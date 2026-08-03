@@ -27,7 +27,6 @@ const {
   createRemoteModelValidator,
   resolveCompatibleEndpointInput,
 }: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
-const setupNimFlow: typeof import("./onboard/setup-nim-flow") = require("./onboard/setup-nim-flow");
 const openrouterSelection: typeof import("./onboard/openrouter-selection") = require("./onboard/openrouter-selection");
 const setupNimOllama: typeof import("./onboard/setup-nim-ollama") = require("./onboard/setup-nim-ollama");
 const inferenceInputCapability = require("./onboard/inference-input-capability");
@@ -51,6 +50,7 @@ const sandboxCreateIntentResolution: typeof import("./onboard/sandbox-create-int
 const sandboxCreatePlanMaterialization: typeof import("./onboard/sandbox-create-plan-materialization") = require("./onboard/sandbox-create-plan-materialization");
 const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
 const onboardEntryOptions: typeof import("./onboard/entry-options") = require("./onboard/entry-options");
+const intentDraft: typeof import("./onboard/intent-draft") = require("./onboard/intent-draft");
 const onboardSessionBootstrap: typeof import("./onboard/session-bootstrap") = require("./onboard/session-bootstrap");
 const channelState: typeof import("./onboard/channel-state") = require("./onboard/channel-state");
 const {
@@ -556,7 +556,6 @@ const {
 }: typeof import("./onboard/bridge-dns-preflight") = require("./onboard/bridge-dns-preflight");
 const agentOnboard = require("./agent/onboard");
 const agentDefs = require("./agent/defs");
-
 const gatewayState: typeof import("./state/gateway") = require("./state/gateway");
 const openClawPluginRestore: typeof import("./state/openclaw-plugin-restore") = require("./state/openclaw-plugin-restore");
 const sandboxState: typeof import("./state/sandbox") = require("./state/sandbox");
@@ -587,6 +586,9 @@ import { streamGatewayStart } from "./onboard/gateway";
 import { bindGatewayAuthorityToCheckpoint } from "./onboard/gateway-authority-checkpoint";
 import { createGatewayHostRuntime } from "./onboard/gateway-host-runtime";
 import {
+  defaultHermesToolGatewaySelection,
+  getRequestedHermesToolGateways,
+  HERMES_TOOL_GATEWAY_PRESETS,
   mergeRequiredHermesToolGatewayPolicyPresets,
   normalizeHermesToolGatewaySelections,
   setupHermesToolGateways,
@@ -824,7 +826,10 @@ const {
 
 // validateNvidiaApiKeyValue — see validation import above
 
-const credentialPrompt = createCredentialPromptHelpers(exitOnboardFromPrompt);
+const credentialPrompt = createCredentialPromptHelpers(exitOnboardFromPrompt, {
+  canReturnToProviderSelection: () => !hasAcceptedOnboardIntent(),
+  onBackUnavailable: () => intentDraft.assertDraftNavigationAllowed("materializing", cliName()),
+});
 const replaceNamedCredential = credentialPrompt.replaceNamedCredential;
 
 const {
@@ -2919,18 +2924,24 @@ async function selectAndValidateOllamaModel(
   const confirm = (question: string, defaultIsYes: boolean) =>
     promptYesNoOrDefault(question, null, defaultIsYes);
   const interaction = { isNonInteractive, isAutoYes, confirm };
+  const refuseAcceptedModelRevision = () => {
+    if (hasAcceptedOnboardIntent()) {
+      intentDraft.assertDraftRevisionAllowed("materializing", "the Ollama model", cliName());
+    }
+  };
   while (true) {
     const installedModels = getOllamaModelOptions();
     let model: string | typeof BACK_TO_SELECTION;
     if (lockedModel) {
       model = lockedModel;
-    } else if (isNonInteractive()) {
+    } else if (isNonInteractive() || hasAcceptedOnboardIntent()) {
       model = localInference.resolveNonInteractiveOllamaModel(requestedModel, recoveredModel, gpu);
     } else {
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
       model = await promptOllamaModel(gpu, { defaultModel: promptDefaultModel && isSafeModelId(promptDefaultModel) ? promptDefaultModel : null, excludeModels: probeFailures.excludedModels() });
     }
     if (isBackToSelection(model)) {
+      refuseAcceptedModelRevision();
       console.log("  Returning to provider selection.");
       console.log("");
       return { outcome: "back-to-selection" };
@@ -2956,6 +2967,7 @@ async function selectAndValidateOllamaModel(
           false,
         );
         if (!proceed) {
+          refuseAcceptedModelRevision();
           console.error(
             `  Skipped pulling Ollama model '${selectedModel}'. Choose another model or re-run with --yes to confirm.`,
           );
@@ -2969,11 +2981,16 @@ async function selectAndValidateOllamaModel(
     if (!probe.ok) {
       const probeFailureLimitReached = probeFailures.recordFailure(selectedModel);
       const action = ollamaFlow.handleOllamaProbeFailure(probe, selectedModel, isNonInteractive);
-      if (action === "back-to-selection") return { outcome: "back-to-selection" };
+      if (action === "back-to-selection") {
+        refuseAcceptedModelRevision();
+        return { outcome: "back-to-selection" };
+      }
       if (probeFailureLimitReached) {
+        refuseAcceptedModelRevision();
         console.error(probeFailures.formatLimitMessage(selectedModel));
         return { outcome: "back-to-selection" };
       }
+      refuseAcceptedModelRevision();
       continue;
     }
     const allowToolsIncompatible = probe.allowToolsIncompatible === true;
@@ -2989,9 +3006,13 @@ async function selectAndValidateOllamaModel(
       null,
       localInference.buildOllamaProbeOptions(allowToolsIncompatible),
     );
-    if (validation.retry === "selection") return { outcome: "back-to-selection" };
+    if (validation.retry === "selection") {
+      refuseAcceptedModelRevision();
+      return { outcome: "back-to-selection" };
+    }
     if (!validation.ok) {
       if (isNonInteractive()) abortNonInteractive(`model '${selectedModel}' failed validation.`);
+      refuseAcceptedModelRevision();
       continue;
     }
     // Ollama's /v1/responses endpoint does not produce correctly formatted
@@ -3064,7 +3085,7 @@ async function handleRoutedSelection(
       "Model Router API key",
       null,
     );
-    if (credentialPrompt.returningToProviderSelection(routerCredentialResult)) {
+    if (returningToProviderSelection(routerCredentialResult)) {
       return "retry-selection";
     }
   }
@@ -3141,7 +3162,7 @@ async function handleNimLocalSelection(
     console.log("  Get one from: https://org.ngc.nvidia.com/setup/api-key");
     console.log("");
     let ngcKey = await credentialPrompt.readValue("  NGC API Key: ");
-    if (credentialPrompt.returningToProviderSelection(ngcKey)) return "retry-selection";
+    if (returningToProviderSelection(ngcKey)) return "retry-selection";
     if (!ngcKey) {
       console.error("  NGC API Key is required for Local NIM.");
       process.exit(1);
@@ -3150,7 +3171,7 @@ async function handleNimLocalSelection(
       console.error("  Failed to login to NGC registry. Check your API key and try again.");
       console.log("");
       ngcKey = await credentialPrompt.readValue("  NGC API Key: ");
-      if (credentialPrompt.returningToProviderSelection(ngcKey)) return "retry-selection";
+      if (returningToProviderSelection(ngcKey)) return "retry-selection";
       if (!ngcKey || !nim.dockerLoginNgc(ngcKey)) {
         console.error("  NGC login failed. Cannot pull NIM images.");
         process.exit(1);
@@ -3165,7 +3186,7 @@ async function handleNimLocalSelection(
       console.log("  NGC API Key required to download NIM model weights at runtime.");
       console.log("  (Docker is logged in to nvcr.io, but the key was not saved.)");
       const ngcKey = await credentialPrompt.readValue("  NGC API Key: ");
-      if (credentialPrompt.returningToProviderSelection(ngcKey)) return "retry-selection";
+      if (returningToProviderSelection(ngcKey)) return "retry-selection";
       ngcApiKey = ngcKey || null;
     }
   }
@@ -3230,7 +3251,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
         ? (recoveredRegistryRoute?.endpointUrl ??
           readRecordedEndpointUrl(sandboxName, args.recoverySessionId))
         : null,
-      nonInteractive: isNonInteractive(),
+      nonInteractive: isNonInteractive() || hasAcceptedOnboardIntent(),
       prompt,
     });
     const navigation = getNavigationChoice(endpointInput);
@@ -3272,7 +3293,12 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
   }
   state.assertRouteCompatible?.();
   if (selected.key === "hermesProvider") {
-    const selectedHermesAuthMethod = await promptHermesAuthMethod();
+    const selectedHermesAuthMethod = hasAcceptedOnboardIntent()
+      ? hermesAuth.getRequestedHermesAuthMethod({
+          error: (message) => console.error(message),
+          exitProcess: (code): never => process.exit(code),
+        })
+      : await promptHermesAuthMethod();
     if (isBackToSelection(selectedHermesAuthMethod)) {
       state.hermesAuthMethod = null;
       console.log("  Returning to provider selection.");
@@ -3292,7 +3318,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
         }
       } else {
         const hermesKeyResult = await ensureHermesNousApiKeyEnv();
-        if (credentialPrompt.returningToProviderSelection(hermesKeyResult)) {
+        if (returningToProviderSelection(hermesKeyResult)) {
           return "retry-selection";
         }
       }
@@ -3362,7 +3388,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
     state.model = await state.nvidiaFeaturedModels!.select(
       requestedModel || (typeof state.model === "string" ? state.model : null),
       recoveredFromSandbox ? recoveredModel : null,
-      isNonInteractive(),
+      isNonInteractive() || hasAcceptedOnboardIntent(),
       process.env.NEMOCLAW_MODEL,
     );
     if (isBackToSelection(state.model)) {
@@ -3421,7 +3447,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
     } else {
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
       const credentialResult = await credentialPrompt.ensureNamedCredential(selectedCredentialEnv, compatibleNoAuth ? `${remoteConfig.label} API key (press Enter for no authentication)` : `${remoteConfig.label} API key`, remoteConfig.helpUrl, openrouterSelection.credentialValidatorForProvider(selected.key), compatibleNoAuth);
-      if (credentialPrompt.returningToProviderSelection(credentialResult)) {
+      if (returningToProviderSelection(credentialResult)) {
         return "retry-selection";
       }
       if (credentialResult === "") state.credentialEnv = OLLAMA_PROXY_CREDENTIAL_ENV;
@@ -3454,7 +3480,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
       };
     }
     while (true) {
-      if (isNonInteractive()) {
+      if (isNonInteractive() || hasAcceptedOnboardIntent()) {
         state.model = defaultModel;
       } else if (openrouterSelection.isOpenRouterProvider(selected.key)) {
         // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -3576,7 +3602,7 @@ function getSetupNimDeps(): SetupNimDeps {
   };
 }
 
-const setupNim = setupNimFlow.createSetupNim(getSetupNimDeps());
+const setupNim = intentDraft.createSetupNim(getSetupNimDeps());
 // ── Step 4: Inference provider ───────────────────────────────────
 
 function getSetupInferenceDeps(): SetupInferenceDeps {
@@ -3904,6 +3930,156 @@ async function preflightAuthoritativeRebuildTarget(
   }
 }
 
+function draftAgent(agentName: string): AgentDefinition | null {
+  return agentName === "openclaw" ? null : agentDefs.loadAgent(agentName);
+}
+
+function hasAcceptedOnboardIntent(): boolean {
+  return process.env.NEMOCLAW_ONBOARD_INTENT_ACCEPTED === "1";
+}
+
+function returningToProviderSelection(
+  value: unknown,
+): value is import("./onboard/credential-navigation").BackNavigationResult {
+  const returning = credentialPrompt.returningToProviderSelection(value);
+  if (returning && hasAcceptedOnboardIntent()) {
+    intentDraft.assertDraftNavigationAllowed("materializing", cliName());
+  }
+  return returning;
+}
+
+function createOnboardIntentDraftDeps(
+  fromDockerfile: string | null,
+  checkpoint: (draft: import("./onboard/intent-draft").OnboardIntentDraft) => void,
+): import("./onboard/intent-draft").OnboardIntentDraftUiDeps {
+  const baseProviderKeys = new Set([
+    "build",
+    "openrouter",
+    "openai",
+    "custom",
+    "anthropic",
+    "anthropicCompatible",
+    "gemini",
+    "ollama",
+    "install-ollama",
+    "vllm",
+    "install-vllm",
+    "nim-local",
+    "routed",
+  ]);
+  const messagingChoices = (agentName: string) => {
+    const agent = draftAgent(agentName);
+    const supported = new Set(
+      filterEnabledChannelsByAgent(
+        MESSAGING_CHANNELS.map((channel) => channel.name),
+        agent,
+      ),
+    );
+    return MESSAGING_CHANNELS.filter((channel) => supported.has(channel.name)).map((channel) => ({
+      value: channel.name,
+      label: channel.label,
+    }));
+  };
+  return {
+    prompt,
+    log: (message = "") => console.log(message),
+    agentChoices: () =>
+      agentDefs.getAgentChoices().map((choice: import("./agent/defs").AgentChoice) => ({
+        value: choice.name,
+        label: choice.displayName,
+      })),
+    inferenceChoices: async (agentName) => {
+      const agent = draftAgent(agentName);
+      return intentDraft
+        .discoverInferenceIntentChoices(getSetupNimDeps(), nim.detectGpu(), agent)
+        .map((choice) => ({
+          value: choice.key,
+          label: choice.label,
+          defaultModel: choice.defaultModel,
+          endpointRequired: choice.key === "custom" || choice.key === "anthropicCompatible",
+          authMethods:
+            choice.key === "hermesProvider"
+              ? [
+                  { value: HERMES_AUTH_METHOD_OAUTH, label: "Nous Portal OAuth" },
+                  { value: HERMES_AUTH_METHOD_API_KEY, label: "Nous API Key" },
+                ]
+              : undefined,
+        }));
+    },
+    webSearchChoices: (agentName) => {
+      const agent = draftAgent(agentName);
+      return webSearch.WEB_SEARCH_PROVIDERS.filter((provider) =>
+        agentSupportsWebSearchProvider(agent, provider, fromDockerfile, ROOT),
+      ).map((provider) => ({ value: provider, label: webSearch.webSearchLabelFor(provider) }));
+    },
+    messagingChoices,
+    managedToolChoices: (agentName, inference) => {
+      if (
+        agentName !== "hermes" ||
+        inference.provider !== "hermesProvider" ||
+        inference.authMethod === HERMES_AUTH_METHOD_API_KEY
+      ) {
+        return [];
+      }
+      return HERMES_TOOL_GATEWAY_PRESETS.map((preset) => ({
+        value: preset.name,
+        label: `${preset.label}: ${preset.description}`,
+      }));
+    },
+    defaultManagedTools: (agentName, inference) => {
+      if (
+        agentName !== "hermes" ||
+        inference.provider !== "hermesProvider" ||
+        inference.authMethod === HERMES_AUTH_METHOD_API_KEY
+      ) {
+        return [];
+      }
+      return getRequestedHermesToolGateways(process.env) ?? defaultHermesToolGatewaySelection();
+    },
+    resourceProfileChoices: () => [
+      { value: "default", label: "OpenShell defaults" },
+      ...Object.keys(intentDraft.loadResourceProfiles())
+        .filter((name) => name !== "default")
+        .map((name) => ({ value: name, label: name })),
+      { value: "custom", label: "Custom CPU and RAM" },
+    ],
+    policyChoices: () => {
+      const choices = tiers.listTiers().map((tier) => ({ value: tier.name, label: tier.label }));
+      return choices.sort((left, right) => {
+        if (left.value === "balanced") return -1;
+        if (right.value === "balanced") return 1;
+        return 0;
+      });
+    },
+    defaultSandboxName: (agentName) => getDefaultSandboxNameForAgent(draftAgent(agentName)),
+    validateSandboxName: (value) => {
+      const validated = validateName(value, "sandbox name");
+      if (RESERVED_SANDBOX_NAMES.has(validated)) {
+        throw new Error(`Reserved name: '${validated}' is a ${cliDisplayName()} CLI command.`);
+      }
+      return validated;
+    },
+    compatibility: {
+      provider: (agentName, inference) =>
+        baseProviderKeys.has(inference.provider) ||
+        getAgentInferenceProviderOptions(draftAgent(agentName)).includes(inference.provider),
+      // Agent manifests do not expose a complete model-compatibility catalog.
+      // Re-adopt the selected provider's reviewed default after an agent edit.
+      model: () => false,
+      webSearch: (agentName, provider) =>
+        agentSupportsWebSearchProvider(
+          draftAgent(agentName),
+          provider as import("./inference/web-search").WebSearchProvider,
+          fromDockerfile,
+          ROOT,
+        ),
+      messaging: (agentName, channel) =>
+        messagingChoices(agentName).some((choice) => choice.value === channel),
+    },
+    checkpoint,
+  };
+}
+
 // ── Main ─────────────────────────────────────────────────────────
 const onboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
@@ -3928,25 +4104,26 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   onboardRuntimeBoundary.reset();
   if (!authoritativeGateway) delete process.env.OPENSHELL_GATEWAY;
   preparedDcodeRuntime.applyGatewayEnv(process.env);
-  const { resume, fresh, requestedFromDockerfile, requestedSandboxName, cannotPrompt } =
-    onboardEntryOptions.resolveOnboardEntryOptions(
-      {
-        opts,
-        env: process.env,
-        stdinIsTty: Boolean(process.stdin && process.stdin.isTTY),
-        stdoutIsTty: Boolean(process.stdout && process.stdout.isTTY),
-        persistedSessionStatus: onboardSession.loadSession()?.status ?? null,
-      },
-      {
-        isNonInteractive,
-        validateName,
-        reservedSandboxNames: RESERVED_SANDBOX_NAMES,
-        cliDisplayName,
-        getNameValidationGuidance,
-        error: (message) => console.error(message),
-        exitProcess: (code) => process.exit(code),
-      },
-    );
+  const resolvedEntryOptions = onboardEntryOptions.resolveOnboardEntryOptions(
+    {
+      opts,
+      env: process.env,
+      stdinIsTty: Boolean(process.stdin && process.stdin.isTTY),
+      stdoutIsTty: Boolean(process.stdout && process.stdout.isTTY),
+      persistedSessionStatus: onboardSession.loadSession()?.status ?? null,
+    },
+    {
+      isNonInteractive,
+      validateName,
+      reservedSandboxNames: RESERVED_SANDBOX_NAMES,
+      cliDisplayName,
+      getNameValidationGuidance,
+      error: (message) => console.error(message),
+      exitProcess: (code) => process.exit(code),
+    },
+  );
+  const { resume, fresh, requestedFromDockerfile, cannotPrompt } = resolvedEntryOptions;
+  let { requestedSandboxName } = resolvedEntryOptions;
   const baseImageResolutionContext = baseImageResolutionFlow.createBaseImageResolutionContext({
     fresh,
     initialHint: opts.baseImageResolutionHint,
@@ -4041,6 +4218,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     collector: null,
     span: null,
   };
+  const restoreOnboardIntentEnvironment = intentDraft.captureOnboardIntentEnvironment(process.env);
   let traceCompleted = false;
   try {
     onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
@@ -4074,6 +4252,37 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         exitProcess: (code) => process.exit(code),
       },
     );
+    const existingIntentDraft = session?.intentDraft ?? null;
+    const shouldCollectIntentDraft =
+      !cannotPrompt &&
+      !authoritativeGateway &&
+      ((!resume && existingIntentDraft?.phase !== "accepted") ||
+        existingIntentDraft?.phase === "collecting");
+    const draftDeps = createOnboardIntentDraftDeps(fromDockerfile, (draft) => {
+      session = onboardSession.updateSession((currentSession) => {
+        currentSession.intentDraft = draft;
+        return currentSession;
+      });
+    });
+    const intentBoundary = await intentDraft.crossOnboardIntentDraftBoundary({
+      shouldCollect: shouldCollectIntentDraft,
+      existingDraft: existingIntentDraft,
+      initialDraft: shouldCollectIntentDraft
+        ? intentDraft.seedOnboardIntentDraft(opts, requestedSandboxName, process.env, (agent) =>
+            agentDefs.resolveAgentName({ agentFlag: agent }),
+          )
+        : intentDraft.createOnboardIntentDraft(),
+      collect: (initialDraft) => intentDraft.collectOnboardIntentDraft(draftDeps, initialDraft),
+      accept: (acceptedDraft) => {
+        intentDraft.applyAcceptedOnboardIntentDraft(acceptedDraft, opts, process.env);
+        requestedSandboxName = acceptedDraft.answers.sandbox ?? requestedSandboxName;
+        setOnboardBrandingAgent(acceptedDraft.answers.agent ?? null);
+      },
+    });
+    if (intentBoundary.kind === "exit") {
+      console.log("  Onboarding draft saved. Re-run onboarding to continue reviewing it.");
+      return;
+    }
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
     // Resume backstop: a session may exist without a sandboxName if sandbox
     // creation failed before that step. Non-interactive --from cannot infer a
@@ -4605,6 +4814,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     completed = true;
     traceCompleted = finalFlowResult.session.machine.state === "complete";
   } finally {
+    restoreOnboardIntentEnvironment();
     releaseOnboardLock();
     onboardRuntimeBoundary.clear();
     onboardTracing.finishOnboardTrace(onboardTrace, traceCompleted);

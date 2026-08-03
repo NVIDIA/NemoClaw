@@ -37,6 +37,7 @@ export interface SetupNimRemoteProviderConfigEntry {
   providerName: string;
   endpointUrl: string;
   credentialEnv: string;
+  defaultModel?: string;
 }
 
 export interface SetupNimRemoteSelectionArgs {
@@ -240,6 +241,69 @@ function applyGatewayRouteDiscoveryConstraints(
   if (!state.preferredInferenceApi && constraints.requiredInferenceApi) {
     state.preferredInferenceApi = constraints.requiredInferenceApi;
   }
+}
+
+export interface DiscoveredInferenceIntentChoice {
+  readonly key: string;
+  readonly label: string;
+  readonly defaultModel: string | null;
+}
+
+/** Discover the provider menu without invoking a provider handler or installer. */
+export function discoverInferenceIntentChoices(
+  deps: SetupNimFlowDeps,
+  gpu: SetupNimGpu,
+  agent: AgentDefinition | null,
+): DiscoveredInferenceIntentChoice[] {
+  const providerHostState = deps.detectInferenceProviderHostState({
+    gpu,
+    experimental: deps.experimental,
+    probeOllama: true,
+    probeVllm: true,
+  });
+  const {
+    hasOllama,
+    ollamaHost,
+    ollamaRunning,
+    isWindowsHostOllama,
+    isWsl: isWslHost,
+    hasWindowsOllama,
+    winOllamaLoopbackOnly,
+    windowsOllamaReachable,
+    windowsHostOllamaDockerRequirement,
+    vllmEntries,
+    ollamaInstallMenu,
+    gpuNimCapable,
+  } = providerHostState;
+  const menu = buildInferenceProviderMenu({
+    remoteProviderConfig: deps.remoteProviderConfig,
+    agentProviderOptions: deps.getAgentInferenceProviderOptions(agent),
+    experimental: deps.experimental,
+    gpuNimCapable,
+    hasOllama,
+    ollamaRunning,
+    ollamaHost,
+    ollamaPort: deps.ollamaPort,
+    isWsl: isWslHost,
+    hasWindowsOllama,
+    isWindowsHostOllama,
+    windowsHostLabelSuffix: windowsHostOllamaDockerRequirement.supported
+      ? ""
+      : windowsHostOllamaDockerRequirement.labelSuffix,
+    windowsHostInstallLabel: windowsHostOllamaDockerRequirement.installLabel,
+    windowsHostStartLabel: windowsHostOllamaDockerRequirement.startLabel,
+    windowsOllamaReachable,
+    winOllamaLoopbackOnly,
+    ollamaInstallEntry: ollamaInstallMenu.entry,
+    vllmEntries,
+    routedEnabled: deps.loadRoutedProfile()?.router?.enabled === true,
+  });
+  return menu.options.map((choice) => ({
+    ...choice,
+    defaultModel:
+      deps.remoteProviderConfig[choice.key]?.defaultModel ??
+      (choice.key === "build" ? resolveAgentDefaultCloudModel(agent) : null),
+  }));
 }
 
 /** Create the provider-selection flow and seed agent-specific Ollama defaults. */

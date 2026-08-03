@@ -52,6 +52,8 @@ export interface SetupMessagingChannelsDeps {
   readonly googlechatTunnelRuntime?: Omit<GooglechatTunnelRuntimeDeps, "sandboxName">;
   /** The channel selection is durable; do not reopen the selector on resume. */
   readonly selectionCompleted?: boolean;
+  /** A reviewed draft supplied the channel IDs; collect configuration only. */
+  readonly selectionProvided?: boolean;
 }
 
 export interface CreateSetupMessagingChannelsDeps {
@@ -67,7 +69,7 @@ export function createSetupMessagingChannels(deps: CreateSetupMessagingChannelsD
     agent: AgentDefinition | null = null,
     existingChannels: string[] | null = null,
     sandboxName: string | null = null,
-    options: { readonly selectionCompleted?: boolean } = {},
+    options: { readonly selectionCompleted?: boolean; readonly selectionProvided?: boolean } = {},
   ): Promise<string[]> =>
     setupMessagingChannels(agent, existingChannels, {
       step: deps.step,
@@ -75,6 +77,7 @@ export function createSetupMessagingChannels(deps: CreateSetupMessagingChannelsD
       isNonInteractive: deps.isNonInteractive,
       sandboxName,
       selectionCompleted: options.selectionCompleted,
+      selectionProvided: options.selectionProvided,
       googlechatTunnelRuntime: deps.googlechatTunnelRuntime
         ? { ...deps.googlechatTunnelRuntime, prompt: deps.prompt }
         : undefined,
@@ -178,7 +181,7 @@ export async function setupMessagingChannels(
   }
 
   const enabled = new Set(
-    deps.selectionCompleted
+    deps.selectionCompleted || deps.selectionProvided
       ? (existingChannels ?? []).filter((channelId) =>
           availableChannels.some((manifest) => manifest.id === channelId),
         )
@@ -189,7 +192,7 @@ export async function setupMessagingChannels(
   const statusForChannel = (manifest: ChannelManifest): string =>
     hasManifestConfiguredInputs(manifest) ? " (configured)" : "";
 
-  if (!deps.selectionCompleted && availableChannels.length > 0) {
+  if (!deps.selectionCompleted && !deps.selectionProvided && availableChannels.length > 0) {
     if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== "function") {
       await promptMessagingChannelLineSelection(availableChannels, enabled, statusForChannel);
     } else {

@@ -192,7 +192,10 @@ function reconcileDeps(plans: readonly (SandboxMessagingPlan | null)[]) {
         _agent: unknown,
         _existingChannels: string[] | null,
         _sandboxName: string,
-        _options?: { readonly selectionCompleted?: boolean },
+        _options?: {
+          readonly selectionCompleted?: boolean;
+          readonly selectionProvided?: boolean;
+        },
       ) => ["telegram"],
     ),
     readMessagingPlanFromEnv: vi
@@ -259,6 +262,35 @@ describe("reconcileReusedSandboxMessaging", () => {
 });
 
 describe("reconcileSandboxMessaging completed checkpoint credentials", () => {
+  it("materializes reviewed channels without reopening the selector (#6005)", async () => {
+    const session = createSession();
+    session.intentDraft = {
+      version: 1,
+      phase: "accepted",
+      answers: { messaging: ["discord"] },
+    };
+    const deps = reconcileDeps([null]);
+    deps.setupMessagingChannels.mockImplementationOnce(
+      async (_agent: unknown, existing: string[] | null) => existing ?? [],
+    );
+
+    const result = await reconcileSandboxMessaging({
+      resume: false,
+      session,
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.setupMessagingChannels).toHaveBeenCalledWith(
+      { name: "openclaw" },
+      ["discord"],
+      "alpha",
+      { selectionProvided: true },
+    );
+    expect(result).toEqual({ plan: null, selectedChannels: ["discord"] });
+  });
+
   it("reuses an active channel only when the process credential matches the persisted hash", async () => {
     const token = "123456:accepted-telegram-token";
     const plan = telegramPlan(hashCredential(token) ?? "");

@@ -20,6 +20,7 @@ import { compactSandboxMessagingPlanForPersistence } from "../messaging/persiste
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 import { describeGatewayOwner, type GatewayOwnerDescription } from "../onboard/gateway-ownership";
+import { type OnboardIntentDraft, parseOnboardIntentDraft } from "../onboard/intent-draft/schema";
 import {
   createOnboardMachineEvent,
   emitOnboardMachineEvent,
@@ -182,6 +183,8 @@ export interface Session {
   webSearchConfig: WebSearchConfig | null;
   /** Completed secret-free choices that can be reused by an interrupted sandbox setup. */
   sandboxPromptProgress: SandboxPromptProgress;
+  /** Reversible, secret-free answers collected before external materialization begins. */
+  intentDraft: OnboardIntentDraft | null;
   /** The selected sandbox resource values; null is an explicit OpenShell-default choice. */
   resourceProfile: SessionResourceProfile | null;
   /** Selected preference, retained even when a model-specific safeguard downgrades it. */
@@ -688,6 +691,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       overrides.sandboxPromptProgress,
       overrides as Record<string, unknown>,
     ),
+    intentDraft: parseOnboardIntentDraft(overrides.intentDraft),
     resourceProfile: parseSessionResourceProfile(overrides.resourceProfile),
     toolDisclosure: normalizeSessionToolDisclosure(overrides.toolDisclosure),
     observabilityEnabled: overrides.observabilityEnabled === true,
@@ -770,6 +774,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
     sandboxPromptProgress: parseSandboxPromptProgress(data.sandboxPromptProgress, data),
+    intentDraft: parseOnboardIntentDraft(data.intentDraft),
     resourceProfile: parseSessionResourceProfile(data.resourceProfile),
     toolDisclosure: normalizeSessionToolDisclosure(data.toolDisclosure),
     observabilityEnabled: data.observabilityEnabled === true,

@@ -1432,6 +1432,22 @@ describe("handleProviderInferenceState", () => {
     expect(calls.setupInference).not.toHaveBeenCalled();
   });
 
+  it("does not show the legacy summary or Apply prompt for an accepted draft (#6005)", async () => {
+    const session = createSession();
+    session.intentDraft = { version: 1, phase: "accepted", answers: {} };
+    const { deps, calls } = createDeps({
+      isNonInteractive: () => false,
+      promptYesNoOrDefault: vi.fn(async () => false),
+    });
+    calls.complete.mockResolvedValue(session);
+
+    await expect(handleProviderInferenceState(baseOptions(deps, session))).resolves.toBeDefined();
+
+    expect(calls.log).not.toHaveBeenCalledWith(expect.stringContaining("summary:"));
+    expect(calls.promptYesNo).not.toHaveBeenCalled();
+    expect(calls.setupInference).toHaveBeenCalledOnce();
+  });
+
   // Regression: #4241. When the provider selection step accepted a no-tools
   // Ollama model (the user answered "yes" to the override prompt or
   // NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 was set), the same flag must reach

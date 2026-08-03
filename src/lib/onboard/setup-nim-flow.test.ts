@@ -9,7 +9,11 @@ import type { VllmProfile } from "../inference/vllm";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
 import type { InferenceProviderHostState } from "./provider-host-state";
-import { createSetupNim, type SetupNimFlowDeps } from "./setup-nim-flow";
+import {
+  createSetupNim,
+  discoverInferenceIntentChoices,
+  type SetupNimFlowDeps,
+} from "./setup-nim-flow";
 
 const REMOTE_PROVIDER_CONFIG: SetupNimFlowDeps["remoteProviderConfig"] = {
   build: {
@@ -141,6 +145,57 @@ function makeDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupNimFlowDeps {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+});
+
+describe("discoverInferenceIntentChoices", () => {
+  it("discovers review choices without invoking provider handlers or installers (#6005)", () => {
+    const detectInferenceProviderHostState = vi.fn(() =>
+      makeHostState({
+        hasOllama: true,
+        ollamaHost: "127.0.0.1",
+        ollamaRunning: true,
+      }),
+    );
+    const handleRemoteProviderSelection = vi.fn();
+    const handleRunningOllamaSelection = vi.fn();
+    const installVllm = vi.fn();
+    const deps = makeDeps({
+      remoteProviderConfig: {
+        ...REMOTE_PROVIDER_CONFIG,
+        build: {
+          ...REMOTE_PROVIDER_CONFIG.build,
+          defaultModel: "nvidia/reviewed-default",
+        },
+      },
+      detectInferenceProviderHostState,
+      getAgentInferenceProviderOptions: () => Object.keys(REMOTE_PROVIDER_CONFIG),
+      handleRemoteProviderSelection,
+      handleRunningOllamaSelection,
+      installVllm,
+    });
+
+    const choices = discoverInferenceIntentChoices(deps, null, null);
+
+    expect(choices).toEqual(
+      expect.arrayContaining([
+        {
+          key: "build",
+          label: "NVIDIA Endpoints",
+          defaultModel: "nvidia/reviewed-default",
+        },
+        expect.objectContaining({ key: "ollama" }),
+      ]),
+    );
+    expect(detectInferenceProviderHostState).toHaveBeenCalledWith({
+      gpu: null,
+      experimental: false,
+      probeOllama: true,
+      probeVllm: true,
+    });
+    expect(handleRemoteProviderSelection).not.toHaveBeenCalled();
+    expect(handleRunningOllamaSelection).not.toHaveBeenCalled();
+    expect(installVllm).not.toHaveBeenCalled();
+  });
 });
 
 describe("createSetupNim", () => {

@@ -74,6 +74,8 @@ export type SetupPresetSuggestionOptions = {
 
 export type SetupPolicySelectionOptions = {
   selectedPresets?: string[] | null;
+  /** Apply reviewed tier-derived suggestions without reopening an interactive picker. */
+  acceptTierSuggestions?: boolean;
   onSelection?: ((policyPresets: string[]) => void) | null;
   webSearchConfig?: WebSearchConfig | null;
   enabledChannels?: string[] | null;
@@ -211,8 +213,8 @@ export function computeSetupPresetSuggestions(
 }
 
 export {
-  preparePolicyPresetResumeSelection,
   type PreparedPolicyResumeSelection,
+  preparePolicyPresetResumeSelection,
 } from "./policy-resume-selection";
 
 export async function setupPoliciesWithSelection(
@@ -382,6 +384,34 @@ async function setupPoliciesWithSelectionInner(
     }),
   );
   const suppressedNames = emitSuppressedAgentRequiredPresetsNote(tierName, agent, deps.note);
+
+  if (options.acceptTierSuggestions === true) {
+    chosen = mergeRequiredSetupPolicyPresets(suggestions, {
+      enabledChannels,
+      hermesToolGateways,
+      agent,
+      observabilityEnabled,
+      knownPresetNames: knownPresets,
+      env: deps.env,
+      tierName,
+      webSearchConfig,
+      customPresetNames,
+      customOwnsObservability,
+    });
+    chosen = pruneUnavailablePresets(chosen);
+    const chosenSet = new Set(chosen);
+    for (const name of appliedForPreservation) {
+      if (chosenSet.has(name) || suppressedNames.has(name)) continue;
+      chosen.push(name);
+      chosenSet.add(name);
+    }
+    if (onSelection) onSelection(chosen);
+    requireSandboxReady(deps, sandboxName, "before");
+    deps.note(`  Applying reviewed '${tierName}' policy suggestions: ${chosen.join(", ")}`);
+    deps.syncPresetSelection(sandboxName, currentAppliedPresets, chosen);
+    requireSandboxReady(deps, sandboxName, "after");
+    return chosen;
+  }
 
   if (deps.isNonInteractive()) {
     const policyMode = (deps.env?.NEMOCLAW_POLICY_MODE || "suggested").trim().toLowerCase();

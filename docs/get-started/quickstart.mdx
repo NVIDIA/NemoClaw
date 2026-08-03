@@ -206,12 +206,22 @@ Use these details when your first-run path needs more control.
   </Accordion>
 
   <Accordion title="Onboarding and Inference Details">
-    The wizard runs preflight checks, starts or reuses the OpenShell gateway, asks for an inference provider and model, collects required credentials, and asks for a sandbox name.
-    It prints a review summary before it registers the provider with OpenShell.
+    The wizard uses read-only host checks while it collects your credential-free choices.
+    It does not change Docker, gateway, provider, policy, or sandbox state until after the review.
+    The choices include the agent, inference provider and model, sandbox name, web search, messaging channels, available managed tools, resources, and policy tier.
+    When you select a custom resource profile, onboarding collects CPU, then RAM, then the sandbox GPU setting, and the review shows the CPU and RAM overrides.
+    Onboarding does not request raw credentials during this stage, store them in the draft, or show them in the review.
 
-    After confirmation, NemoClaw registers inference, prompts for optional web search and messaging channels, builds and starts the sandbox, sets up OpenClaw, and applies the selected network policy tier and presets.
+    During choice collection, press Enter to accept the default shown in `[brackets]`, type `b` or `back` to return to the previous choice, or type `exit` to quit.
+    Backspace continues to edit text in the current prompt.
+    You can repeat `back` until you reach the first choice.
+    At the review, select **Edit a choice** to jump directly to any available choice.
+    Onboarding returns directly to the review when the saved later choices remain compatible.
+    If your edit invalidates a dependent choice, onboarding clears it and reopens only the affected prompts before returning to the review.
 
-    At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
+    After you select **Apply configuration**, NemoClaw requests required credentials, registers inference and optional services, builds and starts the sandbox, sets up OpenClaw, and applies the selected network policy.
+    These resource changes are forward-only, so `back` and **Edit a choice** are no longer available.
+    Follow the printed repair or configuration command if you need to correct a choice after the changes begin.
 
     <Note>
     Onboarding builds the sandbox image with a managed `NEMOCLAW_DISABLE_DEVICE_AUTH=1` compatibility setting so the dashboard is usable during setup.
@@ -268,34 +278,33 @@ Use these details when your first-run path needs more control.
 
     For an OpenAI-compatible endpoint using HTTP on `localhost`, `127.0.0.1`, or `[::1]` and port `8000`, `11434`, or `11435`, press Enter at the API key prompt to select no authentication.
 
-    After you enter a sandbox name, the wizard asks for final confirmation before it registers the provider, prompts for integrations, and builds the sandbox image.
+    After choice collection, the wizard shows the complete review before it requests credentials or changes external resources.
 
     ```text
-      ──────────────────────────────────────────────────
       Review configuration
-      ──────────────────────────────────────────────────
-      Provider:      compatible-endpoint
-      Model:         openai/openai/gpt-5.5
-      API key:       configured for OpenShell gateway registration
-      Web search:    disabled
-      Managed tools: none
-      Messaging:     none
-      Sandbox name:  my-gpt-claw
-      Note:          Sandbox build typically takes 5–15 minutes on this host.
-      ──────────────────────────────────────────────────
-      Web search and messaging channels will be prompted next.
-      Apply this configuration? [Y/n]:
+        Agent: openclaw
+        Inference: custom / openai/openai/gpt-5.5, http://localhost:8000/v1
+        Sandbox: my-gpt-claw
+        Web search: disabled
+        Messaging: none
+        Managed tools: none
+        Resources: default, GPU: auto
+        Policy: balanced
+
+        1) Apply configuration
+        2) Edit a choice
+        3) Exit onboarding
+      Choose [1]:
     ```
 
-    The default is `Y`.
-    Press Enter to continue, or answer `n` to abort cleanly, correct the entries, and rerun `nemoclaw onboard`.
-    Non-interactive runs print the summary for log clarity but skip the prompt.
+    **Apply configuration** is the default.
+    Select **Edit a choice** to change an earlier answer without restarting onboarding.
+    Non-interactive runs continue to print a configuration summary for log clarity but do not show these review actions.
   </Accordion>
 
   <Accordion title="Web Search Messaging and Network Policies">
-    After confirmation, NemoClaw registers the selected provider with the OpenShell gateway and sets the `inference.local` route.
-    The wizard asks whether to enable web search and offers Brave Search or Tavily Search.
-    Provide `BRAVE_API_KEY` for Brave Search or `TAVILY_API_KEY` for Tavily Search when prompted.
+    During choice collection, the wizard asks whether to enable web search and offers Brave Search or Tavily Search.
+    After you apply the configuration, provide `BRAVE_API_KEY` for Brave Search or `TAVILY_API_KEY` for Tavily Search when prompted.
     NemoClaw validates the selected key before it builds the sandbox, registers a sandbox-scoped OpenShell provider, and writes only an OpenShell resolver placeholder into the OpenClaw configuration.
     OpenShell replaces the placeholder with the real key at egress.
 
@@ -313,22 +322,22 @@ Use these details when your first-run path needs more control.
     Changing or disabling web search requires re-running onboarding with the new selection and accepting sandbox recreation, or passing `--recreate-sandbox`.
     NemoClaw backs up supported workspace state before recreation and restores it into the replacement sandbox.
 
-    The wizard also offers Telegram, Discord, Slack, WeChat, and WhatsApp.
+    The choice stage also offers Telegram, Discord, Slack, WeChat, and WhatsApp.
     Press a channel number to toggle it, then press Enter to continue.
     Leave every channel unselected to skip messaging setup.
-    When you select a channel, NemoClaw validates the token format before it bakes the channel configuration into the sandbox.
+    After you apply the configuration, NemoClaw requests the selected channel credentials and validates each token format before it builds the sandbox.
     For example, Slack bot tokens must start with `xoxb-`.
     WeChat and WhatsApp are experimental.
     Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) before enabling them.
 
-    After the sandbox image builds and OpenClaw starts, NemoClaw asks which network policy tier to apply.
-    Web search and messaging selections happen first so the sandbox image and policy suggestions stay aligned.
+    Before the review, NemoClaw asks which network policy tier to apply.
+    Web search and messaging selections happen first so the policy suggestions stay aligned.
+    After review, NemoClaw applies the reviewed tier's suggestions without reopening the preset picker.
     The default Balanced tier includes common development presets, such as npm, PyPI, Hugging Face, and Homebrew, plus the matching `brave` or `tavily` preset.
     Add the `weather` preset explicitly for read-only weather lookups.
     OpenClaw sandboxes also receive the `openclaw-pricing` preset automatically so session-cost records can populate without manual configuration.
-    Use the arrow keys or `j` and `k` to move, Space to select, and Enter to confirm.
-    The selector can include destinations such as GitHub, Jira, Slack, Telegram, or local inference.
-    Press `r` to switch a selected preset between read-only and read-write when it supports both modes.
+    After onboarding, run `nemoclaw <sandbox-name> policy list` to inspect the applied presets.
+    Run `nemoclaw <sandbox-name> policy add <preset>` to review and add another maintained preset.
 
     Use the onboarding summary to verify that the sandbox gateway, dashboard port forward, and `inference.local` route are reachable.
     When web search is enabled, it also checks the selected provider configuration and sends a real search request through sandbox egress.

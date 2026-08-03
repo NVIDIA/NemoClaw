@@ -8,6 +8,11 @@ export type BackNavigationResult = BackToSelection | { kind: "back" };
 export type { BackToSelection };
 export { BACK_TO_SELECTION, isBackToSelection };
 
+export interface CredentialNavigationPolicy {
+  canReturnToProviderSelection(): boolean;
+  onBackUnavailable(): void;
+}
+
 export function getNavigationChoice(value = ""): "back" | "exit" | null {
   const normalized = String(value || "")
     .trim()
@@ -32,17 +37,25 @@ export function printReturningToProviderSelection(): void {
 export function shouldReturnToProviderSelection(
   result: unknown,
   exitOnboardFromPrompt: () => never,
+  navigationPolicy?: CredentialNavigationPolicy,
 ): boolean {
   const navigation = getCredentialPromptNavigation(result);
   if (navigation === "exit") exitOnboardFromPrompt();
-  return navigation === "back" || isBackToSelection(result);
+  const returning = navigation === "back" || isBackToSelection(result);
+  if (returning && navigationPolicy && !navigationPolicy.canReturnToProviderSelection()) {
+    navigationPolicy.onBackUnavailable();
+    throw new Error("Back navigation policy did not refuse unavailable navigation.");
+  }
+  return returning;
 }
 
 export function returningToProviderSelection(
   result: unknown,
   exitOnboardFromPrompt: () => never,
+  navigationPolicy?: CredentialNavigationPolicy,
 ): result is BackNavigationResult {
-  if (!shouldReturnToProviderSelection(result, exitOnboardFromPrompt)) return false;
+  if (!shouldReturnToProviderSelection(result, exitOnboardFromPrompt, navigationPolicy))
+    return false;
   printReturningToProviderSelection();
   return true;
 }
@@ -50,12 +63,19 @@ export function returningToProviderSelection(
 export async function readCredentialValue(
   question: string,
   exitOnboardFromPrompt: () => never,
+  navigationPolicy?: CredentialNavigationPolicy,
 ): Promise<string | BackToSelection> {
   while (true) {
     const input = await credentials.readCredentialPrompt(question, credentials.prompt);
-    if (shouldReturnToProviderSelection(input, exitOnboardFromPrompt)) return BACK_TO_SELECTION;
+    if (shouldReturnToProviderSelection(input, exitOnboardFromPrompt, navigationPolicy)) {
+      return BACK_TO_SELECTION;
+    }
     if (input.kind === "help") {
-      console.log("  Type back to choose a different provider, or exit to quit.");
+      if (navigationPolicy && !navigationPolicy.canReturnToProviderSelection()) {
+        console.log("  Back is unavailable after Apply configuration; use exit to quit.");
+      } else {
+        console.log("  Type back to choose a different provider, or exit to quit.");
+      }
       continue;
     }
     return input.kind === "credential" ? input.value : "";
@@ -69,6 +89,7 @@ export async function replaceNamedCredential({
   validator = null,
   allowEmpty = false,
   exitOnboardFromPrompt,
+  navigationPolicy,
 }: {
   envName: string;
   label: string;
@@ -76,6 +97,7 @@ export async function replaceNamedCredential({
   validator?: ((value: string) => string | null) | null;
   allowEmpty?: boolean;
   exitOnboardFromPrompt: () => never;
+  navigationPolicy?: CredentialNavigationPolicy;
 }): Promise<string | BackToSelection> {
   if (helpUrl) {
     console.log("");
@@ -84,7 +106,7 @@ export async function replaceNamedCredential({
   }
 
   while (true) {
-    const key = await readCredentialValue(`  ${label}: `, exitOnboardFromPrompt);
+    const key = await readCredentialValue(`  ${label}: `, exitOnboardFromPrompt, navigationPolicy);
     if (isBackToSelection(key)) return key;
     if (!key) {
       if (allowEmpty) return "";
@@ -112,6 +134,7 @@ export async function ensureNamedCredential({
   validator = null,
   allowEmpty = false,
   exitOnboardFromPrompt,
+  navigationPolicy,
 }: {
   envName: string | null;
   label: string;
@@ -119,6 +142,7 @@ export async function ensureNamedCredential({
   validator?: ((value: string) => string | null) | null;
   allowEmpty?: boolean;
   exitOnboardFromPrompt: () => never;
+  navigationPolicy?: CredentialNavigationPolicy;
 }): Promise<string | BackToSelection> {
   if (!envName) {
     console.error(`  Missing credential target for ${label}.`);
@@ -134,10 +158,13 @@ export async function ensureNamedCredential({
     console.error(validationError);
   }
   // biome-ignore format: keep optional credential forwarding together.
-  return replaceNamedCredential({ envName, label, helpUrl, validator, allowEmpty, exitOnboardFromPrompt });
+  return replaceNamedCredential({ envName, label, helpUrl, validator, allowEmpty, exitOnboardFromPrompt, navigationPolicy });
 }
 
-export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never): {
+export function createCredentialPromptHelpers(
+  exitOnboardFromPrompt: () => never,
+  navigationPolicy?: CredentialNavigationPolicy,
+): {
   readValue: (question: string) => Promise<string | BackToSelection>;
   replaceNamedCredential: (
     envName: string,
@@ -156,14 +183,21 @@ export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never
   returningToProviderSelection: (result: unknown) => result is BackNavigationResult;
 } {
   return {
-    readValue: (question) => readCredentialValue(question, exitOnboardFromPrompt),
+    readValue: (question) => readCredentialValue(question, exitOnboardFromPrompt, navigationPolicy),
     replaceNamedCredential: (envName, label, helpUrl = null, validator = null) =>
-      replaceNamedCredential({ envName, label, helpUrl, validator, exitOnboardFromPrompt }),
+      replaceNamedCredential({
+        envName,
+        label,
+        helpUrl,
+        validator,
+        exitOnboardFromPrompt,
+        navigationPolicy,
+      }),
     // biome-ignore format: keep optional credential forwarding together.
-    ensureNamedCredential: (envName, label, helpUrl = null, validator = null, allowEmpty = false) => ensureNamedCredential({ envName, label, helpUrl, validator, allowEmpty, exitOnboardFromPrompt }),
+    ensureNamedCredential: (envName, label, helpUrl = null, validator = null, allowEmpty = false) => ensureNamedCredential({ envName, label, helpUrl, validator, allowEmpty, exitOnboardFromPrompt, navigationPolicy }),
     shouldReturnToProviderSelection: (result) =>
-      shouldReturnToProviderSelection(result, exitOnboardFromPrompt),
+      shouldReturnToProviderSelection(result, exitOnboardFromPrompt, navigationPolicy),
     returningToProviderSelection: (result) =>
-      returningToProviderSelection(result, exitOnboardFromPrompt),
+      returningToProviderSelection(result, exitOnboardFromPrompt, navigationPolicy),
   };
 }

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 
 const interactiveDeps = {
@@ -15,6 +15,25 @@ const interactiveDeps = {
 };
 
 describe("prepareProviderDiscovery", () => {
+  it("loads the reviewed model when an interactive draft pins the provider (#6005)", () => {
+    const getNonInteractiveModel = vi.fn(() => "reviewed-model");
+    const result = prepareProviderDiscovery({
+      deps: {
+        ...interactiveDeps,
+        getNonInteractiveProvider: () => "build",
+        getNonInteractiveModel,
+      },
+      sandboxName: null,
+      recoverProvider: false,
+      rebuildRegistryInferenceRoute: null,
+      canProbeRoute: () => true,
+      recoverySessionId: null,
+    });
+
+    expect(result.requestedModel).toBe("reviewed-model");
+    expect(getNonInteractiveModel).toHaveBeenCalledWith("build");
+  });
+
   it("keeps local daemon probes on for the interactive menu when the route preflight reports a conflict (#6750)", () => {
     const result = prepareProviderDiscovery({
       deps: interactiveDeps,

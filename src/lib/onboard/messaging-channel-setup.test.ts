@@ -435,8 +435,7 @@ describe("setupMessagingChannels", () => {
     expect(note).toHaveBeenCalledWith(
       "  [resume] Reusing messaging channel selection; requesting missing credentials only.",
     );
-    expect(prompt).toHaveBeenCalledOnce();
-    expect(prompt).toHaveBeenCalledWith("  Telegram Bot Token: ", { secret: true });
+    expect(prompt).toHaveBeenNthCalledWith(1, "  Telegram Bot Token: ", { secret: true });
     expect(saveCredential).toHaveBeenCalledWith(
       "TELEGRAM_BOT_TOKEN",
       "123456:resumed-telegram-token",
@@ -454,6 +453,23 @@ describe("setupMessagingChannels", () => {
         },
       ],
     });
+  });
+
+  it("uses reviewed channel IDs while requesting their credentials after Apply (#6005)", async () => {
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    vi.mocked(prompt).mockResolvedValueOnce("123456:reviewed-telegram-token");
+
+    const result = await setupMessagingChannels(null, ["telegram"], {
+      sandboxName: "tm",
+      selectionProvided: true,
+    });
+
+    expect(result).toEqual(["telegram"]);
+    expect(prompt).toHaveBeenNthCalledWith(1, "  Telegram Bot Token: ", { secret: true });
+    expect(saveCredential).toHaveBeenCalledWith(
+      "TELEGRAM_BOT_TOKEN",
+      "123456:reviewed-telegram-token",
+    );
   });
 
   it("preserves completed non-default config while reacquiring a missing credential (#6743)", async () => {

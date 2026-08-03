@@ -239,6 +239,71 @@ nemoclaw onboard --agent langchain-deepagents-code [options]
 `--agent` accepts the canonical manifest names from `$$nemoclaw agents list` plus common aliases.
 For example, `nemohermes` resolves to `hermes`, while `dcode`, `deepagents`, `deepagents-code`, and `langchain` resolve to `langchain-deepagents-code`.
 
+#### Interactive Choice Review
+
+During interactive onboarding, host checks are read-only, and credential-free choice collection does not change external resources before the review.
+The available choice groups include the agent, inference provider and model, sandbox name, web search, messaging channels, managed tools, resources, and policy tier.
+The selected agent and host capabilities determine which choices appear within those groups.
+Onboarding does not request raw credentials during choice collection, store them in the draft, or show them in the review.
+
+Type `b` or `back` during choice collection to return to the previous available choice prompt.
+Backspace continues to edit text in the current prompt.
+You can repeat `back` until you reach the first choice.
+At the first choice, another `b` or `back` keeps you there.
+Hidden or nonapplicable groups are skipped.
+
+Nested prompts use these Back transitions:
+
+| Current prompt | Back destination |
+|---|---|
+| Agent | Agent, which is the first-choice floor |
+| Inference provider | Agent |
+| Model | Inference provider |
+| Endpoint URL | Model |
+| Authentication method | Endpoint URL when present; otherwise Model |
+| Sandbox name | The last applicable Inference prompt: Authentication method, Endpoint URL, or Model |
+| Web search | Sandbox name |
+| Messaging channels | Web search |
+| Managed tools | Messaging channels |
+| Resource profile | Managed tools when available; otherwise the previous visible choice group |
+| CPU | Resource profile |
+| RAM | CPU |
+| Sandbox GPU | RAM for a custom profile; otherwise Resource profile |
+| Policy tier | Sandbox GPU |
+
+When you select a custom resource profile, onboarding collects CPU, then RAM, then the sandbox GPU setting.
+The review shows both overrides in the Resources line, for example, `Resources: custom (CPU: 25%, RAM: 25%), GPU: auto`.
+
+After you reach the review, select **Edit a choice** to jump directly to any available group.
+Onboarding returns immediately to the review when the saved later choices remain compatible.
+If the edited value makes a dependent choice incompatible, onboarding clears or adjusts that choice and reopens only affected groups with missing answers.
+
+These edits can invalidate dependent choices:
+
+| Edited choice | Cleared or adjusted dependent choices |
+|---|---|
+| Agent | Managed tools and Policy tier; incompatible Inference or Web search choices; unsupported Messaging channels. If only the model is incompatible, onboarding keeps the provider and resets Model to its displayed default. |
+| Inference provider and model | Managed tools and Policy tier |
+| Web search | Policy tier |
+| Messaging channels | Policy tier |
+| Managed tools | Policy tier |
+
+Editing Sandbox name, Resources, or Policy tier preserves the other draft choices.
+Onboarding derives the sandbox and resource plans only after you select **Apply configuration**.
+
+The review offers these actions:
+
+- **Apply configuration** requests required credentials and starts the forward-only resource changes.
+- **Edit a choice** opens the direct choice menu.
+- **Exit onboarding** stops before external resource changes begin.
+
+After you select **Apply configuration**, onboarding can change Docker, gateway, provider, policy, and sandbox state.
+The `back` command and **Edit a choice** are not available during this forward-only phase.
+If a resource change stops or you need to correct a completed configuration, follow the command-specific remediation that onboarding prints.
+Use `$$nemoclaw onboard --resume` for a retained incomplete session.
+Use the applicable `inference set`, `policy`, or `channels` command for a supported configuration change.
+Use `$$nemoclaw onboard --fresh --name <sandbox-name> --recreate-sandbox` for a build-time choice that requires sandbox recreation.
+
 #### `--events=jsonl`
 
 Emit a read-only stream of canonical onboarding FSM events as JSON Lines on stdout.
@@ -439,19 +504,22 @@ Files outside that recorded path, including `/sandbox/user-data`, are not preser
 Back up those paths outside the sandbox before you continue.
 </Warning>
 
-The wizard prompts for a provider first, then collects the provider credential if needed.
+The wizard collects the provider and model choices before it requests the provider credential.
 Supported non-experimental choices include NVIDIA Endpoints, OpenRouter, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
 Credentials are registered with the OpenShell gateway and never persisted to host disk.
 Refer to [Credential Storage](../security/credential-storage) for details on inspection, rotation, and migration from earlier releases.
 The legacy `$$nemoclaw setup` command is deprecated; use `$$nemoclaw onboard` instead.
 
-After provider selection, the wizard reviews the provider, model, credential state, and sandbox name before registering inference.
+Before the review, the wizard collects all available choices, including the sandbox name, resource profile, custom CPU and RAM values, sandbox GPU setting, and policy tier.
 <AgentOnly variant="openclaw,hermes">
-It then prompts for optional web search and messaging channels, builds and starts the sandbox, and asks for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
+This collection also includes optional web search, messaging channels, and any managed tools supported by the selected agent and provider.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-It then prompts for optional web search, builds and starts the sandbox, and asks for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
+This collection also includes optional web search.
 </AgentOnly>
+The **policy tier** choice controls the suggested network policy presets for the sandbox.
+After review, onboarding applies the reviewed tier's suggestions without reopening the preset picker.
+After you select **Apply configuration**, onboarding requests required credentials, registers providers, and creates or updates the selected resources.
 Three tiers are available:
 
 | Tier | Description |
@@ -629,8 +697,8 @@ Pairing and `TELEGRAM_ALLOWED_IDS` still govern direct messages.
 
 </AgentOnly>
 
-If you cancel a brand-new onboarding run at the policy preset step, NemoClaw rolls back the sandbox, registry entry, and onboarding session instead of leaving a default sandbox with unfinished policy state.
-Existing live sandboxes are not deleted by this cancel rollback path.
+If you exit a brand-new run during choice collection or review, NemoClaw stops before it changes external resources.
+Existing live sandboxes remain unchanged.
 
 If you run onboarding again with the same sandbox name and choose a different inference provider or model, NemoClaw detects the drift and recreates the sandbox so the running agent config matches your selection.
 In interactive mode, the wizard asks for confirmation before delete and recreate.
@@ -3860,7 +3928,7 @@ Set them before running `$$nemoclaw onboard`.
 | Variable | Format | Effect |
 |----------|--------|--------|
 | `NEMOCLAW_YES` | `1` to enable | Auto-accepts confirmation prompts (`--yes` equivalent) including in helpers like the Ollama proxy auth setup, but does not change managed-vLLM storage-warning handling. Express and other non-interactive setup continue after a verified insufficient-capacity warning, interactive setup still requires an explicit `y` or `yes`, and an inconclusive model-cache check stops non-interactive setup with guidance to rerun interactively. |
-| `NEMOCLAW_OLLAMA_NO_AUTOSTART` | `1` to enable | Skips the wizard's eager Ollama auto-start during inference-provider selection (equivalent to passing `--no-ollama-autostart`). When set and Ollama is not running on `localhost:11434`, an agent that uses the legacy `16384`-token context floor, currently OpenClaw, prints a warning and selects the default fallback model instead of spawning `ollama serve`. An agent that requires a larger verified runtime context, currently Hermes at `64000` tokens, returns to interactive provider selection or exits when the Ollama provider is pinned or onboarding is non-interactive. The flag covers only the provider-selection step; later setup steps (auth proxy, validation, model warm) still expect a reachable Ollama. On Linux hosts with a systemd Ollama unit, the loopback-override path may still restart the daemon before this gate runs. |
+| `NEMOCLAW_OLLAMA_NO_AUTOSTART` | `1` to enable | Skips eager Ollama auto-start while NemoClaw applies a reviewed Local Ollama choice (equivalent to passing `--no-ollama-autostart`). When set and Ollama is not running on `localhost:11434`, an agent that uses the legacy `16384`-token context floor, currently OpenClaw, prints a warning and selects the default fallback model instead of spawning `ollama serve`. An agent that requires a larger verified runtime context, currently Hermes at `64000` tokens, returns an error when the Ollama provider is already accepted or onboarding is non-interactive. The flag covers only this provider setup; later steps for the authentication proxy, validation, and model warm-up still expect a reachable Ollama. On Linux hosts with a systemd Ollama unit, the loopback-override path may still restart the daemon after review and before this gate runs. |
 | `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE` | `prompt` or empty/unset | When set to `prompt`, allows non-interactive onboarding to use prompt-capable `sudo` for host setup steps that require elevation, which can ask for a password. Empty/unset is the default and uses `sudo -n`, which fails instead of asking for a password. Any other value is rejected. |
 | `NEMOCLAW_NO_EXPRESS` | `1` to enable | Installer-only. Skips the DGX Spark, DGX Station, and Windows WSL express install prompt and continues with the normal interactive onboarding flow. |
 | `NEMOCLAW_EXPERIMENTAL` | `1` to enable | Surfaces experimental providers and flows in onboarding. |

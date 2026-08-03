@@ -128,6 +128,36 @@ function baseOptions(
 }
 
 describe("handlePoliciesState", () => {
+  it("marks an accepted draft tier as authoritative without a post-Apply picker (#6005)", async () => {
+    const session = createSession();
+    session.intentDraft = {
+      version: 1,
+      phase: "accepted",
+      answers: {
+        agent: "openclaw",
+        inference: { provider: "build", model: "model", endpointUrl: null, authMethod: null },
+        sandbox: "my-assistant",
+        web_search: null,
+        messaging: [],
+        tools: { hermesGateways: [] },
+        resources: { profile: "default", gpu: "auto" },
+        policy: "restricted",
+      },
+    };
+    const { deps, calls, setSession } = createDeps();
+    setSession(session);
+
+    await handlePoliciesState(baseOptions(deps));
+
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({
+        acceptTierSuggestions: true,
+        tierName: "restricted",
+      }),
+    );
+  });
+
   it("runs compatible endpoint smoke before policy selection", async () => {
     const { deps, calls } = createDeps();
 

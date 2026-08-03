@@ -117,4 +117,23 @@ describe("policy selection after interrupted onboarding", () => {
     );
     expect(exit).toHaveBeenCalledWith(1);
   });
+
+  it("applies reviewed tier suggestions without reopening the interactive preset picker (#6005)", async () => {
+    const { deps, syncPresetSelection } = createPolicySelectionHarness();
+    deps.isNonInteractive.mockReturnValue(false);
+    deps.policies.listSetupPolicyPresets.mockReturnValue([{ name: "npm" }]);
+    deps.tiers.resolveTierPresets.mockReturnValue([{ name: "npm" }]);
+
+    await expect(
+      setupPoliciesWithSelection(deps, "alpha", {
+        selectedPresets: null,
+        tierName: "balanced",
+        agent: "openclaw",
+        acceptTierSuggestions: true,
+      }),
+    ).resolves.toEqual(["npm"]);
+
+    expect(deps.selectTierPresetsAndAccess).not.toHaveBeenCalled();
+    expect(syncPresetSelection).toHaveBeenCalledWith("alpha", [], ["npm"]);
+  });
 });

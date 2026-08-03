@@ -36,7 +36,7 @@ export interface SandboxMessagingDeps<Agent> {
     agent: Agent,
     existingChannels: string[] | null,
     sandboxName: string,
-    options?: { readonly selectionCompleted?: boolean },
+    options?: { readonly selectionCompleted?: boolean; readonly selectionProvided?: boolean },
   ): Promise<string[]>;
   readMessagingPlanFromEnv(): SandboxMessagingPlan | null;
   writePlanToEnv(plan: SandboxMessagingPlan): void;
@@ -169,11 +169,16 @@ async function selectionFromMessagingSetup<Agent>(
   existingChannels: string[] | null,
   options: ReconcileSandboxMessagingOptions<Agent>,
   selectionCompleted = false,
+  selectionProvided = false,
 ): Promise<SandboxMessagingSelection> {
   const existing = existingChannels
     ? filterChannelNamesForCurrentAgent(existingChannels, options.agent)
     : existingChannels;
-  const setupOptions = selectionCompleted ? { selectionCompleted: true } : undefined;
+  const setupOptions = selectionCompleted
+    ? { selectionCompleted: true }
+    : selectionProvided
+      ? { selectionProvided: true }
+      : undefined;
   const selected = filterChannelNamesForCurrentAgent(
     setupOptions
       ? await options.deps.setupMessagingChannels(
@@ -369,6 +374,13 @@ async function selectionFromCompletedMessagingCheckpoint<Agent>(
 export async function reconcileSandboxMessaging<Agent>(
   options: ReconcileSandboxMessagingOptions<Agent>,
 ): Promise<SandboxMessagingSelection> {
+  const reviewedChannels =
+    options.session?.intentDraft?.phase === "accepted"
+      ? options.session.intentDraft.answers.messaging
+      : undefined;
+  if (reviewedChannels) {
+    return selectionFromMessagingSetup([...reviewedChannels], options, false, true);
+  }
   const recordedChannels = options.deps.getRecordedMessagingChannelsForResume(
     options.resume,
     options.session,

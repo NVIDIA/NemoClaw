@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import * as credentials from "../credentials/store";
 import {
   BACK_TO_SELECTION,
+  createCredentialPromptHelpers,
   replaceNamedCredential,
   returningToProviderSelection,
   shouldReturnToProviderSelection,
@@ -51,6 +52,38 @@ describe("credential prompt navigation helpers", () => {
     }
 
     expect(logs).toEqual(["  Returning to provider selection.", ""]);
+  });
+
+  it("does not advertise or accept Back after the Apply boundary (#6005)", async () => {
+    const logs: string[] = [];
+    const prompt = vi
+      .spyOn(credentials, "readCredentialPrompt")
+      .mockResolvedValueOnce({ kind: "help" })
+      .mockResolvedValueOnce({ kind: "back" });
+    const log = vi.spyOn(console, "log").mockImplementation((...args) => {
+      logs.push(args.join(" "));
+    });
+    const unavailable = new Error("Back unavailable; rerun onboard --fresh");
+    const helpers = createCredentialPromptHelpers(
+      () => {
+        throw new Error("unexpected exit");
+      },
+      {
+        canReturnToProviderSelection: () => false,
+        onBackUnavailable: () => {
+          throw unavailable;
+        },
+      },
+    );
+    try {
+      await expect(helpers.readValue("secret: ")).rejects.toThrow(unavailable);
+    } finally {
+      prompt.mockRestore();
+      log.mockRestore();
+    }
+
+    expect(logs).toContain("  Back is unavailable after Apply configuration; use exit to quit.");
+    expect(logs.join("\n")).not.toContain("choose a different provider");
   });
 
   it("keeps the prompt and accepts an empty optional credential (#7424)", async () => {

@@ -457,6 +457,25 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
       return configureNonInteractiveWebSearch(existingConfig, agent, dockerfilePathOverride);
     }
 
+    // A reviewed intent projects only the provider name. Credential entry and
+    // validation still happen here, after Apply configuration, without
+    // reopening the provider choice.
+    const explicit = parseExplicitWebSearchProvider(env[WEB_SEARCH_PROVIDER_ENV]);
+    if (env.NEMOCLAW_ONBOARD_INTENT_ACCEPTED === "1" && explicit.specified) {
+      if (!explicit.provider) return null;
+      if (!providerSupported(explicit.provider, agent, dockerfilePathOverride)) return null;
+      const apiKey = await ensureValidatedWebSearchCredential(explicit.provider);
+      if (isBackToSelection(apiKey)) {
+        throw new Error(
+          `Back navigation is unavailable after Apply configuration. Re-run \`${deps.cliName()} onboard --fresh\` to change web search.`,
+        );
+      }
+      if (!apiKey) return null;
+      console.log(`  ✓ Enabled ${providerSpec(explicit.provider).label}`);
+      console.log("");
+      return { fetchEnabled: true, provider: explicit.provider };
+    }
+
     if (existingConfig) return normalizeWebSearchConfig(existingConfig);
 
     const supportedProviders = WEB_SEARCH_PROVIDERS.filter((provider) =>

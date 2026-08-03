@@ -106,9 +106,10 @@ export function prepareProviderDiscovery(options: {
   } = options;
   const nonInteractive = deps.isNonInteractive();
   const requestedProvider = deps.getNonInteractiveProvider();
-  const requestedModel = nonInteractive
-    ? deps.getNonInteractiveModel(requestedProvider || "build")
-    : null;
+  const requestedModel =
+    nonInteractive || requestedProvider
+      ? deps.getNonInteractiveModel(requestedProvider || "build")
+      : null;
   const recoveredRegistryRoute =
     rebuildRegistryInferenceRoute?.sandboxName === sandboxName &&
     rebuildRegistryInferenceRoute.route.source === "registry"

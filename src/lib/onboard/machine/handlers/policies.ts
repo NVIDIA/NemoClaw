@@ -96,6 +96,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
       sandboxName: string,
       options: {
         selectedPresets: string[] | null;
+        acceptTierSuggestions?: boolean;
         enabledChannels: string[];
         disabledChannels?: string[] | null;
         webSearchConfig: WebSearchConfig | null;
@@ -152,7 +153,12 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     : null;
   const recordedMessagingChannels = getActiveChannelsFromPlan(latestSession?.messagingPlan);
   const activeSandbox = deps.getActiveSandbox(sandboxName);
-  const effectivePolicyTier = authoritativePolicyTier ?? activeSandbox?.policyTier ?? null;
+  const reviewedPolicyTier =
+    latestSession?.intentDraft?.phase === "accepted"
+      ? (latestSession.intentDraft.answers.policy ?? null)
+      : null;
+  const effectivePolicyTier =
+    authoritativePolicyTier ?? reviewedPolicyTier ?? activeSandbox?.policyTier ?? null;
   const activePlan = activeSandbox?.messaging?.plan;
   const activeMessagingChannels = getActiveChannelsFromPlan(activePlan);
   const disabledChannels = getDisabledChannelsFromPlan(activePlan);
@@ -232,6 +238,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       selectedPresets: Array.isArray(recordedPolicyPresets)
         ? recordedPolicyPresetsForSupport
         : null,
+      acceptTierSuggestions: latestSession?.intentDraft?.phase === "accepted",
       enabledChannels: policyMessagingChannels,
       disabledChannels,
       webSearchConfig,

@@ -407,6 +407,23 @@ function provenResumeSandboxName(
     : null;
 }
 
+function needsLegacyConfigurationConfirmation(
+  session: Session | null,
+  isNonInteractive: () => boolean,
+): boolean {
+  return session?.intentDraft?.phase !== "accepted" && !isNonInteractive();
+}
+
+function logLegacyConfigurationSummary(
+  reviewedIntentAccepted: boolean,
+  log: (message?: string) => void,
+  summary: string,
+): void {
+  if (reviewedIntentAccepted) return;
+  log(summary);
+  log("  Web search and messaging channels will be prompted next.");
+}
+
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
   gatewayName,
   resume,
@@ -965,7 +982,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1"
           ? null
           : deps.formatSandboxBuildEstimateNote(deps.assessHost());
-      deps.log(
+      const reviewedIntentAccepted = session?.intentDraft?.phase === "accepted";
+      logLegacyConfigurationSummary(
+        reviewedIntentAccepted,
+        deps.log,
         deps.formatOnboardConfigSummary({
           provider,
           model,
@@ -978,8 +998,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           notes: buildEstimateNote ? [buildEstimateNote] : [],
         }),
       );
-      deps.log("  Web search and messaging channels will be prompted next.");
-      if (!deps.isNonInteractive()) {
+      if (needsLegacyConfigurationConfirmation(session, deps.isNonInteractive)) {
         if (!(await deps.promptYesNoOrDefault("  Apply this configuration?", null, true))) {
           deps.log(`  Aborted. Re-run \`${deps.cliName()} onboard\` to start over.`);
           deps.log("  Credentials entered so far were only staged in memory for this run.");

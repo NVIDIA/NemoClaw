@@ -110,8 +110,18 @@ nemoclaw onboard --agent deepagents
 nemoclaw onboard --agent langchain
 ```
 
-The wizard asks for an inference provider, model, required credential, sandbox name, and policy tier before it prints the review summary.
-At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
+The wizard collects the agent, inference provider and model, sandbox name, web search choice, resources, and policy tier before it prints the review summary.
+When you select a custom resource profile, onboarding collects CPU, then RAM, then the sandbox GPU setting, and the review shows the CPU and RAM overrides.
+Onboarding does not request raw credentials during this stage, store them in the draft, or show them in the review.
+During choice collection, press Enter to accept the default shown in `[brackets]`, type `b` or `back` to return to the previous choice, or type `exit` to quit.
+Backspace continues to edit text in the current prompt.
+You can repeat `back` until you reach the first choice.
+At the review, select **Edit a choice** to jump directly to any available choice.
+Onboarding returns directly to the review when the saved later choices remain compatible.
+If your edit invalidates a dependent choice, onboarding clears it and reopens only the affected prompts before returning to the review.
+After you select **Apply configuration**, NemoClaw requests required credentials and starts creating or updating the selected resources.
+These resource changes are forward-only, so `back` and **Edit a choice** are no longer available.
+Follow the printed repair or configuration command if you need to correct a choice after the changes begin.
 The default Deep Agents sandbox name is `deepagents-code`.
 Use a distinct name, such as `my-deepagents`, when you run Deep Agents, Hermes, and OpenClaw sandboxes side by side.
 Refer to [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for provider-specific prompts.

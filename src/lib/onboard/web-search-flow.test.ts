@@ -285,4 +285,56 @@ describe("web search provider selection", () => {
 
     await expect(flow.promptWebSearchProvider(["tavily"])).resolves.toBe("tavily");
   });
+
+  it("uses the reviewed provider and asks only for its credential after Apply (#6005)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-web-search-"));
+    const dockerfile = path.join(root, "Dockerfile");
+    fs.writeFileSync(dockerfile, "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0\n");
+    const prompt = vi.fn(async () => "brv-reviewed-key");
+    const env: NodeJS.ProcessEnv = {
+      NEMOCLAW_ONBOARD_INTENT_ACCEPTED: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
+    };
+    const flow = helpers({
+      env,
+      isNonInteractive: () => false,
+      prompt,
+      getCredential: () => null,
+      saveCredential: vi.fn(),
+    });
+
+    try {
+      await expect(flow.configureWebSearch(null, null, dockerfile)).resolves.toEqual({
+        fetchEnabled: true,
+        provider: "brave",
+      });
+      expect(prompt).toHaveBeenCalledOnce();
+      expect(prompt).toHaveBeenCalledWith("  Brave Search API key: ", { secret: true });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a reviewed web-search Back request with fresh-run guidance (#6005)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-web-back-"));
+    const dockerfile = path.join(root, "Dockerfile");
+    fs.writeFileSync(dockerfile, "ARG NEMOCLAW_WEB_SEARCH_ENABLED=0\n");
+    const flow = helpers({
+      env: {
+        NEMOCLAW_ONBOARD_INTENT_ACCEPTED: "1",
+        NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
+      },
+      isNonInteractive: () => false,
+      prompt: async () => "back",
+      getCredential: () => null,
+    });
+
+    try {
+      await expect(flow.configureWebSearch(null, null, dockerfile)).rejects.toThrow(
+        "nemoclaw onboard --fresh",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
