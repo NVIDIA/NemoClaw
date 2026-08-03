@@ -2554,6 +2554,7 @@ export function createDockerManagedBootstrapAdapter(
       if (normalizedOriginal.hash !== snapshot.specHash) {
         throw new Error("Managed bootstrap Docker replacement snapshot is not exact.");
       }
+      assertNoRootProcessInjectionEnvironment(parsed.inspect.Config?.Env);
       if (parsed.inspect.HostConfig?.ReadonlyRootfs === true) {
         throw new Error(
           "Managed bootstrap cannot stage its root-owned request in a read-only root filesystem.",
