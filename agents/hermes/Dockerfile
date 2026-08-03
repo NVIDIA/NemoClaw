@@ -101,6 +101,7 @@ COPY agents/hermes/image-build-probes.py /opt/nemoclaw-hermes-config/image-build
 COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py
 COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py
 COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py
+COPY agents/hermes/patch-neutral-platform-env-activation.py /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
 COPY src/lib/messaging/ /src/lib/messaging/
@@ -265,7 +266,7 @@ RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
         /scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-tar.mts \
     && chmod -R a+rX /src/lib/messaging
 
-ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=50f5cf638e2c11868fe5128dccc0f6289082ba11ea116efcd030b07286591c00
+ARG NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256=54b43296caad3dd9f91de3d4c431f81f6b160ea2837ed458ede0c35d9737a57b
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256" /opt/nemoclaw-hermes-config/image-build-probes.py \
@@ -348,6 +349,28 @@ RUN printf '%s  %s\n' \
     | sha256sum -c - \
     || { echo "ERROR: patch-hermes-profile-policy-defaults.py hash mismatch (update NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256)" >&2; exit 1; }
 RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py
+
+# Hermes v0.19.0 has several built-in environment override paths that can
+# re-enable an explicitly disabled platform when ambient credentials exist.
+# Apply this after the profile-policy patch above, then bind both its exact
+# output module and this narrow patcher before preserving explicit disables
+# across environment processing.
+ARG NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256=29769d0ae10646dd0a66b32dbefd5f85540544172d57cac96bb4f0941e260948
+ARG NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256=2084c652a07614761d85703787f8697fc29560fe447f23362aa0bda5179dffa7
+ARG NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256=5a1375664d1451b2fe9c3f2325f673149a90b9035588dfd4eb6618f785ecd6a2
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
+        "$NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256" /opt/hermes/gateway/config.py \
+    | sha256sum -c - \
+    || { echo "ERROR: Hermes neutral platform environment source identity mismatch" >&2; exit 1; }
+# hadolint ignore=DL4006
+RUN /usr/bin/python3 -I \
+        /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
+        /opt/hermes/gateway/config.py \
+    && printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256" /opt/hermes/gateway/config.py \
+    | sha256sum -c -
 
 # Prove the source-level fallback on the real installed runtime through the
 # user-facing profile creation path. The new home must remain config-less while
@@ -672,7 +695,14 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix \
     && node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts \
     && if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
-        /opt/hermes/.venv/bin/python -I -c 'import importlib.metadata as m, pathlib, yaml; config=yaml.safe_load(pathlib.Path("/sandbox/.hermes/config.yaml").read_text()); expected=("telegram","discord","weixin","slack","whatsapp","teams"); assert all(config["platforms"].get(name) == {"enabled": False} for name in expected); assert m.version("microsoft-teams-apps") == "2.0.13.4"; assert m.version("aiohttp") == "3.14.1"'; \
+        /opt/hermes/.venv/bin/python -I -c 'import importlib.metadata as m, pathlib, yaml; config=yaml.safe_load(pathlib.Path("/sandbox/.hermes/config.yaml").read_text()); neutral={name: value for name, value in config["platforms"].items() if name != "api_server"}; assert len(neutral) == 30; assert all(value == {"enabled": False} for value in neutral.values()); assert m.version("microsoft-teams-apps") == "2.0.13.4"; assert m.version("aiohttp") == "3.14.1"'; \
+        GOOGLE_CHAT_PROJECT_ID=nemoclaw-hostile \
+        GOOGLE_CHAT_SUBSCRIPTION_NAME=projects/nemoclaw-hostile/subscriptions/nemoclaw-hostile \
+        GOOGLE_CHAT_SERVICE_ACCOUNT_JSON='{"type":"service_account","project_id":"nemoclaw-hostile"}' \
+        WHATSAPP_CLOUD_PHONE_NUMBER_ID=nemoclaw-hostile \
+        WHATSAPP_CLOUD_ACCESS_TOKEN=nemoclaw-hostile \
+        HERMES_HOME=/sandbox/.hermes /opt/hermes/.venv/bin/python -I \
+            /opt/nemoclaw-hermes-config/image-build-probes.py neutral-platform-inertness; \
     fi \
     && rm -rf /sandbox/.cache
 

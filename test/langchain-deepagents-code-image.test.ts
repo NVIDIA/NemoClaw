@@ -232,6 +232,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(startScript).not.toContain("TELEGRAM_BOT_TOKEN");
     expect(startScript).not.toContain("DISCORD_BOT_TOKEN");
     expect(startScript).not.toContain("SLACK_BOT_TOKEN");
+    expect(startScript).not.toContain("GOOGLECHAT_SERVICE_ACCOUNT");
+    expect(startScript).not.toContain("GOOGLE_CHAT_SERVICE_ACCOUNT");
   });
 
   it("prints NemoClaw setup output before idling as a terminal runtime", () => {

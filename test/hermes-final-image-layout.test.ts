@@ -62,6 +62,11 @@ const HERMES_INTEGRITY_FILES = [
     source: "agents/hermes/patch-cron-execution-runtime.py",
     target: "/opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
   },
+  {
+    arg: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256",
+    source: "agents/hermes/patch-neutral-platform-env-activation.py",
+    target: "/opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py",
+  },
 ] as const;
 
 type LegacyDataFixture =
@@ -222,6 +227,7 @@ describe("Hermes final image layout", () => {
           "COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
           "COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py",
           "COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
+          "COPY agents/hermes/patch-neutral-platform-env-activation.py /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py",
           "COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json",
           "COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts",
           "COPY src/lib/messaging/ /src/lib/messaging/",
@@ -305,6 +311,19 @@ describe("Hermes final image layout", () => {
       finalStage,
       "RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/",
     );
+    const managedMessagingUnionInstall = indexOfRequired(
+      finalStage,
+      "--agent hermes --phase managed-image-capability-union",
+    );
+    const profilePolicyPatch = indexOfRequired(
+      finalStage,
+      "RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
+    );
+    const neutralPlatformPatch = indexOfRequired(
+      finalStage,
+      "ARG NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256=",
+    );
+    const neutralMessagingConfig = indexOfRequired(finalStage, "neutral-platform-inertness");
     const configFind = indexOfRequired(finalStage, "RUN find /opt/nemoclaw-hermes-config");
     const blueprintChmod = indexOfRequired(
       finalStage,
@@ -340,6 +359,8 @@ describe("Hermes final image layout", () => {
     expect(npmPatch).toBeLessThan(tarPatch);
     expect(agent).toBeGreaterThan(certifiInstall);
     expect(agent).toBeLessThan(agentChmod);
+    expect(profilePolicyPatch).toBeLessThan(neutralPlatformPatch);
+    expect(managedMessagingUnionInstall).toBeLessThan(neutralMessagingConfig);
     expect(runtime).toBeGreaterThan(configFind);
     expect(runtime).toBeLessThan(managedRuntimeDirectory);
     expect(managedRuntimeDirectory).toBeLessThan(blueprintChmod);
@@ -380,6 +401,18 @@ describe("Hermes final image layout", () => {
     expect(doctorLayer).toContain('if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then');
     expect(doctorLayer).toContain('assert m.version("microsoft-teams-apps") == "2.0.13.4"');
     expect(doctorLayer).toContain('assert m.version("aiohttp") == "3.14.1"');
+    expect(doctorLayer).toContain("assert len(neutral) == 30");
+    expect(doctorLayer).toContain("neutral-platform-inertness");
+    expect(doctorLayer).toContain("GOOGLE_CHAT_SERVICE_ACCOUNT_JSON");
+    expect(doctorLayer).toContain("WHATSAPP_CLOUD_ACCESS_TOKEN");
+    expect(finalStage).toContain(
+      "ARG NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256=" +
+        "2084c652a07614761d85703787f8697fc29560fe447f23362aa0bda5179dffa7",
+    );
+    expect(finalStage).toContain(
+      "ARG NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256=" +
+        "5a1375664d1451b2fe9c3f2325f673149a90b9035588dfd4eb6618f785ecd6a2",
+    );
     expect(doctorLayer).toMatch(/generate-config[.]ts\s+&& if /u);
     expect(doctorLayer).toMatch(/fi\s+&& rm -rf \/sandbox\/[.]cache$/u);
     expect(finalStage).toContain("check_absent /opt/hermes/tests \\");

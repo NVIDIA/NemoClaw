@@ -163,6 +163,18 @@ describe("OpenClaw final image layout", () => {
       "RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
     );
     const pluginInstall = indexOfRequired(finalStage, "RUN npm ci --omit=dev");
+    const managedMessagingUnionInstall = indexOfRequired(
+      finalStage,
+      "--agent openclaw --phase managed-image-capability-union",
+    );
+    const messagingPostInstall = indexOfRequired(
+      finalStage,
+      "--agent openclaw --phase post-agent-install",
+    );
+    const neutralConfigRegeneration = indexOfRequired(
+      finalStage,
+      "# A managed image is a neutral capability carrier",
+    );
     const pluginChmod = indexOfRequired(
       finalStage,
       "RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/",
@@ -190,6 +202,14 @@ describe("OpenClaw final image layout", () => {
     expect(tarPatch).toBeLessThan(braceExpansionPatch);
     expect(plugin).toBeGreaterThan(pluginInstall);
     expect(plugin).toBeLessThan(pluginChmod);
+    expect(managedMessagingUnionInstall).toBeLessThan(messagingPostInstall);
+    expect(messagingPostInstall).toBeLessThan(neutralConfigRegeneration);
+    expect(finalStage.slice(neutralConfigRegeneration)).toContain(
+      "openclaw config validate --json",
+    );
+    expect(finalStage).toContain("packageManifest.openclaw?.channel?.id");
+    expect(finalStage).toContain('channelId === "imessage"');
+    expect(finalStage).toContain("bundled OpenClaw channel is not neutral");
     expect(patch).toBeGreaterThan(wechatInstall);
     expect(patch).toBeLessThan(patchChmod);
     expect(runtime).toBeGreaterThan(blueprintSetup);
