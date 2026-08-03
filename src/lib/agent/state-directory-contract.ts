@@ -67,7 +67,7 @@ function readWritableSubpaths(value: unknown, field: string): string[] {
       throw new Error(`Agent manifest field '${entryField}' must be a string`);
     }
     assertCanonicalPath(entry, entryField, true);
-    if (entry.endsWith("/*")) {
+    if (entry.split("/").at(-1) === "*") {
       throw new Error(
         `Agent manifest field '${entryField}' must end with a literal directory name`,
       );

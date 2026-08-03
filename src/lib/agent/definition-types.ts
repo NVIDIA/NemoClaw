@@ -149,6 +149,7 @@ export interface AgentDefinition {
   config?: ManifestRecord;
   inference?: AgentInference;
   mcp?: AgentMcpCapability;
+  state_lock_plan_in_image?: boolean;
   state_files?: AgentStateFile[];
   user_managed_files?: string[];
   _legacy_paths?: StringMap;
@@ -171,6 +172,7 @@ export interface AgentDefinition {
   readonly nonBackupStateDirs: string[];
   readonly nonBackupStateDirPrefixes: string[];
   readonly stateLockPlan: AgentStateLockPlan;
+  readonly stateLockPlanInImage: boolean;
   readonly stateFiles: AgentStateFile[];
   readonly userManagedFiles: string[];
   readonly versionCommand: string;

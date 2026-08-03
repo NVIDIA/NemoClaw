@@ -218,7 +218,7 @@ test(
         "OpenShell version supports gateway resume and state persistence",
         "sandbox exec/SSH-equivalent access works before and after gateway restart",
         "inference.local returns a live PONG before and after gateway restart",
-        "markers under /sandbox/.openclaw survive the gateway stop/start cycle",
+        "declared workspace, session, and memory markers survive the gateway stop/start cycle",
         "final destroy removes the sandbox from NemoClaw registry/list state",
       ],
     });
@@ -392,12 +392,15 @@ test(
     const markerValue = `nemoclaw-survival-${Date.now()}`;
     const markers: SandboxMarker[] = [
       {
-        path: "/sandbox/.openclaw/.survival-marker-workspace",
+        path: "/sandbox/.openclaw/workspace/.survival-workspace-marker",
         value: markerValue,
       },
-      { path: "/sandbox/.openclaw/.survival-marker", value: markerValue },
       {
-        path: "/sandbox/.openclaw/test-data/nested-marker.txt",
+        path: "/sandbox/.openclaw/agents/main/sessions/.survival-session-marker",
+        value: markerValue,
+      },
+      {
+        path: "/sandbox/.openclaw/memory/.survival-memory-marker",
         value: markerValue,
       },
     ];

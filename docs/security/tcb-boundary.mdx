@@ -136,7 +136,8 @@ The following conditions govern current compatibility code and architecture work
 - Decompose the host shields coordinator only with behavior-preserving changes that keep policy, config, timer, rollback, state, and audit ordering under one typed transaction contract.
 - Keep the managed controller's source-path and fake-root overrides disabled unless the explicit source test flag is present, and keep installed helpers bound to fixed production paths.
 
+The agent manifest declaration drives both generated image-plan selection and the derived `AgentDefinition` used by host wiring.
 Final-image validation must cover the recovery-capable OpenClaw and Hermes images.
 It checks helper owners and modes, root and gateway supplementary groups, root execution of the read-only `probe` path, and refusal before helper entry when the sandbox user attempts execution.
 Deep Agents uses the host-injected helper path instead of an installed recovery artifact.
-Host wiring tests validate that selection and plan handoff, while the shared helper tests validate the descriptor-safe behavior; installed-helper metadata checks do not cover Deep Agents.
+Host wiring tests validate helper selection and plan handoff, while the shared helper tests validate the descriptor-safe behavior; installed-helper metadata checks do not cover Deep Agents.

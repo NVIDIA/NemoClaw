@@ -331,6 +331,7 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
               configPath: string;
               configDir: string;
               sensitiveFiles?: string[];
+              stateLockPlanInImage: boolean;
             } | null = null;
             try {
               // Always prefer the resolved target — even DEFAULT_AGENT_CONFIG
@@ -348,6 +349,7 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
                   configPath: args.configPath,
                   configDir: args.configDir,
                   sensitiveFiles: [`${args.configDir}/.config-hash`],
+                  stateLockPlanInImage: false,
                 };
               } else {
                 lockVerified = false;

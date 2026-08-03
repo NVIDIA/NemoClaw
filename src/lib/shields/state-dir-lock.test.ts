@@ -49,24 +49,23 @@ function createExec(
     privileged: {
       run: (cmd, input) => {
         calls.push({ cmd, input });
-        if (cmd[0] === "test" && cmd.at(-1) === CONTAINER_STATE_LOCK_PLAN) {
-          return {
-            status: runtimePlan === "current" ? 0 : 1,
-            signal: null,
-            stdout: "",
-            stderr: "",
-          };
-        }
-        if (cmd[0] === "cat" && cmd[1] === CONTAINER_STATE_LOCK_PLAN) {
-          return { status: 0, signal: null, stdout: JSON.stringify(PLAN), stderr: "" };
-        }
-        if (cmd[0] === "test") {
-          return {
-            status: helperAvailable ? 0 : 1,
-            signal: null,
-            stdout: "",
-            stderr: "",
-          };
+        switch (cmd[0]) {
+          case "test":
+            return {
+              status:
+                cmd.at(-1) === CONTAINER_STATE_LOCK_PLAN
+                  ? runtimePlan === "current"
+                    ? 0
+                    : 1
+                  : helperAvailable
+                    ? 0
+                    : 1,
+              signal: null,
+              stdout: "",
+              stderr: "",
+            };
+          case "cat":
+            return { status: 0, signal: null, stdout: JSON.stringify(PLAN), stderr: "" };
         }
         const pythonIndex = cmd.indexOf("python3");
         const action = cmd[pythonIndex + 3];
@@ -94,14 +93,18 @@ describe("recursive state-dir lock host wiring", () => {
   it("re-locks state directories when the interrupted transition began locked", () => {
     const { calls, privileged } = createExec();
 
-    expect(restoreStateDirLockPosture(privileged, "/sandbox/.hermes", true, PLAN)).toEqual([]);
+    expect(restoreStateDirLockPosture(privileged, "/sandbox/.hermes", true, PLAN, true)).toEqual(
+      [],
+    );
     expect(actions(calls)).toEqual(["preflight", "lock"]);
   });
 
   it("restores mutable state directories when the interrupted transition began mutable", () => {
     const { calls, privileged } = createExec();
 
-    expect(restoreStateDirLockPosture(privileged, "/sandbox/.hermes", false, PLAN)).toEqual([]);
+    expect(restoreStateDirLockPosture(privileged, "/sandbox/.hermes", false, PLAN, true)).toEqual(
+      [],
+    );
     expect(actions(calls)).toEqual(["unlock"]);
   });
 
@@ -109,7 +112,7 @@ describe("recursive state-dir lock host wiring", () => {
     const { calls, privileged } = createExec();
 
     expect(
-      applyStateDirLockMode(privileged, "/sandbox/.openclaw", "root:sandbox", true, PLAN),
+      applyStateDirLockMode(privileged, "/sandbox/.openclaw", "root:sandbox", true, PLAN, true),
     ).toEqual([]);
     const invocation = calls.find(({ cmd }) => cmd.includes("python3"));
     expect(invocation?.cmd).toEqual([
@@ -133,7 +136,7 @@ describe("recursive state-dir lock host wiring", () => {
     const { calls, privileged } = createExec("historical");
 
     expect(
-      applyStateDirLockMode(privileged, "/sandbox/.openclaw", "root:sandbox", true, PLAN),
+      applyStateDirLockMode(privileged, "/sandbox/.openclaw", "root:sandbox", true, PLAN, true),
     ).toEqual([]);
 
     const invocation = calls.find(({ cmd }) => cmd.includes("python3"));
@@ -156,7 +159,7 @@ describe("recursive state-dir lock host wiring", () => {
     const { calls, privileged } = createExec("historical", false);
 
     expect(
-      applyStateDirLockMode(privileged, "/sandbox/.openclaw", "root:sandbox", true, PLAN),
+      applyStateDirLockMode(privileged, "/sandbox/.openclaw", "root:sandbox", true, PLAN, true),
     ).toEqual([]);
 
     const invocation = calls.find(({ cmd }) => cmd.includes("python3"));
@@ -181,7 +184,7 @@ describe("recursive state-dir lock host wiring", () => {
     const { calls, privileged } = createExec();
 
     expect(
-      applyStateDirLockMode(privileged, "/sandbox/.deepagents", "root:sandbox", true, PLAN),
+      applyStateDirLockMode(privileged, "/sandbox/.deepagents", "root:sandbox", true, PLAN, false),
     ).toEqual([]);
 
     const invocation = calls.find(({ cmd }) => cmd.includes("python3"));
@@ -195,7 +198,7 @@ describe("recursive state-dir lock host wiring", () => {
     const { calls, privileged } = createExec("current", false);
 
     expect(
-      applyStateDirLockMode(privileged, "/sandbox/.openclaw", "root:sandbox", true, PLAN),
+      applyStateDirLockMode(privileged, "/sandbox/.openclaw", "root:sandbox", true, PLAN, true),
     ).toEqual([
       "state-dir guard is unavailable in an image that contains a generated state lock plan",
     ]);
@@ -203,21 +206,23 @@ describe("recursive state-dir lock host wiring", () => {
   });
 
   it.each([
-    ["malformed JSON", "{"],
-    ["an unknown field", JSON.stringify({ ...PLAN, registry: [] })],
-    ["a different policy", JSON.stringify({ ...PLAN, readOnlyRoots: ["hooks"] })],
-  ])("rejects an installed plan with %s before mutation", (_case, payload) => {
+    ["malformed JSON", "{", /not valid JSON/],
+    ["an unknown field", JSON.stringify({ ...PLAN, registry: [] }), /unknown fields: registry/],
+    [
+      "a different policy",
+      JSON.stringify({ ...PLAN, readOnlyRoots: ["hooks"] }),
+      /differs from the current agent manifest/,
+    ],
+  ])("rejects an installed plan with %s before mutation", (_case, payload, expected) => {
     const privileged: PrivilegedExec = {
-      run: (cmd) => {
-        if (cmd[0] === "test") {
-          return { status: 0, signal: null, stdout: "", stderr: "" };
-        }
-        return { status: 0, signal: null, stdout: payload, stderr: "" };
-      },
+      run: (cmd) =>
+        cmd[0] === "test"
+          ? { status: 0, signal: null, stdout: "", stderr: "" }
+          : { status: 0, signal: null, stdout: payload, stderr: "" },
     };
 
-    expect(stateLockPlanCompatibilityIssues(privileged, "/sandbox/.openclaw", PLAN)).toEqual([
-      expect.stringMatching(/installed state lock plan|differs from the current agent manifest/),
+    expect(stateLockPlanCompatibilityIssues(privileged, PLAN, true)).toEqual([
+      expect.stringMatching(expected),
     ]);
   });
 
@@ -234,17 +239,38 @@ describe("recursive state-dir lock host wiring", () => {
             },
     };
 
-    expect(stateLockPlanCompatibilityIssues(privileged, "/sandbox/.openclaw", PLAN)).toEqual([]);
+    expect(stateLockPlanCompatibilityIssues(privileged, PLAN, true)).toEqual([]);
+  });
+
+  it("treats installed plan arrays as unordered sets", () => {
+    const reordered = {
+      ...PLAN,
+      readOnlyRoots: ["workspace", ...PLAN.readOnlyRoots],
+      writableSubpaths: ["workspace/*/sessions", ...PLAN.writableSubpaths],
+    };
+    const expected = {
+      ...PLAN,
+      readOnlyRoots: [...reordered.readOnlyRoots].reverse(),
+      writableSubpaths: [...reordered.writableSubpaths].reverse(),
+    };
+    const privileged: PrivilegedExec = {
+      run: (cmd) =>
+        cmd[0] === "test"
+          ? { status: 0, signal: null, stdout: "", stderr: "" }
+          : { status: 0, signal: null, stdout: JSON.stringify(reordered), stderr: "" },
+    };
+
+    expect(stateLockPlanCompatibilityIssues(privileged, expected, true)).toEqual([]);
   });
 
   it("surfaces structured helper findings and rejects contradictory exit contracts", () => {
     const privileged: PrivilegedExec = {
       run: (cmd) => {
-        if (cmd[0] === "test") {
-          return { status: 0, signal: null, stdout: "", stderr: "" };
-        }
-        if (cmd[0] === "cat") {
-          return { status: 0, signal: null, stdout: JSON.stringify(PLAN), stderr: "" };
+        switch (cmd[0]) {
+          case "test":
+            return { status: 0, signal: null, stdout: "", stderr: "" };
+          case "cat":
+            return { status: 0, signal: null, stdout: JSON.stringify(PLAN), stderr: "" };
         }
         return {
           status: 0,
@@ -268,7 +294,7 @@ describe("recursive state-dir lock host wiring", () => {
       },
     };
 
-    expect(preflightStateDirLock(privileged, "/sandbox/.openclaw", PLAN)).toEqual(
+    expect(preflightStateDirLock(privileged, "/sandbox/.openclaw", PLAN, true)).toEqual(
       expect.arrayContaining([
         expect.stringContaining("[hardlinked-entry]"),
         expect.stringContaining("reported failure with a zero exit"),

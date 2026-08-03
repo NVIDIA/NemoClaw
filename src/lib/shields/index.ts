@@ -767,6 +767,7 @@ type AgentConfigTarget = {
   configDir: string;
   sensitiveFiles?: string[];
   stateLockPlan?: AgentStateLockPlan;
+  stateLockPlanInImage: boolean;
 };
 
 function requireStateLockPlan(target: AgentConfigTarget): AgentStateLockPlan {
@@ -1675,8 +1676,8 @@ function unlockAgentConfigUnderMutationLock(
   const target = ensureConfigHashSensitiveFile(rawTarget);
   const compatibilityIssues = stateLockPlanCompatibilityIssues(
     stateDirLockExec(sandboxName),
-    target.configDir,
     requireStateLockPlan(target),
+    target.stateLockPlanInImage,
   );
   if (compatibilityIssues.length > 0) {
     throw new Error(`Config not unlocked: ${compatibilityIssues.join(", ")}`);
@@ -1738,6 +1739,7 @@ function unlockAgentConfigUnderMutationLock(
         "sandbox:sandbox",
         false,
         requireStateLockPlan(target),
+        target.stateLockPlanInImage,
       );
       for (const issue of stateDirUnlockIssues) errors.push(`state dir unlock: ${issue}`);
     }
@@ -1867,6 +1869,7 @@ function unlockAgentConfigUnderMutationLock(
             target.configDir,
             rollbackLocked,
             requireStateLockPlan(target),
+            target.stateLockPlanInImage,
           ),
         );
       } catch (rollbackError) {
@@ -1898,6 +1901,7 @@ function unlockAgentConfigUnderMutationLock(
               target.configDir,
               rollbackLocked,
               requireStateLockPlan(target),
+              target.stateLockPlanInImage,
             ),
           );
         } catch (rollbackError) {
@@ -2046,8 +2050,8 @@ function lockAgentConfigUnderMutationLock(
   const target = ensureConfigHashSensitiveFile(rawTarget);
   const compatibilityIssues = stateLockPlanCompatibilityIssues(
     stateDirLockExec(sandboxName),
-    target.configDir,
     requireStateLockPlan(target),
+    target.stateLockPlanInImage,
   );
   if (compatibilityIssues.length > 0) {
     throw new Error(`Config not locked: ${compatibilityIssues.join(", ")}`);
@@ -2073,6 +2077,7 @@ function lockAgentConfigUnderMutationLock(
       stateDirLockExec(sandboxName),
       target.configDir,
       requireStateLockPlan(target),
+      target.stateLockPlanInImage,
     );
     if (preflightIssues.length > 0) {
       throw new Error(`Config not locked: ${preflightIssues.join(", ")}`);
@@ -2142,6 +2147,7 @@ function lockAgentConfigUnderMutationLock(
         "root:sandbox",
         true,
         requireStateLockPlan(target),
+        target.stateLockPlanInImage,
       );
       if (stateDirLockIssues.length > 0) {
         throw new Error(`Config not locked: ${stateDirLockIssues.join(", ")}`);
@@ -2250,6 +2256,7 @@ function lockAgentConfigUnderMutationLock(
               target.configDir,
               rollbackLocked,
               requireStateLockPlan(target),
+              target.stateLockPlanInImage,
             ).map((message) => ({ message, readinessFailure: false })),
           );
         } catch (rollbackError) {
@@ -3318,23 +3325,33 @@ function shieldsStatusWithoutHostLock(
       let planIssues: string[] = [];
       try {
         const target = ensureConfigHashSensitiveFile(resolveConfig(sandboxName));
-        planIssues = deps.verifyStateLockPlan
-          ? deps.verifyStateLockPlan(sandboxName, target)
-          : stateLockPlanCompatibilityIssues(
-              stateDirLockExec(sandboxName),
-              target.configDir,
-              requireStateLockPlan(target),
-            );
-        driftIssues = [
-          ...planIssues.map((issue) => `state lock plan: ${issue}`),
-          ...verify(sandboxName, target, {
-            verifyChattr: state.chattrApplied === true,
-            verifyParentProtection: requiresProtectedSandboxParent(target),
-            exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
-            assertLegacyLayout: assertNoLegacyStateLayout,
-            expectedHashes: state.fileHashes,
-          }).issues,
-        ];
+        try {
+          planIssues = deps.verifyStateLockPlan
+            ? deps.verifyStateLockPlan(sandboxName, target)
+            : stateLockPlanCompatibilityIssues(
+                stateDirLockExec(sandboxName),
+                requireStateLockPlan(target),
+                target.stateLockPlanInImage,
+              );
+          driftIssues.push(...planIssues.map((issue) => `state lock plan: ${issue}`));
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          driftIssues.push(`unable to verify state lock plan: ${msg}`);
+        }
+        try {
+          driftIssues.push(
+            ...verify(sandboxName, target, {
+              verifyChattr: state.chattrApplied === true,
+              verifyParentProtection: requiresProtectedSandboxParent(target),
+              exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
+              assertLegacyLayout: assertNoLegacyStateLayout,
+              expectedHashes: state.fileHashes,
+            }).issues,
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          driftIssues.push(`unable to verify agent config target: ${msg}`);
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         driftIssues = [`unable to resolve agent config target: ${msg}`];

@@ -791,6 +791,13 @@ function isAllowedDiscoveredStateDir(
   );
 }
 
+function hasStateDirectorySources(
+  exactDirectories: readonly string[],
+  directoryPrefixes: readonly string[],
+): boolean {
+  return exactDirectories.length > 0 || directoryPrefixes.length > 0;
+}
+
 function describeStateDirDiscoveryFailure(
   result: ReturnType<typeof spawnSync>,
   invalidDirectories: readonly string[],
@@ -1152,6 +1159,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   const dir = agent.configPaths.dir;
   const stateDirs = agent.backupStateDirs;
   const stateDirPrefixes = agent.backupStateDirPrefixes;
+  const hasBackupDirectories = hasStateDirectorySources(stateDirs, stateDirPrefixes);
   const stateFiles = normalizeStateFileSpecs(agent.stateFiles);
   _log(
     `backupSandboxState: agent=${agentName}, dir=${dir}, stateDirs=[${stateDirs.join(",")}], stateDirPrefixes=[${stateDirPrefixes.join(",")}], stateFiles=[${stateFiles.map((f) => f.path).join(",")}]`,
@@ -1281,7 +1289,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   const failedFiles: string[] = [];
   let unreachable = false;
 
-  if (stateDirs.length === 0 && stateDirPrefixes.length === 0 && stateFiles.length === 0) {
+  if (!hasBackupDirectories && stateFiles.length === 0) {
     _log("WARNING: Agent manifest declares no state_dirs or state_files — nothing to back up");
     const publicationError = validateSnapshotPublication(backupPath, options.validateBeforePublish);
     if (publicationError) {
@@ -1322,7 +1330,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-state-");
   const configFile = tempSshConfig.file;
   try {
-    if (stateDirs.length > 0 || stateDirPrefixes.length > 0) {
+    if (hasBackupDirectories) {
       // Build tar command that only includes existing directories.
       // First, check which declared state dirs actually exist in the sandbox,
       // then discover directories matching prefixes declared by the same agent

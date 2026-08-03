@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { loadAgent } from "./defs";
+import { listAgents, loadAgent } from "./defs";
 import {
   buildStateLockPlan,
   readStateDirectories,
@@ -134,7 +134,10 @@ describe("agent state directory contract", () => {
 
   // source-shape-contract: security -- Generated image plans must match the reviewed AgentDefinition projection
   it("keeps generated image plans equal to their AgentDefinition projections (#8006)", () => {
-    for (const agentName of ["openclaw", "hermes"]) {
+    const imagePlanAgents = listAgents().filter(
+      (agentName) => loadAgent(agentName).stateLockPlanInImage,
+    );
+    for (const agentName of imagePlanAgents) {
       const generated = JSON.parse(
         fs.readFileSync(
           path.join(process.cwd(), "agents", agentName, "state-lock-plan.json"),
@@ -164,6 +167,12 @@ describe("agent state directory contract", () => {
         state_dirs: [{ path: "state", shields: "read-only", writable_subpaths: ["run*"] }],
       },
       /complete path component/,
+    ],
+    [
+      {
+        state_dirs: [{ path: "state", shields: "read-only", writable_subpaths: ["*"] }],
+      },
+      /literal directory name/,
     ],
     [
       {

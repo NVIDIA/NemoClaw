@@ -43,6 +43,7 @@ if (!BACKUP_DIR.startsWith(`${path.resolve(BACKUP_ROOT)}${path.sep}`)) {
 }
 const MARKER_FILE = "/sandbox/.openclaw/workspace/snapshot-marker.txt";
 const SECOND_MARKER = "/sandbox/.openclaw/workspace/snapshot-marker-2.txt";
+const PREFIX_MARKER = "/sandbox/.openclaw/workspace-research/snapshot-marker.txt";
 const BASELINE_EXCLUSION_KEY = "openclaw_docs";
 const LIVE_TIMEOUT_MS = 36 * 60_000;
 const INFERENCE_API_KEY = "nvapi-snapshot-commands-fixture-credential";
@@ -330,6 +331,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       "snapshot restore --to returns only after restored gateway pairing is authenticated",
       "post-restore verification stores its unique session only in the clone and sends one authenticated inference request",
       "latest snapshot restore recovers latest workspace state",
+      "snapshot restore recovers state from workspace-* prefix directories",
       "timestamp-targeted restore recovers the first snapshot state",
       "snapshot directory excludes credential-bearing env/json files",
       "snapshot help advertises create/list/restore",
@@ -484,7 +486,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     [
       "sh",
       "-lc",
-      `mkdir -p /sandbox/.openclaw/workspace && printf '%s' '${markerContent}' > ${MARKER_FILE}`,
+      `mkdir -p /sandbox/.openclaw/workspace /sandbox/.openclaw/workspace-research && printf '%s' '${markerContent}' > ${MARKER_FILE} && printf '%s' '${markerContent}' > ${PREFIX_MARKER}`,
     ],
     {
       artifactName: "phase-2-write-marker",
@@ -622,7 +624,11 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
 
   const perturb = await sandbox.exec(
     SANDBOX_NAME,
-    ["sh", "-lc", `rm -f ${SECOND_MARKER} && printf '%s' 'BROKEN' > ${MARKER_FILE}`],
+    [
+      "sh",
+      "-lc",
+      `rm -f ${SECOND_MARKER} ${PREFIX_MARKER} && printf '%s' 'BROKEN' > ${MARKER_FILE}`,
+    ],
     {
       artifactName: "phase-5-perturb-workspace",
       env: commandEnv(),
@@ -644,6 +650,13 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     SECOND_MARKER,
     secondContent,
     "phase-6-read-second-marker-after-latest-restore",
+  );
+  await expectSandboxFileContent(
+    sandbox,
+    SANDBOX_NAME,
+    PREFIX_MARKER,
+    markerContent,
+    "phase-6-read-prefix-marker-after-latest-restore",
   );
   const firstGoneAfterLatest = await sandbox.exec(
     SANDBOX_NAME,

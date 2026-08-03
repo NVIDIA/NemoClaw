@@ -24,6 +24,7 @@ function openClawAgent() {
       shieldsFiles: [],
     },
     stateLockPlan: PLAN,
+    stateLockPlanInImage: true,
   };
 }
 
@@ -49,6 +50,7 @@ describe("agent config resolution", () => {
       configFile: "openclaw.json",
       sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
       stateLockPlan: PLAN,
+      stateLockPlanInImage: true,
     });
     expect(loadAgent).toHaveBeenCalledWith("openclaw");
   });
@@ -108,7 +110,7 @@ describe("agent config resolution", () => {
   ])("rejects %s before constructing privileged paths", (_case, configPaths, expected) => {
     const deps = dependencies({
       getSandbox: vi.fn(() => ({ agent: "hermes" })),
-      loadAgent: vi.fn(() => ({ configPaths, stateLockPlan: PLAN })),
+      loadAgent: vi.fn(() => ({ configPaths, stateLockPlan: PLAN, stateLockPlanInImage: true })),
     });
 
     expect(() => resolveAgentConfig("alpha", deps)).toThrow(expected);
@@ -126,6 +128,7 @@ describe("agent config resolution", () => {
           shieldsFiles: [".secrets"],
         },
         stateLockPlan: PLAN,
+        stateLockPlanInImage: true,
       })),
     });
 
@@ -137,6 +140,7 @@ describe("agent config resolution", () => {
       configFile: "config.yaml",
       sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.secrets"],
       stateLockPlan: PLAN,
+      stateLockPlanInImage: true,
     });
   });
 
@@ -152,6 +156,7 @@ describe("agent config resolution", () => {
           shieldsFiles: [],
         },
         stateLockPlan: PLAN,
+        stateLockPlanInImage: false,
       })),
     });
 
@@ -179,6 +184,7 @@ describe("agent config resolution", () => {
           shieldsFiles,
         },
         stateLockPlan: PLAN,
+        stateLockPlanInImage: true,
       })),
     });
 
@@ -200,6 +206,7 @@ describe("agent config resolution", () => {
           shieldsFiles: shieldsFiles as unknown as string[],
         },
         stateLockPlan: PLAN,
+        stateLockPlanInImage: true,
       })),
     });
 
@@ -218,6 +225,7 @@ describe("agent config resolution", () => {
           shieldsFiles: [".env"],
         },
         stateLockPlan: PLAN,
+        stateLockPlanInImage: false,
       })),
     });
 

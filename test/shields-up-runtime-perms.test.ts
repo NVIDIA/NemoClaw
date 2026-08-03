@@ -146,6 +146,7 @@ try {
       configDir: "/sandbox/.openclaw",
       sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
       stateLockPlan: ${JSON.stringify(OPENCLAW_STATE_LOCK_PLAN)},
+      stateLockPlanInImage: true,
     },
     false,
   );

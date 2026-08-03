@@ -39,6 +39,7 @@ import {
   readObject,
   readPortArray,
   readStateFiles,
+  readStateLockPlanInImage,
   readString,
   readStringArray,
   readStringMap,
@@ -183,6 +184,7 @@ export function loadAgent(name: string): AgentDefinition {
   const nonBackupStateDirs = stateDirectoryPaths(stateDirectories, { backup: false });
   const nonBackupStateDirPrefixes = stateDirectoryPrefixes(stateDirectories, { backup: false });
   const stateLockPlan = buildStateLockPlan(stateDirectories);
+  const stateLockPlanInImage = readStateLockPlanInImage(raw);
   const stateFiles = readStateFiles(raw);
   const userManagedFiles = readUserManagedFiles(raw);
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
@@ -207,6 +209,7 @@ export function loadAgent(name: string): AgentDefinition {
     config,
     inference,
     mcp,
+    state_lock_plan_in_image: stateLockPlanInImage,
     state_files: stateFiles,
     user_managed_files: userManagedFiles,
     _legacy_paths: legacyPathConfig,
@@ -297,6 +300,10 @@ export function loadAgent(name: string): AgentDefinition {
 
     get stateLockPlan(): AgentStateLockPlan {
       return stateLockPlan;
+    },
+
+    get stateLockPlanInImage(): boolean {
+      return stateLockPlanInImage;
     },
 
     get stateFiles(): AgentStateFile[] {

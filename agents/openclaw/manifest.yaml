@@ -40,6 +40,7 @@ config:
   format: json
 
 # ── State directories ──────────────────────────────────────────
+state_lock_plan_in_image: true
 state_dirs:
   - path: agents
     shields: read-only

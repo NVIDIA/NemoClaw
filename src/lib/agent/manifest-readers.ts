@@ -46,6 +46,15 @@ export function readBoolean(record: ManifestRecord, key: string): boolean | unde
   return typeof value === "boolean" ? value : undefined;
 }
 
+export function readStateLockPlanInImage(record: ManifestRecord): boolean {
+  const value = record.state_lock_plan_in_image;
+  if (value === undefined) return false;
+  if (typeof value !== "boolean") {
+    throw new Error("Agent manifest field 'state_lock_plan_in_image' must be a boolean");
+  }
+  return value;
+}
+
 export function readVersionScheme(record: ManifestRecord): AgentVersionScheme | undefined {
   const value = record.version_scheme;
   if (value === "semver" || value === "calendar") return value;

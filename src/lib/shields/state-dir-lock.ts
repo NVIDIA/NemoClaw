@@ -100,7 +100,8 @@ function parseInstalledPlan(payload: string): AgentStateLockPlan | string {
 
 function plansMatch(actual: AgentStateLockPlan, expected: AgentStateLockPlan): boolean {
   return PLAN_ARRAY_FIELDS.every(
-    (field) => JSON.stringify(actual[field]) === JSON.stringify(expected[field]),
+    (field) =>
+      JSON.stringify([...actual[field]].sort()) === JSON.stringify([...expected[field]].sort()),
   );
 }
 
@@ -110,16 +111,12 @@ type RuntimePlanInspection =
   | { kind: "historical" }
   | { kind: "error"; issue: string };
 
-function hasImageRecoveryPlan(configDir: string): boolean {
-  return configDir === "/sandbox/.openclaw" || configDir === "/sandbox/.hermes";
-}
-
 function inspectRuntimePlan(
   privileged: PrivilegedExec,
-  configDir: string,
   expected: AgentStateLockPlan,
+  stateLockPlanInImage: boolean,
 ): RuntimePlanInspection {
-  if (!hasImageRecoveryPlan(configDir)) return { kind: "host-current" };
+  if (!stateLockPlanInImage) return { kind: "host-current" };
   const capability = privileged.run(["test", "-r", CONTAINER_STATE_LOCK_PLAN]);
   if (capability.status === 1 && capability.signal === null && !capability.error) {
     return { kind: "historical" };
@@ -148,10 +145,10 @@ function inspectRuntimePlan(
 
 export function stateLockPlanCompatibilityIssues(
   privileged: PrivilegedExec,
-  configDir: string,
   expected: AgentStateLockPlan,
+  stateLockPlanInImage: boolean,
 ): string[] {
-  const inspection = inspectRuntimePlan(privileged, configDir, expected);
+  const inspection = inspectRuntimePlan(privileged, expected, stateLockPlanInImage);
   return inspection.kind === "error" ? [inspection.issue] : [];
 }
 
@@ -245,8 +242,9 @@ function runStateDirGuard(
   action: GuardAction,
   configDir: string,
   plan: AgentStateLockPlan,
+  stateLockPlanInImage: boolean,
 ): string[] {
-  const runtimePlan = inspectRuntimePlan(privileged, configDir, plan);
+  const runtimePlan = inspectRuntimePlan(privileged, plan, stateLockPlanInImage);
   if (runtimePlan.kind === "error") return [runtimePlan.issue];
 
   if (runtimePlan.kind !== "host-current") {
@@ -286,10 +284,9 @@ function runStateDirGuard(
     return [`trusted host state-dir guard cannot be read: ${message}`];
   }
 
-  // Agents without an image recovery plan, plus images predating the helper,
-  // use the bounded host-injection path. Plan-aware images always use their
-  // root-owned helper so host transitions and PID 1 recovery share one
-  // immutable implementation.
+  // Agent definitions without an image plan, plus images predating the helper,
+  // use the bounded host-injection path. The historical branch remains while
+  // sandboxes built before the generated-plan artifact are supported.
   const command = [
     ...CONTAINER_TIMEOUT,
     "python3",
@@ -311,8 +308,9 @@ export function preflightStateDirLock(
   privileged: PrivilegedExec,
   configDir: string,
   plan: AgentStateLockPlan,
+  stateLockPlanInImage: boolean,
 ): string[] {
-  return runStateDirGuard(privileged, "preflight", configDir, plan);
+  return runStateDirGuard(privileged, "preflight", configDir, plan, stateLockPlanInImage);
 }
 
 // Apply and independently verify the complete recursive state-dir posture.
@@ -324,6 +322,7 @@ export function applyStateDirLockMode(
   highRiskOwner: string,
   isLocking: boolean,
   plan: AgentStateLockPlan,
+  stateLockPlanInImage: boolean,
 ): string[] {
   const expectedOwner = isLocking ? "root:sandbox" : "sandbox:sandbox";
   if (highRiskOwner !== expectedOwner) {
@@ -331,7 +330,13 @@ export function applyStateDirLockMode(
       `state-dir guard owner contract mismatch: ${highRiskOwner} (expected ${expectedOwner})`,
     ];
   }
-  return runStateDirGuard(privileged, isLocking ? "lock" : "unlock", configDir, plan);
+  return runStateDirGuard(
+    privileged,
+    isLocking ? "lock" : "unlock",
+    configDir,
+    plan,
+    stateLockPlanInImage,
+  );
 }
 
 export function restoreStateDirLockPosture(
@@ -339,11 +344,26 @@ export function restoreStateDirLockPosture(
   configDir: string,
   originallyLocked: boolean,
   plan: AgentStateLockPlan,
+  stateLockPlanInImage: boolean,
 ): string[] {
   if (!originallyLocked) {
-    return applyStateDirLockMode(privileged, configDir, "sandbox:sandbox", false, plan);
+    return applyStateDirLockMode(
+      privileged,
+      configDir,
+      "sandbox:sandbox",
+      false,
+      plan,
+      stateLockPlanInImage,
+    );
   }
-  const preflightIssues = preflightStateDirLock(privileged, configDir, plan);
+  const preflightIssues = preflightStateDirLock(privileged, configDir, plan, stateLockPlanInImage);
   if (preflightIssues.length > 0) return preflightIssues;
-  return applyStateDirLockMode(privileged, configDir, "root:sandbox", true, plan);
+  return applyStateDirLockMode(
+    privileged,
+    configDir,
+    "root:sandbox",
+    true,
+    plan,
+    stateLockPlanInImage,
+  );
 }

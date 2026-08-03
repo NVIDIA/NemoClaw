@@ -61,11 +61,12 @@ const HERMES_SEALED_GUARD_HELP = [
 
 function stateDirGuardAction(command: string[]): string | null {
   const installedIndex = command.indexOf(STATE_DIR_GUARD);
-  if (installedIndex >= 0) return command[installedIndex + 1] ?? null;
   const pythonIndex = command.indexOf("python3");
-  return pythonIndex >= 0 && command[pythonIndex + 2] === "-"
-    ? (command[pythonIndex + 3] ?? null)
-    : null;
+  return installedIndex >= 0
+    ? (command[installedIndex + 1] ?? null)
+    : pythonIndex >= 0 && command[pythonIndex + 2] === "-"
+      ? (command[pythonIndex + 3] ?? null)
+      : null;
 }
 
 function extractShellFunctionFromSource(src: string, name: string): string {
@@ -80,6 +81,12 @@ function replaceRequired(source: string, target: string, replacement: string): s
   const parts = source.split(target);
   expect(parts, `Expected exactly one replacement target: ${target}`).toHaveLength(2);
   return `${parts[0]}${replacement}${parts[1]}`;
+}
+
+function restoreCachedModule(modulePath: string, previous: NodeJS.Module | undefined): boolean {
+  return previous === undefined
+    ? Reflect.deleteProperty(require.cache, modulePath)
+    : Reflect.set(require.cache, modulePath, previous);
 }
 
 function normalizeMutableConfigPermsFor(configDir: string): string {
@@ -363,10 +370,8 @@ function withMockedDockerExecFileSync<T>(
     dockerExecModule.dockerExecFileSync = originalDockerExecFileSync;
     dockerExecModule.dockerSpawnSync = originalDockerSpawnSync;
     delete require.cache[shieldsModulePath];
-    if (priorPrivilegedExec) require.cache[privilegedExecPath] = priorPrivilegedExec;
-    else delete require.cache[privilegedExecPath];
-    if (priorTransitionLock) require.cache[transitionLockPath] = priorTransitionLock;
-    else delete require.cache[transitionLockPath];
+    restoreCachedModule(privilegedExecPath, priorPrivilegedExec);
+    restoreCachedModule(transitionLockPath, priorTransitionLock);
   }
 }
 
@@ -507,6 +512,7 @@ describe("mutable agent config permissions", () => {
             configDir: string;
             sensitiveFiles?: string[];
             stateLockPlan?: AgentStateLockPlan;
+            stateLockPlanInImage: boolean;
           },
         ) => void;
       };
@@ -517,6 +523,7 @@ describe("mutable agent config permissions", () => {
         configDir: "/sandbox/.openclaw",
         sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
         stateLockPlan: OPENCLAW_STATE_LOCK_PLAN,
+        stateLockPlanInImage: true,
       });
     });
 
@@ -560,6 +567,7 @@ describe("mutable agent config permissions", () => {
                 configDir: string;
                 sensitiveFiles?: string[];
                 stateLockPlan?: AgentStateLockPlan;
+                stateLockPlanInImage: boolean;
               },
             ) => void;
           };
@@ -570,6 +578,7 @@ describe("mutable agent config permissions", () => {
             configDir: "/sandbox/.openclaw",
             sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
             stateLockPlan: OPENCLAW_STATE_LOCK_PLAN,
+            stateLockPlanInImage: true,
           });
         },
         {
@@ -620,6 +629,7 @@ describe("mutable agent config permissions", () => {
               configDir: string;
               sensitiveFiles?: string[];
               stateLockPlan?: AgentStateLockPlan;
+              stateLockPlanInImage: boolean;
             },
           ) => void;
         };
@@ -630,6 +640,7 @@ describe("mutable agent config permissions", () => {
           configDir: "/sandbox/.hermes",
           sensitiveFiles: ["/sandbox/.hermes/.env"],
           stateLockPlan: HERMES_STATE_LOCK_PLAN,
+          stateLockPlanInImage: true,
         });
       },
       { installedStateLockPlan: HERMES_STATE_LOCK_PLAN },
@@ -676,6 +687,7 @@ describe("mutable agent config permissions", () => {
               configDir: string;
               sensitiveFiles?: string[];
               stateLockPlan?: AgentStateLockPlan;
+              stateLockPlanInImage: boolean;
             },
           ) => void;
         };
@@ -686,6 +698,7 @@ describe("mutable agent config permissions", () => {
           configDir: "/sandbox/.hermes",
           sensitiveFiles: ["/sandbox/.hermes/.env", "/sandbox/.hermes/.config-hash"],
           stateLockPlan: HERMES_STATE_LOCK_PLAN,
+          stateLockPlanInImage: true,
         });
       },
       {
@@ -718,14 +731,7 @@ const OPENCLAW_CONFIG_GUARD = ${JSON.stringify(OPENCLAW_CONFIG_GUARD)};
 const STATE_DIR_GUARD = ${JSON.stringify(STATE_DIR_GUARD)};
 const STATE_LOCK_PLAN = ${JSON.stringify(STATE_LOCK_PLAN)};
 const INSTALLED_STATE_LOCK_PLAN = ${JSON.stringify(OPENCLAW_STATE_LOCK_PLAN)};
-function stateDirGuardAction(command) {
-  const installedIndex = command.indexOf(STATE_DIR_GUARD);
-  if (installedIndex >= 0) return command[installedIndex + 1] || null;
-  const pythonIndex = command.indexOf("python3");
-  return pythonIndex >= 0 && command[pythonIndex + 2] === "-"
-    ? (command[pythonIndex + 3] || null)
-    : null;
-}
+${stateDirGuardAction.toString()}
 Module._load = function patchedLoad(request, parent, isMain) {
   if (request === "./transition-lock") {
     const transitionLock = originalLoad.call(this, request, parent, isMain);
@@ -836,6 +842,7 @@ lockAgentConfig("sandbox-pod", {
   configDir: "/sandbox/.openclaw",
   sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
   stateLockPlan: ${JSON.stringify(OPENCLAW_STATE_LOCK_PLAN)},
+  stateLockPlanInImage: true,
 });
 process.stdout.write(JSON.stringify(calls));
 `,

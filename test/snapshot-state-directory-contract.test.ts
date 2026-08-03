@@ -13,18 +13,9 @@ process.env.HOME = TMP_HOME;
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 type SandboxStateModule = typeof import("../src/lib/state/sandbox.js");
-const loadedSandboxState: unknown = await import(
+const sandboxState = (await import(
   pathToFileURL(path.join(REPO_ROOT, "src", "lib", "state", "sandbox.ts")).href
-);
-if (
-  typeof loadedSandboxState !== "object" ||
-  loadedSandboxState === null ||
-  !("backupSandboxState" in loadedSandboxState) ||
-  !("restoreSandboxState" in loadedSandboxState)
-) {
-  throw new Error("Expected sandbox-state module exports to be available");
-}
-const sandboxState = loadedSandboxState as SandboxStateModule;
+)) as SandboxStateModule;
 const BACKUPS_ROOT = path.join(TMP_HOME, ".nemoclaw", "rebuild-backups");
 
 function writeBackup(
@@ -130,9 +121,16 @@ describe("snapshot state-directory authorization", () => {
   });
 
   it.each([
-    ["workspace-research", true],
-    ["workspace-research/nested", false],
-  ])("authorizes only a top-level concrete match for a dynamic state prefix: %s (#8006)", (stateDir, accepted) => {
+    ["workspace-research", { success: true }],
+    [
+      "workspace-research/nested",
+      {
+        success: false,
+        error:
+          "Backup state directories are not declared by target agent 'openclaw': workspace-research/nested",
+      },
+    ],
+  ])("authorizes only a top-level concrete match for a dynamic state prefix: %s (#8006)", (stateDir, expected) => {
     const manifest = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
       stateDirs: [stateDir],
       backedUpDirs: [],
@@ -142,10 +140,7 @@ describe("snapshot state-directory authorization", () => {
 
     const restore = sandboxState.restoreSandboxState("test-sandbox", String(manifest.backupPath));
 
-    expect(restore.success).toBe(accepted);
-    if (!accepted) {
-      expect(restore.error).toContain("not declared by target agent 'openclaw'");
-    }
+    expect(restore).toMatchObject(expected);
   });
 
   it.each([

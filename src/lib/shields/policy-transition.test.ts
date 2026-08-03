@@ -45,6 +45,7 @@ describe("shields policy transition", () => {
         confidentialPrefixes: [],
         writableSubpaths: [],
       },
+      stateLockPlanInImage: false,
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -119,6 +120,7 @@ describe("shields config lock without a shipped config hash", () => {
         confidentialPrefixes: [],
         writableSubpaths: [],
       },
+      stateLockPlanInImage: false,
     };
   }
 

@@ -62,6 +62,7 @@ export function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefini
       confidentialPrefixes: [],
       writableSubpaths: [],
     },
+    stateLockPlanInImage: true,
     stateFiles: [],
     userManagedFiles: [],
     versionCommand: "hermes --version",

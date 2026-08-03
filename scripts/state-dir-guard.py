@@ -303,7 +303,8 @@ def _validate_writable_subpath(value: str, field: str) -> tuple[str, ...]:
 def _patterns_overlap(first: tuple[str, ...], second: tuple[str, ...]) -> bool:
     return all(
         left == "*" or right == "*" or left == right
-        for left, right in zip(first, second)
+        # A matching shorter pattern is a shared-prefix overlap.
+        for left, right in zip(first, second, strict=False)
     )
 
 
@@ -2247,34 +2248,32 @@ def _load_plan(args: argparse.Namespace) -> AgentStateLockPlan:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
-    result: GuardResult | None = None
     try:
         plan = _load_plan(args)
     except PlanValidationError as exc:
         result = GuardResult(action=args.action)
         result.issues.append(Issue("invalid-plan", args.config_dir, str(exc)))
-    if result is None and os.geteuid() != 0:
-        result = GuardResult(action=args.action)
-        result.issues.append(
-            Issue("root-required", args.config_dir, "state-dir guard must run as root")
-        )
-    elif result is None:
-        try:
-            identity = _production_identity()
-        except KeyError as exc:
+    else:
+        if os.geteuid() != 0:
             result = GuardResult(action=args.action)
             result.issues.append(
-                Issue(
-                    "identity-unavailable",
-                    args.config_dir,
-                    f"required sandbox account is unavailable: {exc}",
-                )
+                Issue("root-required", args.config_dir, "state-dir guard must run as root")
             )
         else:
-            result = run_guard(args.action, args.config_dir, identity, plan)
+            try:
+                identity = _production_identity()
+            except KeyError as exc:
+                result = GuardResult(action=args.action)
+                result.issues.append(
+                    Issue(
+                        "identity-unavailable",
+                        args.config_dir,
+                        f"required sandbox account is unavailable: {exc}",
+                    )
+                )
+            else:
+                result = run_guard(args.action, args.config_dir, identity, plan)
 
-    if result is None:  # All branches above assign a result.
-        raise RuntimeError("state-dir guard did not produce a result")
     for issue in result.issues:
         print(json.dumps(issue.as_json(), sort_keys=True, separators=(",", ":")))
     print(json.dumps(result.summary_json(), sort_keys=True, separators=(",", ":")))

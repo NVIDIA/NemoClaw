@@ -40,6 +40,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
       confidentialPrefixes: [],
       writableSubpaths: [],
     },
+    stateLockPlanInImage: false,
     stateFiles: [],
     userManagedFiles: [],
     versionCommand: "test-agent --version",

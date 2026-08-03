@@ -89,6 +89,14 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   const stateDirLock = requireDist("./state-dir-lock.js");
   const childProcess = requireDist("node:child_process");
   let openClawPosture: "locked" | "mutable" = "mutable";
+  const stateLockPlan = {
+    version: 1,
+    readOnlyRoots: ["skills"],
+    confidentialRoots: [],
+    readOnlyPrefixes: [],
+    confidentialPrefixes: [],
+    writableSubpaths: [],
+  };
 
   vi.spyOn(runner, "validateName").mockImplementation((name: unknown) => String(name));
   vi.spyOn(runner, "runCapture").mockReturnValue("version: 1\nnetwork_policies:\n  test: {}\n");
@@ -109,14 +117,8 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
     configFile: "openclaw.json",
     configPath: "/sandbox/.openclaw/openclaw.json",
     format: "json",
-    stateLockPlan: {
-      version: 1,
-      readOnlyRoots: ["skills"],
-      confidentialRoots: [],
-      readOnlyPrefixes: [],
-      confidentialPrefixes: [],
-      writableSubpaths: [],
-    },
+    stateLockPlan,
+    stateLockPlanInImage: true,
   });
   vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "openclaw", openshellDriver: "docker" });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [{ name: "openclaw" }] });
@@ -140,23 +142,8 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   );
   vi.spyOn(dockerExec, "dockerSpawnSync").mockImplementation((argv: unknown) => {
     const args = Array.isArray(argv) ? argv.map(String) : [];
-    if (args.includes("cat") && args.includes("/usr/local/share/nemoclaw/state-lock-plan.json")) {
-      return {
-        status: 0,
-        signal: null,
-        stdout: `${JSON.stringify({
-          version: 1,
-          readOnlyRoots: ["skills"],
-          confidentialRoots: [],
-          readOnlyPrefixes: [],
-          confidentialPrefixes: [],
-          writableSubpaths: [],
-        })}\n`,
-        stderr: "",
-        pid: 0,
-        output: [],
-      } as never;
-    }
+    const readsStateLockPlan =
+      args.includes("cat") && args.includes("/usr/local/share/nemoclaw/state-lock-plan.json");
     const action = ["preflight", "lock", "unlock"].find((candidate) => args.includes(candidate));
     const openClawGuard = args.some((arg) => arg.endsWith("openclaw-config-guard.py"));
     const shouldFailOpenClawGuard = Boolean(
@@ -191,20 +178,22 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
     const successResult = {
       status: 0,
       signal: null,
-      stdout: action
-        ? `${JSON.stringify({
-            type: "result",
-            action,
-            status: "ok",
-            ...(openClawGuard
-              ? {
-                  configDir: "/sandbox/.openclaw",
-                  files: ["openclaw.json", ".config-hash"],
-                  chattrApplied: action === "lock",
-                }
-              : { issueCount: 0 }),
-          })}\n`
-        : "",
+      stdout: readsStateLockPlan
+        ? `${JSON.stringify(stateLockPlan)}\n`
+        : action
+          ? `${JSON.stringify({
+              type: "result",
+              action,
+              status: "ok",
+              ...(openClawGuard
+                ? {
+                    configDir: "/sandbox/.openclaw",
+                    files: ["openclaw.json", ".config-hash"],
+                    chattrApplied: action === "lock",
+                  }
+                : { issueCount: 0 }),
+            })}\n`
+          : "",
       stderr: "",
       pid: 0,
       output: [],

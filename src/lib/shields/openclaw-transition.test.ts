@@ -31,6 +31,7 @@ function openClawTarget() {
     configFile: "openclaw.json",
     sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
     stateLockPlan: STATE_LOCK_PLAN,
+    stateLockPlanInImage: true,
   };
 }
 

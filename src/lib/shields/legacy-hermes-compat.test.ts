@@ -58,6 +58,7 @@ function hermesTarget() {
     configFile: "config.yaml",
     sensitiveFiles: ["/sandbox/.hermes/.env", "/sandbox/.hermes/.config-hash"],
     stateLockPlan: STATE_LOCK_PLAN,
+    stateLockPlanInImage: true,
   };
 }
 

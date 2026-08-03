@@ -93,7 +93,7 @@ const MARKER_FILE = "/sandbox/.hermes/memories/rebuild-marker.txt";
 const MARKER_CONTENT = `REBUILD_HM_E2E_${Date.now()}`;
 const KANBAN_FILE = "/sandbox/.hermes/kanban.db";
 const KANBAN_TASK_TITLE = `NEMOCLAW_REBUILD_KANBAN_${Date.now()}`;
-const EXCLUDED_KANBAN_FILE = "/sandbox/.hermes/kanban/excluded-rebuild-marker.txt";
+const EXCLUDED_HOOKS_FILE = "/sandbox/.hermes/hooks/excluded-rebuild-marker.txt";
 const DISCORD_PLACEHOLDER = "openshell:resolve:env:DISCORD_BOT_TOKEN";
 const DISCORD_FAKE_TOKEN = "test-fake-discord-token-rebuild-e2e";
 const PRE_REBUILD_API_SERVER_KEY = createHash("sha256").update(MARKER_CONTENT).digest("hex");
@@ -1093,8 +1093,8 @@ test(STALE_BASE_REBUILD
       "sh",
       "-c",
       [
-        `mkdir -p ${shellQuote(path.dirname(EXCLUDED_KANBAN_FILE))}`,
-        `printf '%s' ${shellQuote(MARKER_CONTENT)} > ${shellQuote(EXCLUDED_KANBAN_FILE)}`,
+        `mkdir -p ${shellQuote(path.dirname(EXCLUDED_HOOKS_FILE))}`,
+        `printf '%s' ${shellQuote(MARKER_CONTENT)} > ${shellQuote(EXCLUDED_HOOKS_FILE)}`,
       ].join(" && "),
     ],
     {
@@ -1345,17 +1345,17 @@ test(STALE_BASE_REBUILD
   expectExitZero(restoredKanban, "list Hermes kanban tasks after rebuild");
   expect(resultText(restoredKanban)).toContain(KANBAN_TASK_TITLE);
 
-  const excludedKanbanState = await host.command(
+  const excludedHooksState = await host.command(
     activeOpenshellBin,
-    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "test", "!", "-e", EXCLUDED_KANBAN_FILE],
+    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "test", "!", "-e", EXCLUDED_HOOKS_FILE],
     {
-      artifactName: "phase-7-verify-excluded-kanban-state",
+      artifactName: "phase-7-verify-excluded-hermes-hooks-state",
       env: testEnv(apiKey),
       redactionValues,
       timeoutMs: OPENSHELL_TIMEOUT_MS,
     },
   );
-  expectExitZero(excludedKanbanState, "verify excluded Hermes kanban state was not restored");
+  expectExitZero(excludedHooksState, "verify backup:false Hermes hooks state was not restored");
 
   const restoredEnv = await host.command(
     activeOpenshellBin,

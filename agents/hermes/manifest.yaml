@@ -63,6 +63,7 @@ config:
 # ── State directories ──────────────────────────────────────────
 # All state dirs live under the single config dir now that
 # immutable/writable split has been removed.
+state_lock_plan_in_image: true
 state_dirs:
   - memories
   - sessions

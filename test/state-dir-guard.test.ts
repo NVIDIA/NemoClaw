@@ -383,15 +383,18 @@ describe("state-dir-guard", () => {
 
   it("rejects missing, non-UTF-8, and oversized plan files", () => {
     const { root, configDir } = fixture();
-    const cases: Array<[string, Buffer | null]> = [
-      ["missing.json", null],
-      ["non-utf8.json", Buffer.from([0xff])],
-      ["oversized.json", Buffer.alloc(1024 * 1024 + 1, 0x20)],
+    const cases: Array<[string, (planFile: string) => void]> = [
+      ["missing.json", () => undefined],
+      ["non-utf8.json", (planFile) => fs.writeFileSync(planFile, Buffer.from([0xff]))],
+      [
+        "oversized.json",
+        (planFile) => fs.writeFileSync(planFile, Buffer.alloc(1024 * 1024 + 1, 0x20)),
+      ],
     ];
 
-    for (const [fileName, contents] of cases) {
+    for (const [fileName, writePlan] of cases) {
       const planFile = path.join(root, fileName);
-      if (contents) fs.writeFileSync(planFile, contents);
+      writePlan(planFile);
 
       const result = runGuardWithPlanSource("preflight", configDir, "--plan-file", planFile);
 

@@ -15,6 +15,7 @@ export interface AgentConfigTarget {
   configFile: string;
   sensitiveFiles?: string[];
   stateLockPlan?: AgentStateLockPlan;
+  stateLockPlanInImage: boolean;
 }
 
 export interface AgentConfigDependencies {
@@ -28,6 +29,7 @@ export interface AgentConfigDependencies {
       shieldsFiles: readonly string[];
     };
     stateLockPlan: AgentStateLockPlan;
+    stateLockPlanInImage: boolean;
   };
 }
 
@@ -38,6 +40,7 @@ export const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
   format: "json",
   configFile: "openclaw.json",
   sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+  stateLockPlanInImage: true,
 };
 
 function defaultDependencies(): AgentConfigDependencies {
@@ -124,5 +127,6 @@ export function resolveAgentConfig(
     configFile: cfg.configFile,
     sensitiveFiles,
     stateLockPlan: agent.stateLockPlan,
+    stateLockPlanInImage: agent.stateLockPlanInImage,
   };
 }

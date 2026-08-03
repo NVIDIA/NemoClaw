@@ -26,6 +26,7 @@ const COMPATIBLE_API_KEY = "hermes-shields-e2e-key";
 const COMPATIBLE_MODEL = "hermes-shields-e2e-model";
 const CONFIG_PATH = "/sandbox/.hermes/config.yaml";
 const HERMES_DIR = "/sandbox/.hermes";
+const STATE_LOCK_PLAN_PATH = "/usr/local/share/nemoclaw/state-lock-plan.json";
 const COMMAND_TIMEOUT_MS = 120_000;
 
 validateSandboxName(SANDBOX_NAME);
@@ -170,6 +171,7 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
     boundary: "fresh CPU-only Hermes onboard plus two real shields down/up transitions",
     contracts: [
       "fresh OpenShell-managed non-root Hermes startup mints its API key",
+      "the installed state lock plan keeps skills read-only and pairing confidential",
       "the first shields-down reconciles the startup hash anchor",
       "shields-up establishes the root-owned locked posture",
       "a second down/up cycle completes without corrupting config state",
@@ -277,6 +279,7 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
       "test ! -e /run/nemoclaw/hermes-root-lifecycle",
       `grep -Eq '^API_SERVER_KEY=[0-9a-fA-F]{64}$' ${HERMES_DIR}/.env`,
       `stat -c '%a %U:%G' ${HERMES_DIR}`,
+      `python3 -c 'import json; p=json.load(open("${STATE_LOCK_PLAN_PATH}", encoding="utf-8")); assert "skills" in p["readOnlyRoots"]; assert "pairing" in p["confidentialRoots"]; print("STATE_LOCK_PLAN_MODES=skills:read-only,pairing:confidential")'`,
       `sha256sum ${CONFIG_PATH} | awk '{print $1}'`,
     ].join("\n"),
     "fresh-nonroot-trigger",
@@ -284,6 +287,7 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
   assertExitZero(trigger, "prove fresh non-root Hermes startup trigger");
   const triggerLines = trigger.stdout.trim().split(/\r?\n/);
   expect(triggerLines[0]).toMatch(/^(700|3770) sandbox:sandbox$/);
+  expect(trigger.stdout).toContain("STATE_LOCK_PLAN_MODES=skills:read-only,pairing:confidential");
   const configHashBefore = triggerLines.at(-1) ?? "";
   expect(configHashBefore).toMatch(/^[0-9a-f]{64}$/);
 
@@ -316,6 +320,7 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
     assertions: {
       configPreserved: true,
       freshNonrootTrigger: true,
+      stateLockPlanModes: true,
       firstCycle: true,
       secondCycle: true,
     },
