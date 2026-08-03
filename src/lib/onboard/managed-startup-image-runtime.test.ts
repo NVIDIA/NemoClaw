@@ -394,7 +394,9 @@ describe("managed startup image runtime", () => {
       file: fs.PathLike,
       options?: { bigint?: boolean },
     ) => {
-      if (file.toString() === source && options?.bigint === true) beforeSourceCleanup?.();
+      const sourceCleanupHook =
+        file.toString() === source && options?.bigint === true ? beforeSourceCleanup : undefined;
+      sourceCleanupHook?.();
       const stat = options?.bigint ? realLstatSync(file, { bigint: true }) : realLstatSync(file);
       const rootPath = file.toString() === shareDirectory || file.toString() === target;
       return rootPath && options?.bigint !== true ? rootOwned(stat as fs.Stats) : stat;
