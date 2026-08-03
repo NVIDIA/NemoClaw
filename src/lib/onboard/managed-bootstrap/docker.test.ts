@@ -3,7 +3,10 @@
 
 import { assert, describe, expect, it, vi } from "vitest";
 
-import { ManagedBootstrapOwnerCleanupRequiredError } from "./adapter";
+import {
+  ManagedBootstrapDurableCommitCleanupPendingError,
+  ManagedBootstrapOwnerCleanupRequiredError,
+} from "./adapter";
 import { createDockerManagedBootstrapAdapter } from "./docker";
 import {
   normalizeDockerManagedBootstrapLaunchSpec,
@@ -152,6 +155,20 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.journal).toBeNull();
     expect(fake.sharedState).toBe("none");
     expect(fake.replacement?.Id).toBe(NEW_ID);
+
+    await expect(
+      createDockerManagedBootstrapAdapter(fake.deps).finalizeBootstrap({
+        outcome: "rollback",
+        handle,
+        snapshot,
+        prepared,
+        durablePreparation: reorderedDurable,
+        replacement,
+        completion: null,
+      }),
+    ).rejects.toBeInstanceOf(ManagedBootstrapDurableCommitCleanupPendingError);
+    expect(fake.events).toHaveLength(eventCount);
+    expect(fake.finalization).toMatchObject({ phase: "committed", commitReceipt });
   });
 
   it("preserves commit validation failure details when the replacement cannot be quiesced", async () => {

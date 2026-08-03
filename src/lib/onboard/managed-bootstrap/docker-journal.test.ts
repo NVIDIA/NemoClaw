@@ -299,6 +299,14 @@ describe("Docker managed bootstrap journal", () => {
         cleanupReceipt: { ...finalization.cleanupReceipt, finalizedAt: "2026-07-31T20:00:02.000Z" },
       }),
     ).toThrow("finalization record changed");
+    expect(() =>
+      restarted.recordFinalization({
+        ...finalization,
+        phase: "rolled-back",
+        commitReceipt: null,
+        cleanupReceipt: { ...finalization.cleanupReceipt, outcome: "rolled-back" },
+      }),
+    ).toThrow("finalization record changed");
   });
 
   it("reloads the exact completion receipt from a new journal store", () => {
