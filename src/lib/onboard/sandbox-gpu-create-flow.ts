@@ -10,8 +10,19 @@ import type { DockerGpuPatchDeps, DockerUlimit } from "./docker-gpu-patch-types"
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
-import type { DockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
+import type {
+  ManagedBootstrapAdapter,
+  ManagedBootstrapAgentIdentity,
+  ManagedBootstrapAuthorityStore,
+  ManagedBootstrapImageIdentity,
+} from "./managed-bootstrap/adapter";
+import type { ManagedBootstrapRuntimePatch } from "./managed-bootstrap/runtime-create";
+import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
+import type {
+  RuntimeProviderBootstrapSurface,
+  RuntimeProviderBundle,
+} from "./runtime-provider/contract";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
@@ -41,6 +52,18 @@ export interface SandboxGpuCreateFlowInput {
   restoreBackupPath: string | null;
   terminalAgent: boolean;
   persistStartupCommand?: boolean;
+  managedBootstrap?: {
+    readonly bootstrapIdentity: string;
+    readonly runtimeProvider: RuntimeProviderBundle & {
+      readonly bootstrap: Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
+    };
+    readonly authorityStore: ManagedBootstrapAuthorityStore;
+    readonly request: ManagedStartupRootApplyRequest;
+    readonly image: ManagedBootstrapImageIdentity;
+    readonly agentIdentity: ManagedBootstrapAgentIdentity;
+    readonly intendedWorkloadArgv: readonly string[];
+    readonly expectedSupervisorArgv: readonly string[];
+  } | null;
   requiredUlimits?: readonly DockerUlimit[] | null;
 }
 
@@ -50,11 +73,13 @@ export interface SandboxGpuCreateFlowDeps {
   sleep: Sleep;
   openshellArgv(args: string[]): string[];
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
+  /** Production callers omit this factory and use the runtime provider's adapter. */
+  createManagedBootstrapAdapter?: () => ManagedBootstrapAdapter;
 }
 
 export interface SandboxGpuCreateFlowResult {
   createResult: StreamSandboxCreateResult;
-  dockerGpuCreatePatch: DockerGpuSandboxCreatePatch;
+  runtimePatch: ManagedBootstrapRuntimePatch;
   route: SelectedDockerGpuRoute;
   firstCreateOutput: string;
   /** Mutable tag/reference retained only for registry and image-GC bookkeeping. */
@@ -105,46 +130,65 @@ export async function runSandboxGpuCreateFlow(
           throw new Error("Compatibility retry policy was not materialized.");
         }
         const nativeRuntimeSnapshot = attemptRunner.state.nativeRuntimeSnapshot;
-        const prebuildImageId = input.prebuild.imageId;
-        const imageId =
-          nativeRuntimeSnapshot?.imageId ??
-          (prebuildImageId && isImmutableDockerImageId(prebuildImageId)
-            ? prebuildImageId.toLowerCase()
-            : null);
-        if (
-          !registryImageRef &&
-          nativeRuntimeSnapshot?.bookkeepingImageRef &&
-          !isImmutableDockerImageId(nativeRuntimeSnapshot.bookkeepingImageRef)
-        ) {
-          registryImageRef = nativeRuntimeSnapshot.bookkeepingImageRef;
+        if (attemptRunner.managedRouting) {
+          const prepared = attemptRunner.managedRouting.prepareCompatibilityLaunch({
+            createArgs: input.prebuild.createArgs,
+            currentRegistryImageRef: registryImageRef,
+            prebuildImageId: input.prebuild.imageId,
+            allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
+            compatibilityPolicyPath: input.compatibilityPolicyPath,
+            startupCommand: input.sandboxStartupCommand,
+            runtimeSnapshot: nativeRuntimeSnapshot,
+          });
+          attemptRunner.state.compatibilityArgv = [...prepared.createArgv];
+          registryImageRef = prepared.registryImageRef;
+        } else {
+          const prebuildImageId = input.prebuild.imageId;
+          const imageId =
+            nativeRuntimeSnapshot?.imageId ??
+            (prebuildImageId && isImmutableDockerImageId(prebuildImageId)
+              ? prebuildImageId.toLowerCase()
+              : null);
+          if (
+            !registryImageRef &&
+            nativeRuntimeSnapshot?.bookkeepingImageRef &&
+            !isImmutableDockerImageId(nativeRuntimeSnapshot.bookkeepingImageRef)
+          ) {
+            registryImageRef = nativeRuntimeSnapshot.bookkeepingImageRef;
+          }
+          const compatibilityArgs = renderCompatibilityFallbackCreateArgs(
+            input.prebuild.createArgs,
+            {
+              imageRef: imageId,
+              allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
+              compatibilityPolicyPath: input.compatibilityPolicyPath,
+            },
+          );
+          attemptRunner.state.compatibilityArgv = deps.openshellArgv([
+            "sandbox",
+            "create",
+            ...compatibilityArgs,
+            "--",
+            ...input.sandboxStartupCommand,
+          ]);
         }
-        const compatibilityArgs = renderCompatibilityFallbackCreateArgs(input.prebuild.createArgs, {
-          imageRef: imageId,
-          allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
-          compatibilityPolicyPath: input.compatibilityPolicyPath,
-        });
-        attemptRunner.state.compatibilityArgv = deps.openshellArgv([
-          "sandbox",
-          "create",
-          ...compatibilityArgs,
-          "--",
-          ...input.sandboxStartupCommand,
-        ]);
         if (attemptRunner.state.compatibilityArgv.length === 0) {
           throw new Error("Compatibility sandbox create executable is missing.");
         }
       },
       activateCompatibilityAttempt: async () => {
-        await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(
-          input.provider,
-          input.sandboxGpuConfig,
-          {
-            dockerDriverGateway: input.dockerDriverGateway,
-            selectedRoute: "compatibility",
-            gatewayPort: input.gatewayPort,
-            log: console.log,
-          },
-        );
+        if (!input.managedBootstrap) {
+          await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(
+            input.provider,
+            input.sandboxGpuConfig,
+            {
+              dockerDriverGateway: input.dockerDriverGateway,
+              selectedRoute: "compatibility",
+              gatewayPort: input.gatewayPort,
+              log: console.log,
+            },
+          );
+        }
         input.sandboxGpuConfig.sandboxGpuProof = null;
       },
       traceEvent: addTraceEvent,
