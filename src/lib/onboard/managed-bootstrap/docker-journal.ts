@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
+import { MANAGED_STARTUP_AGENTS, type ManagedStartupAgent } from "../managed-startup/profile";
 import type {
   ManagedBootstrapCompletionReceipt,
   ManagedBootstrapDurablePreparationReceipt,
@@ -11,9 +11,9 @@ import type {
   ManagedBootstrapSandboxIdentity,
 } from "./adapter";
 
-export const DOCKER_MANAGED_BOOTSTRAP_JOURNAL_SCHEMA_VERSION = 2 as const;
+export const DOCKER_MANAGED_BOOTSTRAP_JOURNAL_SCHEMA_VERSION = 3 as const;
 export const DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY = "managed-bootstrap";
-export const DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION = 1 as const;
+export const DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION = 2 as const;
 
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 const MANIFEST_DIGEST_RE = /^sha256:[a-f0-9]{64}$/u;
@@ -29,6 +29,7 @@ export type DockerManagedBootstrapJournalPhase =
   | "staged"
   | "cutover"
   | "rollback-authorized"
+  | "owner-cleanup-required"
   | "shared-state-committed";
 
 export interface DockerManagedBootstrapJournal {
@@ -36,6 +37,7 @@ export interface DockerManagedBootstrapJournal {
   readonly phase: DockerManagedBootstrapJournalPhase;
   readonly bootstrapIdentity: string;
   readonly providerId: string;
+  readonly agent: ManagedStartupAgent;
   readonly sandbox: ManagedBootstrapSandboxIdentity;
   readonly planFingerprint: string;
   readonly profileFingerprint: string;
@@ -59,6 +61,7 @@ export interface DockerManagedBootstrapFinalizationRecord {
   readonly phase: "committed" | "rolled-back";
   readonly bootstrapIdentity: string;
   readonly providerId: string;
+  readonly agent: ManagedStartupAgent;
   readonly sandbox: ManagedBootstrapSandboxIdentity;
   readonly planFingerprint: string;
   readonly profileFingerprint: string;
@@ -67,9 +70,21 @@ export interface DockerManagedBootstrapFinalizationRecord {
   readonly cleanupReceipt: ManagedBootstrapFinalizationReceipt;
 }
 
+export type DockerManagedBootstrapFinalizationContext = Pick<
+  DockerManagedBootstrapFinalizationRecord,
+  | "agent"
+  | "bootstrapIdentity"
+  | "imageReference"
+  | "planFingerprint"
+  | "profileFingerprint"
+  | "providerId"
+  | "sandbox"
+>;
+
 export interface DockerManagedBootstrapJournalStore {
   create(journal: DockerManagedBootstrapJournal): void;
   load(bootstrapIdentity: string): DockerManagedBootstrapJournal | null;
+  listUnfinishedIdentities(): readonly string[];
   transition(
     bootstrapIdentity: string,
     expected: DockerManagedBootstrapJournalPhase,
@@ -80,8 +95,24 @@ export interface DockerManagedBootstrapJournalStore {
     receipt: ManagedBootstrapCompletionReceipt,
   ): DockerManagedBootstrapJournal;
   remove(bootstrapIdentity: string, expected: readonly DockerManagedBootstrapJournalPhase[]): void;
-  recordFinalization(record: DockerManagedBootstrapFinalizationRecord): void;
-  loadFinalization(bootstrapIdentity: string): DockerManagedBootstrapFinalizationRecord | null;
+  recordFinalization(
+    record: DockerManagedBootstrapFinalizationRecord,
+    context?: DockerManagedBootstrapFinalizationContext,
+  ): void;
+  loadFinalization(
+    bootstrapIdentity: string,
+    context?: DockerManagedBootstrapFinalizationContext,
+  ): DockerManagedBootstrapFinalizationRecord | null;
+}
+
+export interface DockerManagedBootstrapLegacyJournalContext {
+  readonly schemaVersion: 1 | 2;
+  readonly phase: Exclude<DockerManagedBootstrapJournalPhase, "owner-cleanup-required">;
+  readonly bootstrapIdentity: string;
+  readonly providerId: string;
+  readonly sandbox: ManagedBootstrapSandboxIdentity;
+  readonly originalRuntimeId: string;
+  readonly replacementRuntimeId: string;
 }
 
 /**
@@ -96,6 +127,52 @@ export class DockerManagedBootstrapJournalAcknowledgementLostError extends Error
   }
 }
 
+export class DockerManagedBootstrapLegacyRecordRequiresAgentError extends Error {
+  readonly bootstrapIdentity: string;
+  readonly journalContext: DockerManagedBootstrapLegacyJournalContext | null;
+  readonly recordKind: "finalization" | "journal";
+  readonly reason: "context-mismatch" | "missing-context" | undefined;
+  readonly schemaVersion: number;
+
+  constructor(input: {
+    readonly bootstrapIdentity: string;
+    readonly journalContext?: DockerManagedBootstrapLegacyJournalContext;
+    readonly recordKind: "finalization" | "journal";
+    readonly reason?: "context-mismatch" | "missing-context";
+    readonly schemaVersion: number;
+  }) {
+    const reason = input.reason;
+    const journalContext = input.journalContext
+      ? Object.freeze({
+          ...input.journalContext,
+          sandbox: Object.freeze({ ...input.journalContext.sandbox }),
+        })
+      : undefined;
+    const journalGuidance = journalContext
+      ? `; recovery is fenced to sandbox '${journalContext.sandbox.sandboxName}' ` +
+        `(ID ${journalContext.sandbox.sandboxId}, provider ${journalContext.providerId}, ` +
+        `journal-body phase ${journalContext.phase}) with exact original runtime ` +
+        `${journalContext.originalRuntimeId} and replacement runtime ` +
+        `${journalContext.replacementRuntimeId}; preserve the journal and follow ` +
+        "https://github.com/NVIDIA/NemoClaw/blob/main/src/lib/onboard/managed-bootstrap/README.md#legacy-journal-drain-schema-1-and-2"
+      : "";
+    super(
+      `Managed bootstrap Docker ${input.recordKind} schema ${input.schemaVersion} for ` +
+        `${input.bootstrapIdentity} lacks durable agent identity` +
+        (reason === "context-mismatch"
+          ? "; supplied durable context does not match this record"
+          : "") +
+        journalGuidance,
+    );
+    this.name = "DockerManagedBootstrapLegacyRecordRequiresAgentError";
+    this.bootstrapIdentity = input.bootstrapIdentity;
+    this.journalContext = journalContext ?? null;
+    this.recordKind = input.recordKind;
+    this.reason = reason;
+    this.schemaVersion = input.schemaVersion;
+  }
+}
+
 class DockerManagedBootstrapJournalExistsError extends Error {
   constructor() {
     super(
@@ -107,12 +184,23 @@ class DockerManagedBootstrapJournalExistsError extends Error {
 
 const ALLOWED_TRANSITIONS = new Set([
   "staged->cutover",
+  "staged->owner-cleanup-required",
   "cutover->rollback-authorized",
   "cutover->shared-state-committed",
+  "rollback-authorized->owner-cleanup-required",
 ]);
 
 function fail(message: string): never {
   throw new Error(`Managed bootstrap Docker journal is invalid: ${message}`);
+}
+
+function hasExactKeys(record: Readonly<Record<string, unknown>>, expected: readonly string[]) {
+  const actualKeys = Object.keys(record).sort();
+  const expectedKeys = [...expected].sort();
+  return (
+    actualKeys.length === expectedKeys.length &&
+    actualKeys.every((key, index) => key === expectedKeys[index])
+  );
 }
 
 function exactString(value: unknown, label: string, maxBytes = 4096): string {
@@ -137,11 +225,35 @@ function exactSha256(value: unknown, label: string): string {
 
 function exactPhase(value: unknown): DockerManagedBootstrapJournalPhase {
   if (
-    !["staged", "cutover", "rollback-authorized", "shared-state-committed"].includes(String(value))
+    ![
+      "staged",
+      "cutover",
+      "rollback-authorized",
+      "owner-cleanup-required",
+      "shared-state-committed",
+    ].includes(String(value))
   ) {
     fail("phase is unsupported");
   }
   return value as DockerManagedBootstrapJournalPhase;
+}
+
+function exactLegacyPhase(
+  value: unknown,
+): Exclude<DockerManagedBootstrapJournalPhase, "owner-cleanup-required"> {
+  if (
+    !["staged", "cutover", "rollback-authorized", "shared-state-committed"].includes(String(value))
+  ) {
+    fail("legacy phase is unsupported");
+  }
+  return value as Exclude<DockerManagedBootstrapJournalPhase, "owner-cleanup-required">;
+}
+
+function exactAgent(value: unknown): ManagedStartupAgent {
+  if (!MANAGED_STARTUP_AGENTS.includes(value as ManagedStartupAgent)) {
+    fail("agent is unsupported");
+  }
+  return value as ManagedStartupAgent;
 }
 
 function exactSandbox(value: unknown): ManagedBootstrapSandboxIdentity {
@@ -159,13 +271,90 @@ function exactSandbox(value: unknown): ManagedBootstrapSandboxIdentity {
   });
 }
 
-export function normalizeDockerManagedBootstrapJournal(
-  value: unknown,
-): DockerManagedBootstrapJournal {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    fail("journal must be an object");
+function sameSandboxIdentity(
+  left: ManagedBootstrapSandboxIdentity,
+  right: ManagedBootstrapSandboxIdentity,
+): boolean {
+  return (
+    left.sandboxName === right.sandboxName &&
+    left.sandboxId === right.sandboxId &&
+    left.driverId === right.driverId
+  );
+}
+
+// Frozen historical schemas: these branches must reproduce the exact canonical
+// bytes written by schema 1 and schema 2. Do not share their implementation with
+// the current normalizer or update them when the current schema changes.
+function normalizeLegacyDockerManagedBootstrapJournal(
+  journal: Readonly<Record<string, unknown>>,
+  schemaVersion: 1 | 2,
+): {
+  readonly bootstrapIdentity: string;
+  readonly canonical: string;
+  readonly journalContext: DockerManagedBootstrapLegacyJournalContext;
+} {
+  if (schemaVersion === 1) {
+    const expectedKeys = [
+      "backupName",
+      "bootstrapIdentity",
+      "imageReference",
+      "originalName",
+      "originalRuntimeId",
+      "originalSpecHash",
+      "phase",
+      "profileFingerprint",
+      "replacementRuntimeId",
+      "replacementSpecHash",
+      "replacementStagingName",
+      "runtimeImageContentId",
+      "sandbox",
+      "schemaVersion",
+    ];
+    if (!hasExactKeys(journal, expectedKeys)) fail("legacy journal schema is invalid");
+    const normalized = Object.freeze({
+      schemaVersion: 1 as const,
+      phase: exactLegacyPhase(journal.phase),
+      bootstrapIdentity: exactSha256(journal.bootstrapIdentity, "bootstrap identity"),
+      sandbox: exactSandbox(journal.sandbox),
+      profileFingerprint: exactSha256(journal.profileFingerprint, "profile fingerprint"),
+      imageReference: exactString(journal.imageReference, "image reference"),
+      runtimeImageContentId: exactString(journal.runtimeImageContentId, "runtime image content ID"),
+      originalRuntimeId: exactSha256(journal.originalRuntimeId, "original runtime ID"),
+      replacementRuntimeId: exactSha256(journal.replacementRuntimeId, "replacement runtime ID"),
+      originalName: exactString(journal.originalName, "original name", 253),
+      replacementStagingName: exactString(
+        journal.replacementStagingName,
+        "replacement staging name",
+        253,
+      ),
+      backupName: exactString(journal.backupName, "backup name", 253),
+      originalSpecHash: exactSha256(journal.originalSpecHash, "original spec hash"),
+      replacementSpecHash: exactSha256(journal.replacementSpecHash, "replacement spec hash"),
+    });
+    if (normalized.originalRuntimeId === normalized.replacementRuntimeId) {
+      fail("original and replacement runtime IDs must differ");
+    }
+    if (
+      new Set([normalized.originalName, normalized.replacementStagingName, normalized.backupName])
+        .size !== 3
+    ) {
+      fail("original, staging, and backup names must be distinct");
+    }
+    return {
+      bootstrapIdentity: normalized.bootstrapIdentity,
+      canonical: `${JSON.stringify(normalized)}\n`,
+      journalContext: Object.freeze({
+        schemaVersion,
+        phase: normalized.phase,
+        bootstrapIdentity: normalized.bootstrapIdentity,
+        providerId: normalized.sandbox.driverId,
+        sandbox: normalized.sandbox,
+        originalRuntimeId: normalized.originalRuntimeId,
+        replacementRuntimeId: normalized.replacementRuntimeId,
+      }),
+    };
   }
-  const journal = value as Record<string, unknown>;
+
   const expectedKeys = [
     "backupName",
     "bootstrapIdentity",
@@ -188,8 +377,131 @@ export function normalizeDockerManagedBootstrapJournal(
     "sandbox",
     "schemaVersion",
   ];
+  if (!hasExactKeys(journal, expectedKeys)) fail("legacy journal schema is invalid");
+  const normalized = Object.freeze({
+    schemaVersion: 2 as const,
+    phase: exactLegacyPhase(journal.phase),
+    bootstrapIdentity: exactSha256(journal.bootstrapIdentity, "bootstrap identity"),
+    providerId: exactString(journal.providerId, "provider ID"),
+    sandbox: exactSandbox(journal.sandbox),
+    planFingerprint: exactSha256(journal.planFingerprint, "plan fingerprint"),
+    profileFingerprint: exactSha256(journal.profileFingerprint, "profile fingerprint"),
+    imageReference: exactString(journal.imageReference, "image reference"),
+    runtimeImageContentId: exactString(journal.runtimeImageContentId, "runtime image content ID"),
+    originalRuntimeId: exactSha256(journal.originalRuntimeId, "original runtime ID"),
+    replacementRuntimeId: exactSha256(journal.replacementRuntimeId, "replacement runtime ID"),
+    originalName: exactString(journal.originalName, "original name", 253),
+    replacementStagingName: exactString(
+      journal.replacementStagingName,
+      "replacement staging name",
+      253,
+    ),
+    backupName: exactString(journal.backupName, "backup name", 253),
+    originalSpecHash: exactSha256(journal.originalSpecHash, "original spec hash"),
+    replacementSpecHash: exactSha256(journal.replacementSpecHash, "replacement spec hash"),
+    rollbackTargetRuntimeId: exactSha256(
+      journal.rollbackTargetRuntimeId,
+      "rollback target runtime ID",
+    ),
+    rollbackTargetSpecHash: exactSha256(
+      journal.rollbackTargetSpecHash,
+      "rollback target spec hash",
+    ),
+    preparationReceipt:
+      journal.preparationReceipt === null
+        ? null
+        : exactPreparationReceipt(journal.preparationReceipt),
+    commitReceipt:
+      journal.commitReceipt === null ? null : exactCompletionReceipt(journal.commitReceipt),
+  });
+  if (normalized.originalRuntimeId === normalized.replacementRuntimeId) {
+    fail("original and replacement runtime IDs must differ");
+  }
   if (
-    Object.keys(journal).sort().join(",") !== expectedKeys.sort().join(",") ||
+    new Set([normalized.originalName, normalized.replacementStagingName, normalized.backupName])
+      .size !== 3
+  ) {
+    fail("original, staging, and backup names must be distinct");
+  }
+  if (
+    normalized.providerId !== normalized.sandbox.driverId ||
+    normalized.rollbackTargetRuntimeId !== normalized.originalRuntimeId ||
+    normalized.rollbackTargetSpecHash !== normalized.originalSpecHash
+  ) {
+    fail("provider or rollback authority does not match the transaction identity");
+  }
+  if (
+    (normalized.preparationReceipt !== null &&
+      (normalized.preparationReceipt.bootstrapIdentity !== normalized.bootstrapIdentity ||
+        !sameSandboxIdentity(normalized.preparationReceipt.sandbox, normalized.sandbox))) ||
+    (normalized.commitReceipt !== null &&
+      (normalized.commitReceipt.bootstrapIdentity !== normalized.bootstrapIdentity ||
+        !sameSandboxIdentity(normalized.commitReceipt.sandbox, normalized.sandbox) ||
+        normalized.commitReceipt.runtimeId !== normalized.replacementRuntimeId ||
+        normalized.commitReceipt.profileFingerprint !== normalized.profileFingerprint ||
+        normalized.commitReceipt.originalSpecHash !== normalized.originalSpecHash ||
+        normalized.commitReceipt.replacementSpecHash !== normalized.replacementSpecHash ||
+        `${normalized.commitReceipt.image.repository}@${normalized.commitReceipt.image.manifestDigest}` !==
+          normalized.imageReference))
+  ) {
+    fail("durable preparation or commit receipt does not match the transaction identity");
+  }
+  return {
+    bootstrapIdentity: normalized.bootstrapIdentity,
+    canonical: `${JSON.stringify(normalized)}\n`,
+    journalContext: Object.freeze({
+      schemaVersion,
+      phase: normalized.phase,
+      bootstrapIdentity: normalized.bootstrapIdentity,
+      providerId: normalized.providerId,
+      sandbox: normalized.sandbox,
+      originalRuntimeId: normalized.originalRuntimeId,
+      replacementRuntimeId: normalized.replacementRuntimeId,
+    }),
+  };
+}
+
+export function normalizeDockerManagedBootstrapJournal(
+  value: unknown,
+): DockerManagedBootstrapJournal {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    fail("journal must be an object");
+  }
+  const journal = value as Record<string, unknown>;
+  if (journal.schemaVersion === 1 || journal.schemaVersion === 2) {
+    const legacy = normalizeLegacyDockerManagedBootstrapJournal(journal, journal.schemaVersion);
+    throw new DockerManagedBootstrapLegacyRecordRequiresAgentError({
+      bootstrapIdentity: legacy.bootstrapIdentity,
+      journalContext: legacy.journalContext,
+      recordKind: "journal",
+      schemaVersion: journal.schemaVersion,
+    });
+  }
+  const expectedKeys = [
+    "agent",
+    "backupName",
+    "bootstrapIdentity",
+    "commitReceipt",
+    "imageReference",
+    "originalName",
+    "originalRuntimeId",
+    "originalSpecHash",
+    "phase",
+    "planFingerprint",
+    "preparationReceipt",
+    "profileFingerprint",
+    "providerId",
+    "replacementRuntimeId",
+    "replacementSpecHash",
+    "replacementStagingName",
+    "rollbackTargetRuntimeId",
+    "rollbackTargetSpecHash",
+    "runtimeImageContentId",
+    "sandbox",
+    "schemaVersion",
+  ];
+  if (
+    !hasExactKeys(journal, expectedKeys) ||
     journal.schemaVersion !== DOCKER_MANAGED_BOOTSTRAP_JOURNAL_SCHEMA_VERSION
   ) {
     fail("journal schema is invalid");
@@ -199,6 +511,7 @@ export function normalizeDockerManagedBootstrapJournal(
     phase: exactPhase(journal.phase),
     bootstrapIdentity: exactSha256(journal.bootstrapIdentity, "bootstrap identity"),
     providerId: exactString(journal.providerId, "provider ID"),
+    agent: exactAgent(journal.agent),
     sandbox: exactSandbox(journal.sandbox),
     planFingerprint: exactSha256(journal.planFingerprint, "plan fingerprint"),
     profileFingerprint: exactSha256(journal.profileFingerprint, "profile fingerprint"),
@@ -249,14 +562,10 @@ export function normalizeDockerManagedBootstrapJournal(
   if (
     (normalized.preparationReceipt !== null &&
       (normalized.preparationReceipt.bootstrapIdentity !== normalized.bootstrapIdentity ||
-        normalized.preparationReceipt.sandbox.sandboxName !== normalized.sandbox.sandboxName ||
-        normalized.preparationReceipt.sandbox.sandboxId !== normalized.sandbox.sandboxId ||
-        normalized.preparationReceipt.sandbox.driverId !== normalized.sandbox.driverId)) ||
+        !sameSandboxIdentity(normalized.preparationReceipt.sandbox, normalized.sandbox))) ||
     (normalized.commitReceipt !== null &&
       (normalized.commitReceipt.bootstrapIdentity !== normalized.bootstrapIdentity ||
-        normalized.commitReceipt.sandbox.sandboxName !== normalized.sandbox.sandboxName ||
-        normalized.commitReceipt.sandbox.sandboxId !== normalized.sandbox.sandboxId ||
-        normalized.commitReceipt.sandbox.driverId !== normalized.sandbox.driverId ||
+        !sameSandboxIdentity(normalized.commitReceipt.sandbox, normalized.sandbox) ||
         normalized.commitReceipt.runtimeId !== normalized.replacementRuntimeId ||
         normalized.commitReceipt.profileFingerprint !== normalized.profileFingerprint ||
         normalized.commitReceipt.originalSpecHash !== normalized.originalSpecHash ||
@@ -293,6 +602,23 @@ export function parseDockerManagedBootstrapJournal(text: string): DockerManagedB
     parsed = JSON.parse(text);
   } catch {
     fail("serialized journal is not valid JSON");
+  }
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    !Array.isArray(parsed) &&
+    ((parsed as Record<string, unknown>).schemaVersion === 1 ||
+      (parsed as Record<string, unknown>).schemaVersion === 2)
+  ) {
+    const record = parsed as Record<string, unknown> & { readonly schemaVersion: 1 | 2 };
+    const legacy = normalizeLegacyDockerManagedBootstrapJournal(record, record.schemaVersion);
+    if (legacy.canonical !== text) fail("serialized legacy journal is not canonical");
+    throw new DockerManagedBootstrapLegacyRecordRequiresAgentError({
+      bootstrapIdentity: legacy.bootstrapIdentity,
+      journalContext: legacy.journalContext,
+      recordKind: "journal",
+      schemaVersion: record.schemaVersion,
+    });
   }
   const journal = normalizeDockerManagedBootstrapJournal(parsed);
   if (serializeDockerManagedBootstrapJournal(journal) !== text) {
@@ -476,9 +802,55 @@ function exactCleanupReceipt(value: unknown): ManagedBootstrapFinalizationReceip
   });
 }
 
-export function normalizeDockerManagedBootstrapFinalizationRecord(
-  value: unknown,
-): DockerManagedBootstrapFinalizationRecord {
+type DockerManagedBootstrapFinalizationWithoutAgent = Omit<
+  DockerManagedBootstrapFinalizationRecord,
+  "agent" | "schemaVersion"
+>;
+
+function normalizeFinalizationWithoutAgent(
+  record: Readonly<Record<string, unknown>>,
+): DockerManagedBootstrapFinalizationWithoutAgent {
+  if (!["committed", "rolled-back"].includes(String(record.phase))) {
+    fail("finalization phase is invalid");
+  }
+  const phase = record.phase as "committed" | "rolled-back";
+  const sandbox = exactSandbox(record.sandbox);
+  const commitReceipt =
+    record.commitReceipt === null ? null : exactCompletionReceipt(record.commitReceipt);
+  const cleanupReceipt = exactCleanupReceipt(record.cleanupReceipt);
+  const normalized = Object.freeze({
+    phase,
+    bootstrapIdentity: exactSha256(record.bootstrapIdentity, "finalization bootstrap identity"),
+    providerId: exactString(record.providerId, "finalization provider ID"),
+    sandbox,
+    planFingerprint: exactSha256(record.planFingerprint, "finalization plan fingerprint"),
+    profileFingerprint: exactSha256(record.profileFingerprint, "finalization profile fingerprint"),
+    imageReference: exactString(record.imageReference, "finalization image reference"),
+    commitReceipt,
+    cleanupReceipt,
+  } satisfies DockerManagedBootstrapFinalizationWithoutAgent);
+  if (
+    normalized.providerId !== sandbox.driverId ||
+    normalized.bootstrapIdentity !== cleanupReceipt.bootstrapIdentity ||
+    normalized.phase !== cleanupReceipt.outcome ||
+    !sameSandboxIdentity(normalized.sandbox, cleanupReceipt.sandbox) ||
+    (phase === "committed") !== (commitReceipt !== null) ||
+    (commitReceipt !== null &&
+      (commitReceipt.bootstrapIdentity !== normalized.bootstrapIdentity ||
+        commitReceipt.profileFingerprint !== normalized.profileFingerprint ||
+        !sameSandboxIdentity(commitReceipt.sandbox, normalized.sandbox) ||
+        `${commitReceipt.image.repository}@${commitReceipt.image.manifestDigest}` !==
+          normalized.imageReference))
+  ) {
+    fail("finalization receipts do not match their durable transaction identity");
+  }
+  return normalized;
+}
+
+function normalizeLegacyFinalizationShape(value: unknown): {
+  readonly canonical: string;
+  readonly record: DockerManagedBootstrapFinalizationWithoutAgent;
+} {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     fail("finalization record must be an object");
   }
@@ -495,46 +867,154 @@ export function normalizeDockerManagedBootstrapFinalizationRecord(
     "sandbox",
     "schemaVersion",
   ];
+  if (!hasExactKeys(record, expectedKeys) || record.schemaVersion !== 1) {
+    fail("legacy finalization record schema is invalid");
+  }
+  const normalized = normalizeFinalizationWithoutAgent(record);
+  const legacy = Object.freeze({
+    schemaVersion: 1 as const,
+    phase: normalized.phase,
+    bootstrapIdentity: normalized.bootstrapIdentity,
+    providerId: normalized.providerId,
+    sandbox: normalized.sandbox,
+    planFingerprint: normalized.planFingerprint,
+    profileFingerprint: normalized.profileFingerprint,
+    imageReference: normalized.imageReference,
+    commitReceipt: normalized.commitReceipt,
+    cleanupReceipt: normalized.cleanupReceipt,
+  });
+  return { canonical: `${JSON.stringify(legacy)}\n`, record: normalized };
+}
+
+function normalizeFinalizationContext(
+  context: DockerManagedBootstrapFinalizationContext,
+): DockerManagedBootstrapFinalizationContext {
+  return Object.freeze({
+    bootstrapIdentity: exactSha256(
+      context.bootstrapIdentity,
+      "finalization context bootstrap identity",
+    ),
+    providerId: exactString(context.providerId, "finalization context provider ID"),
+    agent: exactAgent(context.agent),
+    sandbox: exactSandbox(context.sandbox),
+    planFingerprint: exactSha256(context.planFingerprint, "finalization context plan fingerprint"),
+    profileFingerprint: exactSha256(
+      context.profileFingerprint,
+      "finalization context profile fingerprint",
+    ),
+    imageReference: exactString(context.imageReference, "finalization context image reference"),
+  });
+}
+
+function matchesFinalizationContext(
+  record: DockerManagedBootstrapFinalizationWithoutAgent,
+  context: DockerManagedBootstrapFinalizationContext,
+): boolean {
+  return (
+    context.bootstrapIdentity === record.bootstrapIdentity &&
+    context.providerId === record.providerId &&
+    sameSandboxIdentity(context.sandbox, record.sandbox) &&
+    context.planFingerprint === record.planFingerprint &&
+    context.profileFingerprint === record.profileFingerprint &&
+    context.imageReference === record.imageReference
+  );
+}
+
+function assertFinalizationMatchesContext(
+  record: DockerManagedBootstrapFinalizationRecord,
+  context: DockerManagedBootstrapFinalizationContext,
+): void {
+  const normalizedContext = normalizeFinalizationContext(context);
   if (
-    Object.keys(record).sort().join(",") !== expectedKeys.sort().join(",") ||
-    record.schemaVersion !== DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION ||
-    !["committed", "rolled-back"].includes(String(record.phase))
+    record.agent !== normalizedContext.agent ||
+    !matchesFinalizationContext(record, normalizedContext)
+  ) {
+    fail("finalization record does not match supplied durable context");
+  }
+}
+
+function upgradeLegacyFinalization(
+  legacy: DockerManagedBootstrapFinalizationWithoutAgent,
+  context: DockerManagedBootstrapFinalizationContext | undefined,
+): DockerManagedBootstrapFinalizationRecord {
+  const missingAgent = (reason: "context-mismatch" | "missing-context" = "missing-context") =>
+    new DockerManagedBootstrapLegacyRecordRequiresAgentError({
+      bootstrapIdentity: legacy.bootstrapIdentity,
+      recordKind: "finalization",
+      reason,
+      schemaVersion: 1,
+    });
+  // Runtime names and image repositories are mutable descriptions, never
+  // agent authority. Only an exact live handle or current journal may supply
+  // the field omitted by schema v1.
+  if (!context) throw missingAgent();
+  const normalizedContext = normalizeFinalizationContext(context);
+  if (!matchesFinalizationContext(legacy, normalizedContext)) {
+    throw missingAgent("context-mismatch");
+  }
+  return Object.freeze({
+    schemaVersion: DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION,
+    phase: legacy.phase,
+    bootstrapIdentity: legacy.bootstrapIdentity,
+    providerId: legacy.providerId,
+    agent: normalizedContext.agent,
+    sandbox: legacy.sandbox,
+    planFingerprint: legacy.planFingerprint,
+    profileFingerprint: legacy.profileFingerprint,
+    imageReference: legacy.imageReference,
+    commitReceipt: legacy.commitReceipt,
+    cleanupReceipt: legacy.cleanupReceipt,
+  });
+}
+
+export function normalizeDockerManagedBootstrapFinalizationRecord(
+  value: unknown,
+): DockerManagedBootstrapFinalizationRecord {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    fail("finalization record must be an object");
+  }
+  const record = value as Record<string, unknown>;
+  if (record.schemaVersion === 1) {
+    const legacy = normalizeLegacyFinalizationShape(record).record;
+    throw new DockerManagedBootstrapLegacyRecordRequiresAgentError({
+      bootstrapIdentity: legacy.bootstrapIdentity,
+      recordKind: "finalization",
+      schemaVersion: 1,
+    });
+  }
+  const expectedKeys = [
+    "agent",
+    "bootstrapIdentity",
+    "cleanupReceipt",
+    "commitReceipt",
+    "imageReference",
+    "phase",
+    "planFingerprint",
+    "profileFingerprint",
+    "providerId",
+    "sandbox",
+    "schemaVersion",
+  ];
+  if (
+    !hasExactKeys(record, expectedKeys) ||
+    record.schemaVersion !== DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION
   ) {
     fail("finalization record schema is invalid");
   }
-  const phase = record.phase as "committed" | "rolled-back";
-  const sandbox = exactSandbox(record.sandbox);
-  const commitReceipt =
-    record.commitReceipt === null ? null : exactCompletionReceipt(record.commitReceipt);
-  const cleanupReceipt = exactCleanupReceipt(record.cleanupReceipt);
-  const normalized = Object.freeze({
+  const normalized = normalizeFinalizationWithoutAgent(record);
+  return Object.freeze({
     schemaVersion: DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION,
-    phase,
-    bootstrapIdentity: exactSha256(record.bootstrapIdentity, "finalization bootstrap identity"),
-    providerId: exactString(record.providerId, "finalization provider ID"),
-    sandbox,
-    planFingerprint: exactSha256(record.planFingerprint, "finalization plan fingerprint"),
-    profileFingerprint: exactSha256(record.profileFingerprint, "finalization profile fingerprint"),
-    imageReference: exactString(record.imageReference, "finalization image reference"),
-    commitReceipt,
-    cleanupReceipt,
-  } satisfies DockerManagedBootstrapFinalizationRecord);
-  if (
-    normalized.providerId !== sandbox.driverId ||
-    normalized.bootstrapIdentity !== cleanupReceipt.bootstrapIdentity ||
-    normalized.phase !== cleanupReceipt.outcome ||
-    JSON.stringify(normalized.sandbox) !== JSON.stringify(cleanupReceipt.sandbox) ||
-    (phase === "committed") !== (commitReceipt !== null) ||
-    (commitReceipt !== null &&
-      (commitReceipt.bootstrapIdentity !== normalized.bootstrapIdentity ||
-        commitReceipt.profileFingerprint !== normalized.profileFingerprint ||
-        JSON.stringify(commitReceipt.sandbox) !== JSON.stringify(normalized.sandbox) ||
-        `${commitReceipt.image.repository}@${commitReceipt.image.manifestDigest}` !==
-          normalized.imageReference))
-  ) {
-    fail("finalization receipts do not match their durable transaction identity");
-  }
-  return normalized;
+    phase: normalized.phase,
+    bootstrapIdentity: normalized.bootstrapIdentity,
+    providerId: normalized.providerId,
+    agent: exactAgent(record.agent),
+    sandbox: normalized.sandbox,
+    planFingerprint: normalized.planFingerprint,
+    profileFingerprint: normalized.profileFingerprint,
+    imageReference: normalized.imageReference,
+    commitReceipt: normalized.commitReceipt,
+    cleanupReceipt: normalized.cleanupReceipt,
+  });
 }
 
 export function serializeDockerManagedBootstrapFinalizationRecord(
@@ -547,9 +1027,10 @@ export function serializeDockerManagedBootstrapFinalizationRecord(
   return serialized;
 }
 
-export function parseDockerManagedBootstrapFinalizationRecord(
+function parseDockerManagedBootstrapFinalizationRecordWithContext(
   text: string,
-): DockerManagedBootstrapFinalizationRecord {
+  context?: DockerManagedBootstrapFinalizationContext,
+): { readonly record: DockerManagedBootstrapFinalizationRecord; readonly upgradedLegacy: boolean } {
   if (
     text.length === 0 ||
     text.includes("\0") ||
@@ -563,11 +1044,29 @@ export function parseDockerManagedBootstrapFinalizationRecord(
   } catch {
     fail("serialized finalization record is not valid JSON");
   }
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    !Array.isArray(parsed) &&
+    (parsed as Record<string, unknown>).schemaVersion === 1
+  ) {
+    const legacy = normalizeLegacyFinalizationShape(parsed);
+    if (legacy.canonical !== text) fail("serialized legacy finalization record is not canonical");
+    return { record: upgradeLegacyFinalization(legacy.record, context), upgradedLegacy: true };
+  }
   const record = normalizeDockerManagedBootstrapFinalizationRecord(parsed);
   if (serializeDockerManagedBootstrapFinalizationRecord(record) !== text) {
     fail("serialized finalization record is not canonical");
   }
-  return record;
+  if (context) assertFinalizationMatchesContext(record, context);
+  return { record, upgradedLegacy: false };
+}
+
+export function parseDockerManagedBootstrapFinalizationRecord(
+  text: string,
+  context?: DockerManagedBootstrapFinalizationContext,
+): DockerManagedBootstrapFinalizationRecord {
+  return parseDockerManagedBootstrapFinalizationRecordWithContext(text, context).record;
 }
 
 function assertDirectory(directory: string): void {
@@ -733,7 +1232,22 @@ export function createFileDockerManagedBootstrapJournalStore(
     const target = journalPath(directory, bootstrapIdentity);
     const contents = readPrivateFile(target, "journal");
     if (contents === null) return null;
-    const journal = parseDockerManagedBootstrapJournal(contents);
+    let journal: DockerManagedBootstrapJournal;
+    try {
+      journal = parseDockerManagedBootstrapJournal(contents);
+    } catch (error) {
+      if (
+        error instanceof DockerManagedBootstrapLegacyRecordRequiresAgentError &&
+        error.recordKind === "journal" &&
+        error.bootstrapIdentity !== bootstrapIdentity
+      ) {
+        fail("journal bootstrap identity does not match its file name");
+      }
+      throw error;
+    }
+    if (journal.bootstrapIdentity !== bootstrapIdentity) {
+      fail("journal bootstrap identity does not match its file name");
+    }
     const decision = readPrivateFile(decisionPath(target), "decision");
     if (decision === null) return journal;
     const phase = decision.endsWith("\n") ? decision.slice(0, -1) : "";
@@ -751,13 +1265,24 @@ export function createFileDockerManagedBootstrapJournalStore(
   };
   const loadFinalization = (
     bootstrapIdentity: string,
+    context?: DockerManagedBootstrapFinalizationContext,
   ): DockerManagedBootstrapFinalizationRecord | null => {
     assertDirectory(directory);
-    const contents = readPrivateFile(
-      finalizationPath(journalPath(directory, bootstrapIdentity)),
-      "finalization",
-    );
-    return contents === null ? null : parseDockerManagedBootstrapFinalizationRecord(contents);
+    const target = finalizationPath(journalPath(directory, bootstrapIdentity));
+    const contents = readPrivateFile(target, "finalization");
+    if (contents === null) return null;
+    const parsed = parseDockerManagedBootstrapFinalizationRecordWithContext(contents, context);
+    if (parsed.record.bootstrapIdentity !== bootstrapIdentity) {
+      fail("finalization bootstrap identity does not match its file name");
+    }
+    if (parsed.upgradedLegacy) {
+      const serialized = serializeDockerManagedBootstrapFinalizationRecord(parsed.record);
+      atomicWrite(directory, target, serialized, false);
+      if (readPrivateFile(target, "finalization") !== serialized) {
+        fail("upgraded finalization record was not durably re-readable");
+      }
+    }
+    return parsed.record;
   };
   return Object.freeze({
     create(journal: DockerManagedBootstrapJournal) {
@@ -777,6 +1302,25 @@ export function createFileDockerManagedBootstrapJournalStore(
       atomicWrite(directory, target, serializeDockerManagedBootstrapJournal(normalized), true);
     },
     load,
+    listUnfinishedIdentities() {
+      assertDirectory(directory);
+      const identities: string[] = [];
+      for (const name of fs.readdirSync(directory)) {
+        const match = name.match(/^([a-f0-9]{64})\.json$/u);
+        if (match) {
+          identities.push(match[1]);
+          continue;
+        }
+        if (
+          /^\.[a-f0-9]{64}\.json(?:\.decision|\.finalized)?\.[0-9]+\.[a-f0-9]+\.tmp$/u.test(name) ||
+          /^[a-f0-9]{64}\.json\.(?:decision|finalized)$/u.test(name)
+        ) {
+          continue;
+        }
+        fail(`journal directory contains an unsupported entry: ${name}`);
+      }
+      return Object.freeze(identities.sort());
+    },
     transition(
       bootstrapIdentity: string,
       expected: DockerManagedBootstrapJournalPhase,
@@ -851,23 +1395,38 @@ export function createFileDockerManagedBootstrapJournalStore(
       fs.unlinkSync(target);
       fsyncDirectory(directory);
     },
-    recordFinalization(record: DockerManagedBootstrapFinalizationRecord) {
+    recordFinalization(
+      record: DockerManagedBootstrapFinalizationRecord,
+      context?: DockerManagedBootstrapFinalizationContext,
+    ) {
       const normalized = normalizeDockerManagedBootstrapFinalizationRecord(record);
+      if (context) assertFinalizationMatchesContext(normalized, context);
       assertDirectory(directory);
       const target = finalizationPath(journalPath(directory, normalized.bootstrapIdentity));
       const serialized = serializeDockerManagedBootstrapFinalizationRecord(normalized);
-      const existing = readPrivateFile(target, "finalization");
+      const existing = loadFinalization(normalized.bootstrapIdentity, context);
       if (existing !== null) {
-        if (existing !== serialized)
+        if (serializeDockerManagedBootstrapFinalizationRecord(existing) !== serialized) {
           fail("finalization record changed for this bootstrap identity");
+        }
         return;
       }
       try {
         atomicWrite(directory, target, serialized, true);
       } catch (error) {
-        if (readPrivateFile(target, "finalization") !== serialized) throw error;
+        const recovered = loadFinalization(normalized.bootstrapIdentity, context);
+        if (
+          !recovered ||
+          serializeDockerManagedBootstrapFinalizationRecord(recovered) !== serialized
+        ) {
+          throw error;
+        }
       }
-      if (readPrivateFile(target, "finalization") !== serialized) {
+      const persisted = loadFinalization(normalized.bootstrapIdentity, context);
+      if (
+        !persisted ||
+        serializeDockerManagedBootstrapFinalizationRecord(persisted) !== serialized
+      ) {
         fail("finalization record was not durably re-readable");
       }
     },

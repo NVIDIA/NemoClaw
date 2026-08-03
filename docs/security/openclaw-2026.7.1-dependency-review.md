@@ -107,12 +107,12 @@ An expired, missing, mismatched, duplicate, or unused entry fails the audit.
 
 The transition has these compensating controls:
 
-- PR #8172 authorizes the OpenClaw successor lock SHA-256
+- PR #8165 authorizes the OpenClaw successor lock SHA-256
   `759b31779f40867f35f15065b582eb1d3efb8fddb1fe43c207507c905fa2a421`
   without replacing the current lock.
   That successor resolves `brace-expansion@5.0.9`, `fast-uri@3.1.5`,
   `ip-address@10.3.1`, and `undici@8.10.0`.
-- PR #8172 authorizes the mcporter successor lock SHA-256
+- PR #8165 authorizes the mcporter successor lock SHA-256
   `962dee34f6b0a493521d1619d1cf030e2630cbdfce8bf0598217202f57078793`
   without replacing the current lock.
   That successor resolves `fast-uri@3.1.5` and `ip-address@10.3.1`.

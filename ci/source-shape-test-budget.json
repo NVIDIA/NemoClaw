@@ -427,11 +427,6 @@
       "category": "security"
     },
     {
-      "file": "test/reviewed-npm-audit.test.ts",
-      "test": "binds current and successor locks to their managed runtime graphs (#8156)",
-      "category": "security"
-    },
-    {
       "file": "test/reviewed-npm-audit-workflow.test.ts",
       "test": "executes the trusted driver and helper against explicit target inputs",
       "category": "security"

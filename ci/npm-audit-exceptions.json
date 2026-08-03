@@ -29,7 +29,7 @@
       "trackingIssue": "https://github.com/NVIDIA/NemoClaw/pull/8156",
       "rationale": "PR #8156 upgrades the reviewed OpenClaw runtime lock to brace-expansion 5.0.9 and removes this transition exception.",
       "compensatingControls": [
-        "PR #8172 authorizes the exact reviewed successor lock without changing the current runtime lock.",
+        "PR #8165 authorizes the exact reviewed successor lock without changing the current runtime lock.",
         "PR #8156 validates the replacement archive identity and remediated package-tree digest before image assembly."
       ]
     },
@@ -45,7 +45,7 @@
       "trackingIssue": "https://github.com/NVIDIA/NemoClaw/pull/8156",
       "rationale": "PR #8156 upgrades the reviewed OpenClaw runtime lock to fast-uri 3.1.5 and removes this transition exception.",
       "compensatingControls": [
-        "PR #8172 authorizes the exact reviewed successor lock without changing the current runtime lock.",
+        "PR #8165 authorizes the exact reviewed successor lock without changing the current runtime lock.",
         "PR #8156 validates the replacement archive identity and remediated package-tree digest before image assembly."
       ]
     },
@@ -61,7 +61,7 @@
       "trackingIssue": "https://github.com/NVIDIA/NemoClaw/pull/8156",
       "rationale": "PR #8156 upgrades the reviewed OpenClaw runtime lock to ip-address 10.3.1 and removes this transition exception.",
       "compensatingControls": [
-        "PR #8172 authorizes the exact reviewed successor lock without changing the current runtime lock.",
+        "PR #8165 authorizes the exact reviewed successor lock without changing the current runtime lock.",
         "PR #8156 validates the replacement archive identity and remediated package-tree digest before image assembly."
       ]
     },
@@ -77,7 +77,7 @@
       "trackingIssue": "https://github.com/NVIDIA/NemoClaw/pull/8156",
       "rationale": "PR #8156 upgrades the reviewed OpenClaw runtime lock to undici 8.10.0 and removes this transition exception.",
       "compensatingControls": [
-        "PR #8172 authorizes the exact reviewed successor lock without changing the current runtime lock.",
+        "PR #8165 authorizes the exact reviewed successor lock without changing the current runtime lock.",
         "PR #8156 validates the manifest, shrinkwrap, replacement archive, and installed lock before image assembly."
       ]
     },
@@ -93,7 +93,7 @@
       "trackingIssue": "https://github.com/NVIDIA/NemoClaw/pull/8156",
       "rationale": "PR #8156 upgrades the reviewed mcporter runtime lock to fast-uri 3.1.5 and removes this transition exception.",
       "compensatingControls": [
-        "PR #8172 authorizes the exact reviewed successor lock without changing the current runtime lock.",
+        "PR #8165 authorizes the exact reviewed successor lock without changing the current runtime lock.",
         "PR #8156 pins the replacement through an exact override and validates the installed lock before image assembly."
       ]
     },
@@ -109,7 +109,7 @@
       "trackingIssue": "https://github.com/NVIDIA/NemoClaw/pull/8156",
       "rationale": "PR #8156 upgrades the reviewed mcporter runtime lock to ip-address 10.3.1 and removes this transition exception.",
       "compensatingControls": [
-        "PR #8172 authorizes the exact reviewed successor lock without changing the current runtime lock.",
+        "PR #8165 authorizes the exact reviewed successor lock without changing the current runtime lock.",
         "PR #8156 pins the replacement through an exact override and validates the installed lock before image assembly."
       ]
     }

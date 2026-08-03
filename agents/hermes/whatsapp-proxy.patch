@@ -1,0 +1,218 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Routes the pinned Hermes v2026.7.20 WhatsApp bridge through the OpenShell
+# proxy. Remove this patch when the minimum supported Hermes release passes
+# an HTTPS proxy agent to Baileys natively.
+diff --git a/scripts/whatsapp-bridge/bridge.js b/scripts/whatsapp-bridge/bridge.js
+index 4b5733d16..22f1ec3e1 100644
+--- a/scripts/whatsapp-bridge/bridge.js
++++ b/scripts/whatsapp-bridge/bridge.js
+@@ -30,6 +30,7 @@ import { randomBytes, createHash } from 'crypto';
+ import { execFileSync } from 'child_process';
+ import { tmpdir } from 'os';
+ import qrcode from 'qrcode-terminal';
++import { HttpsProxyAgent } from 'https-proxy-agent';
+ import { matchesAllowedUser, parseAllowedUsers } from './allowlist.js';
+ import { createOutboundIdTracker } from './outbound_ids.js';
+ import { classifyOwnerMessageGate } from './owner_message_gate.js';
+@@ -378,6 +379,9 @@ function rememberSentId(id) {
+
+ let sock = null;
+ let connectionState = 'disconnected';
++const PROXY_AGENT = process.env.HTTPS_PROXY
++  ? new HttpsProxyAgent(process.env.HTTPS_PROXY)
++  : undefined;
+
+ function emitPairEvent(event) {
+   if (!PAIR_JSON) return;
+@@ -393,6 +397,8 @@ async function startSocket() {
+   sock = makeWASocket({
+     version,
+     auth: state,
++    agent: PROXY_AGENT,
++    fetchAgent: PROXY_AGENT,
+     logger,
+     printQRInTerminal: false,
+     browser: ['Hermes Agent', 'Chrome', '120.0'],
+diff --git a/scripts/whatsapp-bridge/proxy-agent.test.mjs b/scripts/whatsapp-bridge/proxy-agent.test.mjs
+new file mode 100644
+index 000000000..4b489e7e0
+--- /dev/null
++++ b/scripts/whatsapp-bridge/proxy-agent.test.mjs
+@@ -0,0 +1,92 @@
++import { strict as assert } from 'node:assert';
++import { once } from 'node:events';
++import { createServer } from 'node:http';
++import { after, mock, test } from 'node:test';
++import { WebSocketClient } from './node_modules/@whiskeysockets/baileys/lib/Socket/Client/websocket.js';
++
++const originalArgv = [...process.argv];
++const originalHttpsProxy = process.env.HTTPS_PROXY;
++const socketOptions = [];
++
++process.argv.push('--pair-only', '--pair-json');
++
++mock.module('@whiskeysockets/baileys', {
++  namedExports: {
++    DisconnectReason: { loggedOut: 401 },
++    decryptPollVote: () => undefined,
++    downloadMediaMessage: async () => Buffer.alloc(0),
++    fetchLatestBaileysVersion: async () => ({ version: [2, 3000, 0] }),
++    getAggregateVotesInPollMessage: () => [],
++    getKeyAuthor: () => '',
++    jidNormalizedUser: (value) => value,
++    makeWASocket: (options) => {
++      socketOptions.push(options);
++      return { ev: { on() {} }, user: {} };
++    },
++    useMultiFileAuthState: async () => ({ state: {}, saveCreds() {} }),
++  },
++});
++
++after(() => {
++  process.argv.splice(0, process.argv.length, ...originalArgv);
++  if (originalHttpsProxy === undefined) {
++    delete process.env.HTTPS_PROXY;
++  } else {
++    process.env.HTTPS_PROXY = originalHttpsProxy;
++  }
++});
++
++async function loadBridge(name) {
++  await import(`./bridge.js?proxy-agent-test=${name}`);
++  for (let attempt = 0; attempt < 20 && socketOptions.length === 0; attempt += 1) {
++    await new Promise((resolve) => setImmediate(resolve));
++  }
++  return socketOptions.at(-1);
++}
++
++test('routes the pinned Baileys WebSocket through the configured HTTPS proxy', async (t) => {
++  const connectTargets = [];
++  const proxy = createServer();
++  proxy.on('connect', (request, socket) => {
++    connectTargets.push(request.url);
++    socket.destroy();
++  });
++  proxy.listen(0, '127.0.0.1');
++  await once(proxy, 'listening');
++  t.after(() => new Promise((resolve) => proxy.close(resolve)));
++
++  const address = proxy.address();
++  assert.ok(address && typeof address !== 'string');
++  process.env.HTTPS_PROXY = `http://127.0.0.1:${address.port}`;
++  const options = await loadBridge('configured');
++
++  assert.ok(options.agent);
++  assert.strictEqual(options.fetchAgent, options.agent);
++  assert.equal(options.agent.proxy.href, `${process.env.HTTPS_PROXY}/`);
++
++  const client = new WebSocketClient(new URL('wss://web.whatsapp.com/ws/chat'), {
++    agent: options.agent,
++    connectTimeoutMs: 1000,
++    options: {},
++  });
++  client.on('error', () => {});
++  client.connect();
++  for (let attempt = 0; attempt < 50 && connectTargets.length === 0; attempt += 1) {
++    await new Promise((resolve) => setTimeout(resolve, 10));
++  }
++
++  assert.deepEqual(connectTargets, ['web.whatsapp.com:443']);
++});
++
++test('leaves both Baileys transport paths unset without HTTPS_PROXY', async () => {
++  delete process.env.HTTPS_PROXY;
++  const priorCalls = socketOptions.length;
++  await import('./bridge.js?proxy-agent-test=unset');
++  for (let attempt = 0; attempt < 20 && socketOptions.length === priorCalls; attempt += 1) {
++    await new Promise((resolve) => setImmediate(resolve));
++  }
++  const options = socketOptions.at(-1);
++
++  assert.equal(options.agent, undefined);
++  assert.equal(options.fetchAgent, undefined);
++});
+diff --git a/scripts/whatsapp-bridge/package-lock.json b/scripts/whatsapp-bridge/package-lock.json
+index b3043d288..06550adcc 100644
+--- a/scripts/whatsapp-bridge/package-lock.json
++++ b/scripts/whatsapp-bridge/package-lock.json
+@@ -10,6 +10,7 @@
+       "dependencies": {
+         "@whiskeysockets/baileys": "7.0.0-rc13",
+         "express": "^4.21.0",
++        "https-proxy-agent": "7.0.6",
+         "pino": "^9.0.0",
+         "qrcode-terminal": "^0.12.0"
+       }
+@@ -806,6 +807,15 @@
+         "node": ">= 0.6"
+       }
+     },
++    "node_modules/agent-base": {
++      "version": "7.1.4",
++      "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
++      "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
++      "license": "MIT",
++      "engines": {
++        "node": ">= 14"
++      }
++    },
+     "node_modules/array-flatten": {
+       "version": "1.1.1",
+       "resolved": "https://registry.npmjs.org/array-flatten/-/array-flatten-1.1.1.tgz",
+@@ -1285,6 +1295,42 @@
+         "url": "https://opencollective.com/express"
+       }
+     },
++    "node_modules/https-proxy-agent": {
++      "version": "7.0.6",
++      "resolved": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz",
++      "integrity": "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==",
++      "license": "MIT",
++      "dependencies": {
++        "agent-base": "^7.1.2",
++        "debug": "4"
++      },
++      "engines": {
++        "node": ">= 14"
++      }
++    },
++    "node_modules/https-proxy-agent/node_modules/debug": {
++      "version": "4.4.3",
++      "resolved": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
++      "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
++      "license": "MIT",
++      "dependencies": {
++        "ms": "^2.1.3"
++      },
++      "engines": {
++        "node": ">=6.0"
++      },
++      "peerDependenciesMeta": {
++        "supports-color": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/https-proxy-agent/node_modules/ms": {
++      "version": "2.1.3",
++      "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
++      "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
++      "license": "MIT"
++    },
+     "node_modules/iconv-lite": {
+       "version": "0.4.24",
+       "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.4.24.tgz",
+diff --git a/scripts/whatsapp-bridge/package.json b/scripts/whatsapp-bridge/package.json
+index 3b664108b..1a45debb7 100644
+--- a/scripts/whatsapp-bridge/package.json
++++ b/scripts/whatsapp-bridge/package.json
+@@ -10,6 +10,7 @@
+   "dependencies": {
+     "@whiskeysockets/baileys": "7.0.0-rc13",
+     "express": "^4.21.0",
++    "https-proxy-agent": "7.0.6",
+     "qrcode-terminal": "^0.12.0",
+     "pino": "^9.0.0"
+   },
