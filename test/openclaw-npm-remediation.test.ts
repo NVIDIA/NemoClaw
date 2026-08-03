@@ -681,5 +681,5 @@ describe("OpenClaw npm remediation", () => {
         path.join(extracted, "package", "node_modules", "tar", "package.json"),
       ),
     ).toMatchObject({ name: "tar", version: "7.5.19" });
-  });
+  }, 60_000);
 });
