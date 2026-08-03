@@ -105,6 +105,7 @@ describe("Docker managed bootstrap restart recovery", () => {
       ManagedBootstrapRecoveryBlockedError,
     );
     expect(dockerMutationEvents(fake.events)).toEqual([]);
+    expect(fake.events).toEqual([]);
     expect(fake.journal).toBeNull();
   });
 

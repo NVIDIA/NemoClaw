@@ -205,7 +205,10 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     input.sandboxEnv = launch.sandboxEnv;
     input.sandboxStartupCommand = launch.sandboxStartupCommand;
     const patch = createPatch() as unknown as ManagedBootstrapRuntimePatch;
-    const recoveryReport = (sandboxName: string | null): ManagedBootstrapRecoveryReport =>
+    const recoveryReport = (
+      sandboxName: string | null,
+      detail = "opaque MXC recovery detail",
+    ): ManagedBootstrapRecoveryReport =>
       Object.freeze({
         receipts: Object.freeze([]),
         failures: Object.freeze([
@@ -224,7 +227,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
             bootstrapIdentity: "e".repeat(64),
             code: "mxc-recovery-retry",
             retryable: true,
-            detail: "opaque MXC recovery detail",
+            detail,
           }),
         ]),
       });
@@ -350,7 +353,10 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     expect(vi.mocked(console.warn).mock.calls.flat().join("\n")).toContain(
       "unrelated sandbox 'bravo'",
     );
-    recoverUnfinished.mockResolvedValueOnce(recoveryReport("alpha"));
+    const recoverySecret = "opaque-recovery-token";
+    recoverUnfinished.mockResolvedValueOnce(
+      recoveryReport("alpha", `Authorization: Bearer ${recoverySecret}`),
+    );
     prepareNetwork.mockClear();
     mocks.streamSandboxCreate.mockClear();
     mockExit();
@@ -363,6 +369,8 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     expect(errorOutput()).toContain("durable sandbox ID mxc-alpha");
     expect(errorOutput()).toContain("OpenShell's sandbox get command");
     expect(errorOutput()).toContain("never delete a runtime by mutable sandbox name");
+    expect(errorOutput()).toContain("Authorization: Bearer <REDACTED>");
+    expect(errorOutput()).not.toContain(recoverySecret);
   });
 });
 
