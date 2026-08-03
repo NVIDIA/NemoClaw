@@ -78,7 +78,7 @@ export interface ManagedBootstrapRuntimeCreateLifecycleInput {
   readonly onPatchFailure?: (error: unknown) => never;
   readonly network: {
     readonly inferenceProvider: string;
-    readonly dockerDriverGateway: boolean;
+    readonly gatewayUsesContainerBridge: boolean;
     readonly gatewayPort: number;
   };
   readonly dependencies: ManagedBootstrapRuntimeDependencies;

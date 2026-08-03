@@ -121,7 +121,8 @@ state_files:
     strategy: sqlite_backup
 user_managed_files:
   # Relative to /sandbox, not config.dir. Hermes stores user-edited API-key
-  # values in /sandbox/.hermes/.env, and rebuild should warn before dropping it.
+  # values in /sandbox/.hermes/.env, and rebuild should warn before dropping
+  # values outside the allowlisted home-channel preservation inventory.
   - .hermes/.env
 
 # ── Authentication ──────────────────────────────────────────────

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { RuntimeProviderBootstrapSurface } from "../runtime-provider/contract";
 import { detectTegraDeviceGroupGids } from "../docker-gpu-jetson-groups";
 import { buildDockerGpuMode, selectDockerGpuPatchMode } from "../docker-gpu-patch-mode";
 import type { DockerGpuPatchMode } from "../docker-gpu-patch-types";
@@ -15,6 +14,7 @@ import {
   queryOpenShellDockerSandboxContainers,
   queryOpenShellDockerSandboxRuntimeSnapshot,
 } from "../openshell-docker-sandbox-containers";
+import type { RuntimeProviderBootstrapSurface } from "../runtime-provider/contract";
 import * as sandboxGpuCreateAttempt from "../sandbox-gpu-create-attempt";
 import {
   activateManagedBootstrapSequence,
@@ -146,7 +146,7 @@ function createDockerLifecycle(
         input.network.inferenceProvider,
         input.sandboxGpuConfig,
         {
-          dockerDriverGateway: input.network.dockerDriverGateway,
+          dockerDriverGateway: input.network.gatewayUsesContainerBridge,
           selectedRoute: input.route,
           gatewayPort: input.network.gatewayPort,
           log: console.log,

@@ -81,14 +81,15 @@ identity-derived staging name while the original remains running. It stages the
 or otherwise mutating the original. Only after the coordinator durably records
 that complete prepared authority may activation journal both full runtime IDs,
 all three names, both launch-spec hashes, image identity, profile fingerprint,
-and sandbox ID and then enter the destructive cutover. Rollback publishes
-`rollback-authorized` before exact replacement deletion; commit publishes
-`shared-state-committed` before exact backup deletion. Cleanup is bound to full
-runtime IDs. Mutable OpenShell names are read only to detect ownership reuse,
-and unsafe name-only deletion returns a typed retention error. The dormant
-adapter assumes the protocol's single coordinator; multi-process
-lease/arbitration remains an explicit production-activation gate. Activation
-must also inject the selected gateway's canonical state root.
+and sandbox ID and then enter the destructive cutover. Post-cutover rollback
+publishes `rollback-authorized` before exact replacement deletion; pre-cutover
+staged cleanup removes only the exact prepared replacement without that journal
+transition. Commit publishes `shared-state-committed` before exact backup
+deletion. Cleanup is bound to full runtime IDs. Mutable OpenShell names are read
+only to detect ownership reuse, and unsafe name-only deletion returns a typed
+retention error. The dormant adapter assumes the protocol's single coordinator;
+multi-process lease/arbitration remains an explicit production-activation gate.
+Activation must also inject the selected gateway's canonical state root.
 
 ## Architectural disposition
 
@@ -103,12 +104,24 @@ Code.
 The coordinator remains the driver-neutral transaction authority: its receipt
 shapes, normalization, state transitions, and rollback proofs form one cohesive
 boundary, while provider-specific routing and runtime operations stay outside
-it. The candidate composition is executable, bounded groundwork rather than an
-untested placeholder, but no registered provider selects it yet.
+it.
+
+This is executable, bounded groundwork rather than an untested placeholder.
+`adapter.test.ts` drives prepare, durable record, activation, finalization, and
+failure rollback for OpenClaw, Hermes, and LangChain Deep Agents Code through an
+MXC-named fake driver. `runtime-provider-contract.test.ts` registers both the
+dormant Docker candidate and an MXC-style bootstrap surface through the same
+provider bundle contract without changing the production registry.
+`runtime-provider-source-shape.test.ts` separately inventories the protocol,
+provider, and image-packaging surfaces and proves that production activation
+does not select a driver-specific bootstrap implementation.
 
 The native entrypoint source is intentionally not compiled into production
-artifacts, and neither image-owned source is packaged or selected yet. The
-current image definitions do not package `nemoclaw-managed-startup-hold`,
+artifacts, and neither image-owned source is installed or selected in a runtime
+image yet. Production onboarding imports only the provider-neutral create
+contract; no activation path or registered provider imports or selects the
+driver-specific Docker candidate. The current image definitions do not package
+`nemoclaw-managed-startup-hold`,
 `managed-startup-image-runtime.cjs`, or the shared-state bootstrap modes consumed
 by the adapter. Later persistence and qualification slices must compile and
 verify the freestanding entrypoint for amd64 and arm64 in every agent image, add

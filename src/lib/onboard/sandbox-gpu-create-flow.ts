@@ -19,14 +19,14 @@ import type {
 import type { ManagedBootstrapRuntimePatch } from "./managed-bootstrap/runtime-create";
 import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
-import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
-import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
-import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
-import type { SandboxPrebuildResult } from "./sandbox-prebuild";
 import type {
   RuntimeProviderBootstrapSurface,
   RuntimeProviderBundle,
 } from "./runtime-provider/contract";
+import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
+import { createSandboxGpuCreateAttemptRunner } from "./sandbox-gpu-create-run-attempt";
+import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
+import type { SandboxPrebuildResult } from "./sandbox-prebuild";
 import { addTraceEvent } from "./tracing";
 
 export { resolveDockerStartupCommandPatch } from "./docker-startup-command-agent";
