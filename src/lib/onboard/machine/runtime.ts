@@ -8,6 +8,7 @@ import type { ResumeConfigConflict } from "../resume-config";
 import {
   createOnboardMachineEvent,
   emitOnboardMachineEvent,
+  machineStateFromOnboardSessionStep,
   type OnboardMachineEvent,
 } from "./events";
 import type { OnboardStateResult } from "./result";
@@ -169,7 +170,18 @@ export class OnboardRuntime {
   }
 
   async markStepSkipped(stepName: string): Promise<Session> {
-    return this.deps.markStepSkipped(stepName);
+    const current = this.ensureSession();
+    const state = machineStateFromOnboardSessionStep(stepName);
+    const previousStatus = state ? current.steps[stepName]?.status : null;
+    const updated = this.deps.markStepSkipped(stepName);
+    if (
+      state &&
+      (previousStatus === "pending" || previousStatus === "in_progress") &&
+      updated.steps[stepName]?.status === "skipped"
+    ) {
+      this.emit("state.skipped", updated, { state, step: stepName });
+    }
+    return updated;
   }
 
   async markStepFailed(stepName: string, message: string | null = null): Promise<Session> {

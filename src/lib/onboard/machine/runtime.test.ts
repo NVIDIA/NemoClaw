@@ -67,13 +67,20 @@ function createHarness(initialSession: Session | null = createSession()) {
         return current;
       });
     },
-    markStepSkipped: (stepName) =>
-      updateSession((current) => {
+    markStepSkipped: (stepName) => {
+      stepCalls.push("markStepSkipped");
+      return updateSession((current) => {
         const step = current.steps[stepName];
         if (!step) return current;
+        if (step.status === "complete" || step.status === "failed" || step.status === "skipped")
+          return current;
         step.status = "skipped";
+        step.startedAt = null;
+        step.completedAt = null;
+        step.error = null;
         return current;
-      }),
+      });
+    },
     markStepFailed: (stepName, message) => {
       stepCalls.push("markStepFailed");
       return updateSession((current) => {
@@ -148,6 +155,52 @@ describe("OnboardRuntime", () => {
         gateway: { status: "failed", error: "boom" },
       },
     });
+  });
+
+  it.each([
+    "pending",
+    "in_progress",
+  ] as const)("emits one mapped skip event when a $status step becomes skipped", async (status) => {
+    const initial = sessionInState("policies");
+    initial.endpointUrl =
+      "https://alice:super-secret@example.com/v1?token=super-secret&keep=yes#token=super-secret";
+    initial.steps.agent_setup.status = status;
+    const { runtime, events, getSession, stepCalls } = createHarness(initial);
+
+    await runtime.markStepSkipped("agent_setup");
+    await runtime.markStepSkipped("agent_setup");
+
+    expect(stepCalls).toEqual(["markStepSkipped", "markStepSkipped"]);
+    expect(getSession().steps.agent_setup.status).toBe("skipped");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      version: 1,
+      type: "state.skipped",
+      sessionId: initial.sessionId,
+      state: "agent_setup",
+      step: "agent_setup",
+      context: { endpointOrigin: "https://example.com" },
+      error: null,
+      metadata: {},
+    });
+    expect(JSON.stringify(events)).not.toContain("super-secret");
+    expect(JSON.stringify(events)).not.toContain("alice");
+  });
+
+  it.each([
+    { label: "complete", stepName: "openclaw", status: "complete" as const },
+    { label: "failed", stepName: "openclaw", status: "failed" as const },
+    { label: "skipped", stepName: "openclaw", status: "skipped" as const },
+    { label: "unknown", stepName: "not_a_step", status: null },
+  ])("does not emit a skip event for a $label step", async ({ stepName, status }) => {
+    const initial = sessionInState("policies");
+    if (status) initial.steps.openclaw.status = status;
+    const { runtime, events, stepCalls } = createHarness(initial);
+
+    await runtime.markStepSkipped(stepName);
+
+    expect(stepCalls).toEqual(["markStepSkipped"]);
+    expect(events).toHaveLength(0);
   });
 
   it("validates and persists explicit transitions", async () => {

@@ -74,6 +74,7 @@ export interface SandboxOnboardFlowPhaseOptions<
   resumeAgentChanged: boolean;
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
+  rebuildPreservedEnv?: readonly import("../../state/preserved-env").PreservedEnvFile[];
   endpointProvenance: EndpointProvenanceOptions;
   recreateSandbox: (requested?: boolean) => boolean;
   controlUiPort: number | null;
@@ -225,6 +226,7 @@ export function createSandboxOnboardFlowPhase<
       resumeAgentChanged: options.resumeAgentChanged,
       requestedObservabilityEnabled: options.requestedObservabilityEnabled,
       requestedDcodeAutoApprovalMode: options.requestedDcodeAutoApprovalMode,
+      rebuildPreservedEnv: options.rebuildPreservedEnv,
       recreateSandbox: options.recreateSandbox,
       session: context.session,
       sandboxName: context.sandboxName,

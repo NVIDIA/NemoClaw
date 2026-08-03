@@ -8,8 +8,8 @@
  * `runtime.test.ts` pins per-operation event shapes, `runner.test.ts` pins
  * handler sequencing without observing events). Descriptive, not
  * aspirational: update a pin in the same PR that changes the ordering.
- * Recovery-path semantics (edges leaving terminal `failed`, the legacy
- * step-mutation bridge) stay out of scope and are owned by #6227.
+ * Recovery-path semantics (edges leaving terminal `failed`) stay out of scope
+ * and are owned by #6227.
  */
 
 import { describe, expect, it, vi } from "vitest";
