@@ -21,20 +21,16 @@ function writeModule(root: string, file: string, source: string): void {
 }
 
 function listProductionTypeScriptFiles(directory: string): string[] {
-  const files: string[] = [];
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const entryPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name !== "__test-helpers__") {
-        files.push(...listProductionTypeScriptFiles(entryPath));
-      }
-      continue;
-    }
-    if (entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) {
-      files.push(entryPath);
-    }
-  }
-  return files;
+    return entry.isDirectory()
+      ? entry.name === "__test-helpers__"
+        ? []
+        : listProductionTypeScriptFiles(entryPath)
+      : entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")
+        ? [entryPath]
+        : [];
+  });
 }
 
 function budget(overrides: Partial<SourceArchitectureBudget> = {}): SourceArchitectureBudget {
