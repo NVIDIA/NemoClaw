@@ -1971,12 +1971,8 @@ async function startDockerDriverGateway({
             port: GATEWAY_PORT,
           }),
       }),
-    () => {
-      const initialHealth = dockerDriverGatewayCutover.readDockerDriverGatewayHealth(
-        runCaptureOpenshell,
-        GATEWAY_NAME,
-      );
-      return dockerDriverGatewayCutover.runDockerDriverGatewayCutover(
+    () =>
+      dockerDriverGatewayCutover.runDockerDriverGatewayCutover(
         {
           gatewayBin,
           identityGatewayBin,
@@ -1987,7 +1983,10 @@ async function startDockerDriverGateway({
           stateDir,
           portListenerScan: servicePortOwnership.portListenerScan,
           pidFileGatewayPid: getDockerDriverGatewayPid(),
-          initialHealth,
+          initialHealth: dockerDriverGatewayCutover.readDockerDriverGatewayHealth(
+            runCaptureOpenshell,
+            GATEWAY_NAME,
+          ),
         },
         {
           isDockerDriverGatewayProcessAlive,
@@ -2027,8 +2026,7 @@ async function startDockerDriverGateway({
           },
           log: (message) => console.log(message),
         },
-      );
-    },
+      ),
   );
   if (cutover !== "launch") return;
   if (!gatewayBin || !gatewayLaunch) {
@@ -2040,9 +2038,8 @@ async function startDockerDriverGateway({
   const logFd = dockerDriverGatewayLaunch.openDockerDriverGatewayLog(logPath, { exitOnFailure });
   console.log("  Starting OpenShell Docker-driver gateway...");
   console.log(`  Gateway log: ${logPath}`);
-  const launch = gatewayLaunch;
-  dockerDriverGatewayLaunch.prepareAndLogDockerDriverGatewayLaunch(launch);
-  const child = dockerDriverGatewayLaunch.spawnDockerDriverGateway(launch, logFd);
+  dockerDriverGatewayLaunch.prepareAndLogDockerDriverGatewayLaunch(gatewayLaunch);
+  const child = dockerDriverGatewayLaunch.spawnDockerDriverGateway(gatewayLaunch, logFd);
   const childExit = trackChildExit(child); // #3111 zombie-safe liveness
   child.unref();
   const childPid = child.pid ?? 0;
