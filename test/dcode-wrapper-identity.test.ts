@@ -195,7 +195,7 @@ describe.skipIf(!canRun)(
         expect(run.launched).toBe(false);
         expect(run.stderr).toContain("refusing to start");
         expect(run.stderr).toContain("OPENAI_API_KEY");
-        expect(run.stderr).not.toContain("sk-live-XXXXXXXXXXXXX");
+        expect(`${run.stdout}\n${run.stderr}`).not.toContain("sk-live-XXXXXXXXXXXXX");
       });
     });
 
