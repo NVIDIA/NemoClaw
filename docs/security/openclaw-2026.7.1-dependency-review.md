@@ -285,6 +285,48 @@ as synchronized.
 It does not roll back a canonical server transition that OpenClaw already
 persisted.
 
+## Transient Remote MCP Startup Recovery
+
+`scripts/patch-openclaw-mcp-reliability.mts` is a version-scoped, fail-closed compatibility patch for issue #7958.
+In `2026.7.1`, the compiled `bundle-mcp` session runtime turns one failed remote server startup into an empty tool set plus catalog diagnostics, caches that degraded catalog for the whole session, and never retries.
+A single transient Streamable HTTP reset or MCP request timeout therefore removes an expected integration until the user starts a new session, and the agent can report the integration or its credentials as unavailable.
+
+The patch identifies its target by the `"openclaw-bundle-mcp"` client identity and requires each rewritten anchor to appear exactly once.
+An unrecognized compiled shape fails the image build instead of silently skipping and forces review before the patch can be updated or removed.
+`--audit` re-verifies the applied state.
+
+Reviewed behavior:
+
+- One retry, and only one, for a server *startup* failure on a `streamable-http` transport.
+  A refresh failure on an already-connected session is not retried.
+- The retry uses a fresh transport from the upstream `resolveMcpTransport` factory after 120 to 299 ms of jitter, and caps its connection timeout at 10,000 ms so a dead server cannot double an agent run's worst-case latency.
+  If fresh transport construction fails, the first diagnostic is preserved and NemoClaw does not claim that a retry occurred.
+- Classification is a fail-closed allowlist over a bounded `cause` chain: MCP request timeout (`-32001`), the OpenClaw connect-timeout message, undici and POSIX in-flight transport codes, and reset/disconnect-before-headers text.
+  A truncated or cyclic cause chain is unclassifiable and is not retried.
+  A blocked-code and blocked-text pass runs first, so authentication, authorization, OAuth token rejection, TLS and certificate validation, SSRF and policy denial, and invalid configuration are never retried.
+  A refused, unreachable, or unresolvable destination is deliberately excluded from the allowlist.
+  An OpenShell L4 policy denial reaches the MCP client as a refused connection, so retrying refusals would risk retrying policy denials.
+- An exhausted retry keeps the upstream diagnostic and appends a temporary-transport statement that states that credentials and configuration were not rejected, so the agent does not report missing credentials for a transport failure.
+  That statement is added only when the *surviving* failure is itself transient.
+  A retry that reaches the server and is then rejected with HTTP 401, a TLS error, or a policy denial keeps its own diagnostic.
+- A catalog carrying a server diagnostic is not retained as the session's stable catalog.
+  It is dropped at the next agent run boundary, in `acquireLease()` and only while the runtime is idle.
+  Upstream fills `catalog.diagnostics` only from a per-server start or refresh failure and omits the key when no server produced a diagnostic, so a non-empty array is the degraded case and a healthy catalog is still reused.
+  A credential, TLS, policy, or configuration rejection keeps its own diagnostic and is still never retried inside a run, but its catalog is not sticky either, so a repaired credential is picked up on the next agent run instead of requiring a new session.
+  Scoping the drop to a run boundary rather than to every `getCatalog()` call is deliberate.
+  `getCatalog()` is also the pre-flight for every `callTool`, `listResources`, `readResource`, `listPrompts`, and `getPrompt`, so dropping it on every call would rebuild the catalog per tool call and turn one unreachable optional server into a per-call reconnect cost.
+  Optional MCP servers stay best-effort.
+- The patch does not bypass or weaken credential, SSRF, OAuth, or network-policy enforcement.
+
+A first version of this patch was rejected during review on two counts, both now covered by tests.
+It retried an OpenShell L4 policy denial because undici reports it as `TypeError: fetch failed`, and it reported a retry that ended in HTTP 401 as a temporary transport failure that had not rejected credentials.
+
+Coverage: `test/openclaw-mcp-reliability-patch.test.ts` pins the compiled preimage, patch idempotence, fail-closed rejection of an unrecognized shape, the classification table, and the retry and diagnostic behavior of the injected runtime.
+`test/helpers/openclaw-real-mcp-start-retry-proof.ts` runs inside the `NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1` harness and drives the real patched runtime against a controlled Streamable HTTP MCP server for three scenarios: first exchange resets then succeeds, every exchange resets, and a persistent 401.
+The proof asserts that the rejected-credential scenario is contacted once per run, with no retry inside a run.
+
+Removal criterion: drop this patch when the reviewed OpenClaw release provides equivalent bounded startup retry, negative-catalog invalidation, and temporary-transport failure attribution.
+
 ## Gateway Startup Migration Compatibility
 
 OpenClaw `2026.7.1` requires its migration checkpoint to complete without

@@ -11,6 +11,7 @@ import os from "node:os";
 import nodePath from "node:path";
 import { detectContainerRuntimeFromDockerInfo } from "../adapters/docker/runtime";
 import { createBearerAuthConfig } from "../adapters/http/auth-config";
+import { CONTAINER_REACHABILITY_IMAGE } from "../adapters/http/container-curl-probe";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
@@ -70,7 +71,8 @@ export function resetOllamaContainerPortCache(): void {
 
 export const HOST_GATEWAY_URL = "http://host.openshell.internal";
 export const LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV = "NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL";
-export const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
+export { CONTAINER_REACHABILITY_IMAGE } from "../adapters/http/container-curl-probe";
+
 // These tags are convenience aliases for callers that want to refer to a
 // specific bootstrap model by role rather than by string. The canonical
 // metadata (memory requirements, download sizes) lives in
@@ -1456,11 +1458,14 @@ export function buildOllamaProbeOptions(allowToolsIncompatible: boolean): {
   skipResponsesProbe: true;
   requireChatCompletionsToolCalling: boolean;
   allowHostDockerInternal: boolean;
+  probeFromDocker: { expectedPort: number } | null;
 } {
+  const windowsHostOllama = getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL;
   return {
     skipResponsesProbe: true,
     requireChatCompletionsToolCalling: !allowToolsIncompatible,
-    allowHostDockerInternal: getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL,
+    allowHostDockerInternal: windowsHostOllama,
+    probeFromDocker: windowsHostOllama ? { expectedPort: OLLAMA_PORT } : null,
   };
 }
 

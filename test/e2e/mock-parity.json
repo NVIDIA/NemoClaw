@@ -110,8 +110,14 @@
       "liveOnlyReason": "Requires a real OpenShell dashboard forward on a remote Brev host to prove all-interface bind behavior after background connect."
     },
     {
+      "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
+      "fast": [
+        "test/e2e/support/workflow-plan.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/sandbox-operations.test.ts",
-      "liveOnlyReason": "The final-destroy gateway release contract needs two real Docker/OpenShell sandboxes plus host 127.0.0.1 port binding; a fast mock cannot prove the shared-gateway ownership boundary."
+      "liveOnlyReason": "The resource-limit and final-destroy contracts require real Docker and OpenShell sandboxes, the repository CLI, and host port binding; fast mocks cannot verify these runtime boundaries."
     },
     {
       "live": "test/e2e/live/onboard-repair.test.ts",
@@ -136,16 +142,6 @@
         "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
         "src/lib/onboard/sandbox-create-plan-extra-providers.test.ts",
         "test/onboard-extra-provider-reconciliation.test.ts",
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
-      "fast": [
-        "test/cli/dispatch-basics.test.ts",
-        "test/e2e/support/e2e-workflow.test.ts",
-        "test/sandbox-rlimit-hooks.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]

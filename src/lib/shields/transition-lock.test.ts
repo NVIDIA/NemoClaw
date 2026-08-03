@@ -106,6 +106,20 @@ describe("host shields transition lock", () => {
     fs.writeFileSync(guardPath, JSON.stringify(value), { mode: 0o600 });
   }
 
+  it("escapes control characters in a rejected sandbox name (#7796)", () => {
+    const hostileName = `bad${String.fromCharCode(27)}[31mX`;
+
+    let message = "";
+    try {
+      shieldsTransitionLockPath(hostileName, stateDir);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    expect(message).toContain(String.raw`Invalid sandbox name: "bad\u001b[31mX".`);
+    expect(message).not.toContain(String.fromCharCode(27));
+  });
+
   it("atomically creates a regular owner file and removes it after the callback", () => {
     const locker = manager();
     const lockPath = shieldsTransitionLockPath("alpha", stateDir);
