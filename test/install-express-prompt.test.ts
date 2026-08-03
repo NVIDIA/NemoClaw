@@ -20,7 +20,7 @@ describe("installer express install prompt (sourced)", () => {
     0,
     1.5,
     Number.MAX_SAFE_INTEGER + 1,
-  ])("does not signal a non-positive or non-safe PTY fixture PID: %s", (childPid) => {
+  ])("does not signal a PTY fixture PID unless it is a positive safe integer: %s", (childPid) => {
     const kill = vi.spyOn(process, "kill").mockReturnValue(true);
     try {
       killPtyFixtureChildIfRunning(childPid);
@@ -30,7 +30,7 @@ describe("installer express install prompt (sourced)", () => {
     }
   });
 
-  it("does not throw when best-effort PTY cleanup cannot signal a valid child", () => {
+  it("ignores a signal error during best-effort PTY fixture cleanup", () => {
     const kill = vi.spyOn(process, "kill").mockImplementation(() => {
       throw Object.assign(new Error("signal denied"), { code: "EPERM" });
     });
