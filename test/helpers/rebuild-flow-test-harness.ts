@@ -166,6 +166,16 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(rebuildCustomImagePreflight, "preflightRebuildImage").mockResolvedValue(
     overrides.customImagePreflight ?? defaultImagePreflight,
   );
+  const finalizePreparedImageSpy = vi
+    .spyOn(rebuildCustomImagePreflight, "finalizePreparedRebuildImageMessagingPlan")
+    .mockImplementation(
+      (overrides.finalizePreparedImage ??
+        ((prepared: typeof defaultImagePreflight.prepared) => ({
+          ok: true as const,
+          imageTag: "nemoclaw-rebuild-finalize:test",
+          prepared,
+        }))) as never,
+    );
   vi.spyOn(rebuildUsageNotice, "ensureRebuildUsageNoticeAccepted").mockResolvedValue(true);
   const warnUnpreservedUserManagedFilesSpy = vi
     .spyOn(rebuildFlowHelpers, "warnUnpreservedUserManagedFiles")
@@ -408,6 +418,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
           backupPath: "/tmp/nemoclaw-rebuild-backup",
           timestamp: "2026-06-01T00:00:00.000Z",
           policyPresets: overrides.backupPolicyPresets ?? ["npm", "bad", "throw"],
+          ...(overrides.backupPreservedEnv
+            ? { preservedEnv: structuredClone(overrides.backupPreservedEnv) }
+            : {}),
           ...(modelsCustomOpenClawImage
             ? {
                 reconcileOpenClawImagePluginProvenance: true,
@@ -658,6 +671,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     restoreSandboxEntryIfMissingSpy,
     restoreMcpBridgesAfterRebuildSpy,
     warnUnpreservedUserManagedFilesSpy,
+    finalizePreparedImageSpy,
     session,
   };
 }
