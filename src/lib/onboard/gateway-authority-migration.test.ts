@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 
 import { createSession } from "../state/onboard-session";
 import { bindGatewayAuthorityToCheckpoint } from "./gateway-authority-checkpoint";
-import type { GatewayManagementDeclaration } from "./gateway-management";
+import {
+  type GatewayManagementDeclaration,
+  GatewayManagementDeclarationError,
+} from "./gateway-management";
 import { type GatewayOwner, resolveGatewayOwner } from "./gateway-ownership";
 import {
   GatewayAuthorityError,
@@ -138,13 +141,22 @@ describe("gateway authority migration is a typed refusal (#8103)", () => {
   it("does not type an invalid management declaration as an authority refusal", () => {
     // A malformed declaration is a different failure class; command boundaries
     // must keep propagating it rather than reporting a migration.
-    expect(() =>
+    let failure: unknown;
+    try {
       resolveGatewayTeardownAuthority(target, {
         hasPackagedService: () => false,
         loadDeclaration: () => ({ ok: false as const, reason: "malformed json" }),
         loadSession: () => null,
-      }),
-    ).not.toThrow(GatewayAuthorityError);
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(GatewayManagementDeclarationError);
+    expect(failure).toHaveProperty(
+      "message",
+      "Invalid gateway management declaration: malformed json",
+    );
   });
 });
 

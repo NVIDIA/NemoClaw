@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import { resolveOnboardOptions, runOnboardCommand } from "./command";
 import type { OnboardFlags } from "./command-support";
 import { invalidGatewayManagementDeclarationError } from "./gateway-management";
+import { GatewayAuthorityError } from "./gateway-teardown-authority";
 
 function exitWithCode(code: number): never {
   throw new Error(`exit:${code}`);
@@ -281,6 +282,32 @@ describe("onboard command options", () => {
     expect(output).toContain("Invalid gateway management declaration");
     expect(output).toContain("unsupported gateway-management contract version");
     // No stack frames leaked into the user-facing output.
+    expect(output).not.toContain(".js:");
+    expect(output).not.toContain("    at ");
+  });
+
+  it("reports a gateway authority refusal at the sandbox recreate boundary (#8103)", async () => {
+    const errors: string[] = [];
+    await expect(
+      runOnboardCommand({
+        flags: { "recreate-sandbox": true },
+        env: {},
+        runOnboard: async () => {
+          throw new GatewayAuthorityError(
+            "Gateway lifecycle authority changed since onboarding (packaged-service -> standalone).",
+          );
+        },
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    const output = errors.join("\n");
+    expect(output).toContain(
+      "Refusing sandbox recreate because the gateway lifecycle authority could not be revalidated.",
+    );
+    expect(output).toContain("packaged-service -> standalone");
+    expect(output).toContain("Re-run onboarding to bind the current gateway authority");
     expect(output).not.toContain(".js:");
     expect(output).not.toContain("    at ");
   });
