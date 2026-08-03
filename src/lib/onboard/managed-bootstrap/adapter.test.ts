@@ -909,13 +909,16 @@ describe("managed bootstrap adapter contract", () => {
   });
 
   it.each([
+    "BASHOPTS=extdebug",
     "BASH_ENV=/sandbox/attacker",
     "ENV=/sandbox/attacker",
-    "LD_PRELOAD=/sandbox/attacker.so",
     "LD_AUDIT=/sandbox/attacker.so",
     "LD_LIBRARY_PATH=/sandbox/lib",
-    "SHELLOPTS=xtrace",
+    "LD_PRELOAD=/sandbox/attacker.so",
+    "NODE_OPTIONS=--require=/sandbox/attacker.cjs",
+    "NODE_PATH=/sandbox/attacker-modules",
     "PS4=$(touch /sandbox/bypass)",
+    "SHELLOPTS=xtrace",
     "BASH_FUNC_attacker%%=() { touch /sandbox/bypass; }",
   ])("rejects a process-control assignment before rendering the held command: %s", (assignment) => {
     const request = requestFor("hermes");
