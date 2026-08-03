@@ -60,7 +60,8 @@ const job = workflow.jobs.approve;
 const actionStep = job.steps?.find(
   (step) => step.name === "Approve exact-head maintainer workflow runs",
 );
-const script = actionStep?.with?.script;
+const rawScript = actionStep?.with?.script;
+const script = typeof rawScript === "string" ? rawScript : undefined;
 
 function actionRequiredRun(id: number, overrides: Record<string, unknown> = {}) {
   return {
@@ -100,7 +101,7 @@ function createHarness(options: HarnessOptions = {}) {
   });
   const abortSignal = { timeout: abortSignalTimeout };
 
-  const getPullRequest = vi.fn(async (input: ApiRequestInput = {}) => {
+  const getPullRequest = vi.fn(async (input: ApiRequestInput) => {
     const hungRequest =
       hungPullRequestAttempts > 0
         ? new Promise<void>((_resolve, reject) => {
@@ -153,11 +154,13 @@ function createHarness(options: HarnessOptions = {}) {
     workflowRunPoll += 1;
     return { data: { total_count: runs.length, workflow_runs: runs } };
   });
-  const approveWorkflowRun = vi.fn(async () => {
-    const failure = approvalErrors.shift();
-    if (failure) throw failure;
-    return { status: 201 };
-  });
+  const approveWorkflowRun = vi.fn(
+    async (_input: ApiRequestInput & { owner: string; repo: string; run_id: number }) => {
+      const failure = approvalErrors.shift();
+      if (failure) throw failure;
+      return { status: 201 };
+    },
+  );
   const getWorkflowRun = vi.fn(async ({ run_id: runId }: { run_id: number }) => {
     const failure = workflowRunGetErrors.shift();
     await (failure ? Promise.reject(failure) : Promise.resolve());
