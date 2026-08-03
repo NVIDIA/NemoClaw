@@ -14,10 +14,17 @@ import { getOllamaContextWindowFloorForAgent } from "../../../inference/ollama-r
 import type { InferenceEndpointSource } from "../../../inference/selection";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
-import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
 import { checkpointSandboxIdentityMatches } from "../../checkpoint-replay";
+import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
 import type { RepairLocalInferenceSystemdOverrideOptions } from "../../local-inference-topology";
-import { describeIgnoredReasoningEnv } from "../../reasoning-mode";
+import {
+  describeIgnoredReasoningEffortEnv,
+  describeIgnoredReasoningEnv,
+  REASONING_EFFORT_ENV,
+  type ReasoningEffort,
+  type ReasoningEffortRequest,
+  resolveReasoningEffortRequest,
+} from "../../reasoning-mode";
 import type {
   createProviderRecoveryReceiptLedger,
   ProviderRecoveryReceipt,
@@ -71,6 +78,7 @@ export interface ProviderSelectionResult {
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: string | null;
+  compatibleEndpointReasoningEffort: string | null;
   nimContainer: string | null;
   allowToolsIncompatible?: boolean;
   skipHostInferenceSmoke?: boolean;
@@ -111,6 +119,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     hermesToolGateways: string[];
     preferredInferenceApi: string | null;
     compatibleEndpointReasoning: string | null;
+    compatibleEndpointReasoningEffort: string | null;
     nimContainer: string | null;
     webSearchConfig: WebSearchConfig | null;
   };
@@ -189,6 +198,12 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     hydrateCredentialEnv(credentialEnv: string | null): string | null | undefined;
     configureCompatibleEndpointReasoning(storedValue?: string | null): Promise<"true" | "false">;
     clearCompatibleEndpointReasoning(): null;
+    configureCompatibleEndpointReasoningEffort(
+      storedValue?: unknown,
+      env?: NodeJS.ProcessEnv,
+      allowRequestFallback?: boolean,
+    ): Promise<ReasoningEffort | null>;
+    clearCompatibleEndpointReasoningEffort(): null;
     repairLocalInferenceSystemdOverrideOrExit(
       options: RepairLocalInferenceSystemdOverrideOptions,
     ): void;
@@ -257,6 +272,7 @@ export interface ProviderInferenceStateResult {
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: string | null;
+  compatibleEndpointReasoningEffort: string | null;
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
   session: Session | null;
@@ -327,6 +343,70 @@ function shouldRefreshCompatibleEndpointRouteForMessaging(
   );
 }
 
+function assertOnboardReasoningEffortRoute(
+  request: ReasoningEffortRequest,
+  provider: string | null,
+  inferenceApi: string | null,
+): void {
+  if (!request.explicit) return;
+  if (provider !== "compatible-endpoint") {
+    throw new Error(`${REASONING_EFFORT_ENV} applies only to the compatible-endpoint provider.`);
+  }
+  if (inferenceApi !== "openai-completions") {
+    throw new Error(
+      `${REASONING_EFFORT_ENV} applies only to compatible-endpoint routes using openai-completions.`,
+    );
+  }
+}
+
+interface CompatibleEndpointReasoningReplayDeps {
+  cliName(): string;
+  log(message?: string): void;
+  configureCompatibleEndpointReasoning(storedValue?: string | null): Promise<"true" | "false">;
+  configureCompatibleEndpointReasoningEffort(
+    storedValue?: unknown,
+    env?: NodeJS.ProcessEnv,
+    allowRequestFallback?: boolean,
+  ): Promise<ReasoningEffort | null>;
+}
+
+// A recovered selection that reuses the registered gateway credential skips the
+// custom-endpoint validation, and that validation is where a compatible endpoint
+// configures its reasoning mode and effort. Replay the recorded configuration for
+// the same route — including the process env the sandbox image patch reads — so a
+// rebuild recreate cannot silently replace it with no reasoning configuration
+// (#7940). Report before configuring, like the resumed-selection path: the
+// recorded value wins over an ambient one, and #7462 requires that replay to name
+// the recorded value instead of silently discarding the exported variable. A
+// rebuild recreate seeds the env from the same recorded configuration, so it stays
+// silent.
+async function replayRecoveredCompatibleEndpointReasoning(
+  deps: CompatibleEndpointReasoningReplayDeps,
+  recorded: { reasoning: string | null; effort: string | null },
+  env: NodeJS.ProcessEnv,
+): Promise<{ reasoning: "true" | "false"; effort: ReasoningEffort | null }> {
+  const ignoredReasoning = describeIgnoredReasoningEnv(recorded.reasoning, deps.cliName(), env);
+  if (ignoredReasoning) deps.log(ignoredReasoning);
+  const ignoredEffort = describeIgnoredReasoningEffortEnv(recorded.effort, deps.cliName(), env);
+  if (ignoredEffort) deps.log(ignoredEffort);
+  return {
+    reasoning: await deps.configureCompatibleEndpointReasoning(recorded.reasoning),
+    effort: await deps.configureCompatibleEndpointReasoningEffort(recorded.effort, env, false),
+  };
+}
+
+function provenResumeSandboxName(
+  session: Session | null,
+  sandboxName: string | null,
+  effectiveResume: boolean,
+  authoritativeResumeConfig: boolean,
+): string | null {
+  if (!effectiveResume || !sandboxName) return null;
+  return authoritativeResumeConfig || checkpointSandboxIdentityMatches(session, sandboxName)
+    ? sandboxName
+    : null;
+}
+
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
   gatewayName,
   resume,
@@ -346,6 +426,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   constants,
   deps,
 }: ProviderInferenceStateOptions<Gpu, Agent, Host>): Promise<ProviderInferenceStateResult> {
+  // Parse the ambient request before provider selection, recovery, or route
+  // mutation. Every provider must reject malformed input even though only a
+  // compatible OpenAI Completions route can apply it.
+  const reasoningEffortRequest = resolveReasoningEffortRequest(null, env);
   let model = initial.model;
   let provider = initial.provider;
   let endpointUrl = initial.endpointUrl;
@@ -368,6 +452,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     initial.preferredInferenceApi,
   );
   let compatibleEndpointReasoning = initial.compatibleEndpointReasoning;
+  let compatibleEndpointReasoningEffort = initial.compatibleEndpointReasoningEffort;
   let nimContainer = initial.nimContainer;
   const webSearchConfig = initial.webSearchConfig;
   let forceProviderSelection = initialForceProviderSelection;
@@ -385,6 +470,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let inferenceCapabilityCache: OnboardInferenceCapabilityCache | undefined;
   let vllmModelIdentity: string | undefined;
   const effectiveResume = resume && !fresh;
+  const reusableResumeSandboxName = provenResumeSandboxName(
+    session,
+    sandboxName,
+    effectiveResume,
+    authoritativeResumeConfig,
+  );
   const stateResults: OnboardStateTransitionResult[] = [];
   const retryStateResults: OnboardStateTransitionResult[] = [];
 
@@ -411,6 +502,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       typeof model === "string";
     let shouldRecordProviderSelection = false;
     if (resumeProviderSelection) {
+      assertOnboardReasoningEffortRoute(reasoningEffortRequest, provider, preferredInferenceApi);
       assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
         provider,
         model,
@@ -479,12 +571,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       }
       deps.skippedStepMessage("provider_selection", `${provider} / ${model}`);
       const selectedAgentName = (agent as { name?: string } | null)?.name;
-      if (
-        (!selectedAgentName || selectedAgentName === "openclaw") &&
-        sandboxName &&
-        checkpointSandboxIdentityMatches(session, sandboxName)
-      ) {
-        deps.log(`  [resume] Reusing sandbox name: ${sandboxName}.`);
+      if ((!selectedAgentName || selectedAgentName === "openclaw") && reusableResumeSandboxName) {
+        deps.log(`  [resume] Reusing sandbox name: ${reusableResumeSandboxName}.`);
       }
       await deps.recordStateSkipped("provider_selection", {
         reason: "resume",
@@ -499,11 +587,23 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           deps.cliName(),
         );
         if (ignoredReasoning) deps.log(ignoredReasoning);
+        const ignoredReasoningEffort = describeIgnoredReasoningEffortEnv(
+          compatibleEndpointReasoningEffort,
+          deps.cliName(),
+          env,
+        );
+        if (ignoredReasoningEffort) deps.log(ignoredReasoningEffort);
         compatibleEndpointReasoning = await deps.configureCompatibleEndpointReasoning(
           compatibleEndpointReasoning,
         );
+        compatibleEndpointReasoningEffort = await deps.configureCompatibleEndpointReasoningEffort(
+          compatibleEndpointReasoningEffort,
+          env,
+          false,
+        );
       } else {
         compatibleEndpointReasoning = deps.clearCompatibleEndpointReasoning();
+        compatibleEndpointReasoningEffort = deps.clearCompatibleEndpointReasoningEffort();
       }
       const localInferenceRepairOptions = {
         provider,
@@ -577,6 +677,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       hermesToolGateways = selection.hermesToolGateways;
       preferredInferenceApi = selection.preferredInferenceApi;
       compatibleEndpointReasoning = selection.compatibleEndpointReasoning;
+      compatibleEndpointReasoningEffort = selection.compatibleEndpointReasoningEffort;
       nimContainer = selection.nimContainer;
       allowToolsIncompatible = selection.allowToolsIncompatible === true;
       skipHostInferenceSmoke = selection.skipHostInferenceSmoke === true;
@@ -592,6 +693,22 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       inferenceCapabilityCache = selection.inferenceCapabilityCache;
       vllmModelIdentity = selection.vllmModelIdentity;
       shouldRecordProviderSelection = true;
+      if (
+        reuseGatewayCredentialWithoutLocalKey &&
+        provider === "compatible-endpoint" &&
+        initial.provider === "compatible-endpoint"
+      ) {
+        const replayed = await replayRecoveredCompatibleEndpointReasoning(
+          deps,
+          {
+            reasoning: compatibleEndpointReasoning ?? initial.compatibleEndpointReasoning,
+            effort: compatibleEndpointReasoningEffort ?? initial.compatibleEndpointReasoningEffort,
+          },
+          env,
+        );
+        compatibleEndpointReasoning = replayed.reasoning;
+        compatibleEndpointReasoningEffort = replayed.effort;
+      }
     }
 
     // Persist a repaired API family only together with a successful inference
@@ -610,6 +727,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       preferredInferenceApi,
     );
     if (!resumeProviderSelection) {
+      assertOnboardReasoningEffortRoute(reasoningEffortRequest, provider, preferredInferenceApi);
       assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
         provider,
         model,
@@ -638,6 +756,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             ? initial.preferredInferenceApi
             : preferredInferenceApi,
           compatibleEndpointReasoning,
+          compatibleEndpointReasoningEffort,
           nimContainer,
           stationExpressModelIdentity: vllmModelIdentity,
         }),
@@ -716,6 +835,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             model,
             hermesAuthMethod,
             compatibleEndpointReasoning,
+            compatibleEndpointReasoningEffort,
             nimContainer,
             hermesToolGateways,
           }),
@@ -725,7 +845,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       const sandboxStepComplete = session?.steps?.sandbox?.status === "complete";
       const resumeReservationName =
         authoritativeResumeConfig || !sandboxStepComplete
-          ? (sandboxName ?? (await deps.promptValidatedSandboxName(agent)))
+          ? (reusableResumeSandboxName ?? (await deps.promptValidatedSandboxName(agent)))
           : null;
       if (resumeReservationName) sandboxName = resumeReservationName;
       const routedInferenceProvider = deps.isRoutedInferenceProvider(provider);
@@ -829,6 +949,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           model,
           hermesAuthMethod,
           compatibleEndpointReasoning,
+          compatibleEndpointReasoningEffort,
           nimContainer,
           hermesToolGateways,
         }),
@@ -922,6 +1043,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         model,
         hermesAuthMethod,
         compatibleEndpointReasoning,
+        compatibleEndpointReasoningEffort,
         nimContainer,
         hermesToolGateways,
         // The forced #6294/#6289 heal succeeded: the gateway registration now
@@ -949,6 +1071,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     hermesToolGateways,
     preferredInferenceApi,
     compatibleEndpointReasoning,
+    compatibleEndpointReasoningEffort,
     nimContainer,
     webSearchConfig,
     session,

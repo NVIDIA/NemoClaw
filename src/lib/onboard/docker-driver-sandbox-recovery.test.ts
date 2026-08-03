@@ -22,8 +22,24 @@ function fakeRename(
   return () => ({ status });
 }
 
-function fakeCapture(output: string): (args: readonly string[]) => string {
-  return () => output;
+function fakeCapture(
+  output: string,
+  inspectOutputs: string[] = ["running\thealthy"],
+  onInspect: (opts?: Record<string, unknown>) => void = () => undefined,
+): (args: readonly string[], opts?: Record<string, unknown>) => string {
+  let inspectIndex = 0;
+  return (args, opts) => {
+    switch (args[0]) {
+      case "inspect": {
+        onInspect(opts);
+        const index = Math.min(inspectIndex, inspectOutputs.length - 1);
+        inspectIndex += 1;
+        return inspectOutputs[index] ?? "";
+      }
+      default:
+        return output;
+    }
+  };
 }
 
 describe("findLabeledSandboxContainers", () => {
@@ -57,11 +73,16 @@ describe("findLabeledSandboxContainers", () => {
 });
 
 describe("recoverDockerDriverSandbox — running original (no-op)", () => {
-  it("reports recovered with via=started-running-original", () => {
+  it("waits for an already-running container to become healthy without starting it", () => {
     const start = vi.fn(fakeStart(0));
+    const sleep = vi.fn();
     const result = recoverDockerDriverSandbox("e2e-x", {
-      dockerCapture: fakeCapture("openshell-e2e-x\tUp 5 minutes\n"),
+      dockerCapture: fakeCapture("openshell-e2e-x\tUp 5 seconds\n", [
+        "running\tstarting",
+        "running\thealthy",
+      ]),
       dockerStart: start,
+      sleep,
     });
     expect(result).toEqual({
       recovered: true,
@@ -69,6 +90,7 @@ describe("recoverDockerDriverSandbox — running original (no-op)", () => {
       containerName: "openshell-e2e-x",
     });
     expect(start).not.toHaveBeenCalled();
+    expect(sleep).toHaveBeenCalledOnce();
   });
 });
 
@@ -106,6 +128,21 @@ describe("recoverDockerDriverSandbox — paused original (unpause)", () => {
     expect(result.detail).toContain("docker unpause");
     expect(unpause).toHaveBeenCalledTimes(1);
   });
+
+  it("does not report recovery when an unpaused container reaches a terminal state", () => {
+    const result = recoverDockerDriverSandbox("e2e-x", {
+      dockerCapture: fakeCapture("openshell-e2e-x\tUp 3 hours (Paused)\n", ["dead\tunhealthy"]),
+      dockerUnpause: fakeStart(0),
+      sleep: vi.fn(),
+    });
+
+    expect(result).toMatchObject({
+      recovered: false,
+      via: null,
+      containerName: "openshell-e2e-x",
+      detail: expect.stringContaining("runtime=dead, health=unhealthy"),
+    });
+  });
 });
 
 describe("recoverDockerDriverSandbox — stopped original (start)", () => {
@@ -135,6 +172,123 @@ describe("recoverDockerDriverSandbox — stopped original (start)", () => {
     expect(result.recovered).toBe(false);
     expect(result.via).toBeNull();
     expect(result.detail).toMatch(/docker start openshell-e2e-x failed.*125/);
+  });
+
+  it("waits for Docker health to become ready before reporting recovery", () => {
+    const sleep = vi.fn();
+    const result = recoverDockerDriverSandbox("e2e-x", {
+      dockerCapture: fakeCapture("openshell-e2e-x\tExited (137) 30 seconds ago\n", [
+        "running\tstarting",
+        "running\tstarting",
+        "running\thealthy",
+      ]),
+      dockerStart: fakeStart(0),
+      sleep,
+    });
+
+    expect(result).toEqual({
+      recovered: true,
+      via: "started-stopped-original",
+      containerName: "openshell-e2e-x",
+    });
+    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(1_000);
+  });
+
+  it("accepts a running container whose image has no Docker health check", () => {
+    const sleep = vi.fn();
+    const result = recoverDockerDriverSandbox("e2e-x", {
+      dockerCapture: fakeCapture("openshell-e2e-x\tExited (137) 30 seconds ago\n", [
+        "running\tnone",
+      ]),
+      dockerStart: fakeStart(0),
+      sleep,
+    });
+
+    expect(result).toEqual({
+      recovered: true,
+      via: "started-stopped-original",
+      containerName: "openshell-e2e-x",
+    });
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "dead",
+    "exited",
+    "removing",
+  ])("does not report recovery when the restarted container reaches terminal state %s", (runtimeState) => {
+    const sleep = vi.fn();
+    const result = recoverDockerDriverSandbox("e2e-x", {
+      dockerCapture: fakeCapture("openshell-e2e-x\tExited (137) 30 seconds ago\n", [
+        `${runtimeState}\tnone`,
+      ]),
+      dockerStart: fakeStart(0),
+      sleep,
+    });
+
+    expect(result).toEqual({
+      recovered: false,
+      via: null,
+      containerName: "openshell-e2e-x",
+      detail:
+        "docker container openshell-e2e-x did not become ready after recovery " +
+        `(runtime=${runtimeState}, health=none)`,
+    });
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("enforces the readiness deadline with an advancing clock", () => {
+    let currentMs = 0;
+    const inspectStartTimes: number[] = [];
+    const inspectTimeouts: number[] = [];
+    const capture = fakeCapture(
+      "openshell-e2e-x\tExited (137) 30 seconds ago\n",
+      ["running\tstarting"],
+      (opts) => {
+        inspectStartTimes.push(currentMs);
+        const timeout = Number(opts?.timeout);
+        inspectTimeouts.push(timeout);
+        currentMs += Math.min(4_900, timeout);
+      },
+    );
+    const sleep = vi.fn((ms: number) => {
+      currentMs += ms;
+    });
+    const result = recoverDockerDriverSandbox("e2e-x", {
+      dockerCapture: capture,
+      dockerStart: fakeStart(0),
+      now: () => currentMs,
+      sleep,
+    });
+
+    expect(result.recovered).toBe(false);
+    expect(result.via).toBeNull();
+    expect(result.detail).toContain("runtime=running, health=starting");
+    expect(currentMs).toBe(90_000);
+    expect(inspectStartTimes.every((startedAt) => startedAt < 90_000)).toBe(true);
+    expect(inspectTimeouts.at(-1)).toBe(1_500);
+  });
+
+  it("fails closed when Docker inspect returns malformed readiness output", () => {
+    let currentMs = 0;
+    const result = recoverDockerDriverSandbox("e2e-x", {
+      dockerCapture: fakeCapture("openshell-e2e-x\tExited (137) 30 seconds ago\n", [
+        "not-a-docker-state",
+      ]),
+      dockerStart: fakeStart(0),
+      now: () => currentMs,
+      sleep: (ms) => {
+        currentMs += ms;
+      },
+    });
+
+    expect(result).toMatchObject({
+      recovered: false,
+      via: null,
+      detail: expect.stringContaining("runtime=not-a-docker-state"),
+    });
+    expect(currentMs).toBe(90_000);
   });
 });
 
@@ -201,6 +355,25 @@ describe("recoverDockerDriverSandbox — backup-only (rename + start)", () => {
     });
     expect(result.recovered).toBe(false);
     expect(result.detail).toMatch(/after backup rename failed.*1/);
+  });
+
+  it("does not report a renamed backup recovered before Docker readiness", () => {
+    const result = recoverDockerDriverSandbox("e2e-x", {
+      dockerCapture: fakeCapture("openshell-e2e-x-nemoclaw-gpu-backup-1717280000000\tExited\n", [
+        "running\tstarting",
+        "removing\tnone",
+      ]),
+      dockerRename: fakeRename(0),
+      dockerStart: fakeStart(0),
+      sleep: vi.fn(),
+    });
+
+    expect(result).toMatchObject({
+      recovered: false,
+      via: null,
+      containerName: "openshell-e2e-x",
+      detail: expect.stringContaining("runtime=removing, health=none"),
+    });
   });
 });
 

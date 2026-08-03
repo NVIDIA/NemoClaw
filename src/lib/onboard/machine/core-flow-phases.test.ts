@@ -802,7 +802,12 @@ describe("core onboard flow phases", () => {
       recordRepairEvent: repairRecorder(repairEvents),
     });
 
-    expect(repairEvents).toHaveLength(4);
+    expect(repairEvents).toEqual([
+      "state.repair.started:provider_selection",
+      "state.repair.completed:provider_selection",
+      "state.repair.started:sandbox",
+      "state.repair.completed:sandbox",
+    ]);
     expect(result.session.machine.state).toBe(state);
     expect(result.context.sandboxName).toBe("created-sandbox");
   });

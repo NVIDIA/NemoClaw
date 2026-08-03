@@ -8,11 +8,13 @@ import {
   OBSERVABILITY_POLICY_BINDING,
 } from "../../onboard/observability-policy-presets";
 import * as policies from "../../policy";
+import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
 import { MCP_BRIDGE_POLICY_SOURCE } from "./mcp-bridge-contracts";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildLog } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import * as snapshotRestore from "./snapshot/restore-authority";
 
 export interface RebuildRestorePhaseInput {
   sandboxName: string;
@@ -191,12 +193,15 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
     console.log("");
     console.log("  Restoring workspace state...");
     log(`Restoring from: ${backupManifest.backupPath} into sandbox: ${sandboxName}`);
-    const restore = sandboxState.restoreRecreatedSandboxState(
+    const restore = snapshotRestore.restoreRecreatedSandboxStateWithManagedAuthority(
       sandboxName,
-      backupManifest.backupPath,
+      backupManifest,
       {
         targetAgentType,
         ...(targetImageIsCustom ? { allowCustomImageWholeStateFileRestore: true } : {}),
+      },
+      {
+        getSandbox: (name) => loadRegistry().sandboxes[name] ?? null,
       },
     );
     log(

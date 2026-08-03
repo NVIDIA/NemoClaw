@@ -21,4 +21,36 @@ describe("toSessionUpdates", () => {
       model: "nemotron-ultra",
     });
   });
+
+  it("carries the recorded compatible-endpoint reasoning effort (#7940)", () => {
+    const updates = toSessionUpdates({
+      provider: "compatible-endpoint",
+      model: "mock/deepseek-compatible",
+      compatibleEndpointReasoning: "true",
+      compatibleEndpointReasoningEffort: "high",
+    });
+
+    expect(updates.compatibleEndpointReasoningEffort).toBe("high");
+    expect(filterSafeUpdates(updates)).toMatchObject({
+      compatibleEndpointReasoning: "true",
+      compatibleEndpointReasoningEffort: "high",
+    });
+  });
+
+  it.each([
+    { label: "an explicit clear", value: null, expected: null },
+    { label: "an unrecognized effort", value: "extreme", expected: null },
+  ])("clears the recorded reasoning effort for $label", ({ value, expected }) => {
+    expect(
+      toSessionUpdates({ compatibleEndpointReasoningEffort: value })
+        .compatibleEndpointReasoningEffort,
+    ).toBe(expected);
+  });
+
+  it("leaves the recorded reasoning effort unchanged when the caller omits it", () => {
+    const updates = toSessionUpdates({ provider: "compatible-endpoint" });
+
+    expect("compatibleEndpointReasoningEffort" in updates).toBe(false);
+    expect(filterSafeUpdates(updates)).toEqual({ provider: "compatible-endpoint" });
+  });
 });

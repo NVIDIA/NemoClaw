@@ -14,7 +14,25 @@ function indexOfRequired(haystack: string, needle: string): number {
   return index;
 }
 
+function hasBuildKitRunMount(dockerfile: string): boolean {
+  return dockerfile
+    .replace(/\\\r?\n[ \t]*/gu, " ")
+    .split(/\r?\n/u)
+    .some((instruction) => {
+      const runOptionPrefix = instruction.match(/^\s*RUN((?:\s+--\S+)*)/iu)?.[1] ?? "";
+      return /(?:^|\s)--mount(?:=|$)/iu.test(runOptionPrefix);
+    });
+}
+
 describe("OpenClaw final image layout", () => {
+  it.each([
+    ["same-line", "RUN --network=none --mount=type=cache,target=/tmp true", true],
+    ["line-continuation", "RUN --security=sandbox \\\n  --mount=type=secret,id=token true", true],
+    ["shell-command argument", "RUN printf '%s' --mount=type=cache", false],
+  ] as const)("recognizes BuildKit mounts only in the RUN option prefix for %s form (#7611)", (_form, dockerfile, expected) => {
+    expect(hasBuildKitRunMount(dockerfile)).toBe(expected);
+  });
+
   // source-shape-contract: compatibility -- Legacy-compatible grouped payload copies preserve cold-onboard export work while retaining intentional cache and scan boundaries
   it("uses grouped legacy-compatible payload layers at their cache boundaries (#7611)", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
@@ -22,10 +40,69 @@ describe("OpenClaw final image layout", () => {
     const finalStageIndex = stages.findIndex((stage) => stage.startsWith("FROM ${BASE_IMAGE}"));
     const finalStage = stages[finalStageIndex] ?? "";
     const payloads = [
-      { stage: "openclaw-dependency-payload", copies: 12 },
-      { stage: "openclaw-plugin-payload", copies: 3 },
-      { stage: "openclaw-patch-payload", copies: 8 },
-      { stage: "openclaw-runtime-payload", copies: 20 },
+      {
+        stage: "openclaw-dependency-payload",
+        copies: [
+          "COPY agents/openclaw/openclaw-runtime/package.json /usr/local/lib/nemoclaw/openclaw-runtime/package.json",
+          "COPY agents/openclaw/openclaw-runtime/package-lock.json /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json",
+          "COPY agents/openclaw/mcporter-runtime/package.json /usr/local/lib/nemoclaw/mcporter-runtime/package.json",
+          "COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json",
+          "COPY agents/openclaw/wechat-runtime/package.json /usr/local/lib/nemoclaw/wechat-runtime/package.json",
+          "COPY agents/openclaw/wechat-runtime/package-lock.json /usr/local/lib/nemoclaw/wechat-runtime/package-lock.json",
+          "COPY ci/npm-audit-exceptions.json /scripts/npm-audit-exceptions.json",
+          "COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts",
+          "COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts",
+          "COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts",
+          "COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts",
+          "COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts",
+        ],
+      },
+      {
+        stage: "openclaw-plugin-payload",
+        copies: [
+          "COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/",
+          "COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/",
+          "COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/",
+        ],
+      },
+      {
+        stage: "openclaw-patch-payload",
+        copies: [
+          "COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts",
+          "COPY scripts/patch-openclaw-chat-send.mts /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts",
+          "COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts",
+          "COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts",
+          "COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts",
+          "COPY scripts/extract-semver.sh /usr/local/lib/nemoclaw/extract-semver",
+          "COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts",
+          "COPY scripts/verify-wechat-runtime-lock.mts /usr/local/lib/nemoclaw/verify-wechat-runtime-lock.mts",
+        ],
+      },
+      {
+        stage: "openclaw-runtime-payload",
+        copies: [
+          "COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh",
+          "COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh",
+          "COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh",
+          "COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py",
+          "COPY scripts/lib/clean_runtime_shell_env_shim.py /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py",
+          "COPY scripts/lib/normalize_mutable_config_perms.py /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py",
+          "COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py",
+          "COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py",
+          "COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py",
+          "COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start",
+          "COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control",
+          "COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/",
+          "COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/",
+          "COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp",
+          "COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts",
+          "COPY scripts/validate-openclaw-tool-search.mts /scripts/validate-openclaw-tool-search.mts",
+          "COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts",
+          "COPY src/lib/messaging/ /src/lib/messaging/",
+          "COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/",
+          "COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/",
+        ],
+      },
     ] as const;
     const dependencyCopy = "COPY --from=openclaw-dependency-payload / /";
     const pluginCopy = "COPY --from=openclaw-plugin-payload / /";
@@ -35,10 +112,10 @@ describe("OpenClaw final image layout", () => {
       "COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts";
 
     expect(finalStageIndex).toBe(stages.length - 1);
-    expect(dockerfile).not.toContain("RUN --mount");
+    expect(hasBuildKitRunMount(dockerfile)).toBe(false);
     for (const payload of payloads) {
       const stage = stages.find((entry) => entry.startsWith(`FROM scratch AS ${payload.stage}`));
-      expect(stage?.match(/^COPY\b.*$/gmu)).toHaveLength(payload.copies);
+      expect(stage?.match(/^COPY\b.*$/gmu)).toEqual(payload.copies);
       expect(finalStage).toContain(`COPY --from=${payload.stage} / /`);
     }
     expect(finalStage.match(/^COPY\b.*$/gmu)).toEqual([

@@ -19,13 +19,14 @@ import {
   setupFixture,
 } from "./helpers";
 
-function findApprovalExec(sandboxExecCalls: string[][]): string[] | undefined {
-  // OpenShell carries the approval pass as one multiline command argument.
-  return sandboxExecCalls.find((call) => {
-    if (!call.includes("--")) return false;
-    const inner = call[call.length - 1] || "";
-    return inner.includes("openclaw") && inner.includes("devices") && inner.includes("approve");
-  });
+function findApprovalExec(state: {
+  sandboxExecCalls: string[][];
+  sandboxExecInputs: string[];
+}): string[] | undefined {
+  const approvalIndex = state.sandboxExecInputs.findIndex(
+    (input) => input.includes("openclaw") && input.includes("devices") && input.includes("approve"),
+  );
+  return state.sandboxExecCalls[approvalIndex];
 }
 
 function findGatewayControlExec(dockerCalls: string[][]): string[] | undefined {
@@ -232,11 +233,7 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
       // Approval-pass exec was attempted (and the fake openshell exited
       // non-zero for it, per the hook above).
-      const approvalExec = (state.sandboxExecCalls as string[][]).find((call) => {
-        if (!call.includes("--")) return false;
-        const inner = call[call.length - 1] || "";
-        return inner.includes("openclaw") && inner.includes("devices") && inner.includes("approve");
-      });
+      const approvalExec = findApprovalExec(state);
       expect(approvalExec).toBeDefined();
       // Despite the approval-pass failure, SSH handoff still happens.
       expect(state.sandboxConnectCalls).toContainEqual(["sandbox", "connect", sandboxName]);
@@ -291,7 +288,7 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
       expect(controlExec).toContain("PYTHONNOUSERSITE=1");
       expect(controlExec?.[userIndex + 5]).toMatch(/^[0-9a-f]{64}$/);
       expect(state.gatewayRunning).toBe(true);
-      const approvalExec = findApprovalExec(state.sandboxExecCalls as string[][]);
+      const approvalExec = findApprovalExec(state);
       expect(approvalExec).toBeDefined();
       expect(approvalExec).toContain("sandbox");
       expect(approvalExec).toContain("exec");
@@ -327,7 +324,7 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-      const approvalExec = findApprovalExec(state.sandboxExecCalls as string[][]);
+      const approvalExec = findApprovalExec(state);
       expect(approvalExec).toBeDefined();
     },
   );
@@ -358,7 +355,7 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
       expect(result.status).toBe(1);
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-      const approvalExec = findApprovalExec(state.sandboxExecCalls as string[][]);
+      const approvalExec = findApprovalExec(state);
       expect(approvalExec).toBeUndefined();
       // And it never opens an SSH session on the failure path.
       expect(state.sandboxConnectCalls).toEqual([]);

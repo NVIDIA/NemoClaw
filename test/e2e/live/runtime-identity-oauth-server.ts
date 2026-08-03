@@ -81,6 +81,25 @@ function generateEphemeralTlsMaterial(): {
   };
 }
 
+function classifyBearer(
+  authorization: string | undefined,
+  accessTokens: readonly string[],
+  currentAccessToken: string | undefined,
+): Pick<RuntimeIdentityResourceRequest, "accessTokenVersion" | "auth"> {
+  const token =
+    typeof authorization === "string" && authorization.startsWith("Bearer ")
+      ? authorization.slice("Bearer ".length)
+      : undefined;
+  const rawAccessTokenVersion = token
+    ? accessTokens.findIndex((candidate) => candidate === token) + 1
+    : null;
+  return {
+    auth: token === currentAccessToken ? "ok" : token ? "invalid" : "missing",
+    accessTokenVersion:
+      rawAccessTokenVersion && rawAccessTokenVersion > 0 ? rawAccessTokenVersion : null,
+  };
+}
+
 /**
  * Standards-shaped OAuth refresh issuer plus protected resource.
  *
@@ -93,6 +112,8 @@ export async function startRuntimeIdentityOAuthServer(options: {
   clientId: string;
   clientSecret: string;
   initialRefreshToken: string;
+  resourcePath?: string;
+  tokenPath?: string;
 }): Promise<RuntimeIdentityOAuthServer> {
   const tls = generateEphemeralTlsMaterial();
   const tokenRequests: RuntimeIdentityTokenRequest[] = [];
@@ -109,6 +130,8 @@ export async function startRuntimeIdentityOAuthServer(options: {
   let currentRefreshToken = refreshTokens[0];
   let currentAccessToken: string | undefined;
   let issueCount = 0;
+  const resourcePath = options.resourcePath ?? "/resource";
+  const tokenPath = options.tokenPath ?? "/oauth/token";
 
   const server = https.createServer({ cert: tls.cert, key: tls.key }, async (req, res) => {
     const requestPath = new URL(req.url ?? "/", "https://runtime-identity.local").pathname;
@@ -116,12 +139,12 @@ export async function startRuntimeIdentityOAuthServer(options: {
     // The public-tunnel readiness probe must not count as protected-resource
     // evidence and intentionally receives the same unauthenticated response a
     // real resource would return.
-    if (req.method === "HEAD" && requestPath === "/resource") {
+    if (req.method === "HEAD" && requestPath === resourcePath) {
       writeJsonResponse(res, 401, { error: "missing bearer credential" });
       return;
     }
 
-    if (req.method === "POST" && requestPath === "/oauth/token") {
+    if (req.method === "POST" && requestPath === tokenPath) {
       const body = new URLSearchParams(await readRequestBody(req));
       const grantTypeOk = body.get("grant_type") === "refresh_token";
       const clientIdOk = body.get("client_id") === options.clientId;
@@ -155,23 +178,17 @@ export async function startRuntimeIdentityOAuthServer(options: {
       return;
     }
 
-    if (req.method === "GET" && requestPath === "/resource") {
-      const authorization = req.headers.authorization;
-      const token =
-        typeof authorization === "string" && authorization.startsWith("Bearer ")
-          ? authorization.slice("Bearer ".length)
-          : undefined;
-      const accessTokenVersion = token
-        ? accessTokens.findIndex((candidate) => candidate === token) + 1
-        : null;
-      const auth: RuntimeIdentityResourceRequest["auth"] =
-        token === currentAccessToken ? "ok" : token ? "invalid" : "missing";
+    if (req.method === "GET" && requestPath === resourcePath) {
+      const { accessTokenVersion, auth } = classifyBearer(
+        req.headers.authorization,
+        accessTokens,
+        currentAccessToken,
+      );
       resourceRequests.push({
         method: req.method,
         path: requestPath,
         auth,
-        accessTokenVersion:
-          accessTokenVersion && accessTokenVersion > 0 ? accessTokenVersion : null,
+        accessTokenVersion,
       });
       if (auth !== "ok") {
         writeJsonResponse(res, 401, { error: "invalid bearer credential" });
@@ -184,6 +201,17 @@ export async function startRuntimeIdentityOAuthServer(options: {
       return;
     }
 
+    const { accessTokenVersion, auth } = classifyBearer(
+      req.headers.authorization,
+      accessTokens,
+      currentAccessToken,
+    );
+    resourceRequests.push({
+      method: req.method ?? "UNKNOWN",
+      path: requestPath,
+      auth,
+      accessTokenVersion,
+    });
     writeJsonResponse(res, 404, { error: "not found" });
   });
 

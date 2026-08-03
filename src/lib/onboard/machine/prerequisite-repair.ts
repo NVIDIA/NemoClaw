@@ -113,11 +113,13 @@ export async function runOnboardPrerequisiteRepair<Context>(options: {
     });
     return { context: phaseResult.context, results, finalState };
   } catch (error) {
-    await options.recordRepairEvent("state.repair.failed", {
-      state: phase.state,
-      error: errorMessage(error),
-      metadata,
-    });
+    await options
+      .recordRepairEvent("state.repair.failed", {
+        state: phase.state,
+        error: errorMessage(error),
+        metadata,
+      })
+      .catch(() => undefined);
     throw error;
   }
 }

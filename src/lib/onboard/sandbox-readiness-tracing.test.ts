@@ -404,10 +404,18 @@ describe("getSandboxReadyErrorDebouncePolls env contract", () => {
 
   it("clamps to a minimum of 1 poll", () => {
     expect(getSandboxReadyErrorDebouncePolls({ [SANDBOX_READY_ERROR_DEBOUNCE_ENV]: "0" })).toBe(1);
-    expect(getSandboxReadyErrorDebouncePolls({ [SANDBOX_READY_ERROR_DEBOUNCE_ENV]: "-5" })).toBe(1);
     // envInt rounds 0.4 -> 0, then the clamp lifts it to 1.
     expect(getSandboxReadyErrorDebouncePolls({ [SANDBOX_READY_ERROR_DEBOUNCE_ENV]: "0.4" })).toBe(
       1,
+    );
+  });
+
+  it("falls back for a negative override instead of clamping it to the minimum", () => {
+    // A negative is invalid input, so it reaches the documented default the
+    // same way "abc" does above, rather than silently becoming the smallest
+    // legal debounce (#7881).
+    expect(getSandboxReadyErrorDebouncePolls({ [SANDBOX_READY_ERROR_DEBOUNCE_ENV]: "-5" })).toBe(
+      30,
     );
   });
 

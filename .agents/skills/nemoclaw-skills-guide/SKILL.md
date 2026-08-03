@@ -30,7 +30,7 @@ Covers routing human users' AI agents to the canonical NemoClaw Markdown documen
 For project maintainers.
 Covers the daily maintainer cadence, trusted E2E dispatch, workflow policy, documentation refactors, releases, review selection, comparison, triage, security review, and stale bug verification.
 
-### `nemoclaw-contributor-*` (5 skills)
+### `nemoclaw-contributor-*` (6 skills)
 
 For contributors to the NemoClaw codebase.
 Covers trusted checkout setup and readiness checks, dependency migration audits, creating pull
@@ -74,6 +74,7 @@ documentation updates, and onboarding new messaging channels.
 | `nemoclaw-contributor-onboard` | Set up, repair, or verify a trusted source checkout, with explicit opt-ins for host-visible CLI exposure, the pinned agent, and runtime onboarding. |
 | `nemoclaw-contributor-create-pr` | Create a PR with the NemoClaw template, required checks, DCO declaration, and verified commits. Then, monitor CI and automated reviews. |
 | `nemoclaw-contributor-update-dependencies` | Audit dependency upgrades release by release, trace upstream source and test changes into downstream contracts, resolve migration concerns, and verify immutable artifacts separately. |
+| `nemoclaw-contributor-update-hermes` | Audit and deliver Hermes upgrades across release identity, configuration, compatibility shims, state, packaging, base-image publication, and runtime evidence. |
 | `nemoclaw-contributor-onboard-messaging-channel` | Add or review a new messaging channel with manifest-first implementation, upstream source analysis, plugin install confirmation, reachability checks, policies, docs, and tests. |
 | `nemoclaw-contributor-update-docs` | Scan recent git commits, update user-facing documentation, and create the canonical `docs/changelog/YYYY-MM-DD.mdx` entry in the pre-tag release-note docs PR. |
 
@@ -90,7 +91,7 @@ Skills are cumulative. Each role includes the skills from the roles above it:
 | Role | Skills included | Count | Start with |
 |------|----------------|-------|------------|
 | User | `nemoclaw-user-*` | 1 | `nemoclaw-user-guide` |
-| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 6 | `nemoclaw-contributor-onboard` |
-| Maintainer | All skills | 21 | `nemoclaw-maintainer-morning` |
+| Contributor | `nemoclaw-user-*` + `nemoclaw-contributor-*` | 7 | `nemoclaw-contributor-onboard` |
+| Maintainer | All skills | 22 | `nemoclaw-maintainer-morning` |
 
 After identifying the role, present the applicable skills from the Skill Catalog above and recommend the starting skill.

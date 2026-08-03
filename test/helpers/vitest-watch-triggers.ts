@@ -47,6 +47,10 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)(?:Dockerfile|agents\/(?:hermes|langchain-deepagents-code)\/Dockerfile)$/,
+    testsToRun: runTests("src/lib/onboard/managed-startup-profile.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)agents\/hermes\/policy-additions\.yaml$/,
     testsToRun: runTests(
       "src/lib/onboard/initial-policy-real-policy.test.ts",
@@ -128,11 +132,17 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern:
-      /(?:^|\/)(?:\.github\/workflows\/platform-vitest-main\.yaml|ci\/platform-vitest-macos-requirements\.lock)$/,
+      /(?:^|\/)(?:\.github\/workflows\/(?:platform-vitest-main|wsl-e2e)\.yaml|tools\/wsl\/ci-helper\.ps1)$/,
+    testsToRun: runTests(
+      "test/platform-vitest-main-workflow.test.ts",
+      "test/wsl-ci-helper.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)ci\/platform-vitest-macos-requirements\.lock$/,
     testsToRun: runTests("test/platform-vitest-main-workflow.test.ts"),
   },
 ];
-
 export function resolveVitestWatchTests(file: string): string[] {
   const normalized = file.replaceAll("\\", "/");
   const tests = new Set<string>();

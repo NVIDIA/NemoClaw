@@ -204,6 +204,7 @@ describe("remote dashboard bind production lifecycle", () => {
           credentialEnv: null,
           preferredInferenceApi: null,
           compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
           nimContainer: null,
         },
         runtimeFields: {

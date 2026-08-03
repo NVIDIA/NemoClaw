@@ -1521,6 +1521,7 @@ NODE
 # backup flow can run before any version bump.
 maybe_install_openshell_during_install() {
   local mode="${1:-force}"
+  local explicit_openshell_bin="${NEMOCLAW_OPENSHELL_BIN:-}"
   if truthy_env "${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"; then
     info "Deferring OpenShell CLI installation until after pre-upgrade backup."
     return 0
@@ -1534,6 +1535,11 @@ maybe_install_openshell_during_install() {
         warn "Homebrew is not installed; using the standalone OpenShell gateway without reboot persistence."
       fi
       prefer_user_local_openshell
+      # Service discovery still uses the user-local PATH, but a source-checkout
+      # caller's executable selection remains authoritative for onboarding.
+      if [[ "$explicit_openshell_bin" == /* && -f "$explicit_openshell_bin" && -x "$explicit_openshell_bin" ]]; then
+        export NEMOCLAW_OPENSHELL_BIN="$explicit_openshell_bin"
+      fi
       install_nemoclaw_openshell_gateway_user_service
       return 0
     fi
@@ -4418,7 +4424,6 @@ ensure_station_express_pair() {
         || error "The explicit DGX Station peer could not be qualified; refusing single-Station fallback."
       station_dual_pair_resume_pending \
         && error "Dual DGX Station preparation returned a single-Station result while exact pair resume state is pending; refusing to discard it."
-      clear_station_express_resume
       if [ "${_STATION_EXPRESS_MODEL_WAS_EXPLICIT:-0}" = "0" ]; then
         NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
         NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"

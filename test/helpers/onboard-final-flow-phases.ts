@@ -152,6 +152,7 @@ export function context(
     hermesToolGateways: ["local"],
     preferredInferenceApi: "chat",
     compatibleEndpointReasoning: null,
+    compatibleEndpointReasoningEffort: null,
     nimContainer: "nim-test",
     webSearchConfig: null,
     webSearchSupported: true,

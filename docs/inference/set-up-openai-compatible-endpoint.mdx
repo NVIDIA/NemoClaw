@@ -126,6 +126,17 @@ NEMOCLAW_PROVIDER=custom \
 | `NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS` | Optional comma-separated exact hostnames or IP literals for operator-owned private inference endpoints. Wildcards are not supported. |
 | `COMPATIBLE_API_KEY` | Endpoint API key. Required unless loopback no-auth mode is selected. |
 
+<AgentOnly variant="openclaw">
+
+For OpenClaw, `NEMOCLAW_REASONING_EFFORT` accepts `low`, `medium`, `high`, or `default`.
+A `low`, `medium`, or `high` value writes `params.extra_body.reasoning_effort` when the selected API is `openai-completions`.
+Another API family omits the field.
+An unset value or `default` leaves the endpoint's own default in place.
+NemoClaw rejects an invalid value or a provider/API mismatch before changing provider, sandbox, policy, or registry state.
+After `inference set` changes the effort, an ordinary sandbox restart preserves the persisted value instead of restoring the image's original onboarding value.
+
+</AgentOnly>
+
 Private and reserved addresses are blocked by default.
 To use an inference gateway on a trusted corporate network, list only its exact host and keep the endpoint URL on that host:
 

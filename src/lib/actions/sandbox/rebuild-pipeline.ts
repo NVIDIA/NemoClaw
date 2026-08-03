@@ -10,7 +10,7 @@ import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { DOCKER_GPU_PATCH_NETWORK_ENV } from "../../onboard/docker-gpu-patch";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import * as onboardSession from "../../state/onboard-session";
-import * as registry from "../../state/registry";
+import { load as loadRegistry } from "../../state/registry/persistence";
 import { normalizeRebuildTargetPolicyPresets, runRebuildBackupPhase } from "./rebuild-backup-phase";
 import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
@@ -20,7 +20,10 @@ import { disposeRebuildAgentBaseImagePreflight } from "./rebuild-flow-helpers";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
-import { blockRebuildOnPendingBaselineTransition } from "./rebuild-preflight-guards";
+import {
+  blockRebuildOnPendingBaselineTransition,
+  revalidateRebuildRouteBeforeDelete,
+} from "./rebuild-preflight-guards";
 import { runRebuildPreflightPhase } from "./rebuild-preflight-phase";
 import {
   disposePreparedBuildContext,
@@ -31,6 +34,10 @@ import {
   revalidatePreparedRecoveryBeforeDelete,
 } from "./rebuild-prepared-recovery";
 import { inspectRebuildGatewayProviderRegistration } from "./rebuild-provider-preflight";
+import {
+  fingerprintRebuildRecreateTargetIntent,
+  openRebuildRecreateJournal,
+} from "./rebuild-recreate-journal";
 import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
 import { createRebuildRegistryRollback } from "./rebuild-registry-rollback";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
@@ -102,6 +109,7 @@ async function rebuildSandboxUnlocked(
     recoveryManifest: validatedRecoveryManifest,
     dcodePreflight,
     preparedImage,
+    routePreflightReceipt,
     releaseOnboardLock,
     log,
     bail,
@@ -126,7 +134,7 @@ async function rebuildSandboxUnlocked(
   try {
     if (blockRebuildOnPendingBaselineTransition(sandboxEntry, sandboxName, bail)) return;
     let recoveryRegistrySnapshot = preparedBackupRecovery
-      ? JSON.parse(JSON.stringify(registry.load()))
+      ? JSON.parse(JSON.stringify(loadRegistry()))
       : liveState.staleRegistrySnapshot;
     const registryRollback = createRebuildRegistryRollback({
       sandboxName,
@@ -210,10 +218,37 @@ async function rebuildSandboxUnlocked(
         return;
       }
 
+      const recreateJournal = openRebuildRecreateJournal({
+        target: {
+          sandboxName,
+          gatewayName: recreateOptions.targetGatewayName,
+          gatewayPort: recreateOptions.targetGatewayPort,
+        },
+        agentName: rebuildAgent || "openclaw",
+        targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
+        log,
+      });
+
+      // An earlier run of this rebuild already registered and proved the
+      // replacement. Retire its journal and stop before the destroy phase so a
+      // restart converges to that sandbox instead of deleting it.
+      if (recreateJournal.acceptedTarget) {
+        recreateJournal.completeAcceptedTarget();
+        log(`Recovered journaled replacement ${recreateJournal.id} for '${sandboxName}'`);
+        console.log(
+          `  Sandbox '${sandboxName}' already holds the replacement from the interrupted rebuild.`,
+        );
+        if (backup.backupManifest) {
+          console.log(`  State backup is preserved at: ${backup.backupManifest.backupPath}`);
+        }
+        return;
+      }
+
       const mcpPreparation = await runRebuildDestroyPhase({
         sandboxName,
         sandboxEntry,
         staleRecovery,
+        recreateJournal,
         backupManifest: backup.backupManifest,
         force: normalized.force,
         log,
@@ -251,6 +286,7 @@ async function rebuildSandboxUnlocked(
             recreateOptions.targetGatewayPort,
           );
         },
+        validateAtDeleteEdge: () => revalidateRebuildRouteBeforeDelete(routePreflightReceipt),
         onDeleted: () => {
           sandboxStillExists = false;
         },
@@ -272,6 +308,7 @@ async function rebuildSandboxUnlocked(
           durableConfig,
           resumeConfig,
           recreateOptions,
+          recreateJournal,
           fromDockerfile,
           rebuildAgent,
           messagingPlan,

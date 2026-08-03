@@ -134,6 +134,26 @@ docker info
 The managed default gateway service accepts `DOCKER_HOST` only as an absolute local `unix://` socket path.
 It rejects remote endpoints and relative socket paths before service startup.
 
+### Onboarding reports `invalid_docker_host`
+
+The `invalid_docker_host` advisory means that `DOCKER_HOST` is not an absolute local `unix://` socket path that NemoClaw can write to the managed OpenShell gateway service environment.
+Remove the override to use Docker's default local socket:
+
+```bash
+unset DOCKER_HOST
+$$nemoclaw onboard
+```
+
+If your Docker daemon uses another local socket, set an absolute `unix://` path before you retry:
+
+```bash
+export DOCKER_HOST=unix:///var/run/docker.sock
+$$nemoclaw onboard
+```
+
+NemoClaw rejects TCP and SSH endpoints, relative socket paths, values that contain single quotes, and values that contain line breaks.
+Do not wrap the socket path in single quotes inside the variable value.
+
 ### macOS first-run failures
 
 The two most common first-run failures on macOS are missing developer tools and Docker connection errors.
@@ -664,7 +684,8 @@ NVIDIA NIM and GPU-backed sandbox setup require a real NVIDIA GPU.
 If NemoClaw rejects the detected GPU name during preflight, select a CPU or remote inference provider, or move the setup to a host with a supported NVIDIA GPU and current drivers.
 
 Jetson/Tegra hosts support sandbox GPU passthrough through the compatibility route.
-Onboarding detects those hosts separately and propagates the supplementary groups required for `/dev/nvmap` and `/dev/nvhost-*`; if that path fails, follow the Jetson/Tegra compatibility guidance below instead of treating a missing `nvidia-smi` result as a placeholder adapter.
+Onboarding detects those hosts separately and propagates eligible host group IDs for selected `/dev/nvmap`, `/dev/nvhost-*`, and `/dev/nvgpu/igpu0/*` nodes plus real `/dev/dri/renderD*` character devices.
+If that path fails, follow the Jetson/Tegra compatibility guidance below instead of treating a missing `nvidia-smi` result as a placeholder adapter.
 
 ### Colima socket not detected (macOS)
 
@@ -991,6 +1012,31 @@ If the sandbox was intentionally deleted and you want a clean setup instead, run
 Create a snapshot first when the sandbox is reachable enough to back up state.
 For details, refer to [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots).
 </Warning>
+
+### Gateway Port Stays Bound After Destroying the Last Sandbox
+
+Destroying the final sandbox with `--cleanup-gateway` stops the packaged OpenShell gateway service before it reaps host gateway processes, so the gateway port is released.
+The service is stopped, not disabled or removed, and the next onboarding run starts it again.
+If the service cannot be stopped, `destroy` exits non-zero and prints the status command for the service.
+Stop the service yourself, then rerun `destroy`.
+
+On Apple Silicon macOS with Homebrew:
+
+```bash
+brew services stop openshell
+```
+
+On Linux, use the service name that matches the install. For package installs:
+
+```bash
+systemctl --user stop openshell-gateway
+```
+
+For tarball installs:
+
+```bash
+systemctl --user stop nemoclaw-openshell-gateway
+```
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -1369,7 +1415,8 @@ The tool's own stdout/stderr bytes and its exit code are left unchanged. The bre
 The first interactive `$$nemoclaw <name> connect` shell also prints a one-line reminder of this denial signature and the `logs` command below.
 The reminder is shown once per top-level interactive session, and only when all of these hold: an egress proxy is configured, the shell is interactive with a terminal attached to stderr, and it is a top-level shell (not a nested subshell or pane).
 Suppress it with `NEMOCLAW_NO_POLICY_HINT=1`.
-On OpenShell 0.0.44 or newer the reminder names your real sandbox; on older OpenShell it shows `<name>` as a placeholder — run `$$nemoclaw list` to see your sandbox names.
+The reminder names the sandbox when NemoClaw receives a valid sandbox name during sandbox creation.
+If no valid name is available, it shows `<name>`; run `$$nemoclaw list` to see your sandbox names.
 If the reported sandbox name contains characters that are not valid in a sandbox name (uppercase letters, underscores, control characters, and similar) or exceeds 63 characters, the reminder shows the `<name>` placeholder for safety rather than echoing the untrusted value.
 The reminder is intentionally proactive: the denial itself is surfaced by the OpenShell proxy, so the `curl`/`git` error text is left unchanged and the reminder points you to the logs instead.
 
@@ -1978,7 +2025,11 @@ A repeating line like the following confirms the conflict:
 [telegram] getUpdates conflict: 409: Conflict: terminated by other getUpdates request; retrying in 30s.
 ```
 
-To fix, run `$$nemoclaw <other-sandbox> destroy` on whichever sandbox should stop polling, or rerun onboarding on it with the channel disabled. Current NemoClaw warns at `$$nemoclaw onboard` time when another sandbox already has the same channel enabled, but sandboxes created before that check was added may still be in a conflict loop.
+To fix, run `$$nemoclaw <other-sandbox> destroy` on whichever sandbox should stop polling, or rerun onboarding on it with the channel disabled.
+The same fail-closed policy applies to every supported messaging channel.
+Onboarding, rebuild, and `channels add` abort on a conflict or an incomplete required check, including unavailable credential hashes.
+Only `channels add <channel> --force` can accept the duplicate-consumer or shared-resource risk.
+Sandboxes created before these checks were added may still be in a conflict loop.
 
 </AgentOnly>
 
@@ -2458,7 +2509,7 @@ To skip GPU passthrough entirely, rerun with `--no-gpu` or set `NEMOCLAW_SANDBOX
 #### Jetson and Tegra compatibility default
 
 Automatic GPU onboarding uses the compatibility path directly; it does not make a native attempt first.
-The path recreates the OpenShell-managed Docker container with NVIDIA GPU flags and propagates the supplementary groups required for `/dev/nvmap` and `/dev/nvhost-*` access.
+The path recreates the OpenShell-managed Docker container with NVIDIA GPU flags and propagates eligible host group IDs for the supported Jetson GPU device nodes.
 Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses that group propagation and CUDA may not initialize.
 
 #### Common compatibility-path recovery
@@ -2684,6 +2735,54 @@ nemohermes <name> start
 Then run `nemohermes inference get` and verify Dashboard Chat uses the selected model.
 If the command succeeds because the dashboard profile is missing, the dashboard is disabled and no dashboard recovery is required.
 
+### Shields Reports Drift for the Hermes Configuration Root
+
+The Hermes configuration root holds the agent's top-level runtime state, not only its configuration.
+The configuration root stores `auth.json`, the drain request, and temporary files for atomic `gateway_state.json` and `gateway.pid` replacement.
+Lockdown moves that directory to `root:sandbox` mode `3770`, which preserves the set-group-ID and sticky bits.
+The gateway can still manage its runtime files.
+The sticky bit prevents the sandbox identity from unlinking or renaming sealed root-owned configuration.
+Run the following command to inspect a locked root:
+
+```bash
+$$nemoclaw <name> exec -- stat -c '%a %U:%G' /sandbox/.hermes
+```
+
+Expected output:
+
+```text
+3770 root:sandbox
+```
+
+A sandbox locked by an older release carries a `755 root:root` root instead.
+The gateway cannot write its runtime state there.
+`$$nemoclaw <name> shields status` reports the stale posture as drift.
+Before restarting the gateway, repair the posture:
+
+```bash
+$$nemoclaw <name> shields up
+```
+
+If the command refuses the repair, follow its recovery guidance and do not restart the gateway.
+Otherwise, verify the repaired posture:
+
+```bash
+$$nemoclaw <name> shields status
+$$nemoclaw <name> exec -- stat -c '%a %U:%G' /sandbox/.hermes
+```
+
+Continue only when status no longer reports drift and `stat` prints the expected output above.
+Then restart the gateway:
+
+```bash
+$$nemoclaw <name> gateway restart
+```
+
+The restart must exit zero and report that the health check passed.
+If restart or recovery already reports `relaunch quarantined`, repairing the directory cannot clear the supervisor quarantine.
+Follow [Restart or recovery reports `relaunch quarantined`](#restart-or-recovery-reports-relaunch-quarantined) to rebuild the sandbox.
+The sealed files are unchanged by the repair and stay `444 root:root`.
+
 ### Hermes restart reports `config hash mismatch`
 
 A Hermes restart reports `config hash mismatch` when a strict root-owned hash is available and `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` does not match it.
@@ -2707,6 +2806,21 @@ Replace them through the supported credential flow so the file contains `openshe
 The Hermes entrypoint supervisor remains responsible for the gateway, dashboard, internal API relay, dashboard relay, and gateway log stream throughout recovery.
 In the OpenShell-managed topology, that nonroot supervisor repairs failed auxiliaries continuously, recovers a gateway after four consecutive failed listener or HTTP health checks, and quarantines relaunch after five exits within 60 seconds until the sandbox is recreated.
 The host only repairs the host-side OpenShell forwards after the supervised processes pass health checks.
+
+### Restart or recovery reports `relaunch quarantined`
+
+In the OpenShell-managed topology the strict root-owned hash is not a trust anchor for mutable config, so a direct edit of `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` is not refused by the host controller.
+The in-sandbox supervisor still refuses to start a gateway on configuration it cannot match to the persisted managed state, and it stops attempting relaunch once that refusal or repeated gateway exits exhaust its crash budget.
+`$$nemoclaw <name> gateway restart`, `$$nemoclaw <name> recover`, and `$$nemoclaw <name> connect` then report the `relaunch quarantined` failure layer.
+
+The refusal is deterministic, so retrying any of those commands cannot clear it.
+Restore the registered configuration and refresh its integrity metadata in one transaction:
+
+```bash
+nemohermes <name> rebuild --yes
+```
+
+After the rebuild, make the intended change through a supported command such as `$$nemoclaw <name> config set` or `$$nemoclaw inference set`, which update the configuration and its hashes together.
 
 ### Port 8642 in a browser shows a blank page or `Cannot GET /`
 

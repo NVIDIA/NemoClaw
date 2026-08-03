@@ -145,18 +145,35 @@ describe("LangChain Deep Agents Code headless runtime contracts", () => {
     }
   });
 
-  it("requires exit zero and PONG from Deep Agents Code headless inference (#6191)", () => {
+  it("requires an exit-zero JSON success envelope containing PONG (#6191, #7773)", () => {
     const classify = (exitCode: string, output: string) =>
       runHeadlessCheckHelper("classify-output", {
         DCODE_EXIT: exitCode,
         HEADLESS_OUTPUT: output,
       });
+    const envelope = (response = "PONG") =>
+      JSON.stringify({
+        schema_version: 1,
+        command: "non-interactive",
+        data: {
+          status: "success",
+          exit_code: 0,
+          response,
+          completion: {
+            thread_id: "thread-1",
+            duration_ms: 12,
+            response_bytes: Buffer.byteLength(response),
+          },
+        },
+      });
 
-    expect(classify("0", "startup log\n  PONG  \nDCODE_EXIT:0")).toBe("pass:pong");
+    expect(classify("0", `startup log\n${envelope()}\nDCODE_EXIT:0`)).toBe(
+      "fail:invalid-json-envelope",
+    );
     expect(
       classify("1", "OpenAI provider returned HTTP 401 for inference.local\nDCODE_EXIT:1"),
     ).toBe("fail:actionable-inference-error");
-    expect(classify("1", "PONG\nDCODE_EXIT:1")).toBe("fail:nonzero-exit");
+    expect(classify("1", `${envelope()}\nDCODE_EXIT:1`)).toBe("fail:nonzero-exit");
     expect(classify("1", "openai.APIConnectionError\nDCODE_EXIT:1")).toBe(
       "fail:inference-connection-failure",
     );
@@ -180,20 +197,22 @@ describe("LangChain Deep Agents Code headless runtime contracts", () => {
     expect(classify("1", "No module named deepagents_code\nDCODE_EXIT:1")).toBe(
       "fail:wrapper-missing",
     );
-    // The word 'dcode' appearing in a non-error context (e.g. a version
-    // banner) must not be misclassified as a wrapper-missing failure. The
-    // is_dcode_wrapper_failure regex requires a specific error indicator
-    // ("command not found", "No such file or directory", "Permission denied",
-    // or "No module named deepagents_code") after the dcode path segment.
-    // See PR #6206 / advisor PRA-2.
-    expect(classify("0", "  PONG  \nDCODE_EXIT:0")).toBe("pass:pong");
-    expect(classify("0", "dcode version 0.1.12\nPONG\nDCODE_EXIT:0")).toBe("pass:pong");
-    expect(classify("0", "something happened\nDCODE_EXIT:0")).toBe("fail:ambiguous-output");
-    expect(classify("0", "Reply with exactly one word: PONG\nDCODE_EXIT:0")).toBe(
-      "fail:ambiguous-output",
+    expect(classify("0", `${envelope()}\nDCODE_EXIT:0`)).toBe("pass:json-pong");
+    expect(classify("0", `dcode version 0.1.12\n${envelope()}\nDCODE_EXIT:0`)).toBe(
+      "fail:invalid-json-envelope",
     );
-    expect(classify("0", "PONG because the route works\nDCODE_EXIT:0")).toBe(
-      "fail:ambiguous-output",
+    expect(classify("0", `${envelope()}\ntrailing banner\nDCODE_EXIT:0`)).toBe(
+      "fail:invalid-json-envelope",
+    );
+    expect(classify("0", "something happened\nDCODE_EXIT:0")).toBe("fail:invalid-json-envelope");
+    expect(classify("0", "Reply with exactly one word: PONG\nDCODE_EXIT:0")).toBe(
+      "fail:invalid-json-envelope",
+    );
+    expect(classify("0", `${envelope("PONG because the route works")}\nDCODE_EXIT:0`)).toBe(
+      "fail:invalid-json-envelope",
+    );
+    expect(classify("0", `${envelope()}\n${envelope()}\nDCODE_EXIT:0`)).toBe(
+      "fail:invalid-json-envelope",
     );
     expect(classify("1", "something happened\nDCODE_EXIT:1")).toBe("fail:nonzero-exit");
   });

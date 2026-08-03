@@ -48,6 +48,9 @@ const E2E_WORKFLOW_CONTRACTS = [
 ] as const;
 
 const OPAQUE_INPUTS = [
+  "Dockerfile",
+  "agents/hermes/Dockerfile",
+  "agents/langchain-deepagents-code/Dockerfile",
   "agents/hermes/policy-additions.yaml",
   "src/lib/messaging/channels/telegram/policy/openclaw.yaml",
   "nemoclaw-blueprint/policies/presets/local-inference.yaml",
@@ -68,6 +71,7 @@ const OPAQUE_INPUTS = [
   ".github/workflows/wsl-e2e.yaml",
   ".github/workflows/macos-e2e.yaml",
   ".github/workflows/platform-vitest-main.yaml",
+  "tools/wsl/ci-helper.ps1",
   "ci/platform-vitest-macos-requirements.lock",
 ] as const;
 
@@ -82,6 +86,13 @@ describe("Vitest opaque-input watch triggers", () => {
   });
 
   it("maps current opaque inputs to their direct contract tests (#6692)", () => {
+    expect(triggeredBy("Dockerfile")).toEqual(["src/lib/onboard/managed-startup-profile.test.ts"]);
+    expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
+      "src/lib/onboard/managed-startup-profile.test.ts",
+    ]);
+    expect(triggeredBy("agents/langchain-deepagents-code/Dockerfile")).toEqual([
+      "src/lib/onboard/managed-startup-profile.test.ts",
+    ]);
     expect(triggeredBy("agents/hermes/policy-additions.yaml")).toEqual([
       "src/lib/onboard/initial-policy-real-policy.test.ts",
       "src/lib/onboard/initial-policy.test.ts",
@@ -136,6 +147,8 @@ describe("Vitest opaque-input watch triggers", () => {
     ]);
     expect(triggeredBy(".github/workflows/wsl-e2e.yaml")).toEqual([
       "test/hosted-runner-recovery-workflow.test.ts",
+      "test/platform-vitest-main-workflow.test.ts",
+      "test/wsl-ci-helper.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/macos-e2e.yaml")).toEqual([
       "test/hosted-runner-recovery-workflow.test.ts",
@@ -143,6 +156,11 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/platform-vitest-main.yaml")).toEqual([
       "test/hosted-runner-recovery-workflow.test.ts",
       "test/platform-vitest-main-workflow.test.ts",
+      "test/wsl-ci-helper.test.ts",
+    ]);
+    expect(triggeredBy("tools/wsl/ci-helper.ps1")).toEqual([
+      "test/platform-vitest-main-workflow.test.ts",
+      "test/wsl-ci-helper.test.ts",
     ]);
     expect(triggeredBy("ci/platform-vitest-macos-requirements.lock")).toEqual([
       "test/platform-vitest-main-workflow.test.ts",
