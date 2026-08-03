@@ -440,14 +440,37 @@ describe("managed bootstrap adapter contract", () => {
   });
 
   it.each([
-    "throws",
+    "throws before launch",
     "returns without launch",
+  ] as const)("does not clean up an unmaterialized create that %s", async (failureMode) => {
+    const fixture = adapterFor("langchain-deepagents-code");
+    const create = vi.mocked(fixture.adapter.createHeldWorkload);
+    if (failureMode === "throws before launch") {
+      create.mockRejectedValueOnce(new Error("create failed before materialization"));
+    } else {
+      create.mockResolvedValueOnce(handleFor(requestFor("langchain-deepagents-code")));
+    }
+
+    const failure = await captureFailure(
+      prepareManagedBootstrapSequence(
+        fixture.adapter,
+        preparationInput("langchain-deepagents-code"),
+      ),
+    );
+
+    expect(fixture.adapter.cleanupIncompleteCreate).not.toHaveBeenCalled();
+    expect(failure.managedBootstrapRollback).toBeUndefined();
+    expect(failure.managedBootstrapRollbackError).toBeUndefined();
+  });
+
+  it.each([
+    "throws after launch",
     "returns an invalid handle",
   ] as const)("runs exact incomplete-create cleanup when create %s", async (failureMode) => {
     const fixture = adapterFor("langchain-deepagents-code");
     const original = fixture.adapter.createHeldWorkload;
     switch (failureMode) {
-      case "throws":
+      case "throws after launch":
         vi.mocked(original).mockImplementationOnce(async (input) => {
           await input.launch({
             heldWorkloadArgv: renderManagedBootstrapHeldCommand(
@@ -459,11 +482,6 @@ describe("managed bootstrap adapter contract", () => {
           });
           throw new Error("create failed after materialization");
         });
-        break;
-      case "returns without launch":
-        vi.mocked(original).mockResolvedValueOnce(
-          handleFor(requestFor("langchain-deepagents-code")),
-        );
         break;
       default:
         vi.mocked(original).mockImplementationOnce(async (input) => {
@@ -493,12 +511,42 @@ describe("managed bootstrap adapter contract", () => {
       plan: expect.objectContaining({ sandboxName: "alpha", driverId: "mxc-fixture" }),
       bootstrapIdentity: IDENTITY,
       heldWorkloadArgv: expect.arrayContaining([IDENTITY]),
+      createReceipt: expect.objectContaining({ sandbox: sandbox(), ready: true }),
     });
     expect(failure.managedBootstrapRollback).toMatchObject({
       outcome: "rolled-back",
       heldWorkloadRemoved: true,
       bootstrapIdentity: IDENTITY,
     });
+  });
+
+  it("rejects incomplete-create cleanup for a different materialized sandbox", async () => {
+    const fixture = adapterFor("langchain-deepagents-code");
+    vi.mocked(fixture.adapter.createHeldWorkload).mockImplementationOnce(async (input) => {
+      await input.launch({
+        heldWorkloadArgv: renderManagedBootstrapHeldCommand(
+          input.request,
+          input.bootstrapIdentity as string,
+          input.plan.intendedWorkloadArgv,
+        ),
+        bootstrapIdentity: input.bootstrapIdentity as string,
+      });
+      throw new Error("create failed after materialization");
+    });
+    vi.mocked(fixture.adapter.cleanupIncompleteCreate).mockResolvedValueOnce({
+      ...cleanupReceipt(),
+      sandbox: { ...sandbox(), sandboxId: "unrelated-sandbox" },
+    });
+
+    const failure = await captureFailure(
+      prepareManagedBootstrapSequence(
+        fixture.adapter,
+        preparationInput("langchain-deepagents-code"),
+      ),
+    );
+
+    expect(failure.managedBootstrapRollback).toBeUndefined();
+    expect(failure.message).toContain("incomplete-create cleanup sandbox");
   });
 
   it("rolls back a prepared replacement when durable recording fails, before activation", async () => {

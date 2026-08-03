@@ -25,6 +25,12 @@ exact captured snapshot or exact workload absence. Commit receipts instead
 prove the committed outcome without reporting rollback state and may leave
 `heldWorkloadRemoved` false while provider-owned cleanup remains.
 
+An incomplete create is cleanup-eligible only after launch returns a validated
+Ready receipt with the exact materialized sandbox identity. A provider throw or
+return before that receipt cannot trigger cleanup against the planned sandbox
+name; after receipt validation, both the cleanup request and its result are
+bound to the exact sandbox ID.
+
 `scripts/managed-bootstrap-trampoline.sh` defines the image-owned executable
 that the later all-agent packaging slice will install as
 `/usr/local/bin/nemoclaw-managed-bootstrap`. It validates the fixed, root-owned

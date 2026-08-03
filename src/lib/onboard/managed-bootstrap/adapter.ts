@@ -97,6 +97,8 @@ export interface ManagedBootstrapIncompleteCreateCleanupInput {
   readonly plan: ManagedBootstrapExpectedPlan;
   readonly bootstrapIdentity: string;
   readonly heldWorkloadArgv: readonly string[];
+  /** Exact validated receipt for the materialized workload that cleanup may remove. */
+  readonly createReceipt: ManagedBootstrapCreateReceipt;
 }
 
 export interface ManagedBootstrapDiscoveryInput {
@@ -312,8 +314,8 @@ export interface ManagedBootstrapAdapter {
   ): Promise<ManagedBootstrapHeldWorkloadHandle>;
 
   /**
-   * Clean up a materialized create that failed before returning a Ready
-   * identity-bound handle.
+   * Clean up only the exact materialized create identified by its validated
+   * Ready receipt after creation fails before returning an identity-bound handle.
    */
   cleanupIncompleteCreate(
     input: ManagedBootstrapIncompleteCreateCleanupInput,
@@ -1139,7 +1141,7 @@ function normalizeFinalizationReceipt(
 
 function normalizeIncompleteCreateCleanupReceipt(
   candidate: ManagedBootstrapFinalizationReceipt,
-  plan: ManagedBootstrapExpectedPlan,
+  createReceipt: ManagedBootstrapCreateReceipt,
   bootstrapIdentity: string,
 ): ManagedBootstrapFinalizationReceipt {
   if (
@@ -1156,7 +1158,8 @@ function normalizeIncompleteCreateCleanupReceipt(
   ) {
     protocolFail("incomplete-create cleanup receipt does not prove exact absence");
   }
-  const sandbox = freezeSandboxIdentity(candidate.sandbox, plan);
+  const sandbox = freezeSandboxIdentity(candidate.sandbox, createReceipt.sandbox);
+  assertExact(sandbox, createReceipt.sandbox, "incomplete-create cleanup sandbox");
   assertTimestamp(candidate.finalizedAt, "incomplete-create cleanup timestamp");
   return Object.freeze({
     schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
@@ -1282,10 +1285,16 @@ export async function prepareManagedBootstrapSequence(
     handle = normalizeHeldHandle(candidate, create, launchReceipt);
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error));
+    if (!launchReceipt) throw failure;
     try {
       const rollback = normalizeIncompleteCreateCleanupReceipt(
-        await adapter.cleanupIncompleteCreate({ plan, bootstrapIdentity, heldWorkloadArgv }),
-        plan,
+        await adapter.cleanupIncompleteCreate({
+          plan,
+          bootstrapIdentity,
+          heldWorkloadArgv,
+          createReceipt: launchReceipt,
+        }),
+        launchReceipt,
         bootstrapIdentity,
       );
       (
