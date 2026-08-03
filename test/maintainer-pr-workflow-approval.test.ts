@@ -117,7 +117,7 @@ function createHarness(options: HarnessOptions = {}) {
     hungPullRequestAttempts = Math.max(0, hungPullRequestAttempts - 1);
     await hungRequest;
     const failure = pullRequestErrors.shift();
-    if (failure) throw failure;
+    await (failure ? Promise.reject(failure) : Promise.resolve());
     const headSha = liveHeads[Math.min(pullRequestRead, liveHeads.length - 1)];
     pullRequestRead += 1;
     return {
@@ -149,7 +149,7 @@ function createHarness(options: HarnessOptions = {}) {
   );
   const listWorkflowRunsForRepo = vi.fn(async () => {
     const failure = workflowRunErrors.shift();
-    if (failure) throw failure;
+    await (failure ? Promise.reject(failure) : Promise.resolve());
     const runs = options.runsByPoll?.[workflowRunPoll] ?? [];
     workflowRunPoll += 1;
     return { data: { total_count: runs.length, workflow_runs: runs } };
@@ -157,7 +157,7 @@ function createHarness(options: HarnessOptions = {}) {
   const approveWorkflowRun = vi.fn(
     async (_input: ApiRequestInput & { owner: string; repo: string; run_id: number }) => {
       const failure = approvalErrors.shift();
-      if (failure) throw failure;
+      await (failure ? Promise.reject(failure) : Promise.resolve());
       return { status: 201 };
     },
   );
