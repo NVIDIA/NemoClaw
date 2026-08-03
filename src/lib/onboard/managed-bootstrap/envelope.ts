@@ -137,10 +137,10 @@ export function parseManagedBootstrapImageCompletion(
   try {
     parsed = JSON.parse(text);
   } catch {
-    return fail("image completion is not valid JSON");
+    fail("image completion is not valid JSON");
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return fail("image completion must be an object");
+    fail("image completion must be an object");
   }
   const completion = parsed as Record<string, unknown>;
   if (
@@ -157,7 +157,7 @@ export function parseManagedBootstrapImageCompletion(
     !BOOTSTRAP_IDENTITY_RE.test(completion.profileFingerprint) ||
     typeof completion.transactionPending !== "boolean"
   ) {
-    return fail("image completion schema is invalid");
+    fail("image completion schema is invalid");
   }
   const normalized = Object.freeze({
     schemaVersion: MANAGED_BOOTSTRAP_ENVELOPE_SCHEMA_VERSION,
@@ -167,7 +167,7 @@ export function parseManagedBootstrapImageCompletion(
     transactionPending: completion.transactionPending,
   });
   if (serializeManagedBootstrapImageCompletion(normalized) !== text) {
-    return fail("image completion is not canonical");
+    fail("image completion is not canonical");
   }
   return normalized;
 }

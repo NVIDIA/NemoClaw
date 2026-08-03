@@ -39,8 +39,11 @@ request and its identity binding, verifies the matching completion, clears its
 private bootstrap variables and file descriptors, and then uses `exec "$@"`. The
 documented trampoline guarantees are preservation of the captured supervisor
 argument boundaries and removal of inherited `BASH_ENV` before Bash parses
-startup files; it does not define preservation of every other environment
-entry.
+startup files. Bootstrap apply and verification run under `env -i` with the
+fixed safe environment `HOME=/root`, `LANG=C.UTF-8`, `LC_ALL=C.UTF-8`,
+`PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, and
+`NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1`; the trampoline does not promise
+preservation of arbitrary caller environment entries.
 
 ## Architectural disposition
 
