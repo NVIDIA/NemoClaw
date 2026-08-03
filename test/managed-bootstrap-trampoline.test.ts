@@ -108,7 +108,6 @@ function environmentWithEntryCount(count: number): NodeJS.ProcessEnv {
 
 function environmentWithEntryLength(length: number): NodeJS.ProcessEnv {
   const prefix = "BOUNDARY=";
-  if (length < prefix.length) throw new Error("entry length is smaller than its assignment prefix");
   return { BOUNDARY: "x".repeat(length - prefix.length) };
 }
 
@@ -120,9 +119,6 @@ function environmentWithSerializedBytes(byteCount: number): NodeJS.ProcessEnv {
     const name = `BYTES_${index.toString().padStart(4, "0")}`;
     const assignmentOverhead = name.length + 2; // '=' plus the terminating NUL.
     const serializedLength = Math.min(60_000, remaining);
-    if (serializedLength < assignmentOverhead) {
-      throw new Error("aggregate environment boundary cannot encode its final assignment");
-    }
     environment[name] = "x".repeat(serializedLength - assignmentOverhead);
     remaining -= serializedLength;
     index += 1;
@@ -206,8 +202,7 @@ int main(int argc, char **argv) {
 function hostileLoader(
   directory: string,
   protectedRequest: string,
-): { afterTrace: string; earlyTrace: string; library: string } | null {
-  if (process.platform !== "linux") return null;
+): { afterTrace: string; earlyTrace: string; library: string } {
   const source = path.join(directory, "hostile-loader.c");
   const library = path.join(directory, "hostile-loader.so");
   const earlyTrace = path.join(directory, "hostile-loader-ran-early");
@@ -503,12 +498,10 @@ exec /usr/bin/env -i NEMOCLAW_MANAGED_BOOTSTRAP_RESUME=1 ${JSON.stringify(
           encoding: "utf8",
           env: testCase.environment(),
         });
-        if (testCase.accepted) {
-          expect(result.status, `${testCase.name}: ${result.stderr}`).toBe(0);
-        } else {
-          expect(result.status, testCase.name).not.toBe(0);
-          expect(result.stderr, testCase.name).toContain(testCase.error);
-        }
+        expect(result.status, `${testCase.name}: ${result.stderr}`).toBe(
+          testCase.accepted ? 0 : 126,
+        );
+        expect(result.stderr, testCase.name).toContain(testCase.error ?? "");
       }
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
@@ -597,12 +590,10 @@ exec /usr/bin/env -i NEMOCLAW_MANAGED_BOOTSTRAP_RESUME=1 ${JSON.stringify(
           [testCase.mode, entrypoint, testCase.count, testCase.bytes, "/bin/true"],
           { encoding: "utf8" },
         );
-        if (testCase.error === undefined) {
-          expect(result.status, `${testCase.name}: ${result.stderr}`).toBe(0);
-        } else {
-          expect(result.status, testCase.name).not.toBe(0);
-          expect(result.stderr, testCase.name).toContain(testCase.error);
-        }
+        expect(result.status, `${testCase.name}: ${result.stderr}`).toBe(
+          testCase.error === undefined ? 0 : 126,
+        );
+        expect(result.stderr, testCase.name).toContain(testCase.error ?? "");
       }
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
