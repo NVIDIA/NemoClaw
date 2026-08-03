@@ -231,19 +231,17 @@ describe("CLI launch routing process contracts (#6006)", () => {
       agent: "openclaw",
       agentCommand: "openclaw tui",
       exitCode: 1,
-      exitNote: "OpenClaw permission cleanup failed (command exit 0",
     },
-    { agent: "hermes", agentCommand: "hermes", exitCode: 0, exitNote: "" },
+    { agent: "hermes", agentCommand: "hermes", exitCode: 0 },
     {
       agent: "langchain-deepagents-code",
       agentCommand: "dcode",
       exitCode: 0,
-      exitNote: "",
     },
   ])(
     "launch runs `$agentCommand` for a $agent sandbox through one TTY exec with no timeout",
     testTimeoutOptions(90_000),
-    ({ agent, agentCommand, exitCode, exitNote }) => {
+    ({ agent, agentCommand, exitCode }) => {
       const harness = createLaunchHarness(`nemoclaw-cli-launch-${agent}-`, agent);
 
       const result = harness.runLaunch("launch alpha");
@@ -277,9 +275,19 @@ describe("CLI launch routing process contracts (#6006)", () => {
       expect(harness.callLines().filter((call) => call.includes("--tty"))).toHaveLength(1);
 
       expect(result.code).toBe(exitCode);
-      if (exitNote) {
-        expect(result.out).toContain(exitNote);
-      }
+    },
+  );
+
+  it(
+    "reports the OpenClaw permission cleanup failure after a successful agent exec",
+    testTimeoutOptions(90_000),
+    () => {
+      const harness = createLaunchHarness("nemoclaw-cli-launch-openclaw-cleanup-", "openclaw");
+
+      const result = harness.runLaunch("launch alpha");
+
+      expect(result.code).toBe(1);
+      expect(result.out).toContain("OpenClaw permission cleanup failed (command exit 0");
     },
   );
 });
