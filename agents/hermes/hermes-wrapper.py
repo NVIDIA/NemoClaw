@@ -186,6 +186,8 @@ def _load_dashboard_api_server_key() -> bool:
             try:
                 os.close(fd)
             except OSError:
+                # Never retry close: EINTR leaves descriptor state unspecified,
+                # and O_CLOEXEC keeps the source out of the dashboard process.
                 pass
 
     os.environ["API_SERVER_KEY"] = values[0]
