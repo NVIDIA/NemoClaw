@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   normalizeOpenClawSignatureAlias,
+  parseAuditConfig,
   selectReviewedLockSha256,
 } from "../scripts/audit-reviewed-npm-graph.mts";
 import { readYaml } from "./helpers/e2e-workflow-contract";
@@ -53,16 +54,48 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-lock-transition-"));
     const lockfile = path.join(root, "package-lock.json");
     fs.writeFileSync(lockfile, "reviewed lock\n");
-    const reviewed = "534ade489fdb2d8ff619a8b110c28fedbd2066e16ebf434738f64a5a44ec9860";
-    const previous = "a".repeat(64);
+    const actualLock = "534ade489fdb2d8ff619a8b110c28fedbd2066e16ebf434738f64a5a44ec9860";
+    const previousLock = "a".repeat(64);
+    const unreviewedLock = "b".repeat(64);
     try {
-      expect(selectReviewedLockSha256(lockfile, [previous, reviewed], "test graph")).toBe(reviewed);
-      expect(() => selectReviewedLockSha256(lockfile, [previous], "test graph")).toThrow(
-        "lock SHA-256 mismatch",
+      expect(selectReviewedLockSha256(lockfile, actualLock, undefined, "test graph")).toBe(
+        actualLock,
       );
+      expect(selectReviewedLockSha256(lockfile, previousLock, actualLock, "test graph")).toBe(
+        actualLock,
+      );
+      expect(() =>
+        selectReviewedLockSha256(lockfile, previousLock, unreviewedLock, "test graph"),
+      ).toThrow("lock SHA-256 mismatch");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("rejects a replacement lock digest that duplicates the current digest", () => {
+    const digest = "a".repeat(64);
+    const config = {
+      archiveGraphId: "reviewed-archive-graph",
+      archivePackages: [],
+      artifactDirectory: "artifacts/reviewed-npm-audit",
+      exceptionFile: "ci/npm-audit-exceptions.json",
+      lockedGraphs: [
+        {
+          directory: "agents/openclaw/openclaw-runtime",
+          id: "openclaw-runtime",
+          lockSha256: digest,
+          replacementLockSha256: digest,
+        },
+      ],
+      nodeVersion: "22.23.1",
+      registryOrigin: "https://registry.npmjs.org/",
+      schemaVersion: 2,
+      severityThreshold: "high",
+    };
+
+    expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
+      "ci/reviewed-npm-audit.json is invalid",
+    );
   });
 
   // source-shape-contract: security -- PR dependency audit code must come from the base SHA or the one-time signed bootstrap
