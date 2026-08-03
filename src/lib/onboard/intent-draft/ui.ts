@@ -158,7 +158,6 @@ async function prepareDraftForReview(
   deps: OnboardIntentDraftUiDeps,
   draft: OnboardIntentDraft,
 ): Promise<OnboardIntentDraft> {
-  if (draft.phase === "accepted") return draft;
   const original = draft.answers;
   let answers = { ...original };
   const agent = answers.agent;
@@ -254,6 +253,22 @@ async function prepareDraftForReview(
   }
 
   return JSON.stringify(answers) === JSON.stringify(original) ? draft : { ...draft, answers };
+}
+
+/** Fail closed when an accepted resume no longer matches current capabilities. */
+export async function validateAcceptedOnboardIntentDraft(
+  deps: OnboardIntentDraftUiDeps,
+  draft: OnboardIntentDraft,
+): Promise<void> {
+  if (draft.phase !== "accepted") {
+    throw new Error("Onboarding intent must be accepted before resume validation.");
+  }
+  const prepared = await prepareDraftForReview(deps, draft);
+  if (prepared !== draft) {
+    throw new Error(
+      "Accepted onboarding choices are no longer available. Rerun onboarding to review the current choices.",
+    );
+  }
 }
 
 function formatInference(inference: OnboardInferenceIntent): string {

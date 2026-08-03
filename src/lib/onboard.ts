@@ -4049,6 +4049,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           )
         : intentDraft.createOnboardIntentDraft(),
       collect: (initialDraft) => intentDraft.collectOnboardIntentDraft(draftDeps, initialDraft),
+      validateAccepted: (acceptedDraft) =>
+        intentDraft.validateAcceptedOnboardIntentDraft(draftDeps, acceptedDraft),
       accept: (acceptedDraft) => {
         intentDraft.applyAcceptedOnboardIntentDraft(acceptedDraft, opts, process.env);
         requestedSandboxName = acceptedDraft.answers.sandbox ?? requestedSandboxName;

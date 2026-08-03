@@ -107,4 +107,29 @@ describe("onboarding review/materialization boundary (#6005)", () => {
     expect(collect).not.toHaveBeenCalled();
     expect(accept).not.toHaveBeenCalled();
   });
+
+  it("revalidates a resumed accepted draft before materialization", async () => {
+    const accepted = {
+      ...createOnboardIntentDraft({ agent: "openclaw" }),
+      phase: "accepted" as const,
+    };
+    const validateAccepted = vi.fn(async () => {
+      throw new Error("accepted choice is unavailable");
+    });
+    const accept = vi.fn();
+
+    await expect(
+      crossOnboardIntentDraftBoundary({
+        shouldCollect: false,
+        existingDraft: accepted,
+        initialDraft: createOnboardIntentDraft(),
+        collect: vi.fn(),
+        validateAccepted,
+        accept,
+      }),
+    ).rejects.toThrow("accepted choice is unavailable");
+
+    expect(validateAccepted).toHaveBeenCalledWith(accepted);
+    expect(accept).not.toHaveBeenCalled();
+  });
 });

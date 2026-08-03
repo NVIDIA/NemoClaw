@@ -13,6 +13,8 @@ export interface OnboardIntentDraftBoundaryOptions {
     | { readonly kind: "apply"; readonly draft: OnboardIntentDraft }
     | { readonly kind: "exit"; readonly draft: OnboardIntentDraft }
   >;
+  /** Revalidates a resumed accepted draft before any materialization input is projected. */
+  validateAccepted?(draft: OnboardIntentDraft): Promise<void> | void;
   /** Runs only after Apply, or for an already accepted resumed draft. */
   accept(draft: OnboardIntentDraft): Promise<void> | void;
 }
@@ -41,6 +43,9 @@ export async function crossOnboardIntentDraftBoundary(
     if (result.kind === "exit") return result;
     acceptedDraft = result.draft;
   }
-  if (acceptedDraft) await options.accept(acceptedDraft);
+  if (acceptedDraft) {
+    await options.validateAccepted?.(acceptedDraft);
+    await options.accept(acceptedDraft);
+  }
   return { kind: "continue", draft: acceptedDraft };
 }

@@ -4,7 +4,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { createOnboardIntentDraft } from "./schema";
 import { seedOnboardIntentDraft } from "./seed";
-import { collectOnboardIntentDraft, type OnboardIntentDraftUiDeps } from "./ui";
+import {
+  collectOnboardIntentDraft,
+  type OnboardIntentDraftUiDeps,
+  validateAcceptedOnboardIntentDraft,
+} from "./ui";
 
 function fail(message: string): never {
   throw new Error(message);
@@ -280,6 +284,35 @@ describe("onboarding intent draft UI (#6005)", () => {
     });
     expect(deps.lines.filter((line) => line === "  Inference provider:")).toHaveLength(1);
     expect(deps.lines.filter((line) => line === "  Review configuration")).toHaveLength(1);
+  });
+
+  it("rejects an accepted resume when its provider is no longer available", async () => {
+    const accepted = {
+      ...createOnboardIntentDraft({
+        agent: "openclaw",
+        inference: {
+          provider: "removed-provider",
+          model: "stale-model",
+          endpointUrl: null,
+          authMethod: null,
+        },
+        sandbox: "demo",
+        web_search: null,
+        messaging: [],
+        tools: { hermesGateways: [] },
+        resources: { profile: "default", gpu: "auto" },
+        policy: "balanced",
+      }),
+      phase: "accepted" as const,
+    };
+    const deps = makeDeps([]);
+
+    await expect(validateAcceptedOnboardIntentDraft(deps, accepted)).rejects.toThrow(
+      "Accepted onboarding choices are no longer available",
+    );
+
+    expect(deps.prompt).not.toHaveBeenCalled();
+    expect(deps.checkpoint).not.toHaveBeenCalled();
   });
 
   it("rejects an unsafe model before it can reach Review", async () => {

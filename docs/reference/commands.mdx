@@ -291,6 +291,11 @@ These edits can invalidate dependent choices:
 
 Editing Sandbox name, Resources, or Policy tier preserves the other draft choices.
 Onboarding derives the sandbox and resource plans only after you select **Apply configuration**.
+Before materialization, onboarding revalidates the accepted choices against the current agent, provider, web search, messaging, managed tool, resource profile, and policy menus.
+This check also applies when `--resume` uses an accepted draft.
+If an accepted choice is no longer available, onboarding stops before it changes provider, gateway, Docker, policy, or sandbox state.
+Onboarding prints `Accepted onboarding choices are no longer available. Rerun onboarding to review the current choices.`
+Run `$$nemoclaw onboard --fresh` to discard the accepted draft and review the current choices.
 
 The review offers these actions:
 
