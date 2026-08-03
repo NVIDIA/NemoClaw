@@ -22,8 +22,8 @@ const mainWorkflow = readYaml<PullRequestWorkflow>(".github/workflows/main.yaml"
 
 function requiredStep(steps: WorkflowStep[], name: string): WorkflowStep {
   const step = steps.find((candidate) => candidate.name === name);
-  if (!step) throw new Error(`Missing workflow step: ${name}`);
-  return step;
+  expect(step, `Missing workflow step: ${name}`).toBeDefined();
+  return step as WorkflowStep;
 }
 
 function fakeCommand(directory: string, name: string, source: string): void {
