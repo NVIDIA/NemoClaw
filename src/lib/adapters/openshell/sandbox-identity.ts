@@ -14,3 +14,19 @@ export function parseOpenShellSandboxId(output: string): string | null {
     ? (matches[0] as string)
     : null;
 }
+
+export function resolveOpenShellSandboxId(
+  sandboxName: string,
+  runCaptureOpenshell: (args: string[], options?: Record<string, unknown>) => string,
+): string {
+  const output = runCaptureOpenshell(["sandbox", "get", sandboxName], {
+    ignoreError: false,
+  });
+  const sandboxId = parseOpenShellSandboxId(output);
+  if (!sandboxId) {
+    throw new Error(
+      `OpenShell sandbox '${sandboxName}' did not return one exact durable sandbox ID.`,
+    );
+  }
+  return sandboxId;
+}
