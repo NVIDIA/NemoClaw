@@ -105,7 +105,8 @@ The installer stages the formula and onboarding starts its `openshell` service.
 If the service fails inspection, startup, or its health check, NemoClaw prints the formula log command and attempts the standalone fallback.
 A host without Homebrew, or with no installed OpenShell formula, also uses the standalone macOS gateway.
 On both platforms, standalone startup requires exclusive ownership of the gateway port.
-Managed-service trust failures and unsafe environment configuration remain hard failures.
+A positively untrusted upstream package service is declined as described above.
+Trust failures in a marked NemoClaw service or Homebrew formula, and unsafe environment configuration, remain hard failures.
 
 NemoClaw-managed gateways on custom ports remain detached and separate from the default service.
 An externally supervised gateway can use any matching configured port; its declared supervisor retains lifecycle authority.
