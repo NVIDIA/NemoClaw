@@ -22,6 +22,7 @@ import { SANDBOX_IMAGE_REPOS } from "../domain/sandbox/image-tag";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
 import { parseLiveSandboxNames, parseReadySandboxNames } from "../runtime-recovery";
+import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
@@ -30,6 +31,7 @@ import {
   openBackupShieldsWindow,
   relockBackupShieldsWindow,
 } from "./sandbox/backup-shields-window";
+import * as snapshotBackup from "./sandbox/snapshot/backup-authority";
 import {
   backupStartedSandboxState,
   isSandboxContainerDefinitivelyAbsent,
@@ -198,7 +200,7 @@ export async function backupAll(): Promise<void> {
   let unreachableRunning = 0;
   let notRunningSkipped = 0;
   const strandedOrphans: string[] = [];
-  for (const sb of sandboxes) {
+  const backupRegisteredSandbox = async (sb: (typeof sandboxes)[number]): Promise<void> => {
     // A registered docker-driver sandbox whose container is merely stopped is
     // backupable: start it for the duration of the backup and return it to
     // its stopped state after (#6500). Anything else that is not Ready keeps
@@ -211,12 +213,12 @@ export async function backupAll(): Promise<void> {
           // Tracked separately from `skipped` so the strict gate stays
           // untripped: there is nothing to back up and nothing to start.
           strandedOrphans.push(sb.name);
-          continue;
+          return;
         }
         console.log(`  ${D}${notRunningBackupSkipMessage(sb.name)}${R}`);
         skipped++;
         notRunningSkipped++;
-        continue;
+        return;
       }
       console.log(`  Starting stopped sandbox '${sb.name}' to back it up...`);
     }
@@ -229,7 +231,13 @@ export async function backupAll(): Promise<void> {
       const attempt = await backupSandboxWithinShieldsWindow(sb.name, () =>
         startedForBackup
           ? backupStartedSandboxState(sb.name)
-          : sandboxState.backupSandboxState(sb.name),
+          : snapshotBackup.backupSandboxStateWithManagedAuthority(
+              sb.name,
+              {},
+              {
+                getSandbox: registry.getSandbox,
+              },
+            ),
       );
       result = attempt.result;
       orphanManifestMessage = attempt.orphanManifestMessage;
@@ -248,17 +256,17 @@ export async function backupAll(): Promise<void> {
     }
     if (!returnedToStopped) {
       failed++;
-      continue;
+      return;
     }
     if (!shieldsWindowOpened) {
       console.error(`  ${RD}✗${R} ${sb.name}: backup failed (could not safely unlock shields)`);
       failed++;
-      continue;
+      return;
     }
     if (orphanManifestMessage) {
       console.log(`  ${YW}⚠${R} Skipped '${sb.name}' (orphan manifest): ${orphanManifestMessage}`);
       skipped++;
-      continue;
+      return;
     }
     if (!result) throw new Error(`Backup for '${sb.name}' completed without a result`);
     if (result.success) {
@@ -273,7 +281,7 @@ export async function backupAll(): Promise<void> {
             `  ${YW}⚠${R} Skipped '${sb.name}' (running but SSH-unreachable; NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1 set). Any uncommitted state since the last successful backup will be lost.`,
           );
           skipped++;
-          continue;
+          return;
         }
         unreachableRunning++;
       }
@@ -282,6 +290,24 @@ export async function backupAll(): Promise<void> {
         result.failedDirReasons,
       );
       console.error(`  ${RD}✗${R} ${sb.name}: backup failed (${failedItems})`);
+      failed++;
+    }
+  };
+  for (const sb of sandboxes) {
+    let enteredMutationLock = false;
+    try {
+      await withSandboxMutationLock(sb.name, () => {
+        enteredMutationLock = true;
+        return backupRegisteredSandbox(sb);
+      });
+    } catch (error) {
+      // Callback failures retain the existing fail-fast behavior. A lock that
+      // could not be acquired is instead one failed sandbox attempt so the
+      // remaining backups, orphan confirmation, summary, and strict gate all
+      // still run.
+      if (enteredMutationLock) throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error(`  ${RD}✗${R} ${sb.name}: backup failed (mutation lock: ${detail})`);
       failed++;
     }
   }

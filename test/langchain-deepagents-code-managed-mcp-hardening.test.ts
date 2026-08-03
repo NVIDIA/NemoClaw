@@ -120,6 +120,56 @@ print("strict-tombstone-ok")
     },
   );
 
+  it("rejects stacked private tmpfs mounts even when the lower mount is compliant (#8018)", () => {
+    const result = runManagedHelper(String.raw`
+import importlib.util
+import fcntl
+import stat
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+for name, value in {
+    "F_SEAL_WRITE": 1,
+    "F_SEAL_GROW": 2,
+    "F_SEAL_SHRINK": 4,
+    "F_SEAL_SEAL": 8,
+}.items():
+    setattr(fcntl, name, getattr(fcntl, name, value))
+spec = importlib.util.spec_from_file_location("_nemoclaw_managed", sys.argv[1])
+managed = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(managed)
+
+directory = Path("/run/nemoclaw-dcode-mcp")
+managed._MCP_PRIVATE_ANONYMOUS_DIRECTORY = directory
+valid_mountinfo = (
+    f"31 20 0:25 / {directory} rw,nosuid,nodev,noexec - "
+    "tmpfs tmpfs rw,size=1024k,mode=1777\n"
+)
+mountinfo = valid_mountinfo
+managed.os.lstat = lambda _path: SimpleNamespace(st_mode=stat.S_IFDIR | 0o1777)
+managed.os.statvfs = lambda _path: SimpleNamespace(f_blocks=256, f_frsize=4096)
+managed.os.path.ismount = lambda _path: True
+managed.Path.read_text = lambda *_args, **_kwargs: mountinfo
+managed._validate_private_managed_mcp_tmpfs()
+
+mountinfo += (
+    f"32 31 0:26 / {directory} rw,nosuid,nodev - "
+    "tmpfs tmpfs rw,size=1024k,mode=1777\n"
+)
+try:
+    managed._validate_private_managed_mcp_tmpfs()
+except RuntimeError as exc:
+    assert "private bounded tmpfs" in str(exc)
+else:
+    raise AssertionError("accepted an ambiguous stacked private tmpfs")
+print("stacked-private-tmpfs-rejected")
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("stacked-private-tmpfs-rejected");
+  });
+
   it.runIf(process.platform === "linux")(
     "rejects a same-sized fully sealed descriptor not created by this process state",
     () => {
@@ -284,15 +334,17 @@ print("anonymous-fallback-ok")
   );
 
   it.runIf(process.platform === "linux")(
-    "fails closed without O_TMPFILE and does not mask unrelated memfd errors",
+    "uses private tmpfs after /tmp rejects O_TMPFILE and preserves fail-closed errors (#8018)",
     () => {
       const result = runManagedHelper(String.raw`
 import errno
 import importlib.util
 import os
+import stat
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 spec = importlib.util.spec_from_file_location("_nemoclaw_managed", sys.argv[1])
 managed = importlib.util.module_from_spec(spec)
@@ -351,25 +403,91 @@ def blocked_memfd(*_args, **_kwargs):
 
 with tempfile.TemporaryDirectory() as tempdir:
     managed._MCP_CONFIG_FILE = Path(tempdir) / ".nemoclaw-mcp.json"
+    private_directory = Path(tempdir) / "private-tmpfs"
+    private_directory.mkdir(mode=0o1777)
+    managed._MCP_PRIVATE_ANONYMOUS_DIRECTORY = private_directory
+
+    real_lstat = managed.os.lstat
+    real_statvfs = managed.os.statvfs
+    real_ismount = managed.os.path.ismount
+    real_read_text = managed.Path.read_text
+    mountinfo = (
+        f"31 20 0:25 / {private_directory} rw,nosuid,nodev,noexec - "
+        "tmpfs tmpfs rw,size=1024k,mode=1777\n"
+    )
+    managed.os.lstat = lambda _path: SimpleNamespace(st_mode=stat.S_IFDIR | 0o1777)
+    managed.os.statvfs = lambda _path: SimpleNamespace(f_blocks=256, f_frsize=4096)
+    managed.os.path.ismount = lambda _path: True
+    managed.Path.read_text = lambda *_args, **_kwargs: mountinfo
+    managed._validate_private_managed_mcp_tmpfs()
+
+    def reject_invalid_private_tmpfs(label):
+        try:
+            managed._validate_private_managed_mcp_tmpfs()
+        except RuntimeError as exc:
+            assert "private bounded tmpfs" in str(exc), label
+        else:
+            raise AssertionError(f"accepted invalid private tmpfs: {label}")
+
+    managed.os.statvfs = lambda _path: SimpleNamespace(f_blocks=257, f_frsize=4096)
+    reject_invalid_private_tmpfs("oversized")
+    managed.os.statvfs = lambda _path: SimpleNamespace(f_blocks=256, f_frsize=4096)
+    mountinfo = mountinfo.replace(",nodev", "")
+    reject_invalid_private_tmpfs("missing nodev")
+    mountinfo = mountinfo.replace("rw,nosuid,noexec", "rw,nosuid,nodev,noexec")
+    managed.os.path.ismount = lambda _path: False
+    reject_invalid_private_tmpfs("not a mount point")
+
+    managed.os.lstat = real_lstat
+    managed.os.statvfs = real_statvfs
+    managed.os.path.ismount = real_ismount
+    managed.Path.read_text = real_read_text
+    managed._validate_private_managed_mcp_tmpfs = lambda: None
     managed.os.memfd_create = blocked_memfd
     real_open = managed.os.open
     before = set(os.listdir("/proc/self/fd"))
+    opened_directories = []
 
     def unsupported_tmpfile(path, flags, *args, **kwargs):
         if flags & os.O_TMPFILE:
-            raise OSError(errno.EOPNOTSUPP, "O_TMPFILE unavailable")
+            opened_directories.append(Path(path))
+            if Path(path) == managed._MCP_ANONYMOUS_DIRECTORY:
+                raise OSError(errno.EOPNOTSUPP, "O_TMPFILE unavailable")
         return real_open(path, flags, *args, **kwargs)
 
     managed.os.open = unsupported_tmpfile
     try:
-        managed.managed_mcp_config_path()
-    except RuntimeError as exc:
-        assert "anonymous O_TMPFILE support" in str(exc)
-    else:
-        raise AssertionError("linked temporary fallback was used")
+        snapshot_path = managed.managed_mcp_config_path()
     finally:
         managed.os.open = real_open
+    assert snapshot_path is not None
+    descriptor = int(snapshot_path.removeprefix(managed._MCP_DESCRIPTOR_PREFIX))
+    binding = managed._MANAGED_MCP_BINDING
+    assert binding is not None
+    assert binding["kind"] == managed._MCP_ANONYMOUS_KIND
+    assert opened_directories == [managed._MCP_ANONYMOUS_DIRECTORY, private_directory]
+    assert managed.managed_mcp_config_bytes(snapshot_path) == payload
+    assert list(private_directory.iterdir()) == []
+    os.close(descriptor)
     assert set(os.listdir("/proc/self/fd")) == before
+    managed._MANAGED_MCP_FD = None
+    managed._MANAGED_MCP_BINDING = None
+    managed._MANAGED_MCP_READY = False
+
+    managed.os.memfd_create = blocked_memfd
+    def invalid_private_tmpfs():
+        raise RuntimeError("managed MCP config requires a private bounded tmpfs")
+
+    managed._validate_private_managed_mcp_tmpfs = invalid_private_tmpfs
+    managed.os.open = unsupported_tmpfile
+    try:
+        managed.managed_mcp_config_path()
+    except RuntimeError as exc:
+        assert "private bounded tmpfs" in str(exc)
+    else:
+        raise AssertionError("invalid private tmpfs was accepted")
+    finally:
+        managed.os.open = real_open
     assert managed._MANAGED_MCP_FD is None
     assert managed._MANAGED_MCP_BINDING is None
     assert managed._MANAGED_MCP_READY is False

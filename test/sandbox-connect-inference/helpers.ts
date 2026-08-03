@@ -176,6 +176,7 @@ function initStateFile(stateFile: string, options: SetupFixtureOptions) {
       inferenceSetCalls: [],
       sandboxConnectCalls: [],
       sandboxExecCalls: [],
+      sandboxExecInputs: [],
       gatewayControlCalls: [],
       gatewaySupervisorRecovery: options.gatewaySupervisorRecovery ?? false,
       gatewayRunning: options.gatewaySupervisorRecovery !== true,
@@ -224,15 +225,17 @@ if (args[0] === "sandbox" && args[1] === "list") {
 }
 
 if (args[0] === "sandbox" && args[1] === "exec") {
+  const input = fs.readFileSync(0, "utf8");
   state.sandboxExecCalls.push(args);
-  const command = args.join(" ");
+  state.sandboxExecInputs.push(input);
+  const command = [args.join(" "), input].filter(Boolean).join("\\n");
   if (!command.includes("inference.local/v1/models")) {
     fs.writeFileSync(stateFile, JSON.stringify(state));
     // Test hook (#4263 / CodeRabbit): when the connect-time auto-pair
     // approval pass is specifically targeted, simulate the failure
-    // path the production code must tolerate. OpenShell carries the script as
-    // one multiline command argument, identifiable by its embedded approval.
-    const approvalCmd = args[args.length - 1] || "";
+    // path the production code must tolerate. The approval program is carried
+    // on stdin so it does not exceed OpenShell command-argument transport.
+    const approvalCmd = input;
     if (
       process.env.OPENSHELL_TEST_FAIL_APPROVAL_PASS === "1" &&
       approvalCmd.includes("openclaw") &&
@@ -580,18 +583,19 @@ export function runConnect(
 
 export function extractApprovalPassScript(stateFile: string, sandboxName: string): string {
   const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-  // OpenShell carries the approval pass as one multiline command argument.
-  const approvalExec = (state.sandboxExecCalls as string[][]).find((call) => {
-    if (!call.includes("--")) return false;
-    const inner = call[call.length - 1] || "";
-    return inner.includes("openclaw") && inner.includes("devices") && inner.includes("approve");
-  });
+  const approvalIndex = (state.sandboxExecInputs as string[]).findIndex(
+    (input) => input.includes("openclaw") && input.includes("devices") && input.includes("approve"),
+  );
+  const approvalExec = (state.sandboxExecCalls as string[][])[approvalIndex];
+  const approvalScript = (state.sandboxExecInputs as string[])[approvalIndex];
   expect(approvalExec).toBeDefined();
   expect(approvalExec).toContain("sandbox");
   expect(approvalExec).toContain("exec");
   expect(approvalExec).toContain("--name");
   expect(approvalExec).toContain(sandboxName);
-  return approvalExec?.[approvalExec.length - 1] || "";
+  expect(approvalExec?.slice(-2)).toEqual(["sh", "-s"]);
+  expect(approvalExec?.join(" ")).not.toContain("PYAPPROVE");
+  return approvalScript || "";
 }
 
 export function runApprovalPassScript(
