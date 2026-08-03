@@ -22,7 +22,22 @@ Update it and `agents/openclaw/mcporter-runtime/package*.json` together whenever
 - Security override: `fast-uri@3.1.4` (`sha512-8JnbkQ4juDyvYs4mgFGQqg4yCYtFDtUtmp2QIQq11ZZe5CFQ5wcqm1rqDgAh/QdMySuBnPzMUiJUNZG5N/AiQw==`) replaces Ajv's vulnerable `3.1.3` resolution for `GHSA-v2hh-gcrm-f6hx`. It remains within Ajv's declared `^3.0.1` range and preserves the reviewed v3 API boundary. Remove the override when the declared graph resolves to a reviewed patched release.
 
 Both image paths install the committed graph with `npm ci --ignore-scripts --omit=dev` because the published package declares no install-time lifecycle script and NemoClaw needs only its already-built CLI.
-The reviewed audit wrapper reports lower-severity production findings and blocks unaccepted high or critical advisories. The default `ci/npm-audit-exceptions.json` registry is empty. Any future exception must match one advisory, graph, package, installed version, and severity; identify an owner and NemoClaw tracking issue; state a decision, rationale, and expiry no more than 30 days away; and include compensating controls for temporary risk acceptance. Missing, malformed, expired, overlong, mismatched, or unused exceptions fail closed. The repository-wide audit also rejects exceptions for unknown graph IDs. Registry signature verification remains a separate control.
+The reviewed audit wrapper reports lower-severity production findings and
+blocks unaccepted high or critical advisories.
+The `ci/npm-audit-exceptions.json` registry is empty by default outside an
+explicitly bounded transition.
+Any exception must match one advisory, graph, package, installed version, and
+severity; identify an owner and NemoClaw tracking issue; state a decision,
+rationale, and expiry no more than 30 days away; and include compensating
+controls for temporary risk acceptance.
+Missing, malformed, expired, overlong, mismatched, or unused exceptions fail
+closed.
+The repository-wide audit also rejects exceptions for unknown graph IDs.
+The seven current `temporary-risk-acceptance` entries are documented in the
+[OpenClaw 2026.7.1 dependency review](../../docs/security/openclaw-2026.7.1-dependency-review.md).
+Pull request (PR) #8156 must remove all seven entries when it merges the
+successor locks and updated archive remediator.
+Registry signature verification remains a separate control.
 
 ## WeChat plugin runtime graph
 
@@ -42,7 +57,7 @@ The lock records the exact version, registry URL, and integrity for every transi
 ## Source-of-Truth Boundary
 
 - `invalidState`: the image installs a package graph, tarball, license, or advisory state that differs from the independently queried npm registry records for `mcporter@0.7.3`, resolves `@hono/node-server` to any version other than exact `2.0.11`, or resolves `fast-uri` to any version other than exact `3.1.4`.
-- `sourceBoundary`: npm owns registry metadata, tarball integrity, provenance signatures, and advisory responses; NemoClaw owns the exact lock, script-disabled install, Docker integrity assertion, empty-by-default audit exception registry, and review record.
+- `sourceBoundary`: npm owns registry metadata, tarball integrity, provenance signatures, and advisory responses; NemoClaw owns the exact lock, script-disabled install, Docker integrity assertion, the audit exception registry's empty default and bounded seven-entry transition, and the review record.
 - `whyNotSourceFix`: a repository note cannot make external registry state trustworthy, so image builds execute `npm audit` and `npm audit signatures` against the locked production graph and reviewers compare the lock with the registry response.
 - `regressionTest`: `test/mcporter-supply-chain.test.ts` keeps the version, integrity, lock metadata, Docker install flags, audit commands, and this review synchronized; `test/reviewed-npm-audit.test.ts` proves exact matching and fail-closed exception validation.
 - `removalCondition`: remove this runtime dependency and review when OpenClaw provides the required authenticated Streamable HTTP client lifecycle without mcporter, or repeat the independent review for a newly pinned version.

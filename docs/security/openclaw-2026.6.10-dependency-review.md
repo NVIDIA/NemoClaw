@@ -70,7 +70,25 @@ The current remediation does not silently extend its authority to those graphs.
 
 This review is an advisory snapshot for the direct OpenClaw runtime package, the locked `mcporter@0.7.3` graph, Codex ACP runtime helper, optional plugins, messaging plugins, and their npm dependency graphs at review time. Default PR and main CI now rematerialize those exact direct packages from SRI-verified reviewed local archives under Node `22.23.1`, install with lifecycle scripts disabled, run `npm audit --omit=dev --json` through `scripts/lib/reviewed-npm-audit.mts`, and upload both the raw reports and normalized policy results from `coverage/reviewed-npm-audit`. The configured threshold in `ci/reviewed-npm-audit.json` is `high`. Lower-severity findings remain visible without blocking. The same job independently installs and audits the committed mcporter production lock. This gate complements, but does not replace, the committed npm integrity pins, registry signature verification, and install-time archive checks.
 
-The exception registry at `ci/npm-audit-exceptions.json` is empty by default. It is not a global npm-audit bypass: each entry must exactly match one advisory, audited graph, package, installed version, and reported severity. It must also record an expiring `not-affected` or `temporary-risk-acceptance` decision, rationale, owner, and NemoClaw issue or PR. Expiry is limited to 30 days. Temporary risk acceptance additionally requires compensating controls. Missing, malformed, expired, overlong, duplicate, mismatched, and unused entries fail the audit. The repository-wide audit also rejects exceptions for unknown graph IDs. The policy file hash, evaluation status, and accepted advisory IDs are bound into OpenClaw base-image provenance, so a child image cannot silently reuse a base built under a different exception set. The registry contains no exception for `GHSA-v2hh-gcrm-f6hx` or any other current advisory.
+The exception registry at `ci/npm-audit-exceptions.json` is empty by default
+outside an explicitly bounded transition.
+It is not a global npm-audit bypass: each entry must exactly match one
+advisory, audited graph, package, installed version, and reported severity.
+It must also record an expiring `not-affected` or
+`temporary-risk-acceptance` decision, rationale, owner, and NemoClaw issue or
+PR.
+Expiry is limited to 30 days.
+Temporary risk acceptance additionally requires compensating controls.
+Missing, malformed, expired, overlong, duplicate, mismatched, and unused
+entries fail the audit.
+The repository-wide audit also rejects exceptions for unknown graph IDs.
+The policy file hash, evaluation status, and accepted advisory IDs are bound
+into OpenClaw base-image provenance, so a child image cannot silently reuse a
+base built under a different exception set.
+The seven current `temporary-risk-acceptance` entries are documented in the
+[OpenClaw 2026.7.1 dependency review](./openclaw-2026.7.1-dependency-review.md).
+PR #8156 must remove all seven entries when it merges the successor locks and
+updated archive remediator.
 
 ## Transitive Dependency Graph Rationale
 
@@ -235,7 +253,7 @@ Removal condition: retain these provenance checks in the shared installer and up
 
 The Codex ACP, runtime OpenClaw, base-image OpenClaw, optional-plugin, and messaging-plugin boundaries consume one reviewed implementation with thin shell or TypeScript callers. Every archive boundary retains exact reviewed package identity, registry SRI, reviewed registry tarball URL, packed-byte SRI, a nonempty regular-file basename contained in a fresh pack directory, install from the resolved local archive only, cleanup, and failure before install on any mismatch. Runtime OpenClaw either executes that full transaction or consumes the exact protected result of the base-image transaction under the bounded provenance checks above; it never substitutes a floating package-spec install. Runtime mcporter verifies the same exact registry metadata and then either installs and audits the committed lock or consumes the marker-bound result of that exact locked and audited base-image transaction.
 
-Invalid state: a caller bypasses the helper, the audit inventory diverges from a production pin, CI audits a graph other than the verified local archives and committed mcporter lock, an exception is missing required review metadata or does not exactly match a current finding, base provenance uses a different exception policy, or audit evidence is lost when the threshold fails. Source boundary: `scripts/lib/reviewed-npm-archive.mts`, `scripts/lib/reviewed-npm-audit.mts`, the thin Docker and messaging callers, `ci/reviewed-npm-audit.json`, `ci/npm-audit-exceptions.json`, `scripts/audit-reviewed-npm-graph.mts`, and `.github/actions/ci-reviewed-npm-audit/action.yaml`. Source-fix constraint: #5242 retains general dependency-pin and canary design ownership; this slice records only the current production audit inventory and tests it against the caller-owned pins. Regression tests: the integrity-pin suites and `test/messaging-build-applier-integrity.test.ts` retain malicious filename, registry drift, packed-SRI drift, and local-install proof at each caller; `test/reviewed-npm-archive.test.ts` tests the shared archive primitive; and `test/reviewed-npm-audit.test.ts` pins the empty default, exact exception matching, expiry, threshold behavior, and fail-closed validation. Removal condition: keep the shared helpers and audit gate while reviewed npm archives remain production build inputs.
+Invalid state: a caller bypasses the helper, the audit inventory diverges from a production pin, CI audits a graph other than the verified local archives and committed mcporter lock, an exception is missing required review metadata or does not exactly match a current finding, base provenance uses a different exception policy, or audit evidence is lost when the threshold fails. Source boundary: `scripts/lib/reviewed-npm-archive.mts`, `scripts/lib/reviewed-npm-audit.mts`, the thin Docker and messaging callers, `ci/reviewed-npm-audit.json`, `ci/npm-audit-exceptions.json`, `scripts/audit-reviewed-npm-graph.mts`, and `.github/actions/ci-reviewed-npm-audit/action.yaml`. Source-fix constraint: #5242 retains general dependency-pin and canary design ownership; this slice records only the current production audit inventory and tests it against the caller-owned pins. Regression tests: the integrity-pin suites and `test/messaging-build-applier-integrity.test.ts` retain malicious filename, registry drift, packed-SRI drift, and local-install proof at each caller; `test/reviewed-npm-archive.test.ts` tests the shared archive primitive; and `test/reviewed-npm-audit.test.ts` pins the bounded seven-entry transition, exact exception matching, expiry, threshold behavior, and fail-closed validation. Removal condition: keep the shared helpers and audit gate while reviewed npm archives remain production build inputs.
 
 ### OpenClaw Compiled-Dist Patch Runtime Boundary
 

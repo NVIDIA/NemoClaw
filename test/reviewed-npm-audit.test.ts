@@ -28,9 +28,10 @@ const CONFIG = JSON.parse(
 ) as {
   severityThreshold: "info" | "low" | "moderate" | "high" | "critical";
 };
-const EMPTY_POLICY = parseAuditExceptionRegistry(
+const CHECKED_IN_POLICY = parseAuditExceptionRegistry(
   fs.readFileSync(path.join(REPO_ROOT, "ci", "npm-audit-exceptions.json"), "utf-8"),
 );
+const EMPTY_POLICY: AuditExceptionRegistry = { schemaVersion: 1, exceptions: [] };
 const NOW = new Date("2026-07-21T12:00:00Z");
 
 function withInstalledGraph(
@@ -118,8 +119,26 @@ function exceptionPolicy(
 }
 
 describe("reviewed npm audit gate", () => {
-  it("uses an empty exception registry by default", () => {
-    expect(EMPTY_POLICY).toEqual({ schemaVersion: 1, exceptions: [] });
+  it("bounds the managed runtime transition exceptions", () => {
+    expect(CHECKED_IN_POLICY).toEqual({
+      schemaVersion: 1,
+      exceptions: expect.arrayContaining([
+        expect.objectContaining({
+          advisory: "GHSA-4cwx-7wf7-3272",
+          decision: "temporary-risk-acceptance",
+          expires: "2026-08-10",
+          graph: "reviewed-archive-graph",
+          installedVersion: "8.5.0",
+          package: "undici",
+          severity: "high",
+          trackingIssue: "https://github.com/NVIDIA/NemoClaw/pull/8156",
+        }),
+      ]),
+    });
+    expect(CHECKED_IN_POLICY.exceptions).toHaveLength(7);
+    expect(new Set(CHECKED_IN_POLICY.exceptions.map((entry) => entry.graph))).toEqual(
+      new Set(["reviewed-archive-graph", "openclaw-runtime", "mcporter-runtime"]),
+    );
   });
 
   it("fails at high or critical findings while retaining lower severities", () => {

@@ -72,12 +72,63 @@ whose amd64 config reports Node `22.23.1`.
 
 The reviewed audit materializes three production-compatible boundaries: the
 remediated reviewed-archive graph, the committed OpenClaw runtime lock, and the
-committed mcporter runtime lock. A real registry-backed run reports `0` high
-and `0` critical vulnerabilities for all three boundaries, and npm registry
-signature verification passes for both locked graphs. The critical `tar`
-finding that blocked the previous pin and the high Jaeger,
-`brace-expansion`, and `fast-uri` findings are gone. Lower-severity findings
-remain visible below the configured `high` threshold.
+committed mcporter runtime lock.
+The July 21, 2026 registry-backed review reported `0` high and `0` critical
+vulnerabilities for all three boundaries.
+npm registry signature verification passed for both locked graphs.
+That review found no `tar`, Jaeger, `brace-expansion`, or `fast-uri` finding at
+or above the configured `high` threshold.
+Lower-severity findings remain visible below that threshold.
+
+### Managed Runtime Lock Transition
+
+The trusted base-owned archive audit cannot execute pull request (PR) #8156's
+updated archive remediator until that PR merges.
+The transition registry therefore accepts exactly these seven high-severity
+findings:
+
+- `reviewed-archive-graph` accepts `undici@8.5.0` for
+  `GHSA-4cwx-7wf7-3272`.
+- `openclaw-runtime` accepts `brace-expansion@5.0.8` for
+  `GHSA-rgw5-rvv9-x895`, `fast-uri@3.1.4` for `GHSA-7p8r-x3mc-p8w7`,
+  `ip-address@10.2.0` for `GHSA-mwp4-54f8-5fhr`, and `undici@8.5.0` for
+  `GHSA-4cwx-7wf7-3272`.
+- `mcporter-runtime` accepts `fast-uri@3.1.4` for
+  `GHSA-7p8r-x3mc-p8w7` and `ip-address@10.2.0` for
+  `GHSA-mwp4-54f8-5fhr`.
+
+Each entry in `ci/npm-audit-exceptions.json` records
+`temporary-risk-acceptance`, identifies the NemoClaw security maintainers as
+owners, tracks PR #8156, and expires on August 10, 2026.
+This is a policy-governed risk acceptance, not a failed-check waiver.
+The audit still records each advisory and accepts it only when the advisory,
+graph, package, installed version, and severity match the policy entry.
+An expired, missing, mismatched, duplicate, or unused entry fails the audit.
+
+The transition has these compensating controls:
+
+- PR #8172 authorizes the OpenClaw successor lock SHA-256
+  `759b31779f40867f35f15065b582eb1d3efb8fddb1fe43c207507c905fa2a421`
+  without replacing the current lock.
+  That successor resolves `brace-expansion@5.0.9`, `fast-uri@3.1.5`,
+  `ip-address@10.3.1`, and `undici@8.10.0`.
+- PR #8172 authorizes the mcporter successor lock SHA-256
+  `962dee34f6b0a493521d1619d1cf030e2630cbdfce8bf0598217202f57078793`
+  without replacing the current lock.
+  That successor resolves `fast-uri@3.1.5` and `ip-address@10.3.1`.
+- PR #8156's image assembly path binds the OpenClaw core and Discord manifests
+  and shrinkwraps, the physical Discord bundle, the replacement archive, the
+  remediated package tree, and the OpenClaw runtime lock to reviewed
+  `undici@8.10.0`.
+  Its remediator validates the other replacement archive identities and the
+  remediated package-tree digest before image assembly.
+
+The separately audited successor locks contain no high or critical advisories
+and require no audit exception.
+PR #8156 must remove all seven entries when it merges the successor locks and
+updated archive remediator.
+The audit rejects the entries after August 10, 2026, if that removal has not
+occurred.
 
 The independently installed `nemoclaw/` plugin graph reports `0`
 vulnerabilities after resolving its direct `tar` dependency to `7.5.20`.
@@ -103,9 +154,9 @@ The reviewed upstream OpenClaw shrinkwrap resolves `3.1.2`, and
 `GHSA-v2hh-gcrm-f6hx` affects releases through `3.1.3`.
 Both committed runtime locks select the first compatible release outside that
 range, `3.1.4`. Image assembly reports lower-severity findings and blocks
-unaccepted high or critical findings through the empty-by-default audit
-exception registry. Signature verification and the exact committed locks
-remain mandatory.
+unaccepted high or critical findings through the exact-match audit exception
+registry described above. Signature verification and the exact committed
+locks remain mandatory.
 
 The OpenClaw audit first applies the same fail-closed remediation to the
 SRI-verified reviewed archive, then independently installs and verifies the

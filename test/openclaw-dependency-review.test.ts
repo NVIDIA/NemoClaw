@@ -294,9 +294,10 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("`npm audit --omit=dev --json`");
     expect(review).toContain("configured threshold in `ci/reviewed-npm-audit.json` is `high`");
     expect(review).toContain(
-      "exception registry at `ci/npm-audit-exceptions.json` is empty by default",
+      "exception registry at `ci/npm-audit-exceptions.json` is empty by default\noutside an explicitly bounded transition",
     );
-    expect(review).toContain("contains no exception for `GHSA-v2hh-gcrm-f6hx`");
+    expect(review).toContain("seven current `temporary-risk-acceptance` entries");
+    expect(review).toContain("PR #8156 must remove all seven entries");
     expect(review).toContain("Transitive Dependency Graph Rationale");
     expect(review).toContain("Transitive Remediation Boundary");
     expect(review).toContain("point-in-time record of the remediation shipped for the");
