@@ -66,5 +66,9 @@ describe("managed snapshot clone activation boundary", () => {
     expect(fixture.lifecycleMock.events).not.toContain("delete");
     expect(fixture.streamSandboxCreateMock).not.toHaveBeenCalled();
     expect(fixture.restoreSandboxStateMock).not.toHaveBeenCalled();
+    expect(fixture.runOpenshellMock).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["provider", "create"]),
+      expect.anything(),
+    );
   });
 });
