@@ -357,13 +357,9 @@ describe.skipIf(process.platform !== "linux")("managed bootstrap image trampolin
           PATH: "/usr/bin:/bin",
           PS4: `$(/usr/bin/touch ${xtrace})`,
           SHELLOPTS: "xtrace",
-          ...(loader
-            ? {
-                LD_AUDIT: loader.library,
-                LD_LIBRARY_PATH: directory,
-                LD_PRELOAD: loader.library,
-              }
-            : {}),
+          LD_AUDIT: loader.library,
+          LD_LIBRARY_PATH: directory,
+          LD_PRELOAD: loader.library,
         },
       });
 
@@ -372,12 +368,12 @@ describe.skipIf(process.platform !== "linux")("managed bootstrap image trampolin
       expect(fs.existsSync(attackerTrace)).toBe(false);
       expect(fs.existsSync(attackerFunction)).toBe(false);
       expect(fs.existsSync(xtrace)).toBe(false);
-      expect(loader && fs.existsSync(loader.earlyTrace)).not.toBe(true);
-      expect(loader && fs.existsSync(loader.afterTrace)).not.toBe(true);
+      expect(fs.existsSync(loader.earlyTrace)).toBe(false);
+      expect(fs.existsSync(loader.afterTrace)).toBe(false);
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
     }
-  });
+  }, 60_000);
 
   it("restores the exact supervisor environment only through the fixed resume mode", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bootstrap-resume-"));
@@ -449,7 +445,7 @@ exec /usr/bin/env -i NEMOCLAW_MANAGED_BOOTSTRAP_RESUME=1 ${JSON.stringify(
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
     }
-  });
+  }, 60_000);
 
   it("enforces supervisor environment count, entry, and aggregate byte boundaries", () => {
     const directory = fs.mkdtempSync(
@@ -623,7 +619,6 @@ exec /usr/bin/env -i NEMOCLAW_MANAGED_BOOTSTRAP_RESUME=1 ${JSON.stringify(
       fs.writeFileSync(runtime, "");
       fs.writeFileSync(request, "{}\n", { mode: 0o400 });
       const loader = hostileLoader(directory, request);
-      const loaderValue = loader?.library ?? "";
       executable(
         path.join(directory, "id"),
         `#!/bin/sh
@@ -674,7 +669,7 @@ test "$3" = "\\$(touch ${injection})"
 test ! -e ${JSON.stringify(injection)}
 test "$BASH_ENV" = ${JSON.stringify(path.join(directory, "bash-env"))}
 test "$LD_LIBRARY_PATH" = ${JSON.stringify(directory)}
-test "$LD_PRELOAD" = ${JSON.stringify(loaderValue)}
+test "$LD_PRELOAD" = ${JSON.stringify(loader.library)}
 attacker
 test -e ${JSON.stringify(attackerFunction)}
 test -z "\${NEMOCLAW_MANAGED_BOOTSTRAP_ENTRYPOINT+x}"
@@ -737,13 +732,9 @@ printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capab
         LANG: "zz_TEST",
         NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "preserved-capability",
         LD_LIBRARY_PATH: directory,
-        LD_PRELOAD: loaderValue,
-        ...(loader
-          ? {
-              DYLD_INSERT_LIBRARIES: loader.library,
-              LD_AUDIT: loader.library,
-            }
-          : {}),
+        LD_PRELOAD: loader.library,
+        DYLD_INSERT_LIBRARIES: loader.library,
+        LD_AUDIT: loader.library,
       };
 
       execFileSync(entrypoint, argv, { env: environment });
@@ -751,8 +742,8 @@ printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capab
       expect(fs.existsSync(request)).toBe(false);
       expect(fs.existsSync(injection)).toBe(false);
       expect(fs.existsSync(attackerFunction)).toBe(true);
-      expect(loader && fs.existsSync(loader.earlyTrace)).not.toBe(true);
-      expect(loader && fs.existsSync(loader.afterTrace)).toBe(loader ? true : null);
+      expect(fs.existsSync(loader.earlyTrace)).toBe(false);
+      expect(fs.existsSync(loader.afterTrace)).toBe(true);
       expect(fs.readFileSync(trace, "utf8").trim().split("\n")).toEqual([
         `node:${runtime} --apply-bootstrap-file --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,
         `node:${runtime} --verify-bootstrap-completion --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,

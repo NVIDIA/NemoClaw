@@ -96,5 +96,7 @@ prerequisites together with their image-runtime bootstrap modes, implement
 driver-specific prepare, durable-record, activate, exact cleanup, and rollback,
 and only then wire the coordinator into create. The same contract is exercised
 for OpenClaw, Hermes, and Deep Agents Code without a provider-specific central
-switch. Until that complete boundary lands, every registered runtime provider
-keeps its bootstrap surface unsupported.
+switch. The remaining integration and qualification work is tracked in
+[epic #7744](https://github.com/NVIDIA/NemoClaw/issues/7744) and its linked
+implementation stack. Until that complete boundary lands, every registered
+runtime provider keeps its bootstrap surface unsupported.

@@ -252,7 +252,7 @@ static void create_environment_transport(size_t count, size_t byte_count) {
   }
   if (written != byte_count ||
       raw_syscall3(SYSCALL_FCNTL, ENVIRONMENT_FD, F_ADD_SEALS, REQUIRED_SEALS) != 0L ||
-      raw_syscall3(SYSCALL_LSEEK, ENVIRONMENT_FD, SEEK_SET, 0L) != 0L) {
+      raw_syscall3(SYSCALL_LSEEK, ENVIRONMENT_FD, 0L, SEEK_SET) != 0L) {
     fail("could not seal the supervisor environment transport");
   }
 }
@@ -265,7 +265,7 @@ static bool exact_resume_environment(void) {
 
 static void read_environment_transport(size_t count, size_t byte_count) {
   if (raw_syscall3(SYSCALL_FCNTL, ENVIRONMENT_FD, F_GET_SEALS, 0L) != REQUIRED_SEALS ||
-      raw_syscall3(SYSCALL_LSEEK, ENVIRONMENT_FD, SEEK_SET, 0L) != 0L) {
+      raw_syscall3(SYSCALL_LSEEK, ENVIRONMENT_FD, 0L, SEEK_SET) != 0L) {
     fail("supervisor environment transport is not the sealed bootstrap transport");
   }
   size_t offset = 0U;
