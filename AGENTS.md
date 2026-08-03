@@ -276,7 +276,9 @@ If the command trace contains no reviewer-request write, report the event as an 
 
 ## Documentation
 
-- Treat `docs/` as the source of truth for user-facing documentation and follow `docs/CONTRIBUTING.md`.
+- Treat `docs/` as the source of truth for public-facing documentation.
+  `docs/CONTRIBUTING.md` owns public-facing documentation procedures and rules.
+  `docs/AGENTS.md` owns agent-specific instructions for applying them.
 - Before completing a code change, determine whether it changes a user-visible surface.
   This includes a public API, CLI, configuration, UI or front-end behavior, workflow, default, error, or other supported product behavior.
 - When it does and the host supports subagents, start a documentation authoring subagent while the primary agent continues the implementation.
@@ -291,8 +293,9 @@ If the command trace contains no reviewer-request write, report the event as an 
   For a documentation-only change, require review of the writing rules and documentation style.
 - If the current host cannot run this reviewer, hand the completed diff and validation evidence to a capable host.
   If no capable host is available, record the review as `blocked` and do not complete final handoff.
-- After the review, complete the PR template's Documentation Writer Review section. Record the result, evidence, and agent surface. Put the reviewed head SHA and current `AGENTS.md` blob SHA in the template's hidden metadata comments.
-- If any commit changes the pull-request head after the hidden head SHA, rerun the documentation writer review and refresh the hidden metadata. The receipt check runs again when new commits are pushed.
+- After the review, follow the
+  [Documentation Writer Review Receipt](CONTRIBUTING.md#documentation-writer-review-receipt)
+  procedure.
 - During pre-tag release prep, run `nemoclaw-contributor-update-docs` and include the canonical release entry in the release-note docs PR. Create or update `docs/changelog/YYYY-MM-DD.mdx` for `vX.Y.Z` following `docs/CONTRIBUTING.md`; a PR that updates ordinary pages without the dated changelog entry is incomplete. Merge that PR, or record an explicit maintainer waiver, before generating the release plan.
 
 ### NVIDIA DORI Routing

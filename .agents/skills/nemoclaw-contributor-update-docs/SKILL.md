@@ -156,26 +156,6 @@ Before writing, verify that the commit was not excluded in Step 1. Do not draft 
 Follow the shared [Documentation Writing and Review](../_shared/documentation-writing-review.md)
 contract for changed documentation, changelog text, independent review, and receipt evidence.
 
-Write the doc update following these conventions:
-
-- **Active voice, present tense, second person.**
-- **No unnecessary bold.** Reserve bold for UI labels and parameter names.
-- **Do not use em dashes.** Use commas, colons, or separate sentences.
-- **Start sections with an introductory sentence** that orients the reader.
-- **No superlatives.** Say what the feature does, not how great it is.
-- **Copyable code examples use language-specific fences** such as `bash`, `sh`, or `powershell`, without prompt markers.
-- **Shared NemoClaw CLI examples use `$$nemoclaw`.** In pages rendered for multiple guide variants, write host CLI examples with the `$$nemoclaw` build-time placeholder. The docs build renders `nemoclaw`, `nemohermes`, or `nemo-deepagents` for the applicable variant before Fern renders fenced code blocks.
-- **Do not duplicate code blocks for binary-name-only differences.** Use one fenced block with `$$nemoclaw` when only the host CLI binary differs. Use `<AgentOnly>` when behavior, setup, paths, state locations, capabilities, or agent-specific wording differ.
-- **Use `console` only for terminal transcripts** that include prompts, output, or interactive sessions.
-- **Include the SPDX header** if creating a new page.
-- **Match existing frontmatter format** if creating a new page.
-- **Always write NVIDIA in all caps.** Wrong: Nvidia, nvidia.
-- **Always capitalize NemoClaw correctly.** Wrong: nemoclaw (in prose), Nemoclaw.
-- **Always capitalize OpenShell correctly.** Wrong: openshell (in prose), Openshell, openShell.
-- **Do not number section titles.** Wrong: "Section 1: Configure Inference" or "Step 3: Verify." Use plain descriptive titles.
-- **No colons in titles.** Wrong: "Inference: Cloud and Local." Write "Cloud and Local Inference" instead.
-- **Use colons to introduce a list or define a term or value.** Do not use a colon to join independent clauses.
-
 When updating an existing page:
 
 - Add content in the logical place within the existing structure.
