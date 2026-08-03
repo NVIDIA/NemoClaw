@@ -76,6 +76,17 @@ describe("uninstall across every gateway port (#7791)", () => {
     expect(runSelectedPass).not.toHaveBeenCalled();
   });
 
+  it("rejects a mismatched gateway check before any port pass", () => {
+    const { deps, error, runPortPass, runSelectedPass } = sweepDeps();
+
+    const result = runUninstallAllGatewayPorts({ ...OPTIONS, gatewayName: "nemoclaw-9000" }, deps);
+
+    expect(result).toEqual({ exitCode: 1, ports: [] });
+    expect(runPortPass).not.toHaveBeenCalled();
+    expect(runSelectedPass).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Refusing to uninstall gateway"));
+  });
+
   it("reports a failed port pass and still finishes the remaining ports", () => {
     const failingPortPass = vi.fn((port: number) => (port === 9000 ? 1 : 0));
     const { deps, error, runSelectedPass } = sweepDeps({ runPortPass: failingPortPass });
@@ -98,12 +109,31 @@ describe("uninstall across every gateway port (#7791)", () => {
     expect(runSelectedPass.mock.calls[0]?.[1]).toMatchObject({ retainedGatewayPorts: [9000] });
   });
 
+  it("returns nonzero when the final pass still observes another gateway environment", () => {
+    const { deps, error } = sweepDeps({
+      runSelectedPass: vi.fn(() => ({
+        exitCode: 0,
+        otherGatewayEnvironmentsRemain: true,
+      })),
+    });
+
+    const result = runUninstallAllGatewayPorts(OPTIONS, deps);
+
+    expect(result.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Whole-host uninstall is incomplete"),
+    );
+  });
+
   it("retains no port for the final pass when every other port uninstalled", () => {
     const { deps, runSelectedPass } = sweepDeps();
 
     runUninstallAllGatewayPorts(OPTIONS, deps);
 
-    expect(runSelectedPass.mock.calls[0]?.[1]).toMatchObject({ retainedGatewayPorts: [] });
+    expect(runSelectedPass.mock.calls[0]?.[1]).toMatchObject({
+      requireCompleteGatewayProcessCleanup: true,
+      retainedGatewayPorts: [],
+    });
   });
 
   it("runs a single scoped pass when no other gateway port exists", () => {
@@ -114,6 +144,27 @@ describe("uninstall across every gateway port (#7791)", () => {
     expect(result.ports).toEqual([8080]);
     expect(runPortPass).not.toHaveBeenCalled();
     expect(runSelectedPass).toHaveBeenCalledTimes(1);
+    expect(runSelectedPass.mock.calls[0]?.[1]).toMatchObject({
+      requireCompleteGatewayProcessCleanup: true,
+      retainedGatewayPorts: [],
+    });
+  });
+
+  it("returns nonzero when an undiscovered environment remains after the only selected pass", () => {
+    const { deps, error } = sweepDeps({
+      listGatewayPorts: () => [8080],
+      runSelectedPass: vi.fn(() => ({
+        exitCode: 0,
+        otherGatewayEnvironmentsRemain: true,
+      })),
+    });
+
+    const result = runUninstallAllGatewayPorts(OPTIONS, deps);
+
+    expect(result.exitCode).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("Whole-host uninstall is incomplete"),
+    );
   });
 
   it("fails without uninstalling anything when the gateway ports cannot be enumerated", () => {
@@ -145,7 +196,11 @@ describe("uninstall across every gateway port (#7791)", () => {
   });
 
   it.each([
-    ["no extra flags", {}, ["internal", "uninstall", "run-plan", "--yes"]],
+    [
+      "no extra flags",
+      {},
+      ["internal", "uninstall", "run-plan", "--yes", "--all-gateway-ports-child"],
+    ],
     [
       "every passthrough flag",
       { deleteModels: true, destroyUserData: true, keepOpenShell: true },
@@ -154,6 +209,7 @@ describe("uninstall across every gateway port (#7791)", () => {
         "uninstall",
         "run-plan",
         "--yes",
+        "--all-gateway-ports-child",
         "--delete-models",
         "--destroy-user-data",
         "--keep-openshell",

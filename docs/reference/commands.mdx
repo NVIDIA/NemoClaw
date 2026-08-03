@@ -3485,12 +3485,17 @@ When uninstall detects other gateway-port environments, it names each one, gives
 A gateway environment whose port cannot be read is reported as an unidentified environment rather than omitted.
 
 `--all-gateway-ports`, or `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS=1`, uninstalls all of them in one run.
-The sweep enumerates the gateway state roots under `~/.nemoclaw/gateways/`, confirms once against the resulting port list, then uninstalls each other port before the port `NEMOCLAW_GATEWAY_PORT` selects.
+The sweep enumerates the default state root and the non-default roots under `~/.nemoclaw/gateways/`.
+It confirms once against the resulting port list, then uninstalls each other port before the port `NEMOCLAW_GATEWAY_PORT` selects.
 Each port runs as its own uninstall so that every port-scoped value, including the state root, registry file, gateway name, and Docker resource names, resolves from that port rather than from the calling environment.
 The selected port runs last so its pass can remove the shared host resources once no other environment remains.
 `--delete-models`, `--destroy-user-data`, and `--keep-openshell` apply to every port; `--gateway` remains a check against the selected port only.
+A failure to enumerate the gateway state roots safely stops the sweep before any port uninstall begins.
+The sweep cannot select an unidentified environment until its gateway port can be determined.
 A port that fails to uninstall is reported, the sweep continues, and the exit code is nonzero.
 That port still counts as a live sibling, so the final pass falls back to gateway-scoped cleanup and preserves the shared host resources.
+Cleanup that completed before a port failure is not rolled back.
+Resolve the reported error, inspect the remaining gateways with `openshell gateway list`, and rerun the sweep or the named per-port command.
 
 ##### User-data preservation under `~/.nemoclaw/`
 

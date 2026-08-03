@@ -120,4 +120,30 @@ describe("uninstall reporting for other gateway-port environments (#7791)", () =
       "Sibling gateways remain; kept shared OpenShell and NemoClaw config.",
     );
   });
+
+  it("returns nonzero when the orphan gateway-process scan cannot run", () => {
+    const errors: string[] = [];
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: false },
+      {
+        commandExists: (command) => command !== "pgrep",
+        env: { HOME: "/tmp/nemoclaw-uninstall-test-scan" } as NodeJS.ProcessEnv,
+        error: (line) => errors.push(line),
+        existsSync: () => false,
+        isTty: false,
+        kill: vi.fn(() => true),
+        log: vi.fn(),
+        requireCompleteGatewayProcessCleanup: true,
+        rmSync: vi.fn(),
+        run: (command, args) =>
+          command === "openshell" && args.join(" ") === "gateway list -o json" ? ok("[]") : ok(),
+        runDocker: () => ok(),
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(errors).toContain(
+      "Cannot continue uninstall because host gateway process cleanup did not complete.",
+    );
+  });
 });

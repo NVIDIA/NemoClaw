@@ -27,6 +27,7 @@ export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
       description:
         "Uninstall every gateway port on this host, not only the port NEMOCLAW_GATEWAY_PORT selects",
     }),
+    "all-gateway-ports-child": Flags.boolean({ hidden: true }),
     "keep-openshell": Flags.boolean({ description: "Leave the openshell binary installed" }),
     "delete-models": Flags.boolean({
       description: `Remove ${CLI_DISPLAY_NAME}-pulled Ollama models`,
@@ -54,6 +55,10 @@ export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
       this.applyExitResult(runUninstallAllGatewayPorts(options));
       return;
     }
-    this.applyExitResult(runUninstallPlan(options));
+    this.applyExitResult(
+      runUninstallPlan(options, {
+        requireCompleteGatewayProcessCleanup: flags["all-gateway-ports-child"] ?? false,
+      }),
+    );
   }
 }

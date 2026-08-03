@@ -416,8 +416,14 @@ Remove every gateway port in one run:
 $$nemoclaw uninstall --all-gateway-ports
 ```
 
+After you confirm uninstall and it exits with status `0`, run `openshell gateway list` again.
+For a NemoClaw-managed gateway without `--keep-openshell`, the gateway name that uninstall removed must be absent.
+An externally supervised gateway or a run with `--keep-openshell` preserves the gateway process and its resources.
+
 The same scoping applies to `$$nemoclaw <name> stop`.
-When stop reports that no valid gateway binding is registered for a sandbox, the sandbox was most likely onboarded under a different gateway port; re-run stop with that `NEMOCLAW_GATEWAY_PORT` value set.
+When `stop` reports that no valid gateway binding is registered for a sandbox, the sandbox can be registered under a different gateway port.
+Rerun `stop` with that `NEMOCLAW_GATEWAY_PORT` value set.
+If that does not find the sandbox, resolve the missing, invalid, or unreadable registry entry that the command reports.
 
 Refer to [Uninstall NemoClaw](../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) for the full sweep contract.
 

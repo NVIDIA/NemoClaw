@@ -44,7 +44,7 @@ export interface AllGatewayPortsDeps extends UninstallRunDeps {
   runSelectedPass?: (
     options: UninstallRunOptions,
     deps: UninstallRunDeps,
-  ) => Pick<UninstallRunOutcome, "exitCode">;
+  ) => Pick<UninstallRunOutcome, "exitCode" | "otherGatewayEnvironmentsRemain">;
 }
 
 export interface AllGatewayPortsOutcome {
@@ -65,7 +65,7 @@ function defaultListGatewayPorts(home: string): readonly number[] {
 }
 
 export function uninstallChildArgs(options: UninstallRunOptions): string[] {
-  const args = ["internal", "uninstall", "run-plan", "--yes"];
+  const args = ["internal", "uninstall", "run-plan", "--yes", "--all-gateway-ports-child"];
   if (options.deleteModels) args.push("--delete-models");
   if (options.destroyUserData) args.push("--destroy-user-data");
   if (options.keepOpenShell) args.push("--keep-openshell");
@@ -136,6 +136,14 @@ export function runUninstallAllGatewayPorts(
   const runPortPass = deps.runPortPass ?? defaultRunPortPass;
   const runSelectedPass = deps.runSelectedPass ?? runUninstallPlan;
   const runDeps = { ...deps, env };
+  const expectedGatewayName = resolveGatewayName(GATEWAY_PORT);
+
+  if (options.gatewayName && options.gatewayName !== expectedGatewayName) {
+    error(
+      `Refusing to uninstall gateway '${options.gatewayName}': NEMOCLAW_GATEWAY_PORT=${String(GATEWAY_PORT)} selects '${expectedGatewayName}'.`,
+    );
+    return { exitCode: 1, ports: [] };
+  }
 
   let discovered: readonly number[];
   try {
@@ -153,7 +161,16 @@ export function runUninstallAllGatewayPorts(
     .filter((port) => port !== GATEWAY_PORT)
     .sort((left, right) => left - right);
   if (otherPorts.length === 0) {
-    return { exitCode: runSelectedPass(options, runDeps).exitCode, ports: [GATEWAY_PORT] };
+    const selected = runSelectedPass(options, {
+      ...runDeps,
+      requireCompleteGatewayProcessCleanup: true,
+      retainedGatewayPorts: [],
+    });
+    if (selected.otherGatewayEnvironmentsRemain) {
+      error("Whole-host uninstall is incomplete because another gateway-port environment remains.");
+      return { exitCode: 1, ports: [GATEWAY_PORT] };
+    }
+    return { exitCode: selected.exitCode, ports: [GATEWAY_PORT] };
   }
 
   const ordered = [...otherPorts, GATEWAY_PORT];
@@ -176,8 +193,16 @@ export function runUninstallAllGatewayPorts(
   );
   const selected = runSelectedPass(
     { ...options, assumeYes: true },
-    { ...runDeps, retainedGatewayPorts },
+    {
+      ...runDeps,
+      requireCompleteGatewayProcessCleanup: true,
+      retainedGatewayPorts,
+    },
   );
   if (selected.exitCode !== 0) exitCode = 1;
+  if (selected.otherGatewayEnvironmentsRemain) {
+    exitCode = 1;
+    error("Whole-host uninstall is incomplete because another gateway-port environment remains.");
+  }
   return { exitCode, ports: ordered };
 }

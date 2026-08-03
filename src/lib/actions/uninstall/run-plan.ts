@@ -41,7 +41,10 @@ import {
   type GatewayTeardownAuthorityResolver,
   resolveGatewayTeardownAuthority,
 } from "../../onboard/gateway-teardown-authority";
-import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
+import {
+  type StopHostGatewayOptions,
+  stopHostGatewayProcesses,
+} from "../../onboard/host-gateway-process";
 import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 import {
@@ -85,6 +88,7 @@ export interface UninstallRunDeps {
   platform?: NodeJS.Platform;
   readProcessArgv?: (pid: number) => readonly string[] | null;
   readLine?: () => string | null;
+  requireCompleteGatewayProcessCleanup?: boolean;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
   retainedGatewayPorts?: readonly number[];
   rmSync?: typeof fs.rmSync;
@@ -95,6 +99,7 @@ export interface UninstallRunDeps {
 
 export interface UninstallRunOutcome {
   exitCode: number;
+  otherGatewayEnvironmentsRemain?: boolean;
   plan: UninstallPlan;
 }
 
@@ -344,6 +349,7 @@ interface UninstallRuntime {
   platform: NodeJS.Platform;
   readProcessArgv: ((pid: number) => readonly string[] | null) | undefined;
   readLine: () => string | null;
+  requireCompleteGatewayProcessCleanup: boolean;
   resolveGatewayTeardownAuthority: GatewayTeardownAuthorityResolver;
   retainedGatewayPorts: readonly number[];
   rmSync: typeof fs.rmSync;
@@ -378,6 +384,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     platform: deps.platform ?? process.platform,
     readProcessArgv: deps.readProcessArgv,
     readLine: deps.readLine ?? readLineFromStdin,
+    requireCompleteGatewayProcessCleanup: deps.requireCompleteGatewayProcessCleanup ?? false,
     resolveGatewayTeardownAuthority:
       deps.resolveGatewayTeardownAuthority ?? resolveGatewayTeardownAuthority,
     retainedGatewayPorts: deps.retainedGatewayPorts ?? [],
@@ -1670,15 +1677,8 @@ function executePlan(
           });
           stopOrphanedOpenShell(runtime);
           if (!externallySupervised) {
-            stopHostGatewayProcesses(
-              {
-                run: runtime.run,
-                kill: runtime.kill,
-                env: runtime.env,
-                log: runtime.log,
-                warn: runtime.warn,
-                commandExists: runtime.commandExists,
-              },
+            stopHostGatewayProcessesForUninstall(
+              runtime,
               GATEWAY_PORT === DEFAULT_GATEWAY_PORT
                 ? { logNoProcesses: true }
                 : {
@@ -1722,24 +1722,14 @@ function executePlan(
         return { ok: false };
       }
       if (scopedToSelectedGateway && !options.keepOpenShell && !externallySupervised) {
-        stopHostGatewayProcesses(
-          {
-            run: runtime.run,
-            kill: runtime.kill,
-            env: runtime.env,
-            log: runtime.log,
-            warn: runtime.warn,
-            commandExists: runtime.commandExists,
-          },
-          {
-            gatewayBin: runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN,
-            logNoProcesses: true,
-            openShellGatewayName: options.gatewayName || resolveGatewayName(GATEWAY_PORT),
-            openShellGatewayPort: GATEWAY_PORT,
-            preserveRuntimeFilesOnNonMatching: true,
-            stateDir: paths.selectedGatewayLocalStateDir,
-          },
-        );
+        stopHostGatewayProcessesForUninstall(runtime, {
+          gatewayBin: runtime.env.NEMOCLAW_OPENSHELL_GATEWAY_BIN,
+          logNoProcesses: true,
+          openShellGatewayName: options.gatewayName || resolveGatewayName(GATEWAY_PORT),
+          openShellGatewayPort: GATEWAY_PORT,
+          preserveRuntimeFilesOnNonMatching: true,
+          stateDir: paths.selectedGatewayLocalStateDir,
+        });
       } else if (scopedToSelectedGateway && externallySupervised) {
         runtime.log("Kept the externally supervised OpenShell gateway process running.");
       }
@@ -1877,6 +1867,29 @@ function executePlan(
   return { ok };
 }
 
+class IncompleteHostGatewayCleanupError extends Error {}
+
+function stopHostGatewayProcessesForUninstall(
+  runtime: UninstallRuntime,
+  options: StopHostGatewayOptions,
+): void {
+  const result = stopHostGatewayProcesses(
+    {
+      run: runtime.run,
+      kill: runtime.kill,
+      env: runtime.env,
+      log: runtime.log,
+      warn: runtime.warn,
+      commandExists: runtime.commandExists,
+    },
+    options,
+  );
+  if (!runtime.requireCompleteGatewayProcessCleanup) return;
+  if (result.failed.length === 0 && result.orphanScanComplete !== false) return;
+  runtime.error("Cannot continue uninstall because host gateway process cleanup did not complete.");
+  throw new IncompleteHostGatewayCleanupError();
+}
+
 export function buildRunPlan(
   options: UninstallRunOptions,
   deps: UninstallRunDeps = {},
@@ -1971,17 +1984,22 @@ export function runUninstallPlan(
     return { exitCode: 1, plan };
   }
   const preserveUnderStateDir = resolvePreserveSet(paths, resolvedOptions, runtime);
-  const { ok } = executePlan(
-    plan,
-    paths,
-    resolvedOptions,
-    runtime,
-    preserveUnderStateDir,
-    scopedToSelectedGateway,
-    gatewayInspection.sharedRegistryMustBePreserved,
-    sandboxNames,
-    externallySupervised,
-  );
+  let ok = false;
+  try {
+    ({ ok } = executePlan(
+      plan,
+      paths,
+      resolvedOptions,
+      runtime,
+      preserveUnderStateDir,
+      scopedToSelectedGateway,
+      gatewayInspection.sharedRegistryMustBePreserved,
+      sandboxNames,
+      externallySupervised,
+    ));
+  } catch (error) {
+    if (!(error instanceof IncompleteHostGatewayCleanupError)) throw error;
+  }
   if (ok) {
     printBye(runtime);
   } else {
@@ -1989,5 +2007,5 @@ export function runUninstallPlan(
       "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
     );
   }
-  return { exitCode: ok ? 0 : 1, plan };
+  return { exitCode: ok ? 0 : 1, otherGatewayEnvironmentsRemain: scopedToSelectedGateway, plan };
 }
