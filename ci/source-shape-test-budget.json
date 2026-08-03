@@ -327,6 +327,11 @@
       "category": "security"
     },
     {
+      "file": "test/mcp-tool-discovery-image-contract.test.ts",
+      "test": "pins the reviewed dependency graph and fail-closed audit boundary (#8177)",
+      "category": "security"
+    },
+    {
       "file": "test/mcp-openshell-workflow.test.ts",
       "test": "keeps the setup docs aligned with the stable default",
       "category": "compatibility"

@@ -13,10 +13,33 @@ The shared image runtime uses the official `@modelcontextprotocol/sdk` client so
 - License: MIT
 - Locked production graph: `package-lock.json` (lockfile version 3)
 - Build-only tools: `typescript@6.0.3`, `@types/node@25.5.2`, and `esbuild@0.27.4` (not copied into the final image)
-- Security overrides: `@hono/node-server@2.0.11` and `fast-uri@3.1.4`
+- Security overrides:
+  - `@hono/node-server@2.0.11` — `sha512-bjD221KPLoJTWUwso1J6fGKiTXEUFedG/s0visavY4zakFPkeGURMRNly+FhBHs7T8Dz4qHaZIMX9ZoJHSJtKA==`
+  - `fast-uri@3.1.5` — `sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==`
+  - `hono@4.12.34` — `sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==`
+  - `ip-address@10.3.1` — `sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==`
 
 OpenClaw's `mcporter` dependency graph also resolves the official SDK but remains separately locked. This runtime keeps a direct lock because Hermes and LangChain Deep Agents Code must not depend on OpenClaw's adapter package.
-The client bundle includes the SDK's AJV validation path, including `ajv-formats` and `fast-uri`, plus `content-type` for standards-compliant response media-type parsing; the `fast-uri` override and `content-type` license are therefore runtime-relevant. It does not include the SDK's Hono server adapter. The build enforces the exact reviewed bundle-package allowlist and emits `BUNDLED_PACKAGES.json` alongside the generated third-party license notice. The exact overrides keep the install and runtime graphs clear of `GHSA-frvp-7c67-39w9` and `GHSA-v2hh-gcrm-f6hx` without changing the SDK client pin.
+The client bundle includes the SDK's AJV validation path, including `ajv-formats` and `fast-uri`, plus `content-type` for standards-compliant response media-type parsing. The `fast-uri` override and `content-type` license are therefore runtime-relevant. The bundle does not include the SDK's Hono server adapter or its `hono` and `ip-address` dependencies, but those packages remain part of the installed production graph that the image build audits. The build enforces the exact reviewed bundle-package allowlist and emits `BUNDLED_PACKAGES.json` alongside the generated third-party license notice. The exact overrides keep the installed graph outside the affected ranges for `GHSA-7p8r-x3mc-p8w7`, `GHSA-8j4g-w8fx-2239`, `GHSA-mwp4-54f8-5fhr`, `GHSA-4xrf-jv44-h6hh`, and `GHSA-22jq-vg5j-6vgg` without changing the SDK client pin.
+
+## 2026-08-03 security refresh
+
+The strict image producer for NemoClaw `v0.0.100` failed before image creation because the committed runtime lock resolved three packages in newly reported advisory ranges. NemoClaw `main` at `3f3eb6139e089c24397d6a499a10fcde4bdc84da` reproduced the same failure. The audit boundary worked as designed and remains unchanged. Issue #8177 records the exact source, producer run, failure receipt, and resume condition.
+
+Registry metadata binds each audited range:
+
+- `fast-uri`: `3.1.4` at `6aeece669e4166b2446a89f17c07a3b15dfb7ed4` to `3.1.5` at `5e179cbb4636d5f773ed21126e5bd3068e87e94e`, one patch release
+- Hono: `4.12.30` at `b2ae3a2204a48ce15a26448fd746d39745eb1837` to `4.12.34` at `734755ace341607628219ea1dd8ca17f01bf1a5c`, four patch releases
+- `ip-address`: `10.2.0` at `80fccaae984618f35dc941efab55cf2440ab37e8` to `10.3.1` at `be7e626c0d49fccb518899f520a3fb64ee189741`, four release increments that cross the `10.3.0` minor boundary
+
+Each target commit descends from its outgoing commit. The target npm package integrities match the committed lock.
+
+Concern ledger:
+
+- `MCP-AUDIT-1` — `fast-uri@3.1.4` accepts malformed or whitespace-smuggled authority introducers that can produce host confusion. Surface: executable AJV format validation in the bundled client. Resolution: pin `fast-uri@3.1.5`, which rejects the ambiguous forms and adds security regressions. Validation: exact lock metadata, `npm test`, bundle verification, and the production audit.
+- `MCP-AUDIT-2` — `hono@4.12.30` uses a regular expression that can cause excessive work for a large CORS request-header value. Surface: installed SDK server dependency; excluded from the client bundle. Resolution: pin `hono@4.12.34`, which replaces the split expression and adds a large-header regression. Validation: exact lock metadata, bundle-input exclusion, and the production audit.
+- `MCP-AUDIT-3` — `ip-address@10.2.0` accepts address forms whose classification can differ across parsers. Surface: installed SDK server dependency; excluded from the client bundle. Resolution: pin `ip-address@10.3.1`, which rejects leading-zero IPv4 octets and stacked subnet suffixes and adds IPv4/IPv6 regressions. Validation: exact lock metadata, bundle-input exclusion, and the production audit.
+- `MCP-AUDIT-4` — A dependency-only remediation could weaken the image build's fail-closed audit boundary. Surface: `install-reviewed-runtime.sh`. Resolution: retain `npm audit --omit=dev --audit-level=low` and bind it with the reviewed manifest and lock in the image contract test. Validation: `test/mcp-tool-discovery-image-contract.test.ts`.
 
 ## 1.29.0 to 1.30.0 migration review
 
@@ -56,6 +79,14 @@ SDK 1.30.0 migration evidence on 2026-07-28:
 - Pre-build `npm audit signatures`: 98 packages with verified registry signatures and 11 packages with verified attestations
 - Exact bundle: 11 packages matching the reviewed allowlist in `BUNDLED_PACKAGES.json`, including `content-type@1.0.5`
 - `npm run typecheck` and `npm run bundle`: passed
+
+Security refresh evidence on 2026-08-03:
+
+- `npm ci --ignore-scripts`: installed the exact 98-package lock
+- `npm audit signatures`: verified 98 registry signatures and 12 provenance attestations
+- `npm test` and `npm run typecheck`: passed
+- `npm run bundle`: emitted the same 11-package client bundle with `fast-uri@3.1.5`; `hono` and `ip-address` remain outside the executable bundle
+- `npm audit --omit=dev --audit-level=low`: 0 vulnerabilities
 
 ## Updating
 
