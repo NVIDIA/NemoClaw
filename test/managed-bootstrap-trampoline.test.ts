@@ -120,8 +120,8 @@ test "$1" = "supervise"
 test "$2" = "two words"
 test "$3" = "\\$(touch ${injection})"
 test ! -e ${JSON.stringify(injection)}
-test "\${BASH_ENV-unset}" = "unset"
-printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capability=%s:bash-env=%s\\n' "$1" "$2" "$3" "\${_nemoclaw_bootstrap_identity-unset}" "\${_nemoclaw_request-unset}" "$HOME" "$PATH" "$LANG" "\${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION-unset}" "\${BASH_ENV-unset}" >>"$TRACE"
+test -z "\${BASH_ENV+x}"
+printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capability=%s:bash-env=%s\\n' "$1" "$2" "$3" "\${_nemoclaw_bootstrap_identity-unset}" "\${_nemoclaw_request-unset}" "$HOME" "$PATH" "$LANG" "\${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION-unset}" "\${BASH_ENV+x}" >>"$TRACE"
 `,
       );
       const source = fs
@@ -178,7 +178,7 @@ printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capab
       expect(fs.readFileSync(trace, "utf8").trim().split("\n")).toEqual([
         `node:${runtime} --apply-bootstrap-file --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,
         `node:${runtime} --verify-bootstrap-completion --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,
-        `supervisor:supervise|two words|$(touch ${injection}):identity=unset:request=unset:home=/preserved-home:path=/preserved-path:lang=zz_TEST:capability=preserved-capability:bash-env=unset`,
+        `supervisor:supervise|two words|$(touch ${injection}):identity=unset:request=unset:home=/preserved-home:path=/preserved-path:lang=zz_TEST:capability=preserved-capability:bash-env=`,
       ]);
 
       execFileSync(script, argv, { env: environment });

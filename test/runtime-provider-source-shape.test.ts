@@ -176,6 +176,7 @@ describe("runtime provider central source boundary", () => {
     const providerSource = providerPaths.map(read).join("\n");
     expect(providerSource).not.toMatch(/managed-bootstrap/iu);
     expect(dockerProvider.match(/bootstrap:\s*unsupported\(/gu)).toHaveLength(2);
+    expect(dockerProvider.match(/recovery:\s*unsupported\(/gu)).toHaveLength(2);
   });
 
   // source-shape-contract: security -- Image packaging must expose only the reviewed dormant trampoline until every required bootstrap runtime asset is activated together
