@@ -88,10 +88,14 @@
 # bypass: every path that launches the gateway now passes through the same
 # single-source-of-truth validator before the port is bound.
 #
-# Only a small set of top-level commands are intercepted; all other hermes
-# subcommands (dashboard, --version, ...) pass straight through unchanged.
+# Only a small set of top-level commands are intercepted. Managed dashboard
+# launches receive the local API bearer token through process environment after
+# a descriptor-safe read, so the isolated dashboard home does not need a second
+# credential-bearing dotenv file. Other subcommands pass through unchanged.
 
 import os
+import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -103,6 +107,8 @@ _INSTALLED_GUARD = "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.
 # Mirror the same dev-fallback `start.sh` uses so an ad-hoc bash invocation
 # over a checkout still finds the guard.
 _GUARD_DEV_FILENAME = "validate-env-secret-boundary.py"
+_DASHBOARD_API_SERVER_ENV_PATH = "NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV"
+_API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 # Trusted absolute paths for the python3 interpreter, ordered most-preferred
 # first. The resolver returns the first executable match (first-wins); the
 # same priority is mirrored by `agents/hermes/start.sh:resolve_trusted_python3`
@@ -138,6 +144,52 @@ def _resolve_trusted_python3() -> str | None:
         if os.access(candidate, os.X_OK):
             return candidate
     return None
+
+
+def _load_dashboard_api_server_key() -> bool:
+    """Load the dashboard bearer token into process env without a config mirror."""
+    source_path = os.environ.pop(_DASHBOARD_API_SERVER_ENV_PATH, "")
+    if not source_path:
+        return True
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fd = -1
+    try:
+        fd = os.open(source_path, flags)
+        source_stat = os.fstat(fd)
+        if not stat.S_ISREG(source_stat.st_mode):
+            raise ValueError("credential source is not a regular file")
+        with os.fdopen(fd, "r", encoding="utf-8", closefd=False) as handle:
+            values: list[str] = []
+            for line in handle:
+                candidate = line.strip()
+                if candidate.startswith("export "):
+                    candidate = candidate[len("export ") :].lstrip()
+                key, separator, value = candidate.partition("=")
+                if not separator or key.strip() != "API_SERVER_KEY":
+                    continue
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                    value = value[1:-1]
+                values.append(value)
+        if len(values) != 1 or _API_SERVER_KEY_RE.fullmatch(values[0]) is None:
+            raise ValueError("credential source has no unique generated token")
+    except (OSError, UnicodeError, ValueError):
+        print(
+            "[SECURITY] Refusing hermes dashboard: API server credential source "
+            "is invalid or unreadable",
+            file=sys.stderr,
+        )
+        return False
+    finally:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    os.environ["API_SERVER_KEY"] = values[0]
+    return True
 
 
 _MASKER_STDERR_ALLOWED_PREFIX = "[SECURITY]"
@@ -808,6 +860,8 @@ def _merge_provider_into_model(argv: list[str]) -> list[str]:
 def main(argv: list[str]) -> int:
     real_hermes = _resolve_real_hermes()
     guard_path = _resolve_guard()
+    if argv[:1] == ["dashboard"] and not _load_dashboard_api_server_key():
+        return 1
     if argv[:2] == ["config", "show"]:
         return _run_config_show(real_hermes, guard_path, argv)
     if argv[:1] == ["gateway"]:

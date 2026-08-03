@@ -13,6 +13,7 @@ describe("patchHermesInferenceConfig", () => {
         default: "moonshotai/kimi-k2.6",
         provider: "custom",
         base_url: "https://old.example/v1",
+        context_length: 32_768,
         temperature: 0.2,
       },
       models: {
@@ -64,6 +65,26 @@ describe("patchHermesInferenceConfig", () => {
       },
     });
     expect(config.terminal).toEqual({ backend: "local" });
+  });
+
+  it("writes the selected Hermes model context window instead of retaining the previous route", () => {
+    const config: ConfigObject = {
+      model: {
+        default: "old-model",
+        provider: "custom",
+        base_url: "https://old.example/v1",
+        context_length: 32_768,
+      },
+    };
+
+    patchHermesInferenceConfig(config, "hermes-provider", "openai/gpt-5.4-mini", null, 128_000);
+
+    expect(config.model).toEqual(
+      expect.objectContaining({
+        default: "openai/gpt-5.4-mini",
+        context_length: 128_000,
+      }),
+    );
   });
 
   it("replaces stale Hermes API keys with the OpenShell proxy rewrite sentinel", () => {

@@ -96,6 +96,7 @@ describe("Hermes managed policy", () => {
       model: "test-model",
     });
     expect(policy.env_lines).toContain("DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN");
+    expect(policy.dashboard.env_keys).not.toContain("API_SERVER_KEY");
     expect(serialized).not.toContain(rawSecret);
     expect(loadWithPython(policy).status).toBe(0);
   });

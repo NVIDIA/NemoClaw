@@ -227,8 +227,31 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
 
     const res = runSeed(src, dst);
     expect(res.status).toBe(1);
-    expect(res.stderr).toContain("no model routing");
+    expect(res.stderr).toContain("invalid model routing");
     expect(fs.existsSync(dst)).toBe(false);
+  });
+
+  it("rejects raw credentials in every mirrored routing shape (#8008)", () => {
+    for (const location of ["model", "provider", "custom provider"] as const) {
+      const gateway = structuredClone(GATEWAY_CONFIG);
+      if (location === "model") {
+        gateway.model.api_key = "sk-raw-model-credential";
+      } else if (location === "provider") {
+        gateway.providers["nvidia-router"].api_key = "sk-raw-provider-credential";
+      } else {
+        gateway.custom_providers[0].api_key = "sk-raw-custom-provider-credential";
+      }
+      const src = writeYaml(`gw-${location}.yaml`, gateway);
+      const dst = writeYaml(`dash-${location}.yaml`, { dashboard_local: true });
+      const before = fs.readFileSync(dst, "utf8");
+
+      const result = runSeed(src, dst);
+
+      expect(result.status, location).toBe(1);
+      expect(result.stderr, location).toContain("[SECURITY]");
+      expect(result.stderr, location).not.toContain("sk-raw-");
+      expect(fs.readFileSync(dst, "utf8"), location).toBe(before);
+    }
   });
 
   it("mirrors only dashboard-needed gateway .env keys for Hermes 0.16 chat setup", () => {
@@ -260,7 +283,6 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
       [
         "API_SERVER_HOST=127.0.0.1",
         "API_SERVER_PORT=18642",
-        `API_SERVER_KEY=${GENERATED_HEX_TOKEN}`,
         `TAVILY_API_KEY=${TAVILY_API_KEY_PLACEHOLDER}`,
         "FIRECRAWL_GATEWAY_URL=http://host.openshell.internal:11436/firecrawl",
         "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1",
@@ -271,7 +293,7 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     expect(fs.statSync(envDst).mode & 0o777).toBe(0o600);
   });
 
-  it("mirrors export-prefixed API_SERVER_KEY into the dashboard .env", () => {
+  it("keeps API_SERVER_KEY out of the dashboard .env mirror", () => {
     const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
     const dst = path.join(tmpDir, "dash.yaml");
     const envSrc = path.join(tmpDir, "gw.env");
@@ -289,12 +311,10 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     const res = runSeed(src, dst, envSrc, envDst);
     expect(res.status).toBe(0);
 
-    expect(fs.readFileSync(envDst, "utf-8")).toBe(
-      [`export API_SERVER_KEY=${GENERATED_HEX_TOKEN}`, "API_SERVER_HOST=127.0.0.1", ""].join("\n"),
-    );
+    expect(fs.readFileSync(envDst, "utf-8")).toBe("API_SERVER_HOST=127.0.0.1\n");
   });
 
-  it("rejects weak API_SERVER_KEY values instead of mirroring them into the dashboard .env", () => {
+  it("ignores API_SERVER_KEY values instead of parsing or mirroring them", () => {
     const weakLines = [
       "API_SERVER_KEY=server-key",
       "API_SERVER_KEY='server-key'",
@@ -310,10 +330,9 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
 
       const res = runSeed(src, dst, envSrc, envDst);
 
-      expect(res.status, weakLine).toBe(1);
-      expect(res.stderr, weakLine).toContain("API_SERVER_KEY");
+      expect(res.status, weakLine).toBe(0);
       expect(res.stderr, weakLine).not.toContain("server-key");
-      expect(fs.existsSync(envDst), weakLine).toBe(false);
+      expect(fs.readFileSync(envDst, "utf-8"), weakLine).toBe("API_SERVER_HOST=127.0.0.1\n");
     }
   });
 
@@ -508,7 +527,7 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
 
     expect(res.status).toBe(0);
     expect(fs.existsSync(dst)).toBe(false);
-    expect(fs.readFileSync(envDst, "utf-8")).toBe(`API_SERVER_KEY=${GENERATED_HEX_TOKEN}\n`);
+    expect(fs.readFileSync(envDst, "utf-8")).toBe("");
   });
 
   it("fails closed without changing stale dashboard config when gateway routing is absent", () => {
@@ -525,7 +544,7 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     const res = runSeed(src, dst);
     expect(res.status).toBe(1);
     expect(res.stderr).toContain("[SECURITY]");
-    expect(res.stderr).toContain("no model routing");
+    expect(res.stderr).toContain("invalid model routing");
     expect(fs.readFileSync(dst, "utf-8")).toBe(before);
   });
 

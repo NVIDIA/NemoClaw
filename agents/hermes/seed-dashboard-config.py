@@ -48,7 +48,6 @@ import errno
 import grp
 import os
 import pwd
-import re
 import stat
 import sys
 from copy import deepcopy
@@ -62,9 +61,6 @@ from managed_policy import (  # noqa: E402
     load_managed_policy,
     policy_value,
 )
-
-API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
-
 
 class UnsafeDashboardSeedPathError(Exception):
     pass
@@ -84,13 +80,6 @@ def _lookup_uid(value: str) -> int:
 
 def _lookup_gid(value: str) -> int:
     return int(value) if value.isdigit() else grp.getgrnam(value).gr_gid
-
-
-def _is_generated_api_server_key(value: str) -> bool:
-    candidate = value.strip()
-    if len(candidate) >= 2 and candidate[0] == candidate[-1] and candidate[0] in ("'", '"'):
-        candidate = candidate[1:-1]
-    return API_SERVER_KEY_RE.fullmatch(candidate) is not None
 
 
 def _seed_owner_ids() -> tuple[int, int] | None:
@@ -194,7 +183,7 @@ def _atomic_write_no_follow(dst: str, label: str, writer: Callable[[TextIO], Non
                 pass
 
 
-def _normalized_routing(gateway: dict, routing_keys: list[str]) -> dict:
+def _normalized_routing(gateway: dict, routing_keys: list[str], policy: dict) -> dict:
     if any(key not in gateway for key in routing_keys):
         raise InvalidDashboardSeedDocumentError("gateway config has incomplete model routing")
     routing = {key: deepcopy(gateway[key]) for key in routing_keys}
@@ -218,6 +207,15 @@ def _normalized_routing(gateway: dict, routing_keys: list[str]) -> dict:
         or not custom_providers
     ):
         raise InvalidDashboardSeedDocumentError("gateway config has invalid model routing")
+    expected_api_key = policy_value(policy["config"], "model.api_key")
+    credential_bearing_routes = [model, *providers.values(), *custom_providers]
+    if not isinstance(expected_api_key, str) or any(
+        not isinstance(route, dict) or route.get("api_key") != expected_api_key
+        for route in credential_bearing_routes
+    ):
+        raise InvalidDashboardSeedDocumentError(
+            "gateway model routing contains a non-policy credential reference"
+        )
     model["provider"] = provider_key
     return routing
 
@@ -326,13 +324,6 @@ def _mirror_env(src: str, dst: str, policy: dict) -> bool:
         key, value = parsed
         if key not in allowed_keys:
             continue
-        if key == "API_SERVER_KEY" and not _is_generated_api_server_key(value):
-            print(
-                "[SECURITY] Refusing to seed dashboard env because API_SERVER_KEY "
-                "does not match the generated-token contract",
-                file=sys.stderr,
-            )
-            return False
         if key == "TAVILY_API_KEY" and value != expected_values.get(key):
             print(
                 "[SECURITY] Refusing to seed dashboard env because TAVILY_API_KEY "
@@ -406,10 +397,10 @@ def main(argv: list[str]) -> int:
         return 1
 
     try:
-        routing = _normalized_routing(gateway, policy["dashboard"]["routing_keys"])
+        routing = _normalized_routing(gateway, policy["dashboard"]["routing_keys"], policy)
     except InvalidDashboardSeedDocumentError:
         print(
-            "[SECURITY] Refusing to seed dashboard config because gateway config has no model routing",
+            "[SECURITY] Refusing to seed dashboard config because gateway config has invalid model routing",
             file=sys.stderr,
         )
         return 1

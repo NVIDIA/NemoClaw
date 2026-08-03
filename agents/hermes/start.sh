@@ -1515,10 +1515,10 @@ prepare_hermes_dashboard_home() {
   seed_hermes_dashboard_config
 }
 
-# Mirror the gateway's model routing and dotenv context into the dashboard's
-# isolated HERMES_HOME so its Models page (/api/model/options), Chat/TUI setup
-# checks, and kanban specifier/dispatcher resolve the routed model. The
-# dashboard runs under HERMES_DASHBOARD_HOME for privilege separation and
+# Mirror the gateway's model routing and non-secret dotenv context into the
+# dashboard's isolated HERMES_HOME so its Models page (/api/model/options),
+# Chat/TUI setup checks, and kanban specifier/dispatcher resolve the routed
+# model. The dashboard runs under HERMES_DASHBOARD_HOME for privilege separation and
 # otherwise only sees a Hermes-default config with an empty model. Idempotent:
 # refreshes the keys on every launch. Missing gateway config is a benign no-op
 # in the seeder; security refusals and write failures abort startup.
@@ -1548,6 +1548,7 @@ start_hermes_dashboard_current_user() {
   prepare_restricted_log /tmp/dashboard.log "" 600 || return 1
   HERMES_HOME="${HERMES_DASHBOARD_HOME}" \
     GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}" \
+    NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV="${HERMES_DIR}/.env" \
     nohup "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" >/tmp/dashboard.log 2>&1 &
   DASHBOARD_PID=$!
   echo "[gateway] hermes dashboard launched (pid $DASHBOARD_PID)" >&2
@@ -1566,6 +1567,7 @@ start_hermes_dashboard_sandbox_user() {
   prepare_restricted_log /tmp/dashboard.log sandbox:sandbox 600 || return 1
   HERMES_HOME="${HERMES_DASHBOARD_HOME}" \
     GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}" \
+    NEMOCLAW_HERMES_DASHBOARD_API_SERVER_ENV="${HERMES_DIR}/.env" \
     nohup "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c 'umask 0077; exec "$@" >/tmp/dashboard.log 2>&1' sh "$HERMES" "${HERMES_DASHBOARD_ARGS[@]}" &
   DASHBOARD_PID=$!
   echo "[gateway] hermes dashboard launched as 'sandbox' user (pid $DASHBOARD_PID)" >&2
