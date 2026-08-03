@@ -262,6 +262,92 @@ function packageNameFromLockLocation(location: string): string {
   return packageName;
 }
 
+type LockDependency = Readonly<{ name: string; optional: boolean }>;
+
+function lockDependencies(
+  record: Readonly<Record<string, unknown>>,
+  location: string,
+): readonly LockDependency[] {
+  const dependencies = new Map<string, boolean>();
+  for (const [field, optional] of [
+    ["dependencies", false],
+    ["optionalDependencies", true],
+  ] as const) {
+    const value = record[field];
+    if (value === undefined) continue;
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error(
+        `reviewed npm lock has an invalid ${field} map: ${location || "root package"}`,
+      );
+    }
+    for (const name of Object.keys(value)) {
+      if (!EXACT_NPM_PACKAGE_SPEC.test(`${name}@0.0.0`)) {
+        throw new Error(
+          `reviewed npm lock has an invalid dependency name: ${location || "root package"}: ${name}`,
+        );
+      }
+      dependencies.set(name, optional);
+    }
+  }
+  return [...dependencies].map(([name, optional]) => ({ name, optional }));
+}
+
+function resolveLockDependencyLocation(
+  packages: Readonly<Record<string, Record<string, unknown>>>,
+  requesterLocation: string,
+  dependencyName: string,
+): string | undefined {
+  let ancestorLocation = requesterLocation;
+  while (true) {
+    const candidate = ancestorLocation
+      ? `${ancestorLocation}/node_modules/${dependencyName}`
+      : `node_modules/${dependencyName}`;
+    if (Object.prototype.hasOwnProperty.call(packages, candidate)) return candidate;
+    if (!ancestorLocation) return undefined;
+    const parentMarker = ancestorLocation.lastIndexOf("/node_modules/");
+    ancestorLocation = parentMarker >= 0 ? ancestorLocation.slice(0, parentMarker) : "";
+  }
+}
+
+function productionLockLocations(
+  packages: Readonly<Record<string, Record<string, unknown>>>,
+): ReadonlySet<string> {
+  const root = packages[""];
+  if (!root || typeof root !== "object" || Array.isArray(root)) {
+    throw new Error("reviewed npm lock is missing its root package record");
+  }
+
+  const reachable = new Set<string>();
+  const pending: Array<Readonly<{ location: string; record: Record<string, unknown> }>> = [
+    { location: "", record: root },
+  ];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current) break;
+    for (const dependency of lockDependencies(current.record, current.location)) {
+      const location = resolveLockDependencyLocation(
+        packages,
+        current.location,
+        dependency.name,
+      );
+      if (!location) {
+        if (dependency.optional) continue;
+        throw new Error(
+          `reviewed npm lock is missing a production dependency: ${current.location || "root package"}: ${dependency.name}`,
+        );
+      }
+      if (reachable.has(location)) continue;
+      const record = packages[location];
+      if (typeof record !== "object" || record === null || Array.isArray(record)) {
+        throw new Error(`reviewed npm lock has an invalid package record: ${location}`);
+      }
+      reachable.add(location);
+      pending.push({ location, record });
+    }
+  }
+  return reachable;
+}
+
 function verifyReviewedLockDigest(
   lockfilePath: string,
   expectedLockSha256: string,
@@ -287,12 +373,16 @@ function readReviewedLockPackages(
 ): readonly ReviewedNpmArchiveRequest[] {
   const reviewed: ReviewedNpmArchiveRequest[] = [];
   const identities = new Map<string, ReviewedNpmArchiveRequest>();
+  const productionLocations = omitDev ? productionLockLocations(packages) : undefined;
   for (const [location, value] of Object.entries(packages)) {
     if (location === "") continue;
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
       throw new Error(`reviewed npm lock has an invalid package record: ${location}`);
     }
     const record = value as Record<string, unknown>;
+    if (productionLocations?.has(location) && record.dev === true) {
+      throw new Error(`reviewed npm lock marks a production dependency as dev: true: ${location}`);
+    }
     if (omitDev && record.dev === true) continue;
     if (Object.prototype.hasOwnProperty.call(record, "hasShrinkwrap")) {
       throw new Error(
@@ -423,9 +513,13 @@ export function verifyInstalledNpmLock(
   const installRoot = resolve(request.installRoot);
   const nodeModulesRoot = resolve(installRoot, "node_modules");
   const verified: string[] = [];
+  const productionLocations = request.omitDev ? productionLockLocations(packages) : undefined;
 
   for (const [location, record] of Object.entries(packages)) {
     if (location === "") continue;
+    if (productionLocations?.has(location) && record.dev === true) {
+      throw new Error(`reviewed npm lock marks a production dependency as dev: true: ${location}`);
+    }
     if (request.omitDev && record.dev === true) continue;
     const locationName = packageNameFromLockLocation(location);
     const expectedName = typeof record.name === "string" ? record.name : locationName;

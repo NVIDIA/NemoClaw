@@ -55,6 +55,7 @@ function requiredStep(job: WorkflowJob, name: string): WorkflowStep {
 function writeProductionSourceGraph(
   root: string,
   packageRecord: Readonly<Record<string, unknown>>,
+  additionalPackageRecords: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {},
 ): Readonly<{ sourceLock: string; sourcePackage: string }> {
   const source = path.join(root, "source");
   const manifest = {
@@ -71,6 +72,7 @@ function writeProductionSourceGraph(
     packages: {
       "": manifest,
       "node_modules/fixture-package": packageRecord,
+      ...additionalPackageRecords,
     },
   };
   fs.mkdirSync(source);
@@ -244,6 +246,132 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
       );
       expect(installCalled).toBe(false);
       expect(fs.existsSync(destination)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects dev: true when root production dependencies reach the package (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-dev-flag-"));
+    const destination = path.join(root, "materialized");
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(
+      root,
+      {
+        dependencies: { "transitive-package": "1.0.0" },
+        integrity: "sha512-fixture",
+        resolved: "https://registry.npmjs.org/fixture-package/-/fixture-package-1.0.0.tgz",
+        version: "1.0.0",
+      },
+      {
+        "node_modules/transitive-package": {
+          dev: true,
+          integrity: "sha512-transitive",
+          resolved: "https://registry.npmjs.org/transitive-package/-/transitive-package-1.0.0.tgz",
+          version: "1.0.0",
+        },
+      },
+    );
+    let installCalled = false;
+    try {
+      expect(() =>
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          () => {
+            installCalled = true;
+          },
+        ),
+      ).toThrow(
+        "reviewed npm lock marks a production dependency as dev: true: node_modules/transitive-package",
+      );
+      expect(installCalled).toBe(false);
+      expect(fs.existsSync(destination)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unreviewed non-dev package that root production dependencies do not reach (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-non-dev-"));
+    const destination = path.join(root, "materialized");
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(
+      root,
+      {
+        integrity: "sha512-fixture",
+        resolved: "https://registry.npmjs.org/fixture-package/-/fixture-package-1.0.0.tgz",
+        version: "1.0.0",
+      },
+      {
+        "node_modules/unreachable-package": {
+          integrity: "sha512-unreachable",
+          resolved: "https://example.com/unreachable-package-1.0.0.tgz",
+          version: "1.0.0",
+        },
+      },
+    );
+    let installCalled = false;
+    try {
+      expect(() =>
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          () => {
+            installCalled = true;
+          },
+        ),
+      ).toThrow(
+        "reviewed npm lock package must use the reviewed registry: node_modules/unreachable-package",
+      );
+      expect(installCalled).toBe(false);
+      expect(fs.existsSync(destination)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("omits dev: true when root production dependencies do not reach the package (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-dev-only-"));
+    const destination = path.join(root, "materialized");
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(
+      root,
+      {
+        integrity: "sha512-fixture",
+        resolved: "https://registry.npmjs.org/fixture-package/-/fixture-package-1.0.0.tgz",
+        version: "1.0.0",
+      },
+      {
+        "node_modules/unreachable-package": {
+          dev: true,
+          integrity: "sha512-unreachable",
+          resolved: "https://example.com/unreachable-package-1.0.0.tgz",
+          version: "1.0.0",
+        },
+      },
+    );
+    let installCalled = false;
+    try {
+      expect(
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          (directory) => {
+            installCalled = true;
+            const packageDirectory = path.join(directory, "node_modules", "fixture-package");
+            fs.mkdirSync(packageDirectory, { recursive: true });
+            fs.writeFileSync(
+              path.join(packageDirectory, "package.json"),
+              `${JSON.stringify({ name: "fixture-package", version: "1.0.0" }, null, 2)}\n`,
+            );
+          },
+        ),
+      ).toBe(destination);
+      expect(installCalled).toBe(true);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
