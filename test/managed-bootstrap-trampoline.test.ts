@@ -290,8 +290,13 @@ describe.skipIf(process.platform !== "linux")("managed bootstrap image trampolin
 
       expect(result.status).not.toBe(0);
       expect(fs.existsSync(attackerTrace)).toBe(false);
-      expect(fs.statSync(TRAMPOLINE).mode & 0o111).toBe(0);
-      expect(fs.readFileSync(TRAMPOLINE, "utf8").startsWith("#!")).toBe(false);
+      const trampolineDescriptor = fs.openSync(TRAMPOLINE, "r");
+      try {
+        expect(fs.fstatSync(trampolineDescriptor).mode & 0o111).toBe(0);
+        expect(fs.readFileSync(trampolineDescriptor, "utf8").startsWith("#!")).toBe(false);
+      } finally {
+        fs.closeSync(trampolineDescriptor);
+      }
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
     }
