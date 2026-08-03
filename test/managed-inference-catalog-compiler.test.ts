@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -10,6 +11,7 @@ import { parse, stringify } from "yaml";
 import {
   compileManagedInferenceCatalogSources,
   type ManagedInferenceCatalogSource,
+  writeManagedInferenceCatalog,
 } from "../scripts/managed-inference/compile-catalog.mts";
 import type {
   ManagedInferenceReadinessSource,
@@ -224,13 +226,47 @@ function matchingReadinessSources(
 }
 
 describe("managed inference catalog compiler", () => {
-  it("produces an identical generated TypeScript module regardless of source enumeration order", () => {
+  it("produces an identical generated JSON document regardless of source enumeration order", () => {
     const sources = catalogSources();
-    const generated = compileManagedInferenceCatalogSources(sources).module;
-    expect(generated).toBe(compileManagedInferenceCatalogSources([...sources].reverse()).module);
-    expect(generated).toMatch(
-      /const generatedCatalog: CompiledManagedInferenceCatalog = \{[\s\S]+\};\n\nexport default generatedCatalog;\n$/u,
+    const compiled = compileManagedInferenceCatalogSources(sources);
+    expect(compiled.document).toBe(
+      compileManagedInferenceCatalogSources([...sources].reverse()).document,
     );
+    expect(JSON.parse(compiled.document)).toEqual(compiled.catalog);
+    expect(compiled.document.endsWith("\n")).toBe(true);
+  });
+
+  it("writes the JSON artifact and removes legacy generated TypeScript outputs", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-catalog-compiler-"));
+    const sources = catalogSources();
+    const legacyPaths = [
+      "src/lib/inference/serving/generated/catalog.ts",
+      "dist/lib/inference/serving/generated/catalog.js",
+      "dist/lib/inference/serving/generated/catalog.js.map",
+      "dist/lib/inference/serving/generated/catalog.d.ts",
+      "dist/lib/inference/serving/generated/catalog.d.ts.map",
+    ];
+    try {
+      for (const source of sources) {
+        const sourcePath = path.join(root, source.path);
+        fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+        fs.writeFileSync(sourcePath, source.contents, "utf8");
+      }
+      for (const legacyPath of legacyPaths) {
+        const artifactPath = path.join(root, legacyPath);
+        fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+        fs.writeFileSync(artifactPath, "legacy generated artifact\n", "utf8");
+      }
+
+      const compiled = writeManagedInferenceCatalog(root);
+      const documentPath = path.join(root, "src/lib/inference/serving/generated/catalog.json");
+      expect(JSON.parse(fs.readFileSync(documentPath, "utf8"))).toEqual(compiled.catalog);
+      expect(legacyPaths.every((legacyPath) => !fs.existsSync(path.join(root, legacyPath)))).toBe(
+        true,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("compiles a synthetic second YAML-only profile without schema or TypeScript changes", () => {
@@ -245,8 +281,8 @@ describe("managed inference catalog compiler", () => {
     expect(compiled.catalog.recipes.map(({ definition }) => definition.metadata.id)).toContain(
       "vllm.synthetic-model.generic-topology.v1",
     );
-    expect(compiled.module).toContain("vllm.synthetic-model.generic-topology");
-    expect(compiled.module).toContain("vllm.synthetic-model.generic-topology.v1");
+    expect(compiled.document).toContain("vllm.synthetic-model.generic-topology");
+    expect(compiled.document).toContain("vllm.synthetic-model.generic-topology.v1");
   });
 
   it("resolves and materializes the second YAML-only profile without profile-specific code", () => {

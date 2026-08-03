@@ -9,7 +9,9 @@ coverage/
 dist/
 docs/_build/
 node_modules/
+# Managed inference compiler output and its pre-JSON legacy path.
 src/lib/inference/serving/generated/catalog.ts
+src/lib/inference/serving/generated/catalog.json
 
 # OS metadata
 .DS_Store

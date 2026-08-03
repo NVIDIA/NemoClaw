@@ -13,7 +13,7 @@ import {
   type ManagedInferenceServingPreset,
   type ManagedInferenceServingRecipe,
 } from "./catalog-types.js";
-import generatedCatalog from "./generated/catalog.js";
+import generatedCatalog from "./generated/catalog.json";
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/u;
 const SOURCE_PATH = /^managed-inference\/(?:presets|recipes)\/[a-z0-9._-]+\.yaml$/u;
