@@ -48,6 +48,12 @@ describe("dual-Station runtime uninstall", () => {
     fs.writeFileSync(path.join(stateDir, "dual-station-vllm-runtime.json"), "{}\n", {
       mode: 0o600,
     });
+    fs.writeFileSync(path.join(stateDir, "dual-station-vllm-api-key"), "ab".repeat(32), {
+      mode: 0o600,
+    });
+    fs.mkdirSync(path.join(stateDir, "dual-station-vllm-runtime.json.ssh-binding"), {
+      mode: 0o700,
+    });
     const runDualStationRuntimeCleanup = vi.fn(() => ok());
     const rmSync = vi.fn();
     const runDocker = vi.fn(() => ok());
@@ -75,6 +81,68 @@ describe("dual-Station runtime uninstall", () => {
         runDocker.mock.invocationCallOrder[0],
       );
     } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("finds host-global pair ownership when the final gateway uses a non-default port", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-dual-port-"));
+    const port = 9123;
+    const stateDir = path.join(home, ".nemoclaw");
+    const legacyStateDir = path.join(stateDir, "gateways", String(port));
+    fs.mkdirSync(legacyStateDir, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(legacyStateDir, "dual-station-vllm-runtime.json"), "{}\n", {
+      mode: 0o600,
+    });
+    fs.writeFileSync(path.join(stateDir, "dual-station-vllm-api-key"), "ab".repeat(32), {
+      mode: 0o600,
+    });
+    fs.mkdirSync(path.join(legacyStateDir, "dual-station-vllm-runtime.json.ssh-binding"), {
+      mode: 0o700,
+    });
+    const runDualStationRuntimeCleanup = vi.fn(() => ok());
+
+    try {
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(port));
+      vi.resetModules();
+      const { runUninstallPlan: runPortUninstallBase } = await import("./run-plan");
+      const result = runPortUninstallBase(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: {
+            HOME: home,
+            NEMOCLAW_GATEWAY_PORT: String(port),
+            TMPDIR: home,
+          } as NodeJS.ProcessEnv,
+          existsSync: () => false,
+          isTty: false,
+          log: vi.fn(),
+          resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+            gatewayName,
+            gatewayPort,
+            mode: "nemoclaw-managed",
+            source: "standalone",
+            endpoint: null,
+            stateDir: null,
+            supervisor: null,
+            requiredCapabilities: [],
+          }),
+          rmSync: vi.fn(),
+          run: (command, args) =>
+            command === "openshell" && args[0] === "gateway" && args[1] === "list"
+              ? ok(JSON.stringify([{ name: `nemoclaw-${String(port)}` }]))
+              : ok(),
+          runDocker: () => ok(),
+          runDualStationRuntimeCleanup,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(runDualStationRuntimeCleanup).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
       fs.rmSync(home, { recursive: true, force: true });
     }
   });

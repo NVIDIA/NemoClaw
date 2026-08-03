@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { getNemoclawStateRoot } from "../state/state-root";
+import { GATEWAYS_SUBDIR, STATE_DIR_NAME } from "../state/state-root";
 import { ensureLocalAdapterStateDir } from "./local-adapter-lifecycle";
 import { buildLocalDualStationDockerEnv } from "./vllm-docker-env";
 import {
@@ -58,8 +58,15 @@ export type DualStationVllmRuntimeCleanupResult =
   | { kind: "not-installed" }
   | { kind: "removed"; removedContainerIds: string[] };
 
+export type DualStationVllmRuntimeRecoveryResult =
+  | { kind: "not-installed" }
+  | { kind: "ready"; plan: DualStationVllmPlan }
+  | { kind: "unsafe"; reason: string };
+
 function defaultStateDir(): string {
-  return getNemoclawStateRoot(os.homedir());
+  // The managed pair and its API key are host-global rather than gateway-scoped.
+  // Every gateway must therefore recover the same cleanup ownership receipt.
+  return path.join(os.homedir(), STATE_DIR_NAME);
 }
 
 export function dualStationVllmRuntimeReceiptPath(stateDir = defaultStateDir()): string {
@@ -179,6 +186,51 @@ function loadReceipt(
   }
 }
 
+function receiptStateDirs(
+  options: Pick<DualStationVllmRuntimeReceiptOptions, "stateDir">,
+): string[] {
+  if (options.stateDir) return [options.stateDir];
+  const sharedStateDir = defaultStateDir();
+  const gatewaysDir = path.join(sharedStateDir, GATEWAYS_SUBDIR);
+  let metadata: fs.Stats;
+  try {
+    metadata = fs.lstatSync(gatewaysDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [sharedStateDir];
+    throw error;
+  }
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+    throw new Error(`Dual-Station vLLM gateway state directory is unsafe: ${gatewaysDir}`);
+  }
+  const stateDirs = [sharedStateDir];
+  for (const entry of fs.readdirSync(gatewaysDir, { withFileTypes: true })) {
+    if (!/^\d{1,5}$/.test(entry.name)) continue;
+    const port = Number(entry.name);
+    if (port < 1 || port > 65535) continue;
+    const stateDir = path.join(gatewaysDir, entry.name);
+    if (entry.isSymbolicLink() || !entry.isDirectory()) {
+      throw new Error(`Dual-Station vLLM legacy gateway state directory is unsafe: ${stateDir}`);
+    }
+    stateDirs.push(stateDir);
+  }
+  return stateDirs;
+}
+
+function loadInstalledReceipt(
+  options: Pick<DualStationVllmRuntimeReceiptOptions, "stateDir">,
+): { receipt: DualStationVllmRuntimeReceipt; stateDir: string } | null {
+  const matches = receiptStateDirs(options).flatMap((stateDir) => {
+    const receipt = loadReceipt({ stateDir });
+    return receipt ? [{ receipt, stateDir }] : [];
+  });
+  if (matches.length > 1) {
+    throw new Error(
+      "Multiple dual-Station vLLM runtime receipts were found; ownership is ambiguous",
+    );
+  }
+  return matches[0] ?? null;
+}
+
 function fsyncDirectory(directory: string): void {
   const fd = fs.openSync(directory, fs.constants.O_RDONLY);
   try {
@@ -225,10 +277,11 @@ export function persistDualStationVllmRuntimeReceipt(
   plan: DualStationVllmPlan,
   options: DualStationVllmRuntimeReceiptOptions = {},
 ): void {
-  const stateDir = options.stateDir ?? defaultStateDir();
+  const installed = loadInstalledReceipt(options);
+  const stateDir = installed?.stateDir ?? options.stateDir ?? defaultStateDir();
   ensureLocalAdapterStateDir(stateDir);
   const clusterId = dualStationVllmClusterId(plan);
-  const existing = loadReceipt({ stateDir });
+  const existing = installed?.receipt ?? null;
   if (
     existing &&
     (existing.peerTarget !== plan.peerSshBinding.peerTarget ||
@@ -237,6 +290,13 @@ export function persistDualStationVllmRuntimeReceipt(
       existing.peerGpuUuid !== plan.peer.gpu.uuid)
   ) {
     throw new Error("A different managed dual-Station runtime receipt already owns rollback state");
+  }
+  if (existing) {
+    const recovered = probeReceiptPlan(existing, options);
+    if (!recovered.ok) {
+      throw new Error(`Could not revalidate the managed dual-Station pair: ${recovered.reason}`);
+    }
+    return;
   }
   const receiptPath = dualStationVllmRuntimeReceiptPath(stateDir);
   const runtimeBinding = copyDualStationSshBinding(receiptPath, plan.peerSshBinding);
@@ -260,16 +320,10 @@ function clearReceipt(stateDir: string): void {
   fsyncDirectory(stateDir);
 }
 
-/**
- * Remove both exact owned containers before ordinary uninstall can retire the
- * controller state required to reach the worker.
- */
-export async function cleanupInstalledDualStationVllmRuntime(
-  options: DualStationVllmRuntimeReceiptOptions = {},
-): Promise<DualStationVllmRuntimeCleanupResult> {
-  const stateDir = options.stateDir ?? defaultStateDir();
-  const receipt = loadReceipt({ stateDir });
-  if (!receipt) return { kind: "not-installed" };
+function probeReceiptPlan(
+  receipt: DualStationVllmRuntimeReceipt,
+  options: DualStationVllmRuntimeReceiptOptions,
+): { ok: true; plan: DualStationVllmPlan } | { ok: false; reason: string } {
   const capability = (options.probeCapability ?? probeDualStationVllmCapability)({
     env: buildLocalDualStationDockerEnv({
       [NEMOCLAW_DGX_STATION_PEER_ENV]: receipt.peerTarget,
@@ -279,19 +333,55 @@ export async function cleanupInstalledDualStationVllmRuntime(
   if (capability.kind !== "ready") {
     const reason =
       capability.kind === "unavailable" ? capability.reason : "runtime peer is not configured";
-    throw new Error(`Could not revalidate the managed dual-Station pair: ${reason}`);
+    return { ok: false, reason };
   }
   if (
     dualStationVllmClusterId(capability.plan) !== receipt.clusterId ||
     capability.plan.local.gpu.uuid !== receipt.localGpuUuid ||
     capability.plan.peer.gpu.uuid !== receipt.peerGpuUuid
   ) {
-    throw new Error("Managed dual-Station runtime identity changed; refusing pair cleanup");
+    return { ok: false, reason: "managed runtime identity changed" };
+  }
+  return { ok: true, plan: capability.plan };
+}
+
+/** Recover and revalidate exact managed-pair ownership for a later onboarding process. */
+export function recoverInstalledDualStationVllmRuntime(
+  options: DualStationVllmRuntimeReceiptOptions = {},
+): DualStationVllmRuntimeRecoveryResult {
+  let installed: { receipt: DualStationVllmRuntimeReceipt; stateDir: string } | null;
+  try {
+    installed = loadInstalledReceipt(options);
+  } catch (error) {
+    return { kind: "unsafe", reason: (error as Error).message };
+  }
+  if (!installed) return { kind: "not-installed" };
+  const recovered = probeReceiptPlan(installed.receipt, options);
+  return recovered.ok
+    ? { kind: "ready", plan: recovered.plan }
+    : {
+        kind: "unsafe",
+        reason: `could not revalidate the managed pair: ${recovered.reason}`,
+      };
+}
+
+/**
+ * Remove both exact owned containers before ordinary uninstall can retire the
+ * controller state required to reach the worker.
+ */
+export async function cleanupInstalledDualStationVllmRuntime(
+  options: DualStationVllmRuntimeReceiptOptions = {},
+): Promise<DualStationVllmRuntimeCleanupResult> {
+  const installed = loadInstalledReceipt(options);
+  if (!installed) return { kind: "not-installed" };
+  const recovered = probeReceiptPlan(installed.receipt, options);
+  if (!recovered.ok) {
+    throw new Error(`Could not revalidate the managed dual-Station pair: ${recovered.reason}`);
   }
   const cleanup = await (options.cleanupManagedVllm ?? cleanupDualStationManagedVllm)(
-    capability.plan,
+    recovered.plan,
   );
   if (!cleanup.ok) throw new Error(cleanup.reason);
-  clearReceipt(stateDir);
+  clearReceipt(installed.stateDir);
   return { kind: "removed", removedContainerIds: cleanup.removedContainerIds };
 }
