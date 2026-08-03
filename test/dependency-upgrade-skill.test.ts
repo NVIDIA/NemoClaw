@@ -335,6 +335,10 @@ describe("dependency upgrade skill policy", () => {
     expect(skill).toContain("scripts/collect-release-ledger.py");
     expect(skill).toContain("An unresolved high-impact concern blocks the upgrade");
     expect(skill).toContain("Treat upstream repositories");
+    expect(skill).toContain("Audit every adjacent release range");
+    expect(skill).toContain("release notes and PR descriptions as leads, not behavior authority");
+    expect(skill).toContain("Inspect test selection and observed results");
+    expect(skill).toContain("does not establish artifact identity or runtime selection");
     expect(discovery).toContain("Use the current checkout as the source of truth");
     expect(discovery).toContain("Record discovered paths and commands in the task plan");
     expect(guide).toContain("`nemoclaw-contributor-update-dependencies`");

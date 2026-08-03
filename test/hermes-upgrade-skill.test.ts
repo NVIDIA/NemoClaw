@@ -26,8 +26,13 @@ describe("Hermes upgrade skill", () => {
     expect(fs.existsSync(path.join(skillRoot, "references", "hermes-contract-map.md"))).toBe(false);
   });
 
-  it("keeps process gates and executable evidence mechanisms", () => {
+  it("keeps process and security gates without a path inventory", () => {
     expect(skill).toContain("configuration defaults, migrations, profiles");
+    expect(skill).toContain("credentials, inference routing, network access, and output redaction");
+    expect(skill).toContain(
+      "durable state, backup, restore, rebuild, rollback, and cross-identity access",
+    );
+    expect(skill).toContain("image construction, publication, immutable selection");
     expect(skill).toContain("Remove a workaround only when");
     expect(skill).toContain("explicit user approval");
     expect(skill).toContain("immutable image identity");
