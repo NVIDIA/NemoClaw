@@ -7,7 +7,11 @@ import {
   type CurlProbeResult,
   runCurlProbe,
 } from "../../adapters/http/probe";
-import { LLAMA_CPP_HOST_BASE_URL, LLAMA_CPP_PORT } from "./contract";
+import {
+  isSafeLlamaCppServedModelAlias,
+  LLAMA_CPP_HOST_BASE_URL,
+  LLAMA_CPP_PORT,
+} from "./contract";
 
 export * from "./contract";
 
@@ -57,7 +61,6 @@ const LLAMA_CPP_META_NUMERIC_KEYS = [
   "size",
 ] as const;
 
-const MAX_LLAMA_CPP_SERVED_MODEL_ALIAS_BYTES = 256;
 const LLAMA_CPP_MAX_PROBE_RESPONSE_BYTES = 256 * 1024;
 
 function failure(
@@ -87,19 +90,6 @@ function hasNativeLlamaCppModelMetadata(entry: LlamaCppModelEntry): boolean {
       (key) => typeof meta[key] === "number" && Number.isFinite(meta[key]),
     ).length >= 4
   );
-}
-
-/** A served alias may contain namespaces, but must not expose a model filesystem path. */
-export function isSafeLlamaCppServedModelAlias(value: string): boolean {
-  const alias = value.trim();
-  if (!alias || alias !== value) return false;
-  if (Buffer.byteLength(alias, "utf8") > MAX_LLAMA_CPP_SERVED_MODEL_ALIAS_BYTES) {
-    return false;
-  }
-  if (!/^[A-Za-z0-9._:/-]+$/.test(alias)) return false;
-  if (/^(?:file:|[A-Za-z]:[\\/]|[./~]|\\\\)/i.test(alias)) return false;
-  if (alias.includes("\\") || /\.gguf$/i.test(alias)) return false;
-  return true;
 }
 
 function selectModelEntry(

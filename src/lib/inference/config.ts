@@ -7,7 +7,7 @@
  */
 
 import { isSafeModelId, shouldSkipResponsesProbe } from "../validation";
-import { LLAMA_CPP_CREDENTIAL_ENV } from "./llama-cpp/contract";
+import { isSafeLlamaCppServedModelAlias, LLAMA_CPP_CREDENTIAL_ENV } from "./llama-cpp/contract";
 import { DEFAULT_OLLAMA_MODEL } from "./local";
 import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "./openrouter";
 
@@ -218,9 +218,10 @@ export function getProviderSelectionConfig(
         providerLabel: "Local Ollama",
       };
     case "llama-cpp-local":
+      if (!model || !isSafeLlamaCppServedModelAlias(model)) return null;
       return {
         ...base,
-        model: model || "llama-cpp-local",
+        model,
         credentialEnv: LLAMA_CPP_LOCAL_CREDENTIAL_ENV,
         providerLabel: "Local llama.cpp",
       };

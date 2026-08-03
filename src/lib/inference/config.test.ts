@@ -183,6 +183,16 @@ describe("inference selection config", () => {
     });
   });
 
+  it.each([
+    undefined,
+    "",
+    "  ",
+    "/models/model.gguf",
+    "a".repeat(257),
+  ])("refuses llama.cpp selection without a validated served alias: %s (#8161)", (model) => {
+    expect(getProviderSelectionConfig("llama-cpp-local", model)).toBeNull();
+  });
+
   it("maps nvidia-nim to the sandbox inference route", () => {
     expect(getProviderSelectionConfig("nvidia-nim", "nvidia/nemotron-3-super-120b-a12b")).toEqual({
       endpointType: "custom",
