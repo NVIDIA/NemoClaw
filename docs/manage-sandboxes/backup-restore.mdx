@@ -168,11 +168,8 @@ OpenClaw regenerates its device identity on demand.
 </AgentOnly>
 <AgentOnly variant="hermes">
 Credential-bearing Hermes files such as `auth.json` are intentionally excluded from snapshots.
-NemoClaw excludes regenerated `config.yaml` and the complete `.env` file from snapshots.
-During a Hermes rebuild, NemoClaw preserves only `.env` assignments whose names match `*_HOME_CHANNEL`, `*_HOME_CHANNEL_NAME`, or `*_HOME_CHANNEL_THREAD_ID`.
-These assignments retain home-channel routing configured with Hermes `/sethome`.
-NemoClaw recreates credentials and all other generated values from host-side onboarding and OpenShell provider state.
-A newly generated assignment overrides a preserved assignment with the same name.
+NemoClaw-regenerated Hermes config files, including `config.yaml` and `.env`, are also excluded.
+NemoClaw recreates model, provider, and messaging credentials from host-side onboarding and OpenShell provider state during rebuild.
 </AgentOnly>
 <AgentOnly variant="deepagents">
 ### Excluded Deep Agents State
