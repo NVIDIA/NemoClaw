@@ -28,6 +28,11 @@ const MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY =
   "/var/lib/nemoclaw/managed-startup-shared-state-commit-v1";
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const DURABLE_IDENTITY_RE = /^[a-f0-9]{64}$/u;
+const DOCKER_MUTATION_OPTIONS = {
+  ignoreError: true,
+  suppressOutput: true,
+  timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+} as const;
 const NEUTRALIZED_PROCESS_INJECTION_ENV = [
   "--env",
   "NODE_OPTIONS=",
@@ -371,12 +376,6 @@ function commitManagedStartupSharedState(
   );
 }
 
-const DOCKER_MUTATION_OPTIONS = {
-  ignoreError: true,
-  suppressOutput: true,
-  timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-} as const;
-
 function quiesceManagedStartupContainer(
   transaction: DockerManagedBootstrapSharedStateTransaction,
   deps: DockerGpuPatchDeps,
@@ -605,7 +604,16 @@ export function finalizeDockerManagedStartupSharedState(
     const failure = new Error(
       `OpenShell supervisor reconnected, but managed shared-state logical commit validation failed: ${commitFailure.message}`,
     );
-    quiesceManagedStartupContainer(transaction, deps);
+    try {
+      quiesceManagedStartupContainer(transaction, deps);
+    } catch (stopError) {
+      throw new Error(
+        `${failure.message}; the new workload could not be quiesced: ${
+          stopError instanceof Error ? stopError.message : String(stopError)
+        }`,
+        { cause: stopError },
+      );
+    }
     rollbackManagedStartupSharedState(transaction, receiptPath, deps);
     if (!input.patchResult && !input.retainContainerAfterRollback) {
       removeFailedUnbackedContainer(transaction, deps);

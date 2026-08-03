@@ -57,6 +57,8 @@ describe("Docker managed bootstrap adapter", () => {
     });
     const order = fake.events;
     expect(order.indexOf("journal:staged")).toBeGreaterThan(order.indexOf("authority:recorded"));
+    expect(order).toContain("journal:cutover");
+    expect(order).toContain(`stop:${OLD_ID}`);
     expect(order.indexOf("journal:cutover")).toBeLessThan(order.indexOf(`stop:${OLD_ID}`));
     expect(fake.journal).toMatchObject({
       phase: "cutover",
@@ -75,12 +77,54 @@ describe("Docker managed bootstrap adapter", () => {
         completion: completion(replacement),
       }),
     ).resolves.toMatchObject({ outcome: "committed" });
+    expect(fake.events).toContain("journal:shared-state-committed");
+    expect(fake.events).toContain(`rm:${OLD_ID}`);
     expect(fake.events.indexOf("journal:shared-state-committed")).toBeLessThan(
       fake.events.indexOf(`rm:${OLD_ID}`),
     );
     expect(fake.journal).toBeNull();
     expect(fake.sharedState).toBe("none");
     expect(fake.replacement?.Id).toBe(NEW_ID);
+  });
+
+  it("preserves commit validation failure details when the replacement cannot be quiesced", async () => {
+    const fake = fixture({
+      sharedState: "pending",
+      sharedStateCommitResult: { status: 1, stderr: "injected commit failure" },
+    });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request, snapshot } = authority();
+    const prepared = await adapter.prepareBootstrapReplacement({
+      handle,
+      snapshot,
+      request,
+      replacementOptions: { values: {} },
+    });
+    const durable = durablePreparation(handle, snapshot, prepared);
+    const replacement = await adapter.activateBootstrapReplacement({
+      handle,
+      snapshot,
+      prepared,
+      durablePreparation: durable,
+    });
+    vi.mocked(fake.deps.dockerStop!).mockReturnValue({
+      status: 1,
+      stderr: "injected quiesce failure",
+    });
+
+    await expect(
+      adapter.finalizeBootstrap({
+        outcome: "commit",
+        handle,
+        snapshot,
+        prepared,
+        durablePreparation: durable,
+        replacement,
+        completion: completion(replacement),
+      }),
+    ).rejects.toThrow(
+      /logical commit validation failed: Managed-startup shared-state commit helper failed.*injected commit failure.*new workload could not be quiesced.*injected quiesce failure/u,
+    );
   });
 
   it("publishes durable rollback authority before deleting the replacement after restart", async () => {
@@ -120,13 +164,16 @@ describe("Docker managed bootstrap adapter", () => {
         completion: null,
       }),
     ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
+    expect(fake.events).toContain("journal:rollback-authorized");
+    expect(fake.events).toContain(`rm:${NEW_ID}`);
     expect(fake.events.indexOf("journal:rollback-authorized")).toBeLessThan(
       fake.events.indexOf(`rm:${NEW_ID}`),
     );
     expect(fake.journal).toBeNull();
     expect(fake.replacement).toBeNull();
-    expect(fake.original.Name).toBe("/openshell-alpha");
-    expect(fake.original.State?.Running).toBe(false);
+    expect(fake.original).not.toBeNull();
+    expect(fake.original?.Name).toBe("/openshell-alpha");
+    expect(fake.original?.State?.Running).toBe(false);
   });
 
   it("recovers the pre-stop cutover crash state after adapter restart", async () => {
@@ -164,6 +211,8 @@ describe("Docker managed bootstrap adapter", () => {
         completion: null,
       }),
     ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
+    expect(fake.events).toContain("journal:rollback-authorized");
+    expect(fake.events).toContain(`rm:${NEW_ID}`);
     expect(fake.events.indexOf("journal:rollback-authorized")).toBeLessThan(
       fake.events.indexOf(`rm:${NEW_ID}`),
     );
@@ -281,8 +330,29 @@ describe("Docker managed bootstrap adapter", () => {
     ).toBe(true);
   });
 
+  it("rejects an empty intended workload argv with a precise boundary error", async () => {
+    const fake = fixture();
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request, snapshot } = authority();
+    const plan = { ...handle.plan, intendedWorkloadArgv: [] };
+    const emptyArgvHandle = { ...handle, intendedWorkloadArgv: [], plan };
+    await expect(
+      adapter.prepareBootstrapReplacement({
+        handle: emptyArgvHandle,
+        snapshot,
+        request,
+        replacementOptions: { values: {} },
+      }),
+    ).rejects.toThrow(
+      "Managed bootstrap Docker replacement requires one bounded intended workload argv.",
+    );
+    expect(fake.events).toContain("create:replacement");
+    expect(fake.events).not.toContain(`stop:${OLD_ID}`);
+  });
+
   it.each([
     "NODE_OPTIONS",
+    "NODE_PATH",
     "LD_PRELOAD",
     "BASH_ENV",
   ])("rejects hostile %s from the launch snapshot before replacement creation", async (key) => {
@@ -326,7 +396,8 @@ describe("Docker managed bootstrap adapter", () => {
       sandboxId: "sandbox-alpha",
       runtimeId: OLD_ID,
     });
-    expect(fake.original.State?.Running).toBe(false);
+    expect(fake.original).not.toBeNull();
+    expect(fake.original?.State?.Running).toBe(false);
     expect(fake.events).not.toContain(`rm:${OLD_ID}`);
     expect(vi.mocked(fake.deps.runOpenshell!)).not.toHaveBeenCalled();
   });
@@ -336,8 +407,10 @@ describe("Docker managed bootstrap adapter", () => {
     const fake = fixture({ ownerId: replacementSandboxId });
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
     const { handle, plan } = authority();
-    expect(fake.original.Config?.Labels).toBeDefined();
-    fake.original.Config!.Labels!["openshell.ai/sandbox-id"] = replacementSandboxId;
+    expect(fake.original).not.toBeNull();
+    const labels = fake.original?.Config?.Labels;
+    expect(labels).toBeDefined();
+    Object.assign(labels ?? {}, { "openshell.ai/sandbox-id": replacementSandboxId });
 
     await expect(
       adapter.cleanupIncompleteCreate({
