@@ -13,6 +13,7 @@ import {
   packReviewedNpmArchive,
   verifyInstalledNpmLock,
   verifyReviewedNpmLock,
+  verifyReviewedNpmLockPackages,
 } from "./lib/reviewed-npm-archive.mts";
 import {
   assertExceptionGraphs,
@@ -241,15 +242,19 @@ export function materializeSourceGraph(
   sourcePackage: string,
   sourceLock: string,
   destination: string,
+  registryOrigin: string,
+  installProductionDependencies: (directory: string) => void = (directory) =>
+    void run("npm", ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"], directory),
 ): string {
   assertRegularFile(sourcePackage, "NemoClaw CLI package manifest");
   assertRegularFile(sourceLock, "NemoClaw CLI lockfile");
+  verifyReviewedNpmLockPackages({ lockfilePath: sourceLock, omitDev: true, registryOrigin });
   const lockSha256 = createHash("sha256").update(fs.readFileSync(sourceLock)).digest("hex");
   fs.mkdirSync(destination);
   fs.copyFileSync(sourcePackage, path.join(destination, "package.json"));
   const installedLock = path.join(destination, "package-lock.json");
   fs.copyFileSync(sourceLock, installedLock);
-  run("npm", ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"], destination);
+  installProductionDependencies(destination);
   const installedLockSha256 = createHash("sha256")
     .update(fs.readFileSync(installedLock))
     .digest("hex");
@@ -378,6 +383,7 @@ function auditSourceGraph(
     sourcePackage,
     sourceLock,
     path.join(tempRoot, "source-graph"),
+    config.registryOrigin,
   );
   return auditMaterializedSourceGraph({
     directory,

@@ -177,11 +177,65 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
           path.join(source, "package.json"),
           path.join(source, "package-lock.json"),
           destination,
+          "https://registry.npmjs.org",
         ),
       ).toBe(destination);
       expect(fs.readFileSync(path.join(destination, "package-lock.json"), "utf-8")).toBe(
         lockSource,
       );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unreviewed registry package before npm ci installs the root production graph (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-registry-"));
+    const source = path.join(root, "source");
+    const destination = path.join(root, "materialized");
+    const manifest = {
+      dependencies: { "fixture-package": "1.0.0" },
+      name: "source-graph-fixture",
+      private: true,
+      version: "1.0.0",
+    };
+    const lock = {
+      name: manifest.name,
+      version: manifest.version,
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": manifest,
+        "node_modules/fixture-package": {
+          integrity: "sha512-fixture",
+          resolved: "https://example.com/fixture-package-1.0.0.tgz",
+          version: "1.0.0",
+        },
+      },
+    };
+    let installCalled = false;
+    try {
+      fs.mkdirSync(source);
+      fs.writeFileSync(path.join(source, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+      fs.writeFileSync(
+        path.join(source, "package-lock.json"),
+        `${JSON.stringify(lock, null, 2)}\n`,
+      );
+
+      expect(() =>
+        materializeSourceGraph(
+          path.join(source, "package.json"),
+          path.join(source, "package-lock.json"),
+          destination,
+          "https://registry.npmjs.org",
+          () => {
+            installCalled = true;
+          },
+        ),
+      ).toThrow(
+        "reviewed npm lock package must use the reviewed registry: node_modules/fixture-package",
+      );
+      expect(installCalled).toBe(false);
+      expect(fs.existsSync(destination)).toBe(false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
