@@ -374,7 +374,7 @@ describe("agent base image provisioning", () => {
 
   it("passes the resolved corporate CA into local agent base image builds (#8119)", () => {
     vi.stubEnv("NEMOCLAW_CORPORATE_CA_BUNDLE", writeCa(tmpDir()));
-    withMockedDocker(({ ensureAgentBaseImage, resolveSandboxBaseImageMock }) => {
+    withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock, resolveSandboxBaseImageMock }) => {
       resolveSandboxBaseImageMock.mockReturnValue({
         ref: "nemoclaw-dcode-sandbox-base-local:compatible",
         digest: null,
@@ -390,9 +390,10 @@ describe("agent base image provisioning", () => {
           dockerfileBasePath: "/test/root/agents/langchain-deepagents-code/Dockerfile.base",
           dockerfilePath: "/test/root/agents/langchain-deepagents-code/Dockerfile",
         }),
+        { forceBaseImageRebuild: true },
       );
 
-      const options = resolveSandboxBaseImageMock.mock.calls[0]?.[0] as {
+      const options = dockerBuildMock.mock.calls[0]?.[3] as {
         buildArgs?: Record<string, string>;
       };
       const encoded = options.buildArgs?.NEMOCLAW_CORPORATE_CA_B64;
