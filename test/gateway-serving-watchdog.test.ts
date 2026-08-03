@@ -51,12 +51,16 @@ function watchdogFunctions(gatewayLog: string): string {
 // `"<exit>:<http-status>"` pair when the status itself is under test.
 // The proc fixture under _NEMOCLAW_PROC_ROOT controls what the PID-identity
 // check sees for the fake gateway.
+// Set `curlUnavailable` to omit the stub and start the watchdog with an empty
+// PATH, so its `command -v curl` guard sees no probe command at all. That is a
+// different path from a probe that runs and fails, which `curlPlan` covers.
 function runWatchdog(opts: {
   curlPlan: Array<number | string>;
   cmdline?: string;
   env?: Record<string, string>;
   // How long to let the watchdog run when no kill is expected (seconds).
   settleSeconds?: number;
+  curlUnavailable?: boolean;
   expectKill: boolean;
 }): {
   result: ReturnType<typeof spawnSync>;
@@ -87,22 +91,26 @@ function runWatchdog(opts: {
     // curl stub: pop the next outcome off the plan; keep the last one. It
     // mirrors real `curl -w '%{http_code}'` by printing a status alongside the
     // exit code, which is what the watchdog's probe classifier reads.
-    `_CURL_PLAN=${JSON.stringify(planFile)}`,
-    "curl() {",
-    "  local next rest code status",
-    '  next="$(head -n1 "$_CURL_PLAN" 2>/dev/null)"',
-    '  [ -n "$next" ] || next=0',
-    '  rest="$(tail -n +2 "$_CURL_PLAN" 2>/dev/null)"',
-    '  if [ -n "$rest" ]; then printf "%s\\n" "$rest" >"$_CURL_PLAN"; fi',
-    '  code="${next%%:*}"',
-    '  status="${next#*:}"',
-    '  [ "$status" != "$next" ] || status=""',
-    '  if [ -z "$status" ]; then',
-    '    if [ "$code" = 0 ]; then status=200; else status=000; fi',
-    "  fi",
-    '  printf "%s" "$status"',
-    '  return "$code"',
-    "}",
+    ...(opts.curlUnavailable
+      ? []
+      : [
+          `_CURL_PLAN=${JSON.stringify(planFile)}`,
+          "curl() {",
+          "  local next rest code status",
+          '  next="$(head -n1 "$_CURL_PLAN" 2>/dev/null)"',
+          '  [ -n "$next" ] || next=0',
+          '  rest="$(tail -n +2 "$_CURL_PLAN" 2>/dev/null)"',
+          '  if [ -n "$rest" ]; then printf "%s\\n" "$rest" >"$_CURL_PLAN"; fi',
+          '  code="${next%%:*}"',
+          '  status="${next#*:}"',
+          '  [ "$status" != "$next" ] || status=""',
+          '  if [ -z "$status" ]; then',
+          '    if [ "$code" = 0 ]; then status=200; else status=000; fi',
+          "  fi",
+          '  printf "%s" "$status"',
+          '  return "$code"',
+          "}",
+        ]),
     // A real process stands in for the gateway so kill -0 / kill -TERM are
     // exercised for real; its claimed cmdline comes from the proc fixture.
     "command sleep 60 &",
@@ -114,7 +122,9 @@ function runWatchdog(opts: {
     watchdogFunctions(wedgeLogFile),
     'capture_openclaw_pid_start_identity() { printf -v "$2" "%s" "watchdog-test"; }',
     'record_gateway_pid "$FAKE_GATEWAY_PID" "$FAKE_GATEWAY_START"',
+    ...(opts.curlUnavailable ? ['_SAVED_PATH="$PATH"', 'PATH=""'] : []),
     "start_gateway_serving_watchdog",
+    ...(opts.curlUnavailable ? ['PATH="$_SAVED_PATH"'] : []),
     'printf "WATCHDOG_PID=%s\\n" "$GATEWAY_WATCHDOG_PID"',
     ...(opts.expectKill
       ? [
@@ -294,6 +304,25 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
       expect(result.stderr).toContain("health probe inconclusive (curl exit 127)");
       expect(result.stderr).not.toContain("stopped serving port 18789");
       expect(String(result.stderr).match(/health probe inconclusive/g)).toHaveLength(1);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("disables itself without signalling the gateway when curl is unavailable (#7377)", () => {
+    // With no probe command there is no evidence either way, so the watchdog
+    // must stand down rather than run blind against a live gateway.
+    const { result, fakeAlive, tmpDir } = runWatchdog({
+      curlPlan: [0],
+      curlUnavailable: true,
+      expectKill: false,
+      settleSeconds: 1.2,
+    });
+    try {
+      expect(result.status, `script failed: ${result.stderr}`).toBe(0);
+      expect(fakeAlive).toBe(true);
+      expect(result.stderr).toContain("curl is unavailable; serving watchdog disabled");
+      expect(result.stderr).not.toContain("stopped serving port 18789");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

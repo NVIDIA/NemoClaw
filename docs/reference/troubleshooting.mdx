@@ -641,7 +641,7 @@ NemoClaw prevents and self-heals this:
 - The generated sandbox config pins `gateway.reload.mode` to `hot`, so configuration changes never make the gateway restart itself out from under the sandbox supervisor.
 - A serving watchdog inside the sandbox kills a gateway that stops serving after it has served at least once, and the supervisor relaunches it (look for `[gateway-watchdog]` lines in `$$nemoclaw <name> logs`).
 
-The watchdog treats the gateway as serving only while the local health endpoint answers `200` or `401`, the same check the sandbox uses at startup.
+The watchdog treats the gateway as serving only while the local health endpoint answers `200` or `401`, the same response requirement the sandbox applies when it waits for the gateway at startup.
 A refused port, a probe that times out, a connection that is accepted and then dropped, and an HTTP error response all count as not serving, so a gateway wedged in any of those states is recovered rather than left running.
 The watchdog logs the cause it observed on each failed probe, and acts after four consecutive failures (roughly two minutes).
 
