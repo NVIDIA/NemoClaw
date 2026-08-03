@@ -285,12 +285,12 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   // the "would have caught DGX Spark" check, even on x86 runners,
   // because a naked gateway crash would also flake on x86 occasionally
   // and a fix that restores the chain trivially holds the PID.
-  const stablePid = await gateway.expectPidStable(instance, {
+  const stableIdentity = await gateway.expectPidStable(instance, {
     durationSeconds: 30,
     pollIntervalSeconds: 5,
   });
 
-  expect(stablePid).toBeGreaterThan(0);
+  expect(stableIdentity.pid).toBeGreaterThan(0);
 
   progress.phase("restart sandbox container with persisted startup command");
   // A Docker restart must reuse the container and its credential-free managed

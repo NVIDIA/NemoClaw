@@ -159,9 +159,26 @@ function mockOnboardRunCapture(command, options = {}) {
   return mockSandboxExecCurl(command, options);
 }
 
+function mockStandaloneGatewayTeardownAuthority() {
+  const authority = require(
+    path.resolve(__dirname, "../../src/lib/onboard/gateway-teardown-authority.ts"),
+  );
+  authority.resolveGatewayTeardownAuthority = ({ gatewayName, gatewayPort }) => ({
+    gatewayName,
+    gatewayPort,
+    mode: "nemoclaw-managed",
+    source: "standalone",
+    endpoint: null,
+    stateDir: null,
+    supervisor: null,
+    requiredCapabilities: [],
+  });
+}
+
 module.exports = {
   isOpenClawSecurityInventoryProbe,
   mockOnboardRunCapture,
   mockSandboxExecCurl,
+  mockStandaloneGatewayTeardownAuthority,
   normalizeCommand,
 };
