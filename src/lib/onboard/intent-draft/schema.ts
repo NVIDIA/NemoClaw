@@ -161,10 +161,8 @@ export function validateOnboardIntentEndpointUrl(value: string): string {
   if (parsed.username || parsed.password) {
     throw new Error("Endpoint URL must not contain a username or password.");
   }
-  for (const key of parsed.searchParams.keys()) {
-    if (/(?:key|token|secret|password|signature|credential|auth)/i.test(key)) {
-      throw new Error("Endpoint URL must not contain credential query parameters.");
-    }
+  if (parsed.search) {
+    throw new Error("Endpoint URL must not contain query parameters.");
   }
   if (parsed.hash) {
     throw new Error("Endpoint URL must not contain a fragment.");

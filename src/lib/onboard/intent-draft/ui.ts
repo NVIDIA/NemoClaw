@@ -183,10 +183,24 @@ async function prepareDraftForReview(
     } catch {
       modelAvailable = false;
     }
+    let normalizedEndpointUrl = inference.endpointUrl;
+    let endpointAvailable = true;
+    if (choice?.endpointRequired) {
+      try {
+        normalizedEndpointUrl =
+          inference.endpointUrl === null
+            ? null
+            : validateOnboardIntentEndpointUrl(inference.endpointUrl);
+      } catch {
+        endpointAvailable = false;
+      }
+    } else {
+      normalizedEndpointUrl = null;
+    }
     if (
       !choice ||
       !modelAvailable ||
-      (choice.endpointRequired && !inference.endpointUrl) ||
+      (choice.endpointRequired && (!normalizedEndpointUrl || !endpointAvailable)) ||
       !authMethodAvailable
     ) {
       answers = withoutDraftAnswers(answers, ["inference", "tools", "policy"]);
@@ -194,7 +208,7 @@ async function prepareDraftForReview(
       const normalizedInference = {
         ...inference,
         model: normalizedModel,
-        endpointUrl: choice.endpointRequired ? inference.endpointUrl : null,
+        endpointUrl: normalizedEndpointUrl,
         authMethod: authMethods.length > 0 ? inference.authMethod : null,
       };
       if (JSON.stringify(normalizedInference) !== JSON.stringify(inference)) {

@@ -339,6 +339,39 @@ describe("onboarding intent draft UI (#6005)", () => {
     expect(deps.lines).toContain("    Inference: build / safe/model");
   });
 
+  it("recollects a signed endpoint query before showing Review", async () => {
+    const initial = createOnboardIntentDraft({
+      agent: "openclaw",
+      inference: {
+        provider: "custom",
+        model: "model-1",
+        endpointUrl: "https://inference.example/v1?sig=opaque-signed-value",
+        authMethod: null,
+      },
+      sandbox: "demo",
+      web_search: null,
+      messaging: [],
+      tools: { hermesGateways: [] },
+      resources: { profile: "default", gpu: "auto" },
+      policy: "balanced",
+    });
+    const deps = makeDeps(["", "", "https://inference.example/v1", "", ""]);
+    deps.inferenceChoices = async () => [
+      {
+        value: "custom",
+        label: "Custom endpoint",
+        defaultModel: "model-1",
+        endpointRequired: true,
+      },
+    ];
+
+    const result = await collectOnboardIntentDraft(deps, initial);
+
+    expect(result.draft.answers.inference?.endpointUrl).toBe("https://inference.example/v1");
+    expect(deps.lines).toContain("    Inference: custom / model-1, https://inference.example/v1");
+    expect(deps.lines.join("\n")).not.toContain("opaque-signed-value");
+  });
+
   it("resumes an incomplete custom resource choice without losing its saved CPU", async () => {
     const initial = createOnboardIntentDraft({
       agent: "openclaw",

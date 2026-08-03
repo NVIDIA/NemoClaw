@@ -71,7 +71,7 @@ describe("onboarding intent draft input seeding (#6005)", () => {
         NEMOCLAW_PROVIDER: "custom",
         NEMOCLAW_ENDPOINT_URL: "https://example.test/v1?api_key=opaque-secret",
       }),
-    ).toThrow("credential query parameters");
+    ).toThrow("query parameters");
   });
 
   it("combines a single explicit resource input with safe defaults", () => {

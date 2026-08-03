@@ -245,6 +245,9 @@ During interactive onboarding, host checks are read-only, and credential-free ch
 The available choice groups include the agent, inference provider and model, sandbox name, web search, messaging channels, managed tools, resources, and policy tier.
 The selected agent and host capabilities determine which choices appear within those groups.
 Onboarding does not request raw credentials during choice collection, store them in the draft, or show them in the review.
+Custom endpoint URLs cannot contain userinfo, query parameters of any name, or fragments.
+Before the review, onboarding revalidates seeded and resumed collecting drafts and recollects a rejected endpoint URL without displaying it.
+Accepted drafts receive the same endpoint URL validation before materialization.
 
 Type `b` or `back` during choice collection to return to the previous available choice prompt.
 Type `exit` or `quit` at a choice prompt to exit onboarding before external resource changes begin.

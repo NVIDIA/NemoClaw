@@ -74,4 +74,26 @@ describe("onboarding intent draft session persistence (#6005)", () => {
 
     expect(session.normalizeSession(created as never)).toBeNull();
   });
+
+  it("rejects a signed endpoint query before it can persist", async () => {
+    const session = await import("../onboard-session");
+    const created = session.createSession() as unknown as Record<string, unknown>;
+    created.intentDraft = {
+      version: 1,
+      phase: "collecting",
+      answers: {
+        inference: {
+          provider: "custom",
+          model: "model-1",
+          endpointUrl: "https://inference.example/v1?sig=opaque-signed-value",
+          authMethod: null,
+        },
+      },
+    };
+
+    const normalized = session.normalizeSession(created as never);
+
+    expect(normalized).toBeNull();
+    expect(JSON.stringify(normalized)).not.toContain("opaque-signed-value");
+  });
 });

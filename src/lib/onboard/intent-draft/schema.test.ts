@@ -137,9 +137,10 @@ describe("onboarding intent dependency invalidation (#6005)", () => {
   it.each([
     "https://user:password@example.com/v1",
     "https://example.com/v1?api_key=secret",
+    "https://inference.example/v1?sig=opaque-signed-value",
     "https://example.com/v1#token=secret",
     "ftp://example.com/v1",
-  ])("rejects credential-bearing or unsupported endpoint metadata: %s", (endpointUrl) => {
+  ])("rejects unsafe or unsupported endpoint metadata: %s", (endpointUrl) => {
     expect(
       parseOnboardIntentDraft({
         version: 1,
