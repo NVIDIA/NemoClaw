@@ -316,7 +316,7 @@ To recover from baseline drift, first check whether the release changed the entr
 If the entry still exists with different content, clear the stale record, review the current scope, and explicitly approve it again only if you still accept the impact:
 
 ```bash
-$$nemoclaw <sandbox-name> policy restore <key>
+$$nemoclaw <sandbox-name> policy restore <key> --force
 $$nemoclaw <sandbox-name> policy exclude <key> --dry-run
 $$nemoclaw <sandbox-name> policy exclude <key> --force
 ```
@@ -325,7 +325,7 @@ If the release removed the entry entirely, `policy exclude <key>` fails with "Un
 Clear the stale record instead:
 
 ```bash
-$$nemoclaw <sandbox-name> policy restore <key>
+$$nemoclaw <sandbox-name> policy restore <key> --force
 ```
 
 List active exclusions with `policy list`.
@@ -335,7 +335,9 @@ An unreadable live policy is unverified, while a live policy that contains the k
 Restore an entry against the current baseline and clear its exclusion:
 
 ```bash
-$$nemoclaw <sandbox-name> policy restore <key>
+$$nemoclaw <sandbox-name> policy restore <key> --force
 ```
+
+`policy restore` previews the egress it re-allows and then requires the same explicit acknowledgement as `policy exclude` (`--force` or `--yes` in non-interactive use).
 
 Excluding a baseline entry leaves agent features that depend on it unsupported for that sandbox.

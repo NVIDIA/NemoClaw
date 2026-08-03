@@ -2014,10 +2014,11 @@ async function restoreSandboxBaselineUnlocked(
   options: PolicyBaselineOptions,
 ): Promise<void> {
   const dryRun = Boolean(options.dryRun);
+  const explicitAck = Boolean(options.yes || options.force);
   const key = options.key?.trim();
   if (!key) {
     console.error("  A baseline key is required.");
-    console.error(`  Usage: ${CLI_NAME} <sandbox> policy restore <key> [--dry-run]`);
+    console.error(`  Usage: ${CLI_NAME} <sandbox> policy restore <key> [--force] [--dry-run]`);
     process.exit(1);
   }
 
@@ -2051,6 +2052,17 @@ async function restoreSandboxBaselineUnlocked(
   if (dryRun) {
     console.log("  --dry-run: no changes applied.");
     return;
+  }
+
+  if (isNonInteractive() && !explicitAck) {
+    console.error(
+      "  Non-interactive restore requires explicit acknowledgement: pass --force (or --yes).",
+    );
+    process.exit(1);
+  }
+  if (!explicitAck) {
+    const confirm = await askPrompt(`  Restore '${key}' for sandbox '${sandboxName}'? [y/N]: `);
+    if (!confirm.trim().toLowerCase().startsWith("y")) return;
   }
 
   if (!policies.restoreBaselineEntry(sandboxName, key)) {
