@@ -13,6 +13,7 @@ import { buildHermesManagedPolicy } from "../agents/hermes/config/managed-policy
 
 const root = path.join(import.meta.dirname, "..");
 const patcher = path.join(root, "agents", "hermes", "patch-profile-policy-defaults.py");
+const imageBuildProbes = path.join(root, "agents", "hermes", "image-build-probes.py");
 const dockerfile = fs.readFileSync(path.join(root, "agents", "hermes", "Dockerfile"), "utf8");
 const POLICY_SETTINGS: HermesBuildSettings = {
   model: "test-model",
@@ -267,6 +268,42 @@ describe("Hermes profile policy defaults", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(`ERROR: ${policyPath}: managed policy is malformed`);
     expect(result.stderr).not.toContain("Traceback");
+  });
+
+  it("checks session reset defaults at their gateway boundary for a config-less profile", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-profile-probe-"));
+    const policyPath = path.join(tmp, "managed-policy.json");
+    fs.writeFileSync(policyPath, `${JSON.stringify(MANAGED_POLICY)}\n`);
+    const harness = `\
+import copy
+import importlib.util
+import json
+import pathlib
+import sys
+from types import SimpleNamespace
+
+probe_path = pathlib.Path(sys.argv[1])
+policy_path = pathlib.Path(sys.argv[2])
+sys.path.insert(0, str(probe_path.parent))
+from managed_policy import profile_default_values
+spec = importlib.util.spec_from_file_location("image_build_probes", probe_path)
+assert spec and spec.loader
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+policy = json.loads(policy_path.read_text(encoding="utf-8"))
+expected = profile_default_values(policy)
+config = copy.deepcopy(policy["config"])
+reset_policy = SimpleNamespace(**config.pop("session_reset"))
+module._verify_profile_config_policy(config, expected)
+module._verify_session_reset_policy(reset_policy, expected)
+`;
+    const result = spawnSync("python3", ["-I", "-c", harness, imageBuildProbes, policyPath], {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    fs.rmSync(tmp, { recursive: true, force: true });
+
+    expect(result.status, result.stderr).toBe(0);
   });
 
   it("hash-binds the reviewed source patch and probes a real config-less profile", () => {

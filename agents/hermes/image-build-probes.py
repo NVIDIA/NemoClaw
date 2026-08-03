@@ -12,6 +12,23 @@ from pathlib import Path
 sys.path.insert(0, "/usr/local/lib/nemoclaw")
 
 
+def _verify_profile_config_policy(config: dict, expected: dict[str, object]) -> None:
+    from managed_policy import policy_value
+
+    for path, value in expected.items():
+        if path.startswith("session_reset."):
+            continue
+        actual = policy_value(config, path)
+        assert actual == value, (path, actual, value)
+
+
+def _verify_session_reset_policy(reset_policy: object, expected: dict[str, object]) -> None:
+    for field in ("mode", "at_hour", "idle_minutes"):
+        path = f"session_reset.{field}"
+        actual = getattr(reset_policy, field)
+        assert actual == expected[path], (path, actual, expected[path])
+
+
 def verify_profile_policy() -> None:
     from types import SimpleNamespace
 
@@ -20,7 +37,7 @@ def verify_profile_policy() -> None:
     from hermes_cli import config as hermes_config
     from hermes_cli.config import load_config_readonly
     from hermes_cli.main import _resolve_pre_update_backup_mode
-    from managed_policy import load_managed_policy, policy_value, profile_default_values
+    from managed_policy import load_managed_policy, profile_default_values
     from tools.browser_tool import (
         _allow_unsafe_browser_evaluate,
         _restrict_browser_evaluate,
@@ -30,18 +47,15 @@ def verify_profile_policy() -> None:
     policy = load_managed_policy()
     expected = profile_default_values(policy)
     config = load_config_readonly()
-    for path, value in expected.items():
-        assert policy_value(config, path) == value, (path, policy_value(config, path), value)
+    _verify_profile_config_policy(config, expected)
     assert CLI_CONFIG["display"]["show_reasoning"] == expected["display.show_reasoning"]
     assert _allow_unsafe_browser_evaluate() == expected["browser.allow_unsafe_evaluate"]
     assert _restrict_browser_evaluate() == expected["browser.restrict_evaluate"]
     assert _load_show_reasoning() == expected["display.show_reasoning"]
-    assert SessionResetPolicy().mode == expected["session_reset.mode"]
-    assert SessionResetPolicy.from_dict({}).mode == expected["session_reset.mode"]
+    _verify_session_reset_policy(SessionResetPolicy(), expected)
+    _verify_session_reset_policy(SessionResetPolicy.from_dict({}), expected)
     gateway = load_gateway_config()
-    assert gateway.default_reset_policy.mode == expected["session_reset.mode"]
-    assert gateway.default_reset_policy.at_hour == expected["session_reset.at_hour"]
-    assert gateway.default_reset_policy.idle_minutes == expected["session_reset.idle_minutes"]
+    _verify_session_reset_policy(gateway.default_reset_policy, expected)
     original_load_config = hermes_config.load_config
     try:
 
