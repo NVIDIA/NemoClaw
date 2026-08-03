@@ -500,13 +500,21 @@ function resolveOpenShellGatewayUserService(
       env,
       spawnSyncImpl: opts.spawnSyncImpl ?? spawnSync,
     });
-    const verdict = checkUpstreamGatewayVersion(identity.ok ? identity.execStartPath : null, opts);
-    if (verdict.supported) {
-      return upstreamService;
-    }
-    if (!warnedUnsupportedUpstreamGateway) {
-      warnedUnsupportedUpstreamGateway = true;
-      (opts.warn ?? ((message: string) => console.error(message)))(verdict.message);
+    // A failed systemctl query leaves the version unknown and preserves the
+    // existing adoption behaviour. Positive evidence of a foreign unit or
+    // executable must fail closed and continue to the NemoClaw fallback.
+    if (identity.ok || !identity.trustFailure) {
+      const verdict = checkUpstreamGatewayVersion(
+        identity.ok ? identity.execStartPath : null,
+        opts,
+      );
+      if (verdict.supported) {
+        return upstreamService;
+      }
+      if (!warnedUnsupportedUpstreamGateway) {
+        warnedUnsupportedUpstreamGateway = true;
+        (opts.warn ?? ((message: string) => console.error(message)))(verdict.message);
+      }
     }
   }
 

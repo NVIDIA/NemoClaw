@@ -82,11 +82,16 @@ NemoClaw's default Docker-driver topology does not place the sandbox in an embed
 Only the default gateway port `8080` uses a NemoClaw-managed service.
 
 On Linux, NemoClaw prefers the upstream package-managed `openshell-gateway.service`.
-Before adoption, NemoClaw asks systemd for the unit's effective `ExecStart` and checks that binary's version against the blueprint range (`min_openshell_version` through `max_openshell_version`).
+Before adoption, NemoClaw asks systemd for the unit's effective `ExecStart`.
+When systemd returns the service identity, NemoClaw requires trusted package paths for both the unit and its effective binary.
+It then checks the effective binary's version against the blueprint range (`min_openshell_version` through `max_openshell_version`).
 This check prevents a supported user-local OpenShell install from hiding an out-of-range binary selected by the package unit's absolute `ExecStart`.
 NemoClaw declines a known version below the minimum or a known stable version above the maximum.
 An above-maximum development build remains eligible when `NEMOCLAW_OPENSHELL_CHANNEL=dev`, and an undetermined version also remains eligible.
-When NemoClaw declines the package unit, it reports the version once and selects an existing marked NemoClaw user service when available.
+When systemd cannot return the service identity, the package unit also remains eligible for later startup inspection.
+NemoClaw declines the package unit when systemd positively identifies an untrusted unit or effective binary.
+For a version rejection, NemoClaw reports the version once.
+After either rejection, it selects an existing marked NemoClaw user service when available.
 Otherwise, onboarding continues with the standalone gateway fallback.
 For tarball installs, the NemoClaw installer stages a marked user-level `nemoclaw-openshell-gateway.service` based on the upstream unit.
 Onboarding validates and reuses a healthy selected service.

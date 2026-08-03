@@ -112,6 +112,30 @@ describe("package-managed gateway version gate (#8094)", () => {
     expect(resolved).toBe(true);
   });
 
+  it("falls back to the NemoClaw-managed unit when the package service identity is untrusted", () => {
+    const home = "/home/tester";
+    const nemoclawUnit = getNemoclawOpenShellGatewayUserServicePath(home, {});
+    const getUpstreamGatewayVersion = vi.fn(() => "0.0.85");
+
+    const resolved = hasOpenShellGatewayUserService(
+      resolveOptions("ignored", {
+        home,
+        env: {},
+        existsSync: (p: string) => packageOnly(p) || p === nemoclawUnit,
+        getUpstreamGatewayVersion,
+        lstatSync: (() => ({ isSymbolicLink: () => false })) as never,
+        readFileSync: () => NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
+        spawnSyncImpl: () => ({
+          status: 0,
+          stdout: trustedShowOutput("/opt/foreign/openshell-gateway"),
+        }),
+      }),
+    );
+
+    expect(resolved).toBe(true);
+    expect(getUpstreamGatewayVersion).not.toHaveBeenCalled();
+  });
+
   it("warns once even when the resolver runs repeatedly", () => {
     const warn = vi.fn();
     const options = resolveOptions("0.0.91", { warn });
