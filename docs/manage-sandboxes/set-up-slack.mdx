@@ -48,8 +48,8 @@ This uses the existing Slack credentials and does not require additional scopes 
 ## Avoid Duplicate Socket Mode Sessions
 
 <Warning title="Conflict Detection Scope">
-NemoClaw checks for duplicate Slack credentials only among sandboxes in the selected OpenShell gateway's sandbox registry.
-It cannot detect or prevent reuse across independent OpenShell gateways.
+NemoClaw checks for another active Slack sandbox only in the selected OpenShell gateway's sandbox registry.
+It cannot detect or prevent Slack credential reuse across independent OpenShell gateways.
 </Warning>
 
 Run only one active Slack sandbox on each OpenShell gateway.
