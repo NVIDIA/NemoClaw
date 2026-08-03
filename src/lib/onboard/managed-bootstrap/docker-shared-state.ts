@@ -17,6 +17,7 @@ import type { DockerGpuPatchDeps, DockerGpuPatchResult } from "../docker-gpu-pat
 import { MANAGED_STARTUP_RUNTIME_EXECUTABLE } from "../managed-startup/image-runtime";
 import { MANAGED_STARTUP_AGENTS, type ManagedStartupAgent } from "../managed-startup/profile";
 import {
+  MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
   MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
   MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
 } from "../managed-startup/shared-state-transaction";
@@ -24,8 +25,6 @@ import { isImmutableDockerImageId } from "../openshell-docker-sandbox-containers
 import { cleanupTempDir, secureTempFile } from "../temp-files";
 
 const RECEIPT_TEMP_PREFIX = "nemoclaw-managed-startup-receipt";
-const MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY =
-  "/var/lib/nemoclaw/managed-startup-shared-state-commit-v1";
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const DURABLE_IDENTITY_RE = /^[a-f0-9]{64}$/u;
 const DOCKER_MUTATION_OPTIONS = {

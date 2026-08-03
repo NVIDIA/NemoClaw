@@ -21,13 +21,18 @@ import {
 } from "./adapter";
 import type { DockerManagedBootstrapDeps } from "./docker";
 import {
+  type DockerManagedBootstrapFinalizationRecord,
   type DockerManagedBootstrapJournal,
   DockerManagedBootstrapJournalAcknowledgementLostError,
   type DockerManagedBootstrapJournalPhase,
   type DockerManagedBootstrapJournalStore,
 } from "./docker-journal";
 import { normalizeDockerManagedBootstrapLaunchSpec } from "./docker-spec";
-import { parseManagedBootstrapEnvelope } from "./envelope";
+import {
+  MANAGED_BOOTSTRAP_COMPLETION_FILE,
+  parseManagedBootstrapEnvelope,
+  serializeManagedBootstrapImageCompletion,
+} from "./envelope";
 
 export const IDENTITY = "1".repeat(64);
 export const OLD_ID = "2".repeat(64);
@@ -206,6 +211,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
   let original: DockerContainerInspect | null = originalInspect(agentInputs(options.agent));
   let replacement: DockerContainerInspect | null = null;
   let journal: DockerManagedBootstrapJournal | null = null;
+  let finalization: DockerManagedBootstrapFinalizationRecord | null = null;
   let sharedState: "committed" | "none" | "pending" = options.sharedState ?? "none";
   const events: string[] = [];
   const lostAcknowledgements = new Set(options.lostAcknowledgements ?? []);
@@ -224,6 +230,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
       }
     },
     load: () => copyJournal(),
+    listUnfinished: () => (journal && !finalization ? [structuredClone(journal)] : []),
     transition(_identity, expected, next) {
       const current =
         journal !== null && journal.phase === expected
@@ -240,6 +247,20 @@ export function fixture(options: DockerFixtureOptions = {}) {
       }
       return structuredClone(journal);
     },
+    recordCompletion(_identity, receipt) {
+      if (!journal || journal.phase !== "cutover") {
+        throw new Error("completion requires cutover journal");
+      }
+      if (
+        journal.commitReceipt !== null &&
+        JSON.stringify(journal.commitReceipt) !== JSON.stringify(receipt)
+      ) {
+        throw new Error("completion changed");
+      }
+      journal = { ...journal, commitReceipt: structuredClone(receipt) };
+      events.push("journal:completion");
+      return structuredClone(journal);
+    },
     remove(_identity, expected) {
       const current = journal;
       void (current !== null && expected.includes(current.phase)
@@ -253,6 +274,14 @@ export function fixture(options: DockerFixtureOptions = {}) {
         );
       }
     },
+    recordFinalization(value) {
+      if (finalization && JSON.stringify(finalization) !== JSON.stringify(value)) {
+        throw new Error("finalization changed");
+      }
+      finalization = structuredClone(value);
+      events.push(`finalization:${value.phase}`);
+    },
+    loadFinalization: () => (finalization ? structuredClone(finalization) : null),
   };
   const inspect = (reference: string): DockerContainerInspect => {
     const candidates = [original, replacement].filter(
@@ -323,6 +352,20 @@ export function fixture(options: DockerFixtureOptions = {}) {
             return ok();
           };
           const copyFromContainer = () => {
+            if (source === `${NEW_ID}:${MANAGED_BOOTSTRAP_COMPLETION_FILE}`) {
+              fs.writeFileSync(
+                destination,
+                serializeManagedBootstrapImageCompletion({
+                  bootstrapIdentity: IDENTITY,
+                  agent: options.agent ?? "hermes",
+                  profileFingerprint: agentInputs(options.agent).request.profileFingerprint,
+                  transactionPending: sharedState === "pending",
+                }),
+                { mode: 0o444 },
+              );
+              fs.chmodSync(destination, 0o444);
+              return ok();
+            }
             const receipt = source.split(":")[1];
             const expected = receipt?.includes("shared-state-commit") ? "committed" : "pending";
             return sharedState === expected
@@ -432,6 +475,9 @@ export function fixture(options: DockerFixtureOptions = {}) {
     events,
     get journal() {
       return journal;
+    },
+    get finalization() {
+      return finalization;
     },
     get original() {
       return original;
