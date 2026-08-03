@@ -245,6 +245,8 @@ export type DualSparkManagedServingConfirmation =
 export interface ProbeDualSparkManagedServingOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly deps?: DualSparkDiscoveryDeps;
+  /** @internal Catalog loader seam for fail-closed tests. */
+  readonly loadCatalog?: typeof loadManagedInferenceCatalog;
   readonly bindingStatePath?: string;
   readonly maxReadinessAgeMs?: number;
 }
@@ -344,11 +346,20 @@ function validatePeerTarget(raw: string): string {
 
 function selectionFromEnvironment(
   env: NodeJS.ProcessEnv,
+  loadCatalog: typeof loadManagedInferenceCatalog,
 ): Selection | DualSparkManagedServingCapability {
   const preset = String(env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
   const peer = String(env[NEMOCLAW_DGX_SPARK_PEER_ENV] ?? "").trim();
   if (preset) {
-    const catalog = loadManagedInferenceCatalog();
+    let catalog;
+    try {
+      catalog = loadCatalog();
+    } catch {
+      return unavailable(
+        "incompatible-selection",
+        "The selected managed inference preset catalog is unavailable.",
+      );
+    }
     const compiledPreset = catalog.presets.find(
       ({ definition }) => definition.metadata.id === preset,
     );
@@ -956,7 +967,10 @@ function confirmationUnavailable(
 export function probeDualSparkManagedServingCapability(
   options: ProbeDualSparkManagedServingOptions = {},
 ): DualSparkManagedServingCapability {
-  const selection = selectionFromEnvironment(options.env ?? process.env);
+  const selection = selectionFromEnvironment(
+    options.env ?? process.env,
+    options.loadCatalog ?? loadManagedInferenceCatalog,
+  );
   if (!("strict" in selection)) return selection;
   const deps = options.deps ?? defaultDualSparkDiscoveryDeps;
   const opened: DualSparkPinnedPeerTransport[] = [];

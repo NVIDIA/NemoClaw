@@ -511,10 +511,10 @@ describe("managed inference resolver", () => {
   });
 
   it.each([
-    { provider: "vllm" },
-    { vllmModel: "another/model" },
-    { vllmExtraArguments: ["--another-option"] },
-  ])("leaves existing inference intent authoritative for automatic selection", (intent) => {
+    { name: "provider", intent: { provider: "vllm" } },
+    { name: "model", intent: { vllmModel: "another/model" } },
+    { name: "extra arguments", intent: { vllmExtraArguments: ["--another-option"] } },
+  ])("leaves existing $name intent authoritative for automatic selection", ({ intent }) => {
     expect(
       resolveManagedInferenceServing({
         readinessReports: [],

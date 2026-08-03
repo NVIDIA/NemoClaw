@@ -19,6 +19,10 @@ export const NO_PREPARATION_REF = "none/v1" as const;
 export const DUAL_SPARK_HUGGING_FACE_CACHE_SOURCE = "huggingface-cache" as const;
 export const DUAL_SPARK_VLLM_MASTER_PORT = 25_000 as const;
 
+export function containerPathContains(parent: string, child: string): boolean {
+  return child === parent || child.startsWith(`${parent}/`);
+}
+
 export interface ManagedInferenceTopologyQualificationDescriptor {
   readonly id: string;
   readonly schemaVersion: number;
@@ -157,6 +161,13 @@ function validateDualSparkMaterializerRecipe(
     )
   ) {
     return "dual-Spark runtime paths must be normalized absolute container paths";
+  }
+  if (
+    recipe.spec.runtime.temporaryFilesystems.some(({ target }) =>
+      containerPathContains(target, recipe.spec.runtime.modelCache.target),
+    )
+  ) {
+    return "dual-Spark temporary filesystem cannot shadow the model cache";
   }
   const resourceValues = [
     recipe.spec.model.downloadSizeBytes,

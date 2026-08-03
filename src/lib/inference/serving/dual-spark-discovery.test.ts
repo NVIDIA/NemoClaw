@@ -347,6 +347,26 @@ describe("dual DGX Spark managed-serving discovery", () => {
     expect(bindingWrites()).toBe(0);
   });
 
+  it("fails closed when an explicit preset catalog cannot be loaded", () => {
+    const { deps, events, bindingWrites } = fixture({
+      localTransport: () => {
+        throw new Error("must not probe");
+      },
+    });
+
+    expect(
+      probeDualSparkManagedServingCapability({
+        env: { [NEMOCLAW_SERVING_PRESET_ENV]: FIXTURE_DUAL_SPARK_PRESET_ID },
+        deps,
+        loadCatalog: () => {
+          throw new Error("catalog unavailable");
+        },
+      }),
+    ).toMatchObject({ kind: "unavailable", code: "incompatible-selection" });
+    expect(events).toEqual([]);
+    expect(bindingWrites()).toBe(0);
+  });
+
   it("persists one binding only after the detected pair is confirmed and revalidated", () => {
     const { deps, events, bindingWrites } = fixture();
 
@@ -706,7 +726,7 @@ describe("production pinned peer transport", () => {
       expect(fs.readFileSync(path.join(bindingRoot, "owner"), "utf8")).toBe("first\n");
     } finally {
       deps.clearBinding(statePath);
-      fs.rmdirSync(parent);
+      fs.rmSync(parent, { force: true, recursive: true });
     }
   });
 

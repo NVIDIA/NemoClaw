@@ -342,6 +342,7 @@ describe("managed inference catalog compiler", () => {
         },
       },
     });
+    expect(revisionIndex).toBeGreaterThanOrEqual(0);
     expect(plan.roles.head.command.arguments[revisionIndex + 1]).toBe(
       "1111111111111111111111111111111111111111",
     );

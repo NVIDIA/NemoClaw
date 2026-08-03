@@ -4,6 +4,7 @@
 import path from "node:path";
 
 import {
+  containerPathContains,
   DUAL_SPARK_VLLM_MASTER_PORT,
   DUAL_SPARK_VLLM_MATERIALIZER_REF,
   getManagedInferenceLifecycleDescriptor,
@@ -368,6 +369,7 @@ function assertRecipeValues(recipe: ManagedInferenceServingRecipe): void {
     if (
       temporaryTargets.has(temporaryFilesystem.target) ||
       !safeAbsolutePath(temporaryFilesystem.target) ||
+      containerPathContains(temporaryFilesystem.target, runtime.modelCache.target) ||
       !positiveSafeInteger(temporaryFilesystem.sizeBytes) ||
       !/^[0-7]{4}$/u.test(temporaryFilesystem.mode) ||
       temporaryFilesystem.options.length > 8 ||

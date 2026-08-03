@@ -10,11 +10,7 @@ vi.mock("./serving/spark-runtime-receipt", async (importOriginal) => ({
   recoverInstalledDualSparkVllmEndpoint: sparkRecovery.endpoint,
 }));
 
-import {
-  isNemoClawManagedVllmRunning,
-  persistConfiguredDualStationVllmRuntimeReceipt,
-  persistConfiguredManagedVllmRuntimeReceipt,
-} from "./vllm";
+import { isNemoClawManagedVllmRunning, persistConfiguredManagedVllmRuntimeReceipt } from "./vllm";
 
 describe("managed vLLM Spark recovery", () => {
   beforeEach(() => {
@@ -32,10 +28,6 @@ describe("managed vLLM Spark recovery", () => {
       ok: true,
       persisted: true,
     });
-    await expect(persistConfiguredDualStationVllmRuntimeReceipt()).resolves.toEqual({
-      ok: true,
-      persisted: true,
-    });
   });
 
   it("fails closed instead of falling through when Spark receipt recovery is unsafe", async () => {
@@ -43,6 +35,7 @@ describe("managed vLLM Spark recovery", () => {
       throw new Error("receipt-owned container IDs changed");
     });
 
+    expect(isNemoClawManagedVllmRunning()).toBe(false);
     await expect(persistConfiguredManagedVllmRuntimeReceipt()).resolves.toEqual({
       ok: false,
       reason: "managed vLLM recovery failed: receipt-owned container IDs changed",

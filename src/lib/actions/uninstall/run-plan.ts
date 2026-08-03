@@ -261,6 +261,8 @@ const SHARED_HOST_STATE_ENTRIES = new Set([
   DUAL_SPARK_VLLM_RUNTIME_RECEIPT_FILE,
   `${DUAL_SPARK_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
   `${DUAL_SPARK_MANAGED_SERVING_STATE_FILE}.ssh-binding`,
+  DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
+  `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
   MANAGED_VLLM_API_KEY_FILE,
   ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
 ]);
@@ -1233,19 +1235,31 @@ function dockerIsAvailable(runtime: UninstallRuntime): boolean {
   return true;
 }
 
+function managedDistributedVllmStateRootStatus(
+  paths: UninstallPaths,
+  runtime: Pick<UninstallRuntime, "error">,
+): "absent" | "directory" | "unsafe" {
+  const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
+  try {
+    const root = fs.lstatSync(sharedRoot);
+    if (root.isSymbolicLink() || !root.isDirectory()) {
+      runtime.error(`Managed distributed vLLM state root is not a real directory: ${sharedRoot}`);
+      return "unsafe";
+    }
+    return "directory";
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "absent";
+    runtime.error(`Could not inspect managed distributed vLLM state root: ${formatError(error)}`);
+    return "unsafe";
+  }
+}
+
 function removeManagedDistributedVllmRuntime(
   paths: UninstallPaths,
   runtime: UninstallRuntime,
 ): boolean {
-  const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
-  try {
-    const root = fs.lstatSync(sharedRoot);
-    if (root.isSymbolicLink() || !root.isDirectory()) return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
-    runtime.error(`Could not inspect managed distributed vLLM state root: ${formatError(error)}`);
-    return false;
-  }
+  const rootStatus = managedDistributedVllmStateRootStatus(paths, runtime);
+  if (rootStatus !== "directory") return rootStatus === "absent";
   let state: ReturnType<typeof findManagedDistributedVllmRuntimeReceipts>;
   try {
     state = findManagedDistributedVllmRuntimeReceipts({
@@ -1925,6 +1939,9 @@ export function runUninstallPlan(
   }
   const resolvedOptions = { ...options, gatewayName: expectedGatewayName };
   const { paths, plan } = buildRunPlan(resolvedOptions, { ...deps, env: runtime.env });
+  if (managedDistributedVllmStateRootStatus(paths, runtime) === "unsafe") {
+    return { exitCode: 1, plan };
+  }
   let externallySupervised: boolean;
   try {
     externallySupervised = isExternallySupervised(

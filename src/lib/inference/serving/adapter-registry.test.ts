@@ -175,6 +175,24 @@ describe("managed inference adapter registries", () => {
         },
       },
     } as ManagedInferenceServingRecipe;
+    const shadowedCache = {
+      ...recipe,
+      spec: {
+        ...recipe.spec,
+        runtime: {
+          ...recipe.spec.runtime,
+          temporaryFilesystems: [
+            ...recipe.spec.runtime.temporaryFilesystems,
+            {
+              target: "/cache",
+              sizeBytes: 1_073_741_824,
+              mode: "0700",
+              options: ["rw", "nosuid", "nodev"],
+            },
+          ],
+        },
+      },
+    } as ManagedInferenceServingRecipe;
 
     expect(getManagedInferenceRecipeRegistrationError(unsupportedCache)).toMatch(
       /Hugging Face cache source/u,
@@ -188,6 +206,9 @@ describe("managed inference adapter registries", () => {
     expect(getManagedInferenceRecipeRegistrationError(redundantPath)).toMatch(
       /normalized absolute/u,
     );
+    expect(getManagedInferenceRecipeRegistrationError(shadowedCache)).toMatch(
+      /cannot shadow the model cache/u,
+    );
   });
 
   it("dispatches topology artifact validation through the registered descriptor", () => {
@@ -196,11 +217,12 @@ describe("managed inference adapter registries", () => {
       artifact.id,
       artifact.schemaVersion,
     );
-    expect(descriptor?.validateArtifact(artifact, artifact.subjectNodeIds)).toBeUndefined();
+    expect(descriptor).toBeDefined();
+    expect(descriptor!.validateArtifact(artifact, artifact.subjectNodeIds)).toBeUndefined();
 
     const changed = structuredClone(artifact);
     (changed as { outputDigest: string }).outputDigest = `sha256:${"f".repeat(64)}`;
-    expect(descriptor?.validateArtifact(changed, artifact.subjectNodeIds)).toMatch(/digest/u);
+    expect(descriptor!.validateArtifact(changed, artifact.subjectNodeIds)).toMatch(/digest/u);
   });
 
   it("keeps preparation inputs bounded without coupling them to a model ID", () => {

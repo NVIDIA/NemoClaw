@@ -63,10 +63,6 @@ spec:
       source: huggingface-cache
       target: /cache/huggingface
     temporaryFilesystems:
-      - target: /cache/huggingface
-        sizeBytes: 17179869184
-        mode: "0700"
-        options: [rw, nosuid, nodev, exec]
       - target: /tmp
         sizeBytes: 17179869184
         mode: "1777"

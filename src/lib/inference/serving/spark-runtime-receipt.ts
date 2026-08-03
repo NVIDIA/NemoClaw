@@ -323,13 +323,20 @@ function writeReceipt(receipt: PersistedReceipt, stateDir: string): void {
     fd = undefined;
     fs.renameSync(temporary, filePath);
     fsyncDirectory(stateDir);
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
+  } catch (error) {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // Preserve the receipt-write failure.
+      }
+    }
     try {
       fs.unlinkSync(temporary);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    } catch {
+      // A leftover unique temporary file must not mask the receipt-write failure.
     }
+    throw error;
   }
 }
 

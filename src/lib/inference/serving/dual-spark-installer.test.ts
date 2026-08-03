@@ -88,7 +88,11 @@ describe("two-Spark managed vLLM installer selection", () => {
   beforeEach(() => vi.restoreAllMocks());
 
   it("leaves non-Spark and conflict-free explicit legacy vLLM intent untouched", async () => {
-    const probeCapability = vi.fn();
+    const probeCapability = vi.fn(() => ({
+      kind: "not-selected" as const,
+      code: "no-match" as const,
+      reason: "no related distributed runtime",
+    }));
     await expect(
       tryInstallDualSparkManagedVllm(
         { platform: "station", nonInteractive: true, promptFn: vi.fn() },
@@ -105,16 +109,10 @@ describe("two-Spark managed vLLM installer selection", () => {
           promptFn: vi.fn(),
         },
         effects(),
-        {
-          probeCapability: () => ({
-            kind: "not-selected",
-            code: "no-match",
-            reason: "no related distributed runtime",
-          }),
-        },
+        { probeCapability },
       ),
     ).resolves.toEqual({ kind: "not-selected" });
-    expect(probeCapability).not.toHaveBeenCalled();
+    expect(probeCapability).toHaveBeenCalledOnce();
   });
 
   it("does not let explicit legacy intent bypass a related-runtime conflict", async () => {

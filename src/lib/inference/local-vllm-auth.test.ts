@@ -155,6 +155,25 @@ describe("managed vLLM authentication", () => {
     expect(getManagedBaseUrlImpl).not.toHaveBeenCalled();
   });
 
+  it("fails URL and validation boundaries closed when managed recovery is unsafe", () => {
+    sparkRecovery.endpoint.mockImplementation(() => {
+      throw new Error("Spark receipt identity changed");
+    });
+    const capture = vi.fn(() => "200");
+
+    expect(getLocalProviderBaseUrl("vllm-local")).toBeNull();
+    expect(getLocalProviderHealthEndpoint("vllm-local")).toBeNull();
+    expect(getLocalProviderHealthCheck("vllm-local")).toBeNull();
+    expect(getLocalProviderContainerReachabilityCheck("vllm-local")).toBeNull();
+    expect(validateLocalProvider("vllm-local", capture)).toEqual({
+      ok: false,
+      message:
+        "Managed vLLM state could not be inspected safely. Re-run `nemoclaw onboard` to repair the provider.",
+    });
+    expect(capture).not.toHaveBeenCalled();
+    expect(lifecycle.baseUrl).not.toHaveBeenCalled();
+  });
+
   it("stops when Spark and Station managed state are both present", () => {
     expect(() =>
       getManagedVllmProviderBinding({

@@ -41,7 +41,7 @@ function selectionWithDigests(): ResolvedManagedInferenceSelection<DualSparkTopo
   };
 }
 
-function syntheticSecondProfile(): SyntheticProfile {
+function syntheticSecondProfile(temporaryFilesystemTarget = "/dev/shm-scratch"): SyntheticProfile {
   const baseCatalog = loadManagedInferenceCatalog();
   const baseSelection = selectionWithDigests();
   const topology = baseSelection.topologyQualification;
@@ -95,7 +95,7 @@ function syntheticSecondProfile(): SyntheticProfile {
         modelCache: { source: "huggingface-cache", target: "/models/cache" },
         temporaryFilesystems: [
           {
-            target: "/models/cache",
+            target: temporaryFilesystemTarget,
             sizeBytes: 4_294_967_296,
             mode: "0700",
             options: ["rw", "nosuid", "nodev"],
@@ -416,5 +416,13 @@ describe("dual-DGX-Spark vLLM materializer", () => {
       { catalog },
     );
     expect(originalFromExpandedCatalog.planId).toBe(originalPlan.planId);
+  });
+
+  it("rejects a temporary filesystem that shadows the model cache", () => {
+    const { catalog, selection } = syntheticSecondProfile("/models");
+
+    expect(() => materializeDualSparkVllmPlan(selection, { catalog })).toThrow(
+      /temporary filesystem cannot shadow the model cache/u,
+    );
   });
 });

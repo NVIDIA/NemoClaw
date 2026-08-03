@@ -7,6 +7,9 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fixtureDualSparkSelection } from "./serving/dual-spark-fixture.test-support";
+import { loadManagedInferenceCatalog } from "./serving/catalog";
+import { managedInferenceDigest } from "./serving/catalog-integrity";
+import type { CompiledManagedInferenceCatalog } from "./serving/catalog-types";
 import {
   type DualSparkNodeSnapshot,
   type DualSparkVllmLifecycleDeps,
@@ -57,6 +60,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.doUnmock("./serving/generated/catalog.json");
   vi.resetModules();
   sshFixture.cleanup();
   fs.rmSync(root, { recursive: true, force: true });
@@ -94,6 +98,61 @@ function input(
     headContainerId: HEAD_ID,
     workerContainerId: WORKER_ID,
   };
+}
+
+function catalogWithUnrelatedProfile(): CompiledManagedInferenceCatalog {
+  const current = loadManagedInferenceCatalog();
+  const selectedPreset = current.presets[0]!;
+  const selectedRecipe = current.recipes[0]!;
+  const unrelatedRecipe = {
+    ...selectedRecipe.definition,
+    metadata: { ...selectedRecipe.definition.metadata, id: "vllm.unrelated.spark-dual.v1" },
+  };
+  const unrelatedPreset = {
+    ...selectedPreset.definition,
+    metadata: { ...selectedPreset.definition.metadata, id: "vllm.unrelated.spark-dual" },
+    spec: {
+      ...selectedPreset.definition.spec,
+      plan: {
+        ...selectedPreset.definition.spec.plan,
+        recipeRef: unrelatedRecipe.metadata.id,
+      },
+    },
+  };
+  const sourceFiles = [
+    ...current.sourceFiles,
+    {
+      path: "managed-inference/presets/vllm.unrelated.spark-dual.yaml",
+      digest: `sha256:${"1".repeat(64)}`,
+    },
+    {
+      path: "managed-inference/recipes/vllm.unrelated.spark-dual.v1.yaml",
+      digest: `sha256:${"2".repeat(64)}`,
+    },
+  ] as const;
+  const contents = {
+    compilerVersion: current.compilerVersion,
+    presets: [
+      ...current.presets,
+      {
+        definition: unrelatedPreset,
+        definitionDigest: managedInferenceDigest(unrelatedPreset),
+        sourceFile: sourceFiles.at(-2)!.path,
+      },
+    ],
+    recipes: [
+      ...current.recipes,
+      {
+        definition: unrelatedRecipe,
+        definitionDigest: managedInferenceDigest(unrelatedRecipe),
+        sourceFile: sourceFiles.at(-1)!.path,
+      },
+    ],
+    schemaVersion: current.schemaVersion,
+    sourceFiles,
+    sourceRevision: managedInferenceDigest(sourceFiles),
+  } as const;
+  return { ...contents, catalogDigest: managedInferenceDigest(contents) };
 }
 
 function persistWithDiscoveryBinding(): {
@@ -200,23 +259,44 @@ describe("dual-Spark vLLM runtime receipt", () => {
     expect(fs.readFileSync(receiptPath, "utf8")).toBe(original);
   });
 
-  it("keeps a selected profile receipt valid when unrelated catalog entries change", () => {
+  it("keeps a selected profile receipt valid when unrelated catalog entries change", async () => {
     const source = input();
-    const previousCatalogPlan = {
-      ...source.plan,
-      catalogDigest: `sha256:${"e".repeat(64)}`,
-    };
+    const currentCatalog = loadManagedInferenceCatalog();
+    const changedCatalog = catalogWithUnrelatedProfile();
+    persistDualSparkVllmRuntimeReceipt(source, { stateDir });
 
-    const runtime = persistDualSparkVllmRuntimeReceipt(
-      { ...source, plan: previousCatalogPlan },
-      { stateDir },
+    expect(changedCatalog.catalogDigest).not.toBe(currentCatalog.catalogDigest);
+    vi.doMock("./serving/generated/catalog.json", () => ({ default: changedCatalog }));
+    vi.resetModules();
+    const { loadDualSparkVllmRuntimeReceipt: loadAgainstChangedCatalog } = await import(
+      "./serving/spark-runtime-receipt"
     );
-    const loaded = loadDualSparkVllmRuntimeReceipt({ stateDir });
+    const loaded = loadAgainstChangedCatalog({ stateDir });
+    const currentPreset = changedCatalog.presets.find(
+      ({ definition }) => definition.metadata.id === source.plan.presetId,
+    );
+    const currentRecipe = changedCatalog.recipes.find(
+      ({ definition }) => definition.metadata.id === source.plan.recipeId,
+    );
 
-    expect(loaded?.plan.catalogDigest).toBe(previousCatalogPlan.catalogDigest);
-    expect(loaded?.plan.planId).toBe(previousCatalogPlan.planId);
-    expect(runtime.plan.presetDigest).toBe(source.plan.presetDigest);
-    expect(runtime.plan.recipeDigest).toBe(source.plan.recipeDigest);
+    expect(loaded?.plan.catalogDigest).toBe(currentCatalog.catalogDigest);
+    expect(loaded?.plan.presetDigest).toBe(currentPreset?.definitionDigest);
+    expect(loaded?.plan.recipeDigest).toBe(currentRecipe?.definitionDigest);
+  });
+
+  it("preserves a receipt-write failure when temporary-file cleanup also fails", () => {
+    const rename = vi.spyOn(fs, "renameSync").mockImplementationOnce(() => {
+      throw new Error("receipt rename failed");
+    });
+    const unlink = vi.spyOn(fs, "unlinkSync").mockImplementationOnce(() => {
+      throw new Error("temporary cleanup failed");
+    });
+
+    expect(() => persistDualSparkVllmRuntimeReceipt(input(), { stateDir })).toThrow(
+      "receipt rename failed",
+    );
+    expect(rename).toHaveBeenCalledOnce();
+    expect(unlink).toHaveBeenCalledOnce();
   });
 
   it("refuses a pre-existing SSH binding tree without mutating it", () => {

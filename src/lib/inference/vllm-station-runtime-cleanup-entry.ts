@@ -67,7 +67,9 @@ async function main(): Promise<void> {
       throw new Error("the requested dual-Spark runtime receipt was not removed");
     }
     console.log(
-      `Removed managed dual-Spark vLLM containers: ${spark.removedContainerIds.join(", ")}`,
+      spark.removedContainerIds.length > 0
+        ? `Removed managed dual-Spark vLLM containers: ${spark.removedContainerIds.join(", ")}`
+        : "Removed managed dual-Spark vLLM state; no receipt-owned containers remained.",
     );
     return;
   }
@@ -77,7 +79,9 @@ async function main(): Promise<void> {
     throw new Error("the requested dual-Station runtime receipt was not removed");
   }
   console.log(
-    `Removed managed dual-Station vLLM containers: ${station.removedContainerIds.join(", ")}`,
+    station.removedContainerIds.length > 0
+      ? `Removed managed dual-Station vLLM containers: ${station.removedContainerIds.join(", ")}`
+      : "Removed managed dual-Station vLLM state; no receipt-owned containers remained.",
   );
 }
 

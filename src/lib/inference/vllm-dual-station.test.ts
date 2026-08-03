@@ -103,11 +103,7 @@ vi.mock("./vllm-api-key", () => ({
   managedVllmStateDir: () => path.join(os.homedir(), ".nemoclaw"),
 }));
 
-import {
-  detectVllmProfile,
-  installVllm,
-  persistConfiguredDualStationVllmRuntimeReceipt,
-} from "./vllm";
+import { detectVllmProfile, installVllm, persistConfiguredManagedVllmRuntimeReceipt } from "./vllm";
 import { DUAL_STATION_VLLM_RUNTIME, type DualStationVllmPlan } from "./vllm-station-cluster";
 import {
   createDualStationSshBindingFixture,
@@ -307,7 +303,7 @@ afterEach(() => {
 
 describe("dual DGX Station running-runtime receipt adoption", () => {
   it("persists cleanup ownership for the exact configured running pair", async () => {
-    await expect(persistConfiguredDualStationVllmRuntimeReceipt()).resolves.toEqual({
+    await expect(persistConfiguredManagedVllmRuntimeReceipt()).resolves.toEqual({
       ok: true,
       persisted: true,
     });
@@ -324,7 +320,7 @@ describe("dual DGX Station running-runtime receipt adoption", () => {
       reason: "worker ownership changed",
     });
 
-    await expect(persistConfiguredDualStationVllmRuntimeReceipt()).resolves.toEqual({
+    await expect(persistConfiguredManagedVllmRuntimeReceipt()).resolves.toEqual({
       ok: false,
       reason: "worker ownership changed",
     });
@@ -334,7 +330,7 @@ describe("dual DGX Station running-runtime receipt adoption", () => {
   it("fails closed when the managed peer configuration is missing", async () => {
     delete process.env.NEMOCLAW_DGX_STATION_PEER;
 
-    await expect(persistConfiguredDualStationVllmRuntimeReceipt()).resolves.toEqual({
+    await expect(persistConfiguredManagedVllmRuntimeReceipt()).resolves.toEqual({
       ok: false,
       reason: "the managed dual-Station peer configuration is missing",
     });

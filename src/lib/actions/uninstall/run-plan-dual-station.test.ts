@@ -341,14 +341,17 @@ describe("managed distributed vLLM runtime uninstall", () => {
     }
   });
 
-  it("finds the host-global Spark receipt from a non-default gateway selection", async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-spark-global-"));
+  it.each([
+    ["Spark", "dual-spark-vllm-runtime.json"],
+    ["Station", "dual-station-vllm-runtime.json"],
+  ])("finds the host-global %s receipt from a non-default gateway selection", async (_topology, receiptFile) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-managed-global-"));
     const stateDir = path.join(home, ".nemoclaw");
     fs.mkdirSync(stateDir, { mode: 0o700 });
-    fs.writeFileSync(path.join(stateDir, "dual-spark-vllm-runtime.json"), "{}\n", {
+    fs.writeFileSync(path.join(stateDir, receiptFile), "{}\n", {
       mode: 0o600,
     });
-    fs.mkdirSync(path.join(stateDir, "dual-spark-vllm-runtime.json.ssh-binding"), {
+    fs.mkdirSync(path.join(stateDir, `${receiptFile}.ssh-binding`), {
       mode: 0o700,
     });
     fs.writeFileSync(path.join(stateDir, "dual-station-vllm-api-key"), `${"a".repeat(64)}\n`, {
@@ -397,6 +400,51 @@ describe("managed distributed vLLM runtime uninstall", () => {
     } finally {
       vi.unstubAllEnvs();
       vi.resetModules();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    "symbolic link",
+    "regular file",
+  ])("fails closed when the host-global managed state root is a %s", (shape) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-unsafe-root-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    if (shape === "symbolic link") {
+      const target = path.join(home, "redirected-state");
+      fs.mkdirSync(target, { mode: 0o700 });
+      fs.symlinkSync(target, stateDir, "dir");
+    } else {
+      fs.writeFileSync(stateDir, "not a directory\n", { mode: 0o600 });
+    }
+    const errors: string[] = [];
+    const runDualStationRuntimeCleanup = vi.fn(() => ok());
+    const runDocker = vi.fn(() => ok());
+
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: { HOME: home, TMPDIR: home } as NodeJS.ProcessEnv,
+          error: (message) => errors.push(message),
+          existsSync: () => false,
+          isTty: false,
+          log: vi.fn(),
+          rmSync: vi.fn(),
+          run: okWithKnownGatewayList,
+          runDocker,
+          runDualStationRuntimeCleanup,
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(runDualStationRuntimeCleanup).not.toHaveBeenCalled();
+      expect(runDocker).not.toHaveBeenCalled();
+      expect(errors.join("\n")).toContain(
+        "Managed distributed vLLM state root is not a real directory",
+      );
+    } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
   });

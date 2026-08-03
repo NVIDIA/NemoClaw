@@ -399,10 +399,19 @@ describe("dual DGX Spark topology qualification", () => {
     });
   });
 
-  it("rejects a peer without an opaque pretrusted SSH binding", () => {
+  it("rejects a peer whose SSH binding state is not trusted", () => {
     const input = qualificationInput();
     input.peers[0]!.sshBinding.state = "untrusted";
-    input.peers[0]!.sshBinding.handle = "not-an-opaque-binding";
+
+    expect(qualifyDualSparkTopology(input)).toMatchObject({
+      outcome: "no-match",
+      code: "ssh-binding-unavailable",
+    });
+  });
+
+  it("rejects a peer whose trusted SSH binding handle is empty", () => {
+    const input = qualificationInput();
+    input.peers[0]!.sshBinding.handle = "   ";
 
     expect(qualifyDualSparkTopology(input)).toMatchObject({
       outcome: "no-match",

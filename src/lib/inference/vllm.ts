@@ -894,7 +894,11 @@ function vllmContainerReplacementTarget(
 }
 
 export function isNemoClawManagedVllmRunning(): boolean {
-  if (recoverInstalledDualSparkVllmEndpoint()) return true;
+  try {
+    if (recoverInstalledDualSparkVllmEndpoint()) return true;
+  } catch {
+    return false;
+  }
   const ownership = inspectVllmContainerOwnership(NEMOCLAW_VLLM_CONTAINER_NAME);
   return (ownership.kind === "managed" || ownership.kind === "dual-managed") && ownership.running;
 }
@@ -902,9 +906,6 @@ export function isNemoClawManagedVllmRunning(): boolean {
 export type PersistConfiguredManagedVllmRuntimeResult =
   | { ok: true; persisted: boolean }
   | { ok: false; reason: string };
-
-export type PersistConfiguredDualStationVllmRuntimeResult =
-  PersistConfiguredManagedVllmRuntimeResult;
 
 /**
  * Confirm an installer-owned receipt or adopt an already-running Station pair
@@ -958,10 +959,6 @@ export async function persistConfiguredManagedVllmRuntimeReceipt(): Promise<Pers
     };
   }
 }
-
-/** @deprecated Use persistConfiguredManagedVllmRuntimeReceipt. */
-export const persistConfiguredDualStationVllmRuntimeReceipt =
-  persistConfiguredManagedVllmRuntimeReceipt;
 
 function startContainer(
   profile: VllmProfile,
