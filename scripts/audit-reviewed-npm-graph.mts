@@ -18,6 +18,7 @@ import {
   assertExceptionGraphs,
   readAuditExceptionRegistry,
   runReviewedNpmAudit,
+  type AuditPolicyResult,
   type Severity,
 } from "./lib/reviewed-npm-audit.mts";
 
@@ -40,6 +41,7 @@ type AuditConfig = Readonly<{
   schemaVersion: 2;
   severityThreshold: Severity;
 }>;
+type ReviewedAuditReport = Readonly<{ label: string; result: AuditPolicyResult }>;
 
 const TRUSTED_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TARGET_REPO_ROOT = fs.realpathSync(
@@ -377,23 +379,64 @@ function auditSourceGraph(
     sourceLock,
     path.join(tempRoot, "source-graph"),
   );
-  const result = runReviewedNpmAudit({
+  return auditMaterializedSourceGraph({
     directory,
     exceptionFile,
+    artifactDirectory,
+    npmVersion,
+    packageSpec: `${sourceManifest.name}@${sourceManifest.version}`,
+    threshold: config.severityThreshold,
+  });
+}
+
+export function auditMaterializedSourceGraph(
+  options: Readonly<{
+    artifactDirectory: string;
+    directory: string;
+    exceptionFile: string;
+    npmVersion: string;
+    packageSpec: string;
+    threshold: Severity;
+  }>,
+  dependencies: Readonly<{
+    runAudit?: typeof runReviewedNpmAudit;
+    verifySignatures?: (directory: string) => void;
+  }> = {},
+): AuditPolicyResult {
+  const result = (dependencies.runAudit ?? runReviewedNpmAudit)({
+    directory: options.directory,
+    exceptionFile: options.exceptionFile,
     graph: SOURCE_GRAPH.id,
     provenance: {
       label: SOURCE_GRAPH.label,
       nodeVersion: process.version,
-      npmVersion,
-      packageSpecs: [`${sourceManifest.name}@${sourceManifest.version}`],
+      npmVersion: options.npmVersion,
+      packageSpecs: [options.packageSpec],
     },
-    reportFile: path.join(artifactDirectory, "source-graph.json"),
-    resultFile: path.join(artifactDirectory, "source-graph-policy.json"),
-    threshold: config.severityThreshold,
+    reportFile: path.join(options.artifactDirectory, "source-graph.json"),
+    resultFile: path.join(options.artifactDirectory, "source-graph-policy.json"),
+    threshold: options.threshold,
     throwOnBlock: false,
   });
-  run("npm", ["audit", "signatures", "--omit=dev"], directory);
+  (
+    dependencies.verifySignatures ??
+    ((directory) => run("npm", ["audit", "signatures", "--omit=dev"], directory))
+  )(options.directory);
   return result;
+}
+
+export function assertReviewedAuditReportsPass(
+  reports: readonly ReviewedAuditReport[],
+  threshold: Severity,
+): void {
+  const failures = reports
+    .filter(({ result }) => result.unacceptedBlockingAdvisories.length > 0)
+    .map(
+      ({ label, result }) =>
+        `${label}: ${result.unacceptedBlockingAdvisories.length} unaccepted at or above ${threshold}`,
+    );
+  if (failures.length > 0)
+    throw new Error(`reviewed npm audit threshold failed\n${failures.join("\n")}`);
 }
 
 function main(): void {
@@ -457,16 +500,7 @@ function main(): void {
         ),
       })),
     ];
-    const failures: string[] = [];
-    for (const { label, result } of reports) {
-      if (result.unacceptedBlockingAdvisories.length > 0) {
-        failures.push(
-          `${label}: ${result.unacceptedBlockingAdvisories.length} unaccepted at or above ${config.severityThreshold}`,
-        );
-      }
-    }
-    if (failures.length > 0)
-      throw new Error(`reviewed npm audit threshold failed\n${failures.join("\n")}`);
+    assertReviewedAuditReportsPass(reports, config.severityThreshold);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }

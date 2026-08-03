@@ -7,9 +7,12 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  assertReviewedAuditReportsPass,
+  auditMaterializedSourceGraph,
   materializeSourceGraph,
   normalizeOpenClawSignatureAlias,
 } from "../scripts/audit-reviewed-npm-graph.mts";
+import type { AuditPolicyResult } from "../scripts/lib/reviewed-npm-audit.mts";
 import { readYaml } from "./helpers/e2e-workflow-contract";
 
 type WorkflowStep = {
@@ -182,6 +185,70 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("audits the NemoClaw production graph, verifies signatures, and rejects blocking advisories (#8116)", () => {
+    const events: string[] = [];
+    const blockedResult = {
+      acceptedAdvisories: [],
+      blockingThreshold: "high",
+      exceptionPolicySha256: "fixture-policy",
+      graph: "nemoclaw-cli",
+      reported: { info: 0, low: 0, moderate: 0, high: 1, critical: 0 },
+      schemaVersion: 1,
+      status: "blocked",
+      unacceptedBlockingAdvisories: [
+        {
+          advisory: "GHSA-aaaa-bbbb-cccc",
+          installedVersion: "1.0.0",
+          package: "fixture-package",
+          severity: "high",
+        },
+      ],
+    } satisfies AuditPolicyResult;
+    const result = auditMaterializedSourceGraph(
+      {
+        artifactDirectory: "/artifacts",
+        directory: "/materialized",
+        exceptionFile: "/exceptions.json",
+        npmVersion: "10.9.4",
+        packageSpec: "nemoclaw@0.0.0",
+        threshold: "high",
+      },
+      {
+        runAudit: (options) => {
+          events.push("policy-audit");
+          expect(options).toMatchObject({
+            directory: "/materialized",
+            exceptionFile: "/exceptions.json",
+            graph: "nemoclaw-cli",
+            provenance: {
+              label: "NemoClaw CLI locked production graph",
+              npmVersion: "10.9.4",
+              packageSpecs: ["nemoclaw@0.0.0"],
+            },
+            reportFile: path.join("/artifacts", "source-graph.json"),
+            resultFile: path.join("/artifacts", "source-graph-policy.json"),
+            threshold: "high",
+            throwOnBlock: false,
+          });
+          return blockedResult;
+        },
+        verifySignatures: (directory) => {
+          events.push(`signatures:${directory}`);
+        },
+      },
+    );
+
+    expect(events).toEqual(["policy-audit", "signatures:/materialized"]);
+    expect(() =>
+      assertReviewedAuditReportsPass(
+        [{ label: "NemoClaw CLI locked production graph", result }],
+        "high",
+      ),
+    ).toThrow(
+      "reviewed npm audit threshold failed\nNemoClaw CLI locked production graph: 1 unaccepted at or above high",
+    );
   });
 
   it("normalizes only the reviewed OpenClaw npm alias for registry signature verification", () => {
