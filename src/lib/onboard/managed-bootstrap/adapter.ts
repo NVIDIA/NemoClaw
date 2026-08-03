@@ -25,6 +25,8 @@ const PROCESS_INJECTION_ENV_KEYS = new Set([
   "LD_AUDIT",
   "LD_LIBRARY_PATH",
   "LD_PRELOAD",
+  "NODE_OPTIONS",
+  "NODE_PATH",
   "PS4",
   "SHELLOPTS",
 ]);
@@ -931,7 +933,7 @@ function normalizePreparedReplacement(
   });
 }
 
-function createPreparedAuthority(
+export function createManagedBootstrapPreparedAuthority(
   transaction: ManagedBootstrapPreparedTransaction,
 ): ManagedBootstrapPreparedAuthority {
   const { handle, snapshot, prepared } = transaction;
@@ -1358,7 +1360,7 @@ export async function activateManagedBootstrapSequence(
   let durablePreparation: ManagedBootstrapDurablePreparationReceipt | null = null;
   let replacement: ManagedBootstrapReplacementHandle | null = null;
   try {
-    const authority = createPreparedAuthority(input.transaction);
+    const authority = createManagedBootstrapPreparedAuthority(input.transaction);
     durablePreparation = normalizeDurablePreparationReceipt(
       await input.authorityStore.recordPreparedAuthority(authority),
       authority,
