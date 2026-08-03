@@ -34,17 +34,22 @@ const DOCKER_MUTATION_OPTIONS = {
   timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
 } as const;
 /**
- * The dynamic loader consumes these before `/usr/bin/env -i` can clear the
- * inherited image or container environment. Every other variable is removed
- * by the shared clean-Node argv below before Node starts.
+ * The dynamic loader consumes LD_* before `/usr/bin/env -i` can clear the
+ * inherited image or container environment. NODE_* is also cleared at this
+ * boundary as defense in depth; the clean-Node argv below removes every other
+ * variable before Node starts.
  */
-const NEUTRALIZED_PRE_ENV_LOADER_ENV = [
+const NEUTRALIZED_PRE_ENTRYPOINT_ENV = [
   "--env",
   "LD_AUDIT=",
   "--env",
   "LD_LIBRARY_PATH=",
   "--env",
   "LD_PRELOAD=",
+  "--env",
+  "NODE_OPTIONS=",
+  "--env",
+  "NODE_PATH=",
 ] as const;
 const CLEAN_NODE_ENTRYPOINT = "/usr/bin/env";
 const CLEAN_NODE_ARGV = [
@@ -166,7 +171,7 @@ function verifyCopiedManagedStartupReceipt(
       "no-new-privileges",
       "--cap-drop",
       "ALL",
-      ...NEUTRALIZED_PRE_ENV_LOADER_ENV,
+      ...NEUTRALIZED_PRE_ENTRYPOINT_ENV,
       "--mount",
       transactionReceiptMount(receiptPath, receiptDirectory),
       "--entrypoint",
@@ -280,7 +285,7 @@ export function clearDockerManagedStartupSharedStateCommitReceipt(
       "0:0",
       "--workdir",
       "/",
-      ...NEUTRALIZED_PRE_ENV_LOADER_ENV,
+      ...NEUTRALIZED_PRE_ENTRYPOINT_ENV,
       transaction.containerId,
       CLEAN_NODE_ENTRYPOINT,
       ...CLEAN_NODE_ARGV,
@@ -330,7 +335,7 @@ function commitManagedStartupSharedState(
       "0:0",
       "--workdir",
       "/",
-      ...NEUTRALIZED_PRE_ENV_LOADER_ENV,
+      ...NEUTRALIZED_PRE_ENTRYPOINT_ENV,
       transaction.containerId,
       CLEAN_NODE_ENTRYPOINT,
       ...CLEAN_NODE_ARGV,
@@ -463,6 +468,11 @@ function rollbackManagedStartupSharedState(
   const dockerRun = deps.dockerRun ?? defaultDockerRun;
   let restored = false;
   try {
+    // The immutable image owns the canonical receipt parser and exact
+    // post-restore verification. Keep the host receipt opaque so that its
+    // validator cannot drift from the image contract. After dropping every
+    // capability, rollback retains only CHOWN for original ownership,
+    // DAC_OVERRIDE for owner-restricted state, and FOWNER for original modes.
     const helper = dockerRun(
       [
         "run",
@@ -484,7 +494,7 @@ function rollbackManagedStartupSharedState(
         "DAC_OVERRIDE",
         "--cap-add",
         "FOWNER",
-        ...NEUTRALIZED_PRE_ENV_LOADER_ENV,
+        ...NEUTRALIZED_PRE_ENTRYPOINT_ENV,
         "--volumes-from",
         transaction.containerId,
         "--mount",
