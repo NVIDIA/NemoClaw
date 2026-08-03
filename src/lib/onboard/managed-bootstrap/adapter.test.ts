@@ -440,16 +440,25 @@ describe("managed bootstrap adapter contract", () => {
   });
 
   it.each([
-    "throws before launch",
-    "returns without launch",
-  ] as const)("does not clean up when createHeldWorkload %s", async (failureMode) => {
+    [
+      "throws before launch",
+      (adapter: ManagedBootstrapAdapter) => {
+        vi.mocked(adapter.createHeldWorkload).mockRejectedValueOnce(
+          new Error("create failed before materialization"),
+        );
+      },
+    ],
+    [
+      "returns without launch",
+      (adapter: ManagedBootstrapAdapter) => {
+        vi.mocked(adapter.createHeldWorkload).mockResolvedValueOnce(
+          handleFor(requestFor("langchain-deepagents-code")),
+        );
+      },
+    ],
+  ] as const)("does not clean up when createHeldWorkload %s", async (_, arrange) => {
     const fixture = adapterFor("langchain-deepagents-code");
-    const create = vi.mocked(fixture.adapter.createHeldWorkload);
-    if (failureMode === "throws before launch") {
-      create.mockRejectedValueOnce(new Error("create failed before materialization"));
-    } else {
-      create.mockResolvedValueOnce(handleFor(requestFor("langchain-deepagents-code")));
-    }
+    arrange(fixture.adapter);
 
     const failure = await captureFailure(
       prepareManagedBootstrapSequence(
