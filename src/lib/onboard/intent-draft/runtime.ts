@@ -20,6 +20,11 @@ export const ONBOARD_INTENT_RUNTIME_ENV_KEYS = [
   "NEMOCLAW_ONBOARD_INTENT_ACCEPTED",
 ] as const;
 
+export function hasAcceptedOnboardIntent(env?: NodeJS.ProcessEnv): boolean {
+  if (!env) return process.env.NEMOCLAW_ONBOARD_INTENT_ACCEPTED === "1";
+  return env.NEMOCLAW_ONBOARD_INTENT_ACCEPTED === "1";
+}
+
 /** Capture the process environment so library callers do not retain draft projection state. */
 export function captureOnboardIntentEnvironment(env: NodeJS.ProcessEnv = process.env): () => void {
   const previous = new Map<string, string | undefined>(

@@ -154,9 +154,6 @@ const {
 const {
   installOllamaOnMacOS,
 }: typeof import("./onboard/install-ollama-macos") = require("./onboard/install-ollama-macos");
-const {
-  OllamaProbeFailureTracker,
-}: typeof import("./onboard/ollama-probe-failure-tracker") = require("./onboard/ollama-probe-failure-tracker");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -216,14 +213,11 @@ const {
   OLLAMA_PROXY_PORT,
 } = require("./core/ports");
 const localInference: typeof import("./inference/local") = require("./inference/local");
-const { ollamaModelRefsMatch }: typeof import("./inference/ollama/model-discovery") =
-  require("./inference/ollama/model-discovery");
 const {
   resetOllamaHostCache,
   getLocalProviderBaseUrl,
   getLocalProviderHealthCheck,
   getLocalProviderValidationBaseUrl,
-  getOllamaModelOptions,
   getOllamaWarmupCommand,
   validateLocalProvider,
 } = localInference;
@@ -239,9 +233,7 @@ const {
   getOllamaProxyToken,
   isProxyHealthy,
   persistAndProbeOllamaProxy,
-  prepareOllamaModel,
   printOllamaExposureWarning,
-  promptOllamaModel,
   startOllamaAuthProxy,
 } = require("./inference/ollama/proxy");
 const {
@@ -586,9 +578,6 @@ import { streamGatewayStart } from "./onboard/gateway";
 import { bindGatewayAuthorityToCheckpoint } from "./onboard/gateway-authority-checkpoint";
 import { createGatewayHostRuntime } from "./onboard/gateway-host-runtime";
 import {
-  defaultHermesToolGatewaySelection,
-  getRequestedHermesToolGateways,
-  HERMES_TOOL_GATEWAY_PRESETS,
   mergeRequiredHermesToolGatewayPolicyPresets,
   normalizeHermesToolGatewaySelections,
   setupHermesToolGateways,
@@ -1048,6 +1037,20 @@ const { validateSelectedRemoteModel } = createRemoteModelValidator({
   getProbeAuthMode,
   ...reasoningMode.compatibleEndpointReasoningConfigureDeps,
 });
+const selectAndValidateOllamaModel = intentDraft.createOllamaModelSelector({
+  isNonInteractive,
+  isAutoYes,
+  confirm: (question, defaultIsYes) => promptYesNoOrDefault(question, null, defaultIsYes),
+  note,
+  abortNonInteractive,
+  validateOpenAiLikeSelection,
+  isSafeModelId,
+  getOllamaModelOptions: localInference.getOllamaModelOptions,
+  resolveNonInteractiveOllamaModel: localInference.resolveNonInteractiveOllamaModel,
+  getLocalProviderValidationBaseUrl,
+  buildOllamaProbeOptions: localInference.buildOllamaProbeOptions,
+  applyOllamaRuntimeContextWindow: localInference.applyOllamaRuntimeContextWindow,
+});
 
 const { promptCloudModel, promptRemoteModel, promptInputModel } = modelPrompts;
 const { validateAnthropicModel, validateOpenAiLikeModel } = providerModels;
@@ -1095,8 +1098,6 @@ const handleVllmSelection = createSetupNimVllmHandler({
   applyVllmRuntimeContextWindow: localInference.applyVllmRuntimeContextWindow, isDgxSparkHost: () => nim.detectNvidiaPlatform() === "spark", isNemoClawManagedVllmRunning: vllmInference.isNemoClawManagedVllmRunning, persistConfiguredDualStationVllmRuntimeReceipt: vllmInference.persistConfiguredDualStationVllmRuntimeReceipt,
   exitProcess: (code) => process.exit(code),
 });
-const ollamaModelSize: typeof import("./inference/ollama/model-size") = require("./inference/ollama/model-size");
-
 function isOpenshellInstalled(): boolean {
   return resolveOpenshell() !== null;
 }
@@ -2913,120 +2914,6 @@ type RebuildRouteHandoff = import("./onboard/rebuild-route-handoff").RebuildRout
 const { readRecordedProvider, readRecordedNimContainer, readRecordedModel, readRecordedEndpointUrl,
   readRecordedInferenceRoute, readRecordedProviderEndpoints } = providerRecovery.createProviderRecoveryHelpers({ parseGatewayInference, runCaptureOpenshell, warn: (message) => console.warn(message) });
 
-async function selectAndValidateOllamaModel(
-  gpu: ReturnType<typeof nim.detectGpu>,
-  provider: string,
-  defaults: OllamaModelSelectionDefaults,
-  onModelSelected?: (model: string) => void,
-): Promise<ollamaFlow.OllamaModelSelectionOutcome> {
-  const { requestedModel, recoveredModel, lockedModel, promptDefaultModel } = defaults;
-  const probeFailures = new OllamaProbeFailureTracker();
-  const confirm = (question: string, defaultIsYes: boolean) =>
-    promptYesNoOrDefault(question, null, defaultIsYes);
-  const interaction = { isNonInteractive, isAutoYes, confirm };
-  const refuseAcceptedModelRevision = () => {
-    if (hasAcceptedOnboardIntent()) {
-      intentDraft.assertDraftRevisionAllowed("materializing", "the Ollama model", cliName());
-    }
-  };
-  while (true) {
-    const installedModels = getOllamaModelOptions();
-    let model: string | typeof BACK_TO_SELECTION;
-    if (lockedModel) {
-      model = lockedModel;
-    } else if (isNonInteractive() || hasAcceptedOnboardIntent()) {
-      model = localInference.resolveNonInteractiveOllamaModel(requestedModel, recoveredModel, gpu);
-    } else {
-      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-      model = await promptOllamaModel(gpu, { defaultModel: promptDefaultModel && isSafeModelId(promptDefaultModel) ? promptDefaultModel : null, excludeModels: probeFailures.excludedModels() });
-    }
-    if (isBackToSelection(model)) {
-      refuseAcceptedModelRevision();
-      console.log("  Returning to provider selection.");
-      console.log("");
-      return { outcome: "back-to-selection" };
-    }
-    const selectedModel = requireValue(model, "Expected an Ollama model selection");
-    onModelSelected?.(selectedModel);
-    if (!installedModels.some((listedModel) => ollamaModelRefsMatch(listedModel, selectedModel))) {
-      const lookup = ollamaModelSize.getOllamaModelSize(selectedModel);
-      const sizeLabel = ollamaModelSize.formatModelSize(lookup);
-      if (isAutoYes()) {
-        note(`  Pulling Ollama model '${selectedModel}' (${sizeLabel}).`);
-      } else if (isNonInteractive()) {
-        console.error(
-          `  Ollama model '${selectedModel}' (${sizeLabel}) is not installed and ` +
-            "non-interactive mode cannot prompt for confirmation. " +
-            "Re-run with --yes / -y (or NEMOCLAW_YES=1) to authorise the download.",
-        );
-        process.exit(1);
-      } else {
-        const proceed = await promptYesNoOrDefault(
-          `  Download Ollama model '${selectedModel}' (${sizeLabel})?`,
-          null,
-          false,
-        );
-        if (!proceed) {
-          refuseAcceptedModelRevision();
-          console.error(
-            `  Skipped pulling Ollama model '${selectedModel}'. Choose another model or re-run with --yes to confirm.`,
-          );
-          console.log("  Choose a different Ollama model or select Other.");
-          console.log("");
-          continue;
-        }
-      }
-    }
-    const probe = await prepareOllamaModel(selectedModel, installedModels, interaction);
-    if (!probe.ok) {
-      const probeFailureLimitReached = probeFailures.recordFailure(selectedModel);
-      const action = ollamaFlow.handleOllamaProbeFailure(probe, selectedModel, isNonInteractive);
-      if (action === "back-to-selection") {
-        refuseAcceptedModelRevision();
-        return { outcome: "back-to-selection" };
-      }
-      if (probeFailureLimitReached) {
-        refuseAcceptedModelRevision();
-        console.error(probeFailures.formatLimitMessage(selectedModel));
-        return { outcome: "back-to-selection" };
-      }
-      refuseAcceptedModelRevision();
-      continue;
-    }
-    const allowToolsIncompatible = probe.allowToolsIncompatible === true;
-    const validationBaseUrl = getLocalProviderValidationBaseUrl(provider);
-    if (!validationBaseUrl)
-      abortNonInteractive("Local Ollama validation URL could not be determined.");
-    const validation = await validateOpenAiLikeSelection(
-      "Local Ollama",
-      validationBaseUrl!,
-      selectedModel,
-      null,
-      "Choose a different Ollama model or select Other.",
-      null,
-      localInference.buildOllamaProbeOptions(allowToolsIncompatible),
-    );
-    if (validation.retry === "selection") {
-      refuseAcceptedModelRevision();
-      return { outcome: "back-to-selection" };
-    }
-    if (!validation.ok) {
-      if (isNonInteractive()) abortNonInteractive(`model '${selectedModel}' failed validation.`);
-      refuseAcceptedModelRevision();
-      continue;
-    }
-    // Ollama's /v1/responses endpoint does not produce correctly formatted
-    // tool calls — force chat completions like vLLM/NIM.
-    if (validation.api !== "openai-completions") {
-      console.log(
-        "  ℹ Using chat completions API (Ollama tool calls require /v1/chat/completions)",
-      );
-    }
-    // biome-ignore format: keep src/lib/onboard.ts under the growth guardrail.
-    return ollamaFlow.completeOllamaRuntimeContextSelection(localInference.applyOllamaRuntimeContextWindow(selectedModel, defaults), { outcome: "selected", model: selectedModel, allowToolsIncompatible }, isNonInteractive);
-  }
-}
-
 type SetupNimSelectionState =
   import("./onboard/setup-nim-selection").SetupNimSelectionState<HermesAuthMethod>;
 type OllamaModelSelectionDefaults =
@@ -3930,13 +3817,7 @@ async function preflightAuthoritativeRebuildTarget(
   }
 }
 
-function draftAgent(agentName: string): AgentDefinition | null {
-  return agentName === "openclaw" ? null : agentDefs.loadAgent(agentName);
-}
-
-function hasAcceptedOnboardIntent(): boolean {
-  return process.env.NEMOCLAW_ONBOARD_INTENT_ACCEPTED === "1";
-}
+const hasAcceptedOnboardIntent = intentDraft.hasAcceptedOnboardIntent;
 
 function returningToProviderSelection(
   value: unknown,
@@ -3946,138 +3827,6 @@ function returningToProviderSelection(
     intentDraft.assertDraftNavigationAllowed("materializing", cliName());
   }
   return returning;
-}
-
-function createOnboardIntentDraftDeps(
-  fromDockerfile: string | null,
-  checkpoint: (draft: import("./onboard/intent-draft").OnboardIntentDraft) => void,
-): import("./onboard/intent-draft").OnboardIntentDraftUiDeps {
-  const baseProviderKeys = new Set([
-    "build",
-    "openrouter",
-    "openai",
-    "custom",
-    "anthropic",
-    "anthropicCompatible",
-    "gemini",
-    "ollama",
-    "install-ollama",
-    "vllm",
-    "install-vllm",
-    "nim-local",
-    "routed",
-  ]);
-  const messagingChoices = (agentName: string) => {
-    const agent = draftAgent(agentName);
-    const supported = new Set(
-      filterEnabledChannelsByAgent(
-        MESSAGING_CHANNELS.map((channel) => channel.name),
-        agent,
-      ),
-    );
-    return MESSAGING_CHANNELS.filter((channel) => supported.has(channel.name)).map((channel) => ({
-      value: channel.name,
-      label: channel.label,
-    }));
-  };
-  return {
-    prompt,
-    log: (message = "") => console.log(message),
-    agentChoices: () =>
-      agentDefs.getAgentChoices().map((choice: import("./agent/defs").AgentChoice) => ({
-        value: choice.name,
-        label: choice.displayName,
-      })),
-    inferenceChoices: async (agentName) => {
-      const agent = draftAgent(agentName);
-      return intentDraft
-        .discoverInferenceIntentChoices(getSetupNimDeps(), nim.detectGpu(), agent)
-        .map((choice) => ({
-          value: choice.key,
-          label: choice.label,
-          defaultModel: choice.defaultModel,
-          endpointRequired: choice.key === "custom" || choice.key === "anthropicCompatible",
-          authMethods:
-            choice.key === "hermesProvider"
-              ? [
-                  { value: HERMES_AUTH_METHOD_OAUTH, label: "Nous Portal OAuth" },
-                  { value: HERMES_AUTH_METHOD_API_KEY, label: "Nous API Key" },
-                ]
-              : undefined,
-        }));
-    },
-    webSearchChoices: (agentName) => {
-      const agent = draftAgent(agentName);
-      return webSearch.WEB_SEARCH_PROVIDERS.filter((provider) =>
-        agentSupportsWebSearchProvider(agent, provider, fromDockerfile, ROOT),
-      ).map((provider) => ({ value: provider, label: webSearch.webSearchLabelFor(provider) }));
-    },
-    messagingChoices,
-    managedToolChoices: (agentName, inference) => {
-      if (
-        agentName !== "hermes" ||
-        inference.provider !== "hermesProvider" ||
-        inference.authMethod === HERMES_AUTH_METHOD_API_KEY
-      ) {
-        return [];
-      }
-      return HERMES_TOOL_GATEWAY_PRESETS.map((preset) => ({
-        value: preset.name,
-        label: `${preset.label}: ${preset.description}`,
-      }));
-    },
-    defaultManagedTools: (agentName, inference) => {
-      if (
-        agentName !== "hermes" ||
-        inference.provider !== "hermesProvider" ||
-        inference.authMethod === HERMES_AUTH_METHOD_API_KEY
-      ) {
-        return [];
-      }
-      return getRequestedHermesToolGateways(process.env) ?? defaultHermesToolGatewaySelection();
-    },
-    resourceProfileChoices: () => [
-      { value: "default", label: "OpenShell defaults" },
-      ...Object.keys(intentDraft.loadResourceProfiles())
-        .filter((name) => name !== "default")
-        .map((name) => ({ value: name, label: name })),
-      { value: "custom", label: "Custom CPU and RAM" },
-    ],
-    policyChoices: () => {
-      const choices = tiers.listTiers().map((tier) => ({ value: tier.name, label: tier.label }));
-      return choices.sort((left, right) => {
-        if (left.value === "balanced") return -1;
-        if (right.value === "balanced") return 1;
-        return 0;
-      });
-    },
-    defaultSandboxName: (agentName) => getDefaultSandboxNameForAgent(draftAgent(agentName)),
-    validateSandboxName: (value) => {
-      const validated = validateName(value, "sandbox name");
-      if (RESERVED_SANDBOX_NAMES.has(validated)) {
-        throw new Error(`Reserved name: '${validated}' is a ${cliDisplayName()} CLI command.`);
-      }
-      return validated;
-    },
-    compatibility: {
-      provider: (agentName, inference) =>
-        baseProviderKeys.has(inference.provider) ||
-        getAgentInferenceProviderOptions(draftAgent(agentName)).includes(inference.provider),
-      // Agent manifests do not expose a complete model-compatibility catalog.
-      // Re-adopt the selected provider's reviewed default after an agent edit.
-      model: () => false,
-      webSearch: (agentName, provider) =>
-        agentSupportsWebSearchProvider(
-          draftAgent(agentName),
-          provider as import("./inference/web-search").WebSearchProvider,
-          fromDockerfile,
-          ROOT,
-        ),
-      messaging: (agentName, channel) =>
-        messagingChoices(agentName).some((choice) => choice.value === channel),
-    },
-    checkpoint,
-  };
 }
 
 // ── Main ─────────────────────────────────────────────────────────
@@ -4258,11 +4007,28 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       !authoritativeGateway &&
       ((!resume && existingIntentDraft?.phase !== "accepted") ||
         existingIntentDraft?.phase === "collecting");
-    const draftDeps = createOnboardIntentDraftDeps(fromDockerfile, (draft) => {
-      session = onboardSession.updateSession((currentSession) => {
-        currentSession.intentDraft = draft;
-        return currentSession;
-      });
+    const draftDeps = intentDraft.createOnboardIntentDraftDeps({
+      fromDockerfile,
+      setupNimDeps: getSetupNimDeps(),
+      prompt,
+      agentChoices: agentDefs.getAgentChoices,
+      loadAgent: agentDefs.loadAgent,
+      webSearchProviders: webSearch.WEB_SEARCH_PROVIDERS,
+      webSearchLabelFor: webSearch.webSearchLabelFor,
+      rootDir: ROOT,
+      validateSandboxName: (value) => {
+        const validated = validateName(value, "sandbox name");
+        if (RESERVED_SANDBOX_NAMES.has(validated)) {
+          throw new Error(`Reserved name: '${validated}' is a ${cliDisplayName()} CLI command.`);
+        }
+        return validated;
+      },
+      checkpoint: (draft) => {
+        session = onboardSession.updateSession((currentSession) => {
+          currentSession.intentDraft = draft;
+          return currentSession;
+        });
+      },
     });
     const intentBoundary = await intentDraft.crossOnboardIntentDraftBoundary({
       shouldCollect: shouldCollectIntentDraft,

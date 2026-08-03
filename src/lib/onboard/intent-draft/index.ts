@@ -7,6 +7,8 @@ export { loadResourceProfiles } from "../../resources-cmd";
 export { createSetupNim, discoverInferenceIntentChoices } from "../setup-nim-flow";
 export * from "./boundary";
 export * from "./controller";
+export * from "./deps";
+export * from "./ollama-model-selection";
 export * from "./runtime";
 export * from "./schema";
 export * from "./seed";
