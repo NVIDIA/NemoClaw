@@ -73,11 +73,7 @@ export interface SandboxGpuCreateFlowDeps {
   sleep: Sleep;
   openshellArgv(args: string[]): string[];
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
-  /**
-   * Protected failure-injection tests wrap the real driver adapter at one
-   * named transaction boundary. Production callers omit this factory and use
-   * the adapter selected by the managed-bootstrap runtime provider.
-   */
+  /** Production callers omit this factory and use the runtime provider's adapter. */
   createManagedBootstrapAdapter?: () => ManagedBootstrapAdapter;
 }
 

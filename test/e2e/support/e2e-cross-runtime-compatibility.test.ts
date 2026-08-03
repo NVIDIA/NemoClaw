@@ -45,7 +45,7 @@ describe("cross-runtime foundation compatibility", () => {
     ];
 
     expect(digestOutput(cases.map(buildRiskPlan))).toBe(
-      "39949b976e4ad2315c6d0696419c178367be425699ff657f45a41df0ec9241bd",
+      "80ba8dfc73d0c7568d77338f0061a205a4414858749b33a7a7af6b4b670be8d7",
     );
   });
 });

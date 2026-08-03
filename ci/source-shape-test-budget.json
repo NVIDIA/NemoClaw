@@ -42,6 +42,11 @@
       "category": "security"
     },
     {
+      "file": "test/ci-cli-coverage-pi-tools-workflow.test.ts",
+      "test": "installs pinned fd and ripgrep before CLI coverage can invoke Pi",
+      "category": "security"
+    },
+    {
       "file": "test/cloudflared-update-check-workflow.test.ts",
       "test": "keeps automatic and on-demand update checks reachable and credential-free",
       "category": "security"
@@ -297,6 +302,11 @@
       "category": "security"
     },
     {
+      "file": "test/maintainer-pr-workflow-approval.test.ts",
+      "test": "keeps workflow approval inside the trusted metadata boundary",
+      "category": "security"
+    },
+    {
       "file": "test/macos-e2e-workflow-boundary.test.ts",
       "test": "keeps secret-bearing live E2E on trusted main-branch code",
       "category": "security"
@@ -513,7 +523,22 @@
     },
     {
       "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps managed bootstrap provider-neutral, image-owned, and dormant",
+      "test": "keeps the dormant managed-bootstrap protocol driver-neutral",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps production activation paths disconnected from driver bootstrap adapters",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps registered providers bootstrap-unsupported",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps managed-bootstrap assets out of image packaging",
       "category": "security"
     },
     {

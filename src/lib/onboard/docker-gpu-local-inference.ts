@@ -497,8 +497,9 @@ export function verifyGpuSandboxLocalInferenceAfterReady(
 
 /**
  * Keep the managed create transaction reversible until the sandbox's real
- * local-inference route is proven. Rollback failures are attached to the
- * original verification failure so callers retain both pieces of evidence.
+ * local-inference reachability check returns HTTP 2xx. Rollback failures are
+ * attached to the original verification failure so callers retain both pieces
+ * of evidence.
  */
 export async function verifyGpuSandboxLocalInferenceAndCommitAfterReady(
   config: DockerGpuLocalInferenceConfig,

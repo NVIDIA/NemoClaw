@@ -388,7 +388,7 @@ describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
     };
   }
 
-  it("commits only after the runtime inference route is proven", async () => {
+  it("commits only after local-inference reachability returns HTTP 2xx", async () => {
     const runtimePatch = {
       commitAfterReady: vi.fn(),
       rollbackManagedStartupAfterCreateFailure: vi.fn(),

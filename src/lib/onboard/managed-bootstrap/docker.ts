@@ -1388,6 +1388,16 @@ function resolveIncompleteCreateSandbox(
     sandboxId,
     driverId: input.plan.driverId,
   });
+  if (
+    input.createReceipt.ready !== true ||
+    input.createReceipt.sandbox.sandboxName !== sandbox.sandboxName ||
+    input.createReceipt.sandbox.sandboxId !== sandbox.sandboxId ||
+    input.createReceipt.sandbox.driverId !== sandbox.driverId
+  ) {
+    throw new Error(
+      "Managed bootstrap Docker incomplete-create workload does not match the exact validated create receipt.",
+    );
+  }
   assertImage(inspect, input.plan.image, deps);
   assertMetadata(inspect, sandbox, input.plan.metadata);
   assertHeldCommand(inspect, input.heldWorkloadArgv, input.bootstrapIdentity);
@@ -2544,6 +2554,7 @@ export function createDockerManagedBootstrapAdapter(
       if (normalizedOriginal.hash !== snapshot.specHash) {
         throw new Error("Managed bootstrap Docker replacement snapshot is not exact.");
       }
+      assertNoRootProcessInjectionEnvironment(parsed.inspect.Config?.Env);
       if (parsed.inspect.HostConfig?.ReadonlyRootfs === true) {
         throw new Error(
           "Managed bootstrap cannot stage its root-owned request in a read-only root filesystem.",

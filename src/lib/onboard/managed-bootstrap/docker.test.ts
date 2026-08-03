@@ -6,6 +6,10 @@ import { describe, expect, it, vi } from "vitest";
 import { ManagedBootstrapOwnerCleanupRequiredError } from "./adapter";
 import { createDockerManagedBootstrapAdapter } from "./docker";
 import {
+  normalizeDockerManagedBootstrapLaunchSpec,
+  parseDockerManagedBootstrapLaunchSpec,
+} from "./docker-spec";
+import {
   authority,
   completion,
   durablePreparation,
@@ -277,15 +281,45 @@ describe("Docker managed bootstrap adapter", () => {
     ).toBe(true);
   });
 
+  it.each([
+    "NODE_OPTIONS",
+    "LD_PRELOAD",
+    "BASH_ENV",
+  ])("rejects hostile %s from the launch snapshot before replacement creation", async (key) => {
+    const fake = fixture();
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request, snapshot } = authority();
+    const parsed = parseDockerManagedBootstrapLaunchSpec(snapshot.specCanonicalJson);
+    const hostileInspect = structuredClone(parsed.inspect);
+    hostileInspect.Config!.Env = [...(hostileInspect.Config!.Env ?? []), `${key}=/tmp/hostile`];
+    const hostileSpec = normalizeDockerManagedBootstrapLaunchSpec(hostileInspect);
+
+    await expect(
+      adapter.prepareBootstrapReplacement({
+        handle,
+        snapshot: {
+          ...snapshot,
+          specHash: hostileSpec.hash,
+          specCanonicalJson: hostileSpec.canonicalJson,
+        },
+        request,
+        replacementOptions: { values: {} },
+      }),
+    ).rejects.toThrow(`Managed bootstrap refuses root-process injection environment '${key}'.`);
+    expect(fake.events).not.toContain("create:replacement");
+    expect(fake.replacement).toBeNull();
+  });
+
   it("quiesces and retains an exact incomplete create when its mutable name is reused", async () => {
     const fake = fixture({ ownerId: "sandbox-alpha-recreated" });
     const adapter = createDockerManagedBootstrapAdapter(fake.deps);
-    const { plan } = authority();
+    const { handle, plan } = authority();
     await expect(
       adapter.cleanupIncompleteCreate({
         plan,
         bootstrapIdentity: IDENTITY,
         heldWorkloadArgv: heldArgv,
+        createReceipt: handle.createReceipt,
       }),
     ).rejects.toMatchObject({
       name: "ManagedBootstrapOwnerCleanupRequiredError",
@@ -295,5 +329,25 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.original.State?.Running).toBe(false);
     expect(fake.events).not.toContain(`rm:${OLD_ID}`);
     expect(vi.mocked(fake.deps.runOpenshell!)).not.toHaveBeenCalled();
+  });
+
+  it("retains a same-name workload that differs from the validated create receipt", async () => {
+    const replacementSandboxId = "sandbox-alpha-recreated";
+    const fake = fixture({ ownerId: replacementSandboxId });
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, plan } = authority();
+    expect(fake.original.Config?.Labels).toBeDefined();
+    fake.original.Config!.Labels!["openshell.ai/sandbox-id"] = replacementSandboxId;
+
+    await expect(
+      adapter.cleanupIncompleteCreate({
+        plan,
+        bootstrapIdentity: IDENTITY,
+        heldWorkloadArgv: heldArgv,
+        createReceipt: handle.createReceipt,
+      }),
+    ).rejects.toThrow(/does not match the exact validated create receipt/u);
+    expect(fake.events).not.toContain(`stop:${OLD_ID}`);
+    expect(fake.events).not.toContain(`rm:${OLD_ID}`);
   });
 });
