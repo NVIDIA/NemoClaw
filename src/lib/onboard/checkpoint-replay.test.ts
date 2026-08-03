@@ -114,7 +114,7 @@ describe("planEffectGroupReplay", () => {
     expect(planEffectGroupReplay(cp, "messaging_providers", "fp").action).toBe("skip");
   });
 
-  it("re-runs a live effect group when its fingerprint differs", () => {
+  it("reruns a recorded effect group when the observed fingerprint differs", () => {
     const cp = checkpoint({
       effectGroups: { messaging_providers: { completedAt: ISO, fingerprint: "recorded" } },
     });
