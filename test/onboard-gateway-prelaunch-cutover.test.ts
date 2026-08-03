@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -8,6 +11,7 @@ import {
   type DockerDriverGatewayCutoverInput,
   readDockerDriverGatewayHealth,
   runDockerDriverGatewayCutover,
+  runDockerDriverGatewayManagedFallback,
 } from "../src/lib/onboard/docker-driver-gateway-cutover";
 
 type Event = {
@@ -119,6 +123,119 @@ describe("Docker-driver gateway prelaunch cutover (#5968)", () => {
     expect(calls).toEqual([["status"], ["gateway", "info", "-g", "nemoclaw"], ["gateway", "info"]]);
   });
 
+  it("skips standalone cutover when managed startup succeeds (#8104)", async () => {
+    let standaloneCalls = 0;
+
+    await expect(
+      runDockerDriverGatewayManagedFallback(
+        async () => true,
+        async () => {
+          standaloneCalls += 1;
+          return "launch";
+        },
+      ),
+    ).resolves.toBe("managed");
+    expect(standaloneCalls).toBe(0);
+  });
+
+  it("refreshes listener evidence through the onboard gateway caller (#8104)", () => {
+    const onboardPath = JSON.stringify(path.join(import.meta.dirname, "../src/lib/onboard.ts"));
+    const script = `
+const Module = require("node:module");
+const originalLoad = Module._load;
+let managedResult = true;
+let probe = 0;
+let standaloneCalls = 0;
+const observedListenerPids = [];
+
+Module._load = function(request, parent, isMain) {
+  const actual = () => originalLoad.call(this, request, parent, isMain);
+  if (request.endsWith("/preflight")) {
+    return { ...actual(), checkPortAvailable: async () => ({ ok: true, pid: ++probe }) };
+  }
+  if (request.endsWith("/docker-driver-gateway-runtime")) {
+    const runtime = actual();
+    return {
+      ...runtime,
+      createDockerDriverGatewayRuntimeHelpers: (deps) => ({
+        ...runtime.createDockerDriverGatewayRuntimeHelpers(deps),
+        createGatewayServicePortOwnership: () => ({
+          preparePort: () => {},
+          reportUntrustedGatewayPort: () => {},
+          validatePortOwner: () => {},
+        }),
+        getDockerDriverGatewayEnv: () => ({}),
+        getDockerDriverGatewayPid: () => null,
+        getDockerDriverGatewayPortListenerScan: (portCheck) => ({
+          complete: true,
+          pids: [portCheck.pid],
+          unverifiedPids: [],
+        }),
+        getDockerDriverGatewayStateDir: () => "/test/state",
+        resolveOpenShellGatewayBinary: () => null,
+        resolveOpenShellSandboxBinary: () => null,
+      }),
+    };
+  }
+  if (request.endsWith("/docker-driver-gateway-env")) {
+    return {
+      ...actual(),
+      getGatewayPortCheckOptions: () => ({}),
+      startPackageManagedDockerDriverGatewayWithEnvOverride: async () => managedResult,
+    };
+  }
+  if (request.endsWith("/docker-driver-gateway-cutover")) {
+    const cutover = actual();
+    return {
+      ...cutover,
+      readDockerDriverGatewayHealth: () => ({ activeInfo: "", namedInfo: "", status: "" }),
+      runDockerDriverGatewayCutover: async (input) => {
+        standaloneCalls += 1;
+        observedListenerPids.push(input.portListenerScan.pids);
+        return "reused";
+      },
+    };
+  }
+  if (request.endsWith("/openshell-cli")) {
+    return {
+      createOpenshellCliHelpers: () => ({
+        getDockerDriverGatewayEndpointArg: () => "https://127.0.0.1:8080",
+        getGatewayPortArg: () => "8080",
+        getOpenshellBinary: () => "/test/bin/openshell",
+        openshellArgv: (args) => args,
+        openshellShellCommand: (args) => args.join(" "),
+        runCaptureOpenshell: () => "openshell 0.0.85",
+        runOpenshell: () => ({ status: 0 }),
+      }),
+    };
+  }
+  return actual();
+};
+
+const { startDockerDriverGateway } = require(${onboardPath});
+(async () => {
+  await startDockerDriverGateway({ exitOnFailure: false });
+  const managedSuccessStandaloneCalls = standaloneCalls;
+  managedResult = false;
+  probe = 0;
+  await startDockerDriverGateway({ exitOnFailure: false });
+  console.log(JSON.stringify({ managedSuccessStandaloneCalls, observedListenerPids }));
+})().catch((error) => {
+  console.error(error && error.stack ? error.stack : error);
+  process.exit(1);
+});
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: path.join(import.meta.dirname, ".."),
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const payload = JSON.parse(result.stdout.trim().split("\n").at(-1) ?? "{}");
+    expect(payload).toEqual({ managedSuccessStandaloneCalls: 0, observedListenerPids: [[2]] });
+  });
+
   it("reaps stale port listeners before allowing a fresh launch", async () => {
     const harness = makeHarness({
       listenerPids: [4242, 4343],
@@ -165,6 +282,31 @@ describe("Docker-driver gateway prelaunch cutover (#5968)", () => {
     expect(harness.events).toContainEqual({ type: "prelaunch-reap", extraPids: [] });
     expect(harness.events.some((event) => event.type === "http-ready")).toBe(false);
     expect(harness.events.some((event) => event.type === "spawn-fresh")).toBe(false);
+  });
+
+  it("preserves the occupied-port gate after managed startup falls back (#8104)", async () => {
+    let listenerPids = [4242];
+    let harness: ReturnType<typeof makeHarness> | undefined;
+
+    await expect(
+      runDockerDriverGatewayManagedFallback(
+        async () => {
+          listenerPids = [];
+          return false;
+        },
+        () => {
+          harness = makeHarness({
+            listenerPids,
+            scanComplete: true,
+            pidFileGatewayPid: null,
+            postReapPortAvailable: false,
+          });
+          return harness.run();
+        },
+      ),
+    ).rejects.toThrow("gateway port remains occupied");
+    expect(harness?.events).toContainEqual({ type: "prelaunch-reap", extraPids: [] });
+    expect(harness?.events.some((event) => event.type === "spawn-fresh")).toBe(false);
   });
 
   it("never includes an unobserved pid-file process in port-scoped cleanup", async () => {
