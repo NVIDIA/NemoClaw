@@ -1161,8 +1161,16 @@ If `shields up` reports that the config remains unlocked or drifted, confirm tha
 If the retry still fails, rebuild a known-good baseline with `$$nemoclaw <name> rebuild --yes`.
 
 Host-side config and inference writes, snapshot mutation, sandbox destruction, and shields transitions serialize per sandbox.
-When a timed shields-down window reaches its deadline, auto-restore can interrupt the exact process tree holding that transition and restore lockdown.
-Retry an interrupted command in a new shields-down window.
+When a timed shields-down window reaches its deadline, auto-restore closes the per-sandbox lifecycle deadline gate.
+The gate blocks new mutations and waits for the recorded live owner to release its exact lock generation before auto-restore restores lockdown.
+NemoClaw does not signal that process because portable process inspection cannot prove that all descendants stopped.
+When an interactive command takes over an expired timer, NemoClaw makes up to 7 restoration attempts over an additional 30-second completion-grace window.
+The deadline gate remains closed during those attempts.
+If restoration cannot commit, NemoClaw records durable containment before the command returns an error.
+NemoClaw also records durable containment when an owner exits before it can prove that the owner's descendants stopped, or when ownership becomes ambiguous.
+Durable containment blocks new mutations until you complete exact-generation operator recovery.
+Stop all NemoClaw processes for the sandbox, then follow the paths, identities, tokens, and removal order in the reported error.
+Verify each recorded generation is unchanged, remove only the exact stale generations first, and remove the exact containment generation last.
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -2902,6 +2910,13 @@ A registered docker-driver sandbox whose container is stopped is started for the
 If the container cannot be returned to the stopped state, the command fails and reports that the container was left running.
 Sandboxes that are not running and cannot be started this way are skipped with remediation guidance.
 
+For each eligible sandbox, `backup-all` acquires the lifecycle lock to open a 30-minute shields-down window when needed.
+It reacquires the lock under that exact timer generation while it copies sandbox state.
+After the copy, it uses a third lock interval with a 30-second acquisition budget to restore the previous Shields posture.
+If the timer expires during the copy, the deadline gate blocks new mutations and waits for the exact backup owner to finish without signaling it.
+An initial lock or unlock failure marks that sandbox as failed, and `backup-all` continues with the next sandbox.
+A failure to restore the previous Shields posture stops `backup-all` before it processes another sandbox.
+
 ```bash
 $$nemoclaw backup-all
 ```
@@ -2921,7 +2936,9 @@ A skipped sandbox's uncommitted state is not included in its last successful bac
 Create a timestamped snapshot of sandbox state.
 Snapshots are stored in `~/.nemoclaw/rebuild-backups/<name>/`.
 The command requires shields to be down and keeps the shields check and backup under one per-sandbox transition.
-An expired auto-restore timer can interrupt a long-running backup and restore lockdown.
+If the timer expires during a long-running backup, the deadline gate blocks new mutations and waits for the exact backup owner to finish.
+Auto-restore does not signal the backup process.
+If ownership becomes ambiguous, NemoClaw records durable containment and reports exact-generation recovery guidance.
 When the sandbox has active baseline exclusions, successful output lists their keys and repeats that excluded egress leaves dependent agent features unsupported for that sandbox.
 
 ```bash
@@ -2955,7 +2972,9 @@ If no selector is provided, the latest snapshot is used.
 Restore removes files added after the snapshot only from state directories selected for cleanup.
 It preserves directories that exist only in the target manifest or whose backup failed.
 The state replacement, mutable-config permission repair, and policy reconciliation run under the same per-sandbox transition.
-An expired auto-restore timer can interrupt that work and restore lockdown.
+If the timer expires during that work, the deadline gate blocks new mutations and waits for the exact restore owner to finish.
+Auto-restore does not signal the restore process.
+If ownership becomes ambiguous, NemoClaw records durable containment and reports exact-generation recovery guidance.
 
 The selector accepts any of:
 

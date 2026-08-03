@@ -35,6 +35,8 @@ export interface ShieldsTransitionLockOptions {
   pollIntervalMs?: number;
   malformedStaleMs?: number;
   takeoverToken?: string;
+  /** Preserve stale owners for a caller that applies a stronger containment protocol. */
+  recoverStaleOwner?: boolean;
 }
 
 export interface ShieldsTransitionLockDependencies {
@@ -488,6 +490,26 @@ export class ShieldsTransitionLockManager {
     }
   }
 
+  inspectAnyShieldsTransitionLockOwner(
+    sandboxName: string,
+  ): InspectedShieldsTransitionOwner | null {
+    const validName = validateSandboxName(sandboxName);
+    const lockPath = shieldsTransitionLockPath(validName, this.stateDir);
+    const snapshot = readExistingLock(lockPath, validName);
+    if (!snapshot) return null;
+    try {
+      const owner = snapshot.owner;
+      if (!owner) return null;
+      return {
+        pid: owner.pid,
+        processStartIdentity: owner.processStartIdentity,
+        command: owner.command,
+      };
+    } finally {
+      closeSnapshot(snapshot);
+    }
+  }
+
   takeoverShieldsTransitionLock(
     sandboxName: string,
     expectedOwnerPid: number,
@@ -816,7 +838,12 @@ export class ShieldsTransitionLockManager {
         );
         if (!observed) continue;
         lastWaitReason = observed;
-        if (this.recoveredObservedStaleOwner(sandboxName, observed)) continue;
+        if (
+          options.recoverStaleOwner !== false &&
+          this.recoveredObservedStaleOwner(sandboxName, observed)
+        ) {
+          continue;
+        }
       }
       this.sleep(this.waitDuration(state, lastWaitReason));
     }
@@ -847,7 +874,12 @@ export class ShieldsTransitionLockManager {
         );
         if (!observed) continue;
         lastWaitReason = observed;
-        if (this.recoveredObservedStaleOwner(sandboxName, observed)) continue;
+        if (
+          options.recoverStaleOwner !== false &&
+          this.recoveredObservedStaleOwner(sandboxName, observed)
+        ) {
+          continue;
+        }
       }
       await this.sleepAsync(this.waitDuration(state, lastWaitReason));
     }
@@ -1138,6 +1170,12 @@ export function inspectShieldsTransitionLockOwner(
   takeoverToken: string,
 ): InspectedShieldsTransitionOwner | null {
   return defaultManager.inspectShieldsTransitionLockOwner(sandboxName, takeoverToken);
+}
+
+export function inspectAnyShieldsTransitionLockOwner(
+  sandboxName: string,
+): InspectedShieldsTransitionOwner | null {
+  return defaultManager.inspectAnyShieldsTransitionLockOwner(sandboxName);
 }
 
 export function takeoverShieldsTransitionLock(

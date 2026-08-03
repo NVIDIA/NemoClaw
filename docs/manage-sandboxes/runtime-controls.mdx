@@ -108,10 +108,19 @@ Run `$$nemoclaw <name> shields down` before the change, then restore lockdown wi
 NemoClaw serializes host-side config and inference writes, snapshot mutation, sandbox destruction, and shields transitions for each sandbox.
 When `shields down --timeout` is active, each mutation binds to that exact timer generation so a replaced or expired timer cannot race a later command or a new sandbox that reuses the same name.
 
-If the timeout expires while a mutation is still changing sandbox state, auto-restore can stop that exact process tree, reclaim the transition, and restore the restrictive policy and config posture.
+If the timeout expires while a mutation is changing sandbox state, auto-restore closes the per-sandbox lifecycle deadline gate.
+The gate blocks new mutations and waits for the recorded live owner to release its exact lock generation.
+NemoClaw does not signal that process because portable process inspection cannot prove that all descendants stopped.
+After the owner releases the lock, auto-restore restores the restrictive policy and config posture.
 The ownership check includes both the process ID and process start identity so PID reuse does not grant control over an unrelated process.
 
-Retry a command that the auto-restore deadline interrupts after you open a new shields-down window.
+When an interactive command takes over an expired timer, NemoClaw makes up to 7 restoration attempts over an additional 30-second completion-grace window.
+The deadline gate remains closed during those attempts.
+If restoration cannot commit, NemoClaw records durable containment before the command returns an error.
+NemoClaw also records durable containment when an owner exits before it can prove that the owner's descendants stopped, or when ownership becomes ambiguous.
+Durable containment keeps new mutations blocked until you complete exact-generation operator recovery.
+Stop all NemoClaw processes for the sandbox, then follow the paths, identities, tokens, and removal order in the reported error.
+Verify each recorded generation is unchanged, remove only the exact stale generations first, and remove the exact containment generation last.
 
 ## Related Topics
 
