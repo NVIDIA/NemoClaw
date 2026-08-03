@@ -49,19 +49,26 @@ function nodeHelperCalls(deps: DockerGpuPatchDeps): readonly (readonly string[])
     .filter((args) => args.includes("/usr/local/bin/node"));
 }
 
-function expectCleanNodeHelper(args: readonly string[]): void {
+function expectLoaderEnvironmentNeutralized(args: readonly string[]): void {
   expect(args).toEqual(expect.arrayContaining([...LOADER_ENV_OVERRIDES]));
   expect(args).not.toContain("BASH_FUNC_*");
+}
+
+function expectCleanRunNodeHelper(args: readonly string[]): void {
+  expectLoaderEnvironmentNeutralized(args);
   const nodeIndex = args.indexOf("/usr/local/bin/node");
   expect(nodeIndex).toBeGreaterThan(0);
-  if (args[0] === "run") {
-    const entrypointIndex = args.indexOf("--entrypoint");
-    expect(args[entrypointIndex + 1]).toBe(CLEAN_NODE_COMMAND[0]);
-    expect(args.slice(nodeIndex - CLEAN_NODE_COMMAND.length + 2, nodeIndex + 1)).toEqual(
-      CLEAN_NODE_COMMAND.slice(1),
-    );
-    return;
-  }
+  const entrypointIndex = args.indexOf("--entrypoint");
+  expect(args[entrypointIndex + 1]).toBe(CLEAN_NODE_COMMAND[0]);
+  expect(args.slice(nodeIndex - CLEAN_NODE_COMMAND.length + 2, nodeIndex + 1)).toEqual(
+    CLEAN_NODE_COMMAND.slice(1),
+  );
+}
+
+function expectCleanExecNodeHelper(args: readonly string[]): void {
+  expectLoaderEnvironmentNeutralized(args);
+  const nodeIndex = args.indexOf("/usr/local/bin/node");
+  expect(nodeIndex).toBeGreaterThan(0);
   expect(args.slice(nodeIndex - CLEAN_NODE_COMMAND.length + 1, nodeIndex + 1)).toEqual(
     CLEAN_NODE_COMMAND,
   );
@@ -84,7 +91,8 @@ describe("Docker managed-bootstrap shared-state helper environment", () => {
     expect(helpers.some((args) => args.includes("--shared-state-transaction-status"))).toBe(true);
     expect(helpers.some((args) => args.includes("--commit-shared-state-transaction"))).toBe(true);
     expect(helpers).not.toHaveLength(0);
-    helpers.forEach(expectCleanNodeHelper);
+    helpers.filter((args) => args[0] === "run").forEach(expectCleanRunNodeHelper);
+    helpers.filter((args) => args[0] === "exec").forEach(expectCleanExecNodeHelper);
   });
 
   it("clears arbitrary image environment before the immutable rollback helper", () => {
@@ -102,7 +110,7 @@ describe("Docker managed-bootstrap shared-state helper environment", () => {
     const helpers = nodeHelperCalls(fake.deps);
     expect(helpers).toHaveLength(1);
     expect(helpers[0]).toContain("--rollback-shared-state-transaction");
-    expectCleanNodeHelper(helpers[0]!);
+    expectCleanRunNodeHelper(helpers[0]!);
   });
 
   it("clears arbitrary container environment before the durable receipt-clear helper", () => {
@@ -112,6 +120,6 @@ describe("Docker managed-bootstrap shared-state helper environment", () => {
     const helpers = nodeHelperCalls(fake.deps);
     expect(helpers).toHaveLength(1);
     expect(helpers[0]).toContain("--clear-shared-state-commit-receipt");
-    expectCleanNodeHelper(helpers[0]!);
+    expectCleanExecNodeHelper(helpers[0]!);
   });
 });
