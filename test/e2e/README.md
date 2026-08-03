@@ -589,6 +589,9 @@ and advisor concurrency groups include that eligibility, so an ignored
 metadata-edit run cannot cancel an eligible run for the same PR. The trusted
 controller reads all changed files after eligible PR CI completes and builds
 the deterministic risk plan.
+The controller's Actions run name carries that CI display title so operators
+can distinguish simultaneous PR, head, and base identities even when the event
+omits pull-request metadata.
 Runtime families and changes to workflow-wired live tests or their owning
 helpers select canonical jobs from the trusted `e2e.yaml` inventory
 independently of advisor output. A workflow-wired live test or owning helper
@@ -800,6 +803,8 @@ commit SHA, base SHA, selected jobs and targets, and
 maintainer then chooses **Run workflow** on `main`, selects `approve-e2e`, and
 supplies the PR number, recorded head SHA, recorded base SHA, and a specific
 review reason.
+The manual controller run name includes the supplied PR, head, and base
+identity for operator coordination.
 GitHub supplies the triggering actor; the controller requires that account to
 have current `maintain` or `admin` permission.
 
