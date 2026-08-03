@@ -8,5 +8,5 @@ export {
   buildVllmDockerEnv,
 } from "../vllm-docker-env.js";
 export { resolveVllmInstallModel } from "../vllm-prompt.js";
-export { tryInstallDualSparkManagedVllm } from "./dual-spark-installer.js";
-export { recoverInstalledDualSparkVllmEndpoint } from "./spark-runtime-receipt.js";
+export { tryInstallManagedClusterManagedVllm } from "./managed-cluster-installer.js";
+export { recoverInstalledManagedClusterVllmEndpoint } from "./managed-cluster-runtime-receipt.js";

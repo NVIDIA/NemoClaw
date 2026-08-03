@@ -295,7 +295,7 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(output).toMatch(
       /Express install will configure managed vLLM with automatic DGX Spark serving-profile selection/,
     );
-    expect(output).toMatch(/one exactly qualified pretrusted two-Spark topology/);
+    expect(output).toMatch(/one exactly qualified pretrusted managed cluster topology/);
     expect(output).toMatch(/related or ambiguous setup remains untouched and stops installation/);
     expect(output).toMatch(/experimental pending physical end-to-end validation/);
     expect(output).toMatch(/Sandbox name: my-assistant/);

@@ -8,12 +8,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import { nemoclawStateRoot } from "../state/state-root";
-import { createProductionDualSparkDiscoveryDeps } from "./serving/dual-spark-discovery-production";
+import { createProductionManagedClusterDiscoveryDeps } from "./serving/managed-cluster-discovery-production";
+import { managedClusterVllmRuntimeReceiptPath } from "./serving/managed-cluster-runtime-receipt";
 import {
   assertNoManagedDistributedVllmRuntimeReceipts,
   findManagedDistributedVllmRuntimeReceipts,
 } from "./serving/managed-runtime-receipts";
-import { dualSparkVllmRuntimeReceiptPath } from "./serving/spark-runtime-receipt";
 import { dualStationVllmRuntimeReceiptPath } from "./vllm-station-runtime-receipt";
 
 const temporaryHomes: string[] = [];
@@ -41,17 +41,17 @@ describe("managed distributed vLLM receipt preflight", () => {
     ).not.toThrow();
   });
 
-  it("blocks a host-global Spark receipt without parsing stale contents", () => {
+  it("blocks a host-global managed cluster receipt without parsing stale contents", () => {
     const homeDir = temporaryHome();
-    const receiptPath = dualSparkVllmRuntimeReceiptPath(
+    const receiptPath = managedClusterVllmRuntimeReceiptPath(
       nemoclawStateRoot(homeDir, DEFAULT_GATEWAY_PORT),
     );
     touch(receiptPath);
 
     expect(findManagedDistributedVllmRuntimeReceipts({ homeDir })).toEqual({
-      sparkBindingPath: null,
-      sparkDiscoveryBindingPaths: [],
-      sparkPath: receiptPath,
+      managedClusterBindingPaths: [],
+      managedClusterDiscoveryBindingPaths: [],
+      managedClusterPath: receiptPath,
       stationBindingPaths: [],
       stationPaths: [],
     });
@@ -78,47 +78,70 @@ describe("managed distributed vLLM receipt preflight", () => {
     const stateRoot = nemoclawStateRoot(homeDir, gatewayPort);
     const receiptPath =
       topology === "Spark"
-        ? dualSparkVllmRuntimeReceiptPath(stateRoot)
+        ? managedClusterVllmRuntimeReceiptPath(stateRoot)
         : dualStationVllmRuntimeReceiptPath(stateRoot);
-    const bindingPath = `${receiptPath}.ssh-binding`;
+    const bindingPath =
+      topology === "Spark" ? `${receiptPath}.rank-1.ssh-binding` : `${receiptPath}.ssh-binding`;
     fs.mkdirSync(bindingPath, { recursive: true, mode: 0o700 });
 
     expect(() => assertNoManagedDistributedVllmRuntimeReceipts({ homeDir })).toThrow(bindingPath);
   });
 
-  it("blocks an orphaned Spark discovery binding claim", () => {
+  it("blocks an orphaned managed cluster discovery binding claim", () => {
     const homeDir = temporaryHome();
     const bindingPath = path.join(
       nemoclawStateRoot(homeDir),
-      "dual-spark-managed-serving.json.ssh-binding",
+      "managed-cluster-managed-serving.json.spark-worker.ssh-binding",
     );
     fs.mkdirSync(bindingPath, { recursive: true, mode: 0o700 });
 
     expect(
-      findManagedDistributedVllmRuntimeReceipts({ homeDir }).sparkDiscoveryBindingPaths,
+      findManagedDistributedVllmRuntimeReceipts({ homeDir }).managedClusterDiscoveryBindingPaths,
     ).toEqual([bindingPath]);
     expect(() => assertNoManagedDistributedVllmRuntimeReceipts({ homeDir })).toThrow(bindingPath);
   });
 
-  it("places the production Spark discovery claim in the scanner-visible gateway root", () => {
+  it("enumerates every ranked runtime binding and per-node discovery claim", () => {
+    const homeDir = temporaryHome();
+    const stateRoot = nemoclawStateRoot(homeDir);
+    const runtimeBindings = [
+      "managed-cluster-vllm-runtime.json.rank-1.ssh-binding",
+      "managed-cluster-vllm-runtime.json.rank-2.ssh-binding",
+    ].map((entry) => path.join(stateRoot, entry));
+    const discoveryBindings = [
+      "managed-cluster-managed-serving.json.node-a.ssh-binding",
+      "managed-cluster-managed-serving.json.node-b.ssh-binding",
+    ].map((entry) => path.join(stateRoot, entry));
+    for (const bindingPath of [...runtimeBindings, ...discoveryBindings]) {
+      fs.mkdirSync(bindingPath, { recursive: true, mode: 0o700 });
+    }
+
+    const receipts = findManagedDistributedVllmRuntimeReceipts({ homeDir });
+    expect(receipts.managedClusterBindingPaths).toEqual(runtimeBindings);
+    expect(receipts.managedClusterDiscoveryBindingPaths).toEqual(discoveryBindings);
+  });
+
+  it("places each production cluster discovery claim in the scanner-visible gateway root", () => {
     const homeDir = temporaryHome();
     vi.stubEnv("HOME", homeDir);
-    const deps = createProductionDualSparkDiscoveryDeps(() => {
+    const deps = createProductionManagedClusterDiscoveryDeps(() => {
       throw new Error("unexpected host probe");
     });
 
-    expect(deps.resolveBindingStatePath()).toBe(
-      path.join(nemoclawStateRoot(homeDir), "dual-spark-managed-serving.json"),
+    expect(deps.resolveBindingStatePath("spark-worker")).toBe(
+      path.join(nemoclawStateRoot(homeDir), "managed-cluster-managed-serving.json.spark-worker"),
     );
   });
 
   it("treats a receipt symlink as existing without following it", () => {
     const homeDir = temporaryHome();
-    const receiptPath = dualSparkVllmRuntimeReceiptPath(nemoclawStateRoot(homeDir));
+    const receiptPath = managedClusterVllmRuntimeReceiptPath(nemoclawStateRoot(homeDir));
     fs.mkdirSync(path.dirname(receiptPath), { recursive: true });
     fs.symlinkSync(path.join(homeDir, "missing-target"), receiptPath);
 
-    expect(findManagedDistributedVllmRuntimeReceipts({ homeDir }).sparkPath).toBe(receiptPath);
+    expect(findManagedDistributedVllmRuntimeReceipts({ homeDir }).managedClusterPath).toBe(
+      receiptPath,
+    );
     expect(() => assertNoManagedDistributedVllmRuntimeReceipts({ homeDir })).toThrow(
       "Managed vLLM runtime state already exists",
     );

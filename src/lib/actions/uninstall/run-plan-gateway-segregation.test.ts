@@ -1072,9 +1072,12 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
-      const runtimeReceipt = path.join(stateDir, "dual-spark-vllm-runtime.json");
-      const runtimeBinding = `${runtimeReceipt}.ssh-binding`;
-      const discoveryBinding = path.join(stateDir, "dual-spark-managed-serving.json.ssh-binding");
+      const runtimeReceipt = path.join(stateDir, "managed-cluster-vllm-runtime.json");
+      const runtimeBinding = `${runtimeReceipt}.rank-1.ssh-binding`;
+      const discoveryBinding = path.join(
+        stateDir,
+        "managed-cluster-managed-serving.json.spark-worker.ssh-binding",
+      );
       const managedApiKey = path.join(stateDir, "dual-station-vllm-api-key");
       fs.writeFileSync(runtimeReceipt, "{}\n", { mode: 0o600 });
       fs.mkdirSync(runtimeBinding, { mode: 0o700 });

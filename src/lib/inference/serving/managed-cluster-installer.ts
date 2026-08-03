@@ -4,7 +4,7 @@
 import { isAffirmativeAnswer } from "../../onboard/prompt-helpers.js";
 import type { VllmProfile } from "../vllm.js";
 import { ensureManagedVllmApiKey } from "../vllm-api-key.js";
-import { assertGatedModelAccess, type VllmModelDef, VLLM_EXTRA_ARGS_ENV } from "../vllm-models.js";
+import { assertGatedModelAccess, VLLM_EXTRA_ARGS_ENV, type VllmModelDef } from "../vllm-models.js";
 import { clearDualStationSshBinding } from "../vllm-station-ssh-binding.js";
 import { imageStorageRequirementBytes, modelStorageRequirementBytes } from "../vllm-storage.js";
 import {
@@ -13,40 +13,40 @@ import {
   type ManagedInferenceServingRecipe,
 } from "./catalog-types.js";
 import {
-  claimDualSparkManagedServingCapability,
-  type DualSparkConfirmedManagedServingCapability,
-  type DualSparkDetectedManagedServingCapability,
-  type DualSparkHostObservation,
-  type DualSparkStorageCapacityObservation,
-  NEMOCLAW_DGX_SPARK_PEER_ENV,
+  claimManagedClusterManagedServingCapability,
+  type ManagedClusterConfirmedManagedServingCapability,
+  type ManagedClusterDetectedManagedServingCapability,
+  type ManagedClusterHostObservation,
+  type ManagedClusterStorageCapacityObservation,
+  NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV,
   NEMOCLAW_SERVING_PRESET_ENV,
-  probeDualSparkManagedServingCapability,
-  revalidateDualSparkManagedServingCapability,
-} from "./dual-spark-discovery.js";
+  probeManagedClusterManagedServingCapability,
+  revalidateManagedClusterManagedServingCapability,
+} from "./managed-cluster-discovery.js";
 import {
-  type CreateDualSparkVllmExecutorOptions,
-  createDualSparkVllmExecutor,
-  type DualSparkExecutorStageNode,
-} from "./dual-spark-executor.js";
+  type CreateManagedClusterVllmExecutorOptions,
+  createManagedClusterVllmExecutor,
+  type ManagedClusterExecutorStageNode,
+} from "./managed-cluster-executor.js";
 import {
-  cleanupDualSparkManagedVllm,
-  type StartDualSparkVllmResult,
-  startAutomaticDualSparkVllm,
-} from "./dual-spark-lifecycle.js";
+  cleanupManagedClusterManagedVllm,
+  type StartManagedClusterVllmResult,
+  startAutomaticManagedClusterVllm,
+} from "./managed-cluster-lifecycle.js";
 import {
-  DUAL_SPARK_VLLM_MASTER_PORT,
-  type DualSparkVllmPlan,
-  materializeDualSparkVllmPlan,
-} from "./dual-spark-materialize.js";
-import type { DualSparkTopologyOutput } from "./dual-spark-topology.js";
+  type ManagedClusterVllmPlan,
+  managedClusterHeadRole,
+  materializeManagedClusterVllmPlan,
+} from "./managed-cluster-materialize.js";
+import {
+  type PersistManagedClusterVllmRuntimeReceiptInput,
+  persistManagedClusterVllmRuntimeReceipt,
+} from "./managed-cluster-runtime-receipt.js";
+import type { ManagedClusterTopologyOutput } from "./managed-cluster-topology.js";
 import { assertNoManagedDistributedVllmRuntimeReceipts } from "./managed-runtime-receipts.js";
 import { resolveManagedInferenceServing } from "./resolver.js";
-import {
-  type PersistDualSparkVllmRuntimeReceiptInput,
-  persistDualSparkVllmRuntimeReceipt,
-} from "./spark-runtime-receipt.js";
 
-export interface DualSparkInstallerOptions {
+export interface ManagedClusterInstallerOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly nonInteractive: boolean;
   readonly platform: VllmProfile["platform"];
@@ -54,7 +54,7 @@ export interface DualSparkInstallerOptions {
   readonly beforeInstall?: (modelId: string) => void;
 }
 
-export interface DualSparkInstallerEffects {
+export interface ManagedClusterInstallerEffects {
   readonly prerequisites: () => { ok: boolean; reason?: string };
   readonly pullImage: (
     profile: VllmProfile,
@@ -69,22 +69,22 @@ export interface DualSparkInstallerEffects {
   readonly printDownloadAuthentication: (nonInteractive: boolean) => void;
 }
 
-export type DualSparkInstallerResult =
+export type ManagedClusterInstallerResult =
   | { readonly kind: "not-selected" }
   | { readonly kind: "handled"; readonly result: { readonly ok: boolean } };
 
-interface DualSparkInstallerDeps {
-  readonly probeCapability: typeof probeDualSparkManagedServingCapability;
-  readonly revalidateCapability: typeof revalidateDualSparkManagedServingCapability;
-  readonly claimCapability: typeof claimDualSparkManagedServingCapability;
+interface ManagedClusterInstallerDeps {
+  readonly probeCapability: typeof probeManagedClusterManagedServingCapability;
+  readonly revalidateCapability: typeof revalidateManagedClusterManagedServingCapability;
+  readonly claimCapability: typeof claimManagedClusterManagedServingCapability;
   readonly resolveSelection: (
-    input: ManagedInferenceResolverInput<DualSparkTopologyOutput>,
-  ) => ManagedInferenceResolution<DualSparkTopologyOutput>;
-  readonly materializePlan: typeof materializeDualSparkVllmPlan;
-  readonly createExecutor: typeof createDualSparkVllmExecutor;
-  readonly start: typeof startAutomaticDualSparkVllm;
-  readonly cleanup: typeof cleanupDualSparkManagedVllm;
-  readonly persistReceipt: typeof persistDualSparkVllmRuntimeReceipt;
+    input: ManagedInferenceResolverInput<ManagedClusterTopologyOutput>,
+  ) => ManagedInferenceResolution<ManagedClusterTopologyOutput>;
+  readonly materializePlan: typeof materializeManagedClusterVllmPlan;
+  readonly createExecutor: typeof createManagedClusterVllmExecutor;
+  readonly start: typeof startAutomaticManagedClusterVllm;
+  readonly cleanup: typeof cleanupManagedClusterManagedVllm;
+  readonly persistReceipt: typeof persistManagedClusterVllmRuntimeReceipt;
   readonly ensureApiKey: typeof ensureManagedVllmApiKey;
   readonly assertNoRuntimeReceipts: typeof assertNoManagedDistributedVllmRuntimeReceipts;
   readonly clearBinding: typeof clearDualStationSshBinding;
@@ -94,16 +94,16 @@ interface DualSparkInstallerDeps {
   readonly warn: (line: string) => void;
 }
 
-const DEFAULT_DEPS: DualSparkInstallerDeps = {
-  probeCapability: probeDualSparkManagedServingCapability,
-  revalidateCapability: revalidateDualSparkManagedServingCapability,
-  claimCapability: claimDualSparkManagedServingCapability,
+const DEFAULT_DEPS: ManagedClusterInstallerDeps = {
+  probeCapability: probeManagedClusterManagedServingCapability,
+  revalidateCapability: revalidateManagedClusterManagedServingCapability,
+  claimCapability: claimManagedClusterManagedServingCapability,
   resolveSelection: resolveManagedInferenceServing,
-  materializePlan: materializeDualSparkVllmPlan,
-  createExecutor: createDualSparkVllmExecutor,
-  start: startAutomaticDualSparkVllm,
-  cleanup: cleanupDualSparkManagedVllm,
-  persistReceipt: persistDualSparkVllmRuntimeReceipt,
+  materializePlan: materializeManagedClusterVllmPlan,
+  createExecutor: createManagedClusterVllmExecutor,
+  start: startAutomaticManagedClusterVllm,
+  cleanup: cleanupManagedClusterManagedVllm,
+  persistReceipt: persistManagedClusterVllmRuntimeReceipt,
   ensureApiKey: ensureManagedVllmApiKey,
   assertNoRuntimeReceipts: assertNoManagedDistributedVllmRuntimeReceipts,
   clearBinding: clearDualStationSshBinding,
@@ -137,13 +137,13 @@ function recipeApiPort(recipe: ManagedInferenceServingRecipe): number | null {
 }
 
 function selectedHostStorageFailure(
-  host: DualSparkHostObservation,
+  host: ManagedClusterHostObservation,
   label: string,
   recipe: ManagedInferenceServingRecipe,
 ): SelectedRecipeAdmissionFailure | null {
   const requirements = new Map<string, bigint>();
   const available = new Map<string, bigint>();
-  const add = (capacity: DualSparkStorageCapacityObservation, required: bigint): boolean => {
+  const add = (capacity: ManagedClusterStorageCapacityObservation, required: bigint): boolean => {
     if (capacity.filesystemId === null || capacity.availableBytes === null) return false;
     requirements.set(
       capacity.filesystemId,
@@ -182,19 +182,17 @@ function selectedHostStorageFailure(
 }
 
 function selectedRecipeAdmissionFailure(
-  capability: DualSparkDetectedManagedServingCapability,
+  capability: ManagedClusterDetectedManagedServingCapability,
   recipe: ManagedInferenceServingRecipe,
 ): SelectedRecipeAdmissionFailure | null {
   const apiPort = recipeApiPort(recipe);
   if (apiPort === null) {
     return { code: "runtime-unknown", reason: "The selected recipe serving port is invalid." };
   }
-  for (const [host, label] of [
-    [capability.local, "Local DGX Spark"],
-    [capability.peer, "Peer DGX Spark"],
-  ] as const) {
+  for (const [index, host] of [capability.local, ...capability.peers].entries()) {
+    const label = index === 0 ? "Local DGX Spark" : `Managed cluster peer ${String(index)}`;
     const occupied = host.runtimeSnapshot.listeningPorts.find(
-      (port) => port === apiPort || port === DUAL_SPARK_VLLM_MASTER_PORT,
+      (port) => port === apiPort || port === recipe.spec.execution.rendezvousPort,
     );
     if (occupied !== undefined) {
       return {
@@ -227,32 +225,33 @@ function requiredPositiveIntegerArgument(
 }
 
 function managedProfile(
-  plan: DualSparkVllmPlan,
+  plan: ManagedClusterVllmPlan,
   recipe: ManagedInferenceServingRecipe,
 ): VllmProfile {
+  const head = managedClusterHeadRole(plan);
   return {
     name: recipe.metadata.displayName,
     platform: "spark",
-    image: plan.roles.head.image,
-    imageDownloadSizeBytes: plan.roles.head.runtime.imageDownloadSizeBytes,
+    image: head.image,
+    imageDownloadSizeBytes: head.runtime.imageDownloadSizeBytes,
     defaultModel: managedModel(plan, recipe),
-    containerName: plan.roles.head.containerName,
+    containerName: head.containerName,
     dockerRunFlags: [],
     pullTimeoutSec: recipe.spec.runtime.pullTimeoutSeconds,
     loadTimeoutSec: Math.ceil(plan.readiness.timeoutMs / 1000),
-    modelDownloadSizeBytes: plan.roles.head.preparation.modelDownloadSizeBytes,
+    modelDownloadSizeBytes: head.preparation.modelDownloadSizeBytes,
   };
 }
 
 function managedModel(
-  plan: DualSparkVllmPlan,
+  plan: ManagedClusterVllmPlan,
   recipe: ManagedInferenceServingRecipe,
 ): VllmModelDef {
   return {
     id: plan.model.id,
     label: recipe.metadata.displayName,
     envValue: plan.model.servedName,
-    downloadSizeBytes: plan.roles.head.preparation.modelDownloadSizeBytes,
+    downloadSizeBytes: managedClusterHeadRole(plan).preparation.modelDownloadSizeBytes,
     maxModelLen: requiredPositiveIntegerArgument(recipe, "--max-model-len"),
     revision: plan.model.revision,
     servedModelId: plan.model.servedName,
@@ -275,54 +274,65 @@ function selectionIntent(env: NodeJS.ProcessEnv) {
 }
 
 function automaticIntentDefersToLegacy(env: NodeJS.ProcessEnv): boolean {
-  const pairIntent =
-    String(env[NEMOCLAW_DGX_SPARK_PEER_ENV] ?? "").trim() ||
+  const clusterIntent =
+    String(env[NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV] ?? "").trim() ||
     String(env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
-  if (pairIntent) return false;
+  if (clusterIntent) return false;
   return Boolean(
     String(env.NEMOCLAW_VLLM_MODEL ?? "").trim() || String(env[VLLM_EXTRA_ARGS_ENV] ?? "").trim(),
   );
 }
 
 function printSummary(
-  capability: DualSparkDetectedManagedServingCapability,
-  plan: DualSparkVllmPlan,
-  deps: DualSparkInstallerDeps,
+  capability: ManagedClusterDetectedManagedServingCapability,
+  plan: ManagedClusterVllmPlan,
+  deps: ManagedClusterInstallerDeps,
 ): void {
   const rails = capability.topology.output.rails
-    .map(
-      ({ head, worker }) =>
-        `${head.address}/${String(head.prefixLength)} to ${worker.address}/${String(worker.prefixLength)}`,
+    .map(({ endpoints }) =>
+      endpoints
+        .map(({ address, prefixLength }) => `${address}/${String(prefixLength)}`)
+        .join(" to "),
     )
     .join(", ");
+  const head = managedClusterHeadRole(plan);
   deps.log();
-  deps.log("  vLLM (two DGX Sparks, experimental):");
+  deps.log(`  vLLM (${String(plan.roles.length)}-node DGX Spark cluster, experimental):`);
   deps.log(`    Serving profile: ${plan.presetId}`);
   deps.log(`    Recipe: ${plan.recipeId}`);
-  deps.log(`    Image: ${plan.roles.head.image}`);
+  deps.log(`    Image: ${head.image}`);
   deps.log(`    Model: ${plan.model.id}@${plan.model.revision}`);
   deps.log(`    Served model: ${plan.model.servedName}`);
-  deps.log(`    Topology: ${capability.local.hostname} + ${capability.peer.hostname}`);
+  deps.log(
+    `    Topology: ${[capability.local, ...capability.peers]
+      .map(({ hostname }) => hostname)
+      .join(" + ")}`,
+  );
   deps.log(`    Direct rails: ${rails}`);
   deps.log(
     `    RoCEv2 GIDs: ${capability.topology.output.rails
-      .map(({ head, worker }) => `${String(head.roceGid.index)}/${String(worker.roceGid.index)}`)
+      .map(({ endpoints }) => endpoints.map(({ roceGid }) => String(roceGid.index)).join("/"))
       .join(", ")}`,
   );
   deps.log(
-    `    Model caches: ${capability.local.storage.huggingFace.cacheRoot}, ${capability.peer.storage.huggingFace.cacheRoot}`,
+    `    Model caches: ${[capability.local, ...capability.peers]
+      .map(({ storage }) => storage.huggingFace.cacheRoot)
+      .join(", ")}`,
   );
-  deps.log("    Launch order: worker first, then head");
-  deps.log("    Restart policy: none; a stopped pair requires explicit cleanup");
-  deps.log("    Experimental: physical two-node end-to-end validation is pending");
+  deps.log("    Launch order: descending worker ranks, then head");
+  deps.log("    Restart policy: none; a stopped cluster requires explicit cleanup");
+  deps.log("    Experimental: physical end-to-end validation is pending");
 }
 
 function resolutionFailure(
-  resolution: Exclude<ManagedInferenceResolution<DualSparkTopologyOutput>, { outcome: "selected" }>,
-  selectionIntent: DualSparkDetectedManagedServingCapability["selectionIntent"],
+  resolution: Exclude<
+    ManagedInferenceResolution<ManagedClusterTopologyOutput>,
+    { outcome: "selected" }
+  >,
+  selectionIntent: ManagedClusterDetectedManagedServingCapability["selectionIntent"],
   allowAutomaticFallback: boolean,
-  deps: DualSparkInstallerDeps,
-): DualSparkInstallerResult {
+  deps: ManagedClusterInstallerDeps,
+): ManagedClusterInstallerResult {
   if (
     allowAutomaticFallback &&
     selectionIntent === "automatic" &&
@@ -330,16 +340,16 @@ function resolutionFailure(
   ) {
     return { kind: "not-selected" };
   }
-  deps.error(`  Two-Spark managed vLLM setup unavailable: ${resolution.message}`);
+  deps.error(`  Managed-cluster vLLM setup unavailable: ${resolution.message}`);
   return { kind: "handled", result: { ok: false } };
 }
 
 function admissionFailure(
   failure: SelectedRecipeAdmissionFailure,
-  selectionIntent: DualSparkDetectedManagedServingCapability["selectionIntent"],
+  selectionIntent: ManagedClusterDetectedManagedServingCapability["selectionIntent"],
   allowAutomaticFallback: boolean,
-  deps: DualSparkInstallerDeps,
-): DualSparkInstallerResult {
+  deps: ManagedClusterInstallerDeps,
+): ManagedClusterInstallerResult {
   if (
     allowAutomaticFallback &&
     selectionIntent === "automatic" &&
@@ -347,32 +357,43 @@ function admissionFailure(
   ) {
     return { kind: "not-selected" };
   }
-  deps.error(`  Two-Spark managed vLLM setup stopped: ${failure.reason}`);
+  deps.error(`  Managed-cluster vLLM setup stopped: ${failure.reason}`);
   return { kind: "handled", result: { ok: false } };
 }
 
 function receiptInput(
-  capability: DualSparkConfirmedManagedServingCapability,
-  plan: DualSparkVllmPlan,
-  started: Extract<StartDualSparkVllmResult, { ok: true }>,
-): PersistDualSparkVllmRuntimeReceiptInput {
+  capability: ManagedClusterConfirmedManagedServingCapability,
+  plan: ManagedClusterVllmPlan,
+  started: Extract<StartManagedClusterVllmResult, { ok: true }>,
+): PersistManagedClusterVllmRuntimeReceiptInput {
+  const hosts = new Map(
+    [capability.local, ...capability.peers].map((host) => [host.nodeId, host] as const),
+  );
   return {
     plan,
-    peerSshBinding: capability.peerSshBinding,
-    localCacheRoot: capability.local.storage.huggingFace.cacheRoot,
-    peerCacheRoot: capability.peer.storage.huggingFace.cacheRoot,
     apiKeyFingerprint: started.apiKeyFingerprint,
-    headContainerId: started.headContainerId,
-    workerContainerId: started.workerContainerId,
+    nodes: plan.roles.map((rolePlan) => {
+      const host = hosts.get(rolePlan.nodeId)!;
+      const owned = started.containers.find(({ nodeId }) => nodeId === rolePlan.nodeId)!;
+      const transport = capability.sshBindings.find(({ nodeId }) => nodeId === rolePlan.nodeId);
+      return {
+        nodeId: rolePlan.nodeId,
+        cacheRoot: host.storage.huggingFace.cacheRoot,
+        containerId: owned.containerId,
+        ...(transport
+          ? { sshBinding: transport.binding, discoveryStatePath: transport.statePath }
+          : {}),
+      };
+    }),
   };
 }
 
-/** Select and run the automatic two-Spark profile without changing the legacy Spark path. */
-export async function tryInstallDualSparkManagedVllm(
-  options: DualSparkInstallerOptions,
-  effects: DualSparkInstallerEffects,
-  overrides: Partial<DualSparkInstallerDeps> = {},
-): Promise<DualSparkInstallerResult> {
+/** Select and run the automatic managed cluster profile without changing the legacy DGX Spark path. */
+export async function tryInstallManagedClusterManagedVllm(
+  options: ManagedClusterInstallerOptions,
+  effects: ManagedClusterInstallerEffects,
+  overrides: Partial<ManagedClusterInstallerDeps> = {},
+): Promise<ManagedClusterInstallerResult> {
   if (options.platform !== "spark") return { kind: "not-selected" };
   const env = options.env ?? process.env;
   const deferToLegacy = automaticIntentDefersToLegacy(env);
@@ -390,14 +411,14 @@ export async function tryInstallDualSparkManagedVllm(
     return { kind: "not-selected" };
   }
   if (detected.kind !== "ready") {
-    deps.error(`  Two-Spark managed vLLM setup stopped: ${detected.reason}`);
+    deps.error(`  Managed-cluster vLLM setup stopped: ${detected.reason}`);
     return { kind: "handled", result: { ok: false } };
   }
 
-  let confirmedBinding: DualSparkConfirmedManagedServingCapability | null = null;
+  let confirmedBinding: ManagedClusterConfirmedManagedServingCapability | null = null;
   let retainBinding = false;
   try {
-    // Explicit legacy model/argument intent keeps the single-Spark path, but
+    // Explicit legacy model/argument intent keeps the single-host DGX Spark path, but
     // only after read-only discovery has proved that doing so will not overlap
     // a related distributed runtime or ambiguous binding.
     if (deferToLegacy) return { kind: "not-selected" };
@@ -415,17 +436,17 @@ export async function tryInstallDualSparkManagedVllm(
       return admissionFailure(previewAdmission, detected.selectionIntent, true, deps);
     }
 
-    let previewPlan: DualSparkVllmPlan;
+    let previewPlan: ManagedClusterVllmPlan;
     try {
       previewPlan = deps.materializePlan(previewResolution);
     } catch (error) {
-      deps.error(`  Two-Spark managed vLLM setup stopped: ${(error as Error).message}`);
+      deps.error(`  Managed-cluster vLLM setup stopped: ${(error as Error).message}`);
       return { kind: "handled", result: { ok: false } };
     }
     try {
       deps.assertGatedModelAccess(managedModel(previewPlan, previewResolution.recipe), env);
     } catch (error) {
-      deps.error(`  Two-Spark managed vLLM setup stopped: ${(error as Error).message}`);
+      deps.error(`  Managed-cluster vLLM setup stopped: ${(error as Error).message}`);
       return { kind: "handled", result: { ok: false } };
     }
     printSummary(detected, previewPlan, deps);
@@ -445,7 +466,7 @@ export async function tryInstallDualSparkManagedVllm(
 
     const revalidated = deps.revalidateCapability(detected, { env });
     if (revalidated.kind !== "ready") {
-      deps.error(`  Two-Spark managed vLLM setup stopped: ${revalidated.reason}`);
+      deps.error(`  Managed-cluster vLLM setup stopped: ${revalidated.reason}`);
       return { kind: "handled", result: { ok: false } };
     }
 
@@ -468,13 +489,13 @@ export async function tryInstallDualSparkManagedVllm(
       revalidatedResolution.presetDigest !== previewResolution.presetDigest ||
       revalidatedResolution.recipeDigest !== previewResolution.recipeDigest
     ) {
-      deps.error("  Two-Spark managed vLLM setup stopped: the selected profile changed.");
+      deps.error("  Managed-cluster vLLM setup stopped: the selected profile changed.");
       return { kind: "handled", result: { ok: false } };
     }
 
     const confirmation = deps.claimCapability(revalidated);
     if (confirmation.kind !== "ready") {
-      deps.error(`  Two-Spark managed vLLM setup stopped: ${confirmation.reason}`);
+      deps.error(`  Managed-cluster vLLM setup stopped: ${confirmation.reason}`);
       return { kind: "handled", result: { ok: false } };
     }
     confirmedBinding = confirmation;
@@ -483,11 +504,11 @@ export async function tryInstallDualSparkManagedVllm(
       topologyQualification: confirmation.topology,
     };
 
-    let plan: DualSparkVllmPlan;
+    let plan: ManagedClusterVllmPlan;
     try {
       plan = deps.materializePlan(resolution);
     } catch (error) {
-      deps.error(`  Two-Spark managed vLLM setup stopped: ${(error as Error).message}`);
+      deps.error(`  Managed-cluster vLLM setup stopped: ${(error as Error).message}`);
       return { kind: "handled", result: { ok: false } };
     }
     if (
@@ -496,9 +517,10 @@ export async function tryInstallDualSparkManagedVllm(
       plan.model.id !== previewPlan.model.id ||
       plan.model.revision !== previewPlan.model.revision ||
       plan.model.servedName !== previewPlan.model.servedName ||
-      plan.roles.head.image !== previewPlan.roles.head.image
+      plan.roles.length !== previewPlan.roles.length ||
+      plan.roles.some((role, index) => role.image !== previewPlan.roles[index]?.image)
     ) {
-      deps.error("  Two-Spark managed vLLM setup stopped: the presented serving plan changed.");
+      deps.error("  Managed-cluster vLLM setup stopped: the presented serving plan changed.");
       return { kind: "handled", result: { ok: false } };
     }
 
@@ -520,12 +542,11 @@ export async function tryInstallDualSparkManagedVllm(
       return { kind: "handled", result: { ok: false } };
     }
 
-    const hosts = {
-      head: confirmation.local,
-      worker: confirmation.peer,
-    } as const;
-    const stageNode: DualSparkExecutorStageNode = async (_request, target) => {
-      const host = hosts[target.role];
+    const hosts = new Map(
+      [confirmation.local, ...confirmation.peers].map((host) => [host.nodeId, host] as const),
+    );
+    const stageNode: ManagedClusterExecutorStageNode = async (_request, target) => {
+      const host = hosts.get(target.nodeId)!;
       deps.log(`  ==> Staging pinned vLLM image and model on ${host.hostname}`);
       const pull = await effects.pullImage(profile, { ...target.dockerEnv });
       if (!pull.ok) return pull;
@@ -539,11 +560,17 @@ export async function tryInstallDualSparkManagedVllm(
         },
       );
     };
-    const executorOptions: CreateDualSparkVllmExecutorOptions = {
+    const executorOptions: CreateManagedClusterVllmExecutorOptions = {
       plan,
-      peerSshBinding: confirmation.peerSshBinding,
-      localCacheRoot: confirmation.local.storage.huggingFace.cacheRoot,
-      peerCacheRoot: confirmation.peer.storage.huggingFace.cacheRoot,
+      nodes: plan.roles.map((rolePlan) => {
+        const host = hosts.get(rolePlan.nodeId)!;
+        const binding = confirmation.sshBindings.find(({ nodeId }) => nodeId === rolePlan.nodeId);
+        return {
+          nodeId: rolePlan.nodeId,
+          modelCacheRoot: host.storage.huggingFace.cacheRoot,
+          ...(binding ? { sshBinding: binding.binding } : {}),
+        };
+      }),
       stageNode,
     };
     const executor = deps.createExecutor(executorOptions);
@@ -563,7 +590,7 @@ export async function tryInstallDualSparkManagedVllm(
     } catch (error) {
       if (!started.reusedExisting) {
         const cleanup = await deps.cleanup(plan, apiKey, executor);
-        const expected = new Set([started.headContainerId, started.workerContainerId]);
+        const expected = new Set(started.containers.map(({ containerId }) => containerId));
         if (
           cleanup.ok &&
           cleanup.removedContainerIds.length === expected.size &&
@@ -573,33 +600,41 @@ export async function tryInstallDualSparkManagedVllm(
           retainBinding = false;
         } else {
           deps.warn(
-            `  vLLM rollback warning: ${cleanup.ok ? "exact pair cleanup was incomplete" : cleanup.reason}`,
+            `  vLLM rollback warning: ${cleanup.ok ? "exact cluster cleanup was incomplete" : cleanup.reason}`,
           );
         }
       }
       deps.error(
-        `  vLLM install failed: could not persist managed two-Spark cleanup ownership: ${(error as Error).message}`,
+        `  vLLM install failed: could not persist managed cluster cleanup ownership: ${(error as Error).message}`,
       );
       return { kind: "handled", result: { ok: false } };
     }
 
-    deps.log(`  ✓ vLLM ready across two DGX Sparks at ${started.baseUrl}`);
+    deps.log(
+      `  ✓ vLLM ready across ${String(plan.roles.length)} DGX Spark systems at ${started.baseUrl}`,
+    );
     return { kind: "handled", result: { ok: true } };
   } catch (error) {
-    deps.error(`  Two-Spark managed vLLM setup failed closed: ${(error as Error).message}`);
+    deps.error(`  Managed-cluster vLLM setup failed closed: ${(error as Error).message}`);
     return { kind: "handled", result: { ok: false } };
   } finally {
     if (confirmedBinding && retainBinding) {
       deps.warn(
-        `  vLLM rollback warning: retained two-Spark SSH ownership state at ${confirmedBinding.peerSshBindingStatePath} because exact container rollback is incomplete. Resolve the related runtime state before retrying setup or uninstall.`,
+        `  vLLM rollback warning: retained managed cluster SSH ownership state at ${confirmedBinding.sshBindings
+          .map(({ statePath }) => statePath)
+          .join(
+            ", ",
+          )} because exact container rollback is incomplete. Resolve the related runtime state before retrying setup or uninstall.`,
       );
     } else if (confirmedBinding) {
-      try {
-        deps.clearBinding(confirmedBinding.peerSshBindingStatePath);
-      } catch (error) {
-        deps.warn(
-          `  vLLM cleanup warning: temporary two-Spark SSH state could not be retired: ${(error as Error).message}`,
-        );
+      for (const { statePath } of confirmedBinding.sshBindings) {
+        try {
+          deps.clearBinding(statePath);
+        } catch (error) {
+          deps.warn(
+            `  vLLM cleanup warning: temporary managed cluster SSH state could not be retired: ${(error as Error).message}`,
+          );
+        }
       }
     }
   }

@@ -40,11 +40,17 @@ function okWithKnownGatewayList(command: string, args: readonly string[]): RunRe
     : ok();
 }
 
+function managedRuntimeBindingPath(receiptPath: string): string {
+  return receiptPath.endsWith("managed-cluster-vllm-runtime.json")
+    ? `${receiptPath}.rank-1.ssh-binding`
+    : `${receiptPath}.ssh-binding`;
+}
+
 describe("managed distributed vLLM runtime uninstall", () => {
   it.each([
     "dual-station-vllm-runtime.json",
-    "dual-spark-vllm-runtime.json",
-  ])("removes the pair owned by %s before the remaining full-uninstall steps", (receiptFile) => {
+    "managed-cluster-vllm-runtime.json",
+  ])("removes the runtime owned by %s before the remaining full-uninstall steps", (receiptFile) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-dual-pair-"));
     const stateDir = path.join(home, ".nemoclaw");
     fs.mkdirSync(stateDir, { mode: 0o700 });
@@ -82,14 +88,17 @@ describe("managed distributed vLLM runtime uninstall", () => {
     }
   });
 
-  it("associates the canonical leftover Spark discovery binding with its durable receipt", () => {
+  it("associates a canonical cluster discovery binding with its durable receipt", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-spark-claim-"));
     const stateDir = path.join(home, ".nemoclaw");
-    const receiptPath = path.join(stateDir, "dual-spark-vllm-runtime.json");
-    const discoveryBindingPath = path.join(stateDir, "dual-spark-managed-serving.json.ssh-binding");
+    const receiptPath = path.join(stateDir, "managed-cluster-vllm-runtime.json");
+    const discoveryBindingPath = path.join(
+      stateDir,
+      "managed-cluster-managed-serving.json.spark-worker.ssh-binding",
+    );
     fs.mkdirSync(stateDir, { mode: 0o700 });
     fs.writeFileSync(receiptPath, "{}\n", { mode: 0o600 });
-    fs.mkdirSync(`${receiptPath}.ssh-binding`, { mode: 0o700 });
+    fs.mkdirSync(managedRuntimeBindingPath(receiptPath), { mode: 0o700 });
     fs.mkdirSync(discoveryBindingPath, { mode: 0o700 });
     const runDualStationRuntimeCleanup = vi.fn(() => ok());
 
@@ -121,14 +130,18 @@ describe("managed distributed vLLM runtime uninstall", () => {
 
   it.each([
     {
-      title: "a noncanonical gateway Spark claim despite a host-global Spark receipt",
-      receiptFile: "dual-spark-vllm-runtime.json",
-      bindingSegments: ["gateways", "18080", "dual-spark-managed-serving.json.ssh-binding"],
+      title: "a noncanonical gateway cluster claim despite a host-global cluster receipt",
+      receiptFile: "managed-cluster-vllm-runtime.json",
+      bindingSegments: [
+        "gateways",
+        "18080",
+        "managed-cluster-managed-serving.json.spark-worker.ssh-binding",
+      ],
     },
     {
-      title: "a canonical Spark claim when only a Station receipt exists",
+      title: "a canonical cluster claim when only a Station receipt exists",
       receiptFile: "dual-station-vllm-runtime.json",
-      bindingSegments: ["dual-spark-managed-serving.json.ssh-binding"],
+      bindingSegments: ["managed-cluster-managed-serving.json.spark-worker.ssh-binding"],
     },
   ])("refuses $title", ({ receiptFile, bindingSegments }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-spark-claim-other-"));
@@ -137,7 +150,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     const discoveryBindingPath = path.join(stateDir, ...bindingSegments);
     fs.mkdirSync(stateDir, { mode: 0o700 });
     fs.writeFileSync(receiptPath, "{}\n", { mode: 0o600 });
-    fs.mkdirSync(`${receiptPath}.ssh-binding`, { mode: 0o700 });
+    fs.mkdirSync(managedRuntimeBindingPath(receiptPath), { mode: 0o700 });
     fs.mkdirSync(discoveryBindingPath, { recursive: true, mode: 0o700 });
     const errors: string[] = [];
     const runDualStationRuntimeCleanup = vi.fn(() => ok());
@@ -260,7 +273,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-dual-conflict-"));
     const stateDir = path.join(home, ".nemoclaw");
     fs.mkdirSync(stateDir, { mode: 0o700 });
-    for (const name of ["dual-spark-vllm-runtime.json", "dual-station-vllm-runtime.json"]) {
+    for (const name of ["managed-cluster-vllm-runtime.json", "dual-station-vllm-runtime.json"]) {
       fs.writeFileSync(path.join(stateDir, name), "{}\n", { mode: 0o600 });
     }
     const errors: string[] = [];
@@ -290,7 +303,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
       expect(runDocker).not.toHaveBeenCalled();
       expect(rmSync).not.toHaveBeenCalled();
       expect(errors).toContain(
-        "Both dual-Spark and dual-Station managed runtime receipts exist. NemoClaw refused ambiguous cleanup before making changes.",
+        "Both managed cluster and dual-Station managed runtime receipts exist. NemoClaw refused ambiguous cleanup before making changes.",
       );
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
@@ -298,13 +311,13 @@ describe("managed distributed vLLM runtime uninstall", () => {
   });
 
   it.each([
-    "dual-spark-vllm-runtime.json",
-    "dual-spark-managed-serving.json",
-    "dual-station-vllm-runtime.json",
-  ])("refuses an orphaned %s SSH binding before cleanup or other mutation", (receiptFile) => {
+    "managed-cluster-vllm-runtime.json.rank-1.ssh-binding",
+    "managed-cluster-managed-serving.json.spark-worker.ssh-binding",
+    "dual-station-vllm-runtime.json.ssh-binding",
+  ])("refuses an orphaned %s before cleanup or other mutation", (bindingEntry) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-binding-orphan-"));
     const stateDir = path.join(home, ".nemoclaw");
-    const bindingPath = path.join(stateDir, `${receiptFile}.ssh-binding`);
+    const bindingPath = path.join(stateDir, bindingEntry);
     fs.mkdirSync(bindingPath, { recursive: true, mode: 0o700 });
     const errors: string[] = [];
     const runDualStationRuntimeCleanup = vi.fn(() => ok());
@@ -342,7 +355,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
   });
 
   it.each([
-    ["Spark", "dual-spark-vllm-runtime.json"],
+    ["Spark", "managed-cluster-vllm-runtime.json"],
     ["Station", "dual-station-vllm-runtime.json"],
   ])("finds the host-global %s receipt from a non-default gateway selection", async (_topology, receiptFile) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-managed-global-"));
@@ -351,7 +364,7 @@ describe("managed distributed vLLM runtime uninstall", () => {
     fs.writeFileSync(path.join(stateDir, receiptFile), "{}\n", {
       mode: 0o600,
     });
-    fs.mkdirSync(path.join(stateDir, `${receiptFile}.ssh-binding`), {
+    fs.mkdirSync(managedRuntimeBindingPath(path.join(stateDir, receiptFile)), {
       mode: 0o700,
     });
     fs.writeFileSync(path.join(stateDir, "dual-station-vllm-api-key"), `${"a".repeat(64)}\n`, {

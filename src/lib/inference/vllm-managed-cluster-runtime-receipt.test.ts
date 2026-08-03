@@ -6,32 +6,32 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fixtureDualSparkSelection } from "./serving/dual-spark-fixture.test-support";
 import { loadManagedInferenceCatalog } from "./serving/catalog";
 import { managedInferenceDigest } from "./serving/catalog-integrity";
 import type { CompiledManagedInferenceCatalog } from "./serving/catalog-types";
+import { fixtureManagedClusterSelection } from "./serving/managed-cluster-fixture.test-support";
 import {
-  type DualSparkNodeSnapshot,
-  type DualSparkVllmLifecycleDeps,
-  dualSparkVllmApiKeyFingerprint,
-} from "./serving/dual-spark-lifecycle";
+  type ManagedClusterNodeSnapshot,
+  type ManagedClusterVllmLifecycleDeps,
+  managedClusterVllmApiKeyFingerprint,
+} from "./serving/managed-cluster-lifecycle";
 import {
-  DUAL_SPARK_API_KEY_FINGERPRINT_LABEL,
-  DUAL_SPARK_TRANSACTION_LABEL,
-  type DualSparkVllmPlan,
-  type DualSparkVllmRolePlan,
-  materializeDualSparkVllmPlan,
-} from "./serving/dual-spark-materialize";
-import { dualSparkTopologyOutputDigest } from "./serving/dual-spark-topology";
+  MANAGED_CLUSTER_API_KEY_FINGERPRINT_LABEL,
+  MANAGED_CLUSTER_TRANSACTION_LABEL,
+  type ManagedClusterVllmPlan,
+  type ManagedClusterVllmRolePlan,
+  materializeManagedClusterVllmPlan,
+} from "./serving/managed-cluster-materialize";
 import {
-  cleanupInstalledDualSparkVllmRuntime,
-  dualSparkVllmRuntimeReceiptPath,
-  loadDualSparkVllmRuntimeReceipt,
-  type PersistDualSparkVllmRuntimeReceiptInput,
-  persistDualSparkVllmRuntimeReceipt,
-  recoverInstalledDualSparkVllmEndpoint,
-} from "./serving/spark-runtime-receipt";
-import { DUAL_SPARK_MANAGED_SERVING_STATE_FILE } from "./serving/spark-runtime-receipt-path";
+  cleanupInstalledManagedClusterVllmRuntime,
+  loadManagedClusterVllmRuntimeReceipt,
+  managedClusterVllmRuntimeReceiptPath,
+  type PersistManagedClusterVllmRuntimeReceiptInput,
+  persistManagedClusterVllmRuntimeReceipt,
+  recoverInstalledManagedClusterVllmEndpoint,
+} from "./serving/managed-cluster-runtime-receipt";
+import { MANAGED_CLUSTER_MANAGED_SERVING_STATE_FILE } from "./serving/managed-cluster-runtime-receipt-path";
+import { managedClusterTopologyOutputDigest } from "./serving/managed-cluster-topology";
 import {
   clearDualStationSshBinding,
   copyDualStationSshBinding,
@@ -53,7 +53,7 @@ let stateDir: string;
 let sshFixture: DualStationSshBindingFixture;
 
 beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-spark-runtime-receipt-"));
+  root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-cluster-runtime-receipt-"));
   stateDir = path.join(root, ".nemoclaw");
   sshFixture = createDualStationSshBindingFixture("nvidia@spark-worker.local");
 });
@@ -66,37 +66,45 @@ afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-function plan(peerSshBinding: DualStationSshBinding = sshFixture.binding): DualSparkVllmPlan {
-  const selection = fixtureDualSparkSelection();
+function plan(sshBinding: DualStationSshBinding = sshFixture.binding): ManagedClusterVllmPlan {
+  const selection = fixtureManagedClusterSelection();
   const sourceTopology = selection.topologyQualification;
   const output = {
     ...sourceTopology.output,
-    peer: {
-      target: peerSshBinding.peerTarget,
-      sshBindingHandle: encodeDualStationSshBindingHandoff(peerSshBinding),
-    },
+    peers: sourceTopology.output.peers.map((peer) => ({
+      ...peer,
+      target: sshBinding.peerTarget,
+      sshBindingHandle: encodeDualStationSshBindingHandoff(sshBinding),
+    })),
   };
-  return materializeDualSparkVllmPlan({
+  return materializeManagedClusterVllmPlan({
     ...selection,
     topologyQualification: {
       ...sourceTopology,
-      outputDigest: dualSparkTopologyOutputDigest(output),
+      outputDigest: managedClusterTopologyOutputDigest(output),
       output,
     },
   });
 }
 
 function input(
-  peerSshBinding: DualStationSshBinding = sshFixture.binding,
-): PersistDualSparkVllmRuntimeReceiptInput {
+  sshBinding: DualStationSshBinding = sshFixture.binding,
+): PersistManagedClusterVllmRuntimeReceiptInput {
+  const runtimePlan = plan(sshBinding);
   return {
-    plan: plan(peerSshBinding),
-    peerSshBinding,
-    localCacheRoot: "/home/nvidia/.cache/huggingface",
-    peerCacheRoot: "/home/nvidia/.cache/huggingface",
-    apiKeyFingerprint: dualSparkVllmApiKeyFingerprint(API_KEY),
-    headContainerId: HEAD_ID,
-    workerContainerId: WORKER_ID,
+    plan: runtimePlan,
+    nodes: runtimePlan.roles.map((rolePlan) => ({
+      nodeId: rolePlan.nodeId,
+      cacheRoot: "/home/nvidia/.cache/huggingface",
+      containerId: rolePlan.rank === 0 ? HEAD_ID : WORKER_ID,
+      ...(rolePlan.execution.kind === "ssh"
+        ? {
+            sshBinding,
+            discoveryStatePath: path.join(stateDir, MANAGED_CLUSTER_MANAGED_SERVING_STATE_FILE),
+          }
+        : {}),
+    })),
+    apiKeyFingerprint: managedClusterVllmApiKeyFingerprint(API_KEY),
   };
 }
 
@@ -158,19 +166,22 @@ function catalogWithUnrelatedProfile(): CompiledManagedInferenceCatalog {
 function persistWithDiscoveryBinding(): {
   discoveryBindingPath: string;
   discoveryStatePath: string;
-  runtime: ReturnType<typeof persistDualSparkVllmRuntimeReceipt>;
+  runtime: ReturnType<typeof persistManagedClusterVllmRuntimeReceipt>;
 } {
   fs.mkdirSync(stateDir, { mode: 0o700 });
-  const discoveryStatePath = path.join(stateDir, DUAL_SPARK_MANAGED_SERVING_STATE_FILE);
+  const discoveryStatePath = path.join(stateDir, MANAGED_CLUSTER_MANAGED_SERVING_STATE_FILE);
   const binding = copyDualStationSshBinding(discoveryStatePath, sshFixture.binding);
   return {
     discoveryBindingPath: `${discoveryStatePath}.ssh-binding`,
     discoveryStatePath,
-    runtime: persistDualSparkVllmRuntimeReceipt(input(binding), { stateDir }),
+    runtime: persistManagedClusterVllmRuntimeReceipt(input(binding), { stateDir }),
   };
 }
 
-function snapshot(rolePlan: DualSparkVllmRolePlan, containerId: string): DualSparkNodeSnapshot {
+function snapshot(
+  rolePlan: ManagedClusterVllmRolePlan,
+  containerId: string,
+): ManagedClusterNodeSnapshot {
   return {
     containers: [
       {
@@ -181,8 +192,8 @@ function snapshot(rolePlan: DualSparkVllmRolePlan, containerId: string): DualSpa
         healthy: true,
         labels: {
           ...rolePlan.baseLabels,
-          [DUAL_SPARK_API_KEY_FINGERPRINT_LABEL]: dualSparkVllmApiKeyFingerprint(API_KEY),
-          [DUAL_SPARK_TRANSACTION_LABEL]: TRANSACTION_ID,
+          [MANAGED_CLUSTER_API_KEY_FINGERPRINT_LABEL]: managedClusterVllmApiKeyFingerprint(API_KEY),
+          [MANAGED_CLUSTER_TRANSACTION_LABEL]: TRANSACTION_ID,
         },
       },
     ],
@@ -192,10 +203,13 @@ function snapshot(rolePlan: DualSparkVllmRolePlan, containerId: string): DualSpa
 }
 
 function cleanupDeps(
-  runtimePlan: DualSparkVllmPlan,
+  runtimePlan: ManagedClusterVllmPlan,
   ids: { head: string; worker: string } = { head: HEAD_ID, worker: WORKER_ID },
 ): {
-  deps: Pick<DualSparkVllmLifecycleDeps, "inspectNode" | "removeContainer" | "withLifecycleLock">;
+  deps: Pick<
+    ManagedClusterVllmLifecycleDeps,
+    "inspectNode" | "removeContainer" | "withLifecycleLock"
+  >;
   removeContainer: ReturnType<typeof vi.fn>;
 } {
   const removeContainer = vi.fn(async () => ({ ok: true as const }));
@@ -203,8 +217,8 @@ function cleanupDeps(
     deps: {
       inspectNode: async (rolePlan) =>
         rolePlan.role === "head"
-          ? snapshot(runtimePlan.roles.head, ids.head)
-          : snapshot(runtimePlan.roles.worker, ids.worker),
+          ? snapshot(runtimePlan.roles[0], ids.head)
+          : snapshot(runtimePlan.roles[1], ids.worker),
       removeContainer,
       withLifecycleLock: async (_plan, operation) => await operation(),
     },
@@ -212,50 +226,58 @@ function cleanupDeps(
   };
 }
 
-describe("dual-Spark vLLM runtime receipt", () => {
+describe("managed cluster vLLM runtime receipt", () => {
   it("uses the host-global default gateway state root", async () => {
     vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18080");
     vi.resetModules();
-    const { dualSparkVllmRuntimeReceiptPath: selectedReceiptPath } = await import(
-      "./serving/spark-runtime-receipt"
+    const { managedClusterVllmRuntimeReceiptPath: selectedReceiptPath } = await import(
+      "./serving/managed-cluster-runtime-receipt"
     );
     expect(selectedReceiptPath()).toBe(
-      path.join(os.homedir(), ".nemoclaw", "dual-spark-vllm-runtime.json"),
+      path.join(os.homedir(), ".nemoclaw", "managed-cluster-vllm-runtime.json"),
     );
   });
 
   it("persists a private exact runtime plan with a promoted SSH binding and no bearer key", () => {
     const source = input();
-    const runtime = persistDualSparkVllmRuntimeReceipt(source, { stateDir });
-    const receiptPath = dualSparkVllmRuntimeReceiptPath(stateDir);
+    const runtime = persistManagedClusterVllmRuntimeReceipt(source, { stateDir });
+    const receiptPath = managedClusterVllmRuntimeReceiptPath(stateDir);
     const raw = fs.readFileSync(receiptPath, "utf8");
+    const worker = runtime.nodes.find((node) => node.binding)!;
 
     expect(fs.statSync(receiptPath).mode & 0o777).toBe(0o600);
-    expect(fs.lstatSync(`${receiptPath}.ssh-binding`).isDirectory()).toBe(true);
+    expect(fs.lstatSync(`${receiptPath}.rank-1.ssh-binding`).isDirectory()).toBe(true);
     expect(raw).not.toContain(API_KEY);
-    expect(runtime.sshBinding).not.toBe(sshFixture.token);
-    expect(runtime.plan.roles.worker.execution).toMatchObject({
+    expect(worker.sshBinding).not.toBe(sshFixture.token);
+    expect(runtime.plan.roles[1].execution).toMatchObject({
       kind: "ssh",
       expectedTarget: sshFixture.binding.peerTarget,
-      bindingHandle: runtime.sshBinding,
+      bindingHandle: worker.sshBinding,
     });
-    expect(runtime.peerSshBinding.bindingFile).toContain(`${receiptPath}.ssh-binding/`);
-    expect(loadDualSparkVllmRuntimeReceipt({ stateDir })).toEqual(runtime);
+    expect(worker.binding?.bindingFile).toContain(`${receiptPath}.rank-1.ssh-binding/`);
+    expect(loadManagedClusterVllmRuntimeReceipt({ stateDir })).toEqual(runtime);
   });
 
   it("is idempotent only for the same committed runtime", () => {
     const source = input();
-    const first = persistDualSparkVllmRuntimeReceipt(source, { stateDir });
-    const receiptPath = dualSparkVllmRuntimeReceiptPath(stateDir);
+    const first = persistManagedClusterVllmRuntimeReceipt(source, { stateDir });
+    const receiptPath = managedClusterVllmRuntimeReceiptPath(stateDir);
     const original = fs.readFileSync(receiptPath, "utf8");
 
-    expect(persistDualSparkVllmRuntimeReceipt(source, { stateDir })).toEqual(first);
+    expect(persistManagedClusterVllmRuntimeReceipt(source, { stateDir })).toEqual(first);
     expect(() =>
-      persistDualSparkVllmRuntimeReceipt(
-        { ...source, workerContainerId: "e".repeat(64) },
+      persistManagedClusterVllmRuntimeReceipt(
+        {
+          ...source,
+          nodes: source.nodes.map((node) =>
+            node.nodeId === source.plan.roles[1]?.nodeId
+              ? { ...node, containerId: "e".repeat(64) }
+              : node,
+          ),
+        },
         { stateDir },
       ),
-    ).toThrow("different managed dual-Spark runtime receipt");
+    ).toThrow("different managed cluster runtime receipt");
     expect(fs.readFileSync(receiptPath, "utf8")).toBe(original);
   });
 
@@ -263,13 +285,13 @@ describe("dual-Spark vLLM runtime receipt", () => {
     const source = input();
     const currentCatalog = loadManagedInferenceCatalog();
     const changedCatalog = catalogWithUnrelatedProfile();
-    persistDualSparkVllmRuntimeReceipt(source, { stateDir });
+    persistManagedClusterVllmRuntimeReceipt(source, { stateDir });
 
     expect(changedCatalog.catalogDigest).not.toBe(currentCatalog.catalogDigest);
     vi.doMock("./serving/generated/catalog.json", () => ({ default: changedCatalog }));
     vi.resetModules();
-    const { loadDualSparkVllmRuntimeReceipt: loadAgainstChangedCatalog } = await import(
-      "./serving/spark-runtime-receipt"
+    const { loadManagedClusterVllmRuntimeReceipt: loadAgainstChangedCatalog } = await import(
+      "./serving/managed-cluster-runtime-receipt"
     );
     const loaded = loadAgainstChangedCatalog({ stateDir });
     const currentPreset = changedCatalog.presets.find(
@@ -292,7 +314,7 @@ describe("dual-Spark vLLM runtime receipt", () => {
       throw new Error("temporary cleanup failed");
     });
 
-    expect(() => persistDualSparkVllmRuntimeReceipt(input(), { stateDir })).toThrow(
+    expect(() => persistManagedClusterVllmRuntimeReceipt(input(), { stateDir })).toThrow(
       "receipt rename failed",
     );
     expect(rename).toHaveBeenCalledOnce();
@@ -301,14 +323,14 @@ describe("dual-Spark vLLM runtime receipt", () => {
 
   it("refuses a pre-existing SSH binding tree without mutating it", () => {
     fs.mkdirSync(stateDir, { mode: 0o700 });
-    const receiptPath = dualSparkVllmRuntimeReceiptPath(stateDir);
-    const bindingPath = `${receiptPath}.ssh-binding`;
+    const receiptPath = managedClusterVllmRuntimeReceiptPath(stateDir);
+    const bindingPath = `${receiptPath}.rank-1.ssh-binding`;
     const markerPath = path.join(bindingPath, "foreign-state");
     fs.mkdirSync(bindingPath, { mode: 0o700 });
     fs.writeFileSync(markerPath, "leave intact\n", { mode: 0o600 });
 
-    expect(() => persistDualSparkVllmRuntimeReceipt(input(), { stateDir })).toThrow(
-      "Managed dual-Spark SSH binding state already exists",
+    expect(() => persistManagedClusterVllmRuntimeReceipt(input(), { stateDir })).toThrow(
+      "Managed cluster SSH binding state already exists",
     );
     expect(fs.readFileSync(markerPath, "utf8")).toBe("leave intact\n");
     expect(fs.existsSync(receiptPath)).toBe(false);
@@ -318,36 +340,38 @@ describe("dual-Spark vLLM runtime receipt", () => {
     fs.mkdirSync(stateDir, { mode: 0o700 });
     const target = path.join(root, "redirected.json");
     fs.writeFileSync(target, "{}\n", { mode: 0o600 });
-    fs.symlinkSync(target, dualSparkVllmRuntimeReceiptPath(stateDir));
+    fs.symlinkSync(target, managedClusterVllmRuntimeReceiptPath(stateDir));
 
-    expect(() => loadDualSparkVllmRuntimeReceipt({ stateDir })).toThrow("symbolic link");
+    expect(() => loadManagedClusterVllmRuntimeReceipt({ stateDir })).toThrow("symbolic link");
   });
 
   it("rejects changed plan contents before using the persisted binding", () => {
-    persistDualSparkVllmRuntimeReceipt(input(), { stateDir });
-    const receiptPath = dualSparkVllmRuntimeReceiptPath(stateDir);
+    persistManagedClusterVllmRuntimeReceipt(input(), { stateDir });
+    const receiptPath = managedClusterVllmRuntimeReceiptPath(stateDir);
     const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
     receipt.plan.model.id = "foreign/model";
     fs.writeFileSync(receiptPath, `${JSON.stringify(receipt)}\n`, {
       mode: 0o600,
     });
 
-    expect(() => loadDualSparkVllmRuntimeReceipt({ stateDir })).toThrow("plan digest changed");
+    expect(() => loadManagedClusterVllmRuntimeReceipt({ stateDir })).toThrow("plan digest changed");
   });
 
   it("recovers only the exact healthy receipt-owned endpoint synchronously", () => {
-    const runtime = persistDualSparkVllmRuntimeReceipt(input(), { stateDir });
+    const runtime = persistManagedClusterVllmRuntimeReceipt(input(), { stateDir });
     expect(
-      recoverInstalledDualSparkVllmEndpoint({
+      recoverInstalledManagedClusterVllmEndpoint({
         stateDir,
         loadApiKey: () => API_KEY,
         inspectNodesSync: () => ({
-          head: snapshot(runtime.plan.roles.head, HEAD_ID),
-          worker: snapshot(runtime.plan.roles.worker, WORKER_ID),
+          nodes: runtime.plan.roles.map((rolePlan) => ({
+            nodeId: rolePlan.nodeId,
+            snapshot: snapshot(rolePlan, rolePlan.rank === 0 ? HEAD_ID : WORKER_ID),
+          })),
         }),
       }),
     ).toEqual({
-      baseUrl: runtime.plan.roles.head.endpoint,
+      baseUrl: runtime.plan.roles[0].endpoint,
       apiKey: API_KEY,
       apiKeyFingerprint: runtime.apiKeyFingerprint,
       plan: runtime.plan,
@@ -355,23 +379,25 @@ describe("dual-Spark vLLM runtime receipt", () => {
   });
 
   it("signals a managed endpoint whose exact receipt-owned IDs changed", () => {
-    const runtime = persistDualSparkVllmRuntimeReceipt(input(), { stateDir });
+    const runtime = persistManagedClusterVllmRuntimeReceipt(input(), { stateDir });
     expect(() =>
-      recoverInstalledDualSparkVllmEndpoint({
+      recoverInstalledManagedClusterVllmEndpoint({
         stateDir,
         loadApiKey: () => API_KEY,
         inspectNodesSync: () => ({
-          head: snapshot(runtime.plan.roles.head, "e".repeat(64)),
-          worker: snapshot(runtime.plan.roles.worker, WORKER_ID),
+          nodes: runtime.plan.roles.map((rolePlan) => ({
+            nodeId: rolePlan.nodeId,
+            snapshot: snapshot(rolePlan, rolePlan.rank === 0 ? "e".repeat(64) : WORKER_ID),
+          })),
         }),
       }),
     ).toThrow("not recoverable");
   });
 
   it("signals a persisted managed endpoint whose key no longer matches", () => {
-    persistDualSparkVllmRuntimeReceipt(input(), { stateDir });
+    persistManagedClusterVllmRuntimeReceipt(input(), { stateDir });
     expect(() =>
-      recoverInstalledDualSparkVllmEndpoint({
+      recoverInstalledManagedClusterVllmEndpoint({
         stateDir,
         loadApiKey: () => "f".repeat(64),
         inspectNodesSync: vi.fn(),
@@ -383,7 +409,7 @@ describe("dual-Spark vLLM runtime receipt", () => {
     const { discoveryStatePath, runtime } = persistWithDiscoveryBinding();
     const { deps, removeContainer } = cleanupDeps(runtime.plan);
     await expect(
-      cleanupInstalledDualSparkVllmRuntime({
+      cleanupInstalledManagedClusterVllmRuntime({
         stateDir,
         loadApiKey: () => API_KEY,
         createLifecycleDeps: () => deps,
@@ -392,11 +418,13 @@ describe("dual-Spark vLLM runtime receipt", () => {
       kind: "removed",
       removedContainerIds: [HEAD_ID, WORKER_ID],
     });
-    expect(removeContainer).toHaveBeenNthCalledWith(1, runtime.plan.roles.head, HEAD_ID);
-    expect(removeContainer).toHaveBeenNthCalledWith(2, runtime.plan.roles.worker, WORKER_ID);
+    expect(removeContainer).toHaveBeenNthCalledWith(1, runtime.plan.roles[0], HEAD_ID);
+    expect(removeContainer).toHaveBeenNthCalledWith(2, runtime.plan.roles[1], WORKER_ID);
     expect(fs.existsSync(`${discoveryStatePath}.ssh-binding`)).toBe(false);
-    expect(fs.existsSync(dualSparkVllmRuntimeReceiptPath(stateDir))).toBe(false);
-    expect(fs.existsSync(`${dualSparkVllmRuntimeReceiptPath(stateDir)}.ssh-binding`)).toBe(false);
+    expect(fs.existsSync(managedClusterVllmRuntimeReceiptPath(stateDir))).toBe(false);
+    expect(
+      fs.existsSync(`${managedClusterVllmRuntimeReceiptPath(stateDir)}.rank-1.ssh-binding`),
+    ).toBe(false);
   });
 
   it("preserves a replaced canonical discovery binding before container cleanup", async () => {
@@ -407,7 +435,7 @@ describe("dual-Spark vLLM runtime receipt", () => {
     const createLifecycleDeps = vi.fn(() => deps);
 
     await expect(
-      cleanupInstalledDualSparkVllmRuntime({
+      cleanupInstalledManagedClusterVllmRuntime({
         stateDir,
         loadApiKey: () => API_KEY,
         createLifecycleDeps,
@@ -417,21 +445,23 @@ describe("dual-Spark vLLM runtime receipt", () => {
     expect(createLifecycleDeps).not.toHaveBeenCalled();
     expect(removeContainer).not.toHaveBeenCalled();
     expect(fs.existsSync(discoveryBindingPath)).toBe(true);
-    expect(fs.existsSync(dualSparkVllmRuntimeReceiptPath(stateDir))).toBe(true);
-    expect(fs.existsSync(`${dualSparkVllmRuntimeReceiptPath(stateDir)}.ssh-binding`)).toBe(true);
+    expect(fs.existsSync(managedClusterVllmRuntimeReceiptPath(stateDir))).toBe(true);
+    expect(
+      fs.existsSync(`${managedClusterVllmRuntimeReceiptPath(stateDir)}.rank-1.ssh-binding`),
+    ).toBe(true);
   });
 
   it("retains durable ownership when a leftover discovery binding is unsafe to retire", async () => {
     const { discoveryBindingPath, runtime } = persistWithDiscoveryBinding();
-    const snapshots: Record<"head" | "worker", DualSparkNodeSnapshot> = {
-      head: snapshot(runtime.plan.roles.head, HEAD_ID),
-      worker: snapshot(runtime.plan.roles.worker, WORKER_ID),
+    const snapshots: Record<"head" | "worker", ManagedClusterNodeSnapshot> = {
+      head: snapshot(runtime.plan.roles[0], HEAD_ID),
+      worker: snapshot(runtime.plan.roles[1], WORKER_ID),
     };
-    const discoveryBindingModeByRole: Record<DualSparkVllmRolePlan["role"], number> = {
+    const discoveryBindingModeByRole: Record<ManagedClusterVllmRolePlan["role"], number> = {
       head: 0o700,
       worker: 0o755,
     };
-    const removeContainer = vi.fn(async (rolePlan: DualSparkVllmRolePlan, id: string) => {
+    const removeContainer = vi.fn(async (rolePlan: ManagedClusterVllmRolePlan, id: string) => {
       snapshots[rolePlan.role] = {
         ...snapshots[rolePlan.role],
         containers: snapshots[rolePlan.role].containers.filter((container) => container.id !== id),
@@ -443,41 +473,45 @@ describe("dual-Spark vLLM runtime receipt", () => {
       stateDir,
       loadApiKey: () => API_KEY,
       createLifecycleDeps: () => ({
-        inspectNode: async (rolePlan: DualSparkVllmRolePlan) => snapshots[rolePlan.role],
+        inspectNode: async (rolePlan: ManagedClusterVllmRolePlan) => snapshots[rolePlan.role],
         removeContainer,
-        withLifecycleLock: async <T>(_plan: DualSparkVllmPlan, operation: () => Promise<T>) =>
+        withLifecycleLock: async <T>(_plan: ManagedClusterVllmPlan, operation: () => Promise<T>) =>
           await operation(),
       }),
     };
 
-    await expect(cleanupInstalledDualSparkVllmRuntime(options)).rejects.toThrow(
+    await expect(cleanupInstalledManagedClusterVllmRuntime(options)).rejects.toThrow(
       "must be an owner-only directory",
     );
 
     expect(removeContainer).toHaveBeenCalledTimes(2);
     expect(fs.existsSync(discoveryBindingPath)).toBe(true);
-    expect(fs.existsSync(dualSparkVllmRuntimeReceiptPath(stateDir))).toBe(true);
-    expect(fs.existsSync(`${dualSparkVllmRuntimeReceiptPath(stateDir)}.ssh-binding`)).toBe(true);
+    expect(fs.existsSync(managedClusterVllmRuntimeReceiptPath(stateDir))).toBe(true);
+    expect(
+      fs.existsSync(`${managedClusterVllmRuntimeReceiptPath(stateDir)}.rank-1.ssh-binding`),
+    ).toBe(true);
 
     fs.chmodSync(discoveryBindingPath, 0o700);
-    await expect(cleanupInstalledDualSparkVllmRuntime(options)).resolves.toEqual({
+    await expect(cleanupInstalledManagedClusterVllmRuntime(options)).resolves.toEqual({
       kind: "removed",
       removedContainerIds: [],
     });
     expect(removeContainer).toHaveBeenCalledTimes(2);
     expect(fs.existsSync(discoveryBindingPath)).toBe(false);
-    expect(fs.existsSync(dualSparkVllmRuntimeReceiptPath(stateDir))).toBe(false);
-    expect(fs.existsSync(`${dualSparkVllmRuntimeReceiptPath(stateDir)}.ssh-binding`)).toBe(false);
+    expect(fs.existsSync(managedClusterVllmRuntimeReceiptPath(stateDir))).toBe(false);
+    expect(
+      fs.existsSync(`${managedClusterVllmRuntimeReceiptPath(stateDir)}.rank-1.ssh-binding`),
+    ).toBe(false);
   });
 
   it("retains the receipt and resumes after one exact container removal fails", async () => {
     const { discoveryStatePath, runtime } = persistWithDiscoveryBinding();
-    const snapshots: Record<"head" | "worker", DualSparkNodeSnapshot> = {
-      head: snapshot(runtime.plan.roles.head, HEAD_ID),
-      worker: snapshot(runtime.plan.roles.worker, WORKER_ID),
+    const snapshots: Record<"head" | "worker", ManagedClusterNodeSnapshot> = {
+      head: snapshot(runtime.plan.roles[0], HEAD_ID),
+      worker: snapshot(runtime.plan.roles[1], WORKER_ID),
     };
     let workerAttempts = 0;
-    const removeContainer = vi.fn(async (rolePlan: DualSparkVllmRolePlan, id: string) => {
+    const removeContainer = vi.fn(async (rolePlan: ManagedClusterVllmRolePlan, id: string) => {
       const shouldFailWorker = rolePlan.role === "worker" && workerAttempts === 0;
       workerAttempts += Number(rolePlan.role === "worker");
       const removeOwnedContainer = () => {
@@ -497,9 +531,9 @@ describe("dual-Spark vLLM runtime receipt", () => {
         : removeOwnedContainer();
     });
     const deps = {
-      inspectNode: async (rolePlan: DualSparkVllmRolePlan) => snapshots[rolePlan.role],
+      inspectNode: async (rolePlan: ManagedClusterVllmRolePlan) => snapshots[rolePlan.role],
       removeContainer,
-      withLifecycleLock: async <T>(_plan: DualSparkVllmPlan, operation: () => Promise<T>) =>
+      withLifecycleLock: async <T>(_plan: ManagedClusterVllmPlan, operation: () => Promise<T>) =>
         await operation(),
     };
     const options = {
@@ -508,12 +542,12 @@ describe("dual-Spark vLLM runtime receipt", () => {
       createLifecycleDeps: () => deps,
     };
 
-    await expect(cleanupInstalledDualSparkVllmRuntime(options)).rejects.toThrow(
+    await expect(cleanupInstalledManagedClusterVllmRuntime(options)).rejects.toThrow(
       "worker daemon unavailable",
     );
     expect(fs.existsSync(`${discoveryStatePath}.ssh-binding`)).toBe(true);
-    expect(fs.existsSync(dualSparkVllmRuntimeReceiptPath(stateDir))).toBe(true);
-    await expect(cleanupInstalledDualSparkVllmRuntime(options)).resolves.toEqual({
+    expect(fs.existsSync(managedClusterVllmRuntimeReceiptPath(stateDir))).toBe(true);
+    await expect(cleanupInstalledManagedClusterVllmRuntime(options)).resolves.toEqual({
       kind: "removed",
       removedContainerIds: [WORKER_ID],
     });
@@ -523,44 +557,46 @@ describe("dual-Spark vLLM runtime receipt", () => {
       WORKER_ID,
     ]);
     expect(fs.existsSync(`${discoveryStatePath}.ssh-binding`)).toBe(false);
-    expect(fs.existsSync(dualSparkVllmRuntimeReceiptPath(stateDir))).toBe(false);
+    expect(fs.existsSync(managedClusterVllmRuntimeReceiptPath(stateDir))).toBe(false);
   });
 
   it("preserves recovery state when the observed container IDs changed", async () => {
-    const runtime = persistDualSparkVllmRuntimeReceipt(input(), { stateDir });
+    const runtime = persistManagedClusterVllmRuntimeReceipt(input(), { stateDir });
     const { deps, removeContainer } = cleanupDeps(runtime.plan, {
       head: "e".repeat(64),
       worker: WORKER_ID,
     });
     await expect(
-      cleanupInstalledDualSparkVllmRuntime({
+      cleanupInstalledManagedClusterVllmRuntime({
         stateDir,
         loadApiKey: () => API_KEY,
         createLifecycleDeps: () => deps,
       }),
     ).rejects.toThrow("head receipt-owned container is absent but related runtime state exists");
     expect(removeContainer).not.toHaveBeenCalled();
-    expect(fs.existsSync(dualSparkVllmRuntimeReceiptPath(stateDir))).toBe(true);
-    expect(fs.existsSync(`${dualSparkVllmRuntimeReceiptPath(stateDir)}.ssh-binding`)).toBe(true);
+    expect(fs.existsSync(managedClusterVllmRuntimeReceiptPath(stateDir))).toBe(true);
+    expect(
+      fs.existsSync(`${managedClusterVllmRuntimeReceiptPath(stateDir)}.rank-1.ssh-binding`),
+    ).toBe(true);
   });
 
   it("preserves recovery state when the managed API key changed", async () => {
-    persistDualSparkVllmRuntimeReceipt(input(), { stateDir });
+    persistManagedClusterVllmRuntimeReceipt(input(), { stateDir });
     const createLifecycleDeps = vi.fn();
     await expect(
-      cleanupInstalledDualSparkVllmRuntime({
+      cleanupInstalledManagedClusterVllmRuntime({
         stateDir,
         loadApiKey: () => "f".repeat(64),
         createLifecycleDeps,
       }),
     ).rejects.toThrow("API key no longer matches");
     expect(createLifecycleDeps).not.toHaveBeenCalled();
-    expect(fs.existsSync(dualSparkVllmRuntimeReceiptPath(stateDir))).toBe(true);
+    expect(fs.existsSync(managedClusterVllmRuntimeReceiptPath(stateDir))).toBe(true);
   });
 
   it("does nothing when no runtime receipt exists", async () => {
     await expect(
-      cleanupInstalledDualSparkVllmRuntime({
+      cleanupInstalledManagedClusterVllmRuntime({
         stateDir,
         loadApiKey: vi.fn(),
         createLifecycleDeps: vi.fn(),

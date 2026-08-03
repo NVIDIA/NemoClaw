@@ -109,6 +109,7 @@ export interface ManagedInferenceServingRecipe {
       readonly tensorParallelSize: number;
       readonly pipelineParallelSize: number;
       readonly distributedExecutorBackend: string;
+      readonly rendezvousPort: number;
     };
     readonly serve: {
       readonly authentication: string;

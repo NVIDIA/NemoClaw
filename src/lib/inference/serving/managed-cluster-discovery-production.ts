@@ -25,14 +25,14 @@ import {
   writeDualStationSshBinding,
 } from "../vllm-station-ssh-binding.js";
 import type {
-  DualSparkCommandResult,
-  DualSparkConnectivityRequest,
-  DualSparkDiscoveryDeps,
-  DualSparkHostObservation,
-  DualSparkPinnedPeerTransport,
-  DualSparkReadOnlyHostTransport,
-} from "./dual-spark-discovery.js";
-import { DUAL_SPARK_MANAGED_SERVING_STATE_FILE } from "./spark-runtime-receipt-path.js";
+  ManagedClusterCommandResult,
+  ManagedClusterConnectivityRequest,
+  ManagedClusterDiscoveryDeps,
+  ManagedClusterHostObservation,
+  ManagedClusterPinnedPeerTransport,
+  ManagedClusterReadOnlyHostTransport,
+} from "./managed-cluster-discovery.js";
+import { MANAGED_CLUSTER_MANAGED_SERVING_STATE_FILE } from "./managed-cluster-runtime-receipt-path.js";
 
 const COMMAND_TIMEOUT_MS = 20_000;
 const MAX_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
@@ -47,7 +47,7 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const SAFE_SSH_KEY_TYPE_PATTERN = /^(?:ssh-|ecdsa-|sk-)[A-Za-z0-9@._+-]+$/;
 const SAFE_SSH_KEY_DATA_PATTERN = /^[A-Za-z0-9+/]+={0,3}$/;
 
-export type DualSparkSpawnSync = (
+export type ManagedClusterSpawnSync = (
   file: string,
   args: readonly string[],
   options: SpawnSyncOptionsWithStringEncoding,
@@ -58,7 +58,7 @@ export type DualSparkSpawnSync = (
   readonly error?: Error;
 };
 
-export type DualSparkHostParser = (value: unknown) => DualSparkHostObservation;
+export type ManagedClusterHostParser = (value: unknown) => ManagedClusterHostObservation;
 
 function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -501,7 +501,7 @@ function defaultSpawnSync(
   file: string,
   args: readonly string[],
   options: SpawnSyncOptionsWithStringEncoding,
-): ReturnType<DualSparkSpawnSync> {
+): ReturnType<ManagedClusterSpawnSync> {
   const result = spawnSync(file, [...args], options);
   return {
     status: result.status,
@@ -523,12 +523,12 @@ function validateArgv(argv: readonly string[]): void {
 }
 
 function runCommand(
-  spawn: DualSparkSpawnSync,
+  spawn: ManagedClusterSpawnSync,
   file: string,
   args: readonly string[],
   input = "",
   env: Readonly<Record<string, string>> = buildVllmSshTransportEnv({ LC_ALL: "C", LANG: "C" }),
-): DualSparkCommandResult {
+): ManagedClusterCommandResult {
   const result = spawn(file, args, {
     encoding: "utf8",
     input,
@@ -546,7 +546,7 @@ function runCommand(
   };
 }
 
-function commandSucceeded(result: DualSparkCommandResult, requireOutput = false): boolean {
+function commandSucceeded(result: ManagedClusterCommandResult, requireOutput = false): boolean {
   return (
     result.status === 0 &&
     result.error === undefined &&
@@ -582,7 +582,7 @@ function readBoundedDirectory(directory: string): string[] {
   return entries.sort(compareStrings);
 }
 
-function createLocalTransport(spawn: DualSparkSpawnSync): DualSparkReadOnlyHostTransport {
+function createLocalTransport(spawn: ManagedClusterSpawnSync): ManagedClusterReadOnlyHostTransport {
   return {
     execute(argv) {
       validateArgv(argv);
@@ -599,7 +599,7 @@ function createLocalTransport(spawn: DualSparkSpawnSync): DualSparkReadOnlyHostT
   };
 }
 
-function parseJsonCommandResult(result: DualSparkCommandResult, label: string): unknown {
+function parseJsonCommandResult(result: ManagedClusterCommandResult, label: string): unknown {
   if (!commandSucceeded(result, true)) throw new Error(`${label} failed`);
   if (Buffer.byteLength(result.stdout, "utf8") > MAX_COMMAND_OUTPUT_BYTES) {
     throw new Error(`${label} output is too large`);
@@ -612,9 +612,9 @@ function parseJsonCommandResult(result: DualSparkCommandResult, label: string): 
 }
 
 function probeHostWithTransport(
-  transport: DualSparkReadOnlyHostTransport,
-  parseHost: DualSparkHostParser,
-): DualSparkHostObservation {
+  transport: ManagedClusterReadOnlyHostTransport,
+  parseHost: ManagedClusterHostParser,
+): ManagedClusterHostObservation {
   const result = transport.execute(["python3", "-c", HOST_PROBE_SCRIPT]);
   return parseHost(parseJsonCommandResult(result, "DGX Spark host probe"));
 }
@@ -692,7 +692,7 @@ function canonicalSshHost(value: string): boolean {
 }
 
 function trustedKnownHostLines(
-  spawn: DualSparkSpawnSync,
+  spawn: ManagedClusterSpawnSync,
   lookupHost: string,
   files: readonly string[],
 ): string[] | null {
@@ -740,7 +740,7 @@ function trustedKnownHostLines(
 }
 
 function inspectPretrustedTarget(
-  spawn: DualSparkSpawnSync,
+  spawn: ManagedClusterSpawnSync,
   rawTarget: string,
 ): QualifiedStationSshIdentity | null {
   const target = validatePeerTarget(rawTarget);
@@ -841,11 +841,11 @@ function assertTemporaryPinnedFiles(
 }
 
 function openPinnedPeerTransport(
-  spawn: DualSparkSpawnSync,
+  spawn: ManagedClusterSpawnSync,
   identity: QualifiedStationSshIdentity,
-): DualSparkPinnedPeerTransport {
+): ManagedClusterPinnedPeerTransport {
   assertPinnedIdentity(identity);
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dual-spark-"));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-cluster-"));
   fs.chmodSync(directory, 0o700);
   const knownHostsFile = path.join(directory, "known_hosts");
   try {
@@ -866,7 +866,7 @@ function openPinnedPeerTransport(
     throw error;
   }
 
-  const execute = (argv: readonly string[]): DualSparkCommandResult => {
+  const execute = (argv: readonly string[]): ManagedClusterCommandResult => {
     validateArgv(argv);
     assertTemporaryPinnedFiles(directory, knownHostsFile, identity.hostKeyDigest);
     const request = Buffer.from(JSON.stringify({ argv }), "utf8").toString("base64url");
@@ -898,7 +898,7 @@ function openPinnedPeerTransport(
       REMOTE_ARGV_EXECUTOR,
     );
   };
-  const transport: DualSparkReadOnlyHostTransport = {
+  const transport: ManagedClusterReadOnlyHostTransport = {
     execute,
     readFile(filePath) {
       if (!path.posix.isAbsolute(filePath) || path.posix.normalize(filePath) !== filePath) {
@@ -953,8 +953,8 @@ function isRecordArray(value: unknown): value is Record<string, unknown>[] {
 }
 
 function connectivityCheck(
-  transport: DualSparkReadOnlyHostTransport,
-  request: DualSparkConnectivityRequest,
+  transport: ManagedClusterReadOnlyHostTransport,
+  request: ManagedClusterConnectivityRequest,
 ): boolean {
   const routeResult = transport.execute([
     "ip",
@@ -1032,8 +1032,8 @@ function connectivityCheck(
 }
 
 function probeConnectivity(
-  transport: DualSparkReadOnlyHostTransport,
-  requests: readonly DualSparkConnectivityRequest[],
+  transport: ManagedClusterReadOnlyHostTransport,
+  requests: readonly ManagedClusterConnectivityRequest[],
 ): boolean {
   if (
     requests.length !== 2 ||
@@ -1052,8 +1052,8 @@ function probeConnectivity(
 }
 
 function createCanonicalReadiness(
-  host: DualSparkHostObservation,
-  transport: DualSparkReadOnlyHostTransport,
+  host: ManagedClusterHostObservation,
+  transport: ManagedClusterReadOnlyHostTransport,
   buildIdentity: BuildIdentity,
   now: Date,
 ): SystemReadinessReport {
@@ -1153,10 +1153,10 @@ function claimBinding(statePath: string): boolean {
  * Construct the production discovery seams. The optional spawn adapter exists
  * only so strict SSH argv behavior can be tested without network or host mutation.
  */
-export function createProductionDualSparkDiscoveryDeps(
-  parseHost: DualSparkHostParser,
-  spawn: DualSparkSpawnSync = defaultSpawnSync,
-): DualSparkDiscoveryDeps {
+export function createProductionManagedClusterDiscoveryDeps(
+  parseHost: ManagedClusterHostParser,
+  spawn: ManagedClusterSpawnSync = defaultSpawnSync,
+): ManagedClusterDiscoveryDeps {
   return {
     now: () => new Date(),
     currentUid: () => process.getuid?.() ?? null,
@@ -1171,7 +1171,7 @@ export function createProductionDualSparkDiscoveryDeps(
     writeBinding: writeDualStationSshBinding,
     clearBinding: clearDualStationSshBinding,
     encodeBinding: encodeDualStationSshBindingHandoff,
-    resolveBindingStatePath: () =>
-      path.join(managedVllmStateDir(), DUAL_SPARK_MANAGED_SERVING_STATE_FILE),
+    resolveBindingStatePath: (nodeId) =>
+      path.join(managedVllmStateDir(), `${MANAGED_CLUSTER_MANAGED_SERVING_STATE_FILE}.${nodeId}`),
   };
 }

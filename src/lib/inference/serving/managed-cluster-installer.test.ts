@@ -4,27 +4,28 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
-  DualSparkConfirmedManagedServingCapability,
-  DualSparkDetectedManagedServingCapability,
-} from "./dual-spark-discovery.js";
+  ManagedClusterConfirmedManagedServingCapability,
+  ManagedClusterDetectedManagedServingCapability,
+} from "./managed-cluster-discovery.js";
 import type {
-  CreateDualSparkVllmExecutorOptions,
-  DualSparkExecutorStageNode,
-} from "./dual-spark-executor.js";
-import { fixtureDualSparkSelection } from "./dual-spark-fixture.test-support.js";
+  CreateManagedClusterVllmExecutorOptions,
+  ManagedClusterExecutorStageNode,
+} from "./managed-cluster-executor.js";
+import { fixtureManagedClusterSelection } from "./managed-cluster-fixture.test-support.js";
 import {
-  type DualSparkInstallerEffects,
-  tryInstallDualSparkManagedVllm,
-} from "./dual-spark-installer.js";
-import type { DualSparkVllmLifecycleDeps } from "./dual-spark-lifecycle.js";
+  type ManagedClusterInstallerEffects,
+  tryInstallManagedClusterManagedVllm,
+} from "./managed-cluster-installer.js";
+import type { ManagedClusterVllmLifecycleDeps } from "./managed-cluster-lifecycle.js";
 
 const API_KEY = "a".repeat(64);
 const HEAD_ID = "b".repeat(64);
 const WORKER_ID = "c".repeat(64);
 
-function readyCapability(): DualSparkDetectedManagedServingCapability {
-  const selection = fixtureDualSparkSelection();
-  const host = (hostname: string, home: string, uid: number) => ({
+function readyCapability(): ManagedClusterDetectedManagedServingCapability {
+  const selection = fixtureManagedClusterSelection();
+  const host = (nodeId: string, hostname: string, home: string, uid: number) => ({
+    nodeId,
     hostname,
     home,
     uid,
@@ -46,25 +47,35 @@ function readyCapability(): DualSparkDetectedManagedServingCapability {
     kind: "ready",
     selectionIntent: "automatic",
     topology: selection.topologyQualification,
-    local: host("spark-a", "/home/alice", 1000),
-    peer: host("spark-b", "/home/bob", 1001),
+    local: host("spark-head", "spark-a", "/home/alice", 1000),
+    peers: [host("spark-worker", "spark-b", "/home/bob", 1001)],
     readiness: [],
-    peerSshBindingStatePath: "/state/dual-spark-managed-serving.json",
-    peerSshIdentity: { sshTarget: "spark-b" },
-  } as unknown as DualSparkDetectedManagedServingCapability;
+    sshClaims: [
+      {
+        nodeId: "spark-worker",
+        statePath: "/state/managed-cluster-managed-serving.json.spark-worker",
+        identity: { sshTarget: "spark-b" },
+      },
+    ],
+  } as unknown as ManagedClusterDetectedManagedServingCapability;
 }
 
 function confirmedCapability(
-  detected: DualSparkDetectedManagedServingCapability,
-): DualSparkConfirmedManagedServingCapability {
+  detected: ManagedClusterDetectedManagedServingCapability,
+): ManagedClusterConfirmedManagedServingCapability {
   return {
     ...detected,
-    peerSshBinding: { peerTarget: "spark-b" },
-    peerSshBindingHandle: "binding",
-  } as unknown as DualSparkConfirmedManagedServingCapability;
+    sshBindings: [
+      {
+        ...detected.sshClaims[0],
+        binding: { peerTarget: "spark-b" },
+        handle: "binding",
+      },
+    ],
+  } as unknown as ManagedClusterConfirmedManagedServingCapability;
 }
 
-function effects(): DualSparkInstallerEffects {
+function effects(): ManagedClusterInstallerEffects {
   return {
     prerequisites: vi.fn(() => ({ ok: true })),
     pullImage: vi.fn(async () => ({ ok: true })),
@@ -78,13 +89,15 @@ function successfulStart(reusedExisting = false) {
     ok: true as const,
     reusedExisting,
     baseUrl: "http://192.168.100.10:8000",
-    headContainerId: HEAD_ID,
-    workerContainerId: WORKER_ID,
+    containers: [
+      { nodeId: "spark-head", containerId: HEAD_ID },
+      { nodeId: "spark-worker", containerId: WORKER_ID },
+    ],
     apiKeyFingerprint: "d".repeat(64),
   };
 }
 
-describe("two-Spark managed vLLM installer selection", () => {
+describe("managed-cluster vLLM installer selection", () => {
   beforeEach(() => vi.restoreAllMocks());
 
   it("leaves non-Spark and conflict-free explicit legacy vLLM intent untouched", async () => {
@@ -94,14 +107,14 @@ describe("two-Spark managed vLLM installer selection", () => {
       reason: "no related distributed runtime",
     }));
     await expect(
-      tryInstallDualSparkManagedVllm(
+      tryInstallManagedClusterManagedVllm(
         { platform: "station", nonInteractive: true, promptFn: vi.fn() },
         effects(),
         { probeCapability },
       ),
     ).resolves.toEqual({ kind: "not-selected" });
     await expect(
-      tryInstallDualSparkManagedVllm(
+      tryInstallManagedClusterManagedVllm(
         {
           platform: "spark",
           env: { NEMOCLAW_VLLM_MODEL: "nvidia/Qwen3.6-35B-A3B-NVFP4" },
@@ -117,7 +130,7 @@ describe("two-Spark managed vLLM installer selection", () => {
 
   it("does not let explicit legacy intent bypass a related-runtime conflict", async () => {
     const installEffects = effects();
-    const result = await tryInstallDualSparkManagedVllm(
+    const result = await tryInstallManagedClusterManagedVllm(
       {
         platform: "spark",
         env: { NEMOCLAW_VLLM_MODEL: "nvidia/Qwen3.6-35B-A3B-NVFP4" },
@@ -145,7 +158,7 @@ describe("two-Spark managed vLLM installer selection", () => {
     const revalidateCapability = vi.fn();
     const claimCapability = vi.fn();
     const resolveSelection = vi.fn();
-    const result = await tryInstallDualSparkManagedVllm(
+    const result = await tryInstallManagedClusterManagedVllm(
       {
         platform: "spark",
         env: { NEMOCLAW_VLLM_MODEL: "nvidia/Qwen3.6-35B-A3B-NVFP4" },
@@ -169,14 +182,14 @@ describe("two-Spark managed vLLM installer selection", () => {
   });
 
   it("falls back only for an ordinary automatic no-match", async () => {
-    const result = await tryInstallDualSparkManagedVllm(
+    const result = await tryInstallManagedClusterManagedVllm(
       { platform: "spark", env: {}, nonInteractive: true, promptFn: vi.fn() },
       effects(),
       {
         probeCapability: () => ({
           kind: "not-selected",
           code: "no-match",
-          reason: "no exact pair",
+          reason: "no exact cluster",
         }),
       },
     );
@@ -186,7 +199,7 @@ describe("two-Spark managed vLLM installer selection", () => {
   it("stops on durable distributed ownership before capability probing or effects", async () => {
     const installEffects = effects();
     const probeCapability = vi.fn();
-    const result = await tryInstallDualSparkManagedVllm(
+    const result = await tryInstallManagedClusterManagedVllm(
       { platform: "spark", env: {}, nonInteractive: true, promptFn: vi.fn() },
       installEffects,
       {
@@ -206,7 +219,7 @@ describe("two-Spark managed vLLM installer selection", () => {
   it("stops before effects when a related runtime is already present", async () => {
     const installEffects = effects();
     const error = vi.fn();
-    const result = await tryInstallDualSparkManagedVllm(
+    const result = await tryInstallManagedClusterManagedVllm(
       { platform: "spark", env: {}, nonInteractive: true, promptFn: vi.fn() },
       installEffects,
       {
@@ -225,7 +238,7 @@ describe("two-Spark managed vLLM installer selection", () => {
   });
 
   it("admits the selected recipe port before prompting or claiming binding state", async () => {
-    const selection = fixtureDualSparkSelection();
+    const selection = fixtureManagedClusterSelection();
     const port = Number(
       selection.recipe.spec.serve.arguments.find(({ name }) => name === "--port")?.value,
     );
@@ -236,13 +249,13 @@ describe("two-Spark managed vLLM installer selection", () => {
         ...base.local,
         runtimeSnapshot: { ...base.local.runtimeSnapshot, listeningPorts: [port] },
       },
-    } as DualSparkDetectedManagedServingCapability;
+    } as ManagedClusterDetectedManagedServingCapability;
     const promptFn = vi.fn(async () => "yes");
     const revalidateCapability = vi.fn();
     const claimCapability = vi.fn();
     const installEffects = effects();
 
-    const result = await tryInstallDualSparkManagedVllm(
+    const result = await tryInstallManagedClusterManagedVllm(
       { platform: "spark", env: {}, nonInteractive: false, promptFn },
       installEffects,
       {
@@ -262,7 +275,7 @@ describe("two-Spark managed vLLM installer selection", () => {
   });
 
   it("budgets the selected model and image at full size before prompting", async () => {
-    const selection = fixtureDualSparkSelection();
+    const selection = fixtureManagedClusterSelection();
     const base = readyCapability();
     const capability = {
       ...base,
@@ -274,11 +287,11 @@ describe("two-Spark managed vLLM installer selection", () => {
           huggingFace: { ...base.local.storage.huggingFace, availableBytes: 1 },
         },
       },
-    } as DualSparkDetectedManagedServingCapability;
+    } as ManagedClusterDetectedManagedServingCapability;
     const promptFn = vi.fn(async () => "yes");
     const claimCapability = vi.fn();
 
-    const result = await tryInstallDualSparkManagedVllm(
+    const result = await tryInstallManagedClusterManagedVllm(
       { platform: "spark", env: {}, nonInteractive: false, promptFn },
       effects(),
       {
@@ -296,20 +309,20 @@ describe("two-Spark managed vLLM installer selection", () => {
 
   it("rechecks the selected port after consent and before claiming binding state", async () => {
     const capability = readyCapability();
-    const selection = fixtureDualSparkSelection();
+    const selection = fixtureManagedClusterSelection();
     const port = Number(
       selection.recipe.spec.serve.arguments.find(({ name }) => name === "--port")?.value,
     );
     const revalidated = {
       ...capability,
-      peer: {
-        ...capability.peer,
-        runtimeSnapshot: { ...capability.peer.runtimeSnapshot, listeningPorts: [port] },
-      },
-    } as DualSparkDetectedManagedServingCapability;
+      peers: capability.peers.map((peer) => ({
+        ...peer,
+        runtimeSnapshot: { ...peer.runtimeSnapshot, listeningPorts: [port] },
+      })),
+    } as ManagedClusterDetectedManagedServingCapability;
     const claimCapability = vi.fn();
 
-    const result = await tryInstallDualSparkManagedVllm(
+    const result = await tryInstallManagedClusterManagedVllm(
       { platform: "spark", env: {}, nonInteractive: false, promptFn: async () => "yes" },
       effects(),
       {
@@ -338,17 +351,17 @@ describe("two-Spark managed vLLM installer selection", () => {
           huggingFace: { ...capability.local.storage.huggingFace, availableBytes: 1 },
         },
       },
-    } as DualSparkDetectedManagedServingCapability;
+    } as ManagedClusterDetectedManagedServingCapability;
     const claimCapability = vi.fn();
 
-    const result = await tryInstallDualSparkManagedVllm(
+    const result = await tryInstallManagedClusterManagedVllm(
       { platform: "spark", env: {}, nonInteractive: false, promptFn: async () => "yes" },
       effects(),
       {
         probeCapability: () => capability,
         revalidateCapability: () => revalidated,
         claimCapability,
-        resolveSelection: () => fixtureDualSparkSelection(),
+        resolveSelection: () => fixtureManagedClusterSelection(),
         assertNoRuntimeReceipts: vi.fn(),
         log: vi.fn(),
         error: vi.fn(),
@@ -363,7 +376,7 @@ describe("two-Spark managed vLLM installer selection", () => {
     const capability = readyCapability();
     const resolveSelection = vi
       .fn()
-      .mockReturnValueOnce(fixtureDualSparkSelection())
+      .mockReturnValueOnce(fixtureManagedClusterSelection())
       .mockReturnValueOnce({
         outcome: "no-match",
         code: "requirements-not-met",
@@ -371,7 +384,7 @@ describe("two-Spark managed vLLM installer selection", () => {
       });
     const claimCapability = vi.fn();
 
-    const result = await tryInstallDualSparkManagedVllm(
+    const result = await tryInstallManagedClusterManagedVllm(
       { platform: "spark", env: {}, nonInteractive: false, promptFn: async () => "yes" },
       effects(),
       {
@@ -390,7 +403,7 @@ describe("two-Spark managed vLLM installer selection", () => {
     expect(claimCapability).not.toHaveBeenCalled();
   });
 
-  it("revalidates only after consent and stops before effects when the pair changed", async () => {
+  it("revalidates only after consent and stops before effects when the cluster changed", async () => {
     const capability = readyCapability();
     const installEffects = effects();
     const clearBinding = vi.fn();
@@ -407,14 +420,14 @@ describe("two-Spark managed vLLM installer selection", () => {
     });
     const assertNoRuntimeReceipts = vi.fn();
 
-    const result = await tryInstallDualSparkManagedVllm(
+    const result = await tryInstallManagedClusterManagedVllm(
       { platform: "spark", env: {}, nonInteractive: false, promptFn },
       installEffects,
       {
         probeCapability: () => capability,
         revalidateCapability,
         claimCapability,
-        resolveSelection: () => fixtureDualSparkSelection(),
+        resolveSelection: () => fixtureManagedClusterSelection(),
         assertNoRuntimeReceipts,
         clearBinding,
         log: vi.fn(),
@@ -442,12 +455,12 @@ describe("two-Spark managed vLLM installer selection", () => {
     const revalidateCapability = vi.fn();
     const claimCapability = vi.fn();
 
-    const result = await tryInstallDualSparkManagedVllm(
+    const result = await tryInstallManagedClusterManagedVllm(
       { platform: "spark", env: {}, nonInteractive: false, promptFn },
       installEffects,
       {
         probeCapability: () => capability,
-        resolveSelection: () => fixtureDualSparkSelection(),
+        resolveSelection: () => fixtureManagedClusterSelection(),
         assertGatedModelAccess,
         revalidateCapability,
         claimCapability,
@@ -469,32 +482,32 @@ describe("two-Spark managed vLLM installer selection", () => {
   it("stages both exact nodes, launches, persists ownership, and retires temporary binding state", async () => {
     const capability = readyCapability();
     const confirmed = confirmedCapability(capability);
-    const selection = fixtureDualSparkSelection();
+    const selection = fixtureManagedClusterSelection();
     const installEffects = effects();
     const beforeInstall = vi.fn();
     const clearBinding = vi.fn();
     const persistReceipt = vi.fn();
-    let capturedStage: DualSparkExecutorStageNode | undefined;
-    const executor = {} as DualSparkVllmLifecycleDeps;
-    const createExecutor = vi.fn((config: CreateDualSparkVllmExecutorOptions) => {
+    let capturedStage: ManagedClusterExecutorStageNode | undefined;
+    const executor = {} as ManagedClusterVllmLifecycleDeps;
+    const createExecutor = vi.fn((config: CreateManagedClusterVllmExecutorOptions) => {
       capturedStage = config.stageNode;
       return executor;
     });
     const start = vi.fn(async (plan) => {
       expect(capturedStage).toBeDefined();
       await capturedStage!(
-        { rolePlan: plan.roles.worker, preparation: plan.roles.worker.preparation },
+        { rolePlan: plan.roles[1], preparation: plan.roles[1].preparation },
         {
-          role: "worker",
+          nodeId: plan.roles[1].nodeId,
           dockerEnv: { DOCKER_HOST: "ssh://spark-b" },
-          modelCacheRoot: capability.peer.storage.huggingFace.cacheRoot,
-          peerSshBinding: confirmed.peerSshBinding,
+          modelCacheRoot: capability.peers[0].storage.huggingFace.cacheRoot,
+          sshBinding: confirmed.sshBindings[0].binding,
         },
       );
       await capturedStage!(
-        { rolePlan: plan.roles.head, preparation: plan.roles.head.preparation },
+        { rolePlan: plan.roles[0], preparation: plan.roles[0].preparation },
         {
-          role: "head",
+          nodeId: plan.roles[0].nodeId,
           dockerEnv: {},
           modelCacheRoot: capability.local.storage.huggingFace.cacheRoot,
         },
@@ -502,7 +515,7 @@ describe("two-Spark managed vLLM installer selection", () => {
       return successfulStart();
     });
 
-    const result = await tryInstallDualSparkManagedVllm(
+    const result = await tryInstallManagedClusterManagedVllm(
       {
         platform: "spark",
         env: {},
@@ -534,20 +547,28 @@ describe("two-Spark managed vLLM installer selection", () => {
       expect.objectContaining({ revision: selection.recipe.spec.model.revision }),
       { DOCKER_HOST: "ssh://spark-b" },
       {
-        hostCacheDir: capability.peer.storage.huggingFace.cacheRoot,
+        hostCacheDir: capability.peers[0].storage.huggingFace.cacheRoot,
         userIdentity: "1001:1001",
       },
     );
     expect(start).toHaveBeenCalledWith(expect.anything(), API_KEY, executor);
     expect(persistReceipt).toHaveBeenCalledWith(
       expect.objectContaining({
-        headContainerId: HEAD_ID,
-        workerContainerId: WORKER_ID,
-        localCacheRoot: "/home/alice/.cache/huggingface",
-        peerCacheRoot: "/home/bob/.cache/huggingface",
+        nodes: [
+          expect.objectContaining({
+            nodeId: "spark-head",
+            containerId: HEAD_ID,
+            cacheRoot: "/home/alice/.cache/huggingface",
+          }),
+          expect.objectContaining({
+            nodeId: "spark-worker",
+            containerId: WORKER_ID,
+            cacheRoot: "/home/bob/.cache/huggingface",
+          }),
+        ],
       }),
     );
-    expect(clearBinding).toHaveBeenCalledWith(capability.peerSshBindingStatePath);
+    expect(clearBinding).toHaveBeenCalledWith(capability.sshClaims[0].statePath);
   });
 
   it("keeps a successful receipt-owned install when temporary binding retirement fails", async () => {
@@ -558,15 +579,15 @@ describe("two-Spark managed vLLM installer selection", () => {
     });
     const warn = vi.fn();
 
-    const result = await tryInstallDualSparkManagedVllm(
+    const result = await tryInstallManagedClusterManagedVllm(
       { platform: "spark", env: {}, nonInteractive: true, promptFn: vi.fn() },
       effects(),
       {
         probeCapability: () => capability,
         revalidateCapability: () => capability,
         claimCapability: () => confirmedCapability(capability),
-        resolveSelection: () => fixtureDualSparkSelection(),
-        createExecutor: () => ({}) as DualSparkVllmLifecycleDeps,
+        resolveSelection: () => fixtureManagedClusterSelection(),
+        createExecutor: () => ({}) as ManagedClusterVllmLifecycleDeps,
         start: async () => successfulStart(),
         ensureApiKey: () => API_KEY,
         persistReceipt,
@@ -578,24 +599,24 @@ describe("two-Spark managed vLLM installer selection", () => {
 
     expect(result).toEqual({ kind: "handled", result: { ok: true } });
     expect(persistReceipt).toHaveBeenCalledOnce();
-    expect(clearBinding).toHaveBeenCalledWith(capability.peerSshBindingStatePath);
+    expect(clearBinding).toHaveBeenCalledWith(capability.sshClaims[0].statePath);
     expect(persistReceipt.mock.invocationCallOrder[0]).toBeLessThan(
       clearBinding.mock.invocationCallOrder[0]!,
     );
     expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("temporary two-Spark SSH state could not be retired"),
+      expect.stringContaining("temporary managed cluster SSH state could not be retired"),
     );
   });
 
-  it("cleans only a newly-created exact pair when receipt persistence fails", async () => {
+  it("cleans only a newly-created exact cluster when receipt persistence fails", async () => {
     const capability = readyCapability();
-    const selection = fixtureDualSparkSelection();
+    const selection = fixtureManagedClusterSelection();
     const cleanup = vi.fn(async () => ({
       ok: true as const,
       removedContainerIds: [HEAD_ID, WORKER_ID],
     }));
     const clearBinding = vi.fn();
-    const result = await tryInstallDualSparkManagedVllm(
+    const result = await tryInstallManagedClusterManagedVllm(
       { platform: "spark", env: {}, nonInteractive: true, promptFn: vi.fn() },
       effects(),
       {
@@ -603,7 +624,7 @@ describe("two-Spark managed vLLM installer selection", () => {
         revalidateCapability: () => capability,
         claimCapability: () => confirmedCapability(capability),
         resolveSelection: () => selection,
-        createExecutor: () => ({}) as DualSparkVllmLifecycleDeps,
+        createExecutor: () => ({}) as ManagedClusterVllmLifecycleDeps,
         start: async () => successfulStart(false),
         cleanup,
         ensureApiKey: () => API_KEY,
@@ -617,22 +638,22 @@ describe("two-Spark managed vLLM installer selection", () => {
     );
     expect(result).toEqual({ kind: "handled", result: { ok: false } });
     expect(cleanup).toHaveBeenCalledOnce();
-    expect(clearBinding).toHaveBeenCalledWith(capability.peerSshBindingStatePath);
+    expect(clearBinding).toHaveBeenCalledWith(capability.sshClaims[0].statePath);
   });
 
   it("retains the claimed binding when receipt-failure rollback is incomplete", async () => {
     const capability = readyCapability();
     const clearBinding = vi.fn();
     const warn = vi.fn();
-    const result = await tryInstallDualSparkManagedVllm(
+    const result = await tryInstallManagedClusterManagedVllm(
       { platform: "spark", env: {}, nonInteractive: true, promptFn: vi.fn() },
       effects(),
       {
         probeCapability: () => capability,
         revalidateCapability: () => capability,
         claimCapability: () => confirmedCapability(capability),
-        resolveSelection: () => fixtureDualSparkSelection(),
-        createExecutor: () => ({}) as DualSparkVllmLifecycleDeps,
+        resolveSelection: () => fixtureManagedClusterSelection(),
+        createExecutor: () => ({}) as ManagedClusterVllmLifecycleDeps,
         start: async () => successfulStart(false),
         cleanup: async () => ({
           ok: false,
@@ -652,22 +673,24 @@ describe("two-Spark managed vLLM installer selection", () => {
 
     expect(result).toEqual({ kind: "handled", result: { ok: false } });
     expect(clearBinding).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("retained two-Spark SSH ownership"));
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("retained managed cluster SSH ownership"),
+    );
   });
 
   it("retains the claimed binding when lifecycle rollback leaves a container", async () => {
     const capability = readyCapability();
     const clearBinding = vi.fn();
     const warn = vi.fn();
-    const result = await tryInstallDualSparkManagedVllm(
+    const result = await tryInstallManagedClusterManagedVllm(
       { platform: "spark", env: {}, nonInteractive: true, promptFn: vi.fn() },
       effects(),
       {
         probeCapability: () => capability,
         revalidateCapability: () => capability,
         claimCapability: () => confirmedCapability(capability),
-        resolveSelection: () => fixtureDualSparkSelection(),
-        createExecutor: () => ({}) as DualSparkVllmLifecycleDeps,
+        resolveSelection: () => fixtureManagedClusterSelection(),
+        createExecutor: () => ({}) as ManagedClusterVllmLifecycleDeps,
         start: async () => ({
           ok: false,
           code: "start-failed",
@@ -684,22 +707,24 @@ describe("two-Spark managed vLLM installer selection", () => {
 
     expect(result).toEqual({ kind: "handled", result: { ok: false } });
     expect(clearBinding).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("retained two-Spark SSH ownership"));
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("retained managed cluster SSH ownership"),
+    );
   });
 
-  it("does not remove an exact reused pair when receipt persistence fails", async () => {
+  it("does not remove an exact reused cluster when receipt persistence fails", async () => {
     const capability = readyCapability();
     const cleanup = vi.fn();
     const clearBinding = vi.fn();
-    await tryInstallDualSparkManagedVllm(
+    await tryInstallManagedClusterManagedVllm(
       { platform: "spark", env: {}, nonInteractive: true, promptFn: vi.fn() },
       effects(),
       {
         probeCapability: () => capability,
         revalidateCapability: () => capability,
         claimCapability: () => confirmedCapability(capability),
-        resolveSelection: () => fixtureDualSparkSelection(),
-        createExecutor: () => ({}) as DualSparkVllmLifecycleDeps,
+        resolveSelection: () => fixtureManagedClusterSelection(),
+        createExecutor: () => ({}) as ManagedClusterVllmLifecycleDeps,
         start: async () => successfulStart(true),
         cleanup,
         ensureApiKey: () => API_KEY,
@@ -720,14 +745,14 @@ describe("two-Spark managed vLLM installer selection", () => {
     const clearBinding = vi.fn();
     const revalidateCapability = vi.fn();
     const claimCapability = vi.fn();
-    const result = await tryInstallDualSparkManagedVllm(
+    const result = await tryInstallManagedClusterManagedVllm(
       { platform: "spark", env: {}, nonInteractive: false, promptFn: async () => "no" },
       effects(),
       {
         probeCapability: () => capability,
         revalidateCapability,
         claimCapability,
-        resolveSelection: () => fixtureDualSparkSelection(),
+        resolveSelection: () => fixtureManagedClusterSelection(),
         clearBinding,
         log: vi.fn(),
       },

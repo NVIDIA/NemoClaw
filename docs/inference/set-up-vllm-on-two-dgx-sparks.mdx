@@ -4,7 +4,7 @@
 title: "Set Up vLLM on Two DGX Sparks"
 sidebar-title: "Set Up vLLM on Two DGX Sparks"
 description: "Qualify two trusted DGX Spark systems and start NemoClaw's Experimental distributed DeepSeek V4 Flash vLLM profile."
-description-agent: "Sets up the Experimental managed vLLM profile for two DGX Spark systems, including selection, qualification, runtime ownership, and cleanup. Use when configuring NEMOCLAW_DGX_SPARK_PEER or NEMOCLAW_SERVING_PRESET."
+description-agent: "Sets up the Experimental managed vLLM profile for two DGX Spark systems, including selection, qualification, runtime ownership, and cleanup. Use when configuring NEMOCLAW_MANAGED_CLUSTER_PEERS or NEMOCLAW_SERVING_PRESET."
 keywords: ["nemoclaw dual dgx spark", "two dgx spark vllm", "deepseek v4 flash"]
 content:
   type: "how_to"
@@ -28,20 +28,24 @@ It does not scan a subnet, add SSH host keys, add authorized keys, or change SSH
 Both derived addresses must already have strict public-key SSH trust.
 They must identify the same physical peer and the same SSH host key.
 The detector performs read-only host probes only through that pinned identity.
-After you confirm setup, NemoClaw repeats the read-only pair qualification and then writes an owner-only temporary SSH binding at `~/.nemoclaw/dual-spark-managed-serving.json.ssh-binding/` for the install transaction.
-This claim is host-global and shared by every gateway on the host.
-Declining setup creates no binding. After confirmation, NemoClaw attempts to remove the binding when setup fails or the durable runtime receipt is committed.
-If cleanup cannot be confirmed and the claim remains without a durable runtime receipt, a new managed-vLLM install stops before mutation and preserves the claim for explicit recovery or removal.
+After you confirm setup, NemoClaw repeats the read-only topology qualification.
+It then writes an owner-only temporary SSH binding for each peer at `~/.nemoclaw/managed-cluster-managed-serving.json.<node-id>.ssh-binding/`.
+These claims are host-global and shared by every gateway on the host.
+Declining setup creates no binding.
+After confirmation, NemoClaw attempts to remove every binding when setup fails or the durable runtime receipt is committed.
+If cleanup cannot be confirmed, a new managed-vLLM install stops before mutation and preserves the claims for explicit recovery or removal.
 
-When no pair qualifies during automatic selection, NemoClaw retains the existing single-DGX Spark managed vLLM path.
+When no matching cluster qualifies during automatic selection, NemoClaw retains the existing single-DGX Spark managed vLLM path.
 This ordinary no-match result occurs before the distributed image or model download starts.
 
 Existing related runtime state is not an ordinary no-match result.
 NemoClaw stops when either host has a related vLLM or DGX Station container, an ambiguous runtime inspection, or a listener on port `8000` or `25000`.
-An existing durable dual-Spark or dual-Station runtime receipt, either receipt's copied SSH binding, an orphaned temporary dual-Spark discovery claim, or an SSH binding that conflicts with the new transaction also stops setup.
+An existing durable managed-cluster or dual-Station runtime receipt also stops setup.
+A copied runtime binding, an orphaned discovery claim, or an SSH binding conflict also stops setup.
 NemoClaw leaves the existing files, containers, and listeners untouched instead of replacing, repairing, adopting, or removing them.
 
-Set `NEMOCLAW_DGX_SPARK_PEER` to request one exact pretrusted peer.
+Set `NEMOCLAW_MANAGED_CLUSTER_PEERS` to a comma-separated list of exact pretrusted peers.
+The current profile declares `nodeCount: 2`, so its strict selection requires one peer.
 Set `NEMOCLAW_SERVING_PRESET=vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731` to request the exact serving profile.
 Either setting makes qualification strict, so a missed requirement stops setup instead of selecting the single-DGX Spark profile.
 
@@ -152,7 +156,7 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
   NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_PROVIDER=install-vllm \
-  NEMOCLAW_DGX_SPARK_PEER="<peer-host-or-address>" \
+  NEMOCLAW_MANAGED_CLUSTER_PEERS="<peer-host-or-address>" \
   NEMOCLAW_SERVING_PRESET=vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731 \
   NEMOCLAW_SANDBOX_NAME=my-assistant \
   bash
@@ -163,8 +167,10 @@ The explicit target still must match the exact reciprocal rail topology.
 
 ## Understand the Distributed Runtime
 
-The compiled managed inference catalog reads profile selection, artifacts, runtime resources, serving arguments, preparation, and readiness checks from preset and recipe YAML.
-Maintainers can add another profile that uses the registered dual-Spark topology, materializer, lifecycle, and preparation adapters by adding preset and recipe YAML without TypeScript changes or a committed generated artifact.
+The compiled managed inference catalog reads cluster size, profile selection, artifacts, runtime resources, serving arguments, preparation, and readiness checks from preset and recipe YAML.
+Maintainers can add another compatible profile that uses the registered managed-cluster adapters by adding preset and recipe YAML.
+The YAML `nodeCount` declares the required cardinality.
+The TypeScript adapters validate the qualified topology against it and materialize every ranked topology node.
 The build compiles those YAML definitions into the packaged runtime catalog automatically.
 A profile that needs a different execution contract requires a registered adapter.
 
@@ -202,31 +208,33 @@ It does not establish physical two-node E2E validation or product support.
 
 ## Preserve Ownership and Uninstall State
 
-After runtime validation, NemoClaw writes the owner-only host-global receipt `~/.nemoclaw/dual-spark-vllm-runtime.json`.
-It copies the pinned SSH binding to `~/.nemoclaw/dual-spark-vllm-runtime.json.ssh-binding/`.
-The receipt contains the exact plan, container IDs, peer identity, and API key fingerprint, but not the API key.
+After runtime validation, NemoClaw writes the owner-only host-global receipt `~/.nemoclaw/managed-cluster-vllm-runtime.json`.
+It copies each pinned peer SSH binding to `~/.nemoclaw/managed-cluster-vllm-runtime.json.rank-<rank>.ssh-binding/`.
+The receipt contains the exact plan, ranked node identities, container IDs, peer identities, and API key fingerprint.
+It does not contain the API key.
 
 NemoClaw stores the host-global bearer API key in the owner-only `~/.nemoclaw/dual-station-vllm-api-key` file.
 The filename remains stable for managed vLLM compatibility across distributed profiles.
 Users with Docker control can inspect the head container environment, so restrict Docker access to trusted administrators.
 
 If receipt persistence fails, NemoClaw attempts to remove only the exact containers created by that attempt and reports any rollback removal it cannot confirm.
-It does not remove an exact pair that existed before the attempt.
+It does not remove an exact cluster that existed before the attempt.
 
 The containers have no Docker restart policy.
 NemoClaw does not provide automatic runtime persistence across a Docker daemon restart or host reboot.
-A stopped, partial, mismatched, or unhealthy pair remains a conflict and is not repaired automatically.
+A stopped, partial, mismatched, or unhealthy cluster remains a conflict and is not repaired automatically.
 
-Run a full uninstall to remove the exact receipt-owned pair.
+Run a full uninstall to remove the exact receipt-owned cluster.
 
 ```bash
 $$nemoclaw uninstall
 ```
 
-Full uninstall revalidates both exact container IDs before it removes them and retires the receipt, copied SSH binding, and only the exact leftover temporary discovery claim recorded by that receipt.
+Full uninstall revalidates every exact container ID before it removes the containers.
+It then retires the receipt, copied SSH bindings, and exact temporary discovery claims recorded by that receipt.
 If revalidation, removal, or safe claim retirement fails, uninstall stops before other cleanup and preserves the receipt for a retry.
-A gateway-scoped uninstall preserves the host-global pair, receipt, SSH binding, and API key while another gateway remains.
-Pair cleanup does not delete the Hugging Face model cache.
+A gateway-scoped uninstall preserves the host-global cluster, receipt, SSH bindings, and API key while another gateway remains.
+Cluster cleanup does not delete the Hugging Face model cache.
 
 ## Related Topics
 

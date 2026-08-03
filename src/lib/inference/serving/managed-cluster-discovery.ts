@@ -10,30 +10,27 @@ import {
   type DualStationSshBinding,
   type QualifiedStationSshIdentity,
 } from "../vllm-station-ssh-binding.js";
-import {
-  DUAL_SPARK_VLLM_MASTER_PORT,
-  DUAL_SPARK_VLLM_MATERIALIZER_REF,
-} from "./adapter-registry.js";
+import { MANAGED_CLUSTER_VLLM_MATERIALIZER_REF } from "./adapter-registry.js";
 import { loadManagedInferenceCatalog } from "./catalog.js";
 import { immutableManagedInferenceCopy } from "./catalog-integrity.js";
-import { createProductionDualSparkDiscoveryDeps } from "./dual-spark-discovery-production.js";
+import { createProductionManagedClusterDiscoveryDeps } from "./managed-cluster-discovery-production.js";
 import {
-  type DualSparkNodeSnapshot,
-  type DualSparkObservedContainer,
   isRelatedManagedVllmContainer,
-} from "./dual-spark-lifecycle.js";
+  type ManagedClusterNodeSnapshot,
+  type ManagedClusterObservedContainer,
+} from "./managed-cluster-lifecycle.js";
 import {
-  type DualSparkNodeObservation,
-  type DualSparkPeerObservation,
-  type DualSparkRailObservation,
-  type DualSparkTopologyArtifact,
-  type DualSparkTopologyOutput,
-  dualSparkTopologyOutputDigest,
-  getDualSparkTopologyArtifactError,
-  qualifyDualSparkTopology,
-} from "./dual-spark-topology.js";
+  getManagedClusterTopologyArtifactError,
+  type ManagedClusterNodeObservation,
+  type ManagedClusterPeerObservation,
+  type ManagedClusterRailObservation,
+  type ManagedClusterTopologyArtifact,
+  type ManagedClusterTopologyOutput,
+  managedClusterTopologyOutputDigest,
+  qualifyManagedClusterTopology,
+} from "./managed-cluster-topology.js";
 
-export const NEMOCLAW_DGX_SPARK_PEER_ENV = "NEMOCLAW_DGX_SPARK_PEER" as const;
+export const NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV = "NEMOCLAW_MANAGED_CLUSTER_PEERS" as const;
 export const NEMOCLAW_SERVING_PRESET_ENV = "NEMOCLAW_SERVING_PRESET" as const;
 
 const HOST_PROBE_SCHEMA_VERSION = 1;
@@ -51,37 +48,37 @@ const MAC_PATTERN = /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/;
 const PCI_ADDRESS_PATTERN = /^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
-export interface DualSparkCommandResult {
+export interface ManagedClusterCommandResult {
   readonly status: number | null;
   readonly stdout: string;
   readonly stderr: string;
   readonly error?: string;
 }
 
-export interface DualSparkReadOnlyHostTransport {
-  execute(argv: readonly string[]): DualSparkCommandResult;
+export interface ManagedClusterReadOnlyHostTransport {
+  execute(argv: readonly string[]): ManagedClusterCommandResult;
   readFile(filePath: string): string;
   readdir(directory: string): string[];
 }
 
-export interface DualSparkGpuObservation {
+export interface ManagedClusterGpuObservation {
   readonly index: number;
   readonly name: string;
   readonly uuid: string;
 }
 
-export interface DualSparkIpv4Observation {
+export interface ManagedClusterIpv4Observation {
   readonly address: string;
   readonly prefixLength: number;
 }
 
-export interface DualSparkRoceGidHostObservation {
+export interface ManagedClusterRoceGidHostObservation {
   readonly index: number;
   readonly value: string;
   readonly ipv4Address: string;
 }
 
-export interface DualSparkCx7RailHostObservation {
+export interface ManagedClusterCx7RailHostObservation {
   readonly physicalPortId: string;
   readonly netdev: string;
   readonly hcaDevice: string;
@@ -95,17 +92,17 @@ export interface DualSparkCx7RailHostObservation {
   readonly linkLayer: string;
   readonly speedMbps: number;
   readonly mtu: number;
-  readonly ipv4Addresses: readonly DualSparkIpv4Observation[];
-  readonly roceV2Ipv4Gids: readonly DualSparkRoceGidHostObservation[];
+  readonly ipv4Addresses: readonly ManagedClusterIpv4Observation[];
+  readonly roceV2Ipv4Gids: readonly ManagedClusterRoceGidHostObservation[];
 }
 
-export interface DualSparkEarlyoomObservation {
+export interface ManagedClusterEarlyoomObservation {
   readonly installed: boolean;
   readonly active: "active" | "inactive" | "unknown";
   readonly enabled: "enabled" | "disabled" | "unknown";
 }
 
-export interface DualSparkStorageCapacityObservation {
+export interface ManagedClusterStorageCapacityObservation {
   readonly requestedPath: string;
   readonly probePath: string | null;
   readonly filesystemId: string | null;
@@ -117,16 +114,16 @@ export interface DualSparkStorageCapacityObservation {
   readonly writableByUser: boolean;
 }
 
-export interface DualSparkStorageObservation {
-  readonly huggingFace: DualSparkStorageCapacityObservation & {
+export interface ManagedClusterStorageObservation {
+  readonly huggingFace: ManagedClusterStorageCapacityObservation & {
     readonly cacheRoot: string;
   };
-  readonly docker: DualSparkStorageCapacityObservation & {
+  readonly docker: ManagedClusterStorageCapacityObservation & {
     readonly dockerRootDir: string | null;
   };
 }
 
-export interface DualSparkHostObservation {
+export interface ManagedClusterHostObservation {
   readonly schemaVersion: 1;
   readonly hostname: string;
   readonly nodeId: string;
@@ -136,53 +133,53 @@ export interface DualSparkHostObservation {
   readonly username: string;
   readonly uid: number;
   readonly gid: number;
-  readonly gpus: readonly DualSparkGpuObservation[];
-  readonly rails: readonly DualSparkCx7RailHostObservation[];
-  readonly earlyoom: DualSparkEarlyoomObservation;
+  readonly gpus: readonly ManagedClusterGpuObservation[];
+  readonly rails: readonly ManagedClusterCx7RailHostObservation[];
+  readonly earlyoom: ManagedClusterEarlyoomObservation;
   readonly runtimeInspectionComplete: boolean;
-  readonly runtimeSnapshot: DualSparkNodeSnapshot;
-  readonly storage: DualSparkStorageObservation;
+  readonly runtimeSnapshot: ManagedClusterNodeSnapshot;
+  readonly storage: ManagedClusterStorageObservation;
 }
 
-export interface DualSparkPinnedPeerTransport {
-  readonly transport: DualSparkReadOnlyHostTransport;
+export interface ManagedClusterPinnedPeerTransport {
+  readonly transport: ManagedClusterReadOnlyHostTransport;
   close(): void;
 }
 
-export interface DualSparkConnectivityRequest {
+export interface ManagedClusterConnectivityRequest {
   readonly netdev: string;
   readonly sourceAddress: string;
   readonly peerAddress: string;
   readonly expectedPeerMac: string;
 }
 
-export interface DualSparkDiscoveryDeps {
+export interface ManagedClusterDiscoveryDeps {
   now(): Date;
   currentUid(): number | null;
   getBuildIdentity(): BuildIdentity;
-  localTransport(): DualSparkReadOnlyHostTransport;
-  probeHost(transport: DualSparkReadOnlyHostTransport): DualSparkHostObservation;
+  localTransport(): ManagedClusterReadOnlyHostTransport;
+  probeHost(transport: ManagedClusterReadOnlyHostTransport): ManagedClusterHostObservation;
   inspectPretrustedTarget(target: string): QualifiedStationSshIdentity | null;
-  openPinnedPeerTransport(identity: QualifiedStationSshIdentity): DualSparkPinnedPeerTransport;
+  openPinnedPeerTransport(identity: QualifiedStationSshIdentity): ManagedClusterPinnedPeerTransport;
   createReadiness(
-    host: DualSparkHostObservation,
-    transport: DualSparkReadOnlyHostTransport,
+    host: ManagedClusterHostObservation,
+    transport: ManagedClusterReadOnlyHostTransport,
     buildIdentity: BuildIdentity,
     now: Date,
   ): SystemReadinessReport;
   probeConnectivity(
-    transport: DualSparkReadOnlyHostTransport,
-    requests: readonly DualSparkConnectivityRequest[],
+    transport: ManagedClusterReadOnlyHostTransport,
+    requests: readonly ManagedClusterConnectivityRequest[],
   ): boolean;
   /** Atomically claim a new binding root. False means an existing owner won. */
   claimBinding(statePath: string): boolean;
   writeBinding(statePath: string, identity: QualifiedStationSshIdentity): DualStationSshBinding;
   clearBinding(statePath: string): void;
   encodeBinding(binding: DualStationSshBinding): string;
-  resolveBindingStatePath(): string;
+  resolveBindingStatePath(nodeId: string): string;
 }
 
-export type DualSparkManagedServingFailureCode =
+export type ManagedClusterManagedServingFailureCode =
   | "no-match"
   | "incompatible-selection"
   | "invalid-peer"
@@ -190,6 +187,7 @@ export type DualSparkManagedServingFailureCode =
   | "peer-trust-unavailable"
   | "peer-identity-ambiguous"
   | "peer-host-unavailable"
+  | "peer-count"
   | "host-unqualified"
   | "earlyoom-active"
   | "earlyoom-unknown"
@@ -204,105 +202,113 @@ export type DualSparkManagedServingFailureCode =
   | "binding-persistence-failed"
   | "topology-unavailable";
 
-export type DualSparkDetectedManagedServingCapability = {
+export type ManagedClusterDetectedManagedServingCapability = {
   readonly kind: "ready";
   readonly selectionIntent: "automatic" | "explicit";
-  readonly topology: DualSparkTopologyArtifact;
-  readonly local: DualSparkHostObservation;
-  readonly peer: DualSparkHostObservation;
-  readonly readiness: readonly [
-    { readonly nodeId: string; readonly report: SystemReadinessReport },
-    { readonly nodeId: string; readonly report: SystemReadinessReport },
-  ];
-  /** Exact transaction state path that may be claimed only after confirmation. */
-  readonly peerSshBindingStatePath: string;
-  readonly peerSshIdentity: QualifiedStationSshIdentity;
+  readonly topology: ManagedClusterTopologyArtifact;
+  readonly local: ManagedClusterHostObservation;
+  readonly peers: readonly ManagedClusterHostObservation[];
+  readonly readiness: readonly {
+    readonly nodeId: string;
+    readonly report: SystemReadinessReport;
+  }[];
+  /** Exact transaction claims that may be persisted only after confirmation. */
+  readonly sshClaims: readonly ManagedClusterSshClaim[];
 };
 
-export type DualSparkManagedServingCapability =
+export interface ManagedClusterSshClaim {
+  readonly nodeId: string;
+  readonly statePath: string;
+  readonly identity: QualifiedStationSshIdentity;
+}
+
+export interface ManagedClusterSshBinding extends ManagedClusterSshClaim {
+  readonly binding: DualStationSshBinding;
+  readonly handle: string;
+}
+
+export type ManagedClusterManagedServingCapability =
   | {
       readonly kind: "not-selected";
-      readonly code: DualSparkManagedServingFailureCode;
+      readonly code: ManagedClusterManagedServingFailureCode;
       readonly reason: string;
     }
   | {
       readonly kind: "unavailable";
-      readonly code: DualSparkManagedServingFailureCode;
+      readonly code: ManagedClusterManagedServingFailureCode;
       readonly reason: string;
     }
-  | DualSparkDetectedManagedServingCapability;
+  | ManagedClusterDetectedManagedServingCapability;
 
-export type DualSparkConfirmedManagedServingCapability =
-  DualSparkDetectedManagedServingCapability & {
-    readonly peerSshBinding: DualStationSshBinding;
-    readonly peerSshBindingHandle: string;
+export type ManagedClusterConfirmedManagedServingCapability =
+  ManagedClusterDetectedManagedServingCapability & {
+    readonly sshBindings: readonly ManagedClusterSshBinding[];
   };
 
-export type DualSparkManagedServingConfirmation =
-  | Exclude<DualSparkManagedServingCapability, { kind: "ready" }>
-  | DualSparkConfirmedManagedServingCapability;
+export type ManagedClusterManagedServingConfirmation =
+  | Exclude<ManagedClusterManagedServingCapability, { kind: "ready" }>
+  | ManagedClusterConfirmedManagedServingCapability;
 
-export interface ProbeDualSparkManagedServingOptions {
+export interface ProbeManagedClusterManagedServingOptions {
   readonly env?: NodeJS.ProcessEnv;
-  readonly deps?: DualSparkDiscoveryDeps;
+  readonly deps?: ManagedClusterDiscoveryDeps;
   /** @internal Catalog loader seam for fail-closed tests. */
   readonly loadCatalog?: typeof loadManagedInferenceCatalog;
-  readonly bindingStatePath?: string;
+  readonly bindingStatePaths?: Readonly<Record<string, string>>;
   readonly maxReadinessAgeMs?: number;
 }
 
 interface QualifiedRail {
-  readonly host: DualSparkCx7RailHostObservation;
+  readonly host: ManagedClusterCx7RailHostObservation;
   readonly address: string;
   readonly peerAddress: string;
   readonly subnet: string;
-  readonly gid: DualSparkRoceGidHostObservation;
+  readonly gid: ManagedClusterRoceGidHostObservation;
 }
 
 interface QualifiedHost {
-  readonly host: DualSparkHostObservation;
-  readonly gpu: DualSparkGpuObservation;
+  readonly host: ManagedClusterHostObservation;
+  readonly gpu: ManagedClusterGpuObservation;
   readonly rails: readonly [QualifiedRail, QualifiedRail];
 }
 
-interface PairPlan {
-  readonly local: QualifiedHost;
-  readonly peer: QualifiedHost;
-  readonly localConnectivity: readonly [DualSparkConnectivityRequest, DualSparkConnectivityRequest];
-  readonly peerConnectivity: readonly [DualSparkConnectivityRequest, DualSparkConnectivityRequest];
+interface ClusterPlan {
+  readonly nodes: readonly QualifiedHost[];
+  readonly connectivity: ReadonlyMap<string, readonly ManagedClusterConnectivityRequest[]>;
+  readonly peerNodeIdsByRail: ReadonlyMap<QualifiedRail, string>;
 }
 
 type DiscoveryFailure = {
-  readonly code: DualSparkManagedServingFailureCode;
+  readonly code: ManagedClusterManagedServingFailureCode;
   readonly reason: string;
 };
 
 type Selection = {
   readonly strict: boolean;
   readonly intent: "automatic" | "explicit";
-  readonly explicitPeer: string | null;
+  readonly explicitPeers: readonly string[];
 };
 
 function notSelected(
-  code: DualSparkManagedServingFailureCode,
+  code: ManagedClusterManagedServingFailureCode,
   reason: string,
-): DualSparkManagedServingCapability {
+): ManagedClusterManagedServingCapability {
   return { kind: "not-selected", code, reason };
 }
 
 function unavailable(
-  code: DualSparkManagedServingFailureCode,
+  code: ManagedClusterManagedServingFailureCode,
   reason: string,
-): DualSparkManagedServingCapability {
+): ManagedClusterManagedServingCapability {
   return { kind: "unavailable", code, reason };
 }
 
 function disposition(
   selection: Selection,
   result: DiscoveryFailure,
-): DualSparkManagedServingCapability {
+): ManagedClusterManagedServingCapability {
   if (selection.strict) return unavailable(result.code, result.reason);
-  const code: DualSparkManagedServingFailureCode = [
+  const code: ManagedClusterManagedServingFailureCode = [
     "runtime-conflict",
     "runtime-unknown",
     "binding-conflict",
@@ -328,7 +334,9 @@ function validatePeerTarget(raw: string): string {
     raw !== raw.trim() ||
     /[/,:;`'"\\$(){}[\]<>|&!?*\s\u0000-\u001f\u007f]/.test(raw)
   ) {
-    throw new Error(`${NEMOCLAW_DGX_SPARK_PEER_ENV} must name one canonical SSH host or user@host`);
+    throw new Error(
+      `${NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV} must contain canonical SSH hosts or user@host values`,
+    );
   }
   const parts = raw.split("@");
   const username = parts.length === 2 ? parts[0] : "";
@@ -339,7 +347,9 @@ function validatePeerTarget(raw: string): string {
     (username !== "" && !SAFE_USERNAME_PATTERN.test(username)) ||
     (net.isIP(hostname) !== 4 && !SAFE_TARGET_PATTERN.test(hostname))
   ) {
-    throw new Error(`${NEMOCLAW_DGX_SPARK_PEER_ENV} must name one canonical SSH host or user@host`);
+    throw new Error(
+      `${NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV} must contain canonical SSH hosts or user@host values`,
+    );
   }
   return raw;
 }
@@ -347,9 +357,22 @@ function validatePeerTarget(raw: string): string {
 function selectionFromEnvironment(
   env: NodeJS.ProcessEnv,
   loadCatalog: typeof loadManagedInferenceCatalog,
-): Selection | DualSparkManagedServingCapability {
+): Selection | ManagedClusterManagedServingCapability {
   const preset = String(env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
-  const peer = String(env[NEMOCLAW_DGX_SPARK_PEER_ENV] ?? "").trim();
+  const peersValue = String(env[NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV] ?? "").trim();
+  let peers: readonly string[] = [];
+  if (peersValue) {
+    try {
+      peers = peersValue.split(",").map((peer) => validatePeerTarget(peer.trim()));
+      if (new Set(peers).size !== peers.length || peers.length > 1_023) {
+        throw new Error(
+          `${NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV} contains duplicate or too many peers`,
+        );
+      }
+    } catch (error) {
+      return unavailable("invalid-peer", (error as Error).message);
+    }
+  }
   if (preset) {
     let catalog;
     try {
@@ -369,30 +392,22 @@ function selectionFromEnvironment(
             definition.metadata.id === compiledPreset.definition.spec.plan.recipeRef,
         )?.definition
       : undefined;
-    if (recipe?.spec.execution.materializerRef !== DUAL_SPARK_VLLM_MATERIALIZER_REF) {
-      return peer
+    if (recipe?.spec.execution.materializerRef !== MANAGED_CLUSTER_VLLM_MATERIALIZER_REF) {
+      return peers.length > 0
         ? unavailable(
             "incompatible-selection",
-            `${NEMOCLAW_DGX_SPARK_PEER_ENV} cannot be combined with another serving preset.`,
+            `${NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV} cannot be combined with another serving preset.`,
           )
         : notSelected("no-match", "Another managed inference preset is selected.");
     }
   }
-  if (peer) {
-    try {
-      return {
-        strict: true,
-        intent: "explicit",
-        explicitPeer: validatePeerTarget(peer),
-      };
-    } catch (error) {
-      return unavailable("invalid-peer", (error as Error).message);
-    }
+  if (peers.length > 0) {
+    return { strict: true, intent: "explicit", explicitPeers: peers };
   }
   return {
     strict: Boolean(preset),
     intent: preset ? "explicit" : "automatic",
-    explicitPeer: null,
+    explicitPeers: [],
   };
 }
 
@@ -449,7 +464,7 @@ function isSafeInteger(
   return Number.isInteger(value) && (value as number) >= minimum && (value as number) <= maximum;
 }
 
-function validStorageCapacity(value: unknown): value is DualSparkStorageCapacityObservation {
+function validStorageCapacity(value: unknown): value is ManagedClusterStorageCapacityObservation {
   if (
     !isRecord(value) ||
     !isSafeText(value.requestedPath) ||
@@ -470,7 +485,7 @@ function validStorageCapacity(value: unknown): value is DualSparkStorageCapacity
   );
 }
 
-function validGpu(value: unknown): value is DualSparkGpuObservation {
+function validGpu(value: unknown): value is ManagedClusterGpuObservation {
   return (
     isRecord(value) &&
     isSafeInteger(value.index, 0, 1024) &&
@@ -480,7 +495,7 @@ function validGpu(value: unknown): value is DualSparkGpuObservation {
   );
 }
 
-function validRail(value: unknown): value is DualSparkCx7RailHostObservation {
+function validRail(value: unknown): value is ManagedClusterCx7RailHostObservation {
   if (
     !isRecord(value) ||
     !isSafeText(value.physicalPortId, 128) ||
@@ -530,7 +545,7 @@ function validRail(value: unknown): value is DualSparkCx7RailHostObservation {
   );
 }
 
-function validContainer(value: unknown): value is DualSparkObservedContainer {
+function validContainer(value: unknown): value is ManagedClusterObservedContainer {
   if (
     !isRecord(value) ||
     !isSafeText(value.id, 64) ||
@@ -550,7 +565,7 @@ function validContainer(value: unknown): value is DualSparkObservedContainer {
   );
 }
 
-export function parseDualSparkHostObservation(value: unknown): DualSparkHostObservation {
+export function parseManagedClusterHostObservation(value: unknown): ManagedClusterHostObservation {
   if (
     !isRecord(value) ||
     value.schemaVersion !== HOST_PROBE_SCHEMA_VERSION ||
@@ -600,10 +615,10 @@ export function parseDualSparkHostObservation(value: unknown): DualSparkHostObse
   ) {
     throw new Error("DGX Spark host observation is invalid");
   }
-  return value as unknown as DualSparkHostObservation;
+  return value as unknown as ManagedClusterHostObservation;
 }
 function qualifyHost(
-  host: DualSparkHostObservation,
+  host: ManagedClusterHostObservation,
   label: string,
 ): QualifiedHost | DiscoveryFailure {
   if (
@@ -644,7 +659,7 @@ function qualifyHost(
         peer: slash30Counterpart(address.address, address.prefixLength),
       }))
       .filter(
-        (entry): entry is { address: DualSparkIpv4Observation; peer: string } =>
+        (entry): entry is { address: ManagedClusterIpv4Observation; peer: string } =>
           entry.peer !== null,
       );
     if (addresses.length !== 1) {
@@ -683,7 +698,10 @@ function qualifyHost(
   return { host, gpu: gpus[0]!, rails: [qualified[0]!, qualified[1]!] };
 }
 
-function runtimeFailure(host: DualSparkHostObservation, label: string): DiscoveryFailure | null {
+function runtimeFailure(
+  host: ManagedClusterHostObservation,
+  label: string,
+): DiscoveryFailure | null {
   if (!host.runtimeInspectionComplete) {
     return { code: "runtime-unknown", reason: `${label} runtime inspection is inconclusive.` };
   }
@@ -694,18 +712,13 @@ function runtimeFailure(host: DualSparkHostObservation, label: string): Discover
       reason: `${label} already has related container ${container.name}; it was not changed.`,
     };
   }
-  const port = host.runtimeSnapshot.listeningPorts.find(
-    (entry) => entry === DUAL_SPARK_VLLM_MASTER_PORT,
-  );
-  return port === undefined
-    ? null
-    : {
-        code: "runtime-conflict",
-        reason: `${label} port ${String(port)} is already in use; its listener was not changed.`,
-      };
+  return null;
 }
 
-function earlyoomFailure(host: DualSparkHostObservation, label: string): DiscoveryFailure | null {
+function earlyoomFailure(
+  host: ManagedClusterHostObservation,
+  label: string,
+): DiscoveryFailure | null {
   if (!host.earlyoom.installed) return null;
   if (host.earlyoom.active === "active") {
     return {
@@ -718,7 +731,7 @@ function earlyoomFailure(host: DualSparkHostObservation, label: string): Discove
     : { code: "earlyoom-unknown", reason: `${label} earlyoom state is inconclusive.` };
 }
 
-function validCapacity(capacity: DualSparkStorageCapacityObservation): boolean {
+function validCapacity(capacity: ManagedClusterStorageCapacityObservation): boolean {
   return (
     capacity.probePath !== null &&
     capacity.filesystemId !== null &&
@@ -731,7 +744,10 @@ function validCapacity(capacity: DualSparkStorageCapacityObservation): boolean {
   );
 }
 
-function storageFailure(host: DualSparkHostObservation, label: string): DiscoveryFailure | null {
+function storageFailure(
+  host: ManagedClusterHostObservation,
+  label: string,
+): DiscoveryFailure | null {
   const huggingFace = host.storage.huggingFace;
   const docker = host.storage.docker;
   if (!validCapacity(huggingFace) || !validCapacity(docker)) {
@@ -766,48 +782,55 @@ function storageFailure(host: DualSparkHostObservation, label: string): Discover
   return null;
 }
 
-function pairHosts(local: QualifiedHost, peer: QualifiedHost): PairPlan | DiscoveryFailure {
-  if (local.host.nodeId === peer.host.nodeId || local.gpu.uuid === peer.gpu.uuid) {
+function matchClusterHosts(nodes: readonly QualifiedHost[]): ClusterPlan | DiscoveryFailure {
+  if (
+    nodes.length < 2 ||
+    new Set(nodes.map(({ host }) => host.nodeId)).size !== nodes.length ||
+    new Set(nodes.map(({ gpu }) => gpu.uuid)).size !== nodes.length
+  ) {
     return {
       code: "peer-identity-ambiguous",
-      reason: "The peer resolves back to the local DGX Spark.",
+      reason: "Managed cluster nodes or GPU identities are duplicated.",
     };
   }
-  const matches = local.rails.map((localRail) => {
-    const peers = peer.rails.filter(
-      (peerRail) =>
-        peerRail.subnet === localRail.subnet &&
-        peerRail.address === localRail.peerAddress &&
-        peerRail.peerAddress === localRail.address,
-    );
-    return peers.length === 1 ? { local: localRail, peer: peers[0]! } : null;
-  });
-  if (matches.some((match) => match === null)) {
-    return {
-      code: "fabric-unavailable",
-      reason: "The peer rails are not exact reciprocal /30 endpoints.",
-    };
+  const peerNodeIdsByRail = new Map<QualifiedRail, string>();
+  const connectivity = new Map<string, ManagedClusterConnectivityRequest[]>();
+  for (const node of nodes) {
+    const requests: ManagedClusterConnectivityRequest[] = [];
+    for (const rail of node.rails) {
+      const matches = nodes.flatMap((candidate) =>
+        candidate.host.nodeId === node.host.nodeId
+          ? []
+          : candidate.rails
+              .filter(
+                (candidateRail) =>
+                  candidateRail.subnet === rail.subnet &&
+                  candidateRail.address === rail.peerAddress &&
+                  candidateRail.peerAddress === rail.address,
+              )
+              .map((candidateRail) => ({ candidate, candidateRail })),
+      );
+      if (matches.length !== 1) {
+        return {
+          code: "fabric-unavailable",
+          reason: "Managed cluster rails are not unique reciprocal /30 endpoints.",
+        };
+      }
+      const match = matches[0]!;
+      peerNodeIdsByRail.set(rail, match.candidate.host.nodeId);
+      requests.push({
+        netdev: rail.host.netdev,
+        sourceAddress: rail.address,
+        peerAddress: match.candidateRail.address,
+        expectedPeerMac: match.candidateRail.host.macAddress,
+      });
+    }
+    connectivity.set(node.host.nodeId, requests);
   }
-  const exact = matches as Array<{ local: QualifiedRail; peer: QualifiedRail }>;
-  return {
-    local,
-    peer,
-    localConnectivity: exact.map(({ local: localRail, peer: peerRail }) => ({
-      netdev: localRail.host.netdev,
-      sourceAddress: localRail.address,
-      peerAddress: peerRail.address,
-      expectedPeerMac: peerRail.host.macAddress,
-    })) as [DualSparkConnectivityRequest, DualSparkConnectivityRequest],
-    peerConnectivity: exact.map(({ local: localRail, peer: peerRail }) => ({
-      netdev: peerRail.host.netdev,
-      sourceAddress: peerRail.address,
-      peerAddress: localRail.address,
-      expectedPeerMac: localRail.host.macAddress,
-    })) as [DualSparkConnectivityRequest, DualSparkConnectivityRequest],
-  };
+  return { nodes, connectivity, peerNodeIdsByRail };
 }
 
-function topologyRail(rail: QualifiedRail, peerNodeId: string): DualSparkRailObservation {
+function topologyRail(rail: QualifiedRail, peerNodeId: string): ManagedClusterRailObservation {
   return {
     adapter: "connectx-7",
     path: "direct",
@@ -826,38 +849,41 @@ function topologyRail(rail: QualifiedRail, peerNodeId: string): DualSparkRailObs
 }
 
 function topologyObservations(
-  pair: PairPlan,
-  localReadiness: SystemReadinessReport,
-  peerReadiness: SystemReadinessReport,
-  identity: QualifiedStationSshIdentity,
-  bindingHandle: string,
-): { local: DualSparkNodeObservation; peer: DualSparkPeerObservation } {
+  cluster: ClusterPlan,
+  readiness: ReadonlyMap<string, SystemReadinessReport>,
+  identities: ReadonlyMap<string, QualifiedStationSshIdentity>,
+  bindingHandles: ReadonlyMap<string, string>,
+): { local: ManagedClusterNodeObservation; peers: readonly ManagedClusterPeerObservation[] } {
+  const controller = cluster.nodes[0]!;
+  const nodeObservation = (node: QualifiedHost): ManagedClusterNodeObservation => ({
+    nodeId: node.host.nodeId,
+    gpuIds: [node.gpu.uuid],
+    readiness: readiness.get(node.host.nodeId)!,
+    runtimeState: "clear",
+    rails: node.rails.map((rail) => topologyRail(rail, cluster.peerNodeIdsByRail.get(rail)!)),
+  });
   return {
-    local: {
-      nodeId: pair.local.host.nodeId,
-      gpuIds: [pair.local.gpu.uuid],
-      readiness: localReadiness,
-      runtimeState: "clear",
-      rails: pair.local.rails.map((rail) => topologyRail(rail, pair.peer.host.nodeId)),
-    },
-    peer: {
-      nodeId: pair.peer.host.nodeId,
-      gpuIds: [pair.peer.gpu.uuid],
-      readiness: peerReadiness,
-      runtimeState: "clear",
-      rails: pair.peer.rails.map((rail) => topologyRail(rail, pair.local.host.nodeId)),
-      sshBinding: {
-        state: "pretrusted",
-        fromNodeId: pair.local.host.nodeId,
-        toNodeId: pair.peer.host.nodeId,
-        peerTarget: identity.sshTarget,
-        handle: bindingHandle,
-      },
-    },
+    local: nodeObservation(controller),
+    peers: cluster.nodes.slice(1).map((node) => {
+      const identity = identities.get(node.host.nodeId)!;
+      return {
+        ...nodeObservation(node),
+        sshBinding: {
+          state: "pretrusted",
+          fromNodeId: controller.host.nodeId,
+          toNodeId: node.host.nodeId,
+          peerTarget: identity.sshTarget,
+          handle: bindingHandles.get(node.host.nodeId)!,
+        },
+      };
+    }),
   };
 }
 
-function hostPolicyFailure(host: DualSparkHostObservation, label: string): DiscoveryFailure | null {
+function hostPolicyFailure(
+  host: ManagedClusterHostObservation,
+  label: string,
+): DiscoveryFailure | null {
   return earlyoomFailure(host, label) ?? runtimeFailure(host, label) ?? storageFailure(host, label);
 }
 
@@ -890,8 +916,8 @@ function sameExactSshIdentity(
 }
 
 function samePhysicalHost(
-  left: DualSparkHostObservation,
-  right: DualSparkHostObservation,
+  left: ManagedClusterHostObservation,
+  right: ManagedClusterHostObservation,
 ): boolean {
   return (
     left.nodeId === right.nodeId &&
@@ -901,82 +927,91 @@ function samePhysicalHost(
   );
 }
 
-function topologyFailureReason(result: ReturnType<typeof qualifyDualSparkTopology>): string {
+function topologyFailureReason(result: ReturnType<typeof qualifyManagedClusterTopology>): string {
   return result.outcome === "qualified" ? "" : result.message;
 }
 
-function sameDetectedPair(
-  detected: DualSparkDetectedManagedServingCapability,
-  revalidated: DualSparkDetectedManagedServingCapability,
+function sameHostIdentity(
+  left: ManagedClusterHostObservation,
+  right: ManagedClusterHostObservation,
+): boolean {
+  return (
+    left.nodeId === right.nodeId &&
+    left.hostname === right.hostname &&
+    left.username === right.username &&
+    left.uid === right.uid &&
+    left.gid === right.gid &&
+    left.home === right.home &&
+    left.gpus[0]?.uuid === right.gpus[0]?.uuid &&
+    left.storage.huggingFace.cacheRoot === right.storage.huggingFace.cacheRoot
+  );
+}
+
+function sameDetectedCluster(
+  detected: ManagedClusterDetectedManagedServingCapability,
+  revalidated: ManagedClusterDetectedManagedServingCapability,
 ): boolean {
   return (
     detected.selectionIntent === revalidated.selectionIntent &&
-    detected.peerSshBindingStatePath === revalidated.peerSshBindingStatePath &&
-    sameExactSshIdentity(detected.peerSshIdentity, revalidated.peerSshIdentity) &&
-    detected.local.nodeId === revalidated.local.nodeId &&
-    detected.local.hostname === revalidated.local.hostname &&
-    detected.local.username === revalidated.local.username &&
-    detected.local.uid === revalidated.local.uid &&
-    detected.local.gid === revalidated.local.gid &&
-    detected.local.home === revalidated.local.home &&
-    detected.local.gpus[0]?.uuid === revalidated.local.gpus[0]?.uuid &&
-    detected.local.storage.huggingFace.cacheRoot ===
-      revalidated.local.storage.huggingFace.cacheRoot &&
-    detected.peer.nodeId === revalidated.peer.nodeId &&
-    detected.peer.hostname === revalidated.peer.hostname &&
-    detected.peer.username === revalidated.peer.username &&
-    detected.peer.uid === revalidated.peer.uid &&
-    detected.peer.gid === revalidated.peer.gid &&
-    detected.peer.home === revalidated.peer.home &&
-    detected.peer.gpus[0]?.uuid === revalidated.peer.gpus[0]?.uuid &&
-    detected.peer.storage.huggingFace.cacheRoot ===
-      revalidated.peer.storage.huggingFace.cacheRoot &&
+    sameHostIdentity(detected.local, revalidated.local) &&
+    detected.peers.length === revalidated.peers.length &&
+    detected.peers.every((peer, index) => sameHostIdentity(peer, revalidated.peers[index]!)) &&
+    detected.sshClaims.length === revalidated.sshClaims.length &&
+    detected.sshClaims.every((claim, index) => {
+      const candidate = revalidated.sshClaims[index];
+      return (
+        candidate?.nodeId === claim.nodeId &&
+        candidate.statePath === claim.statePath &&
+        sameExactSshIdentity(claim.identity, candidate.identity)
+      );
+    }) &&
     detected.topology.subjectDigest === revalidated.topology.subjectDigest &&
     detected.topology.outputDigest === revalidated.topology.outputDigest
   );
 }
 
 function topologyWithBinding(
-  detected: DualSparkDetectedManagedServingCapability,
-  peerSshBindingHandle: string,
-): DualSparkTopologyArtifact {
-  const output: DualSparkTopologyOutput = {
+  detected: ManagedClusterDetectedManagedServingCapability,
+  bindings: readonly ManagedClusterSshBinding[],
+): ManagedClusterTopologyArtifact {
+  const output: ManagedClusterTopologyOutput = {
     ...detected.topology.output,
-    peer: {
-      ...detected.topology.output.peer,
-      sshBindingHandle: peerSshBindingHandle,
-    },
+    peers: detected.topology.output.peers.map((peer) => ({
+      ...peer,
+      sshBindingHandle:
+        bindings.find(({ nodeId }) => nodeId === peer.nodeId)?.handle ?? peer.sshBindingHandle,
+    })),
   };
-  const artifact = immutableManagedInferenceCopy<DualSparkTopologyArtifact>({
+  const artifact = immutableManagedInferenceCopy<ManagedClusterTopologyArtifact>({
     ...detected.topology,
     output,
-    outputDigest: dualSparkTopologyOutputDigest(output),
+    outputDigest: managedClusterTopologyOutputDigest(output),
   });
-  const error = getDualSparkTopologyArtifactError(artifact);
+  const error = getManagedClusterTopologyArtifactError(artifact);
   if (error) throw new Error(error);
   return artifact;
 }
 
 function confirmationUnavailable(
-  code: DualSparkManagedServingFailureCode,
+  code: ManagedClusterManagedServingFailureCode,
   reason: string,
-): DualSparkManagedServingConfirmation {
+): ManagedClusterManagedServingConfirmation {
   return { kind: "unavailable", code, reason };
 }
 
-export function probeDualSparkManagedServingCapability(
-  options: ProbeDualSparkManagedServingOptions = {},
-): DualSparkManagedServingCapability {
+export function probeManagedClusterManagedServingCapability(
+  options: ProbeManagedClusterManagedServingOptions = {},
+): ManagedClusterManagedServingCapability {
   const selection = selectionFromEnvironment(
     options.env ?? process.env,
     options.loadCatalog ?? loadManagedInferenceCatalog,
   );
   if (!("strict" in selection)) return selection;
-  const deps = options.deps ?? defaultDualSparkDiscoveryDeps;
-  const opened: DualSparkPinnedPeerTransport[] = [];
-  let local: DualSparkHostObservation;
+  const deps = options.deps ?? defaultManagedClusterDiscoveryDeps;
+  const opened: ManagedClusterPinnedPeerTransport[] = [];
+  let local: ManagedClusterHostObservation;
   let qualifiedLocal: QualifiedHost;
-  let localTransport: DualSparkReadOnlyHostTransport;
+  let localTransport: ManagedClusterReadOnlyHostTransport;
   try {
     localTransport = deps.localTransport();
     local = deps.probeHost(localTransport);
@@ -1000,105 +1035,143 @@ export function probeDualSparkManagedServingCapability(
   }
 
   try {
-    let selectedIdentity: QualifiedStationSshIdentity;
-    let selectedTransport: DualSparkReadOnlyHostTransport;
-    let peer: DualSparkHostObservation;
-    if (selection.explicitPeer) {
-      const identity = deps.inspectPretrustedTarget(selection.explicitPeer);
-      if (!identity) {
-        return disposition(selection, {
-          code: "peer-trust-unavailable",
-          reason: "The explicit DGX Spark peer lacks usable pre-existing SSH trust.",
-        });
-      }
+    const targets =
+      selection.explicitPeers.length > 0
+        ? selection.explicitPeers
+        : qualifiedLocal.rails.map(({ peerAddress }) => peerAddress);
+    const probes = targets.map((target) => {
+      const identity = deps.inspectPretrustedTarget(target);
+      if (!identity) return null;
       const pinned = deps.openPinnedPeerTransport(identity);
       opened.push(pinned);
-      selectedIdentity = identity;
-      selectedTransport = pinned.transport;
-      peer = deps.probeHost(selectedTransport);
-    } else {
-      const targets = qualifiedLocal.rails.map(({ peerAddress }) => peerAddress);
-      const identities = targets.map((target) => deps.inspectPretrustedTarget(target));
-      if (identities.some((identity) => identity === null)) {
-        return disposition(selection, {
-          code: "peer-trust-unavailable",
-          reason: "Both derived /30 peer addresses require pre-existing SSH host-key trust.",
-        });
-      }
-      const trusted = identities as QualifiedStationSshIdentity[];
-      if (!samePhysicalSshIdentity(trusted[0]!, trusted[1]!)) {
-        return disposition(selection, {
-          code: "peer-identity-ambiguous",
-          reason: "The two derived rail addresses map to different SSH identities.",
-        });
-      }
-      const probes = trusted.map((identity) => {
-        const pinned = deps.openPinnedPeerTransport(identity);
-        opened.push(pinned);
-        return { identity, pinned, host: deps.probeHost(pinned.transport) };
+      return { identity, pinned, host: deps.probeHost(pinned.transport) };
+    });
+    if (probes.some((probe) => probe === null)) {
+      return disposition(selection, {
+        code: "peer-trust-unavailable",
+        reason: "Every managed cluster peer requires usable pre-existing SSH host-key trust.",
       });
-      if (!samePhysicalHost(probes[0]!.host, probes[1]!.host)) {
-        return disposition(selection, {
-          code: "peer-identity-ambiguous",
-          reason: "The two derived rail addresses do not resolve to one physical DGX Spark.",
-        });
-      }
-      probes.sort((left, right) =>
-        compareStrings(left.identity.requestedTarget, right.identity.requestedTarget),
-      );
-      selectedIdentity = probes[0]!.identity;
-      selectedTransport = probes[0]!.pinned.transport;
-      peer = probes[0]!.host;
     }
 
-    const qualifiedPeer = qualifyHost(peer, "Peer DGX Spark");
-    if ("code" in qualifiedPeer) return disposition(selection, qualifiedPeer);
-    if (peer.username !== selectedIdentity.sshUser || peer.uid <= 0) {
+    const unique = new Map<
+      string,
+      {
+        identity: QualifiedStationSshIdentity;
+        transport: ManagedClusterReadOnlyHostTransport;
+        host: ManagedClusterHostObservation;
+      }
+    >();
+    for (const probe of probes as Array<NonNullable<(typeof probes)[number]>>) {
+      if (samePhysicalHost(local, probe.host)) {
+        return disposition(selection, {
+          code: "peer-identity-ambiguous",
+          reason: "A managed cluster peer resolves back to the local DGX Spark.",
+        });
+      }
+      const existing = unique.get(probe.host.nodeId);
+      if (
+        existing &&
+        (!samePhysicalHost(existing.host, probe.host) ||
+          !samePhysicalSshIdentity(existing.identity, probe.identity))
+      ) {
+        return disposition(selection, {
+          code: "peer-identity-ambiguous",
+          reason: "Multiple peer targets disagree about one physical DGX Spark identity.",
+        });
+      }
+      if (
+        !existing ||
+        compareStrings(probe.identity.requestedTarget, existing.identity.requestedTarget) < 0
+      ) {
+        unique.set(probe.host.nodeId, {
+          identity: probe.identity,
+          transport: probe.pinned.transport,
+          host: probe.host,
+        });
+      }
+    }
+    const selectedPeers = [...unique.values()].sort((left, right) =>
+      compareStrings(left.host.nodeId, right.host.nodeId),
+    );
+    if (selectedPeers.length === 0) {
       return disposition(selection, {
-        code: "peer-identity-ambiguous",
-        reason: "The peer SSH user does not own the probed non-root cache identity.",
+        code: "peer-count",
+        reason: "No distinct managed cluster peer was detected.",
       });
     }
-    const peerPolicyFailure = hostPolicyFailure(peer, "Peer DGX Spark");
-    if (peerPolicyFailure) return disposition(selection, peerPolicyFailure);
-    const pair = pairHosts(qualifiedLocal, qualifiedPeer);
-    if ("code" in pair) return disposition(selection, pair);
-    if (
-      !deps.probeConnectivity(localTransport, pair.localConnectivity) ||
-      !deps.probeConnectivity(selectedTransport, pair.peerConnectivity)
-    ) {
-      return disposition(selection, {
-        code: "connectivity-unavailable",
-        reason: "Direct route, neighbor, or jumbo connectivity failed on a DGX Spark rail.",
-      });
+
+    const qualifiedPeers: QualifiedHost[] = [];
+    for (const [index, selected] of selectedPeers.entries()) {
+      const label = `Managed cluster peer ${String(index + 1)}`;
+      const qualifiedPeer = qualifyHost(selected.host, label);
+      if ("code" in qualifiedPeer) return disposition(selection, qualifiedPeer);
+      if (selected.host.username !== selected.identity.sshUser || selected.host.uid <= 0) {
+        return disposition(selection, {
+          code: "peer-identity-ambiguous",
+          reason: `${label} SSH user does not own the probed non-root cache identity.`,
+        });
+      }
+      const policyFailure = hostPolicyFailure(selected.host, label);
+      if (policyFailure) return disposition(selection, policyFailure);
+      qualifiedPeers.push(qualifiedPeer);
+    }
+
+    const cluster = matchClusterHosts([qualifiedLocal, ...qualifiedPeers]);
+    if ("code" in cluster) return disposition(selection, cluster);
+    const transportByNodeId = new Map<string, ManagedClusterReadOnlyHostTransport>([
+      [local.nodeId, localTransport],
+      ...selectedPeers.map(({ host, transport }) => [host.nodeId, transport] as const),
+    ]);
+    for (const node of cluster.nodes) {
+      if (
+        !deps.probeConnectivity(
+          transportByNodeId.get(node.host.nodeId)!,
+          cluster.connectivity.get(node.host.nodeId)!,
+        )
+      ) {
+        return disposition(selection, {
+          code: "connectivity-unavailable",
+          reason: `Direct route, neighbor, or jumbo connectivity failed on ${node.host.hostname}.`,
+        });
+      }
     }
 
     const now = deps.now();
     const buildIdentity = deps.getBuildIdentity();
-    let localReadiness: SystemReadinessReport;
-    let peerReadiness: SystemReadinessReport;
+    const readiness = new Map<string, SystemReadinessReport>();
     try {
-      localReadiness = deps.createReadiness(local, localTransport, buildIdentity, now);
-      peerReadiness = deps.createReadiness(peer, selectedTransport, buildIdentity, now);
+      for (const node of cluster.nodes) {
+        readiness.set(
+          node.host.nodeId,
+          deps.createReadiness(
+            node.host,
+            transportByNodeId.get(node.host.nodeId)!,
+            buildIdentity,
+            now,
+          ),
+        );
+      }
     } catch {
       return disposition(selection, {
         code: "readiness-unavailable",
-        reason: "Canonical readiness could not be generated for both DGX Spark nodes.",
+        reason: "Canonical readiness could not be generated for every managed cluster node.",
       });
     }
-    const temporary = topologyObservations(
-      pair,
-      localReadiness,
-      peerReadiness,
-      selectedIdentity,
-      `pretrusted:${selectedIdentity.hostKeyDigest}`,
+    const identities = new Map(
+      selectedPeers.map(({ host, identity }) => [host.nodeId, identity] as const),
     );
-    const temporaryQualification = qualifyDualSparkTopology({
+    const temporaryHandles = new Map(
+      selectedPeers.map(
+        ({ host, identity }) => [host.nodeId, `pretrusted:${identity.hostKeyDigest}`] as const,
+      ),
+    );
+    const temporary = topologyObservations(cluster, readiness, identities, temporaryHandles);
+    const temporaryQualification = qualifyManagedClusterTopology({
       intent: selection.intent,
       evaluatedAt: now.toISOString(),
       maxReadinessAgeMs: options.maxReadinessAgeMs ?? 60_000,
       local: temporary.local,
-      peers: [temporary.peer],
+      peers: temporary.peers,
     });
     if (temporaryQualification.outcome !== "qualified") {
       return disposition(selection, {
@@ -1107,19 +1180,23 @@ export function probeDualSparkManagedServingCapability(
       });
     }
 
-    const statePath = options.bindingStatePath ?? deps.resolveBindingStatePath();
+    const sshClaims = selectedPeers.map(({ host, identity }) => ({
+      nodeId: host.nodeId,
+      statePath:
+        options.bindingStatePaths?.[host.nodeId] ?? deps.resolveBindingStatePath(host.nodeId),
+      identity,
+    }));
     return {
       kind: "ready",
       selectionIntent: selection.intent,
       topology: temporaryQualification.artifact,
       local,
-      peer,
-      readiness: [
-        { nodeId: local.nodeId, report: localReadiness },
-        { nodeId: peer.nodeId, report: peerReadiness },
-      ],
-      peerSshBindingStatePath: statePath,
-      peerSshIdentity: selectedIdentity,
+      peers: selectedPeers.map(({ host }) => host),
+      readiness: cluster.nodes.map(({ host }) => ({
+        nodeId: host.nodeId,
+        report: readiness.get(host.nodeId)!,
+      })),
+      sshClaims,
     };
   } catch {
     return disposition(selection, {
@@ -1137,87 +1214,99 @@ export function probeDualSparkManagedServingCapability(
   }
 }
 
-/** Revalidate the detected pair without claiming or writing its SSH binding. */
-export function revalidateDualSparkManagedServingCapability(
-  detected: DualSparkDetectedManagedServingCapability,
-  options: ProbeDualSparkManagedServingOptions = {},
-): DualSparkManagedServingCapability {
-  const deps = options.deps ?? defaultDualSparkDiscoveryDeps;
-  const revalidated = probeDualSparkManagedServingCapability({
+/** Revalidate the detected cluster without claiming or writing SSH bindings. */
+export function revalidateManagedClusterManagedServingCapability(
+  detected: ManagedClusterDetectedManagedServingCapability,
+  options: ProbeManagedClusterManagedServingOptions = {},
+): ManagedClusterManagedServingCapability {
+  const deps = options.deps ?? defaultManagedClusterDiscoveryDeps;
+  const revalidated = probeManagedClusterManagedServingCapability({
     ...options,
     deps,
-    bindingStatePath: detected.peerSshBindingStatePath,
+    bindingStatePaths: Object.fromEntries(
+      detected.sshClaims.map(({ nodeId, statePath }) => [nodeId, statePath]),
+    ),
   });
   if (revalidated.kind !== "ready") {
     return confirmationUnavailable(
       revalidated.code,
-      `The confirmed DGX Spark pair no longer qualifies: ${revalidated.reason}`,
+      `The confirmed managed cluster no longer qualifies: ${revalidated.reason}`,
     );
   }
-  if (!sameDetectedPair(detected, revalidated)) {
+  if (!sameDetectedCluster(detected, revalidated)) {
     return confirmationUnavailable(
       "peer-identity-ambiguous",
-      "The confirmed DGX Spark pair or its exact pretrusted SSH identity changed after selection.",
+      "The confirmed managed cluster or an exact pretrusted SSH identity changed after selection.",
     );
   }
   return revalidated;
 }
 
-/** Atomically claim and persist a previously revalidated pair's SSH binding. */
-export function claimDualSparkManagedServingCapability(
-  revalidated: DualSparkDetectedManagedServingCapability,
-  options: Pick<ProbeDualSparkManagedServingOptions, "deps"> = {},
-): DualSparkManagedServingConfirmation {
-  const deps = options.deps ?? defaultDualSparkDiscoveryDeps;
-  const statePath = revalidated.peerSshBindingStatePath;
-  if (!deps.claimBinding(statePath)) {
-    return confirmationUnavailable(
-      "binding-conflict",
-      "An existing DGX Spark SSH binding was preserved and not replaced.",
-    );
-  }
+/** Claim and persist every previously revalidated peer SSH binding. */
+export function claimManagedClusterManagedServingCapability(
+  revalidated: ManagedClusterDetectedManagedServingCapability,
+  options: Pick<ProbeManagedClusterManagedServingOptions, "deps"> = {},
+): ManagedClusterManagedServingConfirmation {
+  const deps = options.deps ?? defaultManagedClusterDiscoveryDeps;
+  const claimed: string[] = [];
   try {
-    const peerSshBinding = deps.writeBinding(statePath, revalidated.peerSshIdentity);
-    const peerSshBindingHandle = deps.encodeBinding(peerSshBinding);
+    const sshBindings: ManagedClusterSshBinding[] = [];
+    for (const claim of revalidated.sshClaims) {
+      if (!deps.claimBinding(claim.statePath)) {
+        throw new Error("binding-conflict");
+      }
+      claimed.push(claim.statePath);
+      const binding = deps.writeBinding(claim.statePath, claim.identity);
+      sshBindings.push({ ...claim, binding, handle: deps.encodeBinding(binding) });
+    }
     return {
       ...revalidated,
-      topology: topologyWithBinding(revalidated, peerSshBindingHandle),
-      peerSshBinding,
-      peerSshBindingHandle,
+      topology: topologyWithBinding(revalidated, sshBindings),
+      sshBindings,
     };
-  } catch {
-    try {
-      deps.clearBinding(statePath);
-    } catch {
+  } catch (error) {
+    let cleanupFailed = false;
+    for (const statePath of claimed.reverse()) {
+      try {
+        deps.clearBinding(statePath);
+      } catch {
+        cleanupFailed = true;
+      }
+    }
+    if (cleanupFailed) {
       return confirmationUnavailable(
         "binding-persistence-failed",
-        "The DGX Spark SSH binding failed and its new state could not be cleaned safely.",
+        "A managed cluster SSH binding failed and newly claimed state could not be cleaned safely.",
       );
     }
     return confirmationUnavailable(
-      "binding-persistence-failed",
-      "The confirmed DGX Spark SSH binding could not be persisted.",
+      (error as Error).message === "binding-conflict"
+        ? "binding-conflict"
+        : "binding-persistence-failed",
+      (error as Error).message === "binding-conflict"
+        ? "An existing managed cluster SSH binding was preserved and not replaced."
+        : "The confirmed managed cluster SSH bindings could not be persisted.",
     );
   }
 }
 
-/** Revalidate the detected pair, then claim and persist its SSH binding after confirmation. */
-export function confirmDualSparkManagedServingCapability(
-  detected: DualSparkDetectedManagedServingCapability,
-  options: ProbeDualSparkManagedServingOptions = {},
-): DualSparkManagedServingConfirmation {
-  const revalidated = revalidateDualSparkManagedServingCapability(detected, options);
+/** Revalidate the detected cluster, then persist its SSH bindings after confirmation. */
+export function confirmManagedClusterManagedServingCapability(
+  detected: ManagedClusterDetectedManagedServingCapability,
+  options: ProbeManagedClusterManagedServingOptions = {},
+): ManagedClusterManagedServingConfirmation {
+  const revalidated = revalidateManagedClusterManagedServingCapability(detected, options);
   return revalidated.kind === "ready"
-    ? claimDualSparkManagedServingCapability(revalidated, options)
+    ? claimManagedClusterManagedServingCapability(revalidated, options)
     : revalidated;
 }
 
-export type { DualSparkSpawnSync } from "./dual-spark-discovery-production.js";
+export type { ManagedClusterSpawnSync } from "./managed-cluster-discovery-production.js";
 
-export function createDualSparkDiscoveryDeps(
-  spawn?: import("./dual-spark-discovery-production.js").DualSparkSpawnSync,
-): DualSparkDiscoveryDeps {
-  return createProductionDualSparkDiscoveryDeps(parseDualSparkHostObservation, spawn);
+export function createManagedClusterDiscoveryDeps(
+  spawn?: import("./managed-cluster-discovery-production.js").ManagedClusterSpawnSync,
+): ManagedClusterDiscoveryDeps {
+  return createProductionManagedClusterDiscoveryDeps(parseManagedClusterHostObservation, spawn);
 }
 
-const defaultDualSparkDiscoveryDeps = createDualSparkDiscoveryDeps();
+const defaultManagedClusterDiscoveryDeps = createManagedClusterDiscoveryDeps();

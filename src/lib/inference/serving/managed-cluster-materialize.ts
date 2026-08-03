@@ -5,13 +5,12 @@ import path from "node:path";
 
 import {
   containerPathContains,
-  DUAL_SPARK_VLLM_MASTER_PORT,
-  DUAL_SPARK_VLLM_MATERIALIZER_REF,
   getManagedInferenceLifecycleDescriptor,
   getManagedInferenceMaterializerDescriptor,
   getManagedInferenceRecipeRegistrationError,
   getManagedInferenceTopologyQualificationDescriptor,
-  isDualSparkMaterializerOwnedEnvironment,
+  isManagedClusterMaterializerOwnedEnvironment,
+  MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
 } from "./adapter-registry.js";
 import { loadManagedInferenceCatalog } from "./catalog.js";
 import {
@@ -20,44 +19,41 @@ import {
   managedInferenceHexDigest,
 } from "./catalog-integrity.js";
 import {
-  isManagedInferenceMaterializerOwnedArgument,
   type CompiledManagedInferenceCatalog,
   type CompiledManagedInferenceDefinition,
+  isManagedInferenceMaterializerOwnedArgument,
   type ManagedInferenceServingPreset,
   type ManagedInferenceServingRecipe,
   type ResolvedManagedInferenceSelection,
 } from "./catalog-types.js";
 import {
-  materializeDualSparkVllmPreparation,
-  type DualSparkVllmPreparationPlan,
-} from "./dual-spark-preparation.js";
+  type ManagedClusterVllmPreparationPlan,
+  materializeManagedClusterVllmPreparation,
+} from "./managed-cluster-preparation.js";
 import {
-  DUAL_SPARK_TOPOLOGY_ID,
-  DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION,
-  type DualSparkTopologyOutput,
-  type DualSparkTopologyRailEndpoint,
-} from "./dual-spark-topology.js";
+  MANAGED_CLUSTER_TOPOLOGY_ID,
+  MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
+  type ManagedClusterTopologyOutput,
+  type ManagedClusterTopologyRailEndpoint,
+} from "./managed-cluster-topology.js";
 
 /** Stable adapter identity; profile identities and values come from the selected catalog entries. */
-export const DUAL_SPARK_VLLM_ADAPTER_ID = DUAL_SPARK_VLLM_MATERIALIZER_REF;
-export { DUAL_SPARK_VLLM_MASTER_PORT };
-export const DUAL_SPARK_VLLM_HEAD_CONTAINER_NAME = "nemoclaw-vllm-dspark-head";
-export const DUAL_SPARK_VLLM_WORKER_CONTAINER_NAME = "nemoclaw-vllm-dspark-worker";
-export const DUAL_SPARK_VLLM_PROJECT_ID = "nemoclaw-vllm-dspark";
+export const MANAGED_CLUSTER_VLLM_ADAPTER_ID = MANAGED_CLUSTER_VLLM_MATERIALIZER_REF;
+export const MANAGED_CLUSTER_VLLM_PROJECT_ID = "nemoclaw-vllm-cluster";
 
-export const DUAL_SPARK_MANAGED_LABEL = "com.nvidia.nemoclaw.managed-vllm";
-export const DUAL_SPARK_ADAPTER_LABEL = "com.nvidia.nemoclaw.serving-adapter";
-export const DUAL_SPARK_PRESET_LABEL = "com.nvidia.nemoclaw.serving-preset";
-export const DUAL_SPARK_RECIPE_LABEL = "com.nvidia.nemoclaw.serving-recipe";
-export const DUAL_SPARK_ROLE_LABEL = "com.nvidia.nemoclaw.serving-role";
-export const DUAL_SPARK_CLUSTER_LABEL = "com.nvidia.nemoclaw.serving-cluster";
-export const DUAL_SPARK_PLAN_LABEL = "com.nvidia.nemoclaw.serving-plan";
-export const DUAL_SPARK_GPU_LABEL = "com.nvidia.nemoclaw.serving-gpu";
-export const DUAL_SPARK_IMAGE_LABEL = "com.nvidia.nemoclaw.serving-image";
-export const DUAL_SPARK_MODEL_REVISION_LABEL = "com.nvidia.nemoclaw.serving-model-revision";
-export const DUAL_SPARK_API_KEY_FINGERPRINT_LABEL =
+export const MANAGED_CLUSTER_MANAGED_LABEL = "com.nvidia.nemoclaw.managed-vllm";
+export const MANAGED_CLUSTER_ADAPTER_LABEL = "com.nvidia.nemoclaw.serving-adapter";
+export const MANAGED_CLUSTER_PRESET_LABEL = "com.nvidia.nemoclaw.serving-preset";
+export const MANAGED_CLUSTER_RECIPE_LABEL = "com.nvidia.nemoclaw.serving-recipe";
+export const MANAGED_CLUSTER_ROLE_LABEL = "com.nvidia.nemoclaw.serving-role";
+export const MANAGED_CLUSTER_CLUSTER_LABEL = "com.nvidia.nemoclaw.serving-cluster";
+export const MANAGED_CLUSTER_PLAN_LABEL = "com.nvidia.nemoclaw.serving-plan";
+export const MANAGED_CLUSTER_GPU_LABEL = "com.nvidia.nemoclaw.serving-gpu";
+export const MANAGED_CLUSTER_IMAGE_LABEL = "com.nvidia.nemoclaw.serving-image";
+export const MANAGED_CLUSTER_MODEL_REVISION_LABEL = "com.nvidia.nemoclaw.serving-model-revision";
+export const MANAGED_CLUSTER_API_KEY_FINGERPRINT_LABEL =
   "com.nvidia.nemoclaw.serving-api-key-fingerprint";
-export const DUAL_SPARK_TRANSACTION_LABEL = "com.nvidia.nemoclaw.serving-transaction";
+export const MANAGED_CLUSTER_TRANSACTION_LABEL = "com.nvidia.nemoclaw.serving-transaction";
 
 const SAFE_DEVICE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/u;
 const SAFE_ABSOLUTE_PATH_PATTERN = /^\/(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._+/-]+$/u;
@@ -78,11 +74,11 @@ const TMPFS_OPTIONS = new Set([
   "noatime",
   "relatime",
 ]);
-export type DualSparkVllmRole = "head" | "worker";
+export type ManagedClusterVllmRole = "head" | "worker";
 
-export interface DualSparkVllmRolePlan {
-  readonly role: DualSparkVllmRole;
-  readonly rank: 0 | 1;
+export interface ManagedClusterVllmRolePlan {
+  readonly role: ManagedClusterVllmRole;
+  readonly rank: number;
   readonly nodeId: string;
   readonly gpuId: string;
   readonly containerName: string;
@@ -118,7 +114,7 @@ export interface DualSparkVllmRolePlan {
       readonly options: readonly string[];
     }[];
   };
-  readonly preparation: DualSparkVllmPreparationPlan;
+  readonly preparation: ManagedClusterVllmPreparationPlan;
   readonly fabric: {
     readonly primaryRailIndex: number;
     readonly netdev: string;
@@ -137,16 +133,16 @@ export interface DualSparkVllmRolePlan {
   readonly baseLabels: Readonly<Record<string, string>>;
 }
 
-export interface DualSparkVllmPlan {
+export interface ManagedClusterVllmPlan {
   readonly schemaVersion: 1;
-  readonly adapterId: typeof DUAL_SPARK_VLLM_ADAPTER_ID;
+  readonly adapterId: typeof MANAGED_CLUSTER_VLLM_ADAPTER_ID;
   readonly catalogDigest: string;
   readonly presetId: string;
   readonly presetDigest: string;
   readonly recipeId: string;
   readonly recipeDigest: string;
-  readonly topologyId: typeof DUAL_SPARK_TOPOLOGY_ID;
-  readonly topologySchemaVersion: typeof DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION;
+  readonly topologyId: typeof MANAGED_CLUSTER_TOPOLOGY_ID;
+  readonly topologySchemaVersion: typeof MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION;
   readonly topologySubjectDigest: string;
   readonly topologyOutputDigest: string;
   readonly clusterId: string;
@@ -159,18 +155,15 @@ export interface DualSparkVllmPlan {
   readonly authentication: string;
   readonly apiPort: number;
   readonly masterAddress: string;
-  readonly masterPort: typeof DUAL_SPARK_VLLM_MASTER_PORT;
+  readonly masterPort: number;
   readonly readiness: {
     readonly timeoutMs: number;
     readonly expectedModel: string;
   };
-  readonly roles: {
-    readonly worker: DualSparkVllmRolePlan;
-    readonly head: DualSparkVllmRolePlan;
-  };
+  readonly roles: readonly ManagedClusterVllmRolePlan[];
 }
 
-export interface DualSparkVllmMaterializeOptions {
+export interface ManagedClusterVllmMaterializeOptions {
   /** Explicit catalog input keeps the materializer testable with additional YAML-compiled profiles. */
   readonly catalog?: CompiledManagedInferenceCatalog;
 }
@@ -186,7 +179,7 @@ interface ParsedServingArguments {
 }
 
 function fail(message: string): never {
-  throw new Error(`Cannot materialize dual-DGX-Spark vLLM: ${message}`);
+  throw new Error(`Cannot materialize managed-cluster vLLM: ${message}`);
 }
 
 function positiveSafeInteger(value: number, maximum = Number.MAX_SAFE_INTEGER): boolean {
@@ -226,7 +219,7 @@ function selectedDefinition<TDefinition extends { readonly metadata: { readonly 
 }
 
 function assertCatalogSelection(
-  selection: ResolvedManagedInferenceSelection<DualSparkTopologyOutput>,
+  selection: ResolvedManagedInferenceSelection<ManagedClusterTopologyOutput>,
   catalog: CompiledManagedInferenceCatalog,
 ): CatalogSelection {
   const { catalogDigest, ...catalogContents } = catalog;
@@ -286,7 +279,7 @@ function assertCatalogSelection(
   const materializer = getManagedInferenceMaterializerDescriptor(
     recipe.spec.execution.materializerRef,
   );
-  if (!materializer || materializer.ref !== DUAL_SPARK_VLLM_MATERIALIZER_REF) {
+  if (!materializer || materializer.ref !== MANAGED_CLUSTER_VLLM_MATERIALIZER_REF) {
     fail(`recipe selects unsupported materializer ${recipe.spec.execution.materializerRef}`);
   }
   const lifecycle = getManagedInferenceLifecycleDescriptor(recipe.spec.execution.lifecycleRef);
@@ -317,6 +310,9 @@ function assertCatalogSelection(
   }
   const topologyError = topologyDescriptor.validateArtifact(topology);
   if (topologyError) fail(topologyError);
+  if (topology.output.nodes.length !== recipe.spec.execution.nodeCount) {
+    fail("topology node count does not match the recipe execution shape");
+  }
 
   return { preset, recipe };
 }
@@ -386,7 +382,7 @@ function assertRecipeValues(recipe: ManagedInferenceServingRecipe): void {
     environmentEntries.some(
       ([name, value]) =>
         !SAFE_ENVIRONMENT_NAME_PATTERN.test(name) ||
-        isDualSparkMaterializerOwnedEnvironment(name) ||
+        isManagedClusterMaterializerOwnedEnvironment(name) ||
         Buffer.byteLength(value, "utf8") > 4_096 ||
         value.includes("\0"),
     )
@@ -443,9 +439,9 @@ function servingArguments(recipe: ManagedInferenceServingRecipe): ParsedServingA
 
 function commandArguments(
   recipe: ManagedInferenceServingRecipe,
-  topology: ResolvedManagedInferenceSelection<DualSparkTopologyOutput>["topologyQualification"],
+  topology: ResolvedManagedInferenceSelection<ManagedClusterTopologyOutput>["topologyQualification"],
   staticArguments: readonly string[],
-  rank: 0 | 1,
+  rank: number,
   hostAddress: string,
 ): string[] {
   return [
@@ -471,69 +467,76 @@ function commandArguments(
     "--master-addr",
     topology.output.masterAddress,
     "--master-port",
-    String(DUAL_SPARK_VLLM_MASTER_PORT),
-    ...(rank === 1 ? ["--headless"] : []),
+    String(recipe.spec.execution.rendezvousPort),
+    ...(rank > 0 ? ["--headless"] : []),
   ];
 }
 
-function endpointForRole(
-  output: DualSparkTopologyOutput,
-  role: DualSparkVllmRole,
-): DualSparkTopologyRailEndpoint {
-  const endpoint = output.rails[0]?.[role];
-  if (!endpoint || endpoint.nodeId !== output[`${role}NodeId`]) {
-    fail(`primary ${role} fabric endpoint does not match the role node`);
+function endpointsForNode(
+  output: ManagedClusterTopologyOutput,
+  nodeId: string,
+): readonly (ManagedClusterTopologyRailEndpoint & { readonly railIndex: number })[] {
+  const endpoints = output.rails
+    .flatMap((rail) =>
+      rail.endpoints
+        .filter((endpoint) => endpoint.nodeId === nodeId)
+        .map((endpoint) => ({ ...endpoint, railIndex: rail.index })),
+    )
+    .sort((left, right) => left.railIndex - right.railIndex);
+  if (
+    endpoints.length === 0 ||
+    endpoints.some(
+      (endpoint) =>
+        !SAFE_DEVICE_PATTERN.test(endpoint.hcaDevice) || !SAFE_DEVICE_PATTERN.test(endpoint.netdev),
+    )
+  ) {
+    fail(`node ${nodeId} has no valid fabric endpoints`);
   }
-  if (!SAFE_DEVICE_PATTERN.test(endpoint.hcaDevice) || !SAFE_DEVICE_PATTERN.test(endpoint.netdev)) {
-    fail(`primary ${role} fabric device identity is invalid`);
-  }
-  return endpoint;
+  return endpoints;
 }
 
 interface RolePlanInput {
-  readonly selection: ResolvedManagedInferenceSelection<DualSparkTopologyOutput>;
+  readonly selection: ResolvedManagedInferenceSelection<ManagedClusterTopologyOutput>;
   readonly preset: ManagedInferenceServingPreset;
   readonly recipe: ManagedInferenceServingRecipe;
   readonly serving: ParsedServingArguments;
-  readonly preparation: DualSparkVllmPreparationPlan;
-  readonly role: DualSparkVllmRole;
+  readonly preparation: ManagedClusterVllmPreparationPlan;
+  readonly node: ManagedClusterTopologyOutput["nodes"][number];
   readonly clusterId: string;
   readonly planId: string;
 }
 
-function rolePlan(input: RolePlanInput): DualSparkVllmRolePlan {
-  const { clusterId, planId, preparation, preset, recipe, role, selection, serving } = input;
+function rolePlan(input: RolePlanInput): ManagedClusterVllmRolePlan {
+  const { clusterId, node, planId, preparation, preset, recipe, selection, serving } = input;
   const output = selection.topologyQualification.output;
-  const rank = role === "head" ? 0 : 1;
-  const nodeId = role === "head" ? output.headNodeId : output.workerNodeId;
-  const node = output.nodes.find(
-    (candidate) => candidate.nodeId === nodeId && candidate.role === role,
-  );
-  if (!node) fail(`${role} node is missing from the topology artifact`);
-  const endpoint = endpointForRole(output, role);
+  const { nodeId, rank, role } = node;
+  const fabricEndpoints = endpointsForNode(output, nodeId);
+  const primaryEndpoint = fabricEndpoints[0]!;
+  const peer = output.peers.find((candidate) => candidate.nodeId === nodeId);
+  if (rank > 0 && !peer) fail(`worker rank ${String(rank)} is missing its SSH binding`);
   const baseLabels = {
-    [DUAL_SPARK_MANAGED_LABEL]: "true",
-    [DUAL_SPARK_ADAPTER_LABEL]: DUAL_SPARK_VLLM_ADAPTER_ID,
-    [DUAL_SPARK_PRESET_LABEL]: preset.metadata.id,
-    [DUAL_SPARK_RECIPE_LABEL]: recipe.metadata.id,
-    [DUAL_SPARK_ROLE_LABEL]: role,
-    [DUAL_SPARK_CLUSTER_LABEL]: clusterId,
-    [DUAL_SPARK_PLAN_LABEL]: planId,
-    [DUAL_SPARK_GPU_LABEL]: node.gpuId,
-    [DUAL_SPARK_IMAGE_LABEL]: recipe.spec.runtime.image,
-    [DUAL_SPARK_MODEL_REVISION_LABEL]: recipe.spec.model.revision,
+    [MANAGED_CLUSTER_MANAGED_LABEL]: "true",
+    [MANAGED_CLUSTER_ADAPTER_LABEL]: MANAGED_CLUSTER_VLLM_ADAPTER_ID,
+    [MANAGED_CLUSTER_PRESET_LABEL]: preset.metadata.id,
+    [MANAGED_CLUSTER_RECIPE_LABEL]: recipe.metadata.id,
+    [MANAGED_CLUSTER_ROLE_LABEL]: role,
+    [MANAGED_CLUSTER_CLUSTER_LABEL]: clusterId,
+    [MANAGED_CLUSTER_PLAN_LABEL]: planId,
+    [MANAGED_CLUSTER_GPU_LABEL]: node.gpuId,
+    [MANAGED_CLUSTER_IMAGE_LABEL]: recipe.spec.runtime.image,
+    [MANAGED_CLUSTER_MODEL_REVISION_LABEL]: recipe.spec.model.revision,
   };
   const environment = {
     ...recipe.spec.runtime.environment,
     HF_HOME: recipe.spec.runtime.modelCache.target,
-    VLLM_HOST_IP: endpoint.address,
-    NCCL_IB_HCA: `${endpoint.hcaDevice}:${String(endpoint.hcaPort)}`,
-    NCCL_SOCKET_IFNAME: endpoint.netdev,
-    TP_SOCKET_IFNAME: endpoint.netdev,
-    GLOO_SOCKET_IFNAME: endpoint.netdev,
-    NCCL_IB_GID_INDEX: String(endpoint.roceGid.index),
+    VLLM_HOST_IP: primaryEndpoint.address,
+    NCCL_IB_HCA: `${primaryEndpoint.hcaDevice}:${String(primaryEndpoint.hcaPort)}`,
+    NCCL_SOCKET_IFNAME: primaryEndpoint.netdev,
+    TP_SOCKET_IFNAME: primaryEndpoint.netdev,
+    GLOO_SOCKET_IFNAME: primaryEndpoint.netdev,
+    NCCL_IB_GID_INDEX: String(primaryEndpoint.roceGid.index),
     MASTER_ADDR: output.masterAddress,
-    MASTER_PORT: String(DUAL_SPARK_VLLM_MASTER_PORT),
+    MASTER_PORT: String(recipe.spec.execution.rendezvousPort),
     NODE_RANK: String(rank),
     HEADLESS: role === "worker" ? "1" : "",
   };
@@ -544,15 +547,14 @@ function rolePlan(input: RolePlanInput): DualSparkVllmRolePlan {
     rank,
     nodeId,
     gpuId: node.gpuId,
-    containerName:
-      role === "head" ? DUAL_SPARK_VLLM_HEAD_CONTAINER_NAME : DUAL_SPARK_VLLM_WORKER_CONTAINER_NAME,
+    containerName: `nemoclaw-vllm-cluster-rank-${String(rank)}`,
     execution:
       role === "head"
         ? { kind: "local" }
         : {
             kind: "ssh",
-            expectedTarget: output.peer.target,
-            bindingHandle: output.peer.sshBindingHandle,
+            expectedTarget: peer!.target,
+            bindingHandle: peer!.sshBindingHandle,
           },
     image: runtime.image,
     runtime: {
@@ -570,13 +572,13 @@ function rolePlan(input: RolePlanInput): DualSparkVllmRolePlan {
     },
     preparation,
     fabric: {
-      primaryRailIndex: output.rails[0].index,
-      netdev: endpoint.netdev,
-      hcaDevice: endpoint.hcaDevice,
-      hcaPort: endpoint.hcaPort,
-      address: endpoint.address,
-      roceGidIndex: endpoint.roceGid.index,
-      roceGidValue: endpoint.roceGid.value,
+      primaryRailIndex: primaryEndpoint.railIndex,
+      netdev: primaryEndpoint.netdev,
+      hcaDevice: primaryEndpoint.hcaDevice,
+      hcaPort: primaryEndpoint.hcaPort,
+      address: primaryEndpoint.address,
+      roceGidIndex: primaryEndpoint.roceGid.index,
+      roceGidValue: primaryEndpoint.roceGid.value,
     },
     environment,
     command: {
@@ -586,7 +588,7 @@ function rolePlan(input: RolePlanInput): DualSparkVllmRolePlan {
         selection.topologyQualification,
         serving.arguments,
         rank,
-        endpoint.address,
+        primaryEndpoint.address,
       ),
     },
     endpoint: role === "head" ? `http://${output.masterAddress}:${String(serving.apiPort)}` : null,
@@ -595,11 +597,11 @@ function rolePlan(input: RolePlanInput): DualSparkVllmRolePlan {
 }
 
 /** Compile one resolved, qualified catalog selection into immutable role-local plans. */
-export function materializeDualSparkVllmPlan(
-  selection: ResolvedManagedInferenceSelection<DualSparkTopologyOutput>,
-  options: DualSparkVllmMaterializeOptions = {},
-): DualSparkVllmPlan {
-  let snapshot: ResolvedManagedInferenceSelection<DualSparkTopologyOutput>;
+export function materializeManagedClusterVllmPlan(
+  selection: ResolvedManagedInferenceSelection<ManagedClusterTopologyOutput>,
+  options: ManagedClusterVllmMaterializeOptions = {},
+): ManagedClusterVllmPlan {
+  let snapshot: ResolvedManagedInferenceSelection<ManagedClusterTopologyOutput>;
   let catalog: CompiledManagedInferenceCatalog;
   try {
     snapshot = immutableManagedInferenceCopy(selection);
@@ -614,9 +616,9 @@ export function materializeDualSparkVllmPlan(
   const catalogSelection = { ...snapshot, ...selected };
   assertRecipeValues(selected.recipe);
   const serving = servingArguments(selected.recipe);
-  let preparation: DualSparkVllmPreparationPlan;
+  let preparation: ManagedClusterVllmPreparationPlan;
   try {
-    preparation = materializeDualSparkVllmPreparation({
+    preparation = materializeManagedClusterVllmPreparation({
       ...selected.recipe.spec.model,
       modelCacheTarget: selected.recipe.spec.runtime.modelCache.target,
     });
@@ -632,7 +634,7 @@ export function materializeDualSparkVllmPlan(
   };
   const clusterId = managedInferenceHexDigest(topologyIdentity);
   const planId = managedInferenceHexDigest({
-    adapterId: DUAL_SPARK_VLLM_ADAPTER_ID,
+    adapterId: MANAGED_CLUSTER_VLLM_ADAPTER_ID,
     preset: { id: selected.preset.metadata.id, digest: snapshot.presetDigest },
     recipe: { id: selected.recipe.metadata.id, digest: snapshot.recipeDigest },
     topology: topologyIdentity,
@@ -640,14 +642,14 @@ export function materializeDualSparkVllmPlan(
   const output = snapshot.topologyQualification.output;
   return immutableManagedInferenceCopy({
     schemaVersion: 1,
-    adapterId: DUAL_SPARK_VLLM_ADAPTER_ID,
+    adapterId: MANAGED_CLUSTER_VLLM_ADAPTER_ID,
     catalogDigest: snapshot.catalogDigest,
     presetId: selected.preset.metadata.id,
     presetDigest: snapshot.presetDigest,
     recipeId: selected.recipe.metadata.id,
     recipeDigest: snapshot.recipeDigest,
-    topologyId: DUAL_SPARK_TOPOLOGY_ID,
-    topologySchemaVersion: DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION,
+    topologyId: MANAGED_CLUSTER_TOPOLOGY_ID,
+    topologySchemaVersion: MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
     topologySubjectDigest: snapshot.topologyQualification.subjectDigest,
     topologyOutputDigest: snapshot.topologyQualification.outputDigest,
     clusterId,
@@ -660,32 +662,34 @@ export function materializeDualSparkVllmPlan(
     authentication: selected.recipe.spec.serve.authentication,
     apiPort: serving.apiPort,
     masterAddress: output.masterAddress,
-    masterPort: DUAL_SPARK_VLLM_MASTER_PORT,
+    masterPort: selected.recipe.spec.execution.rendezvousPort,
     readiness: {
       timeoutMs: selected.recipe.spec.readiness.timeoutSeconds * 1000,
       expectedModel: selected.recipe.spec.readiness.expectedModel,
     },
-    roles: {
-      worker: rolePlan({
+    roles: output.nodes.map((node) =>
+      rolePlan({
         selection: catalogSelection,
         preset: selected.preset,
         recipe: selected.recipe,
         serving,
         preparation,
-        role: "worker",
+        node,
         clusterId,
         planId,
       }),
-      head: rolePlan({
-        selection: catalogSelection,
-        preset: selected.preset,
-        recipe: selected.recipe,
-        serving,
-        preparation,
-        role: "head",
-        clusterId,
-        planId,
-      }),
-    },
+    ),
   });
+}
+
+export function managedClusterHeadRole(plan: ManagedClusterVllmPlan): ManagedClusterVllmRolePlan {
+  const head = plan.roles.find((role) => role.rank === 0 && role.role === "head");
+  if (!head) fail("plan has no rank-zero head role");
+  return head;
+}
+
+export function managedClusterWorkerRoles(
+  plan: ManagedClusterVllmPlan,
+): readonly ManagedClusterVllmRolePlan[] {
+  return plan.roles.filter((role) => role.rank > 0 && role.role === "worker");
 }

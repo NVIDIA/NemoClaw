@@ -5,9 +5,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
-  cleanupInstalledDualSparkVllmRuntime,
-  dualSparkVllmRuntimeReceiptPath,
-} from "./serving/spark-runtime-receipt";
+  cleanupInstalledManagedClusterVllmRuntime,
+  managedClusterVllmRuntimeReceiptPath,
+} from "./serving/managed-cluster-runtime-receipt";
 import {
   cleanupInstalledDualStationVllmRuntime,
   dualStationVllmRuntimeReceiptPath,
@@ -26,7 +26,7 @@ function pathExistsNoFollow(filePath: string): boolean {
 function requestedReceipt(): {
   readonly filePath: string;
   readonly stateDir: string;
-  readonly topology: "spark" | "station";
+  readonly topology: "managed-cluster" | "station";
 } {
   const args = process.argv.slice(2);
   if (args.length !== 1) {
@@ -37,8 +37,8 @@ function requestedReceipt(): {
     throw new Error("managed distributed vLLM cleanup receipt path is invalid");
   }
   const stateDir = path.dirname(filePath);
-  if (filePath === dualSparkVllmRuntimeReceiptPath(stateDir)) {
-    return { filePath, stateDir, topology: "spark" };
+  if (filePath === managedClusterVllmRuntimeReceiptPath(stateDir)) {
+    return { filePath, stateDir, topology: "managed-cluster" };
   }
   if (filePath === dualStationVllmRuntimeReceiptPath(stateDir)) {
     return { filePath, stateDir, topology: "station" };
@@ -52,24 +52,26 @@ async function main(): Promise<void> {
     throw new Error(`managed distributed vLLM receipt disappeared: ${receipt.filePath}`);
   }
   const otherReceipt =
-    receipt.topology === "spark"
+    receipt.topology === "managed-cluster"
       ? dualStationVllmRuntimeReceiptPath(receipt.stateDir)
-      : dualSparkVllmRuntimeReceiptPath(receipt.stateDir);
+      : managedClusterVllmRuntimeReceiptPath(receipt.stateDir);
   if (pathExistsNoFollow(otherReceipt)) {
     throw new Error(
-      "both dual-Spark and dual-Station runtime receipts exist; refusing ambiguous cleanup",
+      "both managed cluster and dual-Station runtime receipts exist; refusing ambiguous cleanup",
     );
   }
 
-  if (receipt.topology === "spark") {
-    const spark = await cleanupInstalledDualSparkVllmRuntime({ stateDir: receipt.stateDir });
-    if (spark.kind !== "removed" || pathExistsNoFollow(receipt.filePath)) {
-      throw new Error("the requested dual-Spark runtime receipt was not removed");
+  if (receipt.topology === "managed-cluster") {
+    const managedCluster = await cleanupInstalledManagedClusterVllmRuntime({
+      stateDir: receipt.stateDir,
+    });
+    if (managedCluster.kind !== "removed" || pathExistsNoFollow(receipt.filePath)) {
+      throw new Error("the requested managed cluster runtime receipt was not removed");
     }
     console.log(
-      spark.removedContainerIds.length > 0
-        ? `Removed managed dual-Spark vLLM containers: ${spark.removedContainerIds.join(", ")}`
-        : "Removed managed dual-Spark vLLM state; no receipt-owned containers remained.",
+      managedCluster.removedContainerIds.length > 0
+        ? `Removed managed cluster vLLM containers: ${managedCluster.removedContainerIds.join(", ")}`
+        : "Removed managed cluster vLLM state; no receipt-owned containers remained.",
     );
     return;
   }

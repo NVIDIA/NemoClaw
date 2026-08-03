@@ -91,7 +91,7 @@
         },
         "execution": {
           "type": "object",
-          "required": ["materializerRef", "lifecycleRef", "topologyBinding", "nodeCount", "tensorParallelSize", "pipelineParallelSize", "distributedExecutorBackend"],
+          "required": ["materializerRef", "lifecycleRef", "topologyBinding", "nodeCount", "tensorParallelSize", "pipelineParallelSize", "distributedExecutorBackend", "rendezvousPort"],
           "properties": {
             "materializerRef": { "$ref": "#/$defs/stableId" },
             "lifecycleRef": { "$ref": "#/$defs/stableId" },
@@ -99,7 +99,8 @@
             "nodeCount": { "type": "integer", "minimum": 1, "maximum": 1024 },
             "tensorParallelSize": { "type": "integer", "minimum": 1, "maximum": 1024 },
             "pipelineParallelSize": { "type": "integer", "minimum": 1, "maximum": 1024 },
-            "distributedExecutorBackend": { "$ref": "#/$defs/token" }
+            "distributedExecutorBackend": { "$ref": "#/$defs/token" },
+            "rendezvousPort": { "type": "integer", "minimum": 1, "maximum": 65535 }
           },
           "additionalProperties": false
         },

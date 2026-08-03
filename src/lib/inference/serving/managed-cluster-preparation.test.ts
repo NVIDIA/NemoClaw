@@ -7,7 +7,7 @@ import {
   NO_PREPARATION_REF,
   SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
 } from "./adapter-registry.js";
-import { materializeDualSparkVllmPreparation } from "./dual-spark-preparation.js";
+import { materializeManagedClusterVllmPreparation } from "./managed-cluster-preparation.js";
 
 const MODEL = {
   id: "example-org/Synthetic-Model",
@@ -16,9 +16,9 @@ const MODEL = {
   modelCacheTarget: "/models/alternate-cache",
 } as const;
 
-describe("dual-DGX-Spark vLLM preparation materializer", () => {
+describe("managed cluster vLLM preparation materializer", () => {
   it("materializes the registered no-op without executable input", () => {
-    const preparation = materializeDualSparkVllmPreparation({
+    const preparation = materializeManagedClusterVllmPreparation({
       ...MODEL,
       preparation: { ref: NO_PREPARATION_REF },
     });
@@ -34,7 +34,7 @@ describe("dual-DGX-Spark vLLM preparation materializer", () => {
   });
 
   it("derives the snapshot root and opaque target paths from recipe data", () => {
-    const preparation = materializeDualSparkVllmPreparation({
+    const preparation = materializeManagedClusterVllmPreparation({
       ...MODEL,
       preparation: {
         ref: SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
@@ -107,6 +107,6 @@ describe("dual-DGX-Spark vLLM preparation materializer", () => {
       },
     },
   ])("rejects bounded operation input with $label", ({ preparation }) => {
-    expect(() => materializeDualSparkVllmPreparation({ ...MODEL, preparation })).toThrow();
+    expect(() => materializeManagedClusterVllmPreparation({ ...MODEL, preparation })).toThrow();
   });
 });

@@ -46,9 +46,9 @@ import {
   resolveOllamaRuntimeContextWindow as resolveOllamaRuntimeContextWindowWithHost,
 } from "./ollama-runtime-context";
 import {
-  type RecoveredDualSparkVllmEndpoint,
-  recoverInstalledDualSparkVllmEndpoint,
-} from "./serving/spark-runtime-receipt";
+  type RecoveredManagedClusterVllmEndpoint,
+  recoverInstalledManagedClusterVllmEndpoint,
+} from "./serving/managed-cluster-runtime-receipt";
 import { loadManagedVllmApiKey } from "./vllm-api-key";
 import { applyVllmRuntimeContextWindow as applyVllmRuntimeContextWindowFromModels } from "./vllm-runtime-context";
 import { getDualStationManagedVllmBaseUrl } from "./vllm-station-cluster-lifecycle";
@@ -260,8 +260,8 @@ export interface LocalProviderHealthProbeOptions {
   loadVllmApiKeyImpl?: () => string | null;
   /** Recovers a managed Station endpoint while validating the injected key. */
   getManagedVllmBaseUrlImpl?: ManagedStationVllmBaseUrlResolver;
-  /** Recovers a receipt-owned managed Spark endpoint. */
-  recoverSparkVllmEndpointImpl?: ManagedSparkVllmEndpointResolver;
+  /** Recovers a receipt-owned managed cluster endpoint. */
+  recoverManagedClusterVllmEndpointImpl?: ManagedClusterVllmEndpointResolver;
 }
 
 function defaultLoadOllamaProxyToken(): string | null {
@@ -440,9 +440,9 @@ type ManagedStationVllmBaseUrlResolver = (overrides?: {
   onManagedHeadObserved?: () => void;
 }) => string | null;
 
-type ManagedSparkVllmEndpointResolver = (options?: {
+type ManagedClusterVllmEndpointResolver = (options?: {
   loadApiKey?: () => string | null;
-}) => Pick<RecoveredDualSparkVllmEndpoint, "baseUrl" | "apiKey"> | null;
+}) => Pick<RecoveredManagedClusterVllmEndpoint, "baseUrl" | "apiKey"> | null;
 
 export type ManagedVllmProviderState =
   | { kind: "absent" }
@@ -454,7 +454,7 @@ export interface ManagedVllmProviderBindingOptions {
   /** Compatibility seam for the Station lifecycle resolver. */
   getManagedBaseUrlImpl?: ManagedStationVllmBaseUrlResolver;
   loadApiKeyImpl?: () => string | null;
-  recoverSparkVllmEndpointImpl?: ManagedSparkVllmEndpointResolver;
+  recoverManagedClusterVllmEndpointImpl?: ManagedClusterVllmEndpointResolver;
 }
 
 function getManagedStationVllmProviderState(
@@ -509,39 +509,44 @@ export function getManagedVllmProviderState(
   if (configuredLocalInferenceHostUrl(options.hostUrl)) return { kind: "absent" };
 
   const loadApiKey = options.loadApiKeyImpl ?? loadManagedVllmApiKey;
-  let sparkAuthFailure: "missing" | "unsafe" | null = null;
-  let sparkEndpoint: Pick<RecoveredDualSparkVllmEndpoint, "baseUrl" | "apiKey"> | null;
+  let managedClusterAuthFailure: "missing" | "unsafe" | null = null;
+  let managedClusterEndpoint: Pick<
+    RecoveredManagedClusterVllmEndpoint,
+    "baseUrl" | "apiKey"
+  > | null;
   try {
-    sparkEndpoint = (options.recoverSparkVllmEndpointImpl ?? recoverInstalledDualSparkVllmEndpoint)(
-      {
-        loadApiKey: () => {
-          try {
-            const apiKey = loadApiKey();
-            if (!apiKey) sparkAuthFailure = "missing";
-            return apiKey;
-          } catch {
-            sparkAuthFailure = "unsafe";
-            return null;
-          }
-        },
+    managedClusterEndpoint = (
+      options.recoverManagedClusterVllmEndpointImpl ?? recoverInstalledManagedClusterVllmEndpoint
+    )({
+      loadApiKey: () => {
+        try {
+          const apiKey = loadApiKey();
+          if (!apiKey) managedClusterAuthFailure = "missing";
+          return apiKey;
+        } catch {
+          managedClusterAuthFailure = "unsafe";
+          return null;
+        }
       },
-    );
+    });
   } catch (error) {
-    if (sparkAuthFailure) return { kind: "invalid-auth", reason: sparkAuthFailure };
+    if (managedClusterAuthFailure) {
+      return { kind: "invalid-auth", reason: managedClusterAuthFailure };
+    }
     throw error;
   }
 
   const stationState = getManagedStationVllmProviderState(options, loadApiKey);
-  if (!sparkEndpoint) return stationState;
+  if (!managedClusterEndpoint) return stationState;
   if (stationState.kind !== "absent") {
     throw new Error(
-      "Both managed Spark and Station vLLM state are present; refusing to select either endpoint.",
+      "Both managed cluster and Station vLLM state are present; refusing to select either endpoint.",
     );
   }
   return {
     kind: "ready",
-    baseUrl: `${sparkEndpoint.baseUrl.replace(/\/+$/, "")}/v1`,
-    apiKey: sparkEndpoint.apiKey,
+    baseUrl: `${managedClusterEndpoint.baseUrl.replace(/\/+$/, "")}/v1`,
+    apiKey: managedClusterEndpoint.apiKey,
   };
 }
 
@@ -815,7 +820,7 @@ export function probeLocalProviderHealth(
       managedState = getManagedVllmProviderState({
         getManagedBaseUrlImpl: options.getManagedVllmBaseUrlImpl,
         loadApiKeyImpl: options.loadVllmApiKeyImpl,
-        recoverSparkVllmEndpointImpl: options.recoverSparkVllmEndpointImpl,
+        recoverManagedClusterVllmEndpointImpl: options.recoverManagedClusterVllmEndpointImpl,
       });
     } catch {
       return {

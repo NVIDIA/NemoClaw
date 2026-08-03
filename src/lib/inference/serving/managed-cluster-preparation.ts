@@ -13,7 +13,7 @@ const MODEL_REVISION = /^[0-9a-f]{40,64}$/u;
 const MAX_PATH_BYTES = 4_096;
 const MAX_REPLACEMENT_BYTES = 64 * 1_024;
 
-export type DualSparkVllmPreparationRecipe =
+export type ManagedClusterVllmPreparationRecipe =
   | { readonly ref: typeof NO_PREPARATION_REF }
   | {
       readonly ref: typeof SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF;
@@ -31,16 +31,16 @@ export type DualSparkVllmPreparationRecipe =
       };
     };
 
-interface DualSparkVllmPreparationPlanBase {
+interface ManagedClusterVllmPreparationPlanBase {
   readonly phase: "container-before-exec";
   readonly modelId: string;
   readonly modelRevision: string;
   readonly modelDownloadSizeBytes: number;
 }
 
-export type DualSparkVllmPreparationPlan =
-  | (DualSparkVllmPreparationPlanBase & { readonly ref: typeof NO_PREPARATION_REF })
-  | (DualSparkVllmPreparationPlanBase & {
+export type ManagedClusterVllmPreparationPlan =
+  | (ManagedClusterVllmPreparationPlanBase & { readonly ref: typeof NO_PREPARATION_REF })
+  | (ManagedClusterVllmPreparationPlanBase & {
       readonly ref: typeof SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF;
       readonly snapshotCopy: {
         readonly sourcePath: string;
@@ -115,7 +115,7 @@ function containerPath(value: unknown, label: string): string {
   return candidate;
 }
 
-function preparationRecipe(value: unknown): DualSparkVllmPreparationRecipe {
+function preparationRecipe(value: unknown): ManagedClusterVllmPreparationRecipe {
   if (!isRecord(value)) throw new Error("model preparation must be an object");
   if (value.ref === NO_PREPARATION_REF) {
     exactKeys(value, ["ref"], "model preparation");
@@ -164,9 +164,9 @@ function preparationRecipe(value: unknown): DualSparkVllmPreparationRecipe {
 }
 
 /** Materialize one allowlisted, non-executable preparation operation from recipe data. */
-export function materializeDualSparkVllmPreparation(
+export function materializeManagedClusterVllmPreparation(
   model: PreparationModel,
-): DualSparkVllmPreparationPlan {
+): ManagedClusterVllmPreparationPlan {
   if (!MODEL_ID.test(model.id) || !MODEL_REVISION.test(model.revision)) {
     throw new Error("model preparation identity is invalid");
   }

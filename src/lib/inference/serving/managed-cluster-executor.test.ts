@@ -9,21 +9,21 @@ import {
 } from "../vllm-station-ssh-binding.test-support.js";
 import { NO_PREPARATION_REF } from "./adapter-registry.js";
 import {
-  assertDualSparkVllmExecutorConfig,
-  buildDualSparkVllmRunArgs,
-  createDualSparkVllmExecutor,
-  type DualSparkVllmExecutorRuntimeDeps,
-  inspectDualSparkVllmNodesSync,
-} from "./dual-spark-executor.js";
-import { fixtureDualSparkPlan } from "./dual-spark-fixture.test-support.js";
+  assertManagedClusterVllmExecutorConfig,
+  buildManagedClusterVllmRunArgs,
+  createManagedClusterVllmExecutor,
+  inspectManagedClusterVllmNodesSync,
+  type ManagedClusterVllmExecutorRuntimeDeps,
+} from "./managed-cluster-executor.js";
+import { fixtureManagedClusterPlan } from "./managed-cluster-fixture.test-support.js";
 import {
-  DUAL_SPARK_API_KEY_FINGERPRINT_LABEL,
-  DUAL_SPARK_MANAGED_LABEL,
-  DUAL_SPARK_TRANSACTION_LABEL,
-  type DualSparkVllmPlan,
-  type DualSparkVllmRole,
-  type DualSparkVllmRolePlan,
-} from "./dual-spark-materialize.js";
+  MANAGED_CLUSTER_API_KEY_FINGERPRINT_LABEL,
+  MANAGED_CLUSTER_MANAGED_LABEL,
+  MANAGED_CLUSTER_TRANSACTION_LABEL,
+  type ManagedClusterVllmPlan,
+  type ManagedClusterVllmRole,
+  type ManagedClusterVllmRolePlan,
+} from "./managed-cluster-materialize.js";
 
 const API_KEY = "a".repeat(64);
 const FINGERPRINT = "b".repeat(64);
@@ -35,7 +35,7 @@ const LOCAL_CACHE_ROOT = "/home/nvidia/.cache/huggingface";
 const PEER_CACHE_ROOT = "/home/spark/.cache/huggingface";
 
 type DockerCaptureOptions = NonNullable<
-  Parameters<DualSparkVllmExecutorRuntimeDeps["dockerCapture"]>[1]
+  Parameters<ManagedClusterVllmExecutorRuntimeDeps["dockerCapture"]>[1]
 >;
 
 type StoppedForeignContainerFixture = {
@@ -62,33 +62,33 @@ const STOPPED_FOREIGN_CONTAINER_FIXTURES: readonly StoppedForeignContainerFixtur
     signal: "managed label",
     name: "foreign-inference",
     image: "example.invalid/inference:latest",
-    labels: { [DUAL_SPARK_MANAGED_LABEL]: "foreign" },
+    labels: { [MANAGED_CLUSTER_MANAGED_LABEL]: "foreign" },
   },
 ];
 
-function bindPlan(fixture: DualStationSshBindingFixture): DualSparkVllmPlan {
-  const plan = fixtureDualSparkPlan();
+function bindPlan(fixture: DualStationSshBindingFixture): ManagedClusterVllmPlan {
+  const plan = fixtureManagedClusterPlan();
   return {
     ...plan,
-    roles: {
-      head: plan.roles.head,
-      worker: {
-        ...plan.roles.worker,
+    roles: [
+      plan.roles[0],
+      {
+        ...plan.roles[1],
         execution: {
           kind: "ssh",
           expectedTarget: fixture.binding.peerTarget,
           bindingHandle: fixture.token,
         },
       },
-    },
+    ],
   };
 }
 
-function launchLabels(rolePlan: DualSparkVllmRolePlan): Record<string, string> {
+function launchLabels(rolePlan: ManagedClusterVllmRolePlan): Record<string, string> {
   return {
     ...rolePlan.baseLabels,
-    [DUAL_SPARK_API_KEY_FINGERPRINT_LABEL]: FINGERPRINT,
-    [DUAL_SPARK_TRANSACTION_LABEL]: TRANSACTION_ID,
+    [MANAGED_CLUSTER_API_KEY_FINGERPRINT_LABEL]: FINGERPRINT,
+    [MANAGED_CLUSTER_TRANSACTION_LABEL]: TRANSACTION_ID,
   };
 }
 
@@ -115,8 +115,8 @@ function successfulDockerResult(stdout = "") {
 }
 
 function runtimeOverrides(
-  overrides: Partial<DualSparkVllmExecutorRuntimeDeps> = {},
-): Partial<DualSparkVllmExecutorRuntimeDeps> {
+  overrides: Partial<ManagedClusterVllmExecutorRuntimeDeps> = {},
+): Partial<ManagedClusterVllmExecutorRuntimeDeps> {
   return {
     dockerCapture: vi.fn(() => ""),
     dockerForceRm: vi.fn(() => successfulDockerResult()),
@@ -160,9 +160,9 @@ function routeDockerCapture(
   return handler(args, options);
 }
 
-describe("dual-DGX-Spark vLLM executor", () => {
+describe("managed-cluster vLLM executor", () => {
   let bindingFixture: DualStationSshBindingFixture;
-  let plan: DualSparkVllmPlan;
+  let plan: ManagedClusterVllmPlan;
 
   beforeEach(() => {
     bindingFixture = createDualStationSshBindingFixture("spark-worker.local");
@@ -175,8 +175,8 @@ describe("dual-DGX-Spark vLLM executor", () => {
   });
 
   it("builds the YAML-backed role launch without a restart policy or bearer value", () => {
-    const head = plan.roles.head;
-    const args = buildDualSparkVllmRunArgs(head, LOCAL_CACHE_ROOT, launchLabels(head));
+    const head = plan.roles[0];
+    const args = buildManagedClusterVllmRunArgs(head, LOCAL_CACHE_ROOT, launchLabels(head));
     const command = args.at(-1)!;
 
     expect(args).toEqual(
@@ -230,14 +230,14 @@ describe("dual-DGX-Spark vLLM executor", () => {
   });
 
   it("dispatches the no-op preparation and YAML-backed executable without patch steps", () => {
-    const head: DualSparkVllmRolePlan = {
-      ...plan.roles.head,
+    const head: ManagedClusterVllmRolePlan = {
+      ...plan.roles[0],
       preparation: {
         ref: NO_PREPARATION_REF,
         phase: "container-before-exec",
         modelId: plan.model.id,
         modelRevision: plan.model.revision,
-        modelDownloadSizeBytes: plan.roles.head.preparation.modelDownloadSizeBytes,
+        modelDownloadSizeBytes: plan.roles[0].preparation.modelDownloadSizeBytes,
       },
       command: {
         executable: "/opt/vllm/bin/vllm",
@@ -245,7 +245,9 @@ describe("dual-DGX-Spark vLLM executor", () => {
       },
     };
 
-    const command = buildDualSparkVllmRunArgs(head, LOCAL_CACHE_ROOT, launchLabels(head)).at(-1)!;
+    const command = buildManagedClusterVllmRunArgs(head, LOCAL_CACHE_ROOT, launchLabels(head)).at(
+      -1,
+    )!;
 
     expect(command).toContain("exec '/opt/vllm/bin/vllm' 'serve' 'synthetic/model'");
     expect(command).not.toContain("install -m");
@@ -253,8 +255,8 @@ describe("dual-DGX-Spark vLLM executor", () => {
   });
 
   it("keeps the worker launch headless and free of the bearer environment key", () => {
-    const worker = plan.roles.worker;
-    const args = buildDualSparkVllmRunArgs(worker, PEER_CACHE_ROOT, launchLabels(worker));
+    const worker = plan.roles[1];
+    const args = buildManagedClusterVllmRunArgs(worker, PEER_CACHE_ROOT, launchLabels(worker));
 
     expect(args).not.toContain("VLLM_API_KEY");
     expect(args.at(-1)).toContain("'--headless'");
@@ -266,58 +268,70 @@ describe("dual-DGX-Spark vLLM executor", () => {
   it("rejects a changed binding handoff before any Docker operation", () => {
     const changedPlan = {
       ...plan,
-      roles: {
-        ...plan.roles,
-        worker: {
-          ...plan.roles.worker,
+      roles: [
+        plan.roles[0],
+        {
+          ...plan.roles[1],
           execution: {
             kind: "ssh" as const,
             expectedTarget: bindingFixture.binding.peerTarget,
             bindingHandle: "changed",
           },
         },
-      },
+      ],
     };
 
     expect(() =>
-      createDualSparkVllmExecutor(
+      createManagedClusterVllmExecutor(
         {
           plan: changedPlan,
-          peerSshBinding: bindingFixture.binding,
-          localCacheRoot: LOCAL_CACHE_ROOT,
-          peerCacheRoot: PEER_CACHE_ROOT,
+          nodes: [
+            { nodeId: plan.roles[0].nodeId, modelCacheRoot: LOCAL_CACHE_ROOT },
+            {
+              nodeId: plan.roles[1].nodeId,
+              modelCacheRoot: PEER_CACHE_ROOT,
+              sshBinding: bindingFixture.binding,
+            },
+          ],
         },
         runtimeOverrides(),
       ),
-    ).toThrow(/qualified binding and plan/);
+    ).toThrow(/executor target .* is invalid/);
   });
 
   it("revalidates catalog-derived commands and exposes the same synchronous inspector", () => {
     const config = {
       plan,
-      peerSshBinding: bindingFixture.binding,
-      localCacheRoot: LOCAL_CACHE_ROOT,
-      peerCacheRoot: PEER_CACHE_ROOT,
+      nodes: [
+        { nodeId: plan.roles[0].nodeId, modelCacheRoot: LOCAL_CACHE_ROOT },
+        {
+          nodeId: plan.roles[1].nodeId,
+          modelCacheRoot: PEER_CACHE_ROOT,
+          sshBinding: bindingFixture.binding,
+        },
+      ],
     };
-    expect(inspectDualSparkVllmNodesSync(config, runtimeOverrides())).toEqual({
-      head: { containers: [], listeningPorts: [] },
-      worker: { containers: [], listeningPorts: [] },
+    expect(inspectManagedClusterVllmNodesSync(config, runtimeOverrides())).toEqual({
+      nodes: [
+        { nodeId: plan.roles[0].nodeId, snapshot: { containers: [], listeningPorts: [] } },
+        { nodeId: plan.roles[1].nodeId, snapshot: { containers: [], listeningPorts: [] } },
+      ],
     });
 
-    const changedPlan: DualSparkVllmPlan = {
+    const changedPlan: ManagedClusterVllmPlan = {
       ...plan,
-      roles: {
-        ...plan.roles,
-        head: {
-          ...plan.roles.head,
+      roles: [
+        {
+          ...plan.roles[0],
           command: {
-            ...plan.roles.head.command,
-            arguments: [...plan.roles.head.command.arguments, "--changed"],
+            ...plan.roles[0].command,
+            arguments: [...plan.roles[0].command.arguments, "--changed"],
           },
         },
-      },
+        plan.roles[1],
+      ],
     };
-    expect(() => assertDualSparkVllmExecutorConfig({ ...config, plan: changedPlan })).toThrow(
+    expect(() => assertManagedClusterVllmExecutorConfig({ ...config, plan: changedPlan })).toThrow(
       /catalog-derived adapter contract/,
     );
   });
@@ -325,23 +339,28 @@ describe("dual-DGX-Spark vLLM executor", () => {
   it("validates selected definition digests without pinning the aggregate catalog", () => {
     const config = {
       plan,
-      peerSshBinding: bindingFixture.binding,
-      localCacheRoot: LOCAL_CACHE_ROOT,
-      peerCacheRoot: PEER_CACHE_ROOT,
+      nodes: [
+        { nodeId: plan.roles[0].nodeId, modelCacheRoot: LOCAL_CACHE_ROOT },
+        {
+          nodeId: plan.roles[1].nodeId,
+          modelCacheRoot: PEER_CACHE_ROOT,
+          sshBinding: bindingFixture.binding,
+        },
+      ],
     };
-    const catalogExpandedElsewhere: DualSparkVllmPlan = {
+    const catalogExpandedElsewhere: ManagedClusterVllmPlan = {
       ...plan,
       catalogDigest: `sha256:${"e".repeat(64)}`,
     };
 
     expect(() =>
-      assertDualSparkVllmExecutorConfig({
+      assertManagedClusterVllmExecutorConfig({
         ...config,
         plan: catalogExpandedElsewhere,
       }),
     ).not.toThrow();
     expect(() =>
-      assertDualSparkVllmExecutorConfig({
+      assertManagedClusterVllmExecutorConfig({
         ...config,
         plan: { ...plan, recipeDigest: `sha256:${"f".repeat(64)}` },
       }),
@@ -349,7 +368,7 @@ describe("dual-DGX-Spark vLLM executor", () => {
   });
 
   it("inspects every container plus host listeners and marks only the exact live role healthy", async () => {
-    const headLabels = launchLabels(plan.roles.head);
+    const headLabels = launchLabels(plan.roles[0]);
     const foreignLabels = { "example.foreign": "true" };
     const dockerCapture = vi.fn((args: readonly string[], options?: DockerCaptureOptions) =>
       routeDockerCapture(args, options, {
@@ -358,8 +377,8 @@ describe("dual-DGX-Spark vLLM executor", () => {
           [
             inspectionRow({
               id: HEAD_ID,
-              name: plan.roles.head.containerName,
-              image: plan.roles.head.image,
+              name: plan.roles[0].containerName,
+              image: plan.roles[0].image,
               running: true,
               labels: headLabels,
             }),
@@ -380,17 +399,22 @@ describe("dual-DGX-Spark vLLM executor", () => {
       () =>
         `LISTEN 0 4096 0.0.0.0:${String(plan.apiPort)} 0.0.0.0:*\nLISTEN 0 128 [::]:${String(plan.masterPort)} [::]:*\n`,
     );
-    const executor = createDualSparkVllmExecutor(
+    const executor = createManagedClusterVllmExecutor(
       {
         plan,
-        peerSshBinding: bindingFixture.binding,
-        localCacheRoot: LOCAL_CACHE_ROOT,
-        peerCacheRoot: PEER_CACHE_ROOT,
+        nodes: [
+          { nodeId: plan.roles[0].nodeId, modelCacheRoot: LOCAL_CACHE_ROOT },
+          {
+            nodeId: plan.roles[1].nodeId,
+            modelCacheRoot: PEER_CACHE_ROOT,
+            sshBinding: bindingFixture.binding,
+          },
+        ],
       },
       runtimeOverrides({ dockerCapture, captureListeners }),
     );
 
-    const snapshot = await executor.inspectNode(plan.roles.head);
+    const snapshot = await executor.inspectNode(plan.roles[0]);
 
     expect(snapshot.listeningPorts).toEqual([plan.apiPort, plan.masterPort].sort((a, b) => a - b));
     expect(snapshot.containers).toHaveLength(2);
@@ -409,24 +433,29 @@ describe("dual-DGX-Spark vLLM executor", () => {
   });
 
   it("fails closed when listener inspection is malformed", async () => {
-    const executor = createDualSparkVllmExecutor(
+    const executor = createManagedClusterVllmExecutor(
       {
         plan,
-        peerSshBinding: bindingFixture.binding,
-        localCacheRoot: LOCAL_CACHE_ROOT,
-        peerCacheRoot: PEER_CACHE_ROOT,
+        nodes: [
+          { nodeId: plan.roles[0].nodeId, modelCacheRoot: LOCAL_CACHE_ROOT },
+          {
+            nodeId: plan.roles[1].nodeId,
+            modelCacheRoot: PEER_CACHE_ROOT,
+            sshBinding: bindingFixture.binding,
+          },
+        ],
       },
       runtimeOverrides({ captureListeners: vi.fn(() => "not-an-ss-row") }),
     );
 
-    await expect(executor.inspectNode(plan.roles.head)).rejects.toThrow(/listener inspection/);
+    await expect(executor.inspectNode(plan.roles[0])).rejects.toThrow(/listener inspection/);
   });
 
   it("does not declare the worker-first boundary once a head setup appears", async () => {
     const dockerCapture = vi.fn((args: readonly string[], options?: DockerCaptureOptions) => {
-      const role = options?.env?.DOCKER_HOST ? "worker" : "head";
-      const rolePlan = plan.roles[role];
-      const id = role === "worker" ? WORKER_ID : HEAD_ID;
+      const roleIndex = options?.env?.DOCKER_HOST ? 1 : 0;
+      const rolePlan = plan.roles[roleIndex]!;
+      const id = roleIndex === 1 ? WORKER_ID : HEAD_ID;
       return routeDockerCapture(args, options, {
         quiet: fixedDockerCapture(id),
         inspect: fixedDockerCapture(
@@ -443,12 +472,17 @@ describe("dual-DGX-Spark vLLM executor", () => {
       });
     });
     let tick = 0;
-    const executor = createDualSparkVllmExecutor(
+    const executor = createManagedClusterVllmExecutor(
       {
         plan,
-        peerSshBinding: bindingFixture.binding,
-        localCacheRoot: LOCAL_CACHE_ROOT,
-        peerCacheRoot: PEER_CACHE_ROOT,
+        nodes: [
+          { nodeId: plan.roles[0].nodeId, modelCacheRoot: LOCAL_CACHE_ROOT },
+          {
+            nodeId: plan.roles[1].nodeId,
+            modelCacheRoot: PEER_CACHE_ROOT,
+            sshBinding: bindingFixture.binding,
+          },
+        ],
       },
       runtimeOverrides({
         dockerCapture,
@@ -458,9 +492,9 @@ describe("dual-DGX-Spark vLLM executor", () => {
 
     await expect(
       executor.waitForWorkerDistributedReady({
-        rolePlan: plan.roles.worker,
+        rolePlan: plan.roles[1],
         containerId: WORKER_ID,
-        expectedLabels: launchLabels(plan.roles.worker),
+        expectedLabels: launchLabels(plan.roles[1]),
         timeoutMs: 1,
       }),
     ).resolves.toBe(false);
@@ -478,10 +512,10 @@ describe("dual-DGX-Spark vLLM executor", () => {
           role === "worker"
             ? inspectionRow({
                 id,
-                name: plan.roles.worker.containerName,
-                image: plan.roles.worker.image,
+                name: plan.roles[1].containerName,
+                image: plan.roles[1].image,
                 running: true,
-                labels: launchLabels(plan.roles.worker),
+                labels: launchLabels(plan.roles[1]),
               })
             : inspectionRow({
                 id,
@@ -496,12 +530,17 @@ describe("dual-DGX-Spark vLLM executor", () => {
       });
     });
     let tick = 0;
-    const executor = createDualSparkVllmExecutor(
+    const executor = createManagedClusterVllmExecutor(
       {
         plan,
-        peerSshBinding: bindingFixture.binding,
-        localCacheRoot: LOCAL_CACHE_ROOT,
-        peerCacheRoot: PEER_CACHE_ROOT,
+        nodes: [
+          { nodeId: plan.roles[0].nodeId, modelCacheRoot: LOCAL_CACHE_ROOT },
+          {
+            nodeId: plan.roles[1].nodeId,
+            modelCacheRoot: PEER_CACHE_ROOT,
+            sshBinding: bindingFixture.binding,
+          },
+        ],
       },
       runtimeOverrides({
         dockerCapture,
@@ -511,24 +550,24 @@ describe("dual-DGX-Spark vLLM executor", () => {
 
     await expect(
       executor.waitForWorkerDistributedReady({
-        rolePlan: plan.roles.worker,
+        rolePlan: plan.roles[1],
         containerId: WORKER_ID,
-        expectedLabels: launchLabels(plan.roles.worker),
+        expectedLabels: launchLabels(plan.roles[1]),
         timeoutMs: 1,
       }),
     ).resolves.toBe(false);
   });
 
   it("starts one exact head with the bearer only in the Docker subprocess environment", async () => {
-    const labels = launchLabels(plan.roles.head);
+    const labels = launchLabels(plan.roles[0]);
     const dockerCapture = vi.fn((args: readonly string[], options?: DockerCaptureOptions) =>
       routeDockerCapture(args, options, {
         quiet: fixedDockerCapture(HEAD_ID),
         inspect: fixedDockerCapture(
           inspectionRow({
             id: HEAD_ID,
-            name: plan.roles.head.containerName,
-            image: plan.roles.head.image,
+            name: plan.roles[0].containerName,
+            image: plan.roles[0].image,
             running: true,
             labels,
           }),
@@ -537,23 +576,28 @@ describe("dual-DGX-Spark vLLM executor", () => {
         fallback: unexpectedDockerCapture,
       }),
     );
-    const dockerRunDetached = vi.fn<DualSparkVllmExecutorRuntimeDeps["dockerRunDetached"]>(() =>
-      successfulDockerResult(`${HEAD_ID}\n`),
+    const dockerRunDetached = vi.fn<ManagedClusterVllmExecutorRuntimeDeps["dockerRunDetached"]>(
+      () => successfulDockerResult(`${HEAD_ID}\n`),
     );
-    const executor = createDualSparkVllmExecutor(
+    const executor = createManagedClusterVllmExecutor(
       {
         plan,
-        peerSshBinding: bindingFixture.binding,
-        localCacheRoot: LOCAL_CACHE_ROOT,
-        peerCacheRoot: PEER_CACHE_ROOT,
+        nodes: [
+          { nodeId: plan.roles[0].nodeId, modelCacheRoot: LOCAL_CACHE_ROOT },
+          {
+            nodeId: plan.roles[1].nodeId,
+            modelCacheRoot: PEER_CACHE_ROOT,
+            sshBinding: bindingFixture.binding,
+          },
+        ],
       },
       runtimeOverrides({ dockerCapture, dockerRunDetached }),
     );
 
     const result = await executor.startContainer({
-      rolePlan: plan.roles.head,
+      rolePlan: plan.roles[0],
       labels,
-      preparation: plan.roles.head.preparation,
+      preparation: plan.roles[0].preparation,
       bearerApiKey: API_KEY,
     });
 
@@ -570,44 +614,54 @@ describe("dual-DGX-Spark vLLM executor", () => {
 
   it("injects staging targets but leaves cleanup construction usable without staging", async () => {
     const stageNode = vi.fn(async () => ({ ok: true }));
-    const withStage = createDualSparkVllmExecutor(
+    const withStage = createManagedClusterVllmExecutor(
       {
         plan,
-        peerSshBinding: bindingFixture.binding,
-        localCacheRoot: LOCAL_CACHE_ROOT,
-        peerCacheRoot: PEER_CACHE_ROOT,
+        nodes: [
+          { nodeId: plan.roles[0].nodeId, modelCacheRoot: LOCAL_CACHE_ROOT },
+          {
+            nodeId: plan.roles[1].nodeId,
+            modelCacheRoot: PEER_CACHE_ROOT,
+            sshBinding: bindingFixture.binding,
+          },
+        ],
         stageNode,
       },
       runtimeOverrides(),
     );
-    const withoutStage = createDualSparkVllmExecutor(
+    const withoutStage = createManagedClusterVllmExecutor(
       {
         plan,
-        peerSshBinding: bindingFixture.binding,
-        localCacheRoot: LOCAL_CACHE_ROOT,
-        peerCacheRoot: PEER_CACHE_ROOT,
+        nodes: [
+          { nodeId: plan.roles[0].nodeId, modelCacheRoot: LOCAL_CACHE_ROOT },
+          {
+            nodeId: plan.roles[1].nodeId,
+            modelCacheRoot: PEER_CACHE_ROOT,
+            sshBinding: bindingFixture.binding,
+          },
+        ],
       },
       runtimeOverrides(),
     );
 
     expect(
       await withStage.stageNode({
-        rolePlan: plan.roles.worker,
-        preparation: plan.roles.worker.preparation,
+        rolePlan: plan.roles[1],
+        preparation: plan.roles[1].preparation,
       }),
     ).toEqual({ ok: true });
     expect(stageNode).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({
-        role: "worker",
+        nodeId: plan.roles[1].nodeId,
         modelCacheRoot: PEER_CACHE_ROOT,
-        peerSshBinding: bindingFixture.binding,
+        sshBinding: bindingFixture.binding,
       }),
     );
     await expect(
       withoutStage.stageNode({
-        rolePlan: plan.roles.head,
-        preparation: plan.roles.head.preparation,
+        rolePlan: plan.roles[0],
+        preparation: plan.roles[0].preparation,
       }),
     ).resolves.toMatchObject({
       ok: false,
@@ -616,15 +670,15 @@ describe("dual-DGX-Spark vLLM executor", () => {
   });
 
   it("removes only the revalidated exact container ID", async () => {
-    const labels = launchLabels(plan.roles.head);
+    const labels = launchLabels(plan.roles[0]);
     const dockerCapture = vi.fn((args: readonly string[], options?: DockerCaptureOptions) =>
       routeDockerCapture(args, options, {
         quiet: fixedDockerCapture(HEAD_ID),
         inspect: fixedDockerCapture(
           inspectionRow({
             id: HEAD_ID,
-            name: plan.roles.head.containerName,
-            image: plan.roles.head.image,
+            name: plan.roles[0].containerName,
+            image: plan.roles[0].image,
             running: false,
             labels,
           }),
@@ -634,22 +688,24 @@ describe("dual-DGX-Spark vLLM executor", () => {
       }),
     );
     const dockerForceRm = vi.fn(() => successfulDockerResult());
-    const executor = createDualSparkVllmExecutor(
+    const executor = createManagedClusterVllmExecutor(
       {
         plan,
-        peerSshBinding: bindingFixture.binding,
-        localCacheRoot: LOCAL_CACHE_ROOT,
-        peerCacheRoot: PEER_CACHE_ROOT,
+        nodes: [
+          { nodeId: plan.roles[0].nodeId, modelCacheRoot: LOCAL_CACHE_ROOT },
+          {
+            nodeId: plan.roles[1].nodeId,
+            modelCacheRoot: PEER_CACHE_ROOT,
+            sshBinding: bindingFixture.binding,
+          },
+        ],
       },
       runtimeOverrides({ dockerCapture, dockerForceRm }),
     );
 
-    await expect(executor.removeContainer(plan.roles.head, HEAD_ID)).resolves.toEqual({ ok: true });
+    await expect(executor.removeContainer(plan.roles[0], HEAD_ID)).resolves.toEqual({ ok: true });
     expect(dockerForceRm).toHaveBeenCalledWith(HEAD_ID, expect.any(Object));
-    expect(dockerForceRm).not.toHaveBeenCalledWith(
-      plan.roles.head.containerName,
-      expect.anything(),
-    );
+    expect(dockerForceRm).not.toHaveBeenCalledWith(plan.roles[0].containerName, expect.anything());
   });
 
   it("performs bounded authenticated model and chat probes without putting the key in argv", async () => {
@@ -680,17 +736,22 @@ describe("dual-DGX-Spark vLLM executor", () => {
         stderr: "",
         message: "",
       });
-    const executor = createDualSparkVllmExecutor(
+    const executor = createManagedClusterVllmExecutor(
       {
         plan,
-        peerSshBinding: bindingFixture.binding,
-        localCacheRoot: LOCAL_CACHE_ROOT,
-        peerCacheRoot: PEER_CACHE_ROOT,
+        nodes: [
+          { nodeId: plan.roles[0].nodeId, modelCacheRoot: LOCAL_CACHE_ROOT },
+          {
+            nodeId: plan.roles[1].nodeId,
+            modelCacheRoot: PEER_CACHE_ROOT,
+            sshBinding: bindingFixture.binding,
+          },
+        ],
       },
       runtimeOverrides({ createBearerAuthConfig, runCurlProbe }),
     );
     const request = {
-      baseUrl: plan.roles.head.endpoint!,
+      baseUrl: plan.roles[0].endpoint!,
       apiKey: API_KEY,
       expectedModel: plan.model.servedName,
       timeoutMs: 10_000,
@@ -721,12 +782,17 @@ describe("dual-DGX-Spark vLLM executor", () => {
       lockCalls += 1;
       return await operation();
     };
-    const executor = createDualSparkVllmExecutor(
+    const executor = createManagedClusterVllmExecutor(
       {
         plan,
-        peerSshBinding: bindingFixture.binding,
-        localCacheRoot: LOCAL_CACHE_ROOT,
-        peerCacheRoot: PEER_CACHE_ROOT,
+        nodes: [
+          { nodeId: plan.roles[0].nodeId, modelCacheRoot: LOCAL_CACHE_ROOT },
+          {
+            nodeId: plan.roles[1].nodeId,
+            modelCacheRoot: PEER_CACHE_ROOT,
+            sshBinding: bindingFixture.binding,
+          },
+        ],
       },
       runtimeOverrides({
         createTransactionId: () => "d".repeat(32),

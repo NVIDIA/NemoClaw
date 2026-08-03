@@ -14,7 +14,7 @@ interface ManagedBaseUrlOverrides {
 const lifecycle = vi.hoisted(() => ({
   baseUrl: vi.fn<(overrides?: ManagedBaseUrlOverrides) => string | null>(),
 }));
-const sparkRecovery = vi.hoisted(() => ({
+const managedClusterRecovery = vi.hoisted(() => ({
   endpoint: vi.fn(),
 }));
 const managedKey = vi.hoisted(() => ({
@@ -24,8 +24,8 @@ const managedKey = vi.hoisted(() => ({
 vi.mock("./vllm-station-cluster-lifecycle", () => ({
   getDualStationManagedVllmBaseUrl: lifecycle.baseUrl,
 }));
-vi.mock("./serving/spark-runtime-receipt", () => ({
-  recoverInstalledDualSparkVllmEndpoint: sparkRecovery.endpoint,
+vi.mock("./serving/managed-cluster-runtime-receipt", () => ({
+  recoverInstalledManagedClusterVllmEndpoint: managedClusterRecovery.endpoint,
 }));
 vi.mock("./vllm-api-key", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./vllm-api-key")>()),
@@ -93,8 +93,8 @@ function productionManagedBaseUrlResolver(
 
 beforeEach(() => {
   vi.stubEnv(LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV, undefined);
-  sparkRecovery.endpoint.mockReset();
-  sparkRecovery.endpoint.mockReturnValue(null);
+  managedClusterRecovery.endpoint.mockReset();
+  managedClusterRecovery.endpoint.mockReturnValue(null);
   managedKey.load.mockReset();
   managedKey.load.mockReturnValue(API_KEY);
   lifecycle.baseUrl.mockReset();
@@ -118,13 +118,13 @@ describe("managed vLLM authentication", () => {
       }),
     ).toBeNull();
     expect(loadApiKeyImpl).not.toHaveBeenCalled();
-    expect(sparkRecovery.endpoint).not.toHaveBeenCalled();
+    expect(managedClusterRecovery.endpoint).not.toHaveBeenCalled();
   });
 
-  it("recovers a receipt-owned Spark endpoint before checking Station state", () => {
+  it("recovers a receipt-owned managed cluster endpoint before checking Station state", () => {
     const events: string[] = [];
-    const recoverSparkVllmEndpointImpl = vi.fn(() => {
-      events.push("spark");
+    const recoverManagedClusterVllmEndpointImpl = vi.fn(() => {
+      events.push("managed-cluster");
       return { baseUrl: BASE_URL, apiKey: API_KEY };
     });
     const getManagedBaseUrlImpl = vi.fn(() => {
@@ -135,29 +135,29 @@ describe("managed vLLM authentication", () => {
     expect(
       getManagedVllmProviderBinding({
         getManagedBaseUrlImpl,
-        recoverSparkVllmEndpointImpl,
+        recoverManagedClusterVllmEndpointImpl,
       }),
     ).toEqual({ baseUrl: `${BASE_URL}/v1`, apiKey: API_KEY });
-    expect(events).toEqual(["spark", "station"]);
+    expect(events).toEqual(["managed-cluster", "station"]);
   });
 
-  it("does not fall through to Station when Spark recovery is unsafe", () => {
+  it("does not fall through to Station when managed cluster recovery is unsafe", () => {
     const getManagedBaseUrlImpl = vi.fn(() => BASE_URL);
 
     expect(() =>
       getManagedVllmProviderBinding({
         getManagedBaseUrlImpl,
-        recoverSparkVllmEndpointImpl: () => {
-          throw new Error("Spark receipt identity changed");
+        recoverManagedClusterVllmEndpointImpl: () => {
+          throw new Error("managed cluster receipt identity changed");
         },
       }),
-    ).toThrow("Spark receipt identity changed");
+    ).toThrow("managed cluster receipt identity changed");
     expect(getManagedBaseUrlImpl).not.toHaveBeenCalled();
   });
 
   it("fails URL and validation boundaries closed when managed recovery is unsafe", () => {
-    sparkRecovery.endpoint.mockImplementation(() => {
-      throw new Error("Spark receipt identity changed");
+    managedClusterRecovery.endpoint.mockImplementation(() => {
+      throw new Error("managed cluster receipt identity changed");
     });
     const capture = vi.fn(() => "200");
 
@@ -174,18 +174,18 @@ describe("managed vLLM authentication", () => {
     expect(lifecycle.baseUrl).not.toHaveBeenCalled();
   });
 
-  it("stops when Spark and Station managed state are both present", () => {
+  it("stops when managed cluster and Station state are both present", () => {
     expect(() =>
       getManagedVllmProviderBinding({
         loadApiKeyImpl: () => API_KEY,
-        recoverSparkVllmEndpointImpl: () => ({ baseUrl: BASE_URL, apiKey: API_KEY }),
+        recoverManagedClusterVllmEndpointImpl: () => ({ baseUrl: BASE_URL, apiKey: API_KEY }),
         getManagedBaseUrlImpl: (overrides) => {
           overrides?.onManagedHeadObserved?.();
           overrides?.loadApiKey?.();
           return BASE_URL;
         },
       }),
-    ).toThrow("Both managed Spark and Station vLLM state are present");
+    ).toThrow("Both managed cluster and Station vLLM state are present");
   });
 
   it("does not load a stale or unsafe key without a recovered managed endpoint", () => {

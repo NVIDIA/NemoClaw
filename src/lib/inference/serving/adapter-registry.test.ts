@@ -4,8 +4,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  DUAL_SPARK_VLLM_LIFECYCLE_REF,
-  DUAL_SPARK_VLLM_MATERIALIZER_REF,
   getManagedInferenceLifecycleDescriptor,
   getManagedInferenceMaterializerDescriptor,
   getManagedInferencePreparationDescriptor,
@@ -15,40 +13,42 @@ import {
   listManagedInferenceMaterializerDescriptors,
   listManagedInferencePreparationDescriptors,
   listManagedInferenceTopologyQualificationDescriptors,
+  MANAGED_CLUSTER_VLLM_LIFECYCLE_REF,
+  MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
   NO_PREPARATION_REF,
   SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
 } from "./adapter-registry.js";
 import { loadManagedInferenceCatalog } from "./catalog.js";
 import type { ManagedInferenceServingRecipe } from "./catalog-types.js";
-import { fixtureDualSparkSelection } from "./dual-spark-fixture.test-support.js";
+import { fixtureManagedClusterSelection } from "./managed-cluster-fixture.test-support.js";
 import {
-  DUAL_SPARK_TOPOLOGY_ID,
-  DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION,
-} from "./dual-spark-topology.js";
+  MANAGED_CLUSTER_TOPOLOGY_ID,
+  MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
+} from "./managed-cluster-topology.js";
 
 function shippedRecipe(): ManagedInferenceServingRecipe {
   const recipe = loadManagedInferenceCatalog().recipes.find(
     ({ definition }) =>
-      definition.spec.execution.materializerRef === DUAL_SPARK_VLLM_MATERIALIZER_REF,
+      definition.spec.execution.materializerRef === MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
   )?.definition;
   expect(recipe).toBeDefined();
   return structuredClone(recipe as ManagedInferenceServingRecipe);
 }
 
 describe("managed inference adapter registries", () => {
-  it("registers one versioned descriptor for each shipped dual-Spark mechanic", () => {
+  it("registers one versioned descriptor for each shipped managed cluster mechanic", () => {
     expect(listManagedInferenceTopologyQualificationDescriptors()).toMatchObject([
       {
-        id: DUAL_SPARK_TOPOLOGY_ID,
-        schemaVersion: DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION,
+        id: MANAGED_CLUSTER_TOPOLOGY_ID,
+        schemaVersion: MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
         bindingOutput: "topology",
       },
     ]);
     expect(listManagedInferenceMaterializerDescriptors()).toMatchObject([
-      { ref: DUAL_SPARK_VLLM_MATERIALIZER_REF, backend: "vllm" },
+      { ref: MANAGED_CLUSTER_VLLM_MATERIALIZER_REF, backend: "vllm" },
     ]);
     expect(listManagedInferenceLifecycleDescriptors()).toMatchObject([
-      { ref: DUAL_SPARK_VLLM_LIFECYCLE_REF, backend: "vllm" },
+      { ref: MANAGED_CLUSTER_VLLM_LIFECYCLE_REF, backend: "vllm" },
     ]);
     expect(listManagedInferencePreparationDescriptors()).toEqual(
       expect.arrayContaining([
@@ -64,18 +64,20 @@ describe("managed inference adapter registries", () => {
   it("looks up mechanics only by their stable registry references", () => {
     expect(
       getManagedInferenceTopologyQualificationDescriptor(
-        DUAL_SPARK_TOPOLOGY_ID,
-        DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION,
+        MANAGED_CLUSTER_TOPOLOGY_ID,
+        MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
       ),
     ).toBeDefined();
     expect(
       getManagedInferenceTopologyQualificationDescriptor("unknown.topology", 1),
     ).toBeUndefined();
     expect(
-      getManagedInferenceMaterializerDescriptor(DUAL_SPARK_VLLM_MATERIALIZER_REF),
+      getManagedInferenceMaterializerDescriptor(MANAGED_CLUSTER_VLLM_MATERIALIZER_REF),
     ).toBeDefined();
     expect(getManagedInferenceMaterializerDescriptor("unknown.materializer/v1")).toBeUndefined();
-    expect(getManagedInferenceLifecycleDescriptor(DUAL_SPARK_VLLM_LIFECYCLE_REF)).toBeDefined();
+    expect(
+      getManagedInferenceLifecycleDescriptor(MANAGED_CLUSTER_VLLM_LIFECYCLE_REF),
+    ).toBeDefined();
     expect(getManagedInferenceLifecycleDescriptor("unknown.lifecycle/v1")).toBeUndefined();
     expect(
       getManagedInferencePreparationDescriptor(
@@ -131,7 +133,7 @@ describe("managed inference adapter registries", () => {
     expect(getManagedInferenceRecipeRegistrationError(unregistered)).toMatch(
       /unknown materializer/u,
     );
-    expect(getManagedInferenceRecipeRegistrationError(wrongShape)).toMatch(/two-node/u);
+    expect(getManagedInferenceRecipeRegistrationError(wrongShape)).toMatch(/TP times PP/u);
   });
 
   it("rejects schema-valid values that the registered adapter cannot execute", () => {
@@ -212,7 +214,7 @@ describe("managed inference adapter registries", () => {
   });
 
   it("dispatches topology artifact validation through the registered descriptor", () => {
-    const artifact = fixtureDualSparkSelection().topologyQualification;
+    const artifact = fixtureManagedClusterSelection().topologyQualification;
     const descriptor = getManagedInferenceTopologyQualificationDescriptor(
       artifact.id,
       artifact.schemaVersion,

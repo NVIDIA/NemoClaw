@@ -28,10 +28,11 @@ import {
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
 import { isOllamaAuthProxyCommandLine } from "../../inference/ollama/process";
 import {
-  DUAL_SPARK_MANAGED_SERVING_STATE_FILE,
-  DUAL_SPARK_VLLM_RUNTIME_RECEIPT_FILE,
   DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
   findManagedDistributedVllmRuntimeReceipts,
+  isManagedClusterDiscoveryBindingStateEntry,
+  isManagedClusterRuntimeBindingStateEntry,
+  MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
   MANAGED_VLLM_API_KEY_FILE,
   MCP_LIFECYCLE_LOCK_DIRNAME,
 } from "../../inference/serving/managed-runtime-receipts";
@@ -258,14 +259,35 @@ const SHARED_HOST_STATE_ENTRIES = new Set([
   "source",
   GATEWAYS_SUBDIR,
   "managed_swap",
-  DUAL_SPARK_VLLM_RUNTIME_RECEIPT_FILE,
-  `${DUAL_SPARK_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
-  `${DUAL_SPARK_MANAGED_SERVING_STATE_FILE}.ssh-binding`,
+  MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
   DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
   `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
   MANAGED_VLLM_API_KEY_FILE,
   ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
 ]);
+
+function isSharedHostStateEntry(entry: string): boolean {
+  return (
+    SHARED_HOST_STATE_ENTRIES.has(entry) ||
+    isManagedClusterRuntimeBindingStateEntry(entry) ||
+    isManagedClusterDiscoveryBindingStateEntry(entry)
+  );
+}
+
+function managedClusterBindingStateEntries(stateDir: string): readonly string[] {
+  try {
+    return fs
+      .readdirSync(stateDir)
+      .filter(
+        (entry) =>
+          isManagedClusterRuntimeBindingStateEntry(entry) ||
+          isManagedClusterDiscoveryBindingStateEntry(entry),
+      );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
 
 function dormantHostGlobalLifecycleState(sharedRoot: string): boolean {
   const stateDir = path.join(sharedRoot, "state");
@@ -1271,17 +1293,26 @@ function removeManagedDistributedVllmRuntime(
     );
     return false;
   }
-  const receipts = [...(state.sparkPath ? [state.sparkPath] : []), ...state.stationPaths];
+  const receipts = [
+    ...(state.managedClusterPath ? [state.managedClusterPath] : []),
+    ...state.stationPaths,
+  ];
   const bindingPaths = [
-    ...(state.sparkBindingPath ? [state.sparkBindingPath] : []),
-    ...state.sparkDiscoveryBindingPaths,
+    ...state.managedClusterBindingPaths,
+    ...state.managedClusterDiscoveryBindingPaths,
     ...state.stationBindingPaths,
   ];
-  const expectedBindingPaths = new Set(receipts.map((receiptPath) => `${receiptPath}.ssh-binding`));
-  if (state.sparkPath) {
-    expectedBindingPaths.add(
-      `${path.join(path.dirname(state.sparkPath), DUAL_SPARK_MANAGED_SERVING_STATE_FILE)}.ssh-binding`,
-    );
+  const expectedBindingPaths = new Set(
+    state.stationPaths.map((receiptPath) => `${receiptPath}.ssh-binding`),
+  );
+  if (state.managedClusterPath) {
+    const stateDir = path.dirname(state.managedClusterPath);
+    for (const bindingPath of [
+      ...state.managedClusterBindingPaths,
+      ...state.managedClusterDiscoveryBindingPaths,
+    ]) {
+      if (path.dirname(bindingPath) === stateDir) expectedBindingPaths.add(bindingPath);
+    }
   }
   const orphanBinding = bindingPaths.find((bindingPath) => !expectedBindingPaths.has(bindingPath));
   if (orphanBinding) {
@@ -1291,9 +1322,9 @@ function removeManagedDistributedVllmRuntime(
     return false;
   }
   if (receipts.length === 0) return true;
-  if (state.sparkPath && state.stationPaths.length > 0) {
+  if (state.managedClusterPath && state.stationPaths.length > 0) {
     runtime.error(
-      "Both dual-Spark and dual-Station managed runtime receipts exist. NemoClaw refused ambiguous cleanup before making changes.",
+      "Both managed cluster and dual-Station managed runtime receipts exist. NemoClaw refused ambiguous cleanup before making changes.",
     );
     return false;
   }
@@ -1469,7 +1500,7 @@ function inspectOtherGatewayEnvironments(
           .readdirSync(sharedRoot)
           .some(
             (entry) =>
-              !SHARED_HOST_STATE_ENTRIES.has(entry) &&
+              !isSharedHostStateEntry(entry) &&
               !(entry === "state" && dormantHostGlobalLifecycleState(sharedRoot)),
           )
       ) {
@@ -1847,9 +1878,8 @@ function executePlan(
             ...(scopedToSelectedGateway
               ? [
                   ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
-                  DUAL_SPARK_VLLM_RUNTIME_RECEIPT_FILE,
-                  `${DUAL_SPARK_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
-                  `${DUAL_SPARK_MANAGED_SERVING_STATE_FILE}.ssh-binding`,
+                  MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
+                  ...managedClusterBindingStateEntries(paths.nemoclawStateDir),
                   DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
                   `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
                   MANAGED_VLLM_API_KEY_FILE,

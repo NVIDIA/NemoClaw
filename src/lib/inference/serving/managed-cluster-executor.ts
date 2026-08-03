@@ -28,41 +28,38 @@ import { getManagedInferenceCompiledPreset, getManagedInferenceCompiledRecipe } 
 import { managedInferenceHexDigest } from "./catalog-integrity.js";
 import type { ManagedInferenceServingRecipe } from "./catalog-types.js";
 import {
-  type DualSparkApiProbeRequest,
-  type DualSparkContainerStartRequest,
-  type DualSparkContainerWaitRequest,
-  type DualSparkNodeSnapshot,
-  type DualSparkObservedContainer,
-  type DualSparkStageRequest,
-  type DualSparkVllmLifecycleDeps,
   isRelatedManagedVllmContainer,
-} from "./dual-spark-lifecycle.js";
+  type ManagedClusterApiProbeRequest,
+  type ManagedClusterContainerStartRequest,
+  type ManagedClusterContainerWaitRequest,
+  type ManagedClusterNodeSnapshot,
+  type ManagedClusterObservedContainer,
+  type ManagedClusterStageRequest,
+  type ManagedClusterVllmLifecycleDeps,
+} from "./managed-cluster-lifecycle.js";
 import {
-  DUAL_SPARK_ADAPTER_LABEL,
-  DUAL_SPARK_API_KEY_FINGERPRINT_LABEL,
-  DUAL_SPARK_CLUSTER_LABEL,
-  DUAL_SPARK_GPU_LABEL,
-  DUAL_SPARK_IMAGE_LABEL,
-  DUAL_SPARK_MANAGED_LABEL,
-  DUAL_SPARK_MODEL_REVISION_LABEL,
-  DUAL_SPARK_PLAN_LABEL,
-  DUAL_SPARK_PRESET_LABEL,
-  DUAL_SPARK_RECIPE_LABEL,
-  DUAL_SPARK_ROLE_LABEL,
-  DUAL_SPARK_TRANSACTION_LABEL,
-  DUAL_SPARK_VLLM_ADAPTER_ID,
-  DUAL_SPARK_VLLM_HEAD_CONTAINER_NAME,
-  DUAL_SPARK_VLLM_MASTER_PORT,
-  DUAL_SPARK_VLLM_WORKER_CONTAINER_NAME,
-  type DualSparkVllmPlan,
-  type DualSparkVllmRole,
-  type DualSparkVllmRolePlan,
-} from "./dual-spark-materialize.js";
-import { materializeDualSparkVllmPreparation } from "./dual-spark-preparation.js";
+  MANAGED_CLUSTER_ADAPTER_LABEL,
+  MANAGED_CLUSTER_API_KEY_FINGERPRINT_LABEL,
+  MANAGED_CLUSTER_CLUSTER_LABEL,
+  MANAGED_CLUSTER_GPU_LABEL,
+  MANAGED_CLUSTER_IMAGE_LABEL,
+  MANAGED_CLUSTER_MANAGED_LABEL,
+  MANAGED_CLUSTER_MODEL_REVISION_LABEL,
+  MANAGED_CLUSTER_PLAN_LABEL,
+  MANAGED_CLUSTER_PRESET_LABEL,
+  MANAGED_CLUSTER_RECIPE_LABEL,
+  MANAGED_CLUSTER_ROLE_LABEL,
+  MANAGED_CLUSTER_TRANSACTION_LABEL,
+  MANAGED_CLUSTER_VLLM_ADAPTER_ID,
+  type ManagedClusterVllmPlan,
+  type ManagedClusterVllmRolePlan,
+  managedClusterHeadRole,
+} from "./managed-cluster-materialize.js";
+import { materializeManagedClusterVllmPreparation } from "./managed-cluster-preparation.js";
 import {
-  DUAL_SPARK_TOPOLOGY_ID,
-  DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION,
-} from "./dual-spark-topology.js";
+  MANAGED_CLUSTER_TOPOLOGY_ID,
+  MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
+} from "./managed-cluster-topology.js";
 
 const API_KEY_PATTERN = /^[a-f0-9]{64}$/;
 const CONTAINER_ID_PATTERN = /^[a-f0-9]{64}$/;
@@ -111,31 +108,35 @@ if content.count(existing) != 1:
 target.write_text(content.replace(existing, replacement), encoding="utf-8")
 `.trim();
 
-export interface DualSparkExecutorStageTarget {
-  readonly role: DualSparkVllmRole;
+export interface ManagedClusterExecutorStageTarget {
+  readonly nodeId: string;
   readonly dockerEnv: Readonly<Record<string, string>>;
   readonly modelCacheRoot: string;
-  readonly peerSshBinding?: DualStationSshBinding;
+  readonly sshBinding?: DualStationSshBinding;
 }
 
-export type DualSparkExecutorStageNode = (
-  request: DualSparkStageRequest,
-  target: DualSparkExecutorStageTarget,
+export type ManagedClusterExecutorStageNode = (
+  request: ManagedClusterStageRequest,
+  target: ManagedClusterExecutorStageTarget,
 ) => Promise<{ ok: boolean; reason?: string }>;
 
-export interface CreateDualSparkVllmExecutorOptions {
-  readonly plan: DualSparkVllmPlan;
-  readonly peerSshBinding: DualStationSshBinding;
-  readonly localCacheRoot: string;
-  readonly peerCacheRoot: string;
-  readonly stageNode?: DualSparkExecutorStageNode;
+export interface CreateManagedClusterVllmExecutorOptions {
+  readonly plan: ManagedClusterVllmPlan;
+  readonly nodes: readonly ManagedClusterExecutorNodeTarget[];
+  readonly stageNode?: ManagedClusterExecutorStageNode;
 }
 
-export interface DualSparkVllmExecutorRuntimeDeps {
+export interface ManagedClusterExecutorNodeTarget {
+  readonly nodeId: string;
+  readonly modelCacheRoot: string;
+  readonly sshBinding?: DualStationSshBinding;
+}
+
+export interface ManagedClusterVllmExecutorRuntimeDeps {
   dockerCapture: typeof dockerCapture;
   dockerForceRm: typeof dockerForceRm;
   dockerRunDetached: typeof dockerRunDetached;
-  captureListeners(role: DualSparkVllmRole, binding: DualStationSshBinding): string;
+  captureListeners(rolePlan: ManagedClusterVllmRolePlan, binding?: DualStationSshBinding): string;
   createBearerAuthConfig: typeof createBearerAuthConfig;
   createTransactionId(): string;
   now(): number;
@@ -146,12 +147,20 @@ export interface DualSparkVllmExecutorRuntimeDeps {
 
 type SelectedRecipe = ManagedInferenceServingRecipe["spec"];
 
-const DEFAULT_DEPS: DualSparkVllmExecutorRuntimeDeps = {
+const DEFAULT_DEPS: ManagedClusterVllmExecutorRuntimeDeps = {
   dockerCapture,
   dockerForceRm,
   dockerRunDetached,
-  captureListeners: (role, binding) =>
-    captureManagedVllmTcpListeners(role, binding, DOCKER_INSPECTION_TIMEOUT_MS),
+  captureListeners: (rolePlan, binding) => {
+    if (rolePlan.execution.kind === "ssh" && !binding) {
+      throw new Error("Managed cluster worker listener probe has no SSH binding");
+    }
+    return captureManagedVllmTcpListeners(
+      rolePlan.role,
+      binding ?? ({} as DualStationSshBinding),
+      DOCKER_INSPECTION_TIMEOUT_MS,
+    );
+  },
   createBearerAuthConfig,
   createTransactionId: () => randomBytes(16).toString("hex"),
   now: () => Date.now(),
@@ -178,13 +187,13 @@ function normalizedAbsoluteHostPath(value: string, label: string): string {
 function exactKeys(actual: object, expected: readonly string[], label: string): void {
   const keys = Object.keys(actual).sort();
   if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) {
-    throw new Error(`${label} does not match the dual-Spark adapter contract`);
+    throw new Error(`${label} does not match the managed cluster adapter contract`);
   }
 }
 
 function recipeCommandArguments(
-  rolePlan: DualSparkVllmRolePlan,
-  plan: DualSparkVllmPlan,
+  rolePlan: ManagedClusterVllmRolePlan,
+  plan: ManagedClusterVllmPlan,
   recipe: SelectedRecipe,
 ): string[] {
   const staticArguments = recipe.serve.arguments.flatMap(({ name, value }) =>
@@ -219,8 +228,8 @@ function recipeCommandArguments(
 }
 
 function assertRolePlan(
-  rolePlan: DualSparkVllmRolePlan,
-  plan: DualSparkVllmPlan,
+  rolePlan: ManagedClusterVllmRolePlan,
+  plan: ManagedClusterVllmPlan,
   recipe: SelectedRecipe,
 ): void {
   const isHead = rolePlan.role === "head";
@@ -239,18 +248,18 @@ function assertRolePlan(
     HEADLESS: isHead ? "" : "1",
   };
   const baseLabels = {
-    [DUAL_SPARK_MANAGED_LABEL]: "true",
-    [DUAL_SPARK_ADAPTER_LABEL]: DUAL_SPARK_VLLM_ADAPTER_ID,
-    [DUAL_SPARK_PRESET_LABEL]: plan.presetId,
-    [DUAL_SPARK_RECIPE_LABEL]: plan.recipeId,
-    [DUAL_SPARK_ROLE_LABEL]: rolePlan.role,
-    [DUAL_SPARK_CLUSTER_LABEL]: plan.clusterId,
-    [DUAL_SPARK_PLAN_LABEL]: plan.planId,
-    [DUAL_SPARK_GPU_LABEL]: rolePlan.gpuId,
-    [DUAL_SPARK_IMAGE_LABEL]: recipe.runtime.image,
-    [DUAL_SPARK_MODEL_REVISION_LABEL]: recipe.model.revision,
+    [MANAGED_CLUSTER_MANAGED_LABEL]: "true",
+    [MANAGED_CLUSTER_ADAPTER_LABEL]: MANAGED_CLUSTER_VLLM_ADAPTER_ID,
+    [MANAGED_CLUSTER_PRESET_LABEL]: plan.presetId,
+    [MANAGED_CLUSTER_RECIPE_LABEL]: plan.recipeId,
+    [MANAGED_CLUSTER_ROLE_LABEL]: rolePlan.role,
+    [MANAGED_CLUSTER_CLUSTER_LABEL]: plan.clusterId,
+    [MANAGED_CLUSTER_PLAN_LABEL]: plan.planId,
+    [MANAGED_CLUSTER_GPU_LABEL]: rolePlan.gpuId,
+    [MANAGED_CLUSTER_IMAGE_LABEL]: recipe.runtime.image,
+    [MANAGED_CLUSTER_MODEL_REVISION_LABEL]: recipe.model.revision,
   };
-  const preparation = materializeDualSparkVllmPreparation({
+  const preparation = materializeManagedClusterVllmPreparation({
     ...recipe.model,
     modelCacheTarget: recipe.runtime.modelCache.target,
   });
@@ -265,12 +274,10 @@ function assertRolePlan(
   };
   const expected = {
     role: rolePlan.role,
-    rank: isHead ? 0 : 1,
+    rank: rolePlan.rank,
     nodeId: rolePlan.nodeId,
     gpuId: rolePlan.gpuId,
-    containerName: isHead
-      ? DUAL_SPARK_VLLM_HEAD_CONTAINER_NAME
-      : DUAL_SPARK_VLLM_WORKER_CONTAINER_NAME,
+    containerName: `nemoclaw-vllm-cluster-rank-${String(rolePlan.rank)}`,
     execution: rolePlan.execution,
     image: recipe.runtime.image,
     runtime: {
@@ -304,7 +311,8 @@ function assertRolePlan(
     !rolePlan.nodeId ||
     rolePlan.nodeId.length > 256 ||
     !/^GPU-[A-Za-z0-9-]+$/.test(rolePlan.gpuId) ||
-    rolePlan.fabric.primaryRailIndex !== 0 ||
+    !Number.isSafeInteger(rolePlan.fabric.primaryRailIndex) ||
+    rolePlan.fabric.primaryRailIndex < 0 ||
     !SAFE_DEVICE_PATTERN.test(rolePlan.fabric.netdev) ||
     !SAFE_DEVICE_PATTERN.test(rolePlan.fabric.hcaDevice) ||
     net.isIP(rolePlan.fabric.address) !== 4 ||
@@ -330,23 +338,36 @@ function recipeApiPort(recipe: SelectedRecipe): number | undefined {
 }
 
 /** Read-only validation shared by installer, receipt, recovery, and cleanup. */
-export function assertDualSparkVllmExecutorConfig(
-  config: CreateDualSparkVllmExecutorOptions,
+export function assertManagedClusterVllmExecutorConfig(
+  config: CreateManagedClusterVllmExecutorOptions,
 ): void {
   exactKeys(
     config,
-    [
-      "localCacheRoot",
-      "peerCacheRoot",
-      "peerSshBinding",
-      "plan",
-      ...(Object.hasOwn(config, "stageNode") ? ["stageNode"] : []),
-    ],
-    "Dual-Spark executor configuration",
+    ["nodes", "plan", ...(Object.hasOwn(config, "stageNode") ? ["stageNode"] : [])],
+    "Managed cluster executor configuration",
   );
-  normalizedAbsoluteHostPath(config.localCacheRoot, "Local model cache root");
-  normalizedAbsoluteHostPath(config.peerCacheRoot, "Peer model cache root");
-  const { plan, peerSshBinding: binding } = config;
+  const { plan } = config;
+  if (
+    config.nodes.length !== plan.roles.length ||
+    new Set(config.nodes.map(({ nodeId }) => nodeId)).size !== config.nodes.length ||
+    config.nodes.some(({ nodeId }) => !plan.roles.some((role) => role.nodeId === nodeId))
+  ) {
+    throw new Error("Managed cluster executor node targets do not match the plan");
+  }
+  for (const target of config.nodes) {
+    normalizedAbsoluteHostPath(target.modelCacheRoot, `${target.nodeId} model cache root`);
+    const rolePlan = plan.roles.find(({ nodeId }) => nodeId === target.nodeId)!;
+    if (
+      (rolePlan.execution.kind === "local" && target.sshBinding !== undefined) ||
+      (rolePlan.execution.kind === "ssh" &&
+        (!target.sshBinding ||
+          rolePlan.execution.expectedTarget !== target.sshBinding.peerTarget ||
+          rolePlan.execution.bindingHandle !==
+            encodeDualStationSshBindingHandoff(target.sshBinding)))
+    ) {
+      throw new Error(`Managed cluster executor target ${target.nodeId} is invalid`);
+    }
+  }
   const compiledPreset = getManagedInferenceCompiledPreset(plan.presetId);
   const compiledRecipe = getManagedInferenceCompiledRecipe(plan.recipeId);
   if (
@@ -357,7 +378,9 @@ export function assertDualSparkVllmExecutorConfig(
     compiledPreset.definition.spec.plan.recipeRef !== compiledRecipe.definition.metadata.id ||
     compiledPreset.definition.spec.plan.backend !== compiledRecipe.definition.spec.backend
   ) {
-    throw new Error("Dual-Spark executor input does not match its selected definition digests");
+    throw new Error(
+      "Managed cluster executor input does not match its selected definition digests",
+    );
   }
   const recipe = compiledRecipe.definition.spec;
   const topologyIdentity = {
@@ -368,21 +391,21 @@ export function assertDualSparkVllmExecutorConfig(
   };
   const expectedClusterId = managedInferenceHexDigest(topologyIdentity);
   const expectedPlanId = managedInferenceHexDigest({
-    adapterId: DUAL_SPARK_VLLM_ADAPTER_ID,
+    adapterId: MANAGED_CLUSTER_VLLM_ADAPTER_ID,
     preset: { id: plan.presetId, digest: plan.presetDigest },
     recipe: { id: plan.recipeId, digest: plan.recipeDigest },
     topology: topologyIdentity,
   });
   const expectedPlan = {
     schemaVersion: 1,
-    adapterId: DUAL_SPARK_VLLM_ADAPTER_ID,
+    adapterId: MANAGED_CLUSTER_VLLM_ADAPTER_ID,
     catalogDigest: plan.catalogDigest,
     presetId: compiledPreset.definition.metadata.id,
     presetDigest: compiledPreset.definitionDigest,
     recipeId: compiledRecipe.definition.metadata.id,
     recipeDigest: compiledRecipe.definitionDigest,
-    topologyId: DUAL_SPARK_TOPOLOGY_ID,
-    topologySchemaVersion: DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION,
+    topologyId: MANAGED_CLUSTER_TOPOLOGY_ID,
+    topologySchemaVersion: MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
     topologySubjectDigest: plan.topologySubjectDigest,
     topologyOutputDigest: plan.topologyOutputDigest,
     clusterId: expectedClusterId,
@@ -395,7 +418,7 @@ export function assertDualSparkVllmExecutorConfig(
     authentication: recipe.serve.authentication,
     apiPort: recipeApiPort(recipe),
     masterAddress: plan.masterAddress,
-    masterPort: DUAL_SPARK_VLLM_MASTER_PORT,
+    masterPort: recipe.execution.rendezvousPort,
     readiness: {
       timeoutMs: recipe.readiness.timeoutSeconds * 1000,
       expectedModel: recipe.readiness.expectedModel,
@@ -407,26 +430,26 @@ export function assertDualSparkVllmExecutorConfig(
     !SHA256_PATTERN.test(plan.catalogDigest) ||
     !SHA256_PATTERN.test(plan.presetDigest) ||
     !SHA256_PATTERN.test(plan.recipeDigest) ||
-    plan.masterAddress !== plan.roles.head.fabric.address ||
+    plan.masterAddress !== managedClusterHeadRole(plan).fabric.address ||
     !HEX64_PATTERN.test(plan.clusterId) ||
     !HEX64_PATTERN.test(plan.planId) ||
     !SHA256_PATTERN.test(plan.topologySubjectDigest) ||
     !SHA256_PATTERN.test(plan.topologyOutputDigest) ||
-    !isDeepStrictEqual(plan.roles.head.execution, { kind: "local" }) ||
-    !isDeepStrictEqual(plan.roles.worker.execution, {
-      kind: "ssh",
-      expectedTarget: binding.peerTarget,
-      bindingHandle: encodeDualStationSshBindingHandoff(binding),
-    })
+    plan.roles.length !== recipe.execution.nodeCount ||
+    !isDeepStrictEqual(managedClusterHeadRole(plan).execution, { kind: "local" }) ||
+    plan.roles.some(
+      (rolePlan, index) =>
+        rolePlan.rank !== index ||
+        (index === 0 ? rolePlan.role !== "head" : rolePlan.role !== "worker"),
+    )
   ) {
-    throw new Error("Dual-Spark executor input does not match its qualified binding and plan");
+    throw new Error("Managed cluster executor input does not match its qualified binding and plan");
   }
-  assertRolePlan(plan.roles.head, plan, recipe);
-  assertRolePlan(plan.roles.worker, plan, recipe);
+  for (const rolePlan of plan.roles) assertRolePlan(rolePlan, plan, recipe);
 }
 
 function shellQuote(value: string): string {
-  if (value.includes("\0")) throw new Error("Dual-Spark command value contains a NUL byte");
+  if (value.includes("\0")) throw new Error("Managed cluster command value contains a NUL byte");
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
@@ -434,7 +457,7 @@ function base64url(value: string): string {
   return Buffer.from(value, "utf8").toString("base64url");
 }
 
-function preparationCommand(rolePlan: DualSparkVllmRolePlan): string {
+function preparationCommand(rolePlan: ManagedClusterVllmRolePlan): string {
   const preparation = rolePlan.preparation;
   const command = ["set -Eeuo pipefail"];
   if (preparation.ref === SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF) {
@@ -451,7 +474,7 @@ function preparationCommand(rolePlan: DualSparkVllmRolePlan): string {
       ].join(" "),
     );
   } else if (preparation.ref !== NO_PREPARATION_REF) {
-    throw new Error("Unsupported dual-Spark preparation");
+    throw new Error("Unsupported managed cluster preparation");
   }
   const executable = shellQuote(rolePlan.command.executable);
   const commandArguments = rolePlan.command.arguments.map(shellQuote).join(" ");
@@ -460,13 +483,13 @@ function preparationCommand(rolePlan: DualSparkVllmRolePlan): string {
 }
 
 function validateLaunchLabels(
-  rolePlan: DualSparkVllmRolePlan,
+  rolePlan: ManagedClusterVllmRolePlan,
   labels: Readonly<Record<string, string>>,
 ): void {
   const expectedKeys = [
     ...Object.keys(rolePlan.baseLabels),
-    DUAL_SPARK_API_KEY_FINGERPRINT_LABEL,
-    DUAL_SPARK_TRANSACTION_LABEL,
+    MANAGED_CLUSTER_API_KEY_FINGERPRINT_LABEL,
+    MANAGED_CLUSTER_TRANSACTION_LABEL,
   ].sort();
   exactKeys(labels, expectedKeys, `${rolePlan.role} launch labels`);
   for (const [name, value] of Object.entries(labels)) {
@@ -482,16 +505,16 @@ function validateLaunchLabels(
   }
   if (
     !Object.entries(rolePlan.baseLabels).every(([name, value]) => labels[name] === value) ||
-    !HEX64_PATTERN.test(labels[DUAL_SPARK_API_KEY_FINGERPRINT_LABEL] ?? "") ||
-    !TRANSACTION_ID_PATTERN.test(labels[DUAL_SPARK_TRANSACTION_LABEL] ?? "")
+    !HEX64_PATTERN.test(labels[MANAGED_CLUSTER_API_KEY_FINGERPRINT_LABEL] ?? "") ||
+    !TRANSACTION_ID_PATTERN.test(labels[MANAGED_CLUSTER_TRANSACTION_LABEL] ?? "")
   ) {
     throw new Error(`${rolePlan.role} launch labels do not match its plan`);
   }
 }
 
 /** Build the exact, non-secret Docker run argv for one materialized role. */
-export function buildDualSparkVllmRunArgs(
-  rolePlan: DualSparkVllmRolePlan,
+export function buildManagedClusterVllmRunArgs(
+  rolePlan: ManagedClusterVllmRolePlan,
   modelCacheRoot: string,
   labels: Readonly<Record<string, string>>,
 ): string[] {
@@ -649,30 +672,33 @@ function mutationSucceeded(result: ReturnType<typeof dockerRunDetached>): boolea
   return result.status === 0 && !result.error && !result.signal;
 }
 
-function modelCacheFor(
-  role: DualSparkVllmRole,
-  config: CreateDualSparkVllmExecutorOptions,
-): string {
-  return role === "head" ? config.localCacheRoot : config.peerCacheRoot;
+function targetFor(
+  rolePlan: ManagedClusterVllmRolePlan,
+  config: CreateManagedClusterVllmExecutorOptions,
+): ManagedClusterExecutorNodeTarget {
+  const target = config.nodes.find(({ nodeId }) => nodeId === rolePlan.nodeId);
+  if (!target) throw new Error(`Managed cluster node ${rolePlan.nodeId} has no executor target`);
+  return target;
 }
 
 function roleDockerEnv(
-  rolePlan: DualSparkVllmRolePlan,
-  config: CreateDualSparkVllmExecutorOptions,
+  rolePlan: ManagedClusterVllmRolePlan,
+  config: CreateManagedClusterVllmExecutorOptions,
 ): Record<string, string> {
+  const target = targetFor(rolePlan, config);
   const env =
-    rolePlan.role === "head"
+    rolePlan.execution.kind === "local"
       ? buildLocalDualStationDockerEnv()
-      : buildRemoteVllmDockerEnv(config.peerSshBinding);
+      : buildRemoteVllmDockerEnv(target.sshBinding!);
   delete env.VLLM_API_KEY;
   return env;
 }
 
 function processMatchesRole(
-  rolePlan: DualSparkVllmRolePlan,
+  rolePlan: ManagedClusterVllmRolePlan,
   containerId: string,
   env: Record<string, string>,
-  deps: DualSparkVllmExecutorRuntimeDeps,
+  deps: ManagedClusterVllmExecutorRuntimeDeps,
 ): boolean {
   const expected = base64url(
     JSON.stringify([rolePlan.command.executable, ...rolePlan.command.arguments]),
@@ -692,10 +718,10 @@ function processMatchesRole(
 }
 
 function inspectRoleNode(
-  rolePlan: DualSparkVllmRolePlan,
-  config: CreateDualSparkVllmExecutorOptions,
-  deps: DualSparkVllmExecutorRuntimeDeps,
-): DualSparkNodeSnapshot {
+  rolePlan: ManagedClusterVllmRolePlan,
+  config: CreateManagedClusterVllmExecutorOptions,
+  deps: ManagedClusterVllmExecutorRuntimeDeps,
+): ManagedClusterNodeSnapshot {
   const env = roleDockerEnv(rolePlan, config);
   const rawIds = deps.dockerCapture(["container", "ls", "--all", "--no-trunc", "--quiet"], {
     env,
@@ -718,7 +744,7 @@ function inspectRoleNode(
         ids,
       )
     : [];
-  const containers: DualSparkObservedContainer[] = inspected.map((container) => ({
+  const containers: ManagedClusterObservedContainer[] = inspected.map((container) => ({
     ...container,
     healthy:
       container.running &&
@@ -728,33 +754,37 @@ function inspectRoleNode(
       processMatchesRole(rolePlan, container.id, env, deps),
   }));
   const listeningPorts = parseListeningPorts(
-    deps.captureListeners(rolePlan.role, config.peerSshBinding),
+    deps.captureListeners(rolePlan, targetFor(rolePlan, config).sshBinding),
   );
   return { containers, listeningPorts };
 }
 
-export interface DualSparkVllmNodeSnapshots {
-  readonly head: DualSparkNodeSnapshot;
-  readonly worker: DualSparkNodeSnapshot;
+export interface ManagedClusterVllmNodeSnapshots {
+  readonly nodes: readonly {
+    readonly nodeId: string;
+    readonly snapshot: ManagedClusterNodeSnapshot;
+  }[];
 }
 
 /** Synchronous read-only recovery seam backed by the production inspector. */
-export function inspectDualSparkVllmNodesSync(
-  config: CreateDualSparkVllmExecutorOptions,
-  overrides: Partial<DualSparkVllmExecutorRuntimeDeps> = {},
-): DualSparkVllmNodeSnapshots {
+export function inspectManagedClusterVllmNodesSync(
+  config: CreateManagedClusterVllmExecutorOptions,
+  overrides: Partial<ManagedClusterVllmExecutorRuntimeDeps> = {},
+): ManagedClusterVllmNodeSnapshots {
   const deps = { ...DEFAULT_DEPS, ...overrides };
-  assertDualSparkVllmExecutorConfig(config);
+  assertManagedClusterVllmExecutorConfig(config);
   return {
-    head: inspectRoleNode(config.plan.roles.head, config, deps),
-    worker: inspectRoleNode(config.plan.roles.worker, config, deps),
+    nodes: config.plan.roles.map((rolePlan) => ({
+      nodeId: rolePlan.nodeId,
+      snapshot: inspectRoleNode(rolePlan, config, deps),
+    })),
   };
 }
 
 function exactWaitObservation(
-  snapshot: DualSparkNodeSnapshot,
-  request: DualSparkContainerWaitRequest,
-): DualSparkObservedContainer | null {
+  snapshot: ManagedClusterNodeSnapshot,
+  request: ManagedClusterContainerWaitRequest,
+): ManagedClusterObservedContainer | null {
   const matches = snapshot.containers.filter(({ id }) => id === request.containerId);
   if (matches.length !== 1) return null;
   const observed = matches[0]!;
@@ -766,8 +796,8 @@ function exactWaitObservation(
 }
 
 function workerFirstBoundaryIsClear(
-  snapshot: DualSparkNodeSnapshot,
-  plan: DualSparkVllmPlan,
+  snapshot: ManagedClusterNodeSnapshot,
+  plan: ManagedClusterVllmPlan,
 ): boolean {
   return (
     !snapshot.listeningPorts.some((port) => port === plan.apiPort || port === plan.masterPort) &&
@@ -776,9 +806,9 @@ function workerFirstBoundaryIsClear(
 }
 
 async function waitForRoleProcess(
-  request: DualSparkContainerWaitRequest,
-  config: CreateDualSparkVllmExecutorOptions,
-  deps: DualSparkVllmExecutorRuntimeDeps,
+  request: ManagedClusterContainerWaitRequest,
+  config: CreateManagedClusterVllmExecutorOptions,
+  deps: ManagedClusterVllmExecutorRuntimeDeps,
   stableChecks: number,
   requireHeadAbsent = false,
 ): Promise<boolean> {
@@ -793,7 +823,7 @@ async function waitForRoleProcess(
       const headAbsent =
         !requireHeadAbsent ||
         workerFirstBoundaryIsClear(
-          inspectRoleNode(config.plan.roles.head, config, deps),
+          inspectRoleNode(managedClusterHeadRole(config.plan), config, deps),
           config.plan,
         );
       consecutive = observed?.running && observed.healthy && headAbsent ? consecutive + 1 : 0;
@@ -833,9 +863,9 @@ function validApiBody(body: string, expectedModel: string, kind: "models" | "cha
 }
 
 async function probeAuthenticatedApi(
-  request: DualSparkApiProbeRequest,
+  request: ManagedClusterApiProbeRequest,
   kind: "models" | "chat",
-  deps: DualSparkVllmExecutorRuntimeDeps,
+  deps: ManagedClusterVllmExecutorRuntimeDeps,
 ): Promise<boolean> {
   if (!API_KEY_PATTERN.test(request.apiKey)) return false;
   const maximum = kind === "models" ? MAX_MODELS_PROBE_MS : MAX_CHAT_PROBE_MS;
@@ -846,7 +876,7 @@ async function probeAuthenticatedApi(
     let authConfig: ReturnType<typeof createBearerAuthConfig> | undefined;
     try {
       authConfig = deps.createBearerAuthConfig(request.apiKey, {
-        prefix: "nemoclaw-dual-spark-vllm-probe",
+        prefix: "nemoclaw-managed-cluster-vllm-probe",
       });
       const baseUrl = request.baseUrl.replace(/\/+$/, "");
       const body =
@@ -891,27 +921,32 @@ async function probeAuthenticatedApi(
 }
 
 /**
- * Bind the code-owned lifecycle to two exact Docker daemons and the qualified,
+ * Bind the code-owned lifecycle to every exact Docker daemon and each qualified,
  * owner-only SSH handoff. Staging stays caller-injected so this module does not
  * depend on installer/model-download orchestration.
  */
-export function createDualSparkVllmExecutor(
-  config: CreateDualSparkVllmExecutorOptions,
-  overrides: Partial<DualSparkVllmExecutorRuntimeDeps> = {},
-): DualSparkVllmLifecycleDeps {
+export function createManagedClusterVllmExecutor(
+  config: CreateManagedClusterVllmExecutorOptions,
+  overrides: Partial<ManagedClusterVllmExecutorRuntimeDeps> = {},
+): ManagedClusterVllmLifecycleDeps {
   const deps = { ...DEFAULT_DEPS, ...overrides };
-  assertDualSparkVllmExecutorConfig(config);
+  assertManagedClusterVllmExecutorConfig(config);
   const capturedPlan = structuredClone(config.plan);
-  const assertPlan = (plan: DualSparkVllmPlan): void => {
+  const assertPlan = (plan: ManagedClusterVllmPlan): void => {
     if (!isDeepStrictEqual(plan, capturedPlan)) {
-      throw new Error("Dual-Spark executor refused a changed materialized plan");
+      throw new Error("Managed cluster executor refused a changed materialized plan");
     }
-    assertDualSparkVllmExecutorConfig(config);
+    assertManagedClusterVllmExecutorConfig(config);
   };
-  const assertRole = (rolePlan: DualSparkVllmRolePlan): void => {
+  const assertRole = (rolePlan: ManagedClusterVllmRolePlan): void => {
     assertPlan(config.plan);
-    if (!isDeepStrictEqual(rolePlan, config.plan.roles[rolePlan.role])) {
-      throw new Error("Dual-Spark executor refused a role outside its materialized plan");
+    if (
+      !isDeepStrictEqual(
+        rolePlan,
+        config.plan.roles.find(({ nodeId }) => nodeId === rolePlan.nodeId),
+      )
+    ) {
+      throw new Error("Managed cluster executor refused a role outside its materialized plan");
     }
   };
 
@@ -926,17 +961,18 @@ export function createDualSparkVllmExecutor(
         return { ok: false, reason: `${request.rolePlan.role} preparation contract changed` };
       }
       if (!config.stageNode) {
-        return { ok: false, reason: "dual-Spark model and image staging is not configured" };
+        return { ok: false, reason: "managed cluster model and image staging is not configured" };
       }
       const dockerEnv = roleDockerEnv(request.rolePlan, config);
+      const target = targetFor(request.rolePlan, config);
       return await config.stageNode(request, {
-        role: request.rolePlan.role,
+        nodeId: request.rolePlan.nodeId,
         dockerEnv,
-        modelCacheRoot: modelCacheFor(request.rolePlan.role, config),
-        ...(request.rolePlan.role === "worker" ? { peerSshBinding: config.peerSshBinding } : {}),
+        modelCacheRoot: target.modelCacheRoot,
+        ...(target.sshBinding ? { sshBinding: target.sshBinding } : {}),
       });
     },
-    async startContainer(request: DualSparkContainerStartRequest) {
+    async startContainer(request: ManagedClusterContainerStartRequest) {
       assertRole(request.rolePlan);
       if (!isDeepStrictEqual(request.preparation, request.rolePlan.preparation)) {
         return { ok: false, reason: `${request.rolePlan.role} preparation contract changed` };
@@ -951,16 +987,16 @@ export function createDualSparkVllmExecutor(
       }
       let args: string[];
       try {
-        args = buildDualSparkVllmRunArgs(
+        args = buildManagedClusterVllmRunArgs(
           request.rolePlan,
-          modelCacheFor(request.rolePlan.role, config),
+          targetFor(request.rolePlan, config).modelCacheRoot,
           request.labels,
         );
       } catch (error) {
         return { ok: false, reason: (error as Error).message };
       }
       if (request.bearerApiKey && JSON.stringify(args).includes(request.bearerApiKey)) {
-        return { ok: false, reason: "dual-Spark bearer key entered Docker argv" };
+        return { ok: false, reason: "managed cluster bearer key entered Docker argv" };
       }
       const env = roleDockerEnv(request.rolePlan, config);
       if (isHead) env.VLLM_API_KEY = request.bearerApiKey!;
@@ -975,7 +1011,7 @@ export function createDualSparkVllmExecutor(
       } catch {
         // Reconcile an exact transaction-owned create below.
       }
-      let observed: DualSparkObservedContainer | null = null;
+      let observed: ManagedClusterObservedContainer | null = null;
       try {
         const snapshot = await inspectRoleNode(request.rolePlan, config, deps);
         const candidates = snapshot.containers.filter(
@@ -1011,7 +1047,7 @@ export function createDualSparkVllmExecutor(
     async waitForWorkerDistributedReady(request) {
       assertRole(request.rolePlan);
       if (request.rolePlan.role !== "worker") return false;
-      // Two spaced exact-process observations prove rank 1 remained alive
+      // Two spaced exact-process observations prove the worker remained alive
       // while rank 0 was still absent, the worker-first rendezvous boundary.
       return await waitForRoleProcess(request, config, deps, 2, true);
     },
@@ -1058,7 +1094,7 @@ export function createDualSparkVllmExecutor(
     },
     async probeModels(request) {
       if (
-        request.baseUrl !== config.plan.roles.head.endpoint ||
+        request.baseUrl !== managedClusterHeadRole(config.plan).endpoint ||
         request.expectedModel !== config.plan.readiness.expectedModel
       ) {
         return false;
@@ -1067,7 +1103,7 @@ export function createDualSparkVllmExecutor(
     },
     async probeChat(request) {
       if (
-        request.baseUrl !== config.plan.roles.head.endpoint ||
+        request.baseUrl !== managedClusterHeadRole(config.plan).endpoint ||
         request.expectedModel !== config.plan.readiness.expectedModel
       ) {
         return false;

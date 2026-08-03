@@ -14,7 +14,7 @@ export const DUAL_STATION_VLLM_API_KEY_FILE = "dual-station-vllm-api-key";
 export const DUAL_STATION_VLLM_API_KEY_PATTERN = /^[a-f0-9]{64}$/;
 // The original managed endpoint key was introduced with dual-Station serving.
 // Keep its path stable while exposing topology-neutral names for later managed
-// serving profiles such as dual Spark.
+// serving profiles.
 export const MANAGED_VLLM_API_KEY_FILE = DUAL_STATION_VLLM_API_KEY_FILE;
 export const MANAGED_VLLM_API_KEY_PATTERN = DUAL_STATION_VLLM_API_KEY_PATTERN;
 

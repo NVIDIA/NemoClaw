@@ -15,13 +15,13 @@ import type {
   ManagedInferenceTopologyQualification,
 } from "./catalog-types.js";
 import {
-  FIXTURE_DUAL_SPARK_PRESET_ID,
-  fixtureDualSparkSelection,
-} from "./dual-spark-fixture.test-support.js";
+  FIXTURE_MANAGED_CLUSTER_PRESET_ID,
+  fixtureManagedClusterSelection,
+} from "./managed-cluster-fixture.test-support.js";
 import {
-  type DualSparkTopologyOutput,
-  dualSparkTopologyOutputDigest,
-} from "./dual-spark-topology.js";
+  type ManagedClusterTopologyOutput,
+  managedClusterTopologyOutputDigest,
+} from "./managed-cluster-topology.js";
 import { resolveManagedInferenceServing } from "./resolver.js";
 
 const NOW = new Date("2026-08-02T18:00:00.000Z");
@@ -35,7 +35,7 @@ function shippedCompiledPreset(
   catalog = shippedCatalog(),
 ): CompiledManagedInferenceCatalog["presets"][number] {
   const preset = catalog.presets.find(
-    ({ definition }) => definition.metadata.id === FIXTURE_DUAL_SPARK_PRESET_ID,
+    ({ definition }) => definition.metadata.id === FIXTURE_MANAGED_CLUSTER_PRESET_ID,
   );
   expect(preset).toBeDefined();
   return preset as CompiledManagedInferenceCatalog["presets"][number];
@@ -135,15 +135,15 @@ function readinessSources(): ManagedInferenceReadinessSource[] {
 }
 
 function topology(
-  overrides: Partial<ManagedInferenceTopologyQualification<DualSparkTopologyOutput>> = {},
-): ManagedInferenceTopologyQualification<DualSparkTopologyOutput> {
-  const artifact = structuredClone(fixtureDualSparkSelection().topologyQualification);
+  overrides: Partial<ManagedInferenceTopologyQualification<ManagedClusterTopologyOutput>> = {},
+): ManagedInferenceTopologyQualification<ManagedClusterTopologyOutput> {
+  const artifact = structuredClone(fixtureManagedClusterSelection().topologyQualification);
   return { ...artifact, ...overrides };
 }
 
 function resolverInput(
-  overrides: Partial<ManagedInferenceResolverInput<DualSparkTopologyOutput>> = {},
-): ManagedInferenceResolverInput<DualSparkTopologyOutput> {
+  overrides: Partial<ManagedInferenceResolverInput<ManagedClusterTopologyOutput>> = {},
+): ManagedInferenceResolverInput<ManagedClusterTopologyOutput> {
   return {
     readinessReports: readinessSources(),
     topologyQualifications: [topology()],
@@ -644,7 +644,7 @@ describe("managed inference resolver", () => {
   it("rejects an internally inconsistent topology with a recomputed output digest", () => {
     const artifact = topology();
     (artifact.output as { masterAddress: string }).masterAddress = "192.168.100.99";
-    (artifact as { outputDigest: string }).outputDigest = dualSparkTopologyOutputDigest(
+    (artifact as { outputDigest: string }).outputDigest = managedClusterTopologyOutputDigest(
       artifact.output,
     );
 

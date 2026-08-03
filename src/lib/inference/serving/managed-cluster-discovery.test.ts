@@ -15,20 +15,20 @@ import {
   stationKnownHostsDigest,
 } from "../vllm-station-ssh-binding.js";
 import {
-  confirmDualSparkManagedServingCapability,
-  createDualSparkDiscoveryDeps,
-  type DualSparkDetectedManagedServingCapability,
-  type DualSparkDiscoveryDeps,
-  type DualSparkHostObservation,
-  type DualSparkReadOnlyHostTransport,
-  type DualSparkSpawnSync,
-  NEMOCLAW_DGX_SPARK_PEER_ENV,
+  confirmManagedClusterManagedServingCapability,
+  createManagedClusterDiscoveryDeps,
+  type ManagedClusterDetectedManagedServingCapability,
+  type ManagedClusterDiscoveryDeps,
+  type ManagedClusterHostObservation,
+  type ManagedClusterReadOnlyHostTransport,
+  type ManagedClusterSpawnSync,
+  NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV,
   NEMOCLAW_SERVING_PRESET_ENV,
-  parseDualSparkHostObservation,
-  probeDualSparkManagedServingCapability,
-} from "./dual-spark-discovery.js";
-import { FIXTURE_DUAL_SPARK_PRESET_ID } from "./dual-spark-fixture.test-support.js";
-import { DUAL_SPARK_MANAGED_LABEL, DUAL_SPARK_VLLM_MASTER_PORT } from "./dual-spark-materialize.js";
+  parseManagedClusterHostObservation,
+  probeManagedClusterManagedServingCapability,
+} from "./managed-cluster-discovery.js";
+import { FIXTURE_MANAGED_CLUSTER_PRESET_ID } from "./managed-cluster-fixture.test-support.js";
+import { MANAGED_CLUSTER_MANAGED_LABEL } from "./managed-cluster-materialize.js";
 
 const NOW = new Date("2026-08-02T20:00:00.000Z");
 const SOURCE_REVISION = "1d6948d89b46eab739728215f9a19ef40b8f6121";
@@ -68,15 +68,15 @@ const STOPPED_FOREIGN_CONTAINER_FIXTURES: readonly StoppedForeignContainerFixtur
     signal: "managed label",
     name: "foreign-inference",
     image: "example.invalid/inference:latest",
-    labels: { [DUAL_SPARK_MANAGED_LABEL]: "foreign" },
+    labels: { [MANAGED_CLUSTER_MANAGED_LABEL]: "foreign" },
   },
 ];
 
-function expectDetectedPair(
-  detected: ReturnType<typeof probeDualSparkManagedServingCapability>,
-): DualSparkDetectedManagedServingCapability {
+function expectDetectedCluster(
+  detected: ReturnType<typeof probeManagedClusterManagedServingCapability>,
+): ManagedClusterDetectedManagedServingCapability {
   expect(detected.kind).toBe("ready");
-  return detected as DualSparkDetectedManagedServingCapability;
+  return detected as ManagedClusterDetectedManagedServingCapability;
 }
 
 function readiness(overrides: Partial<SystemReadinessReport> = {}): SystemReadinessReport {
@@ -130,8 +130,8 @@ function capacity(
 
 function host(
   role: "local" | "peer",
-  overrides: Partial<DualSparkHostObservation> = {},
-): DualSparkHostObservation {
+  overrides: Partial<ManagedClusterHostObservation> = {},
+): ManagedClusterHostObservation {
   const local = role === "local";
   const uid = 1000;
   const gid = 1000;
@@ -203,7 +203,7 @@ function host(
   };
 }
 
-const transport = (name: string): DualSparkReadOnlyHostTransport => ({
+const transport = (name: string): ManagedClusterReadOnlyHostTransport => ({
   execute: () => ({ status: 0, stdout: name, stderr: "" }),
   readFile: () => name,
   readdir: () => [],
@@ -244,7 +244,7 @@ function binding(peerIdentity: QualifiedStationSshIdentity): DualStationSshBindi
   };
 }
 
-function fixture(overrides: Partial<DualSparkDiscoveryDeps> = {}) {
+function fixture(overrides: Partial<ManagedClusterDiscoveryDeps> = {}) {
   const events: string[] = [];
   const localTransport = transport("local");
   const peerTransports = new Map([
@@ -252,7 +252,7 @@ function fixture(overrides: Partial<DualSparkDiscoveryDeps> = {}) {
     ["192.168.101.2", transport("peer-101")],
   ]);
   let bindingWrites = 0;
-  const deps: DualSparkDiscoveryDeps = {
+  const deps: ManagedClusterDiscoveryDeps = {
     now: () => NOW,
     currentUid: () => 1000,
     getBuildIdentity: () => ({
@@ -285,18 +285,18 @@ function fixture(overrides: Partial<DualSparkDiscoveryDeps> = {}) {
     },
     clearBinding: () => events.push("clear-binding"),
     encodeBinding: () => "binding-token",
-    resolveBindingStatePath: () => "/state/dual-spark.json",
+    resolveBindingStatePath: () => "/state/managed-cluster.json",
     ...overrides,
   };
   return { deps, events, bindingWrites: () => bindingWrites, localTransport };
 }
 
-describe("dual DGX Spark managed-serving discovery", () => {
+describe("managed DGX Spark cluster discovery", () => {
   it("accepts the bounded production observation and rejects malformed cache metadata", () => {
     const observed = host("local");
-    expect(parseDualSparkHostObservation(observed)).toBe(observed);
+    expect(parseManagedClusterHostObservation(observed)).toBe(observed);
     expect(() =>
-      parseDualSparkHostObservation({
+      parseManagedClusterHostObservation({
         ...observed,
         storage: {
           ...observed.storage,
@@ -314,7 +314,7 @@ describe("dual DGX Spark managed-serving discovery", () => {
     });
 
     expect(
-      probeDualSparkManagedServingCapability({
+      probeManagedClusterManagedServingCapability({
         env: { [NEMOCLAW_SERVING_PRESET_ENV]: "another-preset" },
         deps,
       }),
@@ -327,7 +327,7 @@ describe("dual DGX Spark managed-serving discovery", () => {
     expect(bindingWrites()).toBe(0);
   });
 
-  it("rejects an explicit dual-Spark peer combined with another serving preset", () => {
+  it("rejects an explicit managed cluster peer combined with another serving preset", () => {
     const { deps, events, bindingWrites } = fixture({
       localTransport: () => {
         throw new Error("must not probe");
@@ -335,10 +335,10 @@ describe("dual DGX Spark managed-serving discovery", () => {
     });
 
     expect(
-      probeDualSparkManagedServingCapability({
+      probeManagedClusterManagedServingCapability({
         env: {
           [NEMOCLAW_SERVING_PRESET_ENV]: "another-preset",
-          [NEMOCLAW_DGX_SPARK_PEER_ENV]: "spark-worker.local",
+          [NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV]: "spark-worker.local",
         },
         deps,
       }),
@@ -355,8 +355,8 @@ describe("dual DGX Spark managed-serving discovery", () => {
     });
 
     expect(
-      probeDualSparkManagedServingCapability({
-        env: { [NEMOCLAW_SERVING_PRESET_ENV]: FIXTURE_DUAL_SPARK_PRESET_ID },
+      probeManagedClusterManagedServingCapability({
+        env: { [NEMOCLAW_SERVING_PRESET_ENV]: FIXTURE_MANAGED_CLUSTER_PRESET_ID },
         deps,
         loadCatalog: () => {
           throw new Error("catalog unavailable");
@@ -367,31 +367,33 @@ describe("dual DGX Spark managed-serving discovery", () => {
     expect(bindingWrites()).toBe(0);
   });
 
-  it("persists one binding only after the detected pair is confirmed and revalidated", () => {
+  it("persists bindings only after the detected cluster is confirmed and revalidated", () => {
     const { deps, events, bindingWrites } = fixture();
 
-    const detected = expectDetectedPair(probeDualSparkManagedServingCapability({ env: {}, deps }));
+    const detected = expectDetectedCluster(
+      probeManagedClusterManagedServingCapability({ env: {}, deps }),
+    );
 
     expect(detected).toMatchObject({
       kind: "ready",
       selectionIntent: "automatic",
-      peerSshBindingStatePath: "/state/dual-spark.json",
+      sshClaims: [{ statePath: "/state/managed-cluster.json" }],
       local: { hostname: "spark-head", uid: 1000 },
-      peer: { hostname: "spark-worker", uid: 1000 },
+      peers: [{ hostname: "spark-worker", uid: 1000 }],
       topology: { status: "qualified" },
     });
     expect(bindingWrites()).toBe(0);
     expect(events).not.toContain("write-binding");
-    const confirmed = confirmDualSparkManagedServingCapability(detected, {
+    const confirmed = confirmManagedClusterManagedServingCapability(detected, {
       env: {},
       deps,
     });
 
     expect(confirmed).toMatchObject({
       kind: "ready",
-      peerSshBindingHandle: "binding-token",
+      sshBindings: [{ handle: "binding-token" }],
       topology: {
-        output: { peer: { sshBindingHandle: "binding-token" } },
+        output: { peers: [{ sshBindingHandle: "binding-token" }] },
       },
     });
     expect(bindingWrites()).toBe(1);
@@ -412,7 +414,7 @@ describe("dual DGX Spark managed-serving discovery", () => {
       inspectPretrustedTarget: () => null,
     });
 
-    expect(probeDualSparkManagedServingCapability({ env: {}, deps })).toMatchObject({
+    expect(probeManagedClusterManagedServingCapability({ env: {}, deps })).toMatchObject({
       kind: "not-selected",
       code: "no-match",
     });
@@ -423,8 +425,8 @@ describe("dual DGX Spark managed-serving discovery", () => {
     const { deps } = fixture({ inspectPretrustedTarget: () => null });
 
     expect(
-      probeDualSparkManagedServingCapability({
-        env: { [NEMOCLAW_SERVING_PRESET_ENV]: FIXTURE_DUAL_SPARK_PRESET_ID },
+      probeManagedClusterManagedServingCapability({
+        env: { [NEMOCLAW_SERVING_PRESET_ENV]: FIXTURE_MANAGED_CLUSTER_PRESET_ID },
         deps,
       }),
     ).toMatchObject({ kind: "unavailable", code: "peer-trust-unavailable" });
@@ -434,8 +436,8 @@ describe("dual DGX Spark managed-serving discovery", () => {
     const { deps } = fixture({ inspectPretrustedTarget: () => null });
 
     expect(
-      probeDualSparkManagedServingCapability({
-        env: { [NEMOCLAW_DGX_SPARK_PEER_ENV]: "spark-worker.local" },
+      probeManagedClusterManagedServingCapability({
+        env: { [NEMOCLAW_MANAGED_CLUSTER_PEERS_ENV]: "spark-worker.local" },
         deps,
       }),
     ).toMatchObject({ kind: "unavailable", code: "peer-trust-unavailable" });
@@ -449,7 +451,7 @@ describe("dual DGX Spark managed-serving discovery", () => {
       },
     });
 
-    expect(probeDualSparkManagedServingCapability({ env: {}, deps })).toMatchObject({
+    expect(probeManagedClusterManagedServingCapability({ env: {}, deps })).toMatchObject({
       kind: "not-selected",
       code: "no-match",
     });
@@ -462,7 +464,7 @@ describe("dual DGX Spark managed-serving discovery", () => {
     const base = fixture();
     const deps = {
       ...base.deps,
-      probeHost: (candidate: DualSparkReadOnlyHostTransport) =>
+      probeHost: (candidate: ManagedClusterReadOnlyHostTransport) =>
         candidate === base.localTransport
           ? host("local", {
               runtimeSnapshot: {
@@ -482,7 +484,7 @@ describe("dual DGX Spark managed-serving discovery", () => {
           : host("peer"),
     };
 
-    expect(probeDualSparkManagedServingCapability({ env: {}, deps })).toMatchObject({
+    expect(probeManagedClusterManagedServingCapability({ env: {}, deps })).toMatchObject({
       kind: "not-selected",
       code: "runtime-conflict",
     });
@@ -494,7 +496,7 @@ describe("dual DGX Spark managed-serving discovery", () => {
     const base = fixture();
     const deps = {
       ...base.deps,
-      probeHost: (candidate: DualSparkReadOnlyHostTransport) =>
+      probeHost: (candidate: ManagedClusterReadOnlyHostTransport) =>
         candidate === base.localTransport
           ? host("local", {
               runtimeSnapshot: {
@@ -514,7 +516,7 @@ describe("dual DGX Spark managed-serving discovery", () => {
           : host("peer"),
     };
 
-    expect(probeDualSparkManagedServingCapability({ env: {}, deps })).toMatchObject({
+    expect(probeManagedClusterManagedServingCapability({ env: {}, deps })).toMatchObject({
       kind: "ready",
     });
     expect(base.bindingWrites()).toBe(0);
@@ -523,7 +525,7 @@ describe("dual DGX Spark managed-serving discovery", () => {
   it.each([
     {
       name: "an active earlyoom service",
-      mutate: (value: DualSparkHostObservation) => ({
+      mutate: (value: ManagedClusterHostObservation) => ({
         ...value,
         earlyoom: {
           installed: true,
@@ -535,18 +537,27 @@ describe("dual DGX Spark managed-serving discovery", () => {
     },
     {
       name: "a related runtime",
-      mutate: (value: DualSparkHostObservation) => ({
+      mutate: (value: ManagedClusterHostObservation) => ({
         ...value,
         runtimeSnapshot: {
-          containers: [],
-          listeningPorts: [DUAL_SPARK_VLLM_MASTER_PORT],
+          containers: [
+            {
+              id: "9".repeat(64),
+              name: "managed-vllm",
+              image: "example.invalid/vllm:latest",
+              running: true,
+              healthy: true,
+              labels: { [MANAGED_CLUSTER_MANAGED_LABEL]: "true" },
+            },
+          ],
+          listeningPorts: [],
         },
       }),
       code: "runtime-conflict",
     },
     {
       name: "an inconclusive runtime inspection",
-      mutate: (value: DualSparkHostObservation) => ({
+      mutate: (value: ManagedClusterHostObservation) => ({
         ...value,
         runtimeInspectionComplete: false,
       }),
@@ -554,7 +565,7 @@ describe("dual DGX Spark managed-serving discovery", () => {
     },
     {
       name: "a missing exact cache root",
-      mutate: (value: DualSparkHostObservation) => ({
+      mutate: (value: ManagedClusterHostObservation) => ({
         ...value,
         storage: {
           ...value.storage,
@@ -567,11 +578,11 @@ describe("dual DGX Spark managed-serving discovery", () => {
     const base = fixture();
     const deps = {
       ...base.deps,
-      probeHost: (candidate: DualSparkReadOnlyHostTransport) =>
+      probeHost: (candidate: ManagedClusterReadOnlyHostTransport) =>
         candidate === base.localTransport ? mutate(host("local")) : host("peer"),
     };
 
-    expect(probeDualSparkManagedServingCapability({ env: {}, deps })).toMatchObject({
+    expect(probeManagedClusterManagedServingCapability({ env: {}, deps })).toMatchObject({
       kind: "not-selected",
       code,
     });
@@ -582,7 +593,7 @@ describe("dual DGX Spark managed-serving discovery", () => {
   it("does not claim when the exact pretrusted peer identity changes after confirmation", () => {
     const base = fixture();
     let inspections = 0;
-    const deps: DualSparkDiscoveryDeps = {
+    const deps: ManagedClusterDiscoveryDeps = {
       ...base.deps,
       inspectPretrustedTarget: (target) => {
         inspections += 1;
@@ -600,9 +611,13 @@ describe("dual DGX Spark managed-serving discovery", () => {
         return true;
       },
     };
-    const detected = expectDetectedPair(probeDualSparkManagedServingCapability({ env: {}, deps }));
+    const detected = expectDetectedCluster(
+      probeManagedClusterManagedServingCapability({ env: {}, deps }),
+    );
 
-    expect(confirmDualSparkManagedServingCapability(detected, { env: {}, deps })).toMatchObject({
+    expect(
+      confirmManagedClusterManagedServingCapability(detected, { env: {}, deps }),
+    ).toMatchObject({
       kind: "unavailable",
       code: "peer-identity-ambiguous",
     });
@@ -613,14 +628,23 @@ describe("dual DGX Spark managed-serving discovery", () => {
   it("rechecks related runtime and listeners before claiming the binding", () => {
     const base = fixture();
     let runtimeAppeared = false;
-    const deps: DualSparkDiscoveryDeps = {
+    const deps: ManagedClusterDiscoveryDeps = {
       ...base.deps,
       probeHost: (candidate) =>
         candidate === base.localTransport && runtimeAppeared
           ? host("local", {
               runtimeSnapshot: {
-                containers: [],
-                listeningPorts: [DUAL_SPARK_VLLM_MASTER_PORT],
+                containers: [
+                  {
+                    id: "9".repeat(64),
+                    name: "managed-vllm",
+                    image: "example.invalid/vllm:latest",
+                    running: true,
+                    healthy: true,
+                    labels: { [MANAGED_CLUSTER_MANAGED_LABEL]: "true" },
+                  },
+                ],
+                listeningPorts: [],
               },
             })
           : candidate === base.localTransport
@@ -631,10 +655,14 @@ describe("dual DGX Spark managed-serving discovery", () => {
         return true;
       },
     };
-    const detected = expectDetectedPair(probeDualSparkManagedServingCapability({ env: {}, deps }));
+    const detected = expectDetectedCluster(
+      probeManagedClusterManagedServingCapability({ env: {}, deps }),
+    );
     runtimeAppeared = true;
 
-    expect(confirmDualSparkManagedServingCapability(detected, { env: {}, deps })).toMatchObject({
+    expect(
+      confirmManagedClusterManagedServingCapability(detected, { env: {}, deps }),
+    ).toMatchObject({
       kind: "unavailable",
       code: "runtime-conflict",
     });
@@ -646,9 +674,13 @@ describe("dual DGX Spark managed-serving discovery", () => {
     const { deps, events, bindingWrites } = fixture({
       claimBinding: () => false,
     });
-    const detected = expectDetectedPair(probeDualSparkManagedServingCapability({ env: {}, deps }));
+    const detected = expectDetectedCluster(
+      probeManagedClusterManagedServingCapability({ env: {}, deps }),
+    );
 
-    expect(confirmDualSparkManagedServingCapability(detected, { env: {}, deps })).toMatchObject({
+    expect(
+      confirmManagedClusterManagedServingCapability(detected, { env: {}, deps }),
+    ).toMatchObject({
       kind: "unavailable",
       code: "binding-conflict",
     });
@@ -663,9 +695,13 @@ describe("dual DGX Spark managed-serving discovery", () => {
         throw new Error("partial write");
       },
     });
-    const detected = expectDetectedPair(probeDualSparkManagedServingCapability({ env: {}, deps }));
+    const detected = expectDetectedCluster(
+      probeManagedClusterManagedServingCapability({ env: {}, deps }),
+    );
 
-    expect(confirmDualSparkManagedServingCapability(detected, { env: {}, deps })).toMatchObject({
+    expect(
+      confirmManagedClusterManagedServingCapability(detected, { env: {}, deps }),
+    ).toMatchObject({
       kind: "unavailable",
       code: "binding-persistence-failed",
     });
@@ -682,9 +718,13 @@ describe("dual DGX Spark managed-serving discovery", () => {
         throw new Error("encode failed");
       },
     };
-    const detected = expectDetectedPair(probeDualSparkManagedServingCapability({ env: {}, deps }));
+    const detected = expectDetectedCluster(
+      probeManagedClusterManagedServingCapability({ env: {}, deps }),
+    );
 
-    expect(confirmDualSparkManagedServingCapability(detected, { env: {}, deps })).toMatchObject({
+    expect(
+      confirmManagedClusterManagedServingCapability(detected, { env: {}, deps }),
+    ).toMatchObject({
       kind: "unavailable",
       code: "binding-persistence-failed",
     });
@@ -697,7 +737,7 @@ describe("dual DGX Spark managed-serving discovery", () => {
   it("fails closed when the controller UID differs from the local cache owner", () => {
     const { deps, bindingWrites } = fixture({ currentUid: () => 2000 });
 
-    expect(probeDualSparkManagedServingCapability({ env: {}, deps })).toMatchObject({
+    expect(probeManagedClusterManagedServingCapability({ env: {}, deps })).toMatchObject({
       kind: "not-selected",
       code: "no-match",
     });
@@ -709,9 +749,9 @@ describe("production pinned peer transport", () => {
   it("atomically preserves an existing binding-root owner", () => {
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-spark-binding-"));
     fs.chmodSync(parent, 0o700);
-    const statePath = path.join(parent, "dual-spark.json");
+    const statePath = path.join(parent, "managed-cluster.json");
     const bindingRoot = `${statePath}.ssh-binding`;
-    const deps = createDualSparkDiscoveryDeps(() => ({
+    const deps = createManagedClusterDiscoveryDeps(() => ({
       status: 0,
       stdout: "",
       stderr: "",
@@ -736,8 +776,8 @@ describe("production pinned peer transport", () => {
     const alias = path.join(root, "alias");
     fs.mkdirSync(parent, { mode: 0o700 });
     fs.symlinkSync(parent, alias, "dir");
-    const statePath = path.join(alias, "dual-spark.json");
-    const deps = createDualSparkDiscoveryDeps(() => ({
+    const statePath = path.join(alias, "managed-cluster.json");
+    const deps = createManagedClusterDiscoveryDeps(() => ({
       status: 0,
       stdout: "",
       stderr: "",
@@ -745,7 +785,7 @@ describe("production pinned peer transport", () => {
 
     try {
       expect(() => deps.claimBinding(statePath)).toThrow();
-      expect(fs.existsSync(`${path.join(parent, "dual-spark.json")}.ssh-binding`)).toBe(false);
+      expect(fs.existsSync(`${path.join(parent, "managed-cluster.json")}.ssh-binding`)).toBe(false);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }
@@ -757,7 +797,7 @@ describe("production pinned peer transport", () => {
       args: readonly string[];
       options: SpawnSyncOptionsWithStringEncoding;
     }> = [];
-    const spawn: DualSparkSpawnSync = (file, args, options) => {
+    const spawn: ManagedClusterSpawnSync = (file, args, options) => {
       calls.push({ file, args: [...args], options });
       return {
         status: 0,
@@ -772,7 +812,7 @@ describe("production pinned peer transport", () => {
     process.env.DOCKER_CONFIG = "/tmp/ambient-docker-config";
 
     try {
-      const deps = createDualSparkDiscoveryDeps(spawn);
+      const deps = createManagedClusterDiscoveryDeps(spawn);
       expect(deps.probeHost(deps.localTransport()).hostname).toBe("spark-head");
       const pinned = deps.openPinnedPeerTransport(identity("192.168.100.2"));
       try {
@@ -812,7 +852,7 @@ describe("production pinned peer transport", () => {
   });
 
   it("requires direct routes, exact neighbors, and jumbo reachability on both rails", () => {
-    const deps = createDualSparkDiscoveryDeps(() => ({
+    const deps = createManagedClusterDiscoveryDeps(() => ({
       status: 0,
       stdout: "",
       stderr: "",
@@ -832,7 +872,7 @@ describe("production pinned peer transport", () => {
       },
     ];
     let routedThroughGateway = false;
-    const directTransport: DualSparkReadOnlyHostTransport = {
+    const directTransport: ManagedClusterReadOnlyHostTransport = {
       execute: (argv) => {
         const routeResponse = () => ({
           status: 0,
@@ -883,11 +923,11 @@ describe("production pinned peer transport", () => {
       args: readonly string[];
       options: SpawnSyncOptionsWithStringEncoding;
     }> = [];
-    const spawn: DualSparkSpawnSync = (file, args, options) => {
+    const spawn: ManagedClusterSpawnSync = (file, args, options) => {
       calls.push({ file, args: [...args], options });
       return { status: 0, stdout: "aarch64\n", stderr: "" };
     };
-    const deps = createDualSparkDiscoveryDeps(spawn);
+    const deps = createManagedClusterDiscoveryDeps(spawn);
     const pinned = deps.openPinnedPeerTransport(identity("192.168.100.2"));
 
     try {

@@ -5,14 +5,14 @@ import { describe, expect, it } from "vitest";
 
 import type { SystemReadinessReport } from "../../readiness/types.js";
 import {
-  DUAL_SPARK_TOPOLOGY_ID,
-  DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION,
-  type DualSparkNodeObservation,
-  type DualSparkPeerObservation,
-  type DualSparkRailObservation,
-  type DualSparkTopologyQualificationInput,
-  qualifyDualSparkTopology,
-} from "./dual-spark-topology.js";
+  MANAGED_CLUSTER_TOPOLOGY_ID,
+  MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
+  type ManagedClusterNodeObservation,
+  type ManagedClusterPeerObservation,
+  type ManagedClusterRailObservation,
+  type ManagedClusterTopologyQualificationInput,
+  qualifyManagedClusterTopology,
+} from "./managed-cluster-topology.js";
 
 const EVALUATED_AT = "2026-08-02T18:00:00.000Z";
 const READINESS_OBSERVED_AT = "2026-08-02T17:59:30.000Z";
@@ -60,8 +60,8 @@ function readiness(overrides: Partial<SystemReadinessReport> = {}): SystemReadin
 function rail(
   node: "head" | "worker",
   index: 0 | 1,
-  overrides: Partial<DualSparkRailObservation> = {},
-): DualSparkRailObservation {
+  overrides: Partial<ManagedClusterRailObservation> = {},
+): ManagedClusterRailObservation {
   const headAddress = `192.168.${100 + index}.10`;
   const workerAddress = `192.168.${100 + index}.11`;
   const isHead = node === "head";
@@ -87,7 +87,7 @@ function rail(
   };
 }
 
-function localNode(): DualSparkNodeObservation {
+function localNode(): ManagedClusterNodeObservation {
   return {
     nodeId: "spark-head",
     gpuIds: ["GPU-head"],
@@ -97,7 +97,7 @@ function localNode(): DualSparkNodeObservation {
   };
 }
 
-function peerNode(index = 0): DualSparkPeerObservation {
+function peerNode(index = 0): ManagedClusterPeerObservation {
   const suffix = index === 0 ? "" : `-${index}`;
   return {
     nodeId: `spark-worker${suffix}`,
@@ -122,8 +122,8 @@ function peerNode(index = 0): DualSparkPeerObservation {
 }
 
 function qualificationInput(
-  peers: readonly DualSparkPeerObservation[] = [peerNode()],
-): DualSparkTopologyQualificationInput {
+  peers: readonly ManagedClusterPeerObservation[] = [peerNode()],
+): ManagedClusterTopologyQualificationInput {
   return {
     intent: "automatic",
     evaluatedAt: EVALUATED_AT,
@@ -133,80 +133,159 @@ function qualificationInput(
   };
 }
 
+function ringRail(
+  nodeId: string,
+  peerNodeId: string,
+  subnet: number,
+  addressHost: number,
+  peerHost: number,
+  index: number,
+): ManagedClusterRailObservation {
+  return {
+    adapter: "connectx-7",
+    path: "direct",
+    physicalPortId: `cx7-${nodeId}`,
+    netdev: `eth${String(index)}`,
+    hcaDevice: `roce${String(index)}`,
+    hcaPort: 1,
+    address: `192.168.${String(subnet)}.${String(addressHost)}`,
+    prefixLength: 30,
+    peerNodeId,
+    peerAddress: `192.168.${String(subnet)}.${String(peerHost)}`,
+    linkState: "up",
+    connectivity: "reachable",
+    roceGid: {
+      state: "resolved",
+      index: 3 + index,
+      value: `fe80::${String(subnet)}:${String(addressHost)}`,
+    },
+  };
+}
+
+function threeNodeQualificationInput(): ManagedClusterTopologyQualificationInput {
+  const input = qualificationInput();
+  input.local.rails = [
+    ringRail("spark-head", "spark-worker-a", 100, 1, 2, 0),
+    ringRail("spark-head", "spark-worker-b", 102, 1, 2, 1),
+  ];
+  input.peers = [
+    {
+      ...peerNode(),
+      nodeId: "spark-worker-a",
+      gpuIds: ["GPU-worker-a"],
+      rails: [
+        ringRail("spark-worker-a", "spark-head", 100, 2, 1, 0),
+        ringRail("spark-worker-a", "spark-worker-b", 101, 1, 2, 1),
+      ],
+      sshBinding: {
+        state: "pretrusted",
+        fromNodeId: "spark-head",
+        toNodeId: "spark-worker-a",
+        peerTarget: "spark-worker-a.local",
+        handle: "ssh-binding:worker-a",
+      },
+    },
+    {
+      ...peerNode(),
+      nodeId: "spark-worker-b",
+      gpuIds: ["GPU-worker-b"],
+      rails: [
+        ringRail("spark-worker-b", "spark-worker-a", 101, 2, 1, 0),
+        ringRail("spark-worker-b", "spark-head", 102, 2, 1, 1),
+      ],
+      sshBinding: {
+        state: "pretrusted",
+        fromNodeId: "spark-head",
+        toNodeId: "spark-worker-b",
+        peerTarget: "spark-worker-b.local",
+        handle: "ssh-binding:worker-b",
+      },
+    },
+  ];
+  return input;
+}
+
 function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
-describe("dual DGX Spark topology qualification", () => {
+describe("managed DGX Spark cluster topology qualification", () => {
   it("returns no match when discovery finds no peer", () => {
-    expect(qualifyDualSparkTopology(qualificationInput([]))).toMatchObject({
+    expect(qualifyManagedClusterTopology(qualificationInput([]))).toMatchObject({
       outcome: "no-match",
       code: "peer-count",
     });
   });
 
-  it("qualifies one peer as a two-node direct ConnectX-7 topology", () => {
-    const result = qualifyDualSparkTopology(qualificationInput());
+  it("qualifies the profile-declared node set as a direct ConnectX-7 topology", () => {
+    const result = qualifyManagedClusterTopology(qualificationInput());
 
-    expect(result.outcome).toBe("qualified");
+    expect(result).toMatchObject({ outcome: "qualified" });
     const qualified = result as Extract<typeof result, { outcome: "qualified" }>;
     expect(qualified.artifact).toMatchObject({
-      id: DUAL_SPARK_TOPOLOGY_ID,
-      schemaVersion: DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION,
+      id: MANAGED_CLUSTER_TOPOLOGY_ID,
+      schemaVersion: MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
       status: "qualified",
       subjectNodeIds: ["spark-head", "spark-worker"],
       output: {
-        headNodeId: "spark-head",
-        workerNodeId: "spark-worker",
-        masterAddress: "192.168.100.10",
-        peer: {
-          target: "spark-worker.local",
-          sshBindingHandle: "ssh-binding:worker-0",
-        },
+        controllerNodeId: "spark-head",
+        peers: [
+          {
+            nodeId: "spark-worker",
+            target: "spark-worker.local",
+            sshBindingHandle: "ssh-binding:worker-0",
+          },
+        ],
       },
     });
     expect(qualified.artifact.subjectDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(qualified.artifact.outputDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(qualified.artifact.output.nodes).toEqual([
-      { nodeId: "spark-head", gpuId: "GPU-head", role: "head" },
-      { nodeId: "spark-worker", gpuId: "GPU-worker", role: "worker" },
+      { nodeId: "spark-head", gpuId: "GPU-head", rank: 0, role: "head" },
+      { nodeId: "spark-worker", gpuId: "GPU-worker", rank: 1, role: "worker" },
     ]);
     expect(qualified.artifact.output.rails).toHaveLength(2);
-    expect(qualified.artifact.output.rails.map(({ head }) => head.netdev)).toEqual([
-      "enp1s0f0np0",
-      "enP2p1s0f0np0",
-    ]);
-    expect(qualified.artifact.output.rails[0]).toMatchObject({
-      index: 0,
-      head: {
-        hcaDevice: "rocep1s0f0",
-        address: "192.168.100.10",
-        peerAddress: "192.168.100.11",
-        roceGid: { index: 5, value: "fe80::10" },
-      },
-      worker: {
-        hcaDevice: "rocep1s0f0",
-        address: "192.168.100.11",
-        peerAddress: "192.168.100.10",
-        roceGid: { index: 5, value: "fe80::20" },
-      },
-    });
+    expect(
+      qualified.artifact.output.rails.flatMap(({ endpoints }) =>
+        endpoints.map(({ nodeId }) => nodeId),
+      ),
+    ).toEqual(expect.arrayContaining(["spark-head", "spark-worker"]));
   });
 
-  it("returns no match when discovery finds two peers", () => {
-    expect(qualifyDualSparkTopology(qualificationInput([peerNode(), peerNode(1)]))).toMatchObject({
+  it("reports a fabric mismatch rather than rejecting a larger cluster by cardinality", () => {
+    expect(
+      qualifyManagedClusterTopology(qualificationInput([peerNode(), peerNode(1)])),
+    ).toMatchObject({
       outcome: "no-match",
-      code: "peer-count",
+      code: "fabric-mismatch",
     });
   });
 
-  it("returns a strict error when discovery finds more than two peers", () => {
+  it("qualifies a three-node ring and assigns deterministic ranks", () => {
+    const result = qualifyManagedClusterTopology(threeNodeQualificationInput());
+    if (result.outcome !== "qualified") throw new Error(`${result.code}: ${result.message}`);
+
+    expect(result).toMatchObject({ outcome: "qualified" });
+    const artifact = (result as Extract<typeof result, { outcome: "qualified" }>).artifact;
+    expect(artifact.output.nodes).toEqual([
+      { nodeId: "spark-head", gpuId: "GPU-head", rank: 0, role: "head" },
+      { nodeId: "spark-worker-a", gpuId: "GPU-worker-a", rank: 1, role: "worker" },
+      { nodeId: "spark-worker-b", gpuId: "GPU-worker-b", rank: 2, role: "worker" },
+    ]);
+    expect(artifact.output.rails).toHaveLength(3);
+    expect(artifact.output.peers.map(({ nodeId }) => nodeId)).toEqual([
+      "spark-worker-a",
+      "spark-worker-b",
+    ]);
+  });
+
+  it("reports strict fabric errors without a fixed peer-count branch", () => {
     const input = qualificationInput([peerNode(), peerNode(1), peerNode(2)]);
     input.intent = "explicit";
 
-    expect(qualifyDualSparkTopology(input)).toMatchObject({
+    expect(qualifyManagedClusterTopology(input)).toMatchObject({
       outcome: "error",
-      code: "peer-count",
+      code: "fabric-mismatch",
     });
   });
 
@@ -214,7 +293,7 @@ describe("dual DGX Spark topology qualification", () => {
     const input = qualificationInput([]);
     input.intent = "resume";
 
-    expect(qualifyDualSparkTopology(input)).toMatchObject({
+    expect(qualifyManagedClusterTopology(input)).toMatchObject({
       outcome: "error",
       code: "peer-count",
     });
@@ -273,7 +352,7 @@ describe("dual DGX Spark topology qualification", () => {
     const input = qualificationInput();
     mutate(input.peers[0]!.readiness);
 
-    expect(qualifyDualSparkTopology(input)).toMatchObject({
+    expect(qualifyManagedClusterTopology(input)).toMatchObject({
       outcome: "no-match",
       code,
     });
@@ -288,7 +367,7 @@ describe("dual DGX Spark topology qualification", () => {
           : capability,
     );
 
-    expect(qualifyDualSparkTopology(input)).toMatchObject({
+    expect(qualifyManagedClusterTopology(input)).toMatchObject({
       outcome: "qualified",
     });
   });
@@ -296,7 +375,7 @@ describe("dual DGX Spark topology qualification", () => {
   it.each([
     {
       name: "the same node identity",
-      mutate: (input: DualSparkTopologyQualificationInput) => {
+      mutate: (input: ManagedClusterTopologyQualificationInput) => {
         input.peers[0]!.nodeId = input.local.nodeId;
         input.peers[0]!.sshBinding.toNodeId = input.local.nodeId;
       },
@@ -304,14 +383,14 @@ describe("dual DGX Spark topology qualification", () => {
     },
     {
       name: "the same GPU identity",
-      mutate: (input: DualSparkTopologyQualificationInput) => {
+      mutate: (input: ManagedClusterTopologyQualificationInput) => {
         input.peers[0]!.gpuIds = input.local.gpuIds;
       },
       code: "duplicate-gpu-identity",
     },
     {
       name: "more than one local GPU identity",
-      mutate: (input: DualSparkTopologyQualificationInput) => {
+      mutate: (input: ManagedClusterTopologyQualificationInput) => {
         input.local.gpuIds = ["GPU-head", "GPU-extra"];
       },
       code: "gpu-identity-unavailable",
@@ -320,7 +399,7 @@ describe("dual DGX Spark topology qualification", () => {
     const input = qualificationInput();
     mutate(input);
 
-    expect(qualifyDualSparkTopology(input)).toMatchObject({
+    expect(qualifyManagedClusterTopology(input)).toMatchObject({
       outcome: "no-match",
       code,
     });
@@ -333,7 +412,7 @@ describe("dual DGX Spark topology qualification", () => {
     const input = qualificationInput();
     input.peers[0]!.runtimeState = state;
 
-    expect(qualifyDualSparkTopology(input)).toMatchObject({
+    expect(qualifyManagedClusterTopology(input)).toMatchObject({
       outcome: "no-match",
       code,
     });
@@ -342,49 +421,49 @@ describe("dual DGX Spark topology qualification", () => {
   it.each([
     {
       name: "one logical rail",
-      mutate: (input: DualSparkTopologyQualificationInput) => {
+      mutate: (input: ManagedClusterTopologyQualificationInput) => {
         input.local.rails = input.local.rails.slice(0, 1);
       },
       code: "fabric-degraded",
     },
     {
       name: "three logical rails",
-      mutate: (input: DualSparkTopologyQualificationInput) => {
+      mutate: (input: ManagedClusterTopologyQualificationInput) => {
         input.local.rails = [...input.local.rails, rail("head", 0, { netdev: "extra0" })];
       },
       code: "fabric-multiple",
     },
     {
       name: "two physical ports",
-      mutate: (input: DualSparkTopologyQualificationInput) => {
+      mutate: (input: ManagedClusterTopologyQualificationInput) => {
         input.local.rails[1]!.physicalPortId = "cx7-right-head";
       },
       code: "fabric-multiple",
     },
     {
       name: "a switched path",
-      mutate: (input: DualSparkTopologyQualificationInput) => {
+      mutate: (input: ManagedClusterTopologyQualificationInput) => {
         input.local.rails[0]!.path = "switched";
       },
       code: "fabric-degraded",
     },
     {
       name: "an unreachable peer address",
-      mutate: (input: DualSparkTopologyQualificationInput) => {
+      mutate: (input: ManagedClusterTopologyQualificationInput) => {
         input.peers[0]!.rails[0]!.connectivity = "unreachable";
       },
       code: "fabric-degraded",
     },
     {
       name: "nonreciprocal addresses",
-      mutate: (input: DualSparkTopologyQualificationInput) => {
+      mutate: (input: ManagedClusterTopologyQualificationInput) => {
         input.peers[0]!.rails[0]!.peerAddress = "192.168.100.99";
       },
       code: "fabric-mismatch",
     },
     {
       name: "an unresolved RoCE GID",
-      mutate: (input: DualSparkTopologyQualificationInput) => {
+      mutate: (input: ManagedClusterTopologyQualificationInput) => {
         input.local.rails[0]!.roceGid = { state: "unknown" };
       },
       code: "fabric-degraded",
@@ -393,7 +472,7 @@ describe("dual DGX Spark topology qualification", () => {
     const input = qualificationInput();
     mutate(input);
 
-    expect(qualifyDualSparkTopology(input)).toMatchObject({
+    expect(qualifyManagedClusterTopology(input)).toMatchObject({
       outcome: "no-match",
       code,
     });
@@ -403,7 +482,7 @@ describe("dual DGX Spark topology qualification", () => {
     const input = qualificationInput();
     input.peers[0]!.sshBinding.state = "untrusted";
 
-    expect(qualifyDualSparkTopology(input)).toMatchObject({
+    expect(qualifyManagedClusterTopology(input)).toMatchObject({
       outcome: "no-match",
       code: "ssh-binding-unavailable",
     });
@@ -413,7 +492,7 @@ describe("dual DGX Spark topology qualification", () => {
     const input = qualificationInput();
     input.peers[0]!.sshBinding.handle = "   ";
 
-    expect(qualifyDualSparkTopology(input)).toMatchObject({
+    expect(qualifyManagedClusterTopology(input)).toMatchObject({
       outcome: "no-match",
       code: "ssh-binding-unavailable",
     });
@@ -425,8 +504,8 @@ describe("dual DGX Spark topology qualification", () => {
     secondInput.local.rails = [...secondInput.local.rails].reverse();
     secondInput.peers[0]!.rails = [...secondInput.peers[0]!.rails].reverse();
 
-    const first = qualifyDualSparkTopology(firstInput);
-    const second = qualifyDualSparkTopology(secondInput);
+    const first = qualifyManagedClusterTopology(firstInput);
+    const second = qualifyManagedClusterTopology(secondInput);
     expect(first.outcome).toBe("qualified");
     expect(second.outcome).toBe("qualified");
     const firstQualified = first as Extract<typeof first, { outcome: "qualified" }>;

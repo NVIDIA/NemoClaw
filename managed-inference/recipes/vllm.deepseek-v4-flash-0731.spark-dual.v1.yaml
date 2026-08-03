@@ -14,9 +14,9 @@ spec:
   bindings:
     sparkTopology:
       type: topologyQualificationOutput
-      qualificationId: dgx-spark.gb10.dual-cx7
+      qualificationId: host-cluster.direct-cx7
       schemaVersion: 1
-      outputSchema: nemoclaw.nvidia.com/dual-spark-topology/v1
+      outputSchema: nemoclaw.nvidia.com/managed-cluster-topology/v1
 
   model:
     id: deepseek-ai/DeepSeek-V4-Flash-0731
@@ -98,13 +98,14 @@ spec:
       VLLM_USE_FLASHINFER_SAMPLER: "1"
 
   execution:
-    materializerRef: vllm.dual-dgx-spark/v1
-    lifecycleRef: vllm.dual-dgx-spark/v1
+    materializerRef: vllm.managed-cluster/v1
+    lifecycleRef: vllm.managed-cluster/v1
     topologyBinding: sparkTopology
     nodeCount: 2
     tensorParallelSize: 2
     pipelineParallelSize: 1
     distributedExecutorBackend: mp
+    rendezvousPort: 25000
 
   serve:
     authentication: bearer

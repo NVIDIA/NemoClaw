@@ -3,25 +3,25 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { fixtureDualSparkPlan } from "./dual-spark-fixture.test-support.js";
+import { fixtureManagedClusterPlan } from "./managed-cluster-fixture.test-support.js";
 import {
-  classifyDualSparkExistingState,
-  cleanupDualSparkManagedVllm,
-  type DualSparkContainerStartRequest,
-  type DualSparkNodeSnapshot,
-  type DualSparkObservedContainer,
-  type DualSparkVllmLifecycleDeps,
-  dualSparkVllmApiKeyFingerprint,
-  startAutomaticDualSparkVllm,
-} from "./dual-spark-lifecycle.js";
+  classifyManagedClusterExistingState,
+  cleanupManagedClusterManagedVllm,
+  type ManagedClusterContainerStartRequest,
+  type ManagedClusterNodeSnapshot,
+  type ManagedClusterObservedContainer,
+  type ManagedClusterVllmLifecycleDeps,
+  managedClusterVllmApiKeyFingerprint,
+  startAutomaticManagedClusterVllm,
+} from "./managed-cluster-lifecycle.js";
 import {
-  DUAL_SPARK_API_KEY_FINGERPRINT_LABEL,
-  DUAL_SPARK_MANAGED_LABEL,
-  DUAL_SPARK_TRANSACTION_LABEL,
-  type DualSparkVllmPlan,
-  type DualSparkVllmRole,
-  type DualSparkVllmRolePlan,
-} from "./dual-spark-materialize.js";
+  MANAGED_CLUSTER_API_KEY_FINGERPRINT_LABEL,
+  MANAGED_CLUSTER_MANAGED_LABEL,
+  MANAGED_CLUSTER_TRANSACTION_LABEL,
+  type ManagedClusterVllmPlan,
+  type ManagedClusterVllmRole,
+  type ManagedClusterVllmRolePlan,
+} from "./managed-cluster-materialize.js";
 
 const API_KEY = "a".repeat(64);
 const TRANSACTION_ID = "b".repeat(32);
@@ -52,18 +52,18 @@ const STOPPED_FOREIGN_CONTAINER_FIXTURES: readonly StoppedForeignContainerFixtur
     signal: "managed label",
     name: "foreign-inference",
     image: "example.invalid/inference:latest",
-    labels: { [DUAL_SPARK_MANAGED_LABEL]: "foreign" },
+    labels: { [MANAGED_CLUSTER_MANAGED_LABEL]: "foreign" },
   },
 ];
 
 type Harness = ReturnType<typeof createHarness>;
 
 function managedContainer(
-  plan: DualSparkVllmPlan,
-  role: DualSparkVllmRole,
-  overrides: Partial<DualSparkObservedContainer> = {},
-): DualSparkObservedContainer {
-  const rolePlan = plan.roles[role];
+  plan: ManagedClusterVllmPlan,
+  role: ManagedClusterVllmRole,
+  overrides: Partial<ManagedClusterObservedContainer> = {},
+): ManagedClusterObservedContainer {
+  const rolePlan = plan.roles.find((candidate) => candidate.role === role)!;
   return {
     id: role === "head" ? HEAD_ID : WORKER_ID,
     name: rolePlan.containerName,
@@ -72,28 +72,38 @@ function managedContainer(
     healthy: true,
     labels: {
       ...rolePlan.baseLabels,
-      [DUAL_SPARK_API_KEY_FINGERPRINT_LABEL]: dualSparkVllmApiKeyFingerprint(API_KEY),
-      [DUAL_SPARK_TRANSACTION_LABEL]: TRANSACTION_ID,
+      [MANAGED_CLUSTER_API_KEY_FINGERPRINT_LABEL]: managedClusterVllmApiKeyFingerprint(API_KEY),
+      [MANAGED_CLUSTER_TRANSACTION_LABEL]: TRANSACTION_ID,
     },
     ...overrides,
   };
 }
 
-function createHarness(plan: DualSparkVllmPlan) {
+function classifiedSnapshots(
+  plan: ManagedClusterVllmPlan,
+  snapshots: Record<ManagedClusterVllmRole, ManagedClusterNodeSnapshot>,
+) {
+  return plan.roles.map((rolePlan) => ({
+    nodeId: rolePlan.nodeId,
+    snapshot: snapshots[rolePlan.role],
+  }));
+}
+
+function createHarness(plan: ManagedClusterVllmPlan) {
   const events: string[] = [];
-  const snapshots: Record<DualSparkVllmRole, DualSparkNodeSnapshot> = {
+  const snapshots: Record<ManagedClusterVllmRole, ManagedClusterNodeSnapshot> = {
     head: { containers: [], listeningPorts: [] },
     worker: { containers: [], listeningPorts: [] },
   };
-  const inspectNode = vi.fn(async (rolePlan: DualSparkVllmRolePlan) => {
+  const inspectNode = vi.fn(async (rolePlan: ManagedClusterVllmRolePlan) => {
     events.push(`inspect:${rolePlan.role}`);
     return snapshots[rolePlan.role];
   });
-  const stageNode = vi.fn(async ({ rolePlan }: { rolePlan: DualSparkVllmRolePlan }) => {
+  const stageNode = vi.fn(async ({ rolePlan }: { rolePlan: ManagedClusterVllmRolePlan }) => {
     events.push(`stage:${rolePlan.role}`);
     return { ok: true };
   });
-  const startContainer = vi.fn(async (request: DualSparkContainerStartRequest) => {
+  const startContainer = vi.fn(async (request: ManagedClusterContainerStartRequest) => {
     const { rolePlan, labels } = request;
     events.push(`start:${rolePlan.role}`);
     const id = rolePlan.role === "head" ? HEAD_ID : WORKER_ID;
@@ -120,7 +130,7 @@ function createHarness(plan: DualSparkVllmPlan) {
     events.push(`distributed:${request.rolePlan.role}`);
     return true;
   });
-  const removeContainer = vi.fn(async (rolePlan: DualSparkVllmRolePlan, id: string) => {
+  const removeContainer = vi.fn(async (rolePlan: ManagedClusterVllmRolePlan, id: string) => {
     events.push(`remove:${rolePlan.role}:${id}`);
     snapshots[rolePlan.role] = {
       ...snapshots[rolePlan.role],
@@ -136,7 +146,7 @@ function createHarness(plan: DualSparkVllmPlan) {
     events.push("probe:chat");
     return true;
   });
-  const deps: DualSparkVllmLifecycleDeps = {
+  const deps: ManagedClusterVllmLifecycleDeps = {
     inspectNode,
     stageNode,
     startContainer,
@@ -161,17 +171,17 @@ function createHarness(plan: DualSparkVllmPlan) {
   };
 }
 
-describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
-  let plan: DualSparkVllmPlan;
+describe("automatic managed-cluster vLLM lifecycle", () => {
+  let plan: ManagedClusterVllmPlan;
   let harness: Harness;
 
   beforeEach(() => {
-    plan = fixtureDualSparkPlan();
+    plan = fixtureManagedClusterPlan();
     harness = createHarness(plan);
   });
 
   it("inspects both nodes before staging either node", async () => {
-    const result = await startAutomaticDualSparkVllm(plan, API_KEY, harness.deps);
+    const result = await startAutomaticManagedClusterVllm(plan, API_KEY, harness.deps);
 
     expect(result.ok).toBe(true);
     const firstStage = harness.events.findIndex((event) => event.startsWith("stage:"));
@@ -195,7 +205,7 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
       listeningPorts: [],
     };
 
-    const result = await startAutomaticDualSparkVllm(plan, API_KEY, harness.deps);
+    const result = await startAutomaticManagedClusterVllm(plan, API_KEY, harness.deps);
 
     expect(result).toMatchObject({ ok: false, code: "conflict" });
     expect(harness.stageNode).not.toHaveBeenCalled();
@@ -220,7 +230,7 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
       listeningPorts: [],
     };
 
-    const result = await startAutomaticDualSparkVllm(plan, API_KEY, harness.deps);
+    const result = await startAutomaticManagedClusterVllm(plan, API_KEY, harness.deps);
 
     expect(result).toMatchObject({ ok: false, code: "conflict" });
     expect(harness.stageNode).not.toHaveBeenCalled();
@@ -247,11 +257,15 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
     };
 
     expect(
-      classifyDualSparkExistingState(plan, dualSparkVllmApiKeyFingerprint(API_KEY), snapshots),
+      classifyManagedClusterExistingState(
+        plan,
+        managedClusterVllmApiKeyFingerprint(API_KEY),
+        classifiedSnapshots(plan, snapshots),
+      ),
     ).toEqual({ outcome: "clear" });
   });
 
-  it("reuses only one exact healthy pair with the same transaction", async () => {
+  it("reuses only one exact healthy cluster with the same transaction", async () => {
     harness.snapshots.head = {
       containers: [managedContainer(plan, "head")],
       listeningPorts: [8000],
@@ -261,13 +275,15 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
       listeningPorts: [25000],
     };
 
-    const result = await startAutomaticDualSparkVllm(plan, API_KEY, harness.deps);
+    const result = await startAutomaticManagedClusterVllm(plan, API_KEY, harness.deps);
 
     expect(result).toMatchObject({
       ok: true,
       reusedExisting: true,
-      headContainerId: HEAD_ID,
-      workerContainerId: WORKER_ID,
+      containers: [
+        { nodeId: plan.roles[0].nodeId, containerId: HEAD_ID },
+        { nodeId: plan.roles[1].nodeId, containerId: WORKER_ID },
+      ],
     });
     expect(harness.probeModels).toHaveBeenCalledOnce();
     expect(harness.probeChat).toHaveBeenCalledOnce();
@@ -285,7 +301,7 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
       listeningPorts: [],
     };
 
-    const result = await startAutomaticDualSparkVllm(plan, API_KEY, harness.deps);
+    const result = await startAutomaticManagedClusterVllm(plan, API_KEY, harness.deps);
 
     expect(result).toMatchObject({ ok: false, code: "conflict" });
     expect(harness.startContainer).not.toHaveBeenCalled();
@@ -293,7 +309,7 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
   });
 
   it("starts and prepares rank 1 before rank 0 without exposing its API key", async () => {
-    const result = await startAutomaticDualSparkVllm(plan, API_KEY, harness.deps);
+    const result = await startAutomaticManagedClusterVllm(plan, API_KEY, harness.deps);
 
     expect(result.ok).toBe(true);
     expect(harness.events.indexOf("start:worker")).toBeLessThan(
@@ -330,12 +346,12 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
       throw new Error("Docker create outcome was ambiguous");
     });
 
-    const result = await startAutomaticDualSparkVllm(plan, API_KEY, harness.deps);
+    const result = await startAutomaticManagedClusterVllm(plan, API_KEY, harness.deps);
 
     expect(result).toMatchObject({ ok: false, code: "start-failed" });
     const failed = result as Extract<typeof result, { ok: false }>;
     expect(failed.rollbackErrors).toContain(
-      "dual-Spark post-failure runtime state could not be proven clear; SSH ownership state was retained",
+      "managed cluster post-failure runtime state could not be proven clear; SSH ownership state was retained",
     );
     expect(harness.removeContainer).not.toHaveBeenCalled();
   });
@@ -345,7 +361,7 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
       throw new Error("Docker create failed before mutation");
     });
 
-    const result = await startAutomaticDualSparkVllm(plan, API_KEY, harness.deps);
+    const result = await startAutomaticManagedClusterVllm(plan, API_KEY, harness.deps);
 
     expect(result).toMatchObject({
       ok: false,
@@ -360,7 +376,7 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
       return false;
     });
 
-    const result = await startAutomaticDualSparkVllm(plan, API_KEY, harness.deps);
+    const result = await startAutomaticManagedClusterVllm(plan, API_KEY, harness.deps);
 
     expect(result).toMatchObject({
       ok: false,
@@ -382,7 +398,7 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
             ...worker,
             labels: {
               ...worker.labels,
-              [DUAL_SPARK_TRANSACTION_LABEL]: "c".repeat(32),
+              [MANAGED_CLUSTER_TRANSACTION_LABEL]: "c".repeat(32),
             },
           },
         ],
@@ -390,7 +406,7 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
       return false;
     });
 
-    const result = await startAutomaticDualSparkVllm(plan, API_KEY, harness.deps);
+    const result = await startAutomaticManagedClusterVllm(plan, API_KEY, harness.deps);
 
     expect(result).toMatchObject({ ok: false, code: "health-failed" });
     const failed = result as Extract<typeof result, { ok: false }>;
@@ -403,17 +419,21 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
 
   it("classifies port conflicts on either node as nonselectable", () => {
     expect(
-      classifyDualSparkExistingState(plan, dualSparkVllmApiKeyFingerprint(API_KEY), {
-        head: { containers: [], listeningPorts: [] },
-        worker: { containers: [], listeningPorts: [25000] },
-      }),
+      classifyManagedClusterExistingState(
+        plan,
+        managedClusterVllmApiKeyFingerprint(API_KEY),
+        classifiedSnapshots(plan, {
+          head: { containers: [], listeningPorts: [] },
+          worker: { containers: [], listeningPorts: [25000] },
+        }),
+      ),
     ).toEqual({
       outcome: "conflict",
-      reason: "worker port 25000 is already in use",
+      reason: `${plan.roles[1].nodeId} port 25000 is already in use`,
     });
   });
 
-  it("cleans up only a complete exact pair and retains all cache state", async () => {
+  it("cleans up only a complete exact cluster and retains all cache state", async () => {
     harness.snapshots.head = {
       containers: [managedContainer(plan, "head")],
       listeningPorts: [],
@@ -423,7 +443,7 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
       listeningPorts: [],
     };
 
-    const result = await cleanupDualSparkManagedVllm(plan, API_KEY, harness.deps);
+    const result = await cleanupManagedClusterManagedVllm(plan, API_KEY, harness.deps);
 
     expect(result).toEqual({
       ok: true,
@@ -459,19 +479,21 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
         : removeOwnedContainer();
     });
     const ownership = {
-      headContainerId: HEAD_ID,
-      workerContainerId: WORKER_ID,
+      containers: [
+        { nodeId: plan.roles[0].nodeId, containerId: HEAD_ID },
+        { nodeId: plan.roles[1].nodeId, containerId: WORKER_ID },
+      ],
     };
 
     await expect(
-      cleanupDualSparkManagedVllm(plan, API_KEY, harness.deps, ownership),
+      cleanupManagedClusterManagedVllm(plan, API_KEY, harness.deps, ownership),
     ).resolves.toEqual({
       ok: false,
       reason: "worker daemon unavailable",
       removedContainerIds: [HEAD_ID],
     });
     await expect(
-      cleanupDualSparkManagedVllm(plan, API_KEY, harness.deps, ownership),
+      cleanupManagedClusterManagedVllm(plan, API_KEY, harness.deps, ownership),
     ).resolves.toEqual({
       ok: true,
       removedContainerIds: [WORKER_ID],

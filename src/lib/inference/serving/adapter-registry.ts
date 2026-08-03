@@ -6,18 +6,17 @@ import type {
   ManagedInferenceTopologyQualification,
 } from "./catalog-types.js";
 import {
-  DUAL_SPARK_TOPOLOGY_ID,
-  DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION,
-  getDualSparkTopologyArtifactError,
-} from "./dual-spark-topology.js";
+  getManagedClusterTopologyArtifactError,
+  MANAGED_CLUSTER_TOPOLOGY_ID,
+  MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
+} from "./managed-cluster-topology.js";
 
-export const DUAL_SPARK_VLLM_MATERIALIZER_REF = "vllm.dual-dgx-spark/v1" as const;
-export const DUAL_SPARK_VLLM_LIFECYCLE_REF = "vllm.dual-dgx-spark/v1" as const;
+export const MANAGED_CLUSTER_VLLM_MATERIALIZER_REF = "vllm.managed-cluster/v1" as const;
+export const MANAGED_CLUSTER_VLLM_LIFECYCLE_REF = "vllm.managed-cluster/v1" as const;
 export const SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF =
   "snapshot-copy-and-exact-text-replacement/v1" as const;
 export const NO_PREPARATION_REF = "none/v1" as const;
-export const DUAL_SPARK_HUGGING_FACE_CACHE_SOURCE = "huggingface-cache" as const;
-export const DUAL_SPARK_VLLM_MASTER_PORT = 25_000 as const;
+export const MANAGED_CLUSTER_HUGGING_FACE_CACHE_SOURCE = "huggingface-cache" as const;
 
 export function containerPathContains(parent: string, child: string): boolean {
   return child === parent || child.startsWith(`${parent}/`);
@@ -62,10 +61,11 @@ export interface ManagedInferencePreparationDescriptor {
   validateRecipe(recipe: ManagedInferenceServingRecipe): string | undefined;
 }
 
-const DUAL_SPARK_TOPOLOGY_OUTPUT_SCHEMA = "nemoclaw.nvidia.com/dual-spark-topology/v1" as const;
-const DUAL_SPARK_PLAN_SCHEMA = "nemoclaw.nvidia.com/dual-spark-vllm-plan/v1" as const;
+const MANAGED_CLUSTER_TOPOLOGY_OUTPUT_SCHEMA =
+  "nemoclaw.nvidia.com/managed-cluster-topology/v1" as const;
+const MANAGED_CLUSTER_PLAN_SCHEMA = "nemoclaw.nvidia.com/managed-cluster-vllm-plan/v1" as const;
 const LOWERCASE_STABLE_ID = /^[a-z0-9][a-z0-9._/-]{0,159}$/u;
-const DUAL_SPARK_MATERIALIZER_OWNED_ENVIRONMENT = new Set([
+const MANAGED_CLUSTER_MATERIALIZER_OWNED_ENVIRONMENT = new Set([
   "GLOO_SOCKET_IFNAME",
   "HEADLESS",
   "HF_HOME",
@@ -80,11 +80,11 @@ const DUAL_SPARK_MATERIALIZER_OWNED_ENVIRONMENT = new Set([
   "VLLM_HOST_IP",
 ]);
 
-export function isDualSparkMaterializerOwnedEnvironment(name: string): boolean {
-  return DUAL_SPARK_MATERIALIZER_OWNED_ENVIRONMENT.has(name);
+export function isManagedClusterMaterializerOwnedEnvironment(name: string): boolean {
+  return MANAGED_CLUSTER_MATERIALIZER_OWNED_ENVIRONMENT.has(name);
 }
 
-function dualSparkTopologyBinding(
+function managedClusterTopologyBinding(
   recipe: ManagedInferenceServingRecipe,
 ): ManagedInferenceServingRecipe["spec"]["bindings"][string] | undefined {
   return recipe.spec.bindings[recipe.spec.execution.topologyBinding];
@@ -107,23 +107,29 @@ function positiveIntegerArgument(
   return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= maximum ? parsed : undefined;
 }
 
-function validateDualSparkMaterializerRecipe(
+function validateManagedClusterMaterializerRecipe(
   recipe: ManagedInferenceServingRecipe,
 ): string | undefined {
-  if (recipe.spec.backend !== "vllm") return "dual-Spark materializer requires backend vllm";
-  if (recipe.spec.execution.materializerRef !== DUAL_SPARK_VLLM_MATERIALIZER_REF) {
-    return "recipe does not select the dual-Spark materializer";
+  if (recipe.spec.backend !== "vllm") return "managed cluster materializer requires backend vllm";
+  if (recipe.spec.execution.materializerRef !== MANAGED_CLUSTER_VLLM_MATERIALIZER_REF) {
+    return "recipe does not select the managed cluster materializer";
   }
+  const { execution } = recipe.spec;
   if (
-    recipe.spec.execution.nodeCount !== 2 ||
-    recipe.spec.execution.tensorParallelSize !== 2 ||
-    recipe.spec.execution.pipelineParallelSize !== 1 ||
-    recipe.spec.execution.distributedExecutorBackend !== "mp"
+    !Number.isSafeInteger(execution.nodeCount) ||
+    execution.nodeCount < 2 ||
+    execution.nodeCount > 1_024 ||
+    !Number.isSafeInteger(execution.tensorParallelSize) ||
+    execution.tensorParallelSize < 1 ||
+    !Number.isSafeInteger(execution.pipelineParallelSize) ||
+    execution.pipelineParallelSize < 1 ||
+    execution.tensorParallelSize * execution.pipelineParallelSize !== execution.nodeCount ||
+    execution.distributedExecutorBackend !== "mp"
   ) {
-    return "dual-Spark materializer requires its two-node TP=2, PP=1, mp execution shape";
+    return "managed cluster materializer requires a bounded node count equal to TP times PP with the mp backend";
   }
   if (Object.keys(recipe.spec.bindings).length !== 1) {
-    return "dual-Spark materializer requires exactly one topology binding";
+    return "managed cluster materializer requires exactly one topology binding";
   }
   if (
     recipe.spec.runtime.architecture !== "arm64" ||
@@ -131,26 +137,33 @@ function validateDualSparkMaterializerRecipe(
     recipe.spec.runtime.ipcMode !== "host" ||
     recipe.spec.serve.authentication !== "bearer"
   ) {
-    return "dual-Spark materializer requires arm64 host networking, host IPC, and bearer authentication";
+    return "managed cluster materializer requires arm64 host networking, host IPC, and bearer authentication";
   }
   const apiPort = positiveIntegerArgument(recipe, "--port", 65_535);
   if (apiPort === undefined || positiveIntegerArgument(recipe, "--max-model-len") === undefined) {
-    return "dual-Spark materializer requires one valid --port and one positive --max-model-len";
+    return "managed cluster materializer requires one valid --port and one positive --max-model-len";
   }
-  if (apiPort === DUAL_SPARK_VLLM_MASTER_PORT) {
-    return "dual-Spark API port conflicts with the materializer rendezvous port";
+  if (
+    !Number.isSafeInteger(execution.rendezvousPort) ||
+    execution.rendezvousPort < 1 ||
+    execution.rendezvousPort > 65_535
+  ) {
+    return "managed cluster materializer requires a valid rendezvous port";
+  }
+  if (apiPort === execution.rendezvousPort) {
+    return "managed cluster API port conflicts with the materializer rendezvous port";
   }
   if (recipe.spec.readiness.expectedModel !== recipe.spec.model.servedName) {
-    return "dual-Spark readiness must expect the recipe served model";
+    return "managed cluster readiness must expect the recipe served model";
   }
   if (!LOWERCASE_STABLE_ID.test(recipe.spec.model.servedName)) {
-    return "dual-Spark served model name must be a lowercase stable ID";
+    return "managed cluster served model name must be a lowercase stable ID";
   }
   if (recipe.spec.model.installFastSafetensors) {
-    return "dual-Spark immutable-image materializer cannot install fastsafetensors at launch";
+    return "managed cluster immutable-image materializer cannot install fastsafetensors at launch";
   }
-  if (recipe.spec.runtime.modelCache.source !== DUAL_SPARK_HUGGING_FACE_CACHE_SOURCE) {
-    return "dual-Spark materializer requires the Hugging Face cache source";
+  if (recipe.spec.runtime.modelCache.source !== MANAGED_CLUSTER_HUGGING_FACE_CACHE_SOURCE) {
+    return "managed cluster materializer requires the Hugging Face cache source";
   }
   if (
     !safeAbsoluteContainerPath(recipe.spec.serve.executable) ||
@@ -160,14 +173,14 @@ function validateDualSparkMaterializerRecipe(
       ({ target }) => !safeAbsoluteContainerPath(target),
     )
   ) {
-    return "dual-Spark runtime paths must be normalized absolute container paths";
+    return "managed cluster runtime paths must be normalized absolute container paths";
   }
   if (
     recipe.spec.runtime.temporaryFilesystems.some(({ target }) =>
       containerPathContains(target, recipe.spec.runtime.modelCache.target),
     )
   ) {
-    return "dual-Spark temporary filesystem cannot shadow the model cache";
+    return "managed cluster temporary filesystem cannot shadow the model cache";
   }
   const resourceValues = [
     recipe.spec.model.downloadSizeBytes,
@@ -177,11 +190,11 @@ function validateDualSparkMaterializerRecipe(
     ...recipe.spec.runtime.temporaryFilesystems.map(({ sizeBytes }) => sizeBytes),
   ];
   if (resourceValues.some((value) => !Number.isSafeInteger(value) || value <= 0)) {
-    return "dual-Spark recipe resource values must be positive safe integers";
+    return "managed cluster recipe resource values must be positive safe integers";
   }
   const memlock = recipe.spec.runtime.ulimits.memlock;
   if (typeof memlock === "number" && (!Number.isSafeInteger(memlock) || memlock < -1)) {
-    return "dual-Spark memlock value must be -1 or a non-negative safe integer";
+    return "managed cluster memlock value must be -1 or a non-negative safe integer";
   }
   if (
     recipe.spec.serve.arguments.some(
@@ -190,43 +203,43 @@ function validateDualSparkMaterializerRecipe(
         (Buffer.byteLength(value, "utf8") > 16_384 || value.includes("\0")),
     )
   ) {
-    return "dual-Spark serving argument values must be bounded text without NUL bytes";
+    return "managed cluster serving argument values must be bounded text without NUL bytes";
   }
   if (
     Object.values(recipe.spec.runtime.environment).some(
       (value) => Buffer.byteLength(value, "utf8") > 4_096 || value.includes("\0"),
     )
   ) {
-    return "dual-Spark environment values must be bounded text without NUL bytes";
+    return "managed cluster environment values must be bounded text without NUL bytes";
   }
   if (
     Object.keys(recipe.spec.runtime.environment).some((name) =>
-      isDualSparkMaterializerOwnedEnvironment(name),
+      isManagedClusterMaterializerOwnedEnvironment(name),
     )
   ) {
-    return "dual-Spark recipe environment overrides a materializer-owned value";
+    return "managed cluster recipe environment overrides a materializer-owned value";
   }
-  const binding = dualSparkTopologyBinding(recipe);
+  const binding = managedClusterTopologyBinding(recipe);
   if (
     !binding ||
     binding.type !== "topologyQualificationOutput" ||
-    binding.qualificationId !== DUAL_SPARK_TOPOLOGY_ID ||
-    binding.schemaVersion !== DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION ||
-    binding.outputSchema !== DUAL_SPARK_TOPOLOGY_OUTPUT_SCHEMA
+    binding.qualificationId !== MANAGED_CLUSTER_TOPOLOGY_ID ||
+    binding.schemaVersion !== MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION ||
+    binding.outputSchema !== MANAGED_CLUSTER_TOPOLOGY_OUTPUT_SCHEMA
   ) {
-    return "dual-Spark materializer topology binding is incompatible";
+    return "managed cluster materializer topology binding is incompatible";
   }
   return undefined;
 }
 
-function validateDualSparkLifecycleRecipe(
+function validateManagedClusterLifecycleRecipe(
   recipe: ManagedInferenceServingRecipe,
 ): string | undefined {
-  const materializerError = validateDualSparkMaterializerRecipe(recipe);
+  const materializerError = validateManagedClusterMaterializerRecipe(recipe);
   if (materializerError) return materializerError;
-  return recipe.spec.execution.lifecycleRef === DUAL_SPARK_VLLM_LIFECYCLE_REF
+  return recipe.spec.execution.lifecycleRef === MANAGED_CLUSTER_VLLM_LIFECYCLE_REF
     ? undefined
-    : "recipe does not select the dual-Spark lifecycle";
+    : "recipe does not select the managed cluster lifecycle";
 }
 
 interface SnapshotPreparationInput {
@@ -340,36 +353,36 @@ function validateNoPreparationRecipe(recipe: ManagedInferenceServingRecipe): str
 
 const TOPOLOGY_DESCRIPTORS = [
   {
-    id: DUAL_SPARK_TOPOLOGY_ID,
-    schemaVersion: DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION,
-    outputSchema: DUAL_SPARK_TOPOLOGY_OUTPUT_SCHEMA,
+    id: MANAGED_CLUSTER_TOPOLOGY_ID,
+    schemaVersion: MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
+    outputSchema: MANAGED_CLUSTER_TOPOLOGY_OUTPUT_SCHEMA,
     bindingOutput: "topology",
-    validateArtifact: getDualSparkTopologyArtifactError,
+    validateArtifact: getManagedClusterTopologyArtifactError,
   },
 ] as const satisfies readonly ManagedInferenceTopologyQualificationDescriptor[];
 
 const MATERIALIZER_DESCRIPTORS = [
   {
-    ref: DUAL_SPARK_VLLM_MATERIALIZER_REF,
+    ref: MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
     backend: "vllm",
-    outputPlanSchema: DUAL_SPARK_PLAN_SCHEMA,
+    outputPlanSchema: MANAGED_CLUSTER_PLAN_SCHEMA,
     topology: {
-      qualificationId: DUAL_SPARK_TOPOLOGY_ID,
-      schemaVersion: DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION,
-      outputSchema: DUAL_SPARK_TOPOLOGY_OUTPUT_SCHEMA,
+      qualificationId: MANAGED_CLUSTER_TOPOLOGY_ID,
+      schemaVersion: MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
+      outputSchema: MANAGED_CLUSTER_TOPOLOGY_OUTPUT_SCHEMA,
     },
-    validateRecipe: validateDualSparkMaterializerRecipe,
+    validateRecipe: validateManagedClusterMaterializerRecipe,
   },
 ] as const satisfies readonly ManagedInferenceMaterializerDescriptor[];
 
 const LIFECYCLE_DESCRIPTORS = [
   {
-    ref: DUAL_SPARK_VLLM_LIFECYCLE_REF,
+    ref: MANAGED_CLUSTER_VLLM_LIFECYCLE_REF,
     backend: "vllm",
-    acceptedMaterializerRefs: [DUAL_SPARK_VLLM_MATERIALIZER_REF],
-    acceptedPlanSchemas: [DUAL_SPARK_PLAN_SCHEMA],
+    acceptedMaterializerRefs: [MANAGED_CLUSTER_VLLM_MATERIALIZER_REF],
+    acceptedPlanSchemas: [MANAGED_CLUSTER_PLAN_SCHEMA],
     secretHandlePermissions: ["sshBinding"],
-    validateRecipe: validateDualSparkLifecycleRecipe,
+    validateRecipe: validateManagedClusterLifecycleRecipe,
   },
 ] as const satisfies readonly ManagedInferenceLifecycleDescriptor[];
 

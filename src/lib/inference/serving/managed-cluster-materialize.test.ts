@@ -15,25 +15,25 @@ import type {
   ManagedInferenceServingRecipe,
   ResolvedManagedInferenceSelection,
 } from "./catalog-types.js";
-import { fixtureDualSparkSelection } from "./dual-spark-fixture.test-support.js";
+import { fixtureManagedClusterSelection } from "./managed-cluster-fixture.test-support.js";
 import {
-  DUAL_SPARK_PRESET_LABEL,
-  DUAL_SPARK_RECIPE_LABEL,
-  DUAL_SPARK_VLLM_MASTER_PORT,
-  materializeDualSparkVllmPlan,
-} from "./dual-spark-materialize.js";
+  MANAGED_CLUSTER_PRESET_LABEL,
+  MANAGED_CLUSTER_RECIPE_LABEL,
+  materializeManagedClusterVllmPlan,
+} from "./managed-cluster-materialize.js";
 import {
-  type DualSparkTopologyOutput,
-  dualSparkTopologyOutputDigest,
-} from "./dual-spark-topology.js";
+  type ManagedClusterTopologyOutput,
+  managedClusterTopologyOutputDigest,
+  managedClusterTopologySubjectDigest,
+} from "./managed-cluster-topology.js";
 
 interface SyntheticProfile {
   readonly catalog: CompiledManagedInferenceCatalog;
-  readonly selection: ResolvedManagedInferenceSelection<DualSparkTopologyOutput>;
+  readonly selection: ResolvedManagedInferenceSelection<ManagedClusterTopologyOutput>;
 }
 
-function selectionWithDigests(): ResolvedManagedInferenceSelection<DualSparkTopologyOutput> {
-  const selection = fixtureDualSparkSelection();
+function selectionWithDigests(): ResolvedManagedInferenceSelection<ManagedClusterTopologyOutput> {
+  const selection = fixtureManagedClusterSelection();
   return {
     ...selection,
     presetDigest: managedInferenceDigest(selection.preset),
@@ -41,10 +41,70 @@ function selectionWithDigests(): ResolvedManagedInferenceSelection<DualSparkTopo
   };
 }
 
-function syntheticSecondProfile(temporaryFilesystemTarget = "/dev/shm-scratch"): SyntheticProfile {
+function threeNodeTopology(): ResolvedManagedInferenceSelection<ManagedClusterTopologyOutput>["topologyQualification"] {
+  const endpoint = (nodeId: string, peerAddress: string, address: string, index: number) => ({
+    nodeId,
+    netdev: `eth${String(index)}`,
+    hcaDevice: `roce${String(index)}`,
+    hcaPort: 1,
+    address,
+    prefixLength: 30,
+    peerAddress,
+    roceGid: { index: 3 + index, value: `fe80::${address.replaceAll(".", ":")}` },
+  });
+  const output: ManagedClusterTopologyOutput = {
+    controllerNodeId: "spark-head",
+    nodes: [
+      { nodeId: "spark-head", gpuId: "GPU-head", rank: 0, role: "head" },
+      { nodeId: "spark-worker-a", gpuId: "GPU-worker-a", rank: 1, role: "worker" },
+      { nodeId: "spark-worker-b", gpuId: "GPU-worker-b", rank: 2, role: "worker" },
+    ],
+    rails: [
+      {
+        index: 0,
+        endpoints: [
+          endpoint("spark-head", "192.168.100.2", "192.168.100.1", 0),
+          endpoint("spark-worker-a", "192.168.100.1", "192.168.100.2", 0),
+        ],
+      },
+      {
+        index: 1,
+        endpoints: [
+          endpoint("spark-worker-a", "192.168.101.2", "192.168.101.1", 1),
+          endpoint("spark-worker-b", "192.168.101.1", "192.168.101.2", 0),
+        ],
+      },
+      {
+        index: 2,
+        endpoints: [
+          endpoint("spark-head", "192.168.102.2", "192.168.102.1", 1),
+          endpoint("spark-worker-b", "192.168.102.1", "192.168.102.2", 1),
+        ],
+      },
+    ],
+    masterAddress: "192.168.100.1",
+    peers: [
+      { nodeId: "spark-worker-a", target: "worker-a.local", sshBindingHandle: "binding-a" },
+      { nodeId: "spark-worker-b", target: "worker-b.local", sshBindingHandle: "binding-b" },
+    ],
+  };
+  const subjectNodeIds = output.nodes.map(({ nodeId }) => nodeId);
+  return {
+    ...fixtureManagedClusterSelection().topologyQualification,
+    subjectNodeIds,
+    subjectDigest: managedClusterTopologySubjectDigest(subjectNodeIds),
+    output,
+    outputDigest: managedClusterTopologyOutputDigest(output),
+  };
+}
+
+function syntheticSecondProfile(
+  temporaryFilesystemTarget = "/dev/shm-scratch",
+  nodeCount = 2,
+): SyntheticProfile {
   const baseCatalog = loadManagedInferenceCatalog();
   const baseSelection = selectionWithDigests();
-  const topology = baseSelection.topologyQualification;
+  const topology = nodeCount === 3 ? threeNodeTopology() : baseSelection.topologyQualification;
   const basePreset = baseCatalog.presets.find(
     ({ definition }) => definition.metadata.id === baseSelection.preset.metadata.id,
   )?.definition;
@@ -59,8 +119,8 @@ function syntheticSecondProfile(temporaryFilesystemTarget = "/dev/shm-scratch"):
   const recipe: ManagedInferenceServingRecipe = {
     ...recipeTemplate,
     metadata: {
-      id: "vllm.synthetic-model.spark-dual.v1",
-      displayName: "Synthetic model on two compatible nodes",
+      id: "vllm.synthetic-model.managed-cluster.v1",
+      displayName: "Synthetic model on a compatible cluster",
     },
     spec: {
       ...recipeTemplate.spec,
@@ -103,6 +163,11 @@ function syntheticSecondProfile(temporaryFilesystemTarget = "/dev/shm-scratch"):
         ],
         environment: { SYNTHETIC_PROFILE: "enabled" },
       },
+      execution: {
+        ...recipeTemplate.spec.execution,
+        nodeCount,
+        tensorParallelSize: nodeCount,
+      },
       serve: {
         ...recipeTemplate.spec.serve,
         executable: "/opt/vllm/bin/vllm",
@@ -118,8 +183,8 @@ function syntheticSecondProfile(temporaryFilesystemTarget = "/dev/shm-scratch"):
   const preset: ManagedInferenceServingPreset = {
     ...presetTemplate,
     metadata: {
-      id: "vllm.synthetic-profile.spark-dual",
-      displayName: "Synthetic profile on two compatible nodes",
+      id: "vllm.synthetic-profile.managed-cluster",
+      displayName: "Synthetic profile on a compatible cluster",
     },
     spec: {
       ...presetTemplate.spec,
@@ -129,8 +194,8 @@ function syntheticSecondProfile(temporaryFilesystemTarget = "/dev/shm-scratch"):
   };
   const recipeDigest = managedInferenceDigest(recipe);
   const presetDigest = managedInferenceDigest(preset);
-  const recipeSourceFile = "managed-inference/recipes/vllm.synthetic-model.spark-dual.v1.yaml";
-  const presetSourceFile = "managed-inference/presets/vllm.synthetic-profile.spark-dual.yaml";
+  const recipeSourceFile = "managed-inference/recipes/vllm.synthetic-model.managed-cluster.v1.yaml";
+  const presetSourceFile = "managed-inference/presets/vllm.synthetic-profile.managed-cluster.yaml";
   const sourceFiles = [
     ...baseCatalog.sourceFiles,
     {
@@ -183,13 +248,13 @@ function syntheticSecondProfile(temporaryFilesystemTarget = "/dev/shm-scratch"):
   };
 }
 
-describe("dual-DGX-Spark vLLM materializer", () => {
+describe("managed-cluster vLLM materializer", () => {
   it("creates deterministic plans entirely from the selected catalog definitions", () => {
     const selection = selectionWithDigests();
-    const plan = materializeDualSparkVllmPlan(selection);
+    const plan = materializeManagedClusterVllmPlan(selection);
     const recipe = selection.recipe.spec;
 
-    expect(materializeDualSparkVllmPlan(selection)).toEqual(plan);
+    expect(materializeManagedClusterVllmPlan(selection)).toEqual(plan);
     expect(Object.isFrozen(plan)).toBe(true);
     expect(plan).toMatchObject({
       catalogDigest: selection.catalogDigest,
@@ -208,7 +273,7 @@ describe("dual-DGX-Spark vLLM materializer", () => {
         expectedModel: recipe.readiness.expectedModel,
       },
     });
-    expect(plan.roles.head).toMatchObject({
+    expect(plan.roles[0]).toMatchObject({
       image: recipe.runtime.image,
       runtime: {
         architecture: recipe.runtime.architecture,
@@ -230,20 +295,20 @@ describe("dual-DGX-Spark vLLM materializer", () => {
     });
     const configuredPort = recipe.serve.arguments.find(({ name }) => name === "--port")?.value;
     expect(plan.apiPort).toBe(configuredPort);
-    expect(plan.roles.head.endpoint).toBe(`http://${plan.masterAddress}:${String(configuredPort)}`);
+    expect(plan.roles[0].endpoint).toBe(`http://${plan.masterAddress}:${String(configuredPort)}`);
   });
 
   it("uses role-local topology values and starts rank 1 headless", () => {
-    const plan = materializeDualSparkVllmPlan(selectionWithDigests());
+    const plan = materializeManagedClusterVllmPlan(selectionWithDigests());
 
-    expect(plan.roles.head.environment).toMatchObject({
+    expect(plan.roles[0].environment).toMatchObject({
       VLLM_HOST_IP: "192.168.100.10",
       NCCL_IB_HCA: "rocep1s0f0:1",
       NCCL_SOCKET_IFNAME: "enp1s0f0np0",
       NCCL_IB_GID_INDEX: "3",
       NODE_RANK: "0",
     });
-    expect(plan.roles.worker.environment).toMatchObject({
+    expect(plan.roles[1].environment).toMatchObject({
       VLLM_HOST_IP: "192.168.100.11",
       NCCL_IB_HCA: "rocep1s0f1:1",
       NCCL_SOCKET_IFNAME: "enp1s0f1np1",
@@ -251,14 +316,14 @@ describe("dual-DGX-Spark vLLM materializer", () => {
       NODE_RANK: "1",
       HEADLESS: "1",
     });
-    expect(plan.roles.head.command.arguments).toEqual(
+    expect(plan.roles[0].command.arguments).toEqual(
       expect.arrayContaining(["--host", "192.168.100.10"]),
     );
-    expect(plan.roles.worker.command.arguments).toEqual(
+    expect(plan.roles[1].command.arguments).toEqual(
       expect.arrayContaining(["--host", "192.168.100.11", "--headless"]),
     );
-    expect(plan.roles.head.command.arguments).not.toContain("--headless");
-    expect(plan.roles.worker.command.arguments).toEqual(
+    expect(plan.roles[0].command.arguments).not.toContain("--headless");
+    expect(plan.roles[1].command.arguments).toEqual(
       expect.arrayContaining([
         "--tensor-parallel-size",
         "2",
@@ -271,15 +336,15 @@ describe("dual-DGX-Spark vLLM materializer", () => {
         "--node-rank",
         "1",
         "--master-port",
-        String(DUAL_SPARK_VLLM_MASTER_PORT),
+        String(selectionWithDigests().recipe.spec.execution.rendezvousPort),
       ]),
     );
   });
 
   it("passes every recipe serving argument without embedding an API key", () => {
     const selection = selectionWithDigests();
-    const plan = materializeDualSparkVllmPlan(selection);
-    const headArguments = plan.roles.head.command.arguments;
+    const plan = materializeManagedClusterVllmPlan(selection);
+    const headArguments = plan.roles[0].command.arguments;
 
     for (const argument of selection.recipe.spec.serve.arguments) {
       const index = headArguments.indexOf(argument.name);
@@ -292,7 +357,7 @@ describe("dual-DGX-Spark vLLM materializer", () => {
       expect(headArguments[index + 1]).toBe(String(argument.value));
     }
     expect(headArguments).not.toContain("--api-key");
-    expect(plan.roles.worker.command.arguments).not.toContain("--api-key");
+    expect(plan.roles[1].command.arguments).not.toContain("--api-key");
   });
 
   it("rejects a selected definition changed after catalog resolution", () => {
@@ -300,35 +365,35 @@ describe("dual-DGX-Spark vLLM materializer", () => {
     (selection.recipe.spec.runtime as { image: string }).image =
       `registry.example.test/vllm@sha256:${"d".repeat(64)}`;
 
-    expect(() => materializeDualSparkVllmPlan(selection)).toThrow(/definition digest/u);
+    expect(() => materializeManagedClusterVllmPlan(selection)).toThrow(/definition digest/u);
   });
 
   it("rejects stale topology subject and output digests", () => {
     const staleSubject = selectionWithDigests();
     (staleSubject.topologyQualification as { subjectDigest: string }).subjectDigest =
       `sha256:${"f".repeat(64)}`;
-    expect(() => materializeDualSparkVllmPlan(staleSubject)).toThrow(/subject digest/u);
+    expect(() => materializeManagedClusterVllmPlan(staleSubject)).toThrow(/subject digest/u);
 
     const staleOutput = selectionWithDigests();
-    (staleOutput.topologyQualification.output.peer as { target: string }).target =
+    (staleOutput.topologyQualification.output.peers[0] as { target: string }).target =
       "other-worker.local";
-    expect(() => materializeDualSparkVllmPlan(staleOutput)).toThrow(/output digest/u);
+    expect(() => materializeManagedClusterVllmPlan(staleOutput)).toThrow(/output digest/u);
   });
 
   it("rejects an inconsistent master address even with a recomputed digest", () => {
     const selection = selectionWithDigests();
     const artifact = selection.topologyQualification;
     (artifact.output as { masterAddress: string }).masterAddress = "192.168.100.99";
-    (artifact as { outputDigest: string }).outputDigest = dualSparkTopologyOutputDigest(
+    (artifact as { outputDigest: string }).outputDigest = managedClusterTopologyOutputDigest(
       artifact.output,
     );
 
-    expect(() => materializeDualSparkVllmPlan(selection)).toThrow(/master address/u);
+    expect(() => materializeManagedClusterVllmPlan(selection)).toThrow(/master address/u);
   });
 
   it("materializes bounded preparation operations from recipe data", () => {
     const selection = selectionWithDigests();
-    const preparation = materializeDualSparkVllmPlan(selection).roles.head.preparation;
+    const preparation = materializeManagedClusterVllmPlan(selection).roles[0].preparation;
     const configured = selection.recipe.spec.model.preparation;
     expect(configured.ref).not.toBe(NO_PREPARATION_REF);
     const boundedConfigured = configured as Extract<
@@ -360,7 +425,7 @@ describe("dual-DGX-Spark vLLM materializer", () => {
 
   it("materializes a synthetic second profile without materializer code changes", () => {
     const { catalog, selection } = syntheticSecondProfile();
-    const plan = materializeDualSparkVllmPlan(selection, { catalog });
+    const plan = materializeManagedClusterVllmPlan(selection, { catalog });
 
     expect(plan).toMatchObject({
       presetId: selection.preset.metadata.id,
@@ -372,7 +437,7 @@ describe("dual-DGX-Spark vLLM materializer", () => {
       apiPort: 9_001,
       readiness: { timeoutMs: 900_000, expectedModel: "synthetic-model" },
     });
-    expect(plan.roles.head).toMatchObject({
+    expect(plan.roles[0]).toMatchObject({
       image: selection.recipe.spec.runtime.image,
       runtime: {
         sharedMemoryBytes: 8_589_934_592,
@@ -397,31 +462,55 @@ describe("dual-DGX-Spark vLLM materializer", () => {
       },
       command: { executable: "/opt/vllm/bin/vllm" },
       baseLabels: {
-        [DUAL_SPARK_PRESET_LABEL]: selection.preset.metadata.id,
-        [DUAL_SPARK_RECIPE_LABEL]: selection.recipe.metadata.id,
+        [MANAGED_CLUSTER_PRESET_LABEL]: selection.preset.metadata.id,
+        [MANAGED_CLUSTER_RECIPE_LABEL]: selection.recipe.metadata.id,
       },
     });
-    expect(plan.roles.head.environment).toMatchObject({
+    expect(plan.roles[0].environment).toMatchObject({
       HF_HOME: "/models/cache",
       SYNTHETIC_PROFILE: "enabled",
     });
-    expect(plan.roles.head.command.arguments).toEqual(
+    expect(plan.roles[0].command.arguments).toEqual(
       expect.arrayContaining(["--port", "9001", "--max-model-len", "4096"]),
     );
 
     const originalSelection = selectionWithDigests();
-    const originalPlan = materializeDualSparkVllmPlan(originalSelection);
-    const originalFromExpandedCatalog = materializeDualSparkVllmPlan(
+    const originalPlan = materializeManagedClusterVllmPlan(originalSelection);
+    const originalFromExpandedCatalog = materializeManagedClusterVllmPlan(
       { ...originalSelection, catalogDigest: catalog.catalogDigest },
       { catalog },
     );
     expect(originalFromExpandedCatalog.planId).toBe(originalPlan.planId);
   });
 
+  it("takes cluster cardinality and parallelism from a synthetic three-node catalog profile", () => {
+    const { catalog, selection } = syntheticSecondProfile("/dev/shm-scratch", 3);
+    const plan = materializeManagedClusterVllmPlan(selection, { catalog });
+
+    expect(plan.roles).toHaveLength(3);
+    expect(plan.roles.map(({ rank, role }) => ({ rank, role }))).toEqual([
+      { rank: 0, role: "head" },
+      { rank: 1, role: "worker" },
+      { rank: 2, role: "worker" },
+    ]);
+    for (const role of plan.roles) {
+      expect(role.command.arguments).toEqual(
+        expect.arrayContaining([
+          "--nnodes",
+          "3",
+          "--tensor-parallel-size",
+          "3",
+          "--node-rank",
+          String(role.rank),
+        ]),
+      );
+    }
+  });
+
   it("rejects a temporary filesystem that shadows the model cache", () => {
     const { catalog, selection } = syntheticSecondProfile("/models");
 
-    expect(() => materializeDualSparkVllmPlan(selection, { catalog })).toThrow(
+    expect(() => materializeManagedClusterVllmPlan(selection, { catalog })).toThrow(
       /temporary filesystem cannot shadow the model cache/u,
     );
   });

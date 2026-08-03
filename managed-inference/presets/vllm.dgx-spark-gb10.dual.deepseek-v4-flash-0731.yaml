@@ -69,7 +69,7 @@ spec:
         operator: equals
         value: 2
       - topologyQualification:
-          id: dgx-spark.gb10.dual-cx7
+          id: host-cluster.direct-cx7
           schemaVersion: 1
           status: qualified
 
@@ -79,6 +79,6 @@ spec:
     bindings:
       sparkTopology:
         valueFromTopologyQualification:
-          id: dgx-spark.gb10.dual-cx7
+          id: host-cluster.direct-cx7
           schemaVersion: 1
           output: topology

@@ -38,9 +38,9 @@ import {
   buildVllmDockerEnv,
   ensureDualStationVllmApiKey,
   loadDualStationVllmApiKey,
-  recoverInstalledDualSparkVllmEndpoint,
+  recoverInstalledManagedClusterVllmEndpoint,
   resolveVllmInstallModel,
-  tryInstallDualSparkManagedVllm,
+  tryInstallManagedClusterManagedVllm,
 } from "./serving/vllm-managed-support";
 import {
   buildVllmServeCommand,
@@ -895,7 +895,7 @@ function vllmContainerReplacementTarget(
 
 export function isNemoClawManagedVllmRunning(): boolean {
   try {
-    if (recoverInstalledDualSparkVllmEndpoint()) return true;
+    if (recoverInstalledManagedClusterVllmEndpoint()) return true;
   } catch {
     return false;
   }
@@ -913,7 +913,7 @@ export type PersistConfiguredManagedVllmRuntimeResult =
  */
 export async function persistConfiguredManagedVllmRuntimeReceipt(): Promise<PersistConfiguredManagedVllmRuntimeResult> {
   try {
-    if (recoverInstalledDualSparkVllmEndpoint()) return { ok: true, persisted: true };
+    if (recoverInstalledManagedClusterVllmEndpoint()) return { ok: true, persisted: true };
   } catch (error) {
     return { ok: false, reason: `managed vLLM recovery failed: ${(error as Error).message}` };
   }
@@ -1577,7 +1577,7 @@ async function runVllmInstall(
   profile: VllmProfile,
   opts: InstallVllmOptions,
 ): Promise<{ ok: boolean }> {
-  const dualSpark = await tryInstallDualSparkManagedVllm(
+  const managedCluster = await tryInstallManagedClusterManagedVllm(
     {
       platform: profile.platform,
       nonInteractive: opts.nonInteractive,
@@ -1591,7 +1591,7 @@ async function runVllmInstall(
       printDownloadAuthentication: printHfDownloadAuthentication,
     },
   );
-  if (dualSpark.kind === "handled") return dualSpark.result;
+  if (managedCluster.kind === "handled") return managedCluster.result;
 
   let dualStationPlan: DualStationVllmPlan | null = null;
   let peerModelSnapshot: "ready" | "staging-required" | null = null;

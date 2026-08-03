@@ -4,25 +4,25 @@
 import { createHmac } from "node:crypto";
 
 import {
-  DUAL_SPARK_API_KEY_FINGERPRINT_LABEL,
-  DUAL_SPARK_MANAGED_LABEL,
-  DUAL_SPARK_TRANSACTION_LABEL,
-  DUAL_SPARK_VLLM_PROJECT_ID,
-  type DualSparkVllmPlan,
-  type DualSparkVllmRolePlan,
-} from "./dual-spark-materialize.js";
+  MANAGED_CLUSTER_API_KEY_FINGERPRINT_LABEL,
+  MANAGED_CLUSTER_MANAGED_LABEL,
+  MANAGED_CLUSTER_TRANSACTION_LABEL,
+  MANAGED_CLUSTER_VLLM_PROJECT_ID,
+  type ManagedClusterVllmPlan,
+  type ManagedClusterVllmRolePlan,
+} from "./managed-cluster-materialize.js";
 
 const API_KEY_PATTERN = /^[a-f0-9]{64}$/;
 const CONTAINER_ID_PATTERN = /^[a-f0-9]{64}$/;
 const TRANSACTION_ID_PATTERN = /^[a-f0-9]{32}$/;
-const FINGERPRINT_CONTEXT = "nemoclaw-dual-dgx-spark-vllm-api-key\0";
+const FINGERPRINT_CONTEXT = "nemoclaw-managed-cluster-vllm-api-key\0";
 const STATION_CONTAINER_NAMES = new Set(["nemoclaw-vllm", "nemoclaw-vllm-worker"]);
 const STATION_LABEL_PREFIX = "com.nvidia.nemoclaw.vllm-";
 const COMPOSE_PROJECT_LABEL = "com.docker.compose.project";
 const COMPOSE_SERVICE_LABEL = "com.docker.compose.service";
 const VLLM_TOKEN_PATTERN = /(?:^|[./:_-])vllm(?:$|[./:@_-])/i;
 
-export interface DualSparkObservedContainer {
+export interface ManagedClusterObservedContainer {
   readonly id: string;
   readonly name: string;
   readonly image: string;
@@ -32,57 +32,56 @@ export interface DualSparkObservedContainer {
   readonly labels: Readonly<Record<string, string>>;
 }
 
-export interface DualSparkNodeSnapshot {
+export interface ManagedClusterNodeSnapshot {
   /** All containers visible to the node daemon, including stopped containers. */
-  readonly containers: readonly DualSparkObservedContainer[];
-  /** Host-network listeners. The executor must inspect both requested ports. */
+  readonly containers: readonly ManagedClusterObservedContainer[];
+  /** Host-network listeners. The executor must inspect all requested ports. */
   readonly listeningPorts: readonly number[];
 }
 
-export type DualSparkExistingState =
+export type ManagedClusterExistingState =
   | { readonly outcome: "clear" }
   | {
       readonly outcome: "reuse";
-      readonly headContainerId: string;
-      readonly workerContainerId: string;
+      readonly containers: readonly ManagedClusterOwnedContainer[];
       readonly transactionId: string;
     }
   | { readonly outcome: "conflict"; readonly reason: string }
   | { readonly outcome: "unknown"; readonly reason: string };
 
-export interface DualSparkStageRequest {
-  readonly rolePlan: DualSparkVllmRolePlan;
+export interface ManagedClusterStageRequest {
+  readonly rolePlan: ManagedClusterVllmRolePlan;
   /** Verify or fetch only the pinned model snapshot and immutable image. */
-  readonly preparation: DualSparkVllmRolePlan["preparation"];
+  readonly preparation: ManagedClusterVllmRolePlan["preparation"];
 }
 
-export interface DualSparkContainerStartRequest {
-  readonly rolePlan: DualSparkVllmRolePlan;
+export interface ManagedClusterContainerStartRequest {
+  readonly rolePlan: ManagedClusterVllmRolePlan;
   readonly labels: Readonly<Record<string, string>>;
   /**
    * The executor performs this code-owned preparation inside the newly
    * created container, then directly execs the role command. Copy/replace
    * operations must match exactly or creation fails before vLLM starts.
    */
-  readonly preparation: DualSparkVllmRolePlan["preparation"];
+  readonly preparation: ManagedClusterVllmRolePlan["preparation"];
   /** Present only for the head. The executor must not persist it in labels or the plan. */
   readonly bearerApiKey?: string;
 }
 
-export interface DualSparkContainerStartResult {
+export interface ManagedClusterContainerStartResult {
   readonly ok: boolean;
   readonly containerId?: string;
   readonly reason?: string;
 }
 
-export interface DualSparkContainerWaitRequest {
-  readonly rolePlan: DualSparkVllmRolePlan;
+export interface ManagedClusterContainerWaitRequest {
+  readonly rolePlan: ManagedClusterVllmRolePlan;
   readonly containerId: string;
   readonly expectedLabels: Readonly<Record<string, string>>;
   readonly timeoutMs: number;
 }
 
-export interface DualSparkApiProbeRequest {
+export interface ManagedClusterApiProbeRequest {
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly expectedModel: string;
@@ -94,32 +93,31 @@ export interface DualSparkApiProbeRequest {
  * binding in each worker role plan and performs Docker operations using argv,
  * never a caller-built command string.
  */
-export interface DualSparkVllmLifecycleDeps {
-  inspectNode(rolePlan: DualSparkVllmRolePlan): Promise<DualSparkNodeSnapshot>;
-  stageNode(request: DualSparkStageRequest): Promise<{ ok: boolean; reason?: string }>;
-  startContainer(request: DualSparkContainerStartRequest): Promise<DualSparkContainerStartResult>;
-  waitForContainerReady(request: DualSparkContainerWaitRequest): Promise<boolean>;
-  /** Prove the rank-1 process is alive and waiting at the distributed rendezvous. */
-  waitForWorkerDistributedReady(request: DualSparkContainerWaitRequest): Promise<boolean>;
+export interface ManagedClusterVllmLifecycleDeps {
+  inspectNode(rolePlan: ManagedClusterVllmRolePlan): Promise<ManagedClusterNodeSnapshot>;
+  stageNode(request: ManagedClusterStageRequest): Promise<{ ok: boolean; reason?: string }>;
+  startContainer(
+    request: ManagedClusterContainerStartRequest,
+  ): Promise<ManagedClusterContainerStartResult>;
+  waitForContainerReady(request: ManagedClusterContainerWaitRequest): Promise<boolean>;
+  /** Prove a worker process is alive and waiting at the distributed rendezvous. */
+  waitForWorkerDistributedReady(request: ManagedClusterContainerWaitRequest): Promise<boolean>;
   removeContainer(
-    rolePlan: DualSparkVllmRolePlan,
+    rolePlan: ManagedClusterVllmRolePlan,
     exactContainerId: string,
   ): Promise<{ ok: boolean; reason?: string }>;
-  probeModels(request: DualSparkApiProbeRequest): Promise<boolean>;
-  probeChat(request: DualSparkApiProbeRequest): Promise<boolean>;
+  probeModels(request: ManagedClusterApiProbeRequest): Promise<boolean>;
+  probeChat(request: ManagedClusterApiProbeRequest): Promise<boolean>;
   createTransactionId(): string;
-  withLifecycleLock<T>(plan: DualSparkVllmPlan, operation: () => Promise<T>): Promise<T>;
+  withLifecycleLock<T>(plan: ManagedClusterVllmPlan, operation: () => Promise<T>): Promise<T>;
 }
 
-export interface DualSparkRuntimeInspection {
-  readonly state: DualSparkExistingState;
-  readonly snapshots?: {
-    readonly head: DualSparkNodeSnapshot;
-    readonly worker: DualSparkNodeSnapshot;
-  };
+export interface ManagedClusterRuntimeInspection {
+  readonly state: ManagedClusterExistingState;
+  readonly snapshots?: readonly ManagedClusterRoleSnapshot[];
 }
 
-export type CleanupDualSparkVllmResult =
+export type CleanupManagedClusterVllmResult =
   | {
       readonly ok: true;
       readonly removedContainerIds: readonly string[];
@@ -131,18 +129,26 @@ export type CleanupDualSparkVllmResult =
       readonly removedContainerIds: readonly string[];
     };
 
-export interface DualSparkCleanupOwnership {
-  readonly headContainerId: string;
-  readonly workerContainerId: string;
+export interface ManagedClusterCleanupOwnership {
+  readonly containers: readonly ManagedClusterOwnedContainer[];
 }
 
-export type StartDualSparkVllmResult =
+export interface ManagedClusterOwnedContainer {
+  readonly nodeId: string;
+  readonly containerId: string;
+}
+
+export interface ManagedClusterRoleSnapshot {
+  readonly nodeId: string;
+  readonly snapshot: ManagedClusterNodeSnapshot;
+}
+
+export type StartManagedClusterVllmResult =
   | {
       readonly ok: true;
       readonly reusedExisting: boolean;
       readonly baseUrl: string;
-      readonly headContainerId: string;
-      readonly workerContainerId: string;
+      readonly containers: readonly ManagedClusterOwnedContainer[];
       readonly apiKeyFingerprint: string;
     }
   | {
@@ -153,13 +159,13 @@ export type StartDualSparkVllmResult =
     };
 
 interface RoleObservation {
-  rolePlan: DualSparkVllmRolePlan;
-  container: DualSparkObservedContainer;
+  rolePlan: ManagedClusterVllmRolePlan;
+  container: ManagedClusterObservedContainer;
   expectedLabels: Readonly<Record<string, string>>;
 }
 
 interface CreatedContainer {
-  rolePlan: DualSparkVllmRolePlan;
+  rolePlan: ManagedClusterVllmRolePlan;
   containerId: string;
   expectedLabels: Readonly<Record<string, string>>;
 }
@@ -172,18 +178,18 @@ function labelsMatch(
 }
 
 function exactRoleObservation(
-  snapshot: DualSparkNodeSnapshot,
-  rolePlan: DualSparkVllmRolePlan,
+  snapshot: ManagedClusterNodeSnapshot,
+  rolePlan: ManagedClusterVllmRolePlan,
   apiKeyFingerprint: string,
 ): RoleObservation | null {
   const matches = snapshot.containers.filter(({ name }) => name === rolePlan.containerName);
   if (matches.length !== 1) return null;
   const container = matches[0]!;
-  const transactionId = container.labels[DUAL_SPARK_TRANSACTION_LABEL] ?? "";
+  const transactionId = container.labels[MANAGED_CLUSTER_TRANSACTION_LABEL] ?? "";
   const expectedLabels = {
     ...rolePlan.baseLabels,
-    [DUAL_SPARK_API_KEY_FINGERPRINT_LABEL]: apiKeyFingerprint,
-    [DUAL_SPARK_TRANSACTION_LABEL]: transactionId,
+    [MANAGED_CLUSTER_API_KEY_FINGERPRINT_LABEL]: apiKeyFingerprint,
+    [MANAGED_CLUSTER_TRANSACTION_LABEL]: transactionId,
   };
   if (
     !CONTAINER_ID_PATTERN.test(container.id) ||
@@ -197,18 +203,18 @@ function exactRoleObservation(
 }
 
 /** Recognize only containers that declare or visibly identify a vLLM runtime. */
-export function isRelatedManagedVllmContainer(container: DualSparkObservedContainer): boolean {
+export function isRelatedManagedVllmContainer(container: ManagedClusterObservedContainer): boolean {
   if (STATION_CONTAINER_NAMES.has(container.name)) return true;
   if (VLLM_TOKEN_PATTERN.test(container.name) || VLLM_TOKEN_PATTERN.test(container.image)) {
     return true;
   }
-  if (Object.hasOwn(container.labels, DUAL_SPARK_MANAGED_LABEL)) return true;
-  if (container.labels[COMPOSE_PROJECT_LABEL] === DUAL_SPARK_VLLM_PROJECT_ID) return true;
-  if (container.labels[COMPOSE_SERVICE_LABEL] === "vllm-dspark") return true;
+  if (Object.hasOwn(container.labels, MANAGED_CLUSTER_MANAGED_LABEL)) return true;
+  if (container.labels[COMPOSE_PROJECT_LABEL] === MANAGED_CLUSTER_VLLM_PROJECT_ID) return true;
+  if (container.labels[COMPOSE_SERVICE_LABEL] === "vllm-cluster") return true;
   return Object.keys(container.labels).some((key) => key.startsWith(STATION_LABEL_PREFIX));
 }
 
-function invalidSnapshotReason(snapshot: DualSparkNodeSnapshot, node: string): string | null {
+function invalidSnapshotReason(snapshot: ManagedClusterNodeSnapshot, node: string): string | null {
   if (
     snapshot.listeningPorts.some((port) => !Number.isInteger(port) || port < 1 || port > 65_535)
   ) {
@@ -222,168 +228,169 @@ function invalidSnapshotReason(snapshot: DualSparkNodeSnapshot, node: string): s
 }
 
 /** Pure, fail-closed classification shared by discovery and lifecycle preflight. */
-export function classifyDualSparkExistingState(
-  plan: DualSparkVllmPlan,
+export function classifyManagedClusterExistingState(
+  plan: ManagedClusterVllmPlan,
   apiKeyFingerprint: string,
-  snapshots: {
-    readonly head: DualSparkNodeSnapshot;
-    readonly worker: DualSparkNodeSnapshot;
-  },
-): DualSparkExistingState {
+  snapshots: readonly ManagedClusterRoleSnapshot[],
+): ManagedClusterExistingState {
   if (!/^[a-f0-9]{64}$/.test(apiKeyFingerprint)) {
-    return { outcome: "unknown", reason: "dual-Spark API key fingerprint is invalid" };
+    return { outcome: "unknown", reason: "managed cluster API key fingerprint is invalid" };
   }
-  for (const [node, snapshot] of [
-    ["head", snapshots.head],
-    ["worker", snapshots.worker],
-  ] as const) {
-    const invalid = invalidSnapshotReason(snapshot, node);
+  if (
+    snapshots.length !== plan.roles.length ||
+    new Set(snapshots.map(({ nodeId }) => nodeId)).size !== snapshots.length ||
+    snapshots.some(({ nodeId }) => !plan.roles.some((role) => role.nodeId === nodeId))
+  ) {
+    return { outcome: "unknown", reason: "managed cluster node inspection is incomplete" };
+  }
+  for (const { nodeId, snapshot } of snapshots) {
+    const invalid = invalidSnapshotReason(snapshot, nodeId);
     if (invalid) return { outcome: "unknown", reason: invalid };
   }
 
-  const head = exactRoleObservation(snapshots.head, plan.roles.head, apiKeyFingerprint);
-  const worker = exactRoleObservation(snapshots.worker, plan.roles.worker, apiKeyFingerprint);
-  const allContainers = [...snapshots.head.containers, ...snapshots.worker.containers];
-  const exactIds = new Set([head?.container.id, worker?.container.id].filter(Boolean));
+  const observations = plan.roles.map((rolePlan) => {
+    const snapshot = snapshots.find(({ nodeId }) => nodeId === rolePlan.nodeId)!.snapshot;
+    return exactRoleObservation(snapshot, rolePlan, apiKeyFingerprint);
+  });
+  const allContainers = snapshots.flatMap(({ snapshot }) => snapshot.containers);
+  const exactIds = new Set(observations.flatMap((entry) => (entry ? [entry.container.id] : [])));
   const unexpectedRelated = allContainers.find(
     (container) => isRelatedManagedVllmContainer(container) && !exactIds.has(container.id),
   );
   if (unexpectedRelated) {
     return {
       outcome: "conflict",
-      reason: `existing related container ${unexpectedRelated.name} is not the exact managed pair`,
+      reason: `existing related container ${unexpectedRelated.name} is not part of the exact managed cluster`,
     };
   }
 
-  if (head || worker) {
-    if (!head || !worker) {
-      return { outcome: "conflict", reason: "managed dual-Spark deployment is incomplete" };
+  if (observations.some(Boolean)) {
+    if (observations.some((observation) => !observation)) {
+      return { outcome: "conflict", reason: "managed cluster deployment is incomplete" };
     }
-    const headTransaction = head.container.labels[DUAL_SPARK_TRANSACTION_LABEL]!;
-    const workerTransaction = worker.container.labels[DUAL_SPARK_TRANSACTION_LABEL]!;
-    if (headTransaction !== workerTransaction) {
-      return { outcome: "conflict", reason: "managed dual-Spark transaction labels do not match" };
+    const exact = observations as RoleObservation[];
+    const transactions = new Set(
+      exact.map(({ container }) => container.labels[MANAGED_CLUSTER_TRANSACTION_LABEL]),
+    );
+    if (transactions.size !== 1) {
+      return { outcome: "conflict", reason: "managed cluster transaction labels do not match" };
     }
-    if (
-      !head.container.running ||
-      !head.container.healthy ||
-      !worker.container.running ||
-      !worker.container.healthy
-    ) {
+    if (exact.some(({ container }) => !container.running || !container.healthy)) {
       return {
         outcome: "conflict",
-        reason: "managed dual-Spark deployment is stopped, incomplete, or unhealthy",
+        reason: "managed cluster deployment is stopped, incomplete, or unhealthy",
       };
     }
     return {
       outcome: "reuse",
-      headContainerId: head.container.id,
-      workerContainerId: worker.container.id,
-      transactionId: headTransaction,
+      containers: exact.map(({ rolePlan, container }) => ({
+        nodeId: rolePlan.nodeId,
+        containerId: container.id,
+      })),
+      transactionId: exact[0]!.container.labels[MANAGED_CLUSTER_TRANSACTION_LABEL]!,
     };
   }
 
-  const dedicatedNameExists = allContainers.some(
-    ({ name }) =>
-      name === plan.roles.head.containerName || name === plan.roles.worker.containerName,
-  );
+  const dedicatedNames = new Set(plan.roles.map(({ containerName }) => containerName));
+  const dedicatedNameExists = allContainers.some(({ name }) => dedicatedNames.has(name));
   if (dedicatedNameExists) {
-    return { outcome: "conflict", reason: "dual-Spark container name ownership is foreign" };
+    return { outcome: "conflict", reason: "managed cluster container name ownership is foreign" };
   }
-  for (const [node, snapshot] of [
-    ["head", snapshots.head],
-    ["worker", snapshots.worker],
-  ] as const) {
+  for (const { nodeId, snapshot } of snapshots) {
     const occupied = snapshot.listeningPorts.find(
       (port) => port === plan.apiPort || port === plan.masterPort,
     );
     if (occupied !== undefined) {
-      return { outcome: "conflict", reason: `${node} port ${String(occupied)} is already in use` };
+      return {
+        outcome: "conflict",
+        reason: `${nodeId} port ${String(occupied)} is already in use`,
+      };
     }
   }
   return { outcome: "clear" };
 }
 
 /** Domain-separated non-secret ownership binding for the managed endpoint key. */
-export function dualSparkVllmApiKeyFingerprint(apiKey: string): string {
+export function managedClusterVllmApiKeyFingerprint(apiKey: string): string {
   if (!API_KEY_PATTERN.test(apiKey)) {
-    throw new Error("Dual-Spark vLLM API key must be 64 lowercase hexadecimal characters.");
+    throw new Error("Managed cluster vLLM API key must be 64 lowercase hexadecimal characters.");
   }
   return createHmac("sha256", Buffer.from(apiKey, "hex")).update(FINGERPRINT_CONTEXT).digest("hex");
 }
 
-async function inspectBoth(
-  plan: DualSparkVllmPlan,
-  deps: Pick<DualSparkVllmLifecycleDeps, "inspectNode">,
-): Promise<{ head: DualSparkNodeSnapshot; worker: DualSparkNodeSnapshot } | null> {
+async function inspectAll(
+  plan: ManagedClusterVllmPlan,
+  deps: Pick<ManagedClusterVllmLifecycleDeps, "inspectNode">,
+): Promise<readonly ManagedClusterRoleSnapshot[] | null> {
   try {
-    const [head, worker] = await Promise.all([
-      deps.inspectNode(plan.roles.head),
-      deps.inspectNode(plan.roles.worker),
-    ]);
-    return { head, worker };
+    return await Promise.all(
+      plan.roles.map(async (rolePlan) => ({
+        nodeId: rolePlan.nodeId,
+        snapshot: await deps.inspectNode(rolePlan),
+      })),
+    );
   } catch {
     return null;
   }
 }
 
-/** Inspect both daemons before any image, cache, or container mutation. */
-export async function preflightDualSparkVllm(
-  plan: DualSparkVllmPlan,
+/** Inspect every daemon before any image, cache, or container mutation. */
+export async function preflightManagedClusterVllm(
+  plan: ManagedClusterVllmPlan,
   apiKey: string,
-  deps: Pick<DualSparkVllmLifecycleDeps, "inspectNode">,
-): Promise<DualSparkExistingState> {
+  deps: Pick<ManagedClusterVllmLifecycleDeps, "inspectNode">,
+): Promise<ManagedClusterExistingState> {
   let fingerprint: string;
   try {
-    fingerprint = dualSparkVllmApiKeyFingerprint(apiKey);
+    fingerprint = managedClusterVllmApiKeyFingerprint(apiKey);
   } catch (error) {
     return { outcome: "unknown", reason: (error as Error).message };
   }
-  const snapshots = await inspectBoth(plan, deps);
+  const snapshots = await inspectAll(plan, deps);
   return snapshots
-    ? classifyDualSparkExistingState(plan, fingerprint, snapshots)
-    : { outcome: "unknown", reason: "could not inspect both dual-Spark container daemons" };
+    ? classifyManagedClusterExistingState(plan, fingerprint, snapshots)
+    : { outcome: "unknown", reason: "could not inspect every managed cluster container daemon" };
 }
 
 /** Plan- and key-specific read-only inspection for installer/runtime recovery. */
-export async function inspectDualSparkManagedRuntime(
-  plan: DualSparkVllmPlan,
+export async function inspectManagedClusterManagedRuntime(
+  plan: ManagedClusterVllmPlan,
   apiKey: string,
-  deps: Pick<DualSparkVllmLifecycleDeps, "inspectNode">,
-): Promise<DualSparkRuntimeInspection> {
+  deps: Pick<ManagedClusterVllmLifecycleDeps, "inspectNode">,
+): Promise<ManagedClusterRuntimeInspection> {
   let fingerprint: string;
   try {
-    fingerprint = dualSparkVllmApiKeyFingerprint(apiKey);
+    fingerprint = managedClusterVllmApiKeyFingerprint(apiKey);
   } catch (error) {
     return { state: { outcome: "unknown", reason: (error as Error).message } };
   }
-  const snapshots = await inspectBoth(plan, deps);
+  const snapshots = await inspectAll(plan, deps);
   return snapshots
-    ? { state: classifyDualSparkExistingState(plan, fingerprint, snapshots), snapshots }
+    ? { state: classifyManagedClusterExistingState(plan, fingerprint, snapshots), snapshots }
     : {
         state: {
           outcome: "unknown",
-          reason: "could not inspect both dual-Spark container daemons",
+          reason: "could not inspect every managed cluster container daemon",
         },
       };
 }
 
 function labelsForStart(
-  rolePlan: DualSparkVllmRolePlan,
+  rolePlan: ManagedClusterVllmRolePlan,
   apiKeyFingerprint: string,
   transactionId: string,
 ): Readonly<Record<string, string>> {
   return {
     ...rolePlan.baseLabels,
-    [DUAL_SPARK_API_KEY_FINGERPRINT_LABEL]: apiKeyFingerprint,
-    [DUAL_SPARK_TRANSACTION_LABEL]: transactionId,
+    [MANAGED_CLUSTER_API_KEY_FINGERPRINT_LABEL]: apiKeyFingerprint,
+    [MANAGED_CLUSTER_TRANSACTION_LABEL]: transactionId,
   };
 }
 
 function exactCreatedContainer(
-  snapshot: DualSparkNodeSnapshot,
+  snapshot: ManagedClusterNodeSnapshot,
   created: CreatedContainer,
-): DualSparkObservedContainer | null {
+): ManagedClusterObservedContainer | null {
   const matches = snapshot.containers.filter(({ id }) => id === created.containerId);
   if (matches.length !== 1) return null;
   const container = matches[0]!;
@@ -396,11 +403,11 @@ function exactCreatedContainer(
 
 async function rollbackCreated(
   created: readonly CreatedContainer[],
-  deps: DualSparkVllmLifecycleDeps,
+  deps: ManagedClusterVllmLifecycleDeps,
 ): Promise<string[]> {
   const errors: string[] = [];
   for (const item of [...created].reverse()) {
-    let snapshot: DualSparkNodeSnapshot;
+    let snapshot: ManagedClusterNodeSnapshot;
     try {
       snapshot = await deps.inspectNode(item.rolePlan);
     } catch {
@@ -424,38 +431,38 @@ async function rollbackCreated(
 }
 
 async function rollbackCreatedAndProveClear(
-  plan: DualSparkVllmPlan,
+  plan: ManagedClusterVllmPlan,
   apiKeyFingerprint: string,
   created: readonly CreatedContainer[],
-  deps: DualSparkVllmLifecycleDeps,
+  deps: ManagedClusterVllmLifecycleDeps,
 ): Promise<string[]> {
   const rollbackErrors = await rollbackCreated(created, deps);
-  const snapshots = await inspectBoth(plan, deps);
+  const snapshots = await inspectAll(plan, deps);
   if (
     snapshots &&
-    classifyDualSparkExistingState(plan, apiKeyFingerprint, snapshots).outcome === "clear"
+    classifyManagedClusterExistingState(plan, apiKeyFingerprint, snapshots).outcome === "clear"
   ) {
     return [];
   }
   return [
     ...rollbackErrors,
-    "dual-Spark post-failure runtime state could not be proven clear; SSH ownership state was retained",
+    "managed cluster post-failure runtime state could not be proven clear; SSH ownership state was retained",
   ];
 }
 
 async function startRole(
-  rolePlan: DualSparkVllmRolePlan,
+  rolePlan: ManagedClusterVllmRolePlan,
   apiKey: string,
   apiKeyFingerprint: string,
   transactionId: string,
   timeoutMs: number,
-  deps: DualSparkVllmLifecycleDeps,
+  deps: ManagedClusterVllmLifecycleDeps,
 ): Promise<
   | { ok: true; created: CreatedContainer }
   | { ok: false; reason: string; created?: CreatedContainer }
 > {
   const expectedLabels = labelsForStart(rolePlan, apiKeyFingerprint, transactionId);
-  let started: DualSparkContainerStartResult;
+  let started: ManagedClusterContainerStartResult;
   try {
     started = await deps.startContainer({
       rolePlan,
@@ -499,7 +506,7 @@ async function startRole(
   if (!ready)
     return { ok: false, reason: `${rolePlan.role} container did not become ready`, created };
 
-  let snapshot: DualSparkNodeSnapshot;
+  let snapshot: ManagedClusterNodeSnapshot;
   try {
     snapshot = await deps.inspectNode(rolePlan);
   } catch {
@@ -517,19 +524,19 @@ async function startRole(
 }
 
 function failure(
-  code: Extract<StartDualSparkVllmResult, { ok: false }>["code"],
+  code: Extract<StartManagedClusterVllmResult, { ok: false }>["code"],
   reason: string,
   rollbackErrors: readonly string[] = [],
-): StartDualSparkVllmResult {
+): StartManagedClusterVllmResult {
   return { ok: false, code, reason, rollbackErrors };
 }
 
 async function probeManagedApi(
-  plan: DualSparkVllmPlan,
+  plan: ManagedClusterVllmPlan,
   apiKey: string,
-  deps: Pick<DualSparkVllmLifecycleDeps, "probeModels" | "probeChat">,
+  deps: Pick<ManagedClusterVllmLifecycleDeps, "probeModels" | "probeChat">,
 ): Promise<boolean> {
-  const baseUrl = plan.roles.head.endpoint;
+  const baseUrl = plan.roles.find(({ rank }) => rank === 0)?.endpoint;
   if (!baseUrl) return false;
   const request = {
     baseUrl,
@@ -545,35 +552,41 @@ async function probeManagedApi(
   }
 }
 
-async function startNewPair(
-  plan: DualSparkVllmPlan,
+async function startNewCluster(
+  plan: ManagedClusterVllmPlan,
   apiKey: string,
   apiKeyFingerprint: string,
-  deps: DualSparkVllmLifecycleDeps,
-): Promise<StartDualSparkVllmResult> {
+  deps: ManagedClusterVllmLifecycleDeps,
+): Promise<StartManagedClusterVllmResult> {
   const staged = await Promise.all(
-    [plan.roles.worker, plan.roles.head].map(async (rolePlan) => {
-      try {
-        return await deps.stageNode({ rolePlan, preparation: rolePlan.preparation });
-      } catch {
-        return { ok: false, reason: `${rolePlan.role} staging failed` };
-      }
-    }),
+    [...plan.roles]
+      .sort((left, right) => right.rank - left.rank)
+      .map(async (rolePlan) => {
+        try {
+          return await deps.stageNode({ rolePlan, preparation: rolePlan.preparation });
+        } catch {
+          return { ok: false, reason: `${rolePlan.role} staging failed` };
+        }
+      }),
   );
   const failedStage = staged.find((result) => !result.ok);
   if (failedStage) {
-    return failure("staging-failed", failedStage.reason ?? "dual-Spark staging failed");
+    return failure("staging-failed", failedStage.reason ?? "managed cluster staging failed");
   }
 
-  const afterStageSnapshots = await inspectBoth(plan, deps);
+  const afterStageSnapshots = await inspectAll(plan, deps);
   if (!afterStageSnapshots) {
-    return failure("unknown", "could not re-inspect both daemons after staging");
+    return failure("unknown", "could not re-inspect every daemon after staging");
   }
-  const afterStage = classifyDualSparkExistingState(plan, apiKeyFingerprint, afterStageSnapshots);
+  const afterStage = classifyManagedClusterExistingState(
+    plan,
+    apiKeyFingerprint,
+    afterStageSnapshots,
+  );
   if (afterStage.outcome !== "clear") {
     return failure(
       afterStage.outcome === "unknown" ? "unknown" : "conflict",
-      `dual-Spark ownership changed during staging: ${
+      `managed cluster ownership changed during staging: ${
         "reason" in afterStage ? afterStage.reason : afterStage.outcome
       }`,
     );
@@ -581,77 +594,68 @@ async function startNewPair(
 
   const transactionId = deps.createTransactionId();
   if (!TRANSACTION_ID_PATTERN.test(transactionId)) {
-    return failure("unknown", "dual-Spark lifecycle transaction ID is invalid");
+    return failure("unknown", "managed cluster lifecycle transaction ID is invalid");
   }
 
   const created: CreatedContainer[] = [];
-  const worker = await startRole(
-    plan.roles.worker,
-    apiKey,
-    apiKeyFingerprint,
-    transactionId,
-    plan.readiness.timeoutMs,
-    deps,
-  );
-  if (!worker.ok) {
-    if (worker.created) created.push(worker.created);
-    return failure(
-      "start-failed",
-      worker.reason,
-      await rollbackCreatedAndProveClear(plan, apiKeyFingerprint, created, deps),
+  for (const rolePlan of [...plan.roles].sort((left, right) => right.rank - left.rank)) {
+    const result = await startRole(
+      rolePlan,
+      apiKey,
+      apiKeyFingerprint,
+      transactionId,
+      plan.readiness.timeoutMs,
+      deps,
     );
+    if (!result.ok) {
+      if (result.created) created.push(result.created);
+      return failure(
+        "start-failed",
+        result.reason,
+        await rollbackCreatedAndProveClear(plan, apiKeyFingerprint, created, deps),
+      );
+    }
+    created.push(result.created);
   }
-  created.push(worker.created);
-
-  const head = await startRole(
-    plan.roles.head,
-    apiKey,
-    apiKeyFingerprint,
-    transactionId,
-    plan.readiness.timeoutMs,
-    deps,
-  );
-  if (!head.ok) {
-    if (head.created) created.push(head.created);
-    return failure(
-      "start-failed",
-      head.reason,
-      await rollbackCreatedAndProveClear(plan, apiKeyFingerprint, created, deps),
-    );
-  }
-  created.push(head.created);
 
   if (!(await probeManagedApi(plan, apiKey, deps))) {
     return failure(
       "health-failed",
-      "dual-Spark models or chat health check failed",
+      "managed cluster models or chat health check failed",
       await rollbackCreatedAndProveClear(plan, apiKeyFingerprint, created, deps),
     );
   }
 
-  const finalSnapshots = await inspectBoth(plan, deps);
+  const finalSnapshots = await inspectAll(plan, deps);
   const finalState = finalSnapshots
-    ? classifyDualSparkExistingState(plan, apiKeyFingerprint, finalSnapshots)
+    ? classifyManagedClusterExistingState(plan, apiKeyFingerprint, finalSnapshots)
     : null;
   if (
     !finalState ||
     finalState.outcome !== "reuse" ||
     finalState.transactionId !== transactionId ||
-    finalState.headContainerId !== head.created.containerId ||
-    finalState.workerContainerId !== worker.created.containerId
+    finalState.containers.length !== created.length ||
+    created.some(
+      ({ rolePlan, containerId }) =>
+        !finalState.containers.some(
+          (owned) => owned.nodeId === rolePlan.nodeId && owned.containerId === containerId,
+        ),
+    )
   ) {
     return failure(
       "health-failed",
-      "dual-Spark ownership changed before lifecycle commit",
+      "managed cluster ownership changed before lifecycle commit",
       await rollbackCreatedAndProveClear(plan, apiKeyFingerprint, created, deps),
     );
   }
   return {
     ok: true,
     reusedExisting: false,
-    baseUrl: plan.roles.head.endpoint!,
-    headContainerId: head.created.containerId,
-    workerContainerId: worker.created.containerId,
+    baseUrl: plan.roles.find(({ rank }) => rank === 0)!.endpoint!,
+    containers: created.map(({ rolePlan, containerId }) => ({
+      nodeId: rolePlan.nodeId,
+      containerId,
+    })),
     apiKeyFingerprint,
   };
 }
@@ -661,21 +665,21 @@ async function startNewPair(
  * Stopped, partial, mismatched, Station, singleton, and foreign deployments
  * are never repaired or replaced.
  */
-export async function startAutomaticDualSparkVllm(
-  plan: DualSparkVllmPlan,
+export async function startAutomaticManagedClusterVllm(
+  plan: ManagedClusterVllmPlan,
   apiKey: string,
-  deps: DualSparkVllmLifecycleDeps,
-): Promise<StartDualSparkVllmResult> {
+  deps: ManagedClusterVllmLifecycleDeps,
+): Promise<StartManagedClusterVllmResult> {
   let apiKeyFingerprint: string;
   try {
-    apiKeyFingerprint = dualSparkVllmApiKeyFingerprint(apiKey);
+    apiKeyFingerprint = managedClusterVllmApiKeyFingerprint(apiKey);
   } catch (error) {
     return failure("unknown", (error as Error).message);
   }
 
   try {
     return await deps.withLifecycleLock(plan, async () => {
-      const preflight = await preflightDualSparkVllm(plan, apiKey, deps);
+      const preflight = await preflightManagedClusterVllm(plan, apiKey, deps);
       if (preflight.outcome === "unknown" || preflight.outcome === "conflict") {
         return failure(preflight.outcome, preflight.reason);
       }
@@ -683,49 +687,53 @@ export async function startAutomaticDualSparkVllm(
         if (!(await probeManagedApi(plan, apiKey, deps))) {
           return failure(
             "conflict",
-            "existing managed dual-Spark API is unhealthy; no repair attempted",
+            "existing managed cluster API is unhealthy; no repair attempted",
           );
         }
         return {
           ok: true,
           reusedExisting: true,
-          baseUrl: plan.roles.head.endpoint!,
-          headContainerId: preflight.headContainerId,
-          workerContainerId: preflight.workerContainerId,
+          baseUrl: plan.roles.find(({ rank }) => rank === 0)!.endpoint!,
+          containers: preflight.containers,
           apiKeyFingerprint,
         };
       }
-      return await startNewPair(plan, apiKey, apiKeyFingerprint, deps);
+      return await startNewCluster(plan, apiKey, apiKeyFingerprint, deps);
     });
   } catch (error) {
-    return failure("unknown", `dual-Spark lifecycle failed: ${(error as Error).message}`);
+    return failure("unknown", `managed cluster lifecycle failed: ${(error as Error).message}`);
   }
 }
 
-function exactPairForCleanup(
-  plan: DualSparkVllmPlan,
+function exactClusterForCleanup(
+  plan: ManagedClusterVllmPlan,
   apiKeyFingerprint: string,
-  snapshots: { readonly head: DualSparkNodeSnapshot; readonly worker: DualSparkNodeSnapshot },
-): { head: RoleObservation; worker: RoleObservation } | null {
-  const head = exactRoleObservation(snapshots.head, plan.roles.head, apiKeyFingerprint);
-  const worker = exactRoleObservation(snapshots.worker, plan.roles.worker, apiKeyFingerprint);
-  if (!head || !worker) return null;
-  const transactionId = head.container.labels[DUAL_SPARK_TRANSACTION_LABEL];
-  if (!transactionId || transactionId !== worker.container.labels[DUAL_SPARK_TRANSACTION_LABEL]) {
+  snapshots: readonly ManagedClusterRoleSnapshot[],
+): readonly RoleObservation[] | null {
+  const observations = plan.roles.map((rolePlan) => {
+    const snapshot = snapshots.find(({ nodeId }) => nodeId === rolePlan.nodeId)?.snapshot;
+    return snapshot ? exactRoleObservation(snapshot, rolePlan, apiKeyFingerprint) : null;
+  });
+  if (observations.some((observation) => !observation)) return null;
+  const exact = observations as RoleObservation[];
+  const transactions = new Set(
+    exact.map(({ container }) => container.labels[MANAGED_CLUSTER_TRANSACTION_LABEL]),
+  );
+  if (transactions.size !== 1 || !exact[0]?.container.labels[MANAGED_CLUSTER_TRANSACTION_LABEL]) {
     return null;
   }
-  const exactIds = new Set([head.container.id, worker.container.id]);
-  const related = [...snapshots.head.containers, ...snapshots.worker.containers].find(
-    (container) => isRelatedManagedVllmContainer(container) && !exactIds.has(container.id),
-  );
-  return related ? null : { head, worker };
+  const exactIds = new Set(exact.map(({ container }) => container.id));
+  const related = snapshots
+    .flatMap(({ snapshot }) => snapshot.containers)
+    .find((container) => isRelatedManagedVllmContainer(container) && !exactIds.has(container.id));
+  return related ? null : exact;
 }
 
 function receiptOwnedTargetsForCleanup(
-  plan: DualSparkVllmPlan,
+  plan: ManagedClusterVllmPlan,
   apiKeyFingerprint: string,
-  snapshots: { readonly head: DualSparkNodeSnapshot; readonly worker: DualSparkNodeSnapshot },
-  ownership: DualSparkCleanupOwnership,
+  snapshots: readonly ManagedClusterRoleSnapshot[],
+  ownership: ManagedClusterCleanupOwnership,
 ):
   | {
       readonly ok: true;
@@ -733,22 +741,30 @@ function receiptOwnedTargetsForCleanup(
       readonly alreadyAbsentContainerIds: readonly string[];
     }
   | { readonly ok: false; readonly reason: string } {
-  const expectedIds = [ownership.headContainerId, ownership.workerContainerId];
+  const expectedIds = ownership.containers.map(({ containerId }) => containerId);
   if (
+    ownership.containers.length !== plan.roles.length ||
     expectedIds.some((id) => !CONTAINER_ID_PATTERN.test(id)) ||
-    ownership.headContainerId === ownership.workerContainerId
+    new Set(expectedIds).size !== expectedIds.length ||
+    new Set(ownership.containers.map(({ nodeId }) => nodeId)).size !==
+      ownership.containers.length ||
+    ownership.containers.some(({ nodeId }) => !plan.roles.some((role) => role.nodeId === nodeId))
   ) {
-    return { ok: false, reason: "dual-Spark cleanup receipt identities are invalid" };
+    return { ok: false, reason: "managed cluster cleanup receipt identities are invalid" };
   }
 
   const observations: RoleObservation[] = [];
   const alreadyAbsentContainerIds: string[] = [];
   let transactionId: string | null = null;
-  for (const [role, snapshot, expectedId] of [
-    ["head", snapshots.head, ownership.headContainerId],
-    ["worker", snapshots.worker, ownership.workerContainerId],
-  ] as const) {
-    const invalid = invalidSnapshotReason(snapshot, role);
+  for (const rolePlan of plan.roles) {
+    const snapshot = snapshots.find(({ nodeId }) => nodeId === rolePlan.nodeId)?.snapshot;
+    const expectedId = ownership.containers.find(
+      ({ nodeId }) => nodeId === rolePlan.nodeId,
+    )?.containerId;
+    if (!snapshot || !expectedId) {
+      return { ok: false, reason: "managed cluster cleanup receipt is incomplete" };
+    }
+    const invalid = invalidSnapshotReason(snapshot, rolePlan.nodeId);
     if (invalid) return { ok: false, reason: invalid };
     const related = snapshot.containers.filter(isRelatedManagedVllmContainer);
     const expected = snapshot.containers.find(({ id }) => id === expectedId);
@@ -756,23 +772,23 @@ function receiptOwnedTargetsForCleanup(
       if (related.length > 0) {
         return {
           ok: false,
-          reason: `${role} receipt-owned container is absent but related runtime state exists`,
+          reason: `${rolePlan.nodeId} receipt-owned container is absent but related runtime state exists`,
         };
       }
       alreadyAbsentContainerIds.push(expectedId);
       continue;
     }
-    const observation = exactRoleObservation(snapshot, plan.roles[role], apiKeyFingerprint);
+    const observation = exactRoleObservation(snapshot, rolePlan, apiKeyFingerprint);
     if (
       !observation ||
       observation.container.id !== expectedId ||
       related.some(({ id }) => id !== expectedId)
     ) {
-      return { ok: false, reason: `${role} receipt-owned container identity changed` };
+      return { ok: false, reason: `${rolePlan.nodeId} receipt-owned container identity changed` };
     }
-    const observedTransaction = observation.container.labels[DUAL_SPARK_TRANSACTION_LABEL]!;
+    const observedTransaction = observation.container.labels[MANAGED_CLUSTER_TRANSACTION_LABEL]!;
     if (transactionId !== null && transactionId !== observedTransaction) {
-      return { ok: false, reason: "dual-Spark receipt-owned transaction identity changed" };
+      return { ok: false, reason: "managed cluster receipt-owned transaction identity changed" };
     }
     transactionId = observedTransaction;
     observations.push(observation);
@@ -780,26 +796,29 @@ function receiptOwnedTargetsForCleanup(
   return { ok: true, observations, alreadyAbsentContainerIds };
 }
 
-/** Remove only a complete, plan/key/transaction-owned pair. Model caches remain. */
-export async function cleanupDualSparkManagedVllm(
-  plan: DualSparkVllmPlan,
+/** Remove only a complete, plan/key/transaction-owned cluster. Model caches remain. */
+export async function cleanupManagedClusterManagedVllm(
+  plan: ManagedClusterVllmPlan,
   apiKey: string,
-  deps: Pick<DualSparkVllmLifecycleDeps, "inspectNode" | "removeContainer" | "withLifecycleLock">,
-  ownership?: DualSparkCleanupOwnership,
-): Promise<CleanupDualSparkVllmResult> {
+  deps: Pick<
+    ManagedClusterVllmLifecycleDeps,
+    "inspectNode" | "removeContainer" | "withLifecycleLock"
+  >,
+  ownership?: ManagedClusterCleanupOwnership,
+): Promise<CleanupManagedClusterVllmResult> {
   let fingerprint: string;
   try {
-    fingerprint = dualSparkVllmApiKeyFingerprint(apiKey);
+    fingerprint = managedClusterVllmApiKeyFingerprint(apiKey);
   } catch (error) {
     return { ok: false, reason: (error as Error).message, removedContainerIds: [] };
   }
   try {
     return await deps.withLifecycleLock(plan, async () => {
-      const snapshots = await inspectBoth(plan, deps);
+      const snapshots = await inspectAll(plan, deps);
       if (!snapshots) {
         return {
           ok: false,
-          reason: "could not inspect both dual-Spark container daemons",
+          reason: "could not inspect every managed cluster container daemon",
           removedContainerIds: [],
         };
       }
@@ -809,15 +828,15 @@ export async function cleanupDualSparkManagedVllm(
       if (owned && !owned.ok) {
         return { ok: false, reason: owned.reason, removedContainerIds: [] };
       }
-      const pair = ownership ? null : exactPairForCleanup(plan, fingerprint, snapshots);
-      if (!ownership && !pair) {
+      const cluster = ownership ? null : exactClusterForCleanup(plan, fingerprint, snapshots);
+      if (!ownership && !cluster) {
         return {
           ok: false,
-          reason: "dual-Spark cleanup requires one complete exact owned pair",
+          reason: "managed cluster cleanup requires one complete exact owned cluster",
           removedContainerIds: [],
         };
       }
-      const observations = owned?.ok ? owned.observations : [pair!.head, pair!.worker];
+      const observations = owned?.ok ? owned.observations : cluster!;
       const removedContainerIds: string[] = [];
       for (const observation of observations) {
         const removed = await deps.removeContainer(observation.rolePlan, observation.container.id);
@@ -841,7 +860,7 @@ export async function cleanupDualSparkManagedVllm(
   } catch (error) {
     return {
       ok: false,
-      reason: `dual-Spark cleanup failed: ${(error as Error).message}`,
+      reason: `managed cluster cleanup failed: ${(error as Error).message}`,
       removedContainerIds: [],
     };
   }

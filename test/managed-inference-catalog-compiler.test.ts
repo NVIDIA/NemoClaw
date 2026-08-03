@@ -20,17 +20,17 @@ import type {
   ResolvedManagedInferenceSelection,
 } from "../src/lib/inference/serving/catalog-types.js";
 import {
-  FIXTURE_DUAL_SPARK_PRESET_ID,
-  fixtureDualSparkSelection,
-} from "../src/lib/inference/serving/dual-spark-fixture.test-support.js";
-import { materializeDualSparkVllmPlan } from "../src/lib/inference/serving/dual-spark-materialize.js";
-import type { DualSparkTopologyOutput } from "../src/lib/inference/serving/dual-spark-topology.js";
+  FIXTURE_MANAGED_CLUSTER_PRESET_ID,
+  fixtureManagedClusterSelection,
+} from "../src/lib/inference/serving/managed-cluster-fixture.test-support.js";
+import { materializeManagedClusterVllmPlan } from "../src/lib/inference/serving/managed-cluster-materialize.js";
+import type { ManagedClusterTopologyOutput } from "../src/lib/inference/serving/managed-cluster-topology.js";
 import { resolveManagedInferenceServing } from "../src/lib/inference/serving/resolver.js";
 import type { SystemReadinessReport } from "../src/lib/readiness/types.js";
 
 const REPOSITORY_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SOURCE_DIRECTORIES = ["managed-inference/presets", "managed-inference/recipes"] as const;
-const FIXTURE_DUAL_SPARK_RECIPE_ID = fixtureDualSparkSelection().recipe.metadata.id;
+const FIXTURE_MANAGED_CLUSTER_RECIPE_ID = fixtureManagedClusterSelection().recipe.metadata.id;
 
 function catalogSources(): ManagedInferenceCatalogSource[] {
   return SOURCE_DIRECTORIES.flatMap((directory) =>
@@ -55,7 +55,9 @@ function replaceDefinition<TDefinition>(
   replace: (definition: TDefinition) => TDefinition,
 ): ManagedInferenceCatalogSource[] {
   const fixtureId =
-    kind === "ServingPreset" ? FIXTURE_DUAL_SPARK_PRESET_ID : FIXTURE_DUAL_SPARK_RECIPE_ID;
+    kind === "ServingPreset"
+      ? FIXTURE_MANAGED_CLUSTER_PRESET_ID
+      : FIXTURE_MANAGED_CLUSTER_RECIPE_ID;
   const replacementIndex = sources.findIndex((source) => {
     const definition = parse(source.contents) as {
       readonly kind?: unknown;
@@ -79,7 +81,7 @@ function syntheticProfileSources(
 ): ManagedInferenceCatalogSource[] {
   const compiled = compileManagedInferenceCatalogSources(sources).catalog;
   const sourcePreset = compiled.presets.find(
-    ({ definition }) => definition.metadata.id === FIXTURE_DUAL_SPARK_PRESET_ID,
+    ({ definition }) => definition.metadata.id === FIXTURE_MANAGED_CLUSTER_PRESET_ID,
   )?.definition;
   expect(sourcePreset).toBeDefined();
   const presetTemplate = sourcePreset as ManagedInferenceServingPreset;
@@ -293,7 +295,7 @@ describe("managed inference catalog compiler", () => {
       ({ definition }) => definition.metadata.id === "vllm.synthetic-model.generic-topology",
     )?.definition;
     expect(preset).toBeDefined();
-    const topologyQualification = fixtureDualSparkSelection().topologyQualification;
+    const topologyQualification = fixtureManagedClusterSelection().topologyQualification;
     const resolution = resolveManagedInferenceServing(
       {
         readinessReports: matchingReadinessSources(preset as ManagedInferenceServingPreset),
@@ -308,11 +310,11 @@ describe("managed inference catalog compiler", () => {
       preset: { metadata: { id: "vllm.synthetic-model.generic-topology" } },
       recipe: { metadata: { id: "vllm.synthetic-model.generic-topology.v1" } },
     });
-    const plan = materializeDualSparkVllmPlan(
-      resolution as ResolvedManagedInferenceSelection<DualSparkTopologyOutput>,
+    const plan = materializeManagedClusterVllmPlan(
+      resolution as ResolvedManagedInferenceSelection<ManagedClusterTopologyOutput>,
       { catalog },
     );
-    const revisionIndex = plan.roles.head.command.arguments.indexOf("--revision");
+    const revisionIndex = plan.roles[0].command.arguments.indexOf("--revision");
 
     expect(plan).toMatchObject({
       model: {
@@ -322,31 +324,29 @@ describe("managed inference catalog compiler", () => {
       },
       apiPort: 8_101,
       readiness: { timeoutMs: 900_000, expectedModel: "synthetic-model" },
-      roles: {
-        head: {
-          image: `registry.example.test/vllm@sha256:${"2".repeat(64)}`,
-          runtime: {
-            sharedMemoryBytes: 34_359_738_368,
-            imageDownloadSizeBytes: 2_345_678_901,
-            modelCache: { source: "huggingface-cache", target: "/models/synthetic-cache" },
-          },
-          preparation: {
-            ref: "none/v1",
-            modelDownloadSizeBytes: 12_345_678_901,
-          },
-          environment: {
-            HF_HOME: "/models/synthetic-cache",
-            SYNTHETIC_PROFILE: "enabled",
-          },
-          command: { executable: "/opt/vllm/bin/vllm" },
-        },
+    });
+    expect(plan.roles[0]).toMatchObject({
+      image: `registry.example.test/vllm@sha256:${"2".repeat(64)}`,
+      runtime: {
+        sharedMemoryBytes: 34_359_738_368,
+        imageDownloadSizeBytes: 2_345_678_901,
+        modelCache: { source: "huggingface-cache", target: "/models/synthetic-cache" },
       },
+      preparation: {
+        ref: "none/v1",
+        modelDownloadSizeBytes: 12_345_678_901,
+      },
+      environment: {
+        HF_HOME: "/models/synthetic-cache",
+        SYNTHETIC_PROFILE: "enabled",
+      },
+      command: { executable: "/opt/vllm/bin/vllm" },
     });
     expect(revisionIndex).toBeGreaterThanOrEqual(0);
-    expect(plan.roles.head.command.arguments[revisionIndex + 1]).toBe(
+    expect(plan.roles[0].command.arguments[revisionIndex + 1]).toBe(
       "1111111111111111111111111111111111111111",
     );
-    expect(plan.roles.head.command.arguments).toEqual(
+    expect(plan.roles[0].command.arguments).toEqual(
       expect.arrayContaining(["--port", "8101", "--max-model-len", "131072"]),
     );
   });
@@ -399,7 +399,7 @@ describe("managed inference catalog compiler", () => {
   it("derives a new definition digest when YAML profile data changes", () => {
     const sources = catalogSources();
     const before = compileManagedInferenceCatalogSources(sources).catalog.recipes.find(
-      ({ definition }) => definition.metadata.id === FIXTURE_DUAL_SPARK_RECIPE_ID,
+      ({ definition }) => definition.metadata.id === FIXTURE_MANAGED_CLUSTER_RECIPE_ID,
     );
     const changed = replaceDefinition<ManagedInferenceServingRecipe>(
       sources,
@@ -419,7 +419,7 @@ describe("managed inference catalog compiler", () => {
       }),
     );
     const after = compileManagedInferenceCatalogSources(changed).catalog.recipes.find(
-      ({ definition }) => definition.metadata.id === FIXTURE_DUAL_SPARK_RECIPE_ID,
+      ({ definition }) => definition.metadata.id === FIXTURE_MANAGED_CLUSTER_RECIPE_ID,
     );
     expect(before).toBeDefined();
     expect(after).toBeDefined();
