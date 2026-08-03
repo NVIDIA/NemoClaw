@@ -449,7 +449,7 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
         '  if [ -n "$rest" ]; then printf "%s\\n" "$rest" >"$_CURL_PLAN"; fi',
         `  printf 'probe\\n' >> ${JSON.stringify(probeLog)}`,
         '  case "$next" in',
-        '    0) record_gateway_pid "$GATEWAY_B" "$GATEWAY_B_START" ;;',
+        '    0) record_gateway_pid "$GATEWAY_B" "$GATEWAY_B_START"; printf 200 ;;',
         "  esac",
         '  return "$next"',
         "}",
