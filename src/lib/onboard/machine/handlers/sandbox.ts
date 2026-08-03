@@ -57,6 +57,8 @@ import {
   observeProviderEffectFingerprint,
   planEffectGroupReplay,
   planSandboxCreateReplay,
+  requiredMessagingProviderBindings,
+  requiredWebSearchProviderType,
 } from "../../checkpoint-replay";
 import {
   bindingRevalidationGuidance,
@@ -385,6 +387,22 @@ function effectiveHermesToolGatewaysForWebSearch(
   return isHermes && tavilySelected
     ? gateways.filter((gateway) => gateway !== "nous-web")
     : [...gateways];
+}
+
+function requiredWebSearchProviderBindings(
+  sandboxName: string,
+  webSearchConfig: SharedWebSearchConfig | null,
+  agent: { name?: string } | null,
+): CheckpointProviderBinding[] {
+  if (webSearchConfig?.fetchEnabled !== true) return [];
+  const provider = webSearchProviderForConfig(webSearchConfig);
+  return [
+    {
+      name: `${sandboxName}-${provider}-search`,
+      type: requiredWebSearchProviderType(provider, agent),
+      credentialEnv: webSearchEnvFor(provider),
+    },
+  ];
 }
 
 function hasResourceProfileEnvOverride(env: NodeJS.ProcessEnv): boolean {
@@ -1097,6 +1115,7 @@ class SandboxStateFlow<
     sandboxName: string,
     enabledChannels: readonly string[],
     webSearchConfig: WebSearchConfig | null,
+    requiredBindings: readonly CheckpointProviderBinding[],
     group: CheckpointEffectGroupName,
     checkpoint: OnboardCheckpoint | null,
   ): Promise<void> {
@@ -1106,7 +1125,7 @@ class SandboxStateFlow<
       planEffectGroupReplay(
         checkpoint,
         group,
-        observeProviderEffectFingerprint(checkpoint, group, (binding) =>
+        observeProviderEffectFingerprint(checkpoint, group, requiredBindings, (binding) =>
           this.deps.providerMatchesGatewayCredential(
             binding.name,
             binding.type,
@@ -1648,6 +1667,11 @@ class SandboxStateFlow<
       requestedSandboxName,
       [],
       nextState.webSearchConfig,
+      requiredWebSearchProviderBindings(
+        requestedSandboxName,
+        nextState.webSearchConfig as unknown as SharedWebSearchConfig | null,
+        this.options.agent as { name?: string } | null,
+      ),
       "web_search_provider",
       nextState.session?.checkpoint ?? null,
     );
@@ -1663,6 +1687,7 @@ class SandboxStateFlow<
       requestedSandboxName,
       nextState.selectedMessagingChannels,
       null,
+      requiredMessagingProviderBindings(requestedSandboxName, messaging.plan),
       "messaging_providers",
       nextState.session?.checkpoint ?? null,
     );

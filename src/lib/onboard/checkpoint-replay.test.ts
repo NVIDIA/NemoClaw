@@ -13,6 +13,7 @@ import {
   observeProviderEffectFingerprint,
   planEffectGroupReplay,
   planSandboxCreateReplay,
+  requiredWebSearchProviderType,
 } from "./checkpoint-replay";
 import { bindingRevalidationGuidance, revalidateCheckpointBindings } from "./checkpoint-revalidate";
 
@@ -146,6 +147,7 @@ describe("observeProviderEffectFingerprint", () => {
       observeProviderEffectFingerprint(
         cp,
         "web_search_provider",
+        [{ name: "web", type: "brave", credentialEnv: "WEB_KEY" }],
         (binding) => binding.name === "web",
       ),
     ).toBe("web");
@@ -162,7 +164,17 @@ describe("observeProviderEffectFingerprint", () => {
       },
     });
 
-    expect(observeProviderEffectFingerprint(cp, "messaging_providers", () => true)).toBeNull();
+    expect(
+      observeProviderEffectFingerprint(
+        cp,
+        "messaging_providers",
+        [
+          { name: "chat", type: "generic", credentialEnv: "CHAT_KEY" },
+          { name: "missing", type: "generic", credentialEnv: "MISSING_KEY" },
+        ],
+        () => true,
+      ),
+    ).toBeNull();
     expect(
       observeProviderEffectFingerprint(
         checkpoint({
@@ -170,9 +182,100 @@ describe("observeProviderEffectFingerprint", () => {
           bindings: cp.bindings,
         }),
         "messaging_providers",
+        [{ name: "chat", type: "generic", credentialEnv: "CHAT_KEY" }],
         () => false,
       ),
     ).toBeNull();
+  });
+
+  it("rejects a live receipt when the current provider set has changed", () => {
+    const cp = checkpoint({
+      effectGroups: {
+        messaging_providers: { completedAt: ISO, fingerprint: "telegram" },
+      },
+      bindings: {
+        credentialEnvs: ["TELEGRAM_BOT_TOKEN"],
+        registeredProviders: [
+          { name: "telegram", type: "generic", credentialEnv: "TELEGRAM_BOT_TOKEN" },
+        ],
+      },
+    });
+
+    expect(
+      observeProviderEffectFingerprint(
+        cp,
+        "messaging_providers",
+        [
+          { name: "slack-bot", type: "generic", credentialEnv: "SLACK_BOT_TOKEN" },
+          { name: "slack-app", type: "generic", credentialEnv: "SLACK_APP_TOKEN" },
+        ],
+        () => true,
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects a same-name provider when its type or credential environment changes", () => {
+    const cp = checkpoint({
+      effectGroups: {
+        web_search_provider: { completedAt: ISO, fingerprint: "search" },
+      },
+      bindings: {
+        credentialEnvs: ["BRAVE_API_KEY"],
+        registeredProviders: [{ name: "search", type: "brave", credentialEnv: "BRAVE_API_KEY" }],
+      },
+    });
+
+    expect(
+      observeProviderEffectFingerprint(
+        cp,
+        "web_search_provider",
+        [{ name: "search", type: "tavily", credentialEnv: "BRAVE_API_KEY" }],
+        () => true,
+      ),
+    ).toBeNull();
+    expect(
+      observeProviderEffectFingerprint(
+        cp,
+        "web_search_provider",
+        [{ name: "search", type: "brave", credentialEnv: "TAVILY_API_KEY" }],
+        () => true,
+      ),
+    ).toBeNull();
+  });
+
+  it("accepts current provider bindings in a different order", () => {
+    const cp = checkpoint({
+      effectGroups: {
+        messaging_providers: { completedAt: ISO, fingerprint: "slack-bot,slack-app" },
+      },
+      bindings: {
+        credentialEnvs: ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
+        registeredProviders: [
+          { name: "slack-bot", type: "generic", credentialEnv: "SLACK_BOT_TOKEN" },
+          { name: "slack-app", type: "generic", credentialEnv: "SLACK_APP_TOKEN" },
+        ],
+      },
+    });
+
+    expect(
+      observeProviderEffectFingerprint(
+        cp,
+        "messaging_providers",
+        [
+          { name: "slack-app", type: "generic", credentialEnv: "SLACK_APP_TOKEN" },
+          { name: "slack-bot", type: "generic", credentialEnv: "SLACK_BOT_TOKEN" },
+        ],
+        () => true,
+      ),
+    ).toBe("slack-bot,slack-app");
+  });
+});
+
+describe("requiredWebSearchProviderType", () => {
+  it("uses the Hermes Tavily profile only for Hermes Tavily selection", () => {
+    expect(requiredWebSearchProviderType("tavily", { name: "hermes" })).toBe("tavily-hermes-v1");
+    expect(requiredWebSearchProviderType("tavily", { name: "openclaw" })).toBe("tavily");
+    expect(requiredWebSearchProviderType("brave", { name: "hermes" })).toBe("brave");
   });
 });
 
