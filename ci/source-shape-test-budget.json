@@ -87,6 +87,11 @@
       "category": "security"
     },
     {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "trusts the corporate CA before the DCode discovery runtime npm install",
+      "category": "security"
+    },
+    {
       "file": "test/dcode-base-image-workflow.test.ts",
       "test": "accepts every discovered publisher and rejects supply-chain mutations",
       "category": "security"

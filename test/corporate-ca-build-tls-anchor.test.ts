@@ -52,24 +52,69 @@ describe("DCode corporate proxy CA cold-build trust (#8119)", () => {
   // source-shape-contract: security -- DCode cold base builds must establish corporate CA trust before HTTPS dependency fetches
   it("accepts the corporate CA build arg in the DCode base image before HTTPS fetches", () => {
     const argIndex = baseDockerfile.indexOf("ARG NEMOCLAW_CORPORATE_CA_B64=");
-    const fromIndex = baseDockerfile.indexOf("FROM node:22-trixie-slim", argIndex);
-    const redeclareIndex = baseDockerfile.indexOf("ARG NEMOCLAW_CORPORATE_CA_B64", fromIndex);
-    const decodeIndex = baseDockerfile.indexOf('if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then');
-    const trustIndex = baseDockerfile.indexOf("update-ca-certificates");
-    const firstSnapshotCurlIndex = baseDockerfile.indexOf("https://snapshot.debian.org/archive");
+    const nativeBuilderIndex = baseDockerfile.indexOf("AS native-security-builder", argIndex);
+    const nativeArgIndex = baseDockerfile.indexOf(
+      "ARG NEMOCLAW_CORPORATE_CA_B64",
+      nativeBuilderIndex,
+    );
+    const nativeTrustIndex = baseDockerfile.indexOf("update-ca-certificates", nativeArgIndex);
+    const nativeFetchIndex = baseDockerfile.indexOf(
+      "build-native-security-packages.sh /out",
+      nativeTrustIndex,
+    );
+    const perlFetchIndex = baseDockerfile.indexOf(
+      "RUN bash /scripts/security/build-perl-security-packages.sh",
+      nativeFetchIndex,
+    );
+    const finalFromIndex = baseDockerfile.indexOf("FROM node:22-trixie-slim", perlFetchIndex);
+    const finalArgIndex = baseDockerfile.indexOf("ARG NEMOCLAW_CORPORATE_CA_B64", finalFromIndex);
+    const finalTrustIndex = baseDockerfile.indexOf("update-ca-certificates", finalArgIndex);
+    const firstSnapshotCurlIndex = baseDockerfile.indexOf(
+      "https://snapshot.debian.org/archive",
+      finalTrustIndex,
+    );
 
     for (const [name, index] of Object.entries({
       argIndex,
-      redeclareIndex,
-      decodeIndex,
-      trustIndex,
+      nativeBuilderIndex,
+      nativeArgIndex,
+      nativeTrustIndex,
+      nativeFetchIndex,
+      perlFetchIndex,
+      finalFromIndex,
+      finalArgIndex,
+      finalTrustIndex,
       firstSnapshotCurlIndex,
     })) {
       expect(index, name).toBeGreaterThan(-1);
     }
-    expect(redeclareIndex).toBeLessThan(decodeIndex);
-    expect(decodeIndex).toBeLessThan(trustIndex);
-    expect(trustIndex).toBeLessThan(firstSnapshotCurlIndex);
+    expect(nativeArgIndex).toBeLessThan(nativeTrustIndex);
+    expect(nativeTrustIndex).toBeLessThan(nativeFetchIndex);
+    expect(nativeFetchIndex).toBeLessThan(perlFetchIndex);
+    expect(finalArgIndex).toBeLessThan(finalTrustIndex);
+    expect(finalTrustIndex).toBeLessThan(firstSnapshotCurlIndex);
+  });
+
+  // source-shape-contract: security -- DCode discovery npm installs must trust the host corporate CA before registry access
+  it("trusts the corporate CA before the DCode discovery runtime npm install", () => {
+    const discoveryStageIndex = finalDockerfile.indexOf("AS mcp-tool-discovery-runtime");
+    const discoveryArgIndex = finalDockerfile.indexOf(
+      "ARG NEMOCLAW_CORPORATE_CA_B64",
+      discoveryStageIndex,
+    );
+    const discoveryTrustIndex = finalDockerfile.indexOf(
+      "export NODE_EXTRA_CA_CERTS=/tmp/nemoclaw-corporate-ca.pem",
+      discoveryArgIndex,
+    );
+    const discoveryInstallIndex = finalDockerfile.indexOf(
+      "./install-reviewed-runtime.sh",
+      discoveryTrustIndex,
+    );
+
+    expect(discoveryStageIndex).toBeGreaterThan(-1);
+    expect(discoveryArgIndex).toBeGreaterThan(discoveryStageIndex);
+    expect(discoveryTrustIndex).toBeGreaterThan(discoveryArgIndex);
+    expect(discoveryInstallIndex).toBeGreaterThan(discoveryTrustIndex);
   });
 
   // source-shape-contract: security -- DCode final images must decode the sandbox-specific corporate CA even when the base is reused
