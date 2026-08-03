@@ -324,6 +324,8 @@ const HOMEBREW_PINNED_TAP_LOAD_REFUSAL =
 
 // Only the complete Homebrew 6.x refusal for the pinned formula can relax the
 // identity check. Changed or additional diagnostic text fails closed (#7707).
+// Remove this compatibility path when the minimum supported Homebrew version
+// can inspect the pinned formula without trusting or loading its tap.
 function isPinnedTapLoadRefusal(result: ReturnType<typeof runBrew>): boolean {
   return (
     !result.ok &&
