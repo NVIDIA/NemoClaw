@@ -91,6 +91,12 @@ sandbox identities, plan and profile
 fingerprints, exact original and replacement IDs, rollback target, and phase.
 Exact commit and cleanup receipts are durable terminal records, so adapter
 recreation does not depend on process-local transaction sets or tombstone maps.
+Rollback retains an `owner-cleanup-required` phase only after image-owned shared
+state is restored and the exact replacement is absent. That phase keeps the
+restored original quiescent and preserves the journal without a terminal
+receipt until the owning sandbox service removes the exact runtime and the
+provider proves its absence. Unknown runtime presence is a retryable durable
+cleanup failure, never evidence of absence.
 The image-owned shared-state transaction uses the same identity-bound model: a
 commit atomically moves its pending manifest and backups into a durable receipt
 namespace, compacts that state to an exact commit receipt, and rejects rollback
@@ -105,12 +111,19 @@ image-owned commit forward or durably authorizes rollback; rollback-authorized
 work completes exact restore and cleanup; and shared-state-committed work
 completes exact backup cleanup and commit. Recovery persists an identity-bound
 finalization receipt before removing the active journal, is idempotent across
-another interruption, and returns normalized, provider-owned receipts in stable
-identity order. Mutable OpenShell names are read only to detect ownership reuse,
-and unsafe name-only deletion returns a typed retention error. The protocol still
-assumes a single coordinator; multi-process lease/arbitration remains an explicit
-production-activation gate. Activation must also inject the selected gateway's
-canonical state root.
+another interruption, and enumerates durable identities before loading each
+record so one unreadable transaction does not hide other results. The provider
+returns bounded `{ receipts, failures }` evidence; the coordinator validates,
+copies, freezes, and orders both arrays without routing on provider phases or
+failure codes. A failure for the requested sandbox name, or one whose sandbox
+identity cannot be proven, blocks create. An exact failure for another sandbox
+is warned and retained without blocking the requested create. The code reads
+mutable OpenShell names only to detect ownership reuse, and unsafe name-only
+deletion returns a typed retention error. Docker mutations use the previously
+journaled full container ID, whose identity cannot be rebound, then re-inspect
+that same ID after quiescence. Multi-process lease/arbitration remains an
+explicit production-activation gate. Activation must also inject the selected
+gateway's canonical state root.
 
 ## Architectural disposition
 

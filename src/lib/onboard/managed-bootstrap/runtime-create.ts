@@ -10,7 +10,7 @@ import type {
   ManagedBootstrapAuthorityStore,
   ManagedBootstrapCreateReceipt,
   ManagedBootstrapImageIdentity,
-  ManagedBootstrapRecoveryReceipt,
+  ManagedBootstrapRecoveryReport,
 } from "./adapter";
 
 export interface ManagedBootstrapRuntimeCommandResult {
@@ -93,7 +93,7 @@ export interface ManagedBootstrapRuntimeCreateLaunchResult<T> {
 export interface ManagedBootstrapRuntimeCreateLifecycle {
   readonly launchArgv: readonly string[];
   readonly patch: ManagedBootstrapRuntimePatch;
-  recoverUnfinished(): Promise<readonly ManagedBootstrapRecoveryReceipt[]>;
+  recoverUnfinished(): Promise<ManagedBootstrapRecoveryReport>;
   prepareNetwork(): Promise<void>;
   runCreate<T>(
     launch: (input: {
