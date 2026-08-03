@@ -253,25 +253,29 @@ const hostileName = "bad" + esc + "[31mX" + esc + "[0m";
 `;
     fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: { ...process.env, HOME: tmpDir, NEMOCLAW_NON_INTERACTIVE: "1" },
-    });
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.completed, false);
-    assert.equal(payload.exitCode, 1);
+    try {
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: { ...process.env, HOME: tmpDir, NEMOCLAW_NON_INTERACTIVE: "1" },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout.trim());
+      assert.equal(payload.completed, false);
+      assert.equal(payload.exitCode, 1);
 
-    const printed = payload.lines.join("\n");
-    assert.ok(
-      !printed.includes(String.fromCharCode(27)),
-      `expected no raw escape byte, got ${JSON.stringify(printed)}`,
-    );
-    assert.ok(
-      printed.includes(String.raw`Invalid sandbox name: "bad\u001b[31mX\u001b[0m".`),
-      `expected an escaped preview line, got ${JSON.stringify(payload.lines)}`,
-    );
+      const printed = payload.lines.join("\n");
+      assert.ok(
+        !printed.includes(String.fromCharCode(27)),
+        `expected no raw escape byte, got ${JSON.stringify(printed)}`,
+      );
+      assert.ok(
+        printed.includes(String.raw`Invalid sandbox name: "bad\u001b[31mX\u001b[0m".`),
+        `expected an escaped preview line, got ${JSON.stringify(payload.lines)}`,
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("exits nonzero for non-interactive resume when the session has no sandbox name", () => {
