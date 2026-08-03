@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingPreset
+
+metadata:
+  id: vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731
+  displayName: DeepSeek V4 Flash 0731 on two DGX Sparks
+
+spec:
+  selection: automatic
+
+  requirements:
+    all:
+      - readiness:
+          scope: everyNode
+          kind: qualification
+          id: host.platform.dgx_spark
+          status: qualified
+      - fact: cluster.nodeCount
+        state: present
+        operator: equals
+        value: 2
+      - topologyQualification:
+          id: dgx-spark.gb10.dual-cx7
+          schemaVersion: 1
+          status: qualified
+
+  plan:
+    backend: vllm
+    recipeRef: vllm.deepseek-v4-flash-0731.spark-dual.v1
+    bindings:
+      sparkTopology:
+        valueFromTopologyQualification:
+          id: dgx-spark.gb10.dual-cx7
+          schemaVersion: 1
+          output: topology

@@ -40,12 +40,15 @@ function okWithKnownGatewayList(command: string, args: readonly string[]): RunRe
     : ok();
 }
 
-describe("dual-Station runtime uninstall", () => {
-  it("removes a managed pair before the remaining full-uninstall steps", () => {
+describe("managed distributed vLLM runtime uninstall", () => {
+  it.each([
+    "dual-station-vllm-runtime.json",
+    "dual-spark-vllm-runtime.json",
+  ])("removes the pair owned by %s before the remaining full-uninstall steps", (receiptFile) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-dual-pair-"));
     const stateDir = path.join(home, ".nemoclaw");
     fs.mkdirSync(stateDir, { mode: 0o700 });
-    fs.writeFileSync(path.join(stateDir, "dual-station-vllm-runtime.json"), "{}\n", {
+    fs.writeFileSync(path.join(stateDir, receiptFile), "{}\n", {
       mode: 0o600,
     });
     const runDualStationRuntimeCleanup = vi.fn(() => ok());
@@ -73,6 +76,45 @@ describe("dual-Station runtime uninstall", () => {
       expect(runDocker).toHaveBeenCalled();
       expect(runDualStationRuntimeCleanup.mock.invocationCallOrder[0]).toBeLessThan(
         runDocker.mock.invocationCallOrder[0],
+      );
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("targets the exact Station receipt found under a stale non-default gateway root", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-stale-station-"));
+    const receiptPath = path.join(
+      home,
+      ".nemoclaw",
+      "gateways",
+      "18080",
+      "dual-station-vllm-runtime.json",
+    );
+    fs.mkdirSync(path.dirname(receiptPath), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(receiptPath, "{}\n", { mode: 0o600 });
+    const runDualStationRuntimeCleanup = vi.fn(() => ok());
+
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: { HOME: home, TMPDIR: home } as NodeJS.ProcessEnv,
+          existsSync: () => false,
+          isTty: false,
+          log: vi.fn(),
+          rmSync: vi.fn(),
+          run: okWithKnownGatewayList,
+          runDocker: () => ok(),
+          runDualStationRuntimeCleanup,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(runDualStationRuntimeCleanup).toHaveBeenCalledWith(
+        receiptPath,
+        expect.objectContaining({ stdio: "inherit" }),
       );
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
@@ -115,9 +157,154 @@ describe("dual-Station runtime uninstall", () => {
       expect(rmSync).not.toHaveBeenCalled();
       expect(runDocker).not.toHaveBeenCalled();
       expect(errors).toContain(
-        "Managed dual-Station cleanup did not complete. NemoClaw did not start the remaining uninstall steps. Resolve the reported cleanup error and retry uninstall.",
+        "Managed distributed vLLM cleanup did not complete. NemoClaw did not start the remaining uninstall steps. Resolve the reported cleanup error and retry uninstall.",
       );
     } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses ambiguous Spark and Station receipts before cleanup or other mutation", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-dual-conflict-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    for (const name of ["dual-spark-vllm-runtime.json", "dual-station-vllm-runtime.json"]) {
+      fs.writeFileSync(path.join(stateDir, name), "{}\n", { mode: 0o600 });
+    }
+    const errors: string[] = [];
+    const runDualStationRuntimeCleanup = vi.fn(() => ok());
+    const runDocker = vi.fn(() => ok());
+    const rmSync = vi.fn();
+
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: false },
+        {
+          commandExists: () => true,
+          env: { HOME: home, TMPDIR: home } as NodeJS.ProcessEnv,
+          error: (message) => errors.push(message),
+          existsSync: () => false,
+          isTty: false,
+          log: vi.fn(),
+          rmSync,
+          run: okWithKnownGatewayList,
+          runDocker,
+          runDualStationRuntimeCleanup,
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(runDualStationRuntimeCleanup).not.toHaveBeenCalled();
+      expect(runDocker).not.toHaveBeenCalled();
+      expect(rmSync).not.toHaveBeenCalled();
+      expect(errors).toContain(
+        "Both dual-Spark and dual-Station managed runtime receipts exist. NemoClaw refused ambiguous cleanup before making changes.",
+      );
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    "dual-spark-vllm-runtime.json",
+    "dual-spark-managed-serving.json",
+    "dual-station-vllm-runtime.json",
+  ])("refuses an orphaned %s SSH binding before cleanup or other mutation", (receiptFile) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-binding-orphan-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const bindingPath = path.join(stateDir, `${receiptFile}.ssh-binding`);
+    fs.mkdirSync(bindingPath, { recursive: true, mode: 0o700 });
+    const errors: string[] = [];
+    const runDualStationRuntimeCleanup = vi.fn(() => ok());
+    const runDocker = vi.fn(() => ok());
+    const rmSync = vi.fn();
+
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: false },
+        {
+          commandExists: () => true,
+          env: { HOME: home, TMPDIR: home } as NodeJS.ProcessEnv,
+          error: (message) => errors.push(message),
+          existsSync: () => false,
+          isTty: false,
+          log: vi.fn(),
+          rmSync,
+          run: okWithKnownGatewayList,
+          runDocker,
+          runDualStationRuntimeCleanup,
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(runDualStationRuntimeCleanup).not.toHaveBeenCalled();
+      expect(runDocker).not.toHaveBeenCalled();
+      expect(rmSync).not.toHaveBeenCalled();
+      expect(errors.join("\n")).toContain(
+        "Managed distributed vLLM SSH binding exists without its ownership receipt",
+      );
+      expect(fs.existsSync(bindingPath)).toBe(true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("finds the host-global Spark receipt from a non-default gateway selection", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-spark-global-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(path.join(stateDir, "dual-spark-vllm-runtime.json"), "{}\n", {
+      mode: 0o600,
+    });
+    fs.mkdirSync(path.join(stateDir, "dual-spark-vllm-runtime.json.ssh-binding"), {
+      mode: 0o700,
+    });
+    fs.writeFileSync(path.join(stateDir, "dual-station-vllm-api-key"), `${"a".repeat(64)}\n`, {
+      mode: 0o600,
+    });
+    fs.mkdirSync(path.join(stateDir, "state", "mcp-lifecycle-locks"), {
+      recursive: true,
+      mode: 0o700,
+    });
+    const runDualStationRuntimeCleanup = vi.fn(() => ok());
+
+    try {
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "18080");
+      vi.resetModules();
+      const { runUninstallPlan: runFreshUninstallPlan } = await import("./run-plan");
+      const result = runFreshUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: { HOME: home, TMPDIR: home, NEMOCLAW_GATEWAY_PORT: "18080" },
+          existsSync: () => false,
+          isTty: false,
+          log: vi.fn(),
+          rmSync: vi.fn(),
+          run: (command, args) =>
+            command === "openshell" && args[0] === "gateway" && args[1] === "list"
+              ? ok(JSON.stringify([{ name: "nemoclaw-18080" }]))
+              : ok(),
+          runDocker: () => ok(),
+          runDualStationRuntimeCleanup,
+          resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+            gatewayName,
+            gatewayPort,
+            mode: "nemoclaw-managed",
+            source: "standalone",
+            endpoint: null,
+            stateDir: null,
+            supervisor: null,
+            requiredCapabilities: [],
+          }),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(runDualStationRuntimeCleanup).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
       fs.rmSync(home, { recursive: true, force: true });
     }
   });

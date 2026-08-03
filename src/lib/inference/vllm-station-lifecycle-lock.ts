@@ -8,7 +8,7 @@ import path from "node:path";
 import { type McpLifecycleLockOptions, withMcpLifecycleLock } from "../state/mcp-lifecycle-lock";
 import { STATE_DIR_NAME } from "../state/state-root";
 
-const DUAL_STATION_VLLM_LIFECYCLE_LOCK = "dual-station-vllm:host-global";
+const HOST_GLOBAL_VLLM_LIFECYCLE_LOCK = "dual-station-vllm:host-global";
 const DUAL_STATION_CONTROLLER_CONFIG_DIR = "/etc/nemoclaw";
 export const DUAL_STATION_CONTROLLER_UID_FILE = path.join(
   DUAL_STATION_CONTROLLER_CONFIG_DIR,
@@ -125,6 +125,18 @@ export function assertDualStationControllerAccount(
   return controllerUid;
 }
 
+/** Serialize every host-managed vLLM profile under the effective account home. */
+export function withHostGlobalVllmLifecycleLock<T>(
+  operation: () => Promise<T> | T,
+  options: McpLifecycleLockOptions = {},
+): Promise<T> {
+  const stateDir = options.stateDir ?? path.join(os.userInfo().homedir, STATE_DIR_NAME, "state");
+  return withMcpLifecycleLock(HOST_GLOBAL_VLLM_LIFECYCLE_LOCK, operation, {
+    ...options,
+    stateDir,
+  });
+}
+
 /**
  * Serialize the host-managed dual-Station service across gateway instances.
  *
@@ -146,9 +158,5 @@ export function withDualStationVllmLifecycleLock<T>(
     identityDeps.readControllerUid,
     identityDeps.effectiveControllerUid,
   );
-  const stateDir = options.stateDir ?? path.join(os.userInfo().homedir, STATE_DIR_NAME, "state");
-  return withMcpLifecycleLock(DUAL_STATION_VLLM_LIFECYCLE_LOCK, operation, {
-    ...options,
-    stateDir,
-  });
+  return withHostGlobalVllmLifecycleLock(operation, options);
 }

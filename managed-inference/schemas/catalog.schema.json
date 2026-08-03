@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/managed-inference/schemas/catalog.schema.json",
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "type": "object",
+  "required": ["catalogDigest", "compilerVersion", "presets", "recipes", "schemaVersion", "sourceFiles", "sourceRevision"],
+  "properties": {
+    "catalogDigest": { "$ref": "#/$defs/digest" },
+    "compilerVersion": { "const": "1.0.0" },
+    "presets": {
+      "type": "array",
+      "items": {
+        "allOf": [
+          { "$ref": "#/$defs/compiledDefinition" },
+          {
+            "type": "object",
+            "properties": {
+              "definition": { "$ref": "preset.schema.json" }
+            }
+          }
+        ]
+      }
+    },
+    "recipes": {
+      "type": "array",
+      "items": {
+        "allOf": [
+          { "$ref": "#/$defs/compiledDefinition" },
+          {
+            "type": "object",
+            "properties": {
+              "definition": { "$ref": "recipe.schema.json" }
+            }
+          }
+        ]
+      }
+    },
+    "schemaVersion": { "const": "1.0.0" },
+    "sourceFiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["digest", "path"],
+        "properties": {
+          "digest": { "$ref": "#/$defs/digest" },
+          "path": { "type": "string", "pattern": "^managed-inference/(?:presets|recipes)/[a-z0-9._-]+\\.yaml$" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "sourceRevision": { "$ref": "#/$defs/digest" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "compiledDefinition": {
+      "type": "object",
+      "required": ["definition", "definitionDigest", "sourceFile"],
+      "properties": {
+        "definition": { "type": "object" },
+        "definitionDigest": { "$ref": "#/$defs/digest" },
+        "sourceFile": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

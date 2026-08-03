@@ -48,6 +48,7 @@ const E2E_WORKFLOW_CONTRACTS = [
 ] as const;
 
 const OPAQUE_INPUTS = [
+  "managed-inference/recipes/vllm.deepseek-v4-flash-0731.spark-dual.v1.yaml",
   "Dockerfile",
   "agents/hermes/Dockerfile",
   "agents/langchain-deepagents-code/Dockerfile",
@@ -86,6 +87,13 @@ describe("Vitest opaque-input watch triggers", () => {
   });
 
   it("maps current opaque inputs to their direct contract tests (#6692)", () => {
+    expect(
+      triggeredBy("managed-inference/recipes/vllm.deepseek-v4-flash-0731.spark-dual.v1.yaml"),
+    ).toEqual([
+      "src/lib/inference/serving/catalog.test.ts",
+      "src/lib/inference/serving/resolver.test.ts",
+      "test/managed-inference-catalog-compiler.test.ts",
+    ]);
     expect(triggeredBy("Dockerfile")).toEqual(["src/lib/onboard/managed-startup-profile.test.ts"]);
     expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
       "src/lib/onboard/managed-startup-profile.test.ts",

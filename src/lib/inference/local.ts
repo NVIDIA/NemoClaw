@@ -45,7 +45,11 @@ import {
   resetOllamaRuntimeContextWindowAutoState,
   resolveOllamaRuntimeContextWindow as resolveOllamaRuntimeContextWindowWithHost,
 } from "./ollama-runtime-context";
-import { loadDualStationVllmApiKey } from "./vllm-api-key";
+import {
+  type RecoveredDualSparkVllmEndpoint,
+  recoverInstalledDualSparkVllmEndpoint,
+} from "./serving/spark-runtime-receipt";
+import { loadManagedVllmApiKey } from "./vllm-api-key";
 import { applyVllmRuntimeContextWindow as applyVllmRuntimeContextWindowFromModels } from "./vllm-runtime-context";
 import { getDualStationManagedVllmBaseUrl } from "./vllm-station-cluster-lifecycle";
 
@@ -252,10 +256,12 @@ export interface LocalProviderHealthProbeOptions {
    * state root (written by inference/ollama/proxy.ts during onboard).
    */
   loadOllamaProxyTokenImpl?: () => string | null;
-  /** Reads the managed dual-Station vLLM key. Injectable so tests stay deterministic. */
+  /** Reads the host-global managed vLLM key. Injectable so tests stay deterministic. */
   loadVllmApiKeyImpl?: () => string | null;
-  /** Recovers an owned managed endpoint while validating the injected key in one lifecycle read. */
-  getManagedVllmBaseUrlImpl?: ManagedDualStationVllmBaseUrlResolver;
+  /** Recovers a managed Station endpoint while validating the injected key. */
+  getManagedVllmBaseUrlImpl?: ManagedStationVllmBaseUrlResolver;
+  /** Recovers a receipt-owned managed Spark endpoint. */
+  recoverSparkVllmEndpointImpl?: ManagedSparkVllmEndpointResolver;
 }
 
 function defaultLoadOllamaProxyToken(): string | null {
@@ -408,39 +414,42 @@ function configuredLocalInferenceHostUrl(hostUrl?: string | null): string | null
   );
 }
 
-function recoveredManagedDualStationVllmBaseUrl(): string | null {
-  return configuredLocalInferenceHostUrl() ? null : getDualStationManagedVllmBaseUrl();
+function recoveredManagedVllmBaseUrl(): string | null {
+  if (configuredLocalInferenceHostUrl()) return null;
+  return getManagedVllmProviderBinding()?.baseUrl.replace(/\/v1\/?$/, "") ?? null;
 }
 
-export interface ManagedDualStationVllmProviderBinding {
+export interface ManagedVllmProviderBinding {
   baseUrl: string;
   apiKey: string;
 }
 
-type ManagedDualStationVllmBaseUrlResolver = (overrides?: {
+type ManagedStationVllmBaseUrlResolver = (overrides?: {
   loadApiKey?: () => string | null;
   onManagedHeadObserved?: () => void;
 }) => string | null;
 
-export type ManagedDualStationVllmProviderState =
+type ManagedSparkVllmEndpointResolver = (options?: {
+  loadApiKey?: () => string | null;
+}) => Pick<RecoveredDualSparkVllmEndpoint, "baseUrl" | "apiKey"> | null;
+
+export type ManagedVllmProviderState =
   | { kind: "absent" }
   | { kind: "invalid-auth"; reason: "missing" | "unsafe" | "mismatched" }
-  | ({ kind: "ready" } & ManagedDualStationVllmProviderBinding);
+  | ({ kind: "ready" } & ManagedVllmProviderBinding);
 
-export interface ManagedDualStationVllmProviderBindingOptions {
+export interface ManagedVllmProviderBindingOptions {
   hostUrl?: string | null;
-  getManagedBaseUrlImpl?: ManagedDualStationVllmBaseUrlResolver;
+  /** Compatibility seam for the Station lifecycle resolver. */
+  getManagedBaseUrlImpl?: ManagedStationVllmBaseUrlResolver;
   loadApiKeyImpl?: () => string | null;
+  recoverSparkVllmEndpointImpl?: ManagedSparkVllmEndpointResolver;
 }
 
-/** Recover endpoint and credential as one lifecycle-validated state. */
-export function getManagedDualStationVllmProviderState(
-  options: ManagedDualStationVllmProviderBindingOptions = {},
-): ManagedDualStationVllmProviderState {
-  const configuredHostUrl = configuredLocalInferenceHostUrl(options.hostUrl);
-  if (configuredHostUrl) return { kind: "absent" };
-
-  const loadApiKey = options.loadApiKeyImpl ?? loadDualStationVllmApiKey;
+function getManagedStationVllmProviderState(
+  options: ManagedVllmProviderBindingOptions,
+  loadApiKey: () => string | null,
+): ManagedVllmProviderState {
   let keyRead = false;
   let managedHeadObserved = false;
   let apiKey: string | null = null;
@@ -479,23 +488,74 @@ export function getManagedDualStationVllmProviderState(
   if (!managedBaseUrl || !apiKey) {
     return { kind: "invalid-auth", reason: authFailure ?? "mismatched" };
   }
-  return { kind: "ready", baseUrl: `${managedBaseUrl}/v1`, apiKey };
+  return { kind: "ready", baseUrl: `${managedBaseUrl.replace(/\/+$/, "")}/v1`, apiKey };
 }
 
-/** Compatibility binding for onboarding and context-window callers. */
-export function getManagedDualStationVllmProviderBinding(
-  options: ManagedDualStationVllmProviderBindingOptions = {},
-): ManagedDualStationVllmProviderBinding | null {
-  const state = getManagedDualStationVllmProviderState(options);
+/** Recover the one owned managed endpoint and credential as a validated state. */
+export function getManagedVllmProviderState(
+  options: ManagedVllmProviderBindingOptions = {},
+): ManagedVllmProviderState {
+  if (configuredLocalInferenceHostUrl(options.hostUrl)) return { kind: "absent" };
+
+  const loadApiKey = options.loadApiKeyImpl ?? loadManagedVllmApiKey;
+  let sparkAuthFailure: "missing" | "unsafe" | null = null;
+  let sparkEndpoint: Pick<RecoveredDualSparkVllmEndpoint, "baseUrl" | "apiKey"> | null;
+  try {
+    sparkEndpoint = (options.recoverSparkVllmEndpointImpl ?? recoverInstalledDualSparkVllmEndpoint)(
+      {
+        loadApiKey: () => {
+          try {
+            const apiKey = loadApiKey();
+            if (!apiKey) sparkAuthFailure = "missing";
+            return apiKey;
+          } catch {
+            sparkAuthFailure = "unsafe";
+            return null;
+          }
+        },
+      },
+    );
+  } catch (error) {
+    if (sparkAuthFailure) return { kind: "invalid-auth", reason: sparkAuthFailure };
+    throw error;
+  }
+
+  const stationState = getManagedStationVllmProviderState(options, loadApiKey);
+  if (!sparkEndpoint) return stationState;
+  if (stationState.kind !== "absent") {
+    throw new Error(
+      "Both managed Spark and Station vLLM state are present; refusing to select either endpoint.",
+    );
+  }
+  return {
+    kind: "ready",
+    baseUrl: `${sparkEndpoint.baseUrl.replace(/\/+$/, "")}/v1`,
+    apiKey: sparkEndpoint.apiKey,
+  };
+}
+
+export function getManagedVllmProviderBinding(
+  options: ManagedVllmProviderBindingOptions = {},
+): ManagedVllmProviderBinding | null {
+  const state = getManagedVllmProviderState(options);
   if (state.kind === "absent") return null;
   if (state.kind === "invalid-auth") {
     if (state.reason !== "missing") {
-      throw new Error("Managed dual-Station vLLM authentication is unsafe or mismatched.");
+      throw new Error("Managed vLLM authentication is unsafe or mismatched.");
     }
-    throw new Error("Managed dual-Station vLLM authentication is missing.");
+    throw new Error("Managed vLLM authentication is missing.");
   }
   return { baseUrl: state.baseUrl, apiKey: state.apiKey };
 }
+
+export type ManagedDualStationVllmProviderBinding = ManagedVllmProviderBinding;
+export type ManagedDualStationVllmProviderState = ManagedVllmProviderState;
+export type ManagedDualStationVllmProviderBindingOptions = ManagedVllmProviderBindingOptions;
+
+/** @deprecated Use getManagedVllmProviderState. */
+export const getManagedDualStationVllmProviderState = getManagedVllmProviderState;
+/** @deprecated Use getManagedVllmProviderBinding. */
+export const getManagedDualStationVllmProviderBinding = getManagedVllmProviderBinding;
 
 export function getLocalProviderBaseUrl(
   provider: string,
@@ -506,8 +566,8 @@ export function getLocalProviderBaseUrl(
   switch (provider) {
     case "vllm-local": {
       if (!configuredHostUrl) {
-        const dualStationBaseUrl = recoveredManagedDualStationVllmBaseUrl();
-        if (dualStationBaseUrl) return `${dualStationBaseUrl}/v1`;
+        const managedBaseUrl = recoveredManagedVllmBaseUrl();
+        if (managedBaseUrl) return `${managedBaseUrl}/v1`;
       }
       return `${hostUrl}:${VLLM_PORT}/v1`;
     }
@@ -522,8 +582,8 @@ export function getLocalProviderBaseUrl(
 export function getLocalProviderValidationBaseUrl(provider: string): string | null {
   switch (provider) {
     case "vllm-local": {
-      const dualStationBaseUrl = recoveredManagedDualStationVllmBaseUrl();
-      return dualStationBaseUrl ? `${dualStationBaseUrl}/v1` : `http://127.0.0.1:${VLLM_PORT}/v1`;
+      const managedBaseUrl = recoveredManagedVllmBaseUrl();
+      return managedBaseUrl ? `${managedBaseUrl}/v1` : `http://127.0.0.1:${VLLM_PORT}/v1`;
     }
     case "ollama-local":
       return `http://${getResolvedOllamaHost()}:${OLLAMA_PORT}/v1`;
@@ -535,9 +595,9 @@ export function getLocalProviderValidationBaseUrl(provider: string): string | nu
 export function getLocalProviderHealthEndpoint(provider: string): string | null {
   switch (provider) {
     case "vllm-local": {
-      const dualStationBaseUrl = recoveredManagedDualStationVllmBaseUrl();
-      return dualStationBaseUrl
-        ? `${dualStationBaseUrl}/v1/models`
+      const managedBaseUrl = recoveredManagedVllmBaseUrl();
+      return managedBaseUrl
+        ? `${managedBaseUrl}/v1/models`
         : `http://127.0.0.1:${VLLM_PORT}/v1/models`;
     }
     case "ollama-local":
@@ -550,8 +610,8 @@ export function getLocalProviderHealthEndpoint(provider: string): string | null 
 /** Lightweight endpoint used only to prove that the local service is reachable. */
 export function getLocalProviderAvailabilityEndpoint(provider: string): string | null {
   if (provider === "vllm-local") {
-    const dualStationBaseUrl = recoveredManagedDualStationVllmBaseUrl();
-    if (dualStationBaseUrl) return `${dualStationBaseUrl}/health`;
+    const managedBaseUrl = recoveredManagedVllmBaseUrl();
+    if (managedBaseUrl) return `${managedBaseUrl}/health`;
   }
   return getLocalProviderHealthEndpoint(provider);
 }
@@ -742,22 +802,23 @@ export function probeLocalProviderHealth(
   const providerLabel = getLocalProviderLabel(provider);
   if (!providerLabel) return null;
 
-  let managedState: ManagedDualStationVllmProviderState = { kind: "absent" };
+  let managedState: ManagedVllmProviderState = { kind: "absent" };
   if (provider === "vllm-local") {
     try {
-      managedState = getManagedDualStationVllmProviderState({
+      managedState = getManagedVllmProviderState({
         getManagedBaseUrlImpl: options.getManagedVllmBaseUrlImpl,
         loadApiKeyImpl: options.loadVllmApiKeyImpl,
+        recoverSparkVllmEndpointImpl: options.recoverSparkVllmEndpointImpl,
       });
     } catch {
       return {
         ok: false,
         providerLabel,
-        endpoint: "managed dual-Station vLLM",
+        endpoint: "managed vLLM",
         failureLabel: "unhealthy",
         probeLabel: "vllm backend",
         detail:
-          "Local vLLM authentication state could not be inspected safely. Re-run `nemoclaw onboard` to repair the managed dual-Station provider.",
+          "Managed vLLM state could not be inspected safely. Re-run `nemoclaw onboard` to repair the provider.",
       };
     }
   }
@@ -766,12 +827,12 @@ export function probeLocalProviderHealth(
     return {
       ok: false,
       providerLabel,
-      endpoint: "managed dual-Station vLLM",
+      endpoint: "managed vLLM",
       failureLabel: missingAuth ? "unauthorized" : "unhealthy",
       probeLabel: "vllm backend",
       detail: missingAuth
-        ? "Local vLLM requires its managed bearer credential, but no private key is available. Re-run `nemoclaw onboard` to repair the dual-Station provider."
-        : "Local vLLM authentication state is unsafe or does not match the managed service. Re-run `nemoclaw onboard` to repair the managed dual-Station provider.",
+        ? "Managed vLLM requires its bearer credential, but no private key is available. Re-run `nemoclaw onboard` to repair the provider."
+        : "Managed vLLM authentication state is unsafe or does not match the service. Re-run `nemoclaw onboard` to repair the provider.",
     };
   }
   const managedBinding = managedState.kind === "ready" ? managedState : null;
@@ -889,9 +950,9 @@ export function probeLocalProviderHealth(
 export function getLocalProviderContainerReachabilityCheck(provider: string): string[] | null {
   switch (provider) {
     case "vllm-local": {
-      const dualStationBaseUrl = recoveredManagedDualStationVllmBaseUrl();
+      const managedBaseUrl = recoveredManagedVllmBaseUrl();
       return [
-        ...(dualStationBaseUrl ? ["docker", "--context", "default"] : ["docker"]),
+        ...(managedBaseUrl ? ["docker", "--context", "default"] : ["docker"]),
         "run",
         "--rm",
         "--add-host",
@@ -901,11 +962,11 @@ export function getLocalProviderContainerReachabilityCheck(provider: string): st
         "5",
         "--max-time",
         "10",
-        ...(dualStationBaseUrl ? ["--noproxy", "*"] : []),
+        ...(managedBaseUrl ? ["--noproxy", "*"] : []),
         "-sf",
-        ...(dualStationBaseUrl ? ["-w", "%{http_code}"] : []),
-        dualStationBaseUrl
-          ? `${dualStationBaseUrl}/health`
+        ...(managedBaseUrl ? ["-w", "%{http_code}"] : []),
+        managedBaseUrl
+          ? `${managedBaseUrl}/health`
           : `http://host.openshell.internal:${VLLM_PORT}/v1/models`,
       ];
     }
@@ -1024,9 +1085,9 @@ export function validateLocalProvider(
 function getContainerCheckUrl(provider: string): string {
   switch (provider) {
     case "vllm-local": {
-      const dualStationBaseUrl = recoveredManagedDualStationVllmBaseUrl();
-      return dualStationBaseUrl
-        ? `${dualStationBaseUrl}/health`
+      const managedBaseUrl = recoveredManagedVllmBaseUrl();
+      return managedBaseUrl
+        ? `${managedBaseUrl}/health`
         : `http://host.openshell.internal:${VLLM_PORT}/v1/models`;
     }
     case "ollama-local":
@@ -1039,7 +1100,7 @@ function getContainerCheckUrl(provider: string): string {
 function collectContainerDiagnostic(provider: string, capture: RunCaptureFn): string {
   const url = getContainerCheckUrl(provider);
   const dockerCommand =
-    provider === "vllm-local" && recoveredManagedDualStationVllmBaseUrl()
+    provider === "vllm-local" && recoveredManagedVllmBaseUrl()
       ? ["docker", "--context", "default"]
       : ["docker"];
   try {

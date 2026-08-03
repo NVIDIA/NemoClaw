@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/managed-inference/schemas/preset.schema.json",
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "const": "nemoclaw.nvidia.com/managed-inference/v1" },
+    "kind": { "const": "ServingPreset" },
+    "metadata": { "$ref": "#/$defs/metadata" },
+    "spec": {
+      "type": "object",
+      "required": ["selection", "requirements", "plan"],
+      "properties": {
+        "selection": { "const": "automatic" },
+        "requirements": {
+          "type": "object",
+          "required": ["all"],
+          "properties": {
+            "all": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "oneOf": [
+                  { "$ref": "#/$defs/readinessRequirement" },
+                  { "$ref": "#/$defs/factRequirement" },
+                  { "$ref": "#/$defs/topologyRequirement" }
+                ]
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "plan": {
+          "type": "object",
+          "required": ["backend", "recipeRef", "bindings"],
+          "properties": {
+            "backend": { "const": "vllm" },
+            "recipeRef": { "$ref": "#/$defs/stableId" },
+            "bindings": {
+              "type": "object",
+              "required": ["sparkTopology"],
+              "properties": {
+                "sparkTopology": {
+                  "type": "object",
+                  "required": ["valueFromTopologyQualification"],
+                  "properties": {
+                    "valueFromTopologyQualification": {
+                      "type": "object",
+                      "required": ["id", "schemaVersion", "output"],
+                      "properties": {
+                        "id": { "const": "dgx-spark.gb10.dual-cx7" },
+                        "schemaVersion": { "const": 1 },
+                        "output": { "const": "topology" }
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "metadata": {
+      "type": "object",
+      "required": ["id", "displayName"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stableId" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "stableId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[._/-][a-z0-9]+)+$",
+      "maxLength": 160
+    },
+    "readinessRequirement": {
+      "type": "object",
+      "required": ["readiness"],
+      "properties": {
+        "readiness": {
+          "type": "object",
+          "required": ["scope", "kind", "id", "status"],
+          "properties": {
+            "scope": { "const": "everyNode" },
+            "kind": { "const": "qualification" },
+            "id": { "const": "host.platform.dgx_spark" },
+            "status": { "const": "qualified" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "factRequirement": {
+      "type": "object",
+      "required": ["fact", "state", "operator", "value"],
+      "properties": {
+        "fact": { "const": "cluster.nodeCount" },
+        "state": { "const": "present" },
+        "operator": { "const": "equals" },
+        "value": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "topologyRequirement": {
+      "type": "object",
+      "required": ["topologyQualification"],
+      "properties": {
+        "topologyQualification": {
+          "type": "object",
+          "required": ["id", "schemaVersion", "status"],
+          "properties": {
+            "id": { "const": "dgx-spark.gb10.dual-cx7" },
+            "schemaVersion": { "const": 1 },
+            "status": { "const": "qualified" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

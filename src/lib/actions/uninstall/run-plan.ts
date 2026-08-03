@@ -27,7 +27,14 @@ import {
 } from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
 import { isOllamaAuthProxyCommandLine } from "../../inference/ollama/process";
-import { DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE } from "../../inference/vllm-station-runtime-receipt-path";
+import {
+  DUAL_SPARK_MANAGED_SERVING_STATE_FILE,
+  DUAL_SPARK_VLLM_RUNTIME_RECEIPT_FILE,
+  DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
+  findManagedDistributedVllmRuntimeReceipts,
+  MANAGED_VLLM_API_KEY_FILE,
+  MCP_LIFECYCLE_LOCK_DIRNAME,
+} from "../../inference/serving/managed-runtime-receipts";
 import { buildDockerGatewayDebEnvFile } from "../../onboard/docker-driver-gateway-env";
 import {
   getNemoclawOpenShellGatewayUserServicePath,
@@ -89,7 +96,7 @@ export interface UninstallRunDeps {
   rmSync?: typeof fs.rmSync;
   run?: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
   runDocker?: (args: string[], options?: SpawnSyncOptions) => RunResult;
-  runDualStationRuntimeCleanup?: (options?: SpawnSyncOptions) => RunResult;
+  runDualStationRuntimeCleanup?: (receiptPath: string, options?: SpawnSyncOptions) => RunResult;
 }
 
 export interface UninstallRunOutcome {
@@ -251,8 +258,28 @@ const SHARED_HOST_STATE_ENTRIES = new Set([
   "source",
   GATEWAYS_SUBDIR,
   "managed_swap",
+  DUAL_SPARK_VLLM_RUNTIME_RECEIPT_FILE,
+  `${DUAL_SPARK_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
+  `${DUAL_SPARK_MANAGED_SERVING_STATE_FILE}.ssh-binding`,
+  MANAGED_VLLM_API_KEY_FILE,
   ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
 ]);
+
+function dormantHostGlobalLifecycleState(sharedRoot: string): boolean {
+  const stateDir = path.join(sharedRoot, "state");
+  try {
+    const state = fs.lstatSync(stateDir);
+    if (state.isSymbolicLink() || !state.isDirectory()) return false;
+    const entries = fs.readdirSync(stateDir);
+    if (entries.length === 0) return true;
+    if (entries.length !== 1 || entries[0] !== MCP_LIFECYCLE_LOCK_DIRNAME) return false;
+    const locksDir = path.join(stateDir, MCP_LIFECYCLE_LOCK_DIRNAME);
+    const locks = fs.lstatSync(locksDir);
+    return !locks.isSymbolicLink() && locks.isDirectory() && fs.readdirSync(locksDir).length === 0;
+  } catch {
+    return false;
+  }
+}
 
 function removePathExcept(
   target: string,
@@ -339,7 +366,7 @@ interface UninstallRuntime {
   rmSync: typeof fs.rmSync;
   run: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
   runDocker: (args: string[], options?: SpawnSyncOptions) => RunResult;
-  runDualStationRuntimeCleanup: (options?: SpawnSyncOptions) => RunResult;
+  runDualStationRuntimeCleanup: (receiptPath: string, options?: SpawnSyncOptions) => RunResult;
   warn: (message: string) => void;
 }
 
@@ -375,7 +402,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     runDocker: deps.runDocker ?? defaultRunDocker,
     runDualStationRuntimeCleanup:
       deps.runDualStationRuntimeCleanup ??
-      ((options = {}) =>
+      ((receiptPath, options = {}) =>
         defaultRun(
           process.execPath,
           [
@@ -386,6 +413,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
               "inference",
               "vllm-station-runtime-cleanup-entry.js",
             ),
+            receiptPath,
           ],
           options,
         )),
@@ -1205,25 +1233,52 @@ function dockerIsAvailable(runtime: UninstallRuntime): boolean {
   return true;
 }
 
-function removeManagedDualStationRuntime(
-  paths: UninstallPaths,
-  runtime: UninstallRuntime,
-): boolean {
-  const receiptPath = path.join(paths.nemoclawStateDir, DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE);
+function removeManagedDistributedVllmRuntime(runtime: UninstallRuntime): boolean {
+  let state: ReturnType<typeof findManagedDistributedVllmRuntimeReceipts>;
   try {
-    fs.lstatSync(receiptPath);
+    state = findManagedDistributedVllmRuntimeReceipts({
+      homeDir: runtime.env.HOME || os.homedir(),
+    });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
-    runtime.error(`Could not inspect managed dual-Station rollback state: ${formatError(error)}`);
+    runtime.error(
+      `Could not inspect managed distributed vLLM rollback state: ${formatError(error)}`,
+    );
     return false;
   }
-  const result = runtime.runDualStationRuntimeCleanup({
+  const receipts = [...(state.sparkPath ? [state.sparkPath] : []), ...state.stationPaths];
+  const bindingPaths = [
+    ...(state.sparkBindingPath ? [state.sparkBindingPath] : []),
+    ...state.sparkDiscoveryBindingPaths,
+    ...state.stationBindingPaths,
+  ];
+  const expectedBindingPaths = new Set(receipts.map((receiptPath) => `${receiptPath}.ssh-binding`));
+  const orphanBinding = bindingPaths.find((bindingPath) => !expectedBindingPaths.has(bindingPath));
+  if (orphanBinding) {
+    runtime.error(
+      `Managed distributed vLLM SSH binding exists without its ownership receipt at ${orphanBinding}. NemoClaw refused uninstall before making changes. Recover or remove that state explicitly, then retry.`,
+    );
+    return false;
+  }
+  if (receipts.length === 0) return true;
+  if (state.sparkPath && state.stationPaths.length > 0) {
+    runtime.error(
+      "Both dual-Spark and dual-Station managed runtime receipts exist. NemoClaw refused ambiguous cleanup before making changes.",
+    );
+    return false;
+  }
+  if (receipts.length !== 1) {
+    runtime.error(
+      "Multiple managed distributed vLLM runtime receipts exist. NemoClaw refused ambiguous cleanup before making changes.",
+    );
+    return false;
+  }
+  const result = runtime.runDualStationRuntimeCleanup(receipts[0]!, {
     env: runtime.env,
     stdio: "inherit",
   });
   if (result.status === 0) return true;
   runtime.error(
-    "Managed dual-Station cleanup did not complete. NemoClaw did not start the remaining uninstall steps. Resolve the reported cleanup error and retry uninstall.",
+    "Managed distributed vLLM cleanup did not complete. NemoClaw did not start the remaining uninstall steps. Resolve the reported cleanup error and retry uninstall.",
   );
   return false;
 }
@@ -1378,7 +1433,15 @@ function inspectOtherGatewayEnvironments(
 
   if (!selectedIsDefault && pathEntryExists(sharedRoot, runtime)) {
     try {
-      if (fs.readdirSync(sharedRoot).some((entry) => !SHARED_HOST_STATE_ENTRIES.has(entry))) {
+      if (
+        fs
+          .readdirSync(sharedRoot)
+          .some(
+            (entry) =>
+              !SHARED_HOST_STATE_ENTRIES.has(entry) &&
+              !(entry === "state" && dormantHostGlobalLifecycleState(sharedRoot)),
+          )
+      ) {
         return {
           otherGatewayEnvironmentsRemain: true,
           sharedRegistryMustBePreserved: false,
@@ -1553,7 +1616,7 @@ function executePlan(
   for (const [index, step] of plan.steps.entries()) {
     runtime.log(`[${index + 1}/${plan.steps.length}] ${planStepDisplayName(step.name, branding)}`);
     if (step.name === "Stopping services") {
-      if (!scopedToSelectedGateway && !removeManagedDualStationRuntime(paths, runtime)) {
+      if (!scopedToSelectedGateway && !removeManagedDistributedVllmRuntime(runtime)) {
         return { ok: false };
       }
       if (
@@ -1745,8 +1808,12 @@ function executePlan(
             ...(scopedToSelectedGateway
               ? [
                   ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
+                  DUAL_SPARK_VLLM_RUNTIME_RECEIPT_FILE,
+                  `${DUAL_SPARK_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
+                  `${DUAL_SPARK_MANAGED_SERVING_STATE_FILE}.ssh-binding`,
                   DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
                   `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
+                  MANAGED_VLLM_API_KEY_FILE,
                 ]
               : []),
           ],

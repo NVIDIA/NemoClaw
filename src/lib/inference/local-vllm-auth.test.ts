@@ -14,9 +14,22 @@ interface ManagedBaseUrlOverrides {
 const lifecycle = vi.hoisted(() => ({
   baseUrl: vi.fn<(overrides?: ManagedBaseUrlOverrides) => string | null>(),
 }));
+const sparkRecovery = vi.hoisted(() => ({
+  endpoint: vi.fn(),
+}));
+const managedKey = vi.hoisted(() => ({
+  load: vi.fn(),
+}));
 
 vi.mock("./vllm-station-cluster-lifecycle", () => ({
   getDualStationManagedVllmBaseUrl: lifecycle.baseUrl,
+}));
+vi.mock("./serving/spark-runtime-receipt", () => ({
+  recoverInstalledDualSparkVllmEndpoint: sparkRecovery.endpoint,
+}));
+vi.mock("./vllm-api-key", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./vllm-api-key")>()),
+  loadManagedVllmApiKey: managedKey.load,
 }));
 
 import {
@@ -25,8 +38,8 @@ import {
   getLocalProviderContainerReachabilityCheck,
   getLocalProviderHealthCheck,
   getLocalProviderHealthEndpoint,
-  getManagedDualStationVllmProviderBinding,
-  getManagedDualStationVllmProviderState,
+  getManagedVllmProviderBinding,
+  getManagedVllmProviderState,
   LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
   probeLocalProviderHealth,
   probeVllmModels,
@@ -80,6 +93,10 @@ function productionManagedBaseUrlResolver(
 
 beforeEach(() => {
   vi.stubEnv(LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV, undefined);
+  sparkRecovery.endpoint.mockReset();
+  sparkRecovery.endpoint.mockReturnValue(null);
+  managedKey.load.mockReset();
+  managedKey.load.mockReturnValue(API_KEY);
   lifecycle.baseUrl.mockReset();
   lifecycle.baseUrl.mockImplementation(
     (overrides) => MANAGED_BASE_URL_BY_API_KEY.get(overrides?.loadApiKey?.()) ?? null,
@@ -88,19 +105,68 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllEnvs());
 
-describe("managed dual-Station vLLM authentication", () => {
+describe("managed vLLM authentication", () => {
   it("keeps an explicit sandbox host override ahead of managed endpoint recovery", () => {
     const loadApiKeyImpl = vi.fn(() => API_KEY);
     expect(getLocalProviderBaseUrl("vllm-local", { hostUrl: "http://explicit-host" })).toBe(
       "http://explicit-host:8000/v1",
     );
     expect(
-      getManagedDualStationVllmProviderBinding({
+      getManagedVllmProviderBinding({
         hostUrl: "http://explicit-host",
         loadApiKeyImpl,
       }),
     ).toBeNull();
     expect(loadApiKeyImpl).not.toHaveBeenCalled();
+    expect(sparkRecovery.endpoint).not.toHaveBeenCalled();
+  });
+
+  it("recovers a receipt-owned Spark endpoint before checking Station state", () => {
+    const events: string[] = [];
+    const recoverSparkVllmEndpointImpl = vi.fn(() => {
+      events.push("spark");
+      return { baseUrl: BASE_URL, apiKey: API_KEY };
+    });
+    const getManagedBaseUrlImpl = vi.fn(() => {
+      events.push("station");
+      return null;
+    });
+
+    expect(
+      getManagedVllmProviderBinding({
+        getManagedBaseUrlImpl,
+        recoverSparkVllmEndpointImpl,
+      }),
+    ).toEqual({ baseUrl: `${BASE_URL}/v1`, apiKey: API_KEY });
+    expect(events).toEqual(["spark", "station"]);
+  });
+
+  it("does not fall through to Station when Spark recovery is unsafe", () => {
+    const getManagedBaseUrlImpl = vi.fn(() => BASE_URL);
+
+    expect(() =>
+      getManagedVllmProviderBinding({
+        getManagedBaseUrlImpl,
+        recoverSparkVllmEndpointImpl: () => {
+          throw new Error("Spark receipt identity changed");
+        },
+      }),
+    ).toThrow("Spark receipt identity changed");
+    expect(getManagedBaseUrlImpl).not.toHaveBeenCalled();
+  });
+
+  it("stops when Spark and Station managed state are both present", () => {
+    expect(() =>
+      getManagedVllmProviderBinding({
+        loadApiKeyImpl: () => API_KEY,
+        recoverSparkVllmEndpointImpl: () => ({ baseUrl: BASE_URL, apiKey: API_KEY }),
+        getManagedBaseUrlImpl: (overrides) => {
+          overrides?.onManagedHeadObserved?.();
+          overrides?.loadApiKey?.();
+          return BASE_URL;
+        },
+      }),
+    ).toThrow("Both managed Spark and Station vLLM state are present");
   });
 
   it("does not load a stale or unsafe key without a recovered managed endpoint", () => {
@@ -109,7 +175,7 @@ describe("managed dual-Station vLLM authentication", () => {
     });
     lifecycle.baseUrl.mockReturnValue(null);
 
-    expect(getManagedDualStationVllmProviderBinding({ loadApiKeyImpl })).toBeNull();
+    expect(getManagedVllmProviderBinding({ loadApiKeyImpl })).toBeNull();
     expect(loadApiKeyImpl).not.toHaveBeenCalled();
   });
 
@@ -146,11 +212,11 @@ describe("managed dual-Station vLLM authentication", () => {
   });
 
   it("returns one atomic provider endpoint and credential binding", () => {
-    expect(getManagedDualStationVllmProviderBinding({ loadApiKeyImpl: () => API_KEY })).toEqual({
+    expect(getManagedVllmProviderBinding({ loadApiKeyImpl: () => API_KEY })).toEqual({
       baseUrl: `${BASE_URL}/v1`,
       apiKey: API_KEY,
     });
-    expect(getManagedDualStationVllmProviderState({ loadApiKeyImpl: () => API_KEY })).toEqual({
+    expect(getManagedVllmProviderState({ loadApiKeyImpl: () => API_KEY })).toEqual({
       kind: "ready",
       baseUrl: `${BASE_URL}/v1`,
       apiKey: API_KEY,
@@ -294,7 +360,7 @@ describe("managed dual-Station vLLM authentication", () => {
 
   it("returns invalid-auth when the private key does not match the managed lifecycle", () => {
     expect(
-      getManagedDualStationVllmProviderState({
+      getManagedVllmProviderState({
         getManagedBaseUrlImpl: productionManagedBaseUrlResolver(OTHER_API_KEY),
         loadApiKeyImpl: () => API_KEY,
       }),
@@ -312,7 +378,7 @@ describe("managed dual-Station vLLM authentication", () => {
     expect(runCurlProbeImpl).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       ok: false,
-      endpoint: "managed dual-Station vLLM",
+      endpoint: "managed vLLM",
       failureLabel: "unhealthy",
     });
   });

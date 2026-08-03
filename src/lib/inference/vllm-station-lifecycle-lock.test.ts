@@ -10,6 +10,7 @@ import {
   type DualStationControllerUidFileStat,
   readDualStationControllerUid,
   withDualStationVllmLifecycleLock,
+  withHostGlobalVllmLifecycleLock,
 } from "./vllm-station-lifecycle-lock";
 
 function controllerUidStat(
@@ -110,6 +111,31 @@ describe("dual-Station controller UID binding", () => {
       expect(operation).not.toHaveBeenCalled();
       expect(fs.existsSync(stateDir)).toBe(false);
     } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("shares the host-global vLLM lock without requiring Station host preparation", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-vllm-lock-"));
+    const accountHome = path.join(root, "account-home");
+    fs.mkdirSync(accountHome, { mode: 0o700 });
+    const userInfo = os.userInfo();
+    const userInfoSpy = vi.spyOn(os, "userInfo").mockReturnValue({
+      ...userInfo,
+      homedir: accountHome,
+    });
+
+    try {
+      await withHostGlobalVllmLifecycleLock(
+        () => {
+          expect(
+            fs.existsSync(path.join(accountHome, ".nemoclaw", "state", "mcp-lifecycle-locks")),
+          ).toBe(true);
+        },
+        { pollIntervalMs: 5, timeoutMs: 250, corruptLockGraceMs: 5 },
+      );
+    } finally {
+      userInfoSpy.mockRestore();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });

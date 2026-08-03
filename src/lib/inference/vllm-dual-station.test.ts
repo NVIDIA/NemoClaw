@@ -97,7 +97,10 @@ vi.mock("./vllm-station-runtime-receipt", () => ({
 
 vi.mock("./vllm-api-key", () => ({
   ensureDualStationVllmApiKey: mocks.ensureApiKey,
+  ensureManagedVllmApiKey: mocks.ensureApiKey,
   loadDualStationVllmApiKey: mocks.loadApiKey,
+  loadManagedVllmApiKey: mocks.loadApiKey,
+  managedVllmStateDir: () => path.join(os.homedir(), ".nemoclaw"),
 }));
 
 import {
