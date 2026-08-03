@@ -66,6 +66,11 @@ including its supervisor environment, to immutable prepared authority before
 activation. The native boundary introduces no driver-specific environment
 policy.
 
+The first Docker-specific groundwork defines a private, monotonic cutover
+journal and a canonical launch-spec normalizer. Each surface is independently
+validated and remains dormant: no registered runtime provider imports either
+module, and neither changes sandbox creation or lifecycle behavior.
+
 ## Architectural disposition
 
 The coordinator deliberately lands as a dormant trust-boundary slice before a
