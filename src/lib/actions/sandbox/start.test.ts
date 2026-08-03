@@ -86,7 +86,9 @@ describe("startSandbox", () => {
     const result = await startSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
-    expect(h.recoverDockerDriverSandbox).toHaveBeenCalledWith("my-sandbox");
+    expect(h.recoverDockerDriverSandbox).toHaveBeenCalledWith("my-sandbox", {
+      readiness: "runtime-running",
+    });
     expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
     expect(h.recoverDockerDriverSandbox.mock.invocationCallOrder[0]).toBeLessThan(
       h.verifyGateway.mock.invocationCallOrder[0],
