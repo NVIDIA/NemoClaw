@@ -6,7 +6,6 @@ import { isDeepStrictEqual } from "node:util";
 
 import { cloneAndDeepFreeze } from "../../core/immutable";
 import { createBuiltInChannelManifestRegistry } from "../../messaging/channels/built-ins";
-import type { MessagingAgentId } from "../../messaging/manifest";
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { isValidName, isValidProviderName } from "../../name-validation";
 import {
@@ -254,7 +253,7 @@ function reboundMessaging(
   if (profile.agent === "langchain-deepagents-code") {
     fail("DCode clone unexpectedly produced a messaging plan");
   }
-  const agent = profile.agent as MessagingAgentId;
+  const agent = profile.agent;
   const manifestRegistry = createBuiltInChannelManifestRegistry();
   const plan = parseSandboxMessagingPlan(profile.messaging.plan, {
     sandboxName: destinationSandboxName,
