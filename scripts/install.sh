@@ -1318,7 +1318,9 @@ resolve_upstream_openshell_gateway_bin_for_service() {
   local -a gateway_bins=()
   exec_start="$(systemctl --user show openshell-gateway.service --property=ExecStart --value 2>/dev/null)" \
     || return 1
-  mapfile -t gateway_bins < <(
+  while IFS= read -r gateway_bin; do
+    gateway_bins+=("$gateway_bin")
+  done < <(
     printf '%s\n' "$exec_start" \
       | grep -oE 'path=[^ ;}]+' \
       | sed 's/^path=//' \
