@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { strictEqual } from "node:assert";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
@@ -75,12 +76,14 @@ describe("managed bootstrap envelope", () => {
   it("round-trips a valid near-limit request after base64 expansion", () => {
     const corporateCa = Buffer.alloc(128 * 1024, 0x61);
     const profile = managedStartupE2eProfile("openclaw", false, false);
+    strictEqual(profile.agentConfig.agent, "openclaw");
+    const agentConfig = profile.agentConfig;
     const encodedProfile = encodeManagedStartupProfile({
       ...profile,
       agentConfig: {
-        ...profile.agentConfig,
+        ...agentConfig,
         extraAgents: {
-          ...profile.agentConfig.extraAgents,
+          ...agentConfig.extraAgents,
           defaults: Object.fromEntries(
             Array.from({ length: 256 }, (_, index) => [
               `padding-${String(index).padStart(3, "0")}`,
