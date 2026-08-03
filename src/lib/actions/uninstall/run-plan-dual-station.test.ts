@@ -158,6 +158,7 @@ describe("dual-Station runtime uninstall", () => {
     fs.writeFileSync(apiKeyPath, "ab".repeat(32), { mode: 0o600 });
     fs.writeFileSync(receiptPath, "{}\n", { mode: 0o600 });
     fs.writeFileSync(selectedStatePath, "remove me\n");
+    const runDualStationRuntimeCleanup = vi.fn(() => ok());
 
     try {
       const result = runUninstallPlan(
@@ -174,7 +175,7 @@ describe("dual-Station runtime uninstall", () => {
               ? ok(JSON.stringify([{ name: "nemoclaw" }, { name: "sibling" }]))
               : ok(),
           runDocker: () => ok(),
-          runDualStationRuntimeCleanup: vi.fn(() => ok()),
+          runDualStationRuntimeCleanup,
         },
       );
 
@@ -183,6 +184,7 @@ describe("dual-Station runtime uninstall", () => {
       expect(fs.existsSync(receiptPath)).toBe(true);
       expect(fs.existsSync(bindingPath)).toBe(true);
       expect(fs.existsSync(selectedStatePath)).toBe(false);
+      expect(runDualStationRuntimeCleanup).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
