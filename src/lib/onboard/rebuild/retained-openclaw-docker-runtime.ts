@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SpawnSyncOptions } from "node:child_process";
+import path from "node:path";
+
 import { isIP } from "node:net";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
-import { ROOT } from "../../state/paths";
 import type { PreparedOpenClawLegacyImage } from "../build-context-stage";
 import type { DockerGpuPatchDeps } from "../docker-gpu-patch-types";
 import { resolveDockerGpuSandboxCreatePlan } from "../docker-gpu-sandbox-create-plan";
@@ -29,6 +30,7 @@ import { detectWslDockerDesktopStatus } from "../wsl-docker-desktop-gpu";
 const RETAINED_DOCKER_OPERATION_TIMEOUT_MS = 30_000;
 const RETAINED_DNS_PROBE_TIMEOUT_MS = 20_000;
 const RETAINED_DOCKER_PULL_TIMEOUT_MS = 60_000;
+const REPOSITORY_ROOT = path.resolve(__dirname, "..", "..", "..", "..");
 
 type DockerRunOptions = Record<string, unknown>;
 type DockerRunResult = NonNullable<ReturnType<typeof dockerSpawnSync>>;
@@ -123,7 +125,7 @@ export function createRetainedOpenClawDockerRuntime(
       );
     }
     const spawnOptions: SpawnSyncOptions = {
-      cwd: ROOT,
+      cwd: REPOSITORY_ROOT,
       encoding: "utf-8",
       env: image.dockerEnv,
       shell: false,

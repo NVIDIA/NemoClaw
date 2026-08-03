@@ -11,6 +11,8 @@ import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import type { DockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
+import type { PreparedOpenClawLegacyImageFinalization } from "./build-context-stage";
+
 import {
   isImmutableDockerImageId,
   queryOpenShellDockerSandboxContainers,
@@ -19,6 +21,7 @@ import {
   bindRetainedOpenClawGpuRoute,
   createRetainedOpenClawDockerRuntime,
 } from "./rebuild/retained-openclaw-docker-runtime";
+export { bindRetainedOpenClawGpuRoute, createRetainedOpenClawDockerRuntime };
 import type {
   ManagedBootstrapAdapter,
   ManagedBootstrapAgentIdentity,
@@ -75,7 +78,8 @@ export interface SandboxGpuCreateFlowInput {
   requiredUlimits?: readonly DockerUlimit[] | null;
 }
 
-export interface SandboxGpuCreateFlowDeps {
+export interface SandboxGpuCreateFlowDeps
+  extends Pick<DockerGpuPatchDeps, "dockerCapture" | "dockerRun" | "dockerStop" | "dockerLogs"> {
   runOpenshell: RunOpenshell;
   runCaptureOpenshell: RunCaptureOpenshell;
   sleep: Sleep;
@@ -126,6 +130,14 @@ function resolveCompatibilityRetryImageId(
   return retainedImageId;
 }
 
+export function resolveCreatedSandboxRegistryImageRef(
+  finalization: PreparedOpenClawLegacyImageFinalization | null,
+  candidates: readonly (string | null | undefined)[],
+): string | null {
+  if (finalization) return finalization.registryImageRef;
+  return candidates.find((candidate): candidate is string => Boolean(candidate)) ?? null;
+}
+
 function abortUnusedRetainedImage(input: SandboxGpuCreateFlowInput): void {
   const preparedImage = input.prebuild.preparedOpenClawLegacyImage;
   if (!preparedImage) return;
@@ -167,11 +179,7 @@ export async function runSandboxGpuCreateFlow(
       return {
         retainedDockerRuntime,
         effectiveDeps,
-        attemptRunner: createSandboxGpuCreateAttemptRunner(
-          input,
-          effectiveDeps,
-          retainedDockerRuntime?.dockerDesktopWsl(),
-        ),
+        attemptRunner: createSandboxGpuCreateAttemptRunner(input, effectiveDeps),
       };
     } catch (error) {
       abortUnusedRetainedImage(input);
@@ -185,97 +193,97 @@ export async function runSandboxGpuCreateFlow(
   }>;
   try {
     gpuCreateOutcome = await sandboxGpuCreateAttempt.executeSandboxGpuCreatePlan(
-    input.gpuRoutePlan,
-    {
-      runAttempt: attemptRunner.runAttempt,
-      captureNativeFailure: (failure) => {
-        const routeAdapter = adaptDockerGpuRouteForPatch(failure.route);
-        const diagnostics = collectDockerGpuPatchDiagnostics(
-          input.sandboxName,
-          {
-            error: failure.error,
-            additionalSummaryLines: routeAdapter.additionalSummaryLines,
-          },
-          effectiveDeps,
-        );
-        if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
-      },
-      cleanupNativeFailure: () =>
-        sandboxGpuCreateAttempt.cleanupNativeGpuAttemptForFallback(input.sandboxName, {
-          runOpenshell: effectiveDeps.runOpenshell,
-          queryContainers: (sandboxName) =>
-            queryOpenShellDockerSandboxContainers(sandboxName, effectiveDeps),
-          sleep: effectiveDeps.sleep,
-        }),
-      prepareCompatibilityAttempt: async () => {
-        if (!input.compatibilityPolicyPath) {
-          throw new Error("Compatibility retry policy was not materialized.");
-        }
-        const nativeRuntimeSnapshot = attemptRunner.state.nativeRuntimeSnapshot;
-        if (attemptRunner.managedRouting) {
-          const prepared = attemptRunner.managedRouting.prepareCompatibilityLaunch({
-            createArgs: input.prebuild.createArgs,
-            currentRegistryImageRef: registryImageRef,
-            prebuildImageId: input.prebuild.imageId,
-            allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
-            compatibilityPolicyPath: input.compatibilityPolicyPath,
-            startupCommand: input.sandboxStartupCommand,
-            runtimeSnapshot: nativeRuntimeSnapshot,
-          });
-          attemptRunner.state.compatibilityArgv = [...prepared.createArgv];
-          registryImageRef = prepared.registryImageRef;
-        } else {
-          const imageId = resolveCompatibilityRetryImageId(
-            input.prebuild,
-            nativeRuntimeSnapshot?.imageId ?? null,
-          );
-          if (
-            !registryImageRef &&
-            nativeRuntimeSnapshot?.bookkeepingImageRef &&
-            !isImmutableDockerImageId(nativeRuntimeSnapshot.bookkeepingImageRef)
-          ) {
-            registryImageRef = nativeRuntimeSnapshot.bookkeepingImageRef;
-          }
-          const compatibilityArgs = renderCompatibilityFallbackCreateArgs(
-            input.prebuild.createArgs,
+      input.gpuRoutePlan,
+      {
+        runAttempt: attemptRunner.runAttempt,
+        captureNativeFailure: (failure) => {
+          const routeAdapter = adaptDockerGpuRouteForPatch(failure.route);
+          const diagnostics = collectDockerGpuPatchDiagnostics(
+            input.sandboxName,
             {
-              imageRef: imageId,
+              error: failure.error,
+              additionalSummaryLines: routeAdapter.additionalSummaryLines,
+            },
+            effectiveDeps,
+          );
+          if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
+        },
+        cleanupNativeFailure: () =>
+          sandboxGpuCreateAttempt.cleanupNativeGpuAttemptForFallback(input.sandboxName, {
+            runOpenshell: effectiveDeps.runOpenshell,
+            queryContainers: (sandboxName) =>
+              queryOpenShellDockerSandboxContainers(sandboxName, effectiveDeps),
+            sleep: effectiveDeps.sleep,
+          }),
+        prepareCompatibilityAttempt: async () => {
+          if (!input.compatibilityPolicyPath) {
+            throw new Error("Compatibility retry policy was not materialized.");
+          }
+          const nativeRuntimeSnapshot = attemptRunner.state.nativeRuntimeSnapshot;
+          if (attemptRunner.managedRouting) {
+            const prepared = attemptRunner.managedRouting.prepareCompatibilityLaunch({
+              createArgs: input.prebuild.createArgs,
+              currentRegistryImageRef: registryImageRef,
+              prebuildImageId: input.prebuild.imageId,
               allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
               compatibilityPolicyPath: input.compatibilityPolicyPath,
-            },
-          );
-          attemptRunner.state.compatibilityArgv = effectiveDeps.openshellArgv([
-            "sandbox",
-            "create",
-            ...compatibilityArgs,
-            "--",
-            ...input.sandboxStartupCommand,
-          ]);
-        }
-        if (attemptRunner.state.compatibilityArgv.length === 0) {
-          throw new Error("Compatibility sandbox create executable is missing.");
-        }
+              startupCommand: input.sandboxStartupCommand,
+              runtimeSnapshot: nativeRuntimeSnapshot,
+            });
+            attemptRunner.state.compatibilityArgv = [...prepared.createArgv];
+            registryImageRef = prepared.registryImageRef;
+          } else {
+            const imageId = resolveCompatibilityRetryImageId(
+              input.prebuild,
+              nativeRuntimeSnapshot?.imageId ?? null,
+            );
+            if (
+              !registryImageRef &&
+              nativeRuntimeSnapshot?.bookkeepingImageRef &&
+              !isImmutableDockerImageId(nativeRuntimeSnapshot.bookkeepingImageRef)
+            ) {
+              registryImageRef = nativeRuntimeSnapshot.bookkeepingImageRef;
+            }
+            const compatibilityArgs = renderCompatibilityFallbackCreateArgs(
+              input.prebuild.createArgs,
+              {
+                imageRef: imageId,
+                allowUnbuiltSource: attemptRunner.state.allowUnbuiltCompatibilitySource,
+                compatibilityPolicyPath: input.compatibilityPolicyPath,
+              },
+            );
+            attemptRunner.state.compatibilityArgv = effectiveDeps.openshellArgv([
+              "sandbox",
+              "create",
+              ...compatibilityArgs,
+              "--",
+              ...input.sandboxStartupCommand,
+            ]);
+          }
+          if (attemptRunner.state.compatibilityArgv.length === 0) {
+            throw new Error("Compatibility sandbox create executable is missing.");
+          }
+        },
+        activateCompatibilityAttempt: async () => {
+          if (!input.managedBootstrap) {
+            await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(
+              input.provider,
+              input.sandboxGpuConfig,
+              {
+                dockerDriverGateway: input.dockerDriverGateway,
+                selectedRoute: "compatibility",
+                gatewayPort: input.gatewayPort,
+                log: console.log,
+                reverifyBridgeReachability: retainedDockerRuntime
+                  ? () => retainedDockerRuntime.reverifyBridgeReachability(input.gatewayPort)
+                  : undefined,
+              },
+            );
+          }
+          input.sandboxGpuConfig.sandboxGpuProof = null;
+        },
+        traceEvent: addTraceEvent,
       },
-      activateCompatibilityAttempt: async () => {
-        if (!input.managedBootstrap) {
-          await dockerGpuLocalInference.enforceDockerGpuPatchPreserveNetwork(
-            input.provider,
-            input.sandboxGpuConfig,
-            {
-              dockerDriverGateway: input.dockerDriverGateway,
-              selectedRoute: "compatibility",
-              gatewayPort: input.gatewayPort,
-              log: console.log,
-              reverifyBridgeReachability: retainedDockerRuntime
-                ? () => retainedDockerRuntime.reverifyBridgeReachability(input.gatewayPort)
-                : undefined,
-            },
-          );
-        }
-        input.sandboxGpuConfig.sandboxGpuProof = null;
-      },
-      traceEvent: addTraceEvent,
-    },
     );
   } catch (error) {
     abortUnusedRetainedImage(input);

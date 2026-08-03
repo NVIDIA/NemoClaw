@@ -8,7 +8,7 @@ import {
   getDockerGpuPatchNetworkMode,
   printDockerGpuProofFailure,
 } from "./docker-gpu-patch";
-import type { DockerGpuPatchMode } from "./docker-gpu-patch-types";
+import type { DockerGpuPatchDeps, DockerGpuPatchMode } from "./docker-gpu-patch-types";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import type { ManagedBootstrapRuntimePatch } from "./managed-bootstrap/runtime-create";
@@ -390,6 +390,9 @@ export type GpuSandboxAfterReadyOptions = {
   reportGpuProofFailure?: boolean;
   selectedMode: ManagedBootstrapRuntimePatch["selectedMode"];
   runCaptureOpenshell: (args: string[], opts?: Record<string, unknown>) => string;
+  dockerCapture?: DockerGpuPatchDeps["dockerCapture"];
+  dockerLogs?: DockerGpuPatchDeps["dockerLogs"];
+
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   log?: (message: string) => void;

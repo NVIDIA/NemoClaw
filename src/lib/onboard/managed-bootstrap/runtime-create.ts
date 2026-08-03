@@ -20,12 +20,12 @@ export interface ManagedBootstrapRuntimeCommandResult {
 }
 
 export interface ManagedBootstrapRuntimeDependencies {
-  readonly runCaptureOpenshell?: (args: string[], options?: Record<string, unknown>) => string;
-  readonly runOpenshell?: (
+  readonly runCaptureOpenshell: (args: string[], options?: Record<string, unknown>) => string;
+  readonly runOpenshell: (
     args: string[],
     options?: Record<string, unknown>,
   ) => ManagedBootstrapRuntimeCommandResult;
-  readonly sleep?: (seconds: number) => void;
+  readonly sleep: (seconds: number) => void;
 }
 
 export type ManagedBootstrapRuntimeRoute = "none" | "native" | "compatibility";

@@ -273,6 +273,8 @@ async function rebuildSandboxUnlocked(
         return;
       }
 
+      const preparedImageForAbort = preparedImage;
+
       const mcpPreparation = await runRebuildDestroyPhase({
         sandboxName,
         sandboxEntry,
@@ -341,8 +343,8 @@ async function rebuildSandboxUnlocked(
           }
           return { ok: true };
         },
-        abortPreparedImageRecreate: preparedImage
-          ? () => abortPreparedImageRecreate(preparedImage)
+        abortPreparedImageRecreate: preparedImageForAbort
+          ? () => abortPreparedImageRecreate(preparedImageForAbort)
           : undefined,
         onDeleted: () => {
           sandboxStillExists = false;
