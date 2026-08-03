@@ -604,7 +604,8 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       "phase-4-verify-primary-session-non-owner",
     );
     await artifacts.writeJson("phase-4-pairing-inference-request-deltas.json", {
-      cloneAuthenticatedCount: clonePairingRequests.filter((request) => request.auth === "ok").length,
+      cloneAuthenticatedCount: clonePairingRequests.filter((request) => request.auth === "ok")
+        .length,
       cloneSessionOwned: true,
       primaryPoisonCount: primaryPairingRequests.length,
       primarySessionOwned: false,
