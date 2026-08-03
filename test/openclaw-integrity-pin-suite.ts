@@ -256,6 +256,16 @@ function runInstallBlock(
   const auditExceptionPolicySha256 = createHash("sha256")
     .update(auditExceptionPolicy)
     .digest("hex");
+  const auditExceptionsByGraph: Record<string, string[]> = {};
+  for (const entry of (
+    JSON.parse(auditExceptionPolicy) as {
+      exceptions?: Array<{ advisory?: string; graph?: string }>;
+    }
+  ).exceptions ?? []) {
+    if (!entry.advisory || !entry.graph) continue;
+    (auditExceptionsByGraph[entry.graph] ??= []).push(entry.advisory);
+  }
+  for (const advisories of Object.values(auditExceptionsByGraph)) advisories.sort();
   fs.mkdirSync(path.dirname(mcporterBin), { recursive: true });
   fs.mkdirSync(openclawRuntime, { recursive: true });
   fs.mkdirSync(mcporterRuntime, { recursive: true });
@@ -322,7 +332,10 @@ function runInstallBlock(
       "const value = (name) => args[args.indexOf(name) + 1];",
       "const counts = { info: 0, low: 0, moderate: 0, high: 0, critical: 0 };",
       "const report = { auditReportVersion: 2, vulnerabilities: {}, metadata: { vulnerabilities: counts } };",
-      `const policy = { schemaVersion: 1, graph: value("--graph"), blockingThreshold: value("--threshold"), exceptionPolicySha256: ${JSON.stringify(auditExceptionPolicySha256)}, reported: counts, status: "clean", acceptedAdvisories: [], unacceptedBlockingAdvisories: [] };`,
+      `const acceptedByGraph = ${JSON.stringify(auditExceptionsByGraph)};`,
+      'const graph = value("--graph");',
+      "const acceptedAdvisories = acceptedByGraph[graph] ?? [];",
+      `const policy = { schemaVersion: 1, graph, blockingThreshold: value("--threshold"), exceptionPolicySha256: ${JSON.stringify(auditExceptionPolicySha256)}, reported: counts, status: acceptedAdvisories.length > 0 ? "accepted-exceptions" : "clean", acceptedAdvisories, unacceptedBlockingAdvisories: [] };`,
       'if (args.includes("--report")) fs.writeFileSync(value("--report"), `${JSON.stringify(report)}\\n`);',
       'if (args.includes("--result")) fs.writeFileSync(value("--result"), `${JSON.stringify(policy)}\\n`);',
       "console.log(`npm audit policy ${policy.graph}: clean`);",
