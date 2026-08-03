@@ -21,13 +21,17 @@ const CLEAN_NODE_COMMAND = [
   "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
   "/usr/local/bin/node",
 ] as const;
-const LOADER_ENV_OVERRIDES = [
+const PRE_ENTRYPOINT_ENV_OVERRIDES = [
   "--env",
   "LD_AUDIT=",
   "--env",
   "LD_LIBRARY_PATH=",
   "--env",
   "LD_PRELOAD=",
+  "--env",
+  "NODE_OPTIONS=",
+  "--env",
+  "NODE_PATH=",
 ] as const;
 
 function sharedStateTransaction(): DockerManagedBootstrapSharedStateTransaction {
@@ -49,13 +53,13 @@ function nodeHelperCalls(deps: DockerGpuPatchDeps): readonly (readonly string[])
     .filter((args) => args.includes("/usr/local/bin/node"));
 }
 
-function expectLoaderEnvironmentNeutralized(args: readonly string[]): void {
-  expect(args).toEqual(expect.arrayContaining([...LOADER_ENV_OVERRIDES]));
+function expectPreEntrypointEnvironmentNeutralized(args: readonly string[]): void {
+  expect(args).toEqual(expect.arrayContaining([...PRE_ENTRYPOINT_ENV_OVERRIDES]));
   expect(args).not.toContain("BASH_FUNC_*");
 }
 
 function expectCleanRunNodeHelper(args: readonly string[]): void {
-  expectLoaderEnvironmentNeutralized(args);
+  expectPreEntrypointEnvironmentNeutralized(args);
   const nodeIndex = args.indexOf("/usr/local/bin/node");
   expect(nodeIndex).toBeGreaterThan(0);
   const entrypointIndex = args.indexOf("--entrypoint");
@@ -66,7 +70,7 @@ function expectCleanRunNodeHelper(args: readonly string[]): void {
 }
 
 function expectCleanExecNodeHelper(args: readonly string[]): void {
-  expectLoaderEnvironmentNeutralized(args);
+  expectPreEntrypointEnvironmentNeutralized(args);
   const nodeIndex = args.indexOf("/usr/local/bin/node");
   expect(nodeIndex).toBeGreaterThan(0);
   expect(args.slice(nodeIndex - CLEAN_NODE_COMMAND.length + 1, nodeIndex + 1)).toEqual(

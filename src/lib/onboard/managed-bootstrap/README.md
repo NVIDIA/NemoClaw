@@ -4,8 +4,8 @@
 # Managed bootstrap protocol
 
 This directory defines a dormant, driver-neutral transaction contract and its
-first driver adapter. It does not register a runtime provider or change sandbox
-creation, onboarding, snapshot, clone, or restore behavior.
+first driver adapter. It does not register a runtime provider, activate managed
+bootstrap, or change the current user-visible lifecycle paths.
 
 The protocol binds one random bootstrap identity to:
 
@@ -77,14 +77,15 @@ identity-derived staging name while the original remains running. It stages the
 or otherwise mutating the original. Only after the coordinator durably records
 that complete prepared authority may activation journal both full runtime IDs,
 all three names, both launch-spec hashes, image identity, profile fingerprint,
-and sandbox ID and then enter the destructive cutover. Rollback publishes
-`rollback-authorized` before exact replacement deletion; commit publishes
-`shared-state-committed` before exact backup deletion. Cleanup is bound to full
-runtime IDs. Mutable OpenShell names are read only to detect ownership reuse,
-and unsafe name-only deletion returns a typed retention error. The dormant
-adapter assumes the protocol's single coordinator; multi-process
-lease/arbitration remains an explicit production-activation gate. Activation
-must also inject the selected gateway's canonical state root.
+and sandbox ID and then enter the destructive cutover. Post-cutover rollback
+publishes `rollback-authorized` before exact replacement deletion; pre-cutover
+staged cleanup removes only the exact prepared replacement without that journal
+transition. Commit publishes `shared-state-committed` before exact backup
+deletion. Cleanup is bound to full runtime IDs. Mutable OpenShell names are read
+only to detect ownership reuse, and unsafe name-only deletion returns a typed
+retention error. The dormant adapter assumes the protocol's single coordinator;
+multi-process lease/arbitration remains an explicit production-activation gate.
+Activation must also inject the selected gateway's canonical state root.
 
 ## Architectural disposition
 
@@ -101,14 +102,15 @@ This is executable, bounded groundwork rather than an untested placeholder.
 failure rollback for OpenClaw, Hermes, and LangChain Deep Agents Code through an
 MXC-named fake driver. `runtime-provider-source-shape.test.ts` separately
 inventories the protocol, provider, and image-packaging surfaces and proves that
-production activation cannot import or package the protocol yet. The later
-activation slice must add a registered-provider contract test for the same
-transaction before removing those dormancy assertions.
+production activation does not import or install the protocol into a runtime
+image yet. The later activation slice must add a registered-provider contract
+test for the same transaction before removing those dormancy assertions.
 
 The native entrypoint source is intentionally not compiled into production
-artifacts, and neither image-owned source is packaged or selected yet. No
-production TypeScript module imports this protocol or the Docker adapter. The
-current image definitions do not package `nemoclaw-managed-startup-hold`,
+artifacts, and neither image-owned source is installed or selected in a runtime
+image yet. No production activation or provider module outside this dormant
+directory imports the protocol or Docker adapter. The current image definitions
+do not package `nemoclaw-managed-startup-hold`,
 `managed-startup-image-runtime.cjs`, or the shared-state bootstrap modes consumed
 by the adapter. A later provider integration must compile and verify the
 freestanding entrypoint natively for amd64 and arm64 in every agent image. It
