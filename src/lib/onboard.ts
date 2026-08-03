@@ -4702,6 +4702,7 @@ module.exports = {
   buildControlUiUrls,
 
   startGateway,
+  startDockerDriverGateway,
   findAvailableDashboardPort,
   startGatewayForRecovery,
   openshellArgv,

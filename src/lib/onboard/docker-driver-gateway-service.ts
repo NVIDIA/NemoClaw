@@ -820,18 +820,6 @@ export async function startPackageManagedDockerDriverGateway({
   validatePortOwnerForOpenShellGatewayUserServiceStart,
   verifySandboxBridgeGatewayReachableOrExit,
 }: PackageManagedDockerDriverGatewayOptions): Promise<boolean> {
-  try {
-    if (!hasService()) return false;
-  } catch (error) {
-    if (error instanceof OpenShellGatewayServiceTrustError) throw error;
-    console.warn(
-      `  OpenShell gateway managed service could not be inspected (${formatError(error)}); using standalone fallback.`,
-    );
-    if (managedServiceLogCommand) console.warn(`  Logs: ${managedServiceLogCommand}`);
-    return false;
-  }
-
-  console.log("  Starting OpenShell Docker-driver gateway via managed service...");
   const stopBeforeStandaloneFallback = () => {
     try {
       const stopped = stopService();
@@ -854,6 +842,19 @@ export async function startPackageManagedDockerDriverGateway({
       );
     }
   };
+  try {
+    if (!hasService()) return false;
+  } catch (error) {
+    if (error instanceof OpenShellGatewayServiceTrustError) throw error;
+    console.warn(
+      `  OpenShell gateway managed service could not be inspected (${formatError(error)}); using standalone fallback.`,
+    );
+    if (managedServiceLogCommand) console.warn(`  Logs: ${managedServiceLogCommand}`);
+    stopBeforeStandaloneFallback();
+    return false;
+  }
+
+  console.log("  Starting OpenShell Docker-driver gateway via managed service...");
   let serviceStart: OpenShellGatewayUserServiceStartResult;
   try {
     serviceStart = startService({

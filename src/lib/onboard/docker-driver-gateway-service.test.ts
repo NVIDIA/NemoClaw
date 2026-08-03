@@ -671,6 +671,11 @@ describe("docker-driver-gateway-service", () => {
 
   it("uses standalone fallback when managed service inspection fails (#8104)", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const stopService = vi.fn(() => ({
+      attempted: true,
+      standaloneFallbackAllowed: false,
+      stopped: true,
+    }));
 
     await expect(
       startPackageManagedDockerDriverGateway({
@@ -686,10 +691,11 @@ describe("docker-driver-gateway-service", () => {
         runCaptureOpenshell: vi.fn(),
         skipSandboxBridgeReachability: false,
         startOpenShellGatewayUserService: vi.fn(),
-        stopOpenShellGatewayUserService: vi.fn(),
+        stopOpenShellGatewayUserService: stopService,
         verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
       }),
     ).resolves.toBe(false);
+    expect(stopService).toHaveBeenCalledOnce();
     expect(warn.mock.calls.flat().join("\n")).toContain("openshell-gateway.err.log");
   });
 
