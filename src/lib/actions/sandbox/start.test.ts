@@ -45,6 +45,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
   const verifyGateway = vi.fn<NonNullable<SandboxStartDeps["verifyGateway"]>>(() =>
     Promise.resolve(),
   );
+  const restoreStartupState = vi.fn<NonNullable<SandboxStartDeps["restoreStartupState"]>>();
   const log = vi.fn<(message: string) => void>();
   const runtimeProviders = createRuntimeProviderBundleRegistry([
     [
@@ -62,6 +63,7 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
   const deps: SandboxStartDeps = {
     getSandbox,
     runtimeProviders,
+    restoreStartupState,
     verifyGateway,
     log,
     ...overrides,
@@ -74,13 +76,14 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
     isDockerRuntimeDown,
     log,
     printDockerRuntimeDownGuidance,
-    verifyGateway,
     recoverDockerDriverSandbox,
+    restoreStartupState,
+    verifyGateway,
   };
 }
 
 describe("startSandbox", () => {
-  it("starts the stopped container and then probes gateway health (#6026)", async () => {
+  it("restores startup state before probing readiness after a stopped container starts (#8112)", async () => {
     const h = harness();
 
     const result = await startSandbox("my-sandbox", h.deps);
@@ -89,8 +92,12 @@ describe("startSandbox", () => {
     expect(h.recoverDockerDriverSandbox).toHaveBeenCalledWith("my-sandbox", {
       readiness: "runtime-running",
     });
+    expect(h.restoreStartupState).toHaveBeenCalledWith("my-sandbox");
     expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
     expect(h.recoverDockerDriverSandbox.mock.invocationCallOrder[0]).toBeLessThan(
+      h.restoreStartupState.mock.invocationCallOrder[0],
+    );
+    expect(h.restoreStartupState.mock.invocationCallOrder[0]).toBeLessThan(
       h.verifyGateway.mock.invocationCallOrder[0],
     );
   });
@@ -162,6 +169,7 @@ describe("startSandbox", () => {
     expect(result.exitCode).toBe(1);
     expect(result.message).toContain("openshell-my-sandbox");
     expect(result.message).toContain("125");
+    expect(h.restoreStartupState).not.toHaveBeenCalled();
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
@@ -191,6 +199,7 @@ describe("startSandbox", () => {
       retryCommand: "start",
     });
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
+    expect(h.restoreStartupState).not.toHaveBeenCalled();
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
@@ -208,6 +217,7 @@ describe("startSandbox", () => {
     expect(result.exitCode).toBe(1);
     expect(result.message).toContain("no Docker container labeled");
     expect(result.message).toContain("rebuild");
+    expect(h.restoreStartupState).not.toHaveBeenCalled();
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
@@ -220,6 +230,7 @@ describe("startSandbox", () => {
     expect(result.exitCode).toBe(1);
     expect(result.message).toContain("not registered");
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
+    expect(h.restoreStartupState).not.toHaveBeenCalled();
   });
 
   it("refuses non-direct drivers instead of guessing at container control (#6026)", async () => {
@@ -233,6 +244,7 @@ describe("startSandbox", () => {
     expect(result.message).toContain("does not authorize 'start' mutation");
     expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
+    expect(h.restoreStartupState).not.toHaveBeenCalled();
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 
@@ -251,6 +263,7 @@ describe("startSandbox", () => {
     expect(h.findLabeledSandboxContainers).not.toHaveBeenCalled();
     expect(h.dockerUnpause).not.toHaveBeenCalled();
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
+    expect(h.restoreStartupState).not.toHaveBeenCalled();
     expect(h.verifyGateway).not.toHaveBeenCalled();
   });
 

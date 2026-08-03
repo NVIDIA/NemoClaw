@@ -131,12 +131,12 @@ Start it again later:
 $$nemoclaw <sandbox-name> start
 ```
 
-After Docker reports the existing container as running, NemoClaw runs the selected agent's readiness checks.
 <AgentOnly variant="openclaw,hermes">
-NemoClaw repairs and verifies the in-sandbox gateway and host forwards before the command reports success.
+After Docker reports the existing container as running, NemoClaw checks the selected agent's managed startup state and recovers missing processes when needed.
+NemoClaw completes this recovery before its final OpenShell readiness and host-forward checks.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-NemoClaw verifies the managed terminal runtime before the command reports success.
+After Docker reports the existing container as running, NemoClaw verifies the managed terminal runtime before the command reports success.
 </AgentOnly>
 Refer to [`$$nemoclaw <name> stop`](../../reference/commands#$$nemoclaw-name-stop) and [`$$nemoclaw <name> start`](../../reference/commands#$$nemoclaw-name-start) for details.
 Use [`$$nemoclaw <name> destroy`](../../reference/commands#$$nemoclaw-name-destroy) when you want to delete the sandbox instead.

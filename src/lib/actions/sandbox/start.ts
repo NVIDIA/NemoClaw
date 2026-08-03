@@ -18,17 +18,24 @@ function verifyGateway(sandboxName: string): Promise<void> {
   return connectSandbox(sandboxName, { probeOnly: true });
 }
 
+function restoreStartupState(sandboxName: string): void {
+  const { restoreSandboxStartupState } = require("./connect") as typeof import("./connect");
+  restoreSandboxStartupState(sandboxName);
+}
+
 export interface SandboxStartDeps {
   environment?: NodeJS.ProcessEnv;
   getSandbox?: typeof registry.getSandbox;
   runtimeProviders?: RuntimeProviderBundleRegistry;
+  restoreStartupState?: (sandboxName: string) => void;
   verifyGateway?: (sandboxName: string) => Promise<void>;
   log?: (message: string) => void;
 }
 
 /**
  * Restart a stopped sandbox through the lifecycle facet bound to its durable
- * provider identity, then restore gateway health and host forwards.
+ * provider identity, then restore startup state before verifying readiness and
+ * host forwards.
  */
 export async function startSandbox(
   sandboxName: string,
@@ -55,7 +62,11 @@ export async function startSandbox(
   const result = resolved.lifecycle.start(input);
   if (result.exitCode !== 0) return result;
 
-  log("  Checking gateway health and host forwards…");
-  await resolved.lifecycle.verifyStarted(input, deps.verifyGateway ?? verifyGateway);
+  await resolved.lifecycle.verifyStarted(input, async (name) => {
+    log("  Restoring sandbox startup state…");
+    (deps.restoreStartupState ?? restoreStartupState)(name);
+    log("  Checking gateway health and host forwards…");
+    await (deps.verifyGateway ?? verifyGateway)(name);
+  });
   return { exitCode: 0 };
 }
