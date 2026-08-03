@@ -27,6 +27,13 @@ describe("MCP tool discovery image contract", () => {
       hono: "4.12.34",
       "ip-address": "10.3.1",
     });
+    expect(lock.packages["node_modules/@hono/node-server"]).toMatchObject({
+      version: "2.0.11",
+      resolved: "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz",
+      integrity:
+        "sha512-bjD221KPLoJTWUwso1J6fGKiTXEUFedG/s0visavY4zakFPkeGURMRNly+FhBHs7T8Dz4qHaZIMX9ZoJHSJtKA==",
+      engines: { node: ">=20" },
+    });
     expect(lock.packages["node_modules/fast-uri"]).toMatchObject({
       version: "3.1.5",
       resolved: "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz",
@@ -47,9 +54,14 @@ describe("MCP tool discovery image contract", () => {
         "sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==",
       engines: { node: ">=16.9.0" },
     });
-    expect(review).toContain("`fast-uri@3.1.5`");
-    expect(review).toContain("`hono@4.12.34`");
-    expect(review).toContain("`ip-address@10.3.1`");
+    for (const reviewedPackage of [
+      "@hono/node-server@2.0.11",
+      "fast-uri@3.1.5",
+      "hono@4.12.34",
+      "ip-address@10.3.1",
+    ]) {
+      expect(review).toContain(`\`${reviewedPackage}\``);
+    }
   });
 
   it.each(

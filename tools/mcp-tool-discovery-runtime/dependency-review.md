@@ -36,8 +36,13 @@ The `4.12.34` replacement is outside the affected range.
 also contains the corrections for `GHSA-4xrf-jv44-h6hh` and
 `GHSA-22jq-vg5j-6vgg`.
 
-The reviewed replacement identities are:
+The reviewed override identities are:
 
+- `@hono/node-server@2.0.11`
+  - Registry tarball: `https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz`
+  - Integrity: `sha512-bjD221KPLoJTWUwso1J6fGKiTXEUFedG/s0visavY4zakFPkeGURMRNly+FhBHs7T8Dz4qHaZIMX9ZoJHSJtKA==`
+  - License: MIT
+  - Node.js engine: `>=20`
 - `fast-uri@3.1.5`
   - Registry tarball: `https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz`
   - Integrity: `sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==`
