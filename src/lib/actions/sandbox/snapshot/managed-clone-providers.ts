@@ -513,6 +513,11 @@ export function provisionManagedCloneProviderTransaction(
     readonly runOpenshell: ManagedCloneProviderRunner;
     readonly readSandbox: ReadSandbox;
     readonly captureSnapshotRestoreAuthority?: CaptureSnapshotRestoreAuthority;
+    /** Provider-neutral apply-time credential substitution (for host brokers). */
+    readonly resolveCredential?: (
+      binding: ManagedCloneProviderBinding,
+      environment: NodeJS.ProcessEnv,
+    ) => string | null | undefined;
   },
 ): ManagedCloneProviderTransactionReceipt {
   const environment = input.environment ?? process.env;
@@ -538,7 +543,12 @@ export function provisionManagedCloneProviderTransaction(
       if (current.kind !== "missing") {
         fail(`provider '${provider.binding.providerName}' appeared after preflight`);
       }
-      const credential = environment[provider.binding.providerEnvKey]?.replace(/\r/gu, "").trim();
+      const resolved = input.resolveCredential?.(provider.binding, environment);
+      const credential = (
+        resolved === undefined ? environment[provider.binding.providerEnvKey] : resolved
+      )
+        ?.replace(/\r/gu, "")
+        .trim();
       if (!credential) {
         fail(`credential ${provider.binding.providerEnvKey} disappeared before provider creation`);
       }

@@ -179,6 +179,25 @@ describe("OpenShell policy boundary package contract", () => {
     ).toBe(false);
   });
 
+  it("ships the Hermes host broker with its canonical sandbox-name boundary", () => {
+    expect(packageFiles(repoRoot)).toContain("agents/hermes/host/");
+    for (const file of [
+      "managed-tool-gateway-matrix.json",
+      "runtime-refresh-credentials.ts",
+      "tool-gateway-broker.ts",
+      "tool-gateway-control-contract.ts",
+    ]) {
+      expect(fs.existsSync(path.join(repoRoot, "agents", "hermes", "host", file))).toBe(true);
+    }
+
+    const controlContract =
+      require("../../agents/hermes/host/tool-gateway-control-contract.ts") as {
+        isValidName: (value: unknown) => boolean;
+      };
+    expect(controlContract.isValidName("packaged-hermes-sandbox")).toBe(true);
+    expect(controlContract.isValidName("../packaged-hermes-sandbox")).toBe(false);
+  });
+
   it("ships an out-of-tree runtime sandbox-policy schema validator", { timeout: 90_000 }, () => {
     const productionDependencyTree = spawnSync(
       "npm",
