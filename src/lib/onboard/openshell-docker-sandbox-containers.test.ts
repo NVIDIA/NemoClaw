@@ -8,11 +8,19 @@ const IMAGE_ID = `sha256:${"a".repeat(64)}`;
 const BOOKKEEPING_IMAGE_REF = "openshell/sandbox-from:alpha";
 const EMPTY_RUNTIME_FIELDS = [IMAGE_ID, BOOKKEEPING_IMAGE_REF, "", null, [], "runc"];
 
-function querySnapshot(fields: unknown) {
+function querySnapshot(fields: unknown, nvidiaVisibleDevices?: string) {
   const dockerRun = vi
     .fn()
     .mockReturnValueOnce({ status: 0, stdout: "container-a\n", stderr: "" })
-    .mockReturnValueOnce({ status: 0, stdout: JSON.stringify(fields), stderr: "" });
+    .mockReturnValueOnce({ status: 0, stdout: JSON.stringify(fields), stderr: "" })
+    .mockReturnValueOnce({
+      status: 0,
+      stdout:
+        nvidiaVisibleDevices === undefined
+          ? ""
+          : `NVIDIA_VISIBLE_DEVICES=${nvidiaVisibleDevices}\n`,
+      stderr: "",
+    });
   return {
     dockerRun,
     result: queryOpenShellDockerSandboxRuntimeSnapshot("alpha", { dockerRun }),
@@ -31,6 +39,7 @@ describe("queryOpenShellDockerSandboxRuntimeSnapshot", () => {
       deviceRequests: null,
       devices: [],
       runtime: "runc",
+      nvidiaVisibleDevices: null,
       nativeGpuAttachmentState: "absent",
       containerId: "container-a",
     });
@@ -114,18 +123,59 @@ describe("queryOpenShellDockerSandboxRuntimeSnapshot", () => {
     ],
     ["NVIDIA runtime", null, [], "nvidia"],
   ])("detects a host-configured GPU attachment from %s", (_label, requests, devices, runtime) => {
-    const { result } = querySnapshot([
-      IMAGE_ID,
-      BOOKKEEPING_IMAGE_REF,
-      "",
-      requests,
-      devices,
-      runtime,
-    ]);
+    const { result } = querySnapshot(
+      [IMAGE_ID, BOOKKEEPING_IMAGE_REF, "", requests, devices, runtime],
+      runtime === "nvidia" ? "all" : undefined,
+    );
 
     expect(result).toMatchObject({
       ok: true,
       nativeGpuAttachmentState: "present",
+    });
+  });
+
+  it.each([
+    ["all devices", "all", "present"],
+    ["an exact device list", "0,GPU-live-1", "present"],
+    ["no devices", "none", "absent"],
+    ["runtime bypass", "void", "absent"],
+  ] as const)("reads only NVIDIA_VISIBLE_DEVICES for %s", (_label, value, expectedState) => {
+    const { dockerRun, result } = querySnapshot(
+      [IMAGE_ID, BOOKKEEPING_IMAGE_REF, "", null, [], "nvidia"],
+      value,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      nvidiaVisibleDevices: value,
+      nativeGpuAttachmentState: expectedState,
+    });
+    expect(dockerRun).toHaveBeenLastCalledWith(
+      [
+        "inspect",
+        "--type",
+        "container",
+        "--format",
+        '{{range .Config.Env}}{{if eq (index (split . "=") 0) "NVIDIA_VISIBLE_DEVICES"}}{{println .}}{{end}}{{end}}',
+        "container-a",
+      ],
+      expect.objectContaining({ suppressOutput: true }),
+    );
+  });
+
+  it.each([
+    "all,0",
+    "0,0",
+    "GPU-0 with-space",
+  ])("rejects ambiguous NVIDIA_VISIBLE_DEVICES value %s", (value) => {
+    const { result } = querySnapshot(
+      [IMAGE_ID, BOOKKEEPING_IMAGE_REF, "", null, [], "nvidia"],
+      value,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "docker inspect returned invalid NVIDIA_VISIBLE_DEVICES",
     });
   });
 

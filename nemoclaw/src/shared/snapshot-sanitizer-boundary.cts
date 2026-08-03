@@ -7,6 +7,8 @@ import path from "node:path";
 
 const HELPER_TIMEOUT_MS = 60_000;
 const HELPER_MAX_BUFFER_BYTES = 48 * 1024 * 1024;
+const MAX_SNAPSHOT_FILE_BYTES = 16 * 1024 * 1024;
+const MAX_SNAPSHOT_FILE_BASE64_LENGTH = Math.ceil(MAX_SNAPSHOT_FILE_BYTES / 3) * 4;
 const TRUSTED_PYTHON_LOCATIONS = [
   "/usr/bin/python3",
   "/usr/local/bin/python3",
@@ -123,7 +125,8 @@ import secrets
 import stat
 import sys
 
-MAX_FILE_BYTES = 16 * 1024 * 1024
+MAX_FILE_BYTES = ${MAX_SNAPSHOT_FILE_BYTES}
+MAX_FILE_BASE64_LENGTH = ((MAX_FILE_BYTES + 2) // 3) * 4
 MAX_TOTAL_BYTES = 32 * 1024 * 1024
 MAX_ENTRIES = 100_000
 O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
@@ -498,10 +501,14 @@ def apply(root_path, plan):
                     raw = action.get("content")
                     if not isinstance(raw, str):
                         fail("snapshot replacement content is invalid")
+                    if len(raw) > MAX_FILE_BASE64_LENGTH:
+                        fail("snapshot replacement content exceeds the encoded size limit")
                     try:
                         payload = base64.b64decode(raw, validate=True)
                     except ValueError:
                         fail("snapshot replacement content is invalid")
+                    if base64.b64encode(payload).decode("ascii") != raw:
+                        fail("snapshot replacement content is not canonical base64")
                     if len(payload) > MAX_FILE_BYTES:
                         fail("snapshot replacement content exceeds the size limit")
                     replace_file(parent_fd, name, expected, payload)
@@ -679,11 +686,32 @@ export function applyDescriptorSnapshotActions(
 export function decodeDescriptorSnapshotContent(content: string | undefined): string | null {
   if (
     content === undefined ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(content)
+    content.length % 4 !== 0 ||
+    content.length > MAX_SNAPSHOT_FILE_BASE64_LENGTH
   ) {
     return null;
   }
+  const paddingLength = content.endsWith("==") ? 2 : content.endsWith("=") ? 1 : 0;
+  const unpaddedLength = content.length - paddingLength;
+  for (let index = 0; index < unpaddedLength; index += 1) {
+    const code = content.charCodeAt(index);
+    if (
+      !(
+        (code >= 0x41 && code <= 0x5a) ||
+        (code >= 0x61 && code <= 0x7a) ||
+        (code >= 0x30 && code <= 0x39) ||
+        code === 0x2b ||
+        code === 0x2f
+      )
+    ) {
+      return null;
+    }
+  }
+  for (let index = unpaddedLength; index < content.length; index += 1) {
+    if (content.charCodeAt(index) !== 0x3d) return null;
+  }
   const decoded = Buffer.from(content, "base64");
+  if (decoded.length > MAX_SNAPSHOT_FILE_BYTES) return null;
   if (decoded.toString("base64") !== content) return null;
   const utf8 = decoded.toString("utf-8");
   if (!Buffer.from(utf8, "utf-8").equals(decoded)) return null;
