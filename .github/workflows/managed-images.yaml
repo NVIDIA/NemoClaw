@@ -14,6 +14,28 @@ name: Images / Managed Images
 
 on:
   workflow_call:
+  pull_request:
+    paths:
+      - ".github/workflows/managed-images.yaml"
+      - ".dockerignore"
+      - "Dockerfile"
+      - "agents/**"
+      - "ci/npm-audit-exceptions.json"
+      - "nemoclaw/**"
+      - "nemoclaw-blueprint/**"
+      - "scripts/**"
+      - "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json"
+      - "src/lib/core/json-types.ts"
+      - "src/lib/core/ports.ts"
+      - "src/lib/messaging/**"
+      - "src/lib/onboard/managed-bootstrap/envelope.ts"
+      - "src/lib/onboard/managed-startup/**"
+      - "src/lib/security/credential-hash.ts"
+      - "src/lib/state/paths.ts"
+      - "src/lib/state/state-root.ts"
+      - "src/lib/tool-disclosure.ts"
+      - "tools/mcp-tool-discovery-runtime/**"
+      - "tsconfig.runtime-preloads.json"
 
 permissions:
   contents: read
@@ -23,8 +45,215 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  pr-build-and-entrypoint:
+    name: PR build and direct managed startup (${{ matrix.display_name }})
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - agent: openclaw
+            display_name: OpenClaw
+            dockerfile: Dockerfile
+            base_alias: ghcr.io/nvidia/nemoclaw/sandbox-base:latest
+            base_repository: ghcr.io/nvidia/nemoclaw/sandbox-base
+            image: nemoclaw-managed-pr/openclaw
+          - agent: hermes
+            display_name: Hermes
+            dockerfile: agents/hermes/Dockerfile
+            base_alias: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest
+            base_repository: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base
+            image: nemoclaw-managed-pr/hermes
+          - agent: langchain-deepagents-code
+            display_name: Deep Agents Code
+            dockerfile: agents/langchain-deepagents-code/Dockerfile
+            base_alias: ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest
+            base_repository: ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
+            image: nemoclaw-managed-pr/langchain-deepagents-code
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Resolve exact linux/amd64 PR base
+        id: base
+        shell: bash
+        env:
+          BASE_ALIAS: ${{ matrix.base_alias }}
+          BASE_REPOSITORY: ${{ matrix.base_repository }}
+          DISPLAY_NAME: ${{ matrix.display_name }}
+        run: |
+          set -euo pipefail
+          alias_raw="$RUNNER_TEMP/pr-base-alias.raw"
+          exact_raw="$RUNNER_TEMP/pr-base-exact.raw"
+          docker buildx imagetools inspect "$BASE_ALIAS" --raw > "$alias_raw"
+          if ! digest="$(
+            jq -er '
+              if (
+                .mediaType == "application/vnd.oci.image.index.v1+json" or
+                .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"
+              ) then
+                [
+                  .manifests[]
+                  | select(
+                      .platform.os == "linux" and
+                      .platform.architecture == "amd64"
+                    )
+                ]
+                | if length == 1 then .[0].digest else error("not one linux/amd64 image") end
+              else
+                error("base alias is not a platform index")
+              end
+            ' "$alias_raw"
+          )"; then
+            echo "ERROR: PR base alias does not contain exactly one linux/amd64 image." >&2
+            exit 1
+          fi
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: PR base alias returned an invalid linux/amd64 digest." >&2
+            exit 1
+          fi
+          reference="${BASE_REPOSITORY}@${digest}"
+          docker buildx imagetools inspect "$reference" --raw > "$exact_raw"
+          actual="sha256:$(sha256sum "$exact_raw" | awk '{print $1}')"
+          if [ "$actual" != "$digest" ]; then
+            echo "ERROR: exact PR base bytes do not match the selected descriptor digest." >&2
+            exit 1
+          fi
+          printf 'ref=%s\n' "$reference" >> "$GITHUB_OUTPUT"
+          printf '### %s PR base\n\n`%s`\n' "$DISPLAY_NAME" "$reference" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate PR managed-image build args
+        shell: bash
+        env:
+          BASE_REFERENCE: ${{ steps.base.outputs.ref }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+        run: |
+          set -euo pipefail
+          scripts/check-production-build-args.sh \
+            -f "$DOCKERFILE" \
+            --build-arg "BASE_IMAGE=${BASE_REFERENCE}" \
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+
+      - name: Build PR managed image locally
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ${{ matrix.image }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            io.nvidia.nemoclaw.agent=${{ matrix.agent }}
+            io.nvidia.nemoclaw.managed-image.contract=1
+            io.nvidia.nemoclaw.managed-image.platform=linux/amd64
+            io.nvidia.nemoclaw.managed-image.startup-profile=1
+            io.nvidia.nemoclaw.managed-image.capabilities=1
+            io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          build-args: |
+            BASE_IMAGE=${{ steps.base.outputs.ref }}
+            NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-amd64
+          provenance: false
+          sbom: false
+
+      - name: Validate exact PR managed image contract
+        id: contract
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
+          IMAGE_REFERENCE: ${{ matrix.image }}:${{ github.sha }}
+          PLATFORM: linux/amd64
+          PUBLICATION_COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          image_json="$(docker image inspect "$IMAGE_REFERENCE")"
+          image_id="$(
+            jq -er '
+              if length == 1 and (.[0].Id | type) == "string"
+              then .[0].Id
+              else error("expected one local image identity")
+              end
+            ' <<< "$image_json"
+          )"
+          if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: PR managed image did not resolve to an immutable local image ID: $image_id" >&2
+            exit 1
+          fi
+          if [ "$(docker image inspect --format '{{.Id}}' "$image_id")" != "$image_id" ]; then
+            echo "ERROR: PR managed image ID did not resolve to itself." >&2
+            exit 1
+          fi
+
+          if [[ ! "$PUBLICATION_COHORT" =~ ^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]] ||
+             ! jq -e \
+               --arg agent "$AGENT" \
+               --arg cohort "$PUBLICATION_COHORT" \
+               --arg image_id "$image_id" \
+               --arg platform "$PLATFORM" \
+               --arg revision "$GITHUB_SHA" '
+                 length == 1 and
+                 .[0].Id == $image_id and
+                 ((.[0].Config.User // "") as $user |
+                   $user == "" or $user == "root" or $user == "0") and
+                 .[0].Config.Labels["io.nvidia.nemoclaw.agent"] == $agent and
+                 .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.contract"] == "1" and
+                 .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.platform"] == $platform and
+                 .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.startup-profile"] == "1" and
+                 .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.capabilities"] == "1" and
+                 .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.cohort"] == $cohort and
+                 .[0].Config.Labels["org.opencontainers.image.revision"] == $revision
+               ' <<< "$image_json" >/dev/null; then
+            echo "ERROR: PR managed image contract does not match the exact build identity." >&2
+            exit 1
+          fi
+
+          printf 'reference=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
+          printf '### %s exact PR managed image\n\n`%s`\n' "$AGENT" "$image_id" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install managed-image direct harness dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm run build:policy-boundary
+
+      - name: Exercise managed startup root stdin and hold
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
+          IMAGE_REFERENCE: ${{ steps.contract.outputs.reference }}
+        run: |
+          set -euo pipefail
+          npx --no-install tsx \
+            scripts/checks/run-managed-image-direct-e2e.ts \
+            --agent "$AGENT" \
+            --image "$IMAGE_REFERENCE" \
+            --platform linux/amd64
+
+
   build-and-validate:
     name: Build and validate ${{ matrix.display_name }} managed image (${{ matrix.arch }})
+    if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     strategy:
@@ -177,7 +406,12 @@ jobs:
           DOCKERFILE: ${{ matrix.dockerfile }}
         run: |
           set -euo pipefail
-          build_args=(-f "$DOCKERFILE" --build-arg "BASE_IMAGE=${BASE_IMAGE}")
+          build_args=(
+            -f "$DOCKERFILE"
+            --build-arg "BASE_IMAGE=${BASE_IMAGE}"
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1"
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+          )
           scripts/check-production-build-args.sh "${build_args[@]}"
 
       # Push only the canonical digest. Consumer aliases do not exist until the
@@ -196,14 +430,24 @@ jobs:
             io.nvidia.nemoclaw.agent=${{ matrix.agent }}
             io.nvidia.nemoclaw.managed-image.contract=1
             io.nvidia.nemoclaw.managed-image.platform=${{ matrix.platform }}
+            io.nvidia.nemoclaw.managed-image.startup-profile=1
+            io.nvidia.nemoclaw.managed-image.capabilities=1
             io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
-          build-args: BASE_IMAGE=${{ steps.base.outputs.ref }}
+          build-args: |
+            BASE_IMAGE=${{ steps.base.outputs.ref }}
+            NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.artifact_platform }}
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.artifact_platform }},mode=max
           provenance: mode=max
           sbom: true
 
-      - name: Validate exact managed image
+      - name: Install managed-image publication harness dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm run build:policy-boundary
+
+      - name: Validate exact managed image before promotion
         id: validate
         shell: bash
         env:
@@ -229,14 +473,15 @@ jobs:
             exit 1
           fi
 
-          entrypoint="$(docker image inspect --format '{{json .Config.Entrypoint}}' "$reference")"
-          command="$(docker image inspect --format '{{json .Config.Cmd}}' "$reference")"
-          if [ "$entrypoint" != '["/usr/local/bin/nemoclaw-start"]' ]; then
-            echo "ERROR: managed image has unexpected entrypoint: $entrypoint" >&2
+          image_id="$(docker image inspect --format '{{.Id}}' "$reference")"
+          if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+             [ "$(docker image inspect --format '{{.Id}}' "$image_id")" != "$image_id" ]; then
+            echo "ERROR: exact managed image did not resolve to one immutable local image ID." >&2
             exit 1
           fi
-          if [ "$command" != '["/bin/bash"]' ]; then
-            echo "ERROR: managed image has unexpected command: $command" >&2
+          image_user="$(docker image inspect --format '{{.Config.User}}' "$reference")"
+          if [ -n "$image_user" ] && [ "$image_user" != "root" ] && [ "$image_user" != "0" ]; then
+            echo "ERROR: managed image OCI user must be uid 0 for OpenShell supervisor initialization: $image_user" >&2
             exit 1
           fi
 
@@ -248,6 +493,16 @@ jobs:
           contract_label="$(
             docker image inspect \
               --format '{{index .Config.Labels "io.nvidia.nemoclaw.managed-image.contract"}}' \
+              "$reference"
+          )"
+          startup_profile_label="$(
+            docker image inspect \
+              --format '{{index .Config.Labels "io.nvidia.nemoclaw.managed-image.startup-profile"}}' \
+              "$reference"
+          )"
+          capabilities_label="$(
+            docker image inspect \
+              --format '{{index .Config.Labels "io.nvidia.nemoclaw.managed-image.capabilities"}}' \
               "$reference"
           )"
           platform_label="$(
@@ -265,8 +520,11 @@ jobs:
               --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
               "$reference"
           )"
-          if [ "$agent_label" != "$AGENT" ] ||
+          if [[ ! "$PUBLICATION_COHORT" =~ ^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]] ||
+             [ "$agent_label" != "$AGENT" ] ||
              [ "$contract_label" != "1" ] ||
+             [ "$startup_profile_label" != "1" ] ||
+             [ "$capabilities_label" != "1" ] ||
              [ "$platform_label" != "$PLATFORM" ] ||
              [ "$cohort_label" != "$PUBLICATION_COHORT" ] ||
              [ "$revision_label" != "$GITHUB_SHA" ]; then
@@ -275,11 +533,16 @@ jobs:
           fi
 
           DOCKER_CONFIG="$anonymous_config" docker run --rm -i \
+            --platform "$PLATFORM" \
             --network none \
+            --env "AGENT=$AGENT" \
             --env "REQUIRED_BINARY=$REQUIRED_BINARY" \
             --entrypoint /bin/sh \
             "$reference" -eu -s <<'VALIDATE_FILESYSTEM'
           test -x /usr/local/bin/nemoclaw-start
+          test -f /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
+          test ! -L /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
+          test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs)" = "0:0:444"
           test -x "$REQUIRED_BINARY"
           test -r /opt/nemoclaw-blueprint/blueprint.yaml
           test -r /usr/local/share/nemoclaw/node-tar-inventory.json
@@ -301,10 +564,87 @@ jobs:
             throw new Error("completed node-tar scan is missing or unsafe");
           }
           VALIDATE_NODE_TAR
+
+          test "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1"
+          case "$AGENT" in
+            openclaw)
+              node <<'VALIDATE_OPENCLAW_UNION'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const config = JSON.parse(
+            fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"),
+          );
+          const packages = {
+            "diagnostics-otel": ["@openclaw/diagnostics-otel", "2026.7.1"],
+            brave: ["@openclaw/brave-plugin", "2026.7.1"],
+            discord: ["@openclaw/discord", "2026.7.1"],
+            "openclaw-weixin": ["@tencent-weixin/openclaw-weixin", "2.4.3"],
+            slack: ["@openclaw/slack", "2026.7.1"],
+            whatsapp: ["@openclaw/whatsapp", "2026.7.1"],
+            msteams: ["@openclaw/msteams", "2026.7.1"],
+          };
+          for (const [id, [name, version]] of Object.entries(packages)) {
+            const install = config.plugins?.installs?.[id];
+            if (
+              !install ||
+              typeof install.installPath !== "string" ||
+              config.plugins?.entries?.[id]?.enabled !== false
+            ) {
+              throw new Error(`managed OpenClaw plugin ${id} is missing or active`);
+            }
+            const manifest = JSON.parse(
+              fs.readFileSync(path.join(install.installPath, "package.json"), "utf8"),
+            );
+            if (manifest.name !== name || manifest.version !== version) {
+              throw new Error(`managed OpenClaw plugin ${id} has an unexpected package identity`);
+            }
+          }
+          for (const id of ["telegram", "tavily"]) {
+            if (config.plugins?.entries?.[id]?.enabled !== false) {
+              throw new Error(`bundled OpenClaw plugin ${id} is not explicitly disabled`);
+            }
+          }
+          for (const id of [
+            "telegram",
+            "discord",
+            "openclaw-weixin",
+            "slack",
+            "whatsapp",
+            "msteams",
+          ]) {
+            if (config.channels?.[id]?.enabled !== false) {
+              throw new Error(`managed OpenClaw channel ${id} is not explicitly disabled`);
+            }
+          }
+          if (config.tools?.web?.search?.enabled !== false) {
+            throw new Error("managed OpenClaw web search is not explicitly disabled");
+          }
+          VALIDATE_OPENCLAW_UNION
+              ;;
+            hermes)
+              /opt/hermes/.venv/bin/python -I <<'VALIDATE_HERMES_UNION'
+          import importlib.metadata as metadata
+          from pathlib import Path
+          import yaml
+
+          config = yaml.safe_load(Path("/sandbox/.hermes/config.yaml").read_text())
+          optional = ("telegram", "discord", "weixin", "slack", "whatsapp", "teams")
+          if any(config["platforms"].get(name) != {"enabled": False} for name in optional):
+              raise SystemExit("managed Hermes optional platform is not explicitly disabled")
+          if metadata.version("microsoft-teams-apps") != "2.0.13.4":
+              raise SystemExit("managed Hermes microsoft-teams-apps version is wrong")
+          if metadata.version("aiohttp") != "3.14.1":
+              raise SystemExit("managed Hermes aiohttp version is wrong")
+          VALIDATE_HERMES_UNION
+              ;;
+            langchain-deepagents-code) ;;
+            *) echo "ERROR: unsupported managed agent $AGENT" >&2; exit 1 ;;
+          esac
           VALIDATE_FILESYSTEM
 
           version_output="$(
             DOCKER_CONFIG="$anonymous_config" docker run --rm \
+              --platform "$PLATFORM" \
               --network none \
               --entrypoint "$REQUIRED_BINARY" \
               "$reference" --version 2>&1
@@ -313,6 +653,14 @@ jobs:
             echo "ERROR: required agent binary returned an empty version." >&2
             exit 1
           fi
+
+          DOCKER_CONFIG="$anonymous_config" \
+            npx --no-install tsx \
+              scripts/checks/run-managed-image-direct-e2e.ts \
+              --agent "$AGENT" \
+              --image "$reference" \
+              --platform "$PLATFORM"
+          printf 'local_id=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
           printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
 
       - name: Export validated managed image candidate

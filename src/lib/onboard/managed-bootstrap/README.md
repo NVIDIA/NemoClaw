@@ -35,8 +35,8 @@ validation, both the cleanup request and its result are bound to the exact
 sandbox ID.
 
 `scripts/managed-bootstrap-entrypoint.c` defines the image-owned native boundary
-that the later all-agent packaging slice will compile as a freestanding Linux
-amd64 or arm64 artifact and install as
+that every managed agent image compiles as a freestanding Linux amd64 or arm64
+artifact and installs as
 `/usr/local/bin/nemoclaw-managed-bootstrap`. The artifact must have no dynamic
 ELF interpreter, dynamic section, undefined symbol, or C library startup. Its
 entry point uses direct Linux system calls. It copies the bounded supervisor
@@ -120,7 +120,7 @@ native-to-compatibility fallback evidence, and deferred commit or rollback.
 Central onboarding accepts that provider-neutral surface without a Docker or
 Podman selection branch. Tests register an MXC-style surface through the same
 bundle, render held launches for OpenClaw, Hermes, and LangChain Deep Agents
-Code, and exercise recovery phases across all three agents.
+Code (DCode), and exercise recovery phases across all three agents.
 
 The coordinator remains the driver-neutral transaction authority: its receipt
 shapes, normalization, state transitions, and rollback proofs form one cohesive
@@ -137,21 +137,21 @@ provider bundle contract without changing the production registry.
 provider, and image-packaging surfaces and proves that production activation
 does not select a driver-specific bootstrap implementation.
 
-The native entrypoint source is intentionally not compiled into production
-artifacts, and neither image-owned source is installed or selected in a runtime
-image yet. The image runtime now has dormant modes that consume the protected
-bootstrap envelope, bind shared-state authority to the exact attempt, publish
-an identity-bound completion, and authenticate that completion together with
-the ordinary startup handoff. Production onboarding imports only the
-provider-neutral create contract; no activation path or registered provider
-imports or selects the driver-specific Docker candidate. The current image
-definitions still do not package `nemoclaw-managed-startup-hold`,
-`nemoclaw-managed-bootstrap`, or `managed-startup-image-runtime.cjs`; no
-production provider can invoke these modes yet. Later persistence and
-qualification slices must compile and verify the freestanding entrypoint for
-amd64 and arm64 in every agent image, add those artifacts and the image-runtime
-prerequisites, and provide the canonical durable authority store. The remaining
-integration and qualification work is tracked in
+The image runtime has dormant modes that consume the protected bootstrap
+envelope, bind shared-state authority to the exact attempt, publish an
+identity-bound completion, and authenticate that completion together with the
+ordinary startup handoff. OpenClaw, Hermes, and DCode images now compile and
+package the freestanding amd64 or arm64 native entrypoint, its non-executable
+shell body, the root-owned hold helper, the runtime bundle, and the complete
+inert capability union. Pull-request and publication workflows build the exact
+images and exercise the direct root-stdin and hold contracts without advertising
+buildless support.
+
+Production onboarding still imports only the provider-neutral create contract;
+no activation path or registered provider imports or selects the driver-specific
+Docker candidate, and no production provider invokes the packaged bootstrap
+modes yet. The remaining provider activation, canonical durable authority, and
+protected qualification work is tracked in
 [epic #7744](https://github.com/NVIDIA/NemoClaw/issues/7744). Until that complete
 boundary passes protected E2E, every production runtime provider keeps
 bootstrap unsupported.

@@ -82,6 +82,7 @@ describe("OpenClaw final image layout", () => {
         stage: "openclaw-runtime-payload",
         copies: [
           "COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh",
+          "COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh",
           "COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh",
           "COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh",
           "COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py",
@@ -91,12 +92,15 @@ describe("OpenClaw final image layout", () => {
           "COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py",
           "COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py",
           "COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start",
+          "COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold",
+          "COPY scripts/managed-bootstrap-trampoline.sh /usr/local/bin/nemoclaw-managed-bootstrap",
           "COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control",
           "COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/",
           "COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/",
           "COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp",
           "COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts",
           "COPY scripts/validate-openclaw-tool-search.mts /scripts/validate-openclaw-tool-search.mts",
+          "COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
           "COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts",
           "COPY src/lib/messaging/ /src/lib/messaging/",
           "COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/",
@@ -170,6 +174,10 @@ describe("OpenClaw final image layout", () => {
       finalStage,
       "RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0",
     );
+    const managedRuntimeDirectory = indexOfRequired(
+      finalStage,
+      "&& install -d -o root -g root -m 0755 /run/nemoclaw",
+    );
     const runtimeChmod = indexOfRequired(finalStage, "RUN chmod 755 /usr/local/bin/nemoclaw-start");
     const metadataCheck = indexOfRequired(finalStage, "RUN check_metadata()");
 
@@ -180,6 +188,12 @@ describe("OpenClaw final image layout", () => {
     expect(patch).toBeGreaterThan(wechatInstall);
     expect(patch).toBeLessThan(patchChmod);
     expect(runtime).toBeGreaterThan(blueprintSetup);
+    expect(runtime).toBeLessThan(managedRuntimeDirectory);
+    expect(managedRuntimeDirectory).toBeLessThan(runtimeChmod);
+    expect(finalStage).toContain("/usr/local/bin/nemoclaw-managed-bootstrap");
+    expect(dockerfile).toContain(
+      "COPY src/lib/onboard/managed-bootstrap/envelope.ts ./src/lib/onboard/managed-bootstrap/",
+    );
     expect(runtime).toBeLessThan(runtimeChmod);
     expect(scan).toBeLessThan(metadataCheck);
   });

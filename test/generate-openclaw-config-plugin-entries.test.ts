@@ -6,9 +6,12 @@
 // scripts/generate-openclaw-config.mts. Split out of generate-openclaw-config
 // .test.ts to keep that file within its size budget.
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { buildConfig } from "../scripts/generate-openclaw-config.mts";
+import { buildConfig, main } from "../scripts/generate-openclaw-config.mts";
 
 const BASE_ENV: Record<string, string> = {
   NEMOCLAW_MODEL: "test-model",
@@ -38,5 +41,71 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
     // OpenClaw warn "plugin not installed: qqbot" on every first TUI launch (#6000).
     const config = buildConfig({ ...BASE_ENV });
     expect(config.plugins.entries.qqbot).toBeUndefined();
+  });
+
+  it("keeps every managed-image plugin and channel explicitly inert before first start (#7744)", () => {
+    const config = buildConfig({
+      ...BASE_ENV,
+      NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+    });
+
+    for (const pluginId of [
+      "telegram",
+      "discord",
+      "openclaw-weixin",
+      "slack",
+      "whatsapp",
+      "msteams",
+      "diagnostics-otel",
+      "brave",
+      "tavily",
+    ]) {
+      expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
+    }
+    for (const channelId of [
+      "telegram",
+      "discord",
+      "openclaw-weixin",
+      "slack",
+      "whatsapp",
+      "msteams",
+    ]) {
+      expect(config.channels[channelId], channelId).toEqual({ enabled: false });
+    }
+    expect(config.tools.web.search).toEqual({ enabled: false });
+  });
+
+  it("retains managed-image install metadata while explicitly disabling the plugin (#7744)", () => {
+    const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-union-"));
+    const originalEnvironment = { ...process.env };
+    const configPath = path.join(tempDirectory, ".openclaw", "openclaw.json");
+    const installEntry = {
+      source: "npm",
+      spec: "@tencent-weixin/openclaw-weixin@2.4.3",
+      installPath: "/sandbox/.openclaw/extensions/openclaw-weixin",
+    };
+    try {
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({ plugins: { installs: { "openclaw-weixin": installEntry } } }),
+      );
+      for (const name of Object.keys(process.env)) delete process.env[name];
+      Object.assign(process.env, BASE_ENV, {
+        HOME: tempDirectory,
+        NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+      });
+
+      main();
+
+      const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual(installEntry);
+      expect(config.plugins?.entries?.["openclaw-weixin"]).toEqual({ enabled: false });
+      expect(config.channels?.["openclaw-weixin"]).toEqual({ enabled: false });
+    } finally {
+      for (const name of Object.keys(process.env)) delete process.env[name];
+      Object.assign(process.env, originalEnvironment);
+      fs.rmSync(tempDirectory, { force: true, recursive: true });
+    }
   });
 });

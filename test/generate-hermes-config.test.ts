@@ -1000,6 +1000,27 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(Object.keys(config.platforms)).toEqual(["api_server"]);
   });
 
+  it("keeps every managed-image messaging platform explicitly disabled before first start (#7744)", () => {
+    const { config, envFile } = generateBaseConfig({
+      NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+    });
+
+    for (const platform of ["telegram", "discord", "weixin", "slack", "whatsapp", "teams"]) {
+      expect(config.platforms[platform], platform).toEqual({ enabled: false });
+      expect(config.platform_toolsets[platform], platform).toBeUndefined();
+    }
+    for (const credential of [
+      "TELEGRAM_BOT_TOKEN",
+      "DISCORD_BOT_TOKEN",
+      "WEIXIN_TOKEN",
+      "SLACK_BOT_TOKEN",
+      "WHATSAPP_ENABLED",
+      "TEAMS_CLIENT_SECRET",
+    ]) {
+      expect(envFile, credential).not.toContain(`${credential}=`);
+    }
+  });
+
   it("enables Slack under platforms even when the slack token allowlist is empty", async () => {
     const { config } = await runConfigScriptWithMessaging({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["slack"]),

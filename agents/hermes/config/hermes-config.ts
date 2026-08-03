@@ -27,6 +27,15 @@ const REMOTE_PLATFORM_TOOLSETS = [
   "audio",
 ];
 
+export const MANAGED_IMAGE_HERMES_OPTIONAL_PLATFORMS = [
+  "telegram",
+  "discord",
+  "weixin",
+  "slack",
+  "whatsapp",
+  "teams",
+] as const;
+
 function hermesApiMode(inferenceApi: string): string | null {
   switch (inferenceApi) {
     case "":
@@ -102,6 +111,21 @@ export function buildHermesConfig(
     provider: settings.upstreamProvider,
     model: settings.model,
   };
+
+  const platforms: Record<string, unknown> = {
+    api_server: {
+      enabled: true,
+      extra: {
+        port: 18642,
+        host: "127.0.0.1",
+      },
+    },
+  };
+  if (settings.managedImageCapabilityUnion) {
+    for (const platform of MANAGED_IMAGE_HERMES_OPTIONAL_PLATFORMS) {
+      platforms[platform] = { enabled: false };
+    }
+  }
 
   const config: Record<string, unknown> = {
     _config_version: 33,
@@ -210,15 +234,7 @@ export function buildHermesConfig(
     platform_toolsets: {
       api_server: remotePlatformToolsets,
     },
-    platforms: {
-      api_server: {
-        enabled: true,
-        extra: {
-          port: 18642,
-          host: "127.0.0.1",
-        },
-      },
-    },
+    platforms,
   };
 
   const managedToolGatewayPresets = effectiveManagedToolGatewayPresets(settings);

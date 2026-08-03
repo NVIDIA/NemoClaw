@@ -254,8 +254,14 @@ describe("runtime provider central source boundary", () => {
         .filter(([, source]) => packagedBootstrapAsset.test(source))
         .map(([path]) => path),
     ).toEqual([
+      ".github/workflows/managed-images.yaml",
+      "Dockerfile",
+      "agents/hermes/Dockerfile",
+      "agents/langchain-deepagents-code/Dockerfile",
+      "scripts/checks/run-managed-image-direct-e2e.ts",
       "scripts/managed-bootstrap-entrypoint.c",
       "scripts/managed-bootstrap-trampoline.sh",
+      "scripts/managed-startup-hold.sh",
     ]);
   });
 });

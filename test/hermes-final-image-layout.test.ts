@@ -233,9 +233,13 @@ describe("Hermes final image layout", () => {
           "COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/",
           "COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/",
           "COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh",
+          "COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh",
           "COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh",
           "COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh",
           "COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start",
+          "COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold",
+          "COPY scripts/managed-bootstrap-trampoline.sh /usr/local/bin/nemoclaw-managed-bootstrap",
+          "COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
           "COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control",
           "COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py",
           "COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
@@ -303,6 +307,14 @@ describe("Hermes final image layout", () => {
       finalStage,
       "RUN chmod -R a+rX /opt/nemoclaw-blueprint/",
     );
+    const managedRuntimeDirectory = indexOfRequired(
+      finalStage,
+      "&& install -d -o root -g root -m 0755 /run/nemoclaw",
+    );
+    const runtimeModeReplay = indexOfRequired(
+      finalStage,
+      "RUN chmod 755 /usr/local/bin/nemoclaw-start",
+    );
     const tirithFinalizerHash = indexOfRequired(
       finalStage,
       '"$NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256"',
@@ -326,7 +338,14 @@ describe("Hermes final image layout", () => {
     expect(agent).toBeGreaterThan(certifiInstall);
     expect(agent).toBeLessThan(agentChmod);
     expect(runtime).toBeGreaterThan(configFind);
+    expect(runtime).toBeLessThan(managedRuntimeDirectory);
+    expect(managedRuntimeDirectory).toBeLessThan(blueprintChmod);
     expect(runtime).toBeLessThan(blueprintChmod);
+    expect(managedRuntimeDirectory).toBeLessThan(runtimeModeReplay);
+    expect(finalStage).toContain("/usr/local/bin/nemoclaw-managed-bootstrap");
+    expect(dockerfile).toContain(
+      "COPY src/lib/onboard/managed-bootstrap/envelope.ts ./src/lib/onboard/managed-bootstrap/",
+    );
     expect(wrapper).toBeGreaterThan(tirithFinalizerHash);
     expect(wrapper).toBeLessThan(pythonCheck);
     expect(scan).toBeGreaterThan(darwinCompatibility);
@@ -341,6 +360,7 @@ describe("Hermes final image layout", () => {
       "/usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py 'root:root 755'",
       "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py 'root:root 755'",
       "/usr/local/bin/nemoclaw-gateway-control 'root:root 700'",
+      "/sandbox/.nemoclaw 'root:root 1755'",
       "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444'",
       "/usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755'",
       "/scripts/checks/node-tar-image-scan.mts 'root:root 755'",
@@ -352,12 +372,19 @@ describe("Hermes final image layout", () => {
     expect(doctorLayer).toContain(
       "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix",
     );
-    expect(doctorLayer).toMatch(/generate-config[.]ts\s+&& rm -rf \/sandbox\/[.]cache$/u);
+    expect(doctorLayer).toContain('if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then');
+    expect(doctorLayer).toContain('assert m.version("microsoft-teams-apps") == "2.0.13.4"');
+    expect(doctorLayer).toContain('assert m.version("aiohttp") == "3.14.1"');
+    expect(doctorLayer).toMatch(/generate-config[.]ts\s+&& if /u);
+    expect(doctorLayer).toMatch(/fi\s+&& rm -rf \/sandbox\/[.]cache$/u);
     expect(finalStage).toContain("check_absent /opt/hermes/tests \\");
     expect(finalStage).toContain(
       "&& check_absent /opt/nemoclaw-hermes-config/image-build-probes.py \\",
     );
     expect(finalStage).toContain("&& check_absent /sandbox/.cache \\");
+    expect(finalStage).toContain("RUN chown root:root /sandbox/.nemoclaw \\");
+    expect(finalStage).toContain("&& chmod 1755 /sandbox/.nemoclaw \\");
+    expect(finalStage).toContain("&& chown sandbox:sandbox /sandbox/.nemoclaw/config.json");
   });
 
   // source-shape-contract: security -- Exact source-to-image digests keep the reviewed Hermes runtime entrypoints bound to the files copied into the sandbox image

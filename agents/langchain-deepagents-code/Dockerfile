@@ -20,16 +20,36 @@ RUN ./install-reviewed-runtime.sh \
 RUN chown -R root:root /opt/mcp-tool-discovery-runtime \
     && chmod -R a=rX /opt/mcp-tool-discovery-runtime
 
+FROM mcp-tool-discovery-runtime AS managed-startup-runtime-builder
+WORKDIR /opt/nemoclaw-managed-startup-build
+COPY src/lib/core/json-types.ts src/lib/core/ports.ts ./src/lib/core/
+COPY src/lib/messaging/ ./src/lib/messaging/
+COPY src/lib/onboard/managed-bootstrap/envelope.ts ./src/lib/onboard/managed-bootstrap/
+COPY src/lib/onboard/managed-startup/ ./src/lib/onboard/managed-startup/
+COPY src/lib/security/credential-hash.ts ./src/lib/security/
+COPY src/lib/state/paths.ts src/lib/state/state-root.ts ./src/lib/state/
+RUN /opt/mcp-tool-discovery-runtime/node_modules/.bin/esbuild \
+        src/lib/onboard/managed-startup/image-runtime.ts \
+        --bundle --platform=node --format=cjs --target=node22 \
+        --outfile=/out/managed-startup-image-runtime.cjs \
+    && chmod 0444 /out/managed-startup-image-runtime.cjs
+
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
+# The supplied base may end as a non-root runtime user. Reset the build user
+# explicitly before installing the root-owned managed-startup handoff.
+USER root
+
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
+COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
+# Keep the root-owned managed-startup handoff in this image-only layer. The
+# following permissions block is replayed on the host by regression tests.
 RUN discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \
     && node -e 'const result = JSON.parse(process.argv[1]); if (result.protocol !== 1 || result.ok !== false || result.detail !== "tool discovery received invalid runtime arguments") process.exit(1);' "$discovery_contract" \
     && discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
-    && test -z "$discovery_unsafe"
-
-USER root
+    && test -z "$discovery_unsafe" \
+    && install -d -o root -g root -m 0755 /run/nemoclaw
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
@@ -69,7 +89,10 @@ COPY agents/langchain-deepagents-code/validate-observability.py /opt/nemoclaw-de
 COPY agents/langchain-deepagents-code/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-wrapper.sh
 COPY agents/langchain-deepagents-code/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-launcher.sh
 COPY agents/langchain-deepagents-code/dcode-session-supervisor.py /usr/local/lib/nemoclaw/dcode-session-supervisor.py
+COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
 COPY agents/langchain-deepagents-code/start.sh /usr/local/bin/nemoclaw-start
+COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
+COPY scripts/managed-bootstrap-trampoline.sh /usr/local/bin/nemoclaw-managed-bootstrap
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 # The first-party profile plugin uses Deep Agents' supported entry-point hook to
 # register managed aliases without modifying third-party package source. The
@@ -82,8 +105,8 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 # regressionTest: the stripped-base gate must reach this marker, then fail import.
 # removalCondition: remove when installation validates dependencies atomically.
 # hadolint ignore=DL4006
-RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/nemoclaw_observability.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py /opt/nemoclaw-deepagents-code/validate-observability.py \
-    && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-session-supervisor.py \
+RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/nemoclaw_observability.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py /opt/nemoclaw-deepagents-code/validate-observability.py /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
+    && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-session-supervisor.py \
     && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/dcode-session-supervisor.py)" = "0:0:755" \
     && install -o root -g root -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-managed-exec \
     && test -f /usr/local/lib/nemoclaw/dcode-managed-exec \
@@ -120,6 +143,9 @@ ARG NEMOCLAW_INFERENCE_API=openai-completions
 ARG NEMOCLAW_REASONING_EFFORT=
 ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
 ARG NEMOCLAW_DCODE_AUTO_APPROVAL=disabled
+# DCode has no extra optional packages today, but release images participate in
+# the same managed-image capability contract as OpenClaw and Hermes.
+ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
 ARG NEMOCLAW_BUILD_ID=default
 ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 ARG NEMOCLAW_PROXY_HOST=10.200.0.1
@@ -141,8 +167,11 @@ RUN case "$NEMOCLAW_TOOL_DISCLOSURE" in \
 # The launcher and startup script read these root-owned files instead of
 # trusting process-level environment overrides for inference routing. Invoking
 # each launcher validates the build args before the image can complete. The
-# empty-prompt probe also exercises the installed launcher -> wrapper chain so a
-# stale or misassembled image cannot silently lose the public exit-code contract.
+# empty-prompt probe targets the installed wrapper directly: it validates the
+# public parser contract without requiring the image builder's kernel to support
+# the runtime-only child-subreaper supervisor. Keep that parser-only probe
+# hermetic so base-image or builder observability variables cannot mask the
+# diagnostic under test; the post-build workflow probes the real managed chain.
 RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && printf '%s\n' "$NEMOCLAW_PROXY_HOST" > /usr/local/share/nemoclaw/dcode-proxy-host \
     && printf '%s\n' "$NEMOCLAW_PROXY_PORT" > /usr/local/share/nemoclaw/dcode-proxy-port \
@@ -153,14 +182,20 @@ RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url /usr/local/share/nemoclaw/dcode-auto-approval /usr/local/share/nemoclaw/dcode-reasoning-effort \
     && unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT \
     && empty_prompt_log="$(mktemp)" \
-    && if timeout 10 /usr/local/bin/dcode -n "" >"$empty_prompt_log" 2>&1; then empty_prompt_status=0; else empty_prompt_status=$?; fi \
-    && test "$empty_prompt_status" -eq 2 \
-    && test "$(cat "$empty_prompt_log")" = "NemoClaw: empty non-interactive prompt for -n; provide prompt text." \
+    && if timeout 10 env -i /usr/local/lib/nemoclaw/dcode-wrapper.sh -n "" >"$empty_prompt_log" 2>&1; then empty_prompt_status=0; else empty_prompt_status=$?; fi \
+    && empty_prompt_output="$(cat "$empty_prompt_log")" \
+    && if [ "$empty_prompt_status" -ne 2 ] \
+        || [ "$empty_prompt_output" != "NemoClaw: empty non-interactive prompt for -n; provide prompt text." ]; then \
+        printf 'ERROR: managed dcode empty-prompt probe returned status %s:\n%s\n' \
+            "$empty_prompt_status" "$empty_prompt_output" >&2; \
+        rm -f "$empty_prompt_log"; \
+        exit 1; \
+    fi \
     && rm -f "$empty_prompt_log" \
-    && /usr/local/lib/nemoclaw/dcode-managed-exec /usr/bin/true \
-    && /usr/local/bin/dcode --version \
-    && /usr/local/bin/dcode.real --version \
-    && /usr/local/bin/deepagents-code --version
+    && env -i /usr/local/lib/nemoclaw/dcode-managed-exec /usr/bin/true \
+    && env -i /usr/local/bin/dcode --version \
+    && env -i /usr/local/bin/dcode.real --version \
+    && env -i /usr/local/bin/deepagents-code --version
 
 ENV HOME=/sandbox \
     VIRTUAL_ENV=/opt/venv \
@@ -173,6 +208,7 @@ ENV HOME=/sandbox \
     NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
     NEMOCLAW_REASONING_EFFORT=${NEMOCLAW_REASONING_EFFORT} \
     NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE} \
+    NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION} \
     NEMOCLAW_BUILD_ID=${NEMOCLAW_BUILD_ID} \
     DEEPAGENTS_CODE_NO_UPDATE_CHECK=1 \
     LANGGRAPH_NO_VERSION_CHECK=true \
@@ -275,6 +311,12 @@ RUN set -eu; \
     test -z "$(dpkg --audit)"
 # End completed-image security package verification.
 
-USER sandbox
+ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
+RUN case "$NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER" in \
+        root|sandbox) ;; \
+        *) echo "ERROR: NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER must be root or sandbox" >&2; exit 1 ;; \
+    esac \
+    && command -v setpriv >/dev/null 2>&1
+USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}
 ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
 CMD ["/bin/bash"]
