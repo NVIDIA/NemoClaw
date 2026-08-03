@@ -889,7 +889,10 @@ download_with_curl() {
     curl_progress=(-sS)
   fi
   for name in "${ASSETS[@]}" "${CHECKSUM_FILES[@]}"; do
-    curl -fL "${curl_progress[@]}" "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \
+    # Archives can exceed the formula download's 30-second transfer limit.
+    curl --proto '=https' --tlsv1.2 -fL "${curl_progress[@]}" \
+      --connect-timeout 10 --retry 3 --retry-delay 1 --retry-all-errors \
+      "https://github.com/NVIDIA/OpenShell/releases/download/${RELEASE_TAG}/$name" \
       -o "$tmpdir/$name"
   done
 }

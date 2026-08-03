@@ -884,6 +884,17 @@ describe("regression guards", () => {
         const out = (result.stdout || "") + (result.stderr || "");
         expect(out).toContain("falling back to curl");
         expect(out).toContain("CURL_FALLBACK");
+        const curlCalls = out.split("\n").filter((line) => line.startsWith("CURL_FALLBACK "));
+        expect(curlCalls.length).toBeGreaterThan(0);
+        for (const call of curlCalls) {
+          expect(call).toContain("--proto =https");
+          expect(call).toContain("--tlsv1.2");
+          expect(call).toContain("--connect-timeout 10");
+          expect(call).toContain("--retry 3");
+          expect(call).toContain("--retry-delay 1");
+          expect(call).toContain("--retry-all-errors");
+          expect(call).not.toContain("--max-time");
+        }
         expect(fs.readFileSync(checksumLog, "utf-8")).toContain("SHA256SUM -c -");
       } finally {
         fs.rmSync(tmpBin, { recursive: true, force: true });
