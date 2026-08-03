@@ -146,6 +146,25 @@ describe("probeLlamaCppAttachment", () => {
     expect(result).toEqual({ ok: true, model: "second/model" });
   });
 
+  it("rejects mixed llama.cpp and vLLM model metadata when the requested entry is native llama.cpp (#8161)", () => {
+    const responses = nativeResponses();
+    responses[1] = response(
+      200,
+      JSON.stringify({
+        data: [nativeModel(), { id: "other/model", object: "model", owned_by: "vllm" }],
+      }),
+    );
+    const probe = scriptedProbe(responses);
+
+    expect(
+      probeLlamaCppAttachment("secret-token", {
+        requestedModel: "team/model-alias",
+        runCurlProbeImpl: probe,
+      }),
+    ).toMatchObject({ ok: false, reason: "conflicting-fingerprint" });
+    expect(probe).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects an ambiguous multi-model catalog instead of guessing (#8161)", () => {
     const responses = nativeResponses();
     responses[1] = response(

@@ -93,18 +93,22 @@ function hasNativeLlamaCppModelMetadata(entry: LlamaCppModelEntry): boolean {
 }
 
 function selectModelEntry(
-  response: LlamaCppModelsResponse,
+  entries: LlamaCppModelEntry[],
   requestedModel: string | null,
 ): LlamaCppModelEntry | null {
+  if (requestedModel) {
+    return entries.find((entry) => entry.id === requestedModel) ?? null;
+  }
+  return entries.length === 1 ? entries[0] : null;
+}
+
+function parseModelEntries(response: LlamaCppModelsResponse): LlamaCppModelEntry[] | null {
   if (!Array.isArray(response.data)) return null;
   const entries = response.data.filter(
     (entry): entry is LlamaCppModelEntry =>
       entry !== null && typeof entry === "object" && !Array.isArray(entry),
   );
-  if (requestedModel) {
-    return entries.find((entry) => entry.id === requestedModel) ?? null;
-  }
-  return entries.length === 1 ? entries[0] : null;
+  return entries.length === response.data.length ? entries : null;
 }
 
 function hasHealthyNativeResponse(result: CurlProbeResult): boolean {
@@ -263,8 +267,28 @@ export function probeLlamaCppAttachment(
         "The authenticated llama.cpp model catalog was malformed.",
       );
     }
+    const modelEntries = parseModelEntries(models);
+    if (!modelEntries) {
+      return failure(
+        "malformed-fingerprint",
+        "The authenticated llama.cpp model catalog was malformed.",
+      );
+    }
+    const nativeModelEntries = modelEntries.filter(hasNativeLlamaCppModelMetadata);
+    if (modelEntries.length > 0 && nativeModelEntries.length === 0) {
+      return failure(
+        "not-llama-cpp",
+        "The model catalog did not contain native llama.cpp metadata.",
+      );
+    }
+    if (nativeModelEntries.length !== modelEntries.length) {
+      return failure(
+        "conflicting-fingerprint",
+        "The model catalog contained conflicting native llama.cpp evidence.",
+      );
+    }
     const requestedModel = options.requestedModel?.trim() || null;
-    const modelEntry = models ? selectModelEntry(models, requestedModel) : null;
+    const modelEntry = selectModelEntry(modelEntries, requestedModel);
     if (!modelEntry) {
       return failure(
         "ambiguous-model",
@@ -280,13 +304,6 @@ export function probeLlamaCppAttachment(
         "llama.cpp must be started with a non-path served model alias.",
       );
     }
-    if (!hasNativeLlamaCppModelMetadata(modelEntry)) {
-      return failure(
-        "not-llama-cpp",
-        "The model catalog did not contain native llama.cpp metadata.",
-      );
-    }
-
     const health = probe(probeArgs(auth.args, `${baseUrl}/health`), probeOptions);
     const props = probe(
       probeArgs(auth.args, `${baseUrl}/props?model=${encodeURIComponent(model)}`),
