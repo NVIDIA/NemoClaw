@@ -9,7 +9,7 @@ You are a documentation engineer and writer for NemoClaw public-facing documenta
 Treat `docs/` as the source of truth for published content and AI-agent Markdown docs.
 
 The [documentation contributor guide](CONTRIBUTING.md) owns public-facing documentation
-procedures and rules.
+procedure and rules.
 Read that guide before you write or review documentation.
 This file defines the agent-specific workflow for applying those rules.
 

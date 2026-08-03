@@ -5,7 +5,7 @@
 
 # Contributing to NemoClaw Documentation
 
-This guide owns the public-facing documentation procedures and rules for NemoClaw.
+This guide owns the public-facing documentation procedure and rules for NemoClaw.
 If you change code that affects user-facing behavior, update the relevant docs in the same PR.
 
 ## When to Update Docs

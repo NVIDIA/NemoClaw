@@ -277,7 +277,7 @@ If the command trace contains no reviewer-request write, report the event as an 
 ## Documentation
 
 - Treat `docs/` as the source of truth for public-facing documentation.
-  `docs/CONTRIBUTING.md` owns public-facing documentation procedures and rules.
+  `docs/CONTRIBUTING.md` owns public-facing documentation procedure and rules.
   `docs/AGENTS.md` owns agent-specific instructions for applying them.
 - Before completing a code change, determine whether it changes a user-visible surface.
   This includes a public API, CLI, configuration, UI or front-end behavior, workflow, default, error, or other supported product behavior.

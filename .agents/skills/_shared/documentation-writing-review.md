@@ -13,7 +13,7 @@ documentation, changelog entries, Announcements, or maintainer guidance.
 - The [NemoClaw Controlled Word List](controlled-words.md) owns project terms, product names,
   lifecycle operations, and evidence claims.
 - The [documentation contributor guide](../../../docs/CONTRIBUTING.md) owns public-facing
-  documentation procedures and rules.
+  documentation procedure and rules.
 - The [Documentation Agent Guide](../../../docs/AGENTS.md) owns agent-specific instructions for
   applying the public-facing documentation rules.
 - The repository [Documentation instructions](../../../AGENTS.md#documentation) own agent workflow
