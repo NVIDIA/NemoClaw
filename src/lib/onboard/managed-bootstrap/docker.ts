@@ -42,6 +42,7 @@ import {
   assertManagedBootstrapSafeProcessEnvironmentKey,
   attachManagedBootstrapRollbackError,
   createManagedBootstrapIdentity,
+  createManagedBootstrapPlanFingerprint,
   createManagedBootstrapPreparedAuthority,
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   type ManagedBootstrapAdapter,
@@ -64,11 +65,15 @@ import {
 } from "./adapter";
 import {
   createFileDockerManagedBootstrapJournalStore,
+  DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION,
   DOCKER_MANAGED_BOOTSTRAP_JOURNAL_SCHEMA_VERSION,
+  type DockerManagedBootstrapFinalizationRecord,
   type DockerManagedBootstrapJournal,
   DockerManagedBootstrapJournalAcknowledgementLostError,
   type DockerManagedBootstrapJournalStore,
   parseDockerManagedBootstrapJournal,
+  sameDockerManagedBootstrapReceipt,
+  serializeDockerManagedBootstrapFinalizationRecord,
   serializeDockerManagedBootstrapJournal,
 } from "./docker-journal";
 import {
@@ -143,12 +148,6 @@ type ResolvedDeps = Required<
   DockerManagedBootstrapDeps;
 
 type DockerBootstrapTransaction = DockerManagedBootstrapJournal;
-
-interface DockerBootstrapRollbackTombstone {
-  readonly profileFingerprint: string;
-  readonly imageReference: string;
-  readonly receipt: ManagedBootstrapFinalizationReceipt;
-}
 
 export interface DockerManagedBootstrapAdapter extends ManagedBootstrapAdapter {}
 
@@ -1426,6 +1425,26 @@ function sameDockerBootstrapJournal(
   );
 }
 
+function sameDockerBootstrapPreparedAuthority(
+  left: DockerBootstrapTransaction,
+  right: DockerBootstrapTransaction,
+): boolean {
+  return sameDockerBootstrapJournal(
+    Object.freeze({
+      ...left,
+      phase: "staged" as const,
+      preparationReceipt: null,
+      commitReceipt: null,
+    }),
+    Object.freeze({
+      ...right,
+      phase: "staged" as const,
+      preparationReceipt: null,
+      commitReceipt: null,
+    }),
+  );
+}
+
 function createDockerBootstrapJournalDurably(
   journal: DockerBootstrapTransaction,
   deps: ResolvedDeps,
@@ -1467,6 +1486,27 @@ function transitionDockerBootstrapJournalDurably(
   return persisted;
 }
 
+function recordDockerBootstrapCompletionDurably(
+  journal: DockerBootstrapTransaction,
+  receipt: ManagedBootstrapCompletionReceipt,
+  deps: ResolvedDeps,
+): DockerBootstrapTransaction {
+  const expected = Object.freeze({ ...journal, commitReceipt: receipt });
+  try {
+    deps.journalStore.recordCompletion(journal.bootstrapIdentity, receipt);
+  } catch (error) {
+    if (!(error instanceof DockerManagedBootstrapJournalAcknowledgementLostError)) throw error;
+    const recovered = deps.journalStore.load(journal.bootstrapIdentity);
+    if (!recovered || !sameDockerBootstrapJournal(recovered, expected)) throw error;
+    return recovered;
+  }
+  const persisted = deps.journalStore.load(journal.bootstrapIdentity);
+  if (!persisted || !sameDockerBootstrapJournal(persisted, expected)) {
+    throw new Error("Managed bootstrap Docker completion receipt was not durably re-readable.");
+  }
+  return persisted;
+}
+
 function removeDockerBootstrapJournalDurably(
   journal: DockerBootstrapTransaction,
   deps: ResolvedDeps,
@@ -1490,6 +1530,7 @@ function assertDockerBootstrapTransactionAuthority(
   snapshot: ManagedBootstrapObservedSnapshot,
   prepared?: ManagedBootstrapPreparedReplacementHandle | null,
   replacement?: ManagedBootstrapReplacementHandle | null,
+  durablePreparation?: ManagedBootstrapDurablePreparationReceipt | null,
 ): void {
   const originalName = dockerContainerName(
     parseDockerManagedBootstrapLaunchSpec(snapshot.specCanonicalJson).inspect,
@@ -1498,9 +1539,11 @@ function assertDockerBootstrapTransactionAuthority(
   if (
     transaction.schemaVersion !== DOCKER_MANAGED_BOOTSTRAP_JOURNAL_SCHEMA_VERSION ||
     transaction.bootstrapIdentity !== handle.bootstrapIdentity ||
+    transaction.providerId !== expectedSandbox.driverId ||
     transaction.sandbox.sandboxName !== expectedSandbox.sandboxName ||
     transaction.sandbox.sandboxId !== expectedSandbox.sandboxId ||
     transaction.sandbox.driverId !== expectedSandbox.driverId ||
+    transaction.planFingerprint !== createManagedBootstrapPlanFingerprint(handle.plan) ||
     transaction.profileFingerprint !== handle.plan.profile.fingerprint ||
     transaction.imageReference !==
       expectedImageReference(snapshot.image.repository, snapshot.image.manifestDigest) ||
@@ -1511,6 +1554,22 @@ function assertDockerBootstrapTransactionAuthority(
       replacementStagingName(originalName, handle.bootstrapIdentity) ||
     transaction.backupName !== backupName(originalName, handle.bootstrapIdentity) ||
     transaction.originalSpecHash !== snapshot.specHash ||
+    transaction.rollbackTargetRuntimeId !== snapshot.runtimeId ||
+    transaction.rollbackTargetSpecHash !== snapshot.specHash ||
+    (transaction.preparationReceipt !== null &&
+      prepared !== undefined &&
+      prepared !== null &&
+      transaction.preparationReceipt.authorityFingerprint !==
+        createManagedBootstrapPreparedAuthority({ handle, snapshot, prepared })
+          .authorityFingerprint) ||
+    (durablePreparation !== undefined &&
+      durablePreparation !== null &&
+      (transaction.preparationReceipt === null ||
+        !sameDockerManagedBootstrapReceipt(
+          "preparation",
+          transaction.preparationReceipt,
+          durablePreparation,
+        ))) ||
     (prepared !== undefined &&
       prepared !== null &&
       (transaction.originalRuntimeId !== prepared.originalRuntimeId ||
@@ -1677,8 +1736,64 @@ export function createDockerManagedBootstrapAdapter(
   dependencies: DockerManagedBootstrapDeps = {},
 ): DockerManagedBootstrapAdapter {
   const deps = resolveDeps(dependencies);
-  const committedTransactions = new Set<string>();
-  const rollbackTombstones = new Map<string, DockerBootstrapRollbackTombstone>();
+  const finalizationRecord = (
+    handle: ManagedBootstrapHeldWorkloadHandle,
+  ): DockerManagedBootstrapFinalizationRecord | null => {
+    const record = deps.journalStore.loadFinalization(handle.bootstrapIdentity);
+    if (!record) return null;
+    if (
+      record.providerId !== handle.sandbox.driverId ||
+      record.sandbox.sandboxName !== handle.sandbox.sandboxName ||
+      record.sandbox.sandboxId !== handle.sandbox.sandboxId ||
+      record.sandbox.driverId !== handle.sandbox.driverId ||
+      record.planFingerprint !== createManagedBootstrapPlanFingerprint(handle.plan) ||
+      record.profileFingerprint !== handle.plan.profile.fingerprint ||
+      record.imageReference !==
+        expectedImageReference(handle.plan.image.repository, handle.plan.image.manifestDigest)
+    ) {
+      throw new Error("Managed bootstrap finalization record does not match its durable identity.");
+    }
+    return record;
+  };
+  const persistFinalization = (
+    handle: ManagedBootstrapHeldWorkloadHandle,
+    phase: "committed" | "rolled-back",
+    commitReceipt: ManagedBootstrapCompletionReceipt | null,
+    cleanupReceipt: ManagedBootstrapFinalizationReceipt,
+  ): ManagedBootstrapFinalizationReceipt => {
+    const record = Object.freeze({
+      schemaVersion: DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION,
+      phase,
+      bootstrapIdentity: handle.bootstrapIdentity,
+      providerId: handle.sandbox.driverId,
+      sandbox: handle.sandbox,
+      planFingerprint: createManagedBootstrapPlanFingerprint(handle.plan),
+      profileFingerprint: handle.plan.profile.fingerprint,
+      imageReference: expectedImageReference(
+        handle.plan.image.repository,
+        handle.plan.image.manifestDigest,
+      ),
+      commitReceipt,
+      cleanupReceipt,
+    } satisfies DockerManagedBootstrapFinalizationRecord);
+    const serialized = serializeDockerManagedBootstrapFinalizationRecord(record);
+    try {
+      deps.journalStore.recordFinalization(record);
+    } catch (error) {
+      const recovered = deps.journalStore.loadFinalization(handle.bootstrapIdentity);
+      if (
+        !recovered ||
+        serializeDockerManagedBootstrapFinalizationRecord(recovered) !== serialized
+      ) {
+        throw error;
+      }
+    }
+    const persisted = deps.journalStore.loadFinalization(handle.bootstrapIdentity);
+    if (!persisted || serializeDockerManagedBootstrapFinalizationRecord(persisted) !== serialized) {
+      throw new Error("Managed bootstrap finalization receipt was not durably re-readable.");
+    }
+    return persisted.cleanupReceipt;
+  };
   const completedRollback = (
     handle: ManagedBootstrapHeldWorkloadHandle,
     alreadyRolledBack: boolean,
@@ -1694,34 +1809,39 @@ export function createDockerManagedBootstrapAdapter(
       alreadyRolledBack,
       finalizedAt: deps.now().toISOString(),
     } satisfies ManagedBootstrapFinalizationReceipt);
-    rollbackTombstones.set(handle.bootstrapIdentity, {
-      profileFingerprint: handle.plan.profile.fingerprint,
-      imageReference: expectedImageReference(
-        handle.plan.image.repository,
-        handle.plan.image.manifestDigest,
-      ),
-      receipt,
-    });
-    return receipt;
+    return persistFinalization(handle, "rolled-back", null, receipt);
+  };
+  const completedCommit = (
+    handle: ManagedBootstrapHeldWorkloadHandle,
+    commitReceipt: ManagedBootstrapCompletionReceipt,
+  ): ManagedBootstrapFinalizationReceipt => {
+    const cleanupReceipt = Object.freeze({
+      schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+      sandbox: handle.sandbox,
+      bootstrapIdentity: handle.bootstrapIdentity,
+      outcome: "committed",
+      restoredRuntimeId: null,
+      restoredSpecHash: null,
+      heldWorkloadRemoved: false,
+      alreadyRolledBack: false,
+      finalizedAt: deps.now().toISOString(),
+    } satisfies ManagedBootstrapFinalizationReceipt);
+    return persistFinalization(handle, "committed", commitReceipt, cleanupReceipt);
   };
   const priorRollback = (
     handle: ManagedBootstrapHeldWorkloadHandle,
   ): ManagedBootstrapFinalizationReceipt | null => {
-    const tombstone = rollbackTombstones.get(handle.bootstrapIdentity);
-    if (!tombstone) return null;
-    const receipt = tombstone.receipt;
-    if (
-      receipt.sandbox.sandboxName !== handle.sandbox.sandboxName ||
-      receipt.sandbox.sandboxId !== handle.sandbox.sandboxId ||
-      receipt.sandbox.driverId !== handle.sandbox.driverId ||
-      tombstone.profileFingerprint !== handle.plan.profile.fingerprint ||
-      tombstone.imageReference !==
-        expectedImageReference(handle.plan.image.repository, handle.plan.image.manifestDigest)
-    ) {
-      throw new Error("Managed bootstrap rollback tombstone does not match its durable identity.");
+    const finalized = finalizationRecord(handle);
+    if (!finalized) return null;
+    if (finalized.phase === "committed") {
+      throw new ManagedBootstrapDurableCommitCleanupPendingError({
+        bootstrapIdentity: handle.bootstrapIdentity,
+        cleanupRuntimeId: finalized.commitReceipt?.runtimeId ?? "unknown",
+        detail: "rollback is no longer legal after the durable finalization receipt",
+      });
     }
     return Object.freeze({
-      ...receipt,
+      ...finalized.cleanupReceipt,
       alreadyRolledBack: true,
     });
   };
@@ -1743,10 +1863,7 @@ export function createDockerManagedBootstrapAdapter(
     const finalized = priorRollback(handle);
     if (finalized) return finalized;
     const journal = deps.journalStore.load(handle.bootstrapIdentity);
-    if (
-      committedTransactions.has(handle.bootstrapIdentity) ||
-      journal?.phase === "shared-state-committed"
-    ) {
+    if (journal?.phase === "shared-state-committed") {
       throw new ManagedBootstrapDurableCommitCleanupPendingError({
         bootstrapIdentity: handle.bootstrapIdentity,
         cleanupRuntimeId: journal?.originalRuntimeId ?? snapshot?.runtimeId ?? "unknown",
@@ -1854,15 +1971,21 @@ export function createDockerManagedBootstrapAdapter(
         detail: "durable Docker cutover lacks its coordinator-recorded prepared authority",
       });
     }
-    const stagedJournal = Object.freeze({ ...journal, phase: "staged" as const });
-    if (!sameDockerBootstrapJournal(stagedJournal, preparedAuthority)) {
+    if (!sameDockerBootstrapPreparedAuthority(journal, preparedAuthority)) {
       throw new ManagedBootstrapCommitStateIndeterminateError({
         bootstrapIdentity: handle.bootstrapIdentity,
         runtimeId: journal.replacementRuntimeId,
         detail: "durable Docker cutover changed its prepared rollback authority",
       });
     }
-    assertDockerBootstrapTransactionAuthority(journal, handle, snapshot, prepared, replacement);
+    assertDockerBootstrapTransactionAuthority(
+      journal,
+      handle,
+      snapshot,
+      prepared,
+      replacement,
+      durablePreparation,
+    );
     const original = inspectTransactionRuntime(journal, journal.originalRuntimeId, deps);
     if (!original) {
       throw new ManagedBootstrapCommitStateIndeterminateError({
@@ -2082,14 +2205,14 @@ export function createDockerManagedBootstrapAdapter(
     return completedRollback(handle, false);
   };
   const commitBootstrapNow = (
+    handle: ManagedBootstrapHeldWorkloadHandle,
     receipt: ManagedBootstrapCompletionReceipt,
     transaction: DockerBootstrapTransaction,
     input: {
       readonly sharedStateStatus: "committed" | "none";
       readonly sharedStateTransaction: ReturnType<typeof managedSharedStateTransaction>;
     },
-  ): void => {
-    if (committedTransactions.has(receipt.bootstrapIdentity)) return;
+  ): ManagedBootstrapFinalizationReceipt => {
     if (
       transaction.phase !== "shared-state-committed" ||
       transaction.replacementRuntimeId !== receipt.runtimeId ||
@@ -2181,7 +2304,7 @@ export function createDockerManagedBootstrapAdapter(
       }
     }
     removeDockerBootstrapJournalDurably(transaction, deps);
-    committedTransactions.add(receipt.bootstrapIdentity);
+    return completedCommit(handle, receipt);
   };
   const finalizeBootstrap = async (
     input: Parameters<ManagedBootstrapAdapter["finalizeBootstrap"]>[0],
@@ -2192,6 +2315,21 @@ export function createDockerManagedBootstrapAdapter(
     const { completion, durablePreparation, handle, prepared, replacement, snapshot } = input;
     if (!completion || !snapshot || !prepared || !durablePreparation || !replacement) {
       throw new Error("Managed bootstrap commit requires one complete cutover receipt.");
+    }
+    const finalized = finalizationRecord(handle);
+    if (finalized) {
+      if (
+        finalized.phase !== "committed" ||
+        !finalized.commitReceipt ||
+        !sameDockerManagedBootstrapReceipt("completion", finalized.commitReceipt, completion)
+      ) {
+        throw new ManagedBootstrapCommitStateIndeterminateError({
+          bootstrapIdentity: handle.bootstrapIdentity,
+          runtimeId: replacement.replacementRuntimeId,
+          detail: "durable finalization cannot change outcome or commit receipt",
+        });
+      }
+      return finalized.cleanupReceipt;
     }
     const preparedAuthority = transactionFromPreparedAuthority(handle, snapshot, prepared);
     assertDurablePreparationAuthority(handle, snapshot, prepared, durablePreparation);
@@ -2210,19 +2348,6 @@ export function createDockerManagedBootstrapAdapter(
     let journal = deps.journalStore.load(handle.bootstrapIdentity);
 
     if (!journal) {
-      if (committedTransactions.has(completion.bootstrapIdentity)) {
-        return Object.freeze({
-          schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
-          sandbox: handle.sandbox,
-          bootstrapIdentity: handle.bootstrapIdentity,
-          outcome: "committed",
-          restoredRuntimeId: null,
-          restoredSpecHash: null,
-          heldWorkloadRemoved: false,
-          alreadyRolledBack: false,
-          finalizedAt: deps.now().toISOString(),
-        });
-      }
       const originalPresence = probeExactDockerContainerAbsence(snapshot.runtimeId, deps);
       if (originalPresence === "unknown") {
         throw new ManagedBootstrapCommitStateIndeterminateError({
@@ -2256,33 +2381,34 @@ export function createDockerManagedBootstrapAdapter(
           detail: "the retired-journal replacement does not match the exact completion receipt",
         });
       }
-      committedTransactions.add(completion.bootstrapIdentity);
-      return Object.freeze({
-        schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
-        sandbox: handle.sandbox,
-        bootstrapIdentity: handle.bootstrapIdentity,
-        outcome: "committed",
-        restoredRuntimeId: null,
-        restoredSpecHash: null,
-        heldWorkloadRemoved: false,
-        alreadyRolledBack: false,
-        finalizedAt: deps.now().toISOString(),
-      });
+      return completedCommit(handle, completion);
     }
 
-    if (
-      !sameDockerBootstrapJournal(
-        Object.freeze({ ...journal, phase: "staged" as const }),
-        preparedAuthority,
-      )
-    ) {
+    if (!sameDockerBootstrapPreparedAuthority(journal, preparedAuthority)) {
       throw new ManagedBootstrapCommitStateIndeterminateError({
         bootstrapIdentity: handle.bootstrapIdentity,
         runtimeId: journal.replacementRuntimeId,
         detail: "durable Docker commit changed its prepared rollback authority",
       });
     }
-    assertDockerBootstrapTransactionAuthority(journal, handle, snapshot, prepared, replacement);
+    assertDockerBootstrapTransactionAuthority(
+      journal,
+      handle,
+      snapshot,
+      prepared,
+      replacement,
+      durablePreparation,
+    );
+    if (
+      journal.commitReceipt === null ||
+      !sameDockerManagedBootstrapReceipt("completion", journal.commitReceipt, completion)
+    ) {
+      throw new ManagedBootstrapCommitStateIndeterminateError({
+        bootstrapIdentity: journal.bootstrapIdentity,
+        runtimeId: journal.replacementRuntimeId,
+        detail: "commit requires the exact durable completion receipt",
+      });
+    }
     if (journal.phase === "staged" || journal.phase === "rollback-authorized") {
       throw new ManagedBootstrapCommitStateIndeterminateError({
         bootstrapIdentity: journal.bootstrapIdentity,
@@ -2361,20 +2487,9 @@ export function createDockerManagedBootstrapAdapter(
       });
     }
 
-    commitBootstrapNow(completion, journal, {
+    return commitBootstrapNow(handle, completion, journal, {
       sharedStateStatus: sharedStatus === "committed" ? "committed" : "none",
       sharedStateTransaction: sharedTransaction,
-    });
-    return Object.freeze({
-      schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
-      sandbox: handle.sandbox,
-      bootstrapIdentity: handle.bootstrapIdentity,
-      outcome: "committed",
-      restoredRuntimeId: null,
-      restoredSpecHash: null,
-      heldWorkloadRemoved: false,
-      alreadyRolledBack: false,
-      finalizedAt: deps.now().toISOString(),
     });
   };
   return {
@@ -2631,7 +2746,9 @@ export function createDockerManagedBootstrapAdapter(
           schemaVersion: DOCKER_MANAGED_BOOTSTRAP_JOURNAL_SCHEMA_VERSION,
           phase: "staged",
           bootstrapIdentity: handle.bootstrapIdentity,
+          providerId: handle.sandbox.driverId,
           sandbox: Object.freeze({ ...handle.sandbox }),
+          planFingerprint: createManagedBootstrapPlanFingerprint(handle.plan),
           profileFingerprint: handle.plan.profile.fingerprint,
           imageReference: expectedImageReference(
             snapshot.image.repository,
@@ -2645,6 +2762,10 @@ export function createDockerManagedBootstrapAdapter(
           backupName: backupContainerName,
           originalSpecHash: snapshot.specHash,
           replacementSpecHash: expectedActivatedSpecHash,
+          rollbackTargetRuntimeId: snapshot.runtimeId,
+          rollbackTargetSpecHash: snapshot.specHash,
+          preparationReceipt: null,
+          commitReceipt: null,
         });
 
         requestFile = writeProtectedEnvelope(handle.bootstrapIdentity, request);
@@ -2724,9 +2845,20 @@ export function createDockerManagedBootstrapAdapter(
     async activateBootstrapReplacement({ handle, snapshot, prepared, durablePreparation }) {
       const authority = transactionFromPreparedAuthority(handle, snapshot, prepared);
       assertDurablePreparationAuthority(handle, snapshot, prepared, durablePreparation);
+      const durableAuthority = Object.freeze({
+        ...authority,
+        preparationReceipt: durablePreparation,
+      });
       const existingJournal = deps.journalStore.load(handle.bootstrapIdentity);
       if (existingJournal) {
-        assertDockerBootstrapTransactionAuthority(existingJournal, handle, snapshot, prepared);
+        assertDockerBootstrapTransactionAuthority(
+          existingJournal,
+          handle,
+          snapshot,
+          prepared,
+          null,
+          durablePreparation,
+        );
         throw new ManagedBootstrapCommitStateIndeterminateError({
           bootstrapIdentity: existingJournal.bootstrapIdentity,
           runtimeId: existingJournal.replacementRuntimeId,
@@ -2756,7 +2888,7 @@ export function createDockerManagedBootstrapAdapter(
           );
         }
 
-        let journal = createDockerBootstrapJournalDurably(authority, deps);
+        let journal = createDockerBootstrapJournalDurably(durableAuthority, deps);
         const originalAtFence = inspectExact(snapshot.runtimeId, deps);
         const replacementAtFence = inspectExact(prepared.preparedRuntimeId, deps);
         assertTransactionOriginal(journal, originalAtFence);
@@ -2929,7 +3061,19 @@ export function createDockerManagedBootstrapAdapter(
           "Managed bootstrap Docker image completion identities do not match the transaction.",
         );
       }
-      return Object.freeze({
+      if (afterWaitJournal.commitReceipt !== null) {
+        if (
+          afterWaitJournal.commitReceipt.transactionPending !== imageCompletion.transactionPending
+        ) {
+          throw new ManagedBootstrapCommitStateIndeterminateError({
+            bootstrapIdentity: afterWaitJournal.bootstrapIdentity,
+            runtimeId: afterWaitJournal.replacementRuntimeId,
+            detail: "durable completion disagrees with the image-owned transaction receipt",
+          });
+        }
+        return afterWaitJournal.commitReceipt;
+      }
+      const completion = Object.freeze({
         schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
         sandbox: handle.sandbox,
         runtimeId: replacement.replacementRuntimeId,
@@ -2942,6 +3086,15 @@ export function createDockerManagedBootstrapAdapter(
         transactionPending: imageCompletion.transactionPending,
         completedAt: deps.now().toISOString(),
       });
+      const completedJournal = recordDockerBootstrapCompletionDurably(
+        afterWaitJournal,
+        completion,
+        deps,
+      );
+      if (completedJournal.commitReceipt === null) {
+        throw new Error("Managed bootstrap Docker completion receipt disappeared after recording.");
+      }
+      return completedJournal.commitReceipt;
     },
 
     finalizeBootstrap,
