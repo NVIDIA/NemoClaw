@@ -20,6 +20,7 @@ import { stopSandbox } from "../../actions/sandbox/stop";
 import { loadAgent } from "../../agent/defs";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
+import { createDockerManagedBootstrapSurface } from "../managed-bootstrap/docker-runtime";
 import { MANAGED_IMAGE_REPOSITORIES } from "../managed-image/contract";
 import {
   encodeManagedStartupProfile,
@@ -145,6 +146,28 @@ describe("RuntimeProviderBundle registry contract", () => {
     }
   });
 
+  it("validates the dormant Docker bootstrap candidate through the same bundle registry", () => {
+    const docker = createDockerRuntimeProviderBundle();
+    const providers = createRuntimeProviderBundleRegistry([
+      [
+        "docker",
+        {
+          ...docker,
+          bootstrap: createDockerManagedBootstrapSurface(),
+        },
+      ],
+    ]);
+
+    expect(providers.docker?.bootstrap).toMatchObject({
+      providerId: "docker",
+      supported: true,
+    });
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.bootstrap).toMatchObject({
+      providerId: "docker",
+      supported: false,
+    });
+  });
+
   it("deeply clones and freezes every registered nested value", () => {
     const source = mxcBundle();
     const registry = createRuntimeProviderBundleRegistry([["mxc", source]]);
@@ -168,6 +191,59 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(() => {
       (registered.capabilities as { directLifecycle: boolean }).directLifecycle = false;
     }).toThrow(TypeError);
+  });
+
+  it("registers an MXC-style managed-bootstrap provider through the bundle surface", () => {
+    const bundle = mxcBundle();
+    const createLifecycle = vi.fn(() => ({
+      launchArgv: ["mxc", "create"],
+      patch: {
+        maybeApplyDuringCreate: vi.fn(),
+        createFailureMessage: vi.fn(() => null),
+        exitOnPatchError: vi.fn(),
+        rollbackManagedStartupAfterCreateFailure: vi.fn(),
+        ensureApplied: vi.fn(),
+        waitForSupervisorReconnectIfNeeded: vi.fn(),
+        commitAfterReady: vi.fn(),
+        selectedMode: vi.fn(() => null),
+        printReadinessFailureIfEnabled: vi.fn(),
+        verifyGpuOrExit: vi.fn(async (verify) => verify("alpha")),
+      },
+      prepareNetwork: vi.fn(async () => undefined),
+      runCreate: vi.fn(),
+    }));
+    const createOnboardRouting = vi.fn(() => ({
+      nativeFallbackHasCleanBaseline: false,
+      inspectNativeRuntime: vi.fn(() => null),
+      isNativeCreateRoutingFailure: vi.fn(() => false),
+      isTrustedNativeRuntimeError: vi.fn(() => false),
+      isNativeReadinessRoutingFailure: vi.fn(() => false),
+      prepareCompatibilityLaunch: vi.fn(() => ({ createArgv: [], registryImageRef: null })),
+    }));
+    const providers = createRuntimeProviderBundleRegistry([
+      [
+        "mxc",
+        replaceSurface(bundle, "bootstrap", {
+          providerId: "mxc",
+          supported: true,
+          createLifecycle,
+          createOnboardRouting,
+        }),
+      ],
+    ]);
+    const registered = providers.mxc!;
+    expectSupportedSurface(registered.bootstrap);
+
+    const routing = registered.bootstrap.createOnboardRouting({
+      sandboxName: "alpha",
+      openshellArgv: (args) => args,
+      nativeFallbackEnabled: false,
+    });
+
+    expect(registered.identity.id).toBe("mxc");
+    expect(routing.nativeFallbackHasCleanBaseline).toBe(false);
+    expect(createOnboardRouting).toHaveBeenCalledOnce();
+    expect(createLifecycle).not.toHaveBeenCalled();
   });
 
   it("rejects an omitted managed platform without changing legacy receipt acceptance", () => {
