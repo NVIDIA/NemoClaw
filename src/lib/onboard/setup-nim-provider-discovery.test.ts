@@ -16,12 +16,12 @@ const interactiveDeps = {
 
 describe("prepareProviderDiscovery", () => {
   it("loads the reviewed model when an interactive draft pins the provider (#6005)", () => {
-    const getNonInteractiveModel = vi.fn(() => "reviewed-model");
+    const getReviewedModel = vi.fn(() => "reviewed-model");
     const result = prepareProviderDiscovery({
       deps: {
         ...interactiveDeps,
-        getNonInteractiveProvider: () => "build",
-        getNonInteractiveModel,
+        getNonInteractiveProvider: () => "openrouter",
+        getReviewedModel,
       },
       sandboxName: null,
       recoverProvider: false,
@@ -31,7 +31,28 @@ describe("prepareProviderDiscovery", () => {
     });
 
     expect(result.requestedModel).toBe("reviewed-model");
-    expect(getNonInteractiveModel).toHaveBeenCalledWith("build");
+    expect(getReviewedModel).toHaveBeenCalledWith("openrouter");
+  });
+
+  it("does not validate an ambient model before an interactive provider menu", () => {
+    const getNonInteractiveModel = vi.fn(() => {
+      throw new Error("ambient model must not be read");
+    });
+    const result = prepareProviderDiscovery({
+      deps: {
+        ...interactiveDeps,
+        getNonInteractiveProvider: () => "openrouter",
+        getNonInteractiveModel,
+      },
+      sandboxName: null,
+      recoverProvider: false,
+      rebuildRegistryInferenceRoute: null,
+      canProbeRoute: () => true,
+      recoverySessionId: null,
+    });
+
+    expect(result.requestedModel).toBeNull();
+    expect(getNonInteractiveModel).not.toHaveBeenCalled();
   });
 
   it("keeps local daemon probes on for the interactive menu when the route preflight reports a conflict (#6750)", () => {

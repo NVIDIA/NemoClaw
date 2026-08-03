@@ -62,4 +62,16 @@ describe("onboarding intent draft session persistence (#6005)", () => {
     });
     expect(JSON.stringify(normalized?.intentDraft)).not.toContain("must-not-persist");
   });
+
+  it("rejects a session with a malformed non-null draft", async () => {
+    const session = await import("../onboard-session");
+    const created = session.createSession() as unknown as Record<string, unknown>;
+    created.intentDraft = {
+      version: 1,
+      phase: "collecting",
+      answers: { messaging: ["telegram", 42] },
+    };
+
+    expect(session.normalizeSession(created as never)).toBeNull();
+  });
 });

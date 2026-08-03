@@ -3448,6 +3448,8 @@ function getSetupNimDeps(): SetupNimDeps {
     isNonInteractive,
     getNonInteractiveProvider,
     getNonInteractiveModel,
+    getReviewedModel: (providerKey) =>
+      hasAcceptedOnboardIntent() ? getNonInteractiveModel(providerKey) : null,
     createNvidiaFeaturedModelSession,
     detectInferenceProviderHostState,
     getAgentInferenceProviderOptions,
@@ -4022,6 +4024,14 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           throw new Error(`Reserved name: '${validated}' is a ${cliDisplayName()} CLI command.`);
         }
         return validated;
+      },
+      validateModel: (value) => {
+        if (!isSafeModelId(value)) {
+          throw new Error(
+            `Invalid model '${value}'. Use letters, numbers, '.', '_', '-', ':', or '/'.`,
+          );
+        }
+        return value;
       },
       checkpoint: (draft) => {
         session = onboardSession.updateSession((currentSession) => {

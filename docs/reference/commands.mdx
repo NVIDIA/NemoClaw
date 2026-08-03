@@ -247,10 +247,11 @@ The selected agent and host capabilities determine which choices appear within t
 Onboarding does not request raw credentials during choice collection, store them in the draft, or show them in the review.
 
 Type `b` or `back` during choice collection to return to the previous available choice prompt.
+Type `exit` or `quit` at a choice prompt to exit onboarding before external resource changes begin.
 Backspace continues to edit text in the current prompt.
 You can repeat `back` until you reach the first choice.
 At the first choice, another `b` or `back` keeps you there.
-Hidden or nonapplicable groups are skipped.
+Hidden groups and groups that are not applicable are skipped.
 
 Nested prompts use these Back transitions:
 
@@ -514,9 +515,6 @@ Before the review, the wizard collects all available choices, including the sand
 <AgentOnly variant="openclaw,hermes">
 This collection also includes optional web search, messaging channels, and any managed tools supported by the selected agent and provider.
 </AgentOnly>
-<AgentOnly variant="deepagents">
-This collection also includes optional web search.
-</AgentOnly>
 The **policy tier** choice controls the suggested network policy presets for the sandbox.
 After review, onboarding applies the reviewed tier's suggestions without reopening the preset picker.
 After you select **Apply configuration**, onboarding requests required credentials, registers providers, and creates or updates the selected resources.
@@ -524,15 +522,13 @@ Three tiers are available:
 
 | Tier | Description |
 |------|-------------|
-| Restricted | No tier defaults. Web search or other integrations selected earlier can still add their required presets; deselect them during policy review for baseline-only access. |
+| Restricted | No tier defaults. Web search or other integrations selected earlier can still add their required presets; disable those integrations during choice review for baseline-only access. |
 | Balanced (default) | Full dev tooling and a selected, supported web search provider. Package installs, model downloads, and inference. No messaging platform access by default. |
 | Open | Broad access across third-party services including supported messaging and productivity presets. Agent-specific unsupported presets are filtered out. |
 
-After selecting a tier, the wizard shows a combined preset and access-mode screen where you can include or exclude individual presets and toggle each between read and read-write access.
 For details on tiers and the presets each includes, refer to [Network Policies](network-policies#policy-tiers).
-When you finish the policy step, NemoClaw records the finalized built-in preset selection for that sandbox.
+After you apply the configuration, NemoClaw derives and records the finalized built-in preset selection from the reviewed tier and supported integrations without opening a preset picker.
 When onboarding creates or recreates a sandbox with presets, NemoClaw prints the exact finalized create-time policy scope before registering providers or creating the sandbox.
-Later re-onboard runs seed from that finalized selection, so presets you intentionally removed stay removed unless you select them again or override the policy mode.
 
 In non-interactive mode, set the tier with `NEMOCLAW_POLICY_TIER` (default: `balanced`):
 

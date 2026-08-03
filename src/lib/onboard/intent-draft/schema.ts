@@ -166,6 +166,9 @@ export function validateOnboardIntentEndpointUrl(value: string): string {
       throw new Error("Endpoint URL must not contain credential query parameters.");
     }
   }
+  if (parsed.hash) {
+    throw new Error("Endpoint URL must not contain a fragment.");
+  }
   return parsed.toString();
 }
 

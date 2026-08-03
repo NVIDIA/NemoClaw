@@ -11,6 +11,7 @@ interface ProviderDiscoveryDeps {
   isNonInteractive(): boolean;
   getNonInteractiveProvider(): string | null;
   getNonInteractiveModel(providerKey: string): string | null;
+  getReviewedModel?(providerKey: string): string | null;
   readRecordedProvider(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
@@ -106,9 +107,10 @@ export function prepareProviderDiscovery(options: {
   } = options;
   const nonInteractive = deps.isNonInteractive();
   const requestedProvider = deps.getNonInteractiveProvider();
-  const requestedModel =
-    nonInteractive || requestedProvider
-      ? deps.getNonInteractiveModel(requestedProvider || "build")
+  const requestedModel = nonInteractive
+    ? deps.getNonInteractiveModel(requestedProvider || "build")
+    : requestedProvider
+      ? (deps.getReviewedModel?.(requestedProvider) ?? null)
       : null;
   const recoveredRegistryRoute =
     rebuildRegistryInferenceRoute?.sandboxName === sandboxName &&

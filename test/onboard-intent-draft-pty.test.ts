@@ -24,6 +24,7 @@ async function runPty(
   });
   let output = "";
   let sent = 0;
+  child.stdin.on("error", () => {});
   const sendRepliesForVisiblePrompts = () => {
     const visiblePrompts = output.match(/PTY_PROMPT:\d+:/g)?.length ?? 0;
     while (sent < visiblePrompts && sent < replies.length) {

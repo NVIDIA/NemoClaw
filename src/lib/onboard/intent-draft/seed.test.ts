@@ -87,4 +87,14 @@ describe("onboarding intent draft input seeding (#6005)", () => {
       }).answers.resources,
     ).toEqual({ profile: "custom", gpu: "auto", cpu: "4", memory: "8Gi" });
   });
+
+  it.each([
+    [{ gpu: true }, "enable"],
+    [{ noGpu: true }, "disable"],
+  ] as const)("seeds legacy GPU flags for review: %o", (options, gpu) => {
+    expect(seedOnboardIntentDraft(options, null, {}).answers.resources).toEqual({
+      profile: "default",
+      gpu,
+    });
+  });
 });

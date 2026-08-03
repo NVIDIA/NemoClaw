@@ -28,6 +28,13 @@ export type OnboardIntentDraftBoundaryResult =
 export async function crossOnboardIntentDraftBoundary(
   options: OnboardIntentDraftBoundaryOptions,
 ): Promise<OnboardIntentDraftBoundaryResult> {
+  if (
+    !options.shouldCollect &&
+    options.existingDraft &&
+    options.existingDraft.phase !== "accepted"
+  ) {
+    throw new Error("Cannot materialize an onboarding draft before it is reviewed and accepted.");
+  }
   let acceptedDraft = options.existingDraft?.phase === "accepted" ? options.existingDraft : null;
   if (options.shouldCollect) {
     const result = await options.collect(options.existingDraft ?? options.initialDraft);

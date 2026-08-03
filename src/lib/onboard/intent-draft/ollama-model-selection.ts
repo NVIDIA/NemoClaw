@@ -38,6 +38,8 @@ export interface OllamaModelSelectorDeps {
     selectedModel: string,
     defaults: OllamaModelSelectionDefaults,
   ) => ApplyOllamaRuntimeContextWindowResult;
+  readonly prepareModel?: typeof prepareOllamaModel;
+  readonly modelSizeLabel?: (model: string) => string;
 }
 
 export type OllamaModelSelector = (
@@ -49,6 +51,10 @@ export type OllamaModelSelector = (
 
 /** Keep post-Apply Ollama validation forward-only while preserving the legacy selector behavior. */
 export function createOllamaModelSelector(deps: OllamaModelSelectorDeps): OllamaModelSelector {
+  const prepareModel = deps.prepareModel ?? prepareOllamaModel;
+  const modelSizeLabel =
+    deps.modelSizeLabel ??
+    ((model: string) => ollamaModelSize.formatModelSize(ollamaModelSize.getOllamaModelSize(model)));
   const refuseAcceptedModelRevision = () => {
     if (hasAcceptedOnboardIntent()) {
       assertDraftRevisionAllowed("materializing", "the Ollama model", cliName());
@@ -90,8 +96,7 @@ export function createOllamaModelSelector(deps: OllamaModelSelectorDeps): Ollama
       if (
         !installedModels.some((listedModel) => ollamaModelRefsMatch(listedModel, selectedModel))
       ) {
-        const lookup = ollamaModelSize.getOllamaModelSize(selectedModel);
-        const sizeLabel = ollamaModelSize.formatModelSize(lookup);
+        const sizeLabel = modelSizeLabel(selectedModel);
         if (deps.isAutoYes()) {
           deps.note(`  Pulling Ollama model '${selectedModel}' (${sizeLabel}).`);
         } else if (deps.isNonInteractive()) {
@@ -113,11 +118,12 @@ export function createOllamaModelSelector(deps: OllamaModelSelectorDeps): Ollama
             );
             console.log("  Choose a different Ollama model or select Other.");
             console.log("");
+            if (lockedModel) return { outcome: "back-to-selection" };
             continue;
           }
         }
       }
-      const probe = await prepareOllamaModel(selectedModel, installedModels, interaction);
+      const probe = await prepareModel(selectedModel, installedModels, interaction);
       if (!probe.ok) {
         const probeFailureLimitReached = probeFailures.recordFailure(selectedModel);
         const action = ollamaFlow.handleOllamaProbeFailure(
@@ -160,6 +166,7 @@ export function createOllamaModelSelector(deps: OllamaModelSelectorDeps): Ollama
           deps.abortNonInteractive(`model '${selectedModel}' failed validation.`);
         }
         refuseAcceptedModelRevision();
+        if (lockedModel) return { outcome: "back-to-selection" };
         continue;
       }
       if (validation.api !== "openai-completions") {

@@ -41,6 +41,7 @@ export interface OnboardIntentDraftUiDeps {
   policyChoices(): readonly OnboardIntentChoice[];
   defaultSandboxName(agent: string): string;
   validateSandboxName(value: string): string;
+  validateModel(value: string): string;
   compatibility: OnboardIntentCompatibility;
   checkpoint(draft: OnboardIntentDraft): Promise<void> | void;
 }
@@ -176,11 +177,24 @@ async function prepareDraftForReview(
       authMethods.length === 0 ||
       (inference.authMethod !== null &&
         authMethods.some((method) => method.value === inference.authMethod));
-    if (!choice || (choice.endpointRequired && !inference.endpointUrl) || !authMethodAvailable) {
+    let normalizedModel = inference.model;
+    let modelAvailable = true;
+    try {
+      normalizedModel = inference.model === null ? null : deps.validateModel(inference.model);
+    } catch {
+      modelAvailable = false;
+    }
+    if (
+      !choice ||
+      !modelAvailable ||
+      (choice.endpointRequired && !inference.endpointUrl) ||
+      !authMethodAvailable
+    ) {
       answers = withoutDraftAnswers(answers, ["inference", "tools", "policy"]);
     } else {
       const normalizedInference = {
         ...inference,
+        model: normalizedModel,
         endpointUrl: choice.endpointRequired ? inference.endpointUrl : null,
         authMethod: authMethods.length > 0 ? inference.authMethod : null,
       };
@@ -302,7 +316,8 @@ async function promptReview(
     deps.log("  Edit a choice:");
     const stepIds = Object.keys(STEP_LABELS) as OnboardIntentStepId[];
     stepIds.forEach((step, index) => deps.log(`    ${index + 1}) ${STEP_LABELS[step]}`));
-    const raw = await deps.prompt("  Choose a choice to edit: ");
+    writeNavigationHint(deps.log);
+    const raw = await deps.prompt("  Choose a group to edit: ");
     const navigation = navigationIntent(raw);
     if (navigation === "exit") return { kind: "exit" };
     if (navigation === "back") continue;
@@ -311,7 +326,7 @@ async function promptReview(
       stepIds.map((step) => ({ value: step, label: STEP_LABELS[step] })),
     );
     if (selected) return { kind: "edit", step: selected.value as OnboardIntentStepId };
-    deps.log(`  Enter a number from 1 to ${stepIds.length}.`);
+    deps.log(`  Enter a number from 1 to ${stepIds.length}, b, or exit.`);
   }
 }
 
@@ -375,7 +390,12 @@ async function promptInference(
         continue;
       }
       if (result.kind === "exit") return result;
-      model = result.value;
+      try {
+        model = result.value === null ? null : deps.validateModel(result.value);
+      } catch (error) {
+        deps.log(`  ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
       stage = providerChoice!.endpointRequired ? "endpoint" : "auth";
       continue;
     }
@@ -424,6 +444,27 @@ async function promptInference(
       value: { provider: providerChoice!.value, model, endpointUrl, authMethod },
     };
   }
+}
+
+async function promptWebSearch(
+  deps: OnboardIntentDraftUiDeps,
+  draft: OnboardIntentDraft,
+  previous: string | null | undefined,
+  direction: "forward" | "back",
+): Promise<DraftPromptResult<string | null>> {
+  const choices = deps.webSearchChoices(draft.answers.agent!);
+  if (choices.length === 0) {
+    return direction === "back" ? { kind: "back" } : { kind: "answer", value: null };
+  }
+  const result = await promptChoice<string>({
+    title: "Web search",
+    choices: [{ value: "none", label: "Disabled" }, ...choices],
+    previous: previous === null ? "none" : previous,
+    deps,
+  });
+  return result.kind === "answer" && result.value === "none"
+    ? { kind: "answer", value: null }
+    : result;
 }
 
 async function promptMessaging(
@@ -563,20 +604,8 @@ function createSteps(
         ...draft,
         answers: { ...draft.answers, web_search: value as string | null },
       }),
-      prompt: ({ draft, previous }) =>
-        promptChoice({
-          title: "Web search",
-          choices: [
-            { value: "none", label: "Disabled" },
-            ...deps.webSearchChoices(draft.answers.agent!),
-          ],
-          previous: previous === null ? "none" : (previous as string | undefined),
-          deps,
-        }).then((result) =>
-          result.kind === "answer" && result.value === "none"
-            ? { kind: "answer" as const, value: null }
-            : result,
-        ),
+      prompt: ({ draft, previous, direction }) =>
+        promptWebSearch(deps, draft, previous as string | null | undefined, direction),
     },
     {
       id: "messaging",

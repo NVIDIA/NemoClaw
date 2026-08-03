@@ -52,7 +52,13 @@ export function seedOnboardIntentDraft(
   const resourceProfile = optionalString(env.NEMOCLAW_RESOURCE_PROFILE);
   const cpu = optionalString(env.NEMOCLAW_CPU);
   const memory = optionalString(env.NEMOCLAW_RAM);
-  const gpu = opts.sandboxGpu ?? null;
+  const gpu =
+    opts.sandboxGpu ??
+    (opts.gpu === true && opts.noGpu !== true
+      ? "enable"
+      : opts.noGpu === true && opts.gpu !== true
+        ? "disable"
+        : null);
   if (resourceProfile || cpu || memory || gpu) {
     Object.assign(answers, {
       resources: {

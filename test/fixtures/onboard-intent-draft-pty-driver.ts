@@ -39,6 +39,7 @@ const result = await collectOnboardIntentDraft({
   policyChoices: () => [{ value: "balanced", label: "Balanced" }],
   defaultSandboxName: () => "demo",
   validateSandboxName: (value) => value,
+  validateModel: (value) => value,
   compatibility: {
     provider: (agent, inference) => agent !== "hermes" || inference.provider !== "openai",
     model: () => true,

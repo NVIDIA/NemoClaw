@@ -72,6 +72,7 @@ export interface SetupNimFlowDeps {
   isNonInteractive(): boolean;
   getNonInteractiveProvider(): string | null;
   getNonInteractiveModel(providerKey: string): string | null;
+  getReviewedModel?(providerKey: string): string | null;
   createNvidiaFeaturedModelSession(
     options?: NvidiaFeaturedModelSessionOptions,
   ): NvidiaFeaturedModelSession;

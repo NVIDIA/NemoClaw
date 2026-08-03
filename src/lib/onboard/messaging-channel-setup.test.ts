@@ -472,6 +472,18 @@ describe("setupMessagingChannels", () => {
     );
   });
 
+  it("uses an existing credential for a reviewed channel without prompting again (#6005)", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123456:existing-telegram-token";
+
+    const result = await setupMessagingChannels(null, ["telegram"], {
+      sandboxName: "tm",
+      selectionProvided: true,
+    });
+
+    expect(result).toEqual(["telegram"]);
+    expect(prompt).not.toHaveBeenCalledWith("  Telegram Bot Token: ", { secret: true });
+  });
+
   it("preserves completed non-default config while reacquiring a missing credential (#6743)", async () => {
     process.env.TELEGRAM_BOT_TOKEN = "123456:original-telegram-token";
     process.env.TELEGRAM_REQUIRE_MENTION = "0";

@@ -38,7 +38,9 @@ function createPolicySelectionHarness(controlPlaneReady = true) {
     selectPolicyTier,
     setPolicyTier,
     getRecordedPolicyTier: vi.fn(() => null),
-    selectTierPresetsAndAccess: vi.fn(async () => []),
+    selectTierPresetsAndAccess: vi.fn<SetupPolicySelectionDeps["selectTierPresetsAndAccess"]>(
+      async () => [],
+    ),
     parsePolicyPresetEnv: vi.fn(() => []),
     env: { NEMOCLAW_POLICY_MODE: "suggested" },
   } satisfies SetupPolicySelectionDeps;
@@ -134,6 +136,26 @@ describe("policy selection after interrupted onboarding", () => {
     ).resolves.toEqual(["npm"]);
 
     expect(deps.selectTierPresetsAndAccess).not.toHaveBeenCalled();
+    expect(deps.selectPolicyTier).not.toHaveBeenCalled();
     expect(syncPresetSelection).toHaveBeenCalledWith("alpha", [], ["npm"]);
+  });
+
+  it("reopens preset selection for an unaccepted interactive tier suggestion", async () => {
+    const { deps } = createPolicySelectionHarness();
+    deps.isNonInteractive.mockReturnValue(false);
+    deps.policies.listSetupPolicyPresets.mockReturnValue([{ name: "npm" }]);
+    deps.tiers.resolveTierPresets.mockReturnValue([{ name: "npm" }]);
+    deps.selectTierPresetsAndAccess.mockResolvedValue([{ name: "npm", access: "sandbox" }]);
+
+    await expect(
+      setupPoliciesWithSelection(deps, "alpha", {
+        selectedPresets: null,
+        tierName: "balanced",
+        agent: "openclaw",
+      }),
+    ).resolves.toEqual(["npm"]);
+
+    expect(deps.selectTierPresetsAndAccess).toHaveBeenCalled();
+    expect(deps.selectPolicyTier).not.toHaveBeenCalled();
   });
 });

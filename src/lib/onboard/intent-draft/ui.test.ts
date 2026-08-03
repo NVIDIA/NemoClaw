@@ -48,6 +48,7 @@ function makeDeps(replies: string[]): OnboardIntentDraftUiDeps & { lines: string
     defaultSandboxName: () => "demo",
     validateSandboxName: (value) =>
       value === "bad" ? fail("Invalid sandbox name") : value.toLowerCase(),
+    validateModel: (value) => value,
     compatibility: {
       provider: (agent, inference) => agent !== "hermes" || inference.provider !== "openai",
       model: () => true,
@@ -111,6 +112,7 @@ describe("onboarding intent draft UI (#6005)", () => {
     expect(result.draft.answers.agent).toBe("openclaw");
     expect(deps.prompt).toHaveBeenCalledTimes(4);
     expect(deps.lines.filter((line) => line === "  Review configuration")).toHaveLength(2);
+    expect(deps.lines).toContain("  [b] Back  [exit] Exit onboarding");
   });
 
   it("reopens only choices invalidated by an agent edit", async () => {
@@ -226,7 +228,7 @@ describe("onboarding intent draft UI (#6005)", () => {
     expect(deps.lines.filter((line) => line === "  Resource profile:")).toHaveLength(2);
   });
 
-  it("skips unavailable messaging and managed-tool groups in reverse navigation (#6005)", async () => {
+  it("skips unavailable web-search, messaging, and managed-tool groups in reverse navigation (#6005)", async () => {
     const initial = createOnboardIntentDraft({
       agent: "openclaw",
       inference: { provider: "build", model: "nemotron", endpointUrl: null, authMethod: null },
@@ -238,14 +240,16 @@ describe("onboarding intent draft UI (#6005)", () => {
       policy: "balanced",
     });
     const deps = makeDeps(["2", "7", "b", "", ""]);
+    deps.webSearchChoices = () => [];
     deps.messagingChoices = () => [];
 
     const result = await collectOnboardIntentDraft(deps, initial);
 
     expect(result.kind).toBe("apply");
-    expect(deps.lines).toContain("  Web search:");
+    expect(deps.lines).not.toContain("  Web search:");
     expect(deps.lines).not.toContain("  Messaging channels:");
     expect(deps.lines).not.toContain("  Managed tools:");
+    expect(deps.prompt).toHaveBeenCalledWith("  Sandbox name [demo]: ");
   });
 
   it("revalidates a complete seeded draft before showing Review", async () => {
@@ -276,6 +280,30 @@ describe("onboarding intent draft UI (#6005)", () => {
     });
     expect(deps.lines.filter((line) => line === "  Inference provider:")).toHaveLength(1);
     expect(deps.lines.filter((line) => line === "  Review configuration")).toHaveLength(1);
+  });
+
+  it("rejects an unsafe model before it can reach Review", async () => {
+    const deps = makeDeps([
+      "",
+      "",
+      "unsafe model",
+      "safe/model",
+      "demo",
+      "",
+      "none",
+      "",
+      "",
+      "",
+      "",
+    ]);
+    deps.validateModel = (value) =>
+      value.includes(" ") ? fail("Invalid model identifier") : value;
+
+    const result = await collectOnboardIntentDraft(deps);
+
+    expect(result.draft.answers.inference?.model).toBe("safe/model");
+    expect(deps.lines).toContain("  Invalid model identifier");
+    expect(deps.lines).toContain("    Inference: build / safe/model");
   });
 
   it("resumes an incomplete custom resource choice without losing its saved CPU", async () => {

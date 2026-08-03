@@ -751,6 +751,8 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   ) {
     return null;
   }
+  const intentDraft = parseOnboardIntentDraft(data.intentDraft);
+  if (hasOwn(data, "intentDraft") && data.intentDraft !== null && !intentDraft) return null;
 
   const normalized = createSession({
     sessionId: readString(data.sessionId) ?? undefined,
@@ -774,7 +776,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
     sandboxPromptProgress: parseSandboxPromptProgress(data.sandboxPromptProgress, data),
-    intentDraft: parseOnboardIntentDraft(data.intentDraft),
+    intentDraft,
     resourceProfile: parseSessionResourceProfile(data.resourceProfile),
     toolDisclosure: normalizeSessionToolDisclosure(data.toolDisclosure),
     observabilityEnabled: data.observabilityEnabled === true,

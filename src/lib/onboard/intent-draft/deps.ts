@@ -50,6 +50,7 @@ export interface CreateOnboardIntentDraftDepsOptions {
   readonly webSearchLabelFor: (provider: DraftWebSearchProvider) => string;
   readonly rootDir: string;
   readonly validateSandboxName: (value: string) => string;
+  readonly validateModel: (value: string) => string;
   readonly env?: NodeJS.ProcessEnv;
 }
 
@@ -146,6 +147,7 @@ export function createOnboardIntentDraftDeps(
     defaultSandboxName: (agentName) =>
       getDefaultSandboxNameForAgent(draftAgent(options, agentName)),
     validateSandboxName: options.validateSandboxName,
+    validateModel: options.validateModel,
     compatibility: {
       provider: (agentName, inference) =>
         BASE_PROVIDER_KEYS.has(inference.provider) ||
