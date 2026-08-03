@@ -65,7 +65,10 @@ export type DockerFixtureAcknowledgement =
 
 export type DockerFixtureOptions = {
   readonly agent?: ManagedStartupAgent;
+  readonly dockerRemoveFailures?: readonly Error[];
   readonly dockerStartResults?: Readonly<Record<string, FixtureCommandResult>>;
+  readonly journalCreateFailures?: readonly Error[];
+  readonly journalRemoveFailures?: readonly Error[];
   readonly journalTransitionFailures?: Partial<
     Readonly<Record<DockerManagedBootstrapJournalPhase, Error>>
   >;
@@ -214,6 +217,9 @@ export function fixture(options: DockerFixtureOptions = {}) {
   let finalization: DockerManagedBootstrapFinalizationRecord | null = null;
   let sharedState: "committed" | "none" | "pending" = options.sharedState ?? "none";
   const events: string[] = [];
+  const dockerRemoveFailures = [...(options.dockerRemoveFailures ?? [])];
+  const journalCreateFailures = [...(options.journalCreateFailures ?? [])];
+  const journalRemoveFailures = [...(options.journalRemoveFailures ?? [])];
   const lostAcknowledgements = new Set(options.lostAcknowledgements ?? []);
   const losesAcknowledgement = (operation: DockerFixtureAcknowledgement) =>
     lostAcknowledgements.has(operation);
@@ -223,6 +229,13 @@ export function fixture(options: DockerFixtureOptions = {}) {
     create(value) {
       journal = structuredClone(value);
       events.push("journal:staged");
+      const injectedFailure = journalCreateFailures.shift();
+      switch (injectedFailure) {
+        case undefined:
+          break;
+        default:
+          throw injectedFailure;
+      }
       if (losesAcknowledgement("journal:create")) {
         throw new DockerManagedBootstrapJournalAcknowledgementLostError(
           "lost journal create acknowledgement",
@@ -230,6 +243,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
       }
     },
     load: () => copyJournal(),
+    listUnfinished: () => (journal ? [structuredClone(journal)] : []),
     transition(_identity, expected, next) {
       const current =
         journal !== null && journal.phase === expected
@@ -265,6 +279,13 @@ export function fixture(options: DockerFixtureOptions = {}) {
       void (current !== null && expected.includes(current.phase)
         ? current
         : failFixture("stale journal remove"));
+      const injectedFailure = journalRemoveFailures.shift();
+      switch (injectedFailure) {
+        case undefined:
+          break;
+        default:
+          throw injectedFailure;
+      }
       journal = null;
       events.push("journal:removed");
       if (losesAcknowledgement("journal:remove")) {
@@ -453,6 +474,13 @@ export function fixture(options: DockerFixtureOptions = {}) {
     }),
     dockerRm: vi.fn((id) => {
       events.push(`rm:${id}`);
+      const injectedFailure = dockerRemoveFailures.shift();
+      switch (injectedFailure) {
+        case undefined:
+          break;
+        default:
+          throw injectedFailure;
+      }
       switch (id) {
         case OLD_ID:
           original = null;

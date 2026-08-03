@@ -25,6 +25,7 @@ import {
   type ManagedBootstrapPreparedReplacementHandle,
   type ManagedBootstrapReplacementHandle,
   prepareManagedBootstrapSequence,
+  recoverManagedBootstrapTransactions,
   renderManagedBootstrapHeldCommand,
 } from "./adapter";
 
@@ -227,6 +228,7 @@ function adapterFor(agent: ManagedStartupAgent): Fixture {
   const order: string[] = [];
   const raw: Fixture["raw"] = { handle: null, snapshot: null, prepared: null };
   const adapter: ManagedBootstrapAdapter = {
+    recoverUnfinishedTransactions: vi.fn(async () => []),
     createHeldWorkload: vi.fn(async (input) => {
       order.push("create");
       const receipt = await input.launch({
@@ -906,6 +908,53 @@ describe("managed bootstrap adapter contract", () => {
       }),
     ).rejects.toThrow("commit requires a completed activated transaction");
     expect(fixture.adapter.finalizeBootstrap).not.toHaveBeenCalled();
+  });
+
+  it("normalizes, freezes, and orders provider-owned restart recovery receipts", async () => {
+    const fixture = adapterFor("openclaw");
+    const receipt = cleanupReceipt();
+    const candidate = (bootstrapIdentity: string) => ({
+      schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+      providerId: receipt.sandbox.driverId,
+      sourcePhase: "cutover",
+      sandbox: receipt.sandbox,
+      bootstrapIdentity,
+      outcome: "rolled-back" as const,
+      finalization: { ...receipt, bootstrapIdentity },
+    });
+    vi.mocked(fixture.adapter.recoverUnfinishedTransactions).mockResolvedValueOnce([
+      candidate("b".repeat(64)),
+      candidate("a".repeat(64)),
+    ]);
+
+    const recovered = await recoverManagedBootstrapTransactions(fixture.adapter);
+
+    expect(recovered.map(({ bootstrapIdentity }) => bootstrapIdentity)).toEqual([
+      "a".repeat(64),
+      "b".repeat(64),
+    ]);
+    expect(Object.isFrozen(recovered)).toBe(true);
+    expect(recovered.every((entry) => Object.isFrozen(entry.finalization))).toBe(true);
+  });
+
+  it("rejects recovery evidence whose provider does not own the durable sandbox", async () => {
+    const fixture = adapterFor("openclaw");
+    const receipt = cleanupReceipt();
+    vi.mocked(fixture.adapter.recoverUnfinishedTransactions).mockResolvedValueOnce([
+      {
+        schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+        providerId: "mxc",
+        sourcePhase: "cutover",
+        sandbox: receipt.sandbox,
+        bootstrapIdentity: IDENTITY,
+        outcome: "rolled-back",
+        finalization: receipt,
+      },
+    ]);
+
+    await expect(recoverManagedBootstrapTransactions(fixture.adapter)).rejects.toThrow(
+      "recovery provider does not own",
+    );
   });
 
   it.each([

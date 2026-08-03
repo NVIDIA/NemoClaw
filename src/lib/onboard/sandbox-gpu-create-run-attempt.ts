@@ -143,6 +143,7 @@ export function createSandboxGpuCreateAttemptRunner(
         backend: input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
         deps,
       });
+    await managedLifecycle?.recoverUnfinished();
     await managedLifecycle?.prepareNetwork();
     const [createExecutable, ...createExecutableArgs] = managedLifecycle?.launchArgv ?? attemptArgv;
     if (!createExecutable) throw new Error("Sandbox create executable is missing.");

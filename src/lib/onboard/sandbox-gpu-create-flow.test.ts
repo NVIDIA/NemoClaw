@@ -166,7 +166,7 @@ beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
 describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
-  it("runs an MXC-style bundle without a Docker branch in central orchestration", async () => {
+  it("recovers before an MXC-style create without a Docker branch in central orchestration", async () => {
     const input = createInput();
     input.sandboxGpuConfig = {
       mode: "0",
@@ -201,11 +201,14 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     input.sandboxEnv = launch.sandboxEnv;
     input.sandboxStartupCommand = launch.sandboxStartupCommand;
     const patch = createPatch() as unknown as ManagedBootstrapRuntimePatch;
+    const recoverUnfinished = vi.fn(async () => []);
+    const prepareNetwork = vi.fn(async () => undefined);
     const createLifecycle = vi.fn(
       (lifecycleInput: ManagedBootstrapRuntimeCreateLifecycleInput) => ({
         launchArgv: ["mxc-launch", ...lifecycleInput.launchArgv.slice(1)],
         patch,
-        prepareNetwork: vi.fn(async () => undefined),
+        recoverUnfinished,
+        prepareNetwork,
         runCreate: async <T>(
           start: (held: {
             readonly heldWorkloadArgv: readonly string[];
@@ -284,6 +287,15 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
       args[1] === "get" ? "ID: mxc-alpha\n" : "alpha Ready",
     );
+    recoverUnfinished.mockRejectedValueOnce(new Error("unfinished recovery failed"));
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "unfinished recovery failed",
+    );
+    expect(prepareNetwork).not.toHaveBeenCalled();
+    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
+    recoverUnfinished.mockClear();
+    createLifecycle.mockClear();
 
     const result = await runSandboxGpuCreateFlow(input, deps);
 
@@ -296,6 +308,12 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
       input.createArgv.slice(1),
       input.sandboxEnv,
       expect.anything(),
+    );
+    expect(recoverUnfinished.mock.invocationCallOrder[0]).toBeLessThan(
+      prepareNetwork.mock.invocationCallOrder[0],
+    );
+    expect(prepareNetwork.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.streamSandboxCreate.mock.invocationCallOrder[0],
     );
     expect(mocks.createDockerGpuSandboxCreatePatch).not.toHaveBeenCalled();
     expect(mocks.queryOpenShellDockerSandboxContainers).not.toHaveBeenCalled();

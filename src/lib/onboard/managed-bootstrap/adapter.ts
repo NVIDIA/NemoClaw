@@ -239,6 +239,21 @@ export interface ManagedBootstrapFinalizationReceipt {
   readonly finalizedAt: string;
 }
 
+/**
+ * Driver-neutral evidence that one durable, process-orphaned transaction was
+ * reconciled without reconstructing authority from mutable runtime names.
+ */
+export interface ManagedBootstrapRecoveryReceipt {
+  readonly schemaVersion: typeof MANAGED_BOOTSTRAP_SCHEMA_VERSION;
+  readonly providerId: string;
+  /** Provider-owned phase name retained for diagnostics, never central routing. */
+  readonly sourcePhase: string;
+  readonly sandbox: ManagedBootstrapSandboxIdentity;
+  readonly bootstrapIdentity: string;
+  readonly outcome: "committed" | "rolled-back";
+  readonly finalization: ManagedBootstrapFinalizationReceipt;
+}
+
 export class ManagedBootstrapDurableCommitCleanupPendingError extends Error {
   readonly bootstrapIdentity: string;
   readonly cleanupRuntimeId: string;
@@ -310,6 +325,12 @@ export function attachManagedBootstrapRollbackError(failure: Error, rollbackErro
 }
 
 export interface ManagedBootstrapAdapter {
+  /**
+   * Enumerate durable unfinished records and reconcile each through the owning
+   * provider. Implementations must be restart-safe and idempotent.
+   */
+  recoverUnfinishedTransactions(): Promise<readonly ManagedBootstrapRecoveryReceipt[]>;
+
   /** Return only after one durable sandbox/driver identity reports Ready. */
   createHeldWorkload(
     input: ManagedBootstrapCreateInput,
@@ -374,6 +395,87 @@ export interface ManagedBootstrapAdapter {
     readonly replacement: ManagedBootstrapReplacementHandle | null;
     readonly completion: ManagedBootstrapCompletionReceipt | null;
   }): Promise<ManagedBootstrapFinalizationReceipt>;
+}
+
+function normalizeRecoveryReceipt(
+  candidate: ManagedBootstrapRecoveryReceipt,
+): ManagedBootstrapRecoveryReceipt {
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate) ||
+    candidate.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION ||
+    !["committed", "rolled-back"].includes(String(candidate.outcome))
+  ) {
+    protocolFail("recovery receipt has an invalid schema or outcome");
+  }
+  assertOpaqueString(candidate.providerId, "recovery provider ID");
+  assertOpaqueString(candidate.sourcePhase, "recovery source phase");
+  assertSandboxIdentity(candidate.sandbox);
+  if (candidate.sandbox.driverId !== candidate.providerId) {
+    protocolFail("recovery provider does not own the recovered sandbox");
+  }
+  if (!SHA256_RE.test(candidate.bootstrapIdentity)) {
+    protocolFail("recovery bootstrap identity must be lowercase SHA-256");
+  }
+  const finalization = candidate.finalization;
+  if (
+    typeof finalization !== "object" ||
+    finalization === null ||
+    Array.isArray(finalization) ||
+    finalization.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION ||
+    finalization.outcome !== candidate.outcome ||
+    finalization.bootstrapIdentity !== candidate.bootstrapIdentity ||
+    !isDeepStrictEqual(finalization.sandbox, candidate.sandbox) ||
+    typeof finalization.heldWorkloadRemoved !== "boolean" ||
+    typeof finalization.alreadyRolledBack !== "boolean"
+  ) {
+    protocolFail("recovery finalization does not match its durable identity");
+  }
+  if (
+    (finalization.restoredRuntimeId !== null && !SHA256_RE.test(finalization.restoredRuntimeId)) ||
+    (finalization.restoredSpecHash !== null && !SHA256_RE.test(finalization.restoredSpecHash)) ||
+    (finalization.restoredRuntimeId === null) !== (finalization.restoredSpecHash === null) ||
+    (candidate.outcome === "committed" &&
+      (finalization.restoredRuntimeId !== null ||
+        finalization.heldWorkloadRemoved ||
+        finalization.alreadyRolledBack))
+  ) {
+    protocolFail("recovery finalization state is inconsistent");
+  }
+  assertTimestamp(finalization.finalizedAt, "recovery finalization timestamp");
+  return Object.freeze({
+    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+    providerId: candidate.providerId,
+    sourcePhase: candidate.sourcePhase,
+    sandbox: Object.freeze({ ...candidate.sandbox }),
+    bootstrapIdentity: candidate.bootstrapIdentity,
+    outcome: candidate.outcome,
+    finalization: Object.freeze({
+      ...finalization,
+      sandbox: Object.freeze({ ...candidate.sandbox }),
+    }),
+  });
+}
+
+/** Recover process-orphaned work without relying on coordinator WeakMap state. */
+export async function recoverManagedBootstrapTransactions(
+  adapter: ManagedBootstrapAdapter,
+): Promise<readonly ManagedBootstrapRecoveryReceipt[]> {
+  const candidates = await adapter.recoverUnfinishedTransactions();
+  if (!Array.isArray(candidates)) {
+    protocolFail("provider recovery must return a receipt array");
+  }
+  const receipts = candidates.map(normalizeRecoveryReceipt);
+  const identities = receipts.map(({ bootstrapIdentity }) => bootstrapIdentity);
+  if (new Set(identities).size !== identities.length) {
+    protocolFail("provider recovery returned duplicate bootstrap identities");
+  }
+  return Object.freeze(
+    [...receipts].sort((left, right) =>
+      left.bootstrapIdentity.localeCompare(right.bootstrapIdentity),
+    ),
+  );
 }
 
 export interface ManagedBootstrapPreparationInput {
