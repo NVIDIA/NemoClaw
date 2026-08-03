@@ -119,7 +119,7 @@ function exceptionPolicy(
 }
 
 describe("reviewed npm audit gate", () => {
-  it("bounds the OpenClaw brace-expansion exception (#8126)", () => {
+  it("bounds the OpenClaw brace-expansion exception (#8116)", () => {
     expect(CHECKED_IN_POLICY).toEqual({
       schemaVersion: 1,
       exceptions: [
