@@ -9,6 +9,7 @@ import * as gatewayRuntime from "../../gateway-runtime-action";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as sandboxState from "../../state/sandbox";
 import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
+import * as snapshotBackup from "./snapshot/backup-authority";
 import {
   backupSandboxStateForRebuild,
   disposeRebuildAgentBaseImagePreflight,
@@ -549,7 +550,7 @@ describe("backupSandboxStateForRebuild with --force", () => {
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    backupSpy = vi.spyOn(sandboxState, "backupSandboxState");
+    backupSpy = vi.spyOn(snapshotBackup, "backupSandboxStateWithManagedAuthority");
   });
 
   afterEach(() => {
@@ -843,7 +844,9 @@ describe("warnUnpreservedUserManagedFiles", () => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    backupSpy = vi.spyOn(sandboxState, "backupSandboxState").mockReturnValue(makeBackupResult());
+    backupSpy = vi
+      .spyOn(snapshotBackup, "backupSandboxStateWithManagedAuthority")
+      .mockReturnValue(makeBackupResult());
     probeSpy = vi.spyOn(userManagedFilesProbe, "probeUserManagedFiles").mockReturnValue({
       declared: [],
       existing: [],
