@@ -61,6 +61,13 @@ import {
   planOpenClawPluginRestore,
 } from "./openclaw-plugin-restore.js";
 import {
+  extractPreservedEnvAssignments,
+  HERMES_PRESERVED_ENV_INVENTORY,
+  type PreservedEnvFile,
+  type PreservedEnvInventory,
+  validatePreservedEnvFiles,
+} from "./preserved-env/index.js";
+import {
   cloneSandboxRuntimeSnapshot,
   type SandboxRuntimeSnapshot,
 } from "./registry/runtime-snapshot.js";
@@ -121,6 +128,8 @@ export interface RebuildManifest {
    * zero-custom snapshot); absent only on legacy manifests.
    */
   customPolicies?: CustomPolicyEntry[];
+  /** Allowlisted non-secret environment assignments captured for image recreation. */
+  preservedEnv?: PreservedEnvFile[];
   /**
    * Provider-neutral runtime and acceleration state captured before the
    * filesystem copy. Required when `workload` is a managed-image receipt.
@@ -345,6 +354,9 @@ function isRebuildManifest(value: unknown): value is RebuildManifest {
       typeof value.blueprintDigest === "string") &&
     (value.policyPresets === undefined || isStringArray(value.policyPresets)) &&
     (value.customPolicies === undefined || isCustomPolicyEntryArray(value.customPolicies)) &&
+    (value.preservedEnv === undefined ||
+      (value.agentType === "hermes" &&
+        validatePreservedEnvFiles(value.preservedEnv, HERMES_PRESERVED_ENV_INVENTORY))) &&
     (value.runtimeSnapshot === undefined || runtimeSnapshot !== undefined) &&
     (value.workload === undefined || workload !== undefined) &&
     (workload?.kind !== "managed-image" || runtimeSnapshot !== undefined) &&
@@ -880,6 +892,90 @@ interface StateFileBackupResult {
   unreachable: boolean;
 }
 
+function capturePreservedEnvFile(
+  configFile: string,
+  sandboxName: string,
+  dir: string,
+  inventory: PreservedEnvInventory,
+): { outcome: StateFileBackupOutcome; file?: PreservedEnvFile; unreachable: boolean } {
+  const command = buildStateFileBackupCommand(dir, {
+    path: inventory.path,
+    strategy: "copy",
+  });
+  _log(`Capturing preserved environment assignments from ${inventory.path}`);
+  const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 30000,
+    maxBuffer: 1024 * 1024,
+  });
+  if (result.status === 2) return { outcome: "missing", unreachable: false };
+  if (result.status !== 0 || result.error || result.signal || !result.stdout) {
+    const detail =
+      (result.stderr?.toString() || "").trim() ||
+      result.error?.message ||
+      (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
+    _log(`FAILED: preserved environment capture ${inventory.path}: ${detail.substring(0, 200)}`);
+    return { outcome: "failed", unreachable: isSshTransportFailure(result) };
+  }
+  try {
+    const assignments = extractPreservedEnvAssignments(result.stdout.toString("utf8"), inventory);
+    _log(
+      `Captured ${assignments.length} preserved environment ${assignments.length === 1 ? "key" : "keys"} from ${inventory.path}`,
+    );
+    return {
+      outcome: "backed_up",
+      file: { path: inventory.path, assignments },
+      unreachable: false,
+    };
+  } catch (error) {
+    _log(
+      `FAILED: preserved environment capture ${inventory.path}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return { outcome: "failed", unreachable: false };
+  }
+}
+
+function capturePreservedEnvFiles(
+  configFile: string,
+  sandboxName: string,
+  dir: string,
+  inventories: readonly PreservedEnvInventory[],
+): { files: PreservedEnvFile[]; failedPaths: string[]; unreachable: boolean } {
+  const files: PreservedEnvFile[] = [];
+  const failedPaths: string[] = [];
+  let unreachable = false;
+  for (const inventory of inventories) {
+    const result = capturePreservedEnvFile(configFile, sandboxName, dir, inventory);
+    if (result.outcome === "backed_up" && result.file) {
+      files.push(result.file);
+    } else if (result.outcome === "failed") {
+      failedPaths.push(inventory.path);
+      if (result.unreachable) unreachable = true;
+    }
+  }
+  return { files, failedPaths, unreachable };
+}
+
+function captureAgentPreservedEnvFiles(
+  agentName: string,
+  configFile: string,
+  sandboxName: string,
+  dir: string,
+  manifest: RebuildManifest,
+  failedFiles: string[],
+): boolean {
+  if (agentName !== "hermes") return false;
+  const preserved = capturePreservedEnvFiles(
+    configFile,
+    sandboxName,
+    dir,
+    HERMES_PRESERVED_ENV_INVENTORY,
+  );
+  manifest.preservedEnv = preserved.files;
+  failedFiles.push(...preserved.failedPaths);
+  return preserved.unreachable;
+}
+
 function backupStateFile(
   configFile: string,
   sandboxName: string,
@@ -1143,6 +1239,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
     blueprintDigest: computeBlueprintDigest(),
     policyPresets,
     customPolicies,
+    ...(agentName === "hermes" ? { preservedEnv: [] } : {}),
     ...snapshotAuthority,
     ...(providedName !== null ? { name: providedName } : {}),
   };
@@ -1462,6 +1559,16 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         if (result.unreachable) unreachable = true;
       }
     }
+
+    unreachable =
+      captureAgentPreservedEnvFiles(
+        agentName,
+        configFile,
+        sandboxName,
+        dir,
+        manifest,
+        failedFiles,
+      ) || unreachable;
   } finally {
     try {
       tempSshConfig.cleanup();
