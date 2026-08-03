@@ -10,6 +10,7 @@ metadata:
 
 spec:
   selection: automatic
+  priority: 400
 
   requirements:
     all:
@@ -18,6 +19,51 @@ spec:
           kind: qualification
           id: host.platform.dgx_spark
           status: qualified
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.platform.supported
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.platform.dgx_spark
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.docker.available
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.docker.daemon_reachable
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.docker.runtime_supported
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.docker.storage_compatible
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.gpu.nvidia_available
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.gpu.container_toolkit_available
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.gpu.cdi_healthy
+          state: present
       - fact: cluster.nodeCount
         state: present
         operator: equals

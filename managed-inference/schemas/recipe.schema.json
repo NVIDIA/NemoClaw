@@ -12,59 +12,79 @@
       "type": "object",
       "required": ["backend", "bindings", "model", "runtime", "execution", "serve", "readiness"],
       "properties": {
-        "backend": { "const": "vllm" },
+        "backend": { "$ref": "#/$defs/token" },
         "bindings": {
           "type": "object",
-          "required": ["sparkTopology"],
-          "properties": {
-            "sparkTopology": {
-              "type": "object",
-              "required": ["type", "qualificationId", "schemaVersion", "outputSchema"],
-              "properties": {
-                "type": { "const": "topologyQualificationOutput" },
-                "qualificationId": { "const": "dgx-spark.gb10.dual-cx7" },
-                "schemaVersion": { "const": 1 },
-                "outputSchema": { "const": "nemoclaw.nvidia.com/dual-spark-topology/v1" }
-              },
-              "additionalProperties": false
-            }
-          },
-          "additionalProperties": false
+          "minProperties": 1,
+          "maxProperties": 16,
+          "propertyNames": { "$ref": "#/$defs/bindingName" },
+          "additionalProperties": { "$ref": "#/$defs/topologyBinding" }
         },
         "model": {
           "type": "object",
-          "required": ["id", "revision", "servedName", "downloadSizeBytes", "preparationRef", "encodingPath"],
+          "required": ["id", "revision", "servedName", "downloadSizeBytes", "gated", "installFastSafetensors", "preparation"],
           "properties": {
-            "id": { "type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$" },
-            "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+            "id": { "type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", "maxLength": 256 },
+            "revision": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
             "servedName": { "$ref": "#/$defs/stableId" },
-            "downloadSizeBytes": { "type": "integer", "minimum": 1 },
-            "preparationRef": { "const": "deepseek-v4-flash-0731/v1" },
-            "encodingPath": { "const": "encoding/encoding_dsv4.py" }
+            "downloadSizeBytes": { "$ref": "#/$defs/positiveSafeInteger" },
+            "gated": { "type": "boolean" },
+            "installFastSafetensors": { "type": "boolean" },
+            "preparation": { "$ref": "#/$defs/modelPreparation" }
           },
           "additionalProperties": false
         },
         "runtime": {
           "type": "object",
-          "required": ["image", "imageDownloadSizeBytes", "architecture", "networkMode", "ipcMode", "sharedMemoryBytes", "devices", "environment"],
+          "required": ["image", "imageDownloadSizeBytes", "pullTimeoutSeconds", "architecture", "networkMode", "ipcMode", "sharedMemoryBytes", "gpuRequest", "devices", "ulimits", "modelCache", "temporaryFilesystems", "environment"],
           "properties": {
-            "image": { "type": "string", "pattern": "^[a-z0-9.-]+(?:/[a-z0-9._-]+)+@sha256:[0-9a-f]{64}$" },
-            "imageDownloadSizeBytes": { "type": "integer", "minimum": 1 },
-            "architecture": { "const": "arm64" },
-            "networkMode": { "const": "host" },
-            "ipcMode": { "const": "host" },
-            "sharedMemoryBytes": { "type": "integer", "minimum": 1 },
+            "image": { "type": "string", "pattern": "^[a-z0-9.-]+(?::[0-9]+)?(?:/[a-z0-9._-]+)+@sha256:[0-9a-f]{64}$", "maxLength": 1024 },
+            "imageDownloadSizeBytes": { "$ref": "#/$defs/positiveSafeInteger" },
+            "pullTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+            "architecture": { "$ref": "#/$defs/token" },
+            "networkMode": { "$ref": "#/$defs/token" },
+            "ipcMode": { "$ref": "#/$defs/token" },
+            "sharedMemoryBytes": { "$ref": "#/$defs/positiveSafeInteger" },
+            "gpuRequest": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._,:=-]{0,255}$" },
             "devices": {
               "type": "array",
-              "minItems": 1,
+              "maxItems": 32,
               "uniqueItems": true,
-              "items": { "type": "string", "pattern": "^/dev/[A-Za-z0-9._/-]+$" }
+              "items": { "$ref": "#/$defs/absolutePath" }
+            },
+            "ulimits": {
+              "type": "object",
+              "required": ["memlock", "stackBytes"],
+              "properties": {
+                "memlock": {
+                  "oneOf": [
+                    { "type": "integer", "minimum": -1, "maximum": 9007199254740991 },
+                    { "type": "string", "enum": ["unlimited"] }
+                  ]
+                },
+                "stackBytes": { "$ref": "#/$defs/positiveSafeInteger" }
+              },
+              "additionalProperties": false
+            },
+            "modelCache": {
+              "type": "object",
+              "required": ["source", "target"],
+              "properties": {
+                "source": { "$ref": "#/$defs/stableId" },
+                "target": { "$ref": "#/$defs/absolutePath" }
+              },
+              "additionalProperties": false
+            },
+            "temporaryFilesystems": {
+              "type": "array",
+              "maxItems": 16,
+              "items": { "$ref": "#/$defs/temporaryFilesystem" }
             },
             "environment": {
               "type": "object",
-              "minProperties": 1,
-              "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]*$" },
-              "additionalProperties": { "type": "string", "maxLength": 1024 }
+              "maxProperties": 128,
+              "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]{0,127}$" },
+              "additionalProperties": { "type": "string", "maxLength": 4096 }
             }
           },
           "additionalProperties": false
@@ -73,30 +93,37 @@
           "type": "object",
           "required": ["materializerRef", "lifecycleRef", "topologyBinding", "nodeCount", "tensorParallelSize", "pipelineParallelSize", "distributedExecutorBackend"],
           "properties": {
-            "materializerRef": { "const": "vllm.dual-dgx-spark/v1" },
-            "lifecycleRef": { "const": "vllm.dual-dgx-spark/v1" },
-            "topologyBinding": { "const": "sparkTopology" },
-            "nodeCount": { "const": 2 },
-            "tensorParallelSize": { "const": 2 },
-            "pipelineParallelSize": { "const": 1 },
-            "distributedExecutorBackend": { "const": "mp" }
+            "materializerRef": { "$ref": "#/$defs/stableId" },
+            "lifecycleRef": { "$ref": "#/$defs/stableId" },
+            "topologyBinding": { "$ref": "#/$defs/bindingName" },
+            "nodeCount": { "type": "integer", "minimum": 1, "maximum": 1024 },
+            "tensorParallelSize": { "type": "integer", "minimum": 1, "maximum": 1024 },
+            "pipelineParallelSize": { "type": "integer", "minimum": 1, "maximum": 1024 },
+            "distributedExecutorBackend": { "$ref": "#/$defs/token" }
           },
           "additionalProperties": false
         },
         "serve": {
           "type": "object",
-          "required": ["authentication", "arguments"],
+          "required": ["authentication", "executable", "arguments"],
           "properties": {
-            "authentication": { "const": "bearer" },
+            "authentication": { "$ref": "#/$defs/token" },
+            "executable": { "$ref": "#/$defs/absolutePath" },
             "arguments": {
               "type": "array",
-              "minItems": 1,
+              "maxItems": 128,
               "items": {
                 "type": "object",
                 "required": ["name"],
                 "properties": {
-                  "name": { "type": "string", "pattern": "^--[a-z0-9]+(?:-[a-z0-9]+)*$" },
-                  "value": { "type": ["string", "number", "boolean"] }
+                  "name": { "type": "string", "pattern": "^--[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 128 },
+                  "value": {
+                    "oneOf": [
+                      { "type": "string", "maxLength": 16384 },
+                      { "type": "number", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+                      { "type": "boolean" }
+                    ]
+                  }
                 },
                 "additionalProperties": false
               }
@@ -108,7 +135,7 @@
           "type": "object",
           "required": ["timeoutSeconds", "expectedModel"],
           "properties": {
-            "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 7200 },
+            "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
             "expectedModel": { "$ref": "#/$defs/stableId" }
           },
           "additionalProperties": false
@@ -123,15 +150,103 @@
       "type": "object",
       "required": ["id", "displayName"],
       "properties": {
-        "id": { "const": "vllm.deepseek-v4-flash-0731.spark-dual.v1" },
+        "id": { "$ref": "#/$defs/stableId" },
         "displayName": { "type": "string", "minLength": 1, "maxLength": 128 }
       },
       "additionalProperties": false
     },
     "stableId": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9]*(?:[._/-][a-z0-9]+)+$",
-      "maxLength": 160
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$"
+    },
+    "bindingName": {
+      "type": "string",
+      "pattern": "^[a-z][A-Za-z0-9]{0,63}$"
+    },
+    "token": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "positiveSafeInteger": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "absolutePath": {
+      "type": "string",
+      "pattern": "^/(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._+/-]+$",
+      "maxLength": 4096
+    },
+    "relativePath": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._+/-]+$",
+      "maxLength": 4096
+    },
+    "topologyBinding": {
+      "type": "object",
+      "required": ["type", "qualificationId", "schemaVersion", "outputSchema"],
+      "properties": {
+        "type": { "const": "topologyQualificationOutput" },
+        "qualificationId": { "$ref": "#/$defs/stableId" },
+        "schemaVersion": { "type": "integer", "minimum": 1 },
+        "outputSchema": { "$ref": "#/$defs/stableId" }
+      },
+      "additionalProperties": false
+    },
+    "modelPreparation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["ref"],
+          "properties": {
+            "ref": { "const": "none/v1" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["ref", "snapshotCopy", "exactTextReplacement"],
+          "properties": {
+            "ref": { "const": "snapshot-copy-and-exact-text-replacement/v1" },
+            "snapshotCopy": {
+              "type": "object",
+              "required": ["sourcePath", "targetPath"],
+              "properties": {
+                "sourcePath": { "$ref": "#/$defs/relativePath" },
+                "targetPath": { "$ref": "#/$defs/absolutePath" }
+              },
+              "additionalProperties": false
+            },
+            "exactTextReplacement": {
+              "type": "object",
+              "required": ["targetPath", "expectedText", "replacementText"],
+              "properties": {
+                "targetPath": { "$ref": "#/$defs/absolutePath" },
+                "expectedText": { "type": "string", "minLength": 1, "maxLength": 16384 },
+                "replacementText": { "type": "string", "minLength": 1, "maxLength": 16384 }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "temporaryFilesystem": {
+      "type": "object",
+      "required": ["target", "sizeBytes", "mode", "options"],
+      "properties": {
+        "target": { "$ref": "#/$defs/absolutePath" },
+        "sizeBytes": { "$ref": "#/$defs/positiveSafeInteger" },
+        "mode": { "type": "string", "pattern": "^[0-7]{4}$" },
+        "options": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "enum": ["rw", "ro", "nosuid", "nodev", "noexec", "exec", "noatime", "relatime"] }
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

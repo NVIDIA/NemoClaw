@@ -29,7 +29,18 @@ function readyCapability(): DualSparkDetectedManagedServingCapability {
     home,
     uid,
     gid: uid,
-    storage: { huggingFace: { cacheRoot: `${home}/.cache/huggingface` } },
+    runtimeSnapshot: { containers: [], listeningPorts: [] },
+    storage: {
+      huggingFace: {
+        cacheRoot: `${home}/.cache/huggingface`,
+        filesystemId: `${hostname}-home`,
+        availableBytes: 400_000_000_000,
+      },
+      docker: {
+        filesystemId: `${hostname}-docker`,
+        availableBytes: 400_000_000_000,
+      },
+    },
   });
   return {
     kind: "ready",
@@ -133,7 +144,8 @@ describe("two-Spark managed vLLM installer selection", () => {
   it("defers qualified explicit legacy intent without claiming binding state", async () => {
     const capability = readyCapability();
     const clearBinding = vi.fn();
-    const confirmCapability = vi.fn();
+    const revalidateCapability = vi.fn();
+    const claimCapability = vi.fn();
     const resolveSelection = vi.fn();
     const result = await tryInstallDualSparkManagedVllm(
       {
@@ -143,11 +155,18 @@ describe("two-Spark managed vLLM installer selection", () => {
         promptFn: vi.fn(),
       },
       effects(),
-      { probeCapability: () => capability, confirmCapability, clearBinding, resolveSelection },
+      {
+        probeCapability: () => capability,
+        revalidateCapability,
+        claimCapability,
+        clearBinding,
+        resolveSelection,
+      },
     );
     expect(result).toEqual({ kind: "not-selected" });
     expect(resolveSelection).not.toHaveBeenCalled();
-    expect(confirmCapability).not.toHaveBeenCalled();
+    expect(revalidateCapability).not.toHaveBeenCalled();
+    expect(claimCapability).not.toHaveBeenCalled();
     expect(clearBinding).not.toHaveBeenCalled();
   });
 
@@ -207,17 +226,184 @@ describe("two-Spark managed vLLM installer selection", () => {
     expect(installEffects.downloadModel).not.toHaveBeenCalled();
   });
 
+  it("admits the selected recipe port before prompting or claiming binding state", async () => {
+    const selection = fixtureDualSparkSelection();
+    const port = Number(
+      selection.recipe.spec.serve.arguments.find(({ name }) => name === "--port")?.value,
+    );
+    const base = readyCapability();
+    const capability = {
+      ...base,
+      local: {
+        ...base.local,
+        runtimeSnapshot: { ...base.local.runtimeSnapshot, listeningPorts: [port] },
+      },
+    } as DualSparkDetectedManagedServingCapability;
+    const promptFn = vi.fn(async () => "yes");
+    const revalidateCapability = vi.fn();
+    const claimCapability = vi.fn();
+    const installEffects = effects();
+
+    const result = await tryInstallDualSparkManagedVllm(
+      { platform: "spark", env: {}, nonInteractive: false, promptFn },
+      installEffects,
+      {
+        probeCapability: () => capability,
+        resolveSelection: () => selection,
+        revalidateCapability,
+        claimCapability,
+        error: vi.fn(),
+      },
+    );
+
+    expect(result).toEqual({ kind: "handled", result: { ok: false } });
+    expect(promptFn).not.toHaveBeenCalled();
+    expect(revalidateCapability).not.toHaveBeenCalled();
+    expect(claimCapability).not.toHaveBeenCalled();
+    expect(installEffects.prerequisites).not.toHaveBeenCalled();
+  });
+
+  it("budgets the selected model and image at full size before prompting", async () => {
+    const selection = fixtureDualSparkSelection();
+    const base = readyCapability();
+    const capability = {
+      ...base,
+      selectionIntent: "explicit",
+      local: {
+        ...base.local,
+        storage: {
+          ...base.local.storage,
+          huggingFace: { ...base.local.storage.huggingFace, availableBytes: 1 },
+        },
+      },
+    } as DualSparkDetectedManagedServingCapability;
+    const promptFn = vi.fn(async () => "yes");
+    const claimCapability = vi.fn();
+
+    const result = await tryInstallDualSparkManagedVllm(
+      { platform: "spark", env: {}, nonInteractive: false, promptFn },
+      effects(),
+      {
+        probeCapability: () => capability,
+        resolveSelection: () => selection,
+        claimCapability,
+        error: vi.fn(),
+      },
+    );
+
+    expect(result).toEqual({ kind: "handled", result: { ok: false } });
+    expect(promptFn).not.toHaveBeenCalled();
+    expect(claimCapability).not.toHaveBeenCalled();
+  });
+
+  it("rechecks the selected port after consent and before claiming binding state", async () => {
+    const capability = readyCapability();
+    const selection = fixtureDualSparkSelection();
+    const port = Number(
+      selection.recipe.spec.serve.arguments.find(({ name }) => name === "--port")?.value,
+    );
+    const revalidated = {
+      ...capability,
+      peer: {
+        ...capability.peer,
+        runtimeSnapshot: { ...capability.peer.runtimeSnapshot, listeningPorts: [port] },
+      },
+    } as DualSparkDetectedManagedServingCapability;
+    const claimCapability = vi.fn();
+
+    const result = await tryInstallDualSparkManagedVllm(
+      { platform: "spark", env: {}, nonInteractive: false, promptFn: async () => "yes" },
+      effects(),
+      {
+        probeCapability: () => capability,
+        revalidateCapability: () => revalidated,
+        claimCapability,
+        resolveSelection: () => selection,
+        assertNoRuntimeReceipts: vi.fn(),
+        log: vi.fn(),
+        error: vi.fn(),
+      },
+    );
+
+    expect(result).toEqual({ kind: "handled", result: { ok: false } });
+    expect(claimCapability).not.toHaveBeenCalled();
+  });
+
+  it("does not fall through to legacy setup when storage changes after consent", async () => {
+    const capability = readyCapability();
+    const revalidated = {
+      ...capability,
+      local: {
+        ...capability.local,
+        storage: {
+          ...capability.local.storage,
+          huggingFace: { ...capability.local.storage.huggingFace, availableBytes: 1 },
+        },
+      },
+    } as DualSparkDetectedManagedServingCapability;
+    const claimCapability = vi.fn();
+
+    const result = await tryInstallDualSparkManagedVllm(
+      { platform: "spark", env: {}, nonInteractive: false, promptFn: async () => "yes" },
+      effects(),
+      {
+        probeCapability: () => capability,
+        revalidateCapability: () => revalidated,
+        claimCapability,
+        resolveSelection: () => fixtureDualSparkSelection(),
+        assertNoRuntimeReceipts: vi.fn(),
+        log: vi.fn(),
+        error: vi.fn(),
+      },
+    );
+
+    expect(result).toEqual({ kind: "handled", result: { ok: false } });
+    expect(claimCapability).not.toHaveBeenCalled();
+  });
+
+  it("does not fall through to legacy setup when selection changes after consent", async () => {
+    const capability = readyCapability();
+    const resolveSelection = vi
+      .fn()
+      .mockReturnValueOnce(fixtureDualSparkSelection())
+      .mockReturnValueOnce({
+        outcome: "no-match",
+        code: "requirements-not-met",
+        message: "selected requirements changed",
+      });
+    const claimCapability = vi.fn();
+
+    const result = await tryInstallDualSparkManagedVllm(
+      { platform: "spark", env: {}, nonInteractive: false, promptFn: async () => "yes" },
+      effects(),
+      {
+        probeCapability: () => capability,
+        revalidateCapability: () => capability,
+        claimCapability,
+        resolveSelection,
+        assertNoRuntimeReceipts: vi.fn(),
+        log: vi.fn(),
+        error: vi.fn(),
+      },
+    );
+
+    expect(result).toEqual({ kind: "handled", result: { ok: false } });
+    expect(resolveSelection).toHaveBeenCalledTimes(2);
+    expect(claimCapability).not.toHaveBeenCalled();
+  });
+
   it("revalidates only after consent and stops before effects when the pair changed", async () => {
     const capability = readyCapability();
     const installEffects = effects();
     const clearBinding = vi.fn();
-    const confirmCapability = vi.fn(() => ({
+    const revalidateCapability = vi.fn(() => ({
       kind: "unavailable" as const,
       code: "runtime-conflict" as const,
       reason: "a related listener appeared after confirmation",
     }));
+    const claimCapability = vi.fn();
     const promptFn = vi.fn(async () => {
-      expect(confirmCapability).not.toHaveBeenCalled();
+      expect(revalidateCapability).not.toHaveBeenCalled();
       expect(installEffects.prerequisites).not.toHaveBeenCalled();
       return "yes";
     });
@@ -228,7 +414,8 @@ describe("two-Spark managed vLLM installer selection", () => {
       installEffects,
       {
         probeCapability: () => capability,
-        confirmCapability,
+        revalidateCapability,
+        claimCapability,
         resolveSelection: () => fixtureDualSparkSelection(),
         assertNoRuntimeReceipts,
         clearBinding,
@@ -239,11 +426,46 @@ describe("two-Spark managed vLLM installer selection", () => {
 
     expect(result).toEqual({ kind: "handled", result: { ok: false } });
     expect(assertNoRuntimeReceipts).toHaveBeenCalledTimes(2);
-    expect(confirmCapability).toHaveBeenCalledOnce();
+    expect(revalidateCapability).toHaveBeenCalledOnce();
+    expect(claimCapability).not.toHaveBeenCalled();
     expect(installEffects.prerequisites).not.toHaveBeenCalled();
     expect(installEffects.pullImage).not.toHaveBeenCalled();
     expect(installEffects.downloadModel).not.toHaveBeenCalled();
     expect(clearBinding).not.toHaveBeenCalled();
+  });
+
+  it("applies selected-model access preflight before prompting or effects", async () => {
+    const capability = readyCapability();
+    const installEffects = effects();
+    const promptFn = vi.fn(async () => "yes");
+    const assertGatedModelAccess = vi.fn(() => {
+      throw new Error("selected model access is unavailable");
+    });
+    const revalidateCapability = vi.fn();
+    const claimCapability = vi.fn();
+
+    const result = await tryInstallDualSparkManagedVllm(
+      { platform: "spark", env: {}, nonInteractive: false, promptFn },
+      installEffects,
+      {
+        probeCapability: () => capability,
+        resolveSelection: () => fixtureDualSparkSelection(),
+        assertGatedModelAccess,
+        revalidateCapability,
+        claimCapability,
+        log: vi.fn(),
+        error: vi.fn(),
+      },
+    );
+
+    expect(result).toEqual({ kind: "handled", result: { ok: false } });
+    expect(assertGatedModelAccess).toHaveBeenCalledOnce();
+    expect(promptFn).not.toHaveBeenCalled();
+    expect(revalidateCapability).not.toHaveBeenCalled();
+    expect(claimCapability).not.toHaveBeenCalled();
+    expect(installEffects.prerequisites).not.toHaveBeenCalled();
+    expect(installEffects.pullImage).not.toHaveBeenCalled();
+    expect(installEffects.downloadModel).not.toHaveBeenCalled();
   });
 
   it("stages both exact nodes, launches, persists ownership, and retires temporary binding state", async () => {
@@ -293,7 +515,8 @@ describe("two-Spark managed vLLM installer selection", () => {
       installEffects,
       {
         probeCapability: () => capability,
-        confirmCapability: () => confirmed,
+        revalidateCapability: () => capability,
+        claimCapability: () => confirmed,
         resolveSelection: () => selection,
         createExecutor: createExecutor as never,
         start: start as never,
@@ -342,7 +565,8 @@ describe("two-Spark managed vLLM installer selection", () => {
       effects(),
       {
         probeCapability: () => capability,
-        confirmCapability: () => confirmedCapability(capability),
+        revalidateCapability: () => capability,
+        claimCapability: () => confirmedCapability(capability),
         resolveSelection: () => selection,
         createExecutor: () => ({}) as DualSparkVllmLifecycleDeps,
         start: async () => successfulStart(false),
@@ -370,7 +594,8 @@ describe("two-Spark managed vLLM installer selection", () => {
       effects(),
       {
         probeCapability: () => capability,
-        confirmCapability: () => confirmedCapability(capability),
+        revalidateCapability: () => capability,
+        claimCapability: () => confirmedCapability(capability),
         resolveSelection: () => fixtureDualSparkSelection(),
         createExecutor: () => ({}) as DualSparkVllmLifecycleDeps,
         start: async () => successfulStart(false),
@@ -404,7 +629,8 @@ describe("two-Spark managed vLLM installer selection", () => {
       effects(),
       {
         probeCapability: () => capability,
-        confirmCapability: () => confirmedCapability(capability),
+        revalidateCapability: () => capability,
+        claimCapability: () => confirmedCapability(capability),
         resolveSelection: () => fixtureDualSparkSelection(),
         createExecutor: () => ({}) as DualSparkVllmLifecycleDeps,
         start: async () => ({
@@ -435,7 +661,8 @@ describe("two-Spark managed vLLM installer selection", () => {
       effects(),
       {
         probeCapability: () => capability,
-        confirmCapability: () => confirmedCapability(capability),
+        revalidateCapability: () => capability,
+        claimCapability: () => confirmedCapability(capability),
         resolveSelection: () => fixtureDualSparkSelection(),
         createExecutor: () => ({}) as DualSparkVllmLifecycleDeps,
         start: async () => successfulStart(true),
@@ -456,20 +683,23 @@ describe("two-Spark managed vLLM installer selection", () => {
   it("does not claim or clear binding state when the operator declines", async () => {
     const capability = readyCapability();
     const clearBinding = vi.fn();
-    const confirmCapability = vi.fn();
+    const revalidateCapability = vi.fn();
+    const claimCapability = vi.fn();
     const result = await tryInstallDualSparkManagedVllm(
       { platform: "spark", env: {}, nonInteractive: false, promptFn: async () => "no" },
       effects(),
       {
         probeCapability: () => capability,
-        confirmCapability,
+        revalidateCapability,
+        claimCapability,
         resolveSelection: () => fixtureDualSparkSelection(),
         clearBinding,
         log: vi.fn(),
       },
     );
     expect(result).toEqual({ kind: "handled", result: { ok: false } });
-    expect(confirmCapability).not.toHaveBeenCalled();
+    expect(revalidateCapability).not.toHaveBeenCalled();
+    expect(claimCapability).not.toHaveBeenCalled();
     expect(clearBinding).not.toHaveBeenCalled();
   });
 });

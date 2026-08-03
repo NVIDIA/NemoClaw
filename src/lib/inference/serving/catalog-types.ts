@@ -5,12 +5,6 @@ import type { SystemReadinessReport } from "../../readiness/types.js";
 
 export const MANAGED_INFERENCE_CATALOG_SCHEMA_VERSION = "1.0.0" as const;
 export const MANAGED_INFERENCE_CATALOG_COMPILER_VERSION = "1.0.0" as const;
-export const DUAL_SPARK_PRESET_ID = "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731" as const;
-export const DUAL_SPARK_RECIPE_ID = "vllm.deepseek-v4-flash-0731.spark-dual.v1" as const;
-export const DUAL_SPARK_RECIPE_SPEC_DIGEST =
-  "sha256:32d4233427cc9fe99a143a52887b66232aeaf650712ad1b8b6ff673743fe9637" as const;
-export const DUAL_SPARK_TOPOLOGY_QUALIFICATION_ID = "dgx-spark.gb10.dual-cx7" as const;
-export const DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION = 1 as const;
 
 const MATERIALIZER_OWNED_SERVE_ARGUMENTS = new Set([
   "--api-key",
@@ -22,6 +16,7 @@ const MATERIALIZER_OWNED_SERVE_ARGUMENTS = new Set([
   "--nnodes",
   "--node-rank",
   "--pipeline-parallel-size",
+  "--revision",
   "--served-model-name",
   "--tensor-parallel-size",
 ]);
@@ -40,49 +35,84 @@ export interface ManagedInferenceServingArgument {
   readonly value?: string | number | boolean;
 }
 
+export interface ManagedInferenceTopologyBinding {
+  readonly type: "topologyQualificationOutput";
+  readonly qualificationId: string;
+  readonly schemaVersion: number;
+  readonly outputSchema: string;
+}
+
+export type ManagedInferenceModelPreparation =
+  | { readonly ref: "none/v1" }
+  | {
+      readonly ref: "snapshot-copy-and-exact-text-replacement/v1";
+      readonly snapshotCopy: {
+        readonly sourcePath: string;
+        readonly targetPath: string;
+      };
+      readonly exactTextReplacement: {
+        readonly targetPath: string;
+        readonly expectedText: string;
+        readonly replacementText: string;
+      };
+    };
+
+export interface ManagedInferenceTemporaryFilesystem {
+  readonly target: string;
+  readonly sizeBytes: number;
+  readonly mode: string;
+  readonly options: readonly string[];
+}
+
 export interface ManagedInferenceServingRecipe {
   readonly apiVersion: "nemoclaw.nvidia.com/managed-inference/v1";
   readonly kind: "ServingRecipe";
   readonly metadata: ManagedInferenceMetadata;
   readonly spec: {
-    readonly backend: "vllm";
-    readonly bindings: {
-      readonly sparkTopology: {
-        readonly type: "topologyQualificationOutput";
-        readonly qualificationId: typeof DUAL_SPARK_TOPOLOGY_QUALIFICATION_ID;
-        readonly schemaVersion: typeof DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION;
-        readonly outputSchema: "nemoclaw.nvidia.com/dual-spark-topology/v1";
-      };
-    };
+    readonly backend: string;
+    readonly bindings: Readonly<Record<string, ManagedInferenceTopologyBinding>>;
     readonly model: {
       readonly id: string;
       readonly revision: string;
       readonly servedName: string;
       readonly downloadSizeBytes: number;
-      readonly preparationRef: "deepseek-v4-flash-0731/v1";
-      readonly encodingPath: "encoding/encoding_dsv4.py";
+      readonly gated: boolean;
+      readonly installFastSafetensors: boolean;
+      readonly preparation: ManagedInferenceModelPreparation;
     };
     readonly runtime: {
       readonly image: string;
       readonly imageDownloadSizeBytes: number;
-      readonly architecture: "arm64";
-      readonly networkMode: "host";
-      readonly ipcMode: "host";
+      readonly pullTimeoutSeconds: number;
+      readonly architecture: string;
+      readonly networkMode: string;
+      readonly ipcMode: string;
       readonly sharedMemoryBytes: number;
+      readonly gpuRequest: string;
       readonly devices: readonly string[];
+      readonly ulimits: {
+        readonly memlock: number | string;
+        readonly stackBytes: number;
+      };
+      readonly modelCache: {
+        readonly source: string;
+        readonly target: string;
+      };
+      readonly temporaryFilesystems: readonly ManagedInferenceTemporaryFilesystem[];
       readonly environment: Readonly<Record<string, string>>;
     };
     readonly execution: {
-      readonly materializerRef: "vllm.dual-dgx-spark/v1";
-      readonly lifecycleRef: "vllm.dual-dgx-spark/v1";
-      readonly topologyBinding: "sparkTopology";
-      readonly nodeCount: 2;
-      readonly tensorParallelSize: 2;
-      readonly pipelineParallelSize: 1;
-      readonly distributedExecutorBackend: "mp";
+      readonly materializerRef: string;
+      readonly lifecycleRef: string;
+      readonly topologyBinding: string;
+      readonly nodeCount: number;
+      readonly tensorParallelSize: number;
+      readonly pipelineParallelSize: number;
+      readonly distributedExecutorBackend: string;
     };
     readonly serve: {
-      readonly authentication: "bearer";
+      readonly authentication: string;
+      readonly executable: string;
       readonly arguments: readonly ManagedInferenceServingArgument[];
     };
     readonly readiness: {
@@ -92,50 +122,72 @@ export interface ManagedInferenceServingRecipe {
   };
 }
 
-export type ManagedInferencePresetRequirement =
+export type ManagedInferenceReadinessRequirement =
   | {
       readonly readiness: {
-        readonly scope: "everyNode";
+        readonly scope: "everyNode" | "anyNode";
         readonly kind: "qualification";
-        readonly id: "host.platform.dgx_spark";
-        readonly status: "qualified";
+        readonly id: string;
+        readonly status: string;
       };
     }
   | {
-      readonly fact: "cluster.nodeCount";
-      readonly state: "present";
-      readonly operator: "equals";
-      readonly value: number;
-    }
-  | {
-      readonly topologyQualification: {
-        readonly id: typeof DUAL_SPARK_TOPOLOGY_QUALIFICATION_ID;
-        readonly schemaVersion: typeof DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION;
-        readonly status: "qualified";
+      readonly readiness: {
+        readonly scope: "everyNode" | "anyNode";
+        readonly kind: "observation" | "capability";
+        readonly id: string;
+        readonly state: string;
       };
     };
+
+export type ManagedInferenceFactValue =
+  | string
+  | number
+  | boolean
+  | readonly (string | number | boolean)[];
+
+export interface ManagedInferenceFactRequirement {
+  readonly fact: string;
+  readonly state: "present" | "absent";
+  readonly operator: "equals" | "oneOf" | "atLeast" | "atMost" | "between";
+  readonly value: ManagedInferenceFactValue;
+}
+
+export interface ManagedInferenceTopologyRequirement {
+  readonly topologyQualification: {
+    readonly id: string;
+    readonly schemaVersion: number;
+    readonly status: string;
+  };
+}
+
+export type ManagedInferencePresetRequirement =
+  | ManagedInferenceReadinessRequirement
+  | ManagedInferenceFactRequirement
+  | ManagedInferenceTopologyRequirement;
+
+export interface ManagedInferencePresetTopologyBinding {
+  readonly valueFromTopologyQualification: {
+    readonly id: string;
+    readonly schemaVersion: number;
+    readonly output: string;
+  };
+}
 
 export interface ManagedInferenceServingPreset {
   readonly apiVersion: "nemoclaw.nvidia.com/managed-inference/v1";
   readonly kind: "ServingPreset";
   readonly metadata: ManagedInferenceMetadata;
   readonly spec: {
-    readonly selection: "automatic";
+    readonly selection: "automatic" | "explicit-only" | "disabled";
+    readonly priority: number;
     readonly requirements: {
       readonly all: readonly ManagedInferencePresetRequirement[];
     };
     readonly plan: {
-      readonly backend: "vllm";
+      readonly backend: string;
       readonly recipeRef: string;
-      readonly bindings: {
-        readonly sparkTopology: {
-          readonly valueFromTopologyQualification: {
-            readonly id: typeof DUAL_SPARK_TOPOLOGY_QUALIFICATION_ID;
-            readonly schemaVersion: typeof DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION;
-            readonly output: "topology";
-          };
-        };
-      };
+      readonly bindings: Readonly<Record<string, ManagedInferencePresetTopologyBinding>>;
     };
   };
 }
@@ -193,6 +245,8 @@ export interface ResolvedManagedInferenceSelection<TTopologyOutput = unknown> {
   readonly outcome: "selected";
   readonly selection: "automatic" | "explicit";
   readonly catalogDigest: string;
+  readonly presetDigest: string;
+  readonly recipeDigest: string;
   readonly preset: ManagedInferenceServingPreset;
   readonly recipe: ManagedInferenceServingRecipe;
   readonly topologyQualification: ManagedInferenceTopologyQualification<TTopologyOutput>;
@@ -212,6 +266,7 @@ export type ManagedInferenceResolution<TTopologyOutput = unknown> =
         | "incompatible-intent"
         | "invalid-readiness"
         | "invalid-topology"
+        | "ambiguous-selection"
         | "requirements-not-met";
       readonly message: string;
     };

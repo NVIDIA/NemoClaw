@@ -1233,7 +1233,19 @@ function dockerIsAvailable(runtime: UninstallRuntime): boolean {
   return true;
 }
 
-function removeManagedDistributedVllmRuntime(runtime: UninstallRuntime): boolean {
+function removeManagedDistributedVllmRuntime(
+  paths: UninstallPaths,
+  runtime: UninstallRuntime,
+): boolean {
+  const sharedRoot = path.dirname(paths.managedSwapMarkerPath);
+  try {
+    const root = fs.lstatSync(sharedRoot);
+    if (root.isSymbolicLink() || !root.isDirectory()) return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    runtime.error(`Could not inspect managed distributed vLLM state root: ${formatError(error)}`);
+    return false;
+  }
   let state: ReturnType<typeof findManagedDistributedVllmRuntimeReceipts>;
   try {
     state = findManagedDistributedVllmRuntimeReceipts({
@@ -1616,7 +1628,7 @@ function executePlan(
   for (const [index, step] of plan.steps.entries()) {
     runtime.log(`[${index + 1}/${plan.steps.length}] ${planStepDisplayName(step.name, branding)}`);
     if (step.name === "Stopping services") {
-      if (!scopedToSelectedGateway && !removeManagedDistributedVllmRuntime(runtime)) {
+      if (!scopedToSelectedGateway && !removeManagedDistributedVllmRuntime(paths, runtime)) {
         return { ok: false };
       }
       if (

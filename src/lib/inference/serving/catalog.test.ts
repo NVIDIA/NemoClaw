@@ -3,46 +3,41 @@
 
 import { describe, expect, it } from "vitest";
 
-import { loadManagedInferenceCatalog } from "./catalog.js";
 import {
-  DUAL_SPARK_PRESET_ID,
-  DUAL_SPARK_RECIPE_ID,
-  DUAL_SPARK_TOPOLOGY_QUALIFICATION_ID,
-} from "./catalog-types.js";
+  getManagedInferenceCompiledPreset,
+  getManagedInferenceCompiledRecipe,
+  loadManagedInferenceCatalog,
+} from "./catalog.js";
 
 describe("managed inference catalog", () => {
-  it("loads the immutable two-Spark recipe from compiled JSON", () => {
+  it("loads every compiled YAML definition with unique IDs and resolvable references", () => {
     const catalog = loadManagedInferenceCatalog();
-    const recipe = catalog.recipes[0]?.definition;
-    const preset = catalog.presets[0]?.definition;
-
     expect(catalog.catalogDigest).toMatch(/^sha256:[0-9a-f]{64}$/u);
-    expect(recipe?.metadata.id).toBe(DUAL_SPARK_RECIPE_ID);
-    expect(recipe?.spec.model).toMatchObject({
-      id: "deepseek-ai/DeepSeek-V4-Flash-0731",
-      revision: "9e165c30e2704aec5d9d593cce3eebd58bbef1cb",
-      downloadSizeBytes: 166_898_661_074,
-      preparationRef: "deepseek-v4-flash-0731/v1",
-    });
-    expect(recipe?.spec.runtime).toMatchObject({
-      image:
-        "ghcr.io/anemll/dspark-vllm-gx10@sha256:a83948492cf13df455170fb42885f5ef4db54fefe0feff0f841ecbff464ac9d8",
-      imageDownloadSizeBytes: 9_787_537_825,
-    });
-    expect(recipe?.spec.execution).toMatchObject({
-      materializerRef: "vllm.dual-dgx-spark/v1",
-      lifecycleRef: "vllm.dual-dgx-spark/v1",
-      nodeCount: 2,
-      tensorParallelSize: 2,
-    });
-    expect(preset?.metadata.id).toBe(DUAL_SPARK_PRESET_ID);
-    expect(preset?.spec.requirements.all).toContainEqual({
-      topologyQualification: {
-        id: DUAL_SPARK_TOPOLOGY_QUALIFICATION_ID,
-        schemaVersion: 1,
-        status: "qualified",
-      },
-    });
+    expect(catalog.presets.length).toBeGreaterThan(0);
+    expect(catalog.recipes.length).toBeGreaterThan(0);
+
+    const ids = [
+      ...catalog.presets.map(({ definition }) => definition.metadata.id),
+      ...catalog.recipes.map(({ definition }) => definition.metadata.id),
+    ];
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const compiledPreset of catalog.presets) {
+      expect(getManagedInferenceCompiledPreset(compiledPreset.definition.metadata.id)).toBe(
+        compiledPreset,
+      );
+      const compiledRecipe = getManagedInferenceCompiledRecipe(
+        compiledPreset.definition.spec.plan.recipeRef,
+      );
+      expect(compiledRecipe?.definition.spec.backend).toBe(
+        compiledPreset.definition.spec.plan.backend,
+      );
+    }
+    for (const compiledRecipe of catalog.recipes) {
+      expect(getManagedInferenceCompiledRecipe(compiledRecipe.definition.metadata.id)).toBe(
+        compiledRecipe,
+      );
+      expect(compiledRecipe.definitionDigest).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    }
   });
 
   it("returns one deeply frozen catalog instance", () => {
@@ -51,6 +46,8 @@ describe("managed inference catalog", () => {
 
     expect(second).toBe(first);
     expect(Object.isFrozen(first)).toBe(true);
-    expect(Object.isFrozen(first.recipes[0]?.definition.spec.runtime.environment)).toBe(true);
+    for (const { definition } of first.recipes) {
+      expect(Object.isFrozen(definition.spec.runtime.environment)).toBe(true);
+    }
   });
 });

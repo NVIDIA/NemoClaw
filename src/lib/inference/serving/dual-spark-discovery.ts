@@ -10,17 +10,18 @@ import {
   type DualStationSshBinding,
   type QualifiedStationSshIdentity,
 } from "../vllm-station-ssh-binding.js";
-import { imageStorageRequirementBytes, modelStorageRequirementBytes } from "../vllm-storage.js";
+import {
+  DUAL_SPARK_VLLM_MASTER_PORT,
+  DUAL_SPARK_VLLM_MATERIALIZER_REF,
+} from "./adapter-registry.js";
 import { loadManagedInferenceCatalog } from "./catalog.js";
 import { immutableManagedInferenceCopy } from "./catalog-integrity.js";
-import { DUAL_SPARK_PRESET_ID } from "./catalog-types.js";
 import { createProductionDualSparkDiscoveryDeps } from "./dual-spark-discovery-production.js";
 import {
   type DualSparkNodeSnapshot,
   type DualSparkObservedContainer,
   isRelatedManagedVllmContainer,
 } from "./dual-spark-lifecycle.js";
-import { DUAL_SPARK_VLLM_API_PORT, DUAL_SPARK_VLLM_MASTER_PORT } from "./dual-spark-materialize.js";
 import {
   type DualSparkNodeObservation,
   type DualSparkPeerObservation,
@@ -39,7 +40,6 @@ const HOST_PROBE_SCHEMA_VERSION = 1;
 const DIRECT_RAIL_PREFIX_LENGTH = 30;
 const EXPECTED_CX7_SPEED_MBPS = 200_000;
 const MINIMUM_CX7_MTU = 9_000;
-const VLLM_WRITABLE_ALLOWANCE_BYTES = 816_000_000n;
 const MINIMUM_AVAILABLE_INODES = 1_024;
 const SAFE_TARGET_PATTERN =
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
@@ -120,13 +120,9 @@ export interface DualSparkStorageCapacityObservation {
 export interface DualSparkStorageObservation {
   readonly huggingFace: DualSparkStorageCapacityObservation & {
     readonly cacheRoot: string;
-    readonly snapshotPath: string;
-    readonly snapshotBytes: number | null;
-    readonly exactSnapshotCached: boolean;
   };
   readonly docker: DualSparkStorageCapacityObservation & {
     readonly dockerRootDir: string | null;
-    readonly exactImageCached: boolean;
   };
 }
 
@@ -351,24 +347,40 @@ function selectionFromEnvironment(
 ): Selection | DualSparkManagedServingCapability {
   const preset = String(env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
   const peer = String(env[NEMOCLAW_DGX_SPARK_PEER_ENV] ?? "").trim();
-  if (preset && preset !== DUAL_SPARK_PRESET_ID) {
-    return peer
-      ? unavailable(
-          "incompatible-selection",
-          `${NEMOCLAW_DGX_SPARK_PEER_ENV} cannot be combined with another serving preset.`,
-        )
-      : notSelected("no-match", "Another managed inference preset is selected.");
+  if (preset) {
+    const catalog = loadManagedInferenceCatalog();
+    const compiledPreset = catalog.presets.find(
+      ({ definition }) => definition.metadata.id === preset,
+    );
+    const recipe = compiledPreset
+      ? catalog.recipes.find(
+          ({ definition }) =>
+            definition.metadata.id === compiledPreset.definition.spec.plan.recipeRef,
+        )?.definition
+      : undefined;
+    if (recipe?.spec.execution.materializerRef !== DUAL_SPARK_VLLM_MATERIALIZER_REF) {
+      return peer
+        ? unavailable(
+            "incompatible-selection",
+            `${NEMOCLAW_DGX_SPARK_PEER_ENV} cannot be combined with another serving preset.`,
+          )
+        : notSelected("no-match", "Another managed inference preset is selected.");
+    }
   }
   if (peer) {
     try {
-      return { strict: true, intent: "explicit", explicitPeer: validatePeerTarget(peer) };
+      return {
+        strict: true,
+        intent: "explicit",
+        explicitPeer: validatePeerTarget(peer),
+      };
     } catch (error) {
       return unavailable("invalid-peer", (error as Error).message);
     }
   }
   return {
-    strict: preset === DUAL_SPARK_PRESET_ID,
-    intent: preset === DUAL_SPARK_PRESET_ID ? "explicit" : "automatic",
+    strict: Boolean(preset),
+    intent: preset ? "explicit" : "automatic",
     explicitPeer: null,
   };
 }
@@ -569,17 +581,11 @@ export function parseDualSparkHostObservation(value: unknown): DualSparkHostObse
     !validStorageCapacity(value.storage.huggingFace) ||
     !isSafeText(value.storage.huggingFace.cacheRoot) ||
     !path.isAbsolute(value.storage.huggingFace.cacheRoot) ||
-    !isSafeText(value.storage.huggingFace.snapshotPath) ||
-    !path.isAbsolute(value.storage.huggingFace.snapshotPath) ||
-    (value.storage.huggingFace.snapshotBytes !== null &&
-      !isSafeInteger(value.storage.huggingFace.snapshotBytes)) ||
-    typeof value.storage.huggingFace.exactSnapshotCached !== "boolean" ||
     !isRecord(value.storage.docker) ||
     !validStorageCapacity(value.storage.docker) ||
     (value.storage.docker.dockerRootDir !== null &&
       (!isSafeText(value.storage.docker.dockerRootDir) ||
-        !path.isAbsolute(value.storage.docker.dockerRootDir))) ||
-    typeof value.storage.docker.exactImageCached !== "boolean"
+        !path.isAbsolute(value.storage.docker.dockerRootDir)))
   ) {
     throw new Error("DGX Spark host observation is invalid");
   }
@@ -678,7 +684,7 @@ function runtimeFailure(host: DualSparkHostObservation, label: string): Discover
     };
   }
   const port = host.runtimeSnapshot.listeningPorts.find(
-    (entry) => entry === DUAL_SPARK_VLLM_API_PORT || entry === DUAL_SPARK_VLLM_MASTER_PORT,
+    (entry) => entry === DUAL_SPARK_VLLM_MASTER_PORT,
   );
   return port === undefined
     ? null
@@ -715,10 +721,6 @@ function validCapacity(capacity: DualSparkStorageCapacityObservation): boolean {
 }
 
 function storageFailure(host: DualSparkHostObservation, label: string): DiscoveryFailure | null {
-  const catalog = loadManagedInferenceCatalog();
-  const recipe = catalog.recipes[0]?.definition;
-  if (!recipe)
-    return { code: "storage-unavailable", reason: "Managed inference recipe is unavailable." };
   const huggingFace = host.storage.huggingFace;
   const docker = host.storage.docker;
   if (!validCapacity(huggingFace) || !validCapacity(docker)) {
@@ -750,36 +752,6 @@ function storageFailure(host: DualSparkHostObservation, label: string): Discover
     };
   }
 
-  const requirements = new Map<string, bigint>();
-  const available = new Map<string, bigint>();
-  const add = (capacity: DualSparkStorageCapacityObservation, required: bigint): void => {
-    const filesystemId = capacity.filesystemId!;
-    requirements.set(filesystemId, (requirements.get(filesystemId) ?? 0n) + required);
-    const bytes = BigInt(capacity.availableBytes!);
-    const prior = available.get(filesystemId);
-    available.set(filesystemId, prior === undefined || bytes < prior ? bytes : prior);
-  };
-  add(
-    huggingFace,
-    (huggingFace.exactSnapshotCached
-      ? 0n
-      : modelStorageRequirementBytes(recipe.spec.model.downloadSizeBytes)) +
-      VLLM_WRITABLE_ALLOWANCE_BYTES,
-  );
-  add(
-    docker,
-    docker.exactImageCached
-      ? 0n
-      : imageStorageRequirementBytes(recipe.spec.runtime.imageDownloadSizeBytes),
-  );
-  for (const [filesystemId, required] of requirements) {
-    if ((available.get(filesystemId) ?? -1n) < required) {
-      return {
-        code: "storage-insufficient",
-        reason: `${label} filesystem ${filesystemId} lacks capacity for the pinned image, model, staging, and writable allowance.`,
-      };
-    }
-  }
   return null;
 }
 
@@ -1151,11 +1123,11 @@ export function probeDualSparkManagedServingCapability(
   }
 }
 
-/** Revalidate the detected pair, then claim and persist its SSH binding after confirmation. */
-export function confirmDualSparkManagedServingCapability(
+/** Revalidate the detected pair without claiming or writing its SSH binding. */
+export function revalidateDualSparkManagedServingCapability(
   detected: DualSparkDetectedManagedServingCapability,
   options: ProbeDualSparkManagedServingOptions = {},
-): DualSparkManagedServingConfirmation {
+): DualSparkManagedServingCapability {
   const deps = options.deps ?? defaultDualSparkDiscoveryDeps;
   const revalidated = probeDualSparkManagedServingCapability({
     ...options,
@@ -1174,7 +1146,15 @@ export function confirmDualSparkManagedServingCapability(
       "The confirmed DGX Spark pair or its exact pretrusted SSH identity changed after selection.",
     );
   }
+  return revalidated;
+}
 
+/** Atomically claim and persist a previously revalidated pair's SSH binding. */
+export function claimDualSparkManagedServingCapability(
+  revalidated: DualSparkDetectedManagedServingCapability,
+  options: Pick<ProbeDualSparkManagedServingOptions, "deps"> = {},
+): DualSparkManagedServingConfirmation {
+  const deps = options.deps ?? defaultDualSparkDiscoveryDeps;
   const statePath = revalidated.peerSshBindingStatePath;
   if (!deps.claimBinding(statePath)) {
     return confirmationUnavailable(
@@ -1205,6 +1185,17 @@ export function confirmDualSparkManagedServingCapability(
       "The confirmed DGX Spark SSH binding could not be persisted.",
     );
   }
+}
+
+/** Revalidate the detected pair, then claim and persist its SSH binding after confirmation. */
+export function confirmDualSparkManagedServingCapability(
+  detected: DualSparkDetectedManagedServingCapability,
+  options: ProbeDualSparkManagedServingOptions = {},
+): DualSparkManagedServingConfirmation {
+  const revalidated = revalidateDualSparkManagedServingCapability(detected, options);
+  return revalidated.kind === "ready"
+    ? claimDualSparkManagedServingCapability(revalidated, options)
+    : revalidated;
 }
 
 export type { DualSparkSpawnSync } from "./dual-spark-discovery-production.js";

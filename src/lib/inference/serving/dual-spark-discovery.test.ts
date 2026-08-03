@@ -14,10 +14,10 @@ import {
   type QualifiedStationSshIdentity,
   stationKnownHostsDigest,
 } from "../vllm-station-ssh-binding.js";
-import { DUAL_SPARK_PRESET_ID } from "./catalog-types.js";
 import {
   confirmDualSparkManagedServingCapability,
   createDualSparkDiscoveryDeps,
+  type DualSparkDetectedManagedServingCapability,
   type DualSparkDiscoveryDeps,
   type DualSparkHostObservation,
   type DualSparkReadOnlyHostTransport,
@@ -27,7 +27,8 @@ import {
   parseDualSparkHostObservation,
   probeDualSparkManagedServingCapability,
 } from "./dual-spark-discovery.js";
-import { DUAL_SPARK_MANAGED_LABEL } from "./dual-spark-materialize.js";
+import { FIXTURE_DUAL_SPARK_PRESET_ID } from "./dual-spark-fixture.test-support.js";
+import { DUAL_SPARK_MANAGED_LABEL, DUAL_SPARK_VLLM_MASTER_PORT } from "./dual-spark-materialize.js";
 
 const NOW = new Date("2026-08-02T20:00:00.000Z");
 const SOURCE_REVISION = "1d6948d89b46eab739728215f9a19ef40b8f6121";
@@ -71,6 +72,13 @@ const STOPPED_FOREIGN_CONTAINER_FIXTURES: readonly StoppedForeignContainerFixtur
   },
 ];
 
+function expectDetectedPair(
+  detected: ReturnType<typeof probeDualSparkManagedServingCapability>,
+): DualSparkDetectedManagedServingCapability {
+  expect(detected.kind).toBe("ready");
+  return detected as DualSparkDetectedManagedServingCapability;
+}
+
 function readiness(overrides: Partial<SystemReadinessReport> = {}): SystemReadinessReport {
   return {
     schemaVersion: "1.1.0",
@@ -83,7 +91,10 @@ function readiness(overrides: Partial<SystemReadinessReport> = {}): SystemReadin
       observedAt: NOW.toISOString(),
     },
     observations: [],
-    capabilities: REQUIRED_CAPABILITIES.map((id) => ({ id, state: "present" as const })),
+    capabilities: REQUIRED_CAPABILITIES.map((id) => ({
+      id,
+      state: "present" as const,
+    })),
     qualifications: [
       {
         id: "host.platform.dgx_spark",
@@ -182,14 +193,10 @@ function host(
       huggingFace: {
         ...capacity(cacheRoot, uid, gid),
         cacheRoot,
-        snapshotPath: `${cacheRoot}/hub/models--deepseek/snapshots/revision`,
-        snapshotBytes: 0,
-        exactSnapshotCached: false,
       },
       docker: {
         ...capacity("/var/lib/docker", 0, 0),
         dockerRootDir: "/var/lib/docker",
-        exactImageCached: false,
       },
     },
     ...overrides,
@@ -248,7 +255,10 @@ function fixture(overrides: Partial<DualSparkDiscoveryDeps> = {}) {
   const deps: DualSparkDiscoveryDeps = {
     now: () => NOW,
     currentUid: () => 1000,
-    getBuildIdentity: () => ({ nemoclawVersion: "0.1.0", sourceRevision: SOURCE_REVISION }),
+    getBuildIdentity: () => ({
+      nemoclawVersion: "0.1.0",
+      sourceRevision: SOURCE_REVISION,
+    }),
     localTransport: () => localTransport,
     probeHost: (candidate) => (candidate === localTransport ? host("local") : host("peer")),
     inspectPretrustedTarget: (target) => identity(target),
@@ -317,10 +327,30 @@ describe("dual DGX Spark managed-serving discovery", () => {
     expect(bindingWrites()).toBe(0);
   });
 
+  it("rejects an explicit dual-Spark peer combined with another serving preset", () => {
+    const { deps, events, bindingWrites } = fixture({
+      localTransport: () => {
+        throw new Error("must not probe");
+      },
+    });
+
+    expect(
+      probeDualSparkManagedServingCapability({
+        env: {
+          [NEMOCLAW_SERVING_PRESET_ENV]: "another-preset",
+          [NEMOCLAW_DGX_SPARK_PEER_ENV]: "spark-worker.local",
+        },
+        deps,
+      }),
+    ).toMatchObject({ kind: "unavailable", code: "incompatible-selection" });
+    expect(events).toEqual([]);
+    expect(bindingWrites()).toBe(0);
+  });
+
   it("persists one binding only after the detected pair is confirmed and revalidated", () => {
     const { deps, events, bindingWrites } = fixture();
 
-    const detected = probeDualSparkManagedServingCapability({ env: {}, deps });
+    const detected = expectDetectedPair(probeDualSparkManagedServingCapability({ env: {}, deps }));
 
     expect(detected).toMatchObject({
       kind: "ready",
@@ -332,9 +362,10 @@ describe("dual DGX Spark managed-serving discovery", () => {
     });
     expect(bindingWrites()).toBe(0);
     expect(events).not.toContain("write-binding");
-    if (detected.kind !== "ready") throw new Error("expected a detected pair");
-
-    const confirmed = confirmDualSparkManagedServingCapability(detected, { env: {}, deps });
+    const confirmed = confirmDualSparkManagedServingCapability(detected, {
+      env: {},
+      deps,
+    });
 
     expect(confirmed).toMatchObject({
       kind: "ready",
@@ -357,7 +388,9 @@ describe("dual DGX Spark managed-serving discovery", () => {
   });
 
   it("returns an ordinary automatic no-match when both rails are not pretrusted", () => {
-    const { deps, bindingWrites } = fixture({ inspectPretrustedTarget: () => null });
+    const { deps, bindingWrites } = fixture({
+      inspectPretrustedTarget: () => null,
+    });
 
     expect(probeDualSparkManagedServingCapability({ env: {}, deps })).toMatchObject({
       kind: "not-selected",
@@ -371,7 +404,7 @@ describe("dual DGX Spark managed-serving discovery", () => {
 
     expect(
       probeDualSparkManagedServingCapability({
-        env: { [NEMOCLAW_SERVING_PRESET_ENV]: DUAL_SPARK_PRESET_ID },
+        env: { [NEMOCLAW_SERVING_PRESET_ENV]: FIXTURE_DUAL_SPARK_PRESET_ID },
         deps,
       }),
     ).toMatchObject({ kind: "unavailable", code: "peer-trust-unavailable" });
@@ -472,7 +505,11 @@ describe("dual DGX Spark managed-serving discovery", () => {
       name: "an active earlyoom service",
       mutate: (value: DualSparkHostObservation) => ({
         ...value,
-        earlyoom: { installed: true, active: "active" as const, enabled: "enabled" as const },
+        earlyoom: {
+          installed: true,
+          active: "active" as const,
+          enabled: "enabled" as const,
+        },
       }),
       code: "no-match",
     },
@@ -482,14 +519,17 @@ describe("dual DGX Spark managed-serving discovery", () => {
         ...value,
         runtimeSnapshot: {
           containers: [],
-          listeningPorts: [8000],
+          listeningPorts: [DUAL_SPARK_VLLM_MASTER_PORT],
         },
       }),
       code: "runtime-conflict",
     },
     {
       name: "an inconclusive runtime inspection",
-      mutate: (value: DualSparkHostObservation) => ({ ...value, runtimeInspectionComplete: false }),
+      mutate: (value: DualSparkHostObservation) => ({
+        ...value,
+        runtimeInspectionComplete: false,
+      }),
       code: "runtime-unknown",
     },
     {
@@ -528,7 +568,11 @@ describe("dual DGX Spark managed-serving discovery", () => {
         inspections += 1;
         const observed = identity(target);
         return inspections > 2
-          ? { ...observed, sshTarget: "spark-worker.local", resolvedHost: "spark-worker.local" }
+          ? {
+              ...observed,
+              sshTarget: "spark-worker.local",
+              resolvedHost: "spark-worker.local",
+            }
           : observed;
       },
       claimBinding: () => {
@@ -536,8 +580,7 @@ describe("dual DGX Spark managed-serving discovery", () => {
         return true;
       },
     };
-    const detected = probeDualSparkManagedServingCapability({ env: {}, deps });
-    if (detected.kind !== "ready") throw new Error("expected a detected pair");
+    const detected = expectDetectedPair(probeDualSparkManagedServingCapability({ env: {}, deps }));
 
     expect(confirmDualSparkManagedServingCapability(detected, { env: {}, deps })).toMatchObject({
       kind: "unavailable",
@@ -554,7 +597,12 @@ describe("dual DGX Spark managed-serving discovery", () => {
       ...base.deps,
       probeHost: (candidate) =>
         candidate === base.localTransport && runtimeAppeared
-          ? host("local", { runtimeSnapshot: { containers: [], listeningPorts: [8000] } })
+          ? host("local", {
+              runtimeSnapshot: {
+                containers: [],
+                listeningPorts: [DUAL_SPARK_VLLM_MASTER_PORT],
+              },
+            })
           : candidate === base.localTransport
             ? host("local")
             : host("peer"),
@@ -563,8 +611,7 @@ describe("dual DGX Spark managed-serving discovery", () => {
         return true;
       },
     };
-    const detected = probeDualSparkManagedServingCapability({ env: {}, deps });
-    if (detected.kind !== "ready") throw new Error("expected a detected pair");
+    const detected = expectDetectedPair(probeDualSparkManagedServingCapability({ env: {}, deps }));
     runtimeAppeared = true;
 
     expect(confirmDualSparkManagedServingCapability(detected, { env: {}, deps })).toMatchObject({
@@ -576,9 +623,10 @@ describe("dual DGX Spark managed-serving discovery", () => {
   });
 
   it("preserves an existing binding as a hard automatic conflict", () => {
-    const { deps, events, bindingWrites } = fixture({ claimBinding: () => false });
-    const detected = probeDualSparkManagedServingCapability({ env: {}, deps });
-    if (detected.kind !== "ready") throw new Error("expected a detected pair");
+    const { deps, events, bindingWrites } = fixture({
+      claimBinding: () => false,
+    });
+    const detected = expectDetectedPair(probeDualSparkManagedServingCapability({ env: {}, deps }));
 
     expect(confirmDualSparkManagedServingCapability(detected, { env: {}, deps })).toMatchObject({
       kind: "unavailable",
@@ -595,8 +643,7 @@ describe("dual DGX Spark managed-serving discovery", () => {
         throw new Error("partial write");
       },
     });
-    const detected = probeDualSparkManagedServingCapability({ env: {}, deps });
-    if (detected.kind !== "ready") throw new Error("expected a detected pair");
+    const detected = expectDetectedPair(probeDualSparkManagedServingCapability({ env: {}, deps }));
 
     expect(confirmDualSparkManagedServingCapability(detected, { env: {}, deps })).toMatchObject({
       kind: "unavailable",
@@ -615,8 +662,7 @@ describe("dual DGX Spark managed-serving discovery", () => {
         throw new Error("encode failed");
       },
     };
-    const detected = probeDualSparkManagedServingCapability({ env: {}, deps });
-    if (detected.kind !== "ready") throw new Error("expected a detected pair");
+    const detected = expectDetectedPair(probeDualSparkManagedServingCapability({ env: {}, deps }));
 
     expect(confirmDualSparkManagedServingCapability(detected, { env: {}, deps })).toMatchObject({
       kind: "unavailable",
@@ -645,11 +691,17 @@ describe("production pinned peer transport", () => {
     fs.chmodSync(parent, 0o700);
     const statePath = path.join(parent, "dual-spark.json");
     const bindingRoot = `${statePath}.ssh-binding`;
-    const deps = createDualSparkDiscoveryDeps(() => ({ status: 0, stdout: "", stderr: "" }));
+    const deps = createDualSparkDiscoveryDeps(() => ({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    }));
 
     try {
       expect(deps.claimBinding(statePath)).toBe(true);
-      fs.writeFileSync(path.join(bindingRoot, "owner"), "first\n", { mode: 0o600 });
+      fs.writeFileSync(path.join(bindingRoot, "owner"), "first\n", {
+        mode: 0o600,
+      });
       expect(deps.claimBinding(statePath)).toBe(false);
       expect(fs.readFileSync(path.join(bindingRoot, "owner"), "utf8")).toBe("first\n");
     } finally {
@@ -690,14 +742,16 @@ describe("production pinned peer transport", () => {
     } finally {
       for (const name of dockerNames) {
         const value = previous.get(name);
-        if (value === undefined) delete process.env[name];
-        else process.env[name] = value;
+        value === undefined
+          ? Reflect.deleteProperty(process.env, name)
+          : Reflect.set(process.env, name, value);
       }
     }
 
     expect(calls).toHaveLength(2);
     const local = calls[0]!;
     expect(local.file).toBe("python3");
+    expect(local.args).toHaveLength(2);
     expect(local.options.env).toMatchObject({ DOCKER_CONTEXT: "default" });
     expect(local.options.env).not.toHaveProperty("DOCKER_HOST");
     expect(local.options.env).not.toHaveProperty("DOCKER_CONFIG");
@@ -708,13 +762,20 @@ describe("production pinned peer transport", () => {
     expect(remote.options.env).not.toHaveProperty("DOCKER_CONTEXT");
     expect(remote.options.env).not.toHaveProperty("DOCKER_CONFIG");
     const request = JSON.parse(Buffer.from(remote.args.at(-1)!, "base64url").toString("utf8"));
+    expect(request.argv).toHaveLength(3);
     const script = request.argv[2] as string;
     expect(script).toContain("env.pop(name, None)");
     expect(script).toContain('env["DOCKER_CONTEXT"] = "default"');
+    expect(script).not.toContain("MODEL_ID");
+    expect(script).not.toContain("IMAGE_REF");
   });
 
   it("requires direct routes, exact neighbors, and jumbo reachability on both rails", () => {
-    const deps = createDualSparkDiscoveryDeps(() => ({ status: 0, stdout: "", stderr: "" }));
+    const deps = createDualSparkDiscoveryDeps(() => ({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    }));
     const requests = [
       {
         netdev: "enp1s0f0np0",
@@ -732,34 +793,39 @@ describe("production pinned peer transport", () => {
     let routedThroughGateway = false;
     const directTransport: DualSparkReadOnlyHostTransport = {
       execute: (argv) => {
-        if (argv[1] === "-j" && argv[2] === "route") {
+        const routeResponse = () => ({
+          status: 0,
+          stdout: JSON.stringify([
+            {
+              dev: argv.at(-1),
+              prefsrc: argv[6],
+              scope: "link",
+              ...(routedThroughGateway ? { gateway: "192.168.100.254" } : {}),
+            },
+          ]),
+          stderr: "",
+        });
+        const pingResponse = () => ({ status: 0, stdout: "", stderr: "" });
+        const neighborResponse = () => {
+          const request = requests.find(({ peerAddress }) => peerAddress === argv[5])!;
           return {
             status: 0,
             stdout: JSON.stringify([
               {
-                dev: argv.at(-1),
-                prefsrc: argv[6],
-                scope: "link",
-                ...(routedThroughGateway ? { gateway: "192.168.100.254" } : {}),
+                dst: request.peerAddress,
+                dev: request.netdev,
+                lladdr: request.expectedPeerMac,
+                state: ["REACHABLE"],
               },
             ]),
             stderr: "",
           };
-        }
-        if (argv[0] === "ping") return { status: 0, stdout: "", stderr: "" };
-        const request = requests.find(({ peerAddress }) => peerAddress === argv[5])!;
-        return {
-          status: 0,
-          stdout: JSON.stringify([
-            {
-              dst: request.peerAddress,
-              dev: request.netdev,
-              lladdr: request.expectedPeerMac,
-              state: ["REACHABLE"],
-            },
-          ]),
-          stderr: "",
         };
+        return argv[1] === "-j" && argv[2] === "route"
+          ? routeResponse()
+          : argv[0] === "ping"
+            ? pingResponse()
+            : neighborResponse();
       },
       readFile: () => "",
       readdir: () => [],
@@ -784,7 +850,9 @@ describe("production pinned peer transport", () => {
     const pinned = deps.openPinnedPeerTransport(identity("192.168.100.2"));
 
     try {
-      expect(pinned.transport.execute(["uname", "-m"])).toMatchObject({ status: 0 });
+      expect(pinned.transport.execute(["uname", "-m"])).toMatchObject({
+        status: 0,
+      });
     } finally {
       pinned.close();
     }

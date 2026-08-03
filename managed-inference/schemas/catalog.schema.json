@@ -9,6 +9,7 @@
     "compilerVersion": { "const": "1.0.0" },
     "presets": {
       "type": "array",
+      "minItems": 1,
       "items": {
         "allOf": [
           { "$ref": "#/$defs/compiledDefinition" },
@@ -23,6 +24,7 @@
     },
     "recipes": {
       "type": "array",
+      "minItems": 1,
       "items": {
         "allOf": [
           { "$ref": "#/$defs/compiledDefinition" },
@@ -38,6 +40,7 @@
     "schemaVersion": { "const": "1.0.0" },
     "sourceFiles": {
       "type": "array",
+      "minItems": 2,
       "items": {
         "type": "object",
         "required": ["digest", "path"],

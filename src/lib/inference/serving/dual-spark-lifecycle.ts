@@ -7,9 +7,6 @@ import {
   DUAL_SPARK_API_KEY_FINGERPRINT_LABEL,
   DUAL_SPARK_MANAGED_LABEL,
   DUAL_SPARK_TRANSACTION_LABEL,
-  DUAL_SPARK_VLLM_API_PORT,
-  DUAL_SPARK_VLLM_IMAGE,
-  DUAL_SPARK_VLLM_MASTER_PORT,
   DUAL_SPARK_VLLM_PROJECT_ID,
   type DualSparkVllmPlan,
   type DualSparkVllmRolePlan,
@@ -298,7 +295,7 @@ export function classifyDualSparkExistingState(
     ["worker", snapshots.worker],
   ] as const) {
     const occupied = snapshot.listeningPorts.find(
-      (port) => port === DUAL_SPARK_VLLM_API_PORT || port === DUAL_SPARK_VLLM_MASTER_PORT,
+      (port) => port === plan.apiPort || port === plan.masterPort,
     );
     if (occupied !== undefined) {
       return { outcome: "conflict", reason: `${node} port ${String(occupied)} is already in use` };

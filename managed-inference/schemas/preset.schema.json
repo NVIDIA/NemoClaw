@@ -10,9 +10,10 @@
     "metadata": { "$ref": "#/$defs/metadata" },
     "spec": {
       "type": "object",
-      "required": ["selection", "requirements", "plan"],
+      "required": ["selection", "priority", "requirements", "plan"],
       "properties": {
-        "selection": { "const": "automatic" },
+        "selection": { "enum": ["automatic", "explicit-only", "disabled"] },
+        "priority": { "type": "integer", "minimum": -1000000, "maximum": 1000000 },
         "requirements": {
           "type": "object",
           "required": ["all"],
@@ -20,9 +21,11 @@
             "all": {
               "type": "array",
               "minItems": 1,
+              "maxItems": 128,
               "items": {
                 "oneOf": [
-                  { "$ref": "#/$defs/readinessRequirement" },
+                  { "$ref": "#/$defs/readinessQualificationRequirement" },
+                  { "$ref": "#/$defs/readinessStateRequirement" },
                   { "$ref": "#/$defs/factRequirement" },
                   { "$ref": "#/$defs/topologyRequirement" }
                 ]
@@ -35,31 +38,14 @@
           "type": "object",
           "required": ["backend", "recipeRef", "bindings"],
           "properties": {
-            "backend": { "const": "vllm" },
+            "backend": { "$ref": "#/$defs/token" },
             "recipeRef": { "$ref": "#/$defs/stableId" },
             "bindings": {
               "type": "object",
-              "required": ["sparkTopology"],
-              "properties": {
-                "sparkTopology": {
-                  "type": "object",
-                  "required": ["valueFromTopologyQualification"],
-                  "properties": {
-                    "valueFromTopologyQualification": {
-                      "type": "object",
-                      "required": ["id", "schemaVersion", "output"],
-                      "properties": {
-                        "id": { "const": "dgx-spark.gb10.dual-cx7" },
-                        "schemaVersion": { "const": 1 },
-                        "output": { "const": "topology" }
-                      },
-                      "additionalProperties": false
-                    }
-                  },
-                  "additionalProperties": false
-                }
-              },
-              "additionalProperties": false
+              "minProperties": 1,
+              "maxProperties": 16,
+              "propertyNames": { "$ref": "#/$defs/bindingName" },
+              "additionalProperties": { "$ref": "#/$defs/presetTopologyBinding" }
             }
           },
           "additionalProperties": false
@@ -81,10 +67,24 @@
     },
     "stableId": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9]*(?:[._/-][a-z0-9]+)+$",
-      "maxLength": 160
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$"
     },
-    "readinessRequirement": {
+    "bindingName": {
+      "type": "string",
+      "pattern": "^[a-z][A-Za-z0-9]{0,63}$"
+    },
+    "token": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "scope": {
+      "enum": ["everyNode", "anyNode"]
+    },
+    "state": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+    },
+    "readinessQualificationRequirement": {
       "type": "object",
       "required": ["readiness"],
       "properties": {
@@ -92,10 +92,28 @@
           "type": "object",
           "required": ["scope", "kind", "id", "status"],
           "properties": {
-            "scope": { "const": "everyNode" },
+            "scope": { "$ref": "#/$defs/scope" },
             "kind": { "const": "qualification" },
-            "id": { "const": "host.platform.dgx_spark" },
-            "status": { "const": "qualified" }
+            "id": { "$ref": "#/$defs/stableId" },
+            "status": { "$ref": "#/$defs/state" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "readinessStateRequirement": {
+      "type": "object",
+      "required": ["readiness"],
+      "properties": {
+        "readiness": {
+          "type": "object",
+          "required": ["scope", "kind", "id", "state"],
+          "properties": {
+            "scope": { "$ref": "#/$defs/scope" },
+            "kind": { "enum": ["observation", "capability"] },
+            "id": { "$ref": "#/$defs/stableId" },
+            "state": { "$ref": "#/$defs/state" }
           },
           "additionalProperties": false
         }
@@ -106,10 +124,20 @@
       "type": "object",
       "required": ["fact", "state", "operator", "value"],
       "properties": {
-        "fact": { "const": "cluster.nodeCount" },
-        "state": { "const": "present" },
-        "operator": { "const": "equals" },
-        "value": { "type": "integer", "minimum": 1 }
+        "fact": { "$ref": "#/$defs/stableId" },
+        "state": { "enum": ["present", "absent"] },
+        "operator": { "enum": ["equals", "oneOf", "atLeast", "atMost", "between"] },
+        "value": {
+          "oneOf": [
+            { "type": ["string", "number", "boolean"] },
+            {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 128,
+              "items": { "type": ["string", "number", "boolean"] }
+            }
+          ]
+        }
       },
       "additionalProperties": false
     },
@@ -121,9 +149,26 @@
           "type": "object",
           "required": ["id", "schemaVersion", "status"],
           "properties": {
-            "id": { "const": "dgx-spark.gb10.dual-cx7" },
-            "schemaVersion": { "const": 1 },
-            "status": { "const": "qualified" }
+            "id": { "$ref": "#/$defs/stableId" },
+            "schemaVersion": { "type": "integer", "minimum": 1 },
+            "status": { "$ref": "#/$defs/state" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "presetTopologyBinding": {
+      "type": "object",
+      "required": ["valueFromTopologyQualification"],
+      "properties": {
+        "valueFromTopologyQualification": {
+          "type": "object",
+          "required": ["id", "schemaVersion", "output"],
+          "properties": {
+            "id": { "$ref": "#/$defs/stableId" },
+            "schemaVersion": { "type": "integer", "minimum": 1 },
+            "output": { "$ref": "#/$defs/token" }
           },
           "additionalProperties": false
         }

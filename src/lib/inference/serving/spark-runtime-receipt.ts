@@ -13,7 +13,6 @@ import {
   encodeDualStationSshBindingHandoff,
   loadDualStationSshBindingHandoff,
 } from "../vllm-station-ssh-binding";
-import { loadManagedInferenceCatalog } from "./catalog";
 import { managedInferenceHexDigest } from "./catalog-integrity";
 import {
   assertDualSparkVllmExecutorConfig,
@@ -171,9 +170,6 @@ function assertExecutorContract(
   localCacheRoot: string,
   peerCacheRoot: string,
 ): void {
-  if (plan.catalogDigest !== loadManagedInferenceCatalog().catalogDigest) {
-    throw new Error("Dual-Spark runtime plan does not match the shipped catalog");
-  }
   assertDualSparkVllmExecutorConfig({
     plan,
     peerSshBinding,

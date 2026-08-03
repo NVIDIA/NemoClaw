@@ -13,14 +13,23 @@ import catalogSchema from "../../managed-inference/schemas/catalog.schema.json" 
 };
 import presetSchema from "../../managed-inference/schemas/preset.schema.json" with { type: "json" };
 import recipeSchema from "../../managed-inference/schemas/recipe.schema.json" with { type: "json" };
+import * as adapterRegistryModule from "../../src/lib/inference/serving/adapter-registry.ts";
 import * as catalogIntegrityModule from "../../src/lib/inference/serving/catalog-integrity.ts";
 import type {
   CompiledManagedInferenceCatalog,
+  ManagedInferenceFactRequirement,
   ManagedInferenceServingPreset,
   ManagedInferenceServingRecipe,
 } from "../../src/lib/inference/serving/catalog-types.ts";
 import * as catalogTypesModule from "../../src/lib/inference/serving/catalog-types.ts";
 
+const compatibleAdapterRegistryModule = adapterRegistryModule as unknown as {
+  default?: typeof adapterRegistryModule;
+};
+const {
+  getManagedInferenceRecipeRegistrationError,
+  getManagedInferenceTopologyQualificationDescriptor,
+} = compatibleAdapterRegistryModule.default ?? adapterRegistryModule;
 const compatibleCatalogIntegrityModule = catalogIntegrityModule as unknown as {
   default?: typeof catalogIntegrityModule;
 };
@@ -30,9 +39,6 @@ const compatibleCatalogTypesModule = catalogTypesModule as unknown as {
   default?: typeof catalogTypesModule;
 };
 const {
-  DUAL_SPARK_PRESET_ID,
-  DUAL_SPARK_RECIPE_ID,
-  DUAL_SPARK_RECIPE_SPEC_DIGEST,
   isManagedInferenceMaterializerOwnedArgument,
   MANAGED_INFERENCE_CATALOG_COMPILER_VERSION,
   MANAGED_INFERENCE_CATALOG_SCHEMA_VERSION,
@@ -104,12 +110,37 @@ function createValidators(): {
   };
 }
 
-function validateRecipeSemantics(recipe: ManagedInferenceServingRecipe): void {
-  if (recipe.metadata.id !== DUAL_SPARK_RECIPE_ID) {
-    throw new Error(`unsupported serving recipe ${recipe.metadata.id}`);
+function factRequirementError(requirement: ManagedInferenceFactRequirement): string | undefined {
+  if (requirement.fact !== "cluster.nodeCount") {
+    return "unsupported selection fact";
   }
+  const { operator, value } = requirement;
+  const arrayValue = Array.isArray(value) ? value : null;
+  if (operator === "oneOf") {
+    return arrayValue && arrayValue.length > 0
+      ? undefined
+      : "oneOf requires a non-empty value array";
+  }
+  if (operator === "between") {
+    return arrayValue?.length === 2 && arrayValue.every((item) => typeof item === "number")
+      ? undefined
+      : "between requires exactly two numeric values";
+  }
+  if (arrayValue) return `${operator} requires one scalar value`;
+  if ((operator === "atLeast" || operator === "atMost") && typeof value !== "number") {
+    return `${operator} requires one numeric value`;
+  }
+  return undefined;
+}
+
+function validateRecipeSemantics(recipe: ManagedInferenceServingRecipe): void {
   if (!SHA256.test(recipe.spec.runtime.image.slice(recipe.spec.runtime.image.indexOf("@") + 1))) {
     throw new Error(`${recipe.metadata.id} must pin its runtime image by sha256 digest`);
+  }
+  if (!Object.hasOwn(recipe.spec.bindings, recipe.spec.execution.topologyBinding)) {
+    throw new Error(
+      `${recipe.metadata.id} references unknown topology binding ${recipe.spec.execution.topologyBinding}`,
+    );
   }
   const seenArguments = new Set<string>();
   for (const argument of recipe.spec.serve.arguments) {
@@ -121,63 +152,121 @@ function validateRecipeSemantics(recipe: ManagedInferenceServingRecipe): void {
     }
     seenArguments.add(argument.name);
   }
-  if (managedInferenceDigest(recipe.spec) !== DUAL_SPARK_RECIPE_SPEC_DIGEST) {
-    throw new Error(`${recipe.metadata.id} contract changed without a new recipe ID`);
+  const temporaryTargets = recipe.spec.runtime.temporaryFilesystems.map(({ target }) => target);
+  if (new Set(temporaryTargets).size !== temporaryTargets.length) {
+    throw new Error(`${recipe.metadata.id} contains duplicate temporary filesystem targets`);
   }
+  for (const filesystem of recipe.spec.runtime.temporaryFilesystems) {
+    const options = new Set(filesystem.options);
+    if (
+      (options.has("rw") && options.has("ro")) ||
+      (options.has("exec") && options.has("noexec"))
+    ) {
+      throw new Error(`${recipe.metadata.id} contains conflicting temporary filesystem options`);
+    }
+  }
+  const registrationError = getManagedInferenceRecipeRegistrationError(recipe);
+  if (registrationError) {
+    throw new Error(
+      `${recipe.metadata.id} is incompatible with its registered adapters: ${registrationError}`,
+    );
+  }
+}
+
+function sortedKeys(value: object): string[] {
+  return Object.keys(value).sort(compareStrings);
 }
 
 function validatePresetSemantics(
   preset: ManagedInferenceServingPreset,
   recipes: ReadonlyMap<string, ManagedInferenceServingRecipe>,
 ): void {
-  if (preset.metadata.id !== DUAL_SPARK_PRESET_ID) {
-    throw new Error(`unsupported serving preset ${preset.metadata.id}`);
-  }
-  if (preset.spec.selection !== "automatic") {
-    throw new Error(`${preset.metadata.id} must remain an automatic preset`);
-  }
   const recipe = recipes.get(preset.spec.plan.recipeRef);
-  if (!recipe)
+  if (!recipe) {
     throw new Error(
       `${preset.metadata.id} references unknown recipe ${preset.spec.plan.recipeRef}`,
     );
+  }
   if (recipe.spec.backend !== preset.spec.plan.backend) {
     throw new Error(`${preset.metadata.id} backend does not match its recipe`);
   }
 
-  const readinessRequirements = preset.spec.requirements.all.filter(
-    (requirement) => "readiness" in requirement,
-  );
-  const nodeCountRequirements = preset.spec.requirements.all.filter(
-    (requirement) => "fact" in requirement,
-  );
-  const topologyRequirements = preset.spec.requirements.all.filter(
-    (requirement) => "topologyQualification" in requirement,
-  );
+  const recipeBindingNames = sortedKeys(recipe.spec.bindings);
+  const presetBindingNames = sortedKeys(preset.spec.plan.bindings);
   if (
-    readinessRequirements.length !== 1 ||
-    readinessRequirements[0]?.readiness.status !== "qualified"
+    recipeBindingNames.length !== presetBindingNames.length ||
+    recipeBindingNames.some((name, index) => name !== presetBindingNames[index])
   ) {
+    throw new Error(`${preset.metadata.id} bindings do not exactly satisfy its recipe`);
+  }
+  const topologyRequirements = preset.spec.requirements.all
+    .filter((requirement) => "topologyQualification" in requirement)
+    .map(({ topologyQualification }) => topologyQualification);
+  if (topologyRequirements.length !== recipeBindingNames.length) {
     throw new Error(
-      `${preset.metadata.id} must require qualified DGX Spark readiness on every node`,
+      `${preset.metadata.id} topology requirements do not exactly satisfy its recipe bindings`,
     );
   }
-  if (
-    nodeCountRequirements.length !== 1 ||
-    nodeCountRequirements[0]?.state !== "present" ||
-    nodeCountRequirements[0]?.value !== recipe.spec.execution.nodeCount
-  ) {
-    throw new Error(`${preset.metadata.id} must require the recipe's exact node count`);
+  for (const name of recipeBindingNames) {
+    const recipeBinding = recipe.spec.bindings[name]!;
+    const presetBinding = preset.spec.plan.bindings[name]!.valueFromTopologyQualification;
+    const descriptor = getManagedInferenceTopologyQualificationDescriptor(
+      recipeBinding.qualificationId,
+      recipeBinding.schemaVersion,
+    );
+    if (
+      !descriptor ||
+      presetBinding.id !== recipeBinding.qualificationId ||
+      presetBinding.schemaVersion !== recipeBinding.schemaVersion ||
+      presetBinding.output !== descriptor.bindingOutput
+    ) {
+      throw new Error(`${preset.metadata.id} binding ${name} does not match its recipe`);
+    }
+    const matchingRequirements = topologyRequirements.filter(
+      ({ id, schemaVersion, status }) =>
+        id === presetBinding.id &&
+        schemaVersion === presetBinding.schemaVersion &&
+        status === "qualified",
+    );
+    if (matchingRequirements.length !== 1) {
+      throw new Error(
+        `${preset.metadata.id} binding ${name} requires one matching qualified topology requirement`,
+      );
+    }
   }
-  const topology = topologyRequirements[0]?.topologyQualification;
-  const recipeTopology = recipe.spec.bindings.sparkTopology;
-  if (
-    topologyRequirements.length !== 1 ||
-    topology?.status !== "qualified" ||
-    topology.id !== recipeTopology.qualificationId ||
-    topology.schemaVersion !== recipeTopology.schemaVersion
-  ) {
-    throw new Error(`${preset.metadata.id} topology requirement does not match its recipe binding`);
+  for (const requirement of preset.spec.requirements.all) {
+    if (!("fact" in requirement)) continue;
+    const error = factRequirementError(requirement);
+    if (error) throw new Error(`${preset.metadata.id} fact ${requirement.fact}: ${error}`);
+    if (
+      requirement.fact === "cluster.nodeCount" &&
+      requirement.state === "present" &&
+      requirement.operator === "equals" &&
+      requirement.value !== recipe.spec.execution.nodeCount
+    ) {
+      throw new Error(`${preset.metadata.id} node-count requirement does not match its recipe`);
+    }
+  }
+}
+
+function assertUniqueDefinitionIds(
+  presets: readonly { readonly definition: ManagedInferenceServingPreset }[],
+  recipes: readonly { readonly definition: ManagedInferenceServingRecipe }[],
+): void {
+  const seen = new Map<string, string>();
+  for (const [kind, definitions] of [
+    ["preset", presets],
+    ["recipe", recipes],
+  ] as const) {
+    for (const { definition } of definitions) {
+      const existing = seen.get(definition.metadata.id);
+      if (existing) {
+        throw new Error(
+          `managed inference definition ID ${definition.metadata.id} is duplicated by ${existing} and ${kind}`,
+        );
+      }
+      seen.set(definition.metadata.id, kind);
+    }
   }
 }
 
@@ -236,14 +325,21 @@ export function compileManagedInferenceCatalogSources(
     }
   }
 
-  if (recipes.length !== 1 || presets.length !== 1) {
-    throw new Error("managed inference catalog v1 requires exactly one recipe and one preset");
+  if (recipes.length === 0 || presets.length === 0) {
+    throw new Error("managed inference catalog requires at least one recipe and one preset");
   }
+  assertUniqueDefinitionIds(presets, recipes);
   for (const { definition } of recipes) validateRecipeSemantics(definition);
   const recipesById = new Map(
     recipes.map(({ definition }) => [definition.metadata.id, definition]),
   );
   for (const { definition } of presets) validatePresetSemantics(definition, recipesById);
+  recipes.sort((left, right) =>
+    compareStrings(left.definition.metadata.id, right.definition.metadata.id),
+  );
+  presets.sort((left, right) =>
+    compareStrings(left.definition.metadata.id, right.definition.metadata.id),
+  );
 
   const sourceFiles = sortedSources.map((source) => ({
     digest: managedInferenceTextDigest(source.contents),
@@ -261,8 +357,9 @@ export function compileManagedInferenceCatalogSources(
     ...withoutDigest,
     catalogDigest: managedInferenceDigest(withoutDigest),
   }) as CompiledManagedInferenceCatalog;
-  if (!validateCatalog(catalog))
+  if (!validateCatalog(catalog)) {
     throw validationError("compiled managed inference catalog", validateCatalog);
+  }
   return { catalog, json: `${JSON.stringify(catalog, null, 2)}\n` };
 }
 

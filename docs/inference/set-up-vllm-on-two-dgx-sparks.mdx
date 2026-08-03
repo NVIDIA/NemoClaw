@@ -28,8 +28,8 @@ It does not scan a subnet, add SSH host keys, add authorized keys, or change SSH
 Both derived addresses must already have strict public-key SSH trust.
 They must identify the same physical peer and the same SSH host key.
 The detector performs read-only host probes only through that pinned identity.
-After you confirm setup, NemoClaw repeats the read-only pair qualification and then writes an owner-only temporary SSH binding at `<selected-state-root>/dual-spark-managed-serving.json.ssh-binding/` for the install transaction.
-The selected state root is `~/.nemoclaw/` for the default gateway or `~/.nemoclaw/gateways/<port>/` for a non-default gateway.
+After you confirm setup, NemoClaw repeats the read-only pair qualification and then writes an owner-only temporary SSH binding at `~/.nemoclaw/dual-spark-managed-serving.json.ssh-binding/` for the install transaction.
+This claim is host-global and shared by every gateway on the host.
 Declining setup creates no binding. After confirmation, NemoClaw attempts to remove the binding when setup fails or the durable runtime receipt is committed.
 If cleanup cannot be confirmed and the claim remains without a durable runtime receipt, a new managed-vLLM install stops before mutation and preserves the claim for explicit recovery or removal.
 
@@ -80,7 +80,7 @@ For a cold cache, each system needs these approximate capacities:
 | Docker storage | `32.584 GB` | Three times the `9.788 GB` compressed image size plus a `3.221 GB` staging reserve. |
 | Shared filesystem | `203.520 GB` | The combined cold-cache requirement when both paths share one filesystem. |
 
-An exact cached image or exact pinned model snapshot removes its corresponding download requirement.
+NemoClaw reserves the selected recipe's full declared image and model download sizes, staging capacity, and writable allowance even when the exact artifacts are cached.
 An unavailable capacity, ownership, directory, writability, or inode result leaves the two-node profile unqualified.
 
 ## Restrict Network Access
@@ -162,6 +162,10 @@ The peer must already pass strict public-key authentication and host-key checkin
 The explicit target still must match the exact reciprocal rail topology.
 
 ## Understand the Distributed Runtime
+
+The compiled managed inference catalog reads profile selection, artifacts, runtime resources, serving arguments, preparation, and readiness checks from preset and recipe YAML.
+Maintainers can add another profile that uses the registered dual-Spark topology, materializer, lifecycle, and preparation adapters by adding preset and recipe YAML without TypeScript changes.
+A profile that needs a different execution contract requires a registered adapter.
 
 The compiled profile pins these artifacts:
 

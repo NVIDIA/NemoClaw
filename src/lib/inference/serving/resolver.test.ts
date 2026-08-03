@@ -2,13 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-
 import type { SystemReadinessReport } from "../../readiness/types.js";
-import {
-  DUAL_SPARK_PRESET_ID,
-  type ManagedInferenceReadinessSource,
-  type ManagedInferenceResolverInput,
-  type ManagedInferenceTopologyQualification,
+import { loadManagedInferenceCatalog } from "./catalog.js";
+import { managedInferenceDigest } from "./catalog-integrity.js";
+import type {
+  CompiledManagedInferenceCatalog,
+  ManagedInferencePresetRequirement,
+  ManagedInferenceReadinessSource,
+  ManagedInferenceResolverInput,
+  ManagedInferenceServingPreset,
+  ManagedInferenceServingRecipe,
+  ManagedInferenceTopologyQualification,
 } from "./catalog-types.js";
 import { fixtureDualSparkSelection } from "./dual-spark-fixture.test-support.js";
 import {
@@ -20,7 +24,65 @@ import { resolveManagedInferenceServing } from "./resolver.js";
 const NOW = new Date("2026-08-02T18:00:00.000Z");
 const SOURCE_REVISION = "a".repeat(40);
 
+function shippedCatalog(): CompiledManagedInferenceCatalog {
+  return structuredClone(loadManagedInferenceCatalog());
+}
+
+function shippedPreset(catalog = shippedCatalog()): ManagedInferenceServingPreset {
+  const preset = catalog.presets[0]?.definition;
+  expect(preset).toBeDefined();
+  return preset as ManagedInferenceServingPreset;
+}
+
+function shippedRecipe(catalog = shippedCatalog()): ManagedInferenceServingRecipe {
+  const recipe = catalog.recipes[0]?.definition;
+  expect(recipe).toBeDefined();
+  return recipe as ManagedInferenceServingRecipe;
+}
+
+function catalogReadinessEntities(): Pick<
+  SystemReadinessReport,
+  "observations" | "capabilities" | "qualifications"
+> {
+  const readinessRequirements = shippedPreset().spec.requirements.all.flatMap((requirement) =>
+    "readiness" in requirement ? [requirement.readiness] : [],
+  );
+  return {
+    observations: readinessRequirements.flatMap((readiness) =>
+      readiness.kind === "observation"
+        ? [
+            {
+              id: readiness.id,
+              state: readiness.state as SystemReadinessReport["observations"][number]["state"],
+            },
+          ]
+        : [],
+    ),
+    capabilities: readinessRequirements.flatMap((readiness) =>
+      readiness.kind === "capability"
+        ? [
+            {
+              id: readiness.id,
+              state: readiness.state as SystemReadinessReport["capabilities"][number]["state"],
+            },
+          ]
+        : [],
+    ),
+    qualifications: readinessRequirements.flatMap((readiness) =>
+      readiness.kind === "qualification"
+        ? [
+            {
+              id: readiness.id,
+              status: readiness.status as SystemReadinessReport["qualifications"][number]["status"],
+            },
+          ]
+        : [],
+    ),
+  };
+}
+
 function readinessReport(overrides: Partial<SystemReadinessReport> = {}): SystemReadinessReport {
+  const entities = catalogReadinessEntities();
   return {
     schemaVersion: "1.1.0",
     mutated: false,
@@ -29,15 +91,7 @@ function readinessReport(overrides: Partial<SystemReadinessReport> = {}): System
       sourceRevision: SOURCE_REVISION,
       observedAt: "2026-08-02T17:59:50.000Z",
     },
-    observations: [],
-    capabilities: [{ id: "host.platform.dgx_spark", state: "present" }],
-    qualifications: [
-      {
-        id: "host.platform.dgx_spark",
-        status: "qualified",
-        capabilityIds: ["host.platform.dgx_spark"],
-      },
-    ],
+    ...entities,
     findings: [],
     evidence: [],
     status: "supported",
@@ -57,10 +111,7 @@ function topology(
   overrides: Partial<ManagedInferenceTopologyQualification<DualSparkTopologyOutput>> = {},
 ): ManagedInferenceTopologyQualification<DualSparkTopologyOutput> {
   const artifact = structuredClone(fixtureDualSparkSelection().topologyQualification);
-  return {
-    ...artifact,
-    ...overrides,
-  };
+  return { ...artifact, ...overrides };
 }
 
 function resolverInput(
@@ -74,31 +125,340 @@ function resolverInput(
   };
 }
 
+function catalogWithSecondProfile(options: {
+  readonly firstPriority: number;
+  readonly secondPriority: number;
+  readonly secondSelection?: "automatic" | "explicit-only" | "disabled";
+}): {
+  readonly catalog: CompiledManagedInferenceCatalog;
+  readonly secondPresetId: string;
+  readonly secondRecipeId: string;
+} {
+  const catalog = shippedCatalog();
+  const firstPreset = shippedPreset(catalog);
+  const firstRecipe = shippedRecipe(catalog);
+  const secondPresetId = "vllm.synthetic.dual-second";
+  const secondRecipeId = "vllm.synthetic.second-recipe";
+  const normalizedFirst = {
+    ...firstPreset,
+    spec: { ...firstPreset.spec, priority: options.firstPriority },
+  } as ManagedInferenceServingPreset;
+  const secondRecipe = {
+    ...firstRecipe,
+    metadata: {
+      ...firstRecipe.metadata,
+      id: secondRecipeId,
+      displayName: "Synthetic model",
+    },
+    spec: {
+      ...firstRecipe.spec,
+      model: {
+        ...firstRecipe.spec.model,
+        id: "example/AnotherModel",
+        revision: "b".repeat(40),
+        servedName: "another-model",
+      },
+      readiness: {
+        ...firstRecipe.spec.readiness,
+        expectedModel: "another-model",
+      },
+    },
+  } as ManagedInferenceServingRecipe;
+  const secondPreset = {
+    ...firstPreset,
+    metadata: {
+      ...firstPreset.metadata,
+      id: secondPresetId,
+      displayName: "Synthetic preset",
+    },
+    spec: {
+      ...firstPreset.spec,
+      selection: options.secondSelection ?? "automatic",
+      priority: options.secondPriority,
+      plan: { ...firstPreset.spec.plan, recipeRef: secondRecipeId },
+    },
+  } as ManagedInferenceServingPreset;
+  return {
+    catalog: {
+      ...catalog,
+      presets: [
+        {
+          ...catalog.presets[0]!,
+          definition: normalizedFirst,
+          definitionDigest: managedInferenceDigest(normalizedFirst),
+        },
+        {
+          ...catalog.presets[0]!,
+          definition: secondPreset,
+          definitionDigest: managedInferenceDigest(secondPreset),
+          sourceFile: "managed-inference/presets/vllm.synthetic.dual-second.yaml",
+        },
+      ],
+      recipes: [
+        catalog.recipes[0]!,
+        {
+          ...catalog.recipes[0]!,
+          definition: secondRecipe,
+          definitionDigest: managedInferenceDigest(secondRecipe),
+          sourceFile: "managed-inference/recipes/vllm.synthetic.second-recipe.yaml",
+        },
+      ],
+    },
+    secondPresetId,
+    secondRecipeId,
+  };
+}
+
 describe("managed inference resolver", () => {
-  it("selects the automatic preset for two fresh qualified Sparks and their topology", () => {
-    const result = resolveManagedInferenceServing(resolverInput());
+  it("selects the shipped automatic preset from catalog data", () => {
+    const catalog = shippedCatalog();
+    const result = resolveManagedInferenceServing(resolverInput(), catalog);
 
     expect(result).toMatchObject({
       outcome: "selected",
       selection: "automatic",
-      preset: { metadata: { id: DUAL_SPARK_PRESET_ID } },
-      recipe: { spec: { execution: { nodeCount: 2, tensorParallelSize: 2 } } },
+      presetDigest: catalog.presets[0]!.definitionDigest,
+      recipeDigest: catalog.recipes[0]!.definitionDigest,
+      preset: { metadata: { id: shippedPreset(catalog).metadata.id } },
+      recipe: { metadata: { id: shippedRecipe(catalog).metadata.id } },
       topologyQualification: { output: { masterAddress: "192.168.100.10" } },
     });
   });
 
-  it("selects the exact explicit preset only when compatible requirements still pass", () => {
+  it("looks up and resolves an arbitrary explicit-only preset by ID", () => {
+    const { catalog, secondPresetId, secondRecipeId } = catalogWithSecondProfile({
+      firstPriority: 100,
+      secondPriority: 1,
+      secondSelection: "explicit-only",
+    });
     const result = resolveManagedInferenceServing(
       resolverInput({
-        intent: {
-          preset: DUAL_SPARK_PRESET_ID,
-          provider: "vllm",
-          vllmModel: "deepseek-ai/DeepSeek-V4-Flash-0731",
-        },
+        intent: { preset: secondPresetId, vllmModel: "another-model" },
       }),
+      catalog,
     );
 
-    expect(result).toMatchObject({ outcome: "selected", selection: "explicit" });
+    expect(result).toMatchObject({
+      outcome: "selected",
+      selection: "explicit",
+      preset: { metadata: { id: secondPresetId } },
+      recipe: { metadata: { id: secondRecipeId } },
+    });
+  });
+
+  it("selects the highest-priority matching automatic preset", () => {
+    const { catalog, secondPresetId, secondRecipeId } = catalogWithSecondProfile({
+      firstPriority: 100,
+      secondPriority: 200,
+    });
+    const result = resolveManagedInferenceServing(resolverInput(), catalog);
+
+    expect(result).toMatchObject({
+      outcome: "selected",
+      preset: { metadata: { id: secondPresetId } },
+      recipe: { metadata: { id: secondRecipeId } },
+    });
+  });
+
+  it("selects a lower-priority profile when higher-priority requirements do not match", () => {
+    const {
+      catalog: baseCatalog,
+      secondPresetId,
+      secondRecipeId,
+    } = catalogWithSecondProfile({
+      firstPriority: 200,
+      secondPriority: 100,
+    });
+    const highPreset = baseCatalog.presets[0]!.definition;
+    const unavailableHighPreset = {
+      ...highPreset,
+      spec: {
+        ...highPreset.spec,
+        requirements: {
+          all: [
+            {
+              readiness: {
+                scope: "everyNode",
+                kind: "capability",
+                id: "host.synthetic.unavailable",
+                state: "present",
+              },
+            },
+            ...highPreset.spec.requirements.all,
+          ],
+        },
+      },
+    } as ManagedInferenceServingPreset;
+    const catalog: CompiledManagedInferenceCatalog = {
+      ...baseCatalog,
+      presets: [
+        {
+          ...baseCatalog.presets[0]!,
+          definition: unavailableHighPreset,
+          definitionDigest: managedInferenceDigest(unavailableHighPreset),
+        },
+        baseCatalog.presets[1]!,
+      ],
+    };
+
+    expect(resolveManagedInferenceServing(resolverInput(), catalog)).toMatchObject({
+      outcome: "selected",
+      preset: { metadata: { id: secondPresetId } },
+      recipe: { metadata: { id: secondRecipeId } },
+    });
+  });
+
+  it("rejects equal-priority automatic matches as ambiguous", () => {
+    const { catalog, secondPresetId } = catalogWithSecondProfile({
+      firstPriority: 100,
+      secondPriority: 100,
+    });
+    const result = resolveManagedInferenceServing(resolverInput(), catalog);
+
+    expect(result).toMatchObject({
+      outcome: "rejected",
+      code: "ambiguous-selection",
+    });
+    const rejected = result as Extract<typeof result, { outcome: "rejected" }>;
+    expect(rejected.message).toContain(shippedPreset(catalog).metadata.id);
+    expect(rejected.message).toContain(secondPresetId);
+  });
+
+  it("evaluates registered readiness entities and numeric facts without profile branches", () => {
+    const catalog = shippedCatalog();
+    const preset = shippedPreset(catalog);
+    const topologyRequirement = preset.spec.requirements.all.find(
+      (requirement) => "topologyQualification" in requirement,
+    );
+    expect(topologyRequirement).toBeDefined();
+    const genericRequirements: ManagedInferencePresetRequirement[] = [
+      {
+        readiness: {
+          scope: "everyNode",
+          kind: "capability",
+          id: "host.docker.available",
+          state: "present",
+        },
+      },
+      {
+        fact: "cluster.nodeCount",
+        state: "present",
+        operator: "between",
+        value: [2, 2],
+      },
+      topologyRequirement as ManagedInferencePresetRequirement,
+    ];
+    const customizedPreset = {
+      ...preset,
+      spec: {
+        ...preset.spec,
+        requirements: { all: genericRequirements },
+      },
+    } as ManagedInferenceServingPreset;
+    const customizedCatalog: CompiledManagedInferenceCatalog = {
+      ...catalog,
+      presets: [
+        {
+          ...catalog.presets[0]!,
+          definition: customizedPreset,
+          definitionDigest: managedInferenceDigest(customizedPreset),
+        },
+      ],
+    };
+
+    expect(resolveManagedInferenceServing(resolverInput(), customizedCatalog)).toMatchObject({
+      outcome: "selected",
+    });
+    const missingCapability = readinessSources();
+    missingCapability[1] = {
+      nodeId: "spark-worker",
+      report: readinessReport({
+        capabilities: readinessReport().capabilities.map((capability) =>
+          capability.id === "host.docker.available"
+            ? { ...capability, state: "absent" }
+            : capability,
+        ),
+      }),
+    };
+    expect(
+      resolveManagedInferenceServing(
+        resolverInput({ readinessReports: missingCapability }),
+        customizedCatalog,
+      ),
+    ).toMatchObject({ outcome: "no-match", code: "requirements-not-met" });
+  });
+
+  it("applies any-node readiness requirements as an existential match", () => {
+    const catalog = shippedCatalog();
+    const preset = shippedPreset(catalog);
+    const topologyRequirement = preset.spec.requirements.all.find(
+      (requirement) => "topologyQualification" in requirement,
+    );
+    expect(topologyRequirement).toBeDefined();
+    const customizedPreset = {
+      ...preset,
+      spec: {
+        ...preset.spec,
+        requirements: {
+          all: [
+            {
+              readiness: {
+                scope: "anyNode",
+                kind: "capability",
+                id: "host.docker.available",
+                state: "present",
+              },
+            },
+            topologyRequirement as ManagedInferencePresetRequirement,
+          ],
+        },
+      },
+    } as ManagedInferenceServingPreset;
+    const customizedCatalog: CompiledManagedInferenceCatalog = {
+      ...catalog,
+      presets: [
+        {
+          ...catalog.presets[0]!,
+          definition: customizedPreset,
+          definitionDigest: managedInferenceDigest(customizedPreset),
+        },
+      ],
+    };
+    const reports = readinessSources();
+    reports[1] = {
+      nodeId: "spark-worker",
+      report: readinessReport({
+        capabilities: readinessReport().capabilities.map((capability) =>
+          capability.id === "host.docker.available"
+            ? { ...capability, state: "absent" }
+            : capability,
+        ),
+      }),
+    };
+
+    expect(
+      resolveManagedInferenceServing(
+        resolverInput({ readinessReports: reports }),
+        customizedCatalog,
+      ),
+    ).toMatchObject({ outcome: "selected" });
+
+    reports[0] = {
+      nodeId: "spark-head",
+      report: readinessReport({
+        capabilities: readinessReport().capabilities.map((capability) =>
+          capability.id === "host.docker.available"
+            ? { ...capability, state: "absent" }
+            : capability,
+        ),
+      }),
+    };
+    expect(
+      resolveManagedInferenceServing(
+        resolverInput({ readinessReports: reports }),
+        customizedCatalog,
+      ),
+    ).toMatchObject({ outcome: "no-match", code: "requirements-not-met" });
   });
 
   it("returns an immutable topology snapshot", () => {
@@ -108,10 +468,10 @@ describe("managed inference resolver", () => {
     );
 
     expect(result.outcome).toBe("selected");
-    if (result.outcome !== "selected") return;
+    const selected = result as Extract<typeof result, { outcome: "selected" }>;
     (artifact.output as { masterAddress: string }).masterAddress = "192.168.100.99";
-    expect(result.topologyQualification.output.masterAddress).toBe("192.168.100.10");
-    expect(Object.isFrozen(result.topologyQualification.output)).toBe(true);
+    expect(selected.topologyQualification.output.masterAddress).toBe("192.168.100.10");
+    expect(Object.isFrozen(selected.topologyQualification.output)).toBe(true);
   });
 
   it.each([
@@ -135,11 +495,29 @@ describe("managed inference resolver", () => {
     ).toMatchObject({ outcome: "rejected", code: "unknown-preset" });
   });
 
-  it("rejects explicit preset intent that conflicts with its immutable recipe", () => {
+  it("rejects a disabled explicit preset", () => {
+    const { catalog, secondPresetId } = catalogWithSecondProfile({
+      firstPriority: 100,
+      secondPriority: 200,
+      secondSelection: "disabled",
+    });
+    expect(
+      resolveManagedInferenceServing(
+        resolverInput({ intent: { preset: secondPresetId } }),
+        catalog,
+      ),
+    ).toMatchObject({ outcome: "rejected", code: "requirements-not-met" });
+  });
+
+  it("rejects explicit preset intent that conflicts with its recipe", () => {
+    const presetId = shippedPreset().metadata.id;
     expect(
       resolveManagedInferenceServing(
         resolverInput({
-          intent: { preset: DUAL_SPARK_PRESET_ID, vllmExtraArguments: ["--max-model-len", "1"] },
+          intent: {
+            preset: presetId,
+            vllmExtraArguments: ["--max-model-len", "1"],
+          },
         }),
       ),
     ).toMatchObject({ outcome: "rejected", code: "incompatible-intent" });
@@ -164,18 +542,6 @@ describe("managed inference resolver", () => {
       name: "blocking finding",
       report: readinessReport({
         findings: [{ id: "host.blocked", severity: "blocking", summary: "Blocked." }],
-      }),
-    },
-    {
-      name: "unknown Spark qualification",
-      report: readinessReport({
-        qualifications: [
-          {
-            id: "host.platform.dgx_spark",
-            status: "unknown",
-            capabilityIds: ["host.platform.dgx_spark"],
-          },
-        ],
       }),
     },
   ])("rejects $name before selecting a recipe", ({ report }) => {
@@ -204,7 +570,7 @@ describe("managed inference resolver", () => {
     ).toMatchObject({ outcome: "no-match", code: "requirements-not-met" });
   });
 
-  it("does not activate automatically without the qualified topology artifact", () => {
+  it("does not activate automatically without the required topology artifact", () => {
     expect(
       resolveManagedInferenceServing(resolverInput({ topologyQualifications: [] })),
     ).toMatchObject({ outcome: "no-match", code: "requirements-not-met" });
@@ -264,7 +630,7 @@ describe("managed inference resolver", () => {
       resolveManagedInferenceServing(
         resolverInput({
           readinessReports: readinessSources().slice(0, 1),
-          intent: { preset: DUAL_SPARK_PRESET_ID },
+          intent: { preset: shippedPreset().metadata.id },
         }),
       ),
     ).toMatchObject({ outcome: "rejected", code: "requirements-not-met" });

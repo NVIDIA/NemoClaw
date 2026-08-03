@@ -20,7 +20,13 @@ import {
   type DualStationSshBinding,
   encodeDualStationSshBindingHandoff,
 } from "../vllm-station-ssh-binding.js";
-import { loadManagedInferenceCatalog } from "./catalog.js";
+import {
+  NO_PREPARATION_REF,
+  SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
+} from "./adapter-registry.js";
+import { getManagedInferenceCompiledPreset, getManagedInferenceCompiledRecipe } from "./catalog.js";
+import { managedInferenceHexDigest } from "./catalog-integrity.js";
+import type { ManagedInferenceServingRecipe } from "./catalog-types.js";
 import {
   type DualSparkApiProbeRequest,
   type DualSparkContainerStartRequest,
@@ -45,7 +51,6 @@ import {
   DUAL_SPARK_ROLE_LABEL,
   DUAL_SPARK_TRANSACTION_LABEL,
   DUAL_SPARK_VLLM_ADAPTER_ID,
-  DUAL_SPARK_VLLM_API_PORT,
   DUAL_SPARK_VLLM_HEAD_CONTAINER_NAME,
   DUAL_SPARK_VLLM_MASTER_PORT,
   DUAL_SPARK_VLLM_WORKER_CONTAINER_NAME,
@@ -53,6 +58,7 @@ import {
   type DualSparkVllmRole,
   type DualSparkVllmRolePlan,
 } from "./dual-spark-materialize.js";
+import { materializeDualSparkVllmPreparation } from "./dual-spark-preparation.js";
 import {
   DUAL_SPARK_TOPOLOGY_ID,
   DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION,
@@ -72,7 +78,7 @@ const PROCESS_PROBE_TIMEOUT_MS = 10_000;
 const PROCESS_PROBE_INTERVAL_MS = 1_000;
 const MAX_PROCESS_WAIT_MS = 120_000;
 const API_PROBE_INTERVAL_MS = 2_000;
-const MAX_MODELS_PROBE_MS = 3_600_000;
+const MAX_MODELS_PROBE_MS = 86_400_000;
 const MAX_CHAT_PROBE_MS = 120_000;
 
 const CONTAINER_INSPECTION_FORMAT =
@@ -87,28 +93,21 @@ for item in glob.glob("/proc/[0-9]*/cmdline"):
         argv = [part.decode("utf-8") for part in raw.split(b"\0") if part]
     except (OSError, UnicodeDecodeError):
         continue
-    try:
-        index = argv.index("/usr/local/bin/vllm")
-    except ValueError:
-        continue
-    actual = argv[index:]
-    if actual[:len(expected)] != expected:
-        continue
-    tail = actual[len(expected):]
-    if not tail:
-        print("ready")
-        raise SystemExit(0)
+    for index, value in enumerate(argv):
+        if value == expected[0] and argv[index:] == expected:
+            print("ready")
+            raise SystemExit(0)
 raise SystemExit(1)
 `.trim();
 
-const REASONING_REPLACEMENT_SCRIPT = String.raw`
+const EXACT_TEXT_REPLACEMENT_SCRIPT = String.raw`
 import base64, pathlib, sys
 target = pathlib.Path(sys.argv[1])
 existing = base64.urlsafe_b64decode(sys.argv[2] + "==").decode("utf-8")
 replacement = base64.urlsafe_b64decode(sys.argv[3] + "==").decode("utf-8")
 content = target.read_text(encoding="utf-8")
 if content.count(existing) != 1:
-    raise SystemExit("reasoning compatibility source text did not match exactly once")
+    raise SystemExit("preparation source text did not match exactly once")
 target.write_text(content.replace(existing, replacement), encoding="utf-8")
 `.trim();
 
@@ -145,9 +144,7 @@ export interface DualSparkVllmExecutorRuntimeDeps {
   withLifecycleLock<T>(operation: () => Promise<T>): Promise<T>;
 }
 
-type ShippedRecipe = ReturnType<
-  typeof loadManagedInferenceCatalog
->["recipes"][number]["definition"]["spec"];
+type SelectedRecipe = ManagedInferenceServingRecipe["spec"];
 
 const DEFAULT_DEPS: DualSparkVllmExecutorRuntimeDeps = {
   dockerCapture,
@@ -188,7 +185,7 @@ function exactKeys(actual: object, expected: readonly string[], label: string): 
 function recipeCommandArguments(
   rolePlan: DualSparkVllmRolePlan,
   plan: DualSparkVllmPlan,
-  recipe: ShippedRecipe,
+  recipe: SelectedRecipe,
 ): string[] {
   const staticArguments = recipe.serve.arguments.flatMap(({ name, value }) =>
     value === undefined ? [name] : [name, String(value)],
@@ -196,6 +193,8 @@ function recipeCommandArguments(
   return [
     "serve",
     recipe.model.id,
+    "--revision",
+    recipe.model.revision,
     "--served-model-name",
     recipe.model.servedName,
     "--host",
@@ -222,11 +221,12 @@ function recipeCommandArguments(
 function assertRolePlan(
   rolePlan: DualSparkVllmRolePlan,
   plan: DualSparkVllmPlan,
-  recipe: ShippedRecipe,
+  recipe: SelectedRecipe,
 ): void {
   const isHead = rolePlan.role === "head";
   const environment = {
     ...recipe.runtime.environment,
+    HF_HOME: recipe.runtime.modelCache.target,
     VLLM_HOST_IP: rolePlan.fabric.address,
     NCCL_IB_HCA: `${rolePlan.fabric.hcaDevice}:${String(rolePlan.fabric.hcaPort)}`,
     NCCL_SOCKET_IFNAME: rolePlan.fabric.netdev,
@@ -250,24 +250,10 @@ function assertRolePlan(
     [DUAL_SPARK_IMAGE_LABEL]: recipe.runtime.image,
     [DUAL_SPARK_MODEL_REVISION_LABEL]: recipe.model.revision,
   };
-  const preparation = {
-    ref: recipe.model.preparationRef,
-    phase: "container-before-exec",
-    modelId: recipe.model.id,
-    modelRevision: recipe.model.revision,
-    modelDownloadSizeBytes: recipe.model.downloadSizeBytes,
-    encodingPath: recipe.model.encodingPath,
-    encodingSourcePath: `/cache/huggingface/hub/models--${recipe.model.id.replaceAll("/", "--")}/snapshots/${recipe.model.revision}/${recipe.model.encodingPath}`,
-    encodingTargetPath:
-      "/usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4_encoding.py",
-    reasoningModulePath: "/usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4.py",
-    reasoningCompatibility: {
-      existingText:
-        'elif reasoning_effort in ("max", "xhigh"):\n                reasoning_effort = "max"\n            else:\n                reasoning_effort = "high"',
-      replacementText:
-        'elif reasoning_effort in ("max", "xhigh"):\n                reasoning_effort = "max"\n            elif reasoning_effort == "high":\n                reasoning_effort = "high"\n            else:\n                reasoning_effort = "low"',
-    },
-  };
+  const preparation = materializeDualSparkVllmPreparation({
+    ...recipe.model,
+    modelCacheTarget: recipe.runtime.modelCache.target,
+  });
   const fabric = {
     primaryRailIndex: rolePlan.fabric.primaryRailIndex,
     netdev: rolePlan.fabric.netdev,
@@ -288,23 +274,29 @@ function assertRolePlan(
     execution: rolePlan.execution,
     image: recipe.runtime.image,
     runtime: {
+      architecture: recipe.runtime.architecture,
       networkMode: recipe.runtime.networkMode,
       ipcMode: recipe.runtime.ipcMode,
       sharedMemoryBytes: recipe.runtime.sharedMemoryBytes,
-      gpuRequest: "all",
+      gpuRequest: recipe.runtime.gpuRequest,
       devices: recipe.runtime.devices,
       imageDownloadSizeBytes: recipe.runtime.imageDownloadSizeBytes,
-      ulimits: { memlock: -1, stack: 67_108_864 },
-      modelCache: { source: "huggingface-cache", target: "/cache/huggingface" },
+      pullTimeoutSeconds: recipe.runtime.pullTimeoutSeconds,
+      ulimits: {
+        memlock: recipe.runtime.ulimits.memlock,
+        stack: recipe.runtime.ulimits.stackBytes,
+      },
+      modelCache: recipe.runtime.modelCache,
+      temporaryFilesystems: recipe.runtime.temporaryFilesystems,
     },
     preparation,
     fabric,
     environment,
     command: {
-      executable: "/usr/local/bin/vllm",
+      executable: recipe.serve.executable,
       arguments: recipeCommandArguments(rolePlan, plan, recipe),
     },
-    endpoint: isHead ? `http://${plan.masterAddress}:${String(DUAL_SPARK_VLLM_API_PORT)}` : null,
+    endpoint: isHead ? `http://${plan.masterAddress}:${String(plan.apiPort)}` : null,
     baseLabels,
   };
   if (
@@ -322,6 +314,19 @@ function assertRolePlan(
   ) {
     throw new Error(`${rolePlan.role} role does not match the catalog-derived adapter contract`);
   }
+}
+
+function recipeApiPort(recipe: SelectedRecipe): number | undefined {
+  const ports = recipe.serve.arguments
+    .filter(({ name }) => name === "--port")
+    .map(({ value }) =>
+      typeof value === "number"
+        ? value
+        : typeof value === "string" && /^\d{1,5}$/u.test(value)
+          ? Number(value)
+          : Number.NaN,
+    );
+  return ports.length === 1 && Number.isInteger(ports[0]) ? ports[0] : undefined;
 }
 
 /** Read-only validation shared by installer, receipt, recovery, and cleanup. */
@@ -342,26 +347,53 @@ export function assertDualSparkVllmExecutorConfig(
   normalizedAbsoluteHostPath(config.localCacheRoot, "Local model cache root");
   normalizedAbsoluteHostPath(config.peerCacheRoot, "Peer model cache root");
   const { plan, peerSshBinding: binding } = config;
-  const catalog = loadManagedInferenceCatalog();
-  const recipe = catalog.recipes[0]!.definition.spec;
+  const compiledPreset = getManagedInferenceCompiledPreset(plan.presetId);
+  const compiledRecipe = getManagedInferenceCompiledRecipe(plan.recipeId);
+  if (
+    !compiledPreset ||
+    !compiledRecipe ||
+    compiledPreset.definitionDigest !== plan.presetDigest ||
+    compiledRecipe.definitionDigest !== plan.recipeDigest ||
+    compiledPreset.definition.spec.plan.recipeRef !== compiledRecipe.definition.metadata.id ||
+    compiledPreset.definition.spec.plan.backend !== compiledRecipe.definition.spec.backend
+  ) {
+    throw new Error("Dual-Spark executor input does not match its selected definition digests");
+  }
+  const recipe = compiledRecipe.definition.spec;
+  const topologyIdentity = {
+    id: plan.topologyId,
+    schemaVersion: plan.topologySchemaVersion,
+    subjectDigest: plan.topologySubjectDigest,
+    outputDigest: plan.topologyOutputDigest,
+  };
+  const expectedClusterId = managedInferenceHexDigest(topologyIdentity);
+  const expectedPlanId = managedInferenceHexDigest({
+    adapterId: DUAL_SPARK_VLLM_ADAPTER_ID,
+    preset: { id: plan.presetId, digest: plan.presetDigest },
+    recipe: { id: plan.recipeId, digest: plan.recipeDigest },
+    topology: topologyIdentity,
+  });
   const expectedPlan = {
     schemaVersion: 1,
     adapterId: DUAL_SPARK_VLLM_ADAPTER_ID,
-    catalogDigest: catalog.catalogDigest,
-    presetId: catalog.presets[0]!.definition.metadata.id,
-    recipeId: catalog.recipes[0]!.definition.metadata.id,
+    catalogDigest: plan.catalogDigest,
+    presetId: compiledPreset.definition.metadata.id,
+    presetDigest: compiledPreset.definitionDigest,
+    recipeId: compiledRecipe.definition.metadata.id,
+    recipeDigest: compiledRecipe.definitionDigest,
     topologyId: DUAL_SPARK_TOPOLOGY_ID,
     topologySchemaVersion: DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION,
     topologySubjectDigest: plan.topologySubjectDigest,
     topologyOutputDigest: plan.topologyOutputDigest,
-    clusterId: plan.clusterId,
-    planId: plan.planId,
+    clusterId: expectedClusterId,
+    planId: expectedPlanId,
     model: {
       id: recipe.model.id,
       revision: recipe.model.revision,
       servedName: recipe.model.servedName,
     },
-    apiPort: DUAL_SPARK_VLLM_API_PORT,
+    authentication: recipe.serve.authentication,
+    apiPort: recipeApiPort(recipe),
     masterAddress: plan.masterAddress,
     masterPort: DUAL_SPARK_VLLM_MASTER_PORT,
     readiness: {
@@ -372,6 +404,9 @@ export function assertDualSparkVllmExecutorConfig(
   };
   if (
     !isDeepStrictEqual(plan, expectedPlan) ||
+    !SHA256_PATTERN.test(plan.catalogDigest) ||
+    !SHA256_PATTERN.test(plan.presetDigest) ||
+    !SHA256_PATTERN.test(plan.recipeDigest) ||
     plan.masterAddress !== plan.roles.head.fabric.address ||
     !HEX64_PATTERN.test(plan.clusterId) ||
     !HEX64_PATTERN.test(plan.planId) ||
@@ -401,19 +436,23 @@ function base64url(value: string): string {
 
 function preparationCommand(rolePlan: DualSparkVllmRolePlan): string {
   const preparation = rolePlan.preparation;
-  const command = [
-    "set -Eeuo pipefail",
-    `test -f ${shellQuote(preparation.encodingSourcePath)}`,
-    `install -m 0644 -- ${shellQuote(preparation.encodingSourcePath)} ${shellQuote(preparation.encodingTargetPath)}`,
-    [
-      "python3",
-      "-c",
-      shellQuote(REASONING_REPLACEMENT_SCRIPT),
-      shellQuote(preparation.reasoningModulePath),
-      shellQuote(base64url(preparation.reasoningCompatibility.existingText)),
-      shellQuote(base64url(preparation.reasoningCompatibility.replacementText)),
-    ].join(" "),
-  ];
+  const command = ["set -Eeuo pipefail"];
+  if (preparation.ref === SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF) {
+    command.push(
+      `test -f ${shellQuote(preparation.snapshotCopy.sourcePath)}`,
+      `install -m 0644 -- ${shellQuote(preparation.snapshotCopy.sourcePath)} ${shellQuote(preparation.snapshotCopy.targetPath)}`,
+      [
+        "python3",
+        "-c",
+        shellQuote(EXACT_TEXT_REPLACEMENT_SCRIPT),
+        shellQuote(preparation.exactTextReplacement.targetPath),
+        shellQuote(base64url(preparation.exactTextReplacement.expectedText)),
+        shellQuote(base64url(preparation.exactTextReplacement.replacementText)),
+      ].join(" "),
+    );
+  } else if (preparation.ref !== NO_PREPARATION_REF) {
+    throw new Error("Unsupported dual-Spark preparation");
+  }
   const executable = shellQuote(rolePlan.command.executable);
   const commandArguments = rolePlan.command.arguments.map(shellQuote).join(" ");
   command.push(`exec ${executable} ${commandArguments}`);
@@ -462,26 +501,30 @@ export function buildDualSparkVllmRunArgs(
     "--pull=never",
     "--init",
     "--network",
-    "host",
+    rolePlan.runtime.networkMode,
     "--ipc",
-    "host",
+    rolePlan.runtime.ipcMode,
     "--shm-size",
-    "64g",
+    String(rolePlan.runtime.sharedMemoryBytes),
     "--gpus",
-    "all",
-    "--device",
-    "/dev/infiniband",
+    rolePlan.runtime.gpuRequest,
     "--ulimit",
-    "memlock=-1",
+    `memlock=${rolePlan.runtime.ulimits.memlock === "unlimited" ? "-1" : String(rolePlan.runtime.ulimits.memlock)}`,
     "--ulimit",
-    "stack=67108864",
-    "--tmpfs",
-    "/cache/huggingface:rw,nosuid,nodev,exec,size=17179869184,mode=0700",
-    "--tmpfs",
-    "/tmp:rw,nosuid,nodev,exec,size=17179869184,mode=1777",
-    "--volume",
-    `${cacheRoot}/hub:${rolePlan.runtime.modelCache.target}/hub:ro`,
+    `stack=${String(rolePlan.runtime.ulimits.stack)}`,
   ];
+  for (const device of rolePlan.runtime.devices) args.push("--device", device);
+  for (const temporaryFilesystem of rolePlan.runtime.temporaryFilesystems) {
+    args.push(
+      "--tmpfs",
+      `${temporaryFilesystem.target}:${[
+        ...temporaryFilesystem.options,
+        `size=${String(temporaryFilesystem.sizeBytes)}`,
+        `mode=${temporaryFilesystem.mode}`,
+      ].join(",")}`,
+    );
+  }
+  args.push("--volume", `${cacheRoot}/hub:${rolePlan.runtime.modelCache.target}/hub:ro`);
   for (const [name, value] of Object.entries(rolePlan.environment).sort(([left], [right]) =>
     left.localeCompare(right),
   )) {
@@ -722,11 +765,13 @@ function exactWaitObservation(
     : null;
 }
 
-function workerFirstBoundaryIsClear(snapshot: DualSparkNodeSnapshot): boolean {
+function workerFirstBoundaryIsClear(
+  snapshot: DualSparkNodeSnapshot,
+  plan: DualSparkVllmPlan,
+): boolean {
   return (
-    !snapshot.listeningPorts.some(
-      (port) => port === DUAL_SPARK_VLLM_API_PORT || port === DUAL_SPARK_VLLM_MASTER_PORT,
-    ) && !snapshot.containers.some(isRelatedManagedVllmContainer)
+    !snapshot.listeningPorts.some((port) => port === plan.apiPort || port === plan.masterPort) &&
+    !snapshot.containers.some(isRelatedManagedVllmContainer)
   );
 }
 
@@ -747,7 +792,10 @@ async function waitForRoleProcess(
       );
       const headAbsent =
         !requireHeadAbsent ||
-        workerFirstBoundaryIsClear(inspectRoleNode(config.plan.roles.head, config, deps));
+        workerFirstBoundaryIsClear(
+          inspectRoleNode(config.plan.roles.head, config, deps),
+          config.plan,
+        );
       consecutive = observed?.running && observed.healthy && headAbsent ? consecutive + 1 : 0;
       if (consecutive >= stableChecks) return true;
     } catch {

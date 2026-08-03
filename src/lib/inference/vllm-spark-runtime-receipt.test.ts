@@ -6,7 +6,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadManagedInferenceCatalog } from "./serving/catalog";
 import { fixtureDualSparkSelection } from "./serving/dual-spark-fixture.test-support";
 import {
   type DualSparkNodeSnapshot,
@@ -58,7 +57,6 @@ afterEach(() => {
 
 function plan(): DualSparkVllmPlan {
   const selection = fixtureDualSparkSelection();
-  const catalog = loadManagedInferenceCatalog();
   const sourceTopology = selection.topologyQualification;
   const output = {
     ...sourceTopology.output,
@@ -69,9 +67,6 @@ function plan(): DualSparkVllmPlan {
   };
   return materializeDualSparkVllmPlan({
     ...selection,
-    catalogDigest: catalog.catalogDigest,
-    preset: catalog.presets[0]!.definition,
-    recipe: catalog.recipes[0]!.definition,
     topologyQualification: {
       ...sourceTopology,
       outputDigest: dualSparkTopologyOutputDigest(output),
@@ -181,6 +176,25 @@ describe("dual-Spark vLLM runtime receipt", () => {
     expect(fs.readFileSync(receiptPath, "utf8")).toBe(original);
   });
 
+  it("keeps a selected profile receipt valid when unrelated catalog entries change", () => {
+    const source = input();
+    const previousCatalogPlan = {
+      ...source.plan,
+      catalogDigest: `sha256:${"e".repeat(64)}`,
+    };
+
+    const runtime = persistDualSparkVllmRuntimeReceipt(
+      { ...source, plan: previousCatalogPlan },
+      { stateDir },
+    );
+    const loaded = loadDualSparkVllmRuntimeReceipt({ stateDir });
+
+    expect(loaded?.plan.catalogDigest).toBe(previousCatalogPlan.catalogDigest);
+    expect(loaded?.plan.planId).toBe(previousCatalogPlan.planId);
+    expect(runtime.plan.presetDigest).toBe(source.plan.presetDigest);
+    expect(runtime.plan.recipeDigest).toBe(source.plan.recipeDigest);
+  });
+
   it("refuses a pre-existing SSH binding tree without mutating it", () => {
     fs.mkdirSync(stateDir, { mode: 0o700 });
     const receiptPath = dualSparkVllmRuntimeReceiptPath(stateDir);
@@ -210,7 +224,9 @@ describe("dual-Spark vLLM runtime receipt", () => {
     const receiptPath = dualSparkVllmRuntimeReceiptPath(stateDir);
     const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
     receipt.plan.model.id = "foreign/model";
-    fs.writeFileSync(receiptPath, `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
+    fs.writeFileSync(receiptPath, `${JSON.stringify(receipt)}\n`, {
+      mode: 0o600,
+    });
 
     expect(() => loadDualSparkVllmRuntimeReceipt({ stateDir })).toThrow("plan digest changed");
   });
@@ -268,7 +284,10 @@ describe("dual-Spark vLLM runtime receipt", () => {
         loadApiKey: () => API_KEY,
         createLifecycleDeps: () => deps,
       }),
-    ).resolves.toEqual({ kind: "removed", removedContainerIds: [HEAD_ID, WORKER_ID] });
+    ).resolves.toEqual({
+      kind: "removed",
+      removedContainerIds: [HEAD_ID, WORKER_ID],
+    });
     expect(removeContainer).toHaveBeenNthCalledWith(1, runtime.plan.roles.head, HEAD_ID);
     expect(removeContainer).toHaveBeenNthCalledWith(2, runtime.plan.roles.worker, WORKER_ID);
     expect(fs.existsSync(dualSparkVllmRuntimeReceiptPath(stateDir))).toBe(false);
@@ -283,14 +302,23 @@ describe("dual-Spark vLLM runtime receipt", () => {
     };
     let workerAttempts = 0;
     const removeContainer = vi.fn(async (rolePlan: DualSparkVllmRolePlan, id: string) => {
-      if (rolePlan.role === "worker" && workerAttempts++ === 0) {
-        return { ok: false as const, reason: "worker daemon unavailable" };
-      }
-      snapshots[rolePlan.role] = {
-        ...snapshots[rolePlan.role],
-        containers: snapshots[rolePlan.role].containers.filter((container) => container.id !== id),
+      const shouldFailWorker = rolePlan.role === "worker" && workerAttempts === 0;
+      workerAttempts += Number(rolePlan.role === "worker");
+      const removeOwnedContainer = () => {
+        snapshots[rolePlan.role] = {
+          ...snapshots[rolePlan.role],
+          containers: snapshots[rolePlan.role].containers.filter(
+            (container) => container.id !== id,
+          ),
+        };
+        return { ok: true as const };
       };
-      return { ok: true as const };
+      return shouldFailWorker
+        ? ({
+            ok: false as const,
+            reason: "worker daemon unavailable",
+          } as const)
+        : removeOwnedContainer();
     });
     const deps = {
       inspectNode: async (rolePlan: DualSparkVllmRolePlan) => snapshots[rolePlan.role],

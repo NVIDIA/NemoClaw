@@ -333,8 +333,8 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
     const result = await startAutomaticDualSparkVllm(plan, API_KEY, harness.deps);
 
     expect(result).toMatchObject({ ok: false, code: "start-failed" });
-    if (result.ok) throw new Error("expected lifecycle failure");
-    expect(result.rollbackErrors).toContain(
+    const failed = result as Extract<typeof result, { ok: false }>;
+    expect(failed.rollbackErrors).toContain(
       "dual-Spark post-failure runtime state could not be proven clear; SSH ownership state was retained",
     );
     expect(harness.removeContainer).not.toHaveBeenCalled();
@@ -362,7 +362,11 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
 
     const result = await startAutomaticDualSparkVllm(plan, API_KEY, harness.deps);
 
-    expect(result).toMatchObject({ ok: false, code: "health-failed", rollbackErrors: [] });
+    expect(result).toMatchObject({
+      ok: false,
+      code: "health-failed",
+      rollbackErrors: [],
+    });
     expect(harness.removeContainer.mock.calls.map((call) => call[1])).toEqual([HEAD_ID, WORKER_ID]);
     expect(harness.events).toContain("probe:models");
     expect(harness.events).toContain("probe:chat");
@@ -389,8 +393,8 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
     const result = await startAutomaticDualSparkVllm(plan, API_KEY, harness.deps);
 
     expect(result).toMatchObject({ ok: false, code: "health-failed" });
-    if (result.ok) throw new Error("expected lifecycle failure");
-    expect(result.rollbackErrors).toContain(
+    const failed = result as Extract<typeof result, { ok: false }>;
+    expect(failed.rollbackErrors).toContain(
       "worker rollback ownership changed; container was left untouched",
     );
     expect(harness.removeContainer.mock.calls.map((call) => call[1])).toEqual([HEAD_ID]);
@@ -403,11 +407,17 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
         head: { containers: [], listeningPorts: [] },
         worker: { containers: [], listeningPorts: [25000] },
       }),
-    ).toEqual({ outcome: "conflict", reason: "worker port 25000 is already in use" });
+    ).toEqual({
+      outcome: "conflict",
+      reason: "worker port 25000 is already in use",
+    });
   });
 
   it("cleans up only a complete exact pair and retains all cache state", async () => {
-    harness.snapshots.head = { containers: [managedContainer(plan, "head")], listeningPorts: [] };
+    harness.snapshots.head = {
+      containers: [managedContainer(plan, "head")],
+      listeningPorts: [],
+    };
     harness.snapshots.worker = {
       containers: [managedContainer(plan, "worker")],
       listeningPorts: [],
@@ -415,30 +425,43 @@ describe("automatic dual-DGX-Spark vLLM lifecycle", () => {
 
     const result = await cleanupDualSparkManagedVllm(plan, API_KEY, harness.deps);
 
-    expect(result).toEqual({ ok: true, removedContainerIds: [HEAD_ID, WORKER_ID] });
+    expect(result).toEqual({
+      ok: true,
+      removedContainerIds: [HEAD_ID, WORKER_ID],
+    });
     expect(harness.stageNode).not.toHaveBeenCalled();
   });
 
   it("retries cleanup after one receipt-owned container was already removed", async () => {
-    harness.snapshots.head = { containers: [managedContainer(plan, "head")], listeningPorts: [] };
+    harness.snapshots.head = {
+      containers: [managedContainer(plan, "head")],
+      listeningPorts: [],
+    };
     harness.snapshots.worker = {
       containers: [managedContainer(plan, "worker")],
       listeningPorts: [],
     };
     let workerAttempts = 0;
     harness.removeContainer.mockImplementation(async (rolePlan, id) => {
-      if (rolePlan.role === "worker" && workerAttempts++ === 0) {
-        return { ok: false, reason: "worker daemon unavailable" };
-      }
-      harness.snapshots[rolePlan.role] = {
-        ...harness.snapshots[rolePlan.role],
-        containers: harness.snapshots[rolePlan.role].containers.filter(
-          (container) => container.id !== id,
-        ),
+      const shouldFailWorker = rolePlan.role === "worker" && workerAttempts === 0;
+      workerAttempts += Number(rolePlan.role === "worker");
+      const removeOwnedContainer = () => {
+        harness.snapshots[rolePlan.role] = {
+          ...harness.snapshots[rolePlan.role],
+          containers: harness.snapshots[rolePlan.role].containers.filter(
+            (container) => container.id !== id,
+          ),
+        };
+        return { ok: true } as const;
       };
-      return { ok: true };
+      return shouldFailWorker
+        ? ({ ok: false, reason: "worker daemon unavailable" } as const)
+        : removeOwnedContainer();
     });
-    const ownership = { headContainerId: HEAD_ID, workerContainerId: WORKER_ID };
+    const ownership = {
+      headContainerId: HEAD_ID,
+      workerContainerId: WORKER_ID,
+    };
 
     await expect(
       cleanupDualSparkManagedVllm(plan, API_KEY, harness.deps, ownership),

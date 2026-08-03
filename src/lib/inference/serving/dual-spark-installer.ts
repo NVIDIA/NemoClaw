@@ -4,21 +4,24 @@
 import { isAffirmativeAnswer } from "../../onboard/prompt-helpers.js";
 import type { VllmProfile } from "../vllm.js";
 import { ensureManagedVllmApiKey } from "../vllm-api-key.js";
-import type { VllmModelDef } from "../vllm-models.js";
-import { VLLM_EXTRA_ARGS_ENV } from "../vllm-models.js";
+import { assertGatedModelAccess, type VllmModelDef, VLLM_EXTRA_ARGS_ENV } from "../vllm-models.js";
 import { clearDualStationSshBinding } from "../vllm-station-ssh-binding.js";
+import { imageStorageRequirementBytes, modelStorageRequirementBytes } from "../vllm-storage.js";
 import {
-  DUAL_SPARK_PRESET_ID,
   type ManagedInferenceResolution,
   type ManagedInferenceResolverInput,
+  type ManagedInferenceServingRecipe,
 } from "./catalog-types.js";
 import {
-  confirmDualSparkManagedServingCapability,
+  claimDualSparkManagedServingCapability,
   type DualSparkConfirmedManagedServingCapability,
   type DualSparkDetectedManagedServingCapability,
+  type DualSparkHostObservation,
+  type DualSparkStorageCapacityObservation,
   NEMOCLAW_DGX_SPARK_PEER_ENV,
   NEMOCLAW_SERVING_PRESET_ENV,
   probeDualSparkManagedServingCapability,
+  revalidateDualSparkManagedServingCapability,
 } from "./dual-spark-discovery.js";
 import {
   type CreateDualSparkVllmExecutorOptions,
@@ -31,7 +34,7 @@ import {
   startAutomaticDualSparkVllm,
 } from "./dual-spark-lifecycle.js";
 import {
-  DUAL_SPARK_VLLM_HEAD_CONTAINER_NAME,
+  DUAL_SPARK_VLLM_MASTER_PORT,
   type DualSparkVllmPlan,
   materializeDualSparkVllmPlan,
 } from "./dual-spark-materialize.js";
@@ -72,7 +75,8 @@ export type DualSparkInstallerResult =
 
 interface DualSparkInstallerDeps {
   readonly probeCapability: typeof probeDualSparkManagedServingCapability;
-  readonly confirmCapability: typeof confirmDualSparkManagedServingCapability;
+  readonly revalidateCapability: typeof revalidateDualSparkManagedServingCapability;
+  readonly claimCapability: typeof claimDualSparkManagedServingCapability;
   readonly resolveSelection: (
     input: ManagedInferenceResolverInput<DualSparkTopologyOutput>,
   ) => ManagedInferenceResolution<DualSparkTopologyOutput>;
@@ -84,6 +88,7 @@ interface DualSparkInstallerDeps {
   readonly ensureApiKey: typeof ensureManagedVllmApiKey;
   readonly assertNoRuntimeReceipts: typeof assertNoManagedDistributedVllmRuntimeReceipts;
   readonly clearBinding: typeof clearDualStationSshBinding;
+  readonly assertGatedModelAccess: typeof assertGatedModelAccess;
   readonly log: (line?: string) => void;
   readonly error: (line: string) => void;
   readonly warn: (line: string) => void;
@@ -91,7 +96,8 @@ interface DualSparkInstallerDeps {
 
 const DEFAULT_DEPS: DualSparkInstallerDeps = {
   probeCapability: probeDualSparkManagedServingCapability,
-  confirmCapability: confirmDualSparkManagedServingCapability,
+  revalidateCapability: revalidateDualSparkManagedServingCapability,
+  claimCapability: claimDualSparkManagedServingCapability,
   resolveSelection: resolveManagedInferenceServing,
   materializePlan: materializeDualSparkVllmPlan,
   createExecutor: createDualSparkVllmExecutor,
@@ -101,53 +107,168 @@ const DEFAULT_DEPS: DualSparkInstallerDeps = {
   ensureApiKey: ensureManagedVllmApiKey,
   assertNoRuntimeReceipts: assertNoManagedDistributedVllmRuntimeReceipts,
   clearBinding: clearDualStationSshBinding,
+  assertGatedModelAccess,
   log: (line = "") => console.log(line),
   error: (line) => console.error(line),
   warn: (line) => console.warn(line),
 };
 
-function managedProfile(plan: DualSparkVllmPlan): VllmProfile {
+const VLLM_WRITABLE_ALLOWANCE_BYTES = 816_000_000n;
+
+type SelectedRecipeAdmissionFailure = {
+  readonly code:
+    | "runtime-conflict"
+    | "runtime-unknown"
+    | "storage-unavailable"
+    | "storage-insufficient";
+  readonly reason: string;
+};
+
+function recipeApiPort(recipe: ManagedInferenceServingRecipe): number | null {
+  const ports = recipe.spec.serve.arguments
+    .filter(({ name }) => name === "--port")
+    .map(({ value }) => Number(value));
+  return ports.length === 1 &&
+    Number.isSafeInteger(ports[0]) &&
+    ports[0]! > 0 &&
+    ports[0]! <= 65_535
+    ? ports[0]!
+    : null;
+}
+
+function selectedHostStorageFailure(
+  host: DualSparkHostObservation,
+  label: string,
+  recipe: ManagedInferenceServingRecipe,
+): SelectedRecipeAdmissionFailure | null {
+  const requirements = new Map<string, bigint>();
+  const available = new Map<string, bigint>();
+  const add = (capacity: DualSparkStorageCapacityObservation, required: bigint): boolean => {
+    if (capacity.filesystemId === null || capacity.availableBytes === null) return false;
+    requirements.set(
+      capacity.filesystemId,
+      (requirements.get(capacity.filesystemId) ?? 0n) + required,
+    );
+    const bytes = BigInt(capacity.availableBytes);
+    const prior = available.get(capacity.filesystemId);
+    available.set(capacity.filesystemId, prior === undefined || bytes < prior ? bytes : prior);
+    return true;
+  };
+  if (
+    !add(
+      host.storage.huggingFace,
+      modelStorageRequirementBytes(recipe.spec.model.downloadSizeBytes) +
+        VLLM_WRITABLE_ALLOWANCE_BYTES,
+    ) ||
+    !add(
+      host.storage.docker,
+      imageStorageRequirementBytes(recipe.spec.runtime.imageDownloadSizeBytes),
+    )
+  ) {
+    return {
+      code: "storage-unavailable",
+      reason: `${label} cache or Docker filesystem capacity could not be proven.`,
+    };
+  }
+  for (const [filesystemId, required] of requirements) {
+    if ((available.get(filesystemId) ?? -1n) < required) {
+      return {
+        code: "storage-insufficient",
+        reason: `${label} filesystem ${filesystemId} lacks capacity for the selected image, model, staging, and writable allowance.`,
+      };
+    }
+  }
+  return null;
+}
+
+function selectedRecipeAdmissionFailure(
+  capability: DualSparkDetectedManagedServingCapability,
+  recipe: ManagedInferenceServingRecipe,
+): SelectedRecipeAdmissionFailure | null {
+  const apiPort = recipeApiPort(recipe);
+  if (apiPort === null) {
+    return { code: "runtime-unknown", reason: "The selected recipe serving port is invalid." };
+  }
+  for (const [host, label] of [
+    [capability.local, "Local DGX Spark"],
+    [capability.peer, "Peer DGX Spark"],
+  ] as const) {
+    const occupied = host.runtimeSnapshot.listeningPorts.find(
+      (port) => port === apiPort || port === DUAL_SPARK_VLLM_MASTER_PORT,
+    );
+    if (occupied !== undefined) {
+      return {
+        code: "runtime-conflict",
+        reason: `${label} port ${String(occupied)} is already in use; its listener was not changed.`,
+      };
+    }
+    const storage = selectedHostStorageFailure(host, label, recipe);
+    if (storage) return storage;
+  }
+  return null;
+}
+
+function structuredArguments(recipe: ManagedInferenceServingRecipe): string[] {
+  return recipe.spec.serve.arguments.flatMap(({ name, value }) =>
+    value === undefined ? [name] : [name, String(value)],
+  );
+}
+
+function requiredPositiveIntegerArgument(
+  recipe: ManagedInferenceServingRecipe,
+  name: string,
+): number {
+  const matches = recipe.spec.serve.arguments.filter((argument) => argument.name === name);
+  const value = matches.length === 1 ? Number(matches[0]?.value) : Number.NaN;
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`Selected serving recipe must define one positive ${name} argument.`);
+  }
+  return value;
+}
+
+function managedProfile(
+  plan: DualSparkVllmPlan,
+  recipe: ManagedInferenceServingRecipe,
+): VllmProfile {
   return {
-    name: "Two DGX Sparks",
+    name: recipe.metadata.displayName,
     platform: "spark",
     image: plan.roles.head.image,
     imageDownloadSizeBytes: plan.roles.head.runtime.imageDownloadSizeBytes,
-    defaultModel: managedModel(plan),
-    containerName: DUAL_SPARK_VLLM_HEAD_CONTAINER_NAME,
+    defaultModel: managedModel(plan, recipe),
+    containerName: plan.roles.head.containerName,
     dockerRunFlags: [],
-    pullTimeoutSec: 12 * 60 * 60,
+    pullTimeoutSec: recipe.spec.runtime.pullTimeoutSeconds,
     loadTimeoutSec: Math.ceil(plan.readiness.timeoutMs / 1000),
     modelDownloadSizeBytes: plan.roles.head.preparation.modelDownloadSizeBytes,
   };
 }
 
-function managedModel(plan: DualSparkVllmPlan): VllmModelDef {
+function managedModel(
+  plan: DualSparkVllmPlan,
+  recipe: ManagedInferenceServingRecipe,
+): VllmModelDef {
   return {
     id: plan.model.id,
-    label: "DeepSeek V4 Flash 0731",
+    label: recipe.metadata.displayName,
     envValue: plan.model.servedName,
     downloadSizeBytes: plan.roles.head.preparation.modelDownloadSizeBytes,
-    maxModelLen: 1_048_576,
+    maxModelLen: requiredPositiveIntegerArgument(recipe, "--max-model-len"),
     revision: plan.model.revision,
     servedModelId: plan.model.servedName,
-    modelArgs: [],
-    gated: false,
+    modelArgs: structuredArguments(recipe),
+    gated: recipe.spec.model.gated,
     platforms: ["spark"],
-    installFastSafetensors: false,
+    installFastSafetensors: recipe.spec.model.installFastSafetensors,
   };
 }
 
-function selectionIntent(
-  capability: DualSparkDetectedManagedServingCapability,
-  env: NodeJS.ProcessEnv,
-) {
+function selectionIntent(env: NodeJS.ProcessEnv) {
   const configuredPreset = String(env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
   const configuredModel = String(env.NEMOCLAW_VLLM_MODEL ?? "").trim();
   const extraArguments = String(env[VLLM_EXTRA_ARGS_ENV] ?? "").trim();
   return {
-    ...(configuredPreset || capability.selectionIntent === "explicit"
-      ? { preset: configuredPreset || DUAL_SPARK_PRESET_ID }
-      : {}),
+    ...(configuredPreset ? { preset: configuredPreset } : {}),
     ...(configuredModel ? { vllmModel: configuredModel } : {}),
     ...(extraArguments ? { vllmExtraArguments: [extraArguments] } : {}),
   };
@@ -198,9 +319,35 @@ function printSummary(
 
 function resolutionFailure(
   resolution: Exclude<ManagedInferenceResolution<DualSparkTopologyOutput>, { outcome: "selected" }>,
+  selectionIntent: DualSparkDetectedManagedServingCapability["selectionIntent"],
+  allowAutomaticFallback: boolean,
   deps: DualSparkInstallerDeps,
 ): DualSparkInstallerResult {
+  if (
+    allowAutomaticFallback &&
+    selectionIntent === "automatic" &&
+    resolution.outcome === "no-match"
+  ) {
+    return { kind: "not-selected" };
+  }
   deps.error(`  Two-Spark managed vLLM setup unavailable: ${resolution.message}`);
+  return { kind: "handled", result: { ok: false } };
+}
+
+function admissionFailure(
+  failure: SelectedRecipeAdmissionFailure,
+  selectionIntent: DualSparkDetectedManagedServingCapability["selectionIntent"],
+  allowAutomaticFallback: boolean,
+  deps: DualSparkInstallerDeps,
+): DualSparkInstallerResult {
+  if (
+    allowAutomaticFallback &&
+    selectionIntent === "automatic" &&
+    (failure.code === "storage-unavailable" || failure.code === "storage-insufficient")
+  ) {
+    return { kind: "not-selected" };
+  }
+  deps.error(`  Two-Spark managed vLLM setup stopped: ${failure.reason}`);
   return { kind: "handled", result: { ok: false } };
 }
 
@@ -231,14 +378,6 @@ export async function tryInstallDualSparkManagedVllm(
   const deferToLegacy = automaticIntentDefersToLegacy(env);
 
   const deps = { ...DEFAULT_DEPS, ...overrides };
-  const configuredPreset = String(env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
-  if (configuredPreset && configuredPreset !== DUAL_SPARK_PRESET_ID) {
-    deps.error(
-      `  Managed vLLM setup stopped: ${NEMOCLAW_SERVING_PRESET_ENV} selects unsupported profile ${configuredPreset}.`,
-    );
-    return { kind: "handled", result: { ok: false } };
-  }
-
   try {
     deps.assertNoRuntimeReceipts();
   } catch (error) {
@@ -266,15 +405,25 @@ export async function tryInstallDualSparkManagedVllm(
     const previewResolution = deps.resolveSelection({
       readinessReports: detected.readiness,
       topologyQualifications: [detected.topology],
-      intent: selectionIntent(detected, env),
+      intent: selectionIntent(env),
     });
     if (previewResolution.outcome !== "selected") {
-      return resolutionFailure(previewResolution, deps);
+      return resolutionFailure(previewResolution, detected.selectionIntent, true, deps);
+    }
+    const previewAdmission = selectedRecipeAdmissionFailure(detected, previewResolution.recipe);
+    if (previewAdmission) {
+      return admissionFailure(previewAdmission, detected.selectionIntent, true, deps);
     }
 
     let previewPlan: DualSparkVllmPlan;
     try {
       previewPlan = deps.materializePlan(previewResolution);
+    } catch (error) {
+      deps.error(`  Two-Spark managed vLLM setup stopped: ${(error as Error).message}`);
+      return { kind: "handled", result: { ok: false } };
+    }
+    try {
+      deps.assertGatedModelAccess(managedModel(previewPlan, previewResolution.recipe), env);
     } catch (error) {
       deps.error(`  Two-Spark managed vLLM setup stopped: ${(error as Error).message}`);
       return { kind: "handled", result: { ok: false } };
@@ -294,19 +443,45 @@ export async function tryInstallDualSparkManagedVllm(
       return { kind: "handled", result: { ok: false } };
     }
 
-    const confirmation = deps.confirmCapability(detected, { env });
+    const revalidated = deps.revalidateCapability(detected, { env });
+    if (revalidated.kind !== "ready") {
+      deps.error(`  Two-Spark managed vLLM setup stopped: ${revalidated.reason}`);
+      return { kind: "handled", result: { ok: false } };
+    }
+
+    const revalidatedResolution = deps.resolveSelection({
+      readinessReports: revalidated.readiness,
+      topologyQualifications: [revalidated.topology],
+      intent: selectionIntent(env),
+    });
+    if (revalidatedResolution.outcome !== "selected") {
+      return resolutionFailure(revalidatedResolution, revalidated.selectionIntent, false, deps);
+    }
+    const revalidatedAdmission = selectedRecipeAdmissionFailure(
+      revalidated,
+      revalidatedResolution.recipe,
+    );
+    if (revalidatedAdmission) {
+      return admissionFailure(revalidatedAdmission, revalidated.selectionIntent, false, deps);
+    }
+    if (
+      revalidatedResolution.presetDigest !== previewResolution.presetDigest ||
+      revalidatedResolution.recipeDigest !== previewResolution.recipeDigest
+    ) {
+      deps.error("  Two-Spark managed vLLM setup stopped: the selected profile changed.");
+      return { kind: "handled", result: { ok: false } };
+    }
+
+    const confirmation = deps.claimCapability(revalidated);
     if (confirmation.kind !== "ready") {
       deps.error(`  Two-Spark managed vLLM setup stopped: ${confirmation.reason}`);
       return { kind: "handled", result: { ok: false } };
     }
     confirmedBinding = confirmation;
-
-    const resolution = deps.resolveSelection({
-      readinessReports: confirmation.readiness,
-      topologyQualifications: [confirmation.topology],
-      intent: selectionIntent(confirmation, env),
-    });
-    if (resolution.outcome !== "selected") return resolutionFailure(resolution, deps);
+    const resolution = {
+      ...revalidatedResolution,
+      topologyQualification: confirmation.topology,
+    };
 
     let plan: DualSparkVllmPlan;
     try {
@@ -327,8 +502,8 @@ export async function tryInstallDualSparkManagedVllm(
       return { kind: "handled", result: { ok: false } };
     }
 
-    const profile = managedProfile(plan);
-    const model = managedModel(plan);
+    const profile = managedProfile(plan, resolution.recipe);
+    const model = managedModel(plan, resolution.recipe);
     options.beforeInstall?.(plan.model.servedName);
 
     const prerequisites = effects.prerequisites();

@@ -3,55 +3,238 @@
 
 import { describe, expect, it } from "vitest";
 
+import {
+  NO_PREPARATION_REF,
+  SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
+} from "./adapter-registry.js";
+import { loadManagedInferenceCatalog } from "./catalog.js";
+import { managedInferenceDigest, managedInferenceTextDigest } from "./catalog-integrity.js";
+import type {
+  CompiledManagedInferenceCatalog,
+  ManagedInferenceServingPreset,
+  ManagedInferenceServingRecipe,
+  ResolvedManagedInferenceSelection,
+} from "./catalog-types.js";
 import { fixtureDualSparkSelection } from "./dual-spark-fixture.test-support.js";
 import {
-  DUAL_SPARK_VLLM_API_PORT,
+  DUAL_SPARK_PRESET_LABEL,
+  DUAL_SPARK_RECIPE_LABEL,
   DUAL_SPARK_VLLM_MASTER_PORT,
   materializeDualSparkVllmPlan,
 } from "./dual-spark-materialize.js";
-import { dualSparkTopologyOutputDigest } from "./dual-spark-topology.js";
+import {
+  type DualSparkTopologyOutput,
+  dualSparkTopologyOutputDigest,
+} from "./dual-spark-topology.js";
+
+interface SyntheticProfile {
+  readonly catalog: CompiledManagedInferenceCatalog;
+  readonly selection: ResolvedManagedInferenceSelection<DualSparkTopologyOutput>;
+}
+
+function selectionWithDigests(): ResolvedManagedInferenceSelection<DualSparkTopologyOutput> {
+  const selection = fixtureDualSparkSelection();
+  return {
+    ...selection,
+    presetDigest: managedInferenceDigest(selection.preset),
+    recipeDigest: managedInferenceDigest(selection.recipe),
+  };
+}
+
+function syntheticSecondProfile(): SyntheticProfile {
+  const baseCatalog = loadManagedInferenceCatalog();
+  const baseSelection = selectionWithDigests();
+  const topology = baseSelection.topologyQualification;
+  const basePreset = baseCatalog.presets.find(
+    ({ definition }) => definition.metadata.id === baseSelection.preset.metadata.id,
+  )?.definition;
+  const baseRecipe = baseCatalog.recipes.find(
+    ({ definition }) => definition.metadata.id === baseSelection.recipe.metadata.id,
+  )?.definition;
+  expect(basePreset).toBeDefined();
+  expect(baseRecipe).toBeDefined();
+  const presetTemplate = basePreset as ManagedInferenceServingPreset;
+  const recipeTemplate = baseRecipe as ManagedInferenceServingRecipe;
+
+  const recipe: ManagedInferenceServingRecipe = {
+    ...recipeTemplate,
+    metadata: {
+      id: "vllm.synthetic-model.spark-dual.v1",
+      displayName: "Synthetic model on two compatible nodes",
+    },
+    spec: {
+      ...recipeTemplate.spec,
+      model: {
+        ...recipeTemplate.spec.model,
+        id: "example-org/Synthetic-Model",
+        revision: "b".repeat(40),
+        servedName: "synthetic-model",
+        downloadSizeBytes: 1_234_567,
+        preparation: {
+          ref: SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
+          snapshotCopy: {
+            sourcePath: "assets/synthetic_tokenizer.py",
+            targetPath: "/opt/synthetic-vllm/tokenizers/copied.py",
+          },
+          exactTextReplacement: {
+            targetPath: "/opt/synthetic-vllm/parsers/reasoning.py",
+            expectedText: "MODE = 'legacy'",
+            replacementText: "MODE = 'compatible'",
+          },
+        },
+      },
+      runtime: {
+        ...recipeTemplate.spec.runtime,
+        image: `registry.example.test/inference/vllm@sha256:${"c".repeat(64)}`,
+        imageDownloadSizeBytes: 7_654_321,
+        pullTimeoutSeconds: 7_200,
+        sharedMemoryBytes: 8_589_934_592,
+        gpuRequest: "device=all",
+        devices: ["/dev/infiniband", "/dev/synthetic"],
+        ulimits: { memlock: "unlimited", stackBytes: 33_554_432 },
+        modelCache: { source: "huggingface-cache", target: "/models/cache" },
+        temporaryFilesystems: [
+          {
+            target: "/models/cache",
+            sizeBytes: 4_294_967_296,
+            mode: "0700",
+            options: ["rw", "nosuid", "nodev"],
+          },
+        ],
+        environment: { SYNTHETIC_PROFILE: "enabled" },
+      },
+      serve: {
+        ...recipeTemplate.spec.serve,
+        executable: "/opt/vllm/bin/vllm",
+        arguments: [
+          { name: "--port", value: 9_001 },
+          { name: "--max-model-len", value: 4_096 },
+          { name: "--generation-config", value: "auto" },
+        ],
+      },
+      readiness: { timeoutSeconds: 900, expectedModel: "synthetic-model" },
+    },
+  };
+  const preset: ManagedInferenceServingPreset = {
+    ...presetTemplate,
+    metadata: {
+      id: "vllm.synthetic-profile.spark-dual",
+      displayName: "Synthetic profile on two compatible nodes",
+    },
+    spec: {
+      ...presetTemplate.spec,
+      priority: 399,
+      plan: { ...presetTemplate.spec.plan, recipeRef: recipe.metadata.id },
+    },
+  };
+  const recipeDigest = managedInferenceDigest(recipe);
+  const presetDigest = managedInferenceDigest(preset);
+  const recipeSourceFile = "managed-inference/recipes/vllm.synthetic-model.spark-dual.v1.yaml";
+  const presetSourceFile = "managed-inference/presets/vllm.synthetic-profile.spark-dual.yaml";
+  const sourceFiles = [
+    ...baseCatalog.sourceFiles,
+    {
+      path: presetSourceFile,
+      digest: managedInferenceTextDigest("synthetic preset"),
+    },
+    {
+      path: recipeSourceFile,
+      digest: managedInferenceTextDigest("synthetic recipe"),
+    },
+  ];
+  const catalogContents = {
+    compilerVersion: baseCatalog.compilerVersion,
+    presets: [
+      ...baseCatalog.presets,
+      {
+        definition: preset,
+        definitionDigest: presetDigest,
+        sourceFile: presetSourceFile,
+      },
+    ],
+    recipes: [
+      ...baseCatalog.recipes,
+      {
+        definition: recipe,
+        definitionDigest: recipeDigest,
+        sourceFile: recipeSourceFile,
+      },
+    ],
+    schemaVersion: baseCatalog.schemaVersion,
+    sourceFiles,
+    sourceRevision: managedInferenceDigest(sourceFiles),
+  } as const;
+  const catalog: CompiledManagedInferenceCatalog = {
+    ...catalogContents,
+    catalogDigest: managedInferenceDigest(catalogContents),
+  };
+  return {
+    catalog,
+    selection: {
+      outcome: "selected",
+      selection: "automatic",
+      catalogDigest: catalog.catalogDigest,
+      presetDigest,
+      recipeDigest,
+      preset,
+      recipe,
+      topologyQualification: topology,
+    },
+  };
+}
 
 describe("dual-DGX-Spark vLLM materializer", () => {
-  it("creates deterministic head and worker plans from the compiled recipe", () => {
-    const selection = fixtureDualSparkSelection();
+  it("creates deterministic plans entirely from the selected catalog definitions", () => {
+    const selection = selectionWithDigests();
     const plan = materializeDualSparkVllmPlan(selection);
     const recipe = selection.recipe.spec;
 
     expect(materializeDualSparkVllmPlan(selection)).toEqual(plan);
-    expect(plan.model).toEqual({
-      id: recipe.model.id,
-      revision: recipe.model.revision,
-      servedName: recipe.model.servedName,
+    expect(Object.isFrozen(plan)).toBe(true);
+    expect(plan).toMatchObject({
+      catalogDigest: selection.catalogDigest,
+      presetId: selection.preset.metadata.id,
+      presetDigest: selection.presetDigest,
+      recipeId: selection.recipe.metadata.id,
+      recipeDigest: selection.recipeDigest,
+      model: {
+        id: recipe.model.id,
+        revision: recipe.model.revision,
+        servedName: recipe.model.servedName,
+      },
+      authentication: recipe.serve.authentication,
+      readiness: {
+        timeoutMs: recipe.readiness.timeoutSeconds * 1_000,
+        expectedModel: recipe.readiness.expectedModel,
+      },
     });
     expect(plan.roles.head).toMatchObject({
       image: recipe.runtime.image,
       runtime: {
+        architecture: recipe.runtime.architecture,
         networkMode: recipe.runtime.networkMode,
         ipcMode: recipe.runtime.ipcMode,
         sharedMemoryBytes: recipe.runtime.sharedMemoryBytes,
+        gpuRequest: recipe.runtime.gpuRequest,
         devices: recipe.runtime.devices,
         imageDownloadSizeBytes: recipe.runtime.imageDownloadSizeBytes,
+        pullTimeoutSeconds: recipe.runtime.pullTimeoutSeconds,
+        ulimits: {
+          memlock: recipe.runtime.ulimits.memlock,
+          stack: recipe.runtime.ulimits.stackBytes,
+        },
+        modelCache: recipe.runtime.modelCache,
+        temporaryFilesystems: recipe.runtime.temporaryFilesystems,
       },
-      preparation: {
-        ref: recipe.model.preparationRef,
-        modelId: recipe.model.id,
-        modelRevision: recipe.model.revision,
-        modelDownloadSizeBytes: recipe.model.downloadSizeBytes,
-        encodingPath: recipe.model.encodingPath,
-      },
+      command: { executable: recipe.serve.executable },
     });
-    expect(plan.readiness).toEqual({
-      timeoutMs: recipe.readiness.timeoutSeconds * 1000,
-      expectedModel: recipe.readiness.expectedModel,
-    });
-    expect(plan.apiPort).toBe(DUAL_SPARK_VLLM_API_PORT);
-    expect(plan.masterPort).toBe(DUAL_SPARK_VLLM_MASTER_PORT);
-    expect(plan.roles.head.containerName).toBe("nemoclaw-vllm-dspark-head");
-    expect(plan.roles.worker.containerName).toBe("nemoclaw-vllm-dspark-worker");
+    const configuredPort = recipe.serve.arguments.find(({ name }) => name === "--port")?.value;
+    expect(plan.apiPort).toBe(configuredPort);
+    expect(plan.roles.head.endpoint).toBe(`http://${plan.masterAddress}:${String(configuredPort)}`);
   });
 
   it("uses role-local topology values and starts rank 1 headless", () => {
-    const plan = materializeDualSparkVllmPlan(fixtureDualSparkSelection());
+    const plan = materializeDualSparkVllmPlan(selectionWithDigests());
 
     expect(plan.roles.head.environment).toMatchObject({
       VLLM_HOST_IP: "192.168.100.10",
@@ -72,9 +255,8 @@ describe("dual-DGX-Spark vLLM materializer", () => {
       expect.arrayContaining(["--host", "192.168.100.10"]),
     );
     expect(plan.roles.worker.command.arguments).toEqual(
-      expect.arrayContaining(["--host", "192.168.100.11"]),
+      expect.arrayContaining(["--host", "192.168.100.11", "--headless"]),
     );
-    expect(plan.roles.worker.command.arguments).toContain("--headless");
     expect(plan.roles.head.command.arguments).not.toContain("--headless");
     expect(plan.roles.worker.command.arguments).toEqual(
       expect.arrayContaining([
@@ -89,105 +271,150 @@ describe("dual-DGX-Spark vLLM materializer", () => {
         "--node-rank",
         "1",
         "--master-port",
-        "25000",
+        String(DUAL_SPARK_VLLM_MASTER_PORT),
       ]),
     );
   });
 
-  it("preserves the fixed DSpark serving profile without embedding the API key", () => {
-    const plan = materializeDualSparkVllmPlan(fixtureDualSparkSelection());
-    const headArgs = plan.roles.head.command.arguments;
+  it("passes every recipe serving argument without embedding an API key", () => {
+    const selection = selectionWithDigests();
+    const plan = materializeDualSparkVllmPlan(selection);
+    const headArguments = plan.roles.head.command.arguments;
 
-    expect(headArgs).toEqual(
-      expect.arrayContaining([
-        "--kv-cache-dtype",
-        "nvfp4_ds_mla",
-        "--block-size",
-        "256",
-        "--max-model-len",
-        "1048576",
-        "--max-num-seqs",
-        "6",
-        "--max-num-batched-tokens",
-        "8192",
-        "--gpu-memory-utilization",
-        "0.8",
-        "--moe-backend",
-        "flashinfer_b12x",
-        "--async-scheduling",
-        "--enable-chunked-prefill",
-        "--generation-config",
-        "vllm",
-      ]),
-    );
-    expect(headArgs.join(" ")).toContain('"num_speculative_tokens":5');
-    expect(headArgs).not.toContain("--api-key");
+    for (const argument of selection.recipe.spec.serve.arguments) {
+      const index = headArguments.indexOf(argument.name);
+      expect(index).toBeGreaterThan(-1);
+    }
+    for (const argument of selection.recipe.spec.serve.arguments.filter(
+      ({ value }) => value !== undefined,
+    )) {
+      const index = headArguments.indexOf(argument.name);
+      expect(headArguments[index + 1]).toBe(String(argument.value));
+    }
+    expect(headArguments).not.toContain("--api-key");
     expect(plan.roles.worker.command.arguments).not.toContain("--api-key");
   });
 
-  it("rejects materializer-owned arguments added after catalog resolution", () => {
-    const selection = fixtureDualSparkSelection();
-    const serve = selection.recipe.spec.serve as unknown as {
-      arguments: Array<{ name: string; value?: string | number }>;
-    };
-    serve.arguments.push({ name: "--headless" });
+  it("rejects a selected definition changed after catalog resolution", () => {
+    const selection = selectionWithDigests();
+    (selection.recipe.spec.runtime as { image: string }).image =
+      `registry.example.test/vllm@sha256:${"d".repeat(64)}`;
 
-    expect(() => materializeDualSparkVllmPlan(selection)).toThrow(
-      /not the shipped dual-Spark profile/,
-    );
+    expect(() => materializeDualSparkVllmPlan(selection)).toThrow(/definition digest/u);
   });
 
   it("rejects stale topology subject and output digests", () => {
-    const staleSubject = fixtureDualSparkSelection();
+    const staleSubject = selectionWithDigests();
     (staleSubject.topologyQualification as { subjectDigest: string }).subjectDigest =
       `sha256:${"f".repeat(64)}`;
-    expect(() => materializeDualSparkVllmPlan(staleSubject)).toThrow(/subject digest/);
+    expect(() => materializeDualSparkVllmPlan(staleSubject)).toThrow(/subject digest/u);
 
-    const staleOutput = fixtureDualSparkSelection();
+    const staleOutput = selectionWithDigests();
     (staleOutput.topologyQualification.output.peer as { target: string }).target =
       "other-worker.local";
-    expect(() => materializeDualSparkVllmPlan(staleOutput)).toThrow(/output digest/);
+    expect(() => materializeDualSparkVllmPlan(staleOutput)).toThrow(/output digest/u);
   });
 
   it("rejects an inconsistent master address even with a recomputed digest", () => {
-    const selection = fixtureDualSparkSelection();
+    const selection = selectionWithDigests();
     const artifact = selection.topologyQualification;
     (artifact.output as { masterAddress: string }).masterAddress = "192.168.100.99";
     (artifact as { outputDigest: string }).outputDigest = dualSparkTopologyOutputDigest(
       artifact.output,
     );
 
-    expect(() => materializeDualSparkVllmPlan(selection)).toThrow(/master address/);
+    expect(() => materializeDualSparkVllmPlan(selection)).toThrow(/master address/u);
   });
 
-  it("requires the code-owned in-container checkpoint compatibility preparation", () => {
-    const preparation = materializeDualSparkVllmPlan(fixtureDualSparkSelection()).roles.head
-      .preparation;
+  it("materializes bounded preparation operations from recipe data", () => {
+    const selection = selectionWithDigests();
+    const preparation = materializeDualSparkVllmPlan(selection).roles.head.preparation;
+    const configured = selection.recipe.spec.model.preparation;
+    expect(configured.ref).not.toBe(NO_PREPARATION_REF);
+    const boundedConfigured = configured as Extract<
+      typeof configured,
+      { ref: typeof SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF }
+    >;
 
     expect(preparation).toMatchObject({
-      ref: "deepseek-v4-flash-0731/v1",
+      ref: boundedConfigured.ref,
       phase: "container-before-exec",
-      encodingPath: "encoding/encoding_dsv4.py",
+      modelId: selection.recipe.spec.model.id,
+      modelRevision: selection.recipe.spec.model.revision,
+      modelDownloadSizeBytes: selection.recipe.spec.model.downloadSizeBytes,
+      snapshotCopy: {
+        targetPath: boundedConfigured.snapshotCopy.targetPath,
+      },
+      exactTextReplacement: boundedConfigured.exactTextReplacement,
     });
-    expect(preparation.encodingSourcePath).toContain(preparation.modelRevision);
-    expect(preparation.encodingTargetPath).toContain("deepseek_v4_encoding.py");
-    expect(preparation.reasoningCompatibility.replacementText).toContain(
-      'reasoning_effort = "low"',
+    expect(preparation.ref).not.toBe(NO_PREPARATION_REF);
+    const boundedPreparation = preparation as Extract<
+      typeof preparation,
+      { ref: typeof SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF }
+    >;
+    expect(boundedPreparation.snapshotCopy.sourcePath).toContain(boundedPreparation.modelRevision);
+    expect(boundedPreparation.snapshotCopy.sourcePath).toContain(
+      boundedConfigured.snapshotCopy.sourcePath,
     );
   });
 
-  it("rejects a recipe changed after catalog resolution", () => {
-    const mutableImage = fixtureDualSparkSelection();
-    (mutableImage.recipe.spec.runtime as { image: string }).image =
-      "ghcr.io/anemll/dspark-vllm-gx10:0.1.1";
-    expect(() => materializeDualSparkVllmPlan(mutableImage)).toThrow(
-      /not the shipped dual-Spark profile/,
+  it("materializes a synthetic second profile without materializer code changes", () => {
+    const { catalog, selection } = syntheticSecondProfile();
+    const plan = materializeDualSparkVllmPlan(selection, { catalog });
+
+    expect(plan).toMatchObject({
+      presetId: selection.preset.metadata.id,
+      recipeId: selection.recipe.metadata.id,
+      model: {
+        id: "example-org/Synthetic-Model",
+        servedName: "synthetic-model",
+      },
+      apiPort: 9_001,
+      readiness: { timeoutMs: 900_000, expectedModel: "synthetic-model" },
+    });
+    expect(plan.roles.head).toMatchObject({
+      image: selection.recipe.spec.runtime.image,
+      runtime: {
+        sharedMemoryBytes: 8_589_934_592,
+        gpuRequest: "device=all",
+        pullTimeoutSeconds: 7_200,
+        ulimits: { memlock: "unlimited", stack: 33_554_432 },
+        modelCache: { source: "huggingface-cache", target: "/models/cache" },
+      },
+      preparation: {
+        ref: SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
+        snapshotCopy: {
+          sourcePath: expect.stringContaining(
+            "/models/cache/hub/models--example-org--Synthetic-Model/",
+          ),
+          targetPath: "/opt/synthetic-vllm/tokenizers/copied.py",
+        },
+        exactTextReplacement: {
+          targetPath: "/opt/synthetic-vllm/parsers/reasoning.py",
+          expectedText: "MODE = 'legacy'",
+          replacementText: "MODE = 'compatible'",
+        },
+      },
+      command: { executable: "/opt/vllm/bin/vllm" },
+      baseLabels: {
+        [DUAL_SPARK_PRESET_LABEL]: selection.preset.metadata.id,
+        [DUAL_SPARK_RECIPE_LABEL]: selection.recipe.metadata.id,
+      },
+    });
+    expect(plan.roles.head.environment).toMatchObject({
+      HF_HOME: "/models/cache",
+      SYNTHETIC_PROFILE: "enabled",
+    });
+    expect(plan.roles.head.command.arguments).toEqual(
+      expect.arrayContaining(["--port", "9001", "--max-model-len", "4096"]),
     );
 
-    const changedRevision = fixtureDualSparkSelection();
-    (changedRevision.recipe.spec.model as { revision: string }).revision = "d".repeat(40);
-    expect(() => materializeDualSparkVllmPlan(changedRevision)).toThrow(
-      /not the shipped dual-Spark profile/,
+    const originalSelection = selectionWithDigests();
+    const originalPlan = materializeDualSparkVllmPlan(originalSelection);
+    const originalFromExpandedCatalog = materializeDualSparkVllmPlan(
+      { ...originalSelection, catalogDigest: catalog.catalogDigest },
+      { catalog },
     );
+    expect(originalFromExpandedCatalog.planId).toBe(originalPlan.planId);
   });
 });

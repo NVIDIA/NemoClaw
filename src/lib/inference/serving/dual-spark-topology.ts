@@ -6,26 +6,11 @@ import net from "node:net";
 import { checkSystemReadinessSchemaVersion } from "../../readiness/compatibility.js";
 import type { SystemReadinessReport } from "../../readiness/types.js";
 import { managedInferenceDigest } from "./catalog-integrity.js";
-import {
-  DUAL_SPARK_TOPOLOGY_QUALIFICATION_ID,
-  DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION,
-  type ManagedInferenceTopologyQualification,
-} from "./catalog-types.js";
+import type { ManagedInferenceTopologyQualification } from "./catalog-types.js";
 
-export const DUAL_SPARK_TOPOLOGY_ID = DUAL_SPARK_TOPOLOGY_QUALIFICATION_ID;
-export { DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION };
+export const DUAL_SPARK_TOPOLOGY_ID = "dgx-spark.gb10.dual-cx7" as const;
+export const DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION = 1 as const;
 
-const REQUIRED_READINESS_CAPABILITY_IDS = [
-  "host.platform.supported",
-  "host.platform.dgx_spark",
-  "host.docker.available",
-  "host.docker.daemon_reachable",
-  "host.docker.runtime_supported",
-  "host.docker.storage_compatible",
-  "host.gpu.nvidia_available",
-  "host.gpu.container_toolkit_available",
-  "host.gpu.cdi_healthy",
-] as const;
 const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SAFE_INTERFACE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
 const SAFE_BINDING_HANDLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,8191}$/;
@@ -208,14 +193,6 @@ function validateQualificationPolicy(
   return evaluatedAtMs;
 }
 
-function findUniqueCapability(
-  report: SystemReadinessReport,
-  id: string,
-): SystemReadinessReport["capabilities"][number] | undefined {
-  const matches = report.capabilities.filter((capability) => capability.id === id);
-  return matches.length === 1 ? matches[0] : undefined;
-}
-
 function validateReadiness(
   report: SystemReadinessReport,
   evaluatedAtMs: number,
@@ -265,14 +242,6 @@ function validateReadiness(
     };
   }
 
-  for (const id of REQUIRED_READINESS_CAPABILITY_IDS) {
-    if (findUniqueCapability(report, id)?.state !== "present") {
-      return {
-        code: "runtime-qualification-unavailable",
-        message: "A node readiness report does not qualify the required container runtime.",
-      };
-    }
-  }
   return undefined;
 }
 

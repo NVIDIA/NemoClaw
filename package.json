@@ -57,7 +57,7 @@
     "build:policy-boundary": "tsc -p nemoclaw/tsconfig.shared.json",
     "catalog:compile": "tsx scripts/managed-inference/compile-catalog.mts --write",
     "catalog:check": "tsx scripts/managed-inference/compile-catalog.mts",
-    "build:cli": "npm run catalog:check && npm run build:policy-boundary && tsc -p tsconfig.src.json && node dist/lib/core/generate-build-identity.js && node dist/lib/cli/generate-oclif-metadata-manifest.js && if find nemoclaw-blueprint/scripts -name '*.ts' -print -quit | grep -q .; then tsc -p nemoclaw-blueprint/tsconfig.json; fi",
+    "build:cli": "npm run build:policy-boundary && tsc -p tsconfig.src.json && npm run catalog:check && node dist/lib/core/generate-build-identity.js && node dist/lib/cli/generate-oclif-metadata-manifest.js && if find nemoclaw-blueprint/scripts -name '*.ts' -print -quit | grep -q .; then tsc -p nemoclaw-blueprint/tsconfig.json; fi",
     "clean:cli": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "typecheck:cli": "tsc -p tsconfig.cli.json",
     "validate:configs": "tsx scripts/validate-configs.mts",

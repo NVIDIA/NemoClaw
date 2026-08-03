@@ -24,7 +24,6 @@ import {
   strictStationSshTransportArgs,
   writeDualStationSshBinding,
 } from "../vllm-station-ssh-binding.js";
-import { loadManagedInferenceCatalog } from "./catalog.js";
 import type {
   DualSparkCommandResult,
   DualSparkConnectivityRequest,
@@ -33,11 +32,6 @@ import type {
   DualSparkPinnedPeerTransport,
   DualSparkReadOnlyHostTransport,
 } from "./dual-spark-discovery.js";
-import {
-  DUAL_SPARK_VLLM_IMAGE,
-  DUAL_SPARK_VLLM_MODEL,
-  DUAL_SPARK_VLLM_MODEL_REVISION,
-} from "./dual-spark-materialize.js";
 import { DUAL_SPARK_MANAGED_SERVING_STATE_FILE } from "./spark-runtime-receipt-path.js";
 
 const COMMAND_TIMEOUT_MS = 20_000;
@@ -171,10 +165,7 @@ import re
 import shutil
 import socket
 import subprocess
-import sys
 
-MODEL_ID, MODEL_REVISION, IMAGE_REF, MODEL_BYTES_TEXT = sys.argv[1:5]
-MODEL_BYTES = int(MODEL_BYTES_TEXT)
 DOCKER_ENV_NAMES = (
     "DOCKER_API_VERSION",
     "DOCKER_CERT_PATH",
@@ -433,44 +424,11 @@ def nearest_capacity(requested):
             "writableByUser": False,
         }
 
-def snapshot_state(snapshot, cache_root):
-    if not snapshot.is_dir():
-        return 0, False
-    total = 0
-    seen = set()
-    count = 0
-    try:
-        cache_real = cache_root.resolve(strict=True)
-        for root, dirs, files in os.walk(snapshot, followlinks=False):
-            dirs.sort()
-            files.sort()
-            for name in files:
-                count += 1
-                if count > 100000 or name.endswith(".incomplete"):
-                    return None, False
-                file_path = Path(root) / name
-                real = file_path.resolve(strict=True)
-                if os.path.commonpath([str(cache_real), str(real)]) != str(cache_real):
-                    return None, False
-                stats = real.stat()
-                identity = (stats.st_dev, stats.st_ino)
-                if identity not in seen:
-                    seen.add(identity)
-                    total += stats.st_size
-        required = [snapshot / "config.json", snapshot / "encoding" / "encoding_dsv4.py"]
-        complete = total >= MODEL_BYTES and all(item.is_file() for item in required)
-        return total, complete
-    except Exception:
-        return None, False
-
 uid = os.getuid()
 gid = os.getgid()
 account = pwd.getpwuid(uid)
 home = Path(account.pw_dir).resolve()
 hf_home = home / ".cache" / "huggingface"
-hub = hf_home / "hub"
-snapshot = hub / ("models--" + MODEL_ID.replace("/", "--")) / "snapshots" / MODEL_REVISION
-snapshot_bytes, snapshot_cached = snapshot_state(snapshot, hub)
 hf_capacity = nearest_capacity(hf_home)
 
 docker_root = None
@@ -481,7 +439,6 @@ if docker_info_code == 0:
     except Exception:
         docker_root = None
 docker_capacity = nearest_capacity(docker_root or "/var/lib/docker")
-image_code, _ = run(["docker", "image", "inspect", IMAGE_REF])
 observed_containers, containers_complete = containers()
 ports, ports_complete = listening_ports()
 
@@ -530,14 +487,10 @@ result = {
         "huggingFace": {
             **hf_capacity,
             "cacheRoot": str(hf_home),
-            "snapshotPath": str(snapshot),
-            "snapshotBytes": snapshot_bytes,
-            "exactSnapshotCached": snapshot_cached,
         },
         "docker": {
             **docker_capacity,
             "dockerRootDir": docker_root,
-            "exactImageCached": image_code == 0,
         },
     },
 }
@@ -662,17 +615,7 @@ function probeHostWithTransport(
   transport: DualSparkReadOnlyHostTransport,
   parseHost: DualSparkHostParser,
 ): DualSparkHostObservation {
-  const recipe = loadManagedInferenceCatalog().recipes[0]?.definition;
-  if (!recipe) throw new Error("Managed inference recipe is unavailable");
-  const result = transport.execute([
-    "python3",
-    "-c",
-    HOST_PROBE_SCRIPT,
-    DUAL_SPARK_VLLM_MODEL,
-    DUAL_SPARK_VLLM_MODEL_REVISION,
-    DUAL_SPARK_VLLM_IMAGE,
-    String(recipe.spec.model.downloadSizeBytes),
-  ]);
+  const result = transport.execute(["python3", "-c", HOST_PROBE_SCRIPT]);
   return parseHost(parseJsonCommandResult(result, "DGX Spark host probe"));
 }
 

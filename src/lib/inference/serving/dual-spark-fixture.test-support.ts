@@ -10,11 +10,21 @@ import {
   dualSparkTopologySubjectDigest,
 } from "./dual-spark-topology.js";
 
+export const FIXTURE_DUAL_SPARK_PRESET_ID = "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731";
+
 export function fixtureDualSparkSelection(): ResolvedManagedInferenceSelection<DualSparkTopologyOutput> {
   const catalog = loadManagedInferenceCatalog();
-  const preset = structuredClone(catalog.presets[0]?.definition);
-  const recipe = structuredClone(catalog.recipes[0]?.definition);
-  if (!preset || !recipe) throw new Error("managed inference fixture catalog is incomplete");
+  const compiledPreset = catalog.presets.find(
+    ({ definition }) => definition.metadata.id === FIXTURE_DUAL_SPARK_PRESET_ID,
+  );
+  const compiledRecipe = catalog.recipes.find(
+    ({ definition }) => definition.metadata.id === compiledPreset?.definition.spec.plan.recipeRef,
+  );
+  if (!compiledPreset || !compiledRecipe) {
+    throw new Error("managed inference fixture catalog is incomplete");
+  }
+  const preset = structuredClone(compiledPreset.definition);
+  const recipe = structuredClone(compiledRecipe.definition);
   const subjectNodeIds = ["spark-head", "spark-worker"] as const;
   const output: DualSparkTopologyOutput = {
     headNodeId: "spark-head",
@@ -78,6 +88,8 @@ export function fixtureDualSparkSelection(): ResolvedManagedInferenceSelection<D
     outcome: "selected",
     selection: "automatic",
     catalogDigest: catalog.catalogDigest,
+    presetDigest: compiledPreset.definitionDigest,
+    recipeDigest: compiledRecipe.definitionDigest,
     preset,
     recipe,
     topologyQualification: {

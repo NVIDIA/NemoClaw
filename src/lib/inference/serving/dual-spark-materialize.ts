@@ -1,6 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
+import {
+  DUAL_SPARK_VLLM_MASTER_PORT,
+  DUAL_SPARK_VLLM_MATERIALIZER_REF,
+  getManagedInferenceLifecycleDescriptor,
+  getManagedInferenceMaterializerDescriptor,
+  getManagedInferenceRecipeRegistrationError,
+  getManagedInferenceTopologyQualificationDescriptor,
+  isDualSparkMaterializerOwnedEnvironment,
+} from "./adapter-registry.js";
 import { loadManagedInferenceCatalog } from "./catalog.js";
 import {
   immutableManagedInferenceCopy,
@@ -8,26 +19,27 @@ import {
   managedInferenceHexDigest,
 } from "./catalog-integrity.js";
 import {
-  DUAL_SPARK_PRESET_ID,
-  DUAL_SPARK_RECIPE_ID,
   isManagedInferenceMaterializerOwnedArgument,
+  type CompiledManagedInferenceCatalog,
+  type CompiledManagedInferenceDefinition,
+  type ManagedInferenceServingPreset,
+  type ManagedInferenceServingRecipe,
   type ResolvedManagedInferenceSelection,
 } from "./catalog-types.js";
+import {
+  materializeDualSparkVllmPreparation,
+  type DualSparkVllmPreparationPlan,
+} from "./dual-spark-preparation.js";
 import {
   DUAL_SPARK_TOPOLOGY_ID,
   DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION,
   type DualSparkTopologyOutput,
   type DualSparkTopologyRailEndpoint,
-  getDualSparkTopologyArtifactError,
 } from "./dual-spark-topology.js";
 
-export const DUAL_SPARK_VLLM_ADAPTER_ID = "vllm.dual-dgx-spark/v1" as const;
-const SHIPPED_DUAL_SPARK_RECIPE = loadManagedInferenceCatalog().recipes[0]!.definition;
-export const DUAL_SPARK_VLLM_IMAGE = SHIPPED_DUAL_SPARK_RECIPE.spec.runtime.image;
-export const DUAL_SPARK_VLLM_MODEL = SHIPPED_DUAL_SPARK_RECIPE.spec.model.id;
-export const DUAL_SPARK_VLLM_MODEL_REVISION = SHIPPED_DUAL_SPARK_RECIPE.spec.model.revision;
-export const DUAL_SPARK_VLLM_API_PORT = 8000;
-export const DUAL_SPARK_VLLM_MASTER_PORT = 25000;
+/** Stable adapter identity; profile identities and values come from the selected catalog entries. */
+export const DUAL_SPARK_VLLM_ADAPTER_ID = DUAL_SPARK_VLLM_MATERIALIZER_REF;
+export { DUAL_SPARK_VLLM_MASTER_PORT };
 export const DUAL_SPARK_VLLM_HEAD_CONTAINER_NAME = "nemoclaw-vllm-dspark-head";
 export const DUAL_SPARK_VLLM_WORKER_CONTAINER_NAME = "nemoclaw-vllm-dspark-worker";
 export const DUAL_SPARK_VLLM_PROJECT_ID = "nemoclaw-vllm-dspark";
@@ -46,7 +58,25 @@ export const DUAL_SPARK_API_KEY_FINGERPRINT_LABEL =
   "com.nvidia.nemoclaw.serving-api-key-fingerprint";
 export const DUAL_SPARK_TRANSACTION_LABEL = "com.nvidia.nemoclaw.serving-transaction";
 
-const SAFE_DEVICE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
+const SAFE_DEVICE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/u;
+const SAFE_ABSOLUTE_PATH_PATTERN = /^\/(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._+/-]+$/u;
+const SAFE_GPU_REQUEST_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._,:=-]{0,255}$/u;
+const SAFE_ENVIRONMENT_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,127}$/u;
+const SAFE_MODEL_ID_PATTERN = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/u;
+const SAFE_MODEL_REVISION_PATTERN = /^[0-9a-f]{40,64}$/u;
+const SAFE_STABLE_ID_PATTERN = /^[a-z0-9][a-z0-9._/-]{0,159}$/u;
+const PINNED_IMAGE_PATTERN = /^[a-z0-9.-]+(?::[0-9]+)?(?:\/[a-z0-9._-]+)+@sha256:[0-9a-f]{64}$/u;
+const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/u;
+const TMPFS_OPTIONS = new Set([
+  "rw",
+  "ro",
+  "nosuid",
+  "nodev",
+  "noexec",
+  "exec",
+  "noatime",
+  "relatime",
+]);
 export type DualSparkVllmRole = "head" | "worker";
 
 export interface DualSparkVllmRolePlan {
@@ -64,37 +94,30 @@ export interface DualSparkVllmRolePlan {
       };
   readonly image: string;
   readonly runtime: {
-    readonly networkMode: "host";
-    readonly ipcMode: "host";
+    readonly architecture: string;
+    readonly networkMode: string;
+    readonly ipcMode: string;
     readonly sharedMemoryBytes: number;
-    readonly gpuRequest: "all";
+    readonly gpuRequest: string;
     readonly devices: readonly string[];
     readonly imageDownloadSizeBytes: number;
+    readonly pullTimeoutSeconds: number;
     readonly ulimits: {
-      readonly memlock: -1;
-      readonly stack: 67_108_864;
+      readonly memlock: number | string;
+      readonly stack: number;
     };
     readonly modelCache: {
-      readonly source: "huggingface-cache";
-      readonly target: "/cache/huggingface";
+      readonly source: string;
+      readonly target: string;
     };
+    readonly temporaryFilesystems: readonly {
+      readonly target: string;
+      readonly sizeBytes: number;
+      readonly mode: string;
+      readonly options: readonly string[];
+    }[];
   };
-  readonly preparation: {
-    readonly ref: string;
-    /** Code-owned adapter operation executed in the new container before vLLM. */
-    readonly phase: "container-before-exec";
-    readonly modelId: string;
-    readonly modelRevision: string;
-    readonly modelDownloadSizeBytes: number;
-    readonly encodingPath: string;
-    readonly encodingSourcePath: string;
-    readonly encodingTargetPath: "/usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4_encoding.py";
-    readonly reasoningModulePath: "/usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4.py";
-    readonly reasoningCompatibility: {
-      readonly existingText: string;
-      readonly replacementText: string;
-    };
-  };
+  readonly preparation: DualSparkVllmPreparationPlan;
   readonly fabric: {
     readonly primaryRailIndex: number;
     readonly netdev: string;
@@ -106,7 +129,7 @@ export interface DualSparkVllmRolePlan {
   };
   readonly environment: Readonly<Record<string, string>>;
   readonly command: {
-    readonly executable: "/usr/local/bin/vllm";
+    readonly executable: string;
     readonly arguments: readonly string[];
   };
   readonly endpoint: string | null;
@@ -117,8 +140,10 @@ export interface DualSparkVllmPlan {
   readonly schemaVersion: 1;
   readonly adapterId: typeof DUAL_SPARK_VLLM_ADAPTER_ID;
   readonly catalogDigest: string;
-  readonly presetId: typeof DUAL_SPARK_PRESET_ID;
-  readonly recipeId: typeof DUAL_SPARK_RECIPE_ID;
+  readonly presetId: string;
+  readonly presetDigest: string;
+  readonly recipeId: string;
+  readonly recipeDigest: string;
   readonly topologyId: typeof DUAL_SPARK_TOPOLOGY_ID;
   readonly topologySchemaVersion: typeof DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION;
   readonly topologySubjectDigest: string;
@@ -130,7 +155,8 @@ export interface DualSparkVllmPlan {
     readonly revision: string;
     readonly servedName: string;
   };
-  readonly apiPort: typeof DUAL_SPARK_VLLM_API_PORT;
+  readonly authentication: string;
+  readonly apiPort: number;
   readonly masterAddress: string;
   readonly masterPort: typeof DUAL_SPARK_VLLM_MASTER_PORT;
   readonly readiness: {
@@ -143,105 +169,309 @@ export interface DualSparkVllmPlan {
   };
 }
 
+export interface DualSparkVllmMaterializeOptions {
+  /** Explicit catalog input keeps the materializer testable with additional YAML-compiled profiles. */
+  readonly catalog?: CompiledManagedInferenceCatalog;
+}
+
+interface CatalogSelection {
+  readonly preset: ManagedInferenceServingPreset;
+  readonly recipe: ManagedInferenceServingRecipe;
+}
+
+interface ParsedServingArguments {
+  readonly apiPort: number;
+  readonly arguments: readonly string[];
+}
+
 function fail(message: string): never {
   throw new Error(`Cannot materialize dual-DGX-Spark vLLM: ${message}`);
 }
 
-function commandArguments(
+function positiveSafeInteger(value: number, maximum = Number.MAX_SAFE_INTEGER): boolean {
+  return Number.isSafeInteger(value) && value > 0 && value <= maximum;
+}
+
+function safeAbsolutePath(value: string): boolean {
+  return (
+    value.length <= 4_096 &&
+    SAFE_ABSOLUTE_PATH_PATTERN.test(value) &&
+    path.posix.normalize(value) === value
+  );
+}
+
+function selectedDefinition<TDefinition extends { readonly metadata: { readonly id: string } }>(
+  definitions: readonly CompiledManagedInferenceDefinition<TDefinition>[],
+  selected: TDefinition,
+  selectedDigest: string,
+  label: string,
+): TDefinition {
+  const matches = definitions.filter(
+    ({ definition }) => definition.metadata.id === selected.metadata.id,
+  );
+  if (matches.length !== 1) {
+    fail(`selected ${label} ${selected.metadata.id} is not unique in the compiled catalog`);
+  }
+  const compiled = matches[0]!;
+  if (
+    !SHA256_PATTERN.test(selectedDigest) ||
+    compiled.definitionDigest !== selectedDigest ||
+    managedInferenceDigest(compiled.definition) !== selectedDigest ||
+    managedInferenceDigest(selected) !== selectedDigest
+  ) {
+    fail(`selected ${label} ${selected.metadata.id} does not match its definition digest`);
+  }
+  return compiled.definition;
+}
+
+function assertCatalogSelection(
   selection: ResolvedManagedInferenceSelection<DualSparkTopologyOutput>,
-  rank: 0 | 1,
-  hostAddress: string,
-): string[] {
-  const recipe = selection.recipe.spec;
+  catalog: CompiledManagedInferenceCatalog,
+): CatalogSelection {
+  const { catalogDigest, ...catalogContents } = catalog;
+  if (
+    selection.catalogDigest !== catalogDigest ||
+    !SHA256_PATTERN.test(catalogDigest) ||
+    managedInferenceDigest(catalogContents) !== catalogDigest
+  ) {
+    fail("the resolved selection does not match the compiled catalog digest");
+  }
+  if (
+    !SHA256_PATTERN.test(catalog.sourceRevision) ||
+    managedInferenceDigest(catalog.sourceFiles) !== catalog.sourceRevision
+  ) {
+    fail("the compiled catalog provenance is invalid");
+  }
+
+  const preset = selectedDefinition(
+    catalog.presets,
+    selection.preset,
+    selection.presetDigest,
+    "preset",
+  );
+  const recipe = selectedDefinition(
+    catalog.recipes,
+    selection.recipe,
+    selection.recipeDigest,
+    "recipe",
+  );
+  const bindingName = recipe.spec.execution.topologyBinding;
+  const recipeBinding = recipe.spec.bindings[bindingName];
+  const presetBinding = preset.spec.plan.bindings[bindingName]?.valueFromTopologyQualification;
+  const topologyDescriptor = recipeBinding
+    ? getManagedInferenceTopologyQualificationDescriptor(
+        recipeBinding.qualificationId,
+        recipeBinding.schemaVersion,
+      )
+    : undefined;
+
+  if (
+    preset.spec.plan.recipeRef !== recipe.metadata.id ||
+    preset.spec.plan.backend !== recipe.spec.backend
+  ) {
+    fail("the selected preset does not reference the selected recipe and backend");
+  }
+  if (
+    !recipeBinding ||
+    !presetBinding ||
+    !topologyDescriptor ||
+    presetBinding.output !== topologyDescriptor.bindingOutput ||
+    presetBinding.id !== recipeBinding.qualificationId ||
+    presetBinding.schemaVersion !== recipeBinding.schemaVersion
+  ) {
+    fail(`preset and recipe topology binding ${bindingName} is incompatible`);
+  }
+
+  const materializer = getManagedInferenceMaterializerDescriptor(
+    recipe.spec.execution.materializerRef,
+  );
+  if (!materializer || materializer.ref !== DUAL_SPARK_VLLM_MATERIALIZER_REF) {
+    fail(`recipe selects unsupported materializer ${recipe.spec.execution.materializerRef}`);
+  }
+  const lifecycle = getManagedInferenceLifecycleDescriptor(recipe.spec.execution.lifecycleRef);
+  if (
+    !lifecycle ||
+    lifecycle.backend !== recipe.spec.backend ||
+    !lifecycle.acceptedMaterializerRefs.includes(materializer.ref) ||
+    !lifecycle.acceptedPlanSchemas.includes(materializer.outputPlanSchema)
+  ) {
+    fail(`recipe selects incompatible lifecycle ${recipe.spec.execution.lifecycleRef}`);
+  }
+  const registrationError = getManagedInferenceRecipeRegistrationError(recipe);
+  if (registrationError) fail(registrationError);
+
+  const topology = selection.topologyQualification;
+  if (
+    topology.status !== "qualified" ||
+    topology.id !== recipeBinding.qualificationId ||
+    topology.schemaVersion !== recipeBinding.schemaVersion ||
+    topology.id !== materializer.topology.qualificationId ||
+    topology.schemaVersion !== materializer.topology.schemaVersion ||
+    recipeBinding.outputSchema !== materializer.topology.outputSchema
+  ) {
+    fail("topology artifact is incompatible with the selected recipe binding");
+  }
+  if (topologyDescriptor.outputSchema !== recipeBinding.outputSchema) {
+    fail("topology artifact has no compatible registered validator");
+  }
+  const topologyError = topologyDescriptor.validateArtifact(topology);
+  if (topologyError) fail(topologyError);
+
+  return { preset, recipe };
+}
+
+function assertRecipeValues(recipe: ManagedInferenceServingRecipe): void {
+  const { model, readiness, runtime, serve } = recipe.spec;
+  if (
+    runtime.architecture !== "arm64" ||
+    runtime.networkMode !== "host" ||
+    runtime.ipcMode !== "host" ||
+    serve.authentication !== "bearer"
+  ) {
+    fail("recipe runtime and authentication do not match adapter v1");
+  }
+  if (
+    !PINNED_IMAGE_PATTERN.test(runtime.image) ||
+    !positiveSafeInteger(runtime.imageDownloadSizeBytes) ||
+    !positiveSafeInteger(runtime.pullTimeoutSeconds, 86_400) ||
+    !positiveSafeInteger(runtime.sharedMemoryBytes) ||
+    !SAFE_GPU_REQUEST_PATTERN.test(runtime.gpuRequest) ||
+    !safeAbsolutePath(serve.executable)
+  ) {
+    fail("recipe runtime contains an invalid executable or resource value");
+  }
+  if (
+    runtime.devices.length > 32 ||
+    new Set(runtime.devices).size !== runtime.devices.length ||
+    runtime.devices.some((device) => !safeAbsolutePath(device))
+  ) {
+    fail("recipe runtime device bindings are invalid");
+  }
+  const { memlock, stackBytes } = runtime.ulimits;
+  if (
+    !(
+      (typeof memlock === "number" && Number.isSafeInteger(memlock) && memlock >= -1) ||
+      memlock === "unlimited"
+    ) ||
+    !positiveSafeInteger(stackBytes)
+  ) {
+    fail("recipe runtime ulimits are invalid");
+  }
+  if (
+    !SAFE_STABLE_ID_PATTERN.test(runtime.modelCache.source) ||
+    !safeAbsolutePath(runtime.modelCache.target)
+  ) {
+    fail("recipe model-cache binding is invalid");
+  }
+  const temporaryTargets = new Set<string>();
+  for (const temporaryFilesystem of runtime.temporaryFilesystems) {
+    if (
+      temporaryTargets.has(temporaryFilesystem.target) ||
+      !safeAbsolutePath(temporaryFilesystem.target) ||
+      !positiveSafeInteger(temporaryFilesystem.sizeBytes) ||
+      !/^[0-7]{4}$/u.test(temporaryFilesystem.mode) ||
+      temporaryFilesystem.options.length > 8 ||
+      new Set(temporaryFilesystem.options).size !== temporaryFilesystem.options.length ||
+      temporaryFilesystem.options.some((option) => !TMPFS_OPTIONS.has(option))
+    ) {
+      fail("recipe temporary-filesystem configuration is invalid");
+    }
+    temporaryTargets.add(temporaryFilesystem.target);
+  }
+  const environmentEntries = Object.entries(runtime.environment);
+  if (
+    environmentEntries.length > 128 ||
+    environmentEntries.some(
+      ([name, value]) =>
+        !SAFE_ENVIRONMENT_NAME_PATTERN.test(name) ||
+        isDualSparkMaterializerOwnedEnvironment(name) ||
+        Buffer.byteLength(value, "utf8") > 4_096 ||
+        value.includes("\0"),
+    )
+  ) {
+    fail("recipe runtime environment is invalid or overrides adapter-owned values");
+  }
+  if (
+    !SAFE_MODEL_ID_PATTERN.test(model.id) ||
+    !SAFE_MODEL_REVISION_PATTERN.test(model.revision) ||
+    !SAFE_STABLE_ID_PATTERN.test(model.servedName) ||
+    !positiveSafeInteger(model.downloadSizeBytes) ||
+    !positiveSafeInteger(readiness.timeoutSeconds, 86_400) ||
+    readiness.expectedModel !== model.servedName
+  ) {
+    fail("recipe model identity or readiness contract is invalid");
+  }
+}
+
+function servingArguments(recipe: ManagedInferenceServingRecipe): ParsedServingArguments {
   const seen = new Set<string>();
   const staticArguments: string[] = [];
-  for (const argument of recipe.serve.arguments) {
-    if (!/^--[a-z0-9][a-z0-9-]*$/.test(argument.name)) fail("a serve argument is invalid");
+  let apiPort: number | undefined;
+  for (const argument of recipe.spec.serve.arguments) {
+    if (!/^--[a-z0-9][a-z0-9-]*$/u.test(argument.name)) fail("a serve argument is invalid");
     if (seen.has(argument.name)) fail(`serve argument ${argument.name} is duplicated`);
     if (isManagedInferenceMaterializerOwnedArgument(argument.name)) {
       fail(`serve argument ${argument.name} is owned by the materializer`);
     }
     seen.add(argument.name);
     staticArguments.push(argument.name);
-    if (argument.value !== undefined) staticArguments.push(String(argument.value));
+    if (argument.value !== undefined) {
+      const value = String(argument.value);
+      if (Buffer.byteLength(value, "utf8") > 16_384 || value.includes("\0")) {
+        fail(`serve argument ${argument.name} has an invalid value`);
+      }
+      staticArguments.push(value);
+    }
+    if (argument.name === "--port") {
+      const parsed =
+        typeof argument.value === "number"
+          ? argument.value
+          : typeof argument.value === "string" && /^\d{1,5}$/u.test(argument.value)
+            ? Number(argument.value)
+            : Number.NaN;
+      if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 65_535) {
+        fail("serve argument --port must contain a valid TCP port");
+      }
+      apiPort = parsed;
+    }
   }
+  if (apiPort === undefined) fail("recipe must define one --port serve argument");
+  return { apiPort, arguments: staticArguments };
+}
 
-  const portIndex = staticArguments.indexOf("--port");
-  if (portIndex < 0 || staticArguments[portIndex + 1] !== String(DUAL_SPARK_VLLM_API_PORT)) {
-    fail(`the shipped recipe must bind API port ${String(DUAL_SPARK_VLLM_API_PORT)}`);
-  }
-
+function commandArguments(
+  recipe: ManagedInferenceServingRecipe,
+  topology: ResolvedManagedInferenceSelection<DualSparkTopologyOutput>["topologyQualification"],
+  staticArguments: readonly string[],
+  rank: 0 | 1,
+  hostAddress: string,
+): string[] {
   return [
     "serve",
-    recipe.model.id,
+    recipe.spec.model.id,
+    "--revision",
+    recipe.spec.model.revision,
     "--served-model-name",
-    recipe.model.servedName,
+    recipe.spec.model.servedName,
     "--host",
     hostAddress,
     ...staticArguments,
     "--tensor-parallel-size",
-    String(recipe.execution.tensorParallelSize),
+    String(recipe.spec.execution.tensorParallelSize),
     "--pipeline-parallel-size",
-    String(recipe.execution.pipelineParallelSize),
+    String(recipe.spec.execution.pipelineParallelSize),
     "--distributed-executor-backend",
-    recipe.execution.distributedExecutorBackend,
+    recipe.spec.execution.distributedExecutorBackend,
     "--nnodes",
-    String(recipe.execution.nodeCount),
+    String(recipe.spec.execution.nodeCount),
     "--node-rank",
     String(rank),
     "--master-addr",
-    selection.topologyQualification.output.masterAddress,
+    topology.output.masterAddress,
     "--master-port",
     String(DUAL_SPARK_VLLM_MASTER_PORT),
     ...(rank === 1 ? ["--headless"] : []),
   ];
-}
-
-function assertShippedSelection(
-  selection: ResolvedManagedInferenceSelection<DualSparkTopologyOutput>,
-): void {
-  const { recipe, preset, topologyQualification: topology } = selection;
-  const catalog = loadManagedInferenceCatalog();
-  const compiledPreset = catalog.presets[0];
-  const compiledRecipe = catalog.recipes[0];
-  if (
-    selection.catalogDigest !== catalog.catalogDigest ||
-    !compiledPreset ||
-    !compiledRecipe ||
-    managedInferenceDigest(preset) !== compiledPreset.definitionDigest ||
-    managedInferenceDigest(recipe) !== compiledRecipe.definitionDigest ||
-    preset.metadata.id !== DUAL_SPARK_PRESET_ID ||
-    recipe.metadata.id !== DUAL_SPARK_RECIPE_ID ||
-    preset.spec.plan.recipeRef !== recipe.metadata.id
-  ) {
-    fail("the selected preset and recipe are not the shipped dual-Spark profile");
-  }
-  if (
-    recipe.spec.execution.materializerRef !== DUAL_SPARK_VLLM_ADAPTER_ID ||
-    recipe.spec.execution.lifecycleRef !== DUAL_SPARK_VLLM_ADAPTER_ID ||
-    recipe.spec.execution.nodeCount !== 2 ||
-    recipe.spec.execution.tensorParallelSize !== 2 ||
-    recipe.spec.execution.pipelineParallelSize !== 1 ||
-    recipe.spec.execution.distributedExecutorBackend !== "mp"
-  ) {
-    fail("recipe execution does not match adapter v1");
-  }
-  if (
-    topology.id !== DUAL_SPARK_TOPOLOGY_ID ||
-    topology.schemaVersion !== DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION ||
-    topology.status !== "qualified"
-  ) {
-    fail("topology artifact is not the qualified dual-Spark v1 artifact");
-  }
-  const topologyError = getDualSparkTopologyArtifactError(topology);
-  if (topologyError) fail(topologyError);
-  if (
-    !Number.isSafeInteger(recipe.spec.readiness.timeoutSeconds) ||
-    recipe.spec.readiness.timeoutSeconds <= 0 ||
-    recipe.spec.readiness.timeoutSeconds > 86_400
-  ) {
-    fail("readiness timeout is invalid");
-  }
 }
 
 function endpointForRole(
@@ -258,14 +488,20 @@ function endpointForRole(
   return endpoint;
 }
 
-function rolePlan(
-  selection: ResolvedManagedInferenceSelection<DualSparkTopologyOutput>,
-  role: DualSparkVllmRole,
-  clusterId: string,
-  planId: string,
-): DualSparkVllmRolePlan {
+interface RolePlanInput {
+  readonly selection: ResolvedManagedInferenceSelection<DualSparkTopologyOutput>;
+  readonly preset: ManagedInferenceServingPreset;
+  readonly recipe: ManagedInferenceServingRecipe;
+  readonly serving: ParsedServingArguments;
+  readonly preparation: DualSparkVllmPreparationPlan;
+  readonly role: DualSparkVllmRole;
+  readonly clusterId: string;
+  readonly planId: string;
+}
+
+function rolePlan(input: RolePlanInput): DualSparkVllmRolePlan {
+  const { clusterId, planId, preparation, preset, recipe, role, selection, serving } = input;
   const output = selection.topologyQualification.output;
-  const recipe = selection.recipe.spec;
   const rank = role === "head" ? 0 : 1;
   const nodeId = role === "head" ? output.headNodeId : output.workerNodeId;
   const node = output.nodes.find(
@@ -276,17 +512,18 @@ function rolePlan(
   const baseLabels = {
     [DUAL_SPARK_MANAGED_LABEL]: "true",
     [DUAL_SPARK_ADAPTER_LABEL]: DUAL_SPARK_VLLM_ADAPTER_ID,
-    [DUAL_SPARK_PRESET_LABEL]: DUAL_SPARK_PRESET_ID,
-    [DUAL_SPARK_RECIPE_LABEL]: DUAL_SPARK_RECIPE_ID,
+    [DUAL_SPARK_PRESET_LABEL]: preset.metadata.id,
+    [DUAL_SPARK_RECIPE_LABEL]: recipe.metadata.id,
     [DUAL_SPARK_ROLE_LABEL]: role,
     [DUAL_SPARK_CLUSTER_LABEL]: clusterId,
     [DUAL_SPARK_PLAN_LABEL]: planId,
     [DUAL_SPARK_GPU_LABEL]: node.gpuId,
-    [DUAL_SPARK_IMAGE_LABEL]: recipe.runtime.image,
-    [DUAL_SPARK_MODEL_REVISION_LABEL]: recipe.model.revision,
+    [DUAL_SPARK_IMAGE_LABEL]: recipe.spec.runtime.image,
+    [DUAL_SPARK_MODEL_REVISION_LABEL]: recipe.spec.model.revision,
   };
   const environment = {
-    ...recipe.runtime.environment,
+    ...recipe.spec.runtime.environment,
+    HF_HOME: recipe.spec.runtime.modelCache.target,
     VLLM_HOST_IP: endpoint.address,
     NCCL_IB_HCA: `${endpoint.hcaDevice}:${String(endpoint.hcaPort)}`,
     NCCL_SOCKET_IFNAME: endpoint.netdev,
@@ -298,6 +535,7 @@ function rolePlan(
     NODE_RANK: String(rank),
     HEADLESS: role === "worker" ? "1" : "",
   };
+  const runtime = recipe.spec.runtime;
 
   return {
     role,
@@ -314,38 +552,21 @@ function rolePlan(
             expectedTarget: output.peer.target,
             bindingHandle: output.peer.sshBindingHandle,
           },
-    image: recipe.runtime.image,
+    image: runtime.image,
     runtime: {
-      networkMode: recipe.runtime.networkMode,
-      ipcMode: recipe.runtime.ipcMode,
-      sharedMemoryBytes: recipe.runtime.sharedMemoryBytes,
-      gpuRequest: "all",
-      devices: recipe.runtime.devices,
-      imageDownloadSizeBytes: recipe.runtime.imageDownloadSizeBytes,
-      ulimits: { memlock: -1, stack: 67_108_864 },
-      modelCache: { source: "huggingface-cache", target: "/cache/huggingface" },
+      architecture: runtime.architecture,
+      networkMode: runtime.networkMode,
+      ipcMode: runtime.ipcMode,
+      sharedMemoryBytes: runtime.sharedMemoryBytes,
+      gpuRequest: runtime.gpuRequest,
+      devices: runtime.devices,
+      imageDownloadSizeBytes: runtime.imageDownloadSizeBytes,
+      pullTimeoutSeconds: runtime.pullTimeoutSeconds,
+      ulimits: { memlock: runtime.ulimits.memlock, stack: runtime.ulimits.stackBytes },
+      modelCache: runtime.modelCache,
+      temporaryFilesystems: runtime.temporaryFilesystems,
     },
-    preparation: {
-      ref: recipe.model.preparationRef,
-      phase: "container-before-exec",
-      modelId: recipe.model.id,
-      modelRevision: recipe.model.revision,
-      modelDownloadSizeBytes: recipe.model.downloadSizeBytes,
-      encodingPath: recipe.model.encodingPath,
-      encodingSourcePath: `/cache/huggingface/hub/models--${recipe.model.id.replaceAll(
-        "/",
-        "--",
-      )}/snapshots/${recipe.model.revision}/${recipe.model.encodingPath}`,
-      encodingTargetPath:
-        "/usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4_encoding.py",
-      reasoningModulePath: "/usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4.py",
-      reasoningCompatibility: {
-        existingText:
-          'elif reasoning_effort in ("max", "xhigh"):\n                reasoning_effort = "max"\n            else:\n                reasoning_effort = "high"',
-        replacementText:
-          'elif reasoning_effort in ("max", "xhigh"):\n                reasoning_effort = "max"\n            elif reasoning_effort == "high":\n                reasoning_effort = "high"\n            else:\n                reasoning_effort = "low"',
-      },
-    },
+    preparation,
     fabric: {
       primaryRailIndex: output.rails[0].index,
       netdev: endpoint.netdev,
@@ -357,11 +578,16 @@ function rolePlan(
     },
     environment,
     command: {
-      executable: "/usr/local/bin/vllm",
-      arguments: commandArguments(selection, rank, endpoint.address),
+      executable: recipe.spec.serve.executable,
+      arguments: commandArguments(
+        recipe,
+        selection.topologyQualification,
+        serving.arguments,
+        rank,
+        endpoint.address,
+      ),
     },
-    endpoint:
-      role === "head" ? `http://${output.masterAddress}:${String(DUAL_SPARK_VLLM_API_PORT)}` : null,
+    endpoint: role === "head" ? `http://${output.masterAddress}:${String(serving.apiPort)}` : null,
     baseLabels,
   };
 }
@@ -369,33 +595,55 @@ function rolePlan(
 /** Compile one resolved, qualified catalog selection into immutable role-local plans. */
 export function materializeDualSparkVllmPlan(
   selection: ResolvedManagedInferenceSelection<DualSparkTopologyOutput>,
+  options: DualSparkVllmMaterializeOptions = {},
 ): DualSparkVllmPlan {
   let snapshot: ResolvedManagedInferenceSelection<DualSparkTopologyOutput>;
+  let catalog: CompiledManagedInferenceCatalog;
   try {
     snapshot = immutableManagedInferenceCopy(selection);
+    catalog = options.catalog
+      ? immutableManagedInferenceCopy(options.catalog)
+      : loadManagedInferenceCatalog();
   } catch {
-    fail("the resolved selection is not immutable JSON data");
+    fail("the resolved selection or catalog is not immutable JSON data");
   }
-  assertShippedSelection(snapshot);
-  const output = snapshot.topologyQualification.output;
-  const clusterId = managedInferenceHexDigest({
-    topologyId: snapshot.topologyQualification.id,
+
+  const selected = assertCatalogSelection(snapshot, catalog);
+  const catalogSelection = { ...snapshot, ...selected };
+  assertRecipeValues(selected.recipe);
+  const serving = servingArguments(selected.recipe);
+  let preparation: DualSparkVllmPreparationPlan;
+  try {
+    preparation = materializeDualSparkVllmPreparation({
+      ...selected.recipe.spec.model,
+      modelCacheTarget: selected.recipe.spec.runtime.modelCache.target,
+    });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : "model preparation is invalid");
+  }
+
+  const topologyIdentity = {
+    id: snapshot.topologyQualification.id,
+    schemaVersion: snapshot.topologyQualification.schemaVersion,
     subjectDigest: snapshot.topologyQualification.subjectDigest,
     outputDigest: snapshot.topologyQualification.outputDigest,
-  });
+  };
+  const clusterId = managedInferenceHexDigest(topologyIdentity);
   const planId = managedInferenceHexDigest({
     adapterId: DUAL_SPARK_VLLM_ADAPTER_ID,
-    catalogDigest: snapshot.catalogDigest,
-    preset: snapshot.preset,
-    recipe: snapshot.recipe,
-    topology: snapshot.topologyQualification,
+    preset: { id: selected.preset.metadata.id, digest: snapshot.presetDigest },
+    recipe: { id: selected.recipe.metadata.id, digest: snapshot.recipeDigest },
+    topology: topologyIdentity,
   });
-  return {
+  const output = snapshot.topologyQualification.output;
+  return immutableManagedInferenceCopy({
     schemaVersion: 1,
     adapterId: DUAL_SPARK_VLLM_ADAPTER_ID,
     catalogDigest: snapshot.catalogDigest,
-    presetId: DUAL_SPARK_PRESET_ID,
-    recipeId: DUAL_SPARK_RECIPE_ID,
+    presetId: selected.preset.metadata.id,
+    presetDigest: snapshot.presetDigest,
+    recipeId: selected.recipe.metadata.id,
+    recipeDigest: snapshot.recipeDigest,
     topologyId: DUAL_SPARK_TOPOLOGY_ID,
     topologySchemaVersion: DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION,
     topologySubjectDigest: snapshot.topologyQualification.subjectDigest,
@@ -403,20 +651,39 @@ export function materializeDualSparkVllmPlan(
     clusterId,
     planId,
     model: {
-      id: snapshot.recipe.spec.model.id,
-      revision: snapshot.recipe.spec.model.revision,
-      servedName: snapshot.recipe.spec.model.servedName,
+      id: selected.recipe.spec.model.id,
+      revision: selected.recipe.spec.model.revision,
+      servedName: selected.recipe.spec.model.servedName,
     },
-    apiPort: DUAL_SPARK_VLLM_API_PORT,
+    authentication: selected.recipe.spec.serve.authentication,
+    apiPort: serving.apiPort,
     masterAddress: output.masterAddress,
     masterPort: DUAL_SPARK_VLLM_MASTER_PORT,
     readiness: {
-      timeoutMs: snapshot.recipe.spec.readiness.timeoutSeconds * 1000,
-      expectedModel: snapshot.recipe.spec.readiness.expectedModel,
+      timeoutMs: selected.recipe.spec.readiness.timeoutSeconds * 1000,
+      expectedModel: selected.recipe.spec.readiness.expectedModel,
     },
     roles: {
-      worker: rolePlan(snapshot, "worker", clusterId, planId),
-      head: rolePlan(snapshot, "head", clusterId, planId),
+      worker: rolePlan({
+        selection: catalogSelection,
+        preset: selected.preset,
+        recipe: selected.recipe,
+        serving,
+        preparation,
+        role: "worker",
+        clusterId,
+        planId,
+      }),
+      head: rolePlan({
+        selection: catalogSelection,
+        preset: selected.preset,
+        recipe: selected.recipe,
+        serving,
+        preparation,
+        role: "head",
+        clusterId,
+        planId,
+      }),
     },
-  };
+  });
 }

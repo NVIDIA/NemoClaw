@@ -38,7 +38,10 @@ function readiness(overrides: Partial<SystemReadinessReport> = {}): SystemReadin
       observedAt: READINESS_OBSERVED_AT,
     },
     observations: [],
-    capabilities: REQUIRED_CAPABILITIES.map((id) => ({ id, state: "present" as const })),
+    capabilities: REQUIRED_CAPABILITIES.map((id) => ({
+      id,
+      state: "present" as const,
+    })),
     qualifications: [
       {
         id: "host.platform.dgx_spark",
@@ -146,8 +149,8 @@ describe("dual DGX Spark topology qualification", () => {
     const result = qualifyDualSparkTopology(qualificationInput());
 
     expect(result.outcome).toBe("qualified");
-    if (result.outcome !== "qualified") return;
-    expect(result.artifact).toMatchObject({
+    const qualified = result as Extract<typeof result, { outcome: "qualified" }>;
+    expect(qualified.artifact).toMatchObject({
       id: DUAL_SPARK_TOPOLOGY_ID,
       schemaVersion: DUAL_SPARK_TOPOLOGY_SCHEMA_VERSION,
       status: "qualified",
@@ -162,18 +165,18 @@ describe("dual DGX Spark topology qualification", () => {
         },
       },
     });
-    expect(result.artifact.subjectDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
-    expect(result.artifact.outputDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
-    expect(result.artifact.output.nodes).toEqual([
+    expect(qualified.artifact.subjectDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(qualified.artifact.outputDigest).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(qualified.artifact.output.nodes).toEqual([
       { nodeId: "spark-head", gpuId: "GPU-head", role: "head" },
       { nodeId: "spark-worker", gpuId: "GPU-worker", role: "worker" },
     ]);
-    expect(result.artifact.output.rails).toHaveLength(2);
-    expect(result.artifact.output.rails.map(({ head }) => head.netdev)).toEqual([
+    expect(qualified.artifact.output.rails).toHaveLength(2);
+    expect(qualified.artifact.output.rails.map(({ head }) => head.netdev)).toEqual([
       "enp1s0f0np0",
       "enP2p1s0f0np0",
     ]);
-    expect(result.artifact.output.rails[0]).toMatchObject({
+    expect(qualified.artifact.output.rails[0]).toMatchObject({
       index: 0,
       head: {
         hcaDevice: "rocep1s0f0",
@@ -257,27 +260,37 @@ describe("dual DGX Spark topology qualification", () => {
       name: "an unknown Spark qualification",
       mutate: (report: SystemReadinessReport) => {
         report.qualifications = [
-          { id: "host.platform.dgx_spark", status: "unknown", capabilityIds: [] },
+          {
+            id: "host.platform.dgx_spark",
+            status: "unknown",
+            capabilityIds: [],
+          },
         ];
       },
       code: "spark-qualification-unavailable",
-    },
-    {
-      name: "an unknown runtime capability",
-      mutate: (report: SystemReadinessReport) => {
-        report.capabilities = report.capabilities.map((capability) =>
-          capability.id === "host.docker.runtime_supported"
-            ? { ...capability, state: "unknown" }
-            : capability,
-        );
-      },
-      code: "runtime-qualification-unavailable",
     },
   ])("fails closed for $name", ({ mutate, code }) => {
     const input = qualificationInput();
     mutate(input.peers[0]!.readiness);
 
-    expect(qualifyDualSparkTopology(input)).toMatchObject({ outcome: "no-match", code });
+    expect(qualifyDualSparkTopology(input)).toMatchObject({
+      outcome: "no-match",
+      code,
+    });
+  });
+
+  it("leaves serving runtime capability policy to preset resolution", () => {
+    const input = qualificationInput();
+    input.peers[0]!.readiness.capabilities = input.peers[0]!.readiness.capabilities.map(
+      (capability) =>
+        capability.id === "host.docker.runtime_supported"
+          ? { ...capability, state: "unknown" }
+          : capability,
+    );
+
+    expect(qualifyDualSparkTopology(input)).toMatchObject({
+      outcome: "qualified",
+    });
   });
 
   it.each([
@@ -307,7 +320,10 @@ describe("dual DGX Spark topology qualification", () => {
     const input = qualificationInput();
     mutate(input);
 
-    expect(qualifyDualSparkTopology(input)).toMatchObject({ outcome: "no-match", code });
+    expect(qualifyDualSparkTopology(input)).toMatchObject({
+      outcome: "no-match",
+      code,
+    });
   });
 
   it.each([
@@ -317,7 +333,10 @@ describe("dual DGX Spark topology qualification", () => {
     const input = qualificationInput();
     input.peers[0]!.runtimeState = state;
 
-    expect(qualifyDualSparkTopology(input)).toMatchObject({ outcome: "no-match", code });
+    expect(qualifyDualSparkTopology(input)).toMatchObject({
+      outcome: "no-match",
+      code,
+    });
   });
 
   it.each([
@@ -374,7 +393,10 @@ describe("dual DGX Spark topology qualification", () => {
     const input = qualificationInput();
     mutate(input);
 
-    expect(qualifyDualSparkTopology(input)).toMatchObject({ outcome: "no-match", code });
+    expect(qualifyDualSparkTopology(input)).toMatchObject({
+      outcome: "no-match",
+      code,
+    });
   });
 
   it("rejects a peer without an opaque pretrusted SSH binding", () => {
@@ -398,7 +420,8 @@ describe("dual DGX Spark topology qualification", () => {
     const second = qualifyDualSparkTopology(secondInput);
     expect(first.outcome).toBe("qualified");
     expect(second.outcome).toBe("qualified");
-    if (first.outcome !== "qualified" || second.outcome !== "qualified") return;
-    expect(second.artifact).toEqual(first.artifact);
+    const firstQualified = first as Extract<typeof first, { outcome: "qualified" }>;
+    const secondQualified = second as Extract<typeof second, { outcome: "qualified" }>;
+    expect(secondQualified.artifact).toEqual(firstQualified.artifact);
   });
 });

@@ -1,5 +1,5 @@
 {
-  "catalogDigest": "sha256:a3d23879b39b36e3ab80cee6846f4a6e7866bfe3589f650bc72ad92e2b182788",
+  "catalogDigest": "sha256:a38d1e4e861f412ddaaa603b1ae4c7521e10c3d4ec80f102eee950fb28acb4a8",
   "compilerVersion": "1.0.0",
   "presets": [
     {
@@ -24,6 +24,7 @@
             },
             "recipeRef": "vllm.deepseek-v4-flash-0731.spark-dual.v1"
           },
+          "priority": 400,
           "requirements": {
             "all": [
               {
@@ -32,6 +33,78 @@
                   "kind": "qualification",
                   "scope": "everyNode",
                   "status": "qualified"
+                }
+              },
+              {
+                "readiness": {
+                  "id": "host.platform.supported",
+                  "kind": "capability",
+                  "scope": "everyNode",
+                  "state": "present"
+                }
+              },
+              {
+                "readiness": {
+                  "id": "host.platform.dgx_spark",
+                  "kind": "capability",
+                  "scope": "everyNode",
+                  "state": "present"
+                }
+              },
+              {
+                "readiness": {
+                  "id": "host.docker.available",
+                  "kind": "capability",
+                  "scope": "everyNode",
+                  "state": "present"
+                }
+              },
+              {
+                "readiness": {
+                  "id": "host.docker.daemon_reachable",
+                  "kind": "capability",
+                  "scope": "everyNode",
+                  "state": "present"
+                }
+              },
+              {
+                "readiness": {
+                  "id": "host.docker.runtime_supported",
+                  "kind": "capability",
+                  "scope": "everyNode",
+                  "state": "present"
+                }
+              },
+              {
+                "readiness": {
+                  "id": "host.docker.storage_compatible",
+                  "kind": "capability",
+                  "scope": "everyNode",
+                  "state": "present"
+                }
+              },
+              {
+                "readiness": {
+                  "id": "host.gpu.nvidia_available",
+                  "kind": "capability",
+                  "scope": "everyNode",
+                  "state": "present"
+                }
+              },
+              {
+                "readiness": {
+                  "id": "host.gpu.container_toolkit_available",
+                  "kind": "capability",
+                  "scope": "everyNode",
+                  "state": "present"
+                }
+              },
+              {
+                "readiness": {
+                  "id": "host.gpu.cdi_healthy",
+                  "kind": "capability",
+                  "scope": "everyNode",
+                  "state": "present"
                 }
               },
               {
@@ -52,7 +125,7 @@
           "selection": "automatic"
         }
       },
-      "definitionDigest": "sha256:ab115dd1842489f0eb64aa54e26b4ef2d8ff8e5725fa5b3af84398d31ff2f523",
+      "definitionDigest": "sha256:a49aa9a24b28b9b5b077d9b9e14f94cd38b328a45e6129704a1a7fb9def72262",
       "sourceFile": "managed-inference/presets/vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731.yaml"
     }
   ],
@@ -86,9 +159,21 @@
           },
           "model": {
             "downloadSizeBytes": 166898661074,
-            "encodingPath": "encoding/encoding_dsv4.py",
+            "gated": false,
             "id": "deepseek-ai/DeepSeek-V4-Flash-0731",
-            "preparationRef": "deepseek-v4-flash-0731/v1",
+            "installFastSafetensors": false,
+            "preparation": {
+              "exactTextReplacement": {
+                "expectedText": "elif reasoning_effort in (\"max\", \"xhigh\"):\n                reasoning_effort = \"max\"\n            else:\n                reasoning_effort = \"high\"",
+                "replacementText": "elif reasoning_effort in (\"max\", \"xhigh\"):\n                reasoning_effort = \"max\"\n            elif reasoning_effort == \"high\":\n                reasoning_effort = \"high\"\n            else:\n                reasoning_effort = \"low\"",
+                "targetPath": "/usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4.py"
+              },
+              "ref": "snapshot-copy-and-exact-text-replacement/v1",
+              "snapshotCopy": {
+                "sourcePath": "encoding/encoding_dsv4.py",
+                "targetPath": "/usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4_encoding.py"
+              }
+            },
             "revision": "9e165c30e2704aec5d9d593cce3eebd58bbef1cb",
             "servedName": "deepseek-v4-flash-0731"
           },
@@ -108,7 +193,6 @@
               "FLASHINFER_CUDA_ARCH_LIST": "12.1a",
               "FLASHINFER_DISABLE_VERSION_CHECK": "1",
               "FLASHINFER_WORKSPACE_BASE": "/cache/huggingface/flashinfer",
-              "HF_HOME": "/cache/huggingface",
               "HF_HUB_DISABLE_XET": "1",
               "HF_HUB_OFFLINE": "1",
               "NCCL_CROSS_NIC": "1",
@@ -132,11 +216,45 @@
               "VLLM_USE_BREAKABLE_CUDAGRAPH": "0",
               "VLLM_USE_FLASHINFER_SAMPLER": "1"
             },
+            "gpuRequest": "all",
             "image": "ghcr.io/anemll/dspark-vllm-gx10@sha256:a83948492cf13df455170fb42885f5ef4db54fefe0feff0f841ecbff464ac9d8",
             "imageDownloadSizeBytes": 9787537825,
             "ipcMode": "host",
+            "modelCache": {
+              "source": "huggingface-cache",
+              "target": "/cache/huggingface"
+            },
             "networkMode": "host",
-            "sharedMemoryBytes": 68719476736
+            "pullTimeoutSeconds": 43200,
+            "sharedMemoryBytes": 68719476736,
+            "temporaryFilesystems": [
+              {
+                "mode": "0700",
+                "options": [
+                  "rw",
+                  "nosuid",
+                  "nodev",
+                  "exec"
+                ],
+                "sizeBytes": 17179869184,
+                "target": "/cache/huggingface"
+              },
+              {
+                "mode": "1777",
+                "options": [
+                  "rw",
+                  "nosuid",
+                  "nodev",
+                  "exec"
+                ],
+                "sizeBytes": 17179869184,
+                "target": "/tmp"
+              }
+            ],
+            "ulimits": {
+              "memlock": -1,
+              "stackBytes": 67108864
+            }
           },
           "serve": {
             "arguments": [
@@ -226,24 +344,25 @@
                 "name": "--enable-flashinfer-autotune"
               }
             ],
-            "authentication": "bearer"
+            "authentication": "bearer",
+            "executable": "/usr/local/bin/vllm"
           }
         }
       },
-      "definitionDigest": "sha256:9ff596013e4e4bb6d22ead3aff23917437239e0bcfbf7f8af79e27f5ec908f0f",
+      "definitionDigest": "sha256:47d72d6065cf9cf942034dcd7eb32199c800bb56a046950cf2c79de2a4796fa5",
       "sourceFile": "managed-inference/recipes/vllm.deepseek-v4-flash-0731.spark-dual.v1.yaml"
     }
   ],
   "schemaVersion": "1.0.0",
   "sourceFiles": [
     {
-      "digest": "sha256:e0c4c3a6f175d1ce65bdc1f7d8d4b59247909e884949110628017d7b4adb85a8",
+      "digest": "sha256:3ec369485750277058344be345187cdac9318d5b1ea2eef55ce78c33c62891ba",
       "path": "managed-inference/presets/vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731.yaml"
     },
     {
-      "digest": "sha256:1dda2fbb6358718dcb718adfb836d43f4dc7bf446f196794e8f9a2dc95087802",
+      "digest": "sha256:f59a45f2661f2ce072b3888802b8d081fb8d747c322c74e1d660a4d969ef0cf9",
       "path": "managed-inference/recipes/vllm.deepseek-v4-flash-0731.spark-dual.v1.yaml"
     }
   ],
-  "sourceRevision": "sha256:d7a897e9b3424f44aa0662a0452da2921686ee3f6779fd0b2d0e858b5625b328"
+  "sourceRevision": "sha256:1602dfca0d1166579893c17a34fd41d39c8a7da99c903f40d3a1fb0466df3584"
 }

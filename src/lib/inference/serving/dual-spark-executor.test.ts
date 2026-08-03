@@ -7,6 +7,7 @@ import {
   createDualStationSshBindingFixture,
   type DualStationSshBindingFixture,
 } from "../vllm-station-ssh-binding.test-support.js";
+import { NO_PREPARATION_REF } from "./adapter-registry.js";
 import {
   assertDualSparkVllmExecutorConfig,
   buildDualSparkVllmRunArgs,
@@ -129,6 +130,36 @@ function runtimeOverrides(
   };
 }
 
+type DockerCaptureHandler = (args: readonly string[], options?: DockerCaptureOptions) => string;
+
+function fixedDockerCapture(value: string): DockerCaptureHandler {
+  return () => value;
+}
+
+function unexpectedDockerCapture(args: readonly string[]): never {
+  throw new Error(`unexpected Docker argv: ${args.join(" ")}`);
+}
+
+function routeDockerCapture(
+  args: readonly string[],
+  options: DockerCaptureOptions | undefined,
+  handlers: {
+    readonly quiet: DockerCaptureHandler;
+    readonly inspect: DockerCaptureHandler;
+    readonly exec: DockerCaptureHandler;
+    readonly fallback: DockerCaptureHandler;
+  },
+): string {
+  const handler = args.includes("--quiet")
+    ? handlers.quiet
+    : args.includes("inspect")
+      ? handlers.inspect
+      : args[0] === "exec"
+        ? handlers.exec
+        : handlers.fallback;
+  return handler(args, options);
+}
+
 describe("dual-DGX-Spark vLLM executor", () => {
   let bindingFixture: DualStationSshBindingFixture;
   let plan: DualSparkVllmPlan;
@@ -143,7 +174,7 @@ describe("dual-DGX-Spark vLLM executor", () => {
     vi.restoreAllMocks();
   });
 
-  it("builds the pinned host-network role launch without a restart policy or bearer value", () => {
+  it("builds the YAML-backed role launch without a restart policy or bearer value", () => {
     const head = plan.roles.head;
     const args = buildDualSparkVllmRunArgs(head, LOCAL_CACHE_ROOT, launchLabels(head));
     const command = args.at(-1)!;
@@ -153,38 +184,72 @@ describe("dual-DGX-Spark vLLM executor", () => {
         "--pull=never",
         "--init",
         "--network",
-        "host",
+        head.runtime.networkMode,
         "--ipc",
-        "host",
+        head.runtime.ipcMode,
         "--shm-size",
-        "64g",
+        String(head.runtime.sharedMemoryBytes),
         "--gpus",
-        "all",
+        head.runtime.gpuRequest,
         "--device",
-        "/dev/infiniband",
+        head.runtime.devices[0],
         "--ulimit",
-        "memlock=-1",
-        "stack=67108864",
+        `memlock=${String(head.runtime.ulimits.memlock)}`,
+        `stack=${String(head.runtime.ulimits.stack)}`,
         "--tmpfs",
-        "/cache/huggingface:rw,nosuid,nodev,exec,size=17179869184,mode=0700",
-        "/tmp:rw,nosuid,nodev,exec,size=17179869184,mode=1777",
+        ...head.runtime.temporaryFilesystems.map(
+          (filesystem) =>
+            `${filesystem.target}:${[
+              ...filesystem.options,
+              `size=${String(filesystem.sizeBytes)}`,
+              `mode=${filesystem.mode}`,
+            ].join(",")}`,
+        ),
         "--volume",
-        `${LOCAL_CACHE_ROOT}/hub:/cache/huggingface/hub:ro`,
+        `${LOCAL_CACHE_ROOT}/hub:${head.runtime.modelCache.target}/hub:ro`,
         "--env",
         "VLLM_API_KEY",
         head.image,
       ]),
     );
     expect(args).not.toContain("--restart");
-    expect(args).not.toContain(`${LOCAL_CACHE_ROOT}:/cache/huggingface`);
+    expect(args).not.toContain(`${LOCAL_CACHE_ROOT}:${head.runtime.modelCache.target}`);
     expect(JSON.stringify(args)).not.toContain(API_KEY);
     expect(command).toContain("install -m 0644 --");
-    expect(command).toContain("deepseek_v4_encoding.py");
-    expect(command).toContain("reasoning compatibility source text did not match exactly once");
+    expect(head.preparation.ref).not.toBe(NO_PREPARATION_REF);
+    const boundedPreparation = head.preparation as Exclude<
+      typeof head.preparation,
+      { ref: typeof NO_PREPARATION_REF }
+    >;
+    expect(command).toContain(boundedPreparation.snapshotCopy.targetPath);
+    expect(command).toContain("preparation source text did not match exactly once");
     expect(command).not.toContain("--api-key");
     expect(command).not.toContain("$VLLM_API_KEY");
     expect(command).toContain("'--host' '192.168.100.10'");
-    expect(command).toContain("exec '/usr/local/bin/vllm'");
+    expect(command).toContain(`exec '${head.command.executable}'`);
+  });
+
+  it("dispatches the no-op preparation and YAML-backed executable without patch steps", () => {
+    const head: DualSparkVllmRolePlan = {
+      ...plan.roles.head,
+      preparation: {
+        ref: NO_PREPARATION_REF,
+        phase: "container-before-exec",
+        modelId: plan.model.id,
+        modelRevision: plan.model.revision,
+        modelDownloadSizeBytes: plan.roles.head.preparation.modelDownloadSizeBytes,
+      },
+      command: {
+        executable: "/opt/vllm/bin/vllm",
+        arguments: ["serve", "synthetic/model"],
+      },
+    };
+
+    const command = buildDualSparkVllmRunArgs(head, LOCAL_CACHE_ROOT, launchLabels(head)).at(-1)!;
+
+    expect(command).toContain("exec '/opt/vllm/bin/vllm' 'serve' 'synthetic/model'");
+    expect(command).not.toContain("install -m");
+    expect(command).not.toContain("python3 -c");
   });
 
   it("keeps the worker launch headless and free of the bearer environment key", () => {
@@ -257,34 +322,63 @@ describe("dual-DGX-Spark vLLM executor", () => {
     );
   });
 
+  it("validates selected definition digests without pinning the aggregate catalog", () => {
+    const config = {
+      plan,
+      peerSshBinding: bindingFixture.binding,
+      localCacheRoot: LOCAL_CACHE_ROOT,
+      peerCacheRoot: PEER_CACHE_ROOT,
+    };
+    const catalogExpandedElsewhere: DualSparkVllmPlan = {
+      ...plan,
+      catalogDigest: `sha256:${"e".repeat(64)}`,
+    };
+
+    expect(() =>
+      assertDualSparkVllmExecutorConfig({
+        ...config,
+        plan: catalogExpandedElsewhere,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertDualSparkVllmExecutorConfig({
+        ...config,
+        plan: { ...plan, recipeDigest: `sha256:${"f".repeat(64)}` },
+      }),
+    ).toThrow(/selected definition digests/u);
+  });
+
   it("inspects every container plus host listeners and marks only the exact live role healthy", async () => {
     const headLabels = launchLabels(plan.roles.head);
     const foreignLabels = { "example.foreign": "true" };
-    const dockerCapture = vi.fn((args: readonly string[]) => {
-      if (args.includes("--quiet")) return `${HEAD_ID}\n${FOREIGN_ID}\n`;
-      if (args.includes("inspect")) {
-        return [
-          inspectionRow({
-            id: HEAD_ID,
-            name: plan.roles.head.containerName,
-            image: plan.roles.head.image,
-            running: true,
-            labels: headLabels,
-          }),
-          inspectionRow({
-            id: FOREIGN_ID,
-            name: "unrelated-service",
-            image: "example.invalid/foreign:latest",
-            running: true,
-            labels: foreignLabels,
-          }),
-        ].join("\n");
-      }
-      if (args[0] === "exec") return "ready";
-      throw new Error(`unexpected Docker argv: ${args.join(" ")}`);
-    });
+    const dockerCapture = vi.fn((args: readonly string[], options?: DockerCaptureOptions) =>
+      routeDockerCapture(args, options, {
+        quiet: fixedDockerCapture(`${HEAD_ID}\n${FOREIGN_ID}\n`),
+        inspect: fixedDockerCapture(
+          [
+            inspectionRow({
+              id: HEAD_ID,
+              name: plan.roles.head.containerName,
+              image: plan.roles.head.image,
+              running: true,
+              labels: headLabels,
+            }),
+            inspectionRow({
+              id: FOREIGN_ID,
+              name: "unrelated-service",
+              image: "example.invalid/foreign:latest",
+              running: true,
+              labels: foreignLabels,
+            }),
+          ].join("\n"),
+        ),
+        exec: fixedDockerCapture("ready"),
+        fallback: unexpectedDockerCapture,
+      }),
+    );
     const captureListeners = vi.fn(
-      () => "LISTEN 0 4096 0.0.0.0:8000 0.0.0.0:*\nLISTEN 0 128 [::]:25000 [::]:*\n",
+      () =>
+        `LISTEN 0 4096 0.0.0.0:${String(plan.apiPort)} 0.0.0.0:*\nLISTEN 0 128 [::]:${String(plan.masterPort)} [::]:*\n`,
     );
     const executor = createDualSparkVllmExecutor(
       {
@@ -298,10 +392,16 @@ describe("dual-DGX-Spark vLLM executor", () => {
 
     const snapshot = await executor.inspectNode(plan.roles.head);
 
-    expect(snapshot.listeningPorts).toEqual([8000, 25000]);
+    expect(snapshot.listeningPorts).toEqual([plan.apiPort, plan.masterPort].sort((a, b) => a - b));
     expect(snapshot.containers).toHaveLength(2);
-    expect(snapshot.containers[0]).toMatchObject({ id: HEAD_ID, healthy: true });
-    expect(snapshot.containers[1]).toMatchObject({ id: FOREIGN_ID, healthy: false });
+    expect(snapshot.containers[0]).toMatchObject({
+      id: HEAD_ID,
+      healthy: true,
+    });
+    expect(snapshot.containers[1]).toMatchObject({
+      id: FOREIGN_ID,
+      healthy: false,
+    });
     expect(dockerCapture).toHaveBeenCalledWith(
       expect.arrayContaining(["container", "inspect", HEAD_ID, FOREIGN_ID]),
       expect.any(Object),
@@ -327,18 +427,20 @@ describe("dual-DGX-Spark vLLM executor", () => {
       const role = options?.env?.DOCKER_HOST ? "worker" : "head";
       const rolePlan = plan.roles[role];
       const id = role === "worker" ? WORKER_ID : HEAD_ID;
-      if (args.includes("--quiet")) return id;
-      if (args.includes("inspect")) {
-        return inspectionRow({
-          id,
-          name: rolePlan.containerName,
-          image: rolePlan.image,
-          running: true,
-          labels: launchLabels(rolePlan),
-        });
-      }
-      if (args[0] === "exec") return "ready";
-      throw new Error(`unexpected Docker argv: ${args.join(" ")}`);
+      return routeDockerCapture(args, options, {
+        quiet: fixedDockerCapture(id),
+        inspect: fixedDockerCapture(
+          inspectionRow({
+            id,
+            name: rolePlan.containerName,
+            image: rolePlan.image,
+            running: true,
+            labels: launchLabels(rolePlan),
+          }),
+        ),
+        exec: fixedDockerCapture("ready"),
+        fallback: unexpectedDockerCapture,
+      });
     });
     let tick = 0;
     const executor = createDualSparkVllmExecutor(
@@ -370,26 +472,28 @@ describe("dual-DGX-Spark vLLM executor", () => {
     const dockerCapture = vi.fn((args: readonly string[], options?: DockerCaptureOptions) => {
       const role = options?.env?.DOCKER_HOST ? "worker" : "head";
       const id = role === "worker" ? WORKER_ID : FOREIGN_ID;
-      if (args.includes("--quiet")) return id;
-      if (args.includes("inspect")) {
-        return role === "worker"
-          ? inspectionRow({
-              id,
-              name: plan.roles.worker.containerName,
-              image: plan.roles.worker.image,
-              running: true,
-              labels: launchLabels(plan.roles.worker),
-            })
-          : inspectionRow({
-              id,
-              name: foreign.name,
-              image: foreign.image,
-              running: false,
-              labels: foreign.labels,
-            });
-      }
-      if (args[0] === "exec") return "ready";
-      throw new Error(`unexpected Docker argv: ${args.join(" ")}`);
+      return routeDockerCapture(args, options, {
+        quiet: fixedDockerCapture(id),
+        inspect: fixedDockerCapture(
+          role === "worker"
+            ? inspectionRow({
+                id,
+                name: plan.roles.worker.containerName,
+                image: plan.roles.worker.image,
+                running: true,
+                labels: launchLabels(plan.roles.worker),
+              })
+            : inspectionRow({
+                id,
+                name: foreign.name,
+                image: foreign.image,
+                running: false,
+                labels: foreign.labels,
+              }),
+        ),
+        exec: fixedDockerCapture("ready"),
+        fallback: unexpectedDockerCapture,
+      });
     });
     let tick = 0;
     const executor = createDualSparkVllmExecutor(
@@ -417,20 +521,22 @@ describe("dual-DGX-Spark vLLM executor", () => {
 
   it("starts one exact head with the bearer only in the Docker subprocess environment", async () => {
     const labels = launchLabels(plan.roles.head);
-    const dockerCapture = vi.fn((args: readonly string[]) => {
-      if (args.includes("--quiet")) return HEAD_ID;
-      if (args.includes("inspect")) {
-        return inspectionRow({
-          id: HEAD_ID,
-          name: plan.roles.head.containerName,
-          image: plan.roles.head.image,
-          running: true,
-          labels,
-        });
-      }
-      if (args[0] === "exec") return "ready";
-      throw new Error(`unexpected Docker argv: ${args.join(" ")}`);
-    });
+    const dockerCapture = vi.fn((args: readonly string[], options?: DockerCaptureOptions) =>
+      routeDockerCapture(args, options, {
+        quiet: fixedDockerCapture(HEAD_ID),
+        inspect: fixedDockerCapture(
+          inspectionRow({
+            id: HEAD_ID,
+            name: plan.roles.head.containerName,
+            image: plan.roles.head.image,
+            running: true,
+            labels,
+          }),
+        ),
+        exec: fixedDockerCapture("ready"),
+        fallback: unexpectedDockerCapture,
+      }),
+    );
     const dockerRunDetached = vi.fn<DualSparkVllmExecutorRuntimeDeps["dockerRunDetached"]>(() =>
       successfulDockerResult(`${HEAD_ID}\n`),
     );
@@ -503,24 +609,30 @@ describe("dual-DGX-Spark vLLM executor", () => {
         rolePlan: plan.roles.head,
         preparation: plan.roles.head.preparation,
       }),
-    ).resolves.toMatchObject({ ok: false, reason: expect.stringContaining("not configured") });
+    ).resolves.toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("not configured"),
+    });
   });
 
   it("removes only the revalidated exact container ID", async () => {
     const labels = launchLabels(plan.roles.head);
-    const dockerCapture = vi.fn((args: readonly string[]) => {
-      if (args.includes("--quiet")) return HEAD_ID;
-      if (args.includes("inspect")) {
-        return inspectionRow({
-          id: HEAD_ID,
-          name: plan.roles.head.containerName,
-          image: plan.roles.head.image,
-          running: false,
-          labels,
-        });
-      }
-      return "";
-    });
+    const dockerCapture = vi.fn((args: readonly string[], options?: DockerCaptureOptions) =>
+      routeDockerCapture(args, options, {
+        quiet: fixedDockerCapture(HEAD_ID),
+        inspect: fixedDockerCapture(
+          inspectionRow({
+            id: HEAD_ID,
+            name: plan.roles.head.containerName,
+            image: plan.roles.head.image,
+            running: false,
+            labels,
+          }),
+        ),
+        exec: fixedDockerCapture(""),
+        fallback: fixedDockerCapture(""),
+      }),
+    );
     const dockerForceRm = vi.fn(() => successfulDockerResult());
     const executor = createDualSparkVllmExecutor(
       {
@@ -561,7 +673,10 @@ describe("dual-DGX-Spark vLLM executor", () => {
         ok: true,
         httpStatus: 200,
         curlStatus: 0,
-        body: JSON.stringify({ model: plan.model.servedName, choices: [{ message: {} }] }),
+        body: JSON.stringify({
+          model: plan.model.servedName,
+          choices: [{ message: {} }],
+        }),
         stderr: "",
         message: "",
       });
@@ -584,7 +699,10 @@ describe("dual-DGX-Spark vLLM executor", () => {
     await expect(executor.probeModels(request)).resolves.toBe(true);
     await expect(executor.probeChat(request)).resolves.toBe(true);
     await expect(
-      executor.probeModels({ ...request, baseUrl: "http://attacker.invalid:8000" }),
+      executor.probeModels({
+        ...request,
+        baseUrl: `http://attacker.invalid:${String(plan.apiPort)}`,
+      }),
     ).resolves.toBe(false);
     for (const [argv, options] of runCurlProbe.mock.calls) {
       expect(JSON.stringify(argv)).not.toContain(API_KEY);
