@@ -19,6 +19,8 @@ The target shape is a machine-driven onboarding runner:
 
 In that final shape, `src/lib/onboard.ts` should be a thin entrypoint. State handlers should own state-specific prompts, resume validation, repair decisions, and side effects.
 
+The strict runner owns exact `init`, `preflight`, `provider_selection`, `inference`, and `sandbox` entry. If the durable state is later than a slice entry, earlier phases run as evented prerequisite repairs. A repair must return a legal, update-free transition chain and must not change the durable entry state.
+
 ## State ownership
 
 Machine states are coarse user-visible onboarding phases, not every subprocess or probe inside a phase. The current vocabulary is intentionally limited to major boundaries:
@@ -91,7 +93,7 @@ without a state transition so a later process can resume the same non-terminal s
 - applying safe session context updates;
 - marking terminal states;
 - emitting redacted lifecycle, state, repair, resume-conflict, and hook events;
-- preserving compatibility with normalized older sessions.
+- normalizing older sessions before strict execution.
 
 The runtime should reject invalid transitions before they can be persisted.
 
