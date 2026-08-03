@@ -369,8 +369,8 @@ describe("locked OpenClaw production installation (#5896)", () => {
       expect.arrayContaining([
         expect.objectContaining({
           directory: "agents/openclaw/openclaw-runtime",
-          lockSha256: LOCK_SHA256,
           packageSpec: PACKAGE_SPEC,
+          reviewedLockSha256: expect.arrayContaining([LOCK_SHA256]),
         }),
       ]),
     );

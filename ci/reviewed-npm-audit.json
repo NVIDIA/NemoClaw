@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "nodeVersion": "22.23.1",
   "registryOrigin": "https://registry.npmjs.org/",
   "severityThreshold": "high",
@@ -70,7 +70,10 @@
       "integrity": "sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==",
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz",
       "directory": "agents/openclaw/openclaw-runtime",
-      "lockSha256": "82489f62febb12da52833c0b1f7f6969f7e21a098c565ef1f91342b1e5e32d88"
+      "reviewedLockSha256": [
+        "82489f62febb12da52833c0b1f7f6969f7e21a098c565ef1f91342b1e5e32d88",
+        "fdbee91a3f3a0222ec2e8e34864d09dfcff4711e86ac6bfa4d475af0593acd51"
+      ]
     },
     {
       "id": "mcporter-runtime",
@@ -79,7 +82,9 @@
       "integrity": "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==",
       "tarballUrl": "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tgz",
       "directory": "agents/openclaw/mcporter-runtime",
-      "lockSha256": "c31959d7950903f7477ca2e143b3f1f4adfd10f1961fe97db40cd72f62b84830"
+      "reviewedLockSha256": [
+        "c31959d7950903f7477ca2e143b3f1f4adfd10f1961fe97db40cd72f62b84830"
+      ]
     }
   ]
 }

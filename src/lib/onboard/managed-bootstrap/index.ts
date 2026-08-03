@@ -20,3 +20,7 @@ export {
   serializeManagedBootstrapEnvelope,
   serializeManagedBootstrapImageCompletion,
 } from "./envelope";
+export type {
+  ManagedBootstrapRuntimeCreateLifecycle,
+  ManagedBootstrapRuntimePatch,
+} from "./runtime-create";

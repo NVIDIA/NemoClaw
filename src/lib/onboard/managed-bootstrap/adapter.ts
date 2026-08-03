@@ -25,6 +25,8 @@ const PROCESS_INJECTION_ENV_KEYS = new Set([
   "LD_AUDIT",
   "LD_LIBRARY_PATH",
   "LD_PRELOAD",
+  "NODE_OPTIONS",
+  "NODE_PATH",
   "PS4",
   "SHELLOPTS",
 ]);
@@ -931,13 +933,15 @@ function normalizePreparedReplacement(
   });
 }
 
-function createPreparedAuthority(
+export function createManagedBootstrapPlanFingerprint(plan: ManagedBootstrapExpectedPlan): string {
+  return createHash("sha256").update(canonicalJson(plan), "utf8").digest("hex");
+}
+
+export function createManagedBootstrapPreparedAuthority(
   transaction: ManagedBootstrapPreparedTransaction,
 ): ManagedBootstrapPreparedAuthority {
   const { handle, snapshot, prepared } = transaction;
-  const planFingerprint = createHash("sha256")
-    .update(canonicalJson(handle.plan), "utf8")
-    .digest("hex");
+  const planFingerprint = createManagedBootstrapPlanFingerprint(handle.plan);
   const bound = Object.freeze({
     schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
     phase: "prepared" as const,
@@ -1358,7 +1362,7 @@ export async function activateManagedBootstrapSequence(
   let durablePreparation: ManagedBootstrapDurablePreparationReceipt | null = null;
   let replacement: ManagedBootstrapReplacementHandle | null = null;
   try {
-    const authority = createPreparedAuthority(input.transaction);
+    const authority = createManagedBootstrapPreparedAuthority(input.transaction);
     durablePreparation = normalizeDurablePreparationReceipt(
       await input.authorityStore.recordPreparedAuthority(authority),
       authority,
