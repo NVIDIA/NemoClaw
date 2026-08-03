@@ -87,6 +87,7 @@ if scenario == "perms-drift-reseals":
     lock()  # perms-only drift must fall through to re-seal, not raise
     check("freeze" in ran and "install" in ran and "commit" in ran, "expected re-seal")
     check(g._resealed_drift is True, "expected resealedDrift flag set for the result JSON")
+    check("fail_closed" not in ran, "re-seal path must not fall into fail-closed")
 elif scenario == "other-error-reraised":
     g._verify_locked_files = raising("verify", "startup-not-ready")
     code = None
