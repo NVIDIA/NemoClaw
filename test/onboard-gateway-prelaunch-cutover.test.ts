@@ -8,6 +8,7 @@ import {
   type DockerDriverGatewayCutoverInput,
   readDockerDriverGatewayHealth,
   runDockerDriverGatewayCutover,
+  runDockerDriverGatewayManagedFallback,
 } from "../src/lib/onboard/docker-driver-gateway-cutover";
 
 type Event = {
@@ -119,6 +120,21 @@ describe("Docker-driver gateway prelaunch cutover (#5968)", () => {
     expect(calls).toEqual([["status"], ["gateway", "info", "-g", "nemoclaw"], ["gateway", "info"]]);
   });
 
+  it("skips standalone cutover when managed startup succeeds (#8104)", async () => {
+    let standaloneCalls = 0;
+
+    await expect(
+      runDockerDriverGatewayManagedFallback(
+        async () => true,
+        async () => {
+          standaloneCalls += 1;
+          return "launch";
+        },
+      ),
+    ).resolves.toBe("managed");
+    expect(standaloneCalls).toBe(0);
+  });
+
   it("reaps stale port listeners before allowing a fresh launch", async () => {
     const harness = makeHarness({
       listenerPids: [4242, 4343],
@@ -164,6 +180,24 @@ describe("Docker-driver gateway prelaunch cutover (#5968)", () => {
     await expect(harness.run()).rejects.toThrow("gateway port remains occupied");
     expect(harness.events).toContainEqual({ type: "prelaunch-reap", extraPids: [] });
     expect(harness.events.some((event) => event.type === "http-ready")).toBe(false);
+    expect(harness.events.some((event) => event.type === "spawn-fresh")).toBe(false);
+  });
+
+  it("preserves the occupied-port gate after managed startup falls back (#8104)", async () => {
+    const harness = makeHarness({
+      listenerPids: [],
+      scanComplete: true,
+      pidFileGatewayPid: null,
+      postReapPortAvailable: false,
+    });
+
+    await expect(
+      runDockerDriverGatewayManagedFallback(
+        async () => false,
+        () => harness.run(),
+      ),
+    ).rejects.toThrow("gateway port remains occupied");
+    expect(harness.events).toContainEqual({ type: "prelaunch-reap", extraPids: [] });
     expect(harness.events.some((event) => event.type === "spawn-fresh")).toBe(false);
   });
 

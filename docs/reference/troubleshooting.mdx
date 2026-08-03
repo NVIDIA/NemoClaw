@@ -932,17 +932,14 @@ Follow these steps to reconnect.
    brew services restart openshell
    ```
 
-   If the Homebrew service cannot be inspected, started, or made healthy during onboarding, NemoClaw prints this command for the formula logs:
+   During onboarding, a missing `openshell` formula uses the standalone fallback.
+   If the installed service fails inspection, startup, or its health check, NemoClaw prints this log command:
 
    ```bash
    tail -n 200 "$(brew --prefix)/var/log/openshell/openshell-gateway.out.log" "$(brew --prefix)/var/log/openshell/openshell-gateway.err.log"
    ```
 
-   NemoClaw attempts to stop a service that reached startup and use the standalone fallback.
-   The standalone gateway starts only after NemoClaw verifies exclusive ownership of the gateway port.
-   If Homebrew is present but the `openshell` formula is missing, onboarding also uses the standalone fallback.
    Rerun the NemoClaw installer to restore the managed service for later onboarding runs.
-   An installed `openshell` formula from another tap remains a hard failure; rerun the installer to restore the official formula.
 
    On Linux package installs, inspect and restart the upstream service.
 
@@ -951,7 +948,7 @@ Follow these steps to reconnect.
    systemctl --user restart openshell-gateway
    ```
 
-   If the service cannot be inspected, started, or made healthy during onboarding, NemoClaw prints this command for its logs:
+   After an inspection, start, or health failure, NemoClaw prints this log command:
 
    ```bash
    journalctl --user --unit openshell-gateway --no-pager --lines=200
@@ -964,7 +961,7 @@ Follow these steps to reconnect.
    systemctl --user restart nemoclaw-openshell-gateway
    ```
 
-   For this service, NemoClaw prints the following log command after an onboarding failure:
+   After an inspection, start, or health failure, NemoClaw prints:
 
    ```bash
    journalctl --user --unit nemoclaw-openshell-gateway --no-pager --lines=200
@@ -972,7 +969,7 @@ Follow these steps to reconnect.
 
    The tarball unit is under `$XDG_CONFIG_HOME/systemd/user`, or `~/.config/systemd/user` when `XDG_CONFIG_HOME` is not absolute.
    It starts with your user session; NemoClaw does not enable lingering.
-   On Linux, NemoClaw attempts to stop a service that reached startup and use the standalone fallback.
+   Managed-service inspection, start, and health failures on either platform attempt the standalone fallback.
    The standalone gateway starts only after NemoClaw verifies exclusive ownership of the gateway port.
    The fallback does not bypass managed-service trust validation or unsafe environment configuration.
    These conditions remain hard failures:
