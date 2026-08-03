@@ -55,6 +55,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     const lockfile = path.join(root, "package-lock.json");
     const currentContents = "current lock\n";
     const replacementContents = "replacement lock\n";
+    const unreviewedContents = "unreviewed lock\n";
     const current = createHash("sha256").update(currentContents).digest("hex");
     const replacement = createHash("sha256").update(replacementContents).digest("hex");
     try {
@@ -64,7 +65,8 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
       expect(selectReviewedLockSha256(lockfile, current, replacement, "test graph")).toBe(
         replacement,
       );
-      expect(() => selectReviewedLockSha256(lockfile, current, undefined, "test graph")).toThrow(
+      fs.writeFileSync(lockfile, unreviewedContents);
+      expect(() => selectReviewedLockSha256(lockfile, current, replacement, "test graph")).toThrow(
         "lock SHA-256 mismatch",
       );
     } finally {
