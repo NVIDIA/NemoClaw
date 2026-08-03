@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
+import type {
+  ManagedBootstrapRuntimeCreateLifecycle,
+  ManagedBootstrapRuntimeCreateLifecycleInput,
+  ManagedBootstrapRuntimeOnboardRouting,
+  ManagedBootstrapRuntimeOnboardRoutingInput,
+} from "../managed-bootstrap/runtime-create";
 import type { ManagedImageSelectionPolicy } from "../workload/source";
 
 export const RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION = 1 as const;
@@ -261,7 +267,12 @@ export type RuntimeProviderMutationAuthoritySurface =
 
 export type RuntimeProviderBootstrapSurface =
   | RuntimeProviderSupportedSurface<{
-      prepare(sandbox: SandboxEntry): unknown;
+      createLifecycle(
+        input: ManagedBootstrapRuntimeCreateLifecycleInput,
+      ): ManagedBootstrapRuntimeCreateLifecycle;
+      createOnboardRouting(
+        input: ManagedBootstrapRuntimeOnboardRoutingInput,
+      ): ManagedBootstrapRuntimeOnboardRouting;
     }>
   | RuntimeProviderUnsupportedSurface;
 
