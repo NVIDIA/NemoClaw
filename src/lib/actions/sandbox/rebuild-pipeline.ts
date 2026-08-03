@@ -24,7 +24,10 @@ import {
   blockRebuildOnPendingBaselineTransition,
   revalidateRebuildRouteBeforeDelete,
 } from "./rebuild-preflight-guards";
-import { runRebuildPreflightPhase } from "./rebuild-preflight-phase";
+import {
+  finalizePreparedRebuildImageMessagingPlan,
+  runRebuildPreflightPhase,
+} from "./rebuild-preflight-phase";
 import {
   disposePreparedBuildContext,
   verifyPreparedBuildContext,
@@ -108,7 +111,7 @@ async function rebuildSandboxUnlocked(
     liveState,
     recoveryManifest: validatedRecoveryManifest,
     dcodePreflight,
-    preparedImage,
+    preparedImage: initiallyPreparedImage,
     routePreflightReceipt,
     releaseOnboardLock,
     log,
@@ -125,6 +128,7 @@ async function rebuildSandboxUnlocked(
     fromDockerfile,
   } = targetConfig;
   const { staleRecovery } = liveState;
+  let preparedImage = initiallyPreparedImage;
   const preservedCustomPolicies = (sandboxEntry.customPolicies ?? []).map((entry) => ({
     ...entry,
   }));
@@ -189,6 +193,29 @@ async function rebuildSandboxUnlocked(
         relockShieldsIfNeeded,
       });
       if (!backup) return;
+
+      const preservedEnv = backup.backupManifest?.preservedEnv ?? [];
+      if (preparedImage && messagingPlan?.agent === "hermes" && preservedEnv.length > 0) {
+        const finalizedImage = finalizePreparedRebuildImageMessagingPlan(
+          preparedImage,
+          messagingPlan,
+          preservedEnv,
+        );
+        if (!finalizedImage.ok) {
+          printRebuildPreflightFailure(
+            `the retained replacement image could not include preserved Hermes messaging state: ${finalizedImage.detail}`,
+            "The existing sandbox is untouched. Retry the rebuild after checking the replacement image inputs.",
+            "Replacement sandbox image finalization failed",
+            bail,
+          );
+          return;
+        }
+        preparedImage = finalizedImage.prepared;
+        recreateOptions.preparedImageRebuild = {
+          buildContext: preparedImage,
+          gatewayName: recreateOptions.targetGatewayName,
+        };
+      }
 
       // The post-delete create must consume the exact context that passed the
       // image preflight. Revalidate at the last safe point so mutation of the
@@ -399,8 +426,9 @@ async function rebuildSandboxUnlocked(
       "  Warning: temporary rebuild base-image handoff could not be removed.",
     );
     if (preparedImage) {
+      const retainedPreparedImage = preparedImage;
       runBestEffortRebuildCleanup(
-        () => disposePreparedBuildContext(preparedImage),
+        () => disposePreparedBuildContext(retainedPreparedImage),
         "  Warning: temporary rebuild image inputs could not be fully removed.",
       );
     }

@@ -20,14 +20,19 @@ const MAX_TRANSACTION_FILES = 128;
 const MAX_TRANSACTION_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_TRANSACTION_TOTAL_BYTES = 32 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 256 * 1024;
+const MAX_COMMIT_RECEIPT_BYTES = 4096;
 const TRANSACTION_PARENT_DIRECTORY_MODE = 0o755;
 const TRANSACTION_DIRECTORY_MODE = 0o700;
 const TRANSACTION_FILE_MODE = 0o400;
+const ATOMIC_TEMPORARY_FILE_MODE = 0o600;
 
 export const MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY =
   "/var/lib/nemoclaw/managed-startup-shared-state-transaction-v1";
 export const MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY =
   "/run/nemoclaw/managed-startup-shared-rollback-receipt-v1";
+export const MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY =
+  "/var/lib/nemoclaw/managed-startup-shared-state-commit-v1";
+const MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_FILE = "receipt.json";
 
 interface FilePresentReceipt {
   readonly path: string;
@@ -66,13 +71,23 @@ interface TransactionManifest {
   readonly schemaVersion: typeof TRANSACTION_SCHEMA_VERSION;
   readonly agent: ManagedStartupAgent;
   readonly profileFingerprint: string;
+  readonly bootstrapIdentity: string | null;
   readonly files: readonly FileReceipt[];
   readonly directories: readonly DirectoryReceipt[];
+}
+
+interface CommitReceipt {
+  readonly schemaVersion: typeof TRANSACTION_SCHEMA_VERSION;
+  readonly agent: ManagedStartupAgent;
+  readonly profileFingerprint: string;
+  readonly bootstrapIdentity: string;
 }
 
 export interface ManagedStartupSharedTransactionOptions {
   readonly sandboxRoot?: string;
   readonly transactionDirectory?: string;
+  /** Test/helper seam. Production derives the fixed image-owned commit receipt path. */
+  readonly commitReceiptDirectory?: string;
   /** Test seam. Production always retains the root:root defaults. */
   readonly trustedUid?: number;
   /** Test seam. Production always retains the root:root defaults. */
@@ -82,6 +97,8 @@ export interface ManagedStartupSharedTransactionOptions {
    * so ownership may reflect the Docker CLI user instead of container root.
    */
   readonly readOnlyReceipt?: boolean;
+  /** One-attempt identity for managed bootstrap; null for legacy root application. */
+  readonly bootstrapIdentity?: string | null;
 }
 
 interface ResolvedOptions {
@@ -90,9 +107,12 @@ interface ResolvedOptions {
   readonly transactionDirectory: string;
   readonly backupDirectory: string;
   readonly manifestFile: string;
+  readonly commitReceiptDirectory: string;
+  readonly commitReceiptFile: string;
   readonly trustedUid: number;
   readonly trustedGid: number;
   readonly readOnlyReceipt: boolean;
+  readonly bootstrapIdentity: string | null;
 }
 
 interface StableFile {
@@ -109,11 +129,28 @@ function resolveOptions(options: ManagedStartupSharedTransactionOptions = {}): R
   const transactionDirectory = path.resolve(
     options.transactionDirectory ?? MANAGED_STARTUP_SHARED_TRANSACTION_DIRECTORY,
   );
+  const commitReceiptDirectory = path.resolve(
+    options.commitReceiptDirectory ??
+      (options.transactionDirectory
+        ? path.join(
+            path.dirname(transactionDirectory),
+            path.basename(MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY),
+          )
+        : MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY),
+  );
   if (
     transactionDirectory === sandboxRoot ||
-    transactionDirectory.startsWith(`${sandboxRoot}${path.sep}`)
+    transactionDirectory.startsWith(`${sandboxRoot}${path.sep}`) ||
+    commitReceiptDirectory === sandboxRoot ||
+    commitReceiptDirectory.startsWith(`${sandboxRoot}${path.sep}`) ||
+    path.dirname(commitReceiptDirectory) !== path.dirname(transactionDirectory) ||
+    commitReceiptDirectory === transactionDirectory
   ) {
-    fail("transaction receipts must not be stored in sandbox-shared state");
+    fail("transaction and commit receipts require distinct paths outside sandbox-shared state");
+  }
+  const bootstrapIdentity = options.bootstrapIdentity ?? null;
+  if (bootstrapIdentity !== null && !/^[a-f0-9]{64}$/u.test(bootstrapIdentity)) {
+    fail("bootstrap identity must encode 32 lowercase-hex bytes");
   }
   return {
     sandboxRoot,
@@ -121,9 +158,15 @@ function resolveOptions(options: ManagedStartupSharedTransactionOptions = {}): R
     transactionDirectory,
     backupDirectory: path.join(transactionDirectory, "backups"),
     manifestFile: path.join(transactionDirectory, "manifest.json"),
+    commitReceiptDirectory,
+    commitReceiptFile: path.join(
+      commitReceiptDirectory,
+      MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_FILE,
+    ),
     trustedUid: options.trustedUid ?? 0,
     trustedGid: options.trustedGid ?? 0,
     readOnlyReceipt: options.readOnlyReceipt ?? false,
+    bootstrapIdentity,
   };
 }
 
@@ -482,14 +525,61 @@ function atomicWriteTrustedFile(
   }
 }
 
+function fsyncDirectory(directory: string): void {
+  const descriptor = fs.openSync(directory, fs.constants.O_RDONLY);
+  try {
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 function canonicalManifest(manifest: TransactionManifest): string {
   return `${JSON.stringify(manifest, null, 2)}\n`;
+}
+
+function canonicalCommitReceipt(receipt: CommitReceipt): string {
+  return `${JSON.stringify(receipt, null, 2)}\n`;
 }
 
 function requireExactKeys(record: Record<string, unknown>, keys: readonly string[]): void {
   if (Object.keys(record).sort().join(",") !== [...keys].sort().join(",")) {
     fail("transaction manifest contains unexpected fields");
   }
+}
+
+function parseCommitReceipt(text: string): CommitReceipt {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    fail("commit receipt is not valid JSON");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    fail("commit receipt must be an object");
+  }
+  const record = parsed as Record<string, unknown>;
+  requireExactKeys(record, ["agent", "bootstrapIdentity", "profileFingerprint", "schemaVersion"]);
+  if (
+    record.schemaVersion !== TRANSACTION_SCHEMA_VERSION ||
+    !["openclaw", "hermes", "langchain-deepagents-code"].includes(String(record.agent)) ||
+    typeof record.profileFingerprint !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(record.profileFingerprint) ||
+    typeof record.bootstrapIdentity !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(record.bootstrapIdentity)
+  ) {
+    fail("commit receipt has an invalid envelope");
+  }
+  const receipt: CommitReceipt = {
+    schemaVersion: TRANSACTION_SCHEMA_VERSION,
+    agent: record.agent as ManagedStartupAgent,
+    profileFingerprint: record.profileFingerprint,
+    bootstrapIdentity: record.bootstrapIdentity,
+  };
+  if (canonicalCommitReceipt(receipt) !== text) {
+    fail("commit receipt is not canonical");
+  }
+  return receipt;
 }
 
 function safeMetadata(value: unknown): value is number {
@@ -509,6 +599,7 @@ function parseManifest(text: string): TransactionManifest {
   const record = parsed as Record<string, unknown>;
   requireExactKeys(record, [
     "agent",
+    "bootstrapIdentity",
     "directories",
     "files",
     "profileFingerprint",
@@ -519,6 +610,11 @@ function parseManifest(text: string): TransactionManifest {
     !["openclaw", "hermes", "langchain-deepagents-code"].includes(String(record.agent)) ||
     typeof record.profileFingerprint !== "string" ||
     !/^[a-f0-9]{64}$/u.test(record.profileFingerprint) ||
+    !(
+      record.bootstrapIdentity === null ||
+      (typeof record.bootstrapIdentity === "string" &&
+        /^[a-f0-9]{64}$/u.test(record.bootstrapIdentity))
+    ) ||
     !Array.isArray(record.files) ||
     !Array.isArray(record.directories) ||
     record.files.length > MAX_TRANSACTION_FILES ||
@@ -613,6 +709,7 @@ function parseManifest(text: string): TransactionManifest {
     schemaVersion: TRANSACTION_SCHEMA_VERSION,
     agent: record.agent as ManagedStartupAgent,
     profileFingerprint: record.profileFingerprint,
+    bootstrapIdentity: record.bootstrapIdentity as string | null,
     files,
     directories,
   };
@@ -639,9 +736,9 @@ function requireTrustedTransactionPath(
   }
 }
 
-function requireReadOnlyReceiptMount(options: ResolvedOptions): void {
+function requireReadOnlyReceiptMount(target: string, options: ResolvedOptions): void {
   if (!options.readOnlyReceipt) return;
-  const probe = path.join(options.transactionDirectory, ".nemoclaw-write-probe");
+  const probe = path.join(target, ".nemoclaw-write-probe");
   let descriptor: number | undefined;
   try {
     descriptor = fs.openSync(
@@ -664,7 +761,7 @@ function loadManifest(options: ResolvedOptions): TransactionManifest | null {
   requireTransactionBoundaries(options);
   if (!pathExistsNoFollow(options.transactionDirectory)) return null;
   requireTrustedTransactionPath(options.transactionDirectory, TRANSACTION_DIRECTORY_MODE, options);
-  requireReadOnlyReceiptMount(options);
+  requireReadOnlyReceiptMount(options.transactionDirectory, options);
   requireTrustedTransactionPath(options.backupDirectory, TRANSACTION_DIRECTORY_MODE, options);
   requireTrustedTransactionPath(options.manifestFile, TRANSACTION_FILE_MODE, options);
   const stable = readStableFile(options.manifestFile, MAX_MANIFEST_BYTES);
@@ -677,6 +774,59 @@ function loadManifest(options: ResolvedOptions): TransactionManifest | null {
     fail("transaction manifest ownership changed while it was read");
   }
   return parseManifest(stable.bytes.toString("utf8"));
+}
+
+function transactionOptionsAt(
+  options: ResolvedOptions,
+  transactionDirectory: string,
+): ResolvedOptions {
+  return {
+    ...options,
+    transactionDirectory,
+    backupDirectory: path.join(transactionDirectory, "backups"),
+    manifestFile: path.join(transactionDirectory, "manifest.json"),
+  };
+}
+
+function loadCommitReceipt(
+  options: ResolvedOptions,
+): { readonly receipt: CommitReceipt; readonly compact: boolean } | null {
+  requireTransactionBoundaries(options);
+  if (!pathExistsNoFollow(options.commitReceiptDirectory)) return null;
+  requireTrustedTransactionPath(
+    options.commitReceiptDirectory,
+    TRANSACTION_DIRECTORY_MODE,
+    options,
+  );
+  if (pathExistsNoFollow(options.commitReceiptFile)) {
+    requireReadOnlyReceiptMount(options.commitReceiptDirectory, options);
+    requireTrustedTransactionPath(options.commitReceiptFile, TRANSACTION_FILE_MODE, options);
+    const stable = readStableFile(options.commitReceiptFile, MAX_COMMIT_RECEIPT_BYTES);
+    if (
+      (!options.readOnlyReceipt &&
+        (Number(stable.stat.uid) !== options.trustedUid ||
+          Number(stable.stat.gid) !== options.trustedGid)) ||
+      Number(stable.stat.mode & 0o7777n) !== TRANSACTION_FILE_MODE
+    ) {
+      fail("commit receipt ownership changed while it was read");
+    }
+    return { receipt: parseCommitReceipt(stable.bytes.toString("utf8")), compact: true };
+  }
+  const stagedOptions = transactionOptionsAt(options, options.commitReceiptDirectory);
+  const staged = loadManifest(stagedOptions);
+  if (!staged || staged.bootstrapIdentity === null) {
+    fail("durable commit staging receipt is incomplete");
+  }
+  verifyAllBackups(staged.files, stagedOptions);
+  return {
+    receipt: {
+      schemaVersion: TRANSACTION_SCHEMA_VERSION,
+      agent: staged.agent,
+      profileFingerprint: staged.profileFingerprint,
+      bootstrapIdentity: staged.bootstrapIdentity,
+    },
+    compact: false,
+  };
 }
 
 function verifyBackup(receipt: FilePresentReceipt, options: ResolvedOptions): Buffer {
@@ -742,9 +892,160 @@ function directoryMatchesReceipt(target: string, receipt: DirectoryPresentReceip
 function removeTransactionDirectory(options: ResolvedOptions): void {
   requireTrustedTransactionPath(options.transactionDirectory, TRANSACTION_DIRECTORY_MODE, options);
   fs.rmSync(options.transactionDirectory, { force: false, recursive: true });
+  fsyncDirectory(options.transactionParentDirectory);
   if (pathExistsNoFollow(options.transactionDirectory)) {
     fail("transaction directory remained after cleanup");
   }
+}
+
+function assertCommitReceiptMatches(
+  receipt: CommitReceipt,
+  expected: {
+    readonly agent: ManagedStartupAgent;
+    readonly profileFingerprint?: string;
+    readonly bootstrapIdentity: string;
+  },
+): void {
+  if (
+    receipt.agent !== expected.agent ||
+    (expected.profileFingerprint !== undefined &&
+      receipt.profileFingerprint !== expected.profileFingerprint) ||
+    receipt.bootstrapIdentity !== expected.bootstrapIdentity
+  ) {
+    fail("durable commit receipt belongs to a different bootstrap attempt");
+  }
+}
+
+function loadCommitStagingManifest(options: ResolvedOptions): TransactionManifest | null {
+  if (!pathExistsNoFollow(options.manifestFile)) return null;
+  requireTrustedTransactionPath(options.manifestFile, TRANSACTION_FILE_MODE, options);
+  const stable = readStableFile(options.manifestFile, MAX_MANIFEST_BYTES);
+  if (
+    Number(stable.stat.uid) !== options.trustedUid ||
+    Number(stable.stat.gid) !== options.trustedGid ||
+    Number(stable.stat.mode & 0o7777n) !== TRANSACTION_FILE_MODE
+  ) {
+    fail("durable commit staging manifest ownership changed while it was read");
+  }
+  return parseManifest(stable.bytes.toString("utf8"));
+}
+
+function retireInterruptedCommitReceiptWrites(
+  receipt: CommitReceipt,
+  options: ResolvedOptions,
+): void {
+  const temporaryPattern = new RegExp(
+    `^\\.${MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_FILE.replace(".", "\\.")}\\.[a-f0-9]{24}$`,
+    "u",
+  );
+  for (const entry of fs.readdirSync(options.commitReceiptDirectory)) {
+    if (!temporaryPattern.test(entry)) continue;
+    const target = path.join(options.commitReceiptDirectory, entry);
+    const stat = fs.lstatSync(target);
+    if (
+      stat.isSymbolicLink() ||
+      !stat.isFile() ||
+      stat.nlink !== 1 ||
+      stat.uid !== options.trustedUid ||
+      stat.gid !== options.trustedGid ||
+      ![ATOMIC_TEMPORARY_FILE_MODE, TRANSACTION_FILE_MODE].includes(modeOf(stat))
+    ) {
+      fail("interrupted durable commit receipt write has unsafe metadata");
+    }
+    const stable = readStableFile(target, MAX_COMMIT_RECEIPT_BYTES);
+    const mode = Number(stable.stat.mode & 0o7777n);
+    if (
+      Number(stable.stat.uid) !== options.trustedUid ||
+      Number(stable.stat.gid) !== options.trustedGid ||
+      ![ATOMIC_TEMPORARY_FILE_MODE, TRANSACTION_FILE_MODE].includes(mode)
+    ) {
+      fail("interrupted durable commit receipt write changed during verification");
+    }
+    if (stable.bytes.length > 0) {
+      let interruptedReceipt: CommitReceipt | null = null;
+      try {
+        interruptedReceipt = parseCommitReceipt(stable.bytes.toString("utf8"));
+      } catch {
+        // The atomic writer may have crashed after any partial write. The
+        // trusted 0700 directory and exact random temp-name shape bind this
+        // artifact to that interrupted write; the established receipt is now
+        // authoritative.
+      }
+      if (interruptedReceipt) assertCommitReceiptMatches(interruptedReceipt, receipt);
+    }
+    fs.unlinkSync(target);
+    fsyncDirectory(options.commitReceiptDirectory);
+  }
+}
+
+function compactDurableCommitReceipt(
+  state: { readonly receipt: CommitReceipt; readonly compact: boolean },
+  options: ResolvedOptions,
+): void {
+  if (!state.compact) {
+    atomicWriteTrustedFile(
+      options.commitReceiptFile,
+      canonicalCommitReceipt(state.receipt),
+      TRANSACTION_FILE_MODE,
+      options.trustedUid,
+      options.trustedGid,
+    );
+    fsyncDirectory(options.commitReceiptDirectory);
+  }
+  retireInterruptedCommitReceiptWrites(state.receipt, options);
+  const stagedOptions = transactionOptionsAt(options, options.commitReceiptDirectory);
+  const manifestExists = pathExistsNoFollow(stagedOptions.manifestFile);
+  const backupsExist = pathExistsNoFollow(stagedOptions.backupDirectory);
+  const unexpectedBeforeCleanup = fs
+    .readdirSync(options.commitReceiptDirectory)
+    .filter(
+      (entry) =>
+        ![
+          MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_FILE,
+          path.basename(stagedOptions.backupDirectory),
+          path.basename(stagedOptions.manifestFile),
+        ].includes(entry),
+    );
+  if (unexpectedBeforeCleanup.length !== 0) {
+    fail("durable commit receipt directory contains unexpected artifacts");
+  }
+  if (manifestExists) {
+    // The fsynced compact receipt is authoritative after commit. Validate the
+    // remaining manifest identity without requiring a complete backup tree:
+    // recursive backup deletion may have been interrupted at any point.
+    const staged = loadCommitStagingManifest(stagedOptions);
+    if (!staged || staged.bootstrapIdentity === null) {
+      fail("durable commit staging receipt disappeared during cleanup");
+    }
+    assertCommitReceiptMatches(state.receipt, {
+      agent: staged.agent,
+      profileFingerprint: staged.profileFingerprint,
+      bootstrapIdentity: staged.bootstrapIdentity,
+    });
+  }
+  if (backupsExist) {
+    requireTrustedTransactionPath(
+      stagedOptions.backupDirectory,
+      TRANSACTION_DIRECTORY_MODE,
+      options,
+    );
+    fs.rmSync(stagedOptions.backupDirectory, { force: false, recursive: true });
+    fsyncDirectory(options.commitReceiptDirectory);
+  }
+  if (manifestExists) {
+    requireTrustedTransactionPath(stagedOptions.manifestFile, TRANSACTION_FILE_MODE, options);
+    fs.unlinkSync(stagedOptions.manifestFile);
+    fsyncDirectory(options.commitReceiptDirectory);
+  }
+  const unexpected = fs
+    .readdirSync(options.commitReceiptDirectory)
+    .filter((entry) => entry !== MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_FILE);
+  if (unexpected.length !== 0) {
+    fail("durable commit receipt directory contains unexpected artifacts");
+  }
+  const verified = loadCommitReceipt(options);
+  if (!verified?.compact) fail("durable commit receipt did not compact successfully");
+  assertCommitReceiptMatches(verified.receipt, state.receipt);
 }
 
 export function beginManagedStartupSharedStateTransaction(
@@ -758,10 +1059,28 @@ export function beginManagedStartupSharedStateTransaction(
   }
   requireTransactionBoundaries(options);
   const profileFingerprint = fingerprintManagedStartupProfile(profile);
+  const committed = loadCommitReceipt(options);
+  if (committed) {
+    if (options.bootstrapIdentity === null) {
+      fail("a durable managed bootstrap commit receipt already exists");
+    }
+    assertCommitReceiptMatches(committed.receipt, {
+      agent: profile.agent,
+      profileFingerprint,
+      bootstrapIdentity: options.bootstrapIdentity,
+    });
+    fail("this managed bootstrap attempt is already durably committed");
+  }
   const pending = loadManifest(options);
   if (pending) {
-    if (pending.agent !== profile.agent || pending.profileFingerprint !== profileFingerprint) {
-      fail("a pending managed startup transaction belongs to a different profile");
+    if (
+      pending.agent !== profile.agent ||
+      pending.profileFingerprint !== profileFingerprint ||
+      pending.bootstrapIdentity !== options.bootstrapIdentity
+    ) {
+      fail(
+        "a pending managed startup transaction belongs to a different agent, profile fingerprint, or bootstrap attempt",
+      );
     }
     verifyAllBackups(pending.files, options);
     return false;
@@ -780,6 +1099,7 @@ export function beginManagedStartupSharedStateTransaction(
     schemaVersion: TRANSACTION_SCHEMA_VERSION,
     agent: profile.agent,
     profileFingerprint,
+    bootstrapIdentity: options.bootstrapIdentity,
     files: snapshots.map(({ receipt }) => receipt),
     directories,
   };
@@ -801,9 +1121,11 @@ export function beginManagedStartupSharedStateTransaction(
     };
     fs.chownSync(options.transactionDirectory, options.trustedUid, options.trustedGid);
     fs.chmodSync(options.transactionDirectory, TRANSACTION_DIRECTORY_MODE);
+    fsyncDirectory(options.transactionParentDirectory);
     fs.mkdirSync(options.backupDirectory, { mode: TRANSACTION_DIRECTORY_MODE });
     fs.chownSync(options.backupDirectory, options.trustedUid, options.trustedGid);
     fs.chmodSync(options.backupDirectory, TRANSACTION_DIRECTORY_MODE);
+    fsyncDirectory(options.transactionDirectory);
     for (const snapshot of snapshots) {
       if (snapshot.receipt.state !== "file" || snapshot.bytes === null) continue;
       atomicWriteTrustedFile(
@@ -814,6 +1136,7 @@ export function beginManagedStartupSharedStateTransaction(
         options.trustedGid,
       );
     }
+    fsyncDirectory(options.backupDirectory);
     atomicWriteTrustedFile(
       options.manifestFile,
       canonicalManifest(manifest),
@@ -821,6 +1144,7 @@ export function beginManagedStartupSharedStateTransaction(
       options.trustedUid,
       options.trustedGid,
     );
+    fsyncDirectory(options.transactionDirectory);
     loadManifest(options);
   } catch (error) {
     try {
@@ -990,10 +1314,24 @@ export function rollbackManagedStartupSharedStateTransaction(
 ): boolean {
   const options = resolveOptions(inputOptions);
   requireTransactionIdentity(options);
+  const committed = loadCommitReceipt(options);
+  if (committed) {
+    if (options.bootstrapIdentity === null) {
+      fail("shared state is already durably committed");
+    }
+    assertCommitReceiptMatches(committed.receipt, {
+      agent: expectedAgent,
+      bootstrapIdentity: options.bootstrapIdentity,
+    });
+    fail("shared state is already durably committed and cannot be rolled back");
+  }
   const manifest = loadManifest(options);
   if (!manifest) return false;
   if (manifest.agent !== expectedAgent) {
     fail(`pending transaction targets ${manifest.agent}, expected ${expectedAgent}`);
+  }
+  if (manifest.bootstrapIdentity !== options.bootstrapIdentity) {
+    fail("pending transaction belongs to a different bootstrap attempt");
   }
   const backups = verifyAllBackups(manifest.files, options);
   ensureOriginalDirectories(manifest.directories, options);
@@ -1015,11 +1353,123 @@ export function commitManagedStartupSharedStateTransaction(
   if (options.readOnlyReceipt) {
     fail("cannot commit a read-only rollback receipt");
   }
+  const committed = loadCommitReceipt(options);
+  if (committed) {
+    if (options.bootstrapIdentity === null) {
+      fail("durable commit receipt is missing its expected bootstrap identity");
+    }
+    assertCommitReceiptMatches(committed.receipt, {
+      agent: expectedAgent,
+      bootstrapIdentity: options.bootstrapIdentity,
+    });
+    compactDurableCommitReceipt(committed, options);
+    return true;
+  }
   const manifest = loadManifest(options);
   if (!manifest) return false;
   if (manifest.agent !== expectedAgent) {
     fail(`pending transaction targets ${manifest.agent}, expected ${expectedAgent}`);
   }
-  removeTransactionDirectory(options);
+  if (manifest.bootstrapIdentity !== options.bootstrapIdentity) {
+    fail("pending transaction belongs to a different bootstrap attempt");
+  }
+  if (manifest.bootstrapIdentity === null) {
+    removeTransactionDirectory(options);
+    return true;
+  }
+  verifyAllBackups(manifest.files, options);
+  if (pathExistsNoFollow(options.commitReceiptDirectory)) {
+    fail("durable commit receipt path appeared before transaction commit");
+  }
+  try {
+    fs.renameSync(options.transactionDirectory, options.commitReceiptDirectory);
+    fsyncDirectory(options.transactionParentDirectory);
+  } catch (error) {
+    fail(`could not atomically establish durable commit state: ${(error as Error).message}`);
+  }
+  const renamed = loadCommitReceipt(options);
+  if (!renamed) fail("durable commit state disappeared after atomic rename");
+  assertCommitReceiptMatches(renamed.receipt, {
+    agent: expectedAgent,
+    profileFingerprint: manifest.profileFingerprint,
+    bootstrapIdentity: manifest.bootstrapIdentity,
+  });
+  compactDurableCommitReceipt(renamed, options);
   return true;
+}
+
+/**
+ * Retire one exact durable bootstrap commit only after the runtime owner has
+ * proven its external rollback backup is gone. This prevents a completed
+ * attempt's image-owned receipt from blocking a later bootstrap with a
+ * different identity in the same persisted workload.
+ */
+export function clearManagedStartupSharedStateCommitReceipt(
+  expectedAgent: ManagedStartupAgent,
+  inputOptions: ManagedStartupSharedTransactionOptions = {},
+): boolean {
+  const options = resolveOptions(inputOptions);
+  requireTransactionIdentity(options);
+  if (options.readOnlyReceipt) {
+    fail("cannot clear a durable commit from a read-only receipt");
+  }
+  if (options.bootstrapIdentity === null) {
+    fail("durable commit cleanup requires its bootstrap identity");
+  }
+  const committed = loadCommitReceipt(options);
+  if (!committed) return false;
+  assertCommitReceiptMatches(committed.receipt, {
+    agent: expectedAgent,
+    bootstrapIdentity: options.bootstrapIdentity,
+  });
+  compactDurableCommitReceipt(committed, options);
+  requireTrustedTransactionPath(
+    options.commitReceiptDirectory,
+    TRANSACTION_DIRECTORY_MODE,
+    options,
+  );
+  requireTrustedTransactionPath(options.commitReceiptFile, TRANSACTION_FILE_MODE, options);
+  const entries = fs.readdirSync(options.commitReceiptDirectory);
+  if (entries.length !== 1 || entries[0] !== MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_FILE) {
+    fail("durable commit receipt directory contains unexpected artifacts");
+  }
+  fs.rmSync(options.commitReceiptDirectory, { force: false, recursive: true });
+  fsyncDirectory(options.transactionParentDirectory);
+  if (pathExistsNoFollow(options.commitReceiptDirectory)) {
+    fail("durable commit receipt remained after cleanup");
+  }
+  return true;
+}
+
+export function getManagedStartupSharedStateTransactionStatus(
+  expected: {
+    readonly agent: ManagedStartupAgent;
+    readonly profileFingerprint: string;
+    readonly bootstrapIdentity: string;
+  },
+  inputOptions: ManagedStartupSharedTransactionOptions = {},
+): "committed" | "none" | "pending" {
+  const options = resolveOptions({
+    ...inputOptions,
+    bootstrapIdentity: expected.bootstrapIdentity,
+  });
+  requireTransactionIdentity(options);
+  const manifest = loadManifest(options);
+  if (manifest) {
+    if (
+      manifest.agent !== expected.agent ||
+      manifest.profileFingerprint !== expected.profileFingerprint ||
+      manifest.bootstrapIdentity !== expected.bootstrapIdentity
+    ) {
+      fail(
+        "pending transaction does not match the expected agent, profile fingerprint, or bootstrap identity",
+      );
+    }
+    verifyAllBackups(manifest.files, options);
+    return "pending";
+  }
+  const committed = loadCommitReceipt(options);
+  if (!committed) return "none";
+  assertCommitReceiptMatches(committed.receipt, expected);
+  return "committed";
 }
