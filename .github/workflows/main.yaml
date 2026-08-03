@@ -136,7 +136,7 @@ jobs:
         run: npx vitest run --project integration test/openclaw-security-audit-suppressions-real.test.ts --silent=false --reporter=default
 
   cli-test-shards:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
