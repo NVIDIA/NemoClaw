@@ -25,6 +25,7 @@ const fallbackSelection: ProviderSelectionResult = {
   hermesToolGateways: [],
   preferredInferenceApi: "openai-responses",
   compatibleEndpointReasoning: null,
+  compatibleEndpointReasoningEffort: null,
   nimContainer: null,
 };
 
@@ -103,6 +104,8 @@ function createDeps() {
     hydrateCredentialEnv: vi.fn(() => "test-key"),
     configureCompatibleEndpointReasoning: vi.fn(async () => "false" as const),
     clearCompatibleEndpointReasoning: () => null,
+    configureCompatibleEndpointReasoningEffort: vi.fn(async () => null),
+    clearCompatibleEndpointReasoningEffort: () => null,
     repairLocalInferenceSystemdOverrideOrExit: vi.fn(),
     isNonInteractive: () => true,
     getOpenshellBinary: () => "/usr/bin/openshell",
@@ -150,6 +153,7 @@ function resumeOptions(
       hermesToolGateways: session.hermesToolGateways ?? [],
       preferredInferenceApi: session.preferredInferenceApi,
       compatibleEndpointReasoning: session.compatibleEndpointReasoning,
+      compatibleEndpointReasoningEffort: null,
       nimContainer: session.nimContainer,
       webSearchConfig: session.webSearchConfig,
     },

@@ -75,6 +75,11 @@ describe("final onboard flow runtime boundary", () => {
     expect(
       harness.events.filter((event) => event.type === "state.entered").map((event) => event.state),
     ).toEqual(["policies", "finalizing", "post_verify", "complete"]);
+    expect(
+      harness.events
+        .filter((event) => event.type === "state.skipped")
+        .map((event) => `${event.type}:${event.state}`),
+    ).toEqual(["state.skipped:agent_setup"]);
     expect(harness.events.some((event) => event.type.startsWith("state.repair."))).toBe(false);
   });
 
@@ -234,6 +239,11 @@ describe("final onboard flow runtime boundary", () => {
       model: "nvidia/test",
       machine: { state: "complete" },
     });
+    expect(
+      harness.events
+        .filter((event) => event.type === "state.skipped")
+        .map((event) => `${event.type}:${event.state}`),
+    ).toEqual(["state.skipped:openclaw"]);
     expect(harness.events.some((event) => event.type.startsWith("state.repair."))).toBe(false);
   });
 

@@ -33,9 +33,9 @@ export type ReleaseE2ePreflight = {
       reason: string;
     }>;
     defaultSuite: {
-      includeStagingBrevLaunchable: boolean;
+      includeStagingBrevLaunchable: true;
       jobs: "";
-      mode: "full" | "ordinary";
+      mode: "full";
       targets: "";
     };
     parallelExplicit: {
@@ -46,7 +46,7 @@ export type ReleaseE2ePreflight = {
   };
   exceptionsRequired: string[];
   executions: ReleaseE2eExecution[];
-  qualificationJobId: string;
+  launchableE2eJobId: string;
   requiredExecutionCount: number;
 };
 
@@ -81,7 +81,6 @@ export type ReleaseE2eLedger = {
 };
 
 type ReleaseEvidenceManifest = {
-  brevReady: boolean;
   candidateSha: string;
   jetsonRunnerOnline: RunnerStatus;
   runs: Array<{
@@ -92,7 +91,6 @@ type ReleaseEvidenceManifest = {
 };
 
 type CliOptions = {
-  brevReady?: boolean;
   candidateSha?: string;
   jetsonRunnerOnline: RunnerStatus;
   manifest?: string;
@@ -140,12 +138,6 @@ function requireEqual(actual: unknown, expected: unknown, label: string): void {
   if (actual !== expected) {
     throw new Error(`${label} must equal ${JSON.stringify(expected)}`);
   }
-}
-
-function parseBoolean(value: string, label: string): boolean {
-  if (value === "true") return true;
-  if (value === "false") return false;
-  throw new Error(`${label} must be true or false`);
 }
 
 function parseRunnerStatus(value: string): RunnerStatus {
@@ -267,7 +259,7 @@ function workflowJobs(workflowPath: string): JsonRecord {
   return record(workflow.jobs, "workflow.jobs");
 }
 
-function isQualificationJob(job: JsonRecord): boolean {
+function isLaunchableE2eJob(job: JsonRecord): boolean {
   const condition = job.if;
   return (
     typeof condition === "string" && condition.includes("inputs.include_staging_brev_launchable")
@@ -280,7 +272,6 @@ function requiresConfirmedJetsonRunner(job: JsonRecord): boolean {
 }
 
 export function buildReleaseE2ePreflight(input: {
-  brevReady: boolean;
   candidateSha: string;
   jetsonRunnerOnline?: RunnerStatus;
   plan?: E2eWorkflowPlan;
@@ -294,22 +285,22 @@ export function buildReleaseE2ePreflight(input: {
   const inventory = readFreeStandingJobsInventory(workflowPath);
   const plan = input.plan ?? buildE2eWorkflowPlan();
   const explicitJobs = new Set(inventory.explicitOnlyJobs);
-  const qualificationJobs = inventory.explicitOnlyJobs.filter((jobId) =>
-    isQualificationJob(record(jobs[jobId], `workflow.jobs.${jobId}`)),
+  const launchableE2eJobs = inventory.explicitOnlyJobs.filter((jobId) =>
+    isLaunchableE2eJob(record(jobs[jobId], `workflow.jobs.${jobId}`)),
   );
-  if (qualificationJobs.length !== 1) {
+  if (launchableE2eJobs.length !== 1) {
     throw new Error(
-      `expected exactly one explicit qualification job, found ${qualificationJobs.length}`,
+      `expected exactly one explicit Launchable E2E job, found ${launchableE2eJobs.length}`,
     );
   }
-  const qualificationJobId = qualificationJobs[0]!;
+  const launchableE2eJobId = launchableE2eJobs[0]!;
   const conditionalJobs = inventory.explicitOnlyJobs.filter(
     (jobId) =>
-      jobId !== qualificationJobId &&
+      jobId !== launchableE2eJobId &&
       requiresConfirmedJetsonRunner(record(jobs[jobId], `workflow.jobs.${jobId}`)),
   );
   const parallelExplicitJobs = inventory.explicitOnlyJobs.filter(
-    (jobId) => jobId !== qualificationJobId && !conditionalJobs.includes(jobId),
+    (jobId) => jobId !== launchableE2eJobId && !conditionalJobs.includes(jobId),
   );
 
   const defaultJobIds = inventory.workflowJobs.filter(
@@ -347,7 +338,6 @@ export function buildReleaseE2ePreflight(input: {
 
   const runnerStatus = input.jetsonRunnerOnline ?? "unknown";
   const exceptionsRequired: string[] = [];
-  if (!input.brevReady) exceptionsRequired.push(qualificationJobId);
   if (runnerStatus !== "true") exceptionsRequired.push(...conditionalJobs);
 
   return {
@@ -362,9 +352,9 @@ export function buildReleaseE2ePreflight(input: {
             : "do not queue until an administrator confirms the Jetson runner online",
       })),
       defaultSuite: {
-        includeStagingBrevLaunchable: input.brevReady,
+        includeStagingBrevLaunchable: true,
         jobs: "",
-        mode: input.brevReady ? "full" : "ordinary",
+        mode: "full",
         targets: "",
       },
       parallelExplicit: {
@@ -375,7 +365,7 @@ export function buildReleaseE2ePreflight(input: {
     },
     exceptionsRequired,
     executions,
-    qualificationJobId,
+    launchableE2eJobId,
     requiredExecutionCount: executions.length,
   };
 }
@@ -456,6 +446,9 @@ export function buildReleaseE2eLedger(
     );
 
     for (const job of flattenJobs(evidence.jobs)) {
+      const jobRunId = numberField(job, "run_id", `runs[${runIndex}].job`);
+      const jobAttempt = numberField(job, "run_attempt", `runs[${runIndex}].job`);
+      if (jobRunId !== runId || jobAttempt > runAttempt) continue;
       const name = stringField(job, "name", `runs[${runIndex}].job`);
       const matches = selectedExecutions.filter((execution) =>
         matchesExpectedName(name, execution.expectedName),
@@ -471,7 +464,7 @@ export function buildReleaseE2eLedger(
       const execution = matches[0]!;
       const values = attempts.get(execution.id) ?? [];
       values.push({
-        attempt: numberField(job, "run_attempt", `runs[${runIndex}].job`),
+        attempt: jobAttempt,
         conclusion: stringField(job, "conclusion", `runs[${runIndex}].job`),
         status: stringField(job, "status", `runs[${runIndex}].job`),
         jobUrl: stringField(job, "html_url", `runs[${runIndex}].job`),
@@ -522,7 +515,6 @@ function parseArgs(argv: readonly string[]): CliOptions {
     const arg = argv[index];
     const value = argv[index + 1];
     if (
-      arg !== "--brev-ready" &&
       arg !== "--candidate-sha" &&
       arg !== "--jetson-runner-online" &&
       arg !== "--manifest" &&
@@ -531,8 +523,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
       throw new Error(`Unknown argument: ${arg}`);
     }
     if (value === undefined) throw new Error(`${arg} requires a value`);
-    if (arg === "--brev-ready") options.brevReady = parseBoolean(value, arg);
-    else if (arg === "--candidate-sha") options.candidateSha = value;
+    if (arg === "--candidate-sha") options.candidateSha = value;
     else if (arg === "--jetson-runner-online") {
       options.jetsonRunnerOnline = parseRunnerStatus(value);
     } else if (arg === "--manifest") options.manifest = value;
@@ -550,7 +541,6 @@ function readManifest(manifestPath: string): {
   const raw = record(JSON.parse(readFileSync(manifestPath, "utf8")), "manifest");
   const manifest = raw as ReleaseEvidenceManifest;
   if (
-    typeof manifest.brevReady !== "boolean" ||
     !SHA_PATTERN.test(manifest.candidateSha) ||
     !Array.isArray(manifest.runs) ||
     !["false", "true", "unknown"].includes(manifest.jetsonRunnerOnline)
@@ -590,7 +580,6 @@ export function runReleaseE2eEvidenceCli(argv = process.argv.slice(2)): void {
     const { manifest, runs } = readManifest(options.manifest);
     requireCandidateCheckout(manifest.candidateSha);
     const preflight = buildReleaseE2ePreflight({
-      brevReady: manifest.brevReady,
       candidateSha: manifest.candidateSha,
       jetsonRunnerOnline: manifest.jetsonRunnerOnline,
       workflowPath: options.workflowPath,
@@ -598,14 +587,13 @@ export function runReleaseE2eEvidenceCli(argv = process.argv.slice(2)): void {
     process.stdout.write(`${JSON.stringify(buildReleaseE2eLedger(preflight, runs), null, 2)}\n`);
     return;
   }
-  if (options.brevReady === undefined || options.candidateSha === undefined) {
-    throw new Error("--candidate-sha and --brev-ready are required for preflight");
+  if (options.candidateSha === undefined) {
+    throw new Error("--candidate-sha is required for preflight");
   }
   requireCandidateCheckout(options.candidateSha);
   process.stdout.write(
     `${JSON.stringify(
       buildReleaseE2ePreflight({
-        brevReady: options.brevReady,
         candidateSha: options.candidateSha,
         jetsonRunnerOnline: options.jetsonRunnerOnline,
         workflowPath: options.workflowPath,

@@ -16,6 +16,12 @@ import {
   trustedSandboxShellScript,
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
+import {
+  type CompatibleAnthropicSwitchBinding,
+  compatibleAnthropicSwitchBinding,
+  compatibleAnthropicSwitchEnv,
+  requireCompatibleAnthropicProviderAbsent,
+} from "../fixtures/compatible-anthropic-switch.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import type { FakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import {
@@ -511,42 +517,22 @@ async function startMockAnthropicProvider(): Promise<MockCompatibleAnthropicProv
   };
 }
 
-export async function ensureCompatibleAnthropicSwitchProvider(
+export async function prepareCompatibleAnthropicSwitchBinding(
   host: HostCliClient,
   cleanup: { add(name: string, run: () => Promise<void> | void): void },
-): Promise<string | null> {
+): Promise<CompatibleAnthropicSwitchBinding | null> {
   if (SWITCH_PROVIDER !== "compatible-anthropic-endpoint" || SWITCH_API !== "anthropic-messages")
     return null;
   const mock = mockAnthropicSwitchEnabled() ? await startMockAnthropicProvider() : undefined;
   mock && cleanup.add("close compatible Anthropic switch mock", () => mock.close());
-  const endpointUrl = process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? mock?.endpointUrl ?? "";
-  const compatibleKey = process.env.COMPATIBLE_ANTHROPIC_API_KEY ?? "test-compatible-anthropic-key";
-  expect(
-    endpointUrl,
-    "NEMOCLAW_SWITCH_ENDPOINT_URL is required for compatible Anthropic inference switches",
-  ).not.toBe("");
-  expect(
-    compatibleKey,
-    "COMPATIBLE_ANTHROPIC_API_KEY is required for compatible Anthropic inference switches",
-  ).not.toBe("");
-  const providerScript = [
-    "set -euo pipefail",
-    "if openshell provider get -g nemoclaw compatible-anthropic-endpoint >/dev/null 2>&1; then",
-    "  openshell provider delete -g nemoclaw compatible-anthropic-endpoint",
-    "fi",
-    'openshell provider create -g nemoclaw --name compatible-anthropic-endpoint --type openai --credential COMPATIBLE_ANTHROPIC_API_KEY --config "OPENAI_BASE_URL=${SWITCH_OPENAI_ENDPOINT_URL}"',
-  ].join("\n");
-  const result = await host.command("bash", ["-lc", providerScript], {
-    artifactName: "register-compatible-anthropic-switch-provider",
-    env: env(undefined, {
-      COMPATIBLE_ANTHROPIC_API_KEY: compatibleKey,
-      SWITCH_OPENAI_ENDPOINT_URL: openAiSurfaceEndpointUrl(endpointUrl),
-    }),
-    redactionValues: [compatibleKey],
-    timeoutMs: 120_000,
+  const binding = compatibleAnthropicSwitchBinding(
+    process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? mock?.endpointUrl ?? "",
+  );
+  await requireCompatibleAnthropicProviderAbsent(host, {
+    artifactName: "compatible-anthropic-provider-absent-before-switch",
+    env: env(),
   });
-  expect(result.exitCode).toBe(0);
-  return endpointUrl;
+  return { ...binding, endpointUrl: openAiSurfaceEndpointUrl(binding.endpointUrl) };
 }
 
 export async function installHermes(
@@ -583,7 +569,11 @@ export async function runHermesInferenceSetWithRetry(
   host: HostCliClient,
   redactionValues: string[],
   compatibleMetadataArgs: string[],
-  options: { attempts?: number; delay?: (milliseconds: number) => Promise<void> } = {},
+  options: {
+    attempts?: number;
+    compatibleBinding?: CompatibleAnthropicSwitchBinding | null;
+    delay?: (milliseconds: number) => Promise<void>;
+  } = {},
 ): Promise<ShellProbeResult> {
   const args = [
     CLI,
@@ -604,7 +594,7 @@ export async function runHermesInferenceSetWithRetry(
         artifactName: verify
           ? `hermes-inference-set-${attempt}`
           : "hermes-inference-set-no-verify-after-transient-failures",
-        env: env(),
+        env: env(undefined, compatibleAnthropicSwitchEnv(options.compatibleBinding ?? null)),
         redactionValues,
         timeoutMs: 180_000,
       }),

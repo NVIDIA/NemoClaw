@@ -8,12 +8,11 @@ import { waitUntil } from "../../core/wait";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { isExplicitMissingSandboxGatewayOutput } from "../../onboard/sandbox-recreate-probe";
 import { redactFull } from "../../security/redact";
 import { parseSandboxPhase } from "../../state/gateway";
 import { registryEntryGatewayPort } from "../../state/gateway-registry";
 import * as registry from "../../state/registry";
-import { removeSandboxRegistryEntryWithReceipt } from "./destroy";
-import { isExplicitMissingSandboxGatewayOutput } from "./gateway-state";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { type RebuildSandboxEntry, warnUnpreservedUserManagedFiles } from "./rebuild-flow-helpers";
@@ -24,6 +23,10 @@ import {
   reattachMcpAfterDeleteFailure,
 } from "./rebuild-mcp-phase";
 import { blockRebuildOnPendingBaselineTransition } from "./rebuild-preflight-guards";
+import type {
+  RebuildRecreateJournal,
+  RebuildRecreateSourcePresence,
+} from "./rebuild-recreate-journal";
 
 export type RebuildDeleteValidationResult =
   | { ok: true }
@@ -33,12 +36,14 @@ export interface RebuildDestroyPhaseInput {
   sandboxName: string;
   sandboxEntry: RebuildSandboxEntry;
   staleRecovery: boolean;
+  recreateJournal: RebuildRecreateJournal;
   backupManifest: RebuildBackupManifest;
   log: RebuildLog;
   bail: RebuildBail;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
   force?: boolean;
   validateAfterMcpPreparation?: () => Promise<RebuildDeleteValidationResult>;
+  validateAtDeleteEdge?: () => RebuildDeleteValidationResult;
   onDeleted: () => void;
   onDeleteStateAmbiguous?: () => void;
 }
@@ -224,11 +229,13 @@ export async function runRebuildDestroyPhase(
   const {
     sandboxName,
     staleRecovery,
+    recreateJournal,
     backupManifest,
     log,
     bail,
     relockShieldsIfNeeded,
     validateAfterMcpPreparation,
+    validateAtDeleteEdge,
     onDeleted,
   } = input;
   const deleteTarget = resolveRebuildDeleteTarget(sandboxName, input.sandboxEntry);
@@ -312,7 +319,6 @@ export async function runRebuildDestroyPhase(
     log,
   });
   if (!mcpPreparation) return null;
-  const rebuildMcpEntries = mcpPreparation.entries;
   const rebuildDetachedMcpProviderEntries = mcpPreparation.detachedProviderEntries;
   const rebuildScrubbedMcpAdapterEntries = mcpPreparation.scrubbedAdapterEntries;
 
@@ -355,15 +361,73 @@ export async function runRebuildDestroyPhase(
     return null;
   }
 
-  log(`Running: openshell sandbox delete -g ${gatewayName} ${sandboxName}`);
-  const deleteResult = runOpenshell(["sandbox", "delete", "-g", gatewayName, sandboxName], {
-    ignoreError: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const { alreadyGone } = getSandboxDeleteOutcome(deleteResult);
-  log(`Delete result: exit=${deleteResult.status}, alreadyGone=${alreadyGone}`);
+  if (validateAtDeleteEdge) {
+    let validation: RebuildDeleteValidationResult;
+    try {
+      validation = validateAtDeleteEdge();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      log(`Unexpected delete-edge validation failure: ${redactFull(detail)}`);
+      validation = {
+        ok: false,
+        message: "Replacement validation failed before sandbox deletion.",
+      };
+    }
+    if (!validation.ok) {
+      const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+        sandboxName,
+        rebuildDetachedMcpProviderEntries,
+        rebuildScrubbedMcpAdapterEntries,
+      );
+      relockShieldsIfNeeded(true);
+      bail(
+        mcpRecoveryFailure
+          ? `${validation.message} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+          : validation.message,
+        validation.code,
+      );
+      return null;
+    }
+  }
+
+  // MCP adapter entries are already detached and scrubbed here. A journal write
+  // that fails must reattach them before the rebuild gives up, or the still
+  // running sandbox is left without its MCP wiring.
+  let sourcePresence: RebuildRecreateSourcePresence;
+  try {
+    sourcePresence = recreateJournal.observeSourceForDelete();
+    recreateJournal.markDeleting();
+  } catch (error) {
+    const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+      sandboxName,
+      rebuildDetachedMcpProviderEntries,
+      rebuildScrubbedMcpAdapterEntries,
+    );
+    relockShieldsIfNeeded(true);
+    const detail = error instanceof Error ? error.message : String(error);
+    bail(
+      mcpRecoveryFailure
+        ? `Sandbox deletion could not be journaled: ${redactFull(detail)} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+        : `Sandbox deletion could not be journaled: ${redactFull(detail)}`,
+    );
+    return null;
+  }
+  if (sourcePresence === "missing") {
+    log(`Skipping delete: gateway ${gatewayName} reports '${sandboxName}' already absent`);
+  } else {
+    log(`Running: openshell sandbox delete -g ${gatewayName} ${sandboxName}`);
+  }
+  const deleteResult =
+    sourcePresence === "missing"
+      ? null
+      : runOpenshell(["sandbox", "delete", "-g", gatewayName, sandboxName], {
+          ignoreError: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+  const alreadyGone = deleteResult === null || getSandboxDeleteOutcome(deleteResult).alreadyGone;
+  if (deleteResult) log(`Delete result: exit=${deleteResult.status}, alreadyGone=${alreadyGone}`);
   let deletionConfirmed = alreadyGone;
-  if (deleteResult.status !== 0) {
+  if (deleteResult && deleteResult.status !== 0) {
     const reconciledDelete = reconcileFailedSandboxDelete(sandboxName, input.sandboxEntry, log);
     if (reconciledDelete.state === "deleted") {
       log("Delete returned nonzero, but exact post-delete state confirms sandbox removal.");
@@ -425,29 +489,31 @@ export async function runRebuildDestroyPhase(
     bail("Sandbox deletion could not be confirmed.");
     return null;
   }
+  try {
+    recreateJournal.confirmDeleted();
+  } catch (error) {
+    console.error(
+      "  Sandbox delete was accepted, but the replacement journal could not confirm absence.",
+    );
+    if (backupManifest) {
+      console.error("  State backup is preserved at: " + backupManifest.backupPath);
+    }
+    input.onDeleteStateAmbiguous?.();
+    const detail = error instanceof Error ? error.message : String(error);
+    bail(`Sandbox deletion could not be journaled: ${redactFull(detail)}`);
+    return null;
+  }
   stopNimBestEffort();
   onDeleted();
-  let removalReceipt: registry.SandboxRemovalReceipt | null = null;
-  const hasBaselineExclusions = (input.sandboxEntry.baselineExclusions?.length ?? 0) > 0;
-  if (rebuildMcpEntries.length === 0 && !hasBaselineExclusions) {
-    removalReceipt = removeSandboxRegistryEntryWithReceipt(sandboxName);
-  }
-  if (rebuildMcpEntries.length > 0) {
-    // The registry entry is the durable MCP rebuild transaction. The inner
-    // onboard run observes that the sandbox is absent, carries the MCP state
-    // into the replacement registration, and never enters generic live
-    // recreation. Keeping it here closes every process-death window between
-    // successful delete and fresh registry registration.
-    log("Preserving MCP-bearing registry entry across sandbox recreation");
-  }
-  if (hasBaselineExclusions) {
-    // Baseline exclusions are also registry-only rebuild intent. Keep the row
-    // until inner onboard snapshots it and replacement registration atomically
-    // publishes the fresh row.
-    log("Preserving baseline-exclusion registry entry across sandbox recreation");
-  }
+  const removalReceipt: registry.SandboxRemovalReceipt | null = null;
+  // The journaled source row is the durable replacement transaction. The inner
+  // onboard run observes that the sandbox is absent, carries the recorded state
+  // into the replacement registration, and never enters generic live
+  // recreation. Keeping it here closes every process-death window between
+  // successful delete and fresh registry registration.
+  log("Preserving journaled source registry entry across sandbox recreation");
   log(
-    `Registry after remove: ${JSON.stringify(registry.listSandboxes().sandboxes.map((s: { name: string }) => s.name))}`,
+    `Registry after delete: ${JSON.stringify(registry.listSandboxes().sandboxes.map((s: { name: string }) => s.name))}`,
   );
   console.log(`  ${G}\u2713${R} Old sandbox deleted`);
 

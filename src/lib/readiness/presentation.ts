@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { validateBuildIdentity } from "../core/version.js";
 import { redactForLog } from "../security/redact.js";
 import type {
   EvidenceScalar,
@@ -21,7 +22,6 @@ const MAX_FINDINGS = 256;
 const MAX_EVIDENCE = 256;
 const MAX_CAPABILITY_REFERENCES = 64;
 const MAX_EVIDENCE_REFERENCES = 32;
-const SOURCE_REVISION_PATTERN = /^[0-9a-f]{40,64}$/;
 const ENVIRONMENT_DETAIL_KEYS = new Set([
   "env",
   "environment",
@@ -256,16 +256,17 @@ export function createPublicReadinessReport(
     MAX_EVIDENCE,
     "evidence",
   );
+  const buildIdentity = validateBuildIdentity({
+    nemoclawVersion: report.provenance.nemoclawVersion,
+    sourceRevision: report.provenance.sourceRevision,
+  });
   return {
     schemaVersion: report.schemaVersion,
     ...outcome,
     mutated: false,
     provenance: {
-      nemoclawVersion: bounded(report.provenance.nemoclawVersion, 128),
-      ...(report.provenance.sourceRevision &&
-      SOURCE_REVISION_PATTERN.test(report.provenance.sourceRevision)
-        ? { sourceRevision: report.provenance.sourceRevision }
-        : {}),
+      nemoclawVersion: buildIdentity.nemoclawVersion,
+      sourceRevision: buildIdentity.sourceRevision,
       observedAt: report.provenance.observedAt,
     },
     observations: selectedObservations.map(observation),

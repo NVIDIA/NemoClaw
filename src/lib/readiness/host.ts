@@ -80,7 +80,7 @@ export interface CollectHostObservationsOptions {
 
 export interface CreateHostReadinessReportOptions {
   nemoclawVersion: string;
-  sourceRevision?: string;
+  sourceRevision: string;
   now?: () => Date;
   maxObservationAgeMs?: number;
 }
@@ -223,6 +223,7 @@ function unknownProjection(evidenceIds: readonly string[]): {
     "host.docker.runtime_supported",
     "host.docker.resources_sufficient",
     "host.docker.storage_compatible",
+    "host.docker.storage_remediation_available",
     "host.toolchain.node_available",
     "host.toolchain.openshell_available",
     "host.gpu.nvidia_available",
@@ -292,6 +293,13 @@ export function projectHostReadiness(
       (!host.cdiNvidiaGpuSpecMissing &&
         !host.cdiNvidiaGpuSpecStale &&
         !host.cdiNvidiaGpuSpecNeedsRepair);
+    const storageRemediationAvailable =
+      host.platform === "linux" &&
+      !host.isWsl &&
+      host.runtime === "docker" &&
+      host.hasNestedOverlayConflict &&
+      host.dockerStorageDriver === "overlayfs" &&
+      host.dockerUsesContainerdSnapshotter === true;
     observations = [
       observation("host.os.platform", host.platform),
       observation("host.os.architecture", host.architecture),
@@ -361,6 +369,10 @@ export function projectHostReadiness(
       capability(
         "host.docker.storage_compatible",
         host.dockerReachable ? stateOf(!host.hasNestedOverlayConflict) : "unknown",
+      ),
+      capability(
+        "host.docker.storage_remediation_available",
+        host.dockerReachable ? stateOf(storageRemediationAvailable) : "unknown",
       ),
       capability("host.toolchain.node_available", stateOf(host.nodeInstalled)),
       capability("host.toolchain.openshell_available", stateOf(host.openshellInstalled)),
@@ -449,7 +461,7 @@ export function projectHostReadiness(
     mutated: false,
     provenance: {
       nemoclawVersion: options.nemoclawVersion,
-      ...(options.sourceRevision ? { sourceRevision: options.sourceRevision } : {}),
+      sourceRevision: options.sourceRevision,
       observedAt: snapshot.observedAt,
     },
     observations,

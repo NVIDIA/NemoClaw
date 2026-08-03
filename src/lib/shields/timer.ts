@@ -13,7 +13,7 @@ import path from "node:path";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types";
 import { buildPolicySetCommand } from "../policy";
 import { run } from "../runner";
-import { resolveAgentConfig } from "../sandbox/config";
+import { resolveAgentConfig } from "../sandbox/agent-config";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";

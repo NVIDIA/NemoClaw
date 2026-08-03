@@ -8,6 +8,7 @@ import type { ResumeConfigConflict } from "../resume-config";
 import {
   createOnboardMachineEvent,
   emitOnboardMachineEvent,
+  machineStateFromOnboardSessionStep,
   type OnboardMachineEvent,
 } from "./events";
 import type { OnboardStateResult } from "./result";
@@ -18,6 +19,7 @@ import {
   type ResultSkippedInputs,
 } from "./result-events";
 import {
+  assertOnboardNotInterrupted,
   assertValidOnboardMachineTransition,
   canTransitionOnboardMachineState,
   isTerminalOnboardMachineState,
@@ -31,10 +33,8 @@ export interface OnboardRuntimeDeps {
   updateSession(mutator: (session: Session) => Session | void): Session;
   markStepStarted(stepName: string): Session;
   markStepComplete(stepName: string, updates?: SessionUpdates): Session;
-  markStepCompleteRecordOnly(stepName: string, updates?: SessionUpdates): Session;
   markStepSkipped(stepName: string): Session;
   markStepFailed(stepName: string, message?: string | null): Session;
-  markStepFailedRecordOnly(stepName: string, message?: string | null): Session;
   completeSession(updates?: SessionUpdates, options?: CompleteSessionOptions): Session;
   filterSafeUpdates(updates: SessionUpdates): Partial<Session>;
   emitEvent(event: OnboardMachineEvent): void;
@@ -75,10 +75,8 @@ function defaultDeps(): OnboardRuntimeDeps {
     updateSession: onboardSession.updateSession,
     markStepStarted: onboardSession.markStepStarted,
     markStepComplete: onboardSession.markStepComplete,
-    markStepCompleteRecordOnly: onboardSession.markStepCompleteRecordOnly,
     markStepSkipped: onboardSession.markStepSkipped,
     markStepFailed: onboardSession.markStepFailed,
-    markStepFailedRecordOnly: onboardSession.markStepFailedRecordOnly,
     completeSession: onboardSession.completeSession,
     filterSafeUpdates: onboardSession.filterSafeUpdates,
     emitEvent: emitOnboardMachineEvent,
@@ -171,26 +169,23 @@ export class OnboardRuntime {
     return updated;
   }
 
-  async markStepCompleteRecordOnly(
-    stepName: string,
-    updates: SessionUpdates = {},
-  ): Promise<Session> {
-    return this.markStepComplete(stepName, updates);
-  }
-
   async markStepSkipped(stepName: string): Promise<Session> {
-    return this.deps.markStepSkipped(stepName);
+    const current = this.ensureSession();
+    const state = machineStateFromOnboardSessionStep(stepName);
+    const previousStatus = state ? current.steps[stepName]?.status : null;
+    const updated = this.deps.markStepSkipped(stepName);
+    if (
+      state &&
+      (previousStatus === "pending" || previousStatus === "in_progress") &&
+      updated.steps[stepName]?.status === "skipped"
+    ) {
+      this.emit("state.skipped", updated, { state, step: stepName });
+    }
+    return updated;
   }
 
   async markStepFailed(stepName: string, message: string | null = null): Promise<Session> {
     return this.deps.markStepFailed(stepName, message);
-  }
-
-  async markStepFailedRecordOnly(
-    stepName: string,
-    message: string | null = null,
-  ): Promise<Session> {
-    return this.deps.markStepFailedRecordOnly(stepName, message);
   }
 
   async completeSession(updates: SessionUpdates = {}): Promise<Session> {
@@ -250,6 +245,7 @@ export class OnboardRuntime {
   ): Promise<Session> {
     const current = this.ensureSession();
     const from = current.machine.state;
+    assertOnboardNotInterrupted(from, "complete", current.failure);
     assertValidOnboardMachineTransition(from, "complete");
 
     const safeUpdates = this.deps.filterSafeUpdates(updates);
@@ -289,6 +285,7 @@ export class OnboardRuntime {
       return;
     }
     if (result.type === "complete") {
+      assertOnboardNotInterrupted(current.machine.state, "complete", current.failure);
       assertValidOnboardMachineTransition(current.machine.state, "complete");
       return;
     }
@@ -301,6 +298,10 @@ export class OnboardRuntime {
         );
       }
       return;
+    }
+    assertOnboardNotInterrupted(current.machine.state, result.next, current.failure);
+    if (isTerminalOnboardMachineState(current.machine.state)) {
+      assertValidOnboardMachineTransition(current.machine.state, result.next);
     }
     if (current.machine.state === result.next) {
       throw new Error(`Onboarding state result already reached target state: ${result.next}`);
@@ -344,6 +345,7 @@ export class OnboardRuntime {
     }
 
     const current = this.ensureSession();
+    assertOnboardNotInterrupted(current.machine.state, result.next, current.failure);
     const transition = assertValidOnboardMachineTransition(current.machine.state, result.next);
     if (result.transitionKind && transition.kind !== result.transitionKind) {
       throw new Error(

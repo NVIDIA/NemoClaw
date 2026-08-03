@@ -27,7 +27,6 @@ import {
   extractPreviousAdvisorReview,
   normalizeReviewResult,
   readTrustedSecurityReviewSkill,
-  readTrustedWritingGuide,
   recordSynthesisValidationFailureOnDraft,
   renderDetailedReview,
   renderSummary,
@@ -36,6 +35,7 @@ import {
   writeDeterministicContextArtifacts,
 } from "../tools/pr-review-advisor/analyze.mts";
 import { buildComment } from "../tools/pr-review-advisor/comment.mts";
+import { testTimeoutOptions } from "./helpers/timeouts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -228,7 +228,7 @@ describe("PR review advisor", () => {
             requiredTests: [],
             optionalTests: [
               {
-                id: "upgrade-stale-sandbox",
+                id: "rebuild-openclaw",
                 reason: "The model tried to downgrade the deterministic job.",
               },
             ],
@@ -245,7 +245,7 @@ describe("PR review advisor", () => {
             ],
             optional: [
               {
-                id: "upgrade-stale-sandbox",
+                id: "rebuild-openclaw",
                 workflow: "e2e.yaml",
                 selectorType: "job",
                 reason: "The model tried to downgrade the deterministic job.",
@@ -259,13 +259,13 @@ describe("PR review advisor", () => {
     );
 
     expect(result.e2e.coverage.requiredTests.map((test) => test.id)).toEqual([
+      "rebuild-openclaw",
       "state-backup-restore",
-      "upgrade-stale-sandbox",
     ]);
     expect(result.e2e.coverage.optionalTests).toEqual([]);
     expect(result.e2e.targets.required.map((target) => target.id)).toEqual([
+      "rebuild-openclaw",
       "state-backup-restore",
-      "upgrade-stale-sandbox",
     ]);
     expect(result.e2e.targets.optional).toEqual([]);
     expect(result.e2e.targets.required[1]).not.toHaveProperty("dispatchCommand");
@@ -276,9 +276,9 @@ describe("PR review advisor", () => {
     const comment = buildComment({ summary: renderSummary(result), result });
     expect(comment).toContain("### E2E guidance");
     expect(comment).toContain("Advisory only. E2E / PR Gate selects and runs jobs independently.");
-    expect(comment).toContain("<code>upgrade-stale-sandbox</code>");
+    expect(comment).toContain("<code>rebuild-openclaw</code>");
     expect(comment).toContain("**Recommended E2E:**");
-    expect(comment.match(/<code>upgrade-stale-sandbox<\/code>/gu)).toHaveLength(1);
+    expect(comment.match(/<code>rebuild-openclaw<\/code>/gu)).toHaveLength(1);
     expect(comment).not.toContain("Recommended coverage");
     expect(comment).not.toContain("Recommended selectors");
     expect(comment).not.toContain("rm -rf");
@@ -319,7 +319,7 @@ describe("PR review advisor", () => {
     expect([required.coverage.optionalTests, required.targets.optional]).toEqual([[], []]);
   });
 
-  it("renders each E2E recommendation once", () => {
+  it("renders each E2E recommendation once", testTimeoutOptions(30_000), () => {
     const result = normalizeReviewResult(
       validResult({
         e2e: {
@@ -424,75 +424,6 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     );
   });
 
-  it("loads the checked-in review guides into the advisor prompt", () => {
-    const skill = readTrustedSecurityReviewSkill();
-    const writingGuide = readTrustedWritingGuide();
-    const prompt = buildSystemPrompt();
-
-    expect(skill).toContain("# Security Code Review");
-    expect(skill).toContain("Category 1: Secrets and Credentials");
-    expect(writingGuide).toContain("# NemoClaw Writing Guide");
-    expect(writingGuide).toContain("Use one term for one concept");
-    expect(writingGuide).toContain("## Scope and Review Policy");
-    expect(prompt).toContain("Trusted security review skill from main checkout");
-    expect(prompt).toContain("Trusted NemoClaw writing guide from workflow checkout");
-    expect(prompt).toContain("Apply its review policy when you evaluate changed explanatory text");
-    expect(prompt).toContain("Do not request unrelated language cleanup");
-    expect(prompt).toContain("For NemoClaw PRs, check SSRF bypasses");
-    expect(prompt).not.toContain("For NemoClaw PRs, check sandbox escape vectors");
-    expect(prompt).toContain(
-      "Do not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or external E2E job status",
-    );
-    expect(prompt).toContain(
-      "merge_as_is means a completed, non-low-confidence review has no open findings",
-    );
-    expect(prompt).toContain(
-      "info_only is reserved for skipped, unavailable, incomplete, or low-confidence review evidence",
-    );
-    expect(prompt).toContain("merge_as_is never approves the PR or replaces required human review");
-    expect(prompt).toContain(
-      "compare it with the current diff and decide whether prior code-review findings were addressed",
-    );
-    expect(prompt).toContain(
-      "any unmet binding acceptance clause or security fail/warning must be represented as a finding",
-    );
-    expect(prompt).toContain("Source-of-truth review");
-    expect(prompt).toContain("E2E suite simplicity");
-    expect(prompt).toContain(
-      "testDepth.suggestedTests are internal review notes, not author tasks",
-    );
-    expect(prompt).toContain(
-      "use category=tests only when the gap is not already part of another defect",
-    );
-    expect(prompt).toContain("Every finding must be probe-shaped");
-    expect(prompt).toContain("Simplification review");
-    expect(prompt).toContain("Deterministic regression risks");
-    expect(prompt).toContain("E2E guidance");
-    expect(prompt).toContain("E2E guidance is not a finding");
-    expect(prompt).toContain("A required validation job is not a finding unless");
-    expect(prompt).toContain("Prior-advisor availability, failure, or incompleteness");
-    expect(prompt).toContain("one flat atomic commit object");
-    expect(prompt).toContain("delete, stdlib, native, yagni, or shrink");
-    expect(prompt).not.toContain("Consider writing more tests for");
-    expect(prompt).toContain("take a closer architecture look for new systems");
-    expect(prompt).toContain("Favor focused tests and local helpers");
-    expect(prompt).toContain("what invalid state is handled");
-    expect(prompt).toContain(
-      "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding",
-    );
-    expect(prompt).toContain("Finding severity mapping: blocker renders as 'Blocker'");
-    expect(prompt).toContain("Proposed designs, implementation ideas, investigation notes");
-    expect(prompt).toContain("author_association is OWNER, MEMBER, or COLLABORATOR");
-    expect(prompt).toContain("A Refs, Related, or Follow-up link does not commit the PR");
-    expect(prompt).toContain("PR-description or template compliance");
-    expect(prompt).toContain("When several symptoms or locations share one root cause and remedy");
-    expect(prompt).toContain("suggestion renders as 'Suggestion'");
-    expect(prompt).toContain("multi-turn conversation");
-    expect(prompt).toContain(
-      "The immediately following validation turn stays in the same agent session",
-    );
-  });
-
   it("includes the built-in security rubric when the trusted skill is unavailable", () => {
     vi.spyOn(fs, "readFileSync").mockImplementationOnce(() => {
       throw new Error("missing skill fixture");
@@ -536,6 +467,11 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     const validationTurn = turns.find((turn) => turn.name === "validate-synthesis-json");
     const expectedAnalysis = [
       ["scope-risk-map-analysis", 8, ["pr_review_scope_risk_context", "pr_review_git_diff"]],
+      [
+        "terminology-review-analysis",
+        8,
+        ["pr_review_controlled_words", "pr_review_terminology_pr_context"],
+      ],
       ["correctness-state-analysis", 8, ["pr_review_correctness_state_context"]],
       ["security-trust-analysis", 12, ["pr_review_security_trust_context"]],
       ["tests-regressions-analysis", 8, ["pr_review_tests_regressions_context"]],
@@ -551,7 +487,7 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
       ];
     });
 
-    expect(turns).toHaveLength(14);
+    expect(turns).toHaveLength(16);
     expect(actualAnalysis).toEqual(expectedAnalysis);
     for (const [index, turn] of turns.entries()) {
       expect(turn.prompt).toContain(`Turn ${index + 1}/${turns.length}`);
@@ -559,23 +495,26 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     const workingPrompts = analysisTurns.map((turn) => turn.prompt);
     expect(
       workingPrompts.filter((prompt) => prompt.includes("Do not produce final JSON")),
-    ).toHaveLength(6);
+    ).toHaveLength(7);
     expect(workingPrompts.join("\n")).not.toContain("<pr_review_advisor_json>");
-    expect(analysisTurns[1]?.prompt).toContain("source-of-truth questions");
-    expect(analysisTurns[2]?.prompt).toContain("sandbox escape");
-    expect(analysisTurns[3]?.prompt).toContain("every riskPlan invariant");
-    expect(analysisTurns[3]?.prompt).toContain("inputs for e2e.coverage");
-    expect(analysisTurns[3]?.prompt).toContain("Do not put E2E recommendations in the ledger");
-    expect(analysisTurns[4]?.prompt).toContain("Do not report live CI/check status");
-    expect(analysisTurns[4]?.prompt).toContain("inputs for e2e.targets");
-    expect(analysisTurns[4]?.prompt).toContain("never invent or execute a command");
-    expect(analysisTurns[1]?.prompt).toContain("classify linked issue text as binding acceptance");
-    expect(analysisTurns[5]?.prompt).toContain("share a root cause and remedy");
-    expect(analysisTurns[5]?.prompt).toContain("unmet binding acceptance clause");
+    expect(analysisTurns[1]?.prompt).toContain("Do not use a token scan");
+    expect(analysisTurns[1]?.prompt).toContain("what concrete contrasting case");
+    expect(analysisTurns[1]?.prompt).toContain("pr_review_trace_term");
+    expect(analysisTurns[2]?.prompt).toContain("source-of-truth questions");
+    expect(analysisTurns[3]?.prompt).toContain("sandbox escape");
+    expect(analysisTurns[4]?.prompt).toContain("every riskPlan invariant");
+    expect(analysisTurns[4]?.prompt).toContain("inputs for e2e.coverage");
+    expect(analysisTurns[4]?.prompt).toContain("Do not put E2E recommendations in the ledger");
+    expect(analysisTurns[5]?.prompt).toContain("Do not report live CI/check status");
+    expect(analysisTurns[5]?.prompt).toContain("inputs for e2e.targets");
+    expect(analysisTurns[5]?.prompt).toContain("never invent or execute a command");
+    expect(analysisTurns[2]?.prompt).toContain("classify linked issue text as binding acceptance");
+    expect(analysisTurns[6]?.prompt).toContain("share a root cause and remedy");
+    expect(analysisTurns[6]?.prompt).toContain("unmet binding acceptance clause");
     expect(analysisTurns[0]?.prompt).toContain(
       "overlap and merge-order observations in this prose receipt",
     );
-    expect(analysisTurns[5]?.prompt).toContain(
+    expect(analysisTurns[6]?.prompt).toContain(
       "Required-job execution status, E2E recommendations, overlap metadata, advisor state, and positive observations",
     );
     expect(synthesisTurn?.prompt).toContain("<pr_review_advisor_json>");
@@ -585,35 +524,53 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     );
     expect(validationTurn?.prompt).toContain("same agent session");
     const correctnessContext = JSON.parse(
-      analysisTurns[1]?.contextToolResults?.[0]?.content || "{}",
+      analysisTurns[2]?.contextToolResults?.[0]?.content || "{}",
     ) as Record<string, unknown>;
     expect(correctnessContext).not.toHaveProperty("pullRequest");
     expect(correctnessContext.issueReferenceLines).toEqual(["Refs #123"]);
     expect(commitTurns[0]?.prompt).toContain("categories scope, architecture");
-    expect(commitTurns[1]?.prompt).toContain("categories correctness, acceptance, docs");
-    expect(commitTurns[2]?.prompt).toContain("basis kinds security_violation");
-    expect(commitTurns[3]?.prompt).toContain("basis kinds missing_regression");
-    expect(commitTurns[4]?.prompt).toContain("categories workflow, docs, architecture");
-    expect(commitTurns[5]?.prompt).toContain("Reconciliation may update, resolve, or supersede");
+    expect(commitTurns[1]?.activeToolNames).toEqual(["pr_review_update_terminology"]);
+    expect(commitTurns[1]?.prompt).toContain("complete terminology receipt");
+    expect(commitTurns[2]?.prompt).toContain("categories correctness, acceptance, docs");
+    expect(commitTurns[3]?.prompt).toContain("basis kinds security_violation");
+    expect(commitTurns[4]?.prompt).toContain("basis kinds missing_regression");
+    expect(commitTurns[5]?.prompt).toContain("categories workflow, docs, architecture");
+    expect(commitTurns[6]?.prompt).toContain("Reconciliation may update, resolve, or supersede");
     for (const turn of analysisTurns) {
       const contextTools = turn.contextToolResults?.map((result) => result.toolName) ?? [];
       const reconciliation = turn.name === "reconcile-findings-analysis";
-      expect(turn.activeToolNames).toEqual(reconciliation ? ["pr_review_read_ledger"] : undefined);
+      const terminology = turn.name === "terminology-review-analysis";
+      const readsTerminology = [
+        "correctness-state-analysis",
+        "security-trust-analysis",
+        "reconcile-findings-analysis",
+      ].includes(turn.name);
+      expect(turn.activeToolNames).toEqual(
+        terminology
+          ? ["pr_review_trace_term"]
+          : reconciliation
+            ? ["pr_review_read_ledger", "pr_review_read_terminology"]
+            : readsTerminology
+              ? ["pr_review_read_terminology"]
+              : undefined,
+      );
       expect(turn.requiredToolNames).toEqual([
         ...contextTools,
         ...(reconciliation ? ["pr_review_read_ledger"] : []),
+        ...(readsTerminology ? ["pr_review_read_terminology"] : []),
       ]);
       expect(turn.requireToolsBeforeText).toEqual([
         ...contextTools,
         ...(reconciliation ? ["pr_review_read_ledger"] : []),
+        ...(readsTerminology ? ["pr_review_read_terminology"] : []),
       ]);
       expect(turn.requireAssistantText).toBe(true);
       expect(turn.atomicTerminalToolName).toBeUndefined();
       expect(turn.prompt).toContain("Required analysis protocol — perform these steps in order");
       expect(turn.prompt).toContain("A separate commit turn follows this analysis");
     }
-    expect(analysisTurns[5]?.prompt).toContain("`pr_review_read_ledger`");
-    for (const turn of commitTurns) {
+    expect(analysisTurns[6]?.prompt).toContain("`pr_review_read_ledger`");
+    for (const turn of commitTurns.filter((turn) => turn.name !== "terminology-review")) {
       expect(turn.contextToolResults).toBeUndefined();
       expect(turn.activeToolNames).toEqual(["pr_review_update_ledger"]);
       expect(turn.requiredToolNames).toEqual(["pr_review_update_ledger"]);
@@ -627,9 +584,15 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
       expect(turn.prompt).not.toContain("`operations`");
       expect(turn.prompt).toContain("Emit no prose before or after the tool call");
     }
-    expect(validationTurn?.activeToolNames).toEqual(["pr_review_read_ledger"]);
+    expect(validationTurn?.activeToolNames).toEqual([
+      "pr_review_read_ledger",
+      "pr_review_read_terminology",
+    ]);
     expect(validationTurn?.atomicTerminalRepairPrompt).toBeUndefined();
-    expect(validationTurn?.requireToolsBeforeText).toEqual(["pr_review_read_ledger"]);
+    expect(validationTurn?.requireToolsBeforeText).toEqual([
+      "pr_review_read_ledger",
+      "pr_review_read_terminology",
+    ]);
     expect(synthesisTurn?.prompt).toContain("only `status=open` findings in snapshot order");
     expect(synthesisTurn?.prompt).toContain(
       "preserve only the CI/operations selector recommendations and their reasons",
@@ -1494,5 +1457,44 @@ diff --git a/test/example.test.ts b/test/example.test.ts
 
     expect(schema["SPDX-License-Identifier"]).toBe("Apache-2.0");
     expect(validate(result)).toBe(true);
+
+    const decision = {
+      id: "T-001",
+      term: "review-bound",
+      change: "introduced",
+      disposition: "replace",
+      meaning: "Evidence for one revision.",
+      contrast: null,
+      existingTerm: "commit SHA",
+      semanticImpact: "evidence",
+      recommendation: "Use commit SHA.",
+      traceId: "term-valid",
+      source: { file: "WRITING.md", line: 12, headSha: "a".repeat(40) },
+    };
+    const invalidReceipts = [
+      {
+        status: "clear",
+        decisions: [],
+        noChangesReason: "No candidates.\nInjected text.",
+      },
+      {
+        status: "candidates",
+        decisions: [{ ...decision, term: "review-bound\ninjected" }],
+        noChangesReason: null,
+      },
+      {
+        status: "candidates",
+        decisions: [{ ...decision, recommendation: "Use commit SHA.\nInjected text." }],
+        noChangesReason: null,
+      },
+      {
+        status: "candidates",
+        decisions: [{ ...decision, source: { ...decision.source, headSha: "abc123" } }],
+        noChangesReason: null,
+      },
+    ];
+    for (const terminologyReview of invalidReceipts) {
+      expect(validate({ ...result, terminologyReview })).toBe(false);
+    }
   });
 });

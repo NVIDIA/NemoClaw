@@ -46,7 +46,7 @@ A state handler may perform many smaller operations, but it should expose only s
 The persisted onboarding session tracks step-level progress for resumability.
 
 - `OnboardRuntime` owns normal machine transitions, revision increments, terminal state, and machine events.
-- Session step helpers record only step status (`pending`, `in_progress`, `complete`, `failed`, `skipped`) and safe step updates. They cannot change the machine snapshot.
+- Session step helpers record step-progress bookkeeping and context updates accepted by `filterSafeUpdates`. They cannot change the machine snapshot.
 - State handlers return explicit results. They do not move the machine through step helpers.
 - Explicit session recovery and the process-exit failure backstop are narrow exceptions.
 
@@ -94,7 +94,7 @@ without a state transition so a later process can resume the same non-terminal s
 - emitting redacted lifecycle, state, repair, resume-conflict, and hook events;
 - normalizing older sessions before strict execution.
 
-Step helpers record step status and safe step updates. They cannot change the machine snapshot or emit machine events. Explicit session recovery and the process-exit failure backstop are separate recovery boundaries. They validate their snapshot changes and run before or outside handler execution.
+Step helpers record step-progress bookkeeping and context updates accepted by `filterSafeUpdates`. They cannot change the machine snapshot or emit machine events. Explicit session recovery and the process-exit failure backstop are separate recovery boundaries. They validate their snapshot changes and run before or outside handler execution.
 
 ## Event semantics
 

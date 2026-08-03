@@ -491,6 +491,31 @@ describe("prepareSandboxCreatePlan", () => {
       "sandbox",
       "--policy",
       "/tmp/policy.yaml",
+      "--driver-config-json",
+      JSON.stringify({
+        docker: {
+          mounts: [
+            {
+              type: "tmpfs",
+              target: "/run/nemoclaw-dcode-mcp",
+              options: ["noexec"],
+              size_bytes: 1_048_576,
+              mode: 0o1777,
+            },
+          ],
+        },
+        podman: {
+          mounts: [
+            {
+              type: "tmpfs",
+              target: "/run/nemoclaw-dcode-mcp",
+              options: ["noexec"],
+              size_bytes: 1_048_576,
+              mode: 0o1777,
+            },
+          ],
+        },
+      }),
       "--gpu",
       "--gpu-device",
       "nvidia.com/gpu=0",

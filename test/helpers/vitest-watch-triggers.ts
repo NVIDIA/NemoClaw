@@ -47,6 +47,10 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)(?:Dockerfile|agents\/(?:hermes|langchain-deepagents-code)\/Dockerfile)$/,
+    testsToRun: runTests("src/lib/onboard/managed-startup-profile.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)agents\/hermes\/policy-additions\.yaml$/,
     testsToRun: runTests(
       "src/lib/onboard/initial-policy-real-policy.test.ts",
@@ -103,6 +107,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/code-scanning-workflow.test.ts"),
   },
   {
+    pattern: /(?:^|\/)\.github\/workflows\/approve-maintainer-pr-workflow-runs\.yaml$/,
+    testsToRun: runTests("test/maintainer-pr-workflow-approval.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)\.github\/workflows\/pr-e2e-gate\.yaml$/,
     testsToRun: runTests("test/pr-e2e-gate-workflow.test.ts", "test/pr-e2e-required.test.ts"),
   },
@@ -128,11 +136,17 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern:
-      /(?:^|\/)(?:\.github\/workflows\/platform-vitest-main\.yaml|ci\/platform-vitest-macos-requirements\.lock)$/,
+      /(?:^|\/)(?:\.github\/workflows\/(?:platform-vitest-main|wsl-e2e)\.yaml|tools\/wsl\/ci-helper\.ps1)$/,
+    testsToRun: runTests(
+      "test/platform-vitest-main-workflow.test.ts",
+      "test/wsl-ci-helper.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)ci\/platform-vitest-macos-requirements\.lock$/,
     testsToRun: runTests("test/platform-vitest-main-workflow.test.ts"),
   },
 ];
-
 export function resolveVitestWatchTests(file: string): string[] {
   const normalized = file.replaceAll("\\", "/");
   const tests = new Set<string>();

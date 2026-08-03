@@ -11,55 +11,116 @@ const DOCKERIGNORE = path.join(REPO_ROOT, ".dockerignore");
 const OLD_OPENCLAW_VERSION = "2026.3.11";
 const BLUEPRINT_RELPATH = "nemoclaw-blueprint/blueprint.yaml";
 
+interface LogicalDockerfileInstruction {
+  lineNumber: number;
+  text: string;
+}
+
 export function oldBaseContextSources(): string[] {
   return [BLUEPRINT_RELPATH, ...directDockerfileBaseCopySources()];
+}
+
+function logicalDockerfileInstructions(text: string): LogicalDockerfileInstruction[] {
+  const instructions: LogicalDockerfileInstruction[] = [];
+  let currentParts: string[] = [];
+  let currentLineNumber = 0;
+  let sawInstruction = false;
+
+  for (const [lineIndex, rawLine] of text.split(/\r?\n/).entries()) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      if (!sawInstruction) {
+        const escapeDirective = /^#\s*escape\s*=\s*(\S+)\s*$/i.exec(line);
+        if (escapeDirective && escapeDirective[1] !== "\\") {
+          throw new Error(
+            `Unsupported Dockerfile.base escape directive at line ${lineIndex + 1}: ${rawLine}`,
+          );
+        }
+      }
+      continue;
+    }
+
+    sawInstruction = true;
+    if (currentParts.length === 0) currentLineNumber = lineIndex + 1;
+
+    const continued = line.endsWith("\\");
+    const part = continued ? line.slice(0, -1).trimEnd() : line;
+    if (!part) {
+      throw new Error(
+        `Unsupported Dockerfile.base continuation at line ${lineIndex + 1}: ${rawLine}`,
+      );
+    }
+    currentParts.push(part);
+
+    if (!continued) {
+      const instruction = currentParts.join(" ");
+      if (instruction.split(/\s+/).some((token) => token.startsWith("<<"))) {
+        throw new Error(
+          `Unsupported Dockerfile.base heredoc instruction at line ${currentLineNumber}: ${instruction}`,
+        );
+      }
+      instructions.push({
+        lineNumber: currentLineNumber,
+        text: instruction,
+      });
+      currentParts = [];
+      currentLineNumber = 0;
+    }
+  }
+
+  if (currentParts.length > 0) {
+    throw new Error(`Dangling Dockerfile.base continuation at line ${currentLineNumber}`);
+  }
+  return instructions;
+}
+
+function unsupportedDirectCopyForm(instruction: LogicalDockerfileInstruction): never {
+  throw new Error(
+    `Unsupported direct Dockerfile.base COPY form at line ${instruction.lineNumber}: ${instruction.text}`,
+  );
+}
+
+function parseDirectCopyOperands(
+  tokens: string[],
+  instruction: LogicalDockerfileInstruction,
+): string[] | null {
+  let operandIndex = 0;
+  while (operandIndex < tokens.length && tokens[operandIndex]?.startsWith("--")) {
+    const flag = tokens[operandIndex]!;
+    if (/^--from=.+$/i.test(flag)) return null;
+    const reviewedDirectFlag =
+      /^--(?:chown|chmod)=.+$/i.test(flag) ||
+      /^--(?:link|parents)(?:=(?:true|false))?$/i.test(flag);
+    if (!reviewedDirectFlag) unsupportedDirectCopyForm(instruction);
+    operandIndex += 1;
+  }
+
+  const operands = tokens.slice(operandIndex);
+  if (operands.length < 2 || operands.some((operand) => operand.startsWith("--"))) {
+    unsupportedDirectCopyForm(instruction);
+  }
+  return operands;
 }
 
 export function directDockerfileBaseCopySources(dockerfilePath = DOCKERFILE_BASE): string[] {
   const text = fs.readFileSync(dockerfilePath, "utf8");
   const sources: string[] = [];
-  let logicalLine = "";
-  let instructionStartLine = 0;
 
-  for (const [lineIndex, rawLine] of text.split(/\r?\n/).entries()) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-
-    if (!logicalLine) instructionStartLine = lineIndex + 1;
-    const continues = line.endsWith("\\");
-    const segment = continues ? line.slice(0, -1).trimEnd() : line;
-    logicalLine = `${logicalLine} ${segment}`.trim();
-    if (continues) continue;
-
-    const instructionMatch = /^(\S+)\b([\s\S]*)$/.exec(logicalLine);
-    const rawInstruction = logicalLine;
-    logicalLine = "";
+  for (const instruction of logicalDockerfileInstructions(text)) {
+    const instructionMatch = /^(\S+)\b([\s\S]*)$/.exec(instruction.text);
     if (!instructionMatch || instructionMatch[1].toUpperCase() !== "COPY") continue;
 
-    const tokens = instructionMatch[2].trim().split(/\s+/).filter(Boolean);
-    const normalizedTokens = tokens.map((token) => token.toLowerCase());
-    const nonFlagTokens = tokens.filter((token) => !token.startsWith("--"));
-    const hasStageSource = normalizedTokens.some(
-      (token) => token === "--from" || token.startsWith("--from="),
-    );
-    if (hasStageSource) continue;
+    const copyForm = instructionMatch[2].trim();
+    const tokens = copyForm.split(/\s+/).filter(Boolean);
+    if (!copyForm || copyForm.startsWith("[")) unsupportedDirectCopyForm(instruction);
 
-    if (nonFlagTokens.length < 2 || nonFlagTokens[0]?.startsWith("[")) {
-      throw new Error(
-        `Unsupported direct Dockerfile.base COPY form at line ${instructionStartLine}: ${rawInstruction}`,
-      );
-    }
+    const operands = parseDirectCopyOperands(tokens, instruction);
+    if (operands === null) continue;
 
-    for (const source of nonFlagTokens.slice(0, -1)) {
+    for (const source of operands.slice(0, -1)) {
       validateOldBaseContextSource(source);
       sources.push(source);
     }
-  }
-
-  if (logicalLine) {
-    throw new Error(
-      `Unsupported unterminated Dockerfile.base instruction at line ${instructionStartLine}: ${logicalLine}`,
-    );
   }
 
   return sources;
@@ -116,6 +177,8 @@ function validateOldBaseContextSource(relativePath: string): string {
   const invalidSource =
     path.isAbsolute(relativePath) ||
     relativePath.includes("\\") ||
+    /[$*?[\]"']/.test(relativePath) ||
+    relativePath.startsWith("--") ||
     parts.some((part) => !part || part === "." || part === "..") ||
     (resolved !== REPO_ROOT && !resolved.startsWith(repoPrefix));
   if (invalidSource) {

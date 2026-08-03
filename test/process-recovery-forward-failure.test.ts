@@ -89,6 +89,43 @@ function compactTeamsMessagingPlan(port = "3978") {
 }
 
 describe("checkAndRecoverSandboxProcesses primary forward failure", () => {
+  it("fails closed when OpenShell forward state is unavailable", () => {
+    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.ts");
+    const agentRuntime = requireSource("../src/lib/agent/runtime.ts");
+    const registry = requireSource("../src/lib/state/registry.ts");
+    const childProcess = requireSource("node:child_process");
+
+    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
+      stderr: "",
+    } as never);
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "beta",
+      agent: "openclaw",
+      dashboardPort: 18789,
+    });
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 1,
+      output: "OpenShell forward state unavailable",
+    });
+    const runOpenshell = vi.spyOn(openshellRuntime, "runOpenshell");
+
+    expect(
+      withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("beta", { quiet: true })),
+    ).toEqual({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+      forwardRecovered: false,
+      forwardRecoveryFailed: true,
+      forwardRecoveryFailureDetail:
+        "the primary dashboard/API host forward could not be verified because OpenShell forward state was unavailable",
+    });
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
   it("reports failure when a messaging forward cannot recover even if the primary is healthy", () => {
     const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.ts");
     const agentRuntime = requireSource("../src/lib/agent/runtime.ts");

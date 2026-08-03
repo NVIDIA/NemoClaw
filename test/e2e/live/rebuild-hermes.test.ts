@@ -36,6 +36,15 @@ import {
   verifyRebuildHermesFinalBaseIdentity,
   verifyRebuildHermesOldBaseIsStale,
 } from "./rebuild-hermes-base-identity.ts";
+import {
+  bootstrapRebuildHermesGateway,
+  cleanupRebuildHermesForward as cleanupHermesForward,
+  cleanupRebuildHermesTrackedForwards,
+  requireRebuildHermesDashboardPort,
+  requireRebuildHermesHostedInferenceRoute,
+  requireRebuildHermesOpenshellBin,
+  resolveRebuildHermesCurrentBase,
+} from "./rebuild-hermes-bootstrap.ts";
 import { buildRebuildHermesChildEnv, planRebuildHermesBaseReuse } from "./rebuild-hermes-env.ts";
 import { ensureRebuildHermesHostTools, hermesApiTokenDigest } from "./rebuild-hermes-host-tools.ts";
 import {
@@ -53,20 +62,18 @@ import { REBUILD_HERMES_PHASES } from "./rebuild-hermes-phases.ts";
 import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
 import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-hermes-timing.ts";
 
-// Protected PR E2E checks out the exact head while the trusted controller runs
+// Protected PR E2E checks out the PR commit while the trusted controller runs
 // the base workflow. Older controller revisions therefore cannot provide the
 // newly introduced CLI build and OpenShell install steps. Keep the test pinned
-// to the exact checked-out launcher and bootstrap only what that controller
+// to the checked-out launcher and bootstrap only what that controller
 // revision omits; the PR workflow remains the canonical execution path.
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
-
 // The rebuild regression invokes the checked-out CLI directly. Full install.sh
 // coverage remains in hermes-e2e; this lane owns Docker base-image builds,
 // OpenShell provider/sandbox commands, direct Hermes sandbox exec, curated
 // local NemoClaw registry/session state, and `nemoclaw <name> rebuild --yes`.
 // Literal interactive issue #3025 reproduction paths (`hermes rebuild`, modal
 // prompt, and `Y` confirmation) remain outside this Vitest migration.
-
 const HERMES_MANIFEST = path.join(REPO_ROOT, "agents", "hermes", "manifest.yaml");
 const OLD_HERMES_VERSION = `v${REBUILD_HERMES_OLD_BASE_FIXTURE.hermesCalver}`;
 const OLD_HERMES_REGISTRY_VERSION = OLD_HERMES_VERSION.slice(1);
@@ -82,7 +89,6 @@ SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX) ||
   fail(
     `rebuild-hermes live test is destructive and only accepts sandbox names with prefix ${TEST_SANDBOX_PREFIX}; got ${SANDBOX_NAME}`,
   );
-
 const MARKER_FILE = "/sandbox/.hermes/memories/rebuild-marker.txt";
 const MARKER_CONTENT = `REBUILD_HM_E2E_${Date.now()}`;
 const KANBAN_FILE = "/sandbox/.hermes/kanban.db";
@@ -126,7 +132,6 @@ const KANBAN_TASK_PROBE = [
   "    raise SystemExit(f'missing expected task: {expected}; evidence={serialized}')",
 ].join("\n");
 
-const ONBOARD_TIMEOUT_MS = 60 * 60_000;
 const DOCKER_PULL_TIMEOUT_MS = 20 * 60_000;
 const OPENSHELL_TIMEOUT_MS = 2 * 60_000;
 const SANDBOX_CREATE_TIMEOUT_MS = 10 * 60_000;
@@ -253,6 +258,7 @@ interface SessionArtifactSummary {
 }
 
 function testEnv(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const openshellBin = process.env.OPENSHELL_BIN?.trim();
   return buildRebuildHermesChildEnv(process.env, {
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_AGENT: "hermes",
@@ -264,6 +270,7 @@ function testEnv(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Process
     NEMOCLAW_PROVIDER: "custom",
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+    ...(openshellBin ? { NEMOCLAW_OPENSHELL_BIN: openshellBin } : {}),
     OPENSHELL_GATEWAY: "nemoclaw",
     ...(apiKey
       ? {
@@ -300,9 +307,10 @@ function expectEqual(actual: string | undefined, expected: string, message: stri
 async function bestEffortPrecleanHermesResources(
   host: HostCliClient,
   apiKey: string | undefined,
+  openshellBin: string,
   artifactName: string,
 ): Promise<void> {
-  await host.nemoclaw([SANDBOX_NAME, "destroy", "--yes", "--cleanup-gateway"], {
+  await host.nemoclaw([SANDBOX_NAME, "destroy", "--yes"], {
     artifactName: `${artifactName}-nemoclaw-destroy`,
     env: testEnv(apiKey),
     redactionValues: [apiKey ?? "", DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY],
@@ -314,9 +322,11 @@ async function bestEffortPrecleanHermesResources(
       "-lc",
       [
         "set +e",
-        'if command -v openshell >/dev/null 2>&1; then openshell sandbox delete "$SANDBOX_NAME" >/dev/null 2>&1 || true; fi',
-        "if command -v openshell >/dev/null 2>&1; then openshell forward stop 8642 >/dev/null 2>&1 || true; fi",
-        'if command -v openshell >/dev/null 2>&1; then openshell provider delete "$DISCORD_PROVIDER" >/dev/null 2>&1 || true; fi',
+        '"$OPENSHELL_BIN" sandbox delete "$SANDBOX_NAME" >/dev/null 2>&1 || true',
+        '"$OPENSHELL_BIN" forward stop 18789 "$SANDBOX_NAME" >/dev/null 2>&1 || true',
+        '"$OPENSHELL_BIN" forward stop 8642 "$SANDBOX_NAME" >/dev/null 2>&1 || true',
+        '"$OPENSHELL_BIN" provider delete "$DISCORD_PROVIDER" >/dev/null 2>&1 || true',
+        '"$OPENSHELL_BIN" gateway destroy -g nemoclaw >/dev/null 2>&1 || true',
         'docker rmi "$OLD_BASE_TAG" >/dev/null 2>&1 || true',
         'docker rmi "$CURRENT_BASE_REUSE_TAG" >/dev/null 2>&1 || true',
         "exit 0",
@@ -328,6 +338,8 @@ async function bestEffortPrecleanHermesResources(
         DISCORD_PROVIDER: `${SANDBOX_NAME}-discord-bridge`,
         CURRENT_BASE_REUSE_TAG,
         OLD_BASE_TAG,
+        OPENSHELL_BIN: openshellBin,
+        SANDBOX_NAME,
       }),
       redactionValues: [apiKey ?? "", DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY],
       timeoutMs: 3 * 60_000,
@@ -367,9 +379,10 @@ async function cleanupHermesNemoClawSandbox(
 async function cleanupHermesDiscordProvider(
   host: HostCliClient,
   apiKey: string | undefined,
+  openshellBin: string,
 ): Promise<void> {
   const provider = `${SANDBOX_NAME}-discord-bridge`;
-  const result = await host.command("openshell", ["provider", "delete", provider], {
+  const result = await host.command(openshellBin, ["provider", "delete", provider], {
     artifactName: "cleanup-hermes-rebuild-resources-provider-delete",
     env: hermesCleanupEnv(apiKey),
     redactionValues: hermesCleanupRedactions(apiKey),
@@ -414,10 +427,11 @@ async function removeHermesFixtureImage(
 async function waitForSandboxReady(
   host: HostCliClient,
   apiKey: string,
+  openshellBin: string,
   artifactPrefix: string,
 ): Promise<void> {
   for (let attempt = 1; attempt <= 30; attempt += 1) {
-    const list = await host.command("openshell", ["sandbox", "list"], {
+    const list = await host.command(openshellBin, ["sandbox", "list"], {
       artifactName: `${artifactPrefix}-sandbox-list-${attempt}`,
       env: testEnv(apiKey),
       redactionValues: [apiKey, PRE_REBUILD_API_SERVER_KEY],
@@ -650,16 +664,17 @@ test(STALE_BASE_REBUILD
     expectedHermesVersion: expectedVersion,
     markerFile: MARKER_FILE,
     preservedBoundaries: [
-      "checked-out NemoClaw CLI non-interactive Hermes onboard",
-      "phase 1 current Hermes base resolution plus immutable old Hermes base fixture",
-      "openshell provider create/update and sandbox create/exec/list",
+      "production current Hermes base resolution without a disposable sandbox",
+      "product gateway startup plus exact compatible-endpoint provider/model route",
+      "current Hermes base identity plus immutable old Hermes base fixture",
+      "OpenShell provider create/update and sandbox create/exec/list",
       "curated local ~/.nemoclaw registry and onboard-session rebuild metadata",
       "real nemoclaw <sandbox> rebuild --yes --verbose without host inference credentials",
       "Hermes .env/config.yaml messaging placeholder preservation",
       "backup credential leak scan under ~/.nemoclaw/rebuild-backups",
     ],
     outOfScope: [
-      "install.sh behavior retained by hermes-e2e",
+      "install.sh and full onboard behavior retained by hermes-e2e",
       "interactive hermes rebuild modal prompt and Y confirmation",
     ],
   });
@@ -692,9 +707,16 @@ test(STALE_BASE_REBUILD
       }
   }
 
-  await bestEffortPrecleanHermesResources(host, apiKey, "pre-cleanup-hermes-rebuild-resources");
-
-  let phase1ImageTag: string | null = null;
+  const activeOpenshellBin = requireRebuildHermesOpenshellBin(host);
+  await bestEffortPrecleanHermesResources(
+    host,
+    apiKey,
+    activeOpenshellBin,
+    "pre-cleanup-hermes-rebuild-resources",
+  );
+  const observedForwardPorts = new Set<number>([8642]);
+  let cleanupRegistryDashboardPort: unknown;
+  let dashboardPort: number | null = null;
   let currentBaseReuseTag: string | null = null;
   let currentBaseSourceInspect: ShellProbeResult | null = null;
   let staleBaseClassification: ReturnType<typeof verifyRebuildHermesOldBaseIsStale> | null = null;
@@ -717,24 +739,18 @@ test(STALE_BASE_REBUILD
     timeoutMs: 3 * 60_000,
   });
   cleanup.trackDisposable(`remove Hermes Discord provider for ${SANDBOX_NAME}`, () =>
-    cleanupHermesDiscordProvider(host, apiKey),
+    cleanupHermesDiscordProvider(host, apiKey, activeOpenshellBin),
   );
-  cleanup.trackForward(host, 8642, {
-    artifactName: "cleanup-hermes-rebuild-resources-forward-stop",
-    env: hermesCleanupEnv(apiKey),
-    redactionValues: hermesCleanupRedactions(apiKey),
-    timeoutMs: 3 * 60_000,
-  });
-  // Cleanup is LIFO: remove the sandbox before reclaiming its exact image tags,
-  // while the gateway/provider/forward remain available for sandbox teardown.
-  cleanup.trackDisposable("remove initial Hermes fixture image", () =>
-    cleanupTrackedRebuildHermesImage(phase1ImageTag, (imageTag) =>
-      removeHermesFixtureImage(host, apiKey, imageTag, {
-        artifactName: "cleanup-hermes-rebuild-resources-docker-rmi-initial-image",
-        label: `cleanup initial Hermes fixture image ${imageTag}`,
-      }),
+  cleanup.trackDisposable("stop Hermes dashboard and API forwards", () =>
+    cleanupRebuildHermesTrackedForwards(
+      observedForwardPorts,
+      cleanupRegistryDashboardPort,
+      (port) => cleanupHermesForward(host, testEnv, apiKey, SANDBOX_NAME, port, redactionValues),
+      (evidence) => artifacts.writeJson("cleanup-dashboard-port.json", evidence),
     ),
   );
+  // Cleanup is LIFO: remove the sandbox before reclaiming its exact image tags,
+  // while the gateway/provider/forward remain available for sandbox teardown.
   cleanup.trackDisposable("remove old derived Hermes fixture image", () =>
     cleanupTrackedRebuildHermesImage(oldSandboxImageState?.imageTag ?? null, (imageTag) =>
       removeHermesFixtureImage(host, apiKey, imageTag, {
@@ -755,7 +771,7 @@ test(STALE_BASE_REBUILD
     cleanupHermesNemoClawSandbox(host, apiKey),
   );
 
-  progress.phase("onboard the current Hermes sandbox");
+  progress.phase("prepare trusted gateway inference and the current Hermes base");
   const cliProbe = await host.nemoclaw(["--help"], {
     artifactName: "phase-1-cli-probe",
     env: testEnv(apiKey),
@@ -764,7 +780,7 @@ test(STALE_BASE_REBUILD
   });
   expectExitZero(cliProbe, "checked-out NemoClaw CLI");
 
-  const openshellProbe = await host.command("openshell", ["--version"], {
+  const openshellProbe = await host.command(activeOpenshellBin, ["--version"], {
     artifactName: "phase-1-openshell-probe",
     env: testEnv(apiKey),
     redactionValues,
@@ -772,48 +788,15 @@ test(STALE_BASE_REBUILD
   });
   expectExitZero(openshellProbe, "workflow-installed OpenShell CLI");
 
-  const onboard = await host.nemoclaw(["onboard", "--non-interactive"], {
-    artifactName: "phase-1-onboard-current-hermes",
-    cwd: REPO_ROOT,
-    env: testEnv(apiKey),
+  const resolvedCurrentBase = await resolveRebuildHermesCurrentBase({
+    host,
+    activeOpenshellBin,
+    envFactory: testEnv,
     redactionValues,
-    timeoutMs: ONBOARD_TIMEOUT_MS,
-    captureLimitBytes: LONG_COMMAND_CAPTURE_LIMIT_BYTES,
     onOutput: progress.onOutput,
   });
-  expectExitZero(onboard, "checked-out NemoClaw Hermes onboard");
-
-  const gatewayProbe = await host.command("openshell", ["gateway", "info", "-g", "nemoclaw"], {
-    artifactName: "phase-1-gateway-probe",
-    env: testEnv(apiKey),
-    redactionValues,
-    timeoutMs: 30_000,
-  });
-  expectExitZero(gatewayProbe, "NemoClaw onboard must leave a reusable 'nemoclaw' gateway");
-
-  const phase1DashboardPort = registrySandbox().dashboardPort;
-  expect(
-    typeof phase1DashboardPort === "number" &&
-      Number.isInteger(phase1DashboardPort) &&
-      phase1DashboardPort > 0 &&
-      phase1DashboardPort <= 65535,
-    "initial Hermes onboard must persist the dashboard port used by authoritative rebuild",
-  ).toBe(true);
-  phase1ImageTag = requireRebuildHermesInitialImageTag(registrySandbox().imageTag, SANDBOX_NAME);
-  const phase1BaseResolution = requireRebuildHermesCurrentBaseIdentity(
-    readSandboxBaseImageResolutionMetadata(phase1ImageTag),
-  );
-  currentBaseSourceInspect = await host.command(
-    "docker",
-    ["image", "inspect", "--format", "{{json .}}", phase1BaseResolution.ref],
-    {
-      artifactName: "phase-1-inspect-current-hermes-base-source",
-      env: buildAvailabilityProbeEnv(),
-      redactionValues,
-      timeoutMs: OPENSHELL_TIMEOUT_MS,
-    },
-  );
-  expectExitZero(currentBaseSourceInspect, "inspect phase 1 current Hermes base source");
+  const { currentBase, baseResolution: phase1BaseResolution } = resolvedCurrentBase;
+  currentBaseSourceInspect = resolvedCurrentBase.sourceInspect;
   const baseReusePlan = planRebuildHermesBaseReuse(
     STALE_BASE_REBUILD,
     phase1BaseResolution,
@@ -829,29 +812,32 @@ test(STALE_BASE_REBUILD
       currentBaseReuseTag = imageTag;
     },
   );
-  await artifacts.writeJson("phase-1-owned-image.json", {
-    imageTag: phase1ImageTag,
+  await artifacts.writeJson("phase-1-current-base-resolution.json", {
+    imageTag: currentBase.imageTag,
+    built: currentBase.built,
     baseResolution: phase1BaseResolution,
     reuseAlias: currentBaseReuseEvidence
       ? { imageTag: CURRENT_BASE_REUSE_TAG, ...currentBaseReuseEvidence }
       : null,
   });
 
-  await sandbox.cleanupSandbox(SANDBOX_NAME, {
-    artifactName: "phase-1-delete-current-sandbox",
-    env: testEnv(apiKey),
+  const gatewayBootstrap = await bootstrapRebuildHermesGateway({
+    host,
+    activeOpenshellBin,
+    apiKey,
+    artifacts,
+    endpointUrl: HOSTED_ENDPOINT_URL,
+    envFactory: testEnv,
+    expectedModel: HOSTED_MODEL,
+    onOutput: progress.onOutput,
     redactionValues,
-    timeoutMs: OPENSHELL_TIMEOUT_MS,
+    sandboxName: SANDBOX_NAME,
   });
-  await removeHermesFixtureImage(host, apiKey, phase1ImageTag, {
-    artifactName: "phase-1-remove-initial-hermes-image",
-    label: `remove initial Hermes fixture image ${phase1ImageTag}`,
-  });
-  await host.command("openshell", ["forward", "stop", "8642"], {
-    artifactName: "phase-1-stop-hermes-forward",
-    env: testEnv(apiKey),
-    redactionValues,
-    timeoutMs: OPENSHELL_TIMEOUT_MS,
+  dashboardPort = gatewayBootstrap.dashboardPort;
+  observedForwardPorts.add(dashboardPort);
+  expect(gatewayBootstrap.route).toEqual({
+    provider: "compatible-endpoint",
+    model: HOSTED_MODEL,
   });
 
   progress.phase("pull and verify the historical Hermes base fixture");
@@ -983,8 +969,8 @@ test(STALE_BASE_REBUILD
         "-lc",
         [
           "set -euo pipefail",
-          'openshell provider create --name "$DISCORD_PROVIDER" --type generic --credential DISCORD_BOT_TOKEN ||',
-          '  openshell provider update "$DISCORD_PROVIDER" --credential DISCORD_BOT_TOKEN',
+          '"$OPENSHELL_BIN" provider create --name "$DISCORD_PROVIDER" --type generic --credential DISCORD_BOT_TOKEN ||',
+          '  "$OPENSHELL_BIN" provider update "$DISCORD_PROVIDER" --credential DISCORD_BOT_TOKEN',
         ].join("\n"),
       ],
       {
@@ -992,16 +978,16 @@ test(STALE_BASE_REBUILD
         env: testEnv(apiKey, {
           DISCORD_BOT_TOKEN: DISCORD_FAKE_TOKEN,
           DISCORD_PROVIDER: `${SANDBOX_NAME}-discord-bridge`,
+          OPENSHELL_BIN: activeOpenshellBin,
         }),
         redactionValues,
         timeoutMs: OPENSHELL_TIMEOUT_MS,
       },
     );
     expectExitZero(provider, "OpenShell Discord provider create/update");
-
     progress.phase("create the historical Hermes sandbox");
     const createOldSandbox = await host.command(
-      "openshell",
+      activeOpenshellBin,
       [
         "sandbox",
         "create",
@@ -1033,7 +1019,7 @@ test(STALE_BASE_REBUILD
   }
   const seededOldSandboxImageState =
     oldSandboxImageState ?? fail("old Hermes sandbox create did not produce managed image state");
-  await waitForSandboxReady(host, apiKey, "phase-3");
+  await waitForSandboxReady(host, apiKey, activeOpenshellBin, "phase-3");
   const seededOldBaseResolution = readSandboxBaseImageResolutionMetadata(
     seededOldSandboxImageState.imageTag,
   );
@@ -1052,10 +1038,9 @@ test(STALE_BASE_REBUILD
     artifactName: "phase-3-release-old-hermes-base-tag",
     label: `release old Hermes base tag ${OLD_BASE_TAG}`,
   });
-
   progress.phase("seed persistent Hermes state and registry metadata");
   const seededKanban = await host.command(
-    "openshell",
+    activeOpenshellBin,
     [
       "sandbox",
       "exec",
@@ -1078,7 +1063,7 @@ test(STALE_BASE_REBUILD
   expectExitZero(seededKanban, "verify historical Hermes kanban seed before rebuild");
   expect(resultText(seededKanban)).toContain(KANBAN_TASK_TITLE);
   const writeMarker = await host.command(
-    "openshell",
+    activeOpenshellBin,
     [
       "sandbox",
       "exec",
@@ -1097,9 +1082,8 @@ test(STALE_BASE_REBUILD
     },
   );
   expectExitZero(writeMarker, "write Hermes marker");
-
   const writeExcludedKanbanMarker = await host.command(
-    "openshell",
+    activeOpenshellBin,
     [
       "sandbox",
       "exec",
@@ -1132,7 +1116,7 @@ test(STALE_BASE_REBUILD
   expect(resultText(seededKanbanDb)).toContain(KANBAN_TASK_TITLE);
 
   const preEnv = await host.command(
-    "openshell",
+    activeOpenshellBin,
     ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", "/sandbox/.hermes/.env"],
     {
       artifactName: "phase-4-read-pre-rebuild-env",
@@ -1143,9 +1127,8 @@ test(STALE_BASE_REBUILD
   );
   expectExitZero(preEnv, "read pre-rebuild Hermes .env");
   expect(preEnv.stdout).toContain(`DISCORD_BOT_TOKEN=${DISCORD_PLACEHOLDER}`);
-
   const preConfig = await host.command(
-    "openshell",
+    activeOpenshellBin,
     ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", "/sandbox/.hermes/config.yaml"],
     {
       artifactName: "phase-4-read-pre-rebuild-config",
@@ -1156,12 +1139,12 @@ test(STALE_BASE_REBUILD
   );
   expectExitZero(preConfig, "read pre-rebuild Hermes config.yaml");
   expect(preConfig.stdout).toContain("discord:");
-
   const sessionSummary = seedRegistryAndSession(
-    phase1DashboardPort as number,
+    dashboardPort ?? fail("Hermes dashboard port allocation disappeared before registry seeding"),
     seededOldSandboxImageState,
   );
   const seededRegistry = registrySandbox();
+  cleanupRegistryDashboardPort = seededRegistry.dashboardPort;
   expect(
     seededRegistry.imageTag,
     "curated rebuild registry must retain the exact old derived image tag for cleanup",
@@ -1206,7 +1189,15 @@ test(STALE_BASE_REBUILD
       break;
     }
   }
-
+  const routeBeforeRebuild = await requireRebuildHermesHostedInferenceRoute(
+    host,
+    testEnv,
+    apiKey,
+    HOSTED_MODEL,
+    "phase-5-inference-route-before-rebuild",
+    redactionValues,
+  );
+  await artifacts.writeJson("phase-5-inference-route-before-rebuild.json", routeBeforeRebuild);
   progress.phase("rebuild the Hermes sandbox");
   const rebuildEnv = testEnv(undefined, {
     NEMOCLAW_REBUILD_VERBOSE: "1",
@@ -1223,14 +1214,23 @@ test(STALE_BASE_REBUILD
     captureLimitBytes: LONG_COMMAND_CAPTURE_LIMIT_BYTES,
     onOutput: progress.onOutput,
   });
+  cleanupRegistryDashboardPort = readJsonFileOr<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[
+    SANDBOX_NAME
+  ]?.dashboardPort;
   expectExitZero(rebuild, "nemoclaw rebuild Hermes sandbox");
+  const rebuiltRegistry = registrySandbox();
+  const rebuiltDashboardPort = requireRebuildHermesDashboardPort(
+    rebuiltRegistry.dashboardPort,
+    "rebuilt Hermes registry dashboardPort",
+  );
+  observedForwardPorts.add(rebuiltDashboardPort);
   const rebuildOutput = resultText(rebuild);
   expect(rebuildOutput).toContain("Hermes API bearer token changed during rebuild");
   expect(rebuildOutput).toContain(`nemoclaw ${SANDBOX_NAME} gateway-token --quiet`);
   expect(rebuildOutput).toContain(`Using Hermes Agent base image: ${phase1BaseResolution.ref}`);
   expect(rebuildOutput).not.toContain("Rebuilding Hermes Agent base image");
   expect(rebuildOutput).not.toMatch(/provider credential not found/i);
-  await waitForSandboxReady(host, apiKey, "phase-6-post-rebuild");
+  await waitForSandboxReady(host, apiKey, activeOpenshellBin, "phase-6-post-rebuild");
 
   const backupPathText = rebuildOutput.match(/^\s*Backup:\s+(.+)$/mu)?.[1]?.trim();
   const rebuildBackupPath = backupPathText
@@ -1277,7 +1277,7 @@ test(STALE_BASE_REBUILD
 
   progress.phase("validate upgraded state inference and backup hygiene");
   const restoredMarker = await host.command(
-    "openshell",
+    activeOpenshellBin,
     ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", MARKER_FILE],
     {
       artifactName: "phase-7-read-marker-after-rebuild",
@@ -1309,7 +1309,7 @@ test(STALE_BASE_REBUILD
   );
 
   const restoredKanbanDatabase = await host.command(
-    "openshell",
+    activeOpenshellBin,
     [
       "sandbox",
       "exec",
@@ -1346,7 +1346,7 @@ test(STALE_BASE_REBUILD
   expect(resultText(restoredKanban)).toContain(KANBAN_TASK_TITLE);
 
   const excludedKanbanState = await host.command(
-    "openshell",
+    activeOpenshellBin,
     ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "test", "!", "-e", EXCLUDED_KANBAN_FILE],
     {
       artifactName: "phase-7-verify-excluded-kanban-state",
@@ -1358,7 +1358,7 @@ test(STALE_BASE_REBUILD
   expectExitZero(excludedKanbanState, "verify excluded Hermes kanban state was not restored");
 
   const restoredEnv = await host.command(
-    "openshell",
+    activeOpenshellBin,
     ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", "/sandbox/.hermes/.env"],
     {
       artifactName: "phase-7-read-env-after-rebuild",
@@ -1390,7 +1390,7 @@ test(STALE_BASE_REBUILD
   expect(stablePostRebuildApiTokenDigest).toBe(postRebuildApiTokenDigest);
 
   const restoredConfig = await host.command(
-    "openshell",
+    activeOpenshellBin,
     ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", "/sandbox/.hermes/config.yaml"],
     {
       artifactName: "phase-7-read-config-after-rebuild",
@@ -1402,7 +1402,6 @@ test(STALE_BASE_REBUILD
   expectExitZero(restoredConfig, "read Hermes config.yaml after rebuild");
   expect(restoredConfig.stdout).toContain("discord:");
 
-  const rebuiltRegistry = registrySandbox();
   const updatedRegistryVersion = rebuiltRegistry.agentVersion;
   expect(updatedRegistryVersion).toEqual(expect.any(String));
   expect(updatedRegistryVersion).not.toBe(OLD_HERMES_REGISTRY_VERSION);
@@ -1436,6 +1435,7 @@ test(STALE_BASE_REBUILD
   );
   await artifacts.writeJson("phase-7-final-base-identity.json", {
     rebuiltImageTag,
+    rebuiltDashboardPort,
     resolutionMetadata: readSandboxBaseImageResolutionMetadata(rebuiltImageTag),
     ...finalBaseEvidence,
   });
@@ -1446,7 +1446,7 @@ test(STALE_BASE_REBUILD
     max_tokens: 100,
   });
   const inference = await host.command(
-    "openshell",
+    activeOpenshellBin,
     [
       "sandbox",
       "exec",

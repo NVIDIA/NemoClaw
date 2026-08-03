@@ -261,7 +261,12 @@ export function collectPlatformIdentity(
       closeFileDescriptor(fileDescriptor);
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") stationProfile = "unknown";
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ELOOP" || code === "EMLINK") {
+      stationProfile = "unsupported-dgx-os";
+    } else if (code !== "ENOENT") {
+      stationProfile = "unknown";
+    }
   }
   return {
     nvidiaPlatform,

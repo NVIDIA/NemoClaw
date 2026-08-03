@@ -7,10 +7,7 @@ import path from "node:path";
 import { defineConfig, defineProject } from "vitest/config";
 
 import pluginVitestProjectOptions from "./nemoclaw/vitest.project";
-import {
-  shouldRunBranchValidationE2E,
-  shouldRunLiveE2E,
-} from "./test/e2e/fixtures/live-project-gate.ts";
+import { shouldRunLiveE2E } from "./test/e2e/fixtures/live-project-gate.ts";
 import { CliCoverageSequencer } from "./test/helpers/cli-coverage-sequencer";
 import { resolveIntegrationProjectScheduling } from "./test/helpers/integration-project-scheduling";
 import { sourceLoaderNodeOptions } from "./test/helpers/source-loader-options";
@@ -23,11 +20,13 @@ import { vitestWatchTriggerPatterns } from "./test/helpers/vitest-watch-triggers
 const { isCi, silent } = resolveVitestFeedback();
 const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
 const runLiveE2E = shouldRunLiveE2E();
-const runBranchValidationE2E = shouldRunBranchValidationE2E();
 const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
 );
 const canonicalSandboxName = path.resolve("nemoclaw/src/shared/sandbox-name.cts");
+const canonicalSnapshotSanitizerBoundary = path.resolve(
+  "nemoclaw/src/shared/snapshot-sanitizer-boundary.cts",
+);
 // Map the generated shared .cjs specifiers back to their .cts source so
 // source-mode test projects exercise the single source of truth rather than a
 // possibly-stale build artifact.
@@ -39,6 +38,10 @@ const canonicalSourceAliases = [
   {
     find: /^.*sandbox-name\.cjs$/,
     replacement: canonicalSandboxName,
+  },
+  {
+    find: /^.*snapshot-sanitizer-boundary\.cjs$/,
+    replacement: canonicalSnapshotSanitizerBoundary,
   },
 ];
 const e2ePhaseCollectionAlias =
@@ -245,32 +248,6 @@ export default defineConfig({
           // Live E2E tests are opt-in because they install, onboard, and
           // mutate real NemoClaw/OpenShell state. Run explicitly with:
           //   NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live
-        },
-      },
-      {
-        ...typedSourceTransform,
-        test: {
-          name: "e2e-branch-validation",
-          alias: canonicalSourceAliases,
-          // A branch-validation retry must provision a fresh remote instance.
-          // Retrying a stateful target inside one VM can overlap a timed-out
-          // installer that still legitimately owns the onboarding lock.
-          retry: 0,
-          include: runBranchValidationE2E ? ["test/e2e/brev-e2e.test.ts"] : [],
-          // Branch validation E2E: bootstraps a generic Brev instance, rsyncs
-          // the selected source revision, and runs the selected test suites.
-          // It does not exercise a published NemoClaw Launchable image.
-          // Only run when explicitly enabled:
-          //   NEMOCLAW_RUN_BRANCH_VALIDATION_E2E=1 npx vitest run --project e2e-branch-validation
-          //
-          // The reusable workflow passes `--silent=false --reporter=default`:
-          // diagnostic output from createBrevInstance / waitForSsh /
-          // waitForBootstrapReady is essential for debugging provisioning
-          // timing, and the suite has no routine test chatter to suppress.
-          // Gate on a workflow-owned sentinel or Brev auth env. Historically
-          // this used BREV_API_TOKEN (short-lived refresh token); newer
-          // workflows authenticate with BREV_API_KEY + BREV_ORG_ID before
-          // invoking Vitest.
         },
       },
     ],

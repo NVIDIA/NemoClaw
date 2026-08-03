@@ -18,7 +18,7 @@ const agentDefs = require("./src/lib/agent/defs.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
-const globalActions = require("./src/lib/actions/global.js");
+const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const expectedId = "11111111-2222-4333-8444-555555555555";
 const foreignId = "99999999-8888-4777-8666-555555555555";
 let liveId = expectedId;
@@ -32,7 +32,7 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   before: { state: "healthy_named" },
   after: { state: "healthy_named" },
 });
-globalActions.runOpenshellProviderCommand = (args) => {
+providerCommands.runOpenshellProviderCommand = (args) => {
   calls.push(args.join(" "));
   if (args[0] === "status") {
     return { status: 0, stdout: "ready", stderr: "" };
@@ -119,7 +119,7 @@ const agentDefs = require("./src/lib/agent/defs.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
-const globalActions = require("./src/lib/actions/global.js");
+const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const expectedId = "11111111-2222-4333-8444-555555555555";
 let providerExists = true;
 let attached = true;
@@ -132,7 +132,7 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   before: { state: "healthy_named" },
   after: { state: "healthy_named" },
 });
-globalActions.runOpenshellProviderCommand = (args) => {
+providerCommands.runOpenshellProviderCommand = (args) => {
   calls.push(args.join(" "));
   if (args[0] === "status") return { status: 0, stdout: "ready", stderr: "" };
   if (args[0] === "provider" && args[1] === "get") {
@@ -267,7 +267,7 @@ process.env.EXPECTED_TOKEN = "host-only-secret";
 const registry = require("./src/lib/state/registry.js");
 const agentDefs = require("./src/lib/agent/defs.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
-const globalActions = require("./src/lib/actions/global.js");
+const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 agentDefs.loadAgent = () => ({
   name: "openclaw",
@@ -280,7 +280,7 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
   before: { state: "healthy_named" },
   after: { state: "healthy_named" },
 });
-globalActions.runOpenshellProviderCommand = (args) => {
+providerCommands.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
@@ -344,10 +344,10 @@ bridge.statusMcpBridge("alpha", "fake").then(
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-dangling-"));
     const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
-const globalActions = require("./src/lib/actions/global.js");
+const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const calls = [];
 const attached = new Set(["alpha-mcp-fake", "alpha-mcp-second"]);
-globalActions.runOpenshellProviderCommand = (args) => {
+providerCommands.runOpenshellProviderCommand = (args) => {
   calls.push(args.join(" "));
   if (args[0] === "provider" && args[1] === "get") {
     return { status: 1, stdout: "", stderr: "NotFound: provider" };
@@ -433,10 +433,10 @@ process.stdout.write(JSON.stringify({ before, firstOutcome, afterFirst, secondOu
     const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
 process.env.EXPECTED_TOKEN = "host-only-secret";
-const globalActions = require("./src/lib/actions/global.js");
+const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const calls = [];
 let resourceVersion = 4;
-globalActions.runOpenshellProviderCommand = (args) => {
+providerCommands.runOpenshellProviderCommand = (args) => {
   calls.push(args.join(" "));
   if (args[0] === "provider" && args[1] === "get") {
     return {
@@ -503,7 +503,7 @@ const agentDefs = require("./src/lib/agent/defs.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const policies = require("./src/lib/policy/index.js");
 const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
-const globalActions = require("./src/lib/actions/global.js");
+const providerCommands = require("./src/lib/adapters/openshell/provider-command.js");
 const calls = [];
 agentDefs.loadAgent = () => { throw new Error("persisted adapter must be used"); };
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
@@ -516,7 +516,7 @@ policies.getPresetContentGatewayState = () => "absent";
 policies.removePreset = () => true;
 processRecovery.executeSandboxCommand = () => ({ status: 0, stdout: "", stderr: "" });
 processRecovery.executeSandboxExecCommand = () => ({ status: 0, stdout: "", stderr: "" });
-globalActions.runOpenshellProviderCommand = (args) => {
+providerCommands.runOpenshellProviderCommand = (args) => {
   calls.push(args.join(" "));
   if (args[0] === "status") {
     return { status: 0, stdout: "ready", stderr: "" };

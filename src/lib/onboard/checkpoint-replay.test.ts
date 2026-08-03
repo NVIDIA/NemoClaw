@@ -37,6 +37,30 @@ function checkpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardCheckpoi
 }
 
 describe("checkpointSandboxIdentityMatches", () => {
+  it("accepts a selected checkpoint identity that matches the requested sandbox", () => {
+    expect(
+      checkpointSandboxIdentityMatches(
+        {
+          checkpoint: checkpoint(),
+          machine: { state: "sandbox" },
+        },
+        "my-sandbox",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a selected checkpoint identity that names another sandbox", () => {
+    expect(
+      checkpointSandboxIdentityMatches(
+        {
+          checkpoint: checkpoint(),
+          machine: { state: "sandbox" },
+        },
+        "other-sandbox",
+      ),
+    ).toBe(false);
+  });
+
   it("uses the checkpoint identity when legacy name progress disagrees", () => {
     expect(
       checkpointSandboxIdentityMatches(

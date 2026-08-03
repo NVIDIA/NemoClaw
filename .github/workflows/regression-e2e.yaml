@@ -21,15 +21,10 @@ on:
       jobs:
         description: >-
           Comma-separated regression job names to run (empty = all).
-          Valid: dashboard-remote-bind-e2e,model-router-provider-routed-inference-e2e,openclaw-plugin-runtime-exdev-e2e,whatsapp-qr-compact-e2e
+          Valid: model-router-provider-routed-inference-e2e,openclaw-plugin-runtime-exdev-e2e,whatsapp-qr-compact-e2e
         required: false
         type: string
         default: ""
-      keep_alive:
-        description: "Keep Brev instance alive after tests (for SSH debugging)"
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   actions: read
@@ -45,7 +40,6 @@ jobs:
   select_regression_jobs:
     runs-on: ubuntu-latest
     outputs:
-      dashboard: ${{ steps.select.outputs.dashboard }}
       model_router_provider_routed_inference: ${{ steps.select.outputs.model_router_provider_routed_inference }}
       openclaw_plugin_runtime_exdev: ${{ steps.select.outputs.openclaw_plugin_runtime_exdev }}
       whatsapp_qr_compact: ${{ steps.select.outputs.whatsapp_qr_compact }}
@@ -64,12 +58,6 @@ jobs:
             esac
           }
 
-          if [ -z "$normalized" ] || includes_job "dashboard-remote-bind-e2e"; then
-            echo "dashboard=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "dashboard=false" >> "$GITHUB_OUTPUT"
-          fi
-
           if [ -z "$normalized" ] || includes_job "model-router-provider-routed-inference-e2e"; then
             echo "model_router_provider_routed_inference=true" >> "$GITHUB_OUTPUT"
           else
@@ -87,19 +75,6 @@ jobs:
           else
             echo "whatsapp_qr_compact=false" >> "$GITHUB_OUTPUT"
           fi
-
-  dashboard-remote-bind-e2e:
-    needs: select_regression_jobs
-    if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      needs.select_regression_jobs.outputs.dashboard == 'true'
-    uses: ./.github/workflows/e2e-branch-validation.yaml
-    with:
-      branch: ${{ github.ref_name }}
-      pr_number: ${{ inputs.pr_number }}
-      test_suite: dashboard-remote-bind
-      keep_alive: ${{ inputs.keep_alive }}
-    secrets: inherit
 
   # ── Model Router provider-routed inference E2E ─────────────────
   # Coverage guard for #3255. Model Router onboard must generate a routed

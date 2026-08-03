@@ -66,7 +66,7 @@ export const TRUSTED_HERMES_SWAP_SCRIPT = [
   'if [[ "${EVENT_NAME}" != "schedule" && "${EVENT_NAME}" != "workflow_dispatch" ]]; then',
   '  fail "workflow event must be schedule or workflow_dispatch"',
   "fi",
-  "# Exact-head mode: controller-dispatched PR revision.",
+  "# PR E2E mode: controller-dispatched PR commit.",
   'if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${CHECKOUT_SHA}" ]]; then',
   '  if [[ ! "${CHECKOUT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then',
   '    fail "checkout SHA must be lowercase 40-hex"',
