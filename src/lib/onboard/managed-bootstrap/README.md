@@ -32,18 +32,39 @@ cannot trigger cleanup against the planned sandbox name; after receipt
 validation, both the cleanup request and its result are bound to the exact
 sandbox ID.
 
-`scripts/managed-bootstrap-trampoline.sh` defines the image-owned executable
-that the later all-agent packaging slice will install as
-`/usr/local/bin/nemoclaw-managed-bootstrap`. It validates the fixed, root-owned
-request and its identity binding, verifies the matching completion, clears its
-private bootstrap variables and file descriptors, and then uses `exec "$@"`. The
-documented trampoline guarantees are preservation of the captured supervisor
-argument boundaries and removal of inherited `BASH_ENV` before Bash parses
-startup files. Bootstrap apply and verification run under `env -i` with the
-fixed safe environment `HOME=/root`, `LANG=C.UTF-8`, `LC_ALL=C.UTF-8`,
+`scripts/managed-bootstrap-entrypoint.c` defines the image-owned native boundary
+that the later all-agent packaging slice will compile as a freestanding Linux
+amd64 or arm64 artifact and install as
+`/usr/local/bin/nemoclaw-managed-bootstrap`. The artifact must have no dynamic
+ELF interpreter, dynamic section, undefined symbol, or C library startup. Its
+entry point uses direct Linux system calls. It copies the bounded supervisor
+environment into a sealed in-memory file, reserves that transport as file
+descriptor 9, and invokes absolute Bash with no startup files and a fixed
+bootstrap environment. Environment values never enter bootstrap argv. The
+non-executable `scripts/managed-bootstrap-trampoline.sh` body therefore cannot
+expose a root dynamic loader or Bash interpreter to ambient process controls
+before request validation.
+
+The body validates the fixed, root-owned request and its identity binding,
+verifies the matching completion, and closes the sealed transport for every
+application and verification helper. It then re-enters the static boundary
+through absolute `env` with only a fixed resume marker and the sealed descriptor.
+The native resume mode verifies the seals and declared bounds, reconstructs the
+byte-exact environment, marks the transport close-on-exec, and applies the
+captured environment only to the final supervisor `execve`. This preserves
+environment order, duplicate assignments, process-control values, and exact
+supervisor argument boundaries. The values do not enter bootstrap argv or
+bootstrap-helper environments. They are restored only for the long-lived
+supervisor.
+
+Bootstrap apply and verification run under their own `env -i` with the fixed
+environment `HOME=/root`, `LANG=C.UTF-8`, `LC_ALL=C.UTF-8`,
 `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, and
-`NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1`; the trampoline does not promise
-preservation of arbitrary caller environment entries.
+`NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1`. Runtime providers remain
+responsible for binding the complete replacement process specification,
+including its supervisor environment, to immutable prepared authority before
+activation. The native boundary introduces no driver-specific environment
+policy.
 
 ## Architectural disposition
 
@@ -58,16 +79,19 @@ logic must live outside it rather than growing this file.
 This is executable, bounded groundwork rather than an untested placeholder.
 `adapter.test.ts` drives prepare, durable record, activation, finalization, and
 failure rollback for OpenClaw, Hermes, and LangChain Deep Agents Code through an
-MXC-named fake driver. `runtime-provider-source-shape.test.ts` separately inventories the
-protocol, provider, and image-packaging surfaces and proves that production
-activation cannot import or package the protocol yet. The later activation
-slice must add a registered-provider contract test for the same transaction
-before removing those dormancy assertions.
+MXC-named fake driver. `runtime-provider-source-shape.test.ts` separately
+inventories the protocol, provider, and image-packaging surfaces and proves that
+production activation cannot import or package the protocol yet. The later
+activation slice must add a registered-provider contract test for the same
+transaction before removing those dormancy assertions.
 
-The trampoline is intentionally not packaged or selected yet, and no production
-TypeScript module imports this protocol. The current image definitions also do
-not package `nemoclaw-managed-startup-hold` or
-`managed-startup-image-runtime.cjs`. A later provider integration must add those
+The native entrypoint source is intentionally not compiled into production
+artifacts, and neither source is packaged or selected yet. No production
+TypeScript module imports this protocol. The current image definitions do not
+package `nemoclaw-managed-startup-hold` or
+`managed-startup-image-runtime.cjs`. A later
+provider integration must compile and verify the freestanding entrypoint
+natively for amd64 and arm64 in every agent image. It must add those
 prerequisites together with their image-runtime bootstrap modes, implement
 driver-specific prepare, durable-record, activate, exact cleanup, and rollback,
 and only then wire the coordinator into create. The same contract is exercised

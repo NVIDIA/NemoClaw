@@ -179,15 +179,21 @@ describe("runtime provider central source boundary", () => {
     expect(dockerProvider.match(/recovery:\s*unsupported\(/gu)).toHaveLength(2);
   });
 
-  // source-shape-contract: security -- Image packaging must expose only the reviewed dormant trampoline until every required bootstrap runtime asset is activated together
+  // source-shape-contract: security -- Image packaging must expose only the reviewed dormant native boundary sources until every required bootstrap runtime asset is activated together
   it("keeps managed-bootstrap assets out of image packaging", () => {
+    const entrypoint = read("scripts/managed-bootstrap-entrypoint.c");
     const trampoline = read("scripts/managed-bootstrap-trampoline.sh");
     const packagingSources = packagingPaths.map((path) => [path, read(path)] as const);
-    expect(trampoline).toMatch(/Image-owned bootstrap boundary/u);
+    expect(entrypoint).toMatch(/exec_process\(NEMOCLAW_MANAGED_BOOTSTRAP_BASH/u);
+    expect(entrypoint).toMatch(/NEMOCLAW_MANAGED_BOOTSTRAP_FREESTANDING/u);
+    expect(trampoline).toMatch(/Non-executable image-owned bootstrap body/u);
     expect(
       packagingSources
         .filter(([, source]) => packagedBootstrapAsset.test(source))
         .map(([path]) => path),
-    ).toEqual(["scripts/managed-bootstrap-trampoline.sh"]);
+    ).toEqual([
+      "scripts/managed-bootstrap-entrypoint.c",
+      "scripts/managed-bootstrap-trampoline.sh",
+    ]);
   });
 });
