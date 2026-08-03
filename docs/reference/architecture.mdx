@@ -88,7 +88,7 @@ It then checks the effective binary's version against the blueprint range (`min_
 This check prevents a supported user-local OpenShell install from hiding an out-of-range binary selected by the package unit's absolute `ExecStart`.
 NemoClaw declines a known version below the minimum or a known stable version above the maximum.
 An above-maximum development build remains eligible when `NEMOCLAW_OPENSHELL_CHANNEL=dev`, and an undetermined version also remains eligible.
-When systemd cannot return the service identity, the package unit also remains eligible for later startup inspection.
+When the systemd identity query fails, the package unit also remains eligible for later startup inspection.
 NemoClaw declines the package unit when systemd positively identifies an untrusted unit or effective binary.
 For a version rejection, NemoClaw reports the version once.
 After either rejection, it selects an existing marked NemoClaw user service when available.
