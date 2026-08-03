@@ -162,6 +162,19 @@ describe("selectPreUpgradeBackupForCreate", () => {
     expect(note).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "ready",
+    "not_ready",
+  ] as const)("throws before backup access when a %s same-name sandbox reports no OpenShell Id (#7736)", (state) => {
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+
+    expect(() => select({ observation: { state, liveIdentityFingerprint: null } })).toThrow(
+      /reports no OpenShell Id/,
+    );
+    expect(getLatestBackupSpy).not.toHaveBeenCalled();
+    expect(note).not.toHaveBeenCalled();
+  });
+
   it("throws before backup access when the source registry row changed (#7736)", () => {
     process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
     const rotated: SandboxEntry = { ...SOURCE_ENTRY, imageTag: "nemoclaw/my-assistant:2" };

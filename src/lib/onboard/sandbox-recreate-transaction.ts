@@ -262,6 +262,9 @@ export function assertSandboxRecreateSourceProof(
   if (fingerprintSandboxRegistryEntry(check.registryEntry) !== proof.sourceRegistryFingerprint) {
     return fail("the source registry row changed after the transaction recorded it");
   }
+  if (check.observation.state !== "missing" && !check.observation.liveIdentityFingerprint) {
+    return fail("the live same-name sandbox reports no OpenShell Id");
+  }
   const observedIdentity =
     check.observation.state === "missing" ? null : check.observation.liveIdentityFingerprint;
   if (observedIdentity !== proof.sourceLiveIdentityFingerprint) {

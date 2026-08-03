@@ -809,4 +809,22 @@ describe("journal-bound source proof (#7736)", () => {
       }),
     ).toThrow(SandboxRecreateSourceMismatchError);
   });
+
+  it.each([
+    "ready",
+    "not_ready",
+  ] as const)("rejects a %s same-name sandbox that reports no OpenShell Id, even when the journal recorded none", (state) => {
+    const proof = proofFor({ state: "missing", liveIdentityFingerprint: null });
+
+    expect(proof.sourceLiveIdentityFingerprint).toBeNull();
+    expect(() =>
+      assertSandboxRecreateSourceProof(proof, {
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw-31818",
+        gatewayPort: 31818,
+        registryEntry: SOURCE_ENTRY,
+        observation: { state, liveIdentityFingerprint: null },
+      }),
+    ).toThrow(/reports no OpenShell Id/);
+  });
 });
