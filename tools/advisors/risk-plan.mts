@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 11 as const;
+export const RISK_PLAN_VERSION = 12 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -390,7 +390,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     requiredJobs: ["full-e2e", "hermes-e2e", "hermes-inference-switch", "security-posture"],
     invariants: [
       "OpenClaw and Hermes both reach readiness through the changed sandbox boundary",
-      "the Hermes runtime preserves provider and model selection across managed inference route changes",
+      "the Hermes runtime and managed inference route agree on the selected provider and model after each route change",
       "the sandbox retains its required security posture and isolation controls",
       "blueprint state agrees with the runtime observed by both supported agents",
     ],

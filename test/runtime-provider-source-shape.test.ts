@@ -121,6 +121,8 @@ describe("runtime provider central source boundary", () => {
   it("inventories every dormant managed-bootstrap protocol source", () => {
     expect(bootstrapProtocolPaths).toEqual([
       "src/lib/onboard/managed-bootstrap/adapter.ts",
+      "src/lib/onboard/managed-bootstrap/docker-journal.ts",
+      "src/lib/onboard/managed-bootstrap/docker-spec.ts",
       "src/lib/onboard/managed-bootstrap/envelope.ts",
       "src/lib/onboard/managed-bootstrap/index.ts",
     ]);
