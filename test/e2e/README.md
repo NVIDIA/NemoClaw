@@ -616,13 +616,17 @@ controller completes it as cancelled with `Superseded by PR update` or
 `PR closed — gate no longer applies` and identifies the obsolete head and base.
 The closed-PR outcome also applies when a fork repository was deleted and
 GitHub consequently returns no head-repository object.
-Shared sandbox-boundary changes have a floor of `full-e2e`, `hermes-e2e`, and
-`security-posture`. E2E control-plane changes select `cloud-onboard`,
-`cloud-inference`, and `security-posture`. The `e2e-control-plane`
+Shared sandbox-boundary changes have a floor of `full-e2e`, `hermes-e2e`,
+`hermes-inference-switch`, and `security-posture`. E2E control-plane changes
+select `cloud-onboard`, `cloud-inference`, and `security-posture`. The `e2e-control-plane`
 family remains the conservative boundary for shared E2E tools, workflow and
 security files, unknown live test paths, risk policy, dependency and test
 configuration, and preparation and upload actions. These cross-cutting changes
 keep the broad three-job floor.
+Changes to the Hermes CLI wrapper, adapter manifest, or adapter validator also
+select `channels-stop-start` and `mcp-bridge`. Both jobs include the Hermes
+shard. The Hermes shards exercise the wrapper during `channels stop` and
+`channels start`, and the adapter during `mcp add`, `mcp restart`, and `mcp remove`.
 Repository-root `Dockerfile` changes additionally select `full-e2e` alongside
 the platform-install `cloud-onboard` floor so OpenClaw final-image changes run
 through cold onboarding and a real first turn.

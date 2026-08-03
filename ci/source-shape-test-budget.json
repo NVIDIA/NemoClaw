@@ -522,6 +522,26 @@
       "category": "compatibility"
     },
     {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps the dormant managed-bootstrap protocol driver-neutral",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps production activation paths disconnected from managed bootstrap",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps registered providers bootstrap-unsupported",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps managed-bootstrap assets out of image packaging",
+      "category": "security"
+    },
+    {
       "file": "test/pr-limit-policy.test.ts",
       "test": "keeps contributor guidance aligned with the enforced maintainer exemption",
       "category": "compatibility"
