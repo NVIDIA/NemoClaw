@@ -277,7 +277,9 @@ describe("CLI launch routing process contracts (#6006)", () => {
       expect(harness.callLines().filter((call) => call.includes("--tty"))).toHaveLength(1);
 
       expect(result.code).toBe(exitCode);
-      expect(result.out).toContain(exitNote);
+      if (exitNote) {
+        expect(result.out).toContain(exitNote);
+      }
     },
   );
 });
