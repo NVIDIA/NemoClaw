@@ -940,7 +940,9 @@ Follow these steps to reconnect.
 
    NemoClaw attempts to stop a service that reached startup and use the standalone fallback.
    The standalone gateway starts only after NemoClaw verifies exclusive ownership of the gateway port.
-   If Homebrew is present but `openshell` is missing or comes from another tap, rerun the NemoClaw installer.
+   If Homebrew is present but the `openshell` formula is missing, onboarding also uses the standalone fallback.
+   Rerun the NemoClaw installer to restore the managed service for later onboarding runs.
+   An installed `openshell` formula from another tap remains a hard failure; rerun the installer to restore the official formula.
 
    On Linux package installs, inspect and restart the upstream service.
 

@@ -693,6 +693,39 @@ describe("docker-driver-gateway-service", () => {
     expect(warn.mock.calls.flat().join("\n")).toContain("openshell-gateway.err.log");
   });
 
+  it("uses standalone fallback when Homebrew has no OpenShell formula (#8104)", async () => {
+    const startService = vi.fn();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(
+      startPackageManagedDockerDriverGateway({
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        exitOnFailure: true,
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: () =>
+          hasOpenShellGatewayUserService({
+            commandExists: () => true,
+            platform: "darwin",
+            spawnSyncImpl: () => spawnResult(1, "formula not installed"),
+          }),
+        managedServiceLogCommand: getOpenShellGatewayManagedServiceLogCommand({
+          platform: "darwin",
+        }),
+        registerDockerDriverGatewayEndpoint: vi.fn(),
+        runCaptureOpenshell: vi.fn(),
+        skipSandboxBridgeReachability: false,
+        startOpenShellGatewayUserService: startService,
+        stopOpenShellGatewayUserService: vi.fn(),
+        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
+      }),
+    ).resolves.toBe(false);
+    expect(startService).not.toHaveBeenCalled();
+    expect(warn.mock.calls.flat().join("\n")).toContain(
+      "official OpenShell Homebrew formula is not installed",
+    );
+    expect(warn.mock.calls.flat().join("\n")).toContain("openshell-gateway.err.log");
+  });
+
   it("blocks standalone fallback when managed service inspection fails trust validation (#8104)", async () => {
     const startService = vi.fn();
 
