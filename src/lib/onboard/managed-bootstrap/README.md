@@ -20,17 +20,20 @@ inspect a stopped replacement, but it cannot alter the Ready held workload.
 Activation first records a complete, fingerprinted authority receipt through
 the injected durable store; only then may the provider quiesce or replace the
 original runtime. Provider results are copied into deeply frozen coordinator
-authority, and finalization receipts must either prove exact snapshot restore
-or exact workload absence.
+authority. Rollback finalization receipts must prove either restoration of the
+exact captured snapshot or exact workload absence. Commit receipts instead
+prove the committed outcome without reporting rollback state and may leave
+`heldWorkloadRemoved` false while provider-owned cleanup remains.
 
 `scripts/managed-bootstrap-trampoline.sh` defines the image-owned executable
 that the later all-agent packaging slice will install as
 `/usr/local/bin/nemoclaw-managed-bootstrap`. It authenticates a fixed,
 root-owned request, verifies an identity-bound completion, clears its private
-bootstrap variables and file descriptors, and then uses `exec "$@"` to preserve
-the captured supervisor argument boundaries. Its image-owned shebang removes
-inherited `BASH_ENV` before Bash parses startup files while preserving every
-other supervisor environment entry.
+bootstrap variables and file descriptors, and then uses `exec "$@"`. The
+documented trampoline guarantees are preservation of the captured supervisor
+argument boundaries and removal of inherited `BASH_ENV` before Bash parses
+startup files; it does not define preservation of every other environment
+entry.
 
 ## Architectural disposition
 
@@ -44,8 +47,8 @@ logic must live outside it rather than growing this file.
 
 This is executable, bounded groundwork rather than an untested placeholder.
 `adapter.test.ts` drives prepare, durable record, activation, finalization, and
-failure rollback for OpenClaw, Hermes, and DCode through an MXC-named fake
-driver. `runtime-provider-source-shape.test.ts` separately inventories the
+failure rollback for OpenClaw, Hermes, and LangChain Deep Agents Code through an
+MXC-named fake driver. `runtime-provider-source-shape.test.ts` separately inventories the
 protocol, provider, and image-packaging surfaces and proves that production
 activation cannot import or package the protocol yet. The later activation
 slice must add a registered-provider contract test for the same transaction
@@ -58,6 +61,6 @@ not package `nemoclaw-managed-startup-hold` or
 prerequisites together with their image-runtime bootstrap modes, implement
 driver-specific prepare, durable-record, activate, exact cleanup, and rollback,
 and only then wire the coordinator into create. The same contract is exercised
-for OpenClaw, Hermes, and DCode without a provider-specific central switch.
-Until that complete boundary lands, every registered runtime provider keeps
-its bootstrap surface unsupported.
+for OpenClaw, Hermes, and Deep Agents Code without a provider-specific central
+switch. Until that complete boundary lands, every registered runtime provider
+keeps its bootstrap surface unsupported.
