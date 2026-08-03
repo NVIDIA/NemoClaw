@@ -5,7 +5,7 @@
 
 ## v0.0.101
 
-NemoClaw v0.0.101 adds experimental Google Chat support for OpenClaw and improves runtime status, failed-gateway cleanup, inference-route cleanup, backup safety, and Hermes messaging persistence.
+NemoClaw v0.0.101 adds experimental Google Chat support for OpenClaw and improves runtime status, failed-gateway cleanup, inference-route cleanup, backup handling, and preservation of Hermes home-channel assignments during rebuilds.
 It also strengthens backup sanitization, lays dormant provider-neutral foundations for managed workload replacement, and expands trusted review and end-to-end (E2E) coverage.
 
 - OpenClaw sandboxes can now use experimental Google Chat through a restricted webhook endpoint.
@@ -24,7 +24,7 @@ It also strengthens backup sanitization, lays dormant provider-neutral foundatio
 - Rebuilds preserve recorded Hermes home-channel assignments while regenerating credentials and other environment values.
   NemoClaw can lock Deep Agents Code configuration when the sandbox image did not ship a configuration hash.
   Uninstall no longer mistakes the selected gateway for a sibling that must preserve shared host resources.
-  For more information, refer to [Manage Messaging Channels](/user-guide/hermes/manage-sandboxes/messaging-channels/manage-messaging-channels), the Deep Agents Code [NemoClaw CLI Commands Reference](/user-guide/deepagents/reference/commands), and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
+  For more information, refer to [Choose Messaging Channels](/user-guide/hermes/manage-sandboxes/messaging-channels/choose-messaging-channels), the Deep Agents Code [NemoClaw CLI Commands Reference](/user-guide/deepagents/reference/commands), and [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw).
 - Migration and rebuild backups now apply the same recursive credential filtering and fail closed when sanitization, cleanup, or filesystem identity checks fail.
   NemoClaw deletes incomplete output when cleanup succeeds and reports when an incomplete backup remains.
   For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
@@ -40,5 +40,5 @@ It also strengthens backup sanitization, lays dormant provider-neutral foundatio
   Live E2E selection now covers Microsoft Teams stop and start behavior, Hermes managed-policy changes, Hermes adapter lifecycle changes, and consolidated sandbox resource-limit probes.
 - Documentation now clarifies Slack conflict detection across independent OpenShell gateways.
   For more information, refer to [Set Up Slack](/user-guide/openclaw/manage-sandboxes/messaging-channels/set-up-slack) and [Manage Messaging Channels](/user-guide/openclaw/manage-sandboxes/messaging-channels/manage-messaging-channels).
-  The release also completes the durable documentation follow-ups identified after the v0.0.100 tag.
+- Documentation also adds durable guidance for inference-route timing, validation reuse boundaries, replacement-image cleanup, and recovery.
   For more information, refer to [Understand Provider Validation](/user-guide/openclaw/inference/validate-inference/understand-provider-validation), [Verify Inference Route](/user-guide/openclaw/inference/validate-inference/verify-inference-route), and [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
