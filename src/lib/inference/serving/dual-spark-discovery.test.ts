@@ -710,6 +710,27 @@ describe("production pinned peer transport", () => {
     }
   });
 
+  it("rejects a symlinked binding parent before creating a claim", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-spark-binding-link-"));
+    const parent = path.join(root, "parent");
+    const alias = path.join(root, "alias");
+    fs.mkdirSync(parent, { mode: 0o700 });
+    fs.symlinkSync(parent, alias, "dir");
+    const statePath = path.join(alias, "dual-spark.json");
+    const deps = createDualSparkDiscoveryDeps(() => ({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    }));
+
+    try {
+      expect(() => deps.claimBinding(statePath)).toThrow();
+      expect(fs.existsSync(`${path.join(parent, "dual-spark.json")}.ssh-binding`)).toBe(false);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it("pins local and remote host probes to the physical default Docker daemon", () => {
     const calls: Array<{
       file: string;

@@ -1112,38 +1112,41 @@ function claimBinding(statePath: string): boolean {
   const parent = path.dirname(bindingDirectory);
   const uid = process.getuid?.();
   if (uid === undefined) throw new Error("DGX Spark binding claim requires a POSIX user identity");
-  const parentMetadata = fs.lstatSync(parent);
-  if (
-    parentMetadata.isSymbolicLink() ||
-    !parentMetadata.isDirectory() ||
-    parentMetadata.uid !== uid ||
-    (parentMetadata.mode & 0o777) !== 0o700
-  ) {
-    throw new Error("DGX Spark binding parent is unsafe");
-  }
+  const directoryFlags = fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW;
+  const parentDescriptor = fs.openSync(parent, directoryFlags);
   try {
-    fs.mkdirSync(bindingDirectory, { mode: 0o700 });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
-    throw error;
-  }
-  try {
-    fs.chmodSync(bindingDirectory, 0o700);
-    const descriptor = fs.openSync(parent, fs.constants.O_RDONLY);
+    const parentMetadata = fs.fstatSync(parentDescriptor);
+    if (
+      !parentMetadata.isDirectory() ||
+      parentMetadata.uid !== uid ||
+      (parentMetadata.mode & 0o777) !== 0o700
+    ) {
+      throw new Error("DGX Spark binding parent is unsafe");
+    }
     try {
-      fs.fsyncSync(descriptor);
+      fs.mkdirSync(bindingDirectory, { mode: 0o700 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw error;
+    }
+
+    const bindingDescriptor = fs.openSync(bindingDirectory, directoryFlags);
+    try {
+      const bindingMetadata = fs.fstatSync(bindingDescriptor);
+      if (!bindingMetadata.isDirectory() || bindingMetadata.uid !== uid) {
+        throw new Error("DGX Spark binding claim is unsafe");
+      }
+      fs.fchmodSync(bindingDescriptor, 0o700);
+      fs.fsyncSync(bindingDescriptor);
     } finally {
-      fs.closeSync(descriptor);
+      fs.closeSync(bindingDescriptor);
     }
-  } catch (error) {
-    try {
-      fs.rmdirSync(bindingDirectory);
-    } catch {
-      // Retain the exclusive claim if its safe cleanup cannot be completed.
-    }
-    throw error;
+
+    fs.fsyncSync(parentDescriptor);
+    return true;
+  } finally {
+    fs.closeSync(parentDescriptor);
   }
-  return true;
 }
 
 /**
