@@ -428,10 +428,10 @@ describe("OpenClaw npm remediation", () => {
       packages: Record<string, { integrity?: string; resolved?: string; version?: string }>;
     }>(path.join(directory, "npm-shrinkwrap.json"));
     expect(shrinkwrap.packages["node_modules/brace-expansion"]).toMatchObject({
-      version: "5.0.8",
-      resolved: "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.8.tgz",
+      version: "5.0.9",
+      resolved: "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz",
       integrity:
-        "sha512-JZyDyq3D4AUifKTPOB7DELf6XsB3WdPuNxCtob1vFXPsSXhdAiHBWJ/tJ8HAc9aH84BK+5JFZLNkJKx3G9kzQg==",
+        "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==",
     });
     expect(shrinkwrap.packages["node_modules/fast-uri"]).toMatchObject({
       version: "3.1.4",

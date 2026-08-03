@@ -85,11 +85,11 @@ const BRACE_EXPANSION_INTEGRITY =
   "sha512-7oFy703dxfY3/NLxC1fh2SUCQ0H9rmAY+5EpDVfXjUTTs+HEwR2nYaqLv+GWcTsumwxPfiz6CzCNkwXwBUwqCA==";
 const BRACE_EXPANSION_TARBALL =
   "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.7.tgz";
-const CURRENT_BRACE_EXPANSION_VERSION = "5.0.8";
+const CURRENT_BRACE_EXPANSION_VERSION = "5.0.9";
 const CURRENT_BRACE_EXPANSION_INTEGRITY =
-  "sha512-JZyDyq3D4AUifKTPOB7DELf6XsB3WdPuNxCtob1vFXPsSXhdAiHBWJ/tJ8HAc9aH84BK+5JFZLNkJKx3G9kzQg==";
+  "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==";
 const CURRENT_BRACE_EXPANSION_TARBALL =
-  "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.8.tgz";
+  "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz";
 const CURRENT_FAST_URI_VERSION = "3.1.4";
 const CURRENT_FAST_URI_INTEGRITY =
   "sha512-8JnbkQ4juDyvYs4mgFGQqg4yCYtFDtUtmp2QIQq11ZZe5CFQ5wcqm1rqDgAh/QdMySuBnPzMUiJUNZG5N/AiQw==";
@@ -152,7 +152,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
   // publishes both corrected transitive resolutions in its shrinkwrap.
   "openclaw@2026.7.1": {
     expectedPatchedTreeIntegrity:
-      "sha512-/D/vAtyFEvd0TvYxFBfBN/chwW8WGaAy8bH40ojjJSRuN+P461qnbfiMTHydA7asXN/69y2NnQHs7b3pDh8+0g==",
+      "sha512-13Ou0RhcOY850Feq/gu6MiCrRQPUlnfkVxwH6o2KCe1G460lfFBJ+lkGBjedUhek1nyEOSotcD0BYsizX7TI+w==",
     kind: "current-core",
     version: "2026.7.1",
   },

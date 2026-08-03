@@ -5,6 +5,8 @@
 
 Review date: 2026-07-21
 
+Last updated: 2026-08-03
+
 ## Decision
 
 Pin the production OpenClaw runtime and matching official plugins to the
@@ -17,10 +19,10 @@ the exact plugin graph reports no vulnerabilities after that update.
 
 The production OpenClaw install uses the authoritative committed lock at
 `agents/openclaw/openclaw-runtime/package-lock.json`, with SHA-256
-`82489f62febb12da52833c0b1f7f6969f7e21a098c565ef1f91342b1e5e32d88`.
+`fdbee91a3f3a0222ec2e8e34864d09dfcff4711e86ac6bfa4d475af0593acd51`.
 NemoClaw derives that lock from the SRI-verified `openclaw@2026.7.1` archive
 after replacing the reviewed affected `brace-expansion@5.0.7` and
-`fast-uri@3.1.2` resolutions with `5.0.8` and `3.1.4`.
+`fast-uri@3.1.2` resolutions with `5.0.9` and `3.1.4`.
 Image builds verify the lock digest and installed production graph before they
 expose the OpenClaw binary.
 
@@ -61,9 +63,9 @@ whose amd64 config reports Node `22.23.1`.
 - `tar@7.5.20` (NemoClaw plugin direct dependency)
   - `sha512-9FcyK4PA6+WbzlTM9WhQm6vB5W7cP7dUiPsv1g7YDwEQnQ1CGpK3MGlKk/ITVWMk05kHZuBhmVhiv8LZoy/PFQ==`
   - `https://registry.npmjs.org/tar/-/tar-7.5.20.tgz`
-- `brace-expansion@5.0.8` (OpenClaw locked-runtime remediation)
-  - `sha512-JZyDyq3D4AUifKTPOB7DELf6XsB3WdPuNxCtob1vFXPsSXhdAiHBWJ/tJ8HAc9aH84BK+5JFZLNkJKx3G9kzQg==`
-  - `https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.8.tgz`
+- `brace-expansion@5.0.9` (OpenClaw locked-runtime remediation)
+  - `sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==`
+  - `https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz`
 - `fast-uri@3.1.4` (OpenClaw and mcporter locked-runtime remediation)
   - `sha512-8JnbkQ4juDyvYs4mgFGQqg4yCYtFDtUtmp2QIQq11ZZe5CFQ5wcqm1rqDgAh/QdMySuBnPzMUiJUNZG5N/AiQw==`
   - `https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.4.tgz`
@@ -94,7 +96,10 @@ major-version compatibility boundary.
 
 OpenClaw's `minimatch@10.2.5` edge originally resolved
 `brace-expansion@5.0.7`, which is affected by `GHSA-mh99-v99m-4gvg`.
-The reviewed OpenClaw remediation selects `5.0.8`, retains the declared
+The initial remediation selected `5.0.8` for that advisory.
+The high-severity `GHSA-rgw5-rvv9-x895`, also tracked as `CVE-2026-69152`,
+affects `brace-expansion` versions `>=4.0.0 <5.0.9`.
+The current OpenClaw remediation selects `5.0.9`, retains the declared
 `balanced-match@^4.0.2` dependency shape, and fails if the upstream shrinkwrap
 or replacement archive identity changes.
 
