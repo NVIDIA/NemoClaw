@@ -10,6 +10,7 @@ content:
   type: "how_to"
 skill:
   priority: 15
+agent-variants: ["openclaw", "hermes"]
 ---
 Use these examples when a sandbox is already installed and an integration needs network access.
 This page covers only integrations that NemoClaw currently ships as maintained policy preset YAML under `nemoclaw-blueprint/policies/presets/`.
@@ -75,7 +76,7 @@ Preview the endpoints before applying:
 $$nemoclaw my-assistant policy add outlook --dry-run
 ```
 
-NemoClaw generates the preview from the exact preset policy YAML that `policy add` would apply.
+NemoClaw generates the preview from the preset policy YAML that `policy add` would apply.
 It lists hosts, ports, access, protocol, TLS, and enforcement settings, HTTP methods and paths, and the binary allowlist.
 
 Apply the preset:

@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Sandbox base dependency review: Vim, jq, Expat, Perl modules, and bundled npm
+# Sandbox base dependency review for Vim, jq, Expat, Perl modules, and bundled npm
 
 Date: 2026-07-25
 
@@ -124,7 +124,7 @@ The core interpreter version check also remains the binding for core-language fi
 
 ## Concern ledger
 
-### DEP-1: affected trixie Vim package
+### DEP-1 affected trixie Vim package
 
 - Range: `2:9.1.1230-2..2:9.2.0782-1`
 - Surface: native package and runtime editor
@@ -136,7 +136,7 @@ The core interpreter version check also remains the binding for core-language fi
 - Verification: exact `RUN`-chain execution, checksum-rejection tests, dpkg identity checks, Vim runtime checks, and native image builds.
 - Remaining gate: multi-image, multi-architecture CI.
 
-### DEP-2: affected package inside npm's private tree
+### DEP-2 affected package inside npm's private tree
 
 - Range: `brace-expansion 5.0.7..5.0.8`
 - Surface: transitive bundled npm dependency
@@ -148,7 +148,7 @@ The core interpreter version check also remains the binding for core-language fi
 - Verification: pre-swap and post-swap rollback, idempotence, unsafe-tree, layout-drift, command-order, Dockerfile-order, and real-registry tests.
 - Remaining gate: multi-image CI.
 
-### DEP-3: Perl package identity does not expose dual-life module versions
+### DEP-3 Perl package identity does not expose dual-life module versions
 
 - Range: Perl `5.44.0` with bundled component versions
 - Surface: native package inventory and runtime modules
@@ -160,7 +160,7 @@ The core interpreter version check also remains the binding for core-language fi
 - Verification: native amd64 and arm64 image builds.
 - Remaining gate: multi-architecture base-image build.
 
-### DEP-4: managed jq, Oniguruma, and Expat identities differ
+### DEP-4 managed jq, Oniguruma, and Expat identities differ
 
 - Range: `libexpat1` distro-selected or `2.8.2-1` to `2.8.2-1`; `libjq1` and `jq` `1.7.1-6+deb13u2..1.8.2-1`; `libonig5 >= 6.9.7.1` to exact `6.9.9-1+b1`.
 - Surface: native packages and runtime libraries

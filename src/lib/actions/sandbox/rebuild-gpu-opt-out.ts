@@ -28,6 +28,7 @@ import type {
 import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
 import { getTier } from "../../policy/tiers";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
+import type { PreservedEnvFile } from "../../state/preserved-env";
 import { type ToolDisclosure, toolDisclosureOrDefault } from "../../tool-disclosure";
 
 export type RebuildGpuOptOutEntry = {
@@ -43,6 +44,9 @@ export type RebuildGpuOptOutEntry = {
   observabilityEnabled?: boolean;
   policyTier?: string | null;
   endpointSource?: InferenceEndpointSource | null;
+  provider?: string | null;
+  model?: string | null;
+  preferredInferenceApi?: string | null;
 };
 
 // Modern source of truth is the persisted `sandboxGpuMode` string ("0" / "1" /
@@ -103,6 +107,9 @@ export type RebuildRecreateOnboardOpts = {
   endpointSource?: InferenceEndpointSource | null;
   acceptThirdPartySoftware: true;
   agent: string | null | undefined;
+  recreateProvider: string | null;
+  recreateModel: string | null;
+  recreatePreferredInferenceApi: string | null;
   fromDockerfile: string | null;
   sandboxGpu: "enable" | "disable" | null;
   sandboxGpuDevice: string | null;
@@ -110,11 +117,14 @@ export type RebuildRecreateOnboardOpts = {
   targetGatewayName: string;
   targetGatewayPort: number;
   onboardLockAlreadyHeld: true;
+  /** Target fingerprint of the replacement journal opened before deletion. */
+  recreateJournalTargetIntentFingerprint?: string;
   preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
   rebuildRegistryInferenceRoute?: RebuildRouteHandoff;
   rebuildProviderReconfigure?: RebuildProviderReconfigureHandoff;
   providerRecoveryReceipt?: ProviderRecoveryReceipt;
   preparedImageRebuild?: PreparedImageRebuildHandoff;
+  rebuildPreservedEnv?: readonly PreservedEnvFile[];
   autoYes: boolean;
   toolDisclosure: ToolDisclosure;
   dcodeAutoApprovalMode: DcodeAutoApprovalMode;
@@ -177,6 +187,9 @@ export function buildRebuildRecreateOnboardOpts(args: {
     endpointSource: normalizeInferenceEndpointSource(args.sb?.endpointSource),
     acceptThirdPartySoftware: args.usageNoticeAccepted,
     agent: args.rebuildAgent,
+    recreateProvider: args.sb?.provider ?? null,
+    recreateModel: args.sb?.model ?? null,
+    recreatePreferredInferenceApi: args.sb?.preferredInferenceApi ?? null,
     fromDockerfile: args.storedFromDockerfile,
     sandboxGpu: gpuOverrides.sandboxGpu,
     sandboxGpuDevice: gpuOverrides.sandboxGpuDevice,

@@ -22,6 +22,18 @@ const REQUEST_TIMEOUT_MS = 20_000;
 const MAX_RETRY_DELAY_MS = 10_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/-]+$/u;
+const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
+  ["agents/**", /^agents\/.+$/u],
+  ["nemoclaw/**", /^nemoclaw\/.+$/u],
+  ["nemoclaw-blueprint/**", /^nemoclaw-blueprint\/.+$/u],
+  ["scripts/**", /^scripts\/.+$/u],
+  [
+    "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json",
+    /^src\/lib\/actions\/sandbox\/openshell-child-visible-credentials[.]v[^/]*[.]json$/u,
+  ],
+  ["src/lib/messaging/**", /^src\/lib\/messaging\/.+$/u],
+  ["tools/mcp-tool-discovery-runtime/**", /^tools\/mcp-tool-discovery-runtime\/.+$/u],
+]);
 const PENDING_RUN_STATUSES = new Set(["requested", "waiting", "pending", "queued", "in_progress"]);
 const COMPLETED_CONCLUSIONS = new Set([
   "action_required",
@@ -127,6 +139,7 @@ function parseQuotedPath(raw: string, lineNumber: number): string {
   if (typeof value !== "string" || value.length === 0 || value.trim() !== value) {
     throw new Error(`base-image push path on line ${lineNumber} must be a non-empty exact path`);
   }
+  if (REVIEWED_PATH_GLOBS.has(value)) return value;
   if (
     !SAFE_PATH_PATTERN.test(value) ||
     value.startsWith("/") ||
@@ -141,9 +154,9 @@ function parseQuotedPath(raw: string, lineNumber: number): string {
 }
 
 /**
- * Read the literal path list that controls the publisher without requiring a
- * dependency install in the preflight job. Deliberately reject YAML features
- * such as flow lists, aliases, globs, and folded scalars instead of guessing.
+ * Read the controlled path list without requiring a dependency install in the
+ * preflight job. Deliberately reject YAML features such as flow lists, aliases,
+ * unreviewed globs, and folded scalars instead of guessing.
  */
 export function parseBaseImagePushPaths(source: string): string[] {
   const lines = source.split(/\r?\n/u);
@@ -226,6 +239,57 @@ function defaultGit(args: string[]): string {
   }).trim();
 }
 
+export function expandBaseImagePushPaths(
+  expectedSha: string,
+  paths: readonly string[],
+  runGit: (args: string[]) => string = defaultGit,
+): string[] {
+  sha(expectedSha, "expected SHA");
+  const expanded = new Set<string>();
+
+  for (const path of paths) {
+    const matcher = REVIEWED_PATH_GLOBS.get(path);
+    if (!matcher) {
+      expanded.add(path);
+      continue;
+    }
+
+    const matches = runGit([
+      "log",
+      "--first-parent",
+      "--diff-merges=first-parent",
+      "--format=",
+      "--name-only",
+      expectedSha,
+      "--",
+      `:(glob)${path}`,
+    ])
+      .split(/\r?\n/u)
+      .filter((candidate) => candidate.length > 0);
+    if (matches.length === 0) {
+      throw new Error(`reviewed base-image push glob did not match Git history: ${path}`);
+    }
+    for (const candidate of matches) {
+      if (
+        !SAFE_PATH_PATTERN.test(candidate) ||
+        candidate.startsWith("/") ||
+        candidate.includes("//") ||
+        candidate
+          .split("/")
+          .some((segment) => segment === "" || segment === "." || segment === "..")
+      ) {
+        throw new Error(`reviewed base-image push glob expanded to an unsafe path: ${candidate}`);
+      }
+      if (!matcher.test(candidate)) {
+        throw new Error(`Git returned a path outside reviewed base-image push glob ${path}`);
+      }
+      expanded.add(candidate);
+    }
+  }
+
+  return [...expanded].sort();
+}
+
 export function resolveFirstParentHistory(
   expectedSha: string,
   paths: readonly string[],
@@ -243,6 +307,10 @@ export function resolveFirstParentHistory(
   if (runGit(["rev-parse", "--is-shallow-repository"]) !== "false") {
     throw new Error("base-image publication gate requires a complete Git history");
   }
+  const expandedPaths = expandBaseImagePushPaths(expectedSha, paths, runGit);
+  if (expandedPaths.length === 0) {
+    throw new Error("base-image push paths did not resolve to any Git paths");
+  }
 
   const relevantSha = runGit([
     "log",
@@ -252,7 +320,7 @@ export function resolveFirstParentHistory(
     "--format=%H",
     expectedSha,
     "--",
-    ...paths,
+    ...expandedPaths,
   ]);
   sha(relevantSha, "latest applicable base-image commit");
 
@@ -332,7 +400,15 @@ function validateRun(value: unknown, index: number, expectedWorkflowId: number):
       throw new Error(`workflow run ${index} pending state is invalid`);
     }
   }
-  return { id, attempt, workflowId: expectedWorkflowId, headSha, status, conclusion, url };
+  return {
+    id,
+    attempt,
+    workflowId: expectedWorkflowId,
+    headSha,
+    status,
+    conclusion,
+    url,
+  };
 }
 
 export function selectPublicationRun(
@@ -417,7 +493,11 @@ export function validatePublisherJobs(payload: unknown, run: PublicationRun): vo
     if (occurrences.some((occurrence) => occurrence.attempt === attempt)) {
       throw new Error(`publisher job ${job.name} is duplicated in attempt ${attempt}; ${run.url}`);
     }
-    occurrences.push({ attempt, status: job.status, conclusion: job.conclusion });
+    occurrences.push({
+      attempt,
+      status: job.status,
+      conclusion: job.conclusion,
+    });
     jobsByName.set(job.name, occurrences);
   }
 

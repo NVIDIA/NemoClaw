@@ -170,8 +170,8 @@ Deep Agents Code creates them when you start the first `dcode` session.
 | `/sandbox/.deepagents/.state/` | Deep Agents Code runtime state, including persisted session and MCP-related state. |
 | `/sandbox/.deepagents/agent/AGENTS.md` | Global memory file for the default Deep Agents Code agent, loaded at session start. |
 | `/sandbox/.deepagents/agent/memories/` | Topic-specific markdown memories that Deep Agents Code can read and update across sessions. |
-| `/sandbox/.deepagents/skills/` | User-level skills available to Deep Agents Code in the sandbox. |
-| `/sandbox/.deepagents/agent/skills/` | Default-agent skills created by the built-in skill creator and preserved by NemoClaw snapshots. |
+| `/sandbox/.deepagents/skills/` | Legacy NemoClaw skill-upload state. Deep Agents Code does not load skills from this path, and `$$nemoclaw <name> skill install` leaves it untouched. |
+| `/sandbox/.deepagents/agent/skills/` | Skills that Deep Agents Code loads at session start, including skills created by the built-in skill creator and fresh-name skills installed directly by `$$nemoclaw <name> skill install`. Preserved by NemoClaw snapshots. |
 | `/sandbox/.deepagents/.nemoclaw-mcp.json` | NemoClaw-generated managed MCP projection with OpenShell credential placeholders. NemoClaw reconstructs it from host-side registry state. |
 | `/sandbox/.deepagents/.state/auth.json` | Upstream auth state. The managed launchers refuse to start when this file contains credentials. |
 | `/sandbox/.deepagents/.state/chatgpt-auth.json` | Upstream ChatGPT auth state. The managed launchers refuse to start when this file exists. |

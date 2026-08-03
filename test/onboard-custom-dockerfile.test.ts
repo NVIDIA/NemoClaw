@@ -232,7 +232,7 @@ runner.run = (command, opts = {}) => {
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
@@ -374,7 +374,7 @@ const destructive = [];
 const sandboxLive = process.env.SANDBOX_LIVE === "1";
 const capture = (command) => {
   const text = Array.isArray(command) ? command.join(" ") : String(command);
-  if (/sandbox get my-assistant/.test(text)) return sandboxLive ? "my-assistant Ready" : "";
+  if (/sandbox get(?: -g \S+)? my-assistant/.test(text)) return sandboxLive ? "my-assistant Ready" : "";
   if (/sandbox list/.test(text)) return sandboxLive ? "my-assistant Ready" : "";
   if (/forward list/.test(text)) return "";
   return "";

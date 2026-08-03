@@ -24,7 +24,7 @@ import {
 } from "../../state/sandbox-session";
 import type { SandboxDockerRuntime } from "./docker-health";
 import type { SandboxGatewayState } from "./gateway-state";
-import { isSandboxGatewayRunningForStatus } from "./process-recovery";
+import { isSandboxGatewayRunningForStatus } from "./status/process-recovery";
 import {
   isInferenceHealthFailing,
   resolveSandboxStatusDcodeAutoApprovalMode,
@@ -247,8 +247,8 @@ function printActiveSessions(sandboxName: string): void {
     const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(openshell));
     if (!sessionResult.detected) return;
     const count = sessionResult.sessions.length;
-    const connected = count > 0 ? `${G}yes${R} (${count} session${count > 1 ? "s" : ""})` : "no";
-    console.log(`    Connected: ${connected}`);
+    const sessions = count > 0 ? `${G}${count}${R}` : "none";
+    console.log(`    SSH sessions: ${sessions}`);
   } catch {
     // Session detection is informational; an unavailable OpenShell client must
     // not suppress the primary sandbox and gateway health report.

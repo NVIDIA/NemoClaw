@@ -178,7 +178,13 @@ describe("nemoclaw-maintainer-e2e workflow routing", () => {
     expect(skill).toContain("deploy pre-release full E2E");
     expect(skill).toContain("run pre-tag full E2E");
     expect(skill).toContain("run release-candidate E2E");
-    expect(skill).toContain("must not authorize the protected Brev path");
+    expect(skill).toContain("must not authorize the Brev Launchable path");
+    expect(skill).toContain(
+      "Launchable and full runs do not require separate environment approval",
+    );
+    expect(skill).toContain(
+      "repository `maintain` or `admin` permission before the Launchable path's source",
+    );
     expect(skill).not.toMatch(/variable (?:set|delete) NEMOCLAW_BREV_LAUNCHABLE_E2E_ENABLED/u);
   });
 

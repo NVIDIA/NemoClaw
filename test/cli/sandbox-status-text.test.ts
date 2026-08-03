@@ -196,7 +196,21 @@ describe("CLI sandbox status text output", () => {
       model: "gpt-4o-mini",
       openshellDriver: "docker",
     });
-    writeHealthyDockerStub(localBin);
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
+        'if [ "$1" = "ps" ]; then echo "openshell-alpha"; exit 0; fi',
+        'if [ "$1" = "exec" ]; then',
+        "  echo 'oom_kill=1'",
+        "  echo 'source=/sys/fs/cgroup/memory.events'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
@@ -208,10 +222,7 @@ describe("CLI sandbox status text output", () => {
         "  exit 0",
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
-        '  case "$*" in',
-        "    *inference.local/v1/models*) echo 'OK 200' ;;",
-        "    *) echo 'oom_kill=1'; echo 'source=/sys/fs/cgroup/memory.events' ;;",
-        "  esac",
+        "  echo 'OK 200'",
         "  exit 0",
         "fi",
         'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',

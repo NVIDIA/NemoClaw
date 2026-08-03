@@ -46,23 +46,31 @@ Render the final scorecard with `scripts/render-verdict.py`. Below is the human-
 | <criterion 2> | covered | missing |
 | <criterion 3> | missing | covered |
 
-### Verdict: MERGE PR #A
+### Verdict: No clear winner — see scorecard for recommended action
 
 Reasoning trace:
 - PR #B failed Tier 0. Check `<name>` failed on `<short-sha>` after the force-push.
 - PR #A scored 14.5. PR #B scored 9.0.
-- PR #A misses criterion 3. Cherry-pick PR #B's test at `<file>:<line>` to cover it.
+- PR #A misses criterion 3. PR #B contains the test at `<file>:<line>`, so PR #A needs a transfer before it can be selected.
 
 ### Suggested action
 
-1. Merge PR #A.
-2. Cherry-pick the test from PR #B at `<file>:<line-range>` to cover criterion 3.
-3. Close PR #B with a comment that links to #A and records the cherry-pick.
+1. Confirm that PR #B contains the contributor's `Signed-off-by:` declaration. Do not add or copy that declaration on the contributor's behalf. If it is absent, leave the winner unset and ask the contributor.
+2. Read the exact author name and email from the source commit. Never guess or substitute it. If no usable identity exists, leave the winner unset and ask the contributor.
+3. Transfer the test from PR #B before merge. Prefer `git cherry-pick -S -x <source-sha>` so the source contributor remains the Git author.
+4. If the work must be combined or reconstructed, add a `Co-authored-by: Name <email>` trailer using the verified source-commit identity.
+5. Add `Supersedes #B` to PR #A's body and identify the transferred test.
+6. Keep the replacement author's own DCO declaration in PR #A's body.
+7. Confirm that every replacement commit appears as `Verified` in GitHub.
+8. Verify the updated commits, attribution, and CI, then run the comparator again on the updated SHA.
+9. Merge PR #A only if the new verdict selects it.
+10. After PR #A merges, close PR #B with a comment that links to #A.
 
 ### Reasoning evidence
 - CI: all 12 required checks passed on PR #A commit `<short-sha>`. On PR #B commit `<short-sha>`, `test-cli` failed at `<log-line>`.
 - Tier 1.1 PR #A: The test at `<file>:<line-range>` asserts on `<output>`. The previous code returned `<wrong-output>`, so the assertion would have failed.
 - Tier 1.3 PR #A fail: no test for empty-input edge case despite issue commenter raising it at `issue.comment.4`
+- Attribution: PR #A carries `<contribution>` from PR #B. Its body names the source PR, and commit `<sha>` preserves `<contributor>` as Git author or co-author.
 - ... <one entry per judgment> ...
 ```
 

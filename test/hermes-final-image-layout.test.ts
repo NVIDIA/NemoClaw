@@ -12,6 +12,11 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 const HERMES_INTEGRITY_FILES = [
   {
+    arg: "NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256",
+    source: "agents/hermes/image-build-probes.py",
+    target: "/opt/nemoclaw-hermes-config/image-build-probes.py",
+  },
+  {
     arg: "NEMOCLAW_HERMES_WRAPPER_SHA256",
     source: "agents/hermes/hermes-wrapper.py",
     target: "/usr/local/lib/nemoclaw/hermes-wrapper.py",
@@ -30,6 +35,31 @@ const HERMES_INTEGRITY_FILES = [
     arg: "NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256",
     source: "agents/hermes/patch-langfuse-credentials.mts",
     target: "/usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_DISCORD_RECOVERY_PATCHER_SHA256",
+    source: "agents/hermes/patch-discord-recovery-permissions.py",
+    target: "/usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256",
+    source: "agents/hermes/patch-profile-policy-defaults.py",
+    target: "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256",
+    source: "agents/hermes/patch-gateway-runtime-metadata.py",
+    target: "/opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256",
+    source: "agents/hermes/patch-gateway-process-identity.py",
+    target: "/opt/nemoclaw-hermes-config/patch-gateway-process-identity.py",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256",
+    source: "agents/hermes/patch-cron-execution-runtime.py",
+    target: "/opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
   },
 ] as const;
 
@@ -133,7 +163,13 @@ function runFinalLayout({
   fs.writeFileSync(path.join(hermesDir, "config.yaml"), "model: test\n");
   fs.writeFileSync(path.join(hermesDir, ".env"), "TOKEN=test\n");
 
-  const fixturePaths = { hermesDir, legacyDataDir, legacyTarget, openclawDir, openclawTarget };
+  const fixturePaths = {
+    hermesDir,
+    legacyDataDir,
+    legacyTarget,
+    openclawDir,
+    openclawTarget,
+  };
   legacyDataSetups[legacyData](fixturePaths);
   openclawSetups[openclaw](fixturePaths);
 
@@ -181,6 +217,10 @@ describe("Hermes final image layout", () => {
           "COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/",
           "COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts",
           "COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/",
+          "COPY agents/hermes/image-build-probes.py /opt/nemoclaw-hermes-config/image-build-probes.py",
+          "COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
+          "COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py",
+          "COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
           "COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json",
           "COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts",
           "COPY src/lib/messaging/ /src/lib/messaging/",
@@ -200,6 +240,8 @@ describe("Hermes final image layout", () => {
           "COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py",
           "COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
           "COPY agents/hermes/patch-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py",
+          "COPY agents/hermes/patch-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py",
+          "COPY agents/hermes/patch-profile-policy-defaults.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
           "COPY agents/hermes/patch-langfuse-credentials.mts /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts",
           "COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py",
           "COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
@@ -296,6 +338,8 @@ describe("Hermes final image layout", () => {
       "/scripts/patch-bundled-npm-tar.mts 'root:root 444'",
       "/opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444'",
       "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755'",
+      "/usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py 'root:root 755'",
+      "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py 'root:root 755'",
       "/usr/local/bin/nemoclaw-gateway-control 'root:root 700'",
       "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444'",
       "/usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755'",
@@ -309,6 +353,10 @@ describe("Hermes final image layout", () => {
       "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix",
     );
     expect(doctorLayer).toMatch(/generate-config[.]ts\s+&& rm -rf \/sandbox\/[.]cache$/u);
+    expect(finalStage).toContain("check_absent /opt/hermes/tests \\");
+    expect(finalStage).toContain(
+      "&& check_absent /opt/nemoclaw-hermes-config/image-build-probes.py \\",
+    );
     expect(finalStage).toContain("&& check_absent /sandbox/.cache \\");
   });
 
@@ -355,7 +403,9 @@ describe("Hermes final image layout", () => {
     try {
       expect(run.result.status).toBe(0);
       expect(
-        fs.lstatSync(path.join(run.sandboxRoot, ".hermes-data"), { throwIfNoEntry: false }),
+        fs.lstatSync(path.join(run.sandboxRoot, ".hermes-data"), {
+          throwIfNoEntry: false,
+        }),
       ).toBeUndefined();
       expect(fs.lstatSync(path.join(run.hermesDir, "sessions")).isDirectory()).toBe(true);
       expect(readText(path.join(run.hermesDir, "sessions", "legacy.json"))).toBe("{}\n");

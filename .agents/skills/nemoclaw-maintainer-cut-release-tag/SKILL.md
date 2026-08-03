@@ -140,7 +140,7 @@ npm run release:e2e-evidence -- \
 The preflight derives every required execution and these dispatch groups from the candidate workflow:
 
 - `defaultSuite`: full mode, which includes the default-enabled suite and `Exact staging Brev Launchable`;
-- `parallelExplicit`: explicit-only selectors that require neither the protected Launchable E2E job nor runner confirmation; and
+- `parallelExplicit`: explicit-only selectors that require neither the Launchable E2E job nor runner confirmation; and
 - `conditional`: Jetson or another lane that must not queue until its authoritative runner inventory is confirmed online.
 
 First feed applicable existing runs for the candidate SHA into the ledger.
@@ -368,7 +368,7 @@ If the Announcement is valid, return its URL with the release artifacts and mark
 
 - Plan generation fails: fix the named precondition, then regenerate the plan.
 - Planned changelog entry is missing or malformed: stop before plan generation and run the pre-tag `nemoclaw-contributor-update-docs` workflow. Use post-release recovery only when the tag already exists.
-- Full-mode E2E waits for protected-environment approval: keep the run pending until a maintainer approves or rejects the job.
+- Full-mode E2E waits in the Launchable concurrency queue: keep the run pending until the earlier Launchable E2E job finishes.
 - Full-mode E2E ran for another SHA or skipped `Exact staging Brev Launchable`: reject the run and dispatch full mode for the plan candidate SHA.
 - Launchable E2E or cleanup evidence is missing or invalid: reject the run. Do not infer Launchable E2E success from the workflow conclusion.
 - `origin/main` moved after plan generation: regenerate the plan and ask for the new confirmation phrase.

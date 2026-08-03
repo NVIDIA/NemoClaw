@@ -4,6 +4,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { restoreEnv } from "../../../../test/helpers/env-test-helpers";
+import { decisionSelected } from "../../state/onboard-checkpoint-decision";
+import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
@@ -49,6 +51,9 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   authoritativeResumeConfig: true,
   acceptThirdPartySoftware: true,
   agent: DCODE_AGENT,
+  recreateProvider: "nvidia",
+  recreateModel: "model-a",
+  recreatePreferredInferenceApi: "openai",
   fromDockerfile: null,
   sandboxGpu: null,
   sandboxGpuDevice: null,
@@ -83,6 +88,17 @@ function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildR
     durableConfig,
     resumeConfig,
     recreateOptions,
+    recreateJournal: {
+      id: "journal-1",
+      acceptedTarget: false,
+      sourceConfirmedAbsent: false,
+      targetGeneration: "generation-1",
+      targetIntentFingerprint: "intent-1",
+      markDeleting: vi.fn(),
+      observeSourceForDelete: vi.fn(() => "source" as const),
+      confirmDeleted: vi.fn(),
+      completeAcceptedTarget: vi.fn(),
+    },
     fromDockerfile: null,
     rebuildAgent: DCODE_AGENT,
     messagingPlan: null,
@@ -174,6 +190,64 @@ describe("runRebuildRecreatePhase handoff", () => {
     expect(onboardSession.loadSession()?.observabilityRequestedExplicitly).toBe(false);
   });
 
+  it("carries the replacement journal and its target fingerprint into inner onboard (#7734)", async () => {
+    session.checkpoint = {
+      ...deriveCheckpointFromSession(session),
+      sandboxIdentity: decisionSelected({ name: "alpha", agent: DCODE_AGENT }),
+      gatewayAuthority: decisionSelected({
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        mode: "nemoclaw-managed",
+        source: "standalone",
+        endpoint: null,
+        stateDir: null,
+        supervisor: null,
+        requiredCapabilities: [],
+      }),
+      sandboxRecreate: {
+        version: 1,
+        id: "journal-1",
+        revision: 3,
+        sandboxName: "alpha",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        sourceRegistryFingerprint: "source-registry",
+        sourceLiveIdentityFingerprint: "source-identity",
+        sourceWorkload: null,
+        targetIntentFingerprint: "intent-1",
+        targetGeneration: "generation-1",
+        targetLiveIdentityFingerprint: null,
+        phase: "deleted",
+        startedAt: "2026-07-28T00:00:00.000Z",
+        updatedAt: "2026-07-28T00:00:01.000Z",
+      },
+    };
+    const retiredSessionId = session.sessionId;
+    let observedFingerprint: string | null | undefined;
+    let observedJournalPhase: string | undefined;
+    let observedCheckpointSessionId: string | undefined;
+    const onboardSpy = vi
+      .spyOn(rebuildOnboardDependencies, "onboard")
+      .mockImplementation(async (options) => {
+        observedFingerprint = options.recreateJournalTargetIntentFingerprint;
+        const carried = onboardSession.loadSession()?.checkpoint;
+        observedJournalPhase = carried?.sandboxRecreate?.phase;
+        observedCheckpointSessionId = carried?.sessionId;
+      });
+
+    try {
+      await expect(runRebuildRecreatePhase(makeInput())).resolves.toBe(true);
+
+      expect(observedFingerprint).toBe("intent-1");
+      expect(observedJournalPhase).toBe("deleted");
+      expect(observedCheckpointSessionId).toBe(onboardSession.loadSession()?.sessionId);
+      expect(observedCheckpointSessionId).not.toBe(retiredSessionId);
+      expect(onboardSession.loadSession()?.checkpoint?.effectGroups).toEqual({});
+    } finally {
+      onboardSpy.mockRestore();
+    }
+  });
+
   it("pins the authoritative restricted tier during recreate and restores ambient policy input", async () => {
     const previousPolicyTier = process.env.NEMOCLAW_POLICY_TIER;
     process.env.NEMOCLAW_POLICY_TIER = "open";
@@ -217,6 +291,66 @@ describe("runRebuildRecreatePhase handoff", () => {
     } finally {
       restoreEnv("NEMOCLAW_RECREATE_WITHOUT_BACKUP", previousRecreateWithoutBackup);
     }
+  });
+
+  it("carries preserved Hermes home channels to the Dockerfile patch boundary (#7803)", async () => {
+    vi.spyOn(rebuildOnboardDependencies, "onboard").mockImplementation(async (options) => {
+      expect(options.rebuildPreservedEnv).toEqual([
+        {
+          path: ".env",
+          assignments: ["SLACK_HOME_CHANNEL=C0123", "SLACK_HOME_CHANNEL_THREAD_ID="],
+        },
+      ]);
+    });
+
+    await expect(
+      runRebuildRecreatePhase(
+        makeInput({
+          sandboxEntry: {
+            name: "alpha",
+            agent: "hermes",
+            observabilityEnabled: true,
+            policyTier: "restricted",
+          },
+          rebuildAgent: "hermes",
+          rebuildsHermesSandbox: true,
+          messagingPlan: {
+            schemaVersion: 1,
+            sandboxName: "alpha",
+            agent: "hermes",
+            workflow: "rebuild",
+            channels: [
+              {
+                channelId: "slack",
+                displayName: "Slack",
+                authMode: "token-paste",
+                active: true,
+                selected: true,
+                configured: true,
+                disabled: false,
+                inputs: [],
+                hooks: [],
+              },
+            ],
+            disabledChannels: [],
+            credentialBindings: [],
+            networkPolicy: { presets: [], entries: [] },
+            agentRender: [],
+            buildSteps: [],
+            stateUpdates: [],
+            healthChecks: [],
+          },
+          backupManifest: {
+            preservedEnv: [
+              {
+                path: ".env",
+                assignments: ["SLACK_HOME_CHANNEL=C0123", "SLACK_HOME_CHANNEL_THREAD_ID="],
+              },
+            ],
+          } as never,
+        }),
+      ),
+    ).resolves.toBe(true);
   });
 
   it("restores the caller backup marker after inner recreate failure", async () => {

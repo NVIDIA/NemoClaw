@@ -198,7 +198,10 @@ function withMockedDockerExecFileSync<T>(
         case "/sandbox/.openclaw":
           return "2770 sandbox:sandbox\n";
         case "/sandbox/.hermes":
-          return options.hermesLockedTransaction ? "755 root:root\n" : "3770 sandbox:sandbox\n";
+          // A locked Hermes root keeps the set-id/sticky shape and only
+          // changes owner, so the gateway can still write its top-level
+          // runtime state under lockdown (#7865).
+          return options.hermesLockedTransaction ? "3770 root:sandbox\n" : "3770 sandbox:sandbox\n";
       }
       if (typeof target === "string" && target.startsWith("/sandbox/.hermes/")) {
         return options.hermesLockedTransaction ? "444 root:root\n" : "640 sandbox:sandbox\n";

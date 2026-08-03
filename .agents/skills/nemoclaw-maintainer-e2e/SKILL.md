@@ -22,7 +22,7 @@ Do not substitute local `npm run test:live-e2e` unless the maintainer explicitly
 | “run pre-tag full E2E” | Full | empty | `true` |
 | “run release-candidate E2E” | Full | empty | `true` |
 
-A generic E2E request must not authorize the protected Brev path.
+A generic E2E request must not authorize the Brev Launchable path.
 Do not infer full mode from words such as “all” or “complete.”
 Ask for clarification only when the request contains conflicting mode phrases.
 
@@ -97,7 +97,10 @@ gh workflow run .github/workflows/e2e.yaml \
 Do not set `jobs=staging-brev-launchable` for full mode.
 Empty `jobs` and `targets` select the default suite.
 The boolean input adds the Launchable E2E job to that same run.
-The protected environment can require approval for Launchable and full runs.
+The trusted `main` workflow verifies that the dispatching and rerunning actors have
+repository `maintain` or `admin` permission before the Launchable path's source
+checkout. That role check is the authorization.
+Launchable and full runs do not require separate environment approval.
 
 ### Release Coverage Dispatch Group
 
@@ -173,7 +176,7 @@ Wait for completion:
 gh run watch "$RUN_ID" --repo NVIDIA/NemoClaw --exit-status
 ```
 
-Launchable and full modes can wait for protected-environment approval.
+Launchable and full modes can wait in the non-cancelling Launchable concurrency queue.
 Queued, waiting, or accepted dispatch state is not success.
 
 ## Verify the Result

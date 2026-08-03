@@ -78,117 +78,27 @@ COPY scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch /script
 
 RUN bash /scripts/security/build-native-security-packages.sh /out
 
-# Debian trixie has not published a Perl package containing the upstream
-# fixes for CVE-2026-12087, CVE-2026-13221, and CVE-2026-57433. Build the
-# fixed upstream release as native Debian packages so dpkg dependencies and
-# vulnerability inventory both describe the runtime that is actually used.
-FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS perl-builder
+# Debian trixie has not published a Perl package containing the reviewed
+# upstream fixes. Build the fixed release as native Debian packages so dpkg
+# dependencies and vulnerability inventory describe the executed runtime.
+FROM native-security-builder AS perl-builder
 
 ARG PERL_VERSION
 ARG PERL_SHA256
 ARG PERL_PACKAGE_REVISION
 
-COPY --from=native-security-builder /out /tmp/security-packages
+COPY scripts/security/build-perl-security-packages.sh /scripts/security/build-perl-security-packages.sh
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential=12.12 \
-        ca-certificates=20250419 \
-        curl=8.14.1-2+deb13u4 \
         netbase=6.5 \
-        xz-utils=5.8.1-1+deb13u1 \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /tmp/perl-source
-
-# Pin the reviewed d_syscallproto result for trixie's libc so both native
-# architectures use the same known declaration instead of relying on a
-# Configure probe that previously returned a false negative under QEMU.
-# Remove this override only after the pinned base image and Perl release report
-# d_syscallproto=define from native Configure probes on amd64 and arm64.
-# Perl's test_harness runs the same upstream suite while TEST_JOBS lets its TAP
-# scheduler use each native runner efficiently instead of serializing every
-# script in QEMU.
-# ExtUtils::Constant's test recursively invokes make and produced an incomplete
-# TAP plan when it overlapped another test locally, so run it alone first and
-# exclude exactly that already-passed file from the parallel pass.
-# Remove this split only after the unsplit parallel harness passes in two
-# consecutive amd64 and arm64 base-image builds; keep the selection-equivalence
-# check below until that removal condition is met.
-RUN curl --proto '=https' --tlsv1.2 -fsSL \
-        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
-        -o /tmp/perl.tar.xz "https://www.cpan.org/src/5.0/perl-${PERL_VERSION}.tar.xz" \
-    && printf '%s  %s\n' "${PERL_SHA256}" /tmp/perl.tar.xz > /tmp/perl.sha256 \
-    && sha256sum -c /tmp/perl.sha256 \
-    && tar -xJf /tmp/perl.tar.xz -C /tmp/perl-source --strip-components=1 \
-    && ./Configure -des \
-        -Dprefix=/usr \
-        -Dvendorprefix=/usr \
-        -Dsiteprefix=/usr/local \
-        -Dusethreads \
-        -Duse64bitall \
-        -Dd_syscallproto=define \
-        -Dman1dir=none \
-        -Dman3dir=none \
-    && make -j"$(nproc)" \
-    && make test_prep \
-    && env -C t PERL_TEST_HARNESS_ASAP=1 ./perl harness -dumptests \
-        > /tmp/perl-tests-full \
-    && env -C t ./perl harness -dumptests \
-        ../cpan/ExtUtils-Constant/t/Constant.t \
-        > /tmp/perl-tests-serial \
-    && env -C t PERL_TEST_HARNESS_ASAP=1 ./perl harness -dumptests \
-        '--nre=^[.][.]/cpan/ExtUtils-Constant/t/Constant[.]t$' \
-        > /tmp/perl-tests-parallel \
-    && sort /tmp/perl-tests-full > /tmp/perl-tests-full.sorted \
-    && sort /tmp/perl-tests-serial /tmp/perl-tests-parallel \
-        > /tmp/perl-tests-combined.sorted \
-    && cmp /tmp/perl-tests-full.sorted /tmp/perl-tests-combined.sorted \
-    && test "$(grep -Fxc \
-        'cpan/ExtUtils-Constant/t/Constant.t' \
-        /tmp/perl-tests-combined.sorted)" -eq 1 \
-    && TEST_JOBS=1 TEST_ARGS='../cpan/ExtUtils-Constant/t/Constant.t' make test_harness \
-    && TEST_JOBS="$(nproc)" PERL_TEST_HARNESS_ASAP=1 \
-        TEST_ARGS='--nre=^[.][.]/cpan/ExtUtils-Constant/t/Constant[.]t$' \
-        make -j"$(nproc)" test_harness \
-    && make install DESTDIR=/tmp/perl-root
-
-RUN package_version="${PERL_VERSION}-${PERL_PACKAGE_REVISION}" \
-    && architecture="$(dpkg --print-architecture)" \
-    && mkdir -p /tmp/perl-root/DEBIAN /tmp/perl-meta/DEBIAN \
-    && printf '%s\n' \
-        'Package: perl-base' \
-        "Version: ${package_version}" \
-        "Architecture: ${architecture}" \
-        'Essential: yes' \
-        'Priority: required' \
-        'Section: perl' \
-        'Multi-Arch: allowed' \
-        'Maintainer: NVIDIA NemoClaw Maintainers' \
-        "Provides: libperl5.40 (= ${package_version}), perl-modules-5.40 (= ${package_version})" \
-        'Conflicts: libperl5.40, perl-modules-5.40' \
-        "Breaks: perl (<< ${package_version})" \
-        "Replaces: libperl5.40, perl-modules-5.40, perl (<< ${package_version})" \
-        'Description: Perl 5 language interpreter built for the NemoClaw sandbox' \
-        > /tmp/perl-root/DEBIAN/control \
-    && printf '%s\n' \
-        'Package: perl' \
-        "Version: ${package_version}" \
-        "Architecture: ${architecture}" \
-        'Priority: standard' \
-        'Section: perl' \
-        'Multi-Arch: allowed' \
-        "Depends: perl-base (= ${package_version})" \
-        'Maintainer: NVIDIA NemoClaw Maintainers' \
-        'Description: Perl 5 language interpreter metapackage for the NemoClaw sandbox' \
-        > /tmp/perl-meta/DEBIAN/control \
-    && dpkg-deb --build --root-owner-group \
-        /tmp/perl-root /tmp/security-packages/perl-base.deb \
-    && dpkg-deb --build --root-owner-group \
-        /tmp/perl-meta /tmp/security-packages/perl.deb
+RUN bash /scripts/security/build-perl-security-packages.sh \
+    /out "${PERL_VERSION}" "${PERL_SHA256}" "${PERL_PACKAGE_REVISION}"
 
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
 
-COPY --from=perl-builder /tmp/security-packages /tmp/nemoclaw-native-security
+COPY --from=perl-builder /out /tmp/nemoclaw-native-security
 
 # OpenShell blocks the link-local EC2 Instance Metadata Service. Keep AWS SDK
 # credential chains from attempting an impossible metadata discovery path.
@@ -317,7 +227,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
         > /usr/local/share/nemoclaw/security-packages.txt \
     && chown root:root /usr/local/share/nemoclaw/security-packages.txt \
-    && chmod 0444 /usr/local/share/nemoclaw/security-packages.txt \
+    && chmod 0644 /usr/local/share/nemoclaw/security-packages.txt \
     && rm -rf "$security_deb_dir" \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/python3 /usr/local/bin/python
@@ -328,6 +238,8 @@ RUN apt-get update \
         /tmp/nemoclaw-native-security/perl.deb \
     && rm -rf /tmp/nemoclaw-native-security \
     && rm -rf /var/lib/apt/lists/* \
+    && test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1" \
+    && test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1" \
     && test "$(perl -e 'print $^V')" = "v5.44.0" \
     && test "$(perl -MSocket -e 'print Socket->VERSION')" = "2.041" \
     && test "$(perl -MStorable -e 'print Storable->VERSION')" = "3.41" \
@@ -339,6 +251,11 @@ RUN apt-get update \
         'eval { pack_ip_mreq_source("\0" x 4, "\0" x 3) }; die "short source accepted" unless $@ =~ /Bad arg length/' \
     && perl -e \
         'my $x = join "|", "aaa".."mzz"; my $y = join "|", "naa".."zzz"; use re "Debug"; "fnord" =~ m/(?:$x)|(?:$y)/' \
+    && printf '%s\n' \
+        "perl-base=5.44.0-1nemoclaw1" \
+        "perl=5.44.0-1nemoclaw1" \
+        >> /usr/local/share/nemoclaw/security-packages.txt \
+    && chmod 0444 /usr/local/share/nemoclaw/security-packages.txt \
     && git --version \
     && test -z "$(dpkg --audit)"
 

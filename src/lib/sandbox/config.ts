@@ -12,6 +12,14 @@
 // config set:          Host-initiated config mutation with validation.
 // config rotate-token: Credential rotation via stdin or env var.
 
+import type { AgentConfigTarget } from "./agent-config";
+
+export type { AgentConfigTarget } from "./agent-config";
+
+const {
+  DEFAULT_AGENT_CONFIG,
+  resolveAgentConfig: resolveAgentConfigTarget,
+}: typeof import("./agent-config") = require("./agent-config");
 const { createHash } = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -75,21 +83,6 @@ function parseJson<T>(text: string): T {
 // loads the agent definition, and returns the paths and format needed
 // to read/write that agent's config from the host.
 // ---------------------------------------------------------------------------
-
-export interface AgentConfigTarget {
-  /** Agent name (e.g. "openclaw", "hermes") */
-  agentName: string;
-  /** Absolute path inside sandbox to the config file */
-  configPath: string;
-  /** Directory containing the config (for chown after cp) */
-  configDir: string;
-  /** Config file format: "json", "yaml", or "toml" */
-  format: string;
-  /** Config file basename */
-  configFile: string;
-  /** Additional files to lock/unlock alongside the main config (e.g. .env, .config-hash) */
-  sensitiveFiles?: string[];
-}
 
 type LookupFn = (
   hostname: string,
@@ -173,15 +166,6 @@ export class ConfigUrlValidationError extends Error {
   }
 }
 
-const DEFAULT_AGENT_CONFIG: AgentConfigTarget = {
-  agentName: "openclaw",
-  configPath: "/sandbox/.openclaw/openclaw.json",
-  configDir: "/sandbox/.openclaw",
-  format: "json",
-  configFile: "openclaw.json",
-  sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
-};
-
 const HERMES_STRICT_HASH_FILE = "/etc/nemoclaw/hermes.config-hash";
 const HERMES_RUNTIME_CONFIG_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py";
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
@@ -244,32 +228,7 @@ function openClawConfigGuardExec(sandboxName: string, expectedContainerId?: stri
 }
 
 function resolveAgentConfig(sandboxName: string): AgentConfigTarget {
-  try {
-    const registry = require("../state/registry");
-    const entry = registry.getSandbox(sandboxName);
-    if (!entry || !entry.agent) return DEFAULT_AGENT_CONFIG;
-
-    const agentDefs = require("../agent/defs");
-    const agent = agentDefs.loadAgent(entry.agent);
-    const cfg = agent.configPaths;
-
-    const dir = cfg.dir;
-    const sensitiveFiles = [`${dir}/.config-hash`];
-    // Hermes stores credentials in .env alongside the config
-    if (entry.agent === "hermes") sensitiveFiles.push(`${dir}/.env`);
-
-    return {
-      agentName: entry.agent,
-      configPath: `${dir}/${cfg.configFile}`,
-      configDir: dir,
-      format: cfg.format || "json",
-      configFile: cfg.configFile,
-      sensitiveFiles,
-    };
-  } catch {
-    // Registry or agent-defs unavailable (e.g., during tests) — fall back
-    return DEFAULT_AGENT_CONFIG;
-  }
+  return resolveAgentConfigTarget(sandboxName);
 }
 
 // ---------------------------------------------------------------------------
@@ -793,7 +752,7 @@ function seedHermesDashboardConfig(
     reportFailure("seed", seed);
     return "failed";
   }
-  const seededMarker = `[dashboard] seeded model routing into ${dashboardConfigPath}`;
+  const seededMarker = `[dashboard] seeded model routing and reviewed policy into ${dashboardConfigPath}`;
   if (
     !String(seed.stderr ?? "")
       .split(/\r?\n/u)
@@ -1514,11 +1473,11 @@ export {
   buildConfigSetRestartGuidance,
   buildRecomputeSandboxConfigHashScript,
   classifyNewKeyGate,
-  configSetAllowsOpenShellBridge,
   composeSandboxConfigBody,
   configGet,
   configRotateToken,
   configSet,
+  configSetAllowsOpenShellBridge,
   DEFAULT_AGENT_CONFIG,
   extractDotpath,
   findClobberingAncestor,

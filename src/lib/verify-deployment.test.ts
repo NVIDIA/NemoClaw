@@ -533,6 +533,21 @@ describe("verifyDeployment", () => {
     expect(result.verification.inferenceRouteWorking).toBe(true);
   });
 
+  it("keeps the inference route reachability probe below the OpenClaw cron preflight timeout", async () => {
+    const scripts: string[] = [];
+    const deps = makeDeps({
+      executeSandboxCommand: (_name: string, script: string) => {
+        scripts.push(script);
+        return { status: 0, stdout: "200", stderr: "" };
+      },
+    });
+
+    await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+
+    const inferenceProbe = scripts.find((script) => script.includes("inference.local"));
+    expect(inferenceProbe).toContain("--max-time 2 ");
+  });
+
   it("retries the gateway probe and recovers when the gateway comes up late (#3563)", async () => {
     let gatewayCalls = 0;
     const deps = makeDeps({

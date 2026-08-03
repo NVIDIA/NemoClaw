@@ -18,7 +18,7 @@ import {
 const CREDENTIAL_TOKEN_VALUE_PATTERN = /(?:nvapi-|sk-|Bearer )/;
 const ENV_ASSIGNMENT_PATTERN = /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=/gm;
 const STRUCTURED_CREDENTIAL_KEY_PATTERN =
-  /["']?(?:apiKey|api_key|accessToken|access_token|secretKey|secret_key|bearerToken|bearer_token)["']?\s*[:=]\s*["'][^"']+["']/i;
+  /["']?(?:apiKey|api_key|accessToken|access_token|secretKey|secret_key|bearerToken|bearer_token)["']?\s*[:=]\s*["']([^"']+)["']/gi;
 
 // OpenClaw 2026.7.1 persists an environment variable name, rather than its
 // resolved value, in generated agents/*/agent/models.json provider entries.
@@ -98,6 +98,14 @@ function containsCredentialEnvAssignment(value: string): boolean {
   return false;
 }
 
+function containsConcreteStructuredCredential(value: string): boolean {
+  for (const match of value.matchAll(STRUCTURED_CREDENTIAL_KEY_PATTERN)) {
+    const credential = match[1];
+    if (credential && !isSafeCredentialPlaceholder(credential)) return true;
+  }
+  return false;
+}
+
 function modelsJsonValueContainsCredentialLeak(value: unknown, fieldName?: string): boolean {
   if (fieldName && isModelsJsonCredentialField(fieldName)) {
     if (value === null) return false;
@@ -146,7 +154,7 @@ export function snapshotFileContainsCredentialLeak(filename: string, body: strin
   // other env/json files where such keys indicate persisted credentials rather
   // than configuration schema.
   const structuredKeyLeak =
-    basename !== "openclaw.json" && STRUCTURED_CREDENTIAL_KEY_PATTERN.test(body);
+    basename !== "openclaw.json" && containsConcreteStructuredCredential(body);
   return tokenValueLeak || envAssignmentLeak || structuredKeyLeak;
 }
 

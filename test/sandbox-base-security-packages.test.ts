@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY } from "../src/lib/sandbox-base-image/security-inventory";
 import {
   BASE_APT_SECURITY_HASHES,
   baseAptSecurityFunctions,
@@ -20,6 +21,8 @@ const SECURITY_IMAGES = [
     dockerfile: path.join(ROOT, "Dockerfile.base"),
     finalDockerfile: path.join(ROOT, "Dockerfile"),
     startMarker: "# Trixie has not published fixes",
+    additionalStartMarker:
+      "RUN apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n        /tmp/nemoclaw-native-security/perl-base.deb",
     endMarker: "# gosu for privilege separation",
   },
   {
@@ -27,6 +30,7 @@ const SECURITY_IMAGES = [
     dockerfile: path.join(ROOT, "agents", "hermes", "Dockerfile.base"),
     finalDockerfile: path.join(ROOT, "agents", "hermes", "Dockerfile"),
     startMarker: "# Install the reviewed libexpat, jq, and Vim packages",
+    additionalStartMarker: null,
     endMarker: "COPY scripts/lib/reviewed-npm-archive.mts",
   },
   {
@@ -34,10 +38,23 @@ const SECURITY_IMAGES = [
     dockerfile: path.join(ROOT, "agents", "langchain-deepagents-code", "Dockerfile.base"),
     finalDockerfile: path.join(ROOT, "agents", "langchain-deepagents-code", "Dockerfile"),
     startMarker: "# Install the reviewed libexpat, jq, and Vim packages",
+    additionalStartMarker: null,
     endMarker: "# Node remains available",
   },
 ] as const;
 const ARCHITECTURES = ["amd64", "arm64"] as const;
+const EXPECTED_SECURITY_PACKAGE_INVENTORY = [
+  "libexpat1=2.8.2-1",
+  "libonig5=6.9.9-1+b1",
+  "libjq1=1.8.2-1",
+  "jq=1.8.2-1",
+  "vim-common=2:9.2.0782-1",
+  "vim-tiny=2:9.2.0782-1",
+  "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1",
+  "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1",
+  "perl-base=5.44.0-1nemoclaw1",
+  "perl=5.44.0-1nemoclaw1",
+] as const;
 const SECURITY_CASES = SECURITY_IMAGES.flatMap((image) =>
   ARCHITECTURES.map((architecture) => [image.name, architecture, image] as const),
 );
@@ -45,6 +62,7 @@ const SECURITY_CASES = SECURITY_IMAGES.flatMap((image) =>
 function sandboxSecurityCommand(
   image: (typeof SECURITY_IMAGES)[number],
   tmp: string,
+  includeAdditionalLayer = true,
 ): {
   command: string;
   inventory: string;
@@ -70,7 +88,15 @@ function sandboxSecurityCommand(
   );
 
   const dockerfile = fs.readFileSync(image.dockerfile, "utf-8");
-  const command = dockerRunCommandBetween(dockerfile, image.startMarker, image.endMarker)
+  const commands = [
+    dockerRunCommandBetween(dockerfile, image.startMarker, image.endMarker),
+    image.additionalStartMarker === null || !includeAdditionalLayer
+      ? ""
+      : dockerRunCommandBetween(dockerfile, image.additionalStartMarker, image.endMarker),
+  ];
+  const command = commands
+    .filter(Boolean)
+    .join("\n")
     .replaceAll("/var/lib/apt/lists", lists)
     .replaceAll("/tmp/nemoclaw-debian-security", debianSecurityDebs)
     .replaceAll("/tmp/nemoclaw-native-security", nativeSecurityDebs)
@@ -83,18 +109,7 @@ function sandboxSecurityCommand(
 }
 
 function securityInventory(architecture: (typeof ARCHITECTURES)[number]): string {
-  return [
-    `architecture=${architecture}`,
-    "libexpat1=2.8.2-1",
-    "libonig5=6.9.9-1+b1",
-    "libjq1=1.8.2-1",
-    "jq=1.8.2-1",
-    "vim-common=2:9.2.0782-1",
-    "vim-tiny=2:9.2.0782-1",
-    "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1",
-    "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1",
-    "",
-  ].join("\n");
+  return `${[`architecture=${architecture}`, ...EXPECTED_SECURITY_PACKAGE_INVENTORY].join("\n")}\n`;
 }
 
 function completedImageSecurityCommand(
@@ -117,6 +132,10 @@ function completedImageSecurityCommand(
 }
 
 describe("sandbox base security packages", () => {
+  it("keeps runtime validation aligned with the independent image inventory", () => {
+    expect(SANDBOX_BASE_SECURITY_PACKAGE_INVENTORY).toEqual(EXPECTED_SECURITY_PACKAGE_INVENTORY);
+  });
+
   it.each(
     SECURITY_CASES,
   )("executes the exact security package contract for %s on %s", (_name, architecture, image) => {
@@ -125,7 +144,9 @@ describe("sandbox base security packages", () => {
 
     try {
       const result = runLoggedDockerShell(prepared.command, tmp, [
-        'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+        "perl_base_installed=0",
+        "perl_installed=0",
+        'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; [[ "$*" != *"/perl-base.deb"* ]] || perl_base_installed=1; [[ "$*" != *"/perl.deb"* ]] || perl_installed=1; }',
         'install() { [[ "$#" -eq 8 && "$1" == "-d" && "$2" == "-o" && "$3" == "root" && "$4" == "-g" && "$5" == "root" && "$6" == "-m" && "$7" == "0755" ]] || return 64; mkdir -p "$8"; }',
         'chown() { [[ "$#" -eq 2 && "$1" == "root:root" ]] || return 64; }',
         ...useRealPatchedParser(baseAptSecurityFunctions(architecture), prepared.pythonShim),
@@ -150,7 +171,7 @@ describe("sandbox base security packages", () => {
       ]);
       expect(prepared.debianSecurityDebs).not.toBe(prepared.nativeSecurityDebs);
       expect(fs.existsSync(prepared.debianSecurityDebs)).toBe(false);
-      expect(fs.existsSync(prepared.nativeSecurityDebs)).toBe(image.name === "OpenClaw");
+      expect(fs.existsSync(prepared.nativeSecurityDebs)).toBe(false);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -164,6 +185,8 @@ describe("sandbox base security packages", () => {
 
     try {
       const result = runLoggedDockerShell(prepared.command, tmp, [
+        "perl_base_installed=1",
+        "perl_installed=1",
         [
           "stat() {",
           `  [[ "$#" -eq 3 && "$1" == "-c" && "$2" == "%u:%g:%a" && "$3" == ${JSON.stringify(prepared.inventory)} ]] || return 64`,
@@ -182,7 +205,7 @@ describe("sandbox base security packages", () => {
     SECURITY_CASES,
   )("rejects a changed expected checksum before installing packages for %s on %s", (_name, architecture, image) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-checksum-"));
-    const prepared = sandboxSecurityCommand(image, tmp);
+    const prepared = sandboxSecurityCommand(image, tmp, false);
     const command = prepared.command.replace(
       BASE_APT_SECURITY_HASHES[architecture].libexpat,
       "0".repeat(64),

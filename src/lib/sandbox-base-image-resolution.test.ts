@@ -637,6 +637,21 @@ describe("sandbox base-image warm resolution", () => {
     expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 
+  it("uses an exact source-SHA image before rebuilding committed branch inputs (#4680)", () => {
+    sourceMocks.inputsChanged.mockReturnValue(true);
+    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
+
+    const resolved = resolveSandboxBaseImage(resolutionOptions());
+
+    expect(resolved).toMatchObject({ source: "source-sha" });
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(`${IMAGE_NAME}:12345678`, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
   it("uses a Dockerfile-pinned remote image before moving published tags (#4680)", () => {
     dockerMocks.imageInspect.mockImplementation((ref: string) => ({
       status: ref === REF ? 0 : 1,

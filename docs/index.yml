@@ -101,6 +101,9 @@ navigation:
                   - page: "Set Up vLLM"
                     path: _build/agent-variants/inference/set-up-vllm.openclaw.generated.mdx
                     slug: set-up-vllm
+                  - page: "Set Up vLLM on Two DGX Stations"
+                    path: _build/agent-variants/inference/set-up-vllm-on-two-dgx-stations.openclaw.generated.mdx
+                    slug: set-up-vllm-on-two-dgx-stations
                   - page: "Set Up NVIDIA NIM"
                     path: _build/agent-variants/inference/set-up-nvidia-nim.openclaw.generated.mdx
                     slug: set-up-nvidia-nim
@@ -168,6 +171,9 @@ navigation:
               - page: "Configure Agent Heartbeats"
                 path: configure-agents/configure-agent-heartbeats.mdx
                 slug: configure-agent-heartbeats
+              - page: "Configure Memory Search"
+                path: configure-agents/configure-memory-search.mdx
+                slug: configure-memory-search
               - page: "Set Up Task-Specific Sub-Agents"
                 path: inference/set-up-sub-agent.mdx
                 slug: set-up-sub-agent
@@ -223,6 +229,9 @@ navigation:
                   - page: "Set Up Slack"
                     path: _build/agent-variants/manage-sandboxes/set-up-slack.openclaw.generated.mdx
                     slug: set-up-slack
+                  - page: "Set Up Google Chat"
+                    path: manage-sandboxes/set-up-google-chat.mdx
+                    slug: set-up-google-chat
                   - page: "Set Up WeChat"
                     path: _build/agent-variants/manage-sandboxes/set-up-wechat.openclaw.generated.mdx
                     slug: set-up-wechat
@@ -313,7 +322,7 @@ navigation:
                 path: _build/agent-variants/deployment/deploy-to-headless-server.openclaw.generated.mdx
                 slug: deploy-to-headless-server
               - page: "Gateway Lifecycle Authority"
-                path: deployment/gateway-lifecycle-authority.mdx
+                path: _build/agent-variants/deployment/gateway-lifecycle-authority.openclaw.generated.mdx
                 slug: gateway-lifecycle-authority
           - section: "Monitoring"
             slug: monitoring
@@ -363,6 +372,9 @@ navigation:
               - page: "Architecture Details"
                 path: _build/agent-variants/reference/architecture.openclaw.generated.mdx
                 slug: architecture
+              - page: "Configure Runtime Identity"
+                path: reference/configure-runtime-identity.mdx
+                slug: configure-runtime-identity
               - page: "Extension Taxonomy and SDK Readiness"
                 path: _build/agent-variants/reference/extension-taxonomy-sdk-readiness.openclaw.generated.mdx
                 slug: extension-taxonomy-sdk-readiness
@@ -397,6 +409,9 @@ navigation:
               - page: "Community Solutions"
                 path: _build/agent-variants/resources/community-contributions.openclaw.generated.mdx
                 slug: community-contributions
+              - page: "Engineer Documentation for AI Agents"
+                path: _build/agent-variants/resources/engineer-agentic-documentation.openclaw.generated.mdx
+                slug: engineer-agentic-documentation
               - link: "Discord"
                 href: https://discord.gg/XFpfPv9Uvx
               - link: "Report Vulnerabilities"
@@ -492,6 +507,9 @@ navigation:
                   - page: "Set Up vLLM"
                     path: _build/agent-variants/inference/set-up-vllm.deepagents.generated.mdx
                     slug: set-up-vllm
+                  - page: "Set Up vLLM on Two DGX Stations"
+                    path: _build/agent-variants/inference/set-up-vllm-on-two-dgx-stations.deepagents.generated.mdx
+                    slug: set-up-vllm-on-two-dgx-stations
                   - page: "Set Up NVIDIA NIM"
                     path: _build/agent-variants/inference/set-up-nvidia-nim.deepagents.generated.mdx
                     slug: set-up-nvidia-nim
@@ -563,6 +581,9 @@ navigation:
                   - page: "Run Sandboxes"
                     path: _build/agent-variants/manage-sandboxes/run-sandboxes.deepagents.generated.mdx
                     slug: run-sandboxes
+                  - page: "Run Deep Agents Code"
+                    path: manage-sandboxes/run-deep-agents-code.mdx
+                    slug: run-deep-agents-code
                   - page: "Recover and Rebuild Sandboxes"
                     path: _build/agent-variants/manage-sandboxes/recover-rebuild-sandboxes.deepagents.generated.mdx
                     slug: recover-and-rebuild-sandboxes
@@ -628,6 +649,9 @@ navigation:
               - page: "Deploy to a Headless Server"
                 path: _build/agent-variants/deployment/deploy-to-headless-server.deepagents.generated.mdx
                 slug: deploy-to-headless-server
+              - page: "Gateway Lifecycle Authority"
+                path: _build/agent-variants/deployment/gateway-lifecycle-authority.deepagents.generated.mdx
+                slug: gateway-lifecycle-authority
           - section: "Monitoring"
             slug: monitoring
             collapsed: open-by-default
@@ -664,6 +688,9 @@ navigation:
               - page: "Platform Support"
                 path: reference/platform-support.mdx
                 slug: platform-support
+              - page: "Enterprise Readiness"
+                path: _build/agent-variants/reference/enterprise-readiness.deepagents.generated.mdx
+                slug: enterprise-readiness
               - page: "Architecture Details"
                 path: _build/agent-variants/reference/architecture.deepagents.generated.mdx
                 slug: architecture
@@ -701,6 +728,9 @@ navigation:
               - page: "Community Solutions"
                 path: _build/agent-variants/resources/community-contributions.deepagents.generated.mdx
                 slug: community-contributions
+              - page: "Engineer Documentation for AI Agents"
+                path: _build/agent-variants/resources/engineer-agentic-documentation.deepagents.generated.mdx
+                slug: engineer-agentic-documentation
               - link: "Report Vulnerabilities"
                 href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
               - page: "License"
@@ -802,6 +832,9 @@ navigation:
                   - page: "Set Up vLLM"
                     path: _build/agent-variants/inference/set-up-vllm.hermes.generated.mdx
                     slug: set-up-vllm
+                  - page: "Set Up vLLM on Two DGX Stations"
+                    path: _build/agent-variants/inference/set-up-vllm-on-two-dgx-stations.hermes.generated.mdx
+                    slug: set-up-vllm-on-two-dgx-stations
                   - page: "Set Up NVIDIA NIM"
                     path: _build/agent-variants/inference/set-up-nvidia-nim.hermes.generated.mdx
                     slug: set-up-nvidia-nim
@@ -995,6 +1028,9 @@ navigation:
               - page: "Deploy to a Headless Server"
                 path: _build/agent-variants/deployment/deploy-to-headless-server.hermes.generated.mdx
                 slug: deploy-to-headless-server
+              - page: "Gateway Lifecycle Authority"
+                path: _build/agent-variants/deployment/gateway-lifecycle-authority.hermes.generated.mdx
+                slug: gateway-lifecycle-authority
           - section: "Monitoring"
             slug: monitoring
             collapsed: open-by-default
@@ -1074,6 +1110,9 @@ navigation:
               - page: "Community Solutions"
                 path: _build/agent-variants/resources/community-contributions.hermes.generated.mdx
                 slug: community-contributions
+              - page: "Engineer Documentation for AI Agents"
+                path: _build/agent-variants/resources/engineer-agentic-documentation.hermes.generated.mdx
+                slug: engineer-agentic-documentation
               - link: "Report Vulnerabilities"
                 href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
               - page: "License"

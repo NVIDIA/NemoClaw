@@ -15,7 +15,11 @@ import { preflightRebuildMessagingConflicts } from "./rebuild-messaging-conflict
 
 const TEAMS_SECRET_KEY = "MSTEAMS_APP_PASSWORD";
 
-function teamsPlan(sandboxName: string, credentialHash: string): SandboxMessagingPlan {
+function teamsPlan(
+  sandboxName: string,
+  credentialHash?: string,
+  credentialAvailable = true,
+): SandboxMessagingPlan {
   return {
     schemaVersion: 1,
     sandboxName,
@@ -39,8 +43,8 @@ function teamsPlan(sandboxName: string, credentialHash: string): SandboxMessagin
       {
         channelId: "teams",
         providerEnvKey: TEAMS_SECRET_KEY,
-        credentialAvailable: true,
-        credentialHash,
+        credentialAvailable,
+        ...(credentialHash !== undefined ? { credentialHash } : {}),
       },
     ],
     networkPolicy: { presets: [], entries: [] },
@@ -120,13 +124,35 @@ describe("preflightRebuildMessagingConflicts (#5954)", () => {
       { name: "my-assistant", messaging: { plan } },
       { name: "hermes", messaging: { plan: teamsPlan("hermes", "shared-hash") } },
     ]);
-    const { deps, bail, log } = makeDeps({ registry: registry as never });
+    const { deps, bail, error } = makeDeps({ registry: registry as never });
 
     await expect(preflightRebuildMessagingConflicts(plan, deps)).rejects.toThrow(
       /messaging channel conflict/i,
     );
     expect(bail).toHaveBeenCalledTimes(1);
-    expect(log.mock.calls.flat().join("\n")).toContain("uses the same teams credential");
+    expect(error.mock.calls.flat().join("\n")).toContain("uses the same teams credential");
+  });
+
+  it("aborts via bail before rebuild when an active credential hash is unavailable (#7808)", async () => {
+    const plan = teamsPlan("my-assistant", undefined, false);
+    const listSandboxes = vi.fn(() => ({
+      sandboxes: [
+        { name: "my-assistant", messaging: { plan } },
+        { name: "hermes", messaging: { plan: teamsPlan("hermes", "other-hash") } },
+      ],
+    }));
+    const { deps, bail, error } = makeDeps({
+      registry: { listSandboxes } as never,
+    });
+
+    await expect(preflightRebuildMessagingConflicts(plan, deps)).rejects.toThrow(
+      /messaging channel conflict/i,
+    );
+    expect(error.mock.calls.flat().join("\n")).toContain(
+      "credential hashes are unavailable for teams",
+    );
+    expect(listSandboxes).not.toHaveBeenCalled();
+    expect(bail).toHaveBeenCalledTimes(1);
   });
 
   it("proceeds (no bail) when no other sandbox shares the credential", async () => {
