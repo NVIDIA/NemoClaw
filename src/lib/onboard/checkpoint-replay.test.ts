@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { decisionSelected, decisionUnset } from "../state/onboard-checkpoint-decision";
 import {
   CHECKPOINT_SCHEMA_VERSION,
@@ -13,6 +14,7 @@ import {
   observeProviderEffectFingerprint,
   planEffectGroupReplay,
   planSandboxCreateReplay,
+  requiredMessagingProviderBindings,
   requiredWebSearchProviderType,
 } from "./checkpoint-replay";
 import { bindingRevalidationGuidance, revalidateCheckpointBindings } from "./checkpoint-revalidate";
@@ -276,6 +278,43 @@ describe("requiredWebSearchProviderType", () => {
     expect(requiredWebSearchProviderType("tavily", { name: "hermes" })).toBe("tavily-hermes-v1");
     expect(requiredWebSearchProviderType("tavily", { name: "openclaw" })).toBe("tavily");
     expect(requiredWebSearchProviderType("brave", { name: "hermes" })).toBe("brave");
+  });
+});
+
+describe("requiredMessagingProviderBindings", () => {
+  it("includes the current Google Chat bridge profile binding", () => {
+    const plan: SandboxMessagingPlan = {
+      schemaVersion: 1,
+      sandboxName: "my-assistant",
+      agent: "openclaw",
+      workflow: "onboard",
+      channels: [
+        {
+          channelId: "googlechat",
+          displayName: "Google Chat",
+          authMode: "token-paste",
+          active: true,
+          selected: true,
+          configured: true,
+          disabled: false,
+          inputs: [],
+          hooks: [],
+        },
+      ],
+      disabledChannels: [],
+      credentialBindings: [],
+      networkPolicy: { presets: [], entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    };
+
+    expect(requiredMessagingProviderBindings("my-assistant", plan)).toContainEqual({
+      name: "my-assistant-googlechat-bridge",
+      type: "google-chat-bridge",
+      credentialEnv: "GOOGLE_CHAT_ACCESS_TOKEN",
+    });
   });
 });
 

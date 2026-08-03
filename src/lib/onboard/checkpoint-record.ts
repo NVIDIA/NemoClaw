@@ -21,6 +21,20 @@ function baseCheckpoint(session: Session): OnboardCheckpoint {
   return session.checkpoint ?? deriveCheckpointFromSession(session);
 }
 
+type ProviderEffectGroupName = Extract<
+  CheckpointEffectGroupName,
+  "web_search_provider" | "messaging_providers"
+>;
+
+function assertValidProviderBindings(bindings: readonly CheckpointProviderBinding[]): void {
+  if (
+    bindings.some((binding) => !binding.name || !binding.type || !binding.credentialEnv) ||
+    new Set(bindings.map((binding) => binding.name)).size !== bindings.length
+  ) {
+    throw new Error("provider effect groups contain invalid or duplicate credential bindings");
+  }
+}
+
 export function recordCheckpointSandboxIdentity(
   session: Session,
   name: string,
@@ -97,34 +111,90 @@ export function recordCheckpointResourceProfile(
   };
 }
 
-export function recordCheckpointBindings(
+export function recordCheckpointProviderEffectGroups(
   session: Session,
-  additions: {
-    registeredProviders?: readonly CheckpointProviderBinding[];
+  providerGroups: {
+    readonly webSearch: readonly CheckpointProviderBinding[];
+    readonly messaging: readonly CheckpointProviderBinding[];
   },
 ): void {
   const base = baseCheckpoint(session);
-  const credentialEnvs = additions.registeredProviders
-    ? [
-        ...new Set([
-          ...base.bindings.credentialEnvs,
-          ...additions.registeredProviders.map((binding) => binding.credentialEnv),
-        ]),
-      ]
-    : base.bindings.credentialEnvs;
-  const registeredProviders = additions.registeredProviders
-    ? [
-        ...new Map(
-          [...base.bindings.registeredProviders, ...additions.registeredProviders].map(
-            (binding) => [binding.name, binding],
-          ),
-        ).values(),
-      ]
-    : base.bindings.registeredProviders;
+  const nextRegisteredProviders = [...providerGroups.webSearch, ...providerGroups.messaging];
+  assertValidProviderBindings(nextRegisteredProviders);
+  const credentialEnvs = [
+    ...new Set(nextRegisteredProviders.map((binding) => binding.credentialEnv)),
+  ];
+  const now = new Date().toISOString();
+  const {
+    web_search_provider: _previousWebSearch,
+    messaging_providers: _previousMessaging,
+    ...otherEffectGroups
+  } = base.effectGroups;
   session.checkpoint = {
     ...base,
     machineState: session.machine.state,
-    updatedAt: new Date().toISOString(),
-    bindings: { credentialEnvs, registeredProviders },
+    updatedAt: now,
+    effectGroups: {
+      ...otherEffectGroups,
+      ...(providerGroups.webSearch.length > 0
+        ? {
+            web_search_provider: {
+              completedAt: now,
+              fingerprint: providerGroups.webSearch.map((binding) => binding.name).join(","),
+            },
+          }
+        : {}),
+      ...(providerGroups.messaging.length > 0
+        ? {
+            messaging_providers: {
+              completedAt: now,
+              fingerprint: providerGroups.messaging.map((binding) => binding.name).join(","),
+            },
+          }
+        : {}),
+    },
+    bindings: { credentialEnvs, registeredProviders: nextRegisteredProviders },
+  };
+}
+
+export function recordCheckpointProviderEffectGroup(
+  session: Session,
+  group: ProviderEffectGroupName,
+  registeredProviders: readonly CheckpointProviderBinding[],
+): void {
+  assertValidProviderBindings(registeredProviders);
+  const base = baseCheckpoint(session);
+  const now = new Date().toISOString();
+  const effectGroups = { ...base.effectGroups };
+  if (registeredProviders.length > 0) {
+    effectGroups[group] = {
+      completedAt: now,
+      fingerprint: registeredProviders.map((binding) => binding.name).join(","),
+    };
+  } else {
+    delete effectGroups[group];
+  }
+  const nextRegisteredProviders = [
+    ...new Map(
+      [...base.bindings.registeredProviders, ...registeredProviders].map((binding) => [
+        binding.name,
+        binding,
+      ]),
+    ).values(),
+  ];
+  session.checkpoint = {
+    ...base,
+    machineState: session.machine.state,
+    updatedAt: now,
+    effectGroups,
+    bindings: {
+      credentialEnvs: [
+        ...new Set([
+          ...base.bindings.credentialEnvs,
+          ...registeredProviders.map((binding) => binding.credentialEnv),
+        ]),
+      ],
+      registeredProviders: nextRegisteredProviders,
+    },
   };
 }

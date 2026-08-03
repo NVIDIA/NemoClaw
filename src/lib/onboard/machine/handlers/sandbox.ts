@@ -45,9 +45,10 @@ import {
 import { getSandboxEntryInference } from "../../../state/registry-entry-view";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
 import {
-  recordCheckpointBindings,
   recordCheckpointEffectGroup,
   recordCheckpointMessaging,
+  recordCheckpointProviderEffectGroup,
+  recordCheckpointProviderEffectGroups,
   recordCheckpointResourceProfile,
   recordCheckpointSandboxIdentity,
   recordCheckpointWebSearch,
@@ -454,6 +455,11 @@ function checkpointIdentityForResumeTarget(
   const identity = checkpoint.sandboxIdentity.value;
   return identity.name === sandboxName && identity.agent === agentName ? identity : null;
 }
+
+type ProviderEffectGroupName = Extract<
+  CheckpointEffectGroupName,
+  "web_search_provider" | "messaging_providers"
+>;
 
 class SandboxStateFlow<
   Gpu,
@@ -1111,15 +1117,38 @@ class SandboxStateFlow<
     };
   }
 
+  private checkpointProviderEffectGroup(
+    state: SandboxStepState<WebSearchConfig>,
+    group: ProviderEffectGroupName,
+    registeredProviders: readonly CheckpointProviderBinding[],
+  ): SandboxStepState<WebSearchConfig> {
+    if (!this.resumesSandboxPrompts) return state;
+    const session = this.deps.updateSession((current) => {
+      recordCheckpointProviderEffectGroup(current, group, registeredProviders);
+      return current;
+    });
+    return { ...state, session };
+  }
+
   private async registerCompletedCredentialProviders(
     sandboxName: string,
     enabledChannels: readonly string[],
     webSearchConfig: WebSearchConfig | null,
     requiredBindings: readonly CheckpointProviderBinding[],
-    group: CheckpointEffectGroupName,
+    group: ProviderEffectGroupName,
     checkpoint: OnboardCheckpoint | null,
   ): Promise<void> {
     if (!this.resumesSandboxPrompts || (!webSearchConfig && enabledChannels.length === 0)) return;
+    const requiredBindingsByName = new Map(
+      requiredBindings.map((binding) => [binding.name, binding]),
+    );
+    if (
+      requiredBindingsByName.size !== requiredBindings.length ||
+      requiredBindings.some((binding) => !binding.name || !binding.type || !binding.credentialEnv)
+    ) {
+      this.deps.error("  Provider setup produced conflicting credential bindings.");
+      return this.deps.exitProcess(1);
+    }
     if (
       checkpoint &&
       planEffectGroupReplay(
@@ -1138,27 +1167,44 @@ class SandboxStateFlow<
     }
     const registeredProviders = await this.deps.withGatewayRouteMutationLock(
       this.options.gatewayName,
-      () =>
-        this.deps.stageSandboxCredentialProviders({
+      async () => {
+        const staged = await this.deps.stageSandboxCredentialProviders({
           sandboxName,
           enabledChannels,
           webSearchConfig,
           agent: this.options.agent,
-        }),
+        });
+        const stagedProviderNames = new Set<string>();
+        for (const binding of staged) {
+          const required = requiredBindingsByName.get(binding.name);
+          if (
+            stagedProviderNames.has(binding.name) ||
+            !required ||
+            binding.type !== required.type ||
+            binding.credentialEnv !== required.credentialEnv
+          ) {
+            this.deps.error("  Provider setup returned unexpected credential bindings.");
+            return this.deps.exitProcess(1);
+          }
+          stagedProviderNames.add(binding.name);
+        }
+        const allRequiredBindingsLive = requiredBindings.every((binding) =>
+          this.deps.providerMatchesGatewayCredential(
+            binding.name,
+            binding.type,
+            binding.credentialEnv,
+          ),
+        );
+        if (!allRequiredBindingsLive) {
+          this.deps.error("  OpenShell did not retain the selected credential bindings.");
+          this.deps.error("  Re-run onboarding with the required credentials available.");
+          return this.deps.exitProcess(1);
+        }
+        return staged;
+      },
     );
     if (registeredProviders.length > 0) {
       this.deps.note("  ✓ Registered selected credentials with OpenShell for resume.");
-      this.deps.updateSession((current) => {
-        recordCheckpointBindings(current, {
-          registeredProviders,
-        });
-        recordCheckpointEffectGroup(
-          current,
-          group,
-          registeredProviders.map((binding) => binding.name).join(","),
-        );
-        return current;
-      });
     }
   }
 
@@ -1663,17 +1709,23 @@ class SandboxStateFlow<
       },
       webSearchConfig,
     );
+    const webSearchProviderBindings = requiredWebSearchProviderBindings(
+      requestedSandboxName,
+      nextState.webSearchConfig as unknown as SharedWebSearchConfig | null,
+      this.options.agent as { name?: string } | null,
+    );
     await this.registerCompletedCredentialProviders(
       requestedSandboxName,
       [],
       nextState.webSearchConfig,
-      requiredWebSearchProviderBindings(
-        requestedSandboxName,
-        nextState.webSearchConfig as unknown as SharedWebSearchConfig | null,
-        this.options.agent as { name?: string } | null,
-      ),
+      webSearchProviderBindings,
       "web_search_provider",
       nextState.session?.checkpoint ?? null,
+    );
+    nextState = this.checkpointProviderEffectGroup(
+      nextState,
+      "web_search_provider",
+      webSearchProviderBindings,
     );
     const messaging = await reconcileSandboxMessaging({
       resume: this.options.resume,
@@ -1683,14 +1735,43 @@ class SandboxStateFlow<
       deps: this.deps,
     });
     nextState = this.checkpointMessaging(nextState, messaging);
+    const messagingProviderBindings = requiredMessagingProviderBindings(
+      requestedSandboxName,
+      messaging.plan,
+    );
     await this.registerCompletedCredentialProviders(
       requestedSandboxName,
       nextState.selectedMessagingChannels,
       null,
-      requiredMessagingProviderBindings(requestedSandboxName, messaging.plan),
+      messagingProviderBindings,
       "messaging_providers",
       nextState.session?.checkpoint ?? null,
     );
+    nextState = this.checkpointProviderEffectGroup(
+      nextState,
+      "messaging_providers",
+      messagingProviderBindings,
+    );
+    if (this.resumesSandboxPrompts) {
+      const providerNames = new Set(
+        [...webSearchProviderBindings, ...messagingProviderBindings].map((binding) => binding.name),
+      );
+      if (
+        providerNames.size !==
+        webSearchProviderBindings.length + messagingProviderBindings.length
+      ) {
+        this.deps.error("  Provider setup produced conflicting credential bindings.");
+        return this.deps.exitProcess(1);
+      }
+      const session = this.deps.updateSession((current) => {
+        recordCheckpointProviderEffectGroups(current, {
+          webSearch: webSearchProviderBindings,
+          messaging: messagingProviderBindings,
+        });
+        return current;
+      });
+      nextState = { ...nextState, session };
+    }
     return this.createAndRecordSandbox(nextState, requestedSandboxName, messaging.plan, decision);
   }
 
