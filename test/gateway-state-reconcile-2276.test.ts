@@ -16,9 +16,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "vitest";
-import { testTimeout } from "./helpers/timeouts";
+import { execTimeout, testTimeoutOptions } from "./helpers/timeouts";
 
-const TIMEOUT_MS = testTimeout(20_000);
+const COMMAND_TIMEOUT_MS = execTimeout(20_000);
+const TEST_TIMEOUT_OPTIONS = testTimeoutOptions(COMMAND_TIMEOUT_MS * 2 + 20_000);
 const SANDBOX_NAME = "my-assistant";
 
 // Output fixtures that mirror real OpenShell CLI output.
@@ -196,7 +197,7 @@ function runCli(action: string, extraEnv: Record<string, string | undefined> = {
     {
       cwd: repoRoot,
       encoding: "utf-8",
-      timeout: TIMEOUT_MS,
+      timeout: COMMAND_TIMEOUT_MS,
       env: {
         ...process.env,
         HOME: tmpDir,
@@ -303,7 +304,7 @@ afterEach(() => {
 // recreate from the preserved registry metadata instead of aborting.
 describe("connect preserves the registry so rebuild can recover in scenario 14 (#4497)", () => {
   it("after a non-destructive connect, `rebuild --yes` recovers the stale sandbox", {
-    timeout: TIMEOUT_MS,
+    ...TEST_TIMEOUT_OPTIONS,
   }, () => {
     writeStubOpenshell({
       sandboxGet: [{ output: SANDBOX_GET_NOT_FOUND, exit: 1 }],
@@ -337,7 +338,7 @@ describe("connect preserves the registry so rebuild can recover in scenario 14 (
       {
         cwd: repoRoot,
         encoding: "utf-8",
-        timeout: TIMEOUT_MS,
+        timeout: COMMAND_TIMEOUT_MS,
         env: {
           ...process.env,
           HOME: tmpDir,
