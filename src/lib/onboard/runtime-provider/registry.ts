@@ -66,6 +66,7 @@ const MUTATION_OPERATIONS = new Set<RuntimeProviderMutationOperation>([
 ]);
 const CONTAINER_ENGINE_OPERATIONS = new Set<RuntimeProviderContainerEngineOperation>([
   "host-doctor",
+  "host-local-inference",
   "gateway-inspection",
   "sandbox-lifecycle",
   "workload-cleanup",

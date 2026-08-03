@@ -6,11 +6,14 @@ import type {
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
 import type { RuntimeProviderDoctorCheck } from "./contract";
+import { normalizePodmanCdiInventory } from "./podman-gpu";
 
 export const MINIMUM_PODMAN_VERSION = "5.0.0";
 
 export interface PodmanHostPreflightReceipt {
   readonly providerId: "podman";
+  /** Exact endpoint identity of the operation-scoped engine that produced this receipt. */
+  readonly authorityId: string;
   readonly clientVersion: string;
   readonly serverVersion: string;
   readonly rootless: true;
@@ -18,11 +21,14 @@ export interface PodmanHostPreflightReceipt {
   readonly os: "linux";
   readonly architecture: "amd64" | "arm64";
   readonly networkBackend: string;
+  readonly cdiDevices: readonly string[];
 }
 
 export interface PodmanHostPreflightOptions {
   readonly platform?: NodeJS.Platform;
   readonly architecture?: NodeJS.Architecture;
+  /** Additional devices from a separately qualified NVIDIA CDI inventory adapter. */
+  readonly additionalCdiDevices?: readonly string[];
 }
 
 export class PodmanHostPreflightError extends Error {
@@ -109,6 +115,23 @@ function normalizeArchitecture(value: string): "amd64" | "arm64" | null {
   if (value === "amd64" || value === "x86_64") return "amd64";
   if (value === "arm64" || value === "aarch64") return "arm64";
   return null;
+}
+
+function collectNvidiaCdiDevices(value: unknown, devices: string[]): void {
+  if (typeof value === "string") {
+    if (value.startsWith("nvidia.com/gpu=")) devices.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) collectNvidiaCdiDevices(entry, devices);
+    return;
+  }
+  const source = record(value);
+  if (!source) return;
+  for (const [key, entry] of Object.entries(source)) {
+    if (key.startsWith("nvidia.com/gpu=")) devices.push(key);
+    collectNvidiaCdiDevices(entry, devices);
+  }
 }
 
 function hasSubordinateIdMapping(output: string): boolean {
@@ -219,8 +242,14 @@ export function qualifyPodmanHost(
   }
   requireSubordinateIdMappings(engine);
 
+  const cdiDevices: string[] = [];
+  collectNvidiaCdiDevices(host, cdiDevices);
+  cdiDevices.push(...(options.additionalCdiDevices ?? []));
+  const qualifiedCdiDevices = normalizePodmanCdiInventory(cdiDevices);
+
   return Object.freeze({
     providerId: "podman",
+    authorityId: engine.authorityId,
     clientVersion,
     serverVersion,
     rootless: true,
@@ -228,6 +257,7 @@ export function qualifyPodmanHost(
     os: "linux",
     architecture: normalizedArchitecture,
     networkBackend: textField(host, "networkBackend", "NetworkBackend") || "unknown",
+    cdiDevices: qualifiedCdiDevices,
   });
 }
 

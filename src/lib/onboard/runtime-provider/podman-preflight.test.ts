@@ -18,6 +18,7 @@ const INFO = JSON.stringify({
     cgroupVersion: "v2",
     networkBackend: "netavark",
     security: { rootless: true },
+    cdi: { devices: ["nvidia.com/gpu=all", "nvidia.com/gpu=0"] },
   },
 });
 
@@ -80,6 +81,7 @@ describe("Podman host preflight", () => {
 
     expect(qualifyPodmanHost(runtime, { platform: "linux", architecture: "x64" })).toEqual({
       providerId: "podman",
+      authorityId: "test:podman-socket",
       clientVersion: "5.6.2",
       serverVersion: "5.6.2",
       rootless: true,
@@ -87,6 +89,7 @@ describe("Podman host preflight", () => {
       os: "linux",
       architecture: "amd64",
       networkBackend: "netavark",
+      cdiDevices: ["nvidia.com/gpu=0", "nvidia.com/gpu=all"],
     });
     expect(runtime.capture).toHaveBeenCalledWith(["info", "--format", "json"], 15_000);
     expect(runtime.capture).toHaveBeenCalledWith(["version", "--format", "json"], 10_000);
@@ -109,6 +112,43 @@ describe("Podman host preflight", () => {
     expect(
       qualifyPodmanHost(engine({ info }), { platform: "linux", architecture: "arm64" }),
     ).toMatchObject({ architecture: "arm64" });
+  });
+
+  it("combines endpoint-reported and separately qualified CDI inventories", () => {
+    expect(
+      qualifyPodmanHost(engine(), {
+        platform: "linux",
+        architecture: "x64",
+        additionalCdiDevices: ["nvidia.com/gpu=GPU-deadbeef"],
+      }),
+    ).toMatchObject({
+      authorityId: "test:podman-socket",
+      cdiDevices: ["nvidia.com/gpu=0", "nvidia.com/gpu=GPU-deadbeef", "nvidia.com/gpu=all"],
+    });
+  });
+
+  it("rejects malformed or duplicate qualified CDI inventory", () => {
+    expect(() =>
+      qualifyPodmanHost(engine(), {
+        platform: "linux",
+        architecture: "x64",
+        additionalCdiDevices: ["/dev/nvidia0"],
+      }),
+    ).toThrow("safe NVIDIA CDI name");
+    expect(() =>
+      qualifyPodmanHost(engine(), {
+        platform: "linux",
+        architecture: "x64",
+        additionalCdiDevices: ["all"],
+      }),
+    ).toThrow("duplicate NVIDIA device");
+    expect(() =>
+      qualifyPodmanHost(engine(), {
+        platform: "linux",
+        architecture: "x64",
+        additionalCdiDevices: ["nvidia.com/gpu=0"],
+      }),
+    ).toThrow("duplicate NVIDIA device");
   });
 
   it("rejects an API service architecture that differs from the host", () => {
