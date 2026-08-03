@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 const adapterMocks = vi.hoisted(() => ({
   dockerRun: vi.fn(),
   dockerCapture: vi.fn(),
+  backupWithAuthority: vi.fn(),
 }));
 
 vi.mock("../../adapters/docker/run", () => ({
@@ -18,6 +19,9 @@ vi.mock("../../state/registry", () => ({
 }));
 vi.mock("../../state/sandbox", () => ({
   backupSandboxState: vi.fn(),
+}));
+vi.mock("./snapshot/backup-authority", () => ({
+  backupSandboxStateWithManagedAuthority: (name: string) => adapterMocks.backupWithAuthority(name),
 }));
 
 import * as registry from "../../state/registry";
@@ -224,6 +228,14 @@ describe("backupStartedSandboxState", () => {
   };
   const unreachable = { ...ok, success: false, unreachable: true };
   const denied = { ...ok, success: false };
+
+  it("uses managed provider authority through the default stopped-backup path", async () => {
+    adapterMocks.backupWithAuthority.mockReturnValueOnce(ok);
+
+    await expect(backupStartedSandboxState("my-sb")).resolves.toEqual(ok);
+
+    expect(adapterMocks.backupWithAuthority).toHaveBeenCalledWith("my-sb");
+  });
 
   it("retries while the just-started container's SSH endpoint is unreachable (#6500)", async () => {
     const backup = vi
