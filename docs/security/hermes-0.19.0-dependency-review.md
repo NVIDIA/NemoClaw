@@ -5,6 +5,8 @@
 
 Review date: 2026-07-30
 
+Issue `#8087` review date: August 2, 2026.
+
 ## Decision
 
 Pin the NemoClaw Hermes runtime to the published, non-draft, non-prerelease `v2026.7.20` release, whose package version is `0.19.0`.
@@ -177,6 +179,17 @@ The WhatsApp bridge moves Baileys from a Git commit dependency to integrity-boun
 This removes both Git resolutions and improves reproducibility.
 The current RC9 bridge graph reports one critical, three high, two medium, and one low affected package entry.
 The RC13 transition removes the critical `GHSA-qvv5-jq5g-4cgg` protocol-message spoof and state-corruption exposure plus every high and medium entry, leaving only one low `body-parser` finding in the target bridge.
+NemoClaw's issue `#8087` patch adds the following integrity-bound production graph so the Baileys socket and fetch paths use the injected `HTTPS_PROXY`.
+
+| Package | Integrity | Declared license |
+| --- | --- | --- |
+| `https-proxy-agent@7.0.6` | `sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==` | MIT |
+| `agent-base@7.1.4` | `sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==` | MIT |
+| `debug@4.4.3` | `sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==` | MIT |
+| `ms@2.1.3` | `sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==` | MIT |
+
+The patched bridge production audit reports zero high or critical findings and retains the unrelated low `body-parser` finding.
+The added packages declare MIT in the patched lock, so the downstream patch adds no restrictive license.
 The `sharp` move from `0.34.5` to `0.35.3` and the native bridge still require amd64 and arm64 pairing, send, and receive proof.
 
 No new copyleft or restrictive license enters the selected graph.
@@ -209,6 +222,7 @@ Artifact scanning must therefore inspect the assembled image and record the down
 | `HERMES-19` | High | Migrate and test | The dashboard has an isolated `HERMES_HOME`, so its allowlisted routing and policy mirror is a startup security boundary. A missing gateway config remains a benign cold-start no-op, while malformed, non-mapping, unreadable, or routing-free source config and invalid existing dashboard config fail startup without changing stale dashboard bytes. Sanitized errors never include raw PyYAML parser context or credential-bearing source lines. |
 | `HERMES-20` | High | Retarget, guard, test, and runtime-proof | Base SHA `fa96c91f` adds a Hermes 0.18 gateway-runtime-metadata patch whose central helper shape does not match Hermes 0.19. The retargeted exact-source guard preserves `_get_process_hermes_home()` while moving the managed default gateway's central PID, lock, and status helpers below `runtime`, hash-binds the patcher, and adds unit and final-image probes. The managed-gateway restart E2E remains the PR SHA runtime gate. |
 | `HERMES-21` | Medium | Document inherited bounded residual | The base workaround does not retarget direct upstream `--replace` cleanup, planned-stop/takeover markers, named-profile and multiplexer readers, service/boot/web/Windows consumers, or upstream backup and Docker paths. With Shields up, those direct paths can fail or observe stale state, but the same limitation exists on base SHA `fa96c91f`; the 0.19 selector retarget adds no regression to NemoClaw's supported host-managed default-gateway lifecycle. A complete relocation needs separate exact-source patches and runtime proof for every explicit consumer. |
+| `HERMES-22` | High | Patch, pin, test, and runtime-proof | Issue `#8087` showed that the Hermes WhatsApp WebSocket ignored the injected `HTTPS_PROXY`, attempted direct DNS resolution, and failed before OpenShell produced an Open Cybersecurity Schema Framework (OCSF) record. NemoClaw exact-source patches both Baileys proxy fields, locks the added proxy dependency graph, and fails the base-image build when the patch or installed proxy constructor drifts. The exact PR head still requires protected Hermes WhatsApp E2E evidence for QR pairing, connected status, and audited WebSocket traffic through the OpenShell proxy. |
 
 Unresolved upgrade-created high-impact concerns: `0`.
 One Medium upgrade-created instance of the pre-existing named-profile raw-capture limitation and one inherited Medium direct-runtime-consumer limitation remain explicitly accepted for this upgrade scope.

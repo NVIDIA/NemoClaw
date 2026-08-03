@@ -195,6 +195,10 @@ function runHermesInstallLayer(
     "      return 42",
     "    }",
     '    mkdir -p "${prefix}/node_modules"',
+    '    if [ "$prefix" = "scripts/whatsapp-bridge" ]; then',
+    '      mkdir -p "$prefix/node_modules/https-proxy-agent"',
+    "      printf '%s\\n' 'class HttpsProxyAgent { constructor(url) { this.proxy = new URL(url); } } module.exports = { HttpsProxyAgent };' > \"$prefix/node_modules/https-proxy-agent/index.js\"",
+    "    fi",
     "  fi",
     "}",
     'rm() { printf "rm %s\\n" "$*" >> "$call_log"; command rm "$@"; }',
@@ -225,12 +229,14 @@ describe("Hermes share mount package parity (#2947)", () => {
     const downloadedTarball = path.join(tmp, "download", "hermes.tar.gz");
     const checksumFile = `${downloadedTarball}.sha256`;
     const securityPatch = path.join(tmp, "hermes-security-dependencies.patch");
+    const whatsappProxyPatch = path.join(tmp, "hermes-whatsapp-proxy.patch");
     const scriptPath = path.join(tmp, "run-hermes-archive-layer.sh");
 
     try {
       fs.mkdirSync(path.join(archiveRoot, "tests"), { recursive: true });
       fs.mkdirSync(path.dirname(downloadedTarball), { recursive: true });
       fs.writeFileSync(securityPatch, "test patch fixture\n");
+      fs.writeFileSync(whatsappProxyPatch, "test patch fixture\n");
       fs.writeFileSync(path.join(archiveRoot, "pyproject.toml"), 'version = "test"\n');
       fs.writeFileSync(
         path.join(archiveRoot, "tests", "security-fixture.txt"),
@@ -245,6 +251,7 @@ describe("Hermes share mount package parity (#2947)", () => {
       const checksum = createHash("sha256").update(fs.readFileSync(sourceTarball)).digest("hex");
       const command = extractHermesArchiveCommand(dockerfile)
         .replaceAll("/tmp/hermes-security-dependencies.patch", securityPatch)
+        .replaceAll("/tmp/hermes-whatsapp-proxy.patch", whatsappProxyPatch)
         .replaceAll("/tmp/hermes.tar.gz.sha256", checksumFile)
         .replaceAll("/tmp/hermes.tar.gz", downloadedTarball)
         .replaceAll("/opt/hermes", targetRoot);
@@ -264,14 +271,15 @@ describe("Hermes share mount package parity (#2947)", () => {
           "}",
           `target_root=${JSON.stringify(targetRoot)}`,
           `security_patch=${JSON.stringify(securityPatch)}`,
+          `whatsapp_proxy_patch=${JSON.stringify(whatsappProxyPatch)}`,
           "git() {",
           '  [ "$1" = "-C" ]',
           '  [ "$2" = "$target_root" ]',
           '  [ "$3" = "apply" ]',
           '  if [ "$4" = "--check" ]; then',
-          '    [ "$5" = "$security_patch" ]',
+          '    [ "$5" = "$security_patch" ] || [ "$5" = "$whatsapp_proxy_patch" ]',
           "  else",
-          '    [ "$4" = "$security_patch" ]',
+          '    [ "$4" = "$security_patch" ] || [ "$4" = "$whatsapp_proxy_patch" ]',
           "  fi",
           "}",
           'export HERMES_VERSION="vtest"',
