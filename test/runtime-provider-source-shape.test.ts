@@ -122,7 +122,10 @@ describe("runtime provider central source boundary", () => {
     expect(bootstrapProtocolPaths).toEqual([
       "src/lib/onboard/managed-bootstrap/adapter.ts",
       "src/lib/onboard/managed-bootstrap/docker-journal.ts",
+      "src/lib/onboard/managed-bootstrap/docker-shared-state.ts",
       "src/lib/onboard/managed-bootstrap/docker-spec.ts",
+      "src/lib/onboard/managed-bootstrap/docker-test-fixture.ts",
+      "src/lib/onboard/managed-bootstrap/docker.ts",
       "src/lib/onboard/managed-bootstrap/envelope.ts",
       "src/lib/onboard/managed-bootstrap/index.ts",
     ]);

@@ -11,7 +11,12 @@ import path from "node:path";
 
 import { redirectInheritedChildStdoutToStderr } from "./cli/stdout-guard";
 import { shellQuote } from "./core/shell-quote";
-import { NAME_ALLOWED_FORMAT, NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "./name-validation";
+import {
+  diagnosticPreview,
+  NAME_ALLOWED_FORMAT,
+  NAME_MAX_LENGTH,
+  NAME_VALID_PATTERN,
+} from "./name-validation";
 import { detectDockerHost } from "./platform";
 import { redact, redactError, writeRedactedResult } from "./security/redact";
 import { buildSubprocessEnv } from "./subprocess-env";
@@ -380,11 +385,13 @@ function validateName(name: string, label = "name"): string {
   }
   if (name.length > NAME_MAX_LENGTH) {
     throw new Error(
-      `${label} too long (max ${NAME_MAX_LENGTH} chars): '${name.slice(0, 20)}...'. Allowed format: ${NAME_ALLOWED_FORMAT}.`,
+      `${label} too long (max ${NAME_MAX_LENGTH} chars): ${diagnosticPreview(name)}. Allowed format: ${NAME_ALLOWED_FORMAT}.`,
     );
   }
   if (!NAME_VALID_PATTERN.test(name)) {
-    throw new Error(`Invalid ${label}: '${name}'. Allowed format: ${NAME_ALLOWED_FORMAT}.`);
+    throw new Error(
+      `Invalid ${label}: ${diagnosticPreview(name)}. Allowed format: ${NAME_ALLOWED_FORMAT}.`,
+    );
   }
   return name;
 }
