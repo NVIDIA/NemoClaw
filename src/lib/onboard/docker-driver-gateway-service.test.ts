@@ -107,9 +107,13 @@ describe("docker-driver-gateway-service", () => {
       args[0] === "info" ? officialFormulaInfo() : spawnResult(),
     );
 
-    expect(hasOpenShellGatewayUserService({ existsSync: linuxExists, platform: "linux" })).toBe(
-      true,
-    );
+    expect(
+      hasOpenShellGatewayUserService({
+        existsSync: linuxExists,
+        platform: "linux",
+        spawnSyncImpl: systemdSpawn([]),
+      }),
+    ).toBe(true);
     expect(
       hasOpenShellGatewayUserService({
         commandExists: (command) => command === "brew",
