@@ -83,7 +83,7 @@ Reuse requires all these inputs to match:
 Trailing endpoint slashes, duplicate IP addresses, and IP address order do not prevent reuse.
 NemoClaw sends another validation request in any of these cases:
 
-- Any of these inputs changes, including the DNS IP address set.
+- Any listed input differs after NemoClaw normalizes the endpoint URL and IP address set, including when the DNS IP address set changes.
 - The endpoint URL contains embedded credentials, a query string, or a fragment.
 - Validation uses custom headers.
 - The endpoint is an operator-trusted private endpoint.
