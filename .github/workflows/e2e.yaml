@@ -5024,7 +5024,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        agent: [openclaw]
+        agent: [openclaw, hermes]
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "bedrock-runtime-compatible-anthropic"
@@ -5039,6 +5039,26 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: e2e-bedrock-${{ matrix.agent }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
+      - id: trusted_hermes_swap
+        name: Provision trusted Hermes E2E swap
+        if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && matrix.agent == 'hermes' }}
+        shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+        env:
+          BASH_ENV: /dev/null
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+          ENV: /dev/null
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          LC_ALL: C
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          RUNNER_ENVIRONMENT_KIND: ${{ runner.environment }}
+          RUNNER_OS_KIND: ${{ runner.os }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: *trusted-hermes-e2e-swap
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
@@ -5052,7 +5072,7 @@ jobs:
 
       - name: Run Bedrock Runtime compatible Anthropic live test
         # Preserves the fake Bedrock Runtime endpoint, /etc/hosts mapping,
-        # source CLI onboard, OpenShell adapter route, OpenClaw runtime probe,
+        # source CLI onboard, OpenShell adapter route, agent runtime probes,
         # and leak-scan contract.
         run: |
           set -euo pipefail

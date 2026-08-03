@@ -73,6 +73,7 @@ const FORK_E2E_AUTHORIZATION_TITLE = "Maintainer approval required to run fork E
 const EVALUATING_PR_COMMIT_TITLE = "Evaluating PR commit";
 const RUNNER_LOSS_RETRY_PREPARATION_TITLE = "Preparing one-time hosted-runner-loss retry";
 const AUTHORIZED_EXECUTION_TITLE_PREFIX = "E2E execution authorized by @";
+const RUNNING_E2E_TITLE_PATTERN = /^Running [1-9][0-9]* E2E checks?$/u;
 const PRE_DISPATCH_CHECK_READ_TIMEOUT_MS = 5_000;
 const RECONCILED_CHILD_VALIDATION_TIMEOUT_MS = 10_000;
 const CHILD_AUTHORIZATION_PUBLISH_TIMEOUT_MS = 5_000;
@@ -2115,6 +2116,43 @@ function authorizedExecutionTitle(maintainer: string): string {
   return `${AUTHORIZED_EXECUTION_TITLE_PREFIX}${maintainer}`;
 }
 
+function maintainerApprovalStateError(check: CheckRun, expectedTitle: string): Error {
+  const title = check.output?.title;
+  const expected = `Wait for the coordination title "${expectedTitle}", then launch a fresh first-attempt approve-e2e run for the same exact revision.`;
+
+  if (
+    check.status === "completed" ||
+    (check.conclusion !== undefined && check.conclusion !== null)
+  ) {
+    return new Error(
+      `PR gate is not ready for maintainer approval: coordination is terminal. Update the PR or rerun eligible CI to create a fresh pending authorization state; do not reuse this approval. Expected title: "${expectedTitle}".`,
+    );
+  }
+  if (
+    check.status === "queued" ||
+    (check.status === "in_progress" &&
+      (title === RESERVED_CHECK_TITLE ||
+        title === EVALUATING_PR_COMMIT_TITLE ||
+        title === RUNNER_LOSS_RETRY_PREPARATION_TITLE))
+  ) {
+    return new Error(
+      `PR gate is not ready for maintainer approval: coordination is still preparing. ${expected}`,
+    );
+  }
+  if (
+    check.status === "in_progress" &&
+    typeof title === "string" &&
+    (title.startsWith(AUTHORIZED_EXECUTION_TITLE_PREFIX) || RUNNING_E2E_TITLE_PATTERN.test(title))
+  ) {
+    return new Error(
+      `PR gate is not ready for maintainer approval: E2E is already executing. Follow the existing controller and child run; do not launch another approval. Expected title: "${expectedTitle}".`,
+    );
+  }
+  return new Error(
+    `PR gate is not ready for maintainer approval: coordination is malformed or unknown. Inspect the coordination check and do not retry until the state is understood. Expected title: "${expectedTitle}".`,
+  );
+}
+
 function assertCurrentPreDispatchCheck(
   history: readonly CheckRun[],
   options: { repository: string; controllerCheckId: number; expectedCheckTitle: string },
@@ -3250,7 +3288,7 @@ async function startAuthorizedPrGate(command: AuthorizedE2ECommand): Promise<voi
     const check = matchingChecks[0]!;
     const pendingAuthorization = check.status === "in_progress" && check.conclusion === null;
     if (!pendingAuthorization || check.output?.title !== pendingTitle) {
-      throw new Error("PR gate must have the matching pending E2E authorization state");
+      throw maintainerApprovalStateError(check, pendingTitle);
     }
     checkRunId = check.id;
     appendOutput("check_id", String(checkRunId));

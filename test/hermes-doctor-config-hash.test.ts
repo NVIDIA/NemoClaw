@@ -30,7 +30,7 @@ describe("Hermes doctor and config hash boundary", () => {
     const command = dockerRunCommandBetween(
       dockerfile,
       'RUN hermes_version_output="$(/usr/local/bin/hermes --version)"',
-      "# This runs before `/usr/local/bin/hermes`",
+      "# Validate the versioned adapter",
     )
       .replaceAll("/usr/local/bin/hermes", hermesBin)
       .replaceAll("/usr/local/lib/nemoclaw/hermes-wrapper.py", wrapper)

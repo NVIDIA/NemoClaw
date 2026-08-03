@@ -14,6 +14,7 @@ import { getOllamaContextWindowFloorForAgent } from "../../../inference/ollama-r
 import type { InferenceEndpointSource } from "../../../inference/selection";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
+import { checkpointSandboxIdentityMatches } from "../../checkpoint-replay";
 import type { OnboardInferenceCapabilityCache } from "../../inference-capability-cache";
 import type { RepairLocalInferenceSystemdOverrideOptions } from "../../local-inference-topology";
 import {
@@ -394,6 +395,18 @@ async function replayRecoveredCompatibleEndpointReasoning(
   };
 }
 
+function provenResumeSandboxName(
+  session: Session | null,
+  sandboxName: string | null,
+  effectiveResume: boolean,
+  authoritativeResumeConfig: boolean,
+): string | null {
+  if (!effectiveResume || !sandboxName) return null;
+  return authoritativeResumeConfig || checkpointSandboxIdentityMatches(session, sandboxName)
+    ? sandboxName
+    : null;
+}
+
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
   gatewayName,
   resume,
@@ -457,6 +470,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let inferenceCapabilityCache: OnboardInferenceCapabilityCache | undefined;
   let vllmModelIdentity: string | undefined;
   const effectiveResume = resume && !fresh;
+  const reusableResumeSandboxName = provenResumeSandboxName(
+    session,
+    sandboxName,
+    effectiveResume,
+    authoritativeResumeConfig,
+  );
   const stateResults: OnboardStateTransitionResult[] = [];
   const retryStateResults: OnboardStateTransitionResult[] = [];
 
@@ -552,13 +571,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       }
       deps.skippedStepMessage("provider_selection", `${provider} / ${model}`);
       const selectedAgentName = (agent as { name?: string } | null)?.name;
-      if (
-        (!selectedAgentName || selectedAgentName === "openclaw") &&
-        sandboxName &&
-        session?.sandboxPromptProgress?.sandboxName === true &&
-        session.sandboxName === sandboxName
-      ) {
-        deps.log(`  [resume] Reusing sandbox name: ${sandboxName}.`);
+      if ((!selectedAgentName || selectedAgentName === "openclaw") && reusableResumeSandboxName) {
+        deps.log(`  [resume] Reusing sandbox name: ${reusableResumeSandboxName}.`);
       }
       await deps.recordStateSkipped("provider_selection", {
         reason: "resume",
@@ -831,7 +845,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       const sandboxStepComplete = session?.steps?.sandbox?.status === "complete";
       const resumeReservationName =
         authoritativeResumeConfig || !sandboxStepComplete
-          ? (sandboxName ?? (await deps.promptValidatedSandboxName(agent)))
+          ? (reusableResumeSandboxName ?? (await deps.promptValidatedSandboxName(agent)))
           : null;
       if (resumeReservationName) sandboxName = resumeReservationName;
       const routedInferenceProvider = deps.isRoutedInferenceProvider(provider);

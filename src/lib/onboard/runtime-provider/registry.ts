@@ -59,6 +59,7 @@ const MUTATION_OPERATIONS = new Set<RuntimeProviderMutationOperation>([
   "stop",
   "inference-set",
   "rebuild",
+  "clone",
   "provider-cleanup",
   "destroy",
   "workload-cleanup",
@@ -336,7 +337,8 @@ function validateMutationAuthoritySurface(
 
 function validateBootstrapSurface(surface: Record<string, unknown>): void {
   if (surface.supported === true) {
-    requireFunction(surface, "prepare", "bootstrap");
+    requireFunction(surface, "createLifecycle", "bootstrap");
+    requireFunction(surface, "createOnboardRouting", "bootstrap");
   }
 }
 
