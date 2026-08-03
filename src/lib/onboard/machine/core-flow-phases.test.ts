@@ -46,6 +46,8 @@ function context(
     hermesToolGateways: [],
     preferredInferenceApi: null,
     compatibleEndpointReasoning: null,
+
+    compatibleEndpointReasoningEffort: null,
     nimContainer: null,
     webSearchConfig: null,
     webSearchSupported: false,
@@ -135,6 +137,8 @@ function createPhases(
         hermesToolGateways: ["local"],
         preferredInferenceApi: "chat",
         compatibleEndpointReasoning: null,
+
+        compatibleEndpointReasoningEffort: null,
         nimContainer: "nim-test",
       })),
       setupInference: vi.fn(async () => ({ ok: true as const })),
@@ -159,7 +163,11 @@ function createPhases(
       recordRepairEvent: vi.fn(async () => createSession()),
       hydrateCredentialEnv: vi.fn(),
       configureCompatibleEndpointReasoning: vi.fn(async () => "false" as const),
+
+      configureCompatibleEndpointReasoningEffort: vi.fn(async () => null),
       clearCompatibleEndpointReasoning: vi.fn(() => null),
+
+      clearCompatibleEndpointReasoningEffort: vi.fn(() => null),
       repairLocalInferenceSystemdOverrideOrExit: vi.fn(),
       isNonInteractive: () => true,
       getOpenshellBinary: () => "openshell",
@@ -200,6 +208,8 @@ function createPhases(
       resolvePath: (value) => value,
       agentSupportsWebSearch: () => true,
       note: vi.fn(),
+
+      cliName: () => "nemoclaw",
       updateSession: vi.fn((mutator) => mutator(createSession()) ?? createSession()),
       getStoredMessagingChannelConfig: () => null,
       hydrateMessagingChannelConfig: (config) => config,
@@ -362,6 +372,8 @@ describe("core onboard flow phases", () => {
       hermesToolGateways: [],
       preferredInferenceApi: "chat",
       compatibleEndpointReasoning: null,
+
+      compatibleEndpointReasoningEffort: null,
       nimContainer: null,
     }));
     const { providerInference: providerPhase } = createPhases({ providerDeps: { setupNim } });
@@ -802,7 +814,12 @@ describe("core onboard flow phases", () => {
       recordRepairEvent: repairRecorder(repairEvents),
     });
 
-    expect(repairEvents).toHaveLength(4);
+    expect(repairEvents).toEqual([
+      "state.repair.started:provider_selection",
+      "state.repair.completed:provider_selection",
+      "state.repair.started:sandbox",
+      "state.repair.completed:sandbox",
+    ]);
     expect(result.session.machine.state).toBe(state);
     expect(result.context.sandboxName).toBe("created-sandbox");
   });

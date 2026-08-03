@@ -6,7 +6,98 @@ import { expect } from "vitest";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import type { FakeMcpHttpsServer } from "./mcp-bridge-servers.ts";
+import type { TestProgress } from "../fixtures/progress.ts";
+import type { FakeMcpHttpsServer, FakeMcpRequest } from "./mcp-bridge-servers.ts";
+
+export interface AuthenticatedMcpDiscoveryTarget {
+  server: FakeMcpHttpsServer;
+  expectedSecret: string;
+  label: string;
+}
+
+const MCP_TOOL_DISCOVERY_TRANSPORT_FAILURE = "MCP tool discovery request failed";
+const MCP_TOOL_DISCOVERY_ATTEMPTS = 2;
+const MCP_TOOL_DISCOVERY_RETRY_DELAY_MS = 1_000;
+
+export function shouldRetryMcpToolDiscoveryTransportFailure(
+  toolDiscovery: { ok: boolean; detail?: string },
+  requestsSinceAttempt: readonly FakeMcpRequest[],
+  attempt: number,
+): boolean {
+  return (
+    attempt < MCP_TOOL_DISCOVERY_ATTEMPTS &&
+    !toolDiscovery.ok &&
+    toolDiscovery.detail === MCP_TOOL_DISCOVERY_TRANSPORT_FAILURE &&
+    requestsSinceAttempt.length === 0
+  );
+}
+
+type McpToolDiscoveryStatusJson = {
+  provider: { credentialResolution?: unknown };
+  toolDiscovery: {
+    ok: boolean;
+    count: number;
+    tools: string[];
+    truncated: boolean;
+    detail?: string;
+  };
+};
+
+export async function assertAuthenticatedMcpRediscovery(
+  target: AuthenticatedMcpDiscoveryTarget | undefined,
+  requestOffset: number | undefined,
+): Promise<void> {
+  if (!target || requestOffset === undefined) return;
+  await assertAuthenticatedMcpDiscovery(target.server, {
+    requestOffset,
+    expectedSecret: target.expectedSecret,
+    label: target.label,
+  });
+}
+
+export function hasSuccessfulAuthenticatedMcpDiscovery(
+  requests: readonly FakeMcpRequest[],
+  expectedSecret: string,
+): boolean {
+  const authenticatedRequests = requests.filter(
+    (request) =>
+      request.method === "POST" &&
+      request.path === "/mcp" &&
+      request.auth === `Bearer ${expectedSecret}`,
+  );
+  for (const [initializeIndex, initializeRequest] of authenticatedRequests.entries()) {
+    if (
+      initializeRequest.rpcMethod !== "initialize" ||
+      initializeRequest.responseStatus !== 200 ||
+      initializeRequest.responseHasResult !== true ||
+      !initializeRequest.negotiatedSessionId ||
+      !initializeRequest.negotiatedProtocolVersion
+    ) {
+      continue;
+    }
+    const hasNegotiatedMetadata = (request: FakeMcpRequest) =>
+      request.sessionId === initializeRequest.negotiatedSessionId &&
+      request.protocolVersion === initializeRequest.negotiatedProtocolVersion;
+    const initializedIndex = authenticatedRequests.findIndex(
+      (request, requestIndex) =>
+        requestIndex > initializeIndex &&
+        request.rpcMethod === "notifications/initialized" &&
+        request.responseStatus === 202 &&
+        hasNegotiatedMetadata(request),
+    );
+    if (initializedIndex === -1) continue;
+    const toolsListed = authenticatedRequests.some(
+      (request, requestIndex) =>
+        requestIndex > initializedIndex &&
+        request.rpcMethod === "tools/list" &&
+        request.responseStatus === 200 &&
+        request.responseHasResult === true &&
+        hasNegotiatedMetadata(request),
+    );
+    if (toolsListed) return true;
+  }
+  return false;
+}
 
 export async function assertAuthenticatedMcpDiscovery(
   fakeMcp: FakeMcpHttpsServer,
@@ -20,60 +111,71 @@ export async function assertAuthenticatedMcpDiscovery(
     .poll(
       () => {
         const requests = fakeMcp.requests.slice(options.requestOffset);
-        const observed = (rpcMethod: "initialize" | "tools/list") =>
-          requests.some(
-            (request) =>
-              request.method === "POST" &&
-              request.path === "/mcp" &&
-              request.rpcMethod === rpcMethod &&
-              request.auth === `Bearer ${options.expectedSecret}`,
-          );
         return {
-          initialized: observed("initialize"),
-          toolsListed: observed("tools/list"),
+          discovered: hasSuccessfulAuthenticatedMcpDiscovery(requests, options.expectedSecret),
           requests: requests.map((request) => ({
             method: request.method,
             path: request.path,
             rpcMethod: request.rpcMethod,
             credentialRewritten: request.auth === `Bearer ${options.expectedSecret}`,
+            sessionId: request.sessionId,
+            protocolVersion: request.protocolVersion,
+            responseStatus: request.responseStatus,
+            responseHasResult: request.responseHasResult,
+            negotiatedSessionId: request.negotiatedSessionId,
+            negotiatedProtocolVersion: request.negotiatedProtocolVersion,
           })),
         };
       },
       { interval: 500, timeout: 90_000, message: options.label },
     )
-    .toMatchObject({ initialized: true, toolsListed: true });
+    .toMatchObject({ discovered: true });
 }
 
 export async function assertAuthenticatedMcpToolDiscovery(
   host: HostCliClient,
   fakeMcp: FakeMcpHttpsServer,
-  options: { sandboxName: string; artifactPrefix: string; hostSecret: string },
+  options: {
+    sandboxName: string;
+    artifactPrefix: string;
+    hostSecret: string;
+    progress: Pick<TestProgress, "event">;
+  },
 ): Promise<void> {
   const requestOffset = fakeMcp.requests.length;
-  const status = await host.nemoclaw(
-    [options.sandboxName, "mcp", "status", "fake", "--tools", "--json"],
-    {
-      artifactName: `${options.artifactPrefix}-mcp-status-tools-json`,
-      env: {
-        ...buildAvailabilityProbeEnv(),
-        FAKE_MCP_SECRET: options.hostSecret,
+  let status: Awaited<ReturnType<HostCliClient["nemoclaw"]>> | undefined;
+  let statusJson: McpToolDiscoveryStatusJson | undefined;
+  for (let attempt = 1; attempt <= MCP_TOOL_DISCOVERY_ATTEMPTS; attempt += 1) {
+    status = await host.nemoclaw(
+      [options.sandboxName, "mcp", "status", "fake", "--tools", "--json"],
+      {
+        artifactName: `${options.artifactPrefix}-mcp-status-tools-json${attempt === 1 ? "" : `-retry-${attempt}`}`,
+        env: {
+          ...buildAvailabilityProbeEnv(),
+          FAKE_MCP_SECRET: options.hostSecret,
+        },
+        redactionValues: [options.hostSecret],
+        timeoutMs: 60_000,
       },
-      redactionValues: [options.hostSecret],
-      timeoutMs: 60_000,
-    },
-  );
-  assertExitZero(status, `${options.artifactPrefix} mcp status --tools --json`);
-  const statusJson = JSON.parse(status.stdout) as {
-    provider: { credentialResolution?: unknown };
-    toolDiscovery: {
-      ok: boolean;
-      count: number;
-      tools: string[];
-      truncated: boolean;
-      detail?: string;
-    };
-  };
-  expect(statusJson.provider.credentialResolution).toBeUndefined();
+    );
+    assertExitZero(status, `${options.artifactPrefix} mcp status --tools --json`);
+    statusJson = JSON.parse(status.stdout) as McpToolDiscoveryStatusJson;
+    expect(statusJson.provider.credentialResolution).toBeUndefined();
+    if (
+      !shouldRetryMcpToolDiscoveryTransportFailure(
+        statusJson.toolDiscovery,
+        fakeMcp.requests.slice(requestOffset),
+        attempt,
+      )
+    ) {
+      break;
+    }
+    options.progress.event(
+      "MCP tool discovery transport failed before reaching the fixture; retrying once",
+    );
+    await new Promise((resolve) => setTimeout(resolve, MCP_TOOL_DISCOVERY_RETRY_DELAY_MS));
+  }
+  if (!status || !statusJson) throw new Error("MCP tool discovery did not run");
   expect(statusJson.toolDiscovery).toMatchObject({
     ok: true,
     count: 2,

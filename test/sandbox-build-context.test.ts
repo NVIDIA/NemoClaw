@@ -54,6 +54,7 @@ describe("sandbox build context staging", () => {
       "install-reviewed-runtime.sh",
       "build-runtime.ts",
       "mcp-tool-discovery.ts",
+      "streamable-http-client.test.ts",
       "tool-discovery-core.ts",
     ]) {
       writeFixture(
@@ -233,6 +234,7 @@ describe("sandbox build context staging", () => {
       "mcp-tool-discovery.ts",
       "package-lock.json",
       "package.json",
+      "streamable-http-client.test.ts",
       "tool-discovery-core.ts",
       "tsconfig.json",
     ]);

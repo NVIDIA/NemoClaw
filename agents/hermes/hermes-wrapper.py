@@ -288,10 +288,16 @@ _VALUE_FLAGS = {
     "-r": "--resume",
     "--resume": "--resume",
 }
+# Hermes 0.19 consumes this global option only on its native one-shot path;
+# `chat --query` accepts the global syntax but does not write the requested
+# report. Recognize it while composing a resumed one-shot command so the
+# wrapper can refuse that semantically incompatible combination instead of
+# forwarding it to `chat` and silently losing the report.
+_TOP_LEVEL_VALUE_FLAGS = ("--usage-file",)
 # Keep this allowlist aligned with the top-level flags accepted by the pinned
-# Hermes Agent CLI in agents/hermes/Dockerfile.base (HERMES_VERSION=v2026.7.1,
-# HERMES_SEMVER=0.18.0) and agents/hermes/manifest.yaml (expected_version
-# "0.18.0"). Unknown flags deliberately fail closed by passing the original argv
+# Hermes Agent CLI in agents/hermes/Dockerfile.base (HERMES_VERSION=v2026.7.20,
+# HERMES_SEMVER=0.19.0) and agents/hermes/manifest.yaml (expected_version
+# "0.19.0"). Unknown flags deliberately fail closed by passing the original argv
 # through to upstream Hermes.
 _BOOLEAN_FLAGS = {
     "--worktree",
@@ -301,6 +307,8 @@ _BOOLEAN_FLAGS = {
     "--pass-session-id",
     "--ignore-user-config",
     "--ignore-rules",
+    "--no-restore-cwd",
+    "--safe-mode",
 }
 _PROVIDER_MODEL_COMMAND_SCAN_SESSION_FLAGS = ("-c", "--continue", "-r", "--resume")
 _PROVIDER_MODEL_COMMAND_SCAN_REQUIRED_VALUE_FLAGS = (
@@ -315,9 +323,10 @@ _PROVIDER_MODEL_COMMAND_SCAN_REQUIRED_VALUE_FLAGS = (
     "--oneshot",
     "-p",
     "--profile",
+    "--usage-file",
 )
-# Mirror the pinned Hermes v0.18 `_coalesce_session_name_args` boundaries:
-# unquoted session names consume words until a flag or known subcommand.
+# Full top-level command inventory used only to decide whether provider/model
+# flags belong to Hermes chat or to another command.
 _HERMES_SUBCOMMANDS = (
     "acp",
     "auth",
@@ -329,6 +338,7 @@ _HERMES_SUBCOMMANDS = (
     "completion",
     "computer-use",
     "config",
+    "console",
     "cron",
     "curator",
     "dashboard",
@@ -382,6 +392,58 @@ _HERMES_SUBCOMMANDS = (
     "whatsapp-cloud",
 )
 
+# Mirror the pinned Hermes v0.19 `_coalesce_session_name_args` set exactly.
+# It intentionally differs from full help (for example, `console` is not a
+# boundary and can remain part of an unquoted session name).
+_HERMES_SESSION_NAME_BOUNDARIES = frozenset(
+    {
+        "acp",
+        "auth",
+        "backup",
+        "chat",
+        "claw",
+        "completion",
+        "config",
+        "cron",
+        "dashboard",
+        "debug",
+        "desktop",
+        "doctor",
+        "dump",
+        "gateway",
+        "gui",
+        "honcho",
+        "import",
+        "insights",
+        "login",
+        "logout",
+        "logs",
+        "mcp",
+        "memory",
+        "model",
+        "pairing",
+        "plugins",
+        "profile",
+        "security",
+        "serve",
+        "sessions",
+        "setup",
+        "skills",
+        "status",
+        "tools",
+        "uninstall",
+        "update",
+        "version",
+        "webhook",
+        "whatsapp",
+        "whatsapp-cloud",
+    }
+)
+_PROFILE_VALUE_FLAGS = {
+    "-p": "--profile",
+    "--profile": "--profile",
+}
+
 
 def _split_flag_value(arg: str) -> tuple[str, str] | None:
     if not arg.startswith("--") or "=" not in arg:
@@ -390,16 +452,35 @@ def _split_flag_value(arg: str) -> tuple[str, str] | None:
     return name, value
 
 
+def _consume_session_name(argv: list[str], start: int) -> tuple[str | None, int]:
+    """Mirror Hermes' unquoted multi-word session-name coalescing."""
+    parts: list[str] = []
+    i = start
+    while (
+        i < len(argv)
+        and not argv[i].startswith("-")
+        and argv[i] not in _HERMES_SESSION_NAME_BOUNDARIES
+    ):
+        parts.append(argv[i])
+        i += 1
+    return (" ".join(parts) if parts else None), i
+
+
+class _UnsupportedResumedOneshotUsageFile(Exception):
+    """Signal a valid resumed one-shot form whose usage report would be lost."""
+
+
 def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
     """Route resumed oneshot invocations through Hermes' native chat resume path.
 
     Upstream Hermes handles top-level `-z/--oneshot` before the normal
     `--resume`/`--continue` chat shortcut. In affected versions the resumed
     session is available as context, but the one-shot turn is persisted under a
-    newly generated session id. The `chat --query --quiet --resume ...` path is
-    the native non-interactive route that appends to the selected session, so
-    translate only the composed top-level form and leave plain one-shot
-    invocations untouched.
+    newly generated session id. The `chat --query --quiet --resume ...` and
+    bare `chat --query --quiet --continue` paths are the native non-interactive
+    routes that append to the selected or most recent session, so translate
+    only the composed top-level form and leave plain one-shot invocations
+    untouched.
 
     NemoClaw owns this installed wrapper, not the prebuilt Hermes Agent binary
     inside the sandbox base image, so the wrapper is the smallest compatibility
@@ -417,11 +498,14 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
     across releases, so this compatibility layer avoids broadening approvals.
     """
     oneshot_prompt: str | None = None
+    global_prefix: list[str] = []
     resume_args: list[str] = []
     passthrough: list[str] = []
     saw_resume = False
     saw_continue = False
     saw_oneshot = False
+    saw_profile = False
+    usage_file_requested = False
 
     i = 0
     while i < len(argv):
@@ -456,6 +540,15 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
                     resume_args.extend([canonical, value])
                 else:
                     passthrough.extend([canonical, value])
+            elif name in _TOP_LEVEL_VALUE_FLAGS:
+                if not value:
+                    return None
+                usage_file_requested = True
+            elif name == "--profile":
+                if not value or saw_profile:
+                    return None
+                saw_profile = True
+                global_prefix.extend(["--profile", value])
             else:
                 return None
             i += 1
@@ -472,34 +565,62 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
             continue
 
         if arg in _VALUE_FLAGS:
-            if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
-                return None
             canonical = _VALUE_FLAGS[arg]
-            value = argv[i + 1]
-            if not value:
-                return None
             if canonical == "--resume":
+                value, next_index = _consume_session_name(argv, i + 1)
+                if not value:
+                    return None
                 if saw_resume or saw_continue:
                     return None
                 saw_resume = True
                 resume_args.extend([canonical, value])
+                i = next_index
             else:
+                if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
+                    return None
+                value = argv[i + 1]
+                if not value:
+                    return None
                 passthrough.extend([canonical, value])
+                i += 2
+            continue
+
+        if arg in _TOP_LEVEL_VALUE_FLAGS:
+            if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
+                return None
+            value = argv[i + 1]
+            if not value:
+                return None
+            usage_file_requested = True
+            i += 2
+            continue
+
+        if arg in _PROFILE_VALUE_FLAGS:
+            if i + 1 >= len(argv) or argv[i + 1].startswith("-") or saw_profile:
+                return None
+            value = argv[i + 1]
+            if not value:
+                return None
+            saw_profile = True
+            global_prefix.extend([_PROFILE_VALUE_FLAGS[arg], value])
             i += 2
             continue
 
         if arg in ("-c", "--continue"):
             if saw_resume or saw_continue:
                 return None
-            if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
-                return None
-            value = argv[i + 1]
+            value, next_index = _consume_session_name(argv, i + 1)
+            if value is None:
+                saw_continue = True
+                resume_args.append("--continue")
+                i += 1
+                continue
             if not value:
                 return None
             saw_continue = True
             resume_args.append("--continue")
             resume_args.append(value)
-            i += 2
+            i = next_index
             continue
 
         if arg in _BOOLEAN_FLAGS:
@@ -513,7 +634,10 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
     if not oneshot_prompt or not (saw_resume or saw_continue):
         return None
 
-    translated = ["chat", "--query", oneshot_prompt, "--quiet"]
+    if usage_file_requested:
+        raise _UnsupportedResumedOneshotUsageFile
+
+    translated = [*global_prefix, "chat", "--query", oneshot_prompt, "--quiet"]
     translated.extend(resume_args)
     translated.extend(passthrough)
     return translated
@@ -692,7 +816,18 @@ def main(argv: list[str]) -> int:
         rc = _run_gateway_guard(guard_path)
         if rc != 0:
             return rc
-    translated = _translate_resumed_oneshot(argv)
+    try:
+        translated = _translate_resumed_oneshot(argv)
+    except _UnsupportedResumedOneshotUsageFile:
+        print(
+            "[COMPATIBILITY] Refusing resumed one-shot with --usage-file: "
+            "Hermes 0.19 writes usage reports only on its native one-shot path, "
+            "while NemoClaw routes this form through chat --query to append to "
+            "the selected or most recent session. Run the resumed turn without "
+            "--usage-file.",
+            file=sys.stderr,
+        )
+        return 2
     if translated is not None:
         exec_argv = translated
     else:

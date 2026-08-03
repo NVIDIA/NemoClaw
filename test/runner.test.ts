@@ -943,51 +943,6 @@ describe("regression guards", () => {
       const mode = fs.statSync(scriptPath).mode;
       expect((mode & 0o111) !== 0).toBe(true);
     });
-
-    it("brev e2e suite includes a deploy-cli mode", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.ts"),
-        "utf-8",
-      );
-      expect(src).toContain('TEST_SUITE === "deploy-cli"');
-      expect(src).toContain("deploy CLI provisions a remote sandbox end to end");
-      expect(src).toContain('NEMOCLAW_DEPLOY_NO_CONNECT: "1"');
-    });
-
-    it("brev e2e suite relies on an authenticated brev CLI instead of a Brev API token", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.ts"),
-        "utf-8",
-      );
-      expect(src).toContain("const hasAuthenticatedBrev =");
-      expect(src).toContain('brev("ls")');
-      expect(src).not.toContain("BREV_API_TOKEN");
-      expect(src).not.toContain('brev("login", "--token"');
-    });
-
-    it("brev e2e suite captures CPU candidates before piping them into create", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.ts"),
-        "utf-8",
-      );
-      expect(src).toContain(
-        'const CAPTURE_OUTPUT_STDIO: StdioOptions = ["ignore", "pipe", "inherit"]',
-      );
-      expect(src).toMatch(
-        /const cpuCandidates = execFileSync\([\s\S]*"search",[\s\S]*"cpu",[\s\S]*stdio: CAPTURE_OUTPUT_STDIO/,
-      );
-      expect(src).toMatch(/input: cpuCandidates,[\s\S]*stdio: PIPE_INPUT_STDIO/);
-    });
-
-    it("brev e2e suite no longer contains the old brev-setup compatibility path", () => {
-      const src = fs.readFileSync(
-        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.ts"),
-        "utf-8",
-      );
-      expect(src).not.toContain("scripts/brev-setup.sh");
-      expect(src).not.toContain("USE_LAUNCHABLE");
-      expect(src).not.toContain("SKIP_VLLM=1");
-    });
   });
 
   describe("OpenClaw runtime hardening", () => {

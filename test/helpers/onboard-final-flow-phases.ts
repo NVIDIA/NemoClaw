@@ -103,11 +103,8 @@ export function createRuntimeHarness(initialSession: Session) {
     markStepStarted: () => cloneSession(session),
     markStepComplete: (_stepName, updates: SessionUpdates = {}) =>
       updateSession((current) => Object.assign(current, filterSafeUpdates(updates))),
-    markStepCompleteRecordOnly: (_stepName, updates: SessionUpdates = {}) =>
-      updateSession((current) => Object.assign(current, filterSafeUpdates(updates))),
     markStepSkipped: () => cloneSession(session),
     markStepFailed: () => cloneSession(session),
-    markStepFailedRecordOnly: () => cloneSession(session),
     completeSession: (updates: SessionUpdates = {}) =>
       updateSession((current) => {
         Object.assign(current, filterSafeUpdates(updates));
@@ -152,6 +149,7 @@ export function context(
     hermesToolGateways: ["local"],
     preferredInferenceApi: "chat",
     compatibleEndpointReasoning: null,
+    compatibleEndpointReasoningEffort: null,
     nimContainer: "nim-test",
     webSearchConfig: null,
     webSearchSupported: true,

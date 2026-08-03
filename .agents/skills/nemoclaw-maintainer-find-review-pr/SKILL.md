@@ -63,11 +63,39 @@ gh pr view <number> --json number,title,author,createdAt,additions,deletions,rev
 
 ## Step 4: Check for superseded PRs
 
-Flag a PR when its body contains one of these phrases:
+Run the comparator's canonical detector with the open candidate PR numbers:
 
-- `follow-up to #NNN` / `supersedes #NNN` / `replaces #NNN` / `folds in #NNN`
+```bash
+../nemoclaw-maintainer-pr-comparator/scripts/parse-supersession.sh <pr-number-1> <pr-number-2> ...
+```
 
-The phrase must name another open candidate PR. It indicates that one PR can include the other.
+It recognizes the comparator parser's case-insensitive statement families:
+
+- `supersed[a-z]*` before `#N`: `supersedes #N` points from the current PR to `#N`; `superseded by #N` points from `#N` to the current PR.
+- `replac[a-z]*` before `#N`: `replaces #N` points from the current PR to `#N`; `replaced by #N` points from `#N` to the current PR.
+- `clos[a-z]* in favor of` before `#N`: `closes in favor of #N` and `closed in favor of #N` point from `#N` to the current PR.
+- `fold[a-z]* in` before `#N`: `folds in #N` points from the current PR to `#N`; `folded into #N` points from `#N` to the current PR.
+
+The bracket expressions describe the parser grammar; they are not literal PR body text.
+A `follow-up to #N` statement is a related-PR signal, not a supersession declaration,
+unless one of these phrases also appears.
+
+Each supersession phrase must name another open candidate PR. It indicates that one PR can include the other.
+It records a relationship but does not prove that the target carries the source PR's work.
+
+When the target claims the source PR's full scope, compare their commits and diffs.
+If material code, tests, or documentation from another contributor remains in the target,
+apply the canonical policy in
+`../nemoclaw-maintainer-policies/references/workflow-policy.md`.
+
+This skill reports recommendations only.
+Do not recommend closing the source PR until another authorized workflow has:
+
+- completed any required transfer
+- verified the updated commits, attribution, and CI
+- rerun the comparator and selected the target
+- confirmed that the target contains the source's full scope and required contributor attribution
+- merged the selected target
 
 ## Step 5: Present results
 
@@ -92,7 +120,8 @@ For superseded PRs:
 ### Superseded PRs
 
 - #1416 supersedes/folds in #1392 (shell-quote sandboxName)
-  Consider closing #1392 if #1416 contains its full scope.
+  Keep #1392 open while an authorized workflow completes any required transfer, verifies the updated commits, attribution, and CI, and reruns the comparator.
+  After the updated verdict selects #1416 and #1416 merges, consider closing #1392 only if #1416 contains its full scope and preserves any required contributor attribution.
 ```
 
 ### Clean candidates

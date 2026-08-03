@@ -49,7 +49,8 @@ function dashboardBuildCommand(hermesRoot: string, rootCache: string): string {
     .replaceAll("/opt/hermes", hermesRoot)
     .replaceAll("/root/.npm", path.join(rootCache, "npm"))
     .replaceAll("/root/.cache/electron", path.join(rootCache, "electron"))
-    .replaceAll("/root/.cache/node-gyp", path.join(rootCache, "node-gyp"));
+    .replaceAll("/root/.cache/node-gyp", path.join(rootCache, "node-gyp"))
+    .replaceAll("/root/.cache/uv", path.join(rootCache, "uv"));
 }
 
 describe("Hermes dashboard provisioning", () => {
@@ -62,7 +63,7 @@ describe("Hermes dashboard provisioning", () => {
     fs.mkdirSync(hermesWebDir, { recursive: true });
     fs.writeFileSync(path.join(hermesRoot, "package-lock.json"), '{"packages":{"web":{}}}\n');
     fs.writeFileSync(path.join(hermesWebDir, "package.json"), "{}\n");
-    for (const cache of ["npm", "electron", "node-gyp"]) {
+    for (const cache of ["npm", "electron", "node-gyp", "uv"]) {
       const cachePath = path.join(rootCache, cache);
       fs.mkdirSync(cachePath, { recursive: true });
       fs.writeFileSync(path.join(cachePath, "build-only-cache"), "unused after image assembly\n");
@@ -82,7 +83,7 @@ describe("Hermes dashboard provisioning", () => {
       expect(calls).toContain(`npm run build --prefix ${hermesRoot} --workspace web`);
       expect(calls).toContain(`npm ci --omit=dev --workspaces=false --prefix ${hermesRoot}`);
       expect(fs.existsSync(hermesWebDist)).toBe(true);
-      for (const cache of ["npm", "electron", "node-gyp"]) {
+      for (const cache of ["npm", "electron", "node-gyp", "uv"]) {
         expect(() => fs.lstatSync(path.join(rootCache, cache))).toThrow();
       }
     } finally {

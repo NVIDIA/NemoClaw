@@ -11,7 +11,6 @@ import {
   collectResourceSnapshot,
 } from "../../../tools/e2e/runner-pressure.mts";
 import { renderSnapshotLine } from "../../../tools/e2e/runner-pressure-core.mts";
-
 import { type ArtifactSink, createArtifactSink } from "./artifacts.ts";
 import { assertCleanupPassed, CleanupRegistry } from "./cleanup.ts";
 import {

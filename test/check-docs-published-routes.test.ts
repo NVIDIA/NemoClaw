@@ -10,6 +10,7 @@ import { parse } from "yaml";
 
 import {
   buildPublishedRouteIndex,
+  extractMarkdownLinks,
   findBrokenChangelogRoutes,
   findBrokenPublishedInferenceRoutes,
   findBrokenPublishedManageSandboxRoutes,
@@ -17,6 +18,7 @@ import {
   findBrokenPublishedRoutes,
   findMissingDirectLegacyManageSandboxRedirects,
   findMissingDirectLegacyReleaseNotesRedirects,
+  renderPublishedPageBodies,
   resolvePublishedRoute,
 } from "../scripts/check-docs-published-routes.mts";
 
@@ -459,6 +461,59 @@ describe("Manage Sandboxes extension routes", () => {
       index.routes.has("/user-guide/deepagents/manage-sandboxes/install-openclaw-plugins"),
     ).toBe(false);
   });
+
+  it("publishes the Deep Agents runtime guide only in the Deep Agents guide", () => {
+    const source = "manage-sandboxes/run-deep-agents-code.mdx";
+    const quickstartSource = "get-started/quickstart-langchain-deepagents-code.mdx";
+    const quickstartRoute = "/user-guide/deepagents/get-started/quickstart";
+    const runtimeRoute =
+      "/user-guide/deepagents/manage-sandboxes/operate-sandboxes/run-deep-agents-code";
+    const [quickstartPage] = renderPublishedPageBodies(quickstartSource, index);
+
+    expect(index.sourceToRoutes.get(source)?.map(({ route }) => route)).toEqual([runtimeRoute]);
+    expect(findBrokenPublishedRoutes(source, index)).toEqual([]);
+    expect(findBrokenPublishedRoutes(quickstartSource, index)).toEqual([]);
+    expect(quickstartPage.route).toBe(quickstartRoute);
+    expect(
+      extractMarkdownLinks(quickstartPage.body).map(({ target }) =>
+        resolvePublishedRoute(quickstartRoute, target),
+      ),
+    ).toContain(runtimeRoute);
+    expect(
+      index.routes.has(
+        "/user-guide/openclaw/manage-sandboxes/operate-sandboxes/run-deep-agents-code",
+      ),
+    ).toBe(false);
+    expect(
+      index.routes.has(
+        "/user-guide/hermes/manage-sandboxes/operate-sandboxes/run-deep-agents-code",
+      ),
+    ).toBe(false);
+  });
+
+  it("preserves the legacy Deep Agents harness anchor", () => {
+    const [quickstartPage] = renderPublishedPageBodies(
+      "get-started/quickstart-langchain-deepagents-code.mdx",
+      index,
+    );
+
+    expect(quickstartPage.body.match(/<a\s+id=["']use-the-harness["']\s*><\/a>/g)).toHaveLength(1);
+  });
+});
+
+describe("Documentation Engineering routes", () => {
+  const index = buildPublishedRouteIndex();
+
+  it("publishes the agentic documentation guide for every agent variant", () => {
+    const source = "resources/engineer-agentic-documentation.mdx";
+
+    expect(index.sourceToRoutes.get(source)?.map(({ route }) => route)).toEqual([
+      "/user-guide/openclaw/resources/engineer-agentic-documentation",
+      "/user-guide/deepagents/resources/engineer-agentic-documentation",
+      "/user-guide/hermes/resources/engineer-agentic-documentation",
+    ]);
+    expect(findBrokenPublishedRoutes(source, index)).toEqual([]);
+  });
 });
 
 describe("headless server deployment routes", () => {
@@ -524,6 +579,24 @@ describe("headless server deployment routes", () => {
         );
       }
     }
+  });
+});
+
+describe("gateway lifecycle authority routes", () => {
+  const index = buildPublishedRouteIndex();
+
+  it("publishes the OpenShell gateway guide for every guide variant (#6576)", () => {
+    for (const variant of ["openclaw", "hermes", "deepagents"]) {
+      expect(
+        index.routes.has(`/user-guide/${variant}/deployment/gateway-lifecycle-authority`),
+      ).toBe(true);
+    }
+  });
+
+  it("resolves every OpenShell gateway guide link for each guide variant (#6576)", () => {
+    expect(findBrokenPublishedRoutes("deployment/gateway-lifecycle-authority.mdx", index)).toEqual(
+      [],
+    );
   });
 });
 

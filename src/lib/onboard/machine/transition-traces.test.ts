@@ -23,7 +23,6 @@ import {
   type Session,
   type SessionUpdates,
   type StepState,
-  sanitizeFailure,
 } from "../../state/onboard-session";
 import type { OnboardMachineEvent } from "./events";
 import { handleSandboxState } from "./handlers/sandbox";
@@ -72,14 +71,12 @@ function createTracedRuntime(initialSession: Session = createSession()) {
     updateSession,
     markStepStarted: () => cloneSession(session),
     markStepComplete: (_stepName, updates) => applySafeUpdates(updates),
-    markStepCompleteRecordOnly: (_stepName, updates) => applySafeUpdates(updates),
     markStepSkipped: () => cloneSession(session),
     markStepFailed: (stepName, message) =>
       updateSession((current) => {
-        current.status = "failed";
-        current.failure = sanitizeFailure({ step: stepName, message, recordedAt: NOW });
+        current.steps[stepName].status = "failed";
+        current.steps[stepName].error = message ?? null;
       }),
-    markStepFailedRecordOnly: () => cloneSession(session),
     completeSession: (updates: SessionUpdates = {}) =>
       updateSession((current) => {
         Object.assign(current, filterSafeUpdates(updates));

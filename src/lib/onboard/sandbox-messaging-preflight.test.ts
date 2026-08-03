@@ -174,7 +174,7 @@ describe("prepareSandboxMessagingPreflight", () => {
     expect(deps.prepareCreateSandboxMessaging).toHaveBeenCalled();
   });
 
-  it("lets interactive users continue through a matching-token conflict", async () => {
+  it("aborts interactive credential conflicts without prompting (#7808)", async () => {
     const deps = createDeps({
       readMessagingPlanFromEnv: vi.fn(() => createPlan("demo", "telegram", "same")),
       registry: {
@@ -187,36 +187,54 @@ describe("prepareSandboxMessagingPreflight", () => {
       promptYesNoOrDefault: vi.fn(async () => true),
     });
 
-    await prepareSandboxMessagingPreflight(baseInput, deps);
+    await expect(prepareSandboxMessagingPreflight(baseInput, deps)).rejects.toMatchObject({
+      code: 1,
+    });
 
-    expect(deps.log).toHaveBeenCalledWith(
+    expect(deps.error).toHaveBeenCalledWith(
       expect.stringContaining("uses the same telegram credential"),
     );
-    expect(deps.promptYesNoOrDefault).toHaveBeenCalledWith("  Continue anyway?", null, false);
-    expect(deps.prepareCreateSandboxMessaging).toHaveBeenCalled();
+    expect(deps.promptYesNoOrDefault).not.toHaveBeenCalled();
+    expect(deps.prepareCreateSandboxMessaging).not.toHaveBeenCalled();
   });
 
-  it("aborts non-interactive runs when the current plan conflicts", async () => {
+  it.each([
+    { mode: "interactive", nonInteractive: false },
+    { mode: "non-interactive", nonInteractive: true },
+  ])("aborts an enabled channel with an unavailable credential hash before $mode onboarding (#7808)", async ({
+    nonInteractive,
+  }) => {
+    const planWithoutHash = createPlan("demo", "discord", undefined);
+    const incompletePlan = {
+      ...planWithoutHash,
+      credentialBindings: planWithoutHash.credentialBindings.map((binding) => {
+        const { credentialHash: _credentialHash, ...bindingWithoutHash } = binding;
+        return { ...bindingWithoutHash, credentialAvailable: false };
+      }),
+    };
+    const listSandboxes = vi.fn(() => ({
+      sandboxes: [
+        { name: "other", messaging: { plan: createPlan("other", "discord", "other-hash") } },
+      ],
+    }));
     const deps = createDeps({
-      readMessagingPlanFromEnv: vi.fn(() => createPlan("demo", "discord", undefined)),
-      isNonInteractive: vi.fn(() => true),
-      registry: {
-        listSandboxes: vi.fn(() => ({
-          sandboxes: [
-            { name: "other", messaging: { plan: createPlan("other", "discord", undefined) } },
-          ],
-        })),
-      },
+      readMessagingPlanFromEnv: vi.fn(() => incompletePlan),
+      isNonInteractive: vi.fn(() => nonInteractive),
+      registry: { listSandboxes },
     });
 
     await expect(prepareSandboxMessagingPreflight(baseInput, deps)).rejects.toMatchObject({
       code: 1,
     });
-    expect(deps.error).toHaveBeenCalledWith(expect.stringContaining("channels stop <channel>"));
+    expect(deps.error).toHaveBeenCalledWith(
+      expect.stringContaining("credential hashes are unavailable for discord"),
+    );
+    expect(listSandboxes).not.toHaveBeenCalled();
     expect(deps.promptYesNoOrDefault).not.toHaveBeenCalled();
+    expect(deps.prepareCreateSandboxMessaging).not.toHaveBeenCalled();
   });
 
-  it("aborts a second Slack Socket Mode sandbox on the same gateway", async () => {
+  it("aborts a second Slack Socket Mode sandbox on the same gateway (#7808)", async () => {
     let gatewayName = "startup-gateway";
     const deps = createDeps({
       gatewayName: vi.fn(() => gatewayName),
@@ -239,7 +257,7 @@ describe("prepareSandboxMessagingPreflight", () => {
     await expect(prepareSandboxMessagingPreflight(baseInput, deps)).rejects.toMatchObject({
       code: 1,
     });
-    expect(deps.log).toHaveBeenCalledWith(
+    expect(deps.error).toHaveBeenCalledWith(
       expect.stringContaining("Slack Socket Mode is already enabled for sandbox 'other'"),
     );
     expect(deps.error).toHaveBeenCalledWith(

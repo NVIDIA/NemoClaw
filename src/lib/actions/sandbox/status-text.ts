@@ -9,6 +9,7 @@ import { shellQuote } from "../../core/shell-quote";
 import { formatInferenceRouteDriftForDisplay } from "../../inference/config";
 import type { ProviderHealthStatus } from "../../inference/health";
 import * as nim from "../../inference/nim";
+import { getEffectiveReasoningEffort } from "../../inference/selection";
 import { getBaselineExclusionRuntimeStatus } from "../../policy";
 import {
   BASELINE_EXCLUSION_SUPPORT_IMPACT,
@@ -23,7 +24,7 @@ import {
 } from "../../state/sandbox-session";
 import type { SandboxDockerRuntime } from "./docker-health";
 import type { SandboxGatewayState } from "./gateway-state";
-import { isSandboxGatewayRunningForStatus } from "./process-recovery";
+import { isSandboxGatewayRunningForStatus } from "./status/process-recovery";
 import {
   isInferenceHealthFailing,
   resolveSandboxStatusDcodeAutoApprovalMode,
@@ -246,8 +247,8 @@ function printActiveSessions(sandboxName: string): void {
     const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(openshell));
     if (!sessionResult.detected) return;
     const count = sessionResult.sessions.length;
-    const connected = count > 0 ? `${G}yes${R} (${count} session${count > 1 ? "s" : ""})` : "no";
-    console.log(`    Connected: ${connected}`);
+    const sessions = count > 0 ? `${G}${count}${R}` : "none";
+    console.log(`    SSH sessions: ${sessions}`);
   } catch {
     // Session detection is informational; an unavailable OpenShell client must
     // not suppress the primary sandbox and gateway health report.
@@ -344,6 +345,8 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
   console.log(`  Sandbox: ${sb.name}`);
   console.log(`    Model:    ${currentModel}`);
   console.log(`    Provider: ${currentProvider}`);
+  const reasoningEffort = getEffectiveReasoningEffort(sb);
+  if (reasoningEffort) console.log(`    Reasoning effort: ${reasoningEffort}`);
   printInferenceRouteDrift(context.routeDrift, sb.name);
   printInferenceStatus(context);
   const inferenceExitCode = inferenceHealthExitCode(context.inferenceHealth);

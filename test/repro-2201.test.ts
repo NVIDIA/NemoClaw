@@ -244,7 +244,7 @@ if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig
 if (a[0]==="sandbox" && a[1]==="delete")     { fs.writeFileSync(deleteMarker, "deleted\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="get") {
   if (fs.existsSync(deleteMarker)) { process.stderr.write("Error: sandbox ${sandboxName} not found\\n"); process.exit(1); }
-  process.stdout.write("Name: ${sandboxName}\\nPhase: Ready\\n");
+  process.stdout.write("Name: ${sandboxName}\\nId: sbx-2201a7c3f5\\nPhase: Ready\\n");
   process.exit(0);
 }
 process.exit(0);

@@ -10,7 +10,6 @@ import {
   normalizeSession,
   type Session,
   type SessionUpdates,
-  sanitizeFailure,
 } from "../../state/onboard-session";
 import type { OnboardFlowContext, OnboardFlowPhaseResult } from "./flow-context";
 import { onboardFlowPhaseResult } from "./flow-context";
@@ -39,6 +38,7 @@ function context(patch: Partial<Context> = {}): Context {
     hermesToolGateways: [],
     preferredInferenceApi: null,
     compatibleEndpointReasoning: null,
+    compatibleEndpointReasoningEffort: null,
     nimContainer: null,
     webSearchConfig: null,
     webSearchSupported: false,
@@ -81,19 +81,13 @@ function createRuntime(initialSession: Session = createSession()) {
         Object.assign(current, filterSafeUpdates(updates));
         return current;
       }),
-    markStepCompleteRecordOnly: (_stepName, updates: SessionUpdates = {}) =>
-      updateSession((current) => {
-        Object.assign(current, filterSafeUpdates(updates));
-        return current;
-      }),
     markStepSkipped: () => cloneSession(session),
     markStepFailed: (stepName, message) =>
       updateSession((current) => {
-        current.status = "failed";
-        current.failure = sanitizeFailure({ step: stepName, message, recordedAt: "now" });
+        current.steps[stepName].status = "failed";
+        current.steps[stepName].error = message ?? null;
         return current;
       }),
-    markStepFailedRecordOnly: () => cloneSession(session),
     completeSession: (updates: SessionUpdates = {}) =>
       updateSession((current) => {
         Object.assign(current, filterSafeUpdates(updates));

@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -149,7 +151,6 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(policy).toContain(
       "Dispatch independent default-suite and unconditional explicit-only work concurrently",
     );
-    expect(policy).toContain("Do not serialize unrelated evidence behind that blocker");
     expect(policy).toContain("discard the ledger and its exceptions");
     expect(policy).toContain("actual selector inputs");
     expect(release).toContain('"dispatchJson"');
@@ -173,7 +174,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(evening).toContain(
       "Each missing test result requires its own itemized maintainer exception",
     );
-    expect(evening).toContain("Missing or invalid qualification requires a separate");
+    expect(evening).toContain("Missing or invalid Launchable E2E evidence requires a separate");
     expect(evening).toContain("Tag the confirmed release commit with `vX.Y.Z`");
     expect(evening).not.toContain("tag `main`");
     expect(dailyFlow).toContain("capture the candidate SHA and review every E2E test");
@@ -189,7 +190,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
 
     expect(e2e).toContain("include_staging_brev_launchable=true");
     expect(e2e).toContain("Exact staging Brev Launchable");
-    expect(e2e).toContain("qualification.json");
+    expect(e2e).toContain("launchable-e2e.json");
     expect(e2e).toContain("cleanup.json");
     expect(e2e).toContain("dispatch.json");
     expect(e2e).toContain("If the release candidate SHA changes");
@@ -205,19 +206,15 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(release).toContain("cleanup evidence that reports the qualified workspace as `ABSENT`");
     expect(release).toContain("a separate itemized maintainer exception for each test");
     expect(release).toContain(
-      "a separate itemized maintainer exception for missing or invalid exact Brev Launchable qualification",
+      "a separate itemized maintainer exception for missing or invalid exact Brev Launchable E2E evidence",
     );
     expect(release).toContain("when accepted full-mode exact Brev evidence exists");
     expect(release.indexOf("load `nemoclaw-maintainer-e2e` and dispatch full mode")).toBeLessThan(
       release.indexOf("Ask the maintainer to paste this phrase"),
     );
     expect(evening).toContain("load `nemoclaw-maintainer-e2e`");
-    expect(evening).toContain(
-      "When the protected qualification readiness variable is `true`, run full mode",
-    );
-    expect(evening).toContain(
-      "When readiness is disabled, run the ordinary default and unconditional explicit-only groups",
-    );
+    expect(evening).toContain("Run full mode if that SHA has no applicable exact Brev");
+    expect(evening).not.toContain("readiness variable");
     expect(policy).toContain(
       "For full-mode exact Brev evidence, require one workflow run for the candidate SHA",
     );
@@ -227,7 +224,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(policy).toContain("trusted dispatch receipt");
     expect(policy).toContain("Each test without a successful execution requires its own");
     expect(policy).toContain(
-      "Missing or invalid exact Brev Launchable qualification requires a separate",
+      "Missing or invalid exact Brev Launchable E2E evidence requires a separate",
     );
     expect(policy).toContain("No release-note-only delta exception is currently defined");
     expect(skillsGuide).toContain("`nemoclaw-maintainer-e2e`");
@@ -326,6 +323,163 @@ describe("maintainer skills follow canonical workflow policy", () => {
     );
   });
 
+  it("requires replacement PRs to preserve transferred contributor attribution", () => {
+    const policy = read(
+      ".agents/skills/nemoclaw-maintainer-policies/references/workflow-policy.md",
+    );
+    const comparator = read(".agents/skills/nemoclaw-maintainer-pr-comparator/SKILL.md");
+    const tiebreakers = read(".agents/skills/nemoclaw-maintainer-pr-comparator/tiebreakers.md");
+    const verdict = read(".agents/skills/nemoclaw-maintainer-pr-comparator/templates/verdict.md");
+    const finder = read(".agents/skills/nemoclaw-maintainer-find-review-pr/SKILL.md");
+    const parser = read(
+      ".agents/skills/nemoclaw-maintainer-pr-comparator/scripts/parse-supersession.sh",
+    );
+
+    expect(policy).toContain("Supersedes #<number>");
+    expect(policy).toContain("Preserve the source contributor as the Git author");
+    expect(policy).toContain("Co-authored-by: Name <email>");
+    expect(policy).toContain("Use the exact author name and email from the source commit");
+    expect(policy).toContain("Never guess or substitute an attribution identity");
+    expect(policy).toContain("Never add or copy a DCO declaration");
+    expect(policy).toContain("leave the winner unset and ask the contributor");
+    const sourceDcoPolicyIndex = policy.indexOf("Confirm that the source PR already contains");
+    const transferPolicyIndex = policy.indexOf("After both checks pass");
+    expect(sourceDcoPolicyIndex).toBeGreaterThanOrEqual(0);
+    expect(transferPolicyIndex).toBeGreaterThan(sourceDcoPolicyIndex);
+    expect(policy).toContain("does not require co-authorship");
+    expect(policy).toContain("does not replace attribution in the merged PR history");
+
+    expect(comparator).toContain("../nemoclaw-maintainer-policies/references/workflow-policy.md");
+    expect(comparator).toContain("They do not rank a candidate");
+    expect(comparator).toContain("`transferred`");
+    expect(comparator).toContain("`unclear`");
+    expect(comparator).toContain("leave `winner` null");
+    expect(finder).toContain("../nemoclaw-maintainer-pr-comparator/scripts/parse-supersession.sh");
+    for (const pattern of [
+      "supersed[a-z]*",
+      "replac[a-z]*",
+      "clos[a-z]* in favor of",
+      "fold[a-z]* in",
+    ]) {
+      expect(parser).toContain(pattern);
+      expect(comparator).toContain(pattern);
+      expect(finder).toContain(pattern);
+    }
+    for (const example of [
+      "superseded by #N",
+      "replaced by #N",
+      "closed in favor of #N",
+      "folded into #N",
+    ]) {
+      expect(comparator).toContain(example);
+      expect(finder).toContain(example);
+    }
+    expect(comparator).toContain("A `follow-up to #N` statement is a related-PR signal");
+    expect(finder).toContain("A `follow-up to #N` statement is a related-PR signal");
+
+    expect(tiebreakers).toContain("it does not rank a candidate");
+    expect(tiebreakers).not.toContain("**Supersession.**");
+    expect(tiebreakers).toContain("rerun the comparator before selecting a winner");
+
+    expect(verdict).toContain("git cherry-pick -S -x <source-sha>");
+    expect(verdict).toContain("Co-authored-by: Name <email>");
+    expect(verdict).toContain("using the verified source-commit identity");
+    expect(verdict).toContain("run the comparator again on the updated SHA");
+    expect(verdict).toContain("contains the contributor's `Signed-off-by:` declaration");
+    expect(verdict).toContain("Do not add or copy that declaration");
+    expect(verdict).toContain("Keep the replacement author's own DCO declaration");
+    expect(verdict).toContain("every replacement commit appears as `Verified` in GitHub");
+
+    const sourceDcoIndex = verdict.indexOf("Confirm that PR #B contains the contributor's");
+    const identityIndex = verdict.indexOf(
+      "Read the exact author name and email from the source commit",
+    );
+    const transferIndex = verdict.indexOf("Transfer the test from PR #B before merge");
+    const rerunIndex = verdict.indexOf("run the comparator again on the updated SHA");
+    const mergeIndex = verdict.indexOf("Merge PR #A only if the new verdict selects it");
+    const closeIndex = verdict.indexOf("After PR #A merges, close PR #B");
+
+    expect(sourceDcoIndex).toBeGreaterThanOrEqual(0);
+    expect(identityIndex).toBeGreaterThanOrEqual(0);
+    expect(transferIndex).toBeGreaterThan(sourceDcoIndex);
+    expect(transferIndex).toBeGreaterThan(identityIndex);
+    expect(rerunIndex).toBeGreaterThan(transferIndex);
+    expect(mergeIndex).toBeGreaterThan(rerunIndex);
+    expect(closeIndex).toBeGreaterThan(mergeIndex);
+
+    expect(finder).toContain("../nemoclaw-maintainer-policies/references/workflow-policy.md");
+    expect(finder).toContain("This skill reports recommendations only");
+    expect(finder).toContain(
+      "Do not recommend closing the source PR until another authorized workflow",
+    );
+    expect(finder).toContain("merged the selected target");
+    expect(finder).toContain("After the updated verdict selects #1416 and #1416 merges");
+  });
+
+  it("orients active and passive supersession statements", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "parse-supersession-"));
+    const bin = path.join(tmp, "bin");
+    const mockGh = path.join(bin, "gh");
+    fs.mkdirSync(bin);
+    fs.writeFileSync(
+      mockGh,
+      [
+        "#!/usr/bin/env bash",
+        'case "$3" in',
+        '  100) printf "%s" "${PR_BODY_100:-}" ;;',
+        '  200) printf "%s" "${PR_BODY_200:-}" ;;',
+        "esac",
+      ].join("\n"),
+    );
+    fs.chmodSync(mockGh, 0o755);
+
+    const parser = path.join(
+      root,
+      ".agents/skills/nemoclaw-maintainer-pr-comparator/scripts/parse-supersession.sh",
+    );
+    const scenarios = [
+      { statement: "Supersedes #200", superseder: 100, superseded: 200 },
+      { statement: "Superseded by #200", superseder: 200, superseded: 100 },
+      { statement: "Replaces #200", superseder: 100, superseded: 200 },
+      { statement: "Replaced by #200", superseder: 200, superseded: 100 },
+      { statement: "Closes in favor of #200", superseder: 200, superseded: 100 },
+      { statement: "Closed in favor of #200", superseder: 200, superseded: 100 },
+      { statement: "Folds in #200", superseder: 100, superseded: 200 },
+      { statement: "Folded into #200", superseder: 200, superseded: 100 },
+      {
+        statement: "Supersedes #200\nReplaces #200",
+        superseder: 100,
+        superseded: 200,
+      },
+    ];
+
+    try {
+      for (const scenario of scenarios) {
+        const result = spawnSync("bash", [parser, "100", "200"], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+            PR_BODY_100: scenario.statement,
+            PR_BODY_200: "",
+          },
+        });
+
+        expect(result.status).toBe(0);
+        expect(JSON.parse(result.stdout)).toEqual({
+          edges: [
+            {
+              superseder: scenario.superseder,
+              superseded: scenario.superseded,
+            },
+          ],
+        });
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("keeps PR workflow writes behind their safety checks", () => {
     const createPr = read(".agents/skills/nemoclaw-contributor-create-pr/SKILL.md");
     const judgment = read(
@@ -338,11 +492,13 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(createPr).toContain("--body-file /tmp/nemoclaw-pr-body.md");
     expect(createPr).not.toContain('--body "..."');
     expect(judgment).toContain("{candidate_comments}");
-    expect(
-      mergeGate.match(
-        /the PR is open and that the PR SHA, base SHA, and coordination identity still match/gu,
-      ),
-    ).toHaveLength(2);
+    expect(mergeGate).toContain(
+      "The first attempt requires the triggering actor to have current `maintain` or `admin` access.",
+    );
+    expect(mergeGate).toContain(
+      "Immediately before dispatch, it confirms that the PR SHA, base SHA, head repository, and coordination identity still match.",
+    );
+    expect(mergeGate).toContain("Approval cannot record success by itself.");
     expect(salvage).toContain("`headRepository.nameWithOwner` is `NVIDIA/NemoClaw`");
     expect(salvage).toContain("git push origin <local-branch>:<headRefName>");
     expect(salvage).toContain("If `maintainerCanModify` is false, do not push");

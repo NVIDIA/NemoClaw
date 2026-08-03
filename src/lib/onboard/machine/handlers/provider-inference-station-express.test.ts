@@ -19,6 +19,7 @@ describe("Station Express provider binding (#7048)", () => {
       hermesToolGateways: [],
       preferredInferenceApi: "openai-completions",
       compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
       nimContainer: null,
       vllmModelIdentity: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
     }));
@@ -78,6 +79,7 @@ describe("Station Express provider binding (#7048)", () => {
           hermesToolGateways: [],
           preferredInferenceApi: "openai-completions",
           compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
           nimContainer: null,
           vllmModelIdentity: checkpointModel,
         };
