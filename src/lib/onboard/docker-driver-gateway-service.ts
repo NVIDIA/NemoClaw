@@ -231,8 +231,12 @@ export function checkUpstreamGatewayVersion(
   binaryPath: string | null,
   opts: Pick<
     OpenShellGatewayUserServiceOptions,
-    "env" | "getUpstreamGatewayVersion" | "getUpstreamGatewayVersionBounds" | "platform"
-  > & { spawnSyncImpl?: SpawnSyncLike } = {},
+    | "env"
+    | "getUpstreamGatewayVersion"
+    | "getUpstreamGatewayVersionBounds"
+    | "platform"
+    | "spawnSyncImpl"
+  > = {},
 ): UpstreamGatewayVersionVerdict {
   if (!binaryPath) return { supported: true };
   const readVersion =
