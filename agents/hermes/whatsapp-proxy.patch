@@ -35,6 +35,76 @@ index 4b5733d16..22f1ec3e1 100644
      logger,
      printQRInTerminal: false,
      browser: ['Hermes Agent', 'Chrome', '120.0'],
+diff --git a/scripts/whatsapp-bridge/proxy-agent.test.mjs b/scripts/whatsapp-bridge/proxy-agent.test.mjs
+new file mode 100644
+index 000000000..65b7327a1
+--- /dev/null
++++ b/scripts/whatsapp-bridge/proxy-agent.test.mjs
+@@ -0,0 +1,64 @@
++import { strict as assert } from 'node:assert';
++import { after, mock, test } from 'node:test';
++
++const originalArgv = [...process.argv];
++const originalHttpsProxy = process.env.HTTPS_PROXY;
++const socketOptions = [];
++
++process.argv.push('--pair-only', '--pair-json');
++
++mock.module('@whiskeysockets/baileys', {
++  namedExports: {
++    DisconnectReason: { loggedOut: 401 },
++    decryptPollVote: () => undefined,
++    downloadMediaMessage: async () => Buffer.alloc(0),
++    fetchLatestBaileysVersion: async () => ({ version: [2, 3000, 0] }),
++    getAggregateVotesInPollMessage: () => [],
++    getKeyAuthor: () => '',
++    jidNormalizedUser: (value) => value,
++    makeWASocket: (options) => {
++      socketOptions.push(options);
++      return { ev: { on() {} }, user: {} };
++    },
++    useMultiFileAuthState: async () => ({ state: {}, saveCreds() {} }),
++  },
++});
++
++after(() => {
++  process.argv.splice(0, process.argv.length, ...originalArgv);
++  if (originalHttpsProxy === undefined) {
++    delete process.env.HTTPS_PROXY;
++  } else {
++    process.env.HTTPS_PROXY = originalHttpsProxy;
++  }
++});
++
++async function loadBridge(name) {
++  await import(`./bridge.js?proxy-agent-test=${name}`);
++  for (let attempt = 0; attempt < 20 && socketOptions.length === 0; attempt += 1) {
++    await new Promise((resolve) => setImmediate(resolve));
++  }
++  return socketOptions.at(-1);
++}
++
++test('passes the HTTPS proxy agent to both Baileys transport paths', async () => {
++  process.env.HTTPS_PROXY = 'http://127.0.0.1:3128';
++  const options = await loadBridge('configured');
++
++  assert.ok(options.agent);
++  assert.strictEqual(options.fetchAgent, options.agent);
++  assert.equal(options.agent.proxy.href, 'http://127.0.0.1:3128/');
++});
++
++test('leaves both Baileys transport paths unset without HTTPS_PROXY', async () => {
++  delete process.env.HTTPS_PROXY;
++  const priorCalls = socketOptions.length;
++  await import('./bridge.js?proxy-agent-test=unset');
++  for (let attempt = 0; attempt < 20 && socketOptions.length === priorCalls; attempt += 1) {
++    await new Promise((resolve) => setImmediate(resolve));
++  }
++  const options = socketOptions.at(-1);
++
++  assert.equal(options.agent, undefined);
++  assert.equal(options.fetchAgent, undefined);
++});
 diff --git a/scripts/whatsapp-bridge/package-lock.json b/scripts/whatsapp-bridge/package-lock.json
 index b3043d288..06550adcc 100644
 --- a/scripts/whatsapp-bridge/package-lock.json

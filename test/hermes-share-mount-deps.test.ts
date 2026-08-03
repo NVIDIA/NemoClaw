@@ -195,11 +195,11 @@ function runHermesInstallLayer(
     "      return 42",
     "    }",
     '    mkdir -p "${prefix}/node_modules"',
-    '    if [ "$prefix" = "scripts/whatsapp-bridge" ]; then',
-    '      mkdir -p "$prefix/node_modules/https-proxy-agent"',
-    "      printf '%s\\n' 'class HttpsProxyAgent { constructor(url) { this.proxy = new URL(url); } } module.exports = { HttpsProxyAgent };' > \"$prefix/node_modules/https-proxy-agent/index.js\"",
-    "    fi",
     "  fi",
+    "}",
+    "node() {",
+    '  printf "node %s\\n" "$*" >> "$call_log"',
+    '  [ "$*" = "--experimental-test-module-mocks --test scripts/whatsapp-bridge/proxy-agent.test.mjs" ]',
     "}",
     'rm() { printf "rm %s\\n" "$*" >> "$call_log"; command rm "$@"; }',
     'ln() { printf "ln %s\\n" "$*" >> "$call_log"; }',
@@ -530,7 +530,7 @@ describe("Hermes share mount package parity (#2947)", () => {
     }
   });
 
-  it("pre-installs the WhatsApp bridge node_modules with npm ci when a lockfile ships (#4764)", () => {
+  it("pre-installs the WhatsApp bridge and runs its proxy regression test (#4764, #8087)", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wa-bridge-"));
     const bridgeNodeModules = path.join(
@@ -553,6 +553,9 @@ describe("Hermes share mount package parity (#2947)", () => {
       // never needs to mkdir node_modules under read-only /opt/hermes.
       expect(calls).toContain(
         "npm ci --prefix scripts/whatsapp-bridge --prefer-offline --no-audit --no-fund",
+      );
+      expect(calls).toContain(
+        "node --experimental-test-module-mocks --test scripts/whatsapp-bridge/proxy-agent.test.mjs",
       );
       expect(fs.existsSync(bridgeNodeModules)).toBe(true);
       expect(fs.existsSync(webNodeModules)).toBe(false);

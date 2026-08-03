@@ -496,7 +496,7 @@ RUN set -eu; \
     && bridge_dir=scripts/whatsapp-bridge \
     && if [ -f "${bridge_dir}/package-lock.json" ]; then \
         npm ci --prefix "${bridge_dir}" --prefer-offline --no-audit --no-fund; \
-        node -e 'const { HttpsProxyAgent } = require("./scripts/whatsapp-bridge/node_modules/https-proxy-agent"); const agent = new HttpsProxyAgent("http://127.0.0.1:3128"); if (agent.proxy.href !== "http://127.0.0.1:3128/") process.exit(1);'; \
+        node --experimental-test-module-mocks --test "${bridge_dir}/proxy-agent.test.mjs"; \
     elif [ -f "${bridge_dir}/package.json" ]; then \
         echo "Skipping optional Hermes bridge ${bridge_dir}: package-lock.json not found"; \
     else \
