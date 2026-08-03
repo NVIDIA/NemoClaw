@@ -55,7 +55,7 @@ describe("source architecture budget (#7692)", () => {
     expect(evaluateSourceArchitectureBudget(report, parsed)).toEqual([]);
   });
 
-  // source-shape-contract: compatibility -- Removed step-mutation APIs must stay absent so OnboardRuntime remains the only persisted machine transition authority
+  // source-shape-contract: compatibility -- Removed step-mutation APIs must stay absent so step helpers cannot persist machine transitions
   test("keeps removed step mutation APIs out of production source (#7703)", () => {
     const productionSources = ["src/lib/onboard", "src/lib/state"]
       .flatMap((directory) => listProductionTypeScriptFiles(path.join(REPO_ROOT, directory)))
