@@ -9,10 +9,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createFileDockerManagedBootstrapJournalStore,
+  DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION,
   DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY,
   DOCKER_MANAGED_BOOTSTRAP_JOURNAL_SCHEMA_VERSION,
+  type DockerManagedBootstrapFinalizationRecord,
   type DockerManagedBootstrapJournal,
+  parseDockerManagedBootstrapFinalizationRecord,
   parseDockerManagedBootstrapJournal,
+  sameDockerManagedBootstrapReceipt,
+  serializeDockerManagedBootstrapFinalizationRecord,
   serializeDockerManagedBootstrapJournal,
 } from "./docker-journal";
 
@@ -22,11 +27,13 @@ const journal = Object.freeze({
   schemaVersion: DOCKER_MANAGED_BOOTSTRAP_JOURNAL_SCHEMA_VERSION,
   phase: "staged",
   bootstrapIdentity: IDENTITY,
+  providerId: "docker",
   sandbox: {
     sandboxName: "alpha",
     sandboxId: "sandbox-alpha",
     driverId: "docker",
   },
+  planFingerprint: "9".repeat(64),
   profileFingerprint: "2".repeat(64),
   imageReference: `registry.example/image@sha256:${"3".repeat(64)}`,
   runtimeImageContentId: `sha256:${"4".repeat(64)}`,
@@ -37,7 +44,59 @@ const journal = Object.freeze({
   backupName: "openshell-alpha-backup",
   originalSpecHash: "7".repeat(64),
   replacementSpecHash: "8".repeat(64),
+  rollbackTargetRuntimeId: "5".repeat(64),
+  rollbackTargetSpecHash: "7".repeat(64),
+  preparationReceipt: {
+    schemaVersion: 1,
+    sandbox: {
+      sandboxName: "alpha",
+      sandboxId: "sandbox-alpha",
+      driverId: "docker",
+    },
+    bootstrapIdentity: IDENTITY,
+    authorityFingerprint: "a".repeat(64),
+    recordId: "prepared-alpha",
+    recordedAt: "2026-07-31T19:59:59.000Z",
+  },
+  commitReceipt: null,
 } satisfies DockerManagedBootstrapJournal);
+const finalization = Object.freeze({
+  schemaVersion: DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION,
+  phase: "committed",
+  bootstrapIdentity: IDENTITY,
+  providerId: "docker",
+  sandbox: journal.sandbox,
+  planFingerprint: journal.planFingerprint,
+  profileFingerprint: journal.profileFingerprint,
+  imageReference: journal.imageReference,
+  commitReceipt: {
+    schemaVersion: 1,
+    sandbox: journal.sandbox,
+    runtimeId: journal.replacementRuntimeId,
+    image: {
+      repository: "registry.example/image",
+      manifestDigest: `sha256:${"3".repeat(64)}` as const,
+    },
+    runtimeImageContentId: journal.runtimeImageContentId,
+    originalSpecHash: journal.originalSpecHash,
+    replacementSpecHash: journal.replacementSpecHash,
+    profileFingerprint: journal.profileFingerprint,
+    bootstrapIdentity: IDENTITY,
+    transactionPending: false,
+    completedAt: "2026-07-31T20:00:00.000Z",
+  },
+  cleanupReceipt: {
+    schemaVersion: 1,
+    sandbox: journal.sandbox,
+    bootstrapIdentity: IDENTITY,
+    outcome: "committed",
+    restoredRuntimeId: null,
+    restoredSpecHash: null,
+    heldWorkloadRemoved: false,
+    alreadyRolledBack: false,
+    finalizedAt: "2026-07-31T20:00:01.000Z",
+  },
+} satisfies DockerManagedBootstrapFinalizationRecord);
 
 function readPinnedPrivateFile(target: string): { readonly mode: number; readonly text: string } {
   const descriptor = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
@@ -78,6 +137,9 @@ describe("Docker managed bootstrap journal", () => {
     );
 
     expect(store.transition(IDENTITY, "staged", "cutover").phase).toBe("cutover");
+    expect(store.recordCompletion(IDENTITY, finalization.commitReceipt).commitReceipt).toEqual(
+      finalization.commitReceipt,
+    );
     expect(store.transition(IDENTITY, "cutover", "shared-state-committed").phase).toBe(
       "shared-state-committed",
     );
@@ -171,5 +233,98 @@ describe("Docker managed bootstrap journal", () => {
     expect(
       serializeDockerManagedBootstrapJournal(Object.freeze({ ...journal, phase: "staged" })),
     ).toBe(`${JSON.stringify(journal)}\n`);
+  });
+
+  it("compares equivalent receipts independent of property insertion order", () => {
+    const preparation = journal.preparationReceipt;
+    const reorderedPreparation = {
+      recordedAt: preparation.recordedAt,
+      recordId: preparation.recordId,
+      authorityFingerprint: preparation.authorityFingerprint,
+      bootstrapIdentity: preparation.bootstrapIdentity,
+      sandbox: {
+        driverId: preparation.sandbox.driverId,
+        sandboxId: preparation.sandbox.sandboxId,
+        sandboxName: preparation.sandbox.sandboxName,
+      },
+      schemaVersion: preparation.schemaVersion,
+    } satisfies typeof preparation;
+    expect(
+      sameDockerManagedBootstrapReceipt("preparation", preparation, reorderedPreparation),
+    ).toBe(true);
+
+    const completion = finalization.commitReceipt;
+    const reorderedCompletion = {
+      completedAt: completion.completedAt,
+      transactionPending: completion.transactionPending,
+      bootstrapIdentity: completion.bootstrapIdentity,
+      profileFingerprint: completion.profileFingerprint,
+      replacementSpecHash: completion.replacementSpecHash,
+      originalSpecHash: completion.originalSpecHash,
+      runtimeImageContentId: completion.runtimeImageContentId,
+      image: {
+        manifestDigest: completion.image.manifestDigest,
+        repository: completion.image.repository,
+      },
+      runtimeId: completion.runtimeId,
+      sandbox: {
+        driverId: completion.sandbox.driverId,
+        sandboxId: completion.sandbox.sandboxId,
+        sandboxName: completion.sandbox.sandboxName,
+      },
+      schemaVersion: completion.schemaVersion,
+    } satisfies typeof completion;
+    expect(sameDockerManagedBootstrapReceipt("completion", completion, reorderedCompletion)).toBe(
+      true,
+    );
+  });
+
+  it("reloads exact terminal receipts from a new journal store", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
+    roots.push(root);
+    const first = createFileDockerManagedBootstrapJournalStore(root);
+    first.create(journal);
+
+    first.recordFinalization(finalization);
+    const restarted = createFileDockerManagedBootstrapJournalStore(root);
+    expect(restarted.loadFinalization(IDENTITY)).toEqual(finalization);
+    expect(
+      parseDockerManagedBootstrapFinalizationRecord(
+        serializeDockerManagedBootstrapFinalizationRecord(finalization),
+      ),
+    ).toEqual(finalization);
+    expect(() =>
+      restarted.recordFinalization({
+        ...finalization,
+        cleanupReceipt: { ...finalization.cleanupReceipt, finalizedAt: "2026-07-31T20:00:02.000Z" },
+      }),
+    ).toThrow("finalization record changed");
+    expect(() =>
+      restarted.recordFinalization({
+        ...finalization,
+        phase: "rolled-back",
+        commitReceipt: null,
+        cleanupReceipt: { ...finalization.cleanupReceipt, outcome: "rolled-back" },
+      }),
+    ).toThrow("finalization record changed");
+  });
+
+  it("reloads the exact completion receipt from a new journal store", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
+    roots.push(root);
+    const first = createFileDockerManagedBootstrapJournalStore(root);
+    first.create(journal);
+    first.transition(IDENTITY, "staged", "cutover");
+    const completed = first.recordCompletion(IDENTITY, finalization.commitReceipt);
+    expect(completed.commitReceipt).toEqual(finalization.commitReceipt);
+
+    const restarted = createFileDockerManagedBootstrapJournalStore(root);
+    expect(restarted.recordCompletion(IDENTITY, finalization.commitReceipt)).toEqual(completed);
+    expect(() =>
+      restarted.recordCompletion(IDENTITY, {
+        ...finalization.commitReceipt,
+        completedAt: "2026-07-31T20:00:02.000Z",
+      }),
+    ).toThrow("completion receipt changed");
   });
 });
