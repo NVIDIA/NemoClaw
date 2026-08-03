@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -428,17 +429,43 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def write_private_output_atomically(output: Path, payload: str) -> None:
+    """Write a private report without replacing an existing path."""
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{output.name}.", suffix=".tmp", dir=output.parent
+    )
+    temporary = Path(temporary_name)
+    descriptor_open = True
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output_file:
+            descriptor_open = False
+            output_file.write(payload)
+            output_file.flush()
+            os.fsync(output_file.fileno())
+        try:
+            os.link(temporary, output, follow_symlinks=False)
+        except FileExistsError as error:
+            raise SupplementError(
+                f"refusing to overwrite output path: {output}"
+            ) from error
+    finally:
+        if descriptor_open:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+
 def main() -> int:
     """Run the collector and write deterministic JSON."""
 
     try:
         args = parse_args()
         supplement = collect(args)
-        output = Path(args.output).expanduser().resolve()
+        output = Path(args.output).expanduser()
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(
-            json.dumps(supplement, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
+        write_private_output_atomically(
+            output, json.dumps(supplement, indent=2, sort_keys=True) + "\n"
         )
     except (OSError, SupplementError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)

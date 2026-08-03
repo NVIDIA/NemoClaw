@@ -13,7 +13,7 @@ const collector = path.join(
   root,
   ".agents",
   "skills",
-  "nemoclaw-contributor-update-hermes",
+  "nemoclaw-contributor-update-dependencies",
   "scripts",
   "collect-hermes-release-supplement.py",
 );
@@ -143,6 +143,7 @@ describe("Hermes CalVer release supplement", () => {
     const result = collect(testFixture);
 
     expect(result.status, String(result.stderr ?? "")).toBe(0);
+    expect(fs.statSync(testFixture.output).mode & 0o777).toBe(0o600);
     const supplement = JSON.parse(fs.readFileSync(testFixture.output, "utf8")) as {
       releaseEndpoints: Array<{
         tag: string;
@@ -201,6 +202,17 @@ describe("Hermes CalVer release supplement", () => {
         changedFileCount: 1,
       },
     ]);
+  });
+
+  it("does not replace an existing report", () => {
+    const testFixture = fixture();
+    fs.writeFileSync(testFixture.output, "keep me\n");
+
+    const result = collect(testFixture);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("refusing to overwrite output path");
+    expect(fs.readFileSync(testFixture.output, "utf8")).toBe("keep me\n");
   });
 
   it("fails when the authoritative stable list omits an endpoint", () => {
