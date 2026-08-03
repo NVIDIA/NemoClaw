@@ -450,7 +450,9 @@ export function shouldAuditTargetSourceGraph(
   trustedRepoRoot: string,
   targetRepoRoot: string,
 ): boolean {
-  return path.resolve(trustedRepoRoot) !== path.resolve(targetRepoRoot);
+  return (
+    fs.realpathSync(path.resolve(trustedRepoRoot)) !== fs.realpathSync(path.resolve(targetRepoRoot))
+  );
 }
 
 function main(): void {

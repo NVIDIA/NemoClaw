@@ -208,6 +208,7 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
           path.join(source, "package-lock.json"),
           destination,
           "https://registry.npmjs.org",
+          () => {},
         ),
       ).toBe(destination);
       expect(fs.readFileSync(path.join(destination, "package-lock.json"), "utf-8")).toBe(
@@ -311,9 +312,22 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     }
   });
 
-  it("audits a separate PR target and skips a same-tree target (#8116)", () => {
-    expect(shouldAuditTargetSourceGraph("/trusted/base", "/target/pr")).toBe(true);
-    expect(shouldAuditTargetSourceGraph("/trusted/base", "/trusted/base")).toBe(false);
+  it("audits a separate PR target and skips a symlink alias of the trusted tree (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-roots-"));
+    const trustedRoot = path.join(root, "trusted");
+    const trustedAlias = path.join(root, "trusted-alias");
+    const targetRoot = path.join(root, "target");
+    try {
+      fs.mkdirSync(trustedRoot);
+      fs.mkdirSync(targetRoot);
+      fs.symlinkSync(trustedRoot, trustedAlias, process.platform === "win32" ? "junction" : "dir");
+
+      expect(shouldAuditTargetSourceGraph(trustedRoot, targetRoot)).toBe(true);
+      expect(shouldAuditTargetSourceGraph(trustedRoot, trustedRoot)).toBe(false);
+      expect(shouldAuditTargetSourceGraph(trustedRoot, trustedAlias)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("audits the NemoClaw production graph, verifies signatures, and rejects blocking advisories (#8116)", () => {
