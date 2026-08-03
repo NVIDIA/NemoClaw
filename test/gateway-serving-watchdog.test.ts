@@ -244,7 +244,7 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
 
   it("recovers a gateway that answers /health with an HTTP error (#7377)", () => {
     // The process replies but is not serving sessions. Only 200/401 count as
-    // serving — the same definition the boot-time readiness gate uses.
+    // serving, matching the response requirement the boot-time readiness gate uses.
     const { result, fakeAlive, tmpDir } = runWatchdog({
       curlPlan: [0, "0:503", "0:503", "0:503", "0:503"],
       expectKill: true,
@@ -487,7 +487,7 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
       const bPid = stdout.match(/^B_PID=(\d+)$/m)?.[1];
       expect(bPid).toBeDefined();
       expect(result.stderr).not.toContain(
-        `gateway pid ${bPid} is alive but dropped its HTTP listener on port 18789`,
+        `gateway pid ${bPid} is alive but stopped serving port 18789`,
       );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });

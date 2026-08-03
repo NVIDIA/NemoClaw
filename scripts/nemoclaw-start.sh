@@ -4721,7 +4721,7 @@ start_plugin_registry_refresh() {
 # never killed; failed first boots stay the respawn loop's and HEALTHCHECK's
 # job.
 #
-# "Serving" uses the same definition as the boot-time readiness gate
+# "Serving" uses the same response requirement as the boot-time readiness gate
 # (openclaw_gateway_healthy): /health must answer 200 or 401. Before #7377 the
 # watchdog instead armed on "curl did not exit 7", so only an unbroken streak
 # of pure connection-refused probes could ever trigger recovery. Every other
