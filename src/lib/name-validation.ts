@@ -8,6 +8,7 @@ import {
   PROVIDER_NAME_ALLOWED_FORMAT as CANONICAL_PROVIDER_NAME_ALLOWED_FORMAT,
   PROVIDER_NAME_MAX_LENGTH as CANONICAL_PROVIDER_NAME_MAX_LENGTH,
   PROVIDER_NAME_VALID_PATTERN as CANONICAL_PROVIDER_NAME_VALID_PATTERN,
+  diagnosticPreview as canonicalDiagnosticPreview,
   isValidName as isCanonicalValidName,
   isValidProviderName as isCanonicalValidProviderName,
 } from "../../nemoclaw/dist/shared/sandbox-name.cjs";
@@ -23,6 +24,7 @@ export const NAME_VALID_PATTERN = CANONICAL_NAME_VALID_PATTERN;
 export const PROVIDER_NAME_MAX_LENGTH = CANONICAL_PROVIDER_NAME_MAX_LENGTH;
 export const PROVIDER_NAME_ALLOWED_FORMAT = CANONICAL_PROVIDER_NAME_ALLOWED_FORMAT;
 export const PROVIDER_NAME_VALID_PATTERN = CANONICAL_PROVIDER_NAME_VALID_PATTERN;
+export const diagnosticPreview = canonicalDiagnosticPreview;
 export const isValidName = isCanonicalValidName;
 export const isValidProviderName = isCanonicalValidProviderName;
 

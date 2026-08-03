@@ -28,6 +28,7 @@ import type {
 import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
 import { getTier } from "../../policy/tiers";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
+import type { PreservedEnvFile } from "../../state/preserved-env";
 import { type ToolDisclosure, toolDisclosureOrDefault } from "../../tool-disclosure";
 
 export type RebuildGpuOptOutEntry = {
@@ -123,6 +124,7 @@ export type RebuildRecreateOnboardOpts = {
   rebuildProviderReconfigure?: RebuildProviderReconfigureHandoff;
   providerRecoveryReceipt?: ProviderRecoveryReceipt;
   preparedImageRebuild?: PreparedImageRebuildHandoff;
+  rebuildPreservedEnv?: readonly PreservedEnvFile[];
   autoYes: boolean;
   toolDisclosure: ToolDisclosure;
   dcodeAutoApprovalMode: DcodeAutoApprovalMode;

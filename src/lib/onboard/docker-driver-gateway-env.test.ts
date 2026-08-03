@@ -292,7 +292,7 @@ describe("writeDockerGatewayDebEnvOverride", () => {
           skipSandboxBridgeReachability: false,
           startOpenShellGatewayUserService: (opts) => {
             opts?.prepareServiceEnv?.();
-            return { attempted: true, fallbackAllowed: false, started: true };
+            return { attempted: true, started: true };
           },
           verifySandboxBridgeGatewayReachableOrExit: async () => undefined,
         }),

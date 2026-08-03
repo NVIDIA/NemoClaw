@@ -16,5 +16,10 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "nemoclaw", "src/**/*.test.ts"]
+  "exclude": [
+    "node_modules",
+    "nemoclaw",
+    "src/**/*.test.ts",
+    "src/**/*-test-fixture.ts"
+  ]
 }
