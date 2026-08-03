@@ -28,7 +28,7 @@ It also strengthens backup sanitization, lays dormant provider-neutral foundatio
 - Migration and rebuild backups now apply the same recursive credential filtering and fail closed when sanitization, cleanup, or filesystem identity checks fail.
   NemoClaw deletes incomplete output when cleanup succeeds and reports when an incomplete backup remains.
   For more information, refer to [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots) and [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
-- CLI validation diagnostics now escape and bound rejected sandbox and agent names before writing them to terminals or CI logs.
+- CLI validation diagnostics now escape and bound rejected sandbox, MCP server, and credential environment names before writing them to terminals or CI logs.
   Snapshot helpers also validate maximum-size Base64 payloads with a bounded linear parser while rejecting malformed, non-canonical, oversized, or invalid UTF-8 content.
   For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
 - Runtime orchestration now uses a provider-neutral policy seam.
