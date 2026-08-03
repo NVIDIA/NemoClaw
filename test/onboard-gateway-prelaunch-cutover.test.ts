@@ -184,21 +184,28 @@ describe("Docker-driver gateway prelaunch cutover (#5968)", () => {
   });
 
   it("preserves the occupied-port gate after managed startup falls back (#8104)", async () => {
-    const harness = makeHarness({
-      listenerPids: [],
-      scanComplete: true,
-      pidFileGatewayPid: null,
-      postReapPortAvailable: false,
-    });
+    let listenerPids = [4242];
+    let harness: ReturnType<typeof makeHarness> | undefined;
 
     await expect(
       runDockerDriverGatewayManagedFallback(
-        async () => false,
-        () => harness.run(),
+        async () => {
+          listenerPids = [];
+          return false;
+        },
+        () => {
+          harness = makeHarness({
+            listenerPids,
+            scanComplete: true,
+            pidFileGatewayPid: null,
+            postReapPortAvailable: false,
+          });
+          return harness.run();
+        },
       ),
     ).rejects.toThrow("gateway port remains occupied");
-    expect(harness.events).toContainEqual({ type: "prelaunch-reap", extraPids: [] });
-    expect(harness.events.some((event) => event.type === "spawn-fresh")).toBe(false);
+    expect(harness?.events).toContainEqual({ type: "prelaunch-reap", extraPids: [] });
+    expect(harness?.events.some((event) => event.type === "spawn-fresh")).toBe(false);
   });
 
   it("never includes an unobserved pid-file process in port-scoped cleanup", async () => {

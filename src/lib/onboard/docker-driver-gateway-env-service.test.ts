@@ -130,7 +130,14 @@ describe("package-managed Docker-driver gateway env service", () => {
           },
           verifySandboxBridgeGatewayReachableOrExit: async () => undefined,
         }),
-      ).rejects.toThrow("Refusing to write symlinked OpenShell gateway env file");
+      ).rejects.toMatchObject({
+        name: "OpenShellGatewayServiceEnvironmentError",
+        cause: expect.objectContaining({
+          message: expect.stringContaining(
+            "Refusing to write symlinked OpenShell gateway env file",
+          ),
+        }),
+      });
 
       expect(fs.readFileSync(targetFile, "utf-8")).toBe("KEEP_ME=1\n");
     } finally {

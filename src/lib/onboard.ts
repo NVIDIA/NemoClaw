@@ -650,6 +650,7 @@ const {
   getDockerDriverGatewayEnv,
   getDockerDriverGatewayPid,
   getDockerDriverGatewayPortListenerPid,
+  getDockerDriverGatewayPortListenerScan,
   getDockerDriverGatewayReuseDrift: getGatewayReuseDrift,
   getDockerDriverGatewayRuntimeDrift,
   getDockerDriverGatewayRuntimeDriftFromSnapshot,
@@ -1898,15 +1899,7 @@ async function startGatewayWithOptions(
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
 }
 
-/**
- * Reconcile or create the host Docker-driver gateway. The public onboard()
- * entrypoint holds acquireOnboardLock()'s atomic cross-process filesystem lock
- * (created with openSync("wx")) across this whole call, so separate concurrent
- * `nemoclaw onboard` CLI processes cannot race creation.
- * The strict post-reap bind check below remains a second boundary against
- * recovery commands or external processes that do not participate in that
- * lock; the OS then permits only one child to bind the port.
- */
+/** Reconcile the host Docker-driver gateway under the onboard lock and strict port checks. */
 async function startDockerDriverGateway({
   exitOnFailure = true,
   skipSandboxBridgeReachability = false,
@@ -1971,7 +1964,7 @@ async function startDockerDriverGateway({
             port: GATEWAY_PORT,
           }),
       }),
-    () =>
+    async () =>
       dockerDriverGatewayCutover.runDockerDriverGatewayCutover(
         {
           gatewayBin,
@@ -1981,7 +1974,10 @@ async function startDockerDriverGateway({
           exitOnFailure,
           skipSandboxBridgeReachability,
           stateDir,
-          portListenerScan: servicePortOwnership.portListenerScan,
+          portListenerScan: getDockerDriverGatewayPortListenerScan(
+            await checkGatewayPortAvailable(),
+            { gatewayBin: identityGatewayBin },
+          ),
           pidFileGatewayPid: getDockerDriverGatewayPid(),
           initialHealth: dockerDriverGatewayCutover.readDockerDriverGatewayHealth(
             runCaptureOpenshell,

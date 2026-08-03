@@ -149,14 +149,14 @@ describe("docker-driver-gateway-service", () => {
     ).toThrow("must come from nvidia/openshell");
   });
 
-  it("rejects a missing Homebrew formula when Homebrew is available (#6903)", () => {
-    expect(() =>
+  it("reports no managed service when the Homebrew formula is missing (#8104)", () => {
+    expect(
       hasOpenShellGatewayUserService({
         commandExists: () => true,
         platform: "darwin",
         spawnSyncImpl: () => spawnResult(1, "formula not installed"),
       }),
-    ).toThrow("official OpenShell Homebrew formula is not installed");
+    ).toBe(false);
   });
 
   it("uses the effective XDG config home and accepts only a marked regular unit (#6903)", () => {
@@ -695,7 +695,6 @@ describe("docker-driver-gateway-service", () => {
 
   it("uses standalone fallback when Homebrew has no OpenShell formula (#8104)", async () => {
     const startService = vi.fn();
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     await expect(
       startPackageManagedDockerDriverGateway({
@@ -720,10 +719,6 @@ describe("docker-driver-gateway-service", () => {
       }),
     ).resolves.toBe(false);
     expect(startService).not.toHaveBeenCalled();
-    expect(warn.mock.calls.flat().join("\n")).toContain(
-      "official OpenShell Homebrew formula is not installed",
-    );
-    expect(warn.mock.calls.flat().join("\n")).toContain("openshell-gateway.err.log");
   });
 
   it("blocks standalone fallback when managed service inspection fails trust validation (#8104)", async () => {
@@ -775,6 +770,42 @@ describe("docker-driver-gateway-service", () => {
         verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
       }),
     ).rejects.toThrow("foreign managed service");
+  });
+
+  it("exits when unhealthy managed service cleanup fails trust validation (#8104)", async () => {
+    const clock = createVirtualClock();
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit(1)");
+    }) as typeof process.exit);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(
+      startPackageManagedDockerDriverGateway({
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        exitOnFailure: true,
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: () => true,
+        healthPollCount: 1,
+        healthPollInterval: 1,
+        isDockerDriverGatewayReady: async () => false,
+        now: clock.now,
+        registerDockerDriverGatewayEndpoint: () => true,
+        runCaptureOpenshell: (args) => (args[0] === "status" ? STATUS_CONNECTED : GATEWAY_INFO),
+        skipSandboxBridgeReachability: false,
+        sleepSeconds: clock.advance,
+        startOpenShellGatewayUserService: () => ({ attempted: true, started: true }),
+        stopOpenShellGatewayUserService: () => ({
+          attempted: true,
+          reason: "foreign managed service",
+          standaloneFallbackAllowed: false,
+          standaloneFallbackBlocked: true,
+          stopped: false,
+        }),
+        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
+      }),
+    ).rejects.toThrow("process.exit(1)");
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("uses standalone fallback when managed service startup fails unexpectedly (#8104)", async () => {

@@ -62,7 +62,7 @@ export interface OpenShellGatewayUserServiceStopResult {
 
 export class OpenShellGatewayServiceEnvironmentError extends Error {
   constructor(error: unknown) {
-    super(formatError(error));
+    super(formatError(error), { cause: error });
     this.name = "OpenShellGatewayServiceEnvironmentError";
   }
 }
@@ -315,9 +315,8 @@ function hasOfficialHomebrewFormula(
   const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
   if (
     !runBrew(["list", "--formula", OPENSHELL_GATEWAY_HOMEBREW_SERVICE], { env, spawnSyncImpl }).ok
-  ) {
-    throw new Error("The official OpenShell Homebrew formula is not installed");
-  }
+  )
+    return false;
   const info = runBrew(["info", "--json=v2", OPENSHELL_GATEWAY_HOMEBREW_SERVICE], {
     env,
     spawnSyncImpl,
@@ -848,6 +847,7 @@ export async function startPackageManagedDockerDriverGateway({
         );
       }
     } catch (error) {
+      if (error instanceof OpenShellGatewayServiceTrustError && exitOnFailure) process.exit(1);
       if (error instanceof OpenShellGatewayServiceTrustError) throw error;
       console.warn(
         `  OpenShell gateway managed service cleanup failed (${formatError(error)}); standalone startup will verify gateway port ownership.`,
