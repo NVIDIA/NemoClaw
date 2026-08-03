@@ -42,6 +42,11 @@
       "category": "security"
     },
     {
+      "file": "test/ci-cli-coverage-pi-tools-workflow.test.ts",
+      "test": "installs pinned fd and ripgrep before CLI coverage can invoke Pi",
+      "category": "security"
+    },
+    {
       "file": "test/cloudflared-update-check-workflow.test.ts",
       "test": "keeps automatic and on-demand update checks reachable and credential-free",
       "category": "security"
