@@ -89,8 +89,8 @@ export function releaseManagedGatewayPort(
         "no valid gateway binding is registered for it (the entry is missing, " +
         "invalid, or unreadable). The registry is read from the state root that " +
         `NEMOCLAW_GATEWAY_PORT=${String(GATEWAY_PORT)} selects, so a sandbox onboarded ` +
-        "under a different gateway port is not visible here: re-run stop with that " +
-        "port set. Otherwise resolve the registry entry, then re-run stop.",
+        "under a different gateway port is not visible here: rerun stop with that " +
+        "port set. Otherwise resolve the registry entry, then rerun stop.",
     );
     return {
       port: null,

@@ -45,8 +45,9 @@ The report includes lines like these:
 ```
 
 <Warning>
-The sweep applies the uninstall plan to every listed gateway port.
-Review the port list before you confirm because `--yes` skips this confirmation.
+The sweep applies the uninstall plan to every discovered gateway port.
+When it finds more than one port, review the port list before you confirm because `--yes` skips this confirmation.
+When it finds only the selected port, it uses the standard uninstall confirmation without a port list.
 If you also pass `--destroy-user-data`, the sweep can remove the preserved registry and backups for any port that reaches that cleanup step.
 </Warning>
 
@@ -56,7 +57,8 @@ Pass `--all-gateway-ports`, or set `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS=1`, to 
 $$nemoclaw uninstall --all-gateway-ports
 ```
 
-The sweep confirms once, lists the ports it will remove, then uninstalls each port in turn and the currently selected port last.
+When the sweep finds more than one port, it lists the ports, confirms once, then uninstalls each port in turn and the currently selected port last.
+When it finds only the selected port, it uses the standard uninstall confirmation and runs that port once.
 Running the selected port last lets that final pass remove the shared CLI, services, images, providers, configuration, models, and swap once no other environment needs them.
 `--delete-models`, `--destroy-user-data`, and `--keep-openshell` apply to every port in the sweep.
 If the sweep cannot enumerate the gateway state roots safely, it exits before uninstalling any port.

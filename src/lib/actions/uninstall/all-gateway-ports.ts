@@ -9,7 +9,7 @@
  * ports bound. That scoping is deliberate (#4422, #7279): one environment must
  * never tear down another. This sweep is the explicit opt-in that asks for all
  * of them, and it runs each port in its own process so every port-scoped value
- * — state root, registry file, gateway name, Docker names — resolves from that
+ * including the state root, registry file, gateway name, and Docker names, resolves from that
  * port rather than from the ambient environment.
  *
  * The ambient port runs last. Once the other ports are gone, its own sibling
@@ -115,7 +115,7 @@ function confirmSweep(
   if (reply && /^(y|yes)$/i.test(reply.trim())) return true;
   if (reply === null) {
     log(
-      "No input available on stdin (closed or non-interactive); re-run with --yes to skip this prompt.",
+      "No input available on stdin (closed or non-interactive); rerun with --yes to skip this prompt.",
     );
   }
   log("Aborted.");
