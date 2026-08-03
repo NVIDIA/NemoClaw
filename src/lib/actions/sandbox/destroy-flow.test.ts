@@ -104,6 +104,72 @@ describe("destroySandbox flow", () => {
     expectFailedDeletePreservesHostState(harness, exitSpy);
   });
 
+  it("preserves provider and registry ownership when runtime authority is unknown", async () => {
+    const harness = createDestroyHarness({
+      openshellDriver: "unknown-runtime",
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(errorOutput).toContain("unknown-runtime");
+    expect(errorOutput).toContain("is not registered for this operation");
+    expect(
+      harness.runOpenshellSpy.mock.calls.some(
+        ([args]) => Array.isArray(args) && args[0] === "sandbox" && args[1] === "delete",
+      ),
+    ).toBe(false);
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+  });
+
+  it("blocks deletion and preserves ownership when image authority is unproven", async () => {
+    const harness = createDestroyHarness({
+      imageTag: "local/alpha:current",
+      workload: {
+        schemaVersion: 1,
+        kind: "legacy-dockerfile",
+        reference: "local/alpha:recorded",
+        shared: false,
+      },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    const logOutput = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(errorOutput).toContain("Runtime provider 'docker'");
+    expect(errorOutput).toContain("recorded workload receipt");
+    expect(logOutput).not.toContain("Sandbox 'alpha' destroyed");
+    expect(harness.events).not.toContain("delete");
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.updateSessionSpy).not.toHaveBeenCalled();
+  });
+
+  it("retires registry and session ownership after the workload receipt is repaired", async () => {
+    const imageTag = "local/alpha:current";
+    const harness = createDestroyHarness({
+      imageTag,
+      workload: {
+        schemaVersion: 1,
+        kind: "legacy-dockerfile",
+        reference: imageTag,
+        shared: false,
+      },
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.dockerRunSpy).toHaveBeenCalledWith(["rmi", imageTag], {
+      ignoreError: true,
+      timeout: 30_000,
+    });
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.updateSessionSpy).toHaveBeenCalledOnce();
+    expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      "Sandbox 'alpha' destroyed",
+    );
+  });
+
   it("refuses shields-up Hermes MCP destroy before stopping services or preparing MCP state", async () => {
     const harness = createDestroyHarness({
       agent: "hermes",

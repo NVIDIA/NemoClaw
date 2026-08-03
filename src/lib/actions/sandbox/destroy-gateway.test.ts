@@ -47,9 +47,10 @@ function packagedServiceOwner({
   };
 }
 
-function serviceStopResult(stopped: boolean, reason?: string) {
+function serviceStopResult(stopped: boolean, reason?: string, standaloneFallbackAllowed = false) {
   return {
     attempted: true,
+    standaloneFallbackAllowed,
     manager: "systemd" as const,
     serviceName: "nemoclaw-openshell-gateway",
     statusCommand: "systemctl --user status nemoclaw-openshell-gateway",
@@ -342,6 +343,134 @@ describe("cleanupGatewayAfterLastSandbox", () => {
       expect.anything(),
     );
     expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+  });
+
+  it("stops the recorded standalone gateway when the systemd user manager is unavailable", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    mocks.resolveGatewayTeardownAuthority.mockImplementationOnce(packagedServiceOwner);
+    mocks.stopHostGatewayProcesses.mockReturnValueOnce({
+      ...idleHostReaperResult(),
+      stopped: [4242],
+    });
+    const clearGatewayRuntimeFiles = vi.fn();
+    const isGatewayPortFree = vi.fn(() => true);
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, {
+      clearGatewayRuntimeFiles,
+      isGatewayPortFree,
+      stopOpenShellGatewayUserService: () =>
+        serviceStopResult(
+          false,
+          "systemctl --user stop failed: Failed to connect to bus: No medium found",
+          true,
+        ),
+    });
+
+    expect(mocks.stopHostGatewayProcesses).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({
+        clearRuntimeFiles: false,
+        openShellGatewayName: "nemoclaw",
+        openShellGatewayPort: 8080,
+        usePgrepFallback: false,
+      }),
+    );
+    expect(isGatewayPortFree).toHaveBeenCalledWith(8080);
+    expect(clearGatewayRuntimeFiles).toHaveBeenCalledWith(
+      "/home/tester/.local/state/nemoclaw/openshell-docker-gateway",
+      "/home/tester/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.pid",
+    );
+    expect(runOpenshell).toHaveBeenCalledWith(["gateway", "remove", "nemoclaw"], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  });
+
+  it("fails closed when a headless service stop has no recorded standalone owner", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    mocks.resolveGatewayTeardownAuthority.mockImplementationOnce(packagedServiceOwner);
+    const isGatewayPortFree = vi.fn(() => true);
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    expect(() =>
+      cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, {
+        isGatewayPortFree,
+        stopOpenShellGatewayUserService: () =>
+          serviceStopResult(false, "Failed to connect to bus: No medium found", true),
+      }),
+    ).toThrow(/no recorded standalone gateway process proved ownership/);
+    expect(isGatewayPortFree).not.toHaveBeenCalled();
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "remove", "nemoclaw"],
+      expect.anything(),
+    );
+  });
+
+  it("fails closed when the gateway port stays occupied after headless fallback cleanup", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    mocks.resolveGatewayTeardownAuthority.mockImplementationOnce(packagedServiceOwner);
+    mocks.stopHostGatewayProcesses.mockReturnValueOnce({
+      ...idleHostReaperResult(),
+      stopped: [4242],
+    });
+    const clearGatewayRuntimeFiles = vi.fn();
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+
+    expect(() =>
+      cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, {
+        clearGatewayRuntimeFiles,
+        isGatewayPortFree: () => false,
+        stopOpenShellGatewayUserService: () =>
+          serviceStopResult(false, "Failed to connect to bus: No medium found", true),
+      }),
+    ).toThrow(/gateway port 8080 remains occupied/);
+    expect(clearGatewayRuntimeFiles).not.toHaveBeenCalled();
+    expect(runOpenshell).not.toHaveBeenCalledWith(
+      ["gateway", "remove", "nemoclaw"],
+      expect.anything(),
+    );
+  });
+
+  it("retries headless fallback cleanup after volume removal fails", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.spyOn(os, "homedir").mockReturnValue("/home/tester");
+    mocks.resolveGatewayTeardownAuthority.mockImplementation(packagedServiceOwner);
+    mocks.stopHostGatewayProcesses
+      .mockReturnValueOnce({
+        ...idleHostReaperResult(),
+        stopped: [4242],
+      })
+      .mockReturnValueOnce({
+        ...idleHostReaperResult(),
+        skippedDeadPids: [4242],
+      });
+    mocks.dockerRemoveVolumesByPrefix.mockImplementationOnce(() => {
+      throw new Error("injected volume cleanup failure");
+    });
+    const clearGatewayRuntimeFiles = vi.fn();
+    const isGatewayPortFree = vi.fn(() => true);
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const deps = {
+      clearGatewayRuntimeFiles,
+      isGatewayPortFree,
+      stopOpenShellGatewayUserService: () =>
+        serviceStopResult(false, "Failed to connect to bus: No medium found", true),
+    };
+
+    expect(() => cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, deps)).toThrow(
+      "injected volume cleanup failure",
+    );
+    expect(clearGatewayRuntimeFiles).not.toHaveBeenCalled();
+
+    expect(() => cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell, deps)).not.toThrow();
+    expect(mocks.stopHostGatewayProcesses).toHaveBeenCalledTimes(2);
+    expect(isGatewayPortFree).toHaveBeenCalledTimes(2);
+    expect(clearGatewayRuntimeFiles).toHaveBeenCalledOnce();
+    expect(mocks.dockerRemoveVolumesByPrefix).toHaveBeenCalledTimes(2);
   });
 
   it("leaves the service manager alone for a standalone NemoClaw gateway (#7904)", () => {

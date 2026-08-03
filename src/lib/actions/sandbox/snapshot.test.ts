@@ -144,19 +144,21 @@ const latestBackupFixture = {
 
 vi.mock("../../adapters/docker", () => ({
   dockerCapture: vi.fn(() => ""),
+  dockerForceRm: vi.fn(),
   dockerInspect: dockerInspectMock,
+  dockerRunDetached: vi.fn(),
 }));
-
 vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: captureOpenshellMock,
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: runOpenshellMock,
 }));
-
 vi.mock("../../credentials/store", () => ({
+  deleteCredential: vi.fn(),
+  getCredential: vi.fn(() => null),
   prompt: vi.fn(),
+  saveCredential: vi.fn(),
 }));
-
 vi.mock("../../domain/sandbox/destroy", () => ({
   getSandboxDeleteOutcome: vi.fn(() => ({ alreadyGone: false, gatewayUnreachable: false })),
 }));
@@ -165,7 +167,6 @@ vi.mock("../../inference/nim", () => ({
   stopNimContainer: vi.fn(),
   stopNimContainerByName: vi.fn(),
 }));
-
 vi.mock("../../policy", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../policy")>()),
   applyPreset: applyPresetMock,
@@ -176,7 +177,6 @@ vi.mock("../../policy", async (importOriginal) => ({
   removePreset: removePresetMock,
   resolveAgentBaselinePolicy: resolveTestAgentBaselinePolicy,
 }));
-
 vi.mock("../../runner", () => ({
   ROOT: "/repo",
   run: vi.fn(() => ({ status: 0 })),
@@ -235,7 +235,6 @@ vi.mock("../../state/sandbox", () => ({
   listBackups: listBackupsMock,
   restoreSandboxState: restoreSandboxStateMock,
 }));
-
 vi.mock("./restore-gateway-pairing", () => ({
   establishRestoredSandboxGatewayPairing: vi.fn(),
   waitForRestoredSandboxGatewaySupervisor: vi.fn(() => true),
@@ -244,8 +243,9 @@ vi.mock("./restore-gateway-pairing", () => ({
 vi.mock("./destroy", () => ({
   cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
   removeSandboxRegistryEntry: vi.fn(),
+  removeSandboxRegistryEntryOutcome: vi.fn(() => ({ status: "complete", removed: true })),
+  requireSandboxDestructiveCleanupAuthority: vi.fn(),
 }));
-
 describe("runSandboxSnapshot", () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -7,11 +7,10 @@ import {
   MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
 } from "./managed-image/contract";
-import {
-  CURRENT_MANAGED_IMAGE_RUNTIME_PROFILES,
-  type ManagedImageRuntimeProfileRegistry,
-  resolveSandboxWorkloadRuntimeCapabilities,
-} from "./workload/runtime";
+import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./runtime-provider/current";
+import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
+import { resolveSandboxWorkloadRuntimeCapabilities } from "./workload/runtime";
+import { createInMemoryRuntimeProviderBundle } from "../../../test/helpers/runtime-provider-bundle";
 
 const AMD64_MANAGED_IMAGE_V1_SUPPORT = {
   exactDigestReferences: true,
@@ -93,21 +92,25 @@ describe("sandbox workload runtime capabilities", () => {
     });
   });
 
-  it.each([
-    "podman",
-    "mxc",
-  ])("lets the %s driver register the same portable contract without Docker coupling (#7744)", (driverName) => {
-    const profiles: ManagedImageRuntimeProfileRegistry = {
-      ...CURRENT_MANAGED_IMAGE_RUNTIME_PROFILES,
-      [driverName]: {
-        support: COMPLETE_MANAGED_IMAGE_V1_SUPPORT,
-        hostArchitectures: ["amd64"],
-        managedImageSelectionPolicy: "require-managed",
-        legacyDockerfileBuilds: false,
-      },
-    };
+  it("projects a complete portable bundle into workload capabilities (#7744)", () => {
+    const driverName = "portable-test";
+    const providers = createRuntimeProviderBundleRegistry([
+      ...Object.entries(CURRENT_RUNTIME_PROVIDER_BUNDLES),
+      [
+        driverName,
+        createInMemoryRuntimeProviderBundle({
+          providerId: driverName,
+          workloadProfile: {
+            support: COMPLETE_MANAGED_IMAGE_V1_SUPPORT,
+            hostArchitectures: ["amd64"],
+            managedImageSelectionPolicy: "require-managed",
+            legacyDockerfileBuilds: false,
+          },
+        }),
+      ],
+    ]);
 
-    expect(resolveSandboxWorkloadRuntimeCapabilities({ driverName }, profiles, "x64")).toEqual({
+    expect(resolveSandboxWorkloadRuntimeCapabilities({ driverName }, providers, "x64")).toEqual({
       driverName,
       managedImageSelectionPolicy: "require-managed",
       legacyDockerfileBuilds: false,

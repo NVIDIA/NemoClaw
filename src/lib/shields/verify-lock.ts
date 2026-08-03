@@ -106,7 +106,9 @@ export function verifyShieldsLockState(
 
   if (
     options.verifyParentProtection &&
-    (target.agentName === "hermes" || target.agentName === "openclaw")
+    (target.agentName === "hermes" ||
+      target.agentName === "openclaw" ||
+      target.agentName === "langchain-deepagents-code")
   ) {
     const separator = target.configDir.lastIndexOf("/");
     const parentDir = separator > 0 ? target.configDir.slice(0, separator) : "/";

@@ -21,8 +21,10 @@ import {
   decodeManagedStartupProfile,
   fingerprintManagedStartupProfile,
   MANAGED_STARTUP_AGENTS,
+  MANAGED_STARTUP_MESSAGING_AGENTS,
   type ManagedStartupAgent,
   type ManagedStartupDashboard,
+  type ManagedStartupMessagingAgent,
   type ManagedStartupProfile,
 } from "./profile";
 import {
@@ -33,7 +35,9 @@ import {
 } from "./root-apply";
 import {
   beginManagedStartupSharedStateTransaction,
+  clearManagedStartupSharedStateCommitReceipt,
   commitManagedStartupSharedStateTransaction,
+  getManagedStartupSharedStateTransactionStatus,
   MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
   rollbackManagedStartupSharedStateTransaction,
 } from "./shared-state-transaction";
@@ -63,7 +67,6 @@ const MAX_MANAGED_STARTUP_COMPLETION_BYTES = 4096;
 const MAX_MANAGED_STARTUP_RUNTIME_ENVIRONMENT_BYTES = 512 * 1024;
 
 export type ManagedStartupImageIdentity = "root" | "sandbox";
-export type ManagedStartupMessagingAgent = "openclaw" | "hermes";
 
 export interface ManagedStartupGenerateConfigConstructionAction {
   readonly kind: "generate-agent-config";
@@ -523,6 +526,7 @@ function generatorCommand(agent: ManagedStartupAgent): readonly string[] {
 function messagingCommand(
   agent: ManagedStartupMessagingAgent,
   phase: "runtime-setup" | "post-agent-install",
+  mode: "apply" | "clear",
 ): readonly string[] {
   return [
     "/usr/local/bin/node",
@@ -532,6 +536,8 @@ function messagingCommand(
     agent,
     "--phase",
     phase,
+    "--mode",
+    mode,
     ...(phase === "post-agent-install" ? ["--managed-startup-runtime"] : []),
   ];
 }
@@ -597,7 +603,7 @@ export function buildManagedStartupImageActionPlan(
           commands.push({
             action: "messaging-runtime-setup",
             runAs: action.runAs,
-            argv: messagingCommand(action.agent, action.phase),
+            argv: messagingCommand(action.agent, action.phase, action.mode),
           });
         } else if (action.phase === "post-agent-install") {
           if (action.runAs !== "sandbox") {
@@ -607,7 +613,7 @@ export function buildManagedStartupImageActionPlan(
           commands.push({
             action: "messaging-post-agent-install",
             runAs: action.runAs,
-            argv: messagingCommand(action.agent, action.phase),
+            argv: messagingCommand(action.agent, action.phase, action.mode),
           });
         } else {
           failActionPlan("unsupported messaging construction phase");
@@ -625,7 +631,10 @@ export function buildManagedStartupImageActionPlan(
   if (generateActions !== 1) {
     failActionPlan("exactly one agent config construction action is required");
   }
-  const expectedMessagingActions = inputAgent === "langchain-deepagents-code" ? 0 : 1;
+  const supportsMessaging = (MANAGED_STARTUP_MESSAGING_AGENTS as readonly string[]).includes(
+    inputAgent,
+  );
+  const expectedMessagingActions = supportsMessaging ? 1 : 0;
   if (
     runtimeMessagingActions !== expectedMessagingActions ||
     postMessagingActions !== expectedMessagingActions
@@ -634,10 +643,9 @@ export function buildManagedStartupImageActionPlan(
       `${inputAgent} requires ${String(expectedMessagingActions)} action for each messaging phase`,
     );
   }
-  const expectedOrder =
-    inputAgent === "langchain-deepagents-code"
-      ? ["generate-agent-config"]
-      : ["messaging-runtime-setup", "generate-agent-config", "messaging-post-agent-install"];
+  const expectedOrder = supportsMessaging
+    ? ["messaging-runtime-setup", "generate-agent-config", "messaging-post-agent-install"]
+    : ["generate-agent-config"];
   if (commands.some((command, index) => command.action !== expectedOrder[index])) {
     failActionPlan(`${inputAgent} image actions are not in the required construction order`);
   }
@@ -1534,7 +1542,7 @@ function readCliAgent(argv: readonly string[], expectedLength = 2): string {
   const index = argv.indexOf("--agent");
   if (index < 0 || index + 1 >= argv.length || argv.length !== expectedLength) {
     fail(
-      "usage: managed-startup-image-runtime [--apply-root-stdin|--wait-for-completion|--verify-completion|--begin-shared-state-transaction|--commit-shared-state-transaction] --agent <agent>",
+      "usage: managed-startup-image-runtime [--apply-root-stdin|--wait-for-completion|--verify-completion|--begin-shared-state-transaction|--commit-shared-state-transaction|--clear-shared-state-commit-receipt|--shared-state-transaction-status] --agent <agent>",
     );
   }
   return argv[index + 1] as string;
@@ -1544,6 +1552,14 @@ function readCliFingerprint(argv: readonly string[]): string {
   const index = argv.indexOf("--profile-fingerprint");
   if (index < 0 || index + 1 >= argv.length) {
     fail("managed startup profile fingerprint argument is missing");
+  }
+  return argv[index + 1] as string;
+}
+
+function readCliBootstrapIdentity(argv: readonly string[]): string {
+  const index = argv.indexOf("--bootstrap-identity");
+  if (index < 0 || index + 1 >= argv.length || !SHA256_RE.test(String(argv[index + 1] ?? ""))) {
+    fail("managed bootstrap identity argument is missing or invalid");
   }
   return argv[index + 1] as string;
 }
@@ -1594,27 +1610,56 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     return;
   }
   if (
-    argv.length === 4 &&
+    (argv.length === 4 || argv.length === 6) &&
     argv[0] === "--rollback-shared-state-transaction" &&
-    argv[3] === "--read-only-receipt"
+    argv[argv.length - 1] === "--read-only-receipt"
   ) {
     requireRoot();
-    const agent = exactAgent(readCliAgent(argv, 4));
+    const agent = exactAgent(readCliAgent(argv, argv.length));
     const rolledBack = rollbackManagedStartupSharedStateTransaction(agent, {
       transactionDirectory: MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY,
       readOnlyReceipt: true,
+      bootstrapIdentity: argv.length === 6 ? readCliBootstrapIdentity(argv) : null,
     });
     if (!rolledBack) fail("read-only shared-state rollback receipt is missing");
     console.log(`[managed-startup] verified and restored ${agent} shared state`);
     return;
   }
-  if (argv.length === 3 && argv[0] === "--commit-shared-state-transaction") {
+  if ((argv.length === 3 || argv.length === 5) && argv[0] === "--commit-shared-state-transaction") {
     requireRoot();
-    const agent = exactAgent(readCliAgent(argv, 3));
-    if (!commitManagedStartupSharedStateTransaction(agent)) {
+    const agent = exactAgent(readCliAgent(argv, argv.length));
+    if (
+      !commitManagedStartupSharedStateTransaction(agent, {
+        bootstrapIdentity: argv.length === 5 ? readCliBootstrapIdentity(argv) : null,
+      })
+    ) {
       fail("managed startup transaction is missing at commit");
     }
     console.log(`[managed-startup] committed ${agent} shared state`);
+    return;
+  }
+  if (argv.length === 5 && argv[0] === "--clear-shared-state-commit-receipt") {
+    requireRoot();
+    const agent = exactAgent(readCliAgent(argv, 5));
+    const bootstrapIdentity = readCliBootstrapIdentity(argv);
+    if (!clearManagedStartupSharedStateCommitReceipt(agent, { bootstrapIdentity })) {
+      fail("managed startup durable commit receipt is missing at cleanup");
+    }
+    console.log(`[managed-startup] cleared ${agent} durable shared-state commit receipt`);
+    return;
+  }
+  if (argv.length === 7 && argv[0] === "--shared-state-transaction-status") {
+    requireRoot();
+    const agent = exactAgent(readCliAgent(argv, 7));
+    const profileFingerprint = readCliFingerprint(argv);
+    const bootstrapIdentity = readCliBootstrapIdentity(argv);
+    process.stdout.write(
+      `${getManagedStartupSharedStateTransactionStatus({
+        agent,
+        profileFingerprint,
+        bootstrapIdentity,
+      })}\n`,
+    );
     return;
   }
   const result = await applyManagedStartupImageProfile(readCliAgent(argv));
@@ -1625,7 +1670,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   );
 }
 
-if (require.main === module) {
+if (typeof require !== "undefined" && typeof module !== "undefined" && require.main === module) {
   main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

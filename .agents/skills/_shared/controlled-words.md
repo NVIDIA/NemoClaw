@@ -354,7 +354,6 @@ For a persistence claim, name the applicable `stop` and `start`, `restart`, `reb
 | `package contract` | Technical noun | A testable requirement of the compiled or published package artifact. | integration contract, package test |
 | `passing` | Adjective | A command exited with status 0, or a check concluded with `SUCCESS`. | green when the result is not named |
 | `PR` | Technical noun | A GitHub pull request. Write `pull request (PR)` at first use for an audience that might not know the abbreviation. | change request, merge request |
-| `PR SHA` | Technical noun | The PR-branch commit that the evidence covers. Use its short SHA in reports. Use the full SHA only when a command or API requires it. | relative revision terms without a SHA |
 | `pre-commit hook` | Technical noun | A repository hook that runs before Git records a commit. | precommit, lint hook |
 | `pre-push hook` | Technical noun | A repository hook that runs before Git sends commits to a remote. | push hook, CI check |
 | `regression test` | Technical noun | A test that fails for a previously observed defect and passes when the defect is corrected. | bug test, reproduction only |

@@ -5,8 +5,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildManagedStartupOnboardProfile,
+  ManagedStartupOnboardProfileError,
   type ManagedStartupOnboardProfileInput,
 } from "./managed-startup/onboard-profile";
+import { decodeManagedStartupProfile } from "./managed-startup/profile";
 
 const EMPTY_ENVIRONMENT: NodeJS.ProcessEnv = {};
 
@@ -197,6 +199,20 @@ describe("buildManagedStartupOnboardProfile", () => {
     ).toThrow(/dashboard bind address must be empty or 0\.0\.0\.0/);
   });
 
+  it("normalizes a malformed dashboard URL without echoing its input", () => {
+    const canary = "dashboard-url-secret-canary";
+    const invoke = () =>
+      buildManagedStartupOnboardProfile(openClawInput({ chatUiUrl: `http://[${canary}` }));
+
+    expect(invoke).toThrow(ManagedStartupOnboardProfileError);
+    expect(invoke).toThrow(/chatUiUrl must be a valid HTTP\(S\) URL/u);
+    try {
+      invoke();
+    } catch (error) {
+      expect(String(error)).not.toContain(canary);
+    }
+  });
+
   it("maps Hermes with its dashboard disabled and Tavily retained", () => {
     const built = buildManagedStartupOnboardProfile(hermesInput());
 
@@ -300,6 +316,23 @@ describe("buildManagedStartupOnboardProfile", () => {
     });
   });
 
+  it.each([
+    ["hermes", hermesInput, "text,image"],
+    ["langchain-deepagents-code", dcodeInput, "text"],
+  ] as const)("rejects OpenClaw input modalities for %s before filtering ambient input", (agent, input, modalities) => {
+    expect(() =>
+      buildManagedStartupOnboardProfile(
+        input({ environment: { NEMOCLAW_INFERENCE_INPUTS: modalities } }),
+      ),
+    ).toThrow(new RegExp(`NEMOCLAW_INFERENCE_INPUTS is not supported by ${agent}`, "u"));
+  });
+
+  it("rejects DCode messaging intent instead of silently discarding it", () => {
+    expect(() =>
+      buildManagedStartupOnboardProfile(dcodeInput({ messagingPlan: messagingPlan("openclaw") })),
+    ).toThrow(/langchain-deepagents-code does not support messaging/u);
+  });
+
   it("does not inspect host CA settings during profile construction", () => {
     const built = buildManagedStartupOnboardProfile(
       openClawInput({
@@ -383,7 +416,9 @@ describe("buildManagedStartupOnboardProfile", () => {
       hostNoProxy: [],
     });
     expect(built.credentialProxyReplayRequired).toBe(agent !== "langchain-deepagents-code");
-    const serialized = JSON.stringify(built);
+    const decoded = decodeManagedStartupProfile(built.encodedProfile);
+    const serialized = JSON.stringify(decoded);
+    expect(decoded).toEqual(built.profile);
     expect(serialized).not.toContain("upper-secret");
     expect(serialized).not.toContain("lower-secret");
     expect(serialized).not.toContain("upper.internal");
@@ -416,6 +451,7 @@ describe("buildManagedStartupOnboardProfile", () => {
       model: "gpt-5.4",
       api: "openai-responses",
     });
+    expect(decodeManagedStartupProfile(built.encodedProfile).inference.model).toBe("gpt-5.4");
     expect(built.profile.tools.disclosure).toBe("direct");
     expect(built.profile.agentConfig).toMatchObject({
       agent: "openclaw",

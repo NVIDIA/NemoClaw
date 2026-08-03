@@ -55,7 +55,9 @@ For those paths, use an HTTPS IP-literal endpoint with a certificate valid for t
 `$$nemoclaw inference set --endpoint-url <url>` on an already-onboarded sandbox supports a DNS-backed HTTPS custom endpoint through the HTTPS Pin Runtime adapter.
 After SSRF validation passes, NemoClaw starts a local reverse-proxy adapter on the host that terminates a pinned, SNI-correct outbound TLS connection to the real upstream hostname, re-validating that the resolved peer IP is still public.
 The sandbox, its OpenShell provider configuration and network policy, and the persisted sandbox registry only ever see the opaque local base `http://host.openshell.internal:<port>/route/<id>`.
-The real upstream hostname and path never reach the sandbox or the persisted registry; host recovery state stores only the opaque route ID, provider type, a non-secret token generation value, and timestamps.
+The real upstream hostname and path never reach the sandbox or the persisted registry.
+Host recovery state contains adapter process metadata, the source-subnet policy, opaque route IDs, provider types, non-secret token generation values, and timestamps.
+It contains no upstream URLs, pinned addresses, or credentials.
 Endpoint URLs containing userinfo, a query string, or a fragment are rejected rather than stripped or persisted.
 For an OpenAI-compatible endpoint entered as a bare origin, the adapter preserves the incoming `/v1` request path.
 For an endpoint with a path prefix, the adapter keeps forwarded requests beneath that prefix and rejects traversal-shaped paths.
@@ -71,6 +73,10 @@ NemoClaw refuses to expose the adapter when it cannot discover a valid bridge su
 Adapter reuse also requires an authenticated health proof for the same source-subnet policy, so a running process with a stale or different policy is replaced.
 After an adapter restart, routes other than the one that triggered recovery return a recovery-needed response until their original `inference set --endpoint-url` command is rerun.
 Switching away from a route or destroying its last sandbox reference revokes it; a scoped uninstall that leaves sibling gateways in place preserves the shared adapter and its remaining routes.
+Revocation has to authenticate the running adapter first, and the control-plane proof binds the source-subnet policy that adapter was started with, so NemoClaw records that policy in host recovery state when it starts or reuses the adapter and reads it back at revocation time.
+It never re-derives the policy from the current host: a bridge that has since been recreated or renumbered would produce a value the running adapter never used.
+An adapter started before NemoClaw recorded that policy cannot be authenticated for revocation, so the superseded route stays registered and `inference set` reports that its upstream credentials are still resident.
+Rerun the `inference set --endpoint-url` command that registered the route: that records the policy for the running adapter, and the next switch revokes cleanly.
 
 This support is specific to `inference set` on an already-onboarded sandbox.
 Hermes Provider setup, host-side `config set`, and a direct blueprint run still reject DNS-backed HTTPS URLs as described above.
