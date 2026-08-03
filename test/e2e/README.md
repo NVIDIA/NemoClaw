@@ -807,6 +807,12 @@ The manual controller run name includes the supplied PR, head, and base
 identity for operator coordination.
 GitHub supplies the triggering actor; the controller requires that account to
 have current `maintain` or `admin` permission.
+Approval is valid only while coordination has the exact
+`Maintainer approval required to run fork E2E` title for the live revision.
+An early or stale approval fails closed. The diagnostic classifies the
+coordination state as preparing, executing, terminal, or malformed. It gives a
+fixed remediation and the expected title without echoing the observed check
+output.
 
 The shared resolver revalidates the open PR, head repository, PR SHA and base
 SHA, deterministic plan, matching pending coordination state, and that the

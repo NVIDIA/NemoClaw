@@ -81,6 +81,7 @@ FROM scratch AS openclaw-patch-payload
 COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts
 COPY scripts/patch-openclaw-chat-send.mts /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts
 COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
+COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts
 COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts
 COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts
 COPY scripts/extract-semver.sh /usr/local/lib/nemoclaw/extract-semver
@@ -305,6 +306,7 @@ COPY --from=openclaw-patch-payload / /
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
+        /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
         /usr/local/lib/nemoclaw/extract-semver \
@@ -919,6 +921,20 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-issue
 # and emits actionable MCP startup timeout diagnostics.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
+    /usr/local/lib/node_modules/openclaw/dist
+
+# Recover from a transient remote Streamable HTTP MCP startup failure. OpenClaw
+# 2026.7.1 turns one reset or request timeout into an empty tool set plus
+# catalog diagnostics, and keeps that degraded catalog for the whole session, so
+# the agent reports the integration as unavailable until a new session starts.
+# The patch retries a classified transient startup once with a fresh transport
+# and drops a diagnostics-carrying catalog at the next agent run. Authentication,
+# authorization, TLS, policy, and configuration failures are never retried.
+#
+# Removal criterion: drop when upstream OpenClaw provides bounded startup retry,
+# negative-catalog invalidation, and temporary-transport failure attribution.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Run the compact tool catalog shim for OpenClaw selection runtimes that still
