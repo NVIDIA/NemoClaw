@@ -347,12 +347,16 @@ describe("dual-Spark vLLM runtime receipt", () => {
       head: snapshot(runtime.plan.roles.head, HEAD_ID),
       worker: snapshot(runtime.plan.roles.worker, WORKER_ID),
     };
+    const discoveryBindingModeByRole: Record<DualSparkVllmRolePlan["role"], number> = {
+      head: 0o700,
+      worker: 0o755,
+    };
     const removeContainer = vi.fn(async (rolePlan: DualSparkVllmRolePlan, id: string) => {
       snapshots[rolePlan.role] = {
         ...snapshots[rolePlan.role],
         containers: snapshots[rolePlan.role].containers.filter((container) => container.id !== id),
       };
-      if (rolePlan.role === "worker") fs.chmodSync(discoveryBindingPath, 0o755);
+      fs.chmodSync(discoveryBindingPath, discoveryBindingModeByRole[rolePlan.role]);
       return { ok: true as const };
     });
     const options = {
