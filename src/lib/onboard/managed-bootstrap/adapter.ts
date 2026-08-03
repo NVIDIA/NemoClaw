@@ -933,13 +933,15 @@ function normalizePreparedReplacement(
   });
 }
 
+export function createManagedBootstrapPlanFingerprint(plan: ManagedBootstrapExpectedPlan): string {
+  return createHash("sha256").update(canonicalJson(plan), "utf8").digest("hex");
+}
+
 export function createManagedBootstrapPreparedAuthority(
   transaction: ManagedBootstrapPreparedTransaction,
 ): ManagedBootstrapPreparedAuthority {
   const { handle, snapshot, prepared } = transaction;
-  const planFingerprint = createHash("sha256")
-    .update(canonicalJson(handle.plan), "utf8")
-    .digest("hex");
+  const planFingerprint = createManagedBootstrapPlanFingerprint(handle.plan);
   const bound = Object.freeze({
     schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
     phase: "prepared" as const,
