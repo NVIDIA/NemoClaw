@@ -248,6 +248,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(updateDocs).toContain("docs/changelog/YYYY-MM-DD.mdx");
     expect(updateDocs).toContain("current documentation contributor guide");
     expect(updateDocs).toContain("current repository policy");
+    expect(updateDocs).toContain("../nemoclaw-maintainer-policies/references/release-train.md");
     expect(updateDocs).not.toContain("parser-safe MDX SPDX comment");
     expect(updateDocs).not.toContain("scan `<previous-tag>..origin/main`");
     expect(updateDocs).toContain("planned release date");

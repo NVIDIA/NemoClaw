@@ -112,6 +112,14 @@ describe("repo skill markdown files", () => {
     expect(discovery).toContain("nemoclaw-maintainer-security-code-review");
   });
 
+  it("links fallback validation to current contributor requirements", () => {
+    const documentationReview = fs.readFileSync(
+      path.join(skillsRoot, "_shared", "documentation-writing-review.md"),
+      "utf8",
+    );
+    expect(documentationReview).toContain("../../../AGENTS.md#pr-requirements");
+  });
+
   it("derives messaging channel architecture from the current checkout", () => {
     const skillFile = path.join(
       skillsRoot,

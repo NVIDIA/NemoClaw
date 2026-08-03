@@ -75,8 +75,9 @@ For pre-tag work:
 
 1. Confirm the target version and planned release date.
 2. Include every intended release item or record its evidence-backed exclusion.
-3. Identify the target release label required by current repository policy and verify that it
-   exists.
+3. Identify the target release label required by the current
+   [release-train policy](../nemoclaw-maintainer-policies/references/release-train.md) and verify
+   that it exists.
 4. Stop before PR creation when the required release label does not exist.
 
 Use post-release recovery rules only when the target release already exists.
