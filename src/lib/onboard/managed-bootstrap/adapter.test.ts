@@ -393,6 +393,53 @@ describe("managed bootstrap adapter contract", () => {
     expect(prepared.prepared.preparedRuntimeId).toBe(PREPARED_ID);
   });
 
+  it.each([
+    {
+      label: "plan metadata",
+      expected: "metadata must be a plain string record",
+      invalidate: (input: Parameters<typeof prepareManagedBootstrapSequence>[1]) => ({
+        ...input,
+        create: {
+          ...input.create,
+          plan: {
+            ...input.create.plan,
+            metadata: Object.assign(
+              Object.create({ inherited: "attacker" }) as Record<string, string>,
+              input.create.plan.metadata,
+            ),
+          },
+        },
+      }),
+    },
+    {
+      label: "replacement option values",
+      expected: "replacement options must be a plain value record",
+      invalidate: (input: Parameters<typeof prepareManagedBootstrapSequence>[1]) => ({
+        ...input,
+        replacementOptions: {
+          values: Object.assign(
+            Object.create({ inherited: "attacker" }) as Record<
+              string,
+              string | number | boolean | readonly string[]
+            >,
+            input.replacementOptions.values,
+          ),
+        },
+      }),
+    },
+  ])("rejects custom-prototype $label before provider invocation", async ({
+    expected,
+    invalidate,
+  }) => {
+    const fixture = adapterFor("openclaw");
+    const input = invalidate(preparationInput("openclaw"));
+
+    await expect(prepareManagedBootstrapSequence(fixture.adapter, input)).rejects.toThrow(expected);
+    expect(fixture.adapter.createHeldWorkload).not.toHaveBeenCalled();
+    expect(input.create.launch).not.toHaveBeenCalled();
+    expect(fixture.order).toEqual([]);
+  });
+
   it("consumes prepared authority exactly once and rejects a second activation", async () => {
     const fixture = adapterFor("openclaw");
     const prepared = await prepareManagedBootstrapSequence(
@@ -558,7 +605,7 @@ describe("managed bootstrap adapter contract", () => {
     expect(failure.message).toContain("incomplete-create cleanup sandbox");
   });
 
-  it("rolls back a prepared replacement when durable recording fails, before activation", async () => {
+  it("rolls back a prepared bootstrap replacement when durable recording fails, before activation", async () => {
     const fixture = adapterFor("openclaw");
     const prepared = await prepareManagedBootstrapSequence(
       fixture.adapter,

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
@@ -9,9 +10,14 @@ import {
   MANAGED_STARTUP_AGENTS,
   type ManagedStartupAgent,
 } from "../managed-startup/profile";
-import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
+import {
+  createManagedStartupRootApplyRequest,
+  MANAGED_STARTUP_ROOT_APPLY_MAX_BYTES,
+  serializeManagedStartupRootApplyRequest,
+} from "../managed-startup/root-apply";
 import {
   MANAGED_BOOTSTRAP_COMPLETION_MAX_BYTES,
+  MANAGED_BOOTSTRAP_ENVELOPE_MAX_BYTES,
   parseManagedBootstrapEnvelope,
   parseManagedBootstrapImageCompletion,
   serializeManagedBootstrapEnvelope,
@@ -64,6 +70,50 @@ describe("managed bootstrap envelope", () => {
         rootApplyRequest: request,
       }),
     ).toThrow(/bootstrap identity/u);
+  });
+
+  it("round-trips a valid near-limit request after base64 expansion", () => {
+    const corporateCa = Buffer.alloc(128 * 1024, 0x61);
+    const profile = managedStartupE2eProfile("openclaw", false, false);
+    const encodedProfile = encodeManagedStartupProfile({
+      ...profile,
+      agentConfig: {
+        ...profile.agentConfig,
+        extraAgents: {
+          ...profile.agentConfig.extraAgents,
+          defaults: Object.fromEntries(
+            Array.from({ length: 256 }, (_, index) => [
+              `padding-${String(index).padStart(3, "0")}`,
+              "x".repeat(220),
+            ]),
+          ),
+        },
+      },
+      corporateCa: {
+        bundleSha256: createHash("sha256").update(corporateCa).digest("hex"),
+      },
+    });
+    const request = createManagedStartupRootApplyRequest({
+      agent: "openclaw",
+      encodedProfile,
+      corporateCaB64: corporateCa.toString("base64"),
+    });
+    const rootRequestBytes = Buffer.byteLength(
+      serializeManagedStartupRootApplyRequest(request),
+      "utf8",
+    );
+    const serialized = serializeManagedBootstrapEnvelope({
+      bootstrapIdentity: "c".repeat(64),
+      rootApplyRequest: request,
+    });
+
+    expect(Math.ceil(rootRequestBytes / 3) * 4).toBeGreaterThan(
+      MANAGED_STARTUP_ROOT_APPLY_MAX_BYTES + 1024,
+    );
+    expect(Buffer.byteLength(serialized, "utf8")).toBeLessThanOrEqual(
+      MANAGED_BOOTSTRAP_ENVELOPE_MAX_BYTES,
+    );
+    expect(parseManagedBootstrapEnvelope(serialized).rootApplyRequest).toEqual(request);
   });
 
   it("round-trips a canonical identity-bound image completion receipt", () => {

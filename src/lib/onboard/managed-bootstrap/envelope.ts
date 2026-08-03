@@ -11,7 +11,8 @@ import {
 export const MANAGED_BOOTSTRAP_ENVELOPE_SCHEMA_VERSION = 1 as const;
 export const MANAGED_BOOTSTRAP_REQUEST_FILE = "/var/lib/nemoclaw-managed-bootstrap-request.json";
 export const MANAGED_BOOTSTRAP_COMPLETION_FILE = "/run/nemoclaw/managed-bootstrap-completion.json";
-export const MANAGED_BOOTSTRAP_ENVELOPE_MAX_BYTES = MANAGED_STARTUP_ROOT_APPLY_MAX_BYTES + 1024;
+export const MANAGED_BOOTSTRAP_ENVELOPE_MAX_BYTES =
+  Math.ceil(MANAGED_STARTUP_ROOT_APPLY_MAX_BYTES / 3) * 4 + 1024;
 export const MANAGED_BOOTSTRAP_COMPLETION_MAX_BYTES = 1024;
 
 const BOOTSTRAP_IDENTITY_RE = /^[a-f0-9]{64}$/u;

@@ -876,10 +876,10 @@ function normalizePreparedReplacement(
     Array.isArray(candidate) ||
     candidate.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION
   ) {
-    protocolFail("prepared replacement schema version is unsupported");
+    protocolFail("prepared bootstrap replacement schema version is unsupported");
   }
-  assertExact(candidate.sandbox, handle.sandbox, "prepared replacement sandbox");
-  assertExact(candidate.image, snapshot.image, "prepared replacement image");
+  assertExact(candidate.sandbox, handle.sandbox, "prepared bootstrap replacement sandbox");
+  assertExact(candidate.image, snapshot.image, "prepared bootstrap replacement image");
   if (
     candidate.bootstrapIdentity !== handle.bootstrapIdentity ||
     candidate.originalRuntimeId !== snapshot.runtimeId ||
@@ -887,7 +887,7 @@ function normalizePreparedReplacement(
     candidate.originalSpecHash !== snapshot.specHash ||
     candidate.profileFingerprint !== handle.plan.profile.fingerprint
   ) {
-    protocolFail("prepared replacement changed immutable transaction authority");
+    protocolFail("prepared bootstrap replacement changed immutable transaction authority");
   }
   assertOpaqueString(candidate.preparedRuntimeId, "prepared runtime ID");
   if (candidate.preparedRuntimeId === candidate.originalRuntimeId) {
