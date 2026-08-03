@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 10 as const;
+export const RISK_PLAN_VERSION = 11 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -30,6 +30,24 @@ const HERMES_CLI_ADAPTER_RUNTIME_FILES = new Set([
   "agents/hermes/hermes-cli-adapter-v1.json",
   "agents/hermes/hermes-wrapper.py",
   "agents/hermes/validate-cli-adapter.py",
+]);
+const HERMES_MANAGED_POLICY_E2E_JOB_IDS = [
+  "bedrock-runtime-compatible-anthropic",
+  "channels-stop-start",
+  "dashboard-remote-bind",
+  "hermes-e2e",
+  "hermes-inference-switch",
+  "hermes-shields-config",
+  "security-posture",
+] as const;
+const HERMES_MANAGED_POLICY_FILES = new Set([
+  "agents/hermes/hermes-wrapper.py",
+  "agents/hermes/image-build-probes.py",
+  "agents/hermes/managed_policy.py",
+  "agents/hermes/patch-profile-policy-defaults.py",
+  "agents/hermes/seed-dashboard-config.py",
+  "agents/hermes/start.sh",
+  "src/lib/hermes-managed-route.ts",
 ]);
 
 export type RiskTier = 0 | 1 | 2 | 3;
@@ -185,14 +203,24 @@ export function focusedPrE2eJobsForChangedFiles(
       (file) => HERMES_CLI_ADAPTER_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
     ),
   );
+  const hermesManagedPolicyFiles = stableUnique(
+    changedFiles.filter(
+      (file) =>
+        (file.startsWith("agents/hermes/config/") || HERMES_MANAGED_POLICY_FILES.has(file)) &&
+        isRuntimeRelevant(file),
+    ),
+  );
   return [
-    ...(managedStartupFiles.length > 0
-      ? MANAGED_STARTUP_E2E_JOB_IDS.map((id) => ({ id, matchedFiles: managedStartupFiles }))
-      : []),
-    ...(hermesCliAdapterFiles.length > 0
-      ? HERMES_CLI_ADAPTER_E2E_JOB_IDS.map((id) => ({ id, matchedFiles: hermesCliAdapterFiles }))
-      : []),
-  ];
+    ...MANAGED_STARTUP_E2E_JOB_IDS.map((id) => ({ id, matchedFiles: managedStartupFiles })),
+    ...HERMES_CLI_ADAPTER_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: hermesCliAdapterFiles,
+    })),
+    ...HERMES_MANAGED_POLICY_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: hermesManagedPolicyFiles,
+    })),
+  ].filter((selection) => selection.matchedFiles.length > 0);
 }
 
 export const RISK_RULES: readonly RiskRule[] = [
