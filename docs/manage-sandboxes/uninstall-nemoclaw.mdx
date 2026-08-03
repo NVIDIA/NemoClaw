@@ -44,9 +44,10 @@ During full uninstall, a managed distributed-vLLM receipt makes NemoClaw first r
 It then removes only both exact receipt-owned containers.
 The dual-DGX Spark receipt is host-global under `~/.nemoclaw/`, while a dual-DGX Station receipt uses the selected gateway state root.
 Only after that pair cleanup succeeds does NemoClaw start the remaining full-uninstall steps.
+For a host-global dual-DGX Spark receipt, successful pair cleanup also retires any canonical temporary discovery claim associated with that receipt.
 If an interrupted dual-DGX Spark transaction leaves `~/.nemoclaw/dual-spark-managed-serving.json.ssh-binding/` without a durable runtime receipt, full uninstall fails closed before cleanup or other mutation and preserves the claim for explicit recovery or removal.
 This temporary claim is host-global regardless of the selected gateway.
-If validation or pair cleanup fails, uninstall exits nonzero and keeps the receipt so you can resolve the reported SSH, Docker, or peer-host error and retry.
+If validation, pair cleanup, or safe temporary-claim retirement fails, uninstall exits nonzero and keeps the receipt so you can resolve the reported SSH, Docker, peer-host, or claim error and retry.
 Pair cleanup can partially complete before an error, so inspect both systems before retrying.
 When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state and preserves those shared host resources.
 This gateway-scoped path leaves a managed distributed pair running and preserves its cleanup receipt, copied SSH binding, any temporary dual-Spark discovery claim, and host-global API key.

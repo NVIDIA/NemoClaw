@@ -222,8 +222,8 @@ Run a full uninstall to remove the exact receipt-owned pair.
 $$nemoclaw uninstall
 ```
 
-Full uninstall revalidates both exact container IDs before it removes them and retires the receipt and copied SSH binding.
-If revalidation or removal fails, uninstall stops before other cleanup and preserves the receipt for a retry.
+Full uninstall revalidates both exact container IDs before it removes them and retires the receipt, copied SSH binding, and any leftover temporary discovery claim associated with that receipt.
+If revalidation, removal, or safe claim retirement fails, uninstall stops before other cleanup and preserves the receipt for a retry.
 A gateway-scoped uninstall preserves the host-global pair, receipt, SSH binding, and API key while another gateway remains.
 Pair cleanup does not delete the Hugging Face model cache.
 
