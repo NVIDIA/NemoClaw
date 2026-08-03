@@ -652,8 +652,10 @@ describe("managed bootstrap adapter contract", () => {
     const replacementPort = 18_000;
     const unrelatedPort = 18_001;
     const retryPreparedId = "9".repeat(64);
-    const targetAuthorityKey = `${sandbox().sandboxId}:${IDENTITY}`;
-    const unrelatedAuthorityKey = `${sandbox().sandboxId}:${"e".repeat(64)}`;
+    const authorityKeyFor = (sandboxId: string, bootstrapIdentity: string) =>
+      `${sandboxId}:${bootstrapIdentity}`;
+    const targetAuthorityKey = authorityKeyFor(sandbox().sandboxId, IDENTITY);
+    const unrelatedAuthorityKey = authorityKeyFor(sandbox().sandboxId, "e".repeat(64));
     const unrelatedOwnership = { port: unrelatedPort, runtimeId: "8".repeat(64) };
     const ownedByAuthority = new Map<string, { port: number; runtimeId: string }>([
       [unrelatedAuthorityKey, unrelatedOwnership],
@@ -674,7 +676,10 @@ describe("managed bootstrap adapter contract", () => {
       prepareInput: Parameters<ManagedBootstrapAdapter["prepareBootstrapReplacement"]>[0],
       runtimeId: string,
     ) => {
-      const authorityKey = `${prepareInput.handle.sandbox.sandboxId}:${prepareInput.handle.bootstrapIdentity}`;
+      const authorityKey = authorityKeyFor(
+        prepareInput.handle.sandbox.sandboxId,
+        prepareInput.handle.bootstrapIdentity,
+      );
       stateBeforePreparation.push({
         authorityKey,
         ownedRuntimeId: ownedByAuthority.get(authorityKey)?.runtimeId ?? null,
@@ -694,7 +699,10 @@ describe("managed bootstrap adapter contract", () => {
       .mockImplementationOnce(async (prepareInput) => allocate(prepareInput, retryPreparedId));
     vi.mocked(fixture.adapter.finalizeBootstrap).mockImplementation(async (finalizeInput) => {
       expect(finalizeInput.outcome).toBe("rollback");
-      const authorityKey = `${finalizeInput.handle.sandbox.sandboxId}:${finalizeInput.handle.bootstrapIdentity}`;
+      const authorityKey = authorityKeyFor(
+        finalizeInput.handle.sandbox.sandboxId,
+        finalizeInput.handle.bootstrapIdentity,
+      );
       ownedByAuthority.delete(authorityKey);
       expect(reservedPorts.get(replacementPort)).toBe(authorityKey);
       reservedPorts.delete(replacementPort);
