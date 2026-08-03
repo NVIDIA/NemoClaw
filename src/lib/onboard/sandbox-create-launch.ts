@@ -9,6 +9,11 @@ import { appendExtraPlaceholderKeysEnvArg } from "./extra-placeholder-keys";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import { appendHermesDashboardEnvArgs } from "./hermes-dashboard";
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
+import {
+  createManagedBootstrapIdentity,
+  renderManagedBootstrapHeldCommand,
+} from "./managed-bootstrap/adapter";
+import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
 import {
   prebuildSandboxImageIfEligible,
@@ -57,6 +62,8 @@ export interface SandboxCreateLaunchInput {
   openshellShellCommand: OpenshellShellCommand;
   openshellArgv?: OpenshellArgv;
   buildEnv?(): Record<string, string>;
+  /** Dormant until a complete runtime bundle and durable authority store are selected. */
+  managedStartupRootApplyRequest?: ManagedStartupRootApplyRequest | null;
 }
 
 export interface SandboxCreateLaunch {
@@ -66,6 +73,9 @@ export interface SandboxCreateLaunch {
   envArgs: string[];
   sandboxEnv: Record<string, string>;
   sandboxStartupCommand: string[];
+  intendedSandboxStartupCommand: string[];
+  managedBootstrapIdentity: string | null;
+  managedStartupRootApplyRequest: ManagedStartupRootApplyRequest | null;
 }
 
 export interface SandboxCreateLaunchWithPrebuildInput extends SandboxCreateLaunchInput {
@@ -203,7 +213,21 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
   // lets the real exit code flow through to run().
-  const sandboxStartupCommand = ["env", ...envArgs, "nemoclaw-start"];
+  const intendedSandboxStartupCommand = ["env", ...envArgs, "nemoclaw-start"];
+  const managedStartupRootApplyRequest = input.managedStartupRootApplyRequest ?? null;
+  const managedBootstrapIdentity = managedStartupRootApplyRequest
+    ? createManagedBootstrapIdentity()
+    : null;
+  const sandboxStartupCommand =
+    managedStartupRootApplyRequest && managedBootstrapIdentity
+      ? [
+          ...renderManagedBootstrapHeldCommand(
+            managedStartupRootApplyRequest,
+            managedBootstrapIdentity,
+            intendedSandboxStartupCommand,
+          ),
+        ]
+      : intendedSandboxStartupCommand;
   const openshellArgs = ["sandbox", "create", ...input.createArgs, "--", ...sandboxStartupCommand];
   const createCommand = renderSandboxCreateCommand(
     input.createArgs,
@@ -221,6 +245,9 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     envArgs,
     sandboxEnv,
     sandboxStartupCommand,
+    intendedSandboxStartupCommand,
+    managedBootstrapIdentity,
+    managedStartupRootApplyRequest,
   };
 }
 

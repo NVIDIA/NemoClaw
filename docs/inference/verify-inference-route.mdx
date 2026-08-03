@@ -41,11 +41,15 @@ Restore the configured endpoint or proxy, run `$$nemoclaw onboard --resume` to c
 
 ## Understand Local Provider Post-Ready Checks
 
-For local Ollama and vLLM on Docker GPU sandboxes using the compatibility route, onboarding performs an additional check after the sandbox becomes ready.
+For local Ollama, local vLLM, and local NVIDIA NIM on Docker GPU sandboxes using the compatibility route, onboarding performs an additional check after the sandbox becomes ready.
+Local NIM uses the `vllm-local` route, so it receives the same reversible post-ready check as local vLLM.
 It requests `https://inference.local/v1/models` from inside the sandbox and accepts only a 2xx response.
-When this check fails, onboarding reports the endpoint and local-provider recovery steps before the first agent prompt.
+If this check fails after compatibility recreation, onboarding prints failure diagnostics and attempts to restore the pre-patch container before it exits.
+If that rollback fails, onboarding reports that the pre-patch container was not restored and prints container-cleanup guidance.
+The local-provider failure output includes the endpoint and recovery steps before the first agent prompt.
+GPU-proof diagnostics are captured before rollback and can also print cleanup guidance before the final container state is known, so inspect the sandbox and its labeled Docker containers before running a deletion command.
 
-NVIDIA NIM and other compatible endpoints receive their provider validation during onboarding but do not receive this local-provider post-ready check.
+Remote NVIDIA NIM and other compatible endpoints receive their provider validation during onboarding but do not receive this local-provider post-ready check.
 For those routes, continue to the final route check, then use the status command and a short agent request after onboarding.
 
 ## Understand Final Route Checks
