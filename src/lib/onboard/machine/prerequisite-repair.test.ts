@@ -4,8 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession } from "../../state/onboard-session";
-import { advanceTo, retryTo } from "./result";
 import { runOnboardPrerequisiteRepair } from "./prerequisite-repair";
+import { advanceTo, retryTo } from "./result";
 
 describe("runOnboardPrerequisiteRepair", () => {
   it("accepts a legal update-free chain and preserves the durable entry state", async () => {
@@ -139,9 +139,10 @@ describe("runOnboardPrerequisiteRepair", () => {
 
   it("preserves the repair error when the failure event recorder rejects", async () => {
     const session = createSession();
-    const recordRepairEvent = vi.fn(async (type: string) => {
-      if (type === "state.repair.failed") throw new Error("event recorder failed");
-    });
+    const recordRepairEvent = vi
+      .fn<(type: string) => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("event recorder failed"));
 
     await expect(
       runOnboardPrerequisiteRepair({
