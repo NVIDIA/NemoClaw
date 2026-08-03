@@ -19,7 +19,7 @@ const PACKAGE_SPEC = "openclaw@2026.7.1";
 const INTEGRITY =
   "sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==";
 const TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz";
-const LOCK_SHA256 = "fdbee91a3f3a0222ec2e8e34864d09dfcff4711e86ac6bfa4d475af0593acd51";
+const LOCK_SHA256 = "847f68ac46f18d17efcd47dd3d8a5944b9dbcd205bc4d1e821ff82aa543eec20";
 const roots: string[] = [];
 
 function sha256(file: string): string {

@@ -89,8 +89,9 @@ The final reviewed dependency set and range evidence is:
 The npm release remains `11.18.0`.
 Its private dependency tree contains one top-level `brace-expansion@5.0.7` package with the existing `balanced-match@^4.0.2` contract.
 The initial replacement selected `5.0.8` to address `GHSA-mh99-v99m-4gvg`.
-The high-severity `GHSA-rgw5-rvv9-x895`, also tracked as `CVE-2026-69152`, affects versions `>=4.0.0 <5.0.9`.
-The current `5.0.9` replacement preserves the dependency contract, and its Node engine floor is compatible with the Node 22 and Node 24 base images.
+`GHSA-rgw5-rvv9-x895` affects versions `>=4.0.0 <5.0.9`, and `5.0.9` fixes the advisory.
+The current `5.0.9` replacement preserves the dependency contract and declares `engines.node` as `20 || >=22`.
+This engine range includes the Node 22 and Node 24 base images.
 
 The replacement helper:
 

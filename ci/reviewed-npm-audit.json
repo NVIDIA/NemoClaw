@@ -71,8 +71,7 @@
       "tarballUrl": "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz",
       "directory": "agents/openclaw/openclaw-runtime",
       "reviewedLockSha256": [
-        "82489f62febb12da52833c0b1f7f6969f7e21a098c565ef1f91342b1e5e32d88",
-        "fdbee91a3f3a0222ec2e8e34864d09dfcff4711e86ac6bfa4d475af0593acd51"
+        "847f68ac46f18d17efcd47dd3d8a5944b9dbcd205bc4d1e821ff82aa543eec20"
       ]
     },
     {
