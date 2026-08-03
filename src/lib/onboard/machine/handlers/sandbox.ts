@@ -141,6 +141,7 @@ export interface SandboxStateOptions<
   resumeAgentChanged: boolean;
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
+  rebuildPreservedEnv?: readonly import("../../../state/preserved-env").PreservedEnvFile[];
   recreateSandbox: (requested?: boolean) => boolean;
   gatewayName: string;
   session: Session | null;
@@ -1208,6 +1209,9 @@ class SandboxStateFlow<
         : {}),
       ...(this.options.authoritativePolicyTier !== undefined
         ? { policyTier: this.options.authoritativePolicyTier }
+        : {}),
+      ...(this.options.rebuildPreservedEnv
+        ? { rebuildPreservedEnv: this.options.rebuildPreservedEnv }
         : {}),
       extraProviders,
     };
