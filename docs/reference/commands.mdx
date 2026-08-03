@@ -877,6 +877,7 @@ It runs every check that `connect` runs.
 After the preflight, `launch` starts the sandbox's agent in your terminal instead of opening a sandbox shell.
 
 The agent command comes from the sandbox's agent manifest.
+If the sandbox registry names a non-OpenClaw agent without a readable local agent manifest, `launch` exits before starting an in-sandbox command.
 
 | Agent | Command |
 |---|---|

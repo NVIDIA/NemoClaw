@@ -4,13 +4,21 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 
-import { buildOpenshellExecArgs } from "../../src/lib/actions/sandbox/exec";
-import { wrapExecCommandWithRuntimeEnv } from "../../src/lib/actions/sandbox/runtime-env";
 import { run, runWithEnv, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
 
 const CALL_SEPARATOR = "--- openshell call ---";
+const RUNTIME_ENV_EXEC_SCRIPT =
+  'if [ -r "/tmp/nemoclaw-proxy-env.sh" ]; then builtin source "/tmp/nemoclaw-proxy-env.sh" || exit $?; fi; builtin unset OPENCLAW_GATEWAY_TOKEN; builtin exec -- "$@"';
+const harnessRoots: string[] = [];
+
+afterAll(() => {
+  for (const root of harnessRoots) {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  harnessRoots.length = 0;
+});
 
 type LaunchHarness = {
   home: string;
@@ -33,6 +41,7 @@ type LaunchHarness = {
  */
 function createLaunchHarness(prefix: string, agent: string): LaunchHarness {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  harnessRoots.push(home);
   const localBin = path.join(home, "bin");
   const callsFile = path.join(home, "openshell-calls");
   const callArgvFile = path.join(home, "openshell-call-argv");
@@ -193,6 +202,26 @@ describe("CLI launch routing process contracts (#6006)", () => {
     },
   );
 
+  it(
+    "refuses an untrusted registry agent before starting an in-sandbox command",
+    testTimeoutOptions(90_000),
+    () => {
+      const harness = createLaunchHarness(
+        "nemoclaw-cli-launch-unsafe-agent-",
+        "mystery-agent; echo pwned",
+      );
+
+      const result = harness.runLaunch("launch alpha");
+
+      expect(result.code).toBe(1);
+      expect(result.out).toContain(
+        'Cannot resolve an interactive command for unsupported agent "mystery-agent; echo pwned".',
+      );
+      expect(harness.launchExecArgv()).toBeNull();
+      expect(harness.callLines().some((call) => call.includes("--tty"))).toBe(false);
+    },
+  );
+
   // OpenClaw sandboxes run a host-side mutable-config permission cleanup after
   // the exec. The fake host has no sandbox container, so that cleanup fails and
   // overrides the exit code; `command exit 0` records that the agent exec
@@ -221,33 +250,28 @@ describe("CLI launch routing process contracts (#6006)", () => {
 
       const execArgv = harness.launchExecArgv();
       expect(execArgv).not.toBeNull();
-      // Derived from the same builders the production path uses, so the
-      // assertion pins launch's own inputs (TTY on, timeout 0, no workdir, the
-      // login-shell `bash -lc` wrapper that preserves OPENCLAW_GATEWAY_TOKEN —
-      // #6291) rather than restating the runtime-env preamble by hand.
-      expect(execArgv).toEqual(
-        buildOpenshellExecArgs(
-          "alpha",
-          wrapExecCommandWithRuntimeEnv(["bash", "-lc", agentCommand]),
-          { tty: true, stdin: true, timeoutSeconds: 0 },
-          "nemoclaw",
-        ),
-      );
-      // Spelled-out guards on the parts an accidental edit would drop first.
-      expect(execArgv).toContain("--tty");
-      expect(execArgv?.slice(0, 6)).toEqual([
+      expect(execArgv).toEqual([
         "sandbox",
         "exec",
         "--name",
         "alpha",
         "-g",
         "nemoclaw",
+        "--tty",
+        "--timeout",
+        "0",
+        "--",
+        "/bin/bash",
+        "--noprofile",
+        "--norc",
+        "-p",
+        "-c",
+        RUNTIME_ENV_EXEC_SCRIPT,
+        "nemoclaw-runtime-env",
+        "bash",
+        "-lc",
+        agentCommand,
       ]);
-      expect(execArgv?.slice(-3)).toEqual(["bash", "-lc", agentCommand]);
-      const timeoutIndex = execArgv?.indexOf("--timeout") ?? -1;
-      expect(timeoutIndex).toBeGreaterThan(-1);
-      expect(execArgv?.[timeoutIndex + 1]).toBe("0");
-      expect(execArgv).toContain("nemoclaw-runtime-env");
 
       // Exactly one interactive exec: launch does not re-run the agent.
       expect(harness.callLines().filter((call) => call.includes("--tty"))).toHaveLength(1);

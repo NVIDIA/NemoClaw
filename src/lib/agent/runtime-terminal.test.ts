@@ -57,8 +57,10 @@ describe("interactive agent command resolution", () => {
     expect(getInteractiveAgentCommand(null, undefined)).toBe("openclaw tui");
   });
 
-  it("falls back to the agent name for an agent without a manifest interactive command", () => {
-    expect(getInteractiveAgentCommand(null, "mystery-agent")).toBe("mystery-agent");
+  it("rejects an untrusted agent name when no agent definition is loaded", () => {
+    expect(() => getInteractiveAgentCommand(null, "mystery-agent; echo pwned")).toThrow(
+      'Cannot resolve an interactive command for unsupported agent "mystery-agent; echo pwned".',
+    );
   });
 
   // runtime-manifest.ts accepts a terminal agent declaring only

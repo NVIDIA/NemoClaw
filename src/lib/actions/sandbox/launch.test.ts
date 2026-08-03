@@ -83,12 +83,15 @@ describe("launchSandbox", () => {
     expect(launchedCommand()).toEqual(["bash", "-lc", "hermes"]);
   });
 
-  it("falls back to the registered agent name when no agent definition loads (#6006)", async () => {
-    prepareSession("mystery-agent", null);
+  it("rejects an untrusted registry agent before starting an in-sandbox command (#6006)", async () => {
+    prepareSession("mystery-agent; echo pwned", null);
 
-    await launchSandbox("alpha");
+    await expect(launchSandbox("alpha")).rejects.toThrow(
+      'Cannot resolve an interactive command for unsupported agent "mystery-agent; echo pwned".',
+    );
 
-    expect(launchedCommand()).toEqual(["bash", "-lc", "mystery-agent"]);
+    expect(mocks.prepareHermesLightTerminalSkin).not.toHaveBeenCalled();
+    expect(mocks.execSandbox).not.toHaveBeenCalled();
   });
 
   // Regression guard for #6291: execSandbox wraps every command in
@@ -151,11 +154,13 @@ describe("launchSandbox", () => {
 
   it("does not print connect's in-sandbox command hint (#6006)", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      await launchSandbox("alpha");
 
-    await launchSandbox("alpha");
-
-    const output = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(output).not.toContain("Inside the sandbox, run");
-    logSpy.mockRestore();
+      const output = logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+      expect(output).not.toContain("Inside the sandbox, run");
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 });

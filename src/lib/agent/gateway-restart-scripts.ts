@@ -41,9 +41,10 @@ export function getTerminalCommand(
  * interactively. Unlike getTerminalCommand, this reads
  * runtime.interactive_command for every agent kind: gateway agents such as
  * OpenClaw and Hermes also have an interactive entry point, they just do not
- * own their process lifecycle through it. Falls back to the historical
- * hardcoded pair (openclaw -> `openclaw tui`, anything else -> its own name)
- * for agents whose manifest declares no interactive command.
+ * own their process lifecycle through it. OpenClaw keeps its historical
+ * fallback when no manifest is loaded. Every other command comes from a
+ * trusted agent definition so a sandbox registry value cannot become shell
+ * source.
  */
 export function getInteractiveAgentCommand(
   agent: AgentDefinition | null,
@@ -56,7 +57,11 @@ export function getInteractiveAgentCommand(
     agent?.runtime?.interactive_command?.trim() || agent?.runtime?.headless_command?.trim();
   if (manifestCommand) return manifestCommand;
   const name = agentName || "openclaw";
-  return name === "openclaw" ? "openclaw tui" : name;
+  if (name === "openclaw") return "openclaw tui";
+  if (agent?.name) return agent.name;
+  throw new Error(
+    `Cannot resolve an interactive command for unsupported agent ${JSON.stringify(name)}.`,
+  );
 }
 
 function getRecoveryHealthProbeUrl(
