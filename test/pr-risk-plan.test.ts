@@ -16,6 +16,25 @@ import {
 import { classifyTestDepth } from "../tools/pr-review-advisor/analyze.mts";
 
 const HEAD_SHA = "a".repeat(40);
+const HERMES_MANAGED_POLICY_JOBS = [
+  "bedrock-runtime-compatible-anthropic",
+  "channels-stop-start",
+  "dashboard-remote-bind",
+  "hermes-e2e",
+  "hermes-inference-switch",
+  "hermes-shields-config",
+  "security-posture",
+];
+const HERMES_MANAGED_POLICY_FILES = [
+  "agents/hermes/config/managed-policy.ts",
+  "agents/hermes/hermes-wrapper.py",
+  "agents/hermes/image-build-probes.py",
+  "agents/hermes/managed_policy.py",
+  "agents/hermes/patch-profile-policy-defaults.py",
+  "agents/hermes/seed-dashboard-config.py",
+  "agents/hermes/start.sh",
+  "src/lib/hermes-managed-route.ts",
+];
 
 function plan(...changedFiles: string[]) {
   return buildRiskPlan({ headSha: HEAD_SHA, changedFiles });
@@ -27,7 +46,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(9);
+    expect(first.version).toBe(11);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -82,6 +101,63 @@ describe("deterministic PR risk plan", () => {
     expect(riskPlanRequiredJobIds(result)).toEqual(["token-rotation"]);
     expect(result.families.map((family) => family.id)).toEqual(["focused-e2e"]);
     expect(result.planHash).not.toBe(withoutFocusedSelection.planHash);
+  });
+
+  it("selects startup and auth E2E for managed startup delivery changes (#8016)", () => {
+    const changedFiles = [
+      "scripts/lib/entrypoint-env-wrapper.sh",
+      "src/lib/onboard/managed-startup/agent-environment.ts",
+      "src/lib/onboard/sandbox-create-launch.ts",
+    ];
+    const result = plan(...changedFiles);
+    const adjacentOnboardChange = plan("src/lib/onboard/provider-selection.ts");
+
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "focused-e2e",
+        matchedFiles: changedFiles,
+        requiredJobs: [
+          "device-auth-health",
+          "issue-4462-scope-upgrade-approval",
+          "openclaw-inference-switch",
+        ],
+      }),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining([
+        "device-auth-health",
+        "issue-4462-scope-upgrade-approval",
+        "openclaw-inference-switch",
+      ]),
+    );
+    expect(riskPlanRequiredJobIds(adjacentOnboardChange)).toEqual([
+      "onboard-repair",
+      "onboard-resume",
+    ]);
+  });
+
+  it.each(
+    HERMES_MANAGED_POLICY_FILES,
+  )("selects every Hermes managed-policy live E2E job for %s (#8008)", (changedFile) => {
+    const result = plan(changedFile);
+
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "focused-e2e",
+        matchedFiles: [changedFile],
+        requiredJobs: HERMES_MANAGED_POLICY_JOBS,
+      }),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining(HERMES_MANAGED_POLICY_JOBS),
+    );
+  });
+
+  it("does not select managed-policy E2E for an unrelated Hermes runtime file (#8008)", () => {
+    const result = plan("agents/hermes/runtime-version.py");
+
+    expect(result.families).not.toContainEqual(expect.objectContaining({ id: "focused-e2e" }));
+    expect(riskPlanRequiredJobIds(result)).toEqual(["full-e2e", "hermes-e2e", "security-posture"]);
   });
 
   it("leaves E2E support-only changes in the fast e2e-support project (#7921)", () => {

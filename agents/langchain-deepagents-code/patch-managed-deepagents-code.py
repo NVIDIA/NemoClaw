@@ -511,7 +511,10 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     """Return only the NemoClaw-managed inference constructor contract."""
     del model_name
     from deepagents_code.model_config import ModelConfig, ModelConfigError
-    from deepagents_code._nemoclaw_managed import managed_inference_base_url
+    from deepagents_code._nemoclaw_managed import (
+        managed_inference_base_url,
+        managed_reasoning_effort,
+    )
 
     if provider not in {"openai", "openrouter"}:
         raise ModelConfigError(
@@ -527,6 +530,9 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     }
     if provider == "openai":
         kwargs["use_responses_api"] = False
+        reasoning_effort = managed_reasoning_effort()
+        if reasoning_effort is not None:
+            kwargs["extra_body"] = {"reasoning_effort": reasoning_effort}
     return kwargs
 '''
 
@@ -1735,9 +1741,10 @@ def main() -> None:
             else ""
         )
         analytics_guard = 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'
-        auto_approval_guards = (
+        capability_guards = (
             "def managed_auto_approval_mode() -> str:",
             "def managed_auto_approval_enabled() -> bool:",
+            "def managed_reasoning_effort() -> str | None:",
         )
         if (
             PATCH_MARKER not in helper_source
@@ -1752,7 +1759,7 @@ def main() -> None:
                     for line in helper_source.splitlines()
                 )
                 != 1
-                for guard in auto_approval_guards
+                for guard in capability_guards
             )
         ):
             raise RuntimeError(

@@ -53,6 +53,9 @@ const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
 const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
 const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
 const rebuildRoutePreflight = requireDist("./rebuild-preflight-guards.js");
+const gatewayTeardownAuthority = requireDist(
+  "../../onboard/gateway-teardown-authority.js",
+) as typeof import("../../src/lib/onboard/gateway-teardown-authority");
 const shields = requireDist("../../shields/index.js");
 
 type RebuildFlowStep = {
@@ -227,12 +230,32 @@ function createStep(status: string): RebuildFlowStep {
   return { status, startedAt: null, completedAt: null, error: null };
 }
 
+function sourceSandboxGateway(argv: string[], verb: string): string | null {
+  const gatewayFlag = argv.indexOf("-g");
+  return argv[0] === "sandbox" && argv[1] === verb && argv.at(-1) === "alpha" && gatewayFlag > 0
+    ? (argv[gatewayFlag + 1] ?? null)
+    : null;
+}
+
 function createRebuildFlowSession(machineSnapshotVersion: number): RebuildFlowSession {
   return {
+    sessionId: "rebuild-flow-session",
+    updatedAt: "2026-06-01T00:00:00.000Z",
     sandboxName: "alpha",
+    agent: null,
     provider: "ollama-local",
     model: "nvidia/nemotron",
     credentialEnv: null,
+    checkpoint: null,
+    webSearchConfig: null,
+    resourceProfile: null,
+    messagingPlan: null,
+    sandboxPromptProgress: {
+      sandboxName: true,
+      webSearch: false,
+      messaging: false,
+      resourceProfile: false,
+    },
     metadata: {},
     hermesToolGateways: [],
     lastStepStarted: null,
@@ -312,6 +335,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
 
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
+  vi.spyOn(gatewayTeardownAuthority, "resolveGatewayTeardownAuthority").mockImplementation(
+    ({ gatewayName, gatewayPort }: { gatewayName: string; gatewayPort: number }) => ({
+      gatewayName,
+      gatewayPort,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  );
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
     result: { status: 0, output: overrides.sandboxListOutput ?? "alpha Ready" },
   });
@@ -581,8 +616,13 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .spyOn(openshellRuntime, "captureOpenshell")
     .mockImplementation((args: unknown, options?: unknown) => {
       const argv = Array.isArray(args) ? args.map(String) : [];
-      return overrides.captureOpenshell
-        ? overrides.captureOpenshell(argv, options as Record<string, unknown> | undefined)
+      if (overrides.captureOpenshell) {
+        return overrides.captureOpenshell(argv, options as Record<string, unknown> | undefined);
+      }
+      const probedGateway = sourceSandboxGateway(argv, "get");
+      const liveSource = "Name: alpha\nId: sbx-alpha-source\nPhase: Ready\n";
+      return probedGateway && !deletedSourceGateways.has(probedGateway)
+        ? { status: 0, output: liveSource, stdout: liveSource, stderr: "" }
         : {
             status: 1,
             output: "",
@@ -590,8 +630,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
             stderr: "Error: sandbox alpha not found",
           };
     });
+  const deletedSourceGateways = new Set<string>();
   const runOpenshellSpy = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
     const argv = args as string[];
+    const deleteGateway = sourceSandboxGateway(argv, "delete");
+    if (deleteGateway) {
+      deletedSourceGateways.add(deleteGateway);
+      return { status: 0, output: "" };
+    }
     if (
       argv.join(" ") === "sandbox get alpha" ||
       argv.join(" ") === "sandbox get -g nemoclaw alpha"

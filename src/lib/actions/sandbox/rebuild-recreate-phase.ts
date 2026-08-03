@@ -5,7 +5,9 @@ import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import type { SandboxMessagingPlan } from "../../messaging";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
+import { applyReasoningEffortEnv } from "../../onboard/reasoning-mode";
 import * as shields from "../../shields";
+import { deriveCheckpointFromSession } from "../../state/onboard-checkpoint-migrate";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
@@ -28,6 +30,7 @@ import {
   restoreMcpRegistryForRebuildRetry,
 } from "./rebuild-mcp-phase";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
+import type { RebuildRecreateJournal } from "./rebuild-recreate-journal";
 import type { RebuildRegistryRollback } from "./rebuild-registry-rollback";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import { printRebuildShieldsRecovery, type RebuildShieldsWindow } from "./rebuild-shields";
@@ -40,6 +43,7 @@ export interface RebuildRecreatePhaseInput {
   durableConfig: RebuildDurableConfig;
   resumeConfig: RebuildResumeConfig;
   recreateOptions: RebuildRecreateOnboardOpts;
+  recreateJournal: RebuildRecreateJournal;
   fromDockerfile: string | null;
   rebuildAgent: string | null;
   messagingPlan: SandboxMessagingPlan | null;
@@ -74,6 +78,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     durableConfig: rebuildDurableConfig,
     resumeConfig,
     recreateOptions,
+    recreateJournal,
     fromDockerfile: storedFromDockerfile,
     rebuildAgent,
     messagingPlan: rebuildMessagingPlan,
@@ -103,6 +108,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   );
 
   onboardSession.updateSession((s: Session) => {
+    const journaledCheckpoint = s.checkpoint;
     Object.assign(
       s,
       onboardSession.createSession({
@@ -154,6 +160,16 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.toolDisclosure = rebuildDurableConfig.toolDisclosure;
     s.observabilityEnabled = recreateOptions.observabilityEnabled;
     s.observabilityRequestedExplicitly = recreateOptions.observabilityRequestedExplicitly;
+    // The journal outlives this reset, but the retired session owns its effect
+    // receipts and bindings. Rebind only the values the journal invariant needs.
+    s.checkpoint = journaledCheckpoint
+      ? {
+          ...deriveCheckpointFromSession(s),
+          sandboxIdentity: journaledCheckpoint.sandboxIdentity,
+          gatewayAuthority: journaledCheckpoint.gatewayAuthority,
+          sandboxRecreate: journaledCheckpoint.sandboxRecreate,
+        }
+      : null;
     return s;
   });
   const sessionAfter = onboardSession.loadSession();
@@ -193,10 +209,24 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   if (recreateOptions.policyTier) {
     process.env.NEMOCLAW_POLICY_TIER = recreateOptions.policyTier;
   }
+  // Isolation removed the ambient reasoning inputs so an unrelated onboard
+  // cannot steer this recreate (#5735). The recreate still has to reapply the
+  // *recorded* compatible-endpoint reasoning configuration: both the recovered
+  // provider selection and the sandbox image patch that bakes
+  // ARG NEMOCLAW_REASONING_EFFORT read it from the process env, so without this
+  // seed the replacement records no reasoning effort (#7940). The isolation
+  // restore puts the caller's ambient values back on success and failure.
+  if (resumeConfig.provider === "compatible-endpoint") {
+    process.env.NEMOCLAW_REASONING = resumeConfig.compatibleEndpointReasoning ?? "false";
+    applyReasoningEffortEnv(resumeConfig.compatibleEndpointReasoningEffort);
+  }
   const restoreRebuildBaseImageOverride =
     pinRebuildAgentBaseImageForRecreate(rebuildBaseImagePreflight);
   try {
-    await rebuildOnboardDependencies.onboard(recreateOptions);
+    await rebuildOnboardDependencies.onboard({
+      ...recreateOptions,
+      recreateJournalTargetIntentFingerprint: recreateJournal.targetIntentFingerprint,
+    });
     log("onboard() returned successfully");
   } catch (error) {
     onboardFailed = true;

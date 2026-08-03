@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 
 import { requireValue } from "../core/require-value";
+import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import {
   applyCloudFallbackSelection,
   clearNimContainerBeforeRetry,
@@ -125,7 +126,10 @@ describe("createRemoteModelValidator", () => {
     state.provider = "openai-compatible";
     state.endpointUrl = "https://compatible.example/v1";
     state.model = "model-a";
+    const capabilityCache = new OnboardInferenceCapabilityCache();
+    state.inferenceCapabilityCache = capabilityCache;
     let calledEndpoint: string | null = null;
+    let receivedCapabilityCache: OnboardInferenceCapabilityCache | undefined;
     let configuredReasoning = false;
     const logLines: string[] = [];
     const { validateSelectedRemoteModel } = createRemoteModelValidator({
@@ -136,8 +140,16 @@ describe("createRemoteModelValidator", () => {
         return value;
       },
       isBackToSelection: (_value): _value is never => false,
-      validateCustomOpenAiLikeSelection: async (_label, endpointUrl) => {
+      validateCustomOpenAiLikeSelection: async (
+        _label,
+        endpointUrl,
+        _model,
+        _credentialEnv,
+        _helpUrl,
+        selectedCapabilityCache,
+      ) => {
         calledEndpoint = endpointUrl;
+        receivedCapabilityCache = selectedCapabilityCache;
         return { ok: true, api: "responses" };
       },
       validateCustomAnthropicSelection: async () => ({ ok: false, retry: "selection" }),
@@ -166,6 +178,7 @@ describe("createRemoteModelValidator", () => {
 
     assert.equal(result, "selected");
     assert.equal(calledEndpoint, "https://compatible.example/v1");
+    assert.equal(receivedCapabilityCache, capabilityCache);
     assert.equal(state.preferredInferenceApi, "openai-completions");
     assert.equal(state.compatibleEndpointReasoning, "true");
     assert.equal(configuredReasoning, true);

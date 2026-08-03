@@ -1279,7 +1279,7 @@ printf 'RESULT peer=%s model=%s binding=%s\n' "$NEMOCLAW_DGX_STATION_PEER" "$NEM
     }
   });
 
-  it("preserves the existing single-Station default when discovery finds no peer", () => {
+  it("preserves the Station resume receipt when discovery finds no peer", () => {
     const { result, output, home } = runInstallerBody(
       `
 node() {
@@ -1298,7 +1298,7 @@ NEMOCLAW_MODEL='nvidia/nemotron-3-ultra-550b-a55b'
 unset NEMOCLAW_DGX_STATION_PEER
 NEMOCLAW_DGX_STATION_SSH_BINDING='stale'
 ensure_station_express_pair
-printf 'RESULT peer=%s model=%s selector=%s binding=%s\n' "\${NEMOCLAW_DGX_STATION_PEER:-}" "\${NEMOCLAW_MODEL:-}" "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_DGX_STATION_SSH_BINDING:-}"
+printf 'RESULT peer=%s model=%s selector=%s binding=%s receipt=%s\n' "\${NEMOCLAW_DGX_STATION_PEER:-}" "\${NEMOCLAW_MODEL:-}" "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_DGX_STATION_SSH_BINDING:-}" "$(sed -n '3p' "$HOME/.nemoclaw/station-express-resume")"
 `,
       { PAIR_REVISION: REVISION },
     );
@@ -1306,7 +1306,7 @@ printf 'RESULT peer=%s model=%s selector=%s binding=%s\n' "\${NEMOCLAW_DGX_STATI
       expect(result.status, output).toBe(0);
       expect(output).toContain("No trusted reciprocal dual-DGX Station pair was detected");
       expect(output).toContain(
-        "RESULT peer= model=nvidia/nemotron-3-ultra-550b-a55b selector=nemotron-3-ultra-550b-a55b binding=",
+        "RESULT peer= model=nvidia/nemotron-3-ultra-550b-a55b selector=nemotron-3-ultra-550b-a55b binding= receipt=generation=0123456789abcdef0123456789abcdef",
       );
     } finally {
       fs.rmSync(home, { recursive: true, force: true });

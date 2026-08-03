@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { vi } from "vitest";
+import type { SandboxWorkloadReceipt } from "../../state/registry/types";
 import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
 import type { SnapshotStreamSandboxCreateMock } from "./snapshot-create-stream-test-types";
 
@@ -41,6 +42,7 @@ export type SandboxRecord = {
   fromDockerfile?: string | null;
   gatewayName?: string | null;
   imageTag?: string | null;
+  workload?: SandboxWorkloadReceipt;
   openshellDriver?: string | null;
   observabilityEnabled?: boolean;
   provider?: string | null;
@@ -126,6 +128,11 @@ const lifecycleMock = vi.hoisted(() => {
 });
 
 export const backupSandboxStateMock = vi.fn();
+export const captureSnapshotRestoreAuthorityMock = vi.fn(() => ({
+  schemaVersion: 1 as const,
+  backupPath: "/tmp/backup-alpha",
+  contentSha256: "a".repeat(64),
+}));
 export const loadAgentMock = vi.fn((name: string) => ({
   name,
   policyAdditionsPath: name === "openclaw" ? null : `/repo/agents/${name}/policy-additions.yaml`,
@@ -165,6 +172,8 @@ export const loadPresetForSandboxMock = vi.fn((_sandbox: string, preset: string)
 export const getSandboxMock = vi.fn<(name?: string) => SandboxRecord | null>(() => null);
 export const isGatewayHealthyMock = vi.fn(() => true);
 export const listBackupsMock = vi.fn<() => Array<Record<string, unknown>>>(() => []);
+export const stopNimContainerMock = vi.fn();
+export const stopNimContainerByNameMock = vi.fn();
 export const parseLiveSandboxNamesMock = vi.fn(() => new Set(["alpha"]));
 export const waitForRestoredSandboxGatewaySupervisorMock = vi.fn(() => true);
 export const prepareInitialSandboxCreatePolicyMock = vi.fn(
@@ -178,6 +187,13 @@ export const prepareInitialSandboxCreatePolicyMock = vi.fn(
 export const registerSandboxMock = vi.fn();
 export const updateSandboxMock = vi.fn();
 export const restoreSandboxStateMock = vi.fn();
+export const removeSandboxRegistryEntryOutcomeMock = vi.fn<
+  (
+    name: string,
+  ) =>
+    | { status: "complete"; removed: true }
+    | { status: "blocked"; reason: "authority-unproven"; removed: false }
+>(() => ({ status: "complete", removed: true }));
 export const runOpenshellMock = vi.fn((args: string[]) => {
   args[0] === "sandbox" && args[1] === "delete" && lifecycleMock.events.push("delete");
   return { status: 0, output: "" };
@@ -219,8 +235,8 @@ vi.mock("../../domain/sandbox/destroy", () => ({
 }));
 
 vi.mock("../../inference/nim", () => ({
-  stopNimContainer: vi.fn(),
-  stopNimContainerByName: vi.fn(),
+  stopNimContainer: stopNimContainerMock,
+  stopNimContainerByName: stopNimContainerByNameMock,
 }));
 
 vi.mock("../../policy", () => ({
@@ -276,6 +292,7 @@ vi.mock("../../state/gateway", () => ({
 }));
 
 vi.mock("../../state/registry", () => ({
+  getBaselineExclusions: vi.fn(() => []),
   getConfiguredMessagingChannelsFromEntry: vi.fn(() => []),
   getCustomPolicies: getCustomPoliciesMock,
   getDisabledMessagingChannelsFromEntry: vi.fn(() => []),
@@ -291,16 +308,29 @@ vi.mock("../../state/registry", () => ({
 
 vi.mock("../../state/sandbox", () => ({
   backupSandboxState: backupSandboxStateMock,
+  captureSnapshotRestoreAuthority: captureSnapshotRestoreAuthorityMock,
   findBackup: findBackupMock,
   getLatestBackup: getLatestBackupMock,
   listBackups: listBackupsMock,
   restoreSandboxState: restoreSandboxStateMock,
 }));
 
-vi.mock("./destroy", () => ({
-  cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
-  removeSandboxRegistryEntry: vi.fn(),
-}));
+vi.mock("./destroy", async () => {
+  const runtimeProviders = await vi.importActual<
+    typeof import("../../onboard/runtime-provider/access")
+  >("../../onboard/runtime-provider/access");
+  return {
+    cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
+    removeSandboxRegistryEntry: vi.fn(() => true),
+    removeSandboxRegistryEntryOutcome: removeSandboxRegistryEntryOutcomeMock,
+    requireSandboxDestructiveCleanupAuthority: (sandboxName: string, sandbox: SandboxRecord) =>
+      runtimeProviders.requireRuntimeProviderDestructiveCleanupAuthority(
+        sandboxName,
+        sandbox,
+        runtimeProviders.CURRENT_RUNTIME_PROVIDER_BUNDLES,
+      ),
+  };
+});
 
 vi.mock("./restore-gateway-pairing", () => ({
   establishRestoredSandboxGatewayPairing: establishRestoredSandboxGatewayPairingMock,
@@ -309,6 +339,11 @@ vi.mock("./restore-gateway-pairing", () => ({
 
 export function resetSnapshotRestoreMocks(): void {
   vi.clearAllMocks();
+  captureSnapshotRestoreAuthorityMock.mockReturnValue({
+    schemaVersion: 1,
+    backupPath: "/tmp/backup-alpha",
+    contentSha256: "a".repeat(64),
+  });
   shieldsMock.setIsShieldsDownExport(shieldsMock.isShieldsDownMock);
   shieldsMock.isShieldsDownMock.mockReturnValue(true);
   shieldsMock.shieldsUpMock.mockImplementation(() => lifecycleMock.events.push("harden"));
@@ -348,6 +383,7 @@ export function resetSnapshotRestoreMocks(): void {
     appliedPresets: [],
   }));
   registerSandboxMock.mockReset();
+  removeSandboxRegistryEntryOutcomeMock.mockReturnValue({ status: "complete", removed: true });
   updateSandboxMock.mockReset();
   restoreSandboxStateMock.mockReturnValue({
     success: true,
