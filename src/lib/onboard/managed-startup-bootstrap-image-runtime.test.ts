@@ -16,6 +16,7 @@ import {
   consumeManagedBootstrapEnvelope,
   serializeManagedStartupCompletionMarker,
   verifyManagedBootstrapImageCompletion,
+  waitForManagedBootstrapImageCompletion,
 } from "./managed-startup/image-runtime";
 import {
   encodeManagedStartupProfile,
@@ -183,6 +184,31 @@ describe("managed bootstrap image runtime", () => {
       ...fixture.expected,
       transactionPending: true,
     });
+  });
+
+  it("lets the unprivileged hold wait for only its exact bootstrap identity", () => {
+    const fixture = completionFixture(temporaryDirectory());
+    mockRootFileOwnership();
+    vi.spyOn(process, "geteuid").mockReturnValue(1000);
+
+    expect(
+      waitForManagedBootstrapImageCompletion(
+        fixture.expected,
+        1,
+        fixture.completionFile,
+        fixture.startupCompletionFile,
+        fixture.runtimeEnvironmentFile,
+      ),
+    ).toMatchObject(fixture.expected);
+    expect(() =>
+      waitForManagedBootstrapImageCompletion(
+        { ...fixture.expected, bootstrapIdentity: "c".repeat(64) },
+        1,
+        fixture.completionFile,
+        fixture.startupCompletionFile,
+        fixture.runtimeEnvironmentFile,
+      ),
+    ).toThrow("managed bootstrap completion identity does not match the replacement");
   });
 
   it.each([

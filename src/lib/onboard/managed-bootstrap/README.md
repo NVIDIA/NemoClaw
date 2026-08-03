@@ -17,6 +17,14 @@ The protocol binds one random bootstrap identity to:
 - the replacement runtime, spec hashes, and image-owned completion receipt; and
 - an identity-bound rollback receipt when any stage fails.
 
+The held startup renderer accepts only an `env` envelope whose executable is
+the fixed `/usr/local/bin/nemoclaw-start`. It replaces that executable with the
+image-owned hold using the exact grammar
+`nemoclaw-managed-startup-hold --agent A --profile-fingerprint F --bootstrap-identity I -- tail`.
+The hold enters through `/bin/bash -p`, authenticates the identity-bound image
+completion and runtime-environment handoff, scrubs process-injection variables,
+and delegates the preserved tail only through the fixed startup executable.
+
 The coordinator deliberately exposes two phases. Preparation may create and
 inspect a stopped replacement, but it cannot alter the Ready held workload.
 Activation first records a complete, fingerprinted authority receipt through
@@ -144,8 +152,9 @@ ordinary startup handoff. OpenClaw, Hermes, and DCode images now compile and
 package the freestanding amd64 or arm64 native entrypoint, its non-executable
 shell body, the root-owned hold helper, the runtime bundle, and the complete
 inert capability union. Pull-request and publication workflows build the exact
-images and exercise the direct root-stdin and hold contracts without advertising
-buildless support.
+images and exercise the protected envelope, native bootstrap, production held
+command renderer, and all-agent hold contracts without advertising buildless
+support.
 
 Production onboarding still imports only the provider-neutral create contract;
 no activation path or registered provider imports or selects the driver-specific

@@ -31,7 +31,7 @@ let packagingPaths: string[] = [];
 const managedBootstrapLoad =
   /(?:from\s*|import\s*|import\s*\(\s*|require\s*\(\s*)["']([^"']*managed-bootstrap(?:\/[^"']*)?)["']/giu;
 const allowedManagedBootstrapLoad =
-  /\/managed-bootstrap\/(?:adapter|runtime-create)(?:\.[cm]?[jt]s)?$/u;
+  /\/managed-bootstrap\/(?:adapter|envelope|runtime-create)(?:\.[cm]?[jt]s)?$/u;
 const packagedBootstrapAsset =
   /(?:nemoclaw-managed-bootstrap|managed-bootstrap-trampoline|managed-startup-image-runtime\.cjs|nemoclaw-managed-startup-hold)/u;
 
@@ -197,6 +197,7 @@ describe("runtime provider central source boundary", () => {
       disallowedManagedBootstrapLoads(
         [
           'import type { Contract } from "../managed-bootstrap/adapter";',
+          'import { envelope } from "../managed-bootstrap/envelope";',
           'import type { Lifecycle } from "../../managed-bootstrap/runtime-create.mts";',
         ].join("\n"),
       ),
@@ -245,10 +246,18 @@ describe("runtime provider central source boundary", () => {
   it("packages the dormant managed-bootstrap native boundary for every agent image", () => {
     const entrypoint = read("scripts/managed-bootstrap-entrypoint.c");
     const trampoline = read("scripts/managed-bootstrap-trampoline.sh");
+    const hold = read("scripts/managed-startup-hold.sh");
+    const directE2e = read("scripts/checks/run-managed-image-direct-e2e.ts");
     const packagingSources = packagingPaths.map((path) => [path, read(path)] as const);
     expect(entrypoint).toMatch(/exec_process\(NEMOCLAW_MANAGED_BOOTSTRAP_BASH/u);
     expect(entrypoint).toMatch(/NEMOCLAW_MANAGED_BOOTSTRAP_FREESTANDING/u);
     expect(trampoline).toMatch(/Non-executable image-owned bootstrap body/u);
+    expect(hold.startsWith("#!/bin/bash -p\n")).toBe(true);
+    expect(hold).toContain('[ "$7" = "--" ]');
+    expect(hold).toContain("/usr/local/bin/nemoclaw-start");
+    expect(directE2e).toContain("renderManagedBootstrapHeldCommand(request, bootstrapIdentity");
+    expect(directE2e).toContain("...heldWorkloadArgv.slice(1)");
+    expect(directE2e).not.toMatch(/const HOLD\s*=/u);
     for (const dockerfilePath of [
       "Dockerfile",
       "agents/hermes/Dockerfile",
