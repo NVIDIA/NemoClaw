@@ -61,6 +61,46 @@ describe("buildSandboxRuntimeEnvArgs", () => {
     expect(omitted).toContain("NEMOCLAW_DASHBOARD_PORT=19000");
     expect(omitted).toContain("NEMOCLAW_PROXY_HOST=host.docker.internal");
   });
+
+  // OpenShell exports OPENSHELL_SANDBOX as the boolean "1" to sandbox processes,
+  // so this injection is the sandbox's only source for its own name. Without it
+  // the in-sandbox hints print a `<name>` placeholder instead of a copyable
+  // host-side command. It used to be injected only for LangChain Deep Agents
+  // Code.
+  it("injects NEMOCLAW_SANDBOX_NAME for every agent (#7795)", () => {
+    const base = {
+      chatUiUrl: "http://127.0.0.1:19000/",
+      manageDashboard: true,
+      getDashboardForwardPort: () => "19000",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+      env: {} as NodeJS.ProcessEnv,
+      sandboxName: "my-assistant",
+    };
+
+    for (const agentName of ["openclaw", "hermes", "langchain-deepagents-code"]) {
+      const envArgs = buildSandboxRuntimeEnvArgs({
+        ...base,
+        agent: { name: agentName, configPaths: { dir: "/sandbox/.openclaw" } } as any,
+      }).envArgs;
+      expect(envArgs, `${agentName} should receive the sandbox name`).toContain(
+        "NEMOCLAW_SANDBOX_NAME=my-assistant",
+      );
+    }
+  });
+
+  it("omits NEMOCLAW_SANDBOX_NAME when no sandbox name is known", () => {
+    const envArgs = buildSandboxRuntimeEnvArgs({
+      agent: { name: "openclaw", configPaths: { dir: "/sandbox/.openclaw" } } as any,
+      chatUiUrl: "http://127.0.0.1:19000/",
+      manageDashboard: true,
+      getDashboardForwardPort: () => "19000",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+      env: {} as NodeJS.ProcessEnv,
+    }).envArgs;
+    expect(envArgs.some((arg) => arg.startsWith("NEMOCLAW_SANDBOX_NAME="))).toBe(false);
+  });
 });
 
 describe("prepareSandboxCreateLaunch", () => {

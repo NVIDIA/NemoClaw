@@ -199,11 +199,6 @@ export function renderE2eReport(input: {
       reason:
         "default dispatch excludes Jetson; explicit dispatch requires allow_jetson_runner_queue=true after confirming an online Jetson runner because queued jobs do not honor timeout-minutes before assignment",
     },
-    "sandbox-rlimits-connect": {
-      job: "sandbox-rlimits-connect",
-      target: "sandbox-rlimits-connect",
-      reason: "default dispatch excludes the destructive rlimit fork/connect probe unless selected",
-    },
   };
   const explicitOnlySkippedJobs = (env.EXPLICIT_ONLY_JOBS || "")
     .split(",")
@@ -428,7 +423,7 @@ export function renderE2eReport(input: {
       ? "**Requested test IDs:** _(selector rejected by workflow validation)_"
       : requestedTestIdsCsv
         ? `**Requested test IDs:** \`${requestedTestIdsCsv}\``
-        : "**Requested test IDs:** _(default — all default-enabled tests; explicit-only tests `openshell-gateway-auth-contract`, `mcp-bridge-dev`, `hermes-gpu-startup`, `sandbox-rlimits-connect`, and `jetson-nvmap-gpu` are skipped unless selected)_",
+        : "**Requested test IDs:** _(default — all default-enabled tests; explicit-only tests `openshell-gateway-auth-contract`, `mcp-bridge-dev`, `hermes-gpu-startup`, and `jetson-nvmap-gpu` are skipped unless selected)_",
     `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped, ${unknown.length} unknown`,
     "",
     "| Test | Result | Total wall clock time |",

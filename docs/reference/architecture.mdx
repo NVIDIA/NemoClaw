@@ -87,12 +87,14 @@ Onboarding validates and reuses a healthy selected service.
 It enables or restarts the service when startup or verified runtime drift requires it, then checks gateway health.
 The marked service generates the local OpenShell mTLS bundle and reads `$XDG_CONFIG_HOME/openshell/gateway.env`, or `~/.config/openshell/gateway.env` when `XDG_CONFIG_HOME` is not absolute.
 NemoClaw preserves unrelated environment entries, accepts `DOCKER_HOST` only for an absolute local `unix://` socket, and refuses foreign or symlinked managed files.
-The standalone Linux process is used only when the systemd user manager is unavailable; after a service is selected, startup or health failure stops onboarding.
+If the selected systemd user service fails inspection, startup, or its health check, NemoClaw prints its `journalctl` log command and attempts the standalone fallback.
 
 On Apple Silicon macOS, Homebrew makes the official OpenShell formula authoritative.
 The installer stages the formula and onboarding starts its `openshell` service.
-When Homebrew is present, a missing formula, a formula from another tap, a service-start failure, or a health failure stops onboarding.
-Only a host without Homebrew uses the standalone macOS gateway fallback.
+If the service fails inspection, startup, or its health check, NemoClaw prints the formula log command and attempts the standalone fallback.
+A host without Homebrew, or with no installed OpenShell formula, also uses the standalone macOS gateway.
+On both platforms, standalone startup requires exclusive ownership of the gateway port.
+Managed-service trust failures and unsafe environment configuration remain hard failures.
 
 NemoClaw-managed gateways on custom ports remain detached and separate from the default service.
 An externally supervised gateway can use any matching configured port; its declared supervisor retains lifecycle authority.

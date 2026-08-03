@@ -78,11 +78,18 @@ export interface SandboxCreateIntent {
     readonly targetGeneration: string;
     readonly targetIntentFingerprint: string;
   };
+  /** Validated non-secret Hermes environment assignments carried by a rebuild. */
+  readonly rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
 }
 
 export type OnboardOptions = {
   nonInteractive?: boolean;
   recreateSandbox?: boolean;
+  /** Internal CLI composition for host-only Google Chat tunnel effects. */
+  googlechatTunnelRuntime?: Omit<
+    import("../messaging/channels/googlechat/hooks/tunnel-runtime").GooglechatTunnelRuntimeDeps,
+    "prompt" | "sandboxName"
+  >;
   authoritativeResumeConfig?: boolean;
   /** Internal endpoint provenance preserved across an authoritative rebuild. */
   endpointSource?: import("../inference/selection").InferenceEndpointSource | null;
@@ -104,6 +111,8 @@ export type OnboardOptions = {
   providerRecoveryReceipt?: import("./rebuild-route-handoff").ProviderRecoveryReceipt;
   /** Internal one-shot handoff for the exact image context validated before rebuild deletion. */
   preparedImageRebuild?: import("./prepared-dcode-rebuild").PreparedImageRebuildHandoff;
+  /** Internal validated non-secret Hermes environment assignments carried by a rebuild. */
+  rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
   /** Internal hint for resolving the sandbox base image without repeating remote discovery. */
   baseImageResolutionHint?:
     | import("../sandbox-base-image").SandboxBaseImageResolutionMetadata
