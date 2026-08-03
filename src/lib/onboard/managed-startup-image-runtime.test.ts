@@ -451,6 +451,11 @@ describe("managed startup image runtime", () => {
       pendingModes.set(resolved, mode);
       return descriptor;
     };
+    const deleteExistingFile = (resolved: string): void => {
+      void (files.get(resolved) ?? missing());
+      files.delete(resolved);
+      fileModes.delete(resolved);
+    };
 
     vi.spyOn(process, "geteuid").mockReturnValue(0);
     vi.spyOn(fs, "lstatSync").mockImplementation(((target: fs.PathLike) => {
@@ -520,9 +525,7 @@ describe("managed startup image runtime", () => {
       );
     });
     vi.spyOn(fs, "unlinkSync").mockImplementation(((target: fs.PathLike) => {
-      const resolved = String(target);
-      if (!files.delete(resolved)) missing();
-      fileModes.delete(resolved);
+      deleteExistingFile(String(target));
     }) as typeof fs.unlinkSync);
 
     return {
