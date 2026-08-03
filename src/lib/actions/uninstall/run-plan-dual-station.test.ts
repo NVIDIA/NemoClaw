@@ -147,6 +147,47 @@ describe("dual-Station runtime uninstall", () => {
     }
   });
 
+  it("preserves host-global pair ownership while sibling gateways remain", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-dual-scoped-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const apiKeyPath = path.join(stateDir, "dual-station-vllm-api-key");
+    const receiptPath = path.join(stateDir, "dual-station-vllm-runtime.json");
+    const bindingPath = `${receiptPath}.ssh-binding`;
+    const selectedStatePath = path.join(stateDir, "selected-only");
+    fs.mkdirSync(bindingPath, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(apiKeyPath, "ab".repeat(32), { mode: 0o600 });
+    fs.writeFileSync(receiptPath, "{}\n", { mode: 0o600 });
+    fs.writeFileSync(selectedStatePath, "remove me\n");
+
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: true },
+        {
+          commandExists: (command) => command === "openshell",
+          env: { HOME: home, TMPDIR: home } as NodeJS.ProcessEnv,
+          existsSync: fs.existsSync,
+          isTty: false,
+          log: vi.fn(),
+          rmSync: fs.rmSync,
+          run: (command, args) =>
+            command === "openshell" && args[0] === "gateway" && args[1] === "list"
+              ? ok(JSON.stringify([{ name: "nemoclaw" }, { name: "sibling" }]))
+              : ok(),
+          runDocker: () => ok(),
+          runDualStationRuntimeCleanup: vi.fn(() => ok()),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(fs.existsSync(apiKeyPath)).toBe(true);
+      expect(fs.existsSync(receiptPath)).toBe(true);
+      expect(fs.existsSync(bindingPath)).toBe(true);
+      expect(fs.existsSync(selectedStatePath)).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("does not start the remaining uninstall steps when managed pair cleanup fails", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-dual-fail-"));
     const stateDir = path.join(home, ".nemoclaw");

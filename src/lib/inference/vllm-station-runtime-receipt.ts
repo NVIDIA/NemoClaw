@@ -17,7 +17,10 @@ import {
   cleanupDualStationManagedVllm,
   dualStationVllmClusterId,
 } from "./vllm-station-cluster-lifecycle";
-import { DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE } from "./vllm-station-runtime-receipt-path";
+import {
+  DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
+  discoverDualStationVllmRuntimeReceiptStateDirs,
+} from "./vllm-station-runtime-receipt-path";
 import {
   clearDualStationSshBinding,
   copyDualStationSshBinding,
@@ -186,40 +189,13 @@ function loadReceipt(
   }
 }
 
-function receiptStateDirs(
-  options: Pick<DualStationVllmRuntimeReceiptOptions, "stateDir">,
-): string[] {
-  if (options.stateDir) return [options.stateDir];
-  const sharedStateDir = defaultStateDir();
-  const gatewaysDir = path.join(sharedStateDir, GATEWAYS_SUBDIR);
-  let metadata: fs.Stats;
-  try {
-    metadata = fs.lstatSync(gatewaysDir);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [sharedStateDir];
-    throw error;
-  }
-  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
-    throw new Error(`Dual-Station vLLM gateway state directory is unsafe: ${gatewaysDir}`);
-  }
-  const stateDirs = [sharedStateDir];
-  for (const entry of fs.readdirSync(gatewaysDir, { withFileTypes: true })) {
-    if (!/^\d{1,5}$/.test(entry.name)) continue;
-    const port = Number(entry.name);
-    if (port < 1 || port > 65535) continue;
-    const stateDir = path.join(gatewaysDir, entry.name);
-    if (entry.isSymbolicLink() || !entry.isDirectory()) {
-      throw new Error(`Dual-Station vLLM legacy gateway state directory is unsafe: ${stateDir}`);
-    }
-    stateDirs.push(stateDir);
-  }
-  return stateDirs;
-}
-
 function loadInstalledReceipt(
   options: Pick<DualStationVllmRuntimeReceiptOptions, "stateDir">,
 ): { receipt: DualStationVllmRuntimeReceipt; stateDir: string } | null {
-  const matches = receiptStateDirs(options).flatMap((stateDir) => {
+  const stateDirs = options.stateDir
+    ? [options.stateDir]
+    : discoverDualStationVllmRuntimeReceiptStateDirs(defaultStateDir(), GATEWAYS_SUBDIR);
+  const matches = stateDirs.flatMap((stateDir) => {
     const receipt = loadReceipt({ stateDir });
     return receipt ? [{ receipt, stateDir }] : [];
   });

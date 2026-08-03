@@ -11,7 +11,6 @@ import { nemoclawStateRoot } from "../state/state-root";
 import { ensureLocalAdapterStateDir } from "./local-adapter-lifecycle";
 import { DUAL_STATION_VLLM_API_KEY_FILE } from "./vllm-station-runtime-receipt-path";
 
-export { DUAL_STATION_VLLM_API_KEY_FILE } from "./vllm-station-runtime-receipt-path";
 export const DUAL_STATION_VLLM_API_KEY_PATTERN = /^[a-f0-9]{64}$/;
 
 export interface DualStationVllmApiKeyOptions {

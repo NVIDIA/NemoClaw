@@ -30,6 +30,7 @@ import { isOllamaAuthProxyCommandLine } from "../../inference/ollama/process";
 import {
   DUAL_STATION_VLLM_API_KEY_FILE,
   DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
+  discoverDualStationVllmRuntimeReceiptStateDirs,
 } from "../../inference/vllm-station-runtime-receipt-path";
 import { buildDockerGatewayDebEnvFile } from "../../onboard/docker-driver-gateway-env";
 import {
@@ -1216,27 +1217,12 @@ function removeManagedDualStationRuntime(
   runtime: UninstallRuntime,
 ): boolean {
   const sharedStateDir = path.dirname(paths.managedSwapMarkerPath);
-  const receiptPaths = [path.join(sharedStateDir, DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE)];
-  const gatewaysDir = path.join(sharedStateDir, GATEWAYS_SUBDIR);
+  let receiptPaths: string[];
   try {
-    try {
-      const metadata = fs.lstatSync(gatewaysDir);
-      if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
-        throw new Error(`gateway state directory is unsafe: ${gatewaysDir}`);
-      }
-      for (const entry of fs.readdirSync(gatewaysDir, { withFileTypes: true })) {
-        if (!/^\d{1,5}$/.test(entry.name)) continue;
-        const port = Number(entry.name);
-        if (port < 1 || port > 65535) continue;
-        const stateDir = path.join(gatewaysDir, entry.name);
-        if (entry.isSymbolicLink() || !entry.isDirectory()) {
-          throw new Error(`legacy gateway state directory is unsafe: ${stateDir}`);
-        }
-        receiptPaths.push(path.join(stateDir, DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE));
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
+    receiptPaths = discoverDualStationVllmRuntimeReceiptStateDirs(
+      sharedStateDir,
+      GATEWAYS_SUBDIR,
+    ).map((stateDir) => path.join(stateDir, DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE));
   } catch (error) {
     runtime.error(`Could not inspect managed dual-Station rollback state: ${formatError(error)}`);
     return false;
