@@ -13,9 +13,9 @@ at the narrowest existing extension point.
 
 ## Establish scope
 
-Confirm that an accepted issue or design decision defines the supported channel, agent runtimes,
-ownership, lifecycle, security, and validation boundary. Route an independent integration through
-Community Solutions when product scope is not established.
+Confirm that an accepted issue or design decision defines the supported channel and agent runtimes,
+plus ownership, lifecycle, compatibility, security, and validation expectations. Route an
+independent integration through Community Solutions when product scope is not established.
 
 Gather missing inputs progressively:
 
