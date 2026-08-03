@@ -37,12 +37,15 @@ index 4b5733d16..22f1ec3e1 100644
      browser: ['Hermes Agent', 'Chrome', '120.0'],
 diff --git a/scripts/whatsapp-bridge/proxy-agent.test.mjs b/scripts/whatsapp-bridge/proxy-agent.test.mjs
 new file mode 100644
-index 000000000..65b7327a1
+index 000000000..4b489e7e0
 --- /dev/null
 +++ b/scripts/whatsapp-bridge/proxy-agent.test.mjs
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,92 @@
 +import { strict as assert } from 'node:assert';
++import { once } from 'node:events';
++import { createServer } from 'node:http';
 +import { after, mock, test } from 'node:test';
++import { WebSocketClient } from './node_modules/@whiskeysockets/baileys/lib/Socket/Client/websocket.js';
 +
 +const originalArgv = [...process.argv];
 +const originalHttpsProxy = process.env.HTTPS_PROXY;
@@ -84,13 +87,38 @@ index 000000000..65b7327a1
 +  return socketOptions.at(-1);
 +}
 +
-+test('passes the HTTPS proxy agent to both Baileys transport paths', async () => {
-+  process.env.HTTPS_PROXY = 'http://127.0.0.1:3128';
++test('routes the pinned Baileys WebSocket through the configured HTTPS proxy', async (t) => {
++  const connectTargets = [];
++  const proxy = createServer();
++  proxy.on('connect', (request, socket) => {
++    connectTargets.push(request.url);
++    socket.destroy();
++  });
++  proxy.listen(0, '127.0.0.1');
++  await once(proxy, 'listening');
++  t.after(() => new Promise((resolve) => proxy.close(resolve)));
++
++  const address = proxy.address();
++  assert.ok(address && typeof address !== 'string');
++  process.env.HTTPS_PROXY = `http://127.0.0.1:${address.port}`;
 +  const options = await loadBridge('configured');
 +
 +  assert.ok(options.agent);
 +  assert.strictEqual(options.fetchAgent, options.agent);
-+  assert.equal(options.agent.proxy.href, 'http://127.0.0.1:3128/');
++  assert.equal(options.agent.proxy.href, `${process.env.HTTPS_PROXY}/`);
++
++  const client = new WebSocketClient(new URL('wss://web.whatsapp.com/ws/chat'), {
++    agent: options.agent,
++    connectTimeoutMs: 1000,
++    options: {},
++  });
++  client.on('error', () => {});
++  client.connect();
++  for (let attempt = 0; attempt < 50 && connectTargets.length === 0; attempt += 1) {
++    await new Promise((resolve) => setTimeout(resolve, 10));
++  }
++
++  assert.deepEqual(connectTargets, ['web.whatsapp.com:443']);
 +});
 +
 +test('leaves both Baileys transport paths unset without HTTPS_PROXY', async () => {
