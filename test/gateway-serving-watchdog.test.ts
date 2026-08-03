@@ -204,9 +204,13 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
     }
   });
 
+  // One case per transport outcome gateway_watchdog_probe_gateway classifies as
+  // not serving, so narrowing that set fails the suite rather than silently
+  // leaving a wedge shape unrecovered.
   it.each([
     ["a probe timeout", 28, "probe timeout"],
     ["an empty reply", 52, "empty reply from gateway"],
+    ["a send error", 55, "send error"],
     ["a connection reset", 56, "connection reset"],
   ])("recovers a gateway wedged behind %s (#7377)", (_label, exitCode, reason) => {
     // A listener that accepts and then stalls or drops the connection is just
@@ -290,6 +294,25 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
       expect(result.stderr).toContain("health probe inconclusive (curl exit 127)");
       expect(result.stderr).not.toContain("stopped serving port 18789");
       expect(String(result.stderr).match(/health probe inconclusive/g)).toHaveLength(1);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("carries an armed streak across an inconclusive probe (#7377)", () => {
+    // An inconclusive probe holds the streak rather than clearing it, so an
+    // intermittent local probe failure cannot postpone recovery indefinitely.
+    // Two failures, one inconclusive probe, two more failures — that is four
+    // classified failures and must still reach the default threshold.
+    const { result, fakeAlive, tmpDir } = runWatchdog({
+      curlPlan: [0, 7, 7, 127, 7, 7],
+      expectKill: true,
+    });
+    try {
+      expect(result.status, `script failed: ${result.stderr}`).toBe(0);
+      expect(fakeAlive).toBe(false);
+      expect(result.stderr).toContain("health probe inconclusive");
+      expect(result.stderr).toContain("(4 consecutive not-serving probes)");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

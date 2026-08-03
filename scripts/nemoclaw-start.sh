@@ -4744,6 +4744,16 @@ start_plugin_registry_refresh() {
 # Probes that fail for local reasons (curl missing or unable to run at all)
 # stay inconclusive: they neither arm the watchdog nor count toward the
 # threshold, so a broken probe can never turn into a kill loop.
+#
+# Source boundary: the wedge itself originates inside OpenClaw's gateway
+# lifecycle, which can leave the process running after its listener is gone
+# instead of exiting. NemoClaw cannot repair that from outside the process, so
+# it does two things it can do: the generated config pins `gateway.reload.mode`
+# to `hot` to remove the most common trigger, and this watchdog turns the
+# surviving cases back into process exits that the #2757 respawn loop already
+# handles. Remove this watchdog once an OpenClaw gateway that cannot serve
+# exits on its own — at that point the respawn loop observes the exit directly
+# and no external prober is needed.
 
 # Human-readable cause for a non-serving probe, used in the watchdog's log
 # lines so an operator can tell a refused port from a wedged-but-listening one.

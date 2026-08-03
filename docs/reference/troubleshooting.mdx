@@ -645,8 +645,12 @@ The watchdog treats the gateway as serving only while the local health endpoint 
 A refused port, a probe that times out, a connection that is accepted and then dropped, and an HTTP error response all count as not serving, so a gateway wedged in any of those states is recovered rather than left running.
 The watchdog logs the cause it observed on each failed probe, and acts after four consecutive failures (roughly two minutes).
 
-A gateway wedged this way shows up as `openclaw health` reporting `gateway_transport_error` — often `1006 abnormal closure (no close frame)` — while the container stays `running` with no restarts, and agent replies keep working through the embedded fallback route instead of the gateway.
+A gateway wedged this way shows up as `openclaw health` reporting `gateway_transport_error` — often `1006 abnormal closure (no close frame)` — while the container stays `running` with no restarts.
+Agent replies keep arriving during the wedge because the OpenClaw CLI falls back to running the agent in-process (its embedded fallback) instead of through the gateway, so the sandbox looks healthy from the outside while the gateway is unusable.
 If the watchdog reports `health probe inconclusive`, the probe itself could not run inside the sandbox; the gateway is left untouched, and the sandbox image needs repair with `$$nemoclaw <name> rebuild --yes`.
+
+The watchdog is recovery, not a fix for the underlying wedge: it converts a gateway that cannot serve back into a process exit that the sandbox supervisor already knows how to relaunch.
+It stays necessary until an OpenClaw gateway that cannot serve exits on its own.
 
 Because of the `hot` pin, restart-class configuration changes made inside the sandbox log `config reload requires gateway restart; hot mode ignoring` and do not take effect until the gateway restarts.
 For example, `openclaw plugins install` logs that message until the gateway restarts.
