@@ -22,7 +22,7 @@ Update the JSON so the tables and partial views on other pages stay in sync with
 |--------|---------|
 | Tested | Validated by CI or QA. Safe to claim and to demo. |
 | Tested with limitations | Works on the listed setup with documented caveats. Caveats must be cited whenever this row is claimed. |
-| Experimental | Available behind `NEMOCLAW_EXPERIMENTAL=1` or an equivalent opt-in flag. Do not claim in launch-facing material without the opt-in mentioned. |
+| Experimental | Available only after an explicit experimental opt-in, such as `NEMOCLAW_EXPERIMENTAL=1` or selecting an integration that the CLI labels experimental. Do not claim in launch-facing material without the opt-in mentioned. |
 | Deferred | Planned but not yet validated. Roadmap-only. Do not claim as supported. |
 | Unsupported | Explicitly out of scope. Not validated and not planned. Documented to set expectations and prevent drift. |
 | Hermes only | Available only when onboarding the Hermes agent. |
@@ -120,7 +120,7 @@ NemoClaw configures messaging channels during onboarding. The OpenShell gateway 
 | WeChat | Tested with limitations | Channel hook available. Verify regional account access before relying on this path. |
 | WhatsApp | Tested with limitations | Supported by both OpenClaw and Hermes through the channel manifest `supportedAgents` declaration in `src/lib/messaging/channels/whatsapp/manifest.ts`. Pairing happens in the sandbox through WhatsApp Web by scanning a QR code at first run; the Hermes flow exposes this as `hermes whatsapp` and persists session credentials under `~/.hermes/platforms/whatsapp/session` (`agents/hermes/manifest.yaml:69-71`). Sandbox egress goes through the `whatsapp` policy preset, which carries the WebSocket / Noise / h1-ALPN caveats documented in `src/lib/messaging/channels/whatsapp/policy/openclaw.yaml` and `src/lib/messaging/channels/whatsapp/policy/hermes.yaml`. No Meta Business API integration today; that path is out of scope for this matrix. |
 | Microsoft Teams | Experimental | Supported by both OpenClaw and Hermes through the manifest-first messaging channel contract. Requires Bot Framework app credentials, a tenant ID, and a public HTTPS endpoint that reaches the sandbox webhook path `/api/messages`. Sandbox egress goes through the `teams` policy preset, and only one active Teams sandbox can use a given local `MSTEAMS_PORT` forward. |
-| Google Chat | Experimental | Available only for OpenClaw through the channel manifest contract. Requires a Google service-account credential and a public HTTPS endpoint that reaches only the `/googlechat` webhook path. OpenShell keeps the service-account private key outside the sandbox and supplies short-lived credentials at approved egress boundaries. |
+| Google Chat | Experimental | Available only for OpenClaw through the channel manifest contract. The onboarding picker labels Google Chat experimental, and NemoClaw enables it only after you explicitly select or add it. Requires a Google service-account credential and a public HTTPS endpoint that reaches only the `/googlechat` webhook path. OpenShell keeps the service-account private key outside the sandbox and supplies short-lived credentials at approved egress boundaries. |
 {/* integration-status:end */}
 
 ## Capabilities

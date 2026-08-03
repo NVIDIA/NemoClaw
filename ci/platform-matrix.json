@@ -18,7 +18,7 @@
   "statuses": {
     "tested": "Validated by CI or QA. Safe to claim and to demo.",
     "caveated": "Works on the listed setup with documented caveats. Caveats must be cited whenever this row is claimed.",
-    "experimental": "Available behind `NEMOCLAW_EXPERIMENTAL=1` or an equivalent opt-in flag. Do not claim in launch-facing material without the opt-in mentioned.",
+    "experimental": "Available only after an explicit experimental opt-in, such as `NEMOCLAW_EXPERIMENTAL=1` or selecting an integration that the CLI labels experimental. Do not claim in launch-facing material without the opt-in mentioned.",
     "deferred": "Planned but not yet validated. Roadmap-only. Do not claim as supported.",
     "unsupported": "Explicitly out of scope. Not validated and not planned. Documented to set expectations and prevent drift.",
     "hermes only": "Available only when onboarding the Hermes agent."
@@ -334,7 +334,7 @@
     {
       "name": "Google Chat",
       "status": "experimental",
-      "notes": "Available only for OpenClaw through the channel manifest contract. Requires a Google service-account credential and a public HTTPS endpoint that reaches only the `/googlechat` webhook path. OpenShell keeps the service-account private key outside the sandbox and supplies short-lived credentials at approved egress boundaries."
+      "notes": "Available only for OpenClaw through the channel manifest contract. The onboarding picker labels Google Chat experimental, and NemoClaw enables it only after you explicitly select or add it. Requires a Google service-account credential and a public HTTPS endpoint that reaches only the `/googlechat` webhook path. OpenShell keeps the service-account private key outside the sandbox and supplies short-lived credentials at approved egress boundaries."
     }
   ],
 
