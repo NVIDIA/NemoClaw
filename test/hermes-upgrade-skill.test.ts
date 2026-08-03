@@ -23,7 +23,7 @@ describe("Hermes upgrade skill", () => {
     expect(skill).toContain("nemoclaw-contributor-update-dependencies");
     expect(skill).toContain("dependency-upgrade checklist");
     expect(skill).toContain("nemoclaw-contributor-create-pr");
-    expect(skill).toContain("exact-head CI");
+    expect(skill).toContain("CI, automated review, and required E2E pass on the head commit");
   });
 
   it("requires an exact stable target and complete Hermes release ranges", () => {

@@ -180,10 +180,23 @@ function createStep(status: string): RebuildFlowStep {
 }
 export function createRebuildFlowSession(machineSnapshotVersion: number): RebuildFlowSession {
   return {
+    sessionId: "rebuild-flow-session",
+    updatedAt: "2026-06-01T00:00:00.000Z",
     sandboxName: "alpha",
+    agent: null,
     provider: "ollama-local",
     model: "nvidia/nemotron",
     credentialEnv: null,
+    checkpoint: null,
+    webSearchConfig: null,
+    resourceProfile: null,
+    messagingPlan: null,
+    sandboxPromptProgress: {
+      sandboxName: true,
+      webSearch: false,
+      messaging: false,
+      resourceProfile: false,
+    },
     metadata: {},
     hermesToolGateways: [],
     lastStepStarted: null,

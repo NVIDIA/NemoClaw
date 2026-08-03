@@ -4,11 +4,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { restoreEnv } from "../../../../test/helpers/env-test-helpers";
+import * as shields from "../../shields";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
+import type { RebuildRecreateJournal } from "./rebuild-recreate-journal";
 import { type RebuildRecreatePhaseInput, runRebuildRecreatePhase } from "./rebuild-recreate-phase";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 
@@ -49,6 +51,9 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   authoritativeResumeConfig: true,
   acceptThirdPartySoftware: true,
   agent: "openclaw",
+  recreateProvider: "compatible-endpoint",
+  recreateModel: "mock/deepseek-compatible",
+  recreatePreferredInferenceApi: "openai-completions",
   fromDockerfile: null,
   sandboxGpu: null,
   sandboxGpuDevice: null,
@@ -66,6 +71,18 @@ const recreateOptions: RebuildRecreateOnboardOpts = {
   baseImageResolutionHint: null,
 };
 
+const recreateJournal: RebuildRecreateJournal = {
+  id: "11111111-1111-4111-8111-111111111111",
+  acceptedTarget: false,
+  sourceConfirmedAbsent: true,
+  targetGeneration: "22222222-2222-4222-8222-222222222222",
+  targetIntentFingerprint: "rebuild-reasoning-target",
+  markDeleting: vi.fn(),
+  observeSourceForDelete: vi.fn((): "missing" => "missing"),
+  confirmDeleted: vi.fn(),
+  completeAcceptedTarget: vi.fn(),
+};
+
 function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildRecreatePhaseInput {
   return {
     sandboxName: SANDBOX_NAME,
@@ -75,6 +92,7 @@ function makeInput(overrides: Partial<RebuildRecreatePhaseInput> = {}): RebuildR
     durableConfig,
     resumeConfig: compatibleResumeConfig,
     recreateOptions,
+    recreateJournal,
     fromDockerfile: null,
     rebuildAgent: "openclaw",
     messagingPlan: null,
@@ -110,6 +128,7 @@ describe("rebuild recreate compatible-endpoint reasoning handoff (#7940)", () =>
     session = onboardSession.createSession({ sandboxName: SANDBOX_NAME });
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(shields, "clearShieldsState").mockImplementation(() => undefined);
     vi.spyOn(onboardSession, "loadSession").mockImplementation(() => session);
     vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator) => {
       session = mutator(session) ?? session;

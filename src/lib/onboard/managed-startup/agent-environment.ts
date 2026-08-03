@@ -8,12 +8,13 @@ import {
   MANAGED_STARTUP_RUNTIME_CLEANUP_OBLIGATIONS,
   type ManagedStartupAgent,
   type ManagedStartupDashboard,
+  type ManagedStartupMessagingAgent,
   type ManagedStartupProfile,
   validateManagedStartupProfile,
 } from "./profile";
 
 export type ManagedStartupConfigAgent = ManagedStartupAgent;
-export type ManagedStartupMessagingAgent = "openclaw" | "hermes";
+export type { ManagedStartupMessagingAgent } from "./profile";
 
 export interface ManagedStartupCorporateCaMaterial {
   readonly kind: "corporate-ca-handoff";

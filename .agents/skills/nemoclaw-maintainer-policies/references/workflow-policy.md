@@ -46,6 +46,40 @@ The contributor must correct a failure.
 Maintainers must reject a PR with an unverified commit or no DCO declaration.
 Do not merge, approve, or repair it for the contributor.
 
+## Superseded PR Attribution
+
+A supersession declaration records a relationship between PRs.
+It does not prove that one PR covers the other, satisfies contributor requirements, or ranks above another candidate.
+
+When a replacement PR carries material code, tests, or documentation from another contributor's PR:
+
+- Confirm that the source PR already contains that contributor's `Signed-off-by:` declaration.
+  Never add or copy a DCO declaration on another contributor's behalf.
+- Use the exact author name and email from the source commit.
+  Never guess or substitute an attribution identity.
+
+If the source commit has no usable author identity, leave the winner unset and ask the contributor to provide machine-readable attribution.
+If the source PR has no contributor DCO declaration, leave the winner unset and ask the contributor to add it.
+A maintainer must not supply either declaration on the contributor's behalf.
+
+After both checks pass:
+
+- Add `Supersedes #<number>` to the replacement PR body and identify the transferred contribution.
+- Preserve the source contributor as the Git author when cherry-picking their commit.
+- When the replacement combines or reconstructs their work, add a
+  `Co-authored-by: Name <email>` commit trailer for each contributor whose work remains.
+  Use the verified source-commit identity.
+- Keep the replacement author's own DCO declaration in the replacement PR body.
+- Before recommending merge or closure, verify the replacement PR body and commit metadata,
+  and confirm that every replacement commit appears as `Verified` in GitHub.
+
+An independent implementation based only on the issue, a reproduction, or public discussion does not require co-authorship.
+Still link the related PRs when recommending closure so the decision remains discoverable.
+A comment on the superseded PR does not replace attribution in the merged PR history.
+
+This policy does not authorize a merge, close, comment, or other write.
+Each operation still requires its own authorization.
+
 ## Issue Classification
 
 Native GitHub Issue Type is the canonical issue-kind field:

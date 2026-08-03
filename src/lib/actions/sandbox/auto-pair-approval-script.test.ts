@@ -67,10 +67,10 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     expect(restoredClone).toContain("local_approval_auth_mode == 'paired-token'");
     expect(restoredClone).toContain("sync_approved_clone_device_auth");
     expect(restoredClone).toContain("os.O_DIRECTORY | os.O_NOFOLLOW");
+    expect(restoredClone).toContain("getattr(os, 'O_PATH', os.O_RDONLY)");
     expect(restoredClone).toContain("dir_fd=clone_state_dir_fd");
     expect(restoredClone).toContain("clone_devices_dir_fd,");
     expect(restoredClone).toContain("clone_identity_dir_fd,");
-    expect(restoredClone).toContain("metadata.st_nlink != 1");
     expect(restoredClone).toContain("pass_fds=approval_pass_fds");
     expect(restoredClone).toContain("approve_env['NODE_DISABLE_COMPILE_CACHE'] = '1'");
     expect(restoredClone).toContain("approve_env['OPENCLAW_NO_RESPAWN'] = '1'");
@@ -113,6 +113,13 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     for (const receipt of [
       "approved-one",
       "list-failed",
+      "list-state-path-invalid",
+      "list-platform-unsupported",
+      "list-state-root-failed",
+      "list-devices-directory-failed",
+      "list-pending-unsafe",
+      "list-pending-unstable",
+      "list-pending-invalid-shape",
       "list-pending-unavailable",
       "list-timeout",
       "list-exec-failed",
