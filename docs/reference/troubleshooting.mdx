@@ -134,7 +134,7 @@ docker info
 The managed default gateway service accepts `DOCKER_HOST` only as an absolute local `unix://` socket path.
 It rejects remote endpoints and relative socket paths before service startup.
 
-### Onboarding reports `invalid_docker_host`
+### Onboarding Reports an Invalid Docker Host
 
 The `invalid_docker_host` advisory means that `DOCKER_HOST` is not an absolute local `unix://` socket path that NemoClaw can write to the managed OpenShell gateway service environment.
 NemoClaw does not use the standalone gateway fallback when this validation fails.
