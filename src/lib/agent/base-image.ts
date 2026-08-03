@@ -41,6 +41,7 @@ import {
 } from "../sandbox-base-image";
 import { createDeepAgentsCodeBaseImageResolutionOptions } from "./deep-agents-code-base-image";
 import type { AgentDefinition } from "./defs";
+import { getNemoCuaBaseImageBuildArgs } from "./nemocua-base-image";
 
 const HERMES_MCP_RUNTIME_PROBE_OK = "nemoclaw-hermes-mcp-runtime-ok";
 // Matches the official Hermes base repository for both Dockerfile manifest-list
@@ -501,6 +502,7 @@ export function ensureAgentBaseImage(
     const buildProvenance = localBaseImageBuildProvenance(resolutionOptions);
     console.log(`  Rebuilding ${agent.displayName} base image...`);
     const buildResult = dockerBuild(baseDockerfile, forceBuildTag, ROOT, {
+      buildArgs: getNemoCuaBaseImageBuildArgs(agent),
       ignoreError: true,
       labels: buildProvenance.labels,
       stdio: ["ignore", "inherit", "inherit"],
@@ -610,6 +612,7 @@ export function ensureAgentBaseImage(
     console.log(`  Building ${agent.displayName} base image (first time only)...`);
     const buildProvenance = localBaseImageBuildProvenance(resolutionOptions);
     const buildResult = dockerBuild(baseDockerfile, baseImageTag, ROOT, {
+      buildArgs: getNemoCuaBaseImageBuildArgs(agent),
       ignoreError: true,
       labels: buildProvenance.labels,
       stdio: ["ignore", "inherit", "inherit"],

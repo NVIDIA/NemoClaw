@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "compatibility": {
+    "status": "awaiting-live-qualification",
+    "issue": 7755
+  },
+  "hostCli": {
+    "name": "nemocua",
+    "version": "0.0.20-dev-v3",
+    "filename": "nemocua_linux_amd64.tar.gz",
+    "sizeBytes": 12322325,
+    "sha256": "702d93c4fc01ba4aafdd23daaf17fd25cea8f7deab3f1caa1c91ef047f4778aa",
+    "sourceRevision": "d2f6b3b7bff5d6cb14eb1b5fdb255b660246762b"
+  },
+  "sandboxImage": {
+    "name": "nvlumina",
+    "version": "v0.0.5",
+    "platform": "linux/amd64",
+    "digest": "sha256:c1a577fc8f69071642b97706130df26abd8a89b8bd429a9ef37abf0ccd634e0b"
+  },
+  "targetServices": {
+    "name": "nemocua-services",
+    "version": "0.0.66-dev-v29",
+    "filename": "nemocua-services-linux-x86_64-v0.0.66-dev-v29.tar.gz",
+    "sizeBytes": 183706364,
+    "sha256": "6d731e02226b364daa61d3521e5903b86f1e4260e41d330b1a7daed5c3ae3b01",
+    "sourceRevision": "712a4e707f816c07a2158e6e3dd1ea77fd91977e"
+  }
+}
