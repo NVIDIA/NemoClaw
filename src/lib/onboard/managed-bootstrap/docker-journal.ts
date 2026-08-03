@@ -105,6 +105,16 @@ export interface DockerManagedBootstrapJournalStore {
   ): DockerManagedBootstrapFinalizationRecord | null;
 }
 
+export interface DockerManagedBootstrapLegacyJournalContext {
+  readonly schemaVersion: 1 | 2;
+  readonly phase: Exclude<DockerManagedBootstrapJournalPhase, "owner-cleanup-required">;
+  readonly bootstrapIdentity: string;
+  readonly providerId: string;
+  readonly sandbox: ManagedBootstrapSandboxIdentity;
+  readonly originalRuntimeId: string;
+  readonly replacementRuntimeId: string;
+}
+
 /**
  * Alternate stores may use this only when the durable mutation completed and
  * the caller lost its acknowledgement. Ordinary I/O and fsync failures must
@@ -119,26 +129,44 @@ export class DockerManagedBootstrapJournalAcknowledgementLostError extends Error
 
 export class DockerManagedBootstrapLegacyRecordRequiresAgentError extends Error {
   readonly bootstrapIdentity: string;
+  readonly journalContext: DockerManagedBootstrapLegacyJournalContext | null;
   readonly recordKind: "finalization" | "journal";
   readonly reason: "context-mismatch" | "missing-context" | undefined;
   readonly schemaVersion: number;
 
   constructor(input: {
     readonly bootstrapIdentity: string;
+    readonly journalContext?: DockerManagedBootstrapLegacyJournalContext;
     readonly recordKind: "finalization" | "journal";
     readonly reason?: "context-mismatch" | "missing-context";
     readonly schemaVersion: number;
   }) {
     const reason = input.reason;
+    const journalContext = input.journalContext
+      ? Object.freeze({
+          ...input.journalContext,
+          sandbox: Object.freeze({ ...input.journalContext.sandbox }),
+        })
+      : undefined;
+    const journalGuidance = journalContext
+      ? `; recovery is fenced to sandbox '${journalContext.sandbox.sandboxName}' ` +
+        `(ID ${journalContext.sandbox.sandboxId}, provider ${journalContext.providerId}, ` +
+        `journal-body phase ${journalContext.phase}) with exact original runtime ` +
+        `${journalContext.originalRuntimeId} and replacement runtime ` +
+        `${journalContext.replacementRuntimeId}; preserve the journal and follow ` +
+        "https://github.com/NVIDIA/NemoClaw/blob/main/src/lib/onboard/managed-bootstrap/README.md#legacy-journal-drain-schema-1-and-2"
+      : "";
     super(
       `Managed bootstrap Docker ${input.recordKind} schema ${input.schemaVersion} for ` +
         `${input.bootstrapIdentity} lacks durable agent identity` +
         (reason === "context-mismatch"
           ? "; supplied durable context does not match this record"
-          : ""),
+          : "") +
+        journalGuidance,
     );
     this.name = "DockerManagedBootstrapLegacyRecordRequiresAgentError";
     this.bootstrapIdentity = input.bootstrapIdentity;
+    this.journalContext = journalContext ?? null;
     this.recordKind = input.recordKind;
     this.reason = reason;
     this.schemaVersion = input.schemaVersion;
@@ -260,7 +288,11 @@ function sameSandboxIdentity(
 function normalizeLegacyDockerManagedBootstrapJournal(
   journal: Readonly<Record<string, unknown>>,
   schemaVersion: 1 | 2,
-): { readonly bootstrapIdentity: string; readonly canonical: string } {
+): {
+  readonly bootstrapIdentity: string;
+  readonly canonical: string;
+  readonly journalContext: DockerManagedBootstrapLegacyJournalContext;
+} {
   if (schemaVersion === 1) {
     const expectedKeys = [
       "backupName",
@@ -311,6 +343,15 @@ function normalizeLegacyDockerManagedBootstrapJournal(
     return {
       bootstrapIdentity: normalized.bootstrapIdentity,
       canonical: `${JSON.stringify(normalized)}\n`,
+      journalContext: Object.freeze({
+        schemaVersion,
+        phase: normalized.phase,
+        bootstrapIdentity: normalized.bootstrapIdentity,
+        providerId: normalized.sandbox.driverId,
+        sandbox: normalized.sandbox,
+        originalRuntimeId: normalized.originalRuntimeId,
+        replacementRuntimeId: normalized.replacementRuntimeId,
+      }),
     };
   }
 
@@ -408,6 +449,15 @@ function normalizeLegacyDockerManagedBootstrapJournal(
   return {
     bootstrapIdentity: normalized.bootstrapIdentity,
     canonical: `${JSON.stringify(normalized)}\n`,
+    journalContext: Object.freeze({
+      schemaVersion,
+      phase: normalized.phase,
+      bootstrapIdentity: normalized.bootstrapIdentity,
+      providerId: normalized.providerId,
+      sandbox: normalized.sandbox,
+      originalRuntimeId: normalized.originalRuntimeId,
+      replacementRuntimeId: normalized.replacementRuntimeId,
+    }),
   };
 }
 
@@ -422,6 +472,7 @@ export function normalizeDockerManagedBootstrapJournal(
     const legacy = normalizeLegacyDockerManagedBootstrapJournal(journal, journal.schemaVersion);
     throw new DockerManagedBootstrapLegacyRecordRequiresAgentError({
       bootstrapIdentity: legacy.bootstrapIdentity,
+      journalContext: legacy.journalContext,
       recordKind: "journal",
       schemaVersion: journal.schemaVersion,
     });
@@ -564,6 +615,7 @@ export function parseDockerManagedBootstrapJournal(text: string): DockerManagedB
     if (legacy.canonical !== text) fail("serialized legacy journal is not canonical");
     throw new DockerManagedBootstrapLegacyRecordRequiresAgentError({
       bootstrapIdentity: legacy.bootstrapIdentity,
+      journalContext: legacy.journalContext,
       recordKind: "journal",
       schemaVersion: record.schemaVersion,
     });
@@ -1180,7 +1232,19 @@ export function createFileDockerManagedBootstrapJournalStore(
     const target = journalPath(directory, bootstrapIdentity);
     const contents = readPrivateFile(target, "journal");
     if (contents === null) return null;
-    const journal = parseDockerManagedBootstrapJournal(contents);
+    let journal: DockerManagedBootstrapJournal;
+    try {
+      journal = parseDockerManagedBootstrapJournal(contents);
+    } catch (error) {
+      if (
+        error instanceof DockerManagedBootstrapLegacyRecordRequiresAgentError &&
+        error.recordKind === "journal" &&
+        error.bootstrapIdentity !== bootstrapIdentity
+      ) {
+        fail("journal bootstrap identity does not match its file name");
+      }
+      throw error;
+    }
     if (journal.bootstrapIdentity !== bootstrapIdentity) {
       fail("journal bootstrap identity does not match its file name");
     }

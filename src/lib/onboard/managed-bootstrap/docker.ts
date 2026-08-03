@@ -128,6 +128,10 @@ function dockerManagedBootstrapRecoveryFailure(
   journal: DockerBootstrapTransaction | null,
   error: unknown,
 ): ManagedBootstrapRecoveryFailure {
+  const legacyJournalContext =
+    error instanceof DockerManagedBootstrapLegacyRecordRequiresAgentError
+      ? error.journalContext
+      : null;
   const classified =
     error instanceof ManagedBootstrapOwnerCleanupRequiredError
       ? { code: "owner-cleanup-required", retryable: true }
@@ -136,13 +140,16 @@ function dockerManagedBootstrapRecoveryFailure(
         : error instanceof ManagedBootstrapCommitStateIndeterminateError
           ? { code: "commit-state-indeterminate", retryable: true }
           : error instanceof DockerManagedBootstrapLegacyRecordRequiresAgentError
-            ? { code: "legacy-agent-required", retryable: false }
+            ? { code: "legacy-agent-required", retryable: true }
             : { code: "provider-recovery-failed", retryable: true };
   return Object.freeze({
     schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
-    providerId: journal?.providerId ?? DOCKER_DRIVER_ID,
+    providerId: journal?.providerId ?? legacyJournalContext?.providerId ?? DOCKER_DRIVER_ID,
+    // A legacy cutover decision sidecar may have advanced beyond the phase in
+    // the journal body. Keep the provider phase unknown until agent-bound
+    // recovery can validate both records, while retaining its exact sandbox.
     sourcePhase: journal?.phase ?? null,
-    sandbox: journal?.sandbox ?? null,
+    sandbox: journal?.sandbox ?? legacyJournalContext?.sandbox ?? null,
     bootstrapIdentity,
     code: classified.code,
     retryable: classified.retryable,

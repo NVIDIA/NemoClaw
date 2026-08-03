@@ -125,6 +125,40 @@ that same ID after quiescence. Multi-process lease/arbitration remains an
 explicit production-activation gate. Activation must also inject the selected
 gateway's canonical state root.
 
+## Legacy journal drain (schema 1 and 2)
+
+Schema 1 and schema 2 journal bodies predate durable agent identity. They cannot
+be upgraded by guessing from a mutable sandbox name, image repository, or the
+agent selected by a later command. Recovery therefore preserves the canonical
+record and any decision sidecar, reports its exact bootstrap, provider, sandbox,
+original-runtime, and replacement-runtime identities, and fences only that
+sandbox name. A create for another sandbox may continue after warning about the
+retained record.
+
+When recovery reports one of these records:
+
+1. Stop onboarding the named sandbox. Save the complete diagnostic and back up
+   the canonical state root's
+   `managed-bootstrap/<bootstrap-identity>.json` file and any adjacent decision
+   sidecar without editing either record.
+2. Inspect the reported full runtime IDs through the owning provider. Treat
+   sandbox and container names as diagnostic text only. Never delete, rename,
+   or adopt a runtime by name, and never copy agent identity from the current
+   invocation into the old record.
+3. If either exact runtime is present, or its presence cannot be proven, leave
+   the journal in place and recover the provider-owned transaction using those
+   immutable IDs. A legacy cutover decision may be newer than the journal-body
+   phase, so the body alone never authorizes commit or rollback.
+4. If both exact runtimes are proven absent, still preserve the journal and its
+   image-owned shared-state evidence. Record the exact absence proof on
+   [epic #7744](https://github.com/NVIDIA/NemoClaw/issues/7744) for the
+   identity-checked retirement path. Until that path ships, use a different
+   sandbox name rather than deleting durable authority.
+
+Production activation must include the identity-checked retirement path and
+protected recovery qualification. This candidate remains inert, so it does not
+expose a runtime that could create these legacy records without that support.
+
 ## Architectural disposition
 
 The runtime-provider bundle is the only bootstrap registration boundary. The

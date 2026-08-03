@@ -353,12 +353,16 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     recoverUnfinished.mockResolvedValueOnce(recoveryReport("alpha"));
     prepareNetwork.mockClear();
     mocks.streamSandboxCreate.mockClear();
+    mockExit();
 
-    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
-      "recovery blocks sandbox 'alpha'",
-    );
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
     expect(prepareNetwork).not.toHaveBeenCalled();
     expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
+    expect(errorOutput()).toContain("recovery stopped before sandbox 'alpha' was created");
+    expect(errorOutput()).toContain("Transaction");
+    expect(errorOutput()).toContain("durable sandbox ID mxc-alpha");
+    expect(errorOutput()).toContain("OpenShell's sandbox get command");
+    expect(errorOutput()).toContain("never delete a runtime by mutable sandbox name");
   });
 });
 

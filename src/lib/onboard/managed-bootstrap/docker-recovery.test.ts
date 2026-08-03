@@ -1,11 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { recoverManagedBootstrapTransactions } from "./adapter";
+import {
+  enforceManagedBootstrapRecoveryForSandbox,
+  ManagedBootstrapRecoveryBlockedError,
+  recoverManagedBootstrapTransactions,
+} from "./adapter";
 import { createDockerManagedBootstrapAdapter } from "./docker";
-import type { DockerManagedBootstrapJournalStore } from "./docker-journal";
+import {
+  type DockerManagedBootstrapJournalStore,
+  DockerManagedBootstrapLegacyRecordRequiresAgentError,
+} from "./docker-journal";
 import {
   authority,
   type DockerFixtureOptions,
@@ -48,6 +55,59 @@ function dockerMutationEvents(events: readonly string[]): readonly string[] {
 }
 
 describe("Docker managed bootstrap restart recovery", () => {
+  it("scopes an exact legacy journal to its durable sandbox without inventing agent authority", async () => {
+    const fake = fixture();
+    const delegate = fake.deps.journalStore as DockerManagedBootstrapJournalStore;
+    const legacyStore: DockerManagedBootstrapJournalStore = {
+      ...delegate,
+      listUnfinishedIdentities: () => [IDENTITY],
+      load() {
+        throw new DockerManagedBootstrapLegacyRecordRequiresAgentError({
+          bootstrapIdentity: IDENTITY,
+          journalContext: {
+            schemaVersion: 2,
+            phase: "cutover",
+            bootstrapIdentity: IDENTITY,
+            providerId: "docker",
+            sandbox: authority().handle.sandbox,
+            originalRuntimeId: OLD_ID,
+            replacementRuntimeId: NEW_ID,
+          },
+          recordKind: "journal",
+          schemaVersion: 2,
+        });
+      },
+    };
+    const adapter = createDockerManagedBootstrapAdapter({
+      ...fake.deps,
+      journalStore: legacyStore,
+    });
+
+    const report = await recoverManagedBootstrapTransactions(adapter);
+    expect(report).toMatchObject({
+      receipts: [],
+      failures: [
+        {
+          bootstrapIdentity: IDENTITY,
+          providerId: "docker",
+          sourcePhase: null,
+          sandbox: authority().handle.sandbox,
+          code: "legacy-agent-required",
+          retryable: true,
+          detail: expect.stringContaining(OLD_ID),
+        },
+      ],
+    });
+    const warn = vi.fn();
+    expect(enforceManagedBootstrapRecoveryForSandbox(report, "bravo", warn)).toBe(report);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("unrelated sandbox 'alpha'"));
+    expect(() => enforceManagedBootstrapRecoveryForSandbox(report, "alpha", warn)).toThrow(
+      ManagedBootstrapRecoveryBlockedError,
+    );
+    expect(dockerMutationEvents(fake.events)).toEqual([]);
+    expect(fake.journal).toBeNull();
+  });
+
   it.each([
     {
       label: "staged",

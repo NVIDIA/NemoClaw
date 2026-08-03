@@ -490,7 +490,8 @@ describe("Docker managed bootstrap journal", () => {
     [1, legacyJournalV1],
     [2, legacyJournalV2],
   ] as const)("fails typed and closed for exact legacy journal schema %i", (schemaVersion, legacy) => {
-    const serialized = `${JSON.stringify(legacy())}\n`;
+    const record = legacy();
+    const serialized = `${JSON.stringify(record)}\n`;
     let failure: unknown;
     try {
       parseDockerManagedBootstrapJournal(serialized);
@@ -500,9 +501,21 @@ describe("Docker managed bootstrap journal", () => {
     expect(failure).toBeInstanceOf(DockerManagedBootstrapLegacyRecordRequiresAgentError);
     expect(failure).toMatchObject({
       bootstrapIdentity: IDENTITY,
+      journalContext: {
+        schemaVersion,
+        phase: record.phase,
+        bootstrapIdentity: IDENTITY,
+        providerId: record.sandbox.driverId,
+        sandbox: record.sandbox,
+        originalRuntimeId: record.originalRuntimeId,
+        replacementRuntimeId: record.replacementRuntimeId,
+      },
       recordKind: "journal",
       schemaVersion,
     });
+    const legacyFailure = failure as DockerManagedBootstrapLegacyRecordRequiresAgentError;
+    expect(Object.isFrozen(legacyFailure.journalContext)).toBe(true);
+    expect(Object.isFrozen(legacyFailure.journalContext?.sandbox)).toBe(true);
 
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
     roots.push(root);
@@ -655,6 +668,12 @@ describe("Docker managed bootstrap journal", () => {
     );
     expect(() => store.loadFinalization(OTHER_IDENTITY)).toThrow(
       "finalization bootstrap identity does not match its file name",
+    );
+    fs.writeFileSync(misplacedJournal, `${JSON.stringify(legacyJournalV2())}\n`, {
+      mode: 0o600,
+    });
+    expect(() => store.load(OTHER_IDENTITY)).toThrow(
+      "journal bootstrap identity does not match its file name",
     );
     expect(fs.existsSync(misplacedJournal)).toBe(true);
     expect(fs.existsSync(misplacedFinalization)).toBe(true);
