@@ -625,8 +625,8 @@ configuration, and preparation and upload actions. These cross-cutting changes
 keep the broad three-job floor.
 Changes to the Hermes CLI wrapper, adapter manifest, or adapter validator also
 select `channels-stop-start` and `mcp-bridge`. Both jobs include the Hermes
-shard. The shards exercise the adapter during messaging-channel disable/re-enable
-and managed MCP add/restart/remove operations.
+shard. The Hermes shards exercise the wrapper during `channels stop` and
+`channels start`, and the adapter during `mcp add`, `mcp restart`, and `mcp remove`.
 Repository-root `Dockerfile` changes additionally select `full-e2e` alongside
 the platform-install `cloud-onboard` floor so OpenClaw final-image changes run
 through cold onboarding and a real first turn.
