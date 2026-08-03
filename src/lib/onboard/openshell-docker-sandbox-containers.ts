@@ -7,6 +7,7 @@ import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
 export const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
+export const OPENSHELL_SANDBOX_ID_LABEL = "openshell.ai/sandbox-id";
 
 const DOCKER_SANDBOX_QUERY_TIMEOUT_MS = 30_000;
 

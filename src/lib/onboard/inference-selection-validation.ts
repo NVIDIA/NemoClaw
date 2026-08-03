@@ -94,6 +94,7 @@ export interface InferenceSelectionValidationHelpers {
       skipResponsesProbe?: boolean;
       probeStreaming?: boolean;
       allowHostDockerInternal?: boolean;
+      probeFromDocker?: { expectedPort: number } | null;
       capabilityCache?: OnboardInferenceCapabilityCache;
     },
   ): Promise<EndpointValidationResult>;
@@ -261,6 +262,7 @@ export function createInferenceSelectionValidationHelpers(
       skipResponsesProbe?: boolean;
       probeStreaming?: boolean;
       allowHostDockerInternal?: boolean;
+      probeFromDocker?: { expectedPort: number } | null;
       capabilityCache?: OnboardInferenceCapabilityCache;
     } = {},
   ): Promise<EndpointValidationResult> {

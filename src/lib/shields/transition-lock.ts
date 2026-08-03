@@ -6,7 +6,12 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { NAME_ALLOWED_FORMAT, NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
+import {
+  diagnosticPreview,
+  NAME_ALLOWED_FORMAT,
+  NAME_MAX_LENGTH,
+  NAME_VALID_PATTERN,
+} from "../name-validation";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { isProcessAlive, readProcessStartIdentity } from "./timer-control";
 
@@ -171,7 +176,9 @@ function validateSandboxName(name: string): string {
     );
   }
   if (!NAME_VALID_PATTERN.test(name)) {
-    throw new Error(`Invalid sandbox name: '${name}'. Allowed format: ${NAME_ALLOWED_FORMAT}.`);
+    throw new Error(
+      `Invalid sandbox name: ${diagnosticPreview(name)}. Allowed format: ${NAME_ALLOWED_FORMAT}.`,
+    );
   }
   return name;
 }
