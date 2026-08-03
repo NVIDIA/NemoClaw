@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { getDiff } from "../tools/advisors/git.mts";
+
+const ROOT = path.resolve(import.meta.dirname, "..");
 
 describe("PR review advisor diff", () => {
   it("keeps content after 160,000 characters", () => {
@@ -121,6 +123,41 @@ describe("PR review advisor diff", () => {
       expect(() => getDiff(base, "missing-ref")).toThrow("failed to read complete diff");
     } finally {
       process.chdir(previousCwd);
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("writes failure artifacts when trusted Git inputs are unavailable", () => {
+    const tmp = fs.mkdtempSync(path.join(tmpdir(), "nemoclaw-pr-advisor-diff-"));
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        path.join(ROOT, "tools/pr-review-advisor/analyze.mts"),
+        "--base",
+        "missing-ref",
+        "--head",
+        "HEAD",
+        "--schema",
+        path.join(ROOT, "tools/pr-review-advisor/schema.json"),
+        "--out-dir",
+        tmp,
+      ],
+      { cwd: ROOT, encoding: "utf8" },
+    );
+
+    try {
+      expect(result.status).toBe(1);
+      expect(
+        JSON.parse(fs.readFileSync(path.join(tmp, "pr-review-advisor-result.json"), "utf8")),
+      ).toMatchObject({ failed: true });
+      expect(
+        JSON.parse(fs.readFileSync(path.join(tmp, "pr-review-advisor-final-result.json"), "utf8")),
+      ).toMatchObject({
+        headSha: expect.stringMatching(/^[0-9a-f]{40}$/u),
+        reviewCompleteness: { requiresHumanReview: true },
+      });
+    } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
