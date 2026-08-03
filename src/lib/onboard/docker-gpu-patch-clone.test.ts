@@ -122,6 +122,41 @@ describe("Docker GPU clone envelope", () => {
     expect(args).not.toContain("nofile=1024:1024");
   });
 
+  it("uses exact managed-bootstrap container, entrypoint, and command overrides", () => {
+    const args = buildDockerGpuCloneRunArgs(
+      inspectFixture(),
+      buildDockerGpuMode("startup-command"),
+      {
+        containerName: "openshell-alpha-bootstrap-stage",
+        containerEntrypoint: "/usr/local/bin/nemoclaw-managed-bootstrap",
+        containerCommand: ["--request", "/run/nemoclaw/bootstrap-request.json"],
+      },
+    );
+
+    expect(args.slice(0, 2)).toEqual(["--name", "openshell-alpha-bootstrap-stage"]);
+    expect(args).toEqual(
+      expect.arrayContaining(["--entrypoint", "/usr/local/bin/nemoclaw-managed-bootstrap"]),
+    );
+    expect(args.slice(args.indexOf("openshell/sandbox:abc"))).toEqual([
+      "openshell/sandbox:abc",
+      "--request",
+      "/run/nemoclaw/bootstrap-request.json",
+    ]);
+  });
+
+  it.each([
+    "",
+    "-starts-with-dash",
+    "contains/slash",
+    "a".repeat(254),
+  ])("rejects invalid managed-bootstrap container name %j", (containerName) => {
+    expect(() =>
+      buildDockerGpuCloneRunArgs(inspectFixture(), buildDockerGpuMode("startup-command"), {
+        containerName,
+      }),
+    ).toThrow("Docker clone container name is invalid.");
+  });
+
   it("adds SYS_PTRACE to the GPU clone when the baseline container lacks it", () => {
     const inspect = inspectFixture();
     inspect.HostConfig!.CapAdd = ["SYS_ADMIN", "NET_ADMIN"];
