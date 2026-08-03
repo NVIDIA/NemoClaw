@@ -129,6 +129,9 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.events.indexOf("journal:shared-state-committed")).toBeLessThan(
       fake.events.indexOf(`rm:${OLD_ID}`),
     );
+    expect(fake.events.indexOf("finalization:committed")).toBeLessThan(
+      fake.events.indexOf("journal:removed"),
+    );
     expect(fake.journal).toBeNull();
     expect(fake.finalization).toMatchObject({ phase: "committed", commitReceipt });
     expect(fake.sharedState).toBe("none");
@@ -259,6 +262,9 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.events).toContain(`rm:${NEW_ID}`);
     expect(fake.events.indexOf("journal:rollback-authorized")).toBeLessThan(
       fake.events.indexOf(`rm:${NEW_ID}`),
+    );
+    expect(fake.events.indexOf("finalization:rolled-back")).toBeLessThan(
+      fake.events.indexOf("journal:removed"),
     );
     expect(fake.journal).toBeNull();
     expect(fake.replacement).toBeNull();

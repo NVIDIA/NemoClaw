@@ -28,6 +28,7 @@ const journal = Object.freeze({
   phase: "staged",
   bootstrapIdentity: IDENTITY,
   providerId: "docker",
+  agent: "hermes",
   sandbox: {
     sandboxName: "alpha",
     sandboxId: "sandbox-alpha",
@@ -65,6 +66,7 @@ const finalization = Object.freeze({
   phase: "committed",
   bootstrapIdentity: IDENTITY,
   providerId: "docker",
+  agent: journal.agent,
   sandbox: journal.sandbox,
   planFingerprint: journal.planFingerprint,
   profileFingerprint: journal.profileFingerprint,
@@ -286,6 +288,9 @@ describe("Docker managed bootstrap journal", () => {
     first.create(journal);
 
     first.recordFinalization(finalization);
+    expect(first.listUnfinished()).toEqual([journal]);
+    first.remove(IDENTITY, ["staged"]);
+    expect(first.listUnfinished()).toEqual([]);
     const restarted = createFileDockerManagedBootstrapJournalStore(root);
     expect(restarted.loadFinalization(IDENTITY)).toEqual(finalization);
     expect(
@@ -307,6 +312,40 @@ describe("Docker managed bootstrap journal", () => {
         cleanupReceipt: { ...finalization.cleanupReceipt, outcome: "rolled-back" },
       }),
     ).toThrow("finalization record changed");
+  });
+
+  it.each([
+    { label: "journal", suffix: "" },
+    { label: "decision", suffix: ".decision" },
+    { label: "finalization", suffix: ".finalized" },
+  ])("ignores an atomic $label write left by a crash during enumeration", ({ suffix }) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
+    roots.push(root);
+    const store = createFileDockerManagedBootstrapJournalStore(root);
+    store.create(journal);
+    const directory = path.join(root, DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY);
+    fs.writeFileSync(
+      path.join(directory, `.${IDENTITY}.json${suffix}.1234.deadbeef.tmp`),
+      "partial",
+      {
+        mode: 0o600,
+      },
+    );
+
+    expect(store.listUnfinished()).toEqual([journal]);
+  });
+
+  it("rejects an unsupported journal-directory entry during enumeration", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
+    roots.push(root);
+    const store = createFileDockerManagedBootstrapJournalStore(root);
+    store.create(journal);
+    const directory = path.join(root, DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY);
+    fs.writeFileSync(path.join(directory, `${IDENTITY}.json.unknown`), "unexpected", {
+      mode: 0o600,
+    });
+
+    expect(() => store.listUnfinished()).toThrow("journal directory contains an unsupported entry");
   });
 
   it("reloads the exact completion receipt from a new journal store", () => {

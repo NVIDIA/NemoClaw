@@ -94,17 +94,23 @@ recreation does not depend on process-local transaction sets or tombstone maps.
 The image-owned shared-state transaction uses the same identity-bound model: a
 commit atomically moves its pending manifest and backups into a durable receipt
 namespace, compacts that state to an exact commit receipt, and rejects rollback
-when a later image-runtime invocation reads that receipt. The provider may
-retire that receipt only after it proves the external rollback backup is gone,
-so that this receipt does not block the next bootstrap attempt.
-Direct identity lookup reconstructs one known transaction record. The bounded
-[3.12b recovery slice](https://github.com/NVIDIA/NemoClaw/issues/7744) introduces
-unfinished-record enumeration together with phase reconciliation and
-cross-surface resume or rollback. The adapter reads mutable OpenShell names only
-to detect ownership reuse. Unsafe name-only deletion returns a typed retention
-error. The dormant adapter assumes the protocol's single coordinator;
-multi-process lease/arbitration remains an explicit production-activation gate.
-Activation must also inject the selected gateway's canonical state root.
+after a restart. The provider may retire that receipt only after it proves the
+external rollback backup is gone, leaving the next bootstrap attempt unblocked.
+Direct identity lookup reconstructs one known transaction record, while managed
+create-lifecycle startup uses unfinished-record enumeration to ask the selected
+provider to reconcile every identity-addressed record before a new sandbox
+create begins. The Docker provider then resumes the durable phase monotonically:
+staged work rolls back without entering cutover; cutover work follows a proven
+image-owned commit forward or durably authorizes rollback; rollback-authorized
+work completes exact restore and cleanup; and shared-state-committed work
+completes exact backup cleanup and commit. Recovery persists an identity-bound
+finalization receipt before removing the active journal, is idempotent across
+another interruption, and returns normalized, provider-owned receipts in stable
+identity order. Mutable OpenShell names are read only to detect ownership reuse,
+and unsafe name-only deletion returns a typed retention error. The protocol still
+assumes a single coordinator; multi-process lease/arbitration remains an explicit
+production-activation gate. Activation must also inject the selected gateway's
+canonical state root.
 
 ## Architectural disposition
 
@@ -113,8 +119,8 @@ candidate Docker surface owns create routing, replacement construction,
 native-to-compatibility fallback evidence, and deferred commit or rollback.
 Central onboarding accepts that provider-neutral surface without a Docker or
 Podman selection branch. Tests register an MXC-style surface through the same
-bundle and render held launches for OpenClaw, Hermes, and LangChain Deep Agents
-Code.
+bundle, render held launches for OpenClaw, Hermes, and LangChain Deep Agents
+Code, and exercise recovery phases across all three agents.
 
 The coordinator remains the driver-neutral transaction authority: its receipt
 shapes, normalization, state transitions, and rollback proofs form one cohesive
