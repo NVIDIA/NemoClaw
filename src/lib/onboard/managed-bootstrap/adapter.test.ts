@@ -605,6 +605,92 @@ describe("managed bootstrap adapter contract", () => {
     expect(failure.message).toContain("incomplete-create cleanup sandbox");
   });
 
+  it("cleans a failed prepared replacement and port before retrying the same sandbox", async () => {
+    const fixture = adapterFor("openclaw");
+    const request = requestFor("openclaw");
+    const replacementPort = 18_000;
+    const retryPreparedId = "9".repeat(64);
+    const ownedBySandbox = new Map<string, { port: number; runtimeId: string }>();
+    const reservedPorts = new Set<number>();
+    const stateBeforePreparation: Array<{
+      ownedRuntimeId: string | null;
+      portReserved: boolean;
+      sandboxName: string;
+    }> = [];
+    const input = {
+      ...preparationInput("openclaw"),
+      replacementOptions: {
+        values: { mode: "native", groups: ["44", "109"], port: replacementPort },
+      },
+    } as const;
+    const allocate = (
+      prepareInput: Parameters<ManagedBootstrapAdapter["prepareBootstrapReplacement"]>[0],
+      runtimeId: string,
+    ) => {
+      const sandboxName = prepareInput.handle.sandbox.sandboxName;
+      stateBeforePreparation.push({
+        sandboxName,
+        ownedRuntimeId: ownedBySandbox.get(sandboxName)?.runtimeId ?? null,
+        portReserved: reservedPorts.has(replacementPort),
+      });
+      expect(prepareInput.replacementOptions.values.port).toBe(replacementPort);
+      ownedBySandbox.set(sandboxName, { port: replacementPort, runtimeId });
+      reservedPorts.add(replacementPort);
+      return { ...preparedFor(request, prepareInput.handle), preparedRuntimeId: runtimeId };
+    };
+
+    vi.mocked(fixture.adapter.prepareBootstrapReplacement)
+      .mockImplementationOnce(async (prepareInput) => {
+        allocate(prepareInput, PREPARED_ID);
+        throw new Error("preparation failed after replacement creation");
+      })
+      .mockImplementationOnce(async (prepareInput) => allocate(prepareInput, retryPreparedId));
+    vi.mocked(fixture.adapter.finalizeBootstrap).mockImplementation(async (finalizeInput) => {
+      expect(finalizeInput.outcome).toBe("rollback");
+      ownedBySandbox.delete(finalizeInput.handle.sandbox.sandboxName);
+      reservedPorts.delete(replacementPort);
+      return rolledBackReceipt(finalizeInput.handle, finalizeInput.snapshot);
+    });
+
+    const failure = await captureFailure(prepareManagedBootstrapSequence(fixture.adapter, input));
+
+    expect(failure.message).toContain("preparation failed after replacement creation");
+    expect(failure.managedBootstrapRollback).toMatchObject({ outcome: "rolled-back" });
+    expect(fixture.adapter.finalizeBootstrap).toHaveBeenCalledWith({
+      outcome: "rollback",
+      handle: expect.objectContaining({ sandbox: sandbox() }),
+      snapshot: expect.objectContaining({ runtimeId: RUNTIME_ID, specHash: SPEC_HASH }),
+      prepared: null,
+      durablePreparation: null,
+      replacement: null,
+      completion: null,
+    });
+    expect(fixture.adapter.finalizeBootstrap).toHaveBeenCalledTimes(1);
+    expect(ownedBySandbox.size).toBe(0);
+    expect(reservedPorts.has(replacementPort)).toBe(false);
+
+    const retried = await prepareManagedBootstrapSequence(fixture.adapter, input);
+
+    expect(stateBeforePreparation).toEqual([
+      { sandboxName: "alpha", ownedRuntimeId: null, portReserved: false },
+      { sandboxName: "alpha", ownedRuntimeId: null, portReserved: false },
+    ]);
+    expect(retried.prepared.preparedRuntimeId).toBe(retryPreparedId);
+    expect(ownedBySandbox.get("alpha")).toEqual({
+      port: replacementPort,
+      runtimeId: retryPreparedId,
+    });
+    expect(reservedPorts.has(replacementPort)).toBe(true);
+
+    await finalizeManagedBootstrapSequence(fixture.adapter, {
+      outcome: "rollback",
+      transaction: retried,
+    });
+    expect(fixture.adapter.finalizeBootstrap).toHaveBeenCalledTimes(2);
+    expect(ownedBySandbox.size).toBe(0);
+    expect(reservedPorts.has(replacementPort)).toBe(false);
+  });
+
   it("rolls back a prepared bootstrap replacement when durable recording fails, before activation", async () => {
     const fixture = adapterFor("openclaw");
     const prepared = await prepareManagedBootstrapSequence(
