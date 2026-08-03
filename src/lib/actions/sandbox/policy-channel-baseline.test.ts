@@ -203,6 +203,25 @@ describe("restoreSandboxBaseline (#7178)", () => {
     process.env.NEMOCLAW_NON_INTERACTIVE = "1";
     const code = await captureExit(() => restoreSandboxBaseline("alpha", { key: "nous_research" }));
     expect(code).toBe(1);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("Non-interactive restore requires explicit acknowledgement"),
+    );
+    expect(promptMock).not.toHaveBeenCalled();
+    expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("does not restore when standard input closes before acknowledgement (#8114)", async () => {
+    getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
+    promptMock.mockRejectedValue(
+      Object.assign(new Error("Prompt closed before input"), { code: "EOF" }),
+    );
+
+    const code = await captureExit(() => restoreSandboxBaseline("alpha", { key: "nous_research" }));
+
+    expect(code).toBe(1);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("No input available on stdin"),
+    );
     expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
   });
 

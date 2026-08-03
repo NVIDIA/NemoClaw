@@ -102,6 +102,15 @@ describe("policy mutation oclif commands", () => {
       dryRun: false,
     });
 
+    await PolicyRestoreCommand.run(["alpha", "nous_research", "--yes"], rootDir);
+
+    expect(mocks.restoreSandboxBaseline).toHaveBeenLastCalledWith("alpha", {
+      key: "nous_research",
+      yes: true,
+      force: false,
+      dryRun: false,
+    });
+
     await PolicyRestoreCommand.run(["alpha", "nous_research", "--force"], rootDir);
 
     expect(mocks.restoreSandboxBaseline).toHaveBeenLastCalledWith("alpha", {

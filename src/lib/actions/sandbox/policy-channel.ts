@@ -2018,7 +2018,9 @@ async function restoreSandboxBaselineUnlocked(
   const key = options.key?.trim();
   if (!key) {
     console.error("  A baseline key is required.");
-    console.error(`  Usage: ${CLI_NAME} <sandbox> policy restore <key> [--force] [--dry-run]`);
+    console.error(
+      `  Usage: ${CLI_NAME} <sandbox> policy restore <key> [--yes|-y] [--force] [--dry-run]`,
+    );
     process.exit(1);
   }
 
@@ -2061,7 +2063,18 @@ async function restoreSandboxBaselineUnlocked(
     process.exit(1);
   }
   if (!explicitAck) {
-    const confirm = await askPrompt(`  Restore '${key}' for sandbox '${sandboxName}'? [y/N]: `);
+    let confirm: string;
+    try {
+      confirm = await askPrompt(`  Restore '${key}' for sandbox '${sandboxName}'? [y/N]: `);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException | null)?.code;
+      if (code !== "EOF") throw error;
+      console.error("  No input available on stdin, so policy restore cannot prompt.");
+      console.error(
+        `  Usage: ${CLI_NAME} <sandbox> policy restore <key> [--yes|-y] [--force] [--dry-run]`,
+      );
+      process.exit(1);
+    }
     if (!confirm.trim().toLowerCase().startsWith("y")) return;
   }
 
