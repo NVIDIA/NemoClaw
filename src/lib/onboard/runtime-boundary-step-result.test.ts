@@ -185,7 +185,7 @@ describe("OnboardRuntimeBoundary step/result pairing", () => {
     expect(events[3]).toMatchObject({ state: "gateway" });
   });
 
-  it("rejects stale default results before compatibility replay", async () => {
+  it("rejects a stale result source before runtime application", async () => {
     const { boundary } = createRuntimeHarness();
     const result = advanceTo("preflight", { metadata: { state: "missing" } });
 
