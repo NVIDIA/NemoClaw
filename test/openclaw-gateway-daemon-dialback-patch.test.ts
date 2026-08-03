@@ -169,27 +169,31 @@ describe("OpenClaw gateway daemon dial-back patch", () => {
       }>(tmp, "gateway-tools.mjs", patchGatewayToolTargetText(TOOL_TARGET_SOURCE).text);
       const privateUrl = "ws://10.200.0.2:18789";
 
-      withGatewayEnvironment(
-        { openshell: "sandbox-name", title: "openclaw-gateway", url: privateUrl },
-        () => {
-          expect(callRuntime.resolveGatewayCallContext({})).toBe("ws://127.0.0.1:18789");
-          expect(detailsRuntime.buildGatewayConnectionDetails({})).toBe("ws://127.0.0.1:18789");
-          expect(targetRuntime.resolveDefaultGatewayTarget({ envGatewayUrl: privateUrl })).toBe(
-            "local",
-          );
-        },
-      );
+      withGatewayEnvironment({ openshell: "1", title: "openclaw-gateway", url: privateUrl }, () => {
+        expect(callRuntime.resolveGatewayCallContext({})).toBe("ws://127.0.0.1:18789");
+        expect(detailsRuntime.buildGatewayConnectionDetails({})).toBe("ws://127.0.0.1:18789");
+        expect(targetRuntime.resolveDefaultGatewayTarget({ envGatewayUrl: privateUrl })).toBe(
+          "local",
+        );
+      });
 
-      withGatewayEnvironment(
-        { openshell: "sandbox-name", title: "openclaw", url: privateUrl },
-        () => {
+      withGatewayEnvironment({ openshell: "1", title: "openclaw", url: privateUrl }, () => {
+        expect(callRuntime.resolveGatewayCallContext({})).toBe(privateUrl);
+        expect(detailsRuntime.buildGatewayConnectionDetails({})).toBe(privateUrl);
+        expect(targetRuntime.resolveDefaultGatewayTarget({ envGatewayUrl: privateUrl })).toBe(
+          "remote",
+        );
+      });
+
+      for (const openshell of ["0", "false", " ", "sandbox-name"]) {
+        withGatewayEnvironment({ openshell, title: "openclaw-gateway", url: privateUrl }, () => {
           expect(callRuntime.resolveGatewayCallContext({})).toBe(privateUrl);
           expect(detailsRuntime.buildGatewayConnectionDetails({})).toBe(privateUrl);
           expect(targetRuntime.resolveDefaultGatewayTarget({ envGatewayUrl: privateUrl })).toBe(
             "remote",
           );
-        },
-      );
+        });
+      }
     } finally {
       fs.rmSync(tmp, { force: true, recursive: true });
     }

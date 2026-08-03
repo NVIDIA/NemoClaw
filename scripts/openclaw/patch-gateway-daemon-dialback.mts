@@ -57,7 +57,7 @@ const CALL_CONTEXT_SPEC: PatchSpec = {
   upstream:
     "const envUrlOverride = cliUrlOverride || opts.localPortOverride !== void 0 ? void 0 : trimToUndefined(process.env.OPENCLAW_GATEWAY_URL);",
   patched: [
-    `const nemoclawGatewaySelfDialback = process.title === "openclaw-gateway" && Boolean(process.env.OPENSHELL_SANDBOX); ${CALL_CONTEXT_MARKER}`,
+    `const nemoclawGatewaySelfDialback = process.title === "openclaw-gateway" && process.env.OPENSHELL_SANDBOX === "1"; ${CALL_CONTEXT_MARKER}`,
     "const envUrlOverride = cliUrlOverride || opts.localPortOverride !== void 0 || nemoclawGatewaySelfDialback ? void 0 : trimToUndefined(process.env.OPENCLAW_GATEWAY_URL);",
   ].join("\n\t"),
 };
@@ -68,7 +68,7 @@ const CONNECTION_DETAILS_SPEC: PatchSpec = {
   upstream:
     "const envUrlOverride = cliUrlOverride || options.ignoreEnvUrlOverride || options.localPortOverride !== void 0 ? void 0 : normalizeOptionalString(process.env.OPENCLAW_GATEWAY_URL);",
   patched: [
-    `const nemoclawGatewaySelfDialback = process.title === "openclaw-gateway" && Boolean(process.env.OPENSHELL_SANDBOX); ${CONNECTION_DETAILS_MARKER}`,
+    `const nemoclawGatewaySelfDialback = process.title === "openclaw-gateway" && process.env.OPENSHELL_SANDBOX === "1"; ${CONNECTION_DETAILS_MARKER}`,
     "const envUrlOverride = cliUrlOverride || options.ignoreEnvUrlOverride || options.localPortOverride !== void 0 || nemoclawGatewaySelfDialback ? void 0 : normalizeOptionalString(process.env.OPENCLAW_GATEWAY_URL);",
   ].join("\n\t"),
 };
@@ -78,7 +78,7 @@ const TOOL_TARGET_SPEC: PatchSpec = {
   marker: TOOL_TARGET_MARKER,
   upstream: 'if (params.envGatewayUrl) return "remote";',
   patched: [
-    `const nemoclawGatewaySelfDialback = process.title === "openclaw-gateway" && Boolean(process.env.OPENSHELL_SANDBOX); ${TOOL_TARGET_MARKER}`,
+    `const nemoclawGatewaySelfDialback = process.title === "openclaw-gateway" && process.env.OPENSHELL_SANDBOX === "1"; ${TOOL_TARGET_MARKER}`,
     'if (params.envGatewayUrl && !nemoclawGatewaySelfDialback) return "remote";',
   ].join("\n\t"),
 };
