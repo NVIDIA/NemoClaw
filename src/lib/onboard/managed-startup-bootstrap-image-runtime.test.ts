@@ -14,8 +14,11 @@ import {
 } from "./managed-bootstrap/envelope";
 import {
   consumeManagedBootstrapEnvelope,
-  serializeManagedStartupCompletionMarker,
   verifyManagedBootstrapImageCompletion,
+} from "./managed-bootstrap/image-runtime";
+import {
+  MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION,
+  serializeManagedStartupCompletionMarker,
 } from "./managed-startup/image-runtime";
 import {
   encodeManagedStartupProfile,
@@ -84,7 +87,7 @@ function completionFixture(directory: string) {
   writeProtectedFile(
     startupCompletionFile,
     serializeManagedStartupCompletionMarker({
-      schemaVersion: 1,
+      schemaVersion: MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION,
       agent: profile.agent,
       profileFingerprint,
       runtimeEnvironmentSha256: createHash("sha256").update(runtimeEnvironment).digest("hex"),
