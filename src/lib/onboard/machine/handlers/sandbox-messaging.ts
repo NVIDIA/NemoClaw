@@ -309,7 +309,7 @@ async function selectionFromCompletedMessagingCheckpoint<Agent>(
   durablePlan: SandboxMessagingPlan | null = options.session?.messagingPlan ?? null,
   reconcileCheckpoint = true,
 ): Promise<SandboxMessagingSelection> {
-  // After the checkpoint completes, the selected registry or session plan is authoritative. The process
+  // After the checkpoint completes, the selected messaging plan is authoritative. The process
   // plan may already have refreshed hashes, so it cannot prove that a newly
   // exported credential passed the channel's validation hooks.
   const diverged = reconcileCheckpoint
@@ -391,6 +391,29 @@ async function selectionFromRegistryAuthority<Agent>(
   return { plan: null, selectedChannels: [] };
 }
 
+function stagedPlanFromAuthority(
+  authority: ReturnType<typeof resolveMessagingPlanAuthority>,
+): SandboxMessagingPlan | null {
+  return authority.source === "staged" ? authority.plan : null;
+}
+
+async function selectionFromCompletedMessagingAuthority<Agent>(
+  authority: ReturnType<typeof resolveMessagingPlanAuthority>,
+  envPlan: SandboxMessagingPlan | null,
+  messagingDecisionCompleted: boolean,
+  options: ReconcileSandboxMessagingOptions<Agent>,
+): Promise<SandboxMessagingSelection | null> {
+  const agentName = (options.agent as MessagingAgentLike | null)?.name;
+  if ((agentName && agentName !== "openclaw") || !options.resume || !messagingDecisionCompleted) {
+    return null;
+  }
+  const stagedPlan = stagedPlanFromAuthority(authority);
+  if (stagedPlan) {
+    return selectionFromCompletedMessagingCheckpoint(envPlan, options, stagedPlan, false);
+  }
+  return selectionFromCompletedMessagingCheckpoint(envPlan, options);
+}
+
 export async function reconcileSandboxMessaging<Agent>(
   options: ReconcileSandboxMessagingOptions<Agent>,
 ): Promise<SandboxMessagingSelection> {
@@ -416,12 +439,20 @@ export async function reconcileSandboxMessaging<Agent>(
     options,
   );
   if (registrySelection) return registrySelection;
-  const agentName = (options.agent as MessagingAgentLike | null)?.name;
-  if ((!agentName || agentName === "openclaw") && options.resume && messagingDecisionCompleted) {
-    return selectionFromCompletedMessagingCheckpoint(envPlan, options);
-  }
+  const completedSelection = await selectionFromCompletedMessagingAuthority(
+    authority,
+    envPlan,
+    messagingDecisionCompleted,
+    options,
+  );
+  if (completedSelection) return completedSelection;
   if (recordedChannels) {
-    return selectionFromRecordedChannels(recordedChannels, envPlan, null, options);
+    return selectionFromRecordedChannels(
+      recordedChannels,
+      stagedPlanFromAuthority(authority),
+      null,
+      options,
+    );
   }
   if (authority.source === "staged" && authority.plan) {
     return selectionFromReusablePlan(authority.plan, options.agent, false, options.deps);
