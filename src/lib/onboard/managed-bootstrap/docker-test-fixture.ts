@@ -26,6 +26,8 @@ import {
   DockerManagedBootstrapJournalAcknowledgementLostError,
   type DockerManagedBootstrapJournalPhase,
   type DockerManagedBootstrapJournalStore,
+  sameDockerManagedBootstrapReceipt,
+  serializeDockerManagedBootstrapFinalizationRecord,
 } from "./docker-journal";
 import { normalizeDockerManagedBootstrapLaunchSpec } from "./docker-spec";
 import {
@@ -58,6 +60,8 @@ export type DockerFixtureAcknowledgement =
   | "container:stop"
   | "journal:create"
   | "journal:cutover"
+  | "journal:completion"
+  | "journal:owner-cleanup-required"
   | "journal:remove"
   | "journal:rollback-authorized"
   | "journal:staged"
@@ -65,7 +69,12 @@ export type DockerFixtureAcknowledgement =
 
 export type DockerFixtureOptions = {
   readonly agent?: ManagedStartupAgent;
+  readonly dockerRemoveFailures?: readonly Error[];
+  readonly dockerRemoveResults?: readonly FixtureCommandResult[];
+  readonly dockerInspectUnknownIds?: readonly string[];
   readonly dockerStartResults?: Readonly<Record<string, FixtureCommandResult>>;
+  readonly journalCreateFailures?: readonly Error[];
+  readonly journalRemoveFailures?: readonly Error[];
   readonly journalTransitionFailures?: Partial<
     Readonly<Record<DockerManagedBootstrapJournalPhase, Error>>
   >;
@@ -73,6 +82,7 @@ export type DockerFixtureOptions = {
   readonly ownerId?: string;
   readonly sharedState?: "committed" | "none" | "pending";
   readonly sharedStateCommitResult?: FixtureCommandResult;
+  readonly sharedReceiptClearFailures?: readonly Error[];
 };
 
 function agentInputs(agent: ManagedStartupAgent = "hermes") {
@@ -214,6 +224,12 @@ export function fixture(options: DockerFixtureOptions = {}) {
   let finalization: DockerManagedBootstrapFinalizationRecord | null = null;
   let sharedState: "committed" | "none" | "pending" = options.sharedState ?? "none";
   const events: string[] = [];
+  const dockerRemoveFailures = [...(options.dockerRemoveFailures ?? [])];
+  const dockerRemoveResults = [...(options.dockerRemoveResults ?? [])];
+  const journalCreateFailures = [...(options.journalCreateFailures ?? [])];
+  const journalRemoveFailures = [...(options.journalRemoveFailures ?? [])];
+  const sharedReceiptClearFailures = [...(options.sharedReceiptClearFailures ?? [])];
+  const dockerInspectUnknownIds = new Set(options.dockerInspectUnknownIds ?? []);
   const lostAcknowledgements = new Set(options.lostAcknowledgements ?? []);
   const losesAcknowledgement = (operation: DockerFixtureAcknowledgement) =>
     lostAcknowledgements.has(operation);
@@ -223,6 +239,13 @@ export function fixture(options: DockerFixtureOptions = {}) {
     create(value) {
       journal = structuredClone(value);
       events.push("journal:staged");
+      const injectedFailure = journalCreateFailures.shift();
+      switch (injectedFailure) {
+        case undefined:
+          break;
+        default:
+          throw injectedFailure;
+      }
       if (losesAcknowledgement("journal:create")) {
         throw new DockerManagedBootstrapJournalAcknowledgementLostError(
           "lost journal create acknowledgement",
@@ -230,6 +253,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
       }
     },
     load: () => copyJournal(),
+    listUnfinishedIdentities: () => (journal ? [journal.bootstrapIdentity] : []),
     transition(_identity, expected, next) {
       const current =
         journal !== null && journal.phase === expected
@@ -252,12 +276,17 @@ export function fixture(options: DockerFixtureOptions = {}) {
       }
       if (
         journal.commitReceipt !== null &&
-        JSON.stringify(journal.commitReceipt) !== JSON.stringify(receipt)
+        !sameDockerManagedBootstrapReceipt("completion", journal.commitReceipt, receipt)
       ) {
         throw new Error("completion changed");
       }
       journal = { ...journal, commitReceipt: structuredClone(receipt) };
       events.push("journal:completion");
+      if (losesAcknowledgement("journal:completion")) {
+        throw new DockerManagedBootstrapJournalAcknowledgementLostError(
+          "lost journal completion acknowledgement",
+        );
+      }
       return structuredClone(journal);
     },
     remove(_identity, expected) {
@@ -265,6 +294,13 @@ export function fixture(options: DockerFixtureOptions = {}) {
       void (current !== null && expected.includes(current.phase)
         ? current
         : failFixture("stale journal remove"));
+      const injectedFailure = journalRemoveFailures.shift();
+      switch (injectedFailure) {
+        case undefined:
+          break;
+        default:
+          throw injectedFailure;
+      }
       journal = null;
       events.push("journal:removed");
       if (losesAcknowledgement("journal:remove")) {
@@ -274,7 +310,11 @@ export function fixture(options: DockerFixtureOptions = {}) {
       }
     },
     recordFinalization(value) {
-      if (finalization && JSON.stringify(finalization) !== JSON.stringify(value)) {
+      if (
+        finalization &&
+        serializeDockerManagedBootstrapFinalizationRecord(finalization) !==
+          serializeDockerManagedBootstrapFinalizationRecord(value)
+      ) {
         throw new Error("finalization changed");
       }
       finalization = structuredClone(value);
@@ -334,6 +374,9 @@ export function fixture(options: DockerFixtureOptions = {}) {
           return ok(original ? OLD_ID : "");
         case "inspect": {
           const id = String(args[3] ?? "");
+          if (dockerInspectUnknownIds.has(id)) {
+            return { status: 1, stderr: `injected unknown inspect state for ${id}` };
+          }
           try {
             inspect(id);
             return ok(`[{"Id":"${id}"}]`);
@@ -398,6 +441,10 @@ export function fixture(options: DockerFixtureOptions = {}) {
               return result;
             }
             case args.includes("--clear-shared-state-commit-receipt"):
+              {
+                const injectedFailure = sharedReceiptClearFailures.shift();
+                if (injectedFailure) throw injectedFailure;
+              }
               sharedState = "none";
               events.push("shared:clear");
               return ok();
@@ -453,17 +500,28 @@ export function fixture(options: DockerFixtureOptions = {}) {
     }),
     dockerRm: vi.fn((id) => {
       events.push(`rm:${id}`);
-      switch (id) {
-        case OLD_ID:
-          original = null;
+      const injectedFailure = dockerRemoveFailures.shift();
+      switch (injectedFailure) {
+        case undefined:
           break;
-        case NEW_ID:
-          replacement = null;
-          break;
+        default:
+          throw injectedFailure;
+      }
+      const result = dockerRemoveResults.shift() ?? ok();
+      switch (result.status) {
+        case 0:
+          switch (id) {
+            case OLD_ID:
+              original = null;
+              break;
+            case NEW_ID:
+              replacement = null;
+              break;
+          }
       }
       return losesAcknowledgement("container:remove")
         ? { status: 1, stderr: "lost rm acknowledgement" }
-        : ok();
+        : result;
     }),
     runCaptureOpenshell: vi.fn(() => `Name: alpha\nID: ${options.ownerId ?? "sandbox-alpha"}\n`),
     runOpenshell: vi.fn(() => ok()),
@@ -486,6 +544,14 @@ export function fixture(options: DockerFixtureOptions = {}) {
     },
     get sharedState() {
       return sharedState;
+    },
+    removeOriginalExternally() {
+      original = null as unknown as DockerContainerInspect;
+      events.push(`external-rm:${OLD_ID}`);
+    },
+    setDockerInspectUnknown(runtimeId: string, indeterminate: boolean) {
+      if (indeterminate) dockerInspectUnknownIds.add(runtimeId);
+      else dockerInspectUnknownIds.delete(runtimeId);
     },
   };
 }

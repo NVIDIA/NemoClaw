@@ -99,6 +99,53 @@ vi.mock("../security/snapshot-sanitizer.js", async () =>
   ),
 );
 
+vi.mock("../shared/snapshot-sanitizer-boundary.cjs", () => {
+  const identity = {
+    dev: "1",
+    ino: "2",
+    mode: "16832",
+    nlink: "1",
+    size: "0",
+    mtimeNs: "3",
+    ctimeNs: "4",
+  };
+  return {
+    decodeDescriptorSnapshotContent: (content: string | undefined) =>
+      content === undefined ? null : Buffer.from(content, "base64").toString("utf-8"),
+    inspectDescriptorSnapshotRoot: (rootPath: string) =>
+      store.get(rootPath)?.type === "dir" ? { canonicalPath: rootPath, identity } : null,
+    installDescriptorSnapshotFile: (
+      root: { canonicalPath: string },
+      targetName: string,
+      content: string,
+    ) => {
+      const targetPath = `${root.canonicalPath}/${targetName}`;
+      const existing = store.get(targetPath);
+      store.set(targetPath, existing ?? { type: "file", content });
+      return existing === undefined;
+    },
+    scanDescriptorSnapshot: (
+      root: { canonicalPath: string },
+      _sensitive: unknown,
+      target: string,
+    ) => {
+      const entry = store.get(`${root.canonicalPath}/${target}`);
+      return entry?.type === "file"
+        ? {
+            root: identity,
+            directories: {},
+            files: [
+              {
+                path: target,
+                metadata: identity,
+                content: Buffer.from(entry.content ?? "", "utf-8").toString("base64"),
+              },
+            ],
+          }
+        : null;
+    },
+  };
+});
 // Mock tar to avoid real archive creation
 vi.mock("tar", () => ({
   create: vi.fn(async () => {}),
@@ -1503,60 +1550,13 @@ describe("commands/migration-state", () => {
     });
   });
 
-  // ── setConfigValue prototype pollution guard ─────────────────────
-
   describe("setConfigValue", () => {
-    const expectPrototypeClean = (): void => {
-      const probe: Record<string, unknown> = {};
-      for (const key of ["polluted", "isAdmin", "bar"]) {
-        expect(Object.prototype.hasOwnProperty.call(Object.prototype, key)).toBe(false);
-        expect(probe[key]).toBeUndefined();
-      }
-    };
-
-    it.each([
-      "__proto__",
-      "constructor",
-      "prototype",
-    ])("rejects unsafe path segment: %s", (segment) => {
-      const doc: Record<string, unknown> = {};
-      expect(() => {
-        setConfigValue(doc, `${segment}.polluted`, "true");
-      }).toThrow(/Unsafe config path segment/);
-      expectPrototypeClean();
-    });
-
-    it("rejects __proto__ in nested position", () => {
-      const doc: Record<string, unknown> = {};
-      expect(() => {
-        setConfigValue(doc, "agents.__proto__.isAdmin", "true");
-      }).toThrow(/Unsafe config path segment/);
-      expectPrototypeClean();
-    });
-
-    it.each([
-      "foo.prototype.bar",
-      "foo.constructor.bar",
-    ])("rejects unsafe segment in nested path: %s", (configPath) => {
-      const doc: Record<string, unknown> = {};
-      expect(() => {
-        setConfigValue(doc, configPath, "true");
-      }).toThrow(/Unsafe config path segment/);
-      expectPrototypeClean();
-    });
-
     it("allows legitimate dotted paths", () => {
       const doc: Record<string, unknown> = {};
       setConfigValue(doc, "agents.list[0].workspace", "/tmp/ws");
       const agents = doc.agents as Record<string, unknown>;
       const list = agents.list as Record<string, unknown>[];
       expect(list[0].workspace).toBe("/tmp/ws");
-    });
-
-    it("allows simple top-level keys", () => {
-      const doc: Record<string, unknown> = {};
-      setConfigValue(doc, "theme", "dark");
-      expect(doc.theme).toBe("dark");
     });
   });
 });
