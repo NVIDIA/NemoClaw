@@ -163,7 +163,7 @@ const REMEDIATIONS: Readonly<Record<string, Remediation>> = Object.freeze({
     version: "2026.6.10",
   },
   // openclaw/openclaw#113584: remove after a supported OpenClaw archive
-  // publishes the corrected transitive resolutions in its shrinkwrap.
+  // publishes every corrected dependency identity in its manifest and shrinkwrap.
   "openclaw@2026.7.1": {
     expectedPatchedTreeIntegrity:
       "sha512-ugtX/U1jNS+ZlZqEXa+Y9nN+wlhPxeZJrx6tJZFLcGspWPFhsC5qOjTkzBbOda9lEZF6TWKt6wU9m9p2tidqdQ==",

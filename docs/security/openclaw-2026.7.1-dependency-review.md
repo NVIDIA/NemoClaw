@@ -112,8 +112,8 @@ Its exact results are:
 Registry signature checks completed within the successful audit.
 The critical `tar` finding that blocked the previous pin and the high Jaeger,
 `brace-expansion`, `fast-uri`, `undici`, and `ip-address` findings are gone.
-The accepted lower-severity findings remain visible below the configured
-`high` threshold.
+The lower-severity findings remain visible below the configured `high`
+threshold.
 
 The independently installed `nemoclaw/` plugin graph reports `0`
 vulnerabilities after resolving its direct `tar` dependency to `7.5.20`.
@@ -192,9 +192,8 @@ Both committed locks report no problems through `npm ls`.
 `npm run build:cli`, `npm run typecheck:cli`, and
 `npm run checks:repository` pass.
 
-Image assembly reports the accepted lower-severity findings and blocks
-unaccepted high or critical findings through the empty-by-default audit
-exception registry.
+Image assembly reports lower-severity findings and blocks high or critical
+findings unless they match the empty-by-default audit exception registry.
 Signature verification and the exact committed locks remain mandatory.
 
 The OpenClaw audit first applies the same fail-closed remediation to the
