@@ -533,6 +533,32 @@ describe("CUA task lifecycle (#7752)", () => {
     expect(reconnectAdapter.execute).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "failed",
+    "not-run",
+  ] as const)("rejects a succeeded task when independent verification is %s", (verificationStatus) => {
+    const unverified = taskResult();
+    unverified.verification.status = verificationStatus;
+    const { registry, deps } = harness(activeAttachment());
+    const adapter = fakeAdapter(() => unverified);
+
+    const outcome = executeCuaTaskLifecycle(
+      {
+        operation: "task.result",
+        sandboxName: "alpha",
+        taskId: "task-1",
+        adapter,
+      },
+      deps,
+    );
+
+    expect(outcome.exitCode).not.toBe(0);
+    expect(outcome.record).toMatchObject({ kind: "failure", family: "validation_failed" });
+    expect(registry.sandboxes.alpha?.cuaTarget?.activeTask?.taskId).toBe("task-1");
+    expect(registry.sandboxes.alpha?.cuaTaskResults).toEqual([]);
+    expect(deps.save).not.toHaveBeenCalled();
+  });
+
   it("requires cancellation to return a terminal result and clears active state", () => {
     const cancelled = taskResult("task-1", "cancelled");
     const { registry, deps } = harness(activeAttachment());

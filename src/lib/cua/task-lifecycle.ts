@@ -363,6 +363,13 @@ function executeLocked(
   if (!taskResultMatches(adapterResult, input.taskId, runtime, target.target)) {
     return failed(input.operation, "runtime_incompatible", false, "runtime");
   }
+  if (
+    adapterResult.status === "succeeded" &&
+    (adapterResult.agentResult.status !== "succeeded" ||
+      adapterResult.verification.status !== "passed")
+  ) {
+    return failed(input.operation, "validation_failed", false, "runtime");
+  }
   if (input.operation === "task.cancel" && adapterResult.status !== "cancelled") {
     return failed(input.operation, "validation_failed", false, "runtime");
   }
