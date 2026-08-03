@@ -61,6 +61,8 @@ Do not run `openclaw channels add` or `openclaw channels remove` inside the sand
 </AgentOnly>
 <AgentOnly variant="hermes">
 Use host-side `$$nemoclaw <sandbox> channels` commands.
+Select a home channel with Hermes `/sethome` inside a chat.
+NemoClaw preserves that selection when the sandbox rebuilds.
 Do not mutate messaging configuration directly inside the sandbox because NemoClaw generates `/sandbox/.hermes/.env` and Hermes config at image build time, and changes inside the running container do not persist across rebuilds.
 </AgentOnly>
 
