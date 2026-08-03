@@ -2702,6 +2702,17 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     return failShieldsCommand(`Unknown policy "${policyName}"`, opts.throwOnError);
   }
 
+  // Every exit after the permissive merge builds a temp policy directory must
+  // remove it. The apply below has always cleaned up, but the timer-failure
+  // and saveShieldsState-failure early exits between here and there historically
+  // leaked one 0700 nemoclaw-permissive-runtime-* directory per failed
+  // attempt. Route all three exits through one cleanup. See #7964.
+  const cleanupRuntimePolicyFile = () => {
+    if (policyFileIsTemp) {
+      cleanupTempDir(policyFile, "nemoclaw-permissive-runtime");
+    }
+  };
+
   const now = new Date().toISOString();
   let transition: ShieldsDownTransition | null = null;
 
@@ -2790,6 +2801,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       }
       clearTimerMarker(sandboxName);
       clearShieldsDownTransition(sandboxName, processToken);
+      cleanupRuntimePolicyFile();
       const message = err instanceof Error ? err.message : String(err);
       console.error(`  Cannot start auto-restore timer: ${message}`);
       return failShieldsCommand(`Cannot start auto-restore timer: ${message}`, opts.throwOnError);
@@ -2810,6 +2822,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       clearShieldsDownTransition(sandboxName, transition.processToken);
       killTimer(sandboxName);
     }
+    cleanupRuntimePolicyFile();
     throw error;
   }
 
@@ -2817,9 +2830,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   try {
     run(buildPolicySetCommand(policyFile, sandboxName));
   } finally {
-    if (policyFileIsTemp) {
-      cleanupTempDir(policyFile, "nemoclaw-permissive-runtime");
-    }
+    cleanupRuntimePolicyFile();
   }
 
   // 2b. Return config to default mutable state.
