@@ -7,6 +7,13 @@ import { assertEndpointResolvesPublic } from "../../inference/endpoint-ssrf-pref
 import { validateCurlProbeArgs } from "./curl-args";
 
 describe("validateCurlProbeArgs — credential-leak defence", () => {
+  it("allows a fixed response-byte cap for bounded llama.cpp probes (#8161)", () => {
+    expect(
+      validateCurlProbeArgs(["-sS", "--max-filesize", "262144", "http://127.0.0.1:8081/v1/models"])
+        .args,
+    ).toEqual(["-sS", "--max-filesize", "262144"]);
+  });
+
   it("rejects an inline Authorization header so credentials cannot reach argv", () => {
     expect(() =>
       validateCurlProbeArgs([

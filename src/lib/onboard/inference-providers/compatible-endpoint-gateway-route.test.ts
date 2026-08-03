@@ -44,6 +44,15 @@ describe("compatible endpoint gateway routing", () => {
     }
   });
 
+  it("rewrites only fixed loopback port 8081 for llama.cpp attachment (#8161)", () => {
+    expect(
+      gatewayReachableCompatibleEndpointUrl("llama-cpp-local", "http://127.0.0.1:8081/v1"),
+    ).toBe("http://host.openshell.internal:8081/v1");
+    expect(
+      gatewayReachableCompatibleEndpointUrl("llama-cpp-local", "http://127.0.0.1:8000/v1"),
+    ).toBe("http://127.0.0.1:8000/v1");
+  });
+
   it("preserves query strings and fragments for root and non-root routes (#5744)", () => {
     expect(
       gatewayReachableCompatibleEndpointUrl(

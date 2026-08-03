@@ -6,11 +6,12 @@ import type { RunOpenshell, UpsertProvider, UpsertProviderResult } from "./types
 // Keep this list aligned with the host.openshell.internal endpoints in
 // nemoclaw-blueprint/policies/presets/local-inference.yaml. These are policy
 // ports, not environment-overridable local provider ports.
-export const BUNDLED_LOCAL_INFERENCE_GATEWAY_PORTS = [11434, 11435, 8000] as const;
+export const BUNDLED_LOCAL_INFERENCE_GATEWAY_PORTS = [8081, 11434, 11435, 8000] as const;
 
 const BUNDLED_LOCAL_INFERENCE_GATEWAY_PORT_SET = new Set<number>(
   BUNDLED_LOCAL_INFERENCE_GATEWAY_PORTS,
 );
+const LOOPBACK_BRIDGE_PROVIDERS = new Set(["compatible-endpoint", "llama-cpp-local"]);
 
 // #5744: keep host-side validation on the user-entered loopback URL, but
 // register the sandbox route through OpenShell's host bridge. Remove this when
@@ -19,7 +20,9 @@ export function gatewayReachableCompatibleEndpointUrl(
   provider: string,
   endpointUrl: string | null | undefined,
 ): string | null | undefined {
-  if (provider !== "compatible-endpoint" || !endpointUrl) return endpointUrl;
+  if (!LOOPBACK_BRIDGE_PROVIDERS.has(provider) || !endpointUrl) {
+    return endpointUrl;
+  }
   const hasExactLoopbackAuthority =
     /^http:\/\/(?:localhost|127\.0\.0\.1|\[::1\]):[0-9]+(?:[/?#]|$)/i.test(endpointUrl);
   let parsed: URL;
@@ -40,7 +43,8 @@ export function gatewayReachableCompatibleEndpointUrl(
     !isLoopback ||
     port === null ||
     !Number.isInteger(port) ||
-    !BUNDLED_LOCAL_INFERENCE_GATEWAY_PORT_SET.has(port)
+    !BUNDLED_LOCAL_INFERENCE_GATEWAY_PORT_SET.has(port) ||
+    (provider === "llama-cpp-local" && port !== 8081)
   ) {
     return endpointUrl;
   }
