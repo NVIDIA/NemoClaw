@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createDockerManagedBootstrapAdapter } from "./docker";
+import type { DockerManagedBootstrapJournalStore } from "./docker-journal";
 import {
   authority,
   type DockerFixtureOptions,
@@ -75,7 +76,7 @@ describe("Docker managed bootstrap restart recovery", () => {
     expect(fake.journal).toBeNull();
     expect(fake.finalization?.phase).toBe("rolled-back");
     expect(fake.replacement).toBeNull();
-    expect(fake.original.State?.Running).toBe(true);
+    expect(fake.original?.State?.Running).toBe(true);
     await expect(restarted.recoverUnfinishedTransactions()).resolves.toEqual([]);
   });
 
@@ -115,7 +116,7 @@ describe("Docker managed bootstrap restart recovery", () => {
     ]);
     expect(fake.sharedState).toBe("none");
     expect(fake.replacement).toBeNull();
-    expect(fake.original.State?.Running).toBe(true);
+    expect(fake.original?.State?.Running).toBe(true);
   });
 
   it("compacts a terminal commit journal after another restart interruption", async () => {
@@ -160,7 +161,36 @@ describe("Docker managed bootstrap restart recovery", () => {
     expect(fake.journal?.phase).toBe("shared-state-committed");
     expect(fake.finalization?.phase).toBe("committed");
 
-    const resumed = createDockerManagedBootstrapAdapter(fake.deps);
+    const journalStore = fake.deps.journalStore;
+    if (!journalStore) throw new Error("fixture journal store is missing");
+    const reorderedFinalizationStore = {
+      ...journalStore,
+      loadFinalization(bootstrapIdentity: string) {
+        const record = journalStore.loadFinalization(bootstrapIdentity);
+        const receipt = record?.commitReceipt;
+        if (!record || !receipt) return record;
+        return {
+          ...record,
+          commitReceipt: {
+            completedAt: receipt.completedAt,
+            transactionPending: receipt.transactionPending,
+            bootstrapIdentity: receipt.bootstrapIdentity,
+            profileFingerprint: receipt.profileFingerprint,
+            replacementSpecHash: receipt.replacementSpecHash,
+            originalSpecHash: receipt.originalSpecHash,
+            runtimeImageContentId: receipt.runtimeImageContentId,
+            image: receipt.image,
+            runtimeId: receipt.runtimeId,
+            sandbox: receipt.sandbox,
+            schemaVersion: receipt.schemaVersion,
+          } satisfies typeof receipt,
+        };
+      },
+    } satisfies DockerManagedBootstrapJournalStore;
+    const resumed = createDockerManagedBootstrapAdapter({
+      ...fake.deps,
+      journalStore: reorderedFinalizationStore,
+    });
     await expect(resumed.recoverUnfinishedTransactions()).resolves.toMatchObject([
       { sourcePhase: "shared-state-committed", outcome: "committed" },
     ]);

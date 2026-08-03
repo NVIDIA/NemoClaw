@@ -16,6 +16,7 @@ import {
   type DockerManagedBootstrapJournal,
   parseDockerManagedBootstrapFinalizationRecord,
   parseDockerManagedBootstrapJournal,
+  sameDockerManagedBootstrapReceipt,
   serializeDockerManagedBootstrapFinalizationRecord,
   serializeDockerManagedBootstrapJournal,
 } from "./docker-journal";
@@ -236,12 +237,55 @@ describe("Docker managed bootstrap journal", () => {
     ).toBe(`${JSON.stringify(journal)}\n`);
   });
 
-  it("enumerates unfinished records and persists exact terminal receipts across restart", () => {
+  it("compares equivalent receipts independent of property insertion order", () => {
+    const preparation = journal.preparationReceipt;
+    const reorderedPreparation = {
+      recordedAt: preparation.recordedAt,
+      recordId: preparation.recordId,
+      authorityFingerprint: preparation.authorityFingerprint,
+      bootstrapIdentity: preparation.bootstrapIdentity,
+      sandbox: {
+        driverId: preparation.sandbox.driverId,
+        sandboxId: preparation.sandbox.sandboxId,
+        sandboxName: preparation.sandbox.sandboxName,
+      },
+      schemaVersion: preparation.schemaVersion,
+    } satisfies typeof preparation;
+    expect(
+      sameDockerManagedBootstrapReceipt("preparation", preparation, reorderedPreparation),
+    ).toBe(true);
+
+    const completion = finalization.commitReceipt;
+    const reorderedCompletion = {
+      completedAt: completion.completedAt,
+      transactionPending: completion.transactionPending,
+      bootstrapIdentity: completion.bootstrapIdentity,
+      profileFingerprint: completion.profileFingerprint,
+      replacementSpecHash: completion.replacementSpecHash,
+      originalSpecHash: completion.originalSpecHash,
+      runtimeImageContentId: completion.runtimeImageContentId,
+      image: {
+        manifestDigest: completion.image.manifestDigest,
+        repository: completion.image.repository,
+      },
+      runtimeId: completion.runtimeId,
+      sandbox: {
+        driverId: completion.sandbox.driverId,
+        sandboxId: completion.sandbox.sandboxId,
+        sandboxName: completion.sandbox.sandboxName,
+      },
+      schemaVersion: completion.schemaVersion,
+    } satisfies typeof completion;
+    expect(sameDockerManagedBootstrapReceipt("completion", completion, reorderedCompletion)).toBe(
+      true,
+    );
+  });
+
+  it("reloads exact terminal receipts from a new journal store", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
     roots.push(root);
     const first = createFileDockerManagedBootstrapJournalStore(root);
     first.create(journal);
-    expect(first.listUnfinished()).toEqual([journal]);
 
     first.recordFinalization(finalization);
     expect(first.listUnfinished()).toEqual([journal]);
@@ -260,9 +304,51 @@ describe("Docker managed bootstrap journal", () => {
         cleanupReceipt: { ...finalization.cleanupReceipt, finalizedAt: "2026-07-31T20:00:02.000Z" },
       }),
     ).toThrow("finalization record changed");
+    expect(() =>
+      restarted.recordFinalization({
+        ...finalization,
+        phase: "rolled-back",
+        commitReceipt: null,
+        cleanupReceipt: { ...finalization.cleanupReceipt, outcome: "rolled-back" },
+      }),
+    ).toThrow("finalization record changed");
   });
 
-  it("persists the exact completion receipt for restart reconstruction", () => {
+  it.each([
+    { label: "journal", suffix: "" },
+    { label: "decision", suffix: ".decision" },
+    { label: "finalization", suffix: ".finalized" },
+  ])("ignores an atomic $label write left by a crash during enumeration", ({ suffix }) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
+    roots.push(root);
+    const store = createFileDockerManagedBootstrapJournalStore(root);
+    store.create(journal);
+    const directory = path.join(root, DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY);
+    fs.writeFileSync(
+      path.join(directory, `.${IDENTITY}.json${suffix}.1234.deadbeef.tmp`),
+      "partial",
+      {
+        mode: 0o600,
+      },
+    );
+
+    expect(store.listUnfinished()).toEqual([journal]);
+  });
+
+  it("rejects an unsupported journal-directory entry during enumeration", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
+    roots.push(root);
+    const store = createFileDockerManagedBootstrapJournalStore(root);
+    store.create(journal);
+    const directory = path.join(root, DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY);
+    fs.writeFileSync(path.join(directory, `${IDENTITY}.json.unknown`), "unexpected", {
+      mode: 0o600,
+    });
+
+    expect(() => store.listUnfinished()).toThrow("journal directory contains an unsupported entry");
+  });
+
+  it("reloads the exact completion receipt from a new journal store", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
     roots.push(root);
     const first = createFileDockerManagedBootstrapJournalStore(root);
@@ -272,7 +358,6 @@ describe("Docker managed bootstrap journal", () => {
     expect(completed.commitReceipt).toEqual(finalization.commitReceipt);
 
     const restarted = createFileDockerManagedBootstrapJournalStore(root);
-    expect(restarted.listUnfinished()).toEqual([completed]);
     expect(restarted.recordCompletion(IDENTITY, finalization.commitReceipt)).toEqual(completed);
     expect(() =>
       restarted.recordCompletion(IDENTITY, {
@@ -280,18 +365,5 @@ describe("Docker managed bootstrap journal", () => {
         completedAt: "2026-07-31T20:00:02.000Z",
       }),
     ).toThrow("completion receipt changed");
-  });
-
-  it("fails closed when enumeration encounters an unsupported state entry", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
-    roots.push(root);
-    const store = createFileDockerManagedBootstrapJournalStore(root);
-    store.create(journal);
-    fs.writeFileSync(
-      path.join(root, DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY, "unexpected.json"),
-      "{}\n",
-      { mode: 0o600 },
-    );
-    expect(() => store.listUnfinished()).toThrow("unsupported entry");
   });
 });

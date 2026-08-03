@@ -395,6 +395,94 @@ describe("managed bootstrap adapter contract", () => {
     expect(prepared.prepared.preparedRuntimeId).toBe(PREPARED_ID);
   });
 
+  it("rejects independent discovered-versus-inspected runtime disagreement before preparation", async () => {
+    const fixture = adapterFor("openclaw");
+    const request = requestFor("openclaw");
+    const discoveryProbe = vi.fn(async () => RUNTIME_ID);
+    const inspectionProbe = vi.fn(async () => "9".repeat(64));
+    vi.mocked(fixture.adapter.discoverHeldWorkload).mockImplementationOnce(async (input) => ({
+      sandbox: input.sandbox,
+      runtimeId: await discoveryProbe(),
+      bootstrapIdentity: IDENTITY,
+    }));
+    vi.mocked(fixture.adapter.inspectHeldWorkload).mockImplementationOnce(async ({ handle }) => ({
+      ...snapshotFor(request, handle),
+      runtimeId: await inspectionProbe(),
+    }));
+
+    const failure = await captureFailure(
+      prepareManagedBootstrapSequence(fixture.adapter, preparationInput("openclaw")),
+    );
+
+    expect(discoveryProbe).toHaveBeenCalledTimes(1);
+    expect(inspectionProbe).toHaveBeenCalledTimes(1);
+    expect(failure.message).toContain("observed runtime identity changed after discovery");
+    expect(fixture.adapter.prepareBootstrapReplacement).not.toHaveBeenCalled();
+    expect(fixture.adapter.activateBootstrapReplacement).not.toHaveBeenCalled();
+    expect(fixture.adapter.finalizeBootstrap).toHaveBeenCalledTimes(1);
+    expect(fixture.adapter.finalizeBootstrap).toHaveBeenCalledWith({
+      outcome: "rollback",
+      handle: fixture.raw.handle,
+      snapshot: null,
+      prepared: null,
+      durablePreparation: null,
+      replacement: null,
+      completion: null,
+    });
+    expect(failure.managedBootstrapRollback).toMatchObject({
+      outcome: "rolled-back",
+      sandbox: sandbox(),
+      heldWorkloadRemoved: true,
+    });
+  });
+
+  it.each([
+    {
+      label: "plan metadata",
+      expected: "metadata must be a plain string record",
+      invalidate: (input: Parameters<typeof prepareManagedBootstrapSequence>[1]) => ({
+        ...input,
+        create: {
+          ...input.create,
+          plan: {
+            ...input.create.plan,
+            metadata: Object.assign(
+              Object.create({ inherited: "attacker" }) as Record<string, string>,
+              input.create.plan.metadata,
+            ),
+          },
+        },
+      }),
+    },
+    {
+      label: "replacement option values",
+      expected: "replacement options must be a plain value record",
+      invalidate: (input: Parameters<typeof prepareManagedBootstrapSequence>[1]) => ({
+        ...input,
+        replacementOptions: {
+          values: Object.assign(
+            Object.create({ inherited: "attacker" }) as Record<
+              string,
+              string | number | boolean | readonly string[]
+            >,
+            input.replacementOptions.values,
+          ),
+        },
+      }),
+    },
+  ])("rejects custom-prototype $label before provider invocation", async ({
+    expected,
+    invalidate,
+  }) => {
+    const fixture = adapterFor("openclaw");
+    const input = invalidate(preparationInput("openclaw"));
+
+    await expect(prepareManagedBootstrapSequence(fixture.adapter, input)).rejects.toThrow(expected);
+    expect(fixture.adapter.createHeldWorkload).not.toHaveBeenCalled();
+    expect(input.create.launch).not.toHaveBeenCalled();
+    expect(fixture.order).toEqual([]);
+  });
+
   it("consumes prepared authority exactly once and rejects a second activation", async () => {
     const fixture = adapterFor("openclaw");
     const prepared = await prepareManagedBootstrapSequence(
@@ -442,14 +530,46 @@ describe("managed bootstrap adapter contract", () => {
   });
 
   it.each([
-    "throws",
-    "returns without launch",
+    [
+      "throws before launch",
+      (adapter: ManagedBootstrapAdapter) => {
+        vi.mocked(adapter.createHeldWorkload).mockRejectedValueOnce(
+          new Error("create failed before materialization"),
+        );
+      },
+    ],
+    [
+      "returns without launch",
+      (adapter: ManagedBootstrapAdapter) => {
+        vi.mocked(adapter.createHeldWorkload).mockResolvedValueOnce(
+          handleFor(requestFor("langchain-deepagents-code")),
+        );
+      },
+    ],
+  ] as const)("does not clean up when createHeldWorkload %s", async (_, arrange) => {
+    const fixture = adapterFor("langchain-deepagents-code");
+    arrange(fixture.adapter);
+
+    const failure = await captureFailure(
+      prepareManagedBootstrapSequence(
+        fixture.adapter,
+        preparationInput("langchain-deepagents-code"),
+      ),
+    );
+
+    expect(fixture.adapter.cleanupIncompleteCreate).not.toHaveBeenCalled();
+    expect(failure.managedBootstrapRollback).toBeUndefined();
+    expect(failure.managedBootstrapRollbackError).toBeUndefined();
+  });
+
+  it.each([
+    "throws after launch",
     "returns an invalid handle",
-  ] as const)("runs exact incomplete-create cleanup when create %s", async (failureMode) => {
+  ] as const)("runs exact cleanup when createHeldWorkload %s", async (failureMode) => {
     const fixture = adapterFor("langchain-deepagents-code");
     const original = fixture.adapter.createHeldWorkload;
     switch (failureMode) {
-      case "throws":
+      case "throws after launch":
         vi.mocked(original).mockImplementationOnce(async (input) => {
           await input.launch({
             heldWorkloadArgv: renderManagedBootstrapHeldCommand(
@@ -461,11 +581,6 @@ describe("managed bootstrap adapter contract", () => {
           });
           throw new Error("create failed after materialization");
         });
-        break;
-      case "returns without launch":
-        vi.mocked(original).mockResolvedValueOnce(
-          handleFor(requestFor("langchain-deepagents-code")),
-        );
         break;
       default:
         vi.mocked(original).mockImplementationOnce(async (input) => {
@@ -495,6 +610,7 @@ describe("managed bootstrap adapter contract", () => {
       plan: expect.objectContaining({ sandboxName: "alpha", driverId: "mxc-fixture" }),
       bootstrapIdentity: IDENTITY,
       heldWorkloadArgv: expect.arrayContaining([IDENTITY]),
+      createReceipt: expect.objectContaining({ sandbox: sandbox(), ready: true }),
     });
     expect(failure.managedBootstrapRollback).toMatchObject({
       outcome: "rolled-back",
@@ -503,7 +619,142 @@ describe("managed bootstrap adapter contract", () => {
     });
   });
 
-  it("rolls back a prepared replacement when durable recording fails, before activation", async () => {
+  it("rejects post-launch createHeldWorkload cleanup for a different sandbox", async () => {
+    const fixture = adapterFor("langchain-deepagents-code");
+    vi.mocked(fixture.adapter.createHeldWorkload).mockImplementationOnce(async (input) => {
+      await input.launch({
+        heldWorkloadArgv: renderManagedBootstrapHeldCommand(
+          input.request,
+          input.bootstrapIdentity as string,
+          input.plan.intendedWorkloadArgv,
+        ),
+        bootstrapIdentity: input.bootstrapIdentity as string,
+      });
+      throw new Error("create failed after materialization");
+    });
+    vi.mocked(fixture.adapter.cleanupIncompleteCreate).mockResolvedValueOnce({
+      ...cleanupReceipt(),
+      sandbox: { ...sandbox(), sandboxId: "unrelated-sandbox" },
+    });
+
+    const failure = await captureFailure(
+      prepareManagedBootstrapSequence(
+        fixture.adapter,
+        preparationInput("langchain-deepagents-code"),
+      ),
+    );
+
+    expect(failure.managedBootstrapRollback).toBeUndefined();
+    expect(failure.message).toContain("incomplete-create cleanup sandbox");
+  });
+
+  it("cleans only the exact failed prepared replacement and port before retry", async () => {
+    const fixture = adapterFor("openclaw");
+    const request = requestFor("openclaw");
+    const replacementPort = 18_000;
+    const unrelatedPort = 18_001;
+    const retryPreparedId = "9".repeat(64);
+    const authorityKeyFor = (sandboxId: string, bootstrapIdentity: string) =>
+      `${sandboxId}:${bootstrapIdentity}`;
+    const targetAuthorityKey = authorityKeyFor(sandbox().sandboxId, IDENTITY);
+    const unrelatedAuthorityKey = authorityKeyFor(sandbox().sandboxId, "e".repeat(64));
+    const unrelatedOwnership = { port: unrelatedPort, runtimeId: "8".repeat(64) };
+    const ownedByAuthority = new Map<string, { port: number; runtimeId: string }>([
+      [unrelatedAuthorityKey, unrelatedOwnership],
+    ]);
+    const reservedPorts = new Map<number, string>([[unrelatedPort, unrelatedAuthorityKey]]);
+    const stateBeforePreparation: Array<{
+      authorityKey: string;
+      ownedRuntimeId: string | null;
+      portOwner: string | null;
+    }> = [];
+    const input = {
+      ...preparationInput("openclaw"),
+      replacementOptions: {
+        values: { mode: "native", groups: ["44", "109"], port: replacementPort },
+      },
+    } as const;
+    const allocate = (
+      prepareInput: Parameters<ManagedBootstrapAdapter["prepareBootstrapReplacement"]>[0],
+      runtimeId: string,
+    ) => {
+      const authorityKey = authorityKeyFor(
+        prepareInput.handle.sandbox.sandboxId,
+        prepareInput.handle.bootstrapIdentity,
+      );
+      stateBeforePreparation.push({
+        authorityKey,
+        ownedRuntimeId: ownedByAuthority.get(authorityKey)?.runtimeId ?? null,
+        portOwner: reservedPorts.get(replacementPort) ?? null,
+      });
+      expect(prepareInput.replacementOptions.values.port).toBe(replacementPort);
+      ownedByAuthority.set(authorityKey, { port: replacementPort, runtimeId });
+      reservedPorts.set(replacementPort, authorityKey);
+      return { ...preparedFor(request, prepareInput.handle), preparedRuntimeId: runtimeId };
+    };
+
+    vi.mocked(fixture.adapter.prepareBootstrapReplacement)
+      .mockImplementationOnce(async (prepareInput) => {
+        allocate(prepareInput, PREPARED_ID);
+        throw new Error("preparation failed after replacement creation");
+      })
+      .mockImplementationOnce(async (prepareInput) => allocate(prepareInput, retryPreparedId));
+    vi.mocked(fixture.adapter.finalizeBootstrap).mockImplementation(async (finalizeInput) => {
+      expect(finalizeInput.outcome).toBe("rollback");
+      const authorityKey = authorityKeyFor(
+        finalizeInput.handle.sandbox.sandboxId,
+        finalizeInput.handle.bootstrapIdentity,
+      );
+      ownedByAuthority.delete(authorityKey);
+      expect(reservedPorts.get(replacementPort)).toBe(authorityKey);
+      reservedPorts.delete(replacementPort);
+      return rolledBackReceipt(finalizeInput.handle, finalizeInput.snapshot);
+    });
+
+    const failure = await captureFailure(prepareManagedBootstrapSequence(fixture.adapter, input));
+
+    expect(failure.message).toContain("preparation failed after replacement creation");
+    expect(failure.managedBootstrapRollback).toMatchObject({ outcome: "rolled-back" });
+    expect(fixture.adapter.finalizeBootstrap).toHaveBeenCalledWith({
+      outcome: "rollback",
+      handle: expect.objectContaining({ sandbox: sandbox() }),
+      snapshot: expect.objectContaining({ runtimeId: RUNTIME_ID, specHash: SPEC_HASH }),
+      prepared: null,
+      durablePreparation: null,
+      replacement: null,
+      completion: null,
+    });
+    expect(fixture.adapter.finalizeBootstrap).toHaveBeenCalledTimes(1);
+    expect(ownedByAuthority.has(targetAuthorityKey)).toBe(false);
+    expect(reservedPorts.has(replacementPort)).toBe(false);
+    expect(ownedByAuthority.get(unrelatedAuthorityKey)).toEqual(unrelatedOwnership);
+    expect(reservedPorts.get(unrelatedPort)).toBe(unrelatedAuthorityKey);
+
+    const retried = await prepareManagedBootstrapSequence(fixture.adapter, input);
+
+    expect(stateBeforePreparation).toEqual([
+      { authorityKey: targetAuthorityKey, ownedRuntimeId: null, portOwner: null },
+      { authorityKey: targetAuthorityKey, ownedRuntimeId: null, portOwner: null },
+    ]);
+    expect(retried.prepared.preparedRuntimeId).toBe(retryPreparedId);
+    expect(ownedByAuthority.get(targetAuthorityKey)).toEqual({
+      port: replacementPort,
+      runtimeId: retryPreparedId,
+    });
+    expect(reservedPorts.get(replacementPort)).toBe(targetAuthorityKey);
+
+    await finalizeManagedBootstrapSequence(fixture.adapter, {
+      outcome: "rollback",
+      transaction: retried,
+    });
+    expect(fixture.adapter.finalizeBootstrap).toHaveBeenCalledTimes(2);
+    expect(ownedByAuthority.has(targetAuthorityKey)).toBe(false);
+    expect(reservedPorts.has(replacementPort)).toBe(false);
+    expect(ownedByAuthority).toEqual(new Map([[unrelatedAuthorityKey, unrelatedOwnership]]));
+    expect(reservedPorts).toEqual(new Map([[unrelatedPort, unrelatedAuthorityKey]]));
+  });
+
+  it("rolls back a prepared bootstrap replacement when durable recording fails, before activation", async () => {
     const fixture = adapterFor("openclaw");
     const prepared = await prepareManagedBootstrapSequence(
       fixture.adapter,
@@ -619,7 +870,7 @@ describe("managed bootstrap adapter contract", () => {
     expect(failure.managedBootstrapRollbackError).toBe(rollbackFailure);
   });
 
-  it("binds rollback and commit receipts to the exact captured snapshot", async () => {
+  it("binds rollback to the snapshot and commit to the activated transaction", async () => {
     const result = await prepareAndActivate("langchain-deepagents-code");
     vi.mocked(result.adapter.finalizeBootstrap).mockResolvedValueOnce({
       ...rolledBackReceipt(result.activated.handle, result.activated.snapshot),
@@ -707,13 +958,16 @@ describe("managed bootstrap adapter contract", () => {
   });
 
   it.each([
+    "BASHOPTS=extdebug",
     "BASH_ENV=/sandbox/attacker",
     "ENV=/sandbox/attacker",
-    "LD_PRELOAD=/sandbox/attacker.so",
     "LD_AUDIT=/sandbox/attacker.so",
     "LD_LIBRARY_PATH=/sandbox/lib",
-    "SHELLOPTS=xtrace",
+    "LD_PRELOAD=/sandbox/attacker.so",
+    "NODE_OPTIONS=--require=/sandbox/attacker.cjs",
+    "NODE_PATH=/sandbox/attacker-modules",
     "PS4=$(touch /sandbox/bypass)",
+    "SHELLOPTS=xtrace",
     "BASH_FUNC_attacker%%=() { touch /sandbox/bypass; }",
   ])("rejects a process-control assignment before rendering the held command: %s", (assignment) => {
     const request = requestFor("hermes");

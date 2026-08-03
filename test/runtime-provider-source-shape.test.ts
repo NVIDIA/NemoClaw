@@ -4,7 +4,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 const repoRoot = join(import.meta.dirname, "..");
 const byCodeUnit = (left: string, right: string): number =>
@@ -21,6 +21,61 @@ function trackedPaths(...pathspecs: readonly string[]): string[] {
 }
 
 const read = (relativePath: string): string => readFileSync(join(repoRoot, relativePath), "utf8");
+
+let productionPaths: string[] = [];
+let bootstrapProtocolPaths: string[] = [];
+let activationPaths: string[] = [];
+let providerPaths: string[] = [];
+let dockerfilePaths: string[] = [];
+let packagingPaths: string[] = [];
+const managedBootstrapLoad =
+  /(?:from\s*|import\s*|import\s*\(\s*|require\s*\(\s*)["']([^"']*managed-bootstrap(?:\/[^"']*)?)["']/giu;
+const allowedManagedBootstrapLoad =
+  /\/managed-bootstrap\/(?:adapter|runtime-create)(?:\.[cm]?[jt]s)?$/u;
+const packagedBootstrapAsset =
+  /(?:nemoclaw-managed-bootstrap|managed-bootstrap-trampoline|managed-startup-image-runtime\.cjs|nemoclaw-managed-startup-hold)/u;
+
+function disallowedManagedBootstrapLoads(source: string): string[] {
+  return [...source.matchAll(managedBootstrapLoad)]
+    .map((match) => match[1] ?? "")
+    .filter((specifier) => !allowedManagedBootstrapLoad.test(specifier));
+}
+
+beforeAll(() => {
+  productionPaths = trackedPaths(
+    "src/lib/onboard.ts",
+    "src/lib/onboard",
+    "scripts",
+    "agents",
+    ".github/workflows",
+    "Dockerfile",
+    "Dockerfile.base",
+  );
+  bootstrapProtocolPaths = productionPaths.filter(
+    (path) =>
+      path.startsWith("src/lib/onboard/managed-bootstrap/") &&
+      path.endsWith(".ts") &&
+      !path.endsWith(".test.ts"),
+  );
+  activationPaths = productionPaths.filter(
+    (path) =>
+      (path === "src/lib/onboard.ts" || path.startsWith("src/lib/onboard/")) &&
+      path.endsWith(".ts") &&
+      !path.endsWith(".test.ts") &&
+      !path.startsWith("src/lib/onboard/managed-bootstrap/"),
+  );
+  providerPaths = activationPaths.filter((path) =>
+    path.startsWith("src/lib/onboard/runtime-provider/"),
+  );
+  dockerfilePaths = productionPaths.filter((path) => /(?:^|\/)Dockerfile(?:\.base)?$/u.test(path));
+  packagingPaths = productionPaths.filter(
+    (path) =>
+      dockerfilePaths.includes(path) ||
+      path.startsWith("scripts/") ||
+      path.startsWith("agents/") ||
+      path.startsWith(".github/workflows/"),
+  );
+});
 
 describe("runtime provider central source boundary", () => {
   // source-shape-contract: compatibility -- Migrated lifecycle and mutation consumers must stay provider-neutral while production selection excludes unqualified future providers and driver-specific bootstrap dependencies
@@ -76,64 +131,8 @@ describe("runtime provider central source boundary", () => {
     expect(providerContract.current).not.toMatch(/\b(?:podman|mxc)\b/iu);
   });
 
-  // source-shape-contract: security -- The bootstrap protocol and image-owned trampoline must remain dormant until a later provider slice supplies runtime packaging and exact activation
-  it("keeps managed bootstrap provider-neutral, image-owned, and dormant", () => {
-    const dockerProvider = readFileSync(
-      join(repoRoot, "src/lib/onboard/runtime-provider/docker.ts"),
-      "utf8",
-    );
-    const productionPaths = trackedPaths(
-      "src/lib/onboard.ts",
-      "src/lib/onboard",
-      "scripts",
-      "agents",
-      ".github/workflows",
-      "Dockerfile",
-      "Dockerfile.base",
-    );
-    const bootstrapSourcePaths = productionPaths.filter(
-      (path) =>
-        path.startsWith("src/lib/onboard/managed-bootstrap/") &&
-        path.endsWith(".ts") &&
-        !path.endsWith(".test.ts"),
-    );
-    const bootstrapProtocolPaths = bootstrapSourcePaths.filter((path) =>
-      [
-        "src/lib/onboard/managed-bootstrap/adapter.ts",
-        "src/lib/onboard/managed-bootstrap/envelope.ts",
-        "src/lib/onboard/managed-bootstrap/index.ts",
-      ].includes(path),
-    );
-    const activationPaths = productionPaths.filter(
-      (path) =>
-        (path === "src/lib/onboard.ts" || path.startsWith("src/lib/onboard/")) &&
-        path.endsWith(".ts") &&
-        !path.endsWith(".test.ts") &&
-        !path.startsWith("src/lib/onboard/managed-bootstrap/"),
-    );
-    const providerPaths = activationPaths.filter((path) =>
-      path.startsWith("src/lib/onboard/runtime-provider/"),
-    );
-    const dockerfilePaths = productionPaths.filter((path) =>
-      /(?:^|\/)Dockerfile(?:\.base)?$/u.test(path),
-    );
-    const packagingPaths = productionPaths.filter(
-      (path) =>
-        dockerfilePaths.includes(path) ||
-        path.startsWith("scripts/") ||
-        path.startsWith("agents/") ||
-        path.startsWith(".github/workflows/"),
-    );
-    const bootstrapProtocol = bootstrapProtocolPaths.map(read);
-    const activationSources = activationPaths.map(read);
-    const providerImplementationSources = providerPaths
-      .filter((path) => path !== "src/lib/onboard/runtime-provider/contract.ts")
-      .map(read);
-    const packagingSources = packagingPaths.map((path) => [path, read(path)] as const);
-    const packagedBootstrapAsset =
-      /(?:nemoclaw-managed-bootstrap|managed-bootstrap-trampoline|managed-startup-image-runtime\.cjs|nemoclaw-managed-startup-hold)/u;
-
-    expect(bootstrapSourcePaths).toEqual([
+  it("inventories every dormant managed-bootstrap protocol source", () => {
+    expect(bootstrapProtocolPaths).toEqual([
       "src/lib/onboard/managed-bootstrap/adapter.ts",
       "src/lib/onboard/managed-bootstrap/docker-journal.ts",
       "src/lib/onboard/managed-bootstrap/docker-runtime.ts",
@@ -145,6 +144,9 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/managed-bootstrap/index.ts",
       "src/lib/onboard/managed-bootstrap/runtime-create.ts",
     ]);
+  });
+
+  it("inventories every runtime-provider implementation", () => {
     expect(providerPaths).toEqual([
       "src/lib/onboard/runtime-provider/access.ts",
       "src/lib/onboard/runtime-provider/contract.ts",
@@ -153,6 +155,9 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/runtime-provider/registry.ts",
       "src/lib/onboard/runtime-provider/snapshot.ts",
     ]);
+  });
+
+  it("inventories every production Dockerfile", () => {
     expect(dockerfilePaths).toEqual([
       "Dockerfile",
       "Dockerfile.base",
@@ -161,26 +166,96 @@ describe("runtime provider central source boundary", () => {
       "agents/langchain-deepagents-code/Dockerfile",
       "agents/langchain-deepagents-code/Dockerfile.base",
     ]);
+  });
 
-    expect(bootstrapProtocol.join("\n")).not.toMatch(
-      /from\s+["'][^"']*(?:docker|podman)[^"']*["']/iu,
-    );
-    expect(bootstrapProtocol.join("\n")).not.toMatch(
+  // source-shape-contract: security -- The central managed-bootstrap authority must stay driver-neutral so Docker, Podman, and MXC providers share one transaction contract
+  it("keeps the dormant managed-bootstrap protocol driver-neutral", () => {
+    const bootstrapProtocolSource = [
+      read("src/lib/onboard/managed-bootstrap/adapter.ts"),
+      read("src/lib/onboard/managed-bootstrap/envelope.ts"),
+      read("src/lib/onboard/managed-bootstrap/index.ts"),
+    ].join("\n");
+    const runtimeCreateContract = read("src/lib/onboard/managed-bootstrap/runtime-create.ts");
+    expect(bootstrapProtocolSource).not.toMatch(/from\s+["'][^"']*(?:docker|podman)[^"']*["']/iu);
+    expect(bootstrapProtocolSource).not.toMatch(
       /(?:driverId|providerId)\s*(?:===|!==)\s*["'](?:docker|podman)["']/iu,
     );
-    expect(bootstrapProtocol.join("\n")).not.toMatch(/\b(?:docker|podman|openshell|mxc)\b/iu);
-    expect(activationSources.join("\n")).not.toMatch(
-      /(?:from\s+["'][^"']*managed-bootstrap\/(?:docker|docker-journal|docker-runtime)|require\([^)]*managed-bootstrap)/u,
+    expect(bootstrapProtocolSource).not.toMatch(/\b(?:docker|podman|openshell|mxc)\b/iu);
+    expect(runtimeCreateContract).not.toMatch(/\b(?:docker|podman|mxc)\b/iu);
+    expect(runtimeCreateContract).not.toMatch(
+      /(?:driverId|providerId)\s*(?:===|!==)\s*["'][^"']+["']/iu,
     );
+  });
+
+  // source-shape-contract: security -- Production onboarding may consume the provider-neutral create contract but cannot select a driver-specific bootstrap implementation
+  it("keeps production activation paths disconnected from driver bootstrap adapters", () => {
+    const onboardEntry = read("src/lib/onboard.ts");
+    const activationSource = activationPaths.map(read).join("\n");
+    expect(disallowedManagedBootstrapLoads(onboardEntry)).toEqual([]);
+    expect(disallowedManagedBootstrapLoads(activationSource)).toEqual([]);
+    expect(
+      disallowedManagedBootstrapLoads(
+        [
+          'import type { Contract } from "../managed-bootstrap/adapter";',
+          'import type { Lifecycle } from "../../managed-bootstrap/runtime-create.mts";',
+        ].join("\n"),
+      ),
+    ).toEqual([]);
+    expect(
+      disallowedManagedBootstrapLoads(
+        [
+          'import "../managed-bootstrap";',
+          'import "../managed-bootstrap/index";',
+          'import "../managed-bootstrap/docker-runtime";',
+          'await import("../managed-bootstrap/podman-runtime");',
+          'require("../managed-bootstrap/mxc-runtime");',
+          'export { provider } from "../managed-bootstrap/future-provider";',
+          'import type { Fake } from "../fake-managed-bootstrap/adapter";',
+          'import type { Nested } from "../managed-bootstrap/docker/adapter";',
+        ].join("\n"),
+      ),
+    ).toEqual([
+      "../managed-bootstrap",
+      "../managed-bootstrap/index",
+      "../managed-bootstrap/docker-runtime",
+      "../managed-bootstrap/podman-runtime",
+      "../managed-bootstrap/mxc-runtime",
+      "../managed-bootstrap/future-provider",
+      "../fake-managed-bootstrap/adapter",
+      "../managed-bootstrap/docker/adapter",
+    ]);
+  });
+
+  // source-shape-contract: security -- Registered runtime providers must remain bootstrap-unsupported until their complete transaction implementations are qualified
+  it("keeps registered providers bootstrap-unsupported", () => {
+    const dockerProvider = read("src/lib/onboard/runtime-provider/docker.ts");
+    const providerImplementationSource = providerPaths
+      .filter((path) => path !== "src/lib/onboard/runtime-provider/contract.ts")
+      .map(read)
+      .join("\n");
     expect(dockerProvider).not.toMatch(
       /(?:from\s+["'][^"']*managed-bootstrap|require\([^)]*managed-bootstrap)/u,
     );
-    expect(providerImplementationSources.join("\n")).not.toMatch(/managed-bootstrap/iu);
+    expect(providerImplementationSource).not.toMatch(/managed-bootstrap/iu);
     expect(dockerProvider.match(/bootstrap:\s*unsupported\(/gu)).toHaveLength(2);
+    expect(dockerProvider.match(/recovery:\s*unsupported\(/gu)).toHaveLength(2);
+  });
+
+  // source-shape-contract: security -- Image packaging must expose only the reviewed dormant native boundary sources until every required bootstrap runtime asset is activated together
+  it("keeps managed-bootstrap assets out of image packaging", () => {
+    const entrypoint = read("scripts/managed-bootstrap-entrypoint.c");
+    const trampoline = read("scripts/managed-bootstrap-trampoline.sh");
+    const packagingSources = packagingPaths.map((path) => [path, read(path)] as const);
+    expect(entrypoint).toMatch(/exec_process\(NEMOCLAW_MANAGED_BOOTSTRAP_BASH/u);
+    expect(entrypoint).toMatch(/NEMOCLAW_MANAGED_BOOTSTRAP_FREESTANDING/u);
+    expect(trampoline).toMatch(/Non-executable image-owned bootstrap body/u);
     expect(
       packagingSources
         .filter(([, source]) => packagedBootstrapAsset.test(source))
         .map(([path]) => path),
-    ).toEqual(["scripts/managed-bootstrap-trampoline.sh"]);
+    ).toEqual([
+      "scripts/managed-bootstrap-entrypoint.c",
+      "scripts/managed-bootstrap-trampoline.sh",
+    ]);
   });
 });

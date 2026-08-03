@@ -221,6 +221,12 @@ function canonicalize(value: unknown): unknown {
   );
 }
 
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== "object" || value === null || Object.isFrozen(value)) return value;
+  for (const nested of Object.values(value)) deepFreeze(nested);
+  return Object.freeze(value);
+}
+
 export function parseExactDockerContainerInspect(output: string): DockerContainerInspect {
   let parsed: unknown;
   try {
@@ -282,11 +288,12 @@ export function normalizeDockerManagedBootstrapLaunchSpec(inspect: DockerContain
       ...("Platform" in raw && typeof raw.Platform === "string" ? { Platform: raw.Platform } : {}),
     },
   };
-  const canonicalJson = `${JSON.stringify(canonicalize(spec))}\n`;
+  const canonicalSpec = deepFreeze(canonicalize(spec) as DockerManagedBootstrapLaunchSpec);
+  const canonicalJson = `${JSON.stringify(canonicalSpec)}\n`;
   return Object.freeze({
     canonicalJson,
     hash: createHash("sha256").update(canonicalJson, "utf8").digest("hex"),
-    spec: Object.freeze(spec),
+    spec: canonicalSpec,
   });
 }
 

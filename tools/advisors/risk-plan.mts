@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 10 as const;
+export const RISK_PLAN_VERSION = 12 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -25,6 +25,30 @@ const MANAGED_STARTUP_E2E_JOB_IDS = [
   "issue-4462-scope-upgrade-approval",
   "openclaw-inference-switch",
 ] as const;
+const HERMES_CLI_ADAPTER_E2E_JOB_IDS = ["channels-stop-start", "mcp-bridge"] as const;
+const HERMES_CLI_ADAPTER_RUNTIME_FILES = new Set([
+  "agents/hermes/hermes-cli-adapter-v1.json",
+  "agents/hermes/hermes-wrapper.py",
+  "agents/hermes/validate-cli-adapter.py",
+]);
+const HERMES_MANAGED_POLICY_E2E_JOB_IDS = [
+  "bedrock-runtime-compatible-anthropic",
+  "channels-stop-start",
+  "dashboard-remote-bind",
+  "hermes-e2e",
+  "hermes-inference-switch",
+  "hermes-shields-config",
+  "security-posture",
+] as const;
+const HERMES_MANAGED_POLICY_FILES = new Set([
+  "agents/hermes/hermes-wrapper.py",
+  "agents/hermes/image-build-probes.py",
+  "agents/hermes/managed_policy.py",
+  "agents/hermes/patch-profile-policy-defaults.py",
+  "agents/hermes/seed-dashboard-config.py",
+  "agents/hermes/start.sh",
+  "src/lib/hermes-managed-route.ts",
+]);
 
 export type RiskTier = 0 | 1 | 2 | 3;
 export type RiskFamilyId =
@@ -165,7 +189,7 @@ export function focusedPrE2eTargetsForChangedFiles(
 export function focusedPrE2eJobsForChangedFiles(
   changedFiles: readonly string[],
 ): TrustedFocusedE2eJob[] {
-  const matchedFiles = stableUnique(
+  const managedStartupFiles = stableUnique(
     changedFiles.filter(
       (file) =>
         (file.startsWith("src/lib/onboard/managed-startup/") ||
@@ -174,8 +198,29 @@ export function focusedPrE2eJobsForChangedFiles(
         isRuntimeRelevant(file),
     ),
   );
-  if (matchedFiles.length === 0) return [];
-  return MANAGED_STARTUP_E2E_JOB_IDS.map((id) => ({ id, matchedFiles }));
+  const hermesCliAdapterFiles = stableUnique(
+    changedFiles.filter(
+      (file) => HERMES_CLI_ADAPTER_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
+    ),
+  );
+  const hermesManagedPolicyFiles = stableUnique(
+    changedFiles.filter(
+      (file) =>
+        (file.startsWith("agents/hermes/config/") || HERMES_MANAGED_POLICY_FILES.has(file)) &&
+        isRuntimeRelevant(file),
+    ),
+  );
+  return [
+    ...MANAGED_STARTUP_E2E_JOB_IDS.map((id) => ({ id, matchedFiles: managedStartupFiles })),
+    ...HERMES_CLI_ADAPTER_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: hermesCliAdapterFiles,
+    })),
+    ...HERMES_MANAGED_POLICY_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: hermesManagedPolicyFiles,
+    })),
+  ].filter((selection) => selection.matchedFiles.length > 0);
 }
 
 export const RISK_RULES: readonly RiskRule[] = [
@@ -342,9 +387,10 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "Sandbox blueprint and agent-runtime changes must preserve equivalent isolation and readiness across supported agents.",
     tier: 3,
-    requiredJobs: ["full-e2e", "hermes-e2e", "security-posture"],
+    requiredJobs: ["full-e2e", "hermes-e2e", "hermes-inference-switch", "security-posture"],
     invariants: [
       "OpenClaw and Hermes both reach readiness through the changed sandbox boundary",
+      "the Hermes runtime and managed inference route agree on the selected provider and model after each route change",
       "the sandbox retains its required security posture and isolation controls",
       "blueprint state agrees with the runtime observed by both supported agents",
     ],

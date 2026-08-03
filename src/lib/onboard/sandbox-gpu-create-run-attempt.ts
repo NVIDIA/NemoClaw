@@ -115,7 +115,7 @@ export function createSandboxGpuCreateAttemptRunner(
           timeoutSecs: input.sandboxReadyTimeoutSecs,
           network: {
             inferenceProvider: input.provider,
-            dockerDriverGateway: input.dockerDriverGateway,
+            gatewayUsesContainerBridge: input.dockerDriverGateway,
             gatewayPort: input.gatewayPort,
           },
           dependencies: {
@@ -252,7 +252,7 @@ export function createSandboxGpuCreateAttemptRunner(
         console.warn("");
         if (managedIncompleteCreateRecovered) {
           console.warn(
-            `  Create stream exited with code ${createResult.status}; the exact durable sandbox reached Ready and completed managed bootstrap.`,
+            `  Create stream exited with code ${createResult.status}; the exact durable sandbox reached Ready, and onboarding is continuing with final checks.`,
           );
         } else {
           console.warn(

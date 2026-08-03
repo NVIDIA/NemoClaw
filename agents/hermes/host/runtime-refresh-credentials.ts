@@ -1,6 +1,17 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+
+type RefreshCredentialState = {
+  sandbox?: unknown;
+  refresh_token_sha256?: unknown;
+};
+
+type RefreshCredentialEntry = Readonly<{
+  refreshToken: string;
+}>;
+
+type HashCredential = (credential: string) => string;
+type RestoreRefreshCredential = () => boolean;
 
 /**
  * Process-memory-only refresh credentials for the shared Hermes tool broker.
@@ -10,12 +21,14 @@
  * credential even when every sandbox shares the same broker listener.
  */
 class RuntimeRefreshCredentialStore {
-  constructor(hashCredential) {
+  private readonly hashCredential: HashCredential;
+  private readonly credentials = new Map<string, RefreshCredentialEntry>();
+
+  constructor(hashCredential: HashCredential) {
     this.hashCredential = hashCredential;
-    this.credentials = new Map();
   }
 
-  register(state, refreshToken) {
+  register(state: RefreshCredentialState | null | undefined, refreshToken: unknown): boolean {
     const sandbox = String(state?.sandbox || "").trim();
     const expectedHash = String(state?.refresh_token_sha256 || "").trim();
     const normalized = String(refreshToken || "").trim();
@@ -27,7 +40,7 @@ class RuntimeRefreshCredentialStore {
     return true;
   }
 
-  resolve(state) {
+  resolve(state: RefreshCredentialState | null | undefined): string | null {
     const sandbox = String(state?.sandbox || "").trim();
     const expectedHash = String(state?.refresh_token_sha256 || "").trim();
     const entry = this.credentials.get(sandbox);
@@ -39,29 +52,31 @@ class RuntimeRefreshCredentialStore {
     return entry.refreshToken;
   }
 
-  rotate(state, nextRefreshToken) {
+  rotate(state: RefreshCredentialState | null | undefined, nextRefreshToken: unknown): boolean {
     return this.register(state, nextRefreshToken);
   }
 
-  replace(state, nextRefreshToken) {
+  replace(
+    state: RefreshCredentialState | null | undefined,
+    nextRefreshToken: unknown,
+  ): RestoreRefreshCredential | null {
     const sandbox = String(state?.sandbox || "").trim();
     if (!sandbox) return null;
-    const hadPrevious = this.credentials.has(sandbox);
     const previous = this.credentials.get(sandbox);
     if (!this.register(state, nextRefreshToken)) return null;
-    const replacement = this.credentials.get(sandbox);
+    const replacement = this.credentials.get(sandbox)!;
     let pending = true;
     return () => {
       if (!pending) return false;
       pending = false;
       if (this.credentials.get(sandbox) !== replacement) return false;
-      if (hadPrevious) this.credentials.set(sandbox, previous);
+      if (previous !== undefined) this.credentials.set(sandbox, previous);
       else this.credentials.delete(sandbox);
       return true;
     };
   }
 
-  unregister(sandboxName) {
+  unregister(sandboxName: unknown): boolean {
     const sandbox = String(sandboxName || "").trim();
     return sandbox ? this.credentials.delete(sandbox) : false;
   }
