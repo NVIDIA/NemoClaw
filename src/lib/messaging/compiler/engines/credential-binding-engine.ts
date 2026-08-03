@@ -1,19 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { hashCredential } from "../../../security/credential-hash";
 import type {
   ChannelManifest,
   SandboxMessagingCredentialBindingPlan,
   SandboxMessagingInputReference,
 } from "../../manifest";
 import type { ManifestCompilerContext } from "../types";
-import { hashCredential } from "../../../security/credential-hash";
 import { resolveSandboxNameTemplate } from "./template";
 
 export function planCredentialBindings(
   manifest: ChannelManifest,
   context: ManifestCompilerContext,
   inputs: readonly SandboxMessagingInputReference[],
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): SandboxMessagingCredentialBindingPlan[] {
   return manifest.credentials.map((credential) => {
     const sourceInput = inputs.find((input) => input.inputId === credential.sourceInput);
@@ -24,7 +25,7 @@ export function planCredentialBindings(
 
     const envKey = sourceInput?.sourceEnv ?? credential.providerEnvKey;
     const credentialHash = credentialAvailable
-      ? (hashCredential(process.env[envKey]) ?? undefined)
+      ? (hashCredential(environment[envKey]) ?? undefined)
       : undefined;
 
     return {
