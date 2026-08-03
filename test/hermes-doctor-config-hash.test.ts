@@ -18,7 +18,8 @@ function writeYamlStubPython(root: string): string {
   const wrapper = path.join(root, "python-with-yaml-stub");
   fs.writeFileSync(
     bootstrap,
-    String.raw`import runpy
+    String.raw`import json
+import runpy
 import sys
 import types
 
@@ -26,7 +27,15 @@ yaml = types.ModuleType("yaml")
 class YAMLError(Exception):
     pass
 yaml.YAMLError = YAMLError
-yaml.safe_load = lambda _text: {}
+def safe_load(text):
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise YAMLError("fixture must contain valid JSON-compatible YAML") from exc
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("mcp_servers"), dict):
+        raise YAMLError("fixture must contain an mcp_servers mapping")
+    return parsed
+yaml.safe_load = safe_load
 sys.modules["yaml"] = yaml
 
 script, *args = sys.argv[1:]
@@ -212,9 +221,16 @@ describe("Hermes doctor and config hash boundary", () => {
     const etcDir = path.join(tmp, "etc", "nemoclaw");
     const hermesPython = writeYamlStubPython(tmp);
     const mode = (entry: string) => (fs.statSync(entry).mode & 0o777).toString(8);
+    const generatedConfig = JSON.stringify({
+      model: "trusted",
+      custom_providers: [],
+      mcp_servers: {
+        fixture: { command: "/bin/true", args: [] },
+      },
+    });
     const fakeGenerateCommand = [
       `printf 'generate\\n' >>${JSON.stringify(orderLogPath)}`,
-      `printf 'model: trusted\\ncustom_providers: []\\n' >${JSON.stringify(configPath)}`,
+      `printf '%s\\n' ${JSON.stringify(generatedConfig)} >${JSON.stringify(configPath)}`,
       `printf 'API_SERVER_HOST=127.0.0.1\\nAPI_SERVER_PORT=18642\\n' >${JSON.stringify(envPath)}`,
       `chmod 600 ${JSON.stringify(configPath)} ${JSON.stringify(envPath)}`,
     ].join("; ");

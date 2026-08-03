@@ -285,8 +285,8 @@ function runStateDirGuard(
   }
 
   // Agent definitions without an image plan, plus images predating the helper,
-  // use the bounded host-injection path. The historical branch remains while
-  // sandboxes built before the generated-plan artifact are supported.
+  // use the bounded host-injection path. The #8006 compatibility branch ends
+  // when every sandbox image supported for rebuild contains CONTAINER_STATE_LOCK_PLAN.
   const command = [
     ...CONTAINER_TIMEOUT,
     "python3",
