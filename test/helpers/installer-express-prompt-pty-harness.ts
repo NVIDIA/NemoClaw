@@ -7,22 +7,18 @@ import os from "node:os";
 import path from "node:path";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./installer-sourced-env";
 
-export type InstallerExpressPtyFixture = {
-  mode: "post-exit-tail" | "timeout";
-  pidFile: string;
-  timeoutSeconds?: number;
-};
+export type InstallerExpressPtyFixture =
+  | {
+      mode: "post-exit-tail";
+      pidFile: string;
+      timeoutSeconds?: number;
+    }
+  | {
+      mode: "timeout";
+      timeoutSeconds?: number;
+    };
 
 const DEFAULT_INSTALLER_EXPRESS_PTY_HARNESS_MODE: "installer" = "installer";
-
-export function killPtyFixtureChildIfRunning(childPid: number | undefined): void {
-  if (childPid === undefined || !Number.isSafeInteger(childPid) || childPid <= 0) return;
-  try {
-    process.kill(childPid, "SIGKILL");
-  } catch {
-    // A cleanup signal failure must not replace the test failure that triggered cleanup.
-  }
-}
 
 export function runExpressPromptWithTty(
   answer: string,
@@ -104,8 +100,6 @@ if pid == 0:
             marker.write(str(os.getpid()))
         os._exit(0)
     if harness_mode == "timeout":
-        with open(pid_file, "w", encoding="utf-8") as marker:
-            marker.write(str(os.getpid()))
         os.write(1, b"PTY_TIMEOUT_STARTED\\n")
         while True:
             signal.pause()
@@ -169,10 +163,9 @@ while True:
             ready, _, _ = select.select([fd], [], [], 0.05)
             if ready:
                 pty_closed = read_output()
-        try:
-            os.waitpid(pid, 0)
-        except ChildProcessError:
-            pass
+        waited_pid, _ = os.waitpid(pid, 0)
+        if waited_pid == pid:
+            output.extend(b"PTY_CHILD_REAPED\\n")
         break
 
 try:
@@ -198,7 +191,7 @@ sys.exit(exit_code)
         entrypoint,
         harnessMode,
         String(harnessFixture?.timeoutSeconds ?? 10),
-        harnessFixture?.pidFile ?? "",
+        harnessFixture?.mode === "post-exit-tail" ? harnessFixture.pidFile : "",
         ...entrypointArgs,
       ],
       {

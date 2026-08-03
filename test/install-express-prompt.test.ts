@@ -5,44 +5,12 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { runInstallerSourced } from "./helpers/installer-express-prompt-harness";
-import {
-  killPtyFixtureChildIfRunning,
-  runExpressPromptWithTty,
-} from "./helpers/installer-express-prompt-pty-harness";
+import { runExpressPromptWithTty } from "./helpers/installer-express-prompt-pty-harness";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 describe("installer express install prompt (sourced)", () => {
-  it.each([
-    undefined,
-    Number.NaN,
-    -1,
-    0,
-    1.5,
-    Number.MAX_SAFE_INTEGER + 1,
-  ])("does not signal a PTY fixture PID unless it is a positive safe integer: %s", (childPid) => {
-    const kill = vi.spyOn(process, "kill").mockReturnValue(true);
-    try {
-      killPtyFixtureChildIfRunning(childPid);
-      expect(kill).not.toHaveBeenCalled();
-    } finally {
-      kill.mockRestore();
-    }
-  });
-
-  it("ignores a signal error during best-effort PTY fixture cleanup", () => {
-    const kill = vi.spyOn(process, "kill").mockImplementation(() => {
-      throw Object.assign(new Error("signal denied"), { code: "EPERM" });
-    });
-    try {
-      expect(() => killPtyFixtureChildIfRunning(1234)).not.toThrow();
-      expect(kill).toHaveBeenCalledWith(1234, "SIGKILL");
-    } finally {
-      kill.mockRestore();
-    }
-  });
-
   it("drains PTY output after the child exits", () => {
     const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pty-tail-"));
     try {
@@ -62,32 +30,16 @@ describe("installer express install prompt (sourced)", () => {
   });
 
   it("reaps the PTY child after the harness timeout", () => {
-    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pty-timeout-"));
-    const pidFile = path.join(fixtureDir, "child.pid");
-    let childPid: number | undefined;
+    const result = runExpressPromptWithTty("", "tty", "DGX Spark", {}, "prompt", [], {
+      mode: "timeout",
+      timeoutSeconds: 1,
+    });
+    const output = `${result.stdout}${result.stderr}`;
 
-    try {
-      const result = runExpressPromptWithTty("", "tty", "DGX Spark", {}, "prompt", [], {
-        mode: "timeout",
-        timeoutSeconds: 1,
-        pidFile,
-      });
-      const output = `${result.stdout}${result.stderr}`;
-
-      expect(result.error, output).toBeUndefined();
-      expect(result.status, output).toBe(124);
-      expect(output).toContain("PTY_TIMEOUT_STARTED");
-      const recordedPid = Number.parseInt(fs.readFileSync(pidFile, "utf-8"), 10);
-      childPid = recordedPid;
-      expect(recordedPid).toBeGreaterThan(0);
-      expect(() => process.kill(recordedPid, 0)).toThrow(
-        expect.objectContaining({ code: "ESRCH" }),
-      );
-      childPid = undefined;
-    } finally {
-      killPtyFixtureChildIfRunning(childPid);
-      fs.rmSync(fixtureDir, { recursive: true, force: true });
-    }
+    expect(result.error, output).toBeUndefined();
+    expect(result.status, output).toBe(124);
+    expect(output).toContain("PTY_TIMEOUT_STARTED");
+    expect(output).toContain("PTY_CHILD_REAPED");
   });
 
   function detectExpressPlatform(
