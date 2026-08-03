@@ -393,6 +393,47 @@ describe("managed bootstrap adapter contract", () => {
     expect(prepared.prepared.preparedRuntimeId).toBe(PREPARED_ID);
   });
 
+  it("rejects independent discovered-versus-inspected runtime disagreement before preparation", async () => {
+    const fixture = adapterFor("openclaw");
+    const request = requestFor("openclaw");
+    const discoveryProbe = vi.fn(async () => RUNTIME_ID);
+    const inspectionProbe = vi.fn(async () => "9".repeat(64));
+    vi.mocked(fixture.adapter.discoverHeldWorkload).mockImplementationOnce(async (input) => ({
+      sandbox: input.sandbox,
+      runtimeId: await discoveryProbe(),
+      bootstrapIdentity: IDENTITY,
+    }));
+    vi.mocked(fixture.adapter.inspectHeldWorkload).mockImplementationOnce(async ({ handle }) => ({
+      ...snapshotFor(request, handle),
+      runtimeId: await inspectionProbe(),
+    }));
+
+    const failure = await captureFailure(
+      prepareManagedBootstrapSequence(fixture.adapter, preparationInput("openclaw")),
+    );
+
+    expect(discoveryProbe).toHaveBeenCalledTimes(1);
+    expect(inspectionProbe).toHaveBeenCalledTimes(1);
+    expect(failure.message).toContain("observed runtime identity changed after discovery");
+    expect(fixture.adapter.prepareBootstrapReplacement).not.toHaveBeenCalled();
+    expect(fixture.adapter.activateBootstrapReplacement).not.toHaveBeenCalled();
+    expect(fixture.adapter.finalizeBootstrap).toHaveBeenCalledTimes(1);
+    expect(fixture.adapter.finalizeBootstrap).toHaveBeenCalledWith({
+      outcome: "rollback",
+      handle: fixture.raw.handle,
+      snapshot: null,
+      prepared: null,
+      durablePreparation: null,
+      replacement: null,
+      completion: null,
+    });
+    expect(failure.managedBootstrapRollback).toMatchObject({
+      outcome: "rolled-back",
+      sandbox: sandbox(),
+      heldWorkloadRemoved: true,
+    });
+  });
+
   it.each([
     {
       label: "plan metadata",
@@ -605,17 +646,23 @@ describe("managed bootstrap adapter contract", () => {
     expect(failure.message).toContain("incomplete-create cleanup sandbox");
   });
 
-  it("cleans a failed prepared replacement and port before retrying the same sandbox", async () => {
+  it("cleans only the exact failed prepared replacement and port before retry", async () => {
     const fixture = adapterFor("openclaw");
     const request = requestFor("openclaw");
     const replacementPort = 18_000;
+    const unrelatedPort = 18_001;
     const retryPreparedId = "9".repeat(64);
-    const ownedBySandbox = new Map<string, { port: number; runtimeId: string }>();
-    const reservedPorts = new Set<number>();
+    const targetAuthorityKey = `${sandbox().sandboxId}:${IDENTITY}`;
+    const unrelatedAuthorityKey = `${sandbox().sandboxId}:${"e".repeat(64)}`;
+    const unrelatedOwnership = { port: unrelatedPort, runtimeId: "8".repeat(64) };
+    const ownedByAuthority = new Map<string, { port: number; runtimeId: string }>([
+      [unrelatedAuthorityKey, unrelatedOwnership],
+    ]);
+    const reservedPorts = new Map<number, string>([[unrelatedPort, unrelatedAuthorityKey]]);
     const stateBeforePreparation: Array<{
+      authorityKey: string;
       ownedRuntimeId: string | null;
-      portReserved: boolean;
-      sandboxName: string;
+      portOwner: string | null;
     }> = [];
     const input = {
       ...preparationInput("openclaw"),
@@ -627,15 +674,15 @@ describe("managed bootstrap adapter contract", () => {
       prepareInput: Parameters<ManagedBootstrapAdapter["prepareBootstrapReplacement"]>[0],
       runtimeId: string,
     ) => {
-      const sandboxName = prepareInput.handle.sandbox.sandboxName;
+      const authorityKey = `${prepareInput.handle.sandbox.sandboxId}:${prepareInput.handle.bootstrapIdentity}`;
       stateBeforePreparation.push({
-        sandboxName,
-        ownedRuntimeId: ownedBySandbox.get(sandboxName)?.runtimeId ?? null,
-        portReserved: reservedPorts.has(replacementPort),
+        authorityKey,
+        ownedRuntimeId: ownedByAuthority.get(authorityKey)?.runtimeId ?? null,
+        portOwner: reservedPorts.get(replacementPort) ?? null,
       });
       expect(prepareInput.replacementOptions.values.port).toBe(replacementPort);
-      ownedBySandbox.set(sandboxName, { port: replacementPort, runtimeId });
-      reservedPorts.add(replacementPort);
+      ownedByAuthority.set(authorityKey, { port: replacementPort, runtimeId });
+      reservedPorts.set(replacementPort, authorityKey);
       return { ...preparedFor(request, prepareInput.handle), preparedRuntimeId: runtimeId };
     };
 
@@ -647,8 +694,11 @@ describe("managed bootstrap adapter contract", () => {
       .mockImplementationOnce(async (prepareInput) => allocate(prepareInput, retryPreparedId));
     vi.mocked(fixture.adapter.finalizeBootstrap).mockImplementation(async (finalizeInput) => {
       expect(finalizeInput.outcome).toBe("rollback");
-      ownedBySandbox.delete(finalizeInput.handle.sandbox.sandboxName);
-      reservedPorts.delete(replacementPort);
+      const authorityKey = `${finalizeInput.handle.sandbox.sandboxId}:${finalizeInput.handle.bootstrapIdentity}`;
+      ownedByAuthority.delete(authorityKey);
+      if (reservedPorts.get(replacementPort) === authorityKey) {
+        reservedPorts.delete(replacementPort);
+      }
       return rolledBackReceipt(finalizeInput.handle, finalizeInput.snapshot);
     });
 
@@ -666,29 +716,33 @@ describe("managed bootstrap adapter contract", () => {
       completion: null,
     });
     expect(fixture.adapter.finalizeBootstrap).toHaveBeenCalledTimes(1);
-    expect(ownedBySandbox.size).toBe(0);
+    expect(ownedByAuthority.has(targetAuthorityKey)).toBe(false);
     expect(reservedPorts.has(replacementPort)).toBe(false);
+    expect(ownedByAuthority.get(unrelatedAuthorityKey)).toEqual(unrelatedOwnership);
+    expect(reservedPorts.get(unrelatedPort)).toBe(unrelatedAuthorityKey);
 
     const retried = await prepareManagedBootstrapSequence(fixture.adapter, input);
 
     expect(stateBeforePreparation).toEqual([
-      { sandboxName: "alpha", ownedRuntimeId: null, portReserved: false },
-      { sandboxName: "alpha", ownedRuntimeId: null, portReserved: false },
+      { authorityKey: targetAuthorityKey, ownedRuntimeId: null, portOwner: null },
+      { authorityKey: targetAuthorityKey, ownedRuntimeId: null, portOwner: null },
     ]);
     expect(retried.prepared.preparedRuntimeId).toBe(retryPreparedId);
-    expect(ownedBySandbox.get("alpha")).toEqual({
+    expect(ownedByAuthority.get(targetAuthorityKey)).toEqual({
       port: replacementPort,
       runtimeId: retryPreparedId,
     });
-    expect(reservedPorts.has(replacementPort)).toBe(true);
+    expect(reservedPorts.get(replacementPort)).toBe(targetAuthorityKey);
 
     await finalizeManagedBootstrapSequence(fixture.adapter, {
       outcome: "rollback",
       transaction: retried,
     });
     expect(fixture.adapter.finalizeBootstrap).toHaveBeenCalledTimes(2);
-    expect(ownedBySandbox.size).toBe(0);
+    expect(ownedByAuthority.has(targetAuthorityKey)).toBe(false);
     expect(reservedPorts.has(replacementPort)).toBe(false);
+    expect(ownedByAuthority).toEqual(new Map([[unrelatedAuthorityKey, unrelatedOwnership]]));
+    expect(reservedPorts).toEqual(new Map([[unrelatedPort, unrelatedAuthorityKey]]));
   });
 
   it("rolls back a prepared bootstrap replacement when durable recording fails, before activation", async () => {
