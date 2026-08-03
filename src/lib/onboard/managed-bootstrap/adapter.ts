@@ -25,6 +25,7 @@ const PROCESS_INJECTION_ENV_KEYS = new Set([
   "LD_AUDIT",
   "LD_LIBRARY_PATH",
   "LD_PRELOAD",
+  "NODE_OPTIONS",
   "PS4",
   "SHELLOPTS",
 ]);
