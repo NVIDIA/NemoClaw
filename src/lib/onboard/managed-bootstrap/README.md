@@ -186,15 +186,20 @@ does not select a driver-specific bootstrap implementation.
 
 The native entrypoint source is intentionally not compiled into production
 artifacts, and neither image-owned source is installed or selected in a runtime
-image yet. Production onboarding imports only the provider-neutral create
-contract; no activation path or registered provider imports or selects the
-driver-specific Docker candidate. The current image definitions do not package
-`nemoclaw-managed-startup-hold`,
-`managed-startup-image-runtime.cjs`, or the shared-state bootstrap modes consumed
-by the adapter. Later persistence and qualification slices must compile and
-verify the freestanding entrypoint for amd64 and arm64 in every agent image, add
-the image-runtime prerequisites, and provide the canonical durable authority
-store. The remaining integration and qualification work is tracked in
+image yet. The dormant managed-bootstrap image runtime composes the neutral
+managed-startup APIs with modes that consume the protected bootstrap envelope,
+bind shared-state authority to the exact attempt, publish an identity-bound
+completion, and authenticate that completion together with the ordinary startup
+handoff. The managed-startup runtime itself does not import the bootstrap layer.
+Production onboarding imports only the provider-neutral create contract; no
+activation path or registered provider imports or selects the driver-specific
+Docker candidate. The current image definitions still do not package
+`nemoclaw-managed-startup-hold`, `nemoclaw-managed-bootstrap`, or
+`managed-startup-image-runtime.cjs`; no production provider can invoke these
+modes yet. Later persistence and qualification slices must compile and verify
+the freestanding entrypoint for amd64 and arm64 in every agent image, add those
+artifacts and the image-runtime prerequisites, and provide the canonical durable
+authority store. The remaining integration and qualification work is tracked in
 [epic #7744](https://github.com/NVIDIA/NemoClaw/issues/7744). Until that complete
 boundary passes protected E2E, every production runtime provider keeps
 bootstrap unsupported.

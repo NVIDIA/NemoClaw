@@ -26,6 +26,13 @@ export {
   serializeManagedBootstrapEnvelope,
   serializeManagedBootstrapImageCompletion,
 } from "./envelope";
+export {
+  applyManagedBootstrapEnvelope,
+  consumeManagedBootstrapEnvelope,
+  type ManagedBootstrapImageRuntimeExpected,
+  main as mainManagedBootstrapImageRuntime,
+  verifyManagedBootstrapImageCompletion,
+} from "./image-runtime";
 export type {
   ManagedBootstrapRuntimeCreateLifecycle,
   ManagedBootstrapRuntimePatch,
