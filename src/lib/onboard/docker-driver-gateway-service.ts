@@ -17,6 +17,7 @@ import { isDockerDriverGatewayHttpReady } from "./gateway-http-readiness";
 import {
   getBlueprintMaxOpenshellVersion,
   getBlueprintMinOpenshellVersion,
+  shouldAllowOpenshellAboveBlueprintMax,
   versionGte,
 } from "./openshell-version";
 
@@ -32,7 +33,7 @@ export interface OpenShellGatewayUserServiceOptions {
   commandExists?: (command: string) => boolean;
   env?: NodeJS.ProcessEnv;
   existsSync?: (filePath: string) => boolean;
-  /** Test seam: read the version of the package-managed gateway binary. */
+  /** Test seam: read the version output of the package-managed gateway binary. */
   getUpstreamGatewayVersion?: (binaryPath: string) => string | null;
   /** Test seam: the blueprint version window the gateway binary must satisfy. */
   getUpstreamGatewayVersionBounds?: () => UpstreamGatewayVersionBounds;
@@ -211,8 +212,8 @@ function readUpstreamGatewayVersion(
       timeout: 10_000,
     });
     if (result.status !== 0) return null;
-    const match = /([0-9]+\.[0-9]+\.[0-9]+)/.exec(text(result.stdout));
-    return match ? match[1] : null;
+    const output = text(result.stdout).trim();
+    return output || null;
   } catch {
     return null;
   }
@@ -227,21 +228,28 @@ function readUpstreamGatewayVersion(
  * checks on a resolved version.
  */
 export function checkUpstreamGatewayVersion(
+  binaryPath: string | null,
   opts: Pick<
     OpenShellGatewayUserServiceOptions,
-    "env" | "existsSync" | "getUpstreamGatewayVersion" | "getUpstreamGatewayVersionBounds"
+    "env" | "getUpstreamGatewayVersion" | "getUpstreamGatewayVersionBounds" | "platform"
   > & { spawnSyncImpl?: SpawnSyncLike } = {},
 ): UpstreamGatewayVersionVerdict {
-  const existsSync = opts.existsSync ?? fs.existsSync;
-  const binaryPath = getOpenShellGatewayUserServiceBinaryPaths().find(existsSync);
   if (!binaryPath) return { supported: true };
   const readVersion =
     opts.getUpstreamGatewayVersion ?? ((p: string) => readUpstreamGatewayVersion(p, opts));
-  const version = readVersion(binaryPath);
+  const versionOutput = readVersion(binaryPath);
+  const version = /([0-9]+\.[0-9]+\.[0-9]+)/.exec(versionOutput ?? "")?.[1];
   if (!version) return { supported: true };
   const bounds = (opts.getUpstreamGatewayVersionBounds ?? defaultUpstreamGatewayVersionBounds)();
   const belowMin = Boolean(bounds.min) && !versionGte(version, bounds.min as string);
-  const aboveMax = Boolean(bounds.max) && !versionGte(bounds.max as string, version);
+  const aboveMax =
+    Boolean(bounds.max) &&
+    !versionGte(bounds.max as string, version) &&
+    !shouldAllowOpenshellAboveBlueprintMax(
+      versionOutput,
+      opts.platform ?? process.platform,
+      opts.env ?? process.env,
+    );
   if (!belowMin && !aboveMax) return { supported: true };
   const bound = belowMin ? `minimum ${bounds.min}` : `maximum ${bounds.max}`;
   return {
@@ -475,16 +483,22 @@ function resolveOpenShellGatewayUserService(
     // user-local build cannot override it. Adopting it while it runs an
     // out-of-window gateway is how #8094 got a 0.0.85 CLI driving a 0.0.91
     // gateway; decline instead and let NemoClaw manage its own service.
-    const verdict = checkUpstreamGatewayVersion(opts);
+    const upstreamService: OpenShellGatewayUserServiceTarget = {
+      logCommand: getSystemdGatewayLogCommand(OPENSHELL_GATEWAY_USER_SERVICE),
+      manager: "systemd",
+      serviceName: OPENSHELL_GATEWAY_USER_SERVICE,
+      statusCommand: `systemctl --user status ${OPENSHELL_GATEWAY_USER_SERVICE}`,
+      trustedBinaryPaths: getOpenShellGatewayUserServiceBinaryPaths(),
+      trustedUnitPaths: getOpenShellGatewayUserServicePaths(),
+    };
+    const env = opts.env ?? process.env;
+    const identity = validateSystemdServiceIdentity(upstreamService, {
+      env,
+      spawnSyncImpl: opts.spawnSyncImpl ?? spawnSync,
+    });
+    const verdict = checkUpstreamGatewayVersion(identity.ok ? identity.execStartPath : null, opts);
     if (verdict.supported) {
-      return {
-        logCommand: getSystemdGatewayLogCommand(OPENSHELL_GATEWAY_USER_SERVICE),
-        manager: "systemd",
-        serviceName: OPENSHELL_GATEWAY_USER_SERVICE,
-        statusCommand: `systemctl --user status ${OPENSHELL_GATEWAY_USER_SERVICE}`,
-        trustedBinaryPaths: getOpenShellGatewayUserServiceBinaryPaths(),
-        trustedUnitPaths: getOpenShellGatewayUserServicePaths(),
-      };
+      return upstreamService;
     }
     if (!warnedUnsupportedUpstreamGateway) {
       warnedUnsupportedUpstreamGateway = true;
@@ -566,7 +580,7 @@ function extractSystemdExecStartPath(execStart: string): string | null {
 function validateSystemdServiceIdentity(
   service: OpenShellGatewayUserServiceTarget,
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
-): { ok: boolean; reason?: string; trustFailure?: boolean } {
+): { ok: true; execStartPath: string } | { ok: false; reason?: string; trustFailure?: boolean } {
   const result = runSystemctlUser(
     ["show", service.serviceName, "--property=FragmentPath", "--property=ExecStart"],
     opts,
@@ -579,7 +593,7 @@ function validateSystemdServiceIdentity(
 function validateSystemdServiceIdentityFromProperties(
   service: OpenShellGatewayUserServiceTarget,
   properties: Record<string, string>,
-): { ok: boolean; reason?: string; trustFailure?: boolean } {
+): { ok: true; execStartPath: string } | { ok: false; reason?: string; trustFailure?: boolean } {
   const fragmentPath = path.normalize(properties.FragmentPath ?? "");
   const execStartPath = extractSystemdExecStartPath(properties.ExecStart ?? "");
   const trustedUnit = service.trustedUnitPaths.some(
@@ -588,13 +602,14 @@ function validateSystemdServiceIdentityFromProperties(
   const trustedBinary =
     execStartPath !== null &&
     service.trustedBinaryPaths.some((candidate) => path.normalize(candidate) === execStartPath);
-  return trustedUnit && trustedBinary
-    ? { ok: true }
-    : {
-        ok: false,
-        reason: `service identity is not a trusted OpenShell gateway (${fragmentPath})`,
-        trustFailure: true,
-      };
+  if (trustedUnit && trustedBinary && execStartPath !== null) {
+    return { ok: true, execStartPath };
+  }
+  return {
+    ok: false,
+    reason: `service identity is not a trusted OpenShell gateway (${fragmentPath})`,
+    trustFailure: true,
+  };
 }
 
 export function getTrustedActiveOpenShellGatewayUserServicePid(

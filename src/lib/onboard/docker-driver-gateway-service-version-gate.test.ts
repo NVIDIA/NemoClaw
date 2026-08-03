@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   checkUpstreamGatewayVersion,
   getNemoclawOpenShellGatewayUserServicePath,
+  getOpenShellGatewayUserServiceBinaryPaths,
   getOpenShellGatewayUserServicePaths,
   hasOpenShellGatewayUserService,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
@@ -15,6 +16,13 @@ import {
 const PACKAGE_UNIT = "/usr/lib/systemd/user/openshell-gateway.service";
 const PACKAGE_BINARY = "/usr/bin/openshell-gateway";
 const BOUNDS = { min: "0.0.85", max: "0.0.85" };
+
+function trustedShowOutput(execPath = PACKAGE_BINARY): string {
+  return [
+    `FragmentPath=${PACKAGE_UNIT}`,
+    `ExecStart={ path=${execPath} ; argv[]=${execPath} ; }`,
+  ].join("\n");
+}
 
 /** Only the package-managed unit and binary exist on this host. */
 function packageOnly(filePath: string): boolean {
@@ -27,6 +35,7 @@ function resolveOptions(version: string, overrides: Record<string, unknown> = {}
     existsSync: packageOnly,
     getUpstreamGatewayVersion: () => version,
     getUpstreamGatewayVersionBounds: () => BOUNDS,
+    spawnSyncImpl: () => ({ status: 0, stdout: trustedShowOutput() }),
     warn: vi.fn(),
     ...overrides,
   };
@@ -36,7 +45,7 @@ describe("package-managed gateway version gate (#8094)", () => {
   beforeEach(() => resetUpstreamGatewayVersionWarning());
 
   it("declines a package gateway newer than the blueprint maximum", () => {
-    expect(checkUpstreamGatewayVersion(resolveOptions("0.0.91"))).toMatchObject({
+    expect(checkUpstreamGatewayVersion(PACKAGE_BINARY, resolveOptions("0.0.91"))).toMatchObject({
       supported: false,
       version: "0.0.91",
       binaryPath: PACKAGE_BINARY,
@@ -45,30 +54,31 @@ describe("package-managed gateway version gate (#8094)", () => {
   });
 
   it("declines a package gateway older than the blueprint minimum", () => {
-    expect(checkUpstreamGatewayVersion(resolveOptions("0.0.71"))).toMatchObject({
+    expect(checkUpstreamGatewayVersion(PACKAGE_BINARY, resolveOptions("0.0.71"))).toMatchObject({
       supported: false,
       message: expect.stringContaining("minimum 0.0.85"),
     });
   });
 
   it("adopts a package gateway inside the supported window", () => {
-    expect(checkUpstreamGatewayVersion(resolveOptions("0.0.85")).supported).toBe(true);
+    expect(checkUpstreamGatewayVersion(PACKAGE_BINARY, resolveOptions("0.0.85")).supported).toBe(
+      true,
+    );
   });
 
   it("adopts the package gateway when its version cannot be determined", () => {
     // Pre-#8094 behaviour: only decline on positive evidence of a bad version,
     // so an unreadable binary never turns a working host into a failing one.
     const verdict = checkUpstreamGatewayVersion(
+      PACKAGE_BINARY,
       resolveOptions("ignored", { getUpstreamGatewayVersion: () => null }),
     );
 
     expect(verdict.supported).toBe(true);
   });
 
-  it("adopts when no package gateway binary is installed", () => {
-    const verdict = checkUpstreamGatewayVersion(
-      resolveOptions("0.0.91", { existsSync: (p: string) => p === PACKAGE_UNIT }),
-    );
+  it("adopts when the effective package gateway binary cannot be resolved", () => {
+    const verdict = checkUpstreamGatewayVersion(null, resolveOptions("0.0.91"));
 
     expect(verdict.supported).toBe(true);
   });
@@ -114,14 +124,39 @@ describe("package-managed gateway version gate (#8094)", () => {
   });
 
   it("probes every documented package binary location", () => {
-    // `/usr/local/bin` installs must be gated the same way as `/usr/bin` ones.
+    const localBinary = "/usr/local/bin/openshell-gateway";
+    expect(checkUpstreamGatewayVersion(localBinary, resolveOptions("0.0.91"))).toMatchObject({
+      supported: false,
+      binaryPath: localBinary,
+    });
+  });
+
+  it("checks the effective ExecStart when both package binaries exist", () => {
+    const getUpstreamGatewayVersion = vi.fn(() => "0.0.91");
+
     expect(
-      checkUpstreamGatewayVersion(
-        resolveOptions("0.0.91", {
-          existsSync: (p: string) => p === PACKAGE_UNIT || p === "/usr/local/bin/openshell-gateway",
+      hasOpenShellGatewayUserService(
+        resolveOptions("ignored", {
+          existsSync: (p: string) =>
+            getOpenShellGatewayUserServicePaths().includes(p) ||
+            getOpenShellGatewayUserServiceBinaryPaths().includes(p),
+          getUpstreamGatewayVersion,
+          spawnSyncImpl: () => ({ status: 0, stdout: trustedShowOutput(PACKAGE_BINARY) }),
         }),
       ),
-    ).toMatchObject({ supported: false, binaryPath: "/usr/local/bin/openshell-gateway" });
+    ).toBe(false);
+    expect(getUpstreamGatewayVersion).toHaveBeenCalledWith(PACKAGE_BINARY);
+  });
+
+  it("preserves above-maximum development gateways on the development channel", () => {
+    expect(
+      checkUpstreamGatewayVersion(
+        PACKAGE_BINARY,
+        resolveOptions("openshell-gateway 0.0.91-dev.1", {
+          env: { NEMOCLAW_OPENSHELL_CHANNEL: "dev" },
+        }),
+      ).supported,
+    ).toBe(true);
   });
 
   it("keeps the package unit paths the gate scans in sync with the resolver", () => {
