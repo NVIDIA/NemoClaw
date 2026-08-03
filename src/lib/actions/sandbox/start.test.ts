@@ -125,7 +125,11 @@ describe("startSandbox", () => {
     const result = await startSandbox("my-sandbox", h.deps);
 
     expect(result.exitCode).toBe(0);
+    expect(h.restoreStartupState).toHaveBeenCalledWith("my-sandbox");
     expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
+    expect(h.restoreStartupState.mock.invocationCallOrder[0]).toBeLessThan(
+      h.verifyGateway.mock.invocationCallOrder[0],
+    );
     const output = h.log.mock.calls.map(([line]) => line).join("\n");
     expect(output).toContain("already running");
   });
@@ -148,7 +152,11 @@ describe("startSandbox", () => {
       timeout: 30_000,
     });
     expect(h.recoverDockerDriverSandbox).not.toHaveBeenCalled();
+    expect(h.restoreStartupState).toHaveBeenCalledWith("my-sandbox");
     expect(h.verifyGateway).toHaveBeenCalledWith("my-sandbox");
+    expect(h.restoreStartupState.mock.invocationCallOrder[0]).toBeLessThan(
+      h.verifyGateway.mock.invocationCallOrder[0],
+    );
     const output = h.log.mock.calls.map(([line]) => line).join("\n");
     expect(output).toContain("unpaused");
   });
