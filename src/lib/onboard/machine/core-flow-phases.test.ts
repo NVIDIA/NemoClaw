@@ -85,6 +85,7 @@ function createPhases(
   overrides: {
     endpointProvenance?: Partial<EndpointProvenanceOptions>;
     providerDeps?: Partial<ProviderOptions["deps"]>;
+    sandboxOptions?: Partial<Omit<SandboxOptions, "deps">>;
     sandboxDeps?: Partial<SandboxOptions["deps"]>;
   } = {},
 ): CoreOnboardFlowPhases<CoreContext> {
@@ -204,6 +205,7 @@ function createPhases(
     controlUiPort: null,
     rootDir: "/repo",
     env: {},
+    ...overrides.sandboxOptions,
     deps: {
       resolvePath: (value) => value,
       agentSupportsWebSearch: () => true,
@@ -359,6 +361,27 @@ describe("core onboard flow phases", () => {
         extraProviders: ["current-provider"],
         staleExtraProviders: ["stale-provider"],
       },
+    });
+  });
+
+  it("carries rebuild-preserved environment assignments into sandbox creation (#7803)", async () => {
+    const createSandbox = vi.fn(async () => "created-sandbox");
+    const rebuildPreservedEnv = [
+      {
+        path: ".env",
+        assignments: ["SLACK_HOME_CHANNEL=C0123"],
+      },
+    ];
+    const { providerInference: providerPhase, sandbox: sandboxPhase } = createPhases({
+      sandboxOptions: { rebuildPreservedEnv },
+      sandboxDeps: { createSandbox },
+    });
+
+    const providerResult = await providerPhase.run(context({ agent: { name: "hermes" } }));
+    await sandboxPhase.run(providerResult.context);
+
+    expect(createSandbox.mock.calls[0]?.at(-1)).toMatchObject({
+      rebuildPreservedEnv,
     });
   });
 
