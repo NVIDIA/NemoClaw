@@ -363,6 +363,28 @@ describe("sandbox recreate journal", () => {
     expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "deleting" });
   });
 
+  it("refuses to open the delete edge when no transaction proves the source (#7736)", () => {
+    const session = createSession({ sandboxName: "alpha" });
+    const runtime = createSandboxRecreateRuntime(
+      {
+        loadSession: () => session,
+        updateSession: (mutator: (current: typeof session) => void) => {
+          mutator(session);
+          return session;
+        },
+      },
+      undefined,
+      "alpha",
+      "nemoclaw-31818",
+      SOURCE_ENTRY,
+      () => ({ state: "ready", liveIdentityFingerprint: SOURCE_ID }),
+      () => undefined,
+    );
+
+    expect(() => runtime.beginDelete()).toThrow(/no recreate transaction proves ownership/i);
+    expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
+  });
+
   it("scopes the delete edge to the journaled gateway, not the ambient one", () => {
     const session = createSession({ sandboxName: "alpha" });
     beginSandboxRecreateTransaction(

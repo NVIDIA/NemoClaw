@@ -156,6 +156,7 @@ Selection asks for the proof only after the installer signals restore intent.
 Without that signal nothing restores onto the replacement, so the run opens no journal and leaves no transaction for the create path to complete.
 
 Once a run binds a gateway authority, a same-name replacement that cannot open a journal stops instead of deleting the sandbox or removing its registry row.
+Every same-name replacement deletes through `SandboxRecreateRuntime.beginDelete`, and the no-transaction runtime refuses there, so a new caller that skips the journal fails before the OpenShell delete rather than passing an unproven source through.
 Custom-image plugin provenance, explicit installer restore intent, the absent-backup warning, managed-MCP routing to `rebuild`, and fail-closed handling of unknown OpenShell state stay separate contracts.
 
 ## Managed snapshot and rebuild restore authority

@@ -610,7 +610,13 @@ const NO_SANDBOX_RECREATE: SandboxRecreateRuntime = {
   sourceProof: null,
   registrationFields: {},
   advance: () => undefined,
-  beginDelete: () => "source",
+  // Every same-name replacement deletes through this boundary. Refusing here is
+  // what stops a new caller from removing a live sandbox it never journaled.
+  beginDelete: (): SandboxRecreateSourcePresence => {
+    throw new Error(
+      "Cannot delete a same-name sandbox: no recreate transaction proves ownership of the source sandbox. Open the recreate journal before deleting.",
+    );
+  },
   confirmDeleted: () => undefined,
   recordCreated: () => undefined,
 };
