@@ -188,8 +188,12 @@ export function registerRebuildFlowTargetImageTests(): void {
       expect(harness.backupSandboxStateSpy.mock.invocationCallOrder[0]).toBeLessThan(
         harness.finalizePreparedImageSpy.mock.invocationCallOrder[0]!,
       );
+      const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
+        ([args]) => Array.isArray(args) && args.join(" ") === "sandbox delete -g nemoclaw alpha",
+      );
+      expect(deleteCall).toBeGreaterThanOrEqual(0);
       expect(harness.finalizePreparedImageSpy.mock.invocationCallOrder[0]).toBeLessThan(
-        harness.removeSandboxRegistryEntryWithReceiptSpy.mock.invocationCallOrder[0]!,
+        harness.runOpenshellSpy.mock.invocationCallOrder[deleteCall]!,
       );
     });
 
