@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { seedOnboardIntentDraft } from "./seed";
 
 describe("onboarding intent draft input seeding (#6005)", () => {
-  it("preserves explicit CLI and environment choices for review", () => {
+  it("uses CLI choices over environment choices for review", () => {
     const draft = seedOnboardIntentDraft(
       {
         agent: "hermes",
@@ -15,11 +15,13 @@ describe("onboarding intent draft input seeding (#6005)", () => {
       },
       "hermes-demo",
       {
+        NEMOCLAW_AGENT: "openclaw",
         NEMOCLAW_PROVIDER: "hermesProvider",
         NEMOCLAW_MODEL: "claude",
         NEMOCLAW_HERMES_AUTH_METHOD: "oauth",
         NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
         NEMOCLAW_RESOURCE_PROFILE: "large",
+        NEMOCLAW_POLICY_TIER: "balanced",
       },
     );
 

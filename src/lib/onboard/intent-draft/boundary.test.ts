@@ -91,15 +91,20 @@ describe("onboarding review/materialization boundary (#6005)", () => {
 
   it("rejects a partial draft when collection is disabled", async () => {
     const partial = createOnboardIntentDraft({ agent: "hermes" });
+    const collect = vi.fn();
+    const accept = vi.fn();
 
     await expect(
       crossOnboardIntentDraftBoundary({
         shouldCollect: false,
         existingDraft: partial,
         initialDraft: createOnboardIntentDraft(),
-        collect: vi.fn(),
-        accept: vi.fn(),
+        collect,
+        accept,
       }),
     ).rejects.toThrow("before it is reviewed and accepted");
+
+    expect(collect).not.toHaveBeenCalled();
+    expect(accept).not.toHaveBeenCalled();
   });
 });
