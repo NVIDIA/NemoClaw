@@ -11,8 +11,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types";
-import { buildPolicySetCommand } from "../policy";
-import { run } from "../runner";
 import { resolveAgentConfig } from "../sandbox/agent-config";
 import { withMcpLifecycleDeadlineFence } from "../state/mcp-lifecycle-lock";
 import {
@@ -241,6 +239,7 @@ async function runRestoreTimer(
       : AUTO_RESTORE_RETRY_MS;
   let exitCode = 0;
   let retryScheduled = false;
+  let managedMcpWarning: string | undefined;
   const scheduleRetry = (): boolean => {
     if (!markerMatchesCurrentTimer(args)) return false;
     retryScheduled = true;
@@ -299,10 +298,16 @@ async function runRestoreTimer(
           }
 
           // Restore policy (slow — openshell policy set --wait blocks)
-          const result = run(buildPolicySetCommand(args.snapshotPath, args.sandboxName), {
-            ignoreError: true,
+          const result = shields.applyShieldsPolicySnapshot(args.sandboxName, args.snapshotPath, {
+            transitionProcessToken: args.processToken,
+            deadlineAuthoritative: true,
           });
           const status = typeof result.status === "number" ? result.status : 1;
+          managedMcpWarning = result.managedMcpOmissions?.length
+            ? `Auto-restore omitted ${String(
+                result.managedMcpOmissions.length,
+              )} unproven managed MCP policy entries`
+            : undefined;
 
           if (status !== 0) {
             appendAudit({
@@ -448,6 +453,7 @@ async function runRestoreTimer(
               restored_by: "auto_timer",
               policy_snapshot: args.snapshotPath,
               scheduled_restore_at: args.restoreAtIso,
+              ...(managedMcpWarning ? { warning: managedMcpWarning } : {}),
             });
             cleanupOwnedTimerMarker(args);
             exitCode = 0;
