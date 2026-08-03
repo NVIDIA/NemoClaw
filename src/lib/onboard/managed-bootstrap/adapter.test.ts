@@ -617,7 +617,7 @@ describe("managed bootstrap adapter contract", () => {
     expect(failure.managedBootstrapRollbackError).toBe(rollbackFailure);
   });
 
-  it("binds rollback and commit receipts to the exact captured snapshot", async () => {
+  it("binds rollback to the snapshot and commit to the activated transaction", async () => {
     const result = await prepareAndActivate("langchain-deepagents-code");
     vi.mocked(result.adapter.finalizeBootstrap).mockResolvedValueOnce({
       ...rolledBackReceipt(result.activated.handle, result.activated.snapshot),

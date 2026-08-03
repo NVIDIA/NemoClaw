@@ -6,7 +6,8 @@
 # Image-owned bootstrap boundary. A runtime provider creates a replacement
 # without starting it, writes one bounded root-owned request into its writable
 # layer, and starts this trampoline as PID 1. The exact captured supervisor argv
-# cannot run until the request has been authenticated and applied.
+# cannot run until the fixed request and its identity binding have been validated
+# and the request applied.
 
 set -euo pipefail
 

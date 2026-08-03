@@ -27,9 +27,9 @@ prove the committed outcome without reporting rollback state and may leave
 
 `scripts/managed-bootstrap-trampoline.sh` defines the image-owned executable
 that the later all-agent packaging slice will install as
-`/usr/local/bin/nemoclaw-managed-bootstrap`. It authenticates a fixed,
-root-owned request, verifies an identity-bound completion, clears its private
-bootstrap variables and file descriptors, and then uses `exec "$@"`. The
+`/usr/local/bin/nemoclaw-managed-bootstrap`. It validates the fixed, root-owned
+request and its identity binding, verifies the matching completion, clears its
+private bootstrap variables and file descriptors, and then uses `exec "$@"`. The
 documented trampoline guarantees are preservation of the captured supervisor
 argument boundaries and removal of inherited `BASH_ENV` before Bash parses
 startup files; it does not define preservation of every other environment
