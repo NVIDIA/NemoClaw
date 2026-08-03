@@ -1264,6 +1264,11 @@ function removeManagedDistributedVllmRuntime(
     ...state.stationBindingPaths,
   ];
   const expectedBindingPaths = new Set(receipts.map((receiptPath) => `${receiptPath}.ssh-binding`));
+  if (state.sparkPath) {
+    expectedBindingPaths.add(
+      `${path.join(path.dirname(state.sparkPath), DUAL_SPARK_MANAGED_SERVING_STATE_FILE)}.ssh-binding`,
+    );
+  }
   const orphanBinding = bindingPaths.find((bindingPath) => !expectedBindingPaths.has(bindingPath));
   if (orphanBinding) {
     runtime.error(

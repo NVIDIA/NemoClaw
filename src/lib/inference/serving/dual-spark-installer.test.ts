@@ -552,6 +552,43 @@ describe("two-Spark managed vLLM installer selection", () => {
     expect(clearBinding).toHaveBeenCalledWith(capability.peerSshBindingStatePath);
   });
 
+  it("keeps a successful receipt-owned install when temporary binding retirement fails", async () => {
+    const capability = readyCapability();
+    const persistReceipt = vi.fn();
+    const clearBinding = vi.fn(() => {
+      throw new Error("temporary binding busy");
+    });
+    const warn = vi.fn();
+
+    const result = await tryInstallDualSparkManagedVllm(
+      { platform: "spark", env: {}, nonInteractive: true, promptFn: vi.fn() },
+      effects(),
+      {
+        probeCapability: () => capability,
+        revalidateCapability: () => capability,
+        claimCapability: () => confirmedCapability(capability),
+        resolveSelection: () => fixtureDualSparkSelection(),
+        createExecutor: () => ({}) as DualSparkVllmLifecycleDeps,
+        start: async () => successfulStart(),
+        ensureApiKey: () => API_KEY,
+        persistReceipt,
+        clearBinding,
+        log: vi.fn(),
+        warn,
+      },
+    );
+
+    expect(result).toEqual({ kind: "handled", result: { ok: true } });
+    expect(persistReceipt).toHaveBeenCalledOnce();
+    expect(clearBinding).toHaveBeenCalledWith(capability.peerSshBindingStatePath);
+    expect(persistReceipt.mock.invocationCallOrder[0]).toBeLessThan(
+      clearBinding.mock.invocationCallOrder[0]!,
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("temporary two-Spark SSH state could not be retired"),
+    );
+  });
+
   it("cleans only a newly-created exact pair when receipt persistence fails", async () => {
     const capability = readyCapability();
     const selection = fixtureDualSparkSelection();

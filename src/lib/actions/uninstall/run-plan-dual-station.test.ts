@@ -82,6 +82,98 @@ describe("managed distributed vLLM runtime uninstall", () => {
     }
   });
 
+  it("associates the canonical leftover Spark discovery binding with its durable receipt", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-spark-claim-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receiptPath = path.join(stateDir, "dual-spark-vllm-runtime.json");
+    const discoveryBindingPath = path.join(stateDir, "dual-spark-managed-serving.json.ssh-binding");
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(receiptPath, "{}\n", { mode: 0o600 });
+    fs.mkdirSync(`${receiptPath}.ssh-binding`, { mode: 0o700 });
+    fs.mkdirSync(discoveryBindingPath, { mode: 0o700 });
+    const runDualStationRuntimeCleanup = vi.fn(() => ok());
+
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: { HOME: home, TMPDIR: home } as NodeJS.ProcessEnv,
+          existsSync: () => false,
+          isTty: false,
+          log: vi.fn(),
+          rmSync: vi.fn(),
+          run: okWithKnownGatewayList,
+          runDocker: () => ok(),
+          runDualStationRuntimeCleanup,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(runDualStationRuntimeCleanup).toHaveBeenCalledWith(
+        receiptPath,
+        expect.objectContaining({ stdio: "inherit" }),
+      );
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      title: "a noncanonical gateway Spark claim despite a host-global Spark receipt",
+      receiptFile: "dual-spark-vllm-runtime.json",
+      bindingSegments: ["gateways", "18080", "dual-spark-managed-serving.json.ssh-binding"],
+    },
+    {
+      title: "a canonical Spark claim when only a Station receipt exists",
+      receiptFile: "dual-station-vllm-runtime.json",
+      bindingSegments: ["dual-spark-managed-serving.json.ssh-binding"],
+    },
+  ])("refuses $title", ({ receiptFile, bindingSegments }) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-spark-claim-other-"));
+    const stateDir = path.join(home, ".nemoclaw");
+    const receiptPath = path.join(stateDir, receiptFile);
+    const discoveryBindingPath = path.join(stateDir, ...bindingSegments);
+    fs.mkdirSync(stateDir, { mode: 0o700 });
+    fs.writeFileSync(receiptPath, "{}\n", { mode: 0o600 });
+    fs.mkdirSync(`${receiptPath}.ssh-binding`, { mode: 0o700 });
+    fs.mkdirSync(discoveryBindingPath, { recursive: true, mode: 0o700 });
+    const errors: string[] = [];
+    const runDualStationRuntimeCleanup = vi.fn(() => ok());
+    const rmSync = vi.fn();
+    const runDocker = vi.fn(() => ok());
+
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => true,
+          env: { HOME: home, TMPDIR: home } as NodeJS.ProcessEnv,
+          error: (message) => errors.push(message),
+          existsSync: () => false,
+          isTty: false,
+          log: vi.fn(),
+          rmSync,
+          run: okWithKnownGatewayList,
+          runDocker,
+          runDualStationRuntimeCleanup,
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(runDualStationRuntimeCleanup).not.toHaveBeenCalled();
+      expect(runDocker).not.toHaveBeenCalled();
+      expect(rmSync).not.toHaveBeenCalled();
+      expect(errors.join("\n")).toContain(
+        "Managed distributed vLLM SSH binding exists without its ownership receipt",
+      );
+      expect(fs.existsSync(discoveryBindingPath)).toBe(true);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("targets the exact Station receipt found under a stale non-default gateway root", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-stale-station-"));
     const receiptPath = path.join(

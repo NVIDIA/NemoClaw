@@ -27,7 +27,10 @@ import {
   dualSparkVllmApiKeyFingerprint,
 } from "./dual-spark-lifecycle";
 import type { DualSparkVllmPlan } from "./dual-spark-materialize";
-import { DUAL_SPARK_VLLM_RUNTIME_RECEIPT_FILE } from "./spark-runtime-receipt-path";
+import {
+  DUAL_SPARK_MANAGED_SERVING_STATE_FILE,
+  DUAL_SPARK_VLLM_RUNTIME_RECEIPT_FILE,
+} from "./spark-runtime-receipt-path";
 
 const MAX_RECEIPT_BYTES = 128 * 1024;
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -514,6 +517,7 @@ export async function cleanupInstalledDualSparkVllmRuntime(
   ) {
     throw new Error("Managed dual-Spark cleanup returned unexpected container identities");
   }
+  clearDualStationSshBinding(path.join(stateDir, DUAL_SPARK_MANAGED_SERVING_STATE_FILE));
   clearReceipt(stateDir);
   return { kind: "removed", removedContainerIds: cleanup.removedContainerIds };
 }
