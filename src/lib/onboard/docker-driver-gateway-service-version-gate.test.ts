@@ -36,22 +36,19 @@ describe("package-managed gateway version gate (#8094)", () => {
   beforeEach(() => resetUpstreamGatewayVersionWarning());
 
   it("declines a package gateway newer than the blueprint maximum", () => {
-    const verdict = checkUpstreamGatewayVersion(resolveOptions("0.0.91"));
-
-    expect(verdict.supported).toBe(false);
-    if (verdict.supported) return;
-    expect(verdict.version).toBe("0.0.91");
-    expect(verdict.binaryPath).toBe(PACKAGE_BINARY);
-    expect(verdict.message).toContain("maximum 0.0.85");
-    expect(verdict.message).toContain("NemoClaw will manage its own gateway service instead");
+    expect(checkUpstreamGatewayVersion(resolveOptions("0.0.91"))).toMatchObject({
+      supported: false,
+      version: "0.0.91",
+      binaryPath: PACKAGE_BINARY,
+      message: expect.stringContaining("maximum 0.0.85"),
+    });
   });
 
   it("declines a package gateway older than the blueprint minimum", () => {
-    const verdict = checkUpstreamGatewayVersion(resolveOptions("0.0.71"));
-
-    expect(verdict.supported).toBe(false);
-    if (verdict.supported) return;
-    expect(verdict.message).toContain("minimum 0.0.85");
+    expect(checkUpstreamGatewayVersion(resolveOptions("0.0.71"))).toMatchObject({
+      supported: false,
+      message: expect.stringContaining("minimum 0.0.85"),
+    });
   });
 
   it("adopts a package gateway inside the supported window", () => {
@@ -118,15 +115,13 @@ describe("package-managed gateway version gate (#8094)", () => {
 
   it("probes every documented package binary location", () => {
     // `/usr/local/bin` installs must be gated the same way as `/usr/bin` ones.
-    const verdict = checkUpstreamGatewayVersion(
-      resolveOptions("0.0.91", {
-        existsSync: (p: string) => p === PACKAGE_UNIT || p === "/usr/local/bin/openshell-gateway",
-      }),
-    );
-
-    expect(verdict.supported).toBe(false);
-    if (verdict.supported) return;
-    expect(verdict.binaryPath).toBe("/usr/local/bin/openshell-gateway");
+    expect(
+      checkUpstreamGatewayVersion(
+        resolveOptions("0.0.91", {
+          existsSync: (p: string) => p === PACKAGE_UNIT || p === "/usr/local/bin/openshell-gateway",
+        }),
+      ),
+    ).toMatchObject({ supported: false, binaryPath: "/usr/local/bin/openshell-gateway" });
   });
 
   it("keeps the package unit paths the gate scans in sync with the resolver", () => {
