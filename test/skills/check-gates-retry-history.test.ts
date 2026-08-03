@@ -2,9 +2,89 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { coordinationCheck, runGate } from "./check-gates-test-fixtures.ts";
+import type { ActionJobFixture, ComplianceFixture } from "./check-gates-test-fixtures.ts";
+import {
+  coordinationCheck,
+  e2eGateCheck,
+  exactDiffGateRun,
+  runGate,
+  successfulRequiredChecksWithoutE2e,
+} from "./check-gates-test-fixtures.ts";
 
 const SIGNED_BODY = "Signed-off-by: Example User <user@example.com>";
+const FORK_REPOSITORY = "example/NemoClaw";
+const CONTROLLER_JOB_NAMES = [
+  "E2E / PR Gate",
+  "cancel-superseded",
+  "initialize",
+  "coordinate",
+] as const;
+const PRIOR_CONTROLLER_CONCLUSIONS = ["CANCELLED", "SUCCESS", "SUCCESS", "SKIPPED"] as const;
+const CURRENT_CONTROLLER_CONCLUSIONS = ["SUCCESS", "SKIPPED", "SKIPPED", "SKIPPED"] as const;
+
+function controllerJobs(runId: number, conclusions: readonly string[]): ActionJobFixture[] {
+  return CONTROLLER_JOB_NAMES.map((name, index) => ({
+    id: runId * 10 + index,
+    name,
+    conclusion: conclusions[index].toLowerCase(),
+  }));
+}
+
+function controllerChecks(runId: number, conclusions: readonly string[], startedAt: string) {
+  return CONTROLLER_JOB_NAMES.map((name, index) =>
+    e2eGateCheck([
+      runId,
+      runId * 10 + index,
+      conclusions[index],
+      startedAt,
+      undefined,
+      "E2E / PR Gate Controller",
+      name,
+    ]),
+  );
+}
+
+function forkRetryFixture(): ComplianceFixture {
+  return {
+    body: SIGNED_BODY,
+    verified: true,
+    headRepository: FORK_REPOSITORY,
+    statusChecks: [
+      ...successfulRequiredChecksWithoutE2e(),
+      ...controllerChecks(100, PRIOR_CONTROLLER_CONCLUSIONS, "2026-01-01T00:00:30Z"),
+      ...controllerChecks(101, CURRENT_CONTROLLER_CONCLUSIONS, "2026-01-01T00:02:45Z"),
+    ],
+    coordinationCheckPages: [
+      {
+        total_count: 2,
+        check_runs: [
+          coordinationCheck({
+            id: 8002,
+            started_at: "2026-01-01T00:04:00Z",
+            completed_at: "2026-01-01T00:05:00Z",
+          }),
+          retryableFailure(8001, "prerequisite-ci"),
+        ],
+      },
+    ],
+    actionRunAttempts: {
+      "100": {
+        ...exactDiffGateRun("cancelled", controllerJobs(100, PRIOR_CONTROLLER_CONCLUSIONS)),
+        headRepository: FORK_REPOSITORY,
+        pullRequests: [],
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:03:00Z",
+      },
+      "101": {
+        ...exactDiffGateRun("success", controllerJobs(101, CURRENT_CONTROLLER_CONCLUSIONS)),
+        headRepository: FORK_REPOSITORY,
+        pullRequests: [],
+        createdAt: "2026-01-01T00:02:45Z",
+        updatedAt: "2026-01-01T00:06:00Z",
+      },
+    },
+  };
+}
 
 function retryableFailure(id: number, reason: string, title = "Retryable E2E failure") {
   return coordinationCheck({
@@ -35,6 +115,43 @@ function expectIncompleteEvidence(checkRuns: unknown[]) {
 }
 
 describe("maintainer merge-gate E2E retry history", () => {
+  it("accepts a later fork controller after a retryable failure when GitHub omits PR associations", () => {
+    const output = JSON.parse(runGate(forkRetryFixture()).stdout);
+
+    expect(output).toMatchObject({ allPass: true, gates: { ci: { pass: true } } });
+  });
+
+  it("rejects two older fork controllers that enclose the same retryable coordination failure", () => {
+    const fixture = forkRetryFixture();
+    fixture.statusChecks = [
+      ...(fixture.statusChecks ?? []),
+      ...controllerChecks(99, PRIOR_CONTROLLER_CONCLUSIONS, "2026-01-01T00:00:45Z"),
+    ];
+    fixture.actionRunAttempts = {
+      ...(fixture.actionRunAttempts ?? {}),
+      "99": {
+        ...exactDiffGateRun("cancelled", controllerJobs(99, PRIOR_CONTROLLER_CONCLUSIONS)),
+        headRepository: FORK_REPOSITORY,
+        pullRequests: [],
+        createdAt: "2026-01-01T00:00:15Z",
+        updatedAt: "2026-01-01T00:03:00Z",
+      },
+    };
+
+    const output = JSON.parse(runGate(fixture).stdout);
+
+    expect(output.gates.ci).toMatchObject({
+      pass: false,
+      failingChecks: [
+        "E2E / PR Gate: latest attempt evidence incomplete",
+        "cancel-superseded: latest attempt evidence incomplete",
+        "coordinate: latest attempt evidence incomplete",
+        "initialize: latest attempt evidence incomplete",
+      ],
+    });
+    expect(output.allPass).toBe(false);
+  });
+
   it.each([
     "prerequisite-ci",
     "child-cancelled",
@@ -61,6 +178,13 @@ describe("maintainer merge-gate E2E retry history", () => {
     [
       "an unsupported retry reason",
       [coordinationCheck({ id: 8002 }), retryableFailure(8001, "product-failure")],
+    ],
+    [
+      "an older retryable failure with an invalid timestamp",
+      [
+        coordinationCheck({ id: 8002 }),
+        { ...retryableFailure(8001, "prerequisite-ci"), started_at: "not-a-time" },
+      ],
     ],
     [
       "trailing content after the retry marker",

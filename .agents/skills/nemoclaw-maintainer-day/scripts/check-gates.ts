@@ -316,7 +316,14 @@ interface E2eCoordinationEvidence {
   valid: boolean | null;
   startedAt?: number;
   completedAt?: number;
+  retryableFailures?: RetryableE2eFailureEvidence[];
   trustedLegacyCheckId?: number;
+}
+
+interface RetryableE2eFailureEvidence {
+  id: number;
+  startedAt: number;
+  completedAt: number;
 }
 
 const E2E_RETRYABLE_FAILURE_MARKER_PREFIX = "<!-- nemoclaw-pr-e2e-retry:v1:";
@@ -376,19 +383,23 @@ function hasRetryableE2eFailureMarker(check: Record<string, unknown>): boolean {
   );
 }
 
-function currentE2eCoordinationCheck(
-  checks: Array<Record<string, unknown>>,
-): Record<string, unknown> | undefined {
+function currentE2eCoordinationCheck(checks: Array<Record<string, unknown>>):
+  | {
+      current: Record<string, unknown>;
+      retryableFailures: Array<Record<string, unknown>>;
+    }
+  | undefined {
   if (checks.length === 0) return undefined;
   const ordered = [...checks].sort((left, right) => (left.id as number) - (right.id as number));
   const active = ordered.filter((check) => check.status !== "completed");
   if (active.length > 1) return undefined;
-  if (ordered.slice(0, -1).some((check) => !hasRetryableE2eFailureMarker(check))) {
+  const retryableFailures = ordered.slice(0, -1);
+  if (retryableFailures.some((check) => !hasRetryableE2eFailureMarker(check))) {
     return undefined;
   }
   const current = ordered.at(-1)!;
   if (active[0] && active[0].id !== current.id) return undefined;
-  return current;
+  return { current, retryableFailures };
 }
 function fetchE2eCoordinationEvidence(
   repo: string,
@@ -468,8 +479,9 @@ function fetchE2eCoordinationEvidence(
     currentNameChecks.length > 0
       ? currentNameChecks
       : claimedChecks.filter((check) => check.name === "E2E / PR Gate");
-  const exact = currentE2eCoordinationCheck(exactChecks);
-  if (!exact) return { valid: false };
+  const selection = currentE2eCoordinationCheck(exactChecks);
+  if (!selection) return { valid: false };
+  const { current: exact } = selection;
   const app = exact.app;
   const startedAt =
     typeof exact.started_at === "string" ? parseGitHubTimestamp(exact.started_at) : Number.NaN;
@@ -488,9 +500,32 @@ function fetchE2eCoordinationEvidence(
     Number.isFinite(startedAt) &&
     Number.isFinite(completedAt) &&
     startedAt <= completedAt;
+  const retryableFailures: RetryableE2eFailureEvidence[] = [];
+  for (const check of selection.retryableFailures) {
+    const retryStartedAt =
+      typeof check.started_at === "string" ? parseGitHubTimestamp(check.started_at) : Number.NaN;
+    const retryCompletedAt =
+      typeof check.completed_at === "string"
+        ? parseGitHubTimestamp(check.completed_at)
+        : Number.NaN;
+    if (
+      !Number.isSafeInteger(check.id) ||
+      !Number.isFinite(retryStartedAt) ||
+      !Number.isFinite(retryCompletedAt) ||
+      retryStartedAt > retryCompletedAt ||
+      retryCompletedAt > startedAt
+    ) {
+      return { valid: false };
+    }
+    retryableFailures.push({
+      id: check.id as number,
+      startedAt: retryStartedAt,
+      completedAt: retryCompletedAt,
+    });
+  }
   return {
     valid,
-    ...(valid ? { startedAt, completedAt } : {}),
+    ...(valid ? { startedAt, completedAt, retryableFailures } : {}),
     ...(valid && exact.name === "E2E / PR Gate"
       ? { trustedLegacyCheckId: exact.id as number }
       : {}),
@@ -909,6 +944,44 @@ function currentCheckRollup(
     run.createdAt <= e2eCoordinationEvidence.startedAt &&
     e2eCoordinationEvidence.completedAt <= run.updatedAt;
 
+  const retryableE2eFailureForRun = (
+    runId: string,
+    run: ActionRunMetadata,
+  ): RetryableE2eFailureEvidence | null => {
+    const jobs = latestAttemptJobs(runId);
+    if (
+      e2eControllerHeadBinding(run) !== "current" ||
+      run.hasPullRequests !== false ||
+      run.e2eGateRun !== true ||
+      run.status !== "COMPLETED" ||
+      (run.conclusion !== "CANCELLED" && run.conclusion !== "FAILURE") ||
+      !jobs ||
+      jobs.size === 0 ||
+      [...jobs.values()].some((job) => job.status !== "COMPLETED" || job.conclusion === null) ||
+      [...jobs.values()].every((job) => job.conclusion === "SKIPPED")
+    ) {
+      return null;
+    }
+    const matches = (e2eCoordinationEvidence.retryableFailures ?? []).filter(
+      (failure) => run.createdAt <= failure.startedAt && failure.completedAt <= run.updatedAt,
+    );
+    return matches.length === 1 ? matches[0] : null;
+  };
+
+  const isValidatedSuccessfulE2eController = (runId: string, run: ActionRunMetadata): boolean => {
+    const jobs = latestAttemptJobs(runId);
+    return Boolean(
+      e2eCoordinationIsEnclosed(run) &&
+        run.e2eGateRun === true &&
+        run.status === "COMPLETED" &&
+        run.conclusion === "SUCCESS" &&
+        jobs &&
+        jobs.size > 0 &&
+        [...jobs.values()].every((job) => job.status === "COMPLETED" && job.conclusion !== null) &&
+        [...jobs.values()].some((job) => job.conclusion !== "SKIPPED"),
+    );
+  };
+
   const isNonAttemptRun = (runId: string): boolean => {
     const run = actionRunMetadata(runId);
     const jobs = latestAttemptJobs(runId);
@@ -1048,7 +1121,7 @@ function currentCheckRollup(
   function runIdentityEvidence(
     runId: string,
     requiresExactDiff: boolean,
-  ): "current" | "other" | "unknown" {
+  ): "current" | "prior_retry" | "other" | "unknown" {
     const metadata = actionRunMetadata(runId);
     if (!metadata?.event || !metadata.path) return "unknown";
     const headBinding = associationLessHeadBinding(metadata);
@@ -1085,7 +1158,8 @@ function currentCheckRollup(
     const e2eHeadBinding = e2eControllerHeadBinding(metadata);
     if (e2eHeadBinding === "other") return "other";
     if (e2eHeadBinding === "current") {
-      return e2eCoordinationIsEnclosed(metadata) ? "current" : "unknown";
+      if (e2eCoordinationIsEnclosed(metadata)) return "current";
+      return retryableE2eFailureForRun(runId, metadata) ? "prior_retry" : "unknown";
     }
     if (
       exactDiff.headRepository !== repo &&
@@ -1199,6 +1273,32 @@ function currentCheckRollup(
             ({ runId }) =>
               runIdentityEvidence(runId, requiredCheck) === "unknown" && !isNonAttemptRun(runId),
           );
+          const successfulControllerRuns = runs.filter(({ runId }) => {
+            const metadata = actionRunMetadata(runId);
+            return Boolean(metadata && isValidatedSuccessfulE2eController(runId, metadata));
+          });
+          const priorRetryEvidenceIds = new Set<number>();
+          let retryHistoryValid = true;
+          for (const prior of runs.filter(
+            ({ runId }) => runIdentityEvidence(runId, requiredCheck) === "prior_retry",
+          )) {
+            const metadata = actionRunMetadata(prior.runId);
+            const failure = metadata ? retryableE2eFailureForRun(prior.runId, metadata) : null;
+            if (
+              !failure ||
+              priorRetryEvidenceIds.has(failure.id) ||
+              e2eCoordinationEvidence.startedAt === undefined ||
+              failure.completedAt > e2eCoordinationEvidence.startedAt ||
+              !successfulControllerRuns.some(
+                (successful) =>
+                  successful.timestamp > prior.timestamp &&
+                  successful.timestamp >= failure.completedAt,
+              )
+            ) {
+              retryHistoryValid = false;
+            }
+            if (failure) priorRetryEvidenceIds.add(failure.id);
+          }
           const currentWorkflowIdentities = new Set(
             currentIdentityRuns.map(({ runId }) => {
               const metadata = actionRunMetadata(runId);
@@ -1210,6 +1310,7 @@ function currentCheckRollup(
           if (
             currentIdentityRuns.length === 0 ||
             unknownIdentityRun ||
+            !retryHistoryValid ||
             currentWorkflowIdentities.size !== 1 ||
             currentWorkflowIdentities.has(null)
           ) {
