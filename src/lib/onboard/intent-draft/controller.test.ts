@@ -18,6 +18,10 @@ function answer(value: string): DraftPromptResult<string> {
   return { kind: "answer", value };
 }
 
+function fail(message: string): never {
+  throw new Error(message);
+}
+
 function makeSteps(
   replies: Record<StepId, DraftPromptResult<string>[]>,
   visits: StepId[],
@@ -29,9 +33,7 @@ function makeSteps(
     write: (draft: Draft, value: unknown) => ({ ...draft, [id]: String(value) }),
     prompt: async () => {
       visits.push(id);
-      const reply = replies[id].shift();
-      if (!reply) throw new Error(`Missing reply for ${id}`);
-      return reply;
+      return replies[id].shift() ?? fail(`Missing reply for ${id}`);
     },
   }));
 }
@@ -110,10 +112,10 @@ describe("onboarding intent draft navigation (#6005)", () => {
       steps,
       initialDraft: { agent: "openclaw", provider: "openai", model: "gpt-5" },
       review,
-      reconcile: ({ previous, next, changedStep }) => {
-        if (changedStep !== "agent" || previous.agent === next.agent) return next;
-        return { ...next, provider: undefined, model: undefined };
-      },
+      reconcile: ({ previous, next, changedStep }) =>
+        changedStep === "agent" && previous.agent !== next.agent
+          ? { ...next, provider: undefined, model: undefined }
+          : next,
     });
 
     expect(visits).toEqual(["agent", "provider", "model"]);

@@ -6,15 +6,15 @@ import { createOnboardIntentDraft } from "./schema";
 import { seedOnboardIntentDraft } from "./seed";
 import { collectOnboardIntentDraft, type OnboardIntentDraftUiDeps } from "./ui";
 
+function fail(message: string): never {
+  throw new Error(message);
+}
+
 function makeDeps(replies: string[]): OnboardIntentDraftUiDeps & { lines: string[] } {
   const lines: string[] = [];
   return {
     lines,
-    prompt: vi.fn(async () => {
-      const reply = replies.shift();
-      if (reply === undefined) throw new Error("Missing prompt reply");
-      return reply;
-    }),
+    prompt: vi.fn(async () => replies.shift() ?? fail("Missing prompt reply")),
     log: (message = "") => lines.push(message),
     agentChoices: () => [
       { value: "openclaw", label: "OpenClaw" },
@@ -46,10 +46,8 @@ function makeDeps(replies: string[]): OnboardIntentDraftUiDeps & { lines: string
       { value: "restricted", label: "Restricted" },
     ],
     defaultSandboxName: () => "demo",
-    validateSandboxName: (value) => {
-      if (value === "bad") throw new Error("Invalid sandbox name");
-      return value.toLowerCase();
-    },
+    validateSandboxName: (value) =>
+      value === "bad" ? fail("Invalid sandbox name") : value.toLowerCase(),
     compatibility: {
       provider: (agent, inference) => agent !== "hermes" || inference.provider !== "openai",
       model: () => true,
