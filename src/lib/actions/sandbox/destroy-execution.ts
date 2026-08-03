@@ -265,6 +265,7 @@ export async function executeSandboxDestroy({
           exitCode: 1,
           gatewayUnreachable: false,
           mcpOwnershipRequiresGateway: false,
+          shieldsRelockRequiresGateway: false,
         };
       }
     }
