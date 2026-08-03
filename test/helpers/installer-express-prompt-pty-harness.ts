@@ -13,12 +13,14 @@ export type InstallerExpressPtyFixture = {
   timeoutSeconds?: number;
 };
 
+const DEFAULT_INSTALLER_EXPRESS_PTY_HARNESS_MODE: "installer" = "installer";
+
 export function killPtyFixtureChildIfRunning(childPid: number | undefined): void {
-  if (childPid === undefined) return;
+  if (childPid === undefined || !Number.isSafeInteger(childPid) || childPid <= 0) return;
   try {
     process.kill(childPid, "SIGKILL");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  } catch {
+    // A cleanup signal failure must not replace the test failure that triggered cleanup.
   }
 }
 
@@ -31,7 +33,6 @@ export function runExpressPromptWithTty(
   entrypointArgs: string[] = [],
   harnessFixture?: InstallerExpressPtyFixture,
 ) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-prompt-"));
   const python =
     spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], {
       encoding: "utf-8",
@@ -163,9 +164,11 @@ while True:
             os.kill(pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-        os.set_blocking(fd, True)
-        while not pty_closed:
-            pty_closed = read_output()
+        drain_deadline = time.monotonic() + 1.0
+        while not pty_closed and time.monotonic() < drain_deadline:
+            ready, _, _ = select.select([fd], [], [], 0.05)
+            if ready:
+                pty_closed = read_output()
         try:
             os.waitpid(pid, 0)
         except ChildProcessError:
@@ -179,31 +182,38 @@ except OSError:
 sys.stdout.buffer.write(output)
 sys.exit(exit_code)
 `;
-  return spawnSync(
-    python,
-    [
-      "-c",
-      ptyRunner,
-      INSTALLER_PAYLOAD,
-      answer,
-      stdinMode,
-      platform,
-      entrypoint,
-      harnessFixture?.mode ?? "installer",
-      String(harnessFixture?.timeoutSeconds ?? 10),
-      harnessFixture?.pidFile ?? "",
-      ...entrypointArgs,
-    ],
-    {
-      cwd: tmp,
-      encoding: "utf-8",
-      timeout: 15_000,
-      killSignal: "SIGKILL",
-      env: {
-        HOME: tmp,
-        PATH: TEST_SYSTEM_PATH,
-        ...extraEnv,
+  const harnessMode: InstallerExpressPtyFixture["mode"] | "installer" =
+    harnessFixture?.mode ?? DEFAULT_INSTALLER_EXPRESS_PTY_HARNESS_MODE;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-prompt-"));
+  try {
+    return spawnSync(
+      python,
+      [
+        "-c",
+        ptyRunner,
+        INSTALLER_PAYLOAD,
+        answer,
+        stdinMode,
+        platform,
+        entrypoint,
+        harnessMode,
+        String(harnessFixture?.timeoutSeconds ?? 10),
+        harnessFixture?.pidFile ?? "",
+        ...entrypointArgs,
+      ],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        timeout: 15_000,
+        killSignal: "SIGKILL",
+        env: {
+          HOME: tmp,
+          PATH: TEST_SYSTEM_PATH,
+          ...extraEnv,
+        },
       },
-    },
-  );
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 }

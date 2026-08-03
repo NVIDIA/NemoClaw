@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runInstallerSourced } from "./helpers/installer-express-prompt-harness";
 import {
   killPtyFixtureChildIfRunning,
@@ -14,8 +14,37 @@ import {
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 describe("installer express install prompt (sourced)", () => {
+  it.each([
+    Number.NaN,
+    -1,
+    0,
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])("does not signal a non-positive or non-safe PTY fixture PID: %s", (childPid) => {
+    const kill = vi.spyOn(process, "kill").mockReturnValue(true);
+    try {
+      killPtyFixtureChildIfRunning(childPid);
+      expect(kill).not.toHaveBeenCalled();
+    } finally {
+      kill.mockRestore();
+    }
+  });
+
+  it("does not throw when best-effort PTY cleanup cannot signal a valid child", () => {
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => {
+      throw Object.assign(new Error("signal denied"), { code: "EPERM" });
+    });
+    try {
+      expect(() => killPtyFixtureChildIfRunning(1234)).not.toThrow();
+      expect(kill).toHaveBeenCalledWith(1234, "SIGKILL");
+    } finally {
+      kill.mockRestore();
+    }
+  });
+
   it("drains PTY output after the child exits", () => {
     const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pty-tail-"));
+    const remove = vi.spyOn(fs, "rmSync");
     try {
       const result = runExpressPromptWithTty("", "tty", "DGX Spark", {}, "prompt", [], {
         mode: "post-exit-tail",
@@ -26,7 +55,12 @@ describe("installer express install prompt (sourced)", () => {
       expect(result.error, output).toBeUndefined();
       expect(result.status, output).toBe(0);
       expect(output).toContain("PTY_POST_EXIT_TAIL");
+      expect(remove).toHaveBeenCalledWith(expect.stringContaining("nemoclaw-express-prompt-"), {
+        recursive: true,
+        force: true,
+      });
     } finally {
+      remove.mockRestore();
       fs.rmSync(fixtureDir, { recursive: true, force: true });
     }
   });
