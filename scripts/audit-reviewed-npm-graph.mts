@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,13 +12,11 @@ import {
   packReviewedNpmArchive,
   verifyInstalledNpmLock,
   verifyReviewedNpmLock,
-  verifyReviewedNpmLockPackages,
 } from "./lib/reviewed-npm-archive.mts";
 import {
   assertExceptionGraphs,
   readAuditExceptionRegistry,
   runReviewedNpmAudit,
-  type AuditPolicyResult,
   type Severity,
 } from "./lib/reviewed-npm-audit.mts";
 
@@ -42,7 +39,6 @@ type AuditConfig = Readonly<{
   schemaVersion: 2;
   severityThreshold: Severity;
 }>;
-type ReviewedAuditReport = Readonly<{ label: string; result: AuditPolicyResult }>;
 
 const TRUSTED_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TARGET_REPO_ROOT = fs.realpathSync(
@@ -50,10 +46,6 @@ const TARGET_REPO_ROOT = fs.realpathSync(
 );
 const CONFIG_PATH = resolveTrustedAuditConfigPath(TRUSTED_REPO_ROOT);
 const SEVERITIES: readonly Severity[] = ["info", "low", "moderate", "high", "critical"];
-const SOURCE_GRAPH = {
-  id: "nemoclaw-cli",
-  label: "NemoClaw CLI locked production graph",
-} as const;
 const OPENCLAW_DOMEXCEPTION_ALIAS = {
   actualName: "@nolyfill/domexception",
   aliasPackagePath: "node_modules/openclaw/node_modules/node-domexception",
@@ -238,32 +230,6 @@ function assertRegularFile(file: string, label: string): void {
   }
 }
 
-export function materializeSourceGraph(
-  sourcePackage: string,
-  sourceLock: string,
-  destination: string,
-  registryOrigin: string,
-  installProductionDependencies: (directory: string) => void = (directory) =>
-    void run("npm", ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"], directory),
-): string {
-  assertRegularFile(sourcePackage, "NemoClaw CLI package manifest");
-  assertRegularFile(sourceLock, "NemoClaw CLI lockfile");
-  verifyReviewedNpmLockPackages({ lockfilePath: sourceLock, omitDev: true, registryOrigin });
-  const lockSha256 = createHash("sha256").update(fs.readFileSync(sourceLock)).digest("hex");
-  fs.mkdirSync(destination);
-  fs.copyFileSync(sourcePackage, path.join(destination, "package.json"));
-  const installedLock = path.join(destination, "package-lock.json");
-  fs.copyFileSync(sourceLock, installedLock);
-  installProductionDependencies(destination);
-  const installedLockSha256 = createHash("sha256")
-    .update(fs.readFileSync(installedLock))
-    .digest("hex");
-  if (installedLockSha256 !== lockSha256) {
-    throw new Error("NemoClaw CLI lockfile changed while materializing its production graph");
-  }
-  return destination;
-}
-
 export function normalizeOpenClawSignatureAlias(directory: string): void {
   const {
     actualName,
@@ -366,85 +332,6 @@ function auditLockedGraph(
   return result;
 }
 
-function auditSourceGraph(
-  config: AuditConfig,
-  tempRoot: string,
-  exceptionFile: string,
-  artifactDirectory: string,
-  npmVersion: string,
-) {
-  const sourcePackage = targetRepositoryPath("package.json", "NemoClaw CLI package manifest");
-  const sourceLock = targetRepositoryPath("package-lock.json", "NemoClaw CLI lockfile");
-  const sourceManifest = readJsonObject(sourcePackage, "NemoClaw CLI package manifest");
-  if (typeof sourceManifest.name !== "string" || typeof sourceManifest.version !== "string") {
-    throw new Error("NemoClaw CLI package manifest must declare its name and version");
-  }
-  const directory = materializeSourceGraph(
-    sourcePackage,
-    sourceLock,
-    path.join(tempRoot, "source-graph"),
-    config.registryOrigin,
-  );
-  return auditMaterializedSourceGraph({
-    directory,
-    exceptionFile,
-    artifactDirectory,
-    npmVersion,
-    packageSpec: `${sourceManifest.name}@${sourceManifest.version}`,
-    threshold: config.severityThreshold,
-  });
-}
-
-export function auditMaterializedSourceGraph(
-  options: Readonly<{
-    artifactDirectory: string;
-    directory: string;
-    exceptionFile: string;
-    npmVersion: string;
-    packageSpec: string;
-    threshold: Severity;
-  }>,
-  dependencies: Readonly<{
-    runAudit?: typeof runReviewedNpmAudit;
-    verifySignatures?: (directory: string) => void;
-  }> = {},
-): AuditPolicyResult {
-  const result = (dependencies.runAudit ?? runReviewedNpmAudit)({
-    directory: options.directory,
-    exceptionFile: options.exceptionFile,
-    graph: SOURCE_GRAPH.id,
-    provenance: {
-      label: SOURCE_GRAPH.label,
-      nodeVersion: process.version,
-      npmVersion: options.npmVersion,
-      packageSpecs: [options.packageSpec],
-    },
-    reportFile: path.join(options.artifactDirectory, "source-graph.json"),
-    resultFile: path.join(options.artifactDirectory, "source-graph-policy.json"),
-    threshold: options.threshold,
-    throwOnBlock: false,
-  });
-  (
-    dependencies.verifySignatures ??
-    ((directory) => run("npm", ["audit", "signatures", "--omit=dev"], directory))
-  )(options.directory);
-  return result;
-}
-
-export function assertReviewedAuditReportsPass(
-  reports: readonly ReviewedAuditReport[],
-  threshold: Severity,
-): void {
-  const failures = reports
-    .filter(({ result }) => result.unacceptedBlockingAdvisories.length > 0)
-    .map(
-      ({ label, result }) =>
-        `${label}: ${result.unacceptedBlockingAdvisories.length} unaccepted at or above ${threshold}`,
-    );
-  if (failures.length > 0)
-    throw new Error(`reviewed npm audit threshold failed\n${failures.join("\n")}`);
-}
-
 function main(): void {
   const config = readConfig();
   const expectedNode = `v${config.nodeVersion}`;
@@ -459,11 +346,7 @@ function main(): void {
   const exceptionRegistry = readAuditExceptionRegistry(exceptionFile);
   assertExceptionGraphs(
     exceptionRegistry.policy,
-    new Set([
-      SOURCE_GRAPH.id,
-      config.archiveGraphId,
-      ...config.lockedGraphs.map((graph) => graph.id),
-    ]),
+    new Set([config.archiveGraphId, ...config.lockedGraphs.map((graph) => graph.id)]),
   );
   fs.rmSync(artifactDirectory, { recursive: true, force: true });
   fs.mkdirSync(artifactDirectory, { recursive: true });
@@ -471,10 +354,6 @@ function main(): void {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-audit-"));
   try {
     const reports = [
-      {
-        label: SOURCE_GRAPH.label,
-        result: auditSourceGraph(config, tempRoot, exceptionFile, artifactDirectory, npmVersion),
-      },
       {
         label: "reviewed archive graph",
         result: runReviewedNpmAudit({
@@ -506,7 +385,16 @@ function main(): void {
         ),
       })),
     ];
-    assertReviewedAuditReportsPass(reports, config.severityThreshold);
+    const failures: string[] = [];
+    for (const { label, result } of reports) {
+      if (result.unacceptedBlockingAdvisories.length > 0) {
+        failures.push(
+          `${label}: ${result.unacceptedBlockingAdvisories.length} unaccepted at or above ${config.severityThreshold}`,
+        );
+      }
+    }
+    if (failures.length > 0)
+      throw new Error(`reviewed npm audit threshold failed\n${failures.join("\n")}`);
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }

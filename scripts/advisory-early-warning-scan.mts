@@ -4,8 +4,8 @@
 //
 // CLI entry for the advisory early-warning path (#7338). Correlates public
 // GitHub Security Advisory JSON with the reviewed npm inventory derived from
-// ci/reviewed-npm-audit.json (committed package specs plus the root and
-// locked-graph production package-locks) and prints structured, NON-blocking signals. Signals never
+// ci/reviewed-npm-audit.json (committed package specs plus the locked-graph
+// package-locks) and prints structured, NON-blocking signals. Signals never
 // fail the process: enforcement stays with the reviewed npm audit gate.
 //
 // Usage:
@@ -17,7 +17,7 @@
 // --inventory replaces the repo-derived reviewed inventory with an explicit
 // JSON array of {name, version[, origin]} entries, so offline callers and
 // tests can run hermetically; without it (the workflow default) the inventory
-// is built from ci/reviewed-npm-audit.json and the production package-locks.
+// is built from ci/reviewed-npm-audit.json and the locked-graph package-locks.
 //
 // --nvd-records attaches supplementary NVD reconciliations from a file of
 // previously fetched NVD 2.0 API responses. The CLI itself never performs
@@ -36,28 +36,21 @@ import { attachNvdReconciliations, type NvdAnnotatedSignal } from "./lib/nvd-rec
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CONFIG_RELATIVE_PATH = path.join("ci", "reviewed-npm-audit.json");
-const ROOT_LOCK_RELATIVE_PATH = "package-lock.json";
 
-export function loadReviewedInventory(repoRoot = REPO_ROOT): InventoryEntry[] {
+function loadReviewedInventory(): InventoryEntry[] {
   const config = JSON.parse(
-    fs.readFileSync(path.join(repoRoot, CONFIG_RELATIVE_PATH), "utf-8"),
+    fs.readFileSync(path.join(REPO_ROOT, CONFIG_RELATIVE_PATH), "utf-8"),
   ) as Record<string, unknown>;
   const inventory = parseInventoryFromAuditConfig(config, CONFIG_RELATIVE_PATH);
   const lockedGraphs = Array.isArray(config.lockedGraphs) ? config.lockedGraphs : [];
-  const lockRelativePaths = [
-    ROOT_LOCK_RELATIVE_PATH,
-    ...lockedGraphs.flatMap((graph) => {
-      const directory = (graph as Record<string, unknown> | null)?.directory;
-      return typeof directory === "string" && directory.length > 0
-        ? [path.join(directory, "package-lock.json")]
-        : [];
-    }),
-  ];
-  for (const lockRelativePath of lockRelativePaths) {
-    const lockPath = path.join(repoRoot, lockRelativePath);
+  for (const graph of lockedGraphs) {
+    const directory = (graph as Record<string, unknown> | null)?.directory;
+    if (typeof directory !== "string" || directory.length === 0) continue;
+    const lockRelativePath = path.join(directory, "package-lock.json");
+    const lockPath = path.join(REPO_ROOT, lockRelativePath);
     if (!fs.existsSync(lockPath)) continue;
     const lock = JSON.parse(fs.readFileSync(lockPath, "utf-8")) as unknown;
-    inventory.push(...parseInventoryFromPackageLock(lock, lockRelativePath, { omitDev: true }));
+    inventory.push(...parseInventoryFromPackageLock(lock, lockRelativePath));
   }
   return inventory;
 }

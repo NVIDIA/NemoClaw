@@ -281,8 +281,6 @@ function readReviewedLockPackages(
   packages: Readonly<Record<string, Record<string, unknown>>>,
   lockfilePath: string,
   registryOrigin: string,
-  omitDev = false,
-  allowEmpty = false,
 ): readonly ReviewedNpmArchiveRequest[] {
   const reviewed: ReviewedNpmArchiveRequest[] = [];
   const identities = new Map<string, ReviewedNpmArchiveRequest>();
@@ -292,7 +290,6 @@ function readReviewedLockPackages(
       throw new Error(`reviewed npm lock has an invalid package record: ${location}`);
     }
     const record = value as Record<string, unknown>;
-    if (omitDev && record.dev === true) continue;
     const locationName = packageNameFromLockLocation(location);
     const packageName = typeof record.name === "string" ? record.name : locationName;
     const version = typeof record.version === "string" ? record.version : "";
@@ -334,23 +331,10 @@ function readReviewedLockPackages(
     identities.set(packageSpec, request);
     reviewed.push(request);
   }
-  if (!allowEmpty && reviewed.length === 0) {
+  if (reviewed.length === 0) {
     throw new Error(`reviewed npm lock contains no packages: ${lockfilePath}`);
   }
   return reviewed;
-}
-
-export function verifyReviewedNpmLockPackages(
-  request: Readonly<{ lockfilePath: string; omitDev?: boolean; registryOrigin: string }>,
-): readonly string[] {
-  const registryOrigin = normalizeRegistryOrigin(request.registryOrigin);
-  return readReviewedLockPackages(
-    readReviewedLock(request.lockfilePath),
-    request.lockfilePath,
-    registryOrigin,
-    request.omitDev,
-    true,
-  ).map(({ packageSpec }) => packageSpec);
 }
 
 export function verifyReviewedNpmLock(
