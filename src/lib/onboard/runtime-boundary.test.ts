@@ -307,14 +307,14 @@ describe("onboarding interrupted while a step is in flight (#7982)", () => {
     expect(harness.getSession().machine).toMatchObject({ state: "failed", revision: 5 });
   });
 
-  it("reports an ordinary failed session as an invalid transition, not an interrupt", async () => {
+  it("reports an ordinary failed session as stale, not interrupted", async () => {
     const { boundary, harness } = failedAtSandbox(false);
 
     const applied = boundary.recordStateResult(
       branchTo("openclaw", { metadata: { state: "sandbox" } }),
     );
 
-    await expect(applied).rejects.toThrow(InvalidOnboardMachineTransitionError);
+    await expect(applied).rejects.toThrow(/Onboarding state result source mismatch/);
     await expect(applied).rejects.not.toThrow(OnboardInterruptedError);
     expect(harness.getSession().machine).toMatchObject({ state: "failed", revision: 5 });
   });
