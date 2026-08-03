@@ -19,6 +19,8 @@ export interface SandboxMessagingPlanParseOptions {
   sandboxName?: string | null;
   agent?: MessagingAgentId | string | null;
   supportedChannelIds?: readonly MessagingChannelId[] | readonly string[] | null;
+  /** Explicit environment seam for deterministic rehydration without ambient credentials. */
+  environment?: Readonly<Record<string, string | undefined>>;
 }
 
 export function parseSandboxMessagingPlan(
@@ -101,6 +103,18 @@ export function parseSandboxMessagingPlan(
     normalizedChannelIds.add(normalizedChannelId);
   }
   if (!value.disabledChannels.every(isCanonicalMessagingChannelId)) return null;
+  const disabledChannelIds = new Set(value.disabledChannels as string[]);
+  if (
+    disabledChannelIds.size !== value.disabledChannels.length ||
+    [...disabledChannelIds].some((channelId) => !normalizedChannelIds.has(channelId)) ||
+    value.channels.some(
+      (channel) =>
+        isObjectRecord(channel) &&
+        (channel.disabled === true) !== disabledChannelIds.has(String(channel.channelId)),
+    )
+  ) {
+    return null;
+  }
   if (
     !hasCanonicalChannelReferences(value.credentialBindings) ||
     !hasCanonicalChannelReferences(value.agentRender) ||
@@ -114,7 +128,10 @@ export function parseSandboxMessagingPlan(
   }
 
   return cloneSandboxMessagingPlan(
-    normalizePersistedSandboxMessagingPlanShape(value as MaybeCompactMessagingPlan),
+    normalizePersistedSandboxMessagingPlanShape(
+      value as MaybeCompactMessagingPlan,
+      options.environment,
+    ),
   );
 }
 
