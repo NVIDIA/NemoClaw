@@ -49,6 +49,25 @@ describe("shields commands with a corrupt transition lock", () => {
   );
 
   it(
+    "refuses shields up without a raw stack trace (#8108)",
+    testTimeoutOptions(30_000),
+    ({ testHome }) => {
+      const { home } = testHome;
+      writeSandboxRegistry(home);
+      const lockPath = writeCorruptTransitionLock(home, "alpha");
+
+      const startedAt = Date.now();
+      const up = runWithEnv("alpha shields up 2>&1", testHome.environment());
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(up.code).toBe(1);
+      expectCleanRefusal(up.out);
+      expect(elapsedMs).toBeLessThan(REFUSAL_BUDGET_MS);
+      expect(fs.readFileSync(lockPath, "utf8")).toBe("");
+    },
+  );
+
+  it(
     "refuses shields down without a raw stack trace (#8108)",
     testTimeoutOptions(30_000),
     ({ testHome }) => {
