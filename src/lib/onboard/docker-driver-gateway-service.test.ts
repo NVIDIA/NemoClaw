@@ -314,7 +314,7 @@ describe("docker-driver-gateway-service", () => {
     ],
     [
       "uses CRLF in the missing-service result",
-      spawnResult(113, LAUNCHCTL_MISSING_OPENSHELL_SERVICE.replace("\n", "\r\n")),
+      spawnResult(113, LAUNCHCTL_MISSING_OPENSHELL_SERVICE.replaceAll("\n", "\r\n")),
     ],
     ["writes whitespace to stdout", spawnResult(113, LAUNCHCTL_MISSING_OPENSHELL_SERVICE, " \n")],
     [

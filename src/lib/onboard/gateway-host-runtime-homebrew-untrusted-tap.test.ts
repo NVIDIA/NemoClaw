@@ -146,7 +146,7 @@ describe("gateway host runtime on Homebrew 6.x untrusted tap", () => {
       LAUNCHCTL_MISSING_OPENSHELL_SERVICE.replace("Could not find", "Could not\nfind"),
       "",
     ],
-    ["CRLF", LAUNCHCTL_MISSING_OPENSHELL_SERVICE.replace("\n", "\r\n"), ""],
+    ["CRLF", LAUNCHCTL_MISSING_OPENSHELL_SERVICE.replaceAll("\n", "\r\n"), ""],
     ["whitespace-only stdout", LAUNCHCTL_MISSING_OPENSHELL_SERVICE, " \n"],
   ])("rejects launchctl diagnostic variation %s before owner selection (#7707)", (_case, stderr, stdout) => {
     Object.assign(commandState.launchctl, { stderr, stdout });
