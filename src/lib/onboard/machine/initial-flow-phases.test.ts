@@ -556,7 +556,12 @@ describe("initial onboard flow phases", () => {
       recordRepairEvent: repairRecorder(repairEvents),
     });
 
-    expect(repairEvents).toHaveLength(4);
+    expect(repairEvents).toEqual([
+      "state.repair.started:preflight",
+      "state.repair.completed:preflight",
+      "state.repair.started:gateway",
+      "state.repair.completed:gateway",
+    ]);
   });
 
   it.each([

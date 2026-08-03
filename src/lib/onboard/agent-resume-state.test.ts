@@ -7,6 +7,7 @@ import { decisionSelected } from "../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../state/onboard-checkpoint-migrate";
 import { createSession } from "../state/onboard-session";
 import { clearAgentScopedResumeState } from "./agent-resume-state";
+import { checkpointSandboxIdentityMatches } from "./checkpoint-replay";
 
 describe("clearAgentScopedResumeState", () => {
   it("invalidates agent-scoped checkpoint decisions and effect receipts", () => {
@@ -46,5 +47,23 @@ describe("clearAgentScopedResumeState", () => {
       bindings: { credentialEnvs: [], registeredProviders: [] },
     });
     expect(session.checkpoint?.resourceProfile.kind).not.toBe("unset");
+  });
+
+  it("invalidates a legacy sandbox identity when the selected agent changes", () => {
+    const session = createSession({
+      sandboxName: "my-sandbox",
+      sandboxPromptProgress: {
+        sandboxName: true,
+        webSearch: true,
+        messaging: true,
+        resourceProfile: true,
+      },
+    });
+
+    clearAgentScopedResumeState(session, "hermes");
+
+    expect(session.checkpoint).toBeNull();
+    expect(session.sandboxPromptProgress.sandboxName).toBe(false);
+    expect(checkpointSandboxIdentityMatches(session, "my-sandbox")).toBe(false);
   });
 });
