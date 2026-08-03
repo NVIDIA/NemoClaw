@@ -412,4 +412,25 @@ describe("setup-jetson JetPack 6 nvmap access", () => {
     expect(result.commandLog).not.toContain("tee /etc/udev/rules.d/99-zz-nemoclaw-nvmap.rules");
     expect(result.commandLog).not.toContain("chmod g+rw /dev/nvmap");
   });
+
+  it("fails when nvmap remains read-only after host setup (#7610)", () => {
+    const result = withJetsonReleaseSandbox(
+      ({ commandLogPath, headArgsPath, releasePath, stubDir }) => {
+        writeFileSync(
+          releasePath,
+          "# R36 (release), REVISION: 5.1, GCID: 12345678, BOARD: t186ref\n",
+        );
+        return spawnSetupJetson(stubDir, headArgsPath, commandLogPath, {
+          NEMOCLAW_TEST_STAT_OUTPUT: "character special file|cr--r-----",
+          NEMOCLAW_TEST_STAT_OUTPUT_AFTER: "character special file|cr--r-----",
+        });
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "/dev/nvmap does not grant its owning group read-write access after host setup",
+    );
+    expect(result.commandLog).toContain("chmod g+rw /dev/nvmap");
+  });
 });
