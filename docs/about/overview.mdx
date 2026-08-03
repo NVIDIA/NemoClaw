@@ -1,10 +1,10 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "Overview of NVIDIA NemoClaw"
+title: "NVIDIA NemoClaw Overview"
 sidebar-title: "Overview"
 description: "NemoClaw is an open-source reference stack for running sandboxed AI agents more safely inside OpenShell."
-description-agent: "Explains what NemoClaw covers: onboarding, lifecycle management, and agent operations within OpenShell containers, plus capabilities and why it exists. Use when users ask what NemoClaw is or what the project provides. For ecosystem placement or OpenShell-only paths, use the Ecosystem page; for internal mechanics, use How It Works."
+description-agent: "Explains NemoClaw benefits, use cases, core capabilities, and product scope. Use when users ask what NemoClaw is or what the project provides."
 keywords: ["nemoclaw overview", "openclaw always-on assistants", "hermes agent", "langchain deep agents code", "dcode sandbox", "nvidia openshell", "nvidia nemotron"]
 content:
   type: "concept"
@@ -30,37 +30,7 @@ The primary tested platforms are Linux and DGX Spark.
 NemoClaw also documents platform limitations for macOS, Windows Subsystem for Linux (WSL), DGX Station, and headless Linux servers.
 Refer to [Platform Support](../reference/platform-support) for current agent, platform, provider, integration, and deployment-path status.
 
-## What NemoClaw Provides
-
-NemoClaw groups its supported capabilities around running, connecting, controlling, and operating agents.
-
-| Area | Capability |
-|---|---|
-| Run supported agents | Onboards OpenClaw, Hermes, or LangChain Deep Agents Code into an agent-specific sandbox image and configuration. |
-| Route inference | Connects supported hosted inference and local inference providers through `inference.local`. OpenShell keeps provider credentials outside the sandbox. |
-| Control sandbox access | Applies network policy, filesystem policy, process controls, and managed inference through OpenShell. |
-| Operate the lifecycle | Reports host readiness, creates or updates sandboxes, reports status and logs, rebuilds or recovers sandboxes, and creates or restores snapshots. |
-| Connect Model Context Protocol (MCP) servers | Manages authenticated HTTPS Streamable HTTP MCP servers for all supported agent runtimes. OpenShell replaces credential placeholders at approved egress boundaries. |
-| Extend agent workflows | Installs agent skills and publishes Markdown documentation that coding agents can use for setup, operation, security review, and troubleshooting. |
-
-<AgentOnly variant="openclaw,hermes">
-
-| Area | Capability |
-|---|---|
-| Connect messaging channels | Configures supported messaging channels during onboarding or through lifecycle commands. Availability and maturity vary by agent and channel. |
-| Configure web search | Configures a supported Brave Search or Tavily Search path and keeps the service credential outside the sandbox. Provider availability varies by agent. |
-
-</AgentOnly>
-<AgentOnly variant="deepagents">
-
-| Area | Capability |
-|---|---|
-| Operate a terminal agent | Runs the managed `dcode` terminal agent interactively or through its headless JSON workflow. |
-| Export traces | Optionally sends bounded Deep Agents Code traces to an operator-managed host collector. The receiver and exported content require the documented trust controls. |
-
-</AgentOnly>
-
-## Benefits of Using NemoClaw
+## Benefits
 
 Autonomous AI agents can make arbitrary network requests, access the host filesystem, and call any inference endpoint.
 Without controls, this creates security, cost, and compliance risks that grow as agents run unattended.
@@ -99,11 +69,42 @@ Use NemoClaw when you need a supported agent runtime with managed inference, net
 | Always-on messaging agent | Connect a supported messaging channel to an agent with channel-specific credentials, policy, and lifecycle management. |
 
 </AgentOnly>
+
 <AgentOnly variant="deepagents">
 
 | Use Case | Description |
 |---|---|
 | Terminal coding agent | Run `dcode` inside an OpenShell sandbox with OpenShell-managed inference credentials and a managed terminal workflow. |
+
+</AgentOnly>
+
+## Core Capabilities
+
+NemoClaw groups its supported capabilities around running, connecting, controlling, and operating agents.
+
+| Area | Capability |
+|---|---|
+| Run supported agents | Onboards OpenClaw, Hermes, or LangChain Deep Agents Code into an agent-specific sandbox image and configuration. |
+| Route inference | Connects supported hosted inference and local inference providers through `inference.local`. OpenShell keeps provider credentials outside the sandbox. |
+| Control sandbox access | Applies network policy, filesystem policy, process controls, and managed inference through OpenShell. |
+| Operate the lifecycle | Reports host readiness, creates or updates sandboxes, reports status and logs, rebuilds or recovers sandboxes, and creates or restores snapshots. |
+| Connect Model Context Protocol (MCP) servers | Manages authenticated HTTPS Streamable HTTP MCP servers for all supported agent runtimes. OpenShell replaces credential placeholders at approved egress boundaries. |
+| Extend agent workflows | Installs agent skills and publishes Markdown documentation that coding agents can use for setup, operation, security review, and troubleshooting. |
+
+<AgentOnly variant="openclaw,hermes">
+
+| Area | Capability |
+|---|---|
+| Connect messaging channels | Configures supported messaging channels during onboarding or through lifecycle commands. Availability and maturity vary by agent and channel. |
+| Configure web search | Configures a supported Brave Search or Tavily Search path and keeps the service credential outside the sandbox. Provider availability varies by agent. |
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+| Area | Capability |
+|---|---|
+| Operate a terminal agent | Runs the managed `dcode` terminal agent interactively or through its headless JSON workflow. |
+| Export traces | Optionally sends bounded Deep Agents Code traces to an operator-managed host collector. The receiver and exported content require the documented trust controls. |
 
 </AgentOnly>
 
@@ -113,9 +114,9 @@ NemoClaw is an early-preview reference stack for a trusted operator on one host.
 It is not a hosted NemoClaw service, a multi-tenant enterprise control plane, or an enterprise identity system.
 Refer to [Enterprise Readiness](../reference/enterprise-readiness) for supported, manual, platform-owned, roadmap-only, and out-of-scope capabilities.
 
-## Next Steps
+## Learn More
 
-Use these topics to learn more about NemoClaw and how to install and use it.
+Use these topics to evaluate NemoClaw, understand its architecture, or start an agent-specific workflow.
 
 - Read [Platform Support](../reference/platform-support) before you repeat an agent, platform, provider, integration, or deployment claim.
 - Read [Architecture Overview](how-it-works) to understand the host CLI, integration layer, blueprint, OpenShell gateway, and sandbox lifecycle.
