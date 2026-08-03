@@ -14,7 +14,7 @@ describe("managed bootstrap Docker launch spec", () => {
     const first = createDockerGpuInspectFixture();
     const second = structuredClone(first);
     second.Id = "another-runtime-id";
-    second.State = { Running: false, Dead: true };
+    Object.assign(second, { State: { Running: false, Dead: true } });
     second.NetworkSettings!.Networks!["openshell-docker"]!.IPAddress = "172.18.0.99";
     second.NetworkSettings!.Networks!["openshell-docker"]!.Gateway = "172.18.0.254";
 
@@ -29,7 +29,7 @@ describe("managed bootstrap Docker launch spec", () => {
   it("changes the hash when a reproducible launch field changes", () => {
     const first = createDockerGpuInspectFixture();
     const second = structuredClone(first);
-    second.Config!.StopTimeout = 45;
+    Object.assign(second.Config!, { StopTimeout: 45 });
 
     expect(normalizeDockerManagedBootstrapLaunchSpec(second).hash).not.toBe(
       normalizeDockerManagedBootstrapLaunchSpec(first).hash,
@@ -58,7 +58,7 @@ describe("managed bootstrap Docker launch spec", () => {
     {
       name: "anonymous Config.Volumes whose data source cannot be proven",
       mutate: (inspect: ReturnType<typeof createDockerGpuInspectFixture>) => {
-        inspect.Config!.Volumes = { "/var/lib/state": {} };
+        Object.assign(inspect.Config!, { Volumes: { "/var/lib/state": {} } });
       },
       error: /config fields it cannot reproduce exactly: Volumes\./u,
     },

@@ -213,9 +213,7 @@ export { lifecycleMock, shieldsMock };
 
 vi.mock("../../adapters/docker", () => ({
   dockerCapture: vi.fn(() => ""),
-  dockerForceRm: vi.fn(),
   dockerInspect: dockerInspectMock,
-  dockerRunDetached: vi.fn(),
 }));
 
 vi.mock("../../agent/defs", () => ({
@@ -229,10 +227,7 @@ vi.mock("../../adapters/openshell/runtime", () => ({
 }));
 
 vi.mock("../../credentials/store", () => ({
-  deleteCredential: vi.fn(),
-  getCredential: vi.fn(() => null),
   prompt: vi.fn(),
-  saveCredential: vi.fn(),
 }));
 
 vi.mock("../../domain/sandbox/destroy", () => ({

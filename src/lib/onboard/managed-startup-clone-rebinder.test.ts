@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { PEM } from "./__test-helpers__/corporate-ca-fixtures";
@@ -24,13 +24,31 @@ function messagingPlan(agent: "openclaw" | "hermes", sandboxName = "source"): Sa
     channels: [
       {
         channelId: "telegram",
+        displayName: "Telegram",
+        authMode: "token-paste",
         configured: true,
         active: true,
+        selected: true,
         disabled: false,
         inputs: [
-          { inputId: "botToken", credentialAvailable: true },
-          { inputId: "allowedIds", value: ["123456"] },
+          {
+            channelId: "telegram",
+            inputId: "botToken",
+            kind: "secret",
+            required: true,
+            sourceEnv: "TELEGRAM_BOT_TOKEN",
+            credentialAvailable: true,
+          },
+          {
+            channelId: "telegram",
+            inputId: "allowedIds",
+            kind: "config",
+            required: false,
+            statePath: "allowedIds.telegram",
+            value: ["123456"],
+          },
         ],
+        hooks: [],
       },
     ],
     disabledChannels: [],
@@ -38,9 +56,10 @@ function messagingPlan(agent: "openclaw" | "hermes", sandboxName = "source"): Sa
     networkPolicy: { presets: [], entries: [] },
     agentRender: [],
     buildSteps: [],
+    runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
     stateUpdates: [],
     healthChecks: [],
-  } as unknown as SandboxMessagingPlan;
+  };
 }
 
 function openClawInput(): ManagedStartupProfileBuilderInput {
@@ -213,40 +232,33 @@ function rebind(
 describe("rebindManagedStartupProfileForClone", () => {
   it("rebinds OpenClaw dashboard and manifest-derived provider identity without ambient tokens", () => {
     const built = buildManagedStartupProfile(openClawInput());
-    const previousToken = process.env.TELEGRAM_BOT_TOKEN;
-    process.env.TELEGRAM_BOT_TOKEN = "ambient-token-must-not-be-read";
-    try {
-      const rebound = rebind(built, "openclaw", 20_789);
-      expect(rebound.profile.dashboard).toMatchObject({
-        agent: "openclaw",
-        url: "http://127.0.0.1:20789",
-        port: 20_789,
-      });
-      expect(rebound.profile.messaging.plan).toMatchObject({
-        sandboxName: "destination",
-        credentialBindings: [
-          {
-            providerName: "destination-telegram-bridge",
-            credentialAvailable: true,
-          },
-        ],
-      });
-      expect(JSON.stringify(rebound.profile.messaging.plan)).not.toContain(
-        "ambient-token-must-not-be-read",
-      );
-      expect(
-        (rebound.profile.messaging.plan as unknown as SandboxMessagingPlan).credentialBindings[0],
-      ).not.toHaveProperty("credentialHash");
-      expect(rebound.startupProfileSha256).not.toBe(built.startupProfileSha256);
-      expect(Object.isFrozen(rebound)).toBe(true);
-      expect(Object.isFrozen(rebound.profile)).toBe(true);
-      expect(Object.isFrozen(rebound.profile.messaging.plan)).toBe(true);
-      expect(Object.isFrozen(rebound.profile.tools.enabledGateways)).toBe(true);
-    } finally {
-      previousToken === undefined
-        ? Reflect.deleteProperty(process.env, "TELEGRAM_BOT_TOKEN")
-        : Reflect.set(process.env, "TELEGRAM_BOT_TOKEN", previousToken);
-    }
+    vi.stubEnv("TELEGRAM_BOT_TOKEN", "ambient-token-must-not-be-read");
+    const rebound = rebind(built, "openclaw", 20_789);
+    expect(rebound.profile.dashboard).toMatchObject({
+      agent: "openclaw",
+      url: "http://127.0.0.1:20789",
+      port: 20_789,
+    });
+    expect(rebound.profile.messaging.plan).toMatchObject({
+      sandboxName: "destination",
+      credentialBindings: [
+        {
+          providerName: "destination-telegram-bridge",
+          credentialAvailable: true,
+        },
+      ],
+    });
+    expect(JSON.stringify(rebound.profile.messaging.plan)).not.toContain(
+      "ambient-token-must-not-be-read",
+    );
+    expect(
+      (rebound.profile.messaging.plan as unknown as SandboxMessagingPlan).credentialBindings[0],
+    ).not.toHaveProperty("credentialHash");
+    expect(rebound.startupProfileSha256).not.toBe(built.startupProfileSha256);
+    expect(Object.isFrozen(rebound)).toBe(true);
+    expect(Object.isFrozen(rebound.profile)).toBe(true);
+    expect(Object.isFrozen(rebound.profile.messaging.plan)).toBe(true);
+    expect(Object.isFrozen(rebound.profile.tools.enabledGateways)).toBe(true);
   });
 
   it("rebinds the current compatible-endpoint reasoning effort instead of stale receipt tuning", () => {

@@ -28,22 +28,13 @@ const streamSandboxCreateMock = vi.fn<SnapshotStreamSandboxCreateMock>(async () 
   forcedReady: false,
 }));
 
-vi.mock("../../adapters/docker", () => ({
-  dockerCapture: vi.fn(() => ""),
-  dockerForceRm: vi.fn(),
-  dockerRunDetached: vi.fn(),
-}));
+vi.mock("../../adapters/docker", () => ({ dockerCapture: vi.fn(() => "") }));
 vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: captureOpenshellMock,
   getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: vi.fn(() => ({ status: 0, output: "" })),
 }));
-vi.mock("../../credentials/store", () => ({
-  deleteCredential: vi.fn(),
-  getCredential: vi.fn(() => null),
-  prompt: vi.fn(),
-  saveCredential: vi.fn(),
-}));
+vi.mock("../../credentials/store", () => ({ prompt: vi.fn() }));
 vi.mock("../../domain/sandbox/destroy", () => ({
   getSandboxDeleteOutcome: vi.fn(() => ({ alreadyGone: false, gatewayUnreachable: false })),
 }));
@@ -59,11 +50,6 @@ vi.mock("../../inference/nim", () => ({
   stopNimContainerByName: vi.fn(),
 }));
 vi.mock("../../messaging/channels", () => ({
-  BUILT_IN_CHANNEL_MANIFESTS: [],
-  getMessagingConfigEnvAliases: vi.fn(() => ({})),
-  getMessagingCredentialEnvKeysByChannel: vi.fn(() => ({})),
-  getMessagingProviderSuffixesByChannel: vi.fn(() => ({})),
-  listBuiltInMessagingChannelManifests: vi.fn(() => []),
   listMessagingProviderSuffixes: vi.fn(() => []),
   listMessagingCredentialMetadata: vi.fn(() => []),
 }));
