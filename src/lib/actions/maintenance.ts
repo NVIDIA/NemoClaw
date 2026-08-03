@@ -81,9 +81,7 @@ async function backupSandboxWithinShieldsWindow(
   backup: () => sandboxState.BackupResult | Promise<sandboxState.BackupResult>,
 ): Promise<BackupAllSandboxAttempt> {
   const shieldsWindowOptions = backupAllShieldsWindowOptions(sandboxName);
-  const window = await withSandboxMutationLock(sandboxName, () =>
-    openBackupShieldsWindow(sandboxName, shieldsWindowOptions),
-  );
+  const window = openBackupShieldsWindow(sandboxName, shieldsWindowOptions);
   if (!window) {
     return {
       result: null,
@@ -111,21 +109,9 @@ async function backupSandboxWithinShieldsWindow(
       hasBackupError = true;
     }
   } finally {
-    try {
-      const relocked = await withSandboxMutationLock(
-        sandboxName,
-        () => relockBackupShieldsWindow(sandboxName, window, true, shieldsWindowOptions),
-        { timeoutMs: 30_000 },
-      );
-      if (!relocked) {
-        relockError = new Error(
-          `Shields lockdown could not be restored for '${sandboxName}' after backup-all; aborting remaining backups.`,
-        );
-      }
-    } catch (error) {
+    if (!relockBackupShieldsWindow(sandboxName, window, true, shieldsWindowOptions)) {
       relockError = new Error(
         `Shields lockdown could not be restored for '${sandboxName}' after backup-all; aborting remaining backups.`,
-        { cause: error },
       );
     }
   }
