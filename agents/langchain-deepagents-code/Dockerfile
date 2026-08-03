@@ -20,8 +20,8 @@ RUN set -eu; \
     if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
       { printf '%s' "${NEMOCLAW_CORPORATE_CA_B64}" | base64 --decode > /tmp/nemoclaw-corporate-ca.pem 2>/dev/null \
         || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 is not valid base64; expected a single-line base64-encoded PEM (#6210)" >&2; exit 1; }; }; \
-      node -e 'const fs = require("node:fs"); const { X509Certificate } = require("node:crypto"); const pem = fs.readFileSync(process.argv[1], "utf8"); const certificates = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g); if (!certificates?.length) process.exit(1); for (const certificate of certificates) new X509Certificate(certificate);' /tmp/nemoclaw-corporate-ca.pem \
-        || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 did not decode to a bundle of valid X.509 certificates (#6210)" >&2; exit 1; }; \
+      node -e 'const fs = require("node:fs"); const { X509Certificate } = require("node:crypto"); const pem = fs.readFileSync(process.argv[1], "utf8"); const certificates = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g); if (!certificates?.length) process.exit(1); for (const certificate of certificates) if (!new X509Certificate(certificate).ca) process.exit(1);' /tmp/nemoclaw-corporate-ca.pem \
+        || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 did not decode to a bundle of valid X.509 certificates with basicConstraints CA:TRUE (#6210)" >&2; exit 1; }; \
       export NODE_EXTRA_CA_CERTS=/tmp/nemoclaw-corporate-ca.pem; \
     fi; \
     ./install-reviewed-runtime.sh \
@@ -46,8 +46,8 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
            || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 is not valid base64; expected a single-line base64-encoded PEM (#6210)" >&2; exit 1; }; } \
       && awk '/-----BEGIN CERTIFICATE-----/{f=1} f{print} /-----END CERTIFICATE-----/{f=0}' /tmp/nemoclaw-corporate-ca.decoded > /usr/local/share/nemoclaw/corporate-ca.pem \
       && rm -f /tmp/nemoclaw-corporate-ca.decoded \
-      && { node -e 'const fs = require("node:fs"); const { X509Certificate } = require("node:crypto"); const pem = fs.readFileSync(process.argv[1], "utf8"); const certificates = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g); if (!certificates?.length) process.exit(1); for (const certificate of certificates) new X509Certificate(certificate);' /usr/local/share/nemoclaw/corporate-ca.pem \
-           || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 did not decode to a bundle of valid X.509 certificates (#6210)" >&2; exit 1; }; } \
+      && { node -e 'const fs = require("node:fs"); const { X509Certificate } = require("node:crypto"); const pem = fs.readFileSync(process.argv[1], "utf8"); const certificates = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g); if (!certificates?.length) process.exit(1); for (const certificate of certificates) if (!new X509Certificate(certificate).ca) process.exit(1);' /usr/local/share/nemoclaw/corporate-ca.pem \
+           || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 did not decode to a bundle of valid X.509 certificates with basicConstraints CA:TRUE (#6210)" >&2; exit 1; }; } \
       && chown root:root /usr/local/share/nemoclaw/corporate-ca.pem \
       && chmod 0444 /usr/local/share/nemoclaw/corporate-ca.pem \
       && echo "[nemoclaw] baked host corporate-proxy CA into DCode image trust (#6210)"; \
