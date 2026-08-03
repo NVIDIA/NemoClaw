@@ -321,6 +321,18 @@ const warnedHomebrewIdentityCheckReasons = new Set<string>();
 const HOMEBREW_PINNED_TAP_LOAD_REFUSAL =
   `Error: Refusing to load formula ${OPENSHELL_GATEWAY_HOMEBREW_TAP}/${OPENSHELL_GATEWAY_HOMEBREW_SERVICE} ` +
   `from untrusted tap ${OPENSHELL_GATEWAY_HOMEBREW_TAP}.`;
+const HOMEBREW_OPENSHELL_NOT_INSTALLED = `Error: No such keg: /opt/homebrew/Cellar/${OPENSHELL_GATEWAY_HOMEBREW_SERVICE}`;
+
+function isHomebrewFormulaNotInstalled(result: ReturnType<typeof runBrew>): boolean {
+  return (
+    !result.ok &&
+    !result.spawnError &&
+    typeof result.status === "number" &&
+    result.status !== 0 &&
+    result.rawStdout === "" &&
+    result.rawStderr === HOMEBREW_OPENSHELL_NOT_INSTALLED
+  );
+}
 
 // Only the complete Homebrew 6.x refusal for the pinned formula can relax the
 // identity check. Changed or additional diagnostic text fails closed (#7707).
@@ -416,12 +428,20 @@ function hasOfficialHomebrewFormula(
     spawnSyncImpl,
   });
   if (!listed.ok) {
-    allowStandaloneForPinnedTapLoadRefusal(listed, {
-      env,
-      getuid: opts.getuid,
-      spawnSyncImpl,
-    });
-    return false;
+    if (isHomebrewFormulaNotInstalled(listed)) return false;
+    if (
+      allowStandaloneForPinnedTapLoadRefusal(listed, {
+        env,
+        getuid: opts.getuid,
+        spawnSyncImpl,
+      })
+    ) {
+      return false;
+    }
+    throw new OpenShellGatewayServiceTrustError(
+      "OpenShell Homebrew formula identity check failed; " +
+        "the unrecognized Homebrew diagnostic was omitted.",
+    );
   }
   const info = runBrew(["info", "--json=v2", OPENSHELL_GATEWAY_HOMEBREW_SERVICE], {
     env,

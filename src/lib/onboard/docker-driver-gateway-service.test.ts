@@ -47,6 +47,7 @@ const LAUNCHCTL_MISSING_OPENSHELL_SERVICE = [
 ].join("\n");
 const HOMEBREW_PINNED_TAP_LOAD_REFUSAL =
   "Error: Refusing to load formula nvidia/openshell/openshell from untrusted tap nvidia/openshell.";
+const HOMEBREW_OPENSHELL_NOT_INSTALLED = "Error: No such keg: /opt/homebrew/Cellar/openshell";
 
 function expectHomebrewGateFailureBeforeMutation(
   brewInfoResult: SpawnSyncLikeResult,
@@ -239,6 +240,28 @@ describe("docker-driver-gateway-service", () => {
       expect.stringContaining("using the standalone gateway fallback"),
     );
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("Refusing to load formula"));
+  });
+
+  it("keeps an altered brew list refusal fatal before probing launchd (#7707)", () => {
+    const alteredRefusal = `${HOMEBREW_PINNED_TAP_LOAD_REFUSAL}\nPermission denied.`;
+    const spawn = vi.fn((_command: string, args: string[]) =>
+      args[0] === "list" ? spawnResult(1, alteredRefusal) : spawnResult(),
+    );
+
+    expect(() =>
+      hasOpenShellGatewayUserService({
+        commandExists: () => true,
+        getuid: () => TEST_UID,
+        platform: "darwin",
+        spawnSyncImpl: spawn,
+      }),
+    ).toThrow(
+      "OpenShell Homebrew formula identity check failed; " +
+        "the unrecognized Homebrew diagnostic was omitted.",
+    );
+    expect(spawn.mock.calls.map(([command, args]) => [command, ...args])).toEqual([
+      ["brew", "list", "--formula", "openshell"],
+    ]);
   });
 
   it("aborts instead of falling back while the Homebrew launchd service is loaded (#7707)", () => {
@@ -467,7 +490,7 @@ describe("docker-driver-gateway-service", () => {
       hasOpenShellGatewayUserService({
         commandExists: () => true,
         platform: "darwin",
-        spawnSyncImpl: () => spawnResult(1, "formula not installed"),
+        spawnSyncImpl: () => spawnResult(1, HOMEBREW_OPENSHELL_NOT_INSTALLED),
       }),
     ).toBe(false);
   });
@@ -1024,7 +1047,7 @@ describe("docker-driver-gateway-service", () => {
           hasOpenShellGatewayUserService({
             commandExists: () => true,
             platform: "darwin",
-            spawnSyncImpl: () => spawnResult(1, "formula not installed"),
+            spawnSyncImpl: () => spawnResult(1, HOMEBREW_OPENSHELL_NOT_INSTALLED),
           }),
         managedServiceLogCommand: getOpenShellGatewayManagedServiceLogCommand({
           platform: "darwin",
