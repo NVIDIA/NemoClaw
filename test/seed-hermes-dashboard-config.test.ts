@@ -232,15 +232,29 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
   });
 
   it("rejects raw credentials in every mirrored routing shape (#8008)", () => {
-    for (const location of ["model", "provider", "custom provider"] as const) {
+    const cases: Array<[string, (gateway: typeof GATEWAY_CONFIG) => void]> = [
+      [
+        "model",
+        (gateway) => {
+          gateway.model.api_key = "sk-raw-model-credential";
+        },
+      ],
+      [
+        "provider",
+        (gateway) => {
+          gateway.providers["nvidia-router"].api_key = "sk-raw-provider-credential";
+        },
+      ],
+      [
+        "custom provider",
+        (gateway) => {
+          gateway.custom_providers[0].api_key = "sk-raw-custom-provider-credential";
+        },
+      ],
+    ];
+    for (const [location, injectRawCredential] of cases) {
       const gateway = structuredClone(GATEWAY_CONFIG);
-      if (location === "model") {
-        gateway.model.api_key = "sk-raw-model-credential";
-      } else if (location === "provider") {
-        gateway.providers["nvidia-router"].api_key = "sk-raw-provider-credential";
-      } else {
-        gateway.custom_providers[0].api_key = "sk-raw-custom-provider-credential";
-      }
+      injectRawCredential(gateway);
       const src = writeYaml(`gw-${location}.yaml`, gateway);
       const dst = writeYaml(`dash-${location}.yaml`, { dashboard_local: true });
       const before = fs.readFileSync(dst, "utf8");
