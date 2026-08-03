@@ -405,18 +405,24 @@ describe("managed distributed vLLM runtime uninstall", () => {
   });
 
   it.each([
-    "symbolic link",
-    "regular file",
-  ])("fails closed when the host-global managed state root is a %s", (shape) => {
+    {
+      shape: "symbolic link",
+      arrange: (stateDir: string, home: string) => {
+        const target = path.join(home, "redirected-state");
+        fs.mkdirSync(target, { mode: 0o700 });
+        fs.symlinkSync(target, stateDir, "dir");
+      },
+    },
+    {
+      shape: "regular file",
+      arrange: (stateDir: string) => {
+        fs.writeFileSync(stateDir, "not a directory\n", { mode: 0o600 });
+      },
+    },
+  ])("fails closed when the host-global managed state root is a $shape", ({ arrange }) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-unsafe-root-"));
     const stateDir = path.join(home, ".nemoclaw");
-    if (shape === "symbolic link") {
-      const target = path.join(home, "redirected-state");
-      fs.mkdirSync(target, { mode: 0o700 });
-      fs.symlinkSync(target, stateDir, "dir");
-    } else {
-      fs.writeFileSync(stateDir, "not a directory\n", { mode: 0o600 });
-    }
+    arrange(stateDir, home);
     const errors: string[] = [];
     const runDualStationRuntimeCleanup = vi.fn(() => ok());
     const runDocker = vi.fn(() => ok());
