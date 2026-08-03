@@ -121,8 +121,8 @@ function run(command: string, args: readonly string[], cwd: string) {
   return result;
 }
 
-function readConfig(): AuditConfig {
-  const parsed = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8")) as AuditConfig;
+export function parseAuditConfig(contents: string): AuditConfig {
+  const parsed = JSON.parse(contents) as AuditConfig;
   if (
     parsed.schemaVersion !== 2 ||
     !SEVERITIES.includes(parsed.severityThreshold) ||
@@ -151,6 +151,10 @@ function readConfig(): AuditConfig {
     throw new Error("ci/reviewed-npm-audit.json is invalid");
   }
   return parsed;
+}
+
+function readConfig(): AuditConfig {
+  return parseAuditConfig(fs.readFileSync(CONFIG_PATH, "utf-8"));
 }
 
 function materializeArchiveGraph(packages: readonly ReviewedPackage[], tempRoot: string): string {
@@ -239,9 +243,7 @@ export function selectReviewedLockSha256(
 ): string {
   const actual = createHash("sha256").update(fs.readFileSync(lockfilePath)).digest("hex");
   const reviewedDigests =
-    replacementLockSha256 === undefined
-      ? [lockSha256]
-      : [lockSha256, replacementLockSha256];
+    replacementLockSha256 === undefined ? [lockSha256] : [lockSha256, replacementLockSha256];
   if (!reviewedDigests.includes(actual)) {
     throw new Error(
       `${label} lock SHA-256 mismatch\nExpected one of: ${reviewedDigests.join(", ")}\nActual:          ${actual}`,

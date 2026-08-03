@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   normalizeOpenClawSignatureAlias,
+  parseAuditConfig,
   selectReviewedLockSha256,
 } from "../scripts/audit-reviewed-npm-graph.mts";
 import { readYaml } from "./helpers/e2e-workflow-contract";
@@ -69,6 +70,32 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("rejects a replacement lock digest that duplicates the current digest", () => {
+    const digest = "a".repeat(64);
+    const config = {
+      archiveGraphId: "reviewed-archive-graph",
+      archivePackages: [],
+      artifactDirectory: "artifacts/reviewed-npm-audit",
+      exceptionFile: "ci/npm-audit-exceptions.json",
+      lockedGraphs: [
+        {
+          directory: "agents/openclaw/openclaw-runtime",
+          id: "openclaw-runtime",
+          lockSha256: digest,
+          replacementLockSha256: digest,
+        },
+      ],
+      nodeVersion: "22.23.1",
+      registryOrigin: "https://registry.npmjs.org/",
+      schemaVersion: 2,
+      severityThreshold: "high",
+    };
+
+    expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
+      "ci/reviewed-npm-audit.json is invalid",
+    );
   });
 
   // source-shape-contract: security -- PR dependency audit code must come from the base SHA or the one-time signed bootstrap
