@@ -97,7 +97,7 @@ If the Homebrew service cannot be inspected, started, or made healthy, NemoClaw 
 It attempts the standalone fallback even when the stop fails.
 The standalone gateway starts only after NemoClaw verifies exclusive ownership of the gateway port.
 A host without Homebrew also uses the standalone macOS gateway.
-Unsafe managed-service environment configuration remains a hard failure on both platforms.
+Managed-service trust validation and unsafe environment configuration remain hard failures on both platforms.
 
 NemoClaw-managed gateways on custom ports remain detached and separate from the default service.
 An externally supervised gateway can use any matching configured port; its declared supervisor retains lifecycle authority.

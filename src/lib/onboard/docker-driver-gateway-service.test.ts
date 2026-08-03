@@ -13,6 +13,7 @@ import {
   getTrustedActiveOpenShellGatewayUserServicePid,
   hasOpenShellGatewayUserService,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER,
+  OpenShellGatewayServiceTrustError,
   type SpawnSyncLikeResult,
   startOpenShellGatewayUserService,
   startPackageManagedDockerDriverGateway,
@@ -438,10 +439,10 @@ describe("docker-driver-gateway-service", () => {
   });
 
   it.each([
-    ["the manager is unavailable", "daemon-reload", "Failed to connect to bus"],
-    ["the executable is foreign", "show", ""],
-    ["the service is inactive", "is-active", "inactive"],
-  ])("reports the selected systemd log command when %s (#8104)", (_case, failedCommand, detail) => {
+    ["the manager is unavailable", "daemon-reload", "Failed to connect to bus", false],
+    ["the executable is foreign", "show", "", true],
+    ["the service is inactive", "is-active", "inactive", false],
+  ])("reports the selected systemd log command when %s (#8104)", (_case, failedCommand, detail, standaloneFallbackBlocked) => {
     const result = startOpenShellGatewayUserService({
       commandExists: () => true,
       env: {},
@@ -467,6 +468,7 @@ describe("docker-driver-gateway-service", () => {
 
     expect(result).toMatchObject({
       logCommand: "journalctl --user --unit openshell-gateway --no-pager --lines=200",
+      standaloneFallbackBlocked,
       started: false,
     });
   });
@@ -689,6 +691,57 @@ describe("docker-driver-gateway-service", () => {
       }),
     ).resolves.toBe(false);
     expect(warn.mock.calls.flat().join("\n")).toContain("openshell-gateway.err.log");
+  });
+
+  it("blocks standalone fallback when managed service inspection fails trust validation (#8104)", async () => {
+    const startService = vi.fn();
+
+    await expect(
+      startPackageManagedDockerDriverGateway({
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        exitOnFailure: false,
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: () => {
+          throw new OpenShellGatewayServiceTrustError("foreign managed service");
+        },
+        managedServiceLogCommand:
+          "journalctl --user --unit nemoclaw-openshell-gateway --no-pager --lines=200",
+        registerDockerDriverGatewayEndpoint: vi.fn(),
+        runCaptureOpenshell: vi.fn(),
+        skipSandboxBridgeReachability: false,
+        startOpenShellGatewayUserService: startService,
+        stopOpenShellGatewayUserService: vi.fn(),
+        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
+      }),
+    ).rejects.toThrow("foreign managed service");
+    expect(startService).not.toHaveBeenCalled();
+  });
+
+  it("blocks standalone fallback when managed service cleanup fails trust validation (#8104)", async () => {
+    await expect(
+      startPackageManagedDockerDriverGateway({
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        exitOnFailure: false,
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: () => true,
+        registerDockerDriverGatewayEndpoint: vi.fn(),
+        runCaptureOpenshell: vi.fn(),
+        skipSandboxBridgeReachability: false,
+        startOpenShellGatewayUserService: () => ({
+          attempted: true,
+          reason: "restart failed",
+          started: false,
+        }),
+        stopOpenShellGatewayUserService: () => ({
+          attempted: true,
+          reason: "foreign managed service",
+          standaloneFallbackAllowed: false,
+          standaloneFallbackBlocked: true,
+          stopped: false,
+        }),
+        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
+      }),
+    ).rejects.toThrow("foreign managed service");
   });
 
   it("uses standalone fallback when managed service startup fails unexpectedly (#8104)", async () => {

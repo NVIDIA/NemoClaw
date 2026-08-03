@@ -55,6 +55,7 @@ export interface OpenShellGatewayUserServiceStopResult {
   manager?: "homebrew" | "systemd";
   reason?: string;
   serviceName?: string;
+  standaloneFallbackBlocked?: boolean;
   statusCommand?: string;
   stopped: boolean;
 }
@@ -63,6 +64,13 @@ export class OpenShellGatewayServiceEnvironmentError extends Error {
   constructor(error: unknown) {
     super(formatError(error));
     this.name = "OpenShellGatewayServiceEnvironmentError";
+  }
+}
+
+export class OpenShellGatewayServiceTrustError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "OpenShellGatewayServiceTrustError";
   }
 }
 
@@ -314,7 +322,11 @@ function hasOfficialHomebrewFormula(
     env,
     spawnSyncImpl,
   });
-  if (!info.ok) throw new Error(`OpenShell Homebrew formula identity check failed: ${info.reason}`);
+  if (!info.ok) {
+    throw new OpenShellGatewayServiceTrustError(
+      `OpenShell Homebrew formula identity check failed: ${info.reason}`,
+    );
+  }
   try {
     const parsed = JSON.parse(info.stdout ?? "") as {
       formulae?: Array<{ name?: string; tap?: string }>;
@@ -323,13 +335,15 @@ function hasOfficialHomebrewFormula(
       (candidate) => candidate.name === OPENSHELL_GATEWAY_HOMEBREW_SERVICE,
     );
     if (formula?.tap !== OPENSHELL_GATEWAY_HOMEBREW_TAP) {
-      throw new Error(
+      throw new OpenShellGatewayServiceTrustError(
         `OpenShell Homebrew formula must come from ${OPENSHELL_GATEWAY_HOMEBREW_TAP}`,
       );
     }
   } catch (error) {
     if (error instanceof SyntaxError) {
-      throw new Error("OpenShell Homebrew formula identity check returned invalid JSON");
+      throw new OpenShellGatewayServiceTrustError(
+        "OpenShell Homebrew formula identity check returned invalid JSON",
+      );
     }
     throw error;
   }
@@ -369,10 +383,14 @@ function resolveOpenShellGatewayUserService(
   const servicePath = getNemoclawOpenShellGatewayUserServicePath(home, env);
   if (!(opts.existsSync ?? fs.existsSync)(servicePath)) return null;
   if (isSymbolicLink(servicePath, opts)) {
-    throw new Error(`Refusing symlinked NemoClaw gateway user service: ${servicePath}`);
+    throw new OpenShellGatewayServiceTrustError(
+      `Refusing symlinked NemoClaw gateway user service: ${servicePath}`,
+    );
   }
   if (!isNemoclawManagedUnit(servicePath, opts)) {
-    throw new Error(`Refusing foreign NemoClaw gateway user service: ${servicePath}`);
+    throw new OpenShellGatewayServiceTrustError(
+      `Refusing foreign NemoClaw gateway user service: ${servicePath}`,
+    );
   }
   return {
     logCommand: getSystemdGatewayLogCommand(NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE),
@@ -434,7 +452,7 @@ function extractSystemdExecStartPath(execStart: string): string | null {
 function validateSystemdServiceIdentity(
   service: OpenShellGatewayUserServiceTarget,
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
-): { ok: boolean; reason?: string } {
+): { ok: boolean; reason?: string; trustFailure?: boolean } {
   const result = runSystemctlUser(
     ["show", service.serviceName, "--property=FragmentPath", "--property=ExecStart"],
     opts,
@@ -447,7 +465,7 @@ function validateSystemdServiceIdentity(
 function validateSystemdServiceIdentityFromProperties(
   service: OpenShellGatewayUserServiceTarget,
   properties: Record<string, string>,
-): { ok: boolean; reason?: string } {
+): { ok: boolean; reason?: string; trustFailure?: boolean } {
   const fragmentPath = path.normalize(properties.FragmentPath ?? "");
   const execStartPath = extractSystemdExecStartPath(properties.ExecStart ?? "");
   const trustedUnit = service.trustedUnitPaths.some(
@@ -461,6 +479,7 @@ function validateSystemdServiceIdentityFromProperties(
     : {
         ok: false,
         reason: `service identity is not a trusted OpenShell gateway (${fragmentPath})`,
+        trustFailure: true,
       };
 }
 
@@ -540,12 +559,16 @@ function removeCompetingNemoclawUnit(
     Pick<OpenShellGatewayUserServiceOptions, "env" | "existsSync" | "home" | "spawnSyncImpl">
   > &
     Pick<OpenShellGatewayUserServiceOptions, "lstatSync" | "readFileSync" | "rmSync">,
-): { ok: boolean; reason?: string } {
+): { ok: boolean; reason?: string; trustFailure?: boolean } {
   if (service.serviceName !== OPENSHELL_GATEWAY_USER_SERVICE) return { ok: true };
   const servicePath = getNemoclawOpenShellGatewayUserServicePath(opts.home, opts.env);
   if (!opts.existsSync(servicePath)) return { ok: true };
   if (isSymbolicLink(servicePath, opts) || !isNemoclawManagedUnit(servicePath, opts)) {
-    return { ok: false, reason: `refusing to reconcile foreign unit ${servicePath}` };
+    return {
+      ok: false,
+      reason: `refusing to reconcile foreign unit ${servicePath}`,
+      trustFailure: true,
+    };
   }
   const disabled = runSystemctlUser(
     ["disable", "--now", NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE],
@@ -631,7 +654,11 @@ export function startOpenShellGatewayUserService(
     }
     const identity = validateSystemdServiceIdentity(service, { env, spawnSyncImpl });
     if (!identity.ok)
-      return serviceFailure(service, identity.reason ?? "service identity is invalid");
+      return serviceFailure(
+        service,
+        identity.reason ?? "service identity is invalid",
+        identity.trustFailure,
+      );
   }
 
   const ownershipFailure = runHook(
@@ -655,6 +682,7 @@ export function startOpenShellGatewayUserService(
       return serviceFailure(
         service,
         `failed to reconcile gateway user services: ${reconciled.reason}`,
+        reconciled.trustFailure,
       );
     }
   }
@@ -735,15 +763,21 @@ export function stopOpenShellGatewayUserService(
     };
   }
 
-  const describe = (stopped: boolean, reason?: string): OpenShellGatewayUserServiceStopResult => ({
+  const describe = (
+    stopped: boolean,
+    reason?: string,
+    standaloneFallbackBlocked = false,
+  ): OpenShellGatewayUserServiceStopResult => ({
     attempted: true,
     standaloneFallbackAllowed:
       !stopped &&
+      !standaloneFallbackBlocked &&
       service.manager === "systemd" &&
       userManagerLooksUnavailable(reason ?? "") &&
       !hasSystemdUserServiceActivationLink(service, home, env, existsSync),
     manager: service.manager,
     serviceName: service.serviceName,
+    ...(standaloneFallbackBlocked ? { standaloneFallbackBlocked: true } : {}),
     statusCommand: service.statusCommand,
     stopped,
     ...(reason === undefined ? {} : { reason }),
@@ -752,7 +786,13 @@ export function stopOpenShellGatewayUserService(
   if (!commandExists(command)) return describe(false, `${command} is not available`);
   if (service.manager === "systemd") {
     const identity = validateSystemdServiceIdentity(service, { env, spawnSyncImpl });
-    if (!identity.ok) return describe(false, identity.reason ?? "service identity is invalid");
+    if (!identity.ok) {
+      return describe(
+        false,
+        identity.reason ?? "service identity is invalid",
+        identity.trustFailure,
+      );
+    }
   }
   const stop = runStopService(service, { env, spawnSyncImpl });
   if (stop.ok) return describe(true);
@@ -784,6 +824,7 @@ export async function startPackageManagedDockerDriverGateway({
   try {
     if (!hasService()) return false;
   } catch (error) {
+    if (error instanceof OpenShellGatewayServiceTrustError) throw error;
     console.warn(
       `  OpenShell gateway managed service could not be inspected (${formatError(error)}); using standalone fallback.`,
     );
@@ -795,6 +836,11 @@ export async function startPackageManagedDockerDriverGateway({
   const stopBeforeStandaloneFallback = () => {
     try {
       const stopped = stopService();
+      if (stopped.standaloneFallbackBlocked) {
+        throw new OpenShellGatewayServiceTrustError(
+          stopped.reason ?? "managed service identity is not trusted",
+        );
+      }
       if (stopped.attempted && !stopped.stopped) {
         const detail = stopped.reason ? ` (${stopped.reason})` : "";
         console.warn(
@@ -802,6 +848,7 @@ export async function startPackageManagedDockerDriverGateway({
         );
       }
     } catch (error) {
+      if (error instanceof OpenShellGatewayServiceTrustError) throw error;
       console.warn(
         `  OpenShell gateway managed service cleanup failed (${formatError(error)}); standalone startup will verify gateway port ownership.`,
       );
@@ -815,7 +862,12 @@ export async function startPackageManagedDockerDriverGateway({
       validatePortOwnerForServiceStart: validatePortOwnerForOpenShellGatewayUserServiceStart,
     });
   } catch (error) {
-    if (error instanceof OpenShellGatewayServiceEnvironmentError) throw error;
+    if (
+      error instanceof OpenShellGatewayServiceEnvironmentError ||
+      error instanceof OpenShellGatewayServiceTrustError
+    ) {
+      throw error;
+    }
     console.warn(
       `  OpenShell gateway managed service startup failed (${formatError(error)}); using standalone fallback.`,
     );
