@@ -6,7 +6,11 @@ import { buildValidatedCurlCommandArgs } from "../../adapters/http/curl-args";
 import { stripAnsi } from "../../adapters/openshell/client";
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT, OLLAMA_PORT } from "../../core/ports";
-import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
+import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  resolveCurrentRuntimeProviderBundle,
+  resolveRuntimeProviderBundle,
+} from "../../onboard/runtime-provider/access";
 import type { SandboxEntry } from "../../state/registry";
 import { readCloudflaredState } from "../../tunnel/services";
 import {
@@ -193,8 +197,9 @@ export function ollamaDoctorCheck(currentProvider: string): DoctorCheck {
  * Prefer the recorded driver and use platform detection for older entries.
  */
 export function shouldInspectLegacyGatewayContainer(sb: SandboxEntry | null | undefined): boolean {
-  const driver = sb?.openshellDriver;
-  if (driver === "docker" || driver === "vm") return false;
-  if (driver === "kubernetes") return true;
-  return !isLinuxDockerDriverGatewayEnabled();
+  const recorded = sb?.openshellDriver?.trim();
+  const provider = recorded
+    ? resolveRuntimeProviderBundle(recorded, CURRENT_RUNTIME_PROVIDER_BUNDLES)
+    : resolveCurrentRuntimeProviderBundle();
+  return provider?.gateway.inspectLegacyContainer === true;
 }

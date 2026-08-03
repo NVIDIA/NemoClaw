@@ -47,6 +47,10 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)(?:Dockerfile|agents\/(?:hermes|langchain-deepagents-code)\/Dockerfile)$/,
+    testsToRun: runTests("src/lib/onboard/managed-startup-profile.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)agents\/hermes\/policy-additions\.yaml$/,
     testsToRun: runTests(
       "src/lib/onboard/initial-policy-real-policy.test.ts",
@@ -101,6 +105,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)\.github\/workflows\/code-scanning\.yaml$/,
     testsToRun: runTests("test/code-scanning-workflow.test.ts"),
+  },
+  {
+    pattern: /(?:^|\/)\.github\/workflows\/approve-maintainer-pr-workflow-runs\.yaml$/,
+    testsToRun: runTests("test/maintainer-pr-workflow-approval.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-e2e-gate\.yaml$/,

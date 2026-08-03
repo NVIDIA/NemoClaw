@@ -588,33 +588,34 @@ export async function resolveManagedImageCatalogFromGhcr(options: {
     });
     const cohortReference = `cohort-${openclaw.source.cohort}`;
     const dependentResults = await Promise.allSettled(
-      SHIPPED_MANAGED_IMAGE_AGENTS.filter((agent) => agent !== "openclaw").map(async (agent) => [
-        agent,
-        await resolveManagedImageContractAtReferenceFromGhcr({
-          agent,
-          reference: cohortReference,
-          release,
-          platform,
-          fetchImpl,
-          expectedCohort: openclaw.source.cohort,
-          expectedRevision: openclaw.source.revision,
-        }),
-      ]),
+      SHIPPED_MANAGED_IMAGE_AGENTS.filter((agent) => agent !== "openclaw").map(
+        async (agent) =>
+          [
+            agent,
+            await resolveManagedImageContractAtReferenceFromGhcr({
+              agent,
+              reference: cohortReference,
+              release,
+              platform,
+              fetchImpl,
+              expectedCohort: openclaw.source.cohort,
+              expectedRevision: openclaw.source.revision,
+            }),
+          ] as const,
+      ),
     );
+    const dependentEntries: Array<readonly [ShippedManagedImageAgent, ManagedImageContractV1]> = [];
+    let unavailable: ManagedImageCatalogUnavailableError | undefined;
     for (const result of dependentResults) {
-      if (
-        result.status === "rejected" &&
-        !(result.reason instanceof ManagedImageCatalogUnavailableError)
-      ) {
+      if (result.status === "fulfilled") {
+        dependentEntries.push(result.value);
+      } else if (!(result.reason instanceof ManagedImageCatalogUnavailableError)) {
         throw result.reason;
+      } else if (unavailable === undefined) {
+        unavailable = result.reason;
       }
     }
-    for (const result of dependentResults) {
-      if (result.status === "rejected") throw result.reason;
-    }
-    const dependentEntries = dependentResults.flatMap((result) =>
-      result.status === "fulfilled" ? [result.value] : [],
-    );
+    if (unavailable !== undefined) throw unavailable;
     return Object.fromEntries([["openclaw", openclaw], ...dependentEntries]);
   });
 }

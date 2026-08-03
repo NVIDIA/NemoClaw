@@ -17,6 +17,16 @@
       "category": "security"
     },
     {
+      "file": "src/lib/onboard/managed-startup-profile.test.ts",
+      "test": "classifies every stock Docker ARG as startup-affordance or deliberate exclusion",
+      "category": "compatibility"
+    },
+    {
+      "file": "src/lib/onboard/managed-startup-profile.test.ts",
+      "test": "classifies every centralized runtime input as profile intent or an explicit deferral",
+      "category": "compatibility"
+    },
+    {
       "file": "src/lib/readiness/host.test.ts",
       "test": "bounds and redacts successful probe text before schema validation",
       "category": "compatibility"
@@ -29,6 +39,11 @@
     {
       "file": "test/candidate-compat.test.ts",
       "test": "keeps the manual controller read-only and runs digest-bound deterministic and live lanes (#6691)",
+      "category": "security"
+    },
+    {
+      "file": "test/ci-cli-coverage-pi-tools-workflow.test.ts",
+      "test": "installs pinned fd and ripgrep before CLI coverage can invoke Pi",
       "category": "security"
     },
     {
@@ -287,6 +302,11 @@
       "category": "security"
     },
     {
+      "file": "test/maintainer-pr-workflow-approval.test.ts",
+      "test": "keeps workflow approval inside the trusted metadata boundary",
+      "category": "security"
+    },
+    {
       "file": "test/macos-e2e-workflow-boundary.test.ts",
       "test": "keeps secret-bearing live E2E on trusted main-branch code",
       "category": "security"
@@ -494,6 +514,31 @@
     {
       "file": "test/pr-review-advisor-workflow-boundary.test.ts",
       "test": "requires one advisor lane to publish the PR comment",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps migrated provider identities and implementations behind the one bundle composition",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps the dormant managed-bootstrap protocol driver-neutral",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps production activation paths disconnected from driver bootstrap adapters",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps registered providers bootstrap-unsupported",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps managed-bootstrap assets out of image packaging",
       "category": "security"
     },
     {

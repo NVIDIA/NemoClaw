@@ -12,6 +12,7 @@ import { getGatewayClusterContainerName } from "../adapters/openshell/gateway-dr
 import { resolveOpenshell } from "../adapters/openshell/resolve";
 import * as agentRuntime from "../agent/runtime";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
+import type { RuntimeProviderChannelStopTransport } from "../onboard/runtime-provider/access";
 import * as registry from "../state/registry";
 import { GATEWAY_STOP_SCRIPT } from "./gateway-stop-script";
 
@@ -24,6 +25,7 @@ type ProcessRunner = (
 ) => SpawnSyncReturns<string>;
 
 export type SandboxGatewayStopDeps = {
+  channelStopTransport?: RuntimeProviderChannelStopTransport;
   getSandbox?: typeof registry.getSandbox;
   getRegisteredAgent?: typeof agentRuntime.getRegisteredAgent;
   getAgentDisplayName?: typeof agentRuntime.getAgentDisplayName;
@@ -105,13 +107,15 @@ export function stopSandboxChannels(sandboxName: string, deps: SandboxGatewaySto
   const gatewayLabel = `${agentDisplayName} gateway`;
   info(`Stopping in-sandbox ${gatewayLabel} (sandbox: ${validatedSandboxName})...`);
 
-  const privilegedResult = stopSandboxChannelsViaKubectl(
-    validatedSandboxName,
-    gatewayName,
-    GATEWAY_STOP_SCRIPT,
-    deps.runDocker ?? dockerSpawnSync,
-  );
-  if (reportStopResult(privilegedResult, gatewayLabel, info, warn)) return;
+  if (deps.channelStopTransport !== "openshell") {
+    const privilegedResult = stopSandboxChannelsViaKubectl(
+      validatedSandboxName,
+      gatewayName,
+      GATEWAY_STOP_SCRIPT,
+      deps.runDocker ?? dockerSpawnSync,
+    );
+    if (reportStopResult(privilegedResult, gatewayLabel, info, warn)) return;
+  }
 
   const openshell = (deps.resolveOpenshell ?? resolveOpenshell)();
   if (!openshell) {

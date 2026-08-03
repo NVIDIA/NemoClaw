@@ -6,7 +6,10 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { normalizeOpenClawSignatureAlias } from "../scripts/audit-reviewed-npm-graph.mts";
+import {
+  normalizeOpenClawSignatureAlias,
+  selectReviewedLockSha256,
+} from "../scripts/audit-reviewed-npm-graph.mts";
 import { readYaml } from "./helpers/e2e-workflow-contract";
 
 type WorkflowStep = {
@@ -46,6 +49,22 @@ function requiredStep(job: WorkflowJob, name: string): WorkflowStep {
 }
 
 describe("trusted reviewed npm audit workflow (#5896)", () => {
+  it("accepts only an explicitly reviewed lock during a dependency transition", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-lock-transition-"));
+    const lockfile = path.join(root, "package-lock.json");
+    fs.writeFileSync(lockfile, "reviewed lock\n");
+    const reviewed = "534ade489fdb2d8ff619a8b110c28fedbd2066e16ebf434738f64a5a44ec9860";
+    const previous = "a".repeat(64);
+    try {
+      expect(selectReviewedLockSha256(lockfile, [previous, reviewed], "test graph")).toBe(reviewed);
+      expect(() => selectReviewedLockSha256(lockfile, [previous], "test graph")).toThrow(
+        "lock SHA-256 mismatch",
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   // source-shape-contract: security -- PR dependency audit code must come from the base SHA or the one-time signed bootstrap
   it("runs PR audits from trusted code and keeps the main audit on the checked-in action", () => {
     const pr = readYaml<Workflow>(".github/workflows/pr.yaml");
