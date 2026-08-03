@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -52,12 +53,18 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
   it("accepts only an explicitly reviewed lock during a dependency transition", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-lock-transition-"));
     const lockfile = path.join(root, "package-lock.json");
-    fs.writeFileSync(lockfile, "reviewed lock\n");
-    const reviewed = "534ade489fdb2d8ff619a8b110c28fedbd2066e16ebf434738f64a5a44ec9860";
-    const previous = "a".repeat(64);
+    const currentContents = "current lock\n";
+    const replacementContents = "replacement lock\n";
+    const current = createHash("sha256").update(currentContents).digest("hex");
+    const replacement = createHash("sha256").update(replacementContents).digest("hex");
     try {
-      expect(selectReviewedLockSha256(lockfile, [previous, reviewed], "test graph")).toBe(reviewed);
-      expect(() => selectReviewedLockSha256(lockfile, [previous], "test graph")).toThrow(
+      fs.writeFileSync(lockfile, currentContents);
+      expect(selectReviewedLockSha256(lockfile, current, replacement, "test graph")).toBe(current);
+      fs.writeFileSync(lockfile, replacementContents);
+      expect(selectReviewedLockSha256(lockfile, current, replacement, "test graph")).toBe(
+        replacement,
+      );
+      expect(() => selectReviewedLockSha256(lockfile, current, undefined, "test graph")).toThrow(
         "lock SHA-256 mismatch",
       );
     } finally {
