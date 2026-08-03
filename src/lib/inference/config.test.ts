@@ -188,6 +188,8 @@ describe("inference selection config", () => {
     "",
     "  ",
     "/models/model.gguf",
+    "models/../secret",
+    "foo/./bar",
     "a".repeat(257),
   ])("refuses llama.cpp selection without a validated served alias: %s (#8161)", (model) => {
     expect(getProviderSelectionConfig("llama-cpp-local", model)).toBeNull();

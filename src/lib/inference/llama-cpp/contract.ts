@@ -22,6 +22,9 @@ export function isSafeLlamaCppServedModelAlias(value: string): boolean {
   }
   if (!/^[A-Za-z0-9._:/-]+$/.test(alias)) return false;
   if (/^(?:file:|[A-Za-z]:[\\/]|[./~]|\\\\)/i.test(alias)) return false;
+  if (alias.split("/").some((segment) => segment === "." || segment === "..")) {
+    return false;
+  }
   if (alias.includes("\\") || /\.gguf$/i.test(alias)) return false;
   return true;
 }

@@ -251,6 +251,8 @@ describe("probeLlamaCppAttachment", () => {
     "C:\\models\\model.gguf",
     "../model.gguf",
     "model.gguf",
+    "models/../secret",
+    "foo/./bar",
   ])("rejects path-like served model alias %s (#8161)", (model) => {
     const responses = nativeResponses(model);
     expect(
