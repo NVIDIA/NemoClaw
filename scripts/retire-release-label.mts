@@ -14,6 +14,9 @@
 
 import { execFileSync } from "node:child_process";
 
+// GitHub list endpoints can briefly return pre-edit or pre-delete state. The
+// workflow cannot make those reads strongly consistent; remove this retry when
+// GitHub guarantees read-after-write consistency for labels and labeled items.
 const CONSISTENCY_ATTEMPTS = 5;
 const CONSISTENCY_DELAY_SECONDS = 2;
 
