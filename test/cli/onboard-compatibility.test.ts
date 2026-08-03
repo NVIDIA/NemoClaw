@@ -113,11 +113,11 @@ describe("CLI onboard compatibility", () => {
     expect(r.out).toContain("--sandbox-gpu-device=<value>");
     expect(r.out).toContain("--events=jsonl");
     expect(r.out).toContain(
-      "Agent runtime to onboard (openclaw, hermes, langchain-deepagents-code;",
+      "Agent runtime to onboard (openclaw, hermes, langchain-deepagents-code,",
     );
-    expect(r.out).toContain("aliases: nemohermes → hermes;");
+    expect(r.out).toContain("nemocua; aliases: nemohermes → hermes;");
     expect(r.out).toContain("nemo-deepagents/dcode/deepagents/deepagents-code/langchain →");
-    expect(r.out).toContain("langchain-deepagents-code)");
+    expect(r.out).toContain("cua/nemo-cua → nemocua)");
   });
 
   it("unknown onboard option exits 1", () => {

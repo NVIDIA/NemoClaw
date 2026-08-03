@@ -116,6 +116,8 @@
     "nemoclaw/package.json",
     "nemoclaw-blueprint/",
     "schemas/network-policy.schema.json",
+    "schemas/cua-lifecycle.schema.json",
+    "schemas/cua-target-manifest.schema.json",
     "schemas/sandbox-policy.schema.json",
     "scripts/",
     "docs/resources/local-credential-form.html",

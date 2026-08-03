@@ -111,6 +111,7 @@ agent_display_name() {
   case "${1:-}" in
     hermes) printf "Hermes" ;;
     langchain-deepagents-code) printf "LangChain Deep Agents Code" ;;
+    nemocua) printf "NemoCUA" ;;
     openclaw | "") printf "OpenClaw" ;;
     *)
       local first rest
@@ -133,6 +134,9 @@ canonical_agent_name() {
       ;;
     nemo-deepagents | nemo-deepagent | nemodeepagents | nemodeepagent | dcode | deepagent | deepagents | deep-agent | deep-agents | deepagentcode | deepagentscode | deepagent-code | deepagents-code | deep-agent-code | deep-agents-code | langchain | langchain-code | langchaindeepagent | langchaindeepagents | langchain-deepagent | langchain-deepagents | langchaindeepagentcode | langchaindeepagentscode | langchain-deepagent-code | langchain-deepagents-code | langchain-deep-agent | langchain-deep-agents | langchain-deep-agent-code | langchain-deep-agents-code)
       printf "langchain-deepagents-code"
+      ;;
+    nemocua | nemo-cua | cua)
+      printf "nemocua"
       ;;
     *)
       printf "%s" "$raw"
@@ -436,6 +440,9 @@ resolve_default_sandbox_name() {
       ;;
     langchain-deepagents-code)
       fallback="deepagents-code"
+      ;;
+    nemocua)
+      fallback="nemocua"
       ;;
   esac
   printf "%s" "${sandbox_name:-$fallback}"
@@ -1101,6 +1108,11 @@ case "${NEMOCLAW_AGENT:-openclaw}" in
     _CLI_DISPLAY="NemoDeepAgents"
     _AGENT_PRODUCT="LangChain Deep Agents Code"
     _CLI_BIN="nemo-deepagents"
+    ;;
+  nemocua)
+    _CLI_DISPLAY="NemoCUA"
+    _AGENT_PRODUCT="NemoCUA"
+    _CLI_BIN="nemoclaw"
     ;;
   *)
     _CLI_DISPLAY="NemoClaw"
@@ -3033,6 +3045,9 @@ run_onboard() {
           langchain-deepagents-code)
             _fresh_install_cmd="curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code bash -s -- --fresh"
             ;;
+          nemocua)
+            _fresh_install_cmd="curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=nemocua bash -s -- --fresh"
+            ;;
           *)
             _fresh_install_cmd="curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --fresh"
             ;;
@@ -3577,7 +3592,7 @@ validate_station_express_resume_model() {
 
 validate_station_express_resume_agent() {
   case "${1:-}" in
-    openclaw | hermes | langchain-deepagents-code) return 0 ;;
+    openclaw | hermes | langchain-deepagents-code | nemocua) return 0 ;;
     *) return 1 ;;
   esac
 }

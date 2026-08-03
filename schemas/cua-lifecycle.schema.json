@@ -1,0 +1,982 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/schemas/cua-lifecycle.schema.json",
+  "title": "NemoClaw CUA lifecycle record",
+  "description": "Secret-free public records for one standalone CUA and one separately managed desktop target.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/runtimeReadiness"
+    },
+    {
+      "$ref": "#/$defs/targetAttachment"
+    },
+    {
+      "$ref": "#/$defs/securityAttestation"
+    },
+    {
+      "$ref": "#/$defs/taskEvidenceIndex"
+    },
+    {
+      "$ref": "#/$defs/taskResult"
+    },
+    {
+      "$ref": "#/$defs/failure"
+    }
+  ],
+  "$defs": {
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "safeSelector": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "componentIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version",
+        "digest",
+        "owner"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/safeId"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "inferenceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "model"
+      ],
+      "properties": {
+        "provider": {
+          "$ref": "#/$defs/safeSelector"
+        },
+        "model": {
+          "$ref": "#/$defs/safeSelector"
+        }
+      }
+    },
+    "componentSetWithoutTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtime",
+        "sandboxImage",
+        "policy",
+        "taskProtocol"
+      ],
+      "properties": {
+        "runtime": {
+          "$ref": "#/$defs/componentIdentity"
+        },
+        "sandboxImage": {
+          "$ref": "#/$defs/componentIdentity"
+        },
+        "policy": {
+          "$ref": "#/$defs/componentIdentity"
+        },
+        "taskProtocol": {
+          "$ref": "#/$defs/componentIdentity"
+        }
+      }
+    },
+    "componentSetWithTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtime",
+        "sandboxImage",
+        "targetImage",
+        "serviceBundle",
+        "policy",
+        "taskProtocol"
+      ],
+      "properties": {
+        "runtime": {
+          "$ref": "#/$defs/componentIdentity"
+        },
+        "sandboxImage": {
+          "$ref": "#/$defs/componentIdentity"
+        },
+        "targetImage": {
+          "$ref": "#/$defs/componentIdentity"
+        },
+        "serviceBundle": {
+          "$ref": "#/$defs/componentIdentity"
+        },
+        "policy": {
+          "$ref": "#/$defs/componentIdentity"
+        },
+        "taskProtocol": {
+          "$ref": "#/$defs/componentIdentity"
+        }
+      }
+    },
+    "capabilityId": {
+      "enum": [
+        "browser",
+        "computer",
+        "terminal"
+      ]
+    },
+    "capabilityHealth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "protocolVersion",
+        "health"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/capabilityId"
+        },
+        "protocolVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "health": {
+          "enum": [
+            "healthy",
+            "unhealthy",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "capabilityIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "protocolVersion"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/capabilityId"
+        },
+        "protocolVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "runtimeReadiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "mode",
+        "status",
+        "components",
+        "inference",
+        "commands",
+        "limits",
+        "requiredCapabilities",
+        "targetOperations",
+        "taskOperations"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "#/$defs/schemaVersion"
+        },
+        "kind": {
+          "const": "runtime-readiness"
+        },
+        "mode": {
+          "const": "standalone"
+        },
+        "status": {
+          "enum": [
+            "available",
+            "unavailable",
+            "incompatible"
+          ]
+        },
+        "components": {
+          "$ref": "#/$defs/componentSetWithoutTarget"
+        },
+        "inference": {
+          "$ref": "#/$defs/inferenceIdentity"
+        },
+        "commands": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "interactive",
+            "headless",
+            "version",
+            "smoke"
+          ],
+          "properties": {
+            "interactive": {
+              "const": true
+            },
+            "headless": {
+              "const": true
+            },
+            "version": {
+              "const": true
+            },
+            "smoke": {
+              "const": true
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "targetsPerWorker",
+            "activeTasksPerTarget"
+          ],
+          "properties": {
+            "targetsPerWorker": {
+              "const": 1
+            },
+            "activeTasksPerTarget": {
+              "const": 1
+            }
+          }
+        },
+        "requiredCapabilities": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/capabilityId"
+          }
+        },
+        "targetOperations": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "target.attach",
+              "target.status",
+              "target.health",
+              "target.detach",
+              "target.reset",
+              "target.destroy"
+            ]
+          }
+        },
+        "taskOperations": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "task.start",
+              "task.status",
+              "task.result",
+              "task.events",
+              "task.logs",
+              "task.plans",
+              "task.pause",
+              "task.cancel",
+              "task.guide",
+              "task.respond"
+            ]
+          }
+        }
+      }
+    },
+    "targetAttachment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "status",
+        "target",
+        "activeTask"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "#/$defs/schemaVersion"
+        },
+        "kind": {
+          "const": "target-attachment"
+        },
+        "status": {
+          "enum": [
+            "attached",
+            "detached",
+            "unreachable",
+            "incompatible",
+            "replaced"
+          ]
+        },
+        "target": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "identityDigest",
+                "platform",
+                "image",
+                "serviceBundle",
+                "capabilities"
+              ],
+              "properties": {
+                "identityDigest": {
+                  "$ref": "#/$defs/digest"
+                },
+                "platform": {
+                  "$ref": "#/$defs/safeSelector"
+                },
+                "image": {
+                  "$ref": "#/$defs/componentIdentity"
+                },
+                "serviceBundle": {
+                  "$ref": "#/$defs/componentIdentity"
+                },
+                "capabilities": {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "uniqueItems": true,
+                  "items": {
+                    "$ref": "#/$defs/capabilityHealth"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "activeTask": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "taskId",
+                "status"
+              ],
+              "properties": {
+                "taskId": {
+                  "$ref": "#/$defs/safeId"
+                },
+                "status": {
+                  "enum": [
+                    "running",
+                    "paused",
+                    "input-required",
+                    "cancelling"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "securityAttestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "status",
+        "bindings",
+        "network",
+        "materialBoundary",
+        "isolation",
+        "artifacts",
+        "authority",
+        "verifier"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "#/$defs/schemaVersion"
+        },
+        "kind": {
+          "const": "security-attestation"
+        },
+        "status": {
+          "const": "enforced"
+        },
+        "bindings": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "targetIdentityDigest",
+            "components",
+            "inference",
+            "capabilities"
+          ],
+          "properties": {
+            "targetIdentityDigest": {
+              "$ref": "#/$defs/digest"
+            },
+            "components": {
+              "$ref": "#/$defs/componentSetWithTarget"
+            },
+            "inference": {
+              "$ref": "#/$defs/inferenceIdentity"
+            },
+            "capabilities": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/capabilityIdentity"
+              }
+            }
+          }
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "defaultAction",
+            "managedInference",
+            "targetServices",
+            "deniedDestinations"
+          ],
+          "properties": {
+            "defaultAction": {
+              "const": "deny"
+            },
+            "managedInference": {
+              "const": "only"
+            },
+            "targetServices": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/capabilityId"
+              }
+            },
+            "deniedDestinations": {
+              "type": "array",
+              "minItems": 6,
+              "maxItems": 6,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "unrelated-internet",
+                  "cloud-metadata",
+                  "undeclared-loopback",
+                  "host-administration",
+                  "host-desktop",
+                  "docker-socket"
+                ]
+              }
+            }
+          }
+        },
+        "materialBoundary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "delivery",
+            "sandboxMaterial",
+            "excludedFrom"
+          ],
+          "properties": {
+            "delivery": {
+              "const": "host-side-secret-boundary"
+            },
+            "sandboxMaterial": {
+              "const": "absent"
+            },
+            "excludedFrom": {
+              "type": "array",
+              "minItems": 9,
+              "maxItems": 9,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "prompt",
+                  "sandbox-filesystem",
+                  "arguments",
+                  "logs",
+                  "state",
+                  "diagnostics",
+                  "backups",
+                  "public-json",
+                  "build-logs"
+                ]
+              }
+            }
+          }
+        },
+        "isolation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "runAs",
+            "privileged",
+            "hostDockerSocket",
+            "hostDesktop",
+            "broadWritableHostMounts"
+          ],
+          "properties": {
+            "runAs": {
+              "const": "non-root"
+            },
+            "privileged": {
+              "const": false
+            },
+            "hostDockerSocket": {
+              "const": false
+            },
+            "hostDesktop": {
+              "const": false
+            },
+            "broadWritableHostMounts": {
+              "const": false
+            }
+          }
+        },
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "classification",
+            "materials",
+            "contentIdentity",
+            "access",
+            "metadata",
+            "retention",
+            "cleanupOperations",
+            "backup"
+          ],
+          "properties": {
+            "materials": {
+              "type": "array",
+              "minItems": 11,
+              "maxItems": 11,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "screenshots",
+                  "page-content",
+                  "screen-content",
+                  "downloads",
+                  "browser-profiles",
+                  "cookies",
+                  "mutable-target-state",
+                  "task-content",
+                  "results",
+                  "logs",
+                  "documents"
+                ]
+              }
+            },
+            "classification": {
+              "const": "private"
+            },
+            "contentIdentity": {
+              "const": "sha256"
+            },
+            "access": {
+              "const": "owner-only"
+            },
+            "metadata": {
+              "const": "bounded"
+            },
+            "retention": {
+              "const": "until-target-reset-or-destroy"
+            },
+            "cleanupOperations": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "target.reset",
+                  "target.destroy"
+                ]
+              }
+            },
+            "backup": {
+              "const": "excluded"
+            }
+          }
+        },
+        "authority": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "fixtureScope",
+            "externalSideEffects",
+            "untrustedInputs",
+            "mayExpand"
+          ],
+          "properties": {
+            "fixtureScope": {
+              "const": "synthetic-local"
+            },
+            "externalSideEffects": {
+              "const": "denied"
+            },
+            "untrustedInputs": {
+              "type": "array",
+              "minItems": 5,
+              "maxItems": 5,
+              "uniqueItems": true,
+              "items": {
+                "enum": [
+                  "page-content",
+                  "screen-content",
+                  "downloads",
+                  "task-input",
+                  "runtime-output"
+                ]
+              }
+            },
+            "mayExpand": {
+              "const": false
+            }
+          }
+        },
+        "verifier": {
+          "$ref": "#/$defs/componentIdentity"
+        }
+      }
+    },
+    "evidenceReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "digest",
+        "classification"
+      ],
+      "properties": {
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "classification": {
+          "const": "private"
+        },
+        "mediaType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9.+-]*/[A-Za-z0-9][A-Za-z0-9.+-]*$"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      }
+    },
+    "capabilityReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capability",
+        "status",
+        "evidenceDigests"
+      ],
+      "properties": {
+        "capability": {
+          "$ref": "#/$defs/capabilityId"
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "failed"
+          ]
+        },
+        "evidenceDigests": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/digest"
+          }
+        }
+      }
+    },
+    "taskEvidenceIndex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "taskId",
+        "category",
+        "targetIdentityDigest",
+        "evidence"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "#/$defs/schemaVersion"
+        },
+        "kind": {
+          "const": "task-evidence-index"
+        },
+        "taskId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "category": {
+          "enum": [
+            "events",
+            "logs",
+            "plans"
+          ]
+        },
+        "targetIdentityDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 96,
+          "items": {
+            "$ref": "#/$defs/evidenceReference"
+          }
+        }
+      }
+    },
+    "taskResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "taskId",
+        "status",
+        "targetIdentityDigest",
+        "components",
+        "inference",
+        "capabilities",
+        "agentResult",
+        "verification",
+        "receipts",
+        "evidence"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "#/$defs/schemaVersion"
+        },
+        "kind": {
+          "const": "task-result"
+        },
+        "taskId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "targetIdentityDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "components": {
+          "$ref": "#/$defs/componentSetWithTarget"
+        },
+        "inference": {
+          "$ref": "#/$defs/inferenceIdentity"
+        },
+        "capabilities": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/capabilityIdentity"
+          }
+        },
+        "agentResult": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "resultDigest"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "succeeded",
+                "failed",
+                "cancelled"
+              ]
+            },
+            "resultDigest": {
+              "$ref": "#/$defs/digest"
+            }
+          }
+        },
+        "verification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "checkIds",
+            "evidenceDigests"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "passed",
+                "failed",
+                "not-run"
+              ]
+            },
+            "checkIds": {
+              "type": "array",
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/safeId"
+              }
+            },
+            "evidenceDigests": {
+              "type": "array",
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/digest"
+              }
+            }
+          }
+        },
+        "receipts": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/capabilityReceipt"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 96,
+          "items": {
+            "$ref": "#/$defs/evidenceReference"
+          }
+        }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "operation",
+        "family",
+        "retryable"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "$ref": "#/$defs/schemaVersion"
+        },
+        "kind": {
+          "const": "failure"
+        },
+        "operation": {
+          "enum": [
+            "target.attach",
+            "target.status",
+            "target.health",
+            "target.detach",
+            "target.reset",
+            "target.destroy",
+            "task.start",
+            "task.status",
+            "task.result",
+            "task.events",
+            "task.logs",
+            "task.plans",
+            "task.pause",
+            "task.cancel",
+            "task.guide",
+            "task.respond",
+            "security.status",
+            "security.verify"
+          ]
+        },
+        "family": {
+          "enum": [
+            "lifecycle_unavailable",
+            "runtime_unavailable",
+            "runtime_incompatible",
+            "inference_unavailable",
+            "policy_invalid",
+            "target_unreachable",
+            "target_replaced",
+            "target_incompatible",
+            "capability_unhealthy",
+            "target_conflict",
+            "task_conflict",
+            "task_timeout",
+            "task_cancelled",
+            "validation_failed"
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "component": {
+          "enum": [
+            "browser",
+            "computer",
+            "terminal",
+            "runtime",
+            "inference",
+            "policy",
+            "target"
+          ]
+        }
+      }
+    }
+  }
+}

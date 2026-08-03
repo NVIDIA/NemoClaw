@@ -165,6 +165,8 @@ describe("runtime provider central source boundary", () => {
       "agents/hermes/Dockerfile.base",
       "agents/langchain-deepagents-code/Dockerfile",
       "agents/langchain-deepagents-code/Dockerfile.base",
+      "agents/nemocua/Dockerfile",
+      "agents/nemocua/Dockerfile.base",
     ]);
   });
 

@@ -27,7 +27,7 @@ describe("public compiled CLI contracts", () => {
   });
 
   it("keeps compiled CLI commands aligned with their documentation headings (#7616)", {
-    timeout: 150_000,
+    timeout: 210_000,
   }, () => {
     // `npm run test:package` builds the CLI before this project, so the shim
     // exercises the same compiled entrypoint shipped by the package.
@@ -55,7 +55,7 @@ exec ${JSON.stringify(process.execPath)} ${JSON.stringify(CLI_ENTRYPOINT)} "$@"
           PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
         },
         killSignal: "SIGKILL",
-        timeout: 120_000,
+        timeout: 180_000,
       });
 
       expect(result.error).toBeUndefined();

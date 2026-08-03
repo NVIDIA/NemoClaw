@@ -10,16 +10,18 @@ import { AGENT_ALIASES } from "../src/lib/agent/aliases";
 import { resolveAgentNameAlias } from "../src/lib/agent/defs";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
-const AVAILABLE_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"];
+const AVAILABLE_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code", "nemocua"];
 const CANONICAL_CASES = [
   ["openclaw", "openclaw"],
   ["hermes", "hermes"],
   ["langchain-deepagents-code", "langchain-deepagents-code"],
+  ["nemocua", "nemocua"],
 ] as const;
 const NORMALIZATION_CASES = [
   ["NEMO_DEEPAGENTS", "langchain-deepagents-code"],
   ["Deep Agents", "langchain-deepagents-code"],
   ["LANGCHAIN", "langchain-deepagents-code"],
+  ["Nemo CUA", "nemocua"],
 ] as const;
 const ALIAS_CASES = [
   ...CANONICAL_CASES,

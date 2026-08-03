@@ -4476,7 +4476,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       webSearchSupported,
     };
     let liveFinalFlowContext = finalFlowContext;
-
     const finalFlowPhases = createFinalOnboardFlowPhases<
       InitialOnboardFlowContext,
       import("./dashboard/contract").DashboardDeliveryChain,
@@ -4499,6 +4498,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           recordStepComplete,
           recordStepFailed,
           skippedStepMessage,
+          updateSandbox: registry.updateSandbox,
         }),
         ensureAgentDashboardForward: (name, selectedAgent) =>
           selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : 0,

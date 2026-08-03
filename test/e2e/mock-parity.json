@@ -64,6 +64,12 @@
       ]
     },
     {
+      "live": "test/e2e/live/cua-gpu-qualification.test.ts",
+      "fast": [
+        "test/e2e/support/cua-qualification-receipt.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/gateway-guard-recovery.test.ts",
       "fast": [
         "src/lib/actions/sandbox/supervisor-relaunch.test.ts",

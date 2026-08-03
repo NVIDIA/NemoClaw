@@ -151,6 +151,14 @@ export function registerSandbox(entry: SandboxEntry): void {
       // cannot inherit a stale finalized marker. See #4621.
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
+      cuaRuntimeReadiness: entry.cuaRuntimeReadiness
+        ? structuredClone(entry.cuaRuntimeReadiness)
+        : undefined,
+      cuaTarget: entry.cuaTarget ? structuredClone(entry.cuaTarget) : undefined,
+      cuaSecurityAttestation: entry.cuaSecurityAttestation
+        ? structuredClone(entry.cuaSecurityAttestation)
+        : undefined,
+      cuaTaskResults: entry.cuaTaskResults ? structuredClone(entry.cuaTaskResults) : undefined,
       openclawImagePluginInstalls: Array.isArray(entry.openclawImagePluginInstalls)
         ? entry.openclawImagePluginInstalls.map((install) => ({
             ...install,

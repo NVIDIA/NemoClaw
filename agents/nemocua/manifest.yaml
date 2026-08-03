@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: nemocua
+display_name: "NemoCUA"
+description: "Computer-use agent for browser, desktop, and terminal tasks"
+language: python
+license: Apache-2.0
+
+binary_path: /usr/local/bin/nemocua-runtime
+version_command: "nemocua-runtime version"
+expected_version: "0.0.20-dev-v3"
+version_scheme: semver
+runtime:
+  kind: terminal
+  interactive_command: "nemocua-runtime interactive"
+  headless_command: "nemocua-runtime headless"
+  smoke_commands:
+    - "nemocua-runtime smoke"
+
+config:
+  dir: /sandbox/.nemocua
+  config_file: runtime.json
+  format: json
+
+# Task content and evidence remain private target/runtime material. NemoClaw
+# persists only the bounded, content-free CUA lifecycle records in its host
+# registry, so no NemoCUA runtime directory is part of generic backup/restore.
+state_dirs: []
+state_files: []
+user_managed_files: []
+
+device_pairing: false
+
+inference:
+  provider_type: openai_compatible
+  default_model: nvidia/nemotron-3-super-120b-a12b
+  proxy_support: implicit
+
+mcp:
+  support: disabled
+  reason: "The first CUA runtime slice exposes only the versioned CUA lifecycle contract."
