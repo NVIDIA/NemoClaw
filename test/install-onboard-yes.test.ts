@@ -137,7 +137,7 @@ function runOnboardWithSession(
 }
 
 type FailedPromptMode = "non-interactive" | "unreadable-tty" | "read-failure";
-type FailedSessionAgent = "" | "hermes" | "langchain-deepagents-code";
+type FailedSessionAgent = "" | "hermes" | "langchain-deepagents-code" | "nemocua";
 
 function runFailedSessionRecovery(mode: FailedPromptMode, agent: FailedSessionAgent = "") {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-failed-recovery-"));
@@ -485,6 +485,12 @@ describe("install.sh run_onboard — failed-session recovery", () => {
       cliName: "nemo-deepagents",
       freshCommand:
         "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code bash -s -- --fresh",
+    },
+    {
+      agent: "nemocua",
+      cliName: "nemoclaw",
+      freshCommand:
+        "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=nemocua bash -s -- --fresh",
     },
   ] as const)("preserves $agent in the fresh and resume commands", (testCase) => {
     const { argvLog, output, status } = runFailedSessionRecovery("non-interactive", testCase.agent);

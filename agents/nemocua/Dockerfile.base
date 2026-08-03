@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# The private source coordinate is deliberately not recorded here. The image
+# release lane imports the verified linux/amd64 OCI archive, tags that exact
+# object as NEMOCUA_RUNTIME_IMAGE, and passes the immutable local reference.
+
+ARG NEMOCUA_RUNTIME_IMAGE
+# hadolint ignore=DL3006
+FROM ${NEMOCUA_RUNTIME_IMAGE}
+
+USER root
+
+COPY agents/nemocua/runtime-artifacts.json /usr/local/share/nemoclaw/nemocua-runtime-artifacts.json
+
+RUN command -v python3 \
+    && test -f /app/run.py \
+    && test -f /app/run_with_harness.py \
+    && test -s /usr/local/share/nemoclaw/nemocua-runtime-artifacts.json \
+    && chown root:root /usr/local/share/nemoclaw/nemocua-runtime-artifacts.json \
+    && chmod 0444 /usr/local/share/nemoclaw/nemocua-runtime-artifacts.json
+
+USER sandbox

@@ -23,6 +23,47 @@ before those targets run; local runners must provide it themselves.
   call their target E2E tests directly. The Ollama auth proxy target is
   selected through `.github/workflows/e2e.yaml`.
 
+## CUA GPU qualification
+
+NemoClaw owns the fail-closed consumer gate for GPU-backed CUA qualification.
+The image and Launchable producer owns environment provisioning and writes
+`/etc/nemoclaw/cua-qualification-environment.json`. That bounded public
+identity contains only the Launchable version and digest, exact NemoClaw
+candidate commit, GPU count and model, driver, CUDA, container-toolkit, and
+digest-pinned probe-image identities. It must not contain Brev authority,
+workspace or host identity, service endpoints, or credentials.
+
+An operator-owned scenario runner uses NemoClaw's public CUA lifecycle and
+independent fixture oracles, then writes
+`/var/lib/nemoclaw/cua-qualification-receipt.json`. The receipt parser in
+`tools/e2e/cua-qualification-receipt.mts` requires all four browser, terminal,
+computer, and integrated scenario claims; exact component and inference
+identities; a repeated run after recreation; the security-negative suite; and
+cleanup. The runner's independent oracles provide the evidence behind those
+claims. Screenshots, documents, task content, and detailed oracle output
+remain private. A producer that cannot provide every required identity and
+result must fail closed instead of writing a partial file.
+
+After the operator-owned qualification runner writes the receipt, run the
+public gate on the GPU instance:
+
+```bash
+NEMOCLAW_RUN_LIVE_E2E=1 \
+NEMOCLAW_RUN_CUA_GPU_QUALIFICATION=1 \
+npx vitest run --project e2e-live test/e2e/live/cua-gpu-qualification.test.ts
+```
+
+The gate validates both public files and compares the receipt with the
+environment identity, checked-out candidate commit, and live GPU count. It
+does not build the image, provision the Launchable, run the scenario, or
+independently prove the detailed evidence behind the receipt. Those
+responsibilities remain with the environment and scenario producers. An
+adapter's or agent's own success claim is not qualification evidence.
+
+This gate does not demonstrate a passing CUA qualification and must not close
+Issue #7753 until a public pinned runtime and complete live evidence are
+available.
+
 ## CI execution shape
 
 The sandbox image workflow builds the Hermes production image in the dedicated

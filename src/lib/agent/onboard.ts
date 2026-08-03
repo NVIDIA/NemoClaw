@@ -9,6 +9,7 @@ import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { getAgentBranding } from "../cli/branding";
 import type { JsonObject as LooseObject } from "../core/json-types";
 import { sleepSeconds } from "../core/wait";
+import { requireQualifiedCuaRuntimeReadiness } from "../cua/runtime-readiness";
 import { getProviderSelectionConfig } from "../inference/config";
 import { runSandboxConfigSync } from "../onboard/config-sync";
 import { isValidForwardPort } from "../onboard/dashboard-runtime";
@@ -42,6 +43,10 @@ export interface OnboardContext {
   recordStepComplete: (stepName: string, updates: LooseObject) => Promise<unknown>;
   recordStepFailed: (stepName: string, message: string | null) => Promise<unknown>;
   skippedStepMessage: (stepName: string, sandboxName: string) => void;
+  updateSandbox?: (
+    sandboxName: string,
+    updates: { cuaRuntimeReadiness: import("../cua/contract").CuaRuntimeReadiness },
+  ) => boolean;
   now?: () => number;
   sleepSeconds?: (seconds: number) => void;
 }
@@ -239,6 +244,26 @@ async function failAgentSetup(
   process.exit(1);
 }
 
+async function recordCuaRuntimeReadiness(
+  sandboxName: string,
+  agent: AgentDefinition,
+  provider: string,
+  model: string,
+  recordStepFailed: OnboardContext["recordStepFailed"],
+  updateSandbox: OnboardContext["updateSandbox"],
+): Promise<void> {
+  if (agent.name !== "nemocua") return;
+  try {
+    const cuaRuntimeReadiness = requireQualifiedCuaRuntimeReadiness(agent, provider, model);
+    if (!updateSandbox?.(sandboxName, { cuaRuntimeReadiness })) {
+      throw new Error(`NemoCUA runtime readiness could not be recorded for '${sandboxName}'`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await failAgentSetup(sandboxName, agent, message, recordStepFailed);
+  }
+}
+
 /**
  * Interpret an agent health-probe response as healthy or unhealthy.
  */
@@ -277,6 +302,7 @@ export async function handleAgentSetup(
     recordStepComplete,
     recordStepFailed,
     skippedStepMessage,
+    updateSandbox,
   } = ctx;
 
   const syncNemoClawConfig = (): void => {
@@ -309,6 +335,14 @@ export async function handleAgentSetup(
             beforeFailure: () => startRecordedStep("agent_setup", { sandboxName, provider, model }),
             onFailure: (message) => failAgentSetup(sandboxName, agent, message, recordStepFailed),
           });
+          await recordCuaRuntimeReadiness(
+            sandboxName,
+            agent,
+            provider,
+            model,
+            recordStepFailed,
+            updateSandbox,
+          );
           skippedStepMessage("agent_setup", sandboxName);
           await recordStepComplete("agent_setup", { sandboxName, provider, model });
           return;
@@ -372,6 +406,14 @@ export async function handleAgentSetup(
     await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, {
       onFailure: (message) => failAgentSetup(sandboxName, agent, message, recordStepFailed),
     });
+    await recordCuaRuntimeReadiness(
+      sandboxName,
+      agent,
+      provider,
+      model,
+      recordStepFailed,
+      updateSandbox,
+    );
     console.log(`  \u2713 ${agent.displayName} terminal runtime is ready`);
     await recordStepComplete("agent_setup", { sandboxName, provider, model });
     return;

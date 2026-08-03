@@ -4499,6 +4499,12 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           recordStepComplete,
           recordStepFailed,
           skippedStepMessage,
+          updateSandbox: (
+            name: string,
+            updates: {
+              cuaRuntimeReadiness: import("./cua/contract").CuaRuntimeReadiness;
+            },
+          ) => registry.updateSandbox(name, updates),
         }),
         ensureAgentDashboardForward: (name, selectedAgent) =>
           selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : 0,
