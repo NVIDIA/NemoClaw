@@ -1721,7 +1721,7 @@ function lockDeepAgentsTopConfig(
       );
     } else if (status === "sandbox-parent") {
       console.error(
-        "  CRITICAL: Deep Agents lock failed after containment began. NemoClaw confirmed fail-closed containment at the sandbox parent because the config root could not be trusted. In-sandbox recovery is unavailable. Restore this sandbox from a trusted snapshot or recreate it before retrying. fail-closed containment=sandbox-parent",
+        "  CRITICAL: Deep Agents lock failed after containment began. NemoClaw confirmed fail-closed containment at the sandbox parent because NemoClaw could not confirm the complete config-root posture. In-sandbox recovery is unavailable. Restore this sandbox from a trusted snapshot or recreate it before retrying. fail-closed containment=sandbox-parent",
       );
     } else if (status === "incomplete") {
       console.error(
@@ -2406,7 +2406,7 @@ function lockAgentConfigUnderMutationLock(
       }
       if (rollbackIssues.length > 0) {
         console.error(
-          `  CRITICAL: Deep Agents lock rollback could not restore the trusted posture. Restore from a trusted backup and recreate the sandbox. ${rollbackIssues.join(", ")}`,
+          `  CRITICAL: Deep Agents lock rollback could not restore the trusted posture. Restore this sandbox from a trusted snapshot or recreate it before retrying. ${rollbackIssues.join(", ")}`,
         );
       }
     }

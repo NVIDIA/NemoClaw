@@ -619,11 +619,11 @@ function loadCopiedConfigDocument(configPath: string): OpenClawConfigDocument {
   );
   const scanned = scan?.files[0];
   if (scan === null || scan.files.length !== 1 || scanned?.path !== path.basename(configPath)) {
-    throw new Error(`Failed to read copied OpenClaw config safely: ${configPath}`);
+    throw new Error(`Failed descriptor-bound scan of copied OpenClaw config: ${configPath}`);
   }
   const raw = decodeDescriptorSnapshotContent(scanned.content);
   if (raw === null) {
-    throw new Error(`Failed to decode copied OpenClaw config safely: ${configPath}`);
+    throw new Error(`Failed canonical decoding of copied OpenClaw config: ${configPath}`);
   }
   return parseConfigDocumentText(raw, configPath);
 }
@@ -736,7 +736,7 @@ function prepareSandboxState(snapshotDir: string, manifest: SnapshotManifest): s
       JSON.stringify(sanitizedConfig, null, 2),
     )
   ) {
-    throw new Error(`Failed to install prepared OpenClaw config safely: ${configPath}`);
+    throw new Error(`Failed descriptor-bound installation of prepared OpenClaw config: ${configPath}`);
   }
 
   // SECURITY: Strip all credentials from the bundle before it enters the sandbox.

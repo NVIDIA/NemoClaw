@@ -1267,12 +1267,14 @@ It means NemoClaw could not restore or confirm the original trusted posture.
 
 - **Config-root posture** (`fail-closed containment=config-root`) means NemoClaw installed fresh `0444 root:root` config and hash inodes.
   NemoClaw also confirmed `0500 root:root` on `/sandbox/.deepagents` and `1775 root:sandbox` on `/sandbox`.
-- **Sandbox-parent posture** (`fail-closed containment=sandbox-parent`) means NemoClaw confirmed `0700 root:root` on `/sandbox` because it could not trust the config root or install and verify a fresh canonical config-and-hash pair.
+- **Sandbox-parent posture** (`fail-closed containment=sandbox-parent`) means NemoClaw confirmed `0700 root:root` on `/sandbox`.
+  NemoClaw uses this posture when it cannot confirm the complete config-root posture.
 - `fail-closed containment=incomplete` means NemoClaw could not confirm either complete posture.
 
 Preserve the complete `CRITICAL` diagnostic.
-Do not run `chmod`, `chown`, `shields up`, or another repair from inside the sandbox.
-A confirmed containment posture deliberately removes the sandbox identity's access.
+Do not retry `shields up`.
+Do not run `chmod`, `chown`, or another repair inside the sandbox.
+A confirmed containment posture removes the sandbox identity's access to the Deep Agents configuration.
 An incomplete containment result or `rollback failed` does not establish a trustworthy boundary from which to accept the current bytes.
 An ordinary `rebuild` cannot turn the current state into a trustworthy snapshot.
 

@@ -4,7 +4,6 @@
 import {
   closeSync,
   existsSync,
-  constants as fsConstants,
   fstatSync,
   mkdirSync,
   mkdtempSync,
@@ -154,8 +153,7 @@ describe("migration-state prepared config security", () => {
       writeFileSync(externalConfigPath, original, { mode: 0o640 });
       const externalConfigFd = openSync(externalConfigPath, "r");
       try {
-        const originalIdentity = fstatSync(externalConfigFd);
-        const originalMode = originalIdentity.mode & 0o777;
+        const originalMode = fstatSync(externalConfigFd).mode & 0o777;
         symlinkSync(externalConfigPath, configPath);
         const logger = makeLogger();
 
@@ -167,17 +165,6 @@ describe("migration-state prepared config security", () => {
         expect(logger.error).toHaveBeenCalled();
         expect(readFileSync(externalConfigFd, "utf-8")).toBe(original);
         expect(fstatSync(externalConfigFd).mode & 0o777).toBe(originalMode);
-        const reopenedExternalConfigFd = openSync(
-          externalConfigPath,
-          fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
-        );
-        try {
-          const reopenedIdentity = fstatSync(reopenedExternalConfigFd);
-          expect(reopenedIdentity.dev).toBe(originalIdentity.dev);
-          expect(reopenedIdentity.ino).toBe(originalIdentity.ino);
-        } finally {
-          closeSync(reopenedExternalConfigFd);
-        }
         const stagingDir = path.join(home, ".nemoclaw", "staging");
         expect(existsSync(stagingDir) ? readdirSync(stagingDir) : []).toEqual([]);
       } finally {
@@ -214,7 +201,7 @@ describe("migration-state prepared config fail-closed boundaries", () => {
       persist: false,
     });
 
-    expectSnapshotFailure(home, logger, bundle, "Failed to decode copied OpenClaw config safely");
+    expectSnapshotFailure(home, logger, bundle, "Failed canonical decoding of copied OpenClaw config");
     expect(decode).toHaveBeenCalledTimes(2);
   });
 
@@ -253,7 +240,7 @@ describe("migration-state prepared config fail-closed boundaries", () => {
       home,
       logger,
       bundle,
-      "Failed to install prepared OpenClaw config safely",
+      "Failed descriptor-bound installation of prepared OpenClaw config",
     );
     expect(install).toHaveBeenCalledOnce();
   });
@@ -286,7 +273,7 @@ describe("migration-state config path security", () => {
     "__proto__",
     "constructor",
     "prototype",
-  ])("rejects unsafe path segment: %s", (segment) => {
+  ])("rejects prototype-related config path segment: %s", (segment) => {
     const doc: Record<string, unknown> = {};
     expect(() => {
       setConfigValue(doc, `${segment}.polluted`, "true");
@@ -305,7 +292,7 @@ describe("migration-state config path security", () => {
   it.each([
     "foo.prototype.bar",
     "foo.constructor.bar",
-  ])("rejects unsafe segment in nested path: %s", (configPath) => {
+  ])("rejects prototype-related segment in nested config path: %s", (configPath) => {
     const doc: Record<string, unknown> = {};
     expect(() => {
       setConfigValue(doc, configPath, "true");

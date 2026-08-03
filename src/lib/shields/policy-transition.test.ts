@@ -112,6 +112,7 @@ describe("shields config lock without a shipped config hash", () => {
   let immutablePaths: Set<string>;
   let lockCalls: string[][];
   let unlockCalls: string[][];
+  let stateDirGuardActions: string[];
   let applyStateDirLockModeSpy: MockInstance;
   let restoreStateDirLockPostureSpy: MockInstance;
   let resolveAgentConfigSpy: MockInstance;
@@ -182,10 +183,9 @@ describe("shields config lock without a shipped config hash", () => {
   }
 
   function rejectConfigLock(failure: Error): SandboxCommandHandler {
-    return (_args, command) => {
-      const selectedFailure =
-        pythonCommandKey(command) === LOCK_COMMAND_KEY ? failure : unsupportedCommand(command);
-      throw selectedFailure;
+    return (args, command) => {
+      if (pythonCommandKey(command) === LOCK_COMMAND_KEY) throw failure;
+      return runPythonFixtureCommand(args, command);
     };
   }
 
@@ -230,6 +230,7 @@ describe("shields config lock without a shipped config hash", () => {
     vi.stubEnv("HOME", homeDir);
     lockCalls = [];
     unlockCalls = [];
+    stateDirGuardActions = [];
     immutablePaths = new Set<string>();
     entries = new Map<string, SandboxEntry>([
       ["/sandbox", { mode: "1775", owner: "root:sandbox" }],
@@ -316,11 +317,41 @@ describe("shields config lock without a shipped config hash", () => {
     vi.spyOn(dockerExec, "dockerExecFileSync").mockImplementation((cmd: unknown) =>
       runSandboxCommand(cmd as string[]),
     );
+    vi.spyOn(dockerExec, "dockerSpawnSync").mockImplementation((rawCommand: unknown) => {
+      const command = Array.isArray(rawCommand) ? rawCommand.map(String) : [];
+      const action = (["preflight", "lock", "unlock"] as const).find((candidate) =>
+        command.includes(candidate),
+      );
+      if (command[0] !== "test" && action === undefined) return unsupportedCommand(command);
+
+      if (action !== undefined) stateDirGuardActions.push(action);
+      if (action === "lock") {
+        entries.set(CONFIG_DIR, { mode: "755", owner: "root:root" });
+      }
+
+      return {
+        status: 0,
+        signal: null,
+        stdout:
+          action === undefined
+            ? ""
+            : `${JSON.stringify({
+                type: "result",
+                action,
+                status: "ok",
+                issueCount: 0,
+              })}\n`,
+        stderr: "",
+        pid: 0,
+        output: [],
+      } as never;
+    });
     vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]);
     applyStateDirLockModeSpy = vi.spyOn(stateDirLock, "applyStateDirLockMode").mockReturnValue([]);
-    restoreStateDirLockPostureSpy = vi
-      .spyOn(stateDirLock, "restoreStateDirLockPosture")
-      .mockReturnValue([]);
+    restoreStateDirLockPostureSpy = vi.spyOn(
+      stateDirLock,
+      "restoreStateDirLockPosture",
+    );
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     shields = requireSource(SHIELDS_MODULE);
@@ -351,7 +382,7 @@ describe("shields config lock without a shipped config hash", () => {
     ],
     [
       "sandbox-parent",
-      "  CRITICAL: Deep Agents lock failed after containment began. NemoClaw confirmed fail-closed containment at the sandbox parent because the config root could not be trusted. In-sandbox recovery is unavailable. Restore this sandbox from a trusted snapshot or recreate it before retrying. fail-closed containment=sandbox-parent",
+      "  CRITICAL: Deep Agents lock failed after containment began. NemoClaw confirmed fail-closed containment at the sandbox parent because NemoClaw could not confirm the complete config-root posture. In-sandbox recovery is unavailable. Restore this sandbox from a trusted snapshot or recreate it before retrying. fail-closed containment=sandbox-parent",
     ],
     [
       "incomplete",
@@ -448,7 +479,10 @@ describe("shields config lock without a shipped config hash", () => {
     entries.set(CONFIG_DIR, { mode: "755", owner: "root:root" });
     entries.set(CONFIG_PATH, { mode: "444", owner: "root:root" });
     entries.set(HASH_PATH, { mode: "444", owner: "root:root" });
-    applyStateDirLockModeSpy.mockReturnValueOnce(["injected recursive lock failure"]);
+    applyStateDirLockModeSpy.mockImplementationOnce(() => {
+      entries.set(CONFIG_DIR, { mode: "500", owner: "root:root" });
+      return ["injected recursive lock failure"];
+    });
 
     expect(() => shields.lockAgentConfig("dcode-safety", target(), true)).toThrow(
       /injected recursive lock failure/,
@@ -457,6 +491,8 @@ describe("shields config lock without a shipped config hash", () => {
     expect(lockCalls[0].slice(4)).toEqual([CONFIG_DIR, CONFIG_PATH]);
     expect(unlockCalls).toHaveLength(0);
     expect(restoreStateDirLockPostureSpy).toHaveBeenCalledWith(expect.anything(), CONFIG_DIR, true);
+    expect(stateDirGuardActions).toEqual(["preflight", "lock"]);
+    expect(entries.get(CONFIG_DIR)).toEqual({ mode: "755", owner: "root:root" });
     expect(entries.get(CONFIG_PATH)).toEqual({ mode: "444", owner: "root:root" });
     expect(entries.get(HASH_PATH)).toEqual({ mode: "444", owner: "root:root" });
     expect(errorSpy).not.toHaveBeenCalledWith(expect.stringContaining("CRITICAL"));

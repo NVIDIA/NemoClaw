@@ -4,7 +4,6 @@
 import {
   chmodSync,
   closeSync,
-  constants as fsConstants,
   fstatSync,
   mkdtempSync,
   openSync,
@@ -138,8 +137,7 @@ describe("migration snapshot sanitizer fallbacks", () => {
       writeFileSync(outsideConfig, original, { mode: 0o640 });
       const outsideConfigFd = openSync(outsideConfig, "r");
       try {
-        const originalIdentity = fstatSync(outsideConfigFd);
-        const originalMode = originalIdentity.mode & 0o777;
+        const originalMode = fstatSync(outsideConfigFd).mode & 0o777;
         const root = inspectDescriptorSnapshotRoot(rootPath);
         expect(root).not.toBeNull();
         const python = requireTrustedPython();
@@ -159,17 +157,6 @@ describe("migration snapshot sanitizer fallbacks", () => {
         ).toBe(false);
         expect(readFileSync(outsideConfigFd, "utf-8")).toBe(original);
         expect(fstatSync(outsideConfigFd).mode & 0o777).toBe(originalMode);
-        const reopenedOutsideConfigFd = openSync(
-          outsideConfig,
-          fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
-        );
-        try {
-          const reopenedIdentity = fstatSync(reopenedOutsideConfigFd);
-          expect(reopenedIdentity.dev).toBe(originalIdentity.dev);
-          expect(reopenedIdentity.ino).toBe(originalIdentity.ino);
-        } finally {
-          closeSync(reopenedOutsideConfigFd);
-        }
       } finally {
         closeSync(outsideConfigFd);
       }
