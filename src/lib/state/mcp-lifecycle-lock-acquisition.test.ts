@@ -74,15 +74,16 @@ function writeStaleMainOwner(shieldsTakeoverToken?: string): string {
 
 function publishTimerWhenStaleOwnerIsObserved(processToken: string): ReturnType<typeof vi.fn> {
   const realProcessKill = process.kill.bind(process);
-  const processKill = vi.fn((pid: number, signal?: string | number) => {
-    if (pid === 2_147_483_647 && signal === 0) {
+  const processKill = vi
+    .fn((pid: number, signal?: string | number) => realProcessKill(pid, signal as never))
+    .mockImplementationOnce((pid: number, signal?: string | number) => {
+      expect(pid).toBe(2_147_483_647);
+      expect(signal).toBe(0);
       writeTimerMarker(processToken);
       const error = new Error("stale owner exited") as NodeJS.ErrnoException;
       error.code = "ESRCH";
       throw error;
-    }
-    return realProcessKill(pid, signal as never);
-  });
+    });
   vi.spyOn(process, "kill").mockImplementation(processKill);
   return processKill;
 }
