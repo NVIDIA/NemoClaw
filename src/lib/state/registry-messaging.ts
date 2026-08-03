@@ -1,11 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { hydrateDerivedSandboxMessagingPlanFields } from "../messaging/hydration";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
-import {
-  compactSandboxMessagingPlanForPersistence,
-  hydrateDerivedSandboxMessagingPlanFields,
-} from "../messaging/persistence";
+import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
 import {
   getConfiguredChannelIdsFromPlan,
   getDisabledChannelIdsFromPlan,

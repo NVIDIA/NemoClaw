@@ -7,7 +7,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 /**
- * Patch the Langfuse validator bundled with pinned Hermes v2026.7.1 / 0.18.0.
+ * Patch the Langfuse validator bundled with pinned Hermes v2026.7.20 / 0.19.0.
  *
  * Hermes rejects OpenShell resolver placeholders before the Langfuse SDK can
  * turn them into outbound authentication headers. NemoClaw keeps the real

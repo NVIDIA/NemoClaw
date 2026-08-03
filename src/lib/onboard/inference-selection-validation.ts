@@ -82,6 +82,11 @@ export interface InferenceSelectionValidationHelpers {
     retryMessage?: string,
     helpUrl?: string | null,
     options?: {
+      /** In-memory credential for managed local endpoints; never read from ambient env. */
+      apiKey?: string | null;
+      /** Approved no-DNS endpoint pin; [] also disables ambient proxies for managed IP URLs. */
+      pinnedAddresses?: readonly string[];
+      trustedPrivateCapability?: TrustedPrivateEndpointCapability;
       authMode?: "bearer" | "query-param";
       extraHeaders?: readonly string[];
       requireResponsesToolCalling?: boolean;
@@ -106,6 +111,7 @@ export interface InferenceSelectionValidationHelpers {
     model: string,
     credentialEnv: string,
     helpUrl?: string | null,
+    capabilityCache?: OnboardInferenceCapabilityCache,
   ): Promise<EndpointValidationResult>;
   validateCustomAnthropicSelection(
     label: string,
@@ -245,6 +251,9 @@ export function createInferenceSelectionValidationHelpers(
     retryMessage = "Please choose a provider/model again.",
     helpUrl: string | null = null,
     options: {
+      apiKey?: string | null;
+      pinnedAddresses?: readonly string[];
+      trustedPrivateCapability?: TrustedPrivateEndpointCapability;
       authMode?: "bearer" | "query-param";
       extraHeaders?: readonly string[];
       requireResponsesToolCalling?: boolean;
@@ -255,13 +264,19 @@ export function createInferenceSelectionValidationHelpers(
       capabilityCache?: OnboardInferenceCapabilityCache;
     } = {},
   ): Promise<EndpointValidationResult> {
-    const apiKey = credentialEnv ? resolveCredential(credentialEnv) : "";
+    const { apiKey: explicitApiKey, ...probeOptions } = options;
+    const apiKey =
+      explicitApiKey !== undefined
+        ? explicitApiKey
+        : credentialEnv
+          ? resolveCredential(credentialEnv)
+          : "";
     const probe = await runOpenAiLikeProbe(endpointUrl, model, apiKey, {
-      ...options,
+      ...probeOptions,
       calibrateTimeouts: true,
     });
     if (!probe.ok) {
-      options.capabilityCache?.invalidate();
+      probeOptions.capabilityCache?.invalidate();
       printValidationFailure(label, probe);
       if (deps.isNonInteractive()) {
         exitNonInteractiveValidationFailure();
@@ -285,12 +300,14 @@ export function createInferenceSelectionValidationHelpers(
     }
     const api = probe.api ?? "openai-completions";
     if (api === "openai-completions" && probe.validated !== false) {
-      options.capabilityCache?.rememberCompletedOpenAiChat({
+      probeOptions.capabilityCache?.rememberCompletedOpenAiChat({
         endpointUrl,
         model,
-        authMode: options.authMode,
-        requireChatCompletionsToolCalling: options.requireChatCompletionsToolCalling,
-        extraHeaders: options.extraHeaders,
+        authMode: probeOptions.authMode,
+        requireChatCompletionsToolCalling: probeOptions.requireChatCompletionsToolCalling,
+        extraHeaders: probeOptions.extraHeaders,
+        pinnedAddresses: probeOptions.pinnedAddresses,
+        trustedPrivateCapability: probeOptions.trustedPrivateCapability,
       });
     }
     return { ok: true, api };
@@ -333,6 +350,7 @@ export function createInferenceSelectionValidationHelpers(
     model: string,
     credentialEnv: string,
     helpUrl: string | null = null,
+    capabilityCache?: OnboardInferenceCapabilityCache,
   ): Promise<EndpointValidationResult> {
     const preflight = await preflightCustomEndpointOrFail(
       label,
@@ -362,9 +380,18 @@ export function createInferenceSelectionValidationHelpers(
           `  ${probe.label} available — ${deps.agentProductName()} will use ${probe.api}.`,
         );
       }
+      const api = probe.api ?? "openai-completions";
+      if (api === "openai-completions" && probe.validated !== false) {
+        capabilityCache?.rememberCompletedOpenAiChat({
+          endpointUrl,
+          model,
+          pinnedAddresses,
+          trustedPrivateCapability,
+        });
+      }
       return {
         ok: true,
-        api: probe.api ?? "openai-completions",
+        api,
         pinnedAddresses,
         ...(trustedPrivateCapability ? { trustedPrivateCapability } : {}),
       };

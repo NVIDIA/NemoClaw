@@ -68,6 +68,11 @@ export interface ExpectPidStableOptions extends ShellProbeRunOptions {
   pollIntervalSeconds?: number;
 }
 
+export interface GatewayProcessIdentity {
+  pid: number;
+  startIdentity: string;
+}
+
 export interface HostGatewayRuntime {
   kind: "pid" | "container";
   id: string;
@@ -170,7 +175,7 @@ export class GatewayClient {
    * The PID is accepted only while the process exists and its `/proc` start
    * identity still matches the second field recorded by the supervisor.
    */
-  async resolveGatewayPid(instance: NemoClawInstance): Promise<number | null> {
+  async resolveGatewayIdentity(instance: NemoClawInstance): Promise<GatewayProcessIdentity | null> {
     const script =
       "set -e; " +
       'record="$(cat /tmp/nemoclaw-gateway.pid 2>/dev/null || true)"; ' +
@@ -200,7 +205,12 @@ export class GatewayClient {
       return null;
     }
     const pid = Number(identity[1]);
-    return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+    if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+    return { pid, startIdentity: identity[2] };
+  }
+
+  async resolveGatewayPid(instance: NemoClawInstance): Promise<number | null> {
+    return (await this.resolveGatewayIdentity(instance))?.pid ?? null;
   }
 
   /**
@@ -279,15 +289,15 @@ export class GatewayClient {
   }
 
   /**
-   * Verify the gateway PID is stable over `durationSeconds`. A crash loop
-   * shows up as the PID changing every few seconds because the supervisor
-   * keeps respawning. We sample at `pollIntervalSeconds` and fail on first
-   * change (or on the gateway disappearing entirely).
+   * Verify the gateway process identity is stable over `durationSeconds`. A
+   * crash loop changes either the PID or its `/proc` start identity when the
+   * supervisor respawns. We sample at `pollIntervalSeconds` and fail on the
+   * first identity change (or on the gateway disappearing entirely).
    */
   async expectPidStable(
     instance: NemoClawInstance,
     options: ExpectPidStableOptions,
-  ): Promise<number> {
+  ): Promise<GatewayProcessIdentity> {
     const pollIntervalSeconds = options.pollIntervalSeconds ?? 3;
     if (!Number.isFinite(options.durationSeconds) || options.durationSeconds <= 0) {
       throw new Error("expectPidStable: durationSeconds must be > 0");
@@ -296,8 +306,8 @@ export class GatewayClient {
       throw new Error("expectPidStable: pollIntervalSeconds must be > 0");
     }
 
-    const initialPid = await this.resolveGatewayPid(instance);
-    if (initialPid === null) {
+    const initialIdentity = await this.resolveGatewayIdentity(instance);
+    if (initialIdentity === null) {
       throw new Error(
         `expectPidStable: no gateway process in ${instance.sandboxName} at start of observation window`,
       );
@@ -306,19 +316,22 @@ export class GatewayClient {
     const samples = Math.max(1, Math.floor(options.durationSeconds / pollIntervalSeconds));
     for (let i = 0; i < samples; i += 1) {
       await sleepSeconds(pollIntervalSeconds);
-      const pid = await this.resolveGatewayPid(instance);
-      if (pid === null) {
+      const identity = await this.resolveGatewayIdentity(instance);
+      if (identity === null) {
         throw new Error(
           `expectPidStable: gateway disappeared in ${instance.sandboxName} after ${(i + 1) * pollIntervalSeconds}s`,
         );
       }
-      if (pid !== initialPid) {
+      if (
+        identity.pid !== initialIdentity.pid ||
+        identity.startIdentity !== initialIdentity.startIdentity
+      ) {
         throw new Error(
-          `expectPidStable: gateway PID changed ${initialPid}→${pid} in ${instance.sandboxName} after ${(i + 1) * pollIntervalSeconds}s (crash-loop suspected)`,
+          `expectPidStable: gateway identity changed ${initialIdentity.pid}:${initialIdentity.startIdentity}→${identity.pid}:${identity.startIdentity} in ${instance.sandboxName} after ${(i + 1) * pollIntervalSeconds}s (crash-loop suspected)`,
         );
       }
     }
-    return initialPid;
+    return initialIdentity;
   }
 
   // ─── Internal helpers ──────────────────────────────────────────────

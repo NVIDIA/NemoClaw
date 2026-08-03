@@ -194,8 +194,9 @@ export async function runInitialOnboardFlowSlice<Context extends OnboardFlowCont
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
   recordInvalidatedStateResult: InvalidatedOnboardStateResultRecorder;
 }): Promise<OnboardMachineRunnerResult<Context>> {
+  // The strict runner owns both exact entry states (`init` and `preflight`).
   // Recompute plan for live resume repair when durable machine snapshots
-  // are already downstream of this slice even though preflight/gateway host
+  // are already downstream of those entries even though preflight/gateway host
   // backstops must still re-run. Those ahead-state snapshots can come from
   // legacy/test step mutation that explicitly opts into `updateMachine === true`
   // or from repaired-resume replay of persisted sessions. Recomputed transition
@@ -204,12 +205,13 @@ export async function runInitialOnboardFlowSlice<Context extends OnboardFlowCont
   // This slice cannot
   // eliminate that source locally because the host backstop checks are still
   // modeled as imperative resume work rather than strict FSM recovery states.
-  // The tolerated downstream family is every nonterminal state after the initial
-  // slice: inference, sandbox, openclaw/agent_setup, policies, finalizing, and
-  // post_verify. Phase tests cover ahead-state resume and terminal-state
-  // rejection; remove this fallback once those repair/backstop checks are
-  // modeled as strict FSM recovery states and legacy machine step mutation is
-  // gone.
+  // The tolerated family is every nonterminal state after the exact
+  // `init`/`preflight` entries: gateway, provider_selection, inference, sandbox,
+  // openclaw/agent_setup, policies, finalizing, and post_verify. Non-resume
+  // compatibility is limited to gateway and provider_selection. Phase tests
+  // cover ahead-state resume and terminal-state rejection; remove this fallback
+  // once those repair/backstop checks are modeled as strict FSM recovery states
+  // and legacy machine step mutation is gone.
   return runLiveOnboardFlowSlice({
     context: options.context,
     runtime: options.runtime,
@@ -217,8 +219,6 @@ export async function runInitialOnboardFlowSlice<Context extends OnboardFlowCont
     runWhenState: ["init", "preflight"],
     compatibilityWhenState: options.resume
       ? [
-          "init",
-          "preflight",
           "gateway",
           "provider_selection",
           "inference",

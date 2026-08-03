@@ -584,6 +584,7 @@ describe("Station Express onboarding session state (#7048)", () => {
         hermesToolGateways: [],
         preferredInferenceApi: "openai-responses",
         compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
         nimContainer: null,
         vllmModelIdentity: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
       };

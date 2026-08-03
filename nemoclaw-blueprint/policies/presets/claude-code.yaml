@@ -3,7 +3,7 @@
 
 preset:
   name: claude-code
-  description: "Claude Code API, telemetry, and crash-report access"
+  description: "Claude Code API, browser login, telemetry, and crash-report access"
 
 network_policies:
   claude_code:
@@ -16,6 +16,13 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+      - host: platform.claude.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/v1/oauth/**" }
+          - allow: { method: POST, path: "/v1/oauth/**" }
       - host: statsig.anthropic.com
         port: 443
         protocol: rest

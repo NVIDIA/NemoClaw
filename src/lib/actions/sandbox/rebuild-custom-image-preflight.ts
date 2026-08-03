@@ -18,6 +18,11 @@ import {
   SANDBOX_BASE_TAG,
   type SandboxBaseImageResolutionMetadata,
 } from "../../sandbox-base-image";
+import {
+  applyReasoningEffortEnv,
+  REASONING_EFFORT_ENV,
+  type ReasoningEffort,
+} from "../../onboard/reasoning-mode";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import {
   createBuildContextVerifier,
@@ -32,6 +37,7 @@ type PreflightInput = {
   provider: string | null;
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: "true" | "false" | null;
+  compatibleEndpointReasoningEffort: ReasoningEffort | null;
   webSearchConfig: WebSearchConfig | null;
   toolDisclosure: ToolDisclosure;
   hermesToolGateways: string[];
@@ -84,11 +90,14 @@ export async function preflightRebuildImage(
   let imageBuilt = false;
   let retainBuildContext = false;
   const previousReasoning = process.env.NEMOCLAW_REASONING;
+  const previousReasoningEffort = process.env[REASONING_EFFORT_ENV];
   try {
     if (input.provider === "compatible-endpoint") {
       process.env.NEMOCLAW_REASONING = input.compatibleEndpointReasoning ?? "false";
+      applyReasoningEffortEnv(input.compatibleEndpointReasoningEffort);
     } else {
       delete process.env.NEMOCLAW_REASONING;
+      delete process.env[REASONING_EFFORT_ENV];
     }
     const staged = stage({
       root: ROOT,
@@ -184,5 +193,7 @@ export async function preflightRebuildImage(
     }
     if (previousReasoning === undefined) delete process.env.NEMOCLAW_REASONING;
     else process.env.NEMOCLAW_REASONING = previousReasoning;
+    if (previousReasoningEffort === undefined) delete process.env[REASONING_EFFORT_ENV];
+    else process.env[REASONING_EFFORT_ENV] = previousReasoningEffort;
   }
 }

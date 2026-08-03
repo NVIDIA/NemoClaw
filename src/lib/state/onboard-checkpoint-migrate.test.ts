@@ -90,6 +90,7 @@ describe("resolveCheckpointForResume", () => {
     gatewayAuthority: decisionUnset(),
     effectGroups: {},
     bindings: { credentialEnvs: [], registeredProviders: [] },
+    sandboxRecreate: null,
   };
 
   it("returns loaded when the embedded checkpoint is valid", () => {

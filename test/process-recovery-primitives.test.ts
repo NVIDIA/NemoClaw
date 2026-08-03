@@ -13,6 +13,7 @@ const requireSource = createRequire(import.meta.url);
 const {
   classifyForwardHealthWithReachability,
   classifySandboxForwardHealth,
+  executeGatewaySupervisorAction,
   executeSandboxCommand,
   executeSandboxExecCommand,
   resolveSandboxDashboardPort,
@@ -22,6 +23,36 @@ const {
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe("executeGatewaySupervisorAction", () => {
+  it("sanitizes a temporarily unavailable direct container into the retry marker", () => {
+    const privilegedExec = requireSource("../src/lib/sandbox/privileged-exec.ts");
+    vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(() => {
+      throw new Error("temporary direct-container discovery detail");
+    });
+    vi.spyOn(privilegedExec, "isDirectSandboxFallbackUnavailableError").mockReturnValue(true);
+
+    expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: "PRIVILEGED_CONTROL_UNAVAILABLE",
+    });
+  });
+
+  it("keeps other privileged-control refusals terminal and classified", () => {
+    const privilegedExec = requireSource("../src/lib/sandbox/privileged-exec.ts");
+    vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(() => {
+      throw new Error("container identity changed");
+    });
+    vi.spyOn(privilegedExec, "isDirectSandboxFallbackUnavailableError").mockReturnValue(false);
+
+    expect(executeGatewaySupervisorAction("new-clone", "probe", 100)).toEqual({
+      status: 1,
+      stdout: "",
+      stderr: "PRIVILEGED_CONTROL_UNAVAILABLE: container identity changed",
+    });
+  });
 });
 
 function withFakeOpenshellBinary<T>(fn: () => T): T {

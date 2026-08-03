@@ -591,7 +591,7 @@ describe("runner", () => {
 
     const hasPlanJson = (): boolean => [...store.keys()].some((k) => k.endsWith("plan.json"));
 
-    it("rejects without persisting a plan when provider create fails (#6703)", async () => {
+    it("rejects provider creation failure with a compensated ownership plan (#6703)", async () => {
       const credential = "provider-secret-value";
       process.env.MY_API_KEY = credential;
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
@@ -615,7 +615,7 @@ describe("runner", () => {
         expect((error as Error).message).toContain("Authorization: Bearer <REDACTED>");
         expect((error as Error).message).not.toContain(credential);
         expect((error as Error).message).not.toContain("opaque-bearer");
-        expect(hasPlanJson()).toBe(false);
+        expect(hasPlanJson()).toBe(true);
         expect(stdoutText()).not.toContain("Apply complete");
         expect(stdoutText()).not.toContain("PROGRESS:70");
         expect(stdoutText()).not.toContain("PROGRESS:100");
@@ -640,7 +640,7 @@ describe("runner", () => {
       expect(stdoutText()).toContain("Apply complete");
     });
 
-    it("rejects without persisting a plan when inference set fails (#6703)", async () => {
+    it("compensates an owned inference provider when inference set fails (#6703)", async () => {
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
         resultForCommandFailure(args, ["inference", "set"], "inference route rejected"),
       );
@@ -649,7 +649,12 @@ describe("runner", () => {
         /Failed to set inference route .*model 'gpt-4'.*inference route rejected/i,
       );
 
-      expect(hasPlanJson()).toBe(false);
+      expect(hasPlanJson()).toBe(true);
+      expect(mockExeca).toHaveBeenCalledWith(
+        "openshell",
+        ["provider", "delete", "my-provider"],
+        expect.objectContaining({ reject: false }),
+      );
       expect(stdoutText()).not.toContain("Apply complete");
       expect(stdoutText()).not.toContain("PROGRESS:100");
     });
@@ -883,6 +888,7 @@ describe("runner", () => {
       const plan = JSON.parse(entry.content);
       expect(plan.profile).toBe("default");
       expect(plan.sandbox_name).toBe("test-sandbox");
+      expect(plan.sandbox_created_by_apply).toBe(true);
       expect(plan.timestamp).toBeDefined();
     });
 
@@ -920,7 +926,16 @@ describe("runner", () => {
       const persisted = JSON.parse(entry.content);
 
       expect(Object.keys(persisted).sort()).toEqual(
-        ["inference", "policy_additions", "profile", "run_id", "sandbox_name", "timestamp"].sort(),
+        [
+          "inference",
+          "inference_provider_created_by_apply",
+          "policy_additions",
+          "profile",
+          "run_id",
+          "sandbox_created_by_apply",
+          "sandbox_name",
+          "timestamp",
+        ].sort(),
       );
       expect(Object.keys(persisted.inference).sort()).toEqual(
         ["endpoint", "model", "provider_name", "provider_type"].sort(),
@@ -1228,6 +1243,7 @@ describe("runner", () => {
             token: "sandbox-token-value",
           },
           sandbox_name: "sb",
+          sandbox_created_by_apply: true,
           policy_additions: {},
           inference: {
             provider_type: "openai",
@@ -1264,6 +1280,7 @@ describe("runner", () => {
           forward_ports: [18789],
         },
         sandbox_name: "sb",
+        sandbox_created_by_apply: true,
         policy_additions: {},
         inference: {
           provider_type: "openai",
@@ -1346,25 +1363,6 @@ describe("runner", () => {
 
     it("throws when run ID is not found", async () => {
       await expect(actionRollback("nc-missing")).rejects.toThrow(/nc-missing not found/);
-    });
-
-    it("stops and removes sandbox from plan", async () => {
-      const runDir = `${RUNS_DIR}/nc-run-1`;
-      addDir(runDir);
-      addFile(`${runDir}/plan.json`, JSON.stringify({ sandbox_name: "my-sandbox" }));
-
-      await actionRollback("nc-run-1");
-
-      expect(mockExeca).toHaveBeenCalledWith(
-        "openshell",
-        ["sandbox", "stop", "my-sandbox"],
-        expect.objectContaining({ reject: false }),
-      );
-      expect(mockExeca).toHaveBeenCalledWith(
-        "openshell",
-        ["sandbox", "remove", "my-sandbox"],
-        expect.objectContaining({ reject: false }),
-      );
     });
 
     it("writes rolled_back marker file", async () => {

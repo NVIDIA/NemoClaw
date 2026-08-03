@@ -7,7 +7,7 @@
   "description": "Locked shared runtime for names-only managed MCP tool discovery",
   "license": "Apache-2.0",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0"
+    "@modelcontextprotocol/sdk": "1.30.0"
   },
   "devDependencies": {
     "@types/node": "25.5.2",
@@ -23,6 +23,7 @@
   },
   "scripts": {
     "bundle": "node --experimental-strip-types build-runtime.ts",
+    "test": "node --experimental-strip-types --test streamable-http-client.test.ts",
     "typecheck": "tsc -p tsconfig.json"
   }
 }

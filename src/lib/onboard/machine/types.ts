@@ -78,6 +78,7 @@ export interface OnboardMachineContext {
   endpointOrigin?: string | null;
   credentialEnv?: string | null;
   preferredInferenceApi?: string | null;
+  reasoningEffort?: "low" | "medium" | "high" | "endpoint-default" | null;
   hermesAuthMethod?: "oauth" | "api_key" | null;
   hermesToolGateways?: string[] | null;
   policyPresets?: string[] | null;

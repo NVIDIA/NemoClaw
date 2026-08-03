@@ -42,6 +42,7 @@ function context(): OnboardFlowContext<null, null, null> {
     hermesToolGateways: [],
     preferredInferenceApi: null,
     compatibleEndpointReasoning: null,
+    compatibleEndpointReasoningEffort: null,
     nimContainer: null,
     webSearchConfig: null,
     webSearchSupported: true,

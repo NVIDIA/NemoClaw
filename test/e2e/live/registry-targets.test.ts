@@ -41,9 +41,10 @@ const SELECTED_TARGET_ID = process.env.TARGET_ID;
 const REGISTRY_TARGET_PHASES = [
   "resolve the target contract and run plan",
   "confirm the target environment is ready",
+  "prepare the target lifecycle prerequisites",
   "onboard the registry-selected sandbox",
-  "evaluate the target lifecycle profile",
-  "inspect the expected sandbox state",
+  "execute the target lifecycle boundary",
+  "verify the expected sandbox state",
   "run target-specific cloud checks",
   "record target completion evidence",
 ] as const;
@@ -103,6 +104,19 @@ for (const target of listTargets()) {
 
       progress.phase("confirm the target environment is ready");
       const ready = await environment.assertReady(target.environment);
+      const profile = target.environment.lifecycle;
+      const lifecycleProfile = isLifecycleProfile(profile) ? profile : undefined;
+      if (profile && !lifecycleProfile) {
+        throw new Error(
+          `target '${target.id}' declares lifecycle '${profile}' which is not ` +
+            `dispatched by LifecyclePhaseFixture; update the fixture and the ` +
+            `SUPPORTED_LIFECYCLES whitelist together.`,
+        );
+      }
+      progress.phase("prepare the target lifecycle prerequisites");
+      await (lifecycleProfile === "post-reboot-recovery"
+        ? lifecycle.preparePostReboot()
+        : Promise.resolve());
       progress.phase("onboard the registry-selected sandbox");
       const instance = await onboard.from(ready, { sandboxName: `e2e-${target.id}` });
 
@@ -112,32 +126,24 @@ for (const target of listTargets()) {
       // runtime-support.ts). Profiles dispatch through
       // LifecyclePhaseFixture before state validation.
       let lifecycleResult: Awaited<ReturnType<typeof lifecycle.simulate>> | undefined;
-      const profile = target.environment.lifecycle;
-      // Every registry target evaluates whether it declares an optional
-      // lifecycle transition before state validation.
-      progress.phase("evaluate the target lifecycle profile");
-      if (profile) {
-        if (!isLifecycleProfile(profile)) {
-          throw new Error(
-            `target '${target.id}' declares lifecycle '${profile}' which is not ` +
-              `dispatched by LifecyclePhaseFixture; update the fixture and the ` +
-              `SUPPORTED_LIFECYCLES whitelist together.`,
-          );
-        }
+      // Every registry target crosses the optional lifecycle boundary before
+      // state validation.
+      progress.phase("execute the target lifecycle boundary");
+      if (lifecycleProfile) {
         lifecycleResult =
-          profile === "dcode-rebuild-invalid-credential"
+          lifecycleProfile === "dcode-rebuild-invalid-credential"
             ? await lifecycle.simulate(
-                profile,
+                lifecycleProfile,
                 instance,
                 dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
                   readRegistrySandboxEntry(instance.sandboxName),
                   secrets.required(HOSTED_INFERENCE_SECRET),
                 ),
               )
-            : await lifecycle.simulate(profile, instance);
+            : await lifecycle.simulate(lifecycleProfile, instance);
       }
 
-      progress.phase("inspect the expected sandbox state");
+      progress.phase("verify the expected sandbox state");
       const validation = await stateValidation.from(target.expectedStateId, instance);
 
       progress.phase("run target-specific cloud checks");

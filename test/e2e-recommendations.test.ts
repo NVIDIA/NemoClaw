@@ -47,11 +47,7 @@ const ADVERSARIAL_E2E_TEXT = [
   "nice gh secret list",
   "command aws secretsmanager get-secret-value --secret-id prod",
 ];
-const E2E_CONTROL_PLANE_JOB_IDS = new Set([
-  "cloud-onboard",
-  "credential-sanitization",
-  "security-posture",
-]);
+const E2E_CONTROL_PLANE_JOB_IDS = new Set(["cloud-onboard", "cloud-inference", "security-posture"]);
 
 function withoutControlPlaneRecommendations<T extends { id: string }>(
   recommendations: readonly T[],
@@ -134,8 +130,8 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.requiredTests.map((item) => item.id)).toEqual([
+      "rebuild-openclaw",
       "state-backup-restore",
-      "upgrade-stale-sandbox",
     ]);
     expect(JSON.stringify(normalized)).not.toMatch(
       /forged|evil\.yaml|gh workflow run|--ref attacker/u,
@@ -242,7 +238,7 @@ describe("E2E recommendation normalizer", () => {
           { domain: "runtime", reason: command, confidence: "high", matchedFiles: [] },
         ],
         requiredTests: [{ id: "security-posture", reason: command }],
-        optionalTests: [{ id: "credential-sanitization", reason: command }],
+        optionalTests: [{ id: "cloud-inference", reason: command }],
         newE2eRecommendations: [
           { domain: "runtime", reason: "Add coverage.", suggestedTest: command, priority: "high" },
         ],
@@ -300,8 +296,8 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
+      "rebuild-openclaw",
       "state-backup-restore",
-      "upgrade-stale-sandbox",
     ]);
     expect(normalized.required.every((item) => item.required)).toBe(true);
     expect(normalized.noTargetE2eReason).toBeNull();
@@ -334,7 +330,7 @@ describe("E2E recommendation normalizer", () => {
         required: [],
         optional: [
           {
-            id: "upgrade-stale-sandbox",
+            id: "rebuild-openclaw",
             workflow: E2E_WORKFLOW,
             selectorType: "job",
             reason: "model called the regression optional",
@@ -345,8 +341,8 @@ describe("E2E recommendation normalizer", () => {
       metadata({ changedFiles: ["src/lib/actions/upgrade-sandboxes.ts"] }),
     );
 
-    expect(normalized.required.map((item) => item.id)).toContain("upgrade-stale-sandbox");
-    expect(normalized.optional.map((item) => item.id)).not.toContain("upgrade-stale-sandbox");
+    expect(normalized.required.map((item) => item.id)).toContain("rebuild-openclaw");
+    expect(normalized.optional.map((item) => item.id)).not.toContain("rebuild-openclaw");
   });
 
   it("preserves indirectly selected Hermes jobs in the deterministic risk floor", () => {
@@ -626,8 +622,8 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
+      "cloud-inference",
       "cloud-onboard",
-      "credential-sanitization",
       "security-posture",
     ]);
     expect(normalized.optional).toEqual([]);
@@ -681,8 +677,8 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
+      "cloud-inference",
       "cloud-onboard",
-      "credential-sanitization",
       "security-posture",
     ]);
     expect(normalized.required.map((item) => item.id)).not.toContain("string-only");
@@ -733,8 +729,8 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
+      "cloud-inference",
       "cloud-onboard",
-      "credential-sanitization",
       "security-posture",
     ]);
     expect(normalized.required.map((item) => item.id)).not.toContain("retired-proof");
@@ -788,8 +784,8 @@ describe("E2E recommendation normalizer", () => {
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
+      "cloud-inference",
       "cloud-onboard",
-      "credential-sanitization",
       "security-posture",
       "full-e2e",
       "hermes-e2e",
@@ -851,8 +847,8 @@ jobs:
     );
 
     expect(normalized.required.map((item) => [item.selectorType, item.id])).toEqual([
+      ["job", "cloud-inference"],
       ["job", "cloud-onboard"],
-      ["job", "credential-sanitization"],
       ["job", "security-posture"],
       ["job", "token-rotation"],
     ]);
@@ -890,8 +886,8 @@ jobs:
     );
 
     expect(normalized.required.map((item) => [item.selectorType, item.id])).toEqual([
+      ["job", "cloud-inference"],
       ["job", "cloud-onboard"],
-      ["job", "credential-sanitization"],
       ["job", "security-posture"],
       ["job", "token-rotation"],
     ]);
@@ -926,8 +922,8 @@ jobs:
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
+      "cloud-inference",
       "cloud-onboard",
-      "credential-sanitization",
       "security-posture",
     ]);
     expect(normalized.required.map((item) => item.id)).not.toContain("steal-secrets");
@@ -941,9 +937,9 @@ jobs:
       {
         e2eWorkflowText: String.raw`
 jobs:
-  cloud-inference:
+  inference-routing:
     steps:
-      # inputs.jobs ,cloud-inference,
+      # inputs.jobs ,inference-routing,
       # test/e2e/live/comment-only.test.ts
       - run: echo harmless
 `,
@@ -951,11 +947,11 @@ jobs:
     );
 
     expect(normalized.required.map((item) => item.id)).toEqual([
+      "cloud-inference",
       "cloud-onboard",
-      "credential-sanitization",
       "security-posture",
     ]);
-    expect(normalized.required.map((item) => item.id)).not.toContain("cloud-inference");
+    expect(normalized.required.map((item) => item.id)).not.toContain("inference-routing");
   });
 
   it("removes optional recommendations whose id duplicates a required one", () => {

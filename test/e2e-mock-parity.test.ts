@@ -167,28 +167,23 @@ describe("trusted E2E parity entrypoint selection", () => {
     }
   }
 
-  it.each([
-    {
-      extensions: ["mts", "ts"],
-      expected: `${stem}.mts`,
-      title: "prefers .mts when both entrypoints exist",
-    },
-    { extensions: ["mts"], expected: `${stem}.mts`, title: "runs the migrated .mts entrypoint" },
-    { extensions: ["ts"], expected: `${stem}.ts`, title: "falls back to the .ts entrypoint" },
-  ])("$title (#6921)", ({ extensions, expected }) => {
-    withParityEntrypoints(extensions, (result, commandLog) => {
+  it("runs the migrated .mts entrypoint (#6918)", () => {
+    withParityEntrypoints(["mts"], (result, commandLog) => {
       expect(result.status, String(result.stderr)).toBe(0);
       expect(
         readFileSync(commandLog, "utf8")
           .trim()
           .split("\n")
           .map((line) => JSON.parse(line)),
-      ).toEqual([["tsx", expected, "--base", "HEAD^1", "--head", "HEAD^2"]]);
+      ).toEqual([["tsx", `${stem}.mts`, "--base", "HEAD^1", "--head", "HEAD^2"]]);
     });
   });
 
-  it("rejects a missing parity entrypoint (#6921)", () => {
-    withParityEntrypoints([], (result, commandLog) => {
+  it.each([
+    { extensions: [], title: "rejects a missing parity entrypoint" },
+    { extensions: ["ts"], title: "rejects the retired .ts parity entrypoint" },
+  ])("$title (#6918)", ({ extensions }) => {
+    withParityEntrypoints(extensions, (result, commandLog) => {
       expect(result.status, String(result.stderr)).toBe(1);
       expect(existsSync(commandLog)).toBe(false);
       expect(String(result.stdout)).toContain("Missing E2E mock parity entrypoint");

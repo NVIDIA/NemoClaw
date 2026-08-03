@@ -26,6 +26,7 @@ import {
 } from "../messaging/channels";
 import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { assertNoOpenShellGatewayEndpointOverride } from "../openshell-gateway-endpoint-guard";
+import { OPENSHELL_SANDBOX_HOST_BRIDGE } from "../private-networks";
 import { ROOT, run, runCapture } from "../runner";
 import * as registry from "../state/registry";
 import type { BaselineExclusionRuntimeStatus } from "./baseline-exclusion";
@@ -157,10 +158,9 @@ function loadPreset(name: string): string | null {
 // The single sandbox->host bridge hostname OpenShell provisions. An endpoint
 // that pins `allowed_ips` for THIS host is the legitimate host-gateway flow
 // (e.g. web_fetch to host.openshell.internal); `allowed_ips` on any other host
-// is a user-preset egress-bypass attempt (#6073). Mirrors the
-// ALLOWED_PRIVATE_CUSTOM_ENDPOINT_HOSTS trust boundary in
-// src/lib/actions/inference-set.ts.
-const HOST_GATEWAY_BRIDGE_HOST = "host.openshell.internal";
+// is a user-preset egress-bypass attempt (#6073). Keep this hostname shared
+// with the config-set and inference endpoint bridge trust boundary.
+const HOST_GATEWAY_BRIDGE_HOST = OPENSHELL_SANDBOX_HOST_BRIDGE;
 
 function endpointHostIsGatewayBridge(ep: PolicyObject): boolean {
   const host = (ep as { host?: unknown }).host;

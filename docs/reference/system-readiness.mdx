@@ -1,0 +1,157 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "System Readiness"
+sidebar-title: "System Readiness"
+description: "Check host readiness before NemoClaw onboarding without changing system state."
+description-agent: "Documents the read-only host readiness command, JSON contract, exit codes, redaction boundary, and mutation guarantees. Use when checking a host before onboarding or consuming readiness JSON."
+keywords: ["nemoclaw host probe", "system readiness", "readiness json", "pre-onboarding check"]
+content:
+  type: "reference"
+---
+
+Use the system readiness report to inspect a host before you run onboarding.
+The command works without a registered gateway or sandbox.
+
+## Run the readiness check
+
+Run the human-readable check from the host:
+
+```bash
+$$nemoclaw host probe
+```
+
+Use JSON when another tool consumes the result:
+
+```bash
+$$nemoclaw host probe --json
+```
+
+Both presentations use the same structured report.
+The JSON report includes its `schemaVersion`, `status`, `exitCode`, `observations`, `capabilities`, `qualifications`, `findings`, `evidence`, and `provenance`.
+It also includes `mutated: false`.
+
+## Interpret exit codes
+
+The command uses deterministic exit codes:
+
+| Exit code | Status | Meaning |
+| --- | --- | --- |
+| `0` | `supported` | Required readiness checks passed. |
+| `2` | `incompatible` | A blocking or fatal finding prevents onboarding. |
+| `3` | `inconclusive` | NemoClaw could not determine a required capability. |
+
+The command writes a schema-valid JSON report for all three results.
+Read the report before you handle a nonzero exit.
+
+## Use the compatibility contract
+
+The `schemaVersion` field uses `major.minor.patch` format.
+Consumers must reject an unknown major version.
+Consumers can ignore fields that they do not recognize within major version 1.
+Use stable capability and finding IDs instead of parsing human summaries.
+Treat bounded evidence as diagnostic context unless an observation, capability, or finding references that evidence ID.
+
+## Verify the report producer
+
+Schema version `1.1.0` adds a required immutable identity for the CLI build that produced the report.
+The identity is present for `supported`, `incompatible`, and `inconclusive` reports.
+
+| Field | Consumer use |
+| --- | --- |
+| `provenance.nemoclawVersion` | Public version of the executing CLI build. |
+| `provenance.sourceRevision` | Full immutable source revision of that build. |
+| `provenance.observedAt` | Time when the host observation started. |
+
+A Git-described version can use a value such as `0.0.96-35-g8bfff4526`.
+The version must begin with three dot-separated digit groups.
+It can add an alphanumeric prerelease suffix after `-` and an alphanumeric build suffix after `+`; each suffix can also contain `.` and `-` separators.
+The revision after `g` must match the leading characters of `sourceRevision`.
+Packaged releases retain the full revision in their compiled build identity when Git metadata is unavailable at runtime.
+
+A strict scenario must fail closed before it uses readiness facts.
+Apply these checks in order:
+
+1. Reject an unknown schema major version.
+2. Require `schemaVersion` `1.1.0` or later within schema major 1.
+3. Compare the leading `X.Y.Z` release identity in `nemoclawVersion` with the scenario minimum.
+4. If the scenario supplies an expected source revision, require an exact `sourceRevision` match.
+5. If `nemoclawVersion` has a Git revision suffix, require it to match `sourceRevision`.
+6. Require `status: "supported"` and retain the producer identity in the admission receipt.
+
+An admission receipt can retain this bounded projection:
+
+```json
+{
+  "readinessStatus": "supported",
+  "readinessProducer": {
+    "schemaVersion": "1.1.0",
+    "nemoclawVersion": "0.0.96-35-g8bfff4526",
+    "sourceRevision": "8bfff4526aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}
+```
+
+Retain the full `sourceRevision` even when the scenario accepts every build above a minimum release.
+Do not use `observedAt` as build identity.
+
+## Interpret Docker storage
+
+The Docker storage capabilities separate the current host configuration from NemoClaw's supported remediation path.
+
+| Capability ID | Result represented |
+| --- | --- |
+| `host.docker.storage_compatible` | The current Docker storage configuration supports nested overlay mounts without remediation. |
+| `host.docker.storage_remediation_available` | NemoClaw can build a patched cluster image for a non-WSL Linux host using Docker with an `overlayfs` containerd-snapshotter conflict. |
+
+Use `host.docker.storage_compatible` for pre-mutation host diagnosis.
+For public NemoClaw lifecycle admission, require either `host.docker.storage_compatible` or `host.docker.storage_remediation_available`.
+When remediation is available, `host.docker.storage_compatible` remains `absent`.
+The report also retains `host.docker.storage_incompatible`, status `incompatible`, and exit code `2` because `host probe` does not change the host.
+Evaluate every other blocking finding before you run onboarding.
+The remediation capability does not prove that a later image build or gateway attachment succeeds.
+Use these storage capabilities when the lifecycle may create or recreate a gateway.
+Gateway attachment is a separate readiness decision.
+
+## Interpret platform qualification
+
+Platform checks report stable capabilities and qualifications for the detected host.
+Each capability uses `present`, `absent`, or `unknown`.
+
+| Capability ID | Result represented |
+| --- | --- |
+| `host.platform.supported` | The combined host platform result. |
+| `host.platform.linux_supported` | Linux on `x64` or `arm64`. |
+| `host.platform.macos_apple_silicon` | Apple silicon with reachable Docker Desktop or Colima. |
+| `host.platform.wsl_runtime_available` | A reachable, recognized Docker runtime in WSL. |
+| `host.platform.wsl_docker_desktop` | Docker Desktop integration in WSL. |
+| `host.platform.wsl_native_docker` | Native Docker Engine inside WSL. |
+| `host.platform.wsl_gpu_passthrough` | Docker Desktop GPU passthrough proof. |
+| `host.platform.dgx_spark` | DGX Spark identity on ARM64 with an available NVIDIA GPU. |
+| `host.platform.dgx_station` | Qualified DGX Station GB300 identity, Linux ARM64 runtime, Ubuntu 24.04, hardware, and software profile. |
+
+The report adds `host.platform.wsl`, `host.platform.dgx_spark`, or `host.platform.dgx_station` qualifications when those platforms apply.
+For WSL, Docker Desktop is `qualified`, native Docker is `unqualified`, and an unrecognized reachable runtime is `unknown`.
+The `host.platform.wsl_gpu_passthrough` capability is `present` only after the Docker Desktop proof passes.
+It is `absent` when the proof fails or the host has no NVIDIA GPU, and `unknown` when the proof cannot run conclusively.
+
+DGX Station qualification fails closed.
+The `host.platform.dgx_station` capability is `present` only when the host runs Linux ARM64 on Ubuntu 24.04, reports an effective NVIDIA GPU, and the product identity, an exact display-class PCI device with NVIDIA vendor ID (`0x10de`) and GB300 device ID (`0x31c2` or `0x31c3`), and the software profile all qualify.
+If `/etc/dgx-release` is absent, NemoClaw uses the qualified `generic-ubuntu` profile.
+If the marker exists, NemoClaw reads it only when it is a nonempty regular non-symlink file of at most 4096 bytes, owned by UID and GID 0, and not writable by group or other users.
+Invalid marker metadata, invalid contents, or another known mismatch produce an `unqualified` qualification and the blocking `host.platform.dgx_station_unqualified` finding.
+An unreadable marker or missing required OS or PCI evidence produces an `unknown` qualification and the blocking `host.platform.dgx_station_inconclusive` finding.
+Both outcomes prevent `host.platform.supported` from becoming `present`.
+When available, bounded Station identity appears under evidence ID `host.platform.identity`.
+
+## Understand the read-only boundary
+
+`host probe` observes the host and does not run remediation.
+Repeated runs do not change filesystem, service, Docker image or container, gateway, provider, credential, policy, or sandbox state.
+A future command that changes the host must use a separate mutating mode.
+That mode cannot run with `--json` probing.
+
+The public report removes process environments and unrecognized fields from internal probe results.
+It redacts token-shaped values and credential-bearing URLs.
+It also limits finding summaries and command evidence before either presentation receives the report.
+It rejects a report that claims mutation and retains every blocking or fatal finding at the bounded public-report boundary.

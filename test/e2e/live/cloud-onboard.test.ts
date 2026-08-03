@@ -25,9 +25,10 @@ const LIVE_TIMEOUT_MS = 60 * 60_000;
 validateSandboxName(SANDBOX_NAME);
 
 function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const home = extra.HOME || os.homedir();
   return {
     ...buildAvailabilityProbeEnv(),
-    PATH: `${os.homedir()}/.local/bin:${os.homedir()}/.npm-global/bin:${process.env.PATH ?? ""}`,
+    PATH: `${home}/.local/bin:${home}/.npm-global/bin:${os.homedir()}/.local/bin:${os.homedir()}/.npm-global/bin:${process.env.PATH ?? ""}`,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RECREATE_SANDBOX: "1",
@@ -42,13 +43,13 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 async function cleanup(
   host: HostCliClient,
   sandbox: SandboxClient,
-  options: { verify: boolean; label: string },
+  options: { verify: boolean; label: string; home: string },
 ): Promise<void> {
   const args = [path.join(REPO_ROOT, "test/e2e/e2e-cloud-experimental/cleanup.sh")];
   if (options.verify) args.push("--verify");
   const cleanupResult = await host.command("bash", args, {
     artifactName: `${options.label}-cloud-experimental-cleanup`,
-    env: env(),
+    env: env({ HOME: options.home }),
     timeoutMs: 180_000,
   });
   if (options.verify) {
@@ -57,7 +58,7 @@ async function cleanup(
 
   const gatewayDestroy = await sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
     artifactName: `${options.label}-openshell-gateway-destroy`,
-    env: env(),
+    env: env({ HOME: options.home }),
     timeoutMs: 60_000,
   });
   if (options.verify && gatewayDestroy.exitCode !== 0) {
@@ -76,8 +77,11 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   meta: {
     e2ePhases: [
       "check cloud onboarding prerequisites",
+      "stage legacy plaintext credential",
       "install and onboard cloud sandbox",
+      "verify migrated gateway credential",
       "validate installed CLI and corporate CA trust",
+      "collect scoped diagnostics from onboarded sandbox",
       "run cloud inference and security checks",
       "remove cloud sandbox",
     ],
@@ -89,6 +93,15 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
     process.env.NEMOCLAW_INSTALL_SCRIPT_URL ??
     `https://raw.githubusercontent.com/NVIDIA/NemoClaw/${ref}/install.sh`;
   const installCwd = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-public-install-"));
+  const testHome = path.join(installCwd, "home");
+  const legacyDir = path.join(testHome, ".nemoclaw");
+  const legacyFile = path.join(legacyDir, "credentials.json");
+  const testEnv = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv =>
+    env({ HOME: testHome, ...extra });
+  const hostedEnvWithoutCredentials = { ...hosted.env };
+  delete hostedEnvWithoutCredentials[hosted.sourceSecretName];
+  delete hostedEnvWithoutCredentials[hosted.credentialEnv];
+  fs.mkdirSync(testHome, { recursive: true, mode: 0o700 });
   const corporateCa = createCorporateCaFixture("explicit", "nemoclaw-cloud-corporate-ca-");
   cleanupRegistry.trackDisposable("remove public installer workspace", () =>
     fs.rmSync(installCwd, { recursive: true, force: true }),
@@ -107,8 +120,12 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
     corporateCaSource: corporateCa.sourceLabel,
     contracts: [
       "public curl installer uses GitHub clone path for the requested ref",
+      "ordinary cloud onboard migrates an allowlisted legacy credential through the real gateway",
+      "tampered non-credential legacy fields do not become gateway providers",
+      "successful onboard removes plaintext credentials.json",
       "sandbox appears healthy after cloud onboarding",
       "explicit corporate CA source is baked and merged with OpenShell trust inside the sandbox",
+      "installed CLI creates a non-empty diagnostics archive for the registered sandbox",
       "cloud split checks cover inference.local, security leak checks, and Landlock/read-only behavior",
       "cleanup verifies sandbox removal",
     ],
@@ -116,7 +133,7 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
 
   const docker = await host.command("docker", ["info"], {
     artifactName: "phase-0-docker-info",
-    env: env(),
+    env: testEnv(),
     timeoutMs: 30_000,
   });
   if (docker.exitCode !== 0) {
@@ -125,9 +142,25 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   }
 
   cleanupRegistry.trackDisposable("remove cloud-onboard sandbox", () =>
-    cleanup(host, sandbox, { label: "cleanup", verify: true }),
+    cleanup(host, sandbox, { home: testHome, label: "cleanup", verify: true }),
   );
-  await cleanup(host, sandbox, { label: "pre-cleanup", verify: false });
+  await cleanup(host, sandbox, { home: testHome, label: "pre-cleanup", verify: false });
+
+  progress.phase("stage legacy plaintext credential");
+  fs.mkdirSync(legacyDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(
+    legacyFile,
+    JSON.stringify(
+      {
+        [hosted.credentialEnv]: hosted.apiKey,
+        OPENSHELL_GATEWAY: "evil-gw-from-tampered-file",
+        NODE_OPTIONS: "--require=/tmp/evil.js",
+      },
+      null,
+      2,
+    ),
+    { mode: 0o600 },
+  );
 
   progress.phase("install and onboard cloud sandbox");
   const install = await host.command(
@@ -135,10 +168,9 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
     ["-lc", `cd ${shellQuote(installCwd)} && curl -fsSL ${shellQuote(installUrl)} | bash`],
     {
       artifactName: "phase-1-public-install",
-      env: env({
-        ...hosted.env,
+      env: testEnv({
+        ...hostedEnvWithoutCredentials,
         ...corporateCa.env,
-        NVIDIA_INFERENCE_API_KEY: hosted.apiKey,
         NEMOCLAW_INSTALL_REF: ref,
         NEMOCLAW_INSTALL_TAG: ref,
         NEMOCLAW_INSTALL_SCRIPT_URL: installUrl,
@@ -150,7 +182,32 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   expect(install.exitCode, resultText(install)).toBe(0);
   expect(resultText(install)).toContain("Installing NemoClaw from GitHub");
   expect(resultText(install)).toContain("Cloning NemoClaw source");
+  expect(resultText(install)).toContain(
+    "Staged 1 legacy credential(s) for migration to the OpenShell gateway.",
+  );
   if (ref !== "main") expect(resultText(install)).toContain(`Resolved install ref: ${ref}`);
+
+  progress.phase("verify migrated gateway credential");
+  expect(fs.existsSync(legacyFile), "successful onboard must remove legacy credentials.json").toBe(
+    false,
+  );
+  const providers = await host.command(
+    "openshell",
+    ["-g", "nemoclaw", "provider", "list", "--names"],
+    {
+      artifactName: "phase-2-gateway-provider-list",
+      env: testEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  expect(providers.exitCode, resultText(providers)).toBe(0);
+  const providerNames = providers.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(line));
+  expect(providerNames).toContain(hosted.providerName);
+  expect(providerNames).not.toContain("OPENSHELL_GATEWAY");
+  expect(providerNames).not.toContain("NODE_OPTIONS");
 
   progress.phase("validate installed CLI and corporate CA trust");
   const cliProbe = await host.command(
@@ -159,13 +216,13 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
       "-lc",
       'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"; command -v nemoclaw; command -v openshell; nemoclaw --help >/dev/null',
     ],
-    { artifactName: "phase-2-cli-path-probe", env: env(), timeoutMs: 60_000 },
+    { artifactName: "phase-2-cli-path-probe", env: testEnv(), timeoutMs: 60_000 },
   );
   expect(cliProbe.exitCode, resultText(cliProbe)).toBe(0);
 
   const list = await host.command("bash", ["-lc", "nemoclaw list"], {
     artifactName: "phase-2-nemoclaw-list",
-    env: env(),
+    env: testEnv(),
     timeoutMs: 60_000,
   });
   expect(list.exitCode, resultText(list)).toBe(0);
@@ -173,10 +230,31 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
 
   const corporateCaProbe = await sandbox.execShell(SANDBOX_NAME, corporateCaMergeProbeScript(), {
     artifactName: "phase-2-corporate-ca-merge-probe",
-    env: env(),
+    env: testEnv(),
     timeoutMs: 60_000,
   });
   expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
+
+  progress.phase("collect scoped diagnostics from onboarded sandbox");
+  const diagnosticsArchive = path.join(installCwd, "cloud-onboard-debug.tar.gz");
+  const diagnostics = await host.command(
+    "bash",
+    [
+      "-lc",
+      `nemoclaw debug --quick --sandbox ${shellQuote(SANDBOX_NAME)} --output ${shellQuote(diagnosticsArchive)}`,
+    ],
+    {
+      artifactName: "phase-3-scoped-diagnostics",
+      env: testEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  expect(diagnostics.exitCode, resultText(diagnostics)).toBe(0);
+  expect(fs.existsSync(diagnosticsArchive), "scoped diagnostics archive must exist").toBe(true);
+  expect(
+    fs.statSync(diagnosticsArchive).size,
+    "scoped diagnostics archive must be non-empty",
+  ).toBeGreaterThan(0);
 
   progress.phase("run cloud inference and security checks");
   const checkScripts = fs
@@ -186,9 +264,9 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   expect(checkScripts.length).toBeGreaterThan(0);
   for (const scriptName of checkScripts) {
     const result = await host.command("bash", [path.join(CHECKS_DIR, scriptName)], {
-      artifactName: `phase-3-check-${scriptName.replace(/\.sh$/, "")}`,
+      artifactName: `phase-4-check-${scriptName.replace(/\.sh$/, "")}`,
       cwd: REPO_ROOT,
-      env: env({
+      env: testEnv({
         ...hosted.env,
         CLOUD_EXPERIMENTAL_MODEL: hosted.model,
         COMPATIBLE_API_KEY: hosted.apiKey,
@@ -203,6 +281,15 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
   }
 
   progress.phase("remove cloud sandbox");
-  await cleanup(host, sandbox, { label: "final-cleanup", verify: true });
-  await artifacts.target.complete({ id: "cloud-onboard", status: "passed" });
+  await cleanup(host, sandbox, { home: testHome, label: "final-cleanup", verify: true });
+  await artifacts.target.complete({
+    id: "cloud-onboard",
+    status: "passed",
+    credentialMigration: {
+      legacyFileRemoved: !fs.existsSync(legacyFile),
+      migratedProviderRegistered: providerNames.includes(hosted.providerName),
+      tamperedKeysExcluded:
+        !providerNames.includes("OPENSHELL_GATEWAY") && !providerNames.includes("NODE_OPTIONS"),
+    },
+  });
 });

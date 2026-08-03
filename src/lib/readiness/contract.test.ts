@@ -52,6 +52,30 @@ describe("system readiness contract", () => {
     expect(getSystemReadinessReferenceErrors(fixture as SystemReadinessReport)).toEqual([]);
   });
 
+  it("requires producer source identity starting with schema 1.1.0 (#7777)", async () => {
+    const validate = await createValidator();
+    const fixture = (await readJson(`${fixtureRoot}/supported.json`)) as Record<string, unknown>;
+    const provenance = { ...(fixture.provenance as Record<string, unknown>) };
+    delete provenance.sourceRevision;
+
+    expect(validate({ ...fixture, provenance })).toBe(false);
+    expect(
+      validate({ ...fixture, schemaVersion: "1.0.0", provenance }),
+      JSON.stringify(validate.errors),
+    ).toBe(true);
+  });
+
+  it("rejects an invalid public producer version (#7777)", async () => {
+    const validate = await createValidator();
+    const fixture = (await readJson(`${fixtureRoot}/supported.json`)) as Record<string, unknown>;
+    const provenance = {
+      ...(fixture.provenance as Record<string, unknown>),
+      nemoclawVersion: `nvapi-${"a".repeat(24)}`,
+    };
+
+    expect(validate({ ...fixture, provenance })).toBe(false);
+  });
+
   it("accepts optional fields in schema major 1 (#7409)", async () => {
     const validate = await createValidator();
     const fixture = (await readJson(`${fixtureRoot}/supported.json`)) as Record<string, unknown>;
@@ -107,9 +131,13 @@ describe("system readiness contract", () => {
 
   it("pairs every readiness status with its exit code in TypeScript (#7409)", () => {
     const reportFields = {
-      schemaVersion: "1.0.0",
+      schemaVersion: "1.1.0",
       mutated: false,
-      provenance: { nemoclawVersion: "0.1.0", observedAt: "2026-06-01T12:00:00Z" },
+      provenance: {
+        nemoclawVersion: "0.1.0",
+        sourceRevision: "21e60ae287e8c2a184f71406ac8b418f046330d1",
+        observedAt: "2026-06-01T12:00:00Z",
+      },
       observations: [],
       capabilities: [],
       qualifications: [],

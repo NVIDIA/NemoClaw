@@ -150,7 +150,7 @@ function vllmContainerRow(
   containerName: string,
   { id = MANAGED_CONTAINER_ID, label = "true", state = "exited" } = {},
 ): string {
-  return `${id}|${containerName}|${state}|${label}`;
+  return `${id}|${containerName}|${state}|${label}|||`;
 }
 
 function mockSuccessfulVllmInstall(
@@ -174,8 +174,19 @@ function mockSuccessfulVllmInstall(
   mocks.dockerSpawn.mockReturnValue(mockDockerSpawnSuccess());
   mocks.dockerRunDetached.mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
   const ownershipQueue = [...ownershipResponses];
+  let ownershipCallIndex = 0;
+  const ownershipHandlers = [
+    (): string => "",
+    (): string =>
+      (
+        ownershipQueue.shift() ??
+        (() => {
+          throw new Error("Unexpected extra ambient vLLM ownership inspection");
+        })
+      )(),
+  ];
   const dockerCaptureByCommand = new Map<string, () => string>([
-    ["container", () => (ownershipQueue.shift() ?? (() => ""))()],
+    ["container", () => ownershipHandlers[ownershipCallIndex++ % ownershipHandlers.length]()],
     ["ps", () => `${containerName}\n`],
   ]);
   mocks.dockerCapture.mockImplementation((args: readonly string[]) =>
@@ -579,7 +590,15 @@ describe("managed vLLM ownership", () => {
         "--filter",
         `name=^/${NEMOCLAW_VLLM_CONTAINER_NAME}$`,
         "--format",
-        `{{.ID}}|{{.Names}}|{{.State}}|{{.Label "${NEMOCLAW_VLLM_MANAGED_LABEL}"}}`,
+        [
+          "{{.ID}}",
+          "{{.Names}}",
+          "{{.State}}",
+          `{{.Label "${NEMOCLAW_VLLM_MANAGED_LABEL}"}}`,
+          '{{.Label "com.nvidia.nemoclaw.vllm-role"}}',
+          '{{.Label "com.nvidia.nemoclaw.vllm-endpoint"}}',
+          '{{.Label "com.nvidia.nemoclaw.vllm-cluster"}}',
+        ].join("|"),
       ],
       expect.objectContaining({ timeout: 10_000 }),
     );
@@ -739,6 +758,7 @@ describe("installVllm model resolution", () => {
 
   it("rejects a Station-only runtime override before side effects on generic Linux", async () => {
     process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
+    process.env.HF_TOKEN = "hf_test";
     const profile = detectVllmProfile({ platform: "linux", type: "nvidia" })!;
     const beforeInstall = vi.fn();
 
@@ -822,6 +842,7 @@ describe("installVllm model resolution", () => {
 
   it("installs the complete Nemotron Ultra Station recipe without another selection", async () => {
     process.env.NEMOCLAW_VLLM_MODEL = "nemotron-3-ultra-550b-a55b";
+    process.env.HF_TOKEN = "hf_test";
     mocks.getGpuIndicesByName.mockReturnValue([0]);
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
     const beforeInstall = vi.fn();
@@ -1007,8 +1028,16 @@ describe("installVllm model resolution", () => {
       ...mocks.dockerRunDetached.mock.calls.map((call) => call[1]),
       ...mocks.dockerCapture.mock.calls.map((call) => call[1]),
     ];
-    expect(dockerAdapterOptions).toHaveLength(7);
-    for (const options of dockerAdapterOptions) {
+    expect(dockerAdapterOptions).toHaveLength(9);
+    const canonicalOwnershipOptions = dockerAdapterOptions.filter(
+      (options) => options.env?.DOCKER_CONTEXT === "default",
+    );
+    expect(canonicalOwnershipOptions).toHaveLength(2);
+    const ambientDockerOptions = dockerAdapterOptions.filter(
+      (options) => options.env?.DOCKER_CONTEXT !== "default",
+    );
+    expect(ambientDockerOptions).toHaveLength(7);
+    for (const options of ambientDockerOptions) {
       expect(options).toEqual(
         expect.objectContaining({
           env: expect.objectContaining({ DOCKER_CONTEXT: "local-test-context" }),

@@ -10,9 +10,10 @@ Use these instructions only after hardware detection confirms DGX Station.
 Use the selected maintained release's official installer as the authority for Station qualification, host preparation, model selection, consent, and reboot or login resume.
 Do not run the Station preparation helper separately or reproduce Express by pre-setting provider and model environment variables.
 
-The installer provides these Station Express model choices:
+The installer provides these Station Express choices:
 
-1. The ordinary installer defaults to `nemotron-3-ultra-550b-a55b`, served as `nvidia/nemotron-3-ultra-550b-a55b`.
+1. The ordinary installer selects `nemotron-3-ultra-550b-a55b` and checks for one already-trusted peer at the deterministic counterpart on each of two configured private `/30` ConnectX-8 rails.
+   A qualified pair uses the vLLM 0.25.1 and Ray 2.56.0 dual-Station recipe served as `nemotron-ultra`; otherwise it retains the single-Station Ultra recipe served as `nvidia/nemotron-3-ultra-550b-a55b`.
 2. The explicit `--station-deepseek` flag selects `deepseek-v4-flash`, served as `deepseek-ai/DeepSeek-V4-Flash`.
 
 Both choices use the same Station detection, host-preparation, consent, suggested-policy, default-sandbox, and revision resume flow.
@@ -22,21 +23,23 @@ Before asking for consent, explain all of these boundaries:
 - On generic Ubuntu, Station Express may install or change the pinned NVIDIA open driver, Docker with Buildx, NVIDIA Container Toolkit, and the reviewed factory `dkms` transition. On qualified factory images, the installer follows its bounded validation and repair path instead of replacing the factory stack.
 - Official Station preparation may add the trusted local account to the `docker` group, which grants root-equivalent control and is suitable only for a trusted single-user development host.
 - Official Station preparation may require an operator-controlled reboot and resumes only with the accepted NemoClaw revision.
+- NemoClaw does not configure the two private rails, scan the network, enroll SSH trust, or reboot either Station. The operator owns physical isolation, firewalling, SSH trust, and manual reboots.
+- The dual-Station runtime uses unauthenticated Ray, NCCL, and vLLM coordination traffic, including the Ray head on TCP port `6379` and Ray worker traffic. Both Stations and every host that can reach either rail must be mutually trusted; a shared `/24` is not equivalent to the required direct private `/30` rails.
 - Nemotron Ultra Express discloses an approximately `352 GB` model download. DeepSeek Express downloads its pinned vLLM container and model data. Both require enough space on the model-cache filesystem and Docker storage.
 - DGX Station is tested with limitations across qualified profiles on one physical DGX Station GB300.
 - Dual-Station configurations are not yet validated, and dedicated CI coverage is not available.
 
-Ask: "Which DGX Station Express model would you like?"
+Ask: "Which DGX Station Express option would you like?"
 Choices:
 
-1. Nemotron 3 Ultra 550B, the ordinary installer default.
+1. Automatic pair selection: use Nemotron 3 Ultra 550B with a qualified trusted pair when available; otherwise use the single-Station Ultra recipe.
 2. DeepSeek V4 Flash, the explicit `--station-deepseek` override.
 3. Neither, let me choose the runtime and model normally.
 
 If a Station Express model is selected:
 
 - Set `NEMOCLAW_AGENT` to the agent already selected in the starter prompt.
-- For Nemotron Ultra, run the ordinary installer without `--station-deepseek`.
+- For automatic pair selection, run the ordinary installer without `--station-deepseek`. Do not supply a peer unless the user already selected an exact, pretrusted peer; an explicit peer must qualify or setup stops rather than falling back.
 - For DeepSeek, pass `--station-deepseek` and no other model-selection override.
 - Do not set `NEMOCLAW_PROVIDER`, `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_MODEL`, `NEMOCLAW_NON_INTERACTIVE`, `NEMOCLAW_YES`, `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE`, or `NEMOCLAW_NO_EXPRESS`.
 - Leave `NEMOCLAW_SANDBOX_NAME`, `NEMOCLAW_POLICY_TIER`, web-search settings, and messaging settings unset so the installer applies its Express defaults.
@@ -45,6 +48,7 @@ If a Station Express model is selected:
 - Let the installer present its third-party-software notice and complete Express summary. Keep each official confirmation visible, wait for the user's response, and do not pre-answer or suppress it.
 - Do not pass `--force-station-install` unless the installer rejects release metadata on genuine Station GB300 hardware and the user separately chooses the documented temporary override.
 - Follow the command that the installer prints after a required reboot or login transition.
+- Describe Ultra as the ordinary Express selection. Describe the distributed two-Station topology as selected only after the installer reports that reciprocal Station, GPU, rail, MAC, route, neighbor, and jumbo-frame checks qualified the pair.
 
 If Station Express is declined, continue with the normal provider selection.
 Offer existing vLLM when a ready server is detected, managed vLLM, supported local Ollama, and every hosted or compatible provider supported by the selected agent.

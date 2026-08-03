@@ -275,7 +275,7 @@ const TEST_NVIDIA_FEATURED_MODELS = parseNvidiaFeaturedModels(
       },
       { model: "z-ai/glm-5.1", "model-name": "GLM 5.1" },
       { model: "moonshotai/kimi-k2.6", "model-name": "Kimi K2.6" },
-      { model: "minimaxai/minimax-m2.7", "model-name": "Minimax M2.7" },
+      { model: "minimaxai/minimax-m3", "model-name": "Minimax M3" },
     ],
   }),
 );

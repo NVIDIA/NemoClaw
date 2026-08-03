@@ -171,6 +171,28 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge",
     ]);
   });
 
+  it("merges after the Hermes 0.19 usage report flag (#7361)", () => {
+    const run = runWrapper(
+      [
+        "--usage-file",
+        "/tmp/hermes-usage.json",
+        "--provider",
+        "nvidia-prod",
+        "--model",
+        "nvidia/nemotron-3-super-120b-a12b",
+      ],
+      {},
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual([
+      "--usage-file",
+      "/tmp/hermes-usage.json",
+      "--model",
+      "nvidia-prod/nvidia/nemotron-3-super-120b-a12b",
+    ]);
+  });
+
   it("merges a namespaced model for the supported chat command (#7361)", () => {
     const run = runWrapper(
       [
@@ -218,12 +240,12 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py provider/model merge",
     expect(run.realArgv).toEqual(argv);
   });
 
-  it("does not consume a pinned Hermes subcommand as continuation text (#7361)", () => {
+  it("does not consume the Hermes 0.19 console subcommand as continuation text (#7361)", () => {
     const argv = [
       "-c",
       "my",
       "project",
-      "hooks",
+      "console",
       "list",
       "--provider",
       "nvidia-prod",

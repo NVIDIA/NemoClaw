@@ -144,7 +144,7 @@ describe("resolveLiveSelector (#6901)", () => {
 
   it("does not infer selectors for unrelated live tests", () => {
     expect(
-      resolveLiveSelector("test/e2e/live/diagnostics.test.ts", undefined, {
+      resolveLiveSelector("test/e2e/live/cloud-inference.test.ts", undefined, {
         NEMOCLAW_MCP_BRIDGE_AGENT: "hermes",
       }),
     ).toBeUndefined();
@@ -175,14 +175,14 @@ describe("buildLiveVitestArgs (#6961)", () => {
   it("omits the selector arguments for a single-file target", () => {
     expect(
       buildLiveVitestArgs({
-        testPath: "test/e2e/live/diagnostics.test.ts",
+        testPath: "test/e2e/live/cloud-inference.test.ts",
       }),
     ).toEqual([
       "vitest",
       "run",
       "--project",
       "e2e-live",
-      "test/e2e/live/diagnostics.test.ts",
+      "test/e2e/live/cloud-inference.test.ts",
       "--silent=false",
       "--reporter=default",
       `--reporter=${RISK_SIGNAL_REPORTER}`,
@@ -207,7 +207,7 @@ describe("buildLiveVitestArgs (#6961)", () => {
 });
 
 describe("runLiveVitestCommand (#6961)", () => {
-  const validArgs = ["run", "--test-path", "test/e2e/live/diagnostics.test.ts"];
+  const validArgs = ["run", "--test-path", "test/e2e/live/cloud-inference.test.ts"];
 
   it.each([
     ["child status", { status: 7, signal: null }, 7],
@@ -228,7 +228,7 @@ describe("runLiveVitestCommand (#6961)", () => {
         "run",
         "--project",
         "e2e-live",
-        "test/e2e/live/diagnostics.test.ts",
+        "test/e2e/live/cloud-inference.test.ts",
         "--silent=false",
         "--reporter=default",
         `--reporter=${RISK_SIGNAL_REPORTER}`,
@@ -267,7 +267,7 @@ describe("runLiveVitestCommand (#6961)", () => {
   it.each([
     [
       "unknown option",
-      ["run", "--test-path", "test/e2e/live/diagnostics.test.ts", "--selctor", "^x$"],
+      ["run", "--test-path", "test/e2e/live/cloud-inference.test.ts", "--selctor", "^x$"],
     ],
     ["bare selector", [...validArgs, "--selector"]],
   ])("rejects an %s before spawning Vitest", (_label, args) => {

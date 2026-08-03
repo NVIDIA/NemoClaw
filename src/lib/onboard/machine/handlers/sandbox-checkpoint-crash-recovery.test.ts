@@ -55,6 +55,7 @@ function crashedCheckpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardC
       },
     },
     bindings: { credentialEnvs: [], registeredProviders: [] },
+    sandboxRecreate: null,
     ...overrides,
   };
 }

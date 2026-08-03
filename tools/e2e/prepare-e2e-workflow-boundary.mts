@@ -22,6 +22,7 @@ export const PREPARE_E2E_STEP = "Prepare E2E workspace";
 
 const CHECKOUT_LOCAL_PREPARE_E2E_ACTION = "./.github/actions/prepare-e2e";
 const PREINSTALLED_E2E_JOBS = new Set(["staging-brev-launchable"]);
+const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
 
 const NO_BUILD_JOBS = new Set([
   "generate-matrix",
@@ -107,7 +108,10 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
         const job = record(value);
         return (
           !PREINSTALLED_E2E_JOBS.has(jobName) &&
-          (jobName === "generate-matrix" || jobName === "live" || record(job.env).E2E_JOB === "1")
+          (jobName === "generate-matrix" ||
+            jobName === "live" ||
+            jobName === RETIRED_SELECTOR_COMPATIBILITY_JOB ||
+            record(job.env).E2E_JOB === "1")
         );
       })
       .map(([jobName]) => jobName),

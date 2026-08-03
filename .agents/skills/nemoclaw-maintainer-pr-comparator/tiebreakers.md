@@ -23,13 +23,18 @@ Eliminate any PR failing Tier 0. Among survivors:
    Set the winner when the evidence distinguishes a PR.
    Otherwise, leave `winner` null.
 
+### Supersession relationship
+
+A supersession statement records a relationship between candidates.
+It does not prove coverage or attribution, and it does not rank a candidate.
+Classify transferred work and complete the canonical attribution checks before recommending the replacement PR.
+
 ### Tiebreakers (in order)
 
-1. **Supersession.** Prefer a PR whose body states that it supersedes another candidate. See `scripts/parse-supersession.sh`.
-2. **Smaller diff.** Prefer the smaller diff when both PRs cover the issue scope.
-3. **Better edge-case test coverage.** Compare Tier 1.3 (negative test coverage) outputs.
-4. **Most recent activity.** Prefer the PR with the most recent commit.
-5. **Lower PR number.** Use the lower PR number if the PRs remain tied.
+1. **Smaller diff.** Prefer the smaller diff when both PRs cover the issue scope.
+2. **Better edge-case test coverage.** Compare Tier 1.3 (negative test coverage) outputs.
+3. **Most recent activity.** Prefer the PR with the most recent commit.
+4. **Lower PR number.** Use the lower PR number if the PRs remain tied.
 
 ## Degraded mode (no PR passes Tier 0)
 
@@ -68,5 +73,6 @@ For each acceptance criterion (from issue body + comments), build a row showing 
 
 Use the matrix to find tests or changes that the selected PR does not include.
 The verdict can recommend a small transfer from another PR.
+Complete the transfer and required attribution, then rerun the comparator before selecting a winner.
 
 Per-criterion winner cells: `covered` (full), `partial` (yellow), `missing` (red).

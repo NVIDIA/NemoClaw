@@ -242,6 +242,7 @@ process.exit = function exit(code) {
 };
 
 initialPhases.runInitialOnboardFlowSlice = async ({ context, runtime }) => {
+  await runtime.applyResult(advanceTo("preflight", { metadata: { state: "init" } }));
   await runtime.applyResult(advanceTo("gateway", { metadata: { state: "preflight" } }));
   await runtime.applyResult(advanceTo("provider_selection", { metadata: { state: "gateway" } }));
   const session = await runtime.session();

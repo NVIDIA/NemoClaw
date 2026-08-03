@@ -113,6 +113,12 @@ describe("snapshot credential scanner", () => {
     expect(
       snapshotFileContainsCredentialLeak("openclaw.json", '{"value":"nvapi-concrete-secret"}'),
     ).toBe(true);
+    expect(
+      snapshotFileContainsCredentialLeak(
+        "credentials.json",
+        '{"apiKey":"[STRIPPED_BY_MIGRATION]","marker":"non-secret"}',
+      ),
+    ).toBe(false);
     expect(snapshotFileContainsCredentialLeak("settings.json", '{"apiKey":"opaque"}')).toBe(true);
     expect(snapshotFileContainsCredentialLeak("runtime.env", "OPENAI_API_KEY=concrete")).toBe(true);
     expect(

@@ -21,6 +21,10 @@ import {
   retryTo,
 } from "./machine/result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./machine/runtime";
+import {
+  InvalidOnboardMachineTransitionError,
+  OnboardInterruptedError,
+} from "./machine/transitions";
 import type { OnboardMachineState } from "./machine/types";
 import { OnboardRuntimeBoundary } from "./runtime-boundary";
 import { applySessionRecovery } from "./session-recovery";
@@ -391,78 +395,6 @@ describe("OnboardRuntimeBoundary", () => {
     });
   });
 
-  it("applies the initial preflight transition on fresh onboarding", async () => {
-    const harness = createRuntimeHarness();
-    const boundary = new OnboardRuntimeBoundary({
-      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
-      maybeForceE2eStepFailure: () => undefined,
-      createRuntime: harness.createRuntime,
-    });
-
-    await boundary.recordInitialPreflightTransition(false);
-
-    expect(harness.events.map((event) => event.type)).toEqual(["state.exited", "state.entered"]);
-    expect(harness.events.at(-1)).toMatchObject({ state: "preflight" });
-  });
-
-  it("invalidates the initial preflight transition when resume already stands at preflight (#6227)", async () => {
-    const harness = createRuntimeHarness({
-      machine: {
-        version: 1,
-        state: "preflight",
-        stateEnteredAt: "2026-06-09T00:00:00.000Z",
-        revision: 3,
-      },
-    });
-    const boundary = new OnboardRuntimeBoundary({
-      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
-      maybeForceE2eStepFailure: () => undefined,
-      createRuntime: harness.createRuntime,
-    });
-
-    await boundary.recordInitialPreflightTransition(true);
-
-    expect(harness.events.map((event) => event.type)).toEqual(["state.result.invalidated"]);
-    expect(harness.events[0]).toMatchObject({
-      type: "state.result.invalidated",
-      metadata: {
-        reason: "already_at_target",
-        currentState: "preflight",
-        sourceState: "init",
-        targetState: "preflight",
-      },
-    });
-  });
-
-  it("invalidates the initial preflight transition when resume already advanced past init (#6227)", async () => {
-    const harness = createRuntimeHarness({
-      machine: {
-        version: 1,
-        state: "gateway",
-        stateEnteredAt: "2026-06-09T00:00:00.000Z",
-        revision: 5,
-      },
-    });
-    const boundary = new OnboardRuntimeBoundary({
-      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
-      maybeForceE2eStepFailure: () => undefined,
-      createRuntime: harness.createRuntime,
-    });
-
-    await boundary.recordInitialPreflightTransition(true);
-
-    expect(harness.events.map((event) => event.type)).toEqual(["state.result.invalidated"]);
-    expect(harness.events[0]).toMatchObject({
-      type: "state.result.invalidated",
-      metadata: {
-        reason: "source_state_mismatch",
-        currentState: "gateway",
-        sourceState: "init",
-        targetState: "preflight",
-      },
-    });
-  });
-
   it("rejects skipped transition results that carry context updates", async () => {
     const harness = createRuntimeHarness();
     const boundary = new OnboardRuntimeBoundary({
@@ -577,11 +509,13 @@ describe("OnboardRuntimeBoundary", () => {
       advanceTo("finalizing", { metadata: { state: "policies" } }),
     );
 
-    await boundary.recordPostVerifyStarted();
+    await boundary.recordStateResultWithStepCompatibility(
+      advanceTo("post_verify", { metadata: { state: "finalizing" } }),
+    );
     const completed = await boundary.recordStateResultWithStepCompatibility(
       completeOnboardMachine(
         { sandboxName: "openclaw-sb", provider: "nvidia", model: "nemotron" },
-        { state: "finalizing" },
+        { state: "post_verify" },
       ),
     );
 
@@ -667,5 +601,113 @@ describe("OnboardRuntimeBoundary", () => {
       type: "resume.conflict",
       metadata: { field: "sandbox", recorded: "old-sandbox", requested: "new-sandbox" },
     });
+  });
+});
+
+describe("onboarding interrupted while a step is in flight (#7982)", () => {
+  function failedAtSandbox(interrupted: boolean) {
+    const harness = createRuntimeHarness({
+      status: "failed",
+      lastStepStarted: "sandbox",
+      failure: {
+        step: "sandbox",
+        message: interrupted
+          ? "Onboarding exited before the step completed."
+          : "Rebuild recreate failed",
+        recordedAt: "2026-05-27T00:00:00.000Z",
+        interrupted,
+      },
+      machine: {
+        version: 1,
+        state: "failed",
+        stateEnteredAt: "2026-05-27T00:00:00.000Z",
+        revision: 5,
+      },
+    });
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+    return { boundary, harness };
+  }
+
+  function interruptedAtSandbox() {
+    return failedAtSandbox(true);
+  }
+
+  it("reports the sandbox branch as interrupted rather than an invalid transition", async () => {
+    const { boundary, harness } = interruptedAtSandbox();
+
+    const applied = boundary.recordStateResult(
+      branchTo("openclaw", { metadata: { state: "sandbox" } }),
+    );
+
+    await expect(applied).rejects.toThrow(OnboardInterruptedError);
+    await expect(applied).rejects.not.toThrow(InvalidOnboardMachineTransitionError);
+    await expect(applied).rejects.toThrow(/during the sandbox step/);
+    await expect(applied).rejects.toThrow(/continue to openclaw/);
+    expect(harness.getSession().machine).toMatchObject({ state: "failed", revision: 5 });
+    expect(harness.events).toHaveLength(0);
+  });
+
+  it("reports an interrupt recorded by another process without an in-process latch", async () => {
+    const { boundary, harness } = interruptedAtSandbox();
+
+    const applied = boundary.recordStateResult(
+      branchTo("openclaw", { metadata: { state: "sandbox" } }),
+    );
+
+    await expect(applied).rejects.toThrow(OnboardInterruptedError);
+    await expect(applied).rejects.toThrow(/during the sandbox step/);
+    expect(harness.getSession().machine).toMatchObject({ state: "failed", revision: 5 });
+  });
+
+  it("reports an ordinary failed session as an invalid transition, not an interrupt", async () => {
+    const { boundary, harness } = failedAtSandbox(false);
+
+    const applied = boundary.recordStateResult(
+      branchTo("openclaw", { metadata: { state: "sandbox" } }),
+    );
+
+    await expect(applied).rejects.toThrow(InvalidOnboardMachineTransitionError);
+    await expect(applied).rejects.not.toThrow(OnboardInterruptedError);
+    expect(harness.getSession().machine).toMatchObject({ state: "failed", revision: 5 });
+  });
+
+  it("rejects completing an interrupted session through recordSessionComplete", async () => {
+    const { boundary, harness } = interruptedAtSandbox();
+
+    await expect(boundary.recordSessionComplete()).rejects.toThrow(OnboardInterruptedError);
+    expect(harness.getSession().machine).toMatchObject({ state: "failed", revision: 5 });
+  });
+
+  it("reports an interrupted finalization rather than an invalid completion", async () => {
+    const { boundary } = interruptedAtSandbox();
+
+    await expect(boundary.recordStateResult(completeOnboardMachine())).rejects.toThrow(
+      OnboardInterruptedError,
+    );
+  });
+
+  it("still applies a legal branch when no interrupt was recorded", async () => {
+    const harness = createRuntimeHarness({
+      lastStepStarted: "sandbox",
+      machine: {
+        version: 1,
+        state: "sandbox",
+        stateEnteredAt: "2026-05-27T00:00:00.000Z",
+        revision: 5,
+      },
+    });
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await boundary.recordStateResult(branchTo("openclaw", { metadata: { state: "sandbox" } }));
+
+    expect(harness.getSession().machine).toMatchObject({ state: "openclaw", revision: 6 });
   });
 });

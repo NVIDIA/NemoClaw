@@ -1,11 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { dockerSpawnSync } from "../../adapters/docker/exec";
+import { findLabeledSandboxContainers } from "../../onboard/docker-driver-sandbox-recovery";
+import { load as loadRegistry } from "../../state/registry/persistence";
+import { resolveSandboxContainerOwner } from "./sandbox-container-owner";
 
-import { resolveOpenshell } from "../../adapters/openshell/resolve";
-import { buildOpenshellExecArgs } from "./exec";
-
+/**
+ * The sandbox's own memory cgroup records `oom_kill` when the kernel kills a
+ * process inside it while the container supervisor survives — the case that
+ * leaves `nemoclaw status` reporting Ready over a degraded sandbox (#5796).
+ *
+ * The counter must be read from the host. Running this script through the
+ * sandbox exec transport puts it under the sandbox policy, which denies
+ * `/sys/fs/cgroup`, so a real OOM was indistinguishable from "the probe could
+ * not run" and status never escalated. A host-side `docker exec` enters the
+ * container's cgroup namespace without inheriting that policy, so
+ * `/sys/fs/cgroup/memory.events` resolves to the sandbox's own counters.
+ */
 const CGROUP_OOM_PROBE_SCRIPT = [
   "probe_cgroup_file() {",
   '  file="$1"',
@@ -36,10 +48,7 @@ export type TerminalRuntimeOomProbeResult =
   | { kind: "degraded"; oomKillCount: number; source?: string }
   | { kind: "unavailable"; detail?: string };
 
-export type TerminalRuntimeOomProbeRunner = (
-  binary: string,
-  args: readonly string[],
-) => {
+export type TerminalRuntimeOomProbeRunner = (args: readonly string[]) => {
   status: number | null;
   stdout?: string | Buffer;
   stderr?: string | Buffer;
@@ -64,30 +73,78 @@ export function parseTerminalRuntimeOomProbeOutput(
   return { kind: "ok", oomKillCount: 0, source };
 }
 
+const PROBE_TIMEOUT_MS = 5_000;
+
+export interface TerminalRuntimeOomProbeDeps {
+  getSandboxDriver: (name: string) => string | null | undefined;
+  listLabeledContainerNames: (name: string) => string[];
+  listSandboxNames: () => string[] | undefined;
+  run: TerminalRuntimeOomProbeRunner;
+}
+
+/** Registry read failure is unknown, not "not docker", so the probe reports
+ * unavailable instead of silently concluding the sandbox has no counter. */
+function readSandboxDriver(name: string): string | null | undefined {
+  try {
+    return loadRegistry().sandboxes[name]?.openshellDriver;
+  } catch {
+    return undefined;
+  }
+}
+
+function readSandboxNames(): string[] | undefined {
+  try {
+    return Object.values(loadRegistry().sandboxes).map((entry) => entry.name);
+  } catch {
+    return undefined;
+  }
+}
+
+const defaultDeps: TerminalRuntimeOomProbeDeps = {
+  getSandboxDriver: readSandboxDriver,
+  listLabeledContainerNames: (name) =>
+    findLabeledSandboxContainers(name).map((container) => container.name),
+  listSandboxNames: readSandboxNames,
+  run: (args) =>
+    dockerSpawnSync(args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: PROBE_TIMEOUT_MS,
+    }),
+};
+
 export function probeTerminalRuntimeCgroupOom(
   sandboxName: string,
-  options: {
-    openshellBinary?: string | null;
-    run?: TerminalRuntimeOomProbeRunner;
-  } = {},
+  depsOverride: Partial<TerminalRuntimeOomProbeDeps> = {},
 ): TerminalRuntimeOomProbeResult {
-  const binary = options.openshellBinary ?? resolveOpenshell();
-  if (!binary) return { kind: "unavailable", detail: "openshell not found" };
-
-  const run =
-    options.run ??
-    ((cmd, args) =>
-      spawnSync(cmd, args, {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-      }));
-  const result = run(
-    binary,
-    buildOpenshellExecArgs(sandboxName, ["sh", "-lc", CGROUP_OOM_PROBE_SCRIPT], {
-      timeoutSeconds: 5,
-      tty: false,
-    }),
+  const deps: TerminalRuntimeOomProbeDeps = { ...defaultDeps, ...depsOverride };
+  if (deps.getSandboxDriver(sandboxName) !== "docker") {
+    return { kind: "unavailable", detail: "cgroup OOM probe requires the docker driver" };
+  }
+  // Reading the wrong container's counter would report a degraded sandbox that
+  // is healthy, so ambiguous ownership stays unavailable rather than guessing.
+  const labeledContainerNames = deps.listLabeledContainerNames(sandboxName);
+  if (labeledContainerNames.length !== 1) {
+    return {
+      kind: "unavailable",
+      detail:
+        labeledContainerNames.length === 0
+          ? "no labeled container found for sandbox"
+          : "ambiguous sandbox container ownership",
+    };
+  }
+  const sandboxNames = deps.listSandboxNames();
+  if (!sandboxNames) {
+    return { kind: "unavailable", detail: "sandbox ownership registry unavailable" };
+  }
+  const containerName = resolveSandboxContainerOwner(
+    labeledContainerNames[0] ?? "",
+    sandboxName,
+    sandboxNames,
   );
+  if (!containerName) return { kind: "unavailable", detail: "sandbox container owner unresolved" };
+
+  const result = deps.run(["exec", containerName, "sh", "-lc", CGROUP_OOM_PROBE_SCRIPT]);
   if (result.error) return { kind: "unavailable", detail: result.error.message };
   if (result.status !== 0) {
     const stderr = Buffer.isBuffer(result.stderr)

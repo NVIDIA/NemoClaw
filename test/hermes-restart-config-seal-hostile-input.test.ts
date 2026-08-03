@@ -183,7 +183,7 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
 
       const aborted = runShieldsTransactionAction(fixture, "abort-shields-transition", { token });
       expect(aborted.status, aborted.stderr).toBe(0);
-      expect(mode(fixture.hermesDir)).toBe(0o755);
+      expect(mode(fixture.hermesDir)).toBe(0o3770);
       expect(mode(fixture.sandboxDir)).toBe(0o1775);
     } finally {
       fs.rmSync(fixture.root, { recursive: true, force: true });

@@ -19,15 +19,19 @@ import {
 const installer = fileURLToPath(new URL("../../../scripts/install.sh", import.meta.url));
 
 describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
-  it("stages, enables, and removes the repository service template", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-lifecycle-stage-service-"));
+  it("stages, enables, and removes the repository service without installer cleanup", () => {
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-installer-lifecycle-stage-service-"),
+    );
     const home = path.join(root, "home");
     const configHome = path.join(root, "config");
     const bin = path.join(home, ".local", "bin");
     const log = path.join(root, "systemctl.log");
     const unit = path.join(configHome, "systemd", "user", "nemoclaw-openshell-gateway.service");
+    const installerCleanupSentinel = path.join(root, "installer-cleanup-sentinel");
 
     fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(installerCleanupSentinel, "fixture-owned\n");
     fs.writeFileSync(path.join(bin, "openshell-gateway"), "#!/bin/sh\n", { mode: 0o755 });
     fs.writeFileSync(
       path.join(bin, "systemctl"),
@@ -46,6 +50,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
         PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
         XDG_CONFIG_HOME: configHome,
       });
+      env.NEMOCLAW_INSTALLER_STAGED = installerCleanupSentinel;
       const staged = execFileSync(
         "bash",
         ["-lc", buildOpenShellGatewayUserServiceStageScript(), "stage-service", installer],
@@ -53,6 +58,7 @@ describe("reboot lifecycle OpenShell gateway user-service fixture", () => {
       );
 
       expect(staged).toContain("NEMOCLAW_E2E_GATEWAY_USER_SERVICE=staged");
+      expect(fs.existsSync(installerCleanupSentinel)).toBe(true);
       expect(fs.readFileSync(unit, "utf8")).toContain(`ExecStart=${bin}/openshell-gateway`);
       expect(fs.statSync(unit).mode & 0o777).toBe(0o600);
 

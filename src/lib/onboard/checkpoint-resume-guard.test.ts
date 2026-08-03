@@ -39,6 +39,7 @@ const loadedCheckpoint: OnboardCheckpoint = {
   gatewayAuthority: decisionUnset(),
   effectGroups: {},
   bindings: { credentialEnvs: [], registeredProviders: [] },
+  sandboxRecreate: null,
 };
 
 function makeDeps(overrides: Partial<OnboardSessionBootstrapDeps>): OnboardSessionBootstrapDeps {

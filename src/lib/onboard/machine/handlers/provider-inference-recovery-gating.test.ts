@@ -289,6 +289,7 @@ describe("provider inference recovery gating", () => {
         hermesToolGateways: [],
         preferredInferenceApi: "openai-responses",
         compatibleEndpointReasoning: null,
+        compatibleEndpointReasoningEffort: null,
         nimContainer: null,
         recoveredFromSandbox: true,
       };

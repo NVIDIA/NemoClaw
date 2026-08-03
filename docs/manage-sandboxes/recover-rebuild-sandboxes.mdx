@@ -82,10 +82,17 @@ Refer to [`$$nemoclaw <name> recover`](../../reference/commands#$$nemoclaw-name-
 Recovery uses registry-scoped privileged direct-container control and does not fall back to ordinary `openshell sandbox exec` or a manual in-sandbox relaunch.
 For a local Docker-driver sandbox whose container still uses the legacy keepalive startup, `recover` can transactionally recreate the registered container with a credential-free managed startup command.
 
-NemoClaw keeps the previous container available until the managed controller proves the supervisor topology, gateway health, and settle check, and attempts to restore it if that proof fails.
-The recreation preserves mounted sandbox state, but a committed swap does not retain changes stored only in the previous container's writable layer.
-After a transactional recreation, NemoClaw uses the `NEMOCLAW_SANDBOX_READY_TIMEOUT` budget (180 seconds by default) for OpenShell to re-register the sandbox before starting the primary dashboard or API host forward.
-A definitive managed-health failure still stops immediately; if re-registration does not complete within the budget, the forward stays stopped.
+NemoClaw keeps the previous container available throughout the replacement health, OpenShell readiness, state restoration, gateway restart, and settle checks.
+Before recreation, NemoClaw backs up the state directories and files declared by the agent manifest.
+NemoClaw waits for OpenShell to re-register the exact replacement before it restores state.
+After state restoration, it restarts the gateway in that replacement and reruns the managed health and settle checks.
+It commits only after the replacement identity, state restoration, gateway restart, and settle check pass.
+NemoClaw removes the temporary state backup after a successful restore or rollback.
+If state restoration and rollback both fail, it retains the backup and prints host recovery guidance.
+Mounted state remains available, but a committed swap does not retain other writable-layer changes.
+NemoClaw uses the `NEMOCLAW_SANDBOX_READY_TIMEOUT` budget (180 seconds by default) for OpenShell re-registration.
+If re-registration, state restoration, or a later gateway check fails, NemoClaw attempts to roll back the replacement.
+The primary dashboard or API host forward stays stopped.
 
 For the controller topology, trust boundary, and fail-closed conditions, refer to [Understand Gateway Lifecycle Control](../configure-sandboxes/understand-gateway-lifecycle-control).
 If recovery cannot repair a sandbox that needs credentials or a current controller contract, rebuild it.
@@ -160,6 +167,33 @@ Follow the printed recovery guidance, using `$$nemoclaw <sandbox-name> recover` 
 The rebuild command preserves manifest-defined Deep Agents state, regenerates `config.toml`, reconstructs managed MCP projection state, and reapplies registered policies while recreating the container.
 </AgentOnly>
 
+### Continue an Interrupted Replacement
+
+Before `rebuild` deletes the existing sandbox, NemoClaw records a replacement journal in the onboarding session.
+The journal binds the operation to the sandbox name, recorded OpenShell gateway, source identity, and replacement settings.
+It stores fingerprints instead of credential values or raw OpenShell sandbox IDs.
+
+If `rebuild` stops after recording the journal, rerun the command with the same replacement settings.
+The rerun takes one of these actions:
+
+- It continues deletion when the live sandbox still has the journaled source identity.
+- It continues creation when the recorded OpenShell gateway explicitly reports the source sandbox as absent.
+- It accepts an existing replacement only when its live identity and sandbox registry generation match the journal.
+
+An accepted replacement is not deleted again.
+The command reports `Sandbox '<name>' already holds the replacement from the interrupted rebuild.` and preserves the state backup path when one exists.
+Pass `--verbose` to include the replacement identifier, OpenShell gateway, and journal phase in rebuild diagnostics.
+
+NemoClaw fails closed when the selected gateway, replacement settings, durable source registry fields, or live source or target identity no longer matches the journal.
+The error names the sandbox and the mismatch that stopped recovery.
+Do not delete a same-name sandbox to bypass this check.
+Inspect the named OpenShell gateway and sandbox, correct the reported drift, and rerun the original command.
+
+A same-name recreation started by `$$nemoclaw onboard` uses the same replacement journal.
+If that recreation is interrupted after the `Journaled replacement` message, rerun the original onboarding command with the same target settings.
+The active replacement can continue without adding `--resume`.
+Use `--resume` for interrupted onboarding steps that occur before a replacement journal exists.
+
 If an archive command preserves at least one state directory, NemoClaw keeps the usable entries and reports the manifest-defined paths that could not be archived.
 If a manifest-declared state file fails, NemoClaw stops before deleting the original sandbox even when it preserved state directories, unless you explicitly pass `--force`.
 If every state directory fails, NemoClaw stops before deleting the original sandbox even when it captured loose files, unless you explicitly pass `--force`.
@@ -169,7 +203,8 @@ If every state directory fails, NemoClaw stops before deleting the original sand
 NemoClaw restores any entries captured in the partial backup; if nothing usable was captured, it recreates the sandbox from recorded registry metadata without restoring prior sandbox state.
 Use this recovery path only when losing the state that could not be backed up is acceptable.
 When a sandbox with managed MCP servers cannot run a pre-mutation no-op, explicit `--force` uses its complete registry entries plus the exact live generated policies and provider identities to preserve MCP intent without scrubbing the unreachable in-sandbox adapter.
-Every bridge entry must record an explicit adapter that matches the sandbox's recorded agent, and the registered policy must be the canonical generated policy for that adapter, server name, URL endpoint, and current resolved-address pins.
+Every bridge entry must record the adapter for the sandbox's recorded agent.
+The registered policy must match the policy NemoClaw generates for that adapter, server name, endpoint URL, and resolved addresses.
 NemoClaw rechecks that read-only snapshot immediately before deletion and stops if the target, registry, policy, provider, or recorded gateway changed.
 NemoClaw sends the delete request and every deletion-confirmation lookup to the sandbox's exact recorded gateway.
 Across every rebuild path, NemoClaw does not attempt to stop the local NIM through the delete attempt, and cleanup is attempted on a best-effort basis only after deletion is positively confirmed.

@@ -339,14 +339,15 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     );
   });
 
-  it("uses the Nemotron Ultra recipe without follow-up choices on DGX Station", () => {
+  it("keeps the Station Ultra default while deferring topology selection", () => {
     const result = runExpressPromptWithTty("\n", "pipe", "DGX Station");
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected DGX Station/);
     expect(output).toMatch(
-      /Express install will configure managed local vLLM with NVIDIA Nemotron 3 Ultra 550B/,
+      /Express install will configure managed local vLLM with NVIDIA Nemotron 3 Ultra 550B and automatic Station topology selection/,
     );
+    expect(output).toMatch(/pretrusted reciprocal dual-Station pair selects distributed serving/);
     expect(output).toMatch(/approximately 352 GB model/);
     expect(output).toContain(
       "Hugging Face authentication is optional for this public model but recommended",
@@ -537,7 +538,7 @@ ensure_station_express_host`,
     ).toBe(
       `revision=${revision}\nmodel=deepseek-v4-flash\ngeneration=${generation}\n` +
         "agent=hermes\nsandbox=custom-agent\npolicy_tier=restricted\n" +
-        "gateway_port=18081\ndashboard_port=18790\nvllm_port=18000\n",
+        "gateway_port=18081\ndashboard_port=18790\nvllm_port=18000\nmode=express\n",
     );
     expect(output).toContain("A reboot is not required");
     expect(output).toContain(
@@ -1209,8 +1210,8 @@ printf 'NON_EXPRESS_ALLOWED\n'
     });
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
-    expect(output).toMatch(/managed local vLLM with NVIDIA Nemotron 3 Ultra 550B/);
-    expect(output).toMatch(/approximately 352 GB model/);
+    expect(output).toMatch(/automatic Station topology selection/);
+    expect(output).toMatch(/pretrusted reciprocal dual-Station pair selects distributed serving/);
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL=nvidia\/nemotron-3-ultra-550b-a55b VLLM_MODEL=nemotron-3-ultra-550b-a55b POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
@@ -1253,7 +1254,20 @@ detect_express_platform
     expect(result.stdout).toBe("DGX Station");
   });
 
-  it.each(["7.2.0", "7.4.0", "7.5.0"])("recognizes stock DGX OS %s", (version) => {
+  it("rejects partial and unsupported Station product identifiers", () => {
+    for (const productName of [
+      "Acme XP3830 Workstation",
+      "Dell Pro Max with Station GB200",
+      "Dell Pro Max with GB300",
+    ]) {
+      const result = detectExpressPlatformForProductName(productName);
+
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(result.stdout).not.toBe("DGX Station");
+    }
+  });
+
+  it.each(["7.2.0", "7.4.0", "7.5.0"])("recognizes stock DGX OS %s on Station GB300", (version) => {
     const result = detectExpressPlatformForStockDgxRelease(
       "DGX Station GB300",
       stockDgxRelease(version),

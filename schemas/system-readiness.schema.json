@@ -3,7 +3,7 @@
   "$id": "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json",
   "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
   "title": "NemoClaw system readiness report",
-  "description": "Version 1 consumer-neutral contract for a read-only system readiness report. Unknown major versions are incompatible. Consumers must ignore unrecognized optional fields in major version 1. IDs must be unique within each entity collection, and every capabilityIds or evidenceIds reference must resolve within its target collection. These cross-array rules require semantic validation after JSON Schema validation. Evidence is bounded diagnostic context and does not affect compatibility decisions unless a capability or finding references its ID in evidenceIds.",
+  "description": "Version 1 consumer-neutral contract for a read-only system readiness report. Unknown major versions are incompatible. Consumers must ignore unrecognized optional fields in major version 1. Schema version 1.1.0 and later require the immutable source revision of the report producer. IDs must be unique within each entity collection, and every capabilityIds or evidenceIds reference must resolve within its target collection. These cross-array rules require semantic validation after JSON Schema validation. Evidence is bounded diagnostic context and does not affect compatibility decisions unless a capability or finding references its ID in evidenceIds.",
   "type": "object",
   "required": ["schemaVersion", "status", "exitCode", "mutated", "provenance", "observations", "capabilities", "qualifications", "findings", "evidence"],
   "properties": {
@@ -58,6 +58,28 @@
   },
   "allOf": [
     {
+      "if": {
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "pattern": "^1\\.(?:[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$"
+          }
+        },
+        "required": ["schemaVersion"]
+      },
+      "then": {
+        "properties": {
+          "provenance": {
+            "type": "object",
+            "required": ["sourceRevision"],
+            "properties": {
+              "sourceRevision": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    {
       "if": { "properties": { "status": { "const": "supported" } }, "required": ["status"] },
       "then": { "properties": { "exitCode": { "const": 0 } } }
     },
@@ -86,11 +108,17 @@
       "type": "object",
       "required": ["nemoclawVersion", "observedAt"],
       "properties": {
-        "nemoclawVersion": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "nemoclawVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$",
+          "description": "Public version identity of the executing NemoClaw CLI build."
+        },
         "sourceRevision": {
           "type": "string",
           "pattern": "^[0-9a-f]{40,64}$",
-          "description": "Immutable source revision when the build provides one."
+          "description": "Immutable source revision of the executing CLI build. When nemoclawVersion uses Git describe form, its g-prefixed revision must match the leading characters of this value."
         },
         "observedAt": { "type": "string", "format": "date-time" }
       },

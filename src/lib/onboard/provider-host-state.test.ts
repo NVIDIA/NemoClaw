@@ -148,6 +148,18 @@ describe("detectInferenceProviderHostState", () => {
     );
   });
 
+  it("does not treat curl connection status 000 as a running vLLM", () => {
+    const state = detectWithDeps(
+      buildDeps({
+        runCapture: vi.fn((command) =>
+          command.join(" ").includes("127.0.0.1:8000/v1/models") ? "000" : "",
+        ),
+      }),
+    );
+
+    expect(state.vllmRunning).toBe(false);
+  });
+
   it("detects a reachable Windows-host Ollama beside WSL-local Ollama and warns outside mirrored networking", () => {
     const logs: string[] = [];
     const deps = buildDeps({

@@ -4,8 +4,8 @@
 title: "Create Custom Policy Presets"
 sidebar-title: "Create Custom Presets"
 description: "Author and apply a scoped network policy preset for an endpoint that NemoClaw does not include."
-description-agent: "Creates and applies custom policy presets. Use when adding a reviewed endpoint, applying preset files, or allowing a URL-based MCP server."
-keywords: ["nemoclaw custom policy preset", "policy add from-file", "url mcp network policy"]
+description-agent: "Creates and applies custom policy presets. Use when adding a reviewed endpoint or applying preset files."
+keywords: ["nemoclaw custom policy preset", "policy add from-file"]
 content:
   type: "how_to"
 skill:
@@ -38,8 +38,14 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
     binaries:
-      - { path: /usr/local/bin/node }
+      - { path: /path/to/requesting-binary }
 ```
+
+Replace `/path/to/requesting-binary` with the exact executable path reported for the blocked request in `openshell term`.
+<AgentOnly variant="deepagents">
+For Deep Agents Code, OpenShell commonly reports `/usr/local/bin/dcode` or `/opt/venv/bin/python3*`.
+Authorize only the process that needs the reviewed endpoint.
+</AgentOnly>
 
 The top-level `preset.name` must be a lowercase RFC 1123 label with letters, digits, and hyphens.
 It must not collide with a maintained preset name such as `slack` or `pypi`.
@@ -113,6 +119,8 @@ $$nemoclaw my-assistant policy remove my-service-api --yes
 
 Run `$$nemoclaw <name> policy list` to see every maintained and custom preset recorded for the sandbox.
 
+<AgentOnly variant="openclaw,hermes">
+
 ## Configure a URL-Based MCP Server
 
 Prefer the managed workflow in [Add an MCP Server](../../manage-sandboxes/mcp-servers/add-an-mcp-server) when the server uses authenticated HTTPS Streamable HTTP.
@@ -184,8 +192,12 @@ If the hostname resolves to a private, loopback, or link-local address, establis
 Then follow the approved private-destination configuration.
 Refer to [Agent cannot reach a host-side HTTP service](../../reference/troubleshooting#agent-cannot-reach-a-host-side-http-service) for routing and private-destination diagnostics.
 
+</AgentOnly>
+
 ## Related Topics
 
 - [Apply Policy Presets](apply-policy-presets) explains preset persistence and reapplication.
+<AgentOnly variant="openclaw,hermes">
 - [Configure Raw TLS Passthrough](configure-raw-tls-passthrough) covers endpoints that cannot use L7 inspection.
+</AgentOnly>
 - [Network Policies](../../reference/network-policies) describes the policy schema.

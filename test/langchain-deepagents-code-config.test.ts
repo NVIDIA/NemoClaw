@@ -45,6 +45,7 @@ function runGeneratorProcess(
     NEMOCLAW_UPSTREAM_PROVIDER: "nvidia-prod",
     NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
     NEMOCLAW_INFERENCE_API: "openai-completions",
+    NEMOCLAW_REASONING_EFFORT: "",
     ...definedOverrides,
   };
   Object.entries(env)
@@ -179,6 +180,47 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(config).toContain(
       "extra_body = { chat_template_kwargs = { force_nonempty_content = true } }",
     );
+  });
+
+  it.each([
+    "low",
+    "medium",
+    "high",
+  ])("records the onboarding reasoning effort as a managed request parameter: %s (#7938)", (effort) => {
+    const config = runGenerator({ NEMOCLAW_REASONING_EFFORT: effort });
+
+    expect(config).toContain(
+      '[models.providers.openai.params."nvidia/nemotron-3-super-120b-a12b"]',
+    );
+    expect(config).toContain(`extra_body = { reasoning_effort = "${effort}" }`);
+  });
+
+  it("keeps both managed request parameters for an Ultra model with a reasoning effort (#7938)", () => {
+    const config = runGenerator({
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
+      NEMOCLAW_REASONING_EFFORT: "high",
+    });
+
+    expect(config).toContain(
+      'extra_body = { chat_template_kwargs = { force_nonempty_content = true }, reasoning_effort = "high" }',
+    );
+  });
+
+  it("omits the request parameter table when onboarding recorded no reasoning effort (#7938)", () => {
+    const config = runGenerator({ NEMOCLAW_REASONING_EFFORT: undefined });
+
+    expect(config).not.toContain("reasoning_effort");
+    expect(config).not.toContain("[models.providers.openai.params.");
+  });
+
+  it("rejects an unsupported reasoning effort before writing config (#7938)", () => {
+    const result = runGeneratorProcess({ NEMOCLAW_REASONING_EFFORT: "extreme" });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(
+      "NEMOCLAW_REASONING_EFFORT must be low, medium, or high.",
+    );
+    expect(fs.existsSync(path.join(result.home, ".deepagents", "config.toml"))).toBe(false);
   });
 
   it("preserves colons that belong to the model ID", () => {

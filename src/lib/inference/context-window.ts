@@ -10,10 +10,12 @@
  * window kept for a cloud model → silent under-utilization).
  */
 
-import { VLLM_PORT } from "../core/ports";
 import { DEFAULT_CONTEXT_WINDOW } from "./config";
 import {
+  getLocalProviderHealthEndpoint,
+  getManagedDualStationVllmProviderBinding,
   getOllamaWarmupCommand,
+  probeVllmModels,
   type RunCaptureFn,
   resolveOllamaRuntimeContextWindow,
 } from "./local";
@@ -44,10 +46,22 @@ const defaultContextWindowDeps: ContextWindowDeps = {
   probeVllmContextWindow: (model: string): number | null => {
     // Same source onboard uses: GET /v1/models on the host vLLM server and read
     // max_model_len (handles both NemoClaw-launched and bring-your-own vLLM).
-    const { runCapture } = require("../runner") as { runCapture: RunCaptureFn };
-    const raw = runCapture(["curl", "-sf", `http://127.0.0.1:${VLLM_PORT}/v1/models`], {
-      ignoreError: true,
-    });
+    let managedBinding: ReturnType<typeof getManagedDualStationVllmProviderBinding>;
+    try {
+      managedBinding = getManagedDualStationVllmProviderBinding();
+    } catch {
+      return null;
+    }
+    let raw: string;
+    if (managedBinding) {
+      const result = probeVllmModels(managedBinding.baseUrl, managedBinding.apiKey);
+      raw = result.ok ? result.body : "";
+    } else {
+      const { runCapture } = require("../runner") as { runCapture: RunCaptureFn };
+      const endpoint = getLocalProviderHealthEndpoint("vllm-local");
+      if (!endpoint) return null;
+      raw = runCapture(["curl", "-sf", endpoint], { ignoreError: true });
+    }
     if (!raw) return null;
     let parsed: unknown;
     try {

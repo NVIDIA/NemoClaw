@@ -47,6 +47,25 @@ function runStationPreparationSourced(body: string) {
 }
 
 describe("installer Station Local vLLM continuation", () => {
+  it("normalizes a trailing slash in HOME before selecting continuation state", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-vllm-resume-home-slash-"));
+    try {
+      const { result, output } = runInstallerSourced(
+        `
+load_station_vllm_conflict_helpers
+printf 'resume=%s\\n' "$(station_local_vllm_resume_file)"
+`,
+        `${home}/`,
+      );
+
+      expect(result.status, output).toBe(0);
+      expect(output).toContain(`resume=${home}/.nemoclaw/station-local-vllm-resume`);
+      expect(output).not.toContain(`${home}//.nemoclaw`);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("ignores diagnostic processes that mention vLLM", () => {
     const { result, output } = runInstallerSourced(`
 load_station_vllm_conflict_helpers

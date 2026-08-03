@@ -26,6 +26,7 @@ function checkpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardCheckpoi
     gatewayAuthority: decisionUnset(),
     effectGroups: {},
     bindings: { credentialEnvs: [], registeredProviders: [] },
+    sandboxRecreate: null,
     ...overrides,
   };
 }

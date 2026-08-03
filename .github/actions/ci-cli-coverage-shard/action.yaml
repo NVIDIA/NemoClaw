@@ -91,15 +91,11 @@ runs:
             exit 0
             ;;
         esac
-        parity_check=scripts/checks/e2e-mock-parity.mts
-        if [ ! -f "$parity_check" ]; then
-          parity_check=scripts/checks/e2e-mock-parity.ts
-        fi
-        if [ ! -f "$parity_check" ]; then
-          echo "::error title=Missing E2E mock parity entrypoint::Expected scripts/checks/e2e-mock-parity.mts or scripts/checks/e2e-mock-parity.ts."
+        if [ ! -f scripts/checks/e2e-mock-parity.mts ]; then
+          echo "::error title=Missing E2E mock parity entrypoint::Expected scripts/checks/e2e-mock-parity.mts."
           exit 1
         fi
-        npx tsx "$parity_check" --base "$base" --head "$head"
+        npx tsx scripts/checks/e2e-mock-parity.mts --base "$base" --head "$head"
 
     - name: Build TypeScript plugin
       shell: bash
@@ -110,11 +106,7 @@ runs:
       run: |
         node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })"
         npm run build:cli
-        dist_sourcemap_check=scripts/check-dist-sourcemaps.mts
-        if [ ! -f "$dist_sourcemap_check" ]; then
-          dist_sourcemap_check=scripts/check-dist-sourcemaps.ts
-        fi
-        npx tsx "$dist_sourcemap_check" dist
+        npx tsx scripts/check-dist-sourcemaps.mts dist
 
     - name: Upload compiled CLI artifact
       if: ${{ steps.validate-shard-inputs.outputs.upload_build_artifact == 'true' && success() }}
