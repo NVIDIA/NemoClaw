@@ -3,9 +3,70 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createSession } from "../../state/onboard-session";
+import {
+  createSession,
+  MACHINE_SNAPSHOT_VERSION,
+  type Session,
+} from "../../state/onboard-session";
 import type { OnboardFlowContext } from "./flow-context";
 import { prepareCoreOnboardFlowContext, prepareFinalOnboardFlowContext } from "./flow-handoff";
+import type { OnboardMachineState } from "./types";
+
+const TRACE_TIME = "2026-08-03T00:00:00.000Z";
+
+interface HandoffResultCase {
+  trace: string;
+  resume: boolean;
+  fresh: boolean;
+  initialState: OnboardMachineState;
+  coreState: OnboardMachineState;
+  status: "in_progress" | "failed";
+}
+
+const handoffResultCases: readonly HandoffResultCase[] = [
+  {
+    trace: "resumed",
+    resume: true,
+    fresh: false,
+    initialState: "provider_selection",
+    coreState: "openclaw",
+    status: "in_progress",
+  },
+  {
+    trace: "failed",
+    resume: false,
+    fresh: true,
+    initialState: "failed",
+    coreState: "failed",
+    status: "failed",
+  },
+  {
+    trace: "paused",
+    resume: false,
+    fresh: true,
+    initialState: "gateway",
+    coreState: "sandbox",
+    status: "in_progress",
+  },
+];
+
+function runnerSession(
+  state: OnboardMachineState,
+  status: HandoffResultCase["status"],
+  failure: Session["failure"],
+): Session {
+  const session = createSession({
+    failure,
+    machine: {
+      version: MACHINE_SNAPSHOT_VERSION,
+      state,
+      stateEnteredAt: TRACE_TIME,
+      revision: 7,
+    },
+  });
+  session.status = status;
+  return session;
+}
 
 function context(): OnboardFlowContext & {
   gpu: string | null;
@@ -123,6 +184,56 @@ describe("onboard flow handoffs", () => {
     ).toThrow("Preflight did not produce a sandbox GPU configuration.");
   });
 
+  it.each(handoffResultCases)(
+    "preserves a $trace runner result at the initial-to-core handoff (#7706)",
+    ({ trace, resume, fresh, initialState, status }) => {
+      const failure =
+        status === "failed"
+          ? {
+              step: "gateway",
+              message: "gateway failed",
+              recordedAt: TRACE_TIME,
+            }
+          : null;
+      const persisted = runnerSession(initialState, status, failure);
+      const endpointUrl = `${trace}.example.test`;
+
+      const result = prepareCoreOnboardFlowContext({
+        initial: {
+          context: {
+            ...context(),
+            resume,
+            fresh,
+            endpointUrl,
+          },
+          session: persisted,
+        },
+        recordedSandboxName: null,
+        requestedSandboxName: null,
+        checkpointedSandboxName: null,
+        selectedMessagingChannels: ["slack"],
+        assertSandboxNameAllowed: vi.fn(),
+      });
+
+      expect(result.session).toBe(persisted);
+      expect(result).toMatchObject({
+        resume,
+        fresh,
+        endpointUrl,
+        selectedMessagingChannels: ["slack"],
+      });
+      expect(result.session).toMatchObject({
+        status,
+        resumable: true,
+        failure,
+        machine: {
+          state: initialState,
+          revision: 7,
+        },
+      });
+    },
+  );
+
   it("constructs final context after sandbox identity and inference are complete", () => {
     const persisted = createSession();
     const coreContext = {
@@ -130,15 +241,74 @@ describe("onboard flow handoffs", () => {
       sandboxName: "ready",
       model: "model",
       provider: "provider",
+      endpointUrl: "https://inference.example.test",
+      selectedMessagingChannels: ["slack"],
     };
 
-    expect(
-      prepareFinalOnboardFlowContext({
-        context: coreContext,
-        session: persisted,
-      }),
-    ).toMatchObject({ sandboxName: "ready", model: "model", provider: "provider" });
+    const result = prepareFinalOnboardFlowContext({
+      context: coreContext,
+      session: persisted,
+    });
+
+    expect(result.session).toBe(persisted);
+    expect(result).toMatchObject({
+      sandboxName: "ready",
+      model: "model",
+      provider: "provider",
+      endpointUrl: "https://inference.example.test",
+      selectedMessagingChannels: ["slack"],
+    });
   });
+
+  it.each(handoffResultCases)(
+    "preserves a $trace runner result at the core-to-final handoff (#7706)",
+    ({ trace, resume, fresh, coreState, status }) => {
+      const failure =
+        status === "failed"
+          ? {
+              step: "sandbox",
+              message: "sandbox failed",
+              recordedAt: TRACE_TIME,
+            }
+          : null;
+      const persisted = runnerSession(coreState, status, failure);
+      const endpointUrl = `${trace}.example.test`;
+
+      const result = prepareFinalOnboardFlowContext({
+        context: {
+          ...context(),
+          resume,
+          fresh,
+          sandboxName: "ready",
+          model: "model",
+          provider: "provider",
+          endpointUrl,
+          selectedMessagingChannels: ["slack"],
+        },
+        session: persisted,
+      });
+
+      expect(result.session).toBe(persisted);
+      expect(result).toMatchObject({
+        resume,
+        fresh,
+        sandboxName: "ready",
+        model: "model",
+        provider: "provider",
+        endpointUrl,
+        selectedMessagingChannels: ["slack"],
+      });
+      expect(result.session).toMatchObject({
+        status,
+        resumable: true,
+        failure,
+        machine: {
+          state: coreState,
+          revision: 7,
+        },
+      });
+    },
+  );
 
   it.each([
     "sandboxName",
