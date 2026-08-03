@@ -494,7 +494,7 @@ describe("OpenClaw npm remediation", () => {
     );
   });
 
-  it("replaces the reviewed current OpenClaw transitive resolutions", () => {
+  it("replaces the reviewed OpenClaw 2026.7.1 dependency resolutions", () => {
     const directory = writeCurrentCoreFixture();
 
     patchCurrentOpenClawCorePackageGraph(directory);

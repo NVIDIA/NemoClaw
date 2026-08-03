@@ -169,6 +169,7 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("GHSA-4cwx-7wf7-3272");
     expect(review).toContain("undici@8.10.0");
     expect(review).toContain("GHSA-mwp4-54f8-5fhr");
+    expect(review).toContain("ip-address@^10.2.0");
     expect(review).toContain("ip-address@10.3.1");
   });
 

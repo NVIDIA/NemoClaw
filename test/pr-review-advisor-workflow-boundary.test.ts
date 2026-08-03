@@ -1310,7 +1310,7 @@ process.exitCode = valid ? 0 : 1;`,
     const errors = validateMutation((source) =>
       source
         .replace('      FD_FIND_VERSION: "9.0.0-1"', '      FD_FIND_VERSION: "latest"')
-        .replace('      UNDICI_VERSION: "8.5.0"', '      UNDICI_VERSION: "latest"')
+        .replace('      UNDICI_VERSION: "8.10.0"', '      UNDICI_VERSION: "latest"')
         .replace('      VITEST_VERSION: "4.1.9"', '      VITEST_VERSION: "latest"')
         .replace('      YAML_VERSION: "2.8.3"', '      YAML_VERSION: "latest"')
         .replace(
@@ -1322,7 +1322,7 @@ process.exitCode = valid ? 0 : 1;`,
     expect(errors).toEqual(
       expect.arrayContaining([
         "review job env.FD_FIND_VERSION must be 9.0.0-1",
-        "review job env.UNDICI_VERSION must be 8.5.0",
+        "review job env.UNDICI_VERSION must be 8.10.0",
         "review job env.VITEST_VERSION must be 4.1.9",
         "review job env.YAML_VERSION must be 2.8.3",
         "review job env.PR_REVIEW_ADVISOR_LOAD_PREVIOUS_REVIEW must be false",
@@ -1380,7 +1380,7 @@ process.exitCode = valid ? 0 : 1;`,
         expect.arrayContaining([
           "advisor package lock must pin @earendil-works/pi-coding-agent@0.80.6",
           "advisor package lock must pin typebox@1.1.38",
-          "advisor package lock must pin undici@8.5.0",
+          "advisor package lock must pin undici@8.10.0",
           "advisor package lock must pin yaml@2.8.3",
           "advisor package lock must pin vitest@4.1.9",
         ]),
