@@ -13,10 +13,17 @@ The shared image runtime uses the official `@modelcontextprotocol/sdk` client so
 - License: MIT
 - Locked production graph: `package-lock.json` (lockfile version 3)
 - Build-only tools: `typescript@6.0.3`, `@types/node@25.5.2`, and `esbuild@0.27.4` (not copied into the final image)
-- Security overrides: `@hono/node-server@2.0.11` and `fast-uri@3.1.4`
+- Security overrides: `@hono/node-server@2.0.11`, `fast-uri@3.1.5`, `hono@4.12.34`, and `ip-address@10.3.1`
 
 OpenClaw's `mcporter` dependency graph also resolves the official SDK but remains separately locked. This runtime keeps a direct lock because Hermes and LangChain Deep Agents Code must not depend on OpenClaw's adapter package.
-The client bundle includes the SDK's AJV validation path, including `ajv-formats` and `fast-uri`, plus `content-type` for standards-compliant response media-type parsing; the `fast-uri` override and `content-type` license are therefore runtime-relevant. It does not include the SDK's Hono server adapter. The build enforces the exact reviewed bundle-package allowlist and emits `BUNDLED_PACKAGES.json` alongside the generated third-party license notice. The exact overrides keep the install and runtime graphs clear of `GHSA-frvp-7c67-39w9` and `GHSA-v2hh-gcrm-f6hx` without changing the SDK client pin.
+The client bundle includes the SDK's AJV validation path, including `ajv-formats` and `fast-uri`, plus `content-type` for standards-compliant response media-type parsing. The `fast-uri` override and `content-type` license are therefore runtime-relevant. The bundle does not include the SDK's Hono server adapter, Hono, or `ip-address`. The build enforces the exact reviewed bundle-package allowlist and emits `BUNDLED_PACKAGES.json` alongside the generated third-party license notice.
+
+The exact overrides remove the advisory-affected versions from the install graph. The executable bundle contains the reviewed `fast-uri` version and excludes the other affected packages. The SDK client pin does not change. The affected advisories are:
+
+- `GHSA-frvp-7c67-39w9` in `@hono/node-server`.
+- `GHSA-v2hh-gcrm-f6hx` and `GHSA-7p8r-x3mc-p8w7` in `fast-uri`.
+- `GHSA-8j4g-w8fx-2239` in Hono.
+- `GHSA-mwp4-54f8-5fhr`, `GHSA-4xrf-jv44-h6hh`, and `GHSA-22jq-vg5j-6vgg` in `ip-address`.
 
 ## 1.29.0 to 1.30.0 migration review
 
@@ -30,6 +37,16 @@ Concern ledger:
 - `MCP-SDK-130-2` — `content-type@1.0.5` becomes executable bundle input. Surface: response media-type parsing and bundled notices. Resolution: add it to the exact bundle allowlist and verify its MIT text in the generated notice. Validation: `npm run bundle`.
 - `MCP-SDK-130-3` — The upstream package widens its Hono server range. Surface: resolved install graph only; the Hono server adapter is absent from the client bundle. Resolution: retain the existing exact `@hono/node-server@2.0.11` security override. Validation: the lock diff and `BUNDLED_PACKAGES.json`.
 - `MCP-SDK-130-4` — Other adjacent commits could alter unrelated transports or server behavior. Surface: upstream stdio and server entry points. Resolution: no migration because NemoClaw imports only `client/index.js` and `client/streamableHttp.js`; classify those commits as no runtime impact. Validation: esbuild's exact input graph.
+
+## 2026-08-03 security override refresh
+
+This refresh changes three transitive versions and does not change the direct SDK dependency:
+
+- `fast-uri@3.1.4` to `fast-uri@3.1.5`. The published tag resolves to commit `5e179cbb4636d5f773ed21126e5bd3068e87e94e`. This version rejects malformed authority introducers that can cause host confusion. `fast-uri` remains part of the executable bundle through AJV.
+- `hono@4.12.30` to `hono@4.12.34`. The published tag resolves to commit `734755ace341607628219ea1dd8ca17f01bf1a5c`. This version replaces the vulnerable CORS header split regular expression with a literal delimiter split and trimming. Hono remains in the install graph and is absent from the executable bundle.
+- `ip-address@10.2.0` to `ip-address@10.3.1`. The published tag resolves to commit `be7e626c0d49fccb518899f520a3fb64ee189741`. This version rejects ambiguous IPv4 octets and invalid stacked subnet suffixes. `ip-address` remains in the install graph and is absent from the executable bundle.
+
+The npm publication `gitHead` for each target matches its upstream tag. The licenses remain BSD-3-Clause for `fast-uri` and MIT for Hono and `ip-address`.
 
 ## Build and audit contract
 
@@ -55,6 +72,14 @@ SDK 1.30.0 migration evidence on 2026-07-28:
 - `npm audit --omit=dev --audit-level=low`: 0 vulnerabilities
 - Pre-build `npm audit signatures`: 98 packages with verified registry signatures and 11 packages with verified attestations
 - Exact bundle: 11 packages matching the reviewed allowlist in `BUNDLED_PACKAGES.json`, including `content-type@1.0.5`
+- `npm run typecheck` and `npm run bundle`: passed
+
+Security override refresh evidence on 2026-08-03:
+
+- `npm test`: case-variant SSE discovery passed
+- `npm audit --omit=dev --audit-level=low`: 0 vulnerabilities
+- Pre-build `npm audit signatures`: 98 packages with verified registry signatures and 12 packages with verified attestations
+- Exact bundle: 11 packages matching the reviewed allowlist in `BUNDLED_PACKAGES.json`, including `fast-uri@3.1.5` and excluding Hono and `ip-address`
 - `npm run typecheck` and `npm run bundle`: passed
 
 ## Updating
