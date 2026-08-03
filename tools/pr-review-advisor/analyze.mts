@@ -360,7 +360,7 @@ async function main(): Promise<void> {
   const schema = readJson<Record<string, unknown>>(schemaPath);
   const changedFiles = getChangedFiles(baseRef, headRef);
   const headSha = getHeadSha(headRef);
-  const diff = getDiff(baseRef, headRef, 160000);
+  const diff = getDiff(baseRef, headRef);
   const deterministic = await collectDeterministicContext({
     baseRef,
     headRef,
@@ -1808,7 +1808,7 @@ export function buildPromptTurns({
           "pr_review_git_diff",
           diff || "<no diff available>",
           "diff",
-          "truncated git diff",
+          "complete git diff",
         ),
       ],
       prompt: `${stageAnalysisProtocol(
