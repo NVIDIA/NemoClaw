@@ -564,12 +564,13 @@ describe("handleSandboxState provider effect replay", () => {
       return [currentBinding];
     });
     let lockCount = 0;
+    const beforeLock = [() => undefined, () => liveBindings.delete(currentBinding.name)];
     const withGatewayRouteMutationLock = async <T>(
       _gatewayName: string,
       operation: () => Promise<T> | T,
     ): Promise<T> => {
+      beforeLock[lockCount]?.();
       lockCount += 1;
-      if (lockCount === 2) liveBindings.delete(currentBinding.name);
       return await operation();
     };
     const { deps, calls } = createDeps(
