@@ -302,6 +302,11 @@
       "category": "security"
     },
     {
+      "file": "test/maintainer-pr-workflow-approval.test.ts",
+      "test": "keeps workflow approval inside the trusted metadata boundary",
+      "category": "security"
+    },
+    {
       "file": "test/macos-e2e-workflow-boundary.test.ts",
       "test": "keeps secret-bearing live E2E on trusted main-branch code",
       "category": "security"
@@ -515,6 +520,26 @@
       "file": "test/runtime-provider-source-shape.test.ts",
       "test": "keeps migrated provider identities and implementations behind the one bundle composition",
       "category": "compatibility"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps the dormant managed-bootstrap protocol driver-neutral",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps production activation paths disconnected from managed bootstrap",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps registered providers bootstrap-unsupported",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps managed-bootstrap assets out of image packaging",
+      "category": "security"
     },
     {
       "file": "test/pr-limit-policy.test.ts",
