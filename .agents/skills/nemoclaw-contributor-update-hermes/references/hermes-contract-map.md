@@ -34,7 +34,12 @@ The complete Hermes range is the union of the generic evidence and every adjacen
 
 Audit these surfaces:
 
-- `agents/hermes/config/managed-policy.ts`;
+- `agents/hermes/config/managed-policy.ts` and the isolated Python reader in
+  `agents/hermes/managed_policy.py`;
+- policy artifact writing and root-owned installation in `agents/hermes/config/write-config.ts`
+  and `src/lib/onboard/managed-startup/image-runtime.ts`;
+- profile and dashboard consumers in `agents/hermes/patch-profile-policy-defaults.py`,
+  `agents/hermes/seed-dashboard-config.py`, and `agents/hermes/start.sh`;
 - `test/generate-hermes-config.test.ts`;
 - config generation and `hermes doctor --fix` order in `agents/hermes/Dockerfile`;
 - upstream `DEFAULT_CONFIG`, migrations, validation, and config-loading precedence.
