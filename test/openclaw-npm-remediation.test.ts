@@ -287,6 +287,10 @@ function readJson<T>(file: string): T {
   return JSON.parse(readFileSync(file, "utf-8")) as T;
 }
 
+function writeJson(file: string, value: unknown): void {
+  writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
+}
+
 function packFixture(packageDirectory: string, archivePath: string): void {
   const root = mkdtempSync(path.join(tmpdir(), "nemoclaw-openclaw-archive-fixture-"));
   temporaryDirectories.push(root);
@@ -549,6 +553,24 @@ describe("OpenClaw npm remediation", () => {
     expect(() => patchCurrentOpenClawCorePackageGraph(directory)).toThrow(error);
   });
 
+  it.each([
+    ["resolved", "https://registry.npmjs.org/undici/-/undici-8.4.0.tgz"],
+    ["integrity", "sha512-deliberate-mismatch"],
+    ["engines", { node: ">=22.20.0" }],
+  ])("rejects a current OpenClaw undici shrinkwrap with changed %s", (field, value) => {
+    const directory = writeCurrentCoreFixture();
+    const shrinkwrapPath = path.join(directory, "npm-shrinkwrap.json");
+    const shrinkwrap = readJson<{
+      packages: Record<string, Record<string, unknown>>;
+    }>(shrinkwrapPath);
+    shrinkwrap.packages["node_modules/undici"][field] = value;
+    writeJson(shrinkwrapPath, shrinkwrap);
+
+    expect(() => patchCurrentOpenClawCorePackageGraph(directory)).toThrow(
+      "undici layout changed after review",
+    );
+  });
+
   it("replaces the reviewed OpenClaw Discord undici dependency", () => {
     const directory = writeDiscordFixture();
 
@@ -580,6 +602,48 @@ describe("OpenClaw npm remediation", () => {
 
     expect(() => patchOpenClawDiscordPackageGraph(directory)).toThrow(
       "undici dependency changed after review",
+    );
+  });
+
+  it.each([
+    ["resolved", "https://registry.npmjs.org/undici/-/undici-8.4.0.tgz"],
+    ["integrity", "sha512-deliberate-mismatch"],
+    ["engines", { node: ">=22.20.0" }],
+  ])("rejects an OpenClaw Discord undici shrinkwrap with changed %s", (field, value) => {
+    const directory = writeDiscordFixture();
+    const shrinkwrapPath = path.join(directory, "npm-shrinkwrap.json");
+    const shrinkwrap = readJson<{
+      packages: Record<string, Record<string, unknown>>;
+    }>(shrinkwrapPath);
+    shrinkwrap.packages["node_modules/undici"][field] = value;
+    writeJson(shrinkwrapPath, shrinkwrap);
+
+    expect(() => patchOpenClawDiscordPackageGraph(directory)).toThrow(
+      "undici layout changed after review",
+    );
+  });
+
+  it("rejects a changed OpenClaw Discord bundled undici identity", () => {
+    const directory = writeDiscordFixture();
+    writeJson(path.join(directory, "node_modules", "undici", "package.json"), {
+      name: "undici",
+      version: "8.4.0",
+      engines: { node: ">=22.19.0" },
+    });
+
+    expect(() => patchOpenClawDiscordPackageGraph(directory)).toThrow("must be undici@8.5.0");
+  });
+
+  it("rejects a changed OpenClaw Discord bundled undici layout", () => {
+    const directory = writeDiscordFixture();
+    writeJson(path.join(directory, "node_modules", "undici", "package.json"), {
+      name: "undici",
+      version: "8.5.0",
+      engines: { node: ">=22.20.0" },
+    });
+
+    expect(() => patchOpenClawDiscordPackageGraph(directory)).toThrow(
+      "bundled undici layout changed after review",
     );
   });
 

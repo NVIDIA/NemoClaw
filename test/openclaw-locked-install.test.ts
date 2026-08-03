@@ -384,18 +384,14 @@ describe("locked OpenClaw production installation (#5896)", () => {
         }),
       ]),
     );
-    const openclawGraph = audit.lockedGraphs.find(
-      ({ packageSpec }: { packageSpec?: string }) => packageSpec === PACKAGE_SPEC,
-    );
-    expect(openclawGraph).toBeDefined();
-    expect(openclawGraph).not.toHaveProperty("replacementLockSha256");
-    expect(openclawGraph).not.toHaveProperty("reviewedLockSha256");
-    const mcporterGraph = audit.lockedGraphs.find(
-      ({ packageSpec }: { packageSpec?: string }) => packageSpec === MCPORTER_PACKAGE_SPEC,
-    );
-    expect(mcporterGraph).toBeDefined();
-    expect(mcporterGraph).not.toHaveProperty("replacementLockSha256");
-    expect(mcporterGraph).not.toHaveProperty("reviewedLockSha256");
+    expect(audit.lockedGraphs).toHaveLength(2);
+    expect(
+      audit.lockedGraphs.map(({ packageSpec }: { packageSpec?: string }) => packageSpec).sort(),
+    ).toEqual([MCPORTER_PACKAGE_SPEC, PACKAGE_SPEC].sort());
+    for (const graph of audit.lockedGraphs) {
+      expect(graph).not.toHaveProperty("replacementLockSha256");
+      expect(graph).not.toHaveProperty("reviewedLockSha256");
+    }
 
     const baseWorkflow = fs.readFileSync(
       path.join(REPO_ROOT, ".github", "workflows", "base-image.yaml"),
