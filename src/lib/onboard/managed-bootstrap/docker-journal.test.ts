@@ -279,15 +279,13 @@ describe("Docker managed bootstrap journal", () => {
     );
   });
 
-  it("enumerates unfinished records and reloads exact terminal receipts from a new journal store", () => {
+  it("reloads exact terminal receipts from a new journal store", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
     roots.push(root);
     const first = createFileDockerManagedBootstrapJournalStore(root);
     first.create(journal);
-    expect(first.listUnfinished()).toEqual([journal]);
 
     first.recordFinalization(finalization);
-    expect(first.listUnfinished()).toEqual([]);
     const restarted = createFileDockerManagedBootstrapJournalStore(root);
     expect(restarted.loadFinalization(IDENTITY)).toEqual(finalization);
     expect(
@@ -303,25 +301,6 @@ describe("Docker managed bootstrap journal", () => {
     ).toThrow("finalization record changed");
   });
 
-  it("ignores interrupted atomic-write sidecars during unfinished enumeration", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
-    roots.push(root);
-    const store = createFileDockerManagedBootstrapJournalStore(root);
-    store.create(journal);
-    const directory = path.join(root, DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY);
-    for (const target of [
-      `${IDENTITY}.json`,
-      `${IDENTITY}.json.decision`,
-      `${IDENTITY}.json.finalized`,
-    ]) {
-      fs.writeFileSync(path.join(directory, `.${target}.${process.pid}.abcdef.tmp`), "partial", {
-        mode: 0o600,
-      });
-    }
-
-    expect(store.listUnfinished()).toEqual([journal]);
-  });
-
   it("reloads the exact completion receipt from a new journal store", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
     roots.push(root);
@@ -332,7 +311,6 @@ describe("Docker managed bootstrap journal", () => {
     expect(completed.commitReceipt).toEqual(finalization.commitReceipt);
 
     const restarted = createFileDockerManagedBootstrapJournalStore(root);
-    expect(restarted.listUnfinished()).toEqual([completed]);
     expect(restarted.recordCompletion(IDENTITY, finalization.commitReceipt)).toEqual(completed);
     expect(() =>
       restarted.recordCompletion(IDENTITY, {
@@ -340,18 +318,5 @@ describe("Docker managed bootstrap journal", () => {
         completedAt: "2026-07-31T20:00:02.000Z",
       }),
     ).toThrow("completion receipt changed");
-  });
-
-  it("fails closed when enumeration encounters an unsupported state entry", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
-    roots.push(root);
-    const store = createFileDockerManagedBootstrapJournalStore(root);
-    store.create(journal);
-    fs.writeFileSync(
-      path.join(root, DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY, "unexpected.json"),
-      "{}\n",
-      { mode: 0o600 },
-    );
-    expect(() => store.listUnfinished()).toThrow("unsupported entry");
   });
 });

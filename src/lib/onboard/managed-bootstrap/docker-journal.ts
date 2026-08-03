@@ -70,7 +70,6 @@ export interface DockerManagedBootstrapFinalizationRecord {
 export interface DockerManagedBootstrapJournalStore {
   create(journal: DockerManagedBootstrapJournal): void;
   load(bootstrapIdentity: string): DockerManagedBootstrapJournal | null;
-  listUnfinished(): readonly DockerManagedBootstrapJournal[];
   transition(
     bootstrapIdentity: string,
     expected: DockerManagedBootstrapJournalPhase,
@@ -778,34 +777,6 @@ export function createFileDockerManagedBootstrapJournalStore(
       atomicWrite(directory, target, serializeDockerManagedBootstrapJournal(normalized), true);
     },
     load,
-    listUnfinished() {
-      assertDirectory(directory);
-      const identities: string[] = [];
-      for (const name of fs.readdirSync(directory)) {
-        const match = name.match(/^([a-f0-9]{64})\.json$/u);
-        if (match) {
-          identities.push(match[1]);
-          continue;
-        }
-        if (
-          /^\.[a-f0-9]{64}\.json(?:\.decision|\.finalized)?\.[0-9]+\.[a-f0-9]+\.tmp$/u.test(name) ||
-          /^[a-f0-9]{64}\.json\.(?:decision|finalized)$/u.test(name)
-        ) {
-          continue;
-        }
-        fail(`journal directory contains an unsupported entry: ${name}`);
-      }
-      return Object.freeze(
-        identities
-          .sort()
-          .filter((identity) => loadFinalization(identity) === null)
-          .map((identity) => {
-            const journal = load(identity);
-            if (!journal) fail(`enumerated journal ${identity} disappeared`);
-            return journal;
-          }),
-      );
-    },
     transition(
       bootstrapIdentity: string,
       expected: DockerManagedBootstrapJournalPhase,

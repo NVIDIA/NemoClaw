@@ -230,7 +230,6 @@ export function fixture(options: DockerFixtureOptions = {}) {
       }
     },
     load: () => copyJournal(),
-    listUnfinished: () => (journal && !finalization ? [structuredClone(journal)] : []),
     transition(_identity, expected, next) {
       const current =
         journal !== null && journal.phase === expected
