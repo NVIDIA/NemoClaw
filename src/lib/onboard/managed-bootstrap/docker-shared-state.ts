@@ -28,25 +28,33 @@ const MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY =
   "/var/lib/nemoclaw/managed-startup-shared-state-commit-v1";
 const FULL_CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const DURABLE_IDENTITY_RE = /^[a-f0-9]{64}$/u;
-const NEUTRALIZED_PROCESS_INJECTION_ENV = [
-  "--env",
-  "NODE_OPTIONS=",
-  "--env",
-  "NODE_PATH=",
-  "--env",
-  "BASH_ENV=",
-  "--env",
-  "ENV=",
-  "--env",
-  "LD_PRELOAD=",
+const DOCKER_MUTATION_OPTIONS = {
+  ignoreError: true,
+  suppressOutput: true,
+  timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+} as const;
+/**
+ * The dynamic loader consumes these before `/usr/bin/env -i` can clear the
+ * inherited image or container environment. Every other variable is removed
+ * by the shared clean-Node argv below before Node starts.
+ */
+const NEUTRALIZED_PRE_ENV_LOADER_ENV = [
   "--env",
   "LD_AUDIT=",
   "--env",
   "LD_LIBRARY_PATH=",
   "--env",
-  "SHELLOPTS=",
-  "--env",
-  "PS4=",
+  "LD_PRELOAD=",
+] as const;
+const CLEAN_NODE_ENTRYPOINT = "/usr/bin/env";
+const CLEAN_NODE_ARGV = [
+  "-i",
+  "HOME=/root",
+  "LANG=C.UTF-8",
+  "LC_ALL=C.UTF-8",
+  "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1",
+  "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+  "/usr/local/bin/node",
 ] as const;
 
 export interface DockerManagedBootstrapSharedStateTransaction {
@@ -158,12 +166,13 @@ function verifyCopiedManagedStartupReceipt(
       "no-new-privileges",
       "--cap-drop",
       "ALL",
-      ...NEUTRALIZED_PROCESS_INJECTION_ENV,
+      ...NEUTRALIZED_PRE_ENV_LOADER_ENV,
       "--mount",
       transactionReceiptMount(receiptPath, receiptDirectory),
       "--entrypoint",
-      "/usr/local/bin/node",
+      CLEAN_NODE_ENTRYPOINT,
       transaction.image,
+      ...CLEAN_NODE_ARGV,
       MANAGED_STARTUP_RUNTIME_EXECUTABLE,
       "--shared-state-transaction-status",
       "--agent",
@@ -271,16 +280,10 @@ export function clearDockerManagedStartupSharedStateCommitReceipt(
       "0:0",
       "--workdir",
       "/",
-      ...NEUTRALIZED_PROCESS_INJECTION_ENV,
+      ...NEUTRALIZED_PRE_ENV_LOADER_ENV,
       transaction.containerId,
-      "/usr/bin/env",
-      "-i",
-      "HOME=/root",
-      "LANG=C.UTF-8",
-      "LC_ALL=C.UTF-8",
-      "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1",
-      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      "/usr/local/bin/node",
+      CLEAN_NODE_ENTRYPOINT,
+      ...CLEAN_NODE_ARGV,
       ...command,
     ],
     DOCKER_MUTATION_OPTIONS,
@@ -327,16 +330,10 @@ function commitManagedStartupSharedState(
       "0:0",
       "--workdir",
       "/",
-      ...NEUTRALIZED_PROCESS_INJECTION_ENV,
+      ...NEUTRALIZED_PRE_ENV_LOADER_ENV,
       transaction.containerId,
-      "/usr/bin/env",
-      "-i",
-      "HOME=/root",
-      "LANG=C.UTF-8",
-      "LC_ALL=C.UTF-8",
-      "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1",
-      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      "/usr/local/bin/node",
+      CLEAN_NODE_ENTRYPOINT,
+      ...CLEAN_NODE_ARGV,
       ...command,
     ],
     DOCKER_MUTATION_OPTIONS,
@@ -370,12 +367,6 @@ function commitManagedStartupSharedState(
     `Managed-startup shared-state commit helper returned success, but durable commit was not proven (status=${status}).`,
   );
 }
-
-const DOCKER_MUTATION_OPTIONS = {
-  ignoreError: true,
-  suppressOutput: true,
-  timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-} as const;
 
 function quiesceManagedStartupContainer(
   transaction: DockerManagedBootstrapSharedStateTransaction,
@@ -493,14 +484,15 @@ function rollbackManagedStartupSharedState(
         "DAC_OVERRIDE",
         "--cap-add",
         "FOWNER",
-        ...NEUTRALIZED_PROCESS_INJECTION_ENV,
+        ...NEUTRALIZED_PRE_ENV_LOADER_ENV,
         "--volumes-from",
         transaction.containerId,
         "--mount",
         `type=bind,src=${receiptPath},dst=${MANAGED_STARTUP_SHARED_ROLLBACK_RECEIPT_DIRECTORY},readonly`,
         "--entrypoint",
-        "/usr/local/bin/node",
+        CLEAN_NODE_ENTRYPOINT,
         transaction.image,
+        ...CLEAN_NODE_ARGV,
         ...transactionCommand("rollback", transaction),
         "--read-only-receipt",
       ],
@@ -605,7 +597,16 @@ export function finalizeDockerManagedStartupSharedState(
     const failure = new Error(
       `OpenShell supervisor reconnected, but managed shared-state logical commit validation failed: ${commitFailure.message}`,
     );
-    quiesceManagedStartupContainer(transaction, deps);
+    try {
+      quiesceManagedStartupContainer(transaction, deps);
+    } catch (stopError) {
+      throw new Error(
+        `${failure.message}; the new workload could not be quiesced: ${
+          stopError instanceof Error ? stopError.message : String(stopError)
+        }`,
+        { cause: stopError },
+      );
+    }
     rollbackManagedStartupSharedState(transaction, receiptPath, deps);
     if (!input.patchResult && !input.retainContainerAfterRollback) {
       removeFailedUnbackedContainer(transaction, deps);

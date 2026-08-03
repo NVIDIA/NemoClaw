@@ -67,6 +67,7 @@ export type DockerFixtureOptions = {
   readonly lostAcknowledgements?: readonly DockerFixtureAcknowledgement[];
   readonly ownerId?: string;
   readonly sharedState?: "committed" | "none" | "pending";
+  readonly sharedStateCommitResult?: FixtureCommandResult;
 };
 
 function agentInputs(agent: ManagedStartupAgent = "hermes") {
@@ -202,7 +203,7 @@ function readProtectedEnvelope(source: string): ReturnType<typeof parseManagedBo
 }
 
 export function fixture(options: DockerFixtureOptions = {}) {
-  let original = originalInspect(agentInputs(options.agent));
+  let original: DockerContainerInspect | null = originalInspect(agentInputs(options.agent));
   let replacement: DockerContainerInspect | null = null;
   let journal: DockerManagedBootstrapJournal | null = null;
   let sharedState: "committed" | "none" | "pending" = options.sharedState ?? "none";
@@ -276,6 +277,8 @@ export function fixture(options: DockerFixtureOptions = {}) {
       switch (args[0]) {
         case "create": {
           events.push("create:replacement");
+          const source =
+            original ?? failFixture("original disappeared before replacement creation");
           const name = String(args[args.indexOf("--name") + 1] ?? "");
           const entrypoint = String(args[args.indexOf("--entrypoint") + 1] ?? "");
           const imageIndex = args.indexOf(IMAGE);
@@ -283,11 +286,11 @@ export function fixture(options: DockerFixtureOptions = {}) {
             value === "--env" ? [String(args[index + 1] ?? "")] : [],
           );
           replacement = {
-            ...structuredClone(original),
+            ...structuredClone(source),
             Id: NEW_ID,
             Name: `/${name}`,
             Config: {
-              ...structuredClone(original.Config),
+              ...structuredClone(source.Config),
               Image: IMAGE,
               Env: env,
               Entrypoint: [entrypoint],
@@ -346,10 +349,12 @@ export function fixture(options: DockerFixtureOptions = {}) {
           break;
         case "exec":
           switch (true) {
-            case args.includes("--commit-shared-state-transaction"):
-              sharedState = "committed";
+            case args.includes("--commit-shared-state-transaction"): {
+              const result = options.sharedStateCommitResult ?? ok();
+              sharedState = result.status === 0 ? "committed" : sharedState;
               events.push("shared:commit");
-              return ok();
+              return result;
+            }
             case args.includes("--clear-shared-state-commit-receipt"):
               sharedState = "none";
               events.push("shared:clear");
@@ -408,7 +413,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
       events.push(`rm:${id}`);
       switch (id) {
         case OLD_ID:
-          original = null as unknown as DockerContainerInspect;
+          original = null;
           break;
         case NEW_ID:
           replacement = null;

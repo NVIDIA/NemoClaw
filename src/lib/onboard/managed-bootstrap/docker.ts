@@ -30,7 +30,6 @@ import type {
 import { waitForOpenShellSupervisorReconnect } from "../docker-gpu-supervisor-reconnect";
 import { openshellSandboxCommandEnvValue } from "../docker-startup-command-env";
 import {
-  isImmutableDockerImageId,
   OPENSHELL_MANAGED_BY_LABEL,
   OPENSHELL_MANAGED_BY_VALUE,
   OPENSHELL_SANDBOX_ID_LABEL,
@@ -1193,7 +1192,7 @@ function restoreOriginal(transaction: DockerBootstrapTransaction, deps: Resolved
   }
 }
 
-function removeOwnedWorkload(
+function retainOwnedWorkloadForOwnerCleanup(
   sandbox: ManagedBootstrapSandboxIdentity,
   deps: ResolvedDeps,
   expectedRuntimeId?: string,
@@ -1598,30 +1597,6 @@ function reconstructDockerBootstrapTransaction(
   return transaction;
 }
 
-function rollbackReplacementSharedStateIfPending(
-  input: {
-    readonly handle: ManagedBootstrapHeldWorkloadHandle;
-    readonly replacementRuntimeId: string;
-    readonly runtimeImageContentId: string;
-  },
-  deps: ResolvedDeps,
-): void {
-  if (!tryInspectExact(input.replacementRuntimeId, deps)) {
-    throw new Error(
-      "Managed bootstrap replacement disappeared before shared-state rollback could be proven; the preserved original remains stopped.",
-    );
-  }
-  const transaction = managedSharedStateTransaction(
-    input.handle,
-    input.replacementRuntimeId,
-    input.runtimeImageContentId,
-  );
-  finalizeDockerManagedStartupSharedState(
-    { transaction, supervisorReady: false, retainContainerAfterRollback: true },
-    deps,
-  );
-}
-
 function cleanupUnjournaledPreparedContainer(
   input: {
     readonly snapshot: ManagedBootstrapObservedSnapshot;
@@ -1787,7 +1762,7 @@ export function createDockerManagedBootstrapAdapter(
           detail: "Docker replacement authority exists without its observed snapshot",
         });
       }
-      removeOwnedWorkload(handle.sandbox, deps);
+      retainOwnedWorkloadForOwnerCleanup(handle.sandbox, deps);
       return completedRollback(handle, false);
     }
 
@@ -1868,7 +1843,7 @@ export function createDockerManagedBootstrapAdapter(
           });
         }
       }
-      removeOwnedWorkload(handle.sandbox, deps, snapshot.runtimeId);
+      retainOwnedWorkloadForOwnerCleanup(handle.sandbox, deps, snapshot.runtimeId);
       return completedRollback(handle, true);
     }
 
@@ -1923,7 +1898,7 @@ export function createDockerManagedBootstrapAdapter(
         removeExactReplacement(journal, observedReplacement, deps);
       }
       removeDockerBootstrapJournalDurably(journal, deps);
-      removeOwnedWorkload(handle.sandbox, deps, journal.originalRuntimeId);
+      retainOwnedWorkloadForOwnerCleanup(handle.sandbox, deps, journal.originalRuntimeId);
       return completedRollback(handle, false);
     }
 
@@ -2103,7 +2078,7 @@ export function createDockerManagedBootstrapAdapter(
       throw new Error("Managed bootstrap Docker rollback did not restore its exact original.");
     }
     removeDockerBootstrapJournalDurably(activeJournal, deps);
-    removeOwnedWorkload(handle.sandbox, deps, activeJournal.originalRuntimeId);
+    retainOwnedWorkloadForOwnerCleanup(handle.sandbox, deps, activeJournal.originalRuntimeId);
     return completedRollback(handle, false);
   };
   const commitBootstrapNow = (
@@ -2361,7 +2336,7 @@ export function createDockerManagedBootstrapAdapter(
                   "durable authority changed after shared-state rollback and before restoration",
               });
             }
-            journal = transitionDockerBootstrapJournalDurably(journal, "rollback-authorized", deps);
+            transitionDockerBootstrapJournalDurably(journal, "rollback-authorized", deps);
             await rollbackBootstrapNow({
               handle,
               snapshot,
@@ -2443,7 +2418,7 @@ export function createDockerManagedBootstrapAdapter(
 
     async cleanupIncompleteCreate(input) {
       const { sandbox, runtimeId } = resolveIncompleteCreateSandbox(input, deps);
-      removeOwnedWorkload(sandbox, deps, runtimeId);
+      retainOwnedWorkloadForOwnerCleanup(sandbox, deps, runtimeId);
       return Object.freeze({
         schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
         sandbox,
@@ -2630,13 +2605,19 @@ export function createDockerManagedBootstrapAdapter(
         }
         assertMetadata(createdInspect, handle.sandbox, snapshot.metadata);
         assertRootSupervisor(createdInspect);
+        const intendedSandboxCommand = openshellSandboxCommandEnvValue(handle.intendedWorkloadArgv);
+        if (!intendedSandboxCommand) {
+          throw new Error(
+            "Managed bootstrap Docker replacement requires one bounded intended workload argv.",
+          );
+        }
         assertReplacementBoundary(createdInspect, handle, snapshot);
         const expectedActivatedSpecHash = assertReplacementMatchesIntent(
           snapshot.specCanonicalJson,
           createdInspect,
           originalName,
           plan,
-          openshellSandboxCommandEnvValue(handle.intendedWorkloadArgv) as string,
+          intendedSandboxCommand,
         );
         const preparedSpec = normalizeDockerManagedBootstrapLaunchSpec(createdInspect);
         const expectedActivatedSpec = normalizeDockerManagedBootstrapLaunchSpec({
