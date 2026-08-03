@@ -148,7 +148,7 @@ describe("runtime provider central source boundary", () => {
     ]);
   });
 
-  // source-shape-contract: security -- The central managed-bootstrap authority must stay driver-neutral so Docker Podman and MXC providers share one transaction contract
+  // source-shape-contract: security -- The central managed-bootstrap authority must stay driver-neutral so Docker, Podman, and MXC providers share one transaction contract
   it("keeps the dormant managed-bootstrap protocol driver-neutral", () => {
     const bootstrapProtocolSource = [
       read("src/lib/onboard/managed-bootstrap/adapter.ts"),
