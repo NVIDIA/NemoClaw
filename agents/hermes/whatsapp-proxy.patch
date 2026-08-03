@@ -17,13 +17,13 @@ index 4b5733d16..22f1ec3e1 100644
  import { createOutboundIdTracker } from './outbound_ids.js';
  import { classifyOwnerMessageGate } from './owner_message_gate.js';
 @@ -378,6 +379,9 @@ function rememberSentId(id) {
- 
+
  let sock = null;
  let connectionState = 'disconnected';
 +const PROXY_AGENT = process.env.HTTPS_PROXY
 +  ? new HttpsProxyAgent(process.env.HTTPS_PROXY)
 +  : undefined;
- 
+
  function emitPairEvent(event) {
    if (!PAIR_JSON) return;
 @@ -393,6 +397,8 @@ async function startSocket() {
