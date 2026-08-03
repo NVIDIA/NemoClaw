@@ -19,6 +19,8 @@ The target shape is a machine-driven onboarding runner:
 
 In that final shape, `src/lib/onboard.ts` should be a thin entrypoint. State handlers should own state-specific prompts, resume validation, repair decisions, and side effects.
 
+`flow-handoff.ts` validates required data and constructs context at the initial-to-core and core-to-final boundaries. The entrypoint supplies process-bound dependencies and reserved-name output.
+
 The strict runner owns exact `init`, `preflight`, `provider_selection`, `inference`, and `sandbox` entry. If the durable state is later than a slice entry, earlier phases run as evented prerequisite repairs. A repair must return a legal, update-free transition chain and must not change the durable entry state.
 
 ## State ownership

@@ -32,6 +32,8 @@ import type { OnboardMachineRunnerResult, OnboardMachineRunnerRuntime } from "./
 import { runOnboardSequenceWithRunner, type OnboardSequencePhase } from "./sequence-runner";
 import type { OnboardMachineState } from "./types";
 
+export { prepareCoreOnboardFlowContext, prepareFinalOnboardFlowContext } from "./flow-handoff";
+
 export interface EndpointProvenanceOptions {
   endpointSource?: InferenceEndpointSource | null;
   endpointSourceProvider?: string | null;
