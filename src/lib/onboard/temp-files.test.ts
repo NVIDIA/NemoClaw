@@ -45,7 +45,7 @@ describe("onboard temp file helpers", () => {
       fs.symlinkSync(plantedTarget, filePath);
       expect(() =>
         fs.writeFileSync(filePath, "replacement\n", { flag: "wx", mode: 0o400 }),
-      ).toThrow();
+      ).toThrowError(expect.objectContaining({ code: "EEXIST" }));
       expect(fs.readFileSync(plantedTarget, "utf8")).toBe("untouched\n");
     },
   );
