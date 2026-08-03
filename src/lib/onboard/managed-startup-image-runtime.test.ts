@@ -376,6 +376,32 @@ describe("managed startup image runtime", () => {
       owned(realLstatSync(file, options))) as typeof fs.lstatSync);
   }
 
+  function mockRootOwnedPolicyInstallPaths(
+    source: string,
+    shareDirectory: string,
+    target: string,
+    beforeSourceCleanup?: () => void,
+  ): void {
+    const realLstatSync = fs.lstatSync.bind(fs);
+    const rootOwned = (stat: fs.Stats): fs.Stats =>
+      new Proxy(stat, {
+        get(inner, property) {
+          const value = property === "uid" || property === "gid" ? 0 : Reflect.get(inner, property);
+          return typeof value === "function" ? value.bind(inner) : value;
+        },
+      });
+    vi.spyOn(fs, "lstatSync").mockImplementation(((
+      file: fs.PathLike,
+      options?: { bigint?: boolean },
+    ) => {
+      if (file.toString() === source && options?.bigint === true) beforeSourceCleanup?.();
+      const stat = options?.bigint ? realLstatSync(file, { bigint: true }) : realLstatSync(file);
+      const rootPath = file.toString() === shareDirectory || file.toString() === target;
+      return rootPath && options?.bigint !== true ? rootOwned(stat as fs.Stats) : stat;
+    }) as typeof fs.lstatSync);
+    vi.spyOn(fs, "fchownSync").mockImplementation(() => undefined);
+  }
+
   function mockRootReplayFilesystem(runtimeWrites: string[]): void {
     const directories = new Set([
       "/",
@@ -929,29 +955,32 @@ describe("managed startup image runtime", () => {
     const policy = '{"schema_version":1}\n';
     fs.mkdirSync(shareDirectory);
     fs.writeFileSync(source, policy, { mode: 0o600 });
-    const realLstatSync = fs.lstatSync.bind(fs);
-    const rootOwned = (stat: fs.Stats): fs.Stats =>
-      new Proxy(stat, {
-        get(inner, property) {
-          const value = property === "uid" || property === "gid" ? 0 : Reflect.get(inner, property);
-          return typeof value === "function" ? value.bind(inner) : value;
-        },
-      });
-    vi.spyOn(fs, "lstatSync").mockImplementation(((
-      file: fs.PathLike,
-      options?: { bigint?: boolean },
-    ) => {
-      const stat = options?.bigint ? realLstatSync(file, { bigint: true }) : realLstatSync(file);
-      const rootPath = file.toString() === shareDirectory || file.toString() === target;
-      return rootPath && options?.bigint !== true ? rootOwned(stat as fs.Stats) : stat;
-    }) as typeof fs.lstatSync);
-    vi.spyOn(fs, "fchownSync").mockImplementation(() => undefined);
+    mockRootOwnedPolicyInstallPaths(source, shareDirectory, target);
 
     installHermesManagedPolicy(source, target);
 
     expect(fs.existsSync(source)).toBe(false);
     expect(fs.readFileSync(target, "utf8")).toBe(policy);
     expect(fs.statSync(target).mode & 0o777).toBe(0o444);
+  });
+
+  it("preserves generated Hermes policy when it changes before source cleanup", () => {
+    const directory = temporaryDirectory();
+    const shareDirectory = path.join(directory, "share");
+    const source = path.join(directory, "managed-policy.json");
+    const target = path.join(shareDirectory, "hermes-managed-policy.json");
+    const policy = '{"schema_version":1}\n';
+    fs.mkdirSync(shareDirectory);
+    fs.writeFileSync(source, policy, { mode: 0o600 });
+    mockRootOwnedPolicyInstallPaths(source, shareDirectory, target, () => {
+      fs.appendFileSync(source, "changed\n");
+    });
+
+    expect(() => installHermesManagedPolicy(source, target)).toThrow(
+      /changed before source cleanup/u,
+    );
+    expect(fs.readFileSync(source, "utf8")).toBe(`${policy}changed\n`);
+    expect(fs.readFileSync(target, "utf8")).toBe(policy);
   });
 
   it("normalizes mutable sandbox-owned Hermes config descriptors to mode 0640", () => {
