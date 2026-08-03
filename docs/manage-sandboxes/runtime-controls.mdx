@@ -118,6 +118,14 @@ An interactive command can take over an expired timer.
 Interactive recovery has separate transition-takeover and restoration phases.
 Each phase makes up to 7 attempts and waits 5 seconds between failures, for up to 30 seconds of retry delay per phase.
 Detached recovery uses one 7-attempt budget across deadline setup, main-generation publication, and restoration.
+
+Before a manual Shields transition replaces a policy, NemoClaw requires exact Model Context Protocol (MCP) agreement among the sandbox registry, generated-policy record, and live gateway policy.
+`shields down` carries the proven managed MCP policy entries into the relaxed policy.
+Restoration removes snapshot-time-managed MCP entries before it overlays current exact entries.
+If exact agreement is absent, a manual Shields transition refuses the replacement policy.
+At an expired deadline, auto-restore omits unproven managed MCP policy entries, restores lockdown, and records the omission count in its audit entry.
+An MCP server removed during the shields-down window stays removed.
+A surviving server keeps its recorded endpoint and address pins while its policy ownership remains exact.
 The deadline gate remains closed during those attempts.
 If restoration cannot commit, NemoClaw attempts to record durable containment.
 If that containment commit also fails, NemoClaw retains any exact lifecycle and deadline gates it already owns.
