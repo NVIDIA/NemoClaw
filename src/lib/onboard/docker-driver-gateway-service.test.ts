@@ -825,7 +825,11 @@ describe("docker-driver-gateway-service", () => {
       ),
     });
 
-    expect(result).toMatchObject({ attempted: true, stopped: false });
+    expect(result).toMatchObject({
+      attempted: true,
+      standaloneFallbackBlocked: true,
+      stopped: false,
+    });
     expect(result.reason).toContain("service identity is not a trusted OpenShell gateway");
     expect(events).toEqual([
       "show nemoclaw-openshell-gateway --property=FragmentPath --property=ExecStart",
