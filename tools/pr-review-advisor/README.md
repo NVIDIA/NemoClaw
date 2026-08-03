@@ -112,7 +112,7 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
   job that the model omits or downgrades. The PR E2E controller separately dispatches every listed
   job without consuming the advisor's normalized result.
 
-Risk plan version 10 maps runtime changes from these paths to the `focused-e2e` family:
+Risk plan version 12 maps runtime changes from these paths to the `focused-e2e` family:
 
 - `src/lib/onboard/managed-startup/**`.
 - `src/lib/onboard/sandbox-create-launch.ts`.
@@ -123,6 +123,17 @@ Each match selects these focused E2E jobs:
 - `device-auth-health`.
 - `issue-4462-scope-upgrade-approval`.
 - `openclaw-inference-switch`.
+
+The same risk plan maps these Hermes CLI adapter paths to `focused-e2e`:
+
+- `agents/hermes/hermes-cli-adapter-v1.json`.
+- `agents/hermes/hermes-wrapper.py`.
+- `agents/hermes/validate-cli-adapter.py`.
+
+Each Hermes CLI adapter match selects these focused E2E jobs:
+
+- `channels-stop-start`.
+- `mcp-bridge`.
 
 ## Required secret
 

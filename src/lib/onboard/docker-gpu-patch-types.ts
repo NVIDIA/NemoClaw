@@ -116,6 +116,14 @@ export type DockerGpuCloneRunOptions = {
   openshellSandboxCommand?: readonly string[] | null;
   requiredUlimits?: readonly DockerUlimit[] | null;
   /**
+   * Exact replacement process boundary used only by dormant managed bootstrap.
+   * Ordinary recreation leaves both fields unset.
+   */
+  containerEntrypoint?: string | null;
+  containerCommand?: readonly string[] | null;
+  /** Stopped staging name used before exact-name cutover. */
+  containerName?: string | null;
+  /**
    * Extra supplementary group IDs to add to the recreated container via
    * `--group-add`. On Jetson these are the host group(s) owning the Tegra GPU
    * device nodes; granting the sandbox user membership lets CUDA's nvmap init
@@ -200,6 +208,14 @@ export type DockerContainerInspect = {
     Hostname?: string;
     Tty?: boolean;
     OpenStdin?: boolean;
+    StopTimeout?: number | null;
+    Volumes?: Record<string, unknown> | null;
+  } | null;
+  State?: {
+    Running?: boolean;
+    Paused?: boolean;
+    Restarting?: boolean;
+    Dead?: boolean;
   } | null;
   HostConfig?: {
     Binds?: string[] | null;
@@ -254,6 +270,7 @@ export type DockerContainerInspect = {
       DeviceIDs?: string[] | null;
     }> | null;
     ShmSize?: number;
+    ReadonlyRootfs?: boolean;
     ReadonlyPaths?: string[] | null;
     MaskedPaths?: string[] | null;
   } | null;

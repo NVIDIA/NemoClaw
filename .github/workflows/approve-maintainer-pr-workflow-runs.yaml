@@ -1,0 +1,258 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Automation / Approve Maintainer PR Workflow Runs
+
+# pull_request_target loads this workflow from the trusted base branch. The
+# pinned action reads repository metadata and approves exact workflow-run IDs.
+# Do not add a checkout or execute pull-request code in this workflow.
+on:
+  # Keep every target branch eligible so maintainer-owned stacked PRs receive
+  # the same exact-head approval policy as PRs that target main.
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: approve-maintainer-pr-workflow-runs-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+jobs:
+  approve:
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Approve exact-head maintainer workflow runs
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            // Keeping this policy inline prevents a write-capable
+            // pull_request_target job from checking out repository files.
+            const SHA_PATTERN = /^[0-9a-f]{40}$/i;
+            const TRUSTED_BASE_PERMISSIONS = new Set(['write', 'admin']);
+            const POLL_ATTEMPTS = 12;
+            const POLL_INTERVAL_MS = 5000;
+            const { owner, repo } = context.repo;
+
+            function validateEventPullRequest(value) {
+              if (!value || typeof value !== 'object') {
+                throw new Error('Invalid pull_request_target payload: pull_request is missing');
+              }
+              if (!Number.isInteger(value.number) || value.number <= 0) {
+                throw new Error(`Invalid pull request number: ${value.number}`);
+              }
+              if (typeof value.head?.sha !== 'string' || !SHA_PATTERN.test(value.head.sha)) {
+                throw new Error(`Invalid event head SHA for PR #${value.number}`);
+              }
+              return { number: value.number, headSha: value.head.sha.toLowerCase() };
+            }
+
+            function liveHeadSha(pullRequest, prNumber) {
+              const headSha = pullRequest?.head?.sha;
+              if (typeof headSha !== 'string' || !SHA_PATTERN.test(headSha)) {
+                throw new Error(`Invalid live head SHA for PR #${prNumber}`);
+              }
+              return headSha.toLowerCase();
+            }
+
+            function repositoryName(value) {
+              return typeof value === 'string' ? value.toLowerCase() : '';
+            }
+
+            function isSameRepositoryHead(pullRequest) {
+              return (
+                repositoryName(pullRequest?.head?.repo?.full_name) ===
+                repositoryName(`${owner}/${repo}`)
+              );
+            }
+
+            async function loadLivePullRequest(prNumber) {
+              const response = await github.rest.pulls.get({
+                owner,
+                repo,
+                pull_number: prNumber,
+              });
+              const pullRequest = response.data;
+              if (pullRequest?.number !== prNumber || pullRequest?.state !== 'open') {
+                throw new Error(`PR #${prNumber} is not an open pull request`);
+              }
+              const baseRepository = pullRequest.base?.repo?.full_name;
+              if (
+                typeof baseRepository !== 'string' ||
+                baseRepository.toLowerCase() !== `${owner}/${repo}`.toLowerCase()
+              ) {
+                throw new Error(`PR #${prNumber} does not target ${owner}/${repo}`);
+              }
+              return pullRequest;
+            }
+
+            async function loadAuthorPermission(author) {
+              try {
+                const response = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner,
+                  repo,
+                  username: author,
+                });
+                const responseLogin = response.data.user?.login;
+                if (
+                  typeof responseLogin !== 'string' ||
+                  responseLogin.toLowerCase() !== author.toLowerCase()
+                ) {
+                  throw new Error(`Permission response did not match PR author ${author}`);
+                }
+                return response.data;
+              } catch (error) {
+                if (error?.status === 404) return null;
+                throw error;
+              }
+            }
+
+            function hasWritePermission(permission) {
+              const basePermission = String(permission?.permission ?? '').toLowerCase();
+              // GitHub maps maintain to the write base permission. role_name can
+              // contain an arbitrary custom-role label, so it is not authority.
+              return TRUSTED_BASE_PERMISSIONS.has(basePermission);
+            }
+
+            function belongsToExactPullRequest(run, prNumber, headSha) {
+              if (
+                !Number.isInteger(run?.id) ||
+                run.id <= 0 ||
+                run.event !== 'pull_request' ||
+                run.status !== 'completed' ||
+                run.conclusion !== 'action_required' ||
+                String(run.head_sha ?? '').toLowerCase() !== headSha ||
+                repositoryName(run.head_repository?.full_name) !==
+                  repositoryName(`${owner}/${repo}`)
+              ) {
+                return false;
+              }
+              return (
+                Array.isArray(run.pull_requests) &&
+                run.pull_requests.some(
+                  (pullRequest) =>
+                    pullRequest?.number === prNumber &&
+                    String(pullRequest.head?.sha ?? '').toLowerCase() === headSha,
+                )
+              );
+            }
+
+            const eventPullRequest = validateEventPullRequest(context.payload.pull_request);
+            const initialPullRequest = await loadLivePullRequest(eventPullRequest.number);
+            const expectedHeadSha = liveHeadSha(initialPullRequest, eventPullRequest.number);
+            if (expectedHeadSha !== eventPullRequest.headSha) {
+              core.info(
+                `PR #${eventPullRequest.number} moved from event head ${eventPullRequest.headSha} to ${expectedHeadSha}; no workflow runs approved`,
+              );
+              return;
+            }
+            if (!isSameRepositoryHead(initialPullRequest)) {
+              core.info(
+                `PR #${eventPullRequest.number} head repository is not ${owner}/${repo}; workflow runs remain gated`,
+              );
+              return;
+            }
+
+            const author = initialPullRequest.user?.login;
+            if (typeof author !== 'string' || author.length === 0) {
+              throw new Error(`PR #${eventPullRequest.number} has no live author`);
+            }
+            const permission = await loadAuthorPermission(author);
+            if (!permission || !hasWritePermission(permission)) {
+              core.info(
+                `PR #${eventPullRequest.number} author ${author} does not have write, maintain, or admin permission; workflow runs remain gated`,
+              );
+              return;
+            }
+
+            const approvedRunIds = new Set();
+            for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt += 1) {
+              const currentPullRequest = await loadLivePullRequest(eventPullRequest.number);
+              if (liveHeadSha(currentPullRequest, eventPullRequest.number) !== expectedHeadSha) {
+                core.warning(
+                  `PR #${eventPullRequest.number} head changed during workflow-run discovery; no further runs approved`,
+                );
+                return;
+              }
+
+              const runs = await github.paginate(
+                github.rest.actions.listWorkflowRunsForRepo,
+                {
+                  owner,
+                  repo,
+                  event: 'pull_request',
+                  head_sha: expectedHeadSha,
+                  status: 'action_required',
+                  per_page: 100,
+                },
+              );
+
+              for (const run of runs) {
+                if (
+                  approvedRunIds.has(run?.id) ||
+                  !belongsToExactPullRequest(
+                    run,
+                    eventPullRequest.number,
+                    expectedHeadSha,
+                  )
+                ) {
+                  continue;
+                }
+
+                const liveBeforeApproval = await loadLivePullRequest(eventPullRequest.number);
+                if (
+                  liveHeadSha(liveBeforeApproval, eventPullRequest.number) !==
+                  expectedHeadSha
+                ) {
+                  core.warning(
+                    `PR #${eventPullRequest.number} head changed before workflow-run approval; no further runs approved`,
+                  );
+                  return;
+                }
+                if (!isSameRepositoryHead(liveBeforeApproval)) {
+                  core.warning(
+                    `PR #${eventPullRequest.number} head repository changed; no further runs approved`,
+                  );
+                  return;
+                }
+                if (
+                  String(liveBeforeApproval.user?.login ?? '').toLowerCase() !==
+                  author.toLowerCase()
+                ) {
+                  throw new Error(
+                    `PR #${eventPullRequest.number} author changed during workflow-run discovery`,
+                  );
+                }
+                const livePermission = await loadAuthorPermission(author);
+                if (!livePermission || !hasWritePermission(livePermission)) {
+                  core.warning(
+                    `PR #${eventPullRequest.number} author ${author} no longer has write, maintain, or admin permission; no further runs approved`,
+                  );
+                  return;
+                }
+
+                await github.rest.actions.approveWorkflowRun({
+                  owner,
+                  repo,
+                  run_id: run.id,
+                });
+                approvedRunIds.add(run.id);
+                core.info(
+                  `Approved pull_request workflow run ${run.id} for PR #${eventPullRequest.number} at ${expectedHeadSha}`,
+                );
+              }
+
+              if (attempt + 1 < POLL_ATTEMPTS) {
+                await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+              }
+            }
+
+            core.info(
+              `Approved ${approvedRunIds.size} exact-head workflow run(s) for PR #${eventPullRequest.number}`,
+            );

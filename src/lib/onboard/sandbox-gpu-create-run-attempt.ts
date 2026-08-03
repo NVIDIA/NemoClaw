@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { resolveOpenShellSandboxId } from "../adapters/openshell/sandbox-identity";
 import { printSandboxCreateRecoveryHints } from "../build-context";
 import { getSandboxDeleteOutcome } from "../domain/sandbox/destroy";
 import { streamSandboxCreate } from "../sandbox/create-stream";
@@ -13,8 +14,8 @@ import { reportSandboxCreateFailure } from "./created-sandbox-failure";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
+import type { ManagedBootstrapRuntimeSnapshot } from "./managed-bootstrap/runtime-create";
 import {
-  type OpenShellDockerSandboxRuntimeSnapshotQuery,
   queryOpenShellDockerSandboxContainers,
   queryOpenShellDockerSandboxRuntimeSnapshot,
 } from "./openshell-docker-sandbox-containers";
@@ -28,7 +29,7 @@ import * as sandboxGpuPreflight from "./sandbox-gpu-preflight";
 import * as sandboxReadinessTracing from "./sandbox-readiness-tracing";
 import { addTraceEvent } from "./tracing";
 
-type NativeRuntimeSnapshot = Extract<OpenShellDockerSandboxRuntimeSnapshotQuery, { ok: true }>;
+type NativeRuntimeSnapshot = ManagedBootstrapRuntimeSnapshot;
 
 export type SandboxGpuCreateAttemptState = {
   firstCreateOutput: string;
@@ -41,6 +42,12 @@ export type SandboxGpuCreateAttemptState = {
 // Ready row. Require one confirmation poll before advancing to the GPU proof.
 const COMPATIBILITY_STABLE_READY_POLLS = 2;
 
+class ManagedBootstrapCreateStreamFailure extends Error {
+  constructor(readonly result: Awaited<ReturnType<typeof streamSandboxCreate>>) {
+    super("Managed bootstrap held workload did not complete its create stream.");
+  }
+}
+
 export function createSandboxGpuCreateAttemptRunner(
   input: SandboxGpuCreateFlowInput,
   deps: SandboxGpuCreateFlowDeps,
@@ -51,13 +58,26 @@ export function createSandboxGpuCreateAttemptRunner(
     allowUnbuiltCompatibilitySource: false,
     nativeRuntimeSnapshot: null,
   };
+  const managedRouting = input.managedBootstrap?.runtimeProvider.bootstrap.createOnboardRouting({
+    sandboxName: input.sandboxName,
+    openshellArgv: deps.openshellArgv,
+    nativeFallbackEnabled:
+      input.initialGpuRoute === "native" && input.gpuRoutePlan === "native-with-fallback",
+  });
   const nativeFallbackBaseline =
-    input.initialGpuRoute === "native" && input.gpuRoutePlan === "native-with-fallback"
+    !managedRouting &&
+    input.initialGpuRoute === "native" &&
+    input.gpuRoutePlan === "native-with-fallback"
       ? queryOpenShellDockerSandboxContainers(input.sandboxName)
       : null;
   const nativeFallbackHasCleanBaseline =
-    nativeFallbackBaseline?.ok === true && nativeFallbackBaseline.ids.length === 0;
-  const inspectNativeRuntime = () => queryOpenShellDockerSandboxRuntimeSnapshot(input.sandboxName);
+    managedRouting?.nativeFallbackHasCleanBaseline ??
+    (nativeFallbackBaseline?.ok === true && nativeFallbackBaseline.ids.length === 0);
+  const inspectNativeRuntime = (): NativeRuntimeSnapshot | null => {
+    if (managedRouting) return managedRouting.inspectNativeRuntime();
+    const snapshot = queryOpenShellDockerSandboxRuntimeSnapshot(input.sandboxName);
+    return snapshot.ok ? snapshot : null;
+  };
 
   const runAttempt = async (route: SelectedDockerGpuRoute) => {
     const compatibility = route === "compatibility";
@@ -70,73 +90,199 @@ export function createSandboxGpuCreateAttemptRunner(
       );
     }
     const hasRequiredUlimits = (input.requiredUlimits?.length ?? 0) > 0;
-    const dockerGpuCreatePatch = createDockerGpuSandboxCreatePatch({
-      route,
-      // The startup clone preserves native CDI devices, so DCode can apply its
-      // exact required limits without replacing the native GPU envelope.
-      // Other native routes are not swapped solely to persist a command.
-      persistStartupCommand:
-        input.persistStartupCommand === true && (route !== "native" || hasRequiredUlimits),
-      sandboxName: input.sandboxName,
-      gpuDevice: input.sandboxGpuConfig.sandboxGpuDevice,
-      openshellSandboxCommand: input.sandboxStartupCommand,
-      requiredUlimits: input.requiredUlimits,
-      timeoutSecs: input.sandboxReadyTimeoutSecs,
-      backend: input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
-      deps,
-    });
+    const managedBootstrap = input.managedBootstrap ?? null;
     const attemptArgv = state.compatibilityArgv ?? input.createArgv;
-    const [createExecutable, ...createExecutableArgs] = attemptArgv;
+    const managedLifecycle = managedBootstrap
+      ? managedBootstrap.runtimeProvider.bootstrap.createLifecycle({
+          providerId: managedBootstrap.runtimeProvider.identity.id,
+          bootstrapIdentity: managedBootstrap.bootstrapIdentity,
+          request: managedBootstrap.request,
+          image: managedBootstrap.image,
+          agentIdentity: managedBootstrap.agentIdentity,
+          intendedWorkloadArgv: managedBootstrap.intendedWorkloadArgv,
+          expectedSupervisorArgv: managedBootstrap.expectedSupervisorArgv,
+          launchArgv: attemptArgv,
+          heldWorkloadArgv: input.sandboxStartupCommand,
+          authorityStore: managedBootstrap.authorityStore,
+          ...(deps.createManagedBootstrapAdapter
+            ? { adapterOverride: deps.createManagedBootstrapAdapter() }
+            : {}),
+          route,
+          persistStartupCommand: input.persistStartupCommand === true,
+          sandboxName: input.sandboxName,
+          sandboxGpuConfig: input.sandboxGpuConfig,
+          requiredLimits: input.requiredUlimits ?? [],
+          timeoutSecs: input.sandboxReadyTimeoutSecs,
+          network: {
+            inferenceProvider: input.provider,
+            gatewayUsesContainerBridge: input.dockerDriverGateway,
+            gatewayPort: input.gatewayPort,
+          },
+          dependencies: {
+            runCaptureOpenshell: deps.runCaptureOpenshell,
+            runOpenshell: deps.runOpenshell,
+            sleep: deps.sleep,
+          },
+        })
+      : null;
+    const runtimePatch =
+      managedLifecycle?.patch ??
+      createDockerGpuSandboxCreatePatch({
+        route,
+        // The startup clone preserves native CDI devices, so DCode can apply its
+        // exact required limits without replacing the native GPU envelope.
+        // Other native routes are not swapped solely to persist a command.
+        persistStartupCommand:
+          input.persistStartupCommand === true && (route !== "native" || hasRequiredUlimits),
+        externalRecreation: false,
+        sandboxName: input.sandboxName,
+        gpuDevice: input.sandboxGpuConfig.sandboxGpuDevice,
+        openshellSandboxCommand: input.sandboxStartupCommand,
+        requiredUlimits: input.requiredUlimits,
+        timeoutSecs: input.sandboxReadyTimeoutSecs,
+        backend: input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
+        deps,
+      });
+    await managedLifecycle?.prepareNetwork();
+    const [createExecutable, ...createExecutableArgs] = managedLifecycle?.launchArgv ?? attemptArgv;
     if (!createExecutable) throw new Error("Sandbox create executable is missing.");
-    const createResult = await streamSandboxCreate(
-      createExecutable,
-      createExecutableArgs,
-      input.sandboxEnv,
-      {
+    const streamCreate = () =>
+      streamSandboxCreate(createExecutable, createExecutableArgs, input.sandboxEnv, {
         readyCheck: () => {
           const list = deps.runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
           return isSandboxReady(list, input.sandboxName);
         },
-        onPoll: () => dockerGpuCreatePatch.maybeApplyDuringCreate(),
+        onPoll: () => runtimePatch.maybeApplyDuringCreate(),
         readyCheckOutputPatterns: getReadyCheckOutputPatternsForAgent(
           input.terminalAgent,
           input.sandboxEnv,
         ),
-        failureCheck: dockerGpuCreatePatch.createFailureMessage,
+        failureCheck: runtimePatch.createFailureMessage,
         traceEvent: addTraceEvent,
         initialPhase:
           compatibility && (input.prebuild.imageRef || state.compatibilityArgv)
             ? "create"
             : undefined,
-      },
-    );
+      });
+    let createResult: Awaited<ReturnType<typeof streamSandboxCreate>>;
+    let managedIncompleteCreateRecovered = false;
+    if (managedBootstrap && managedLifecycle) {
+      try {
+        createResult = await managedLifecycle.runCreate(
+          async ({ heldWorkloadArgv, bootstrapIdentity }) => {
+            if (
+              bootstrapIdentity !== managedBootstrap.bootstrapIdentity ||
+              heldWorkloadArgv.length !== input.sandboxStartupCommand.length ||
+              heldWorkloadArgv.some((value, index) => value !== input.sandboxStartupCommand[index])
+            ) {
+              throw new Error(
+                "Managed bootstrap launch does not match the rendered identity-bound hold.",
+              );
+            }
+            const result = await streamCreate();
+            const createFailure =
+              result.status === 0 ? null : classifySandboxCreateFailure(result.output);
+            if (result.status !== 0 && createFailure?.kind !== "sandbox_create_incomplete") {
+              throw new ManagedBootstrapCreateStreamFailure(result);
+            }
+            if (createFailure?.kind === "sandbox_create_incomplete") {
+              const readiness = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
+                sandboxName: input.sandboxName,
+                timeoutSecs: input.sandboxReadyTimeoutSecs,
+                runCaptureOpenshell: deps.runCaptureOpenshell,
+                isSandboxReady,
+                getSandboxFailurePhase,
+                stableReadyPolls: 1,
+                sleep: deps.sleep,
+              });
+              if (!readiness.ready) {
+                throw new Error(
+                  `Managed bootstrap incomplete create did not reach authoritative Ready state (${readiness.reason}).`,
+                );
+              }
+            } else {
+              const list = deps.runCaptureOpenshell(["sandbox", "list"], {
+                ignoreError: true,
+              });
+              if (!isSandboxReady(list, input.sandboxName)) {
+                throw new Error(
+                  "Managed bootstrap create completed without an authoritative Ready sandbox.",
+                );
+              }
+            }
+            let sandboxId: string;
+            try {
+              sandboxId = resolveOpenShellSandboxId(input.sandboxName, deps.runCaptureOpenshell);
+            } catch (error) {
+              throw new Error(
+                createFailure?.kind === "sandbox_create_incomplete"
+                  ? "Managed bootstrap incomplete create did not return one exact durable sandbox identity after Ready."
+                  : "Managed bootstrap create did not return one exact durable sandbox identity after Ready.",
+                { cause: error },
+              );
+            }
+            managedIncompleteCreateRecovered = createFailure?.kind === "sandbox_create_incomplete";
+            return {
+              value: result,
+              receipt: {
+                sandbox: {
+                  sandboxName: input.sandboxName,
+                  sandboxId,
+                  driverId: managedBootstrap.runtimeProvider.identity.id,
+                },
+                ready: true,
+                readyAt: new Date().toISOString(),
+              },
+            };
+          },
+        );
+      } catch (error) {
+        if (!(error instanceof ManagedBootstrapCreateStreamFailure)) throw error;
+        createResult = error.result;
+      }
+    } else {
+      createResult = await streamCreate();
+    }
     if (!state.firstCreateOutput) state.firstCreateOutput = createResult.output;
-    dockerGpuCreatePatch.exitOnPatchError();
+    await runtimePatch.exitOnPatchError();
     if (createResult.status !== 0) {
       const failure = classifySandboxCreateFailure(createResult.output);
       if (failure.kind === "sandbox_create_incomplete") {
         console.warn("");
-        console.warn(
-          `  Create stream exited with code ${createResult.status} after sandbox was created.`,
-        );
-        console.warn("  Checking whether the sandbox reaches Ready state...");
+        if (managedIncompleteCreateRecovered) {
+          console.warn(
+            `  Create stream exited with code ${createResult.status}; the exact durable sandbox reached Ready, and onboarding is continuing with final checks.`,
+          );
+        } else {
+          console.warn(
+            `  Create stream exited with code ${createResult.status} after sandbox was created.`,
+          );
+          console.warn("  Checking whether the sandbox reaches Ready state...");
+        }
       } else if (
         route === "native" &&
         input.gpuRoutePlan === "native-with-fallback" &&
         nativeFallbackHasCleanBaseline &&
         (() => {
           if (
-            sandboxGpuCreateAttempt.isNativeGpuCreateRoutingFailure(createResult.output, {
-              sawProgress: createResult.sawProgress,
-            })
+            managedRouting
+              ? managedRouting.isNativeCreateRoutingFailure(
+                  createResult.output,
+                  createResult.sawProgress,
+                )
+              : sandboxGpuCreateAttempt.isNativeGpuCreateRoutingFailure(createResult.output, {
+                  sawProgress: createResult.sawProgress,
+                })
           ) {
             state.allowUnbuiltCompatibilitySource = input.prebuild.imageRef === null;
             return true;
           }
           const snapshot = inspectNativeRuntime();
           if (
-            snapshot.ok &&
-            sandboxGpuCreateAttempt.isTrustedNativeGpuRuntimeError(snapshot.stateError)
+            snapshot &&
+            (managedRouting
+              ? managedRouting.isTrustedNativeRuntimeError(snapshot.stateError)
+              : sandboxGpuCreateAttempt.isTrustedNativeGpuRuntimeError(snapshot.stateError))
           ) {
             state.nativeRuntimeSnapshot = snapshot;
             return true;
@@ -144,6 +290,7 @@ export function createSandboxGpuCreateAttemptRunner(
           return false;
         })()
       ) {
+        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
         return {
           ok: false,
           route,
@@ -152,6 +299,7 @@ export function createSandboxGpuCreateAttemptRunner(
           fallbackEligible: true,
         } as const;
       } else {
+        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
         reportSandboxCreateFailure(
           {
             sandboxName: input.sandboxName,
@@ -171,8 +319,8 @@ export function createSandboxGpuCreateAttemptRunner(
         );
       }
     }
-    dockerGpuCreatePatch.ensureApplied();
-    dockerGpuCreatePatch.waitForSupervisorReconnectIfNeeded();
+    await runtimePatch.ensureApplied();
+    await runtimePatch.waitForSupervisorReconnectIfNeeded();
     console.log("  Waiting for sandbox to become ready...");
     const readiness = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
       sandboxName: input.sandboxName,
@@ -197,13 +345,19 @@ export function createSandboxGpuCreateAttemptRunner(
       const runtimeSnapshot = canClassifyNativeReadiness ? inspectNativeRuntime() : null;
       if (
         canClassifyNativeReadiness &&
-        runtimeSnapshot?.ok &&
-        sandboxGpuCreateAttempt.isNativeGpuReadinessRoutingFailure({
-          failurePhase: readiness.failurePhase,
-          runtimeError: runtimeSnapshot.stateError,
-        })
+        runtimeSnapshot &&
+        (managedRouting
+          ? managedRouting.isNativeReadinessRoutingFailure({
+              failurePhase: readiness.failurePhase,
+              runtimeError: runtimeSnapshot.stateError,
+            })
+          : sandboxGpuCreateAttempt.isNativeGpuReadinessRoutingFailure({
+              failurePhase: readiness.failurePhase,
+              runtimeError: runtimeSnapshot.stateError,
+            }))
       ) {
         state.nativeRuntimeSnapshot = runtimeSnapshot;
+        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
         return {
           ok: false,
           route,
@@ -214,10 +368,11 @@ export function createSandboxGpuCreateAttemptRunner(
           fallbackEligible: true,
         } as const;
       }
+      await runtimePatch.rollbackManagedStartupAfterCreateFailure();
       printSandboxCreateFailureDiagnostics(input.sandboxName, {
         backupPath: input.restoreBackupPath,
       });
-      if (compatibility) dockerGpuCreatePatch.printReadinessFailureIfEnabled();
+      if (compatibility) runtimePatch.printReadinessFailureIfEnabled();
       else {
         const deletion = deps.runOpenshell(["sandbox", "delete", input.sandboxName], {
           ignoreError: true,
@@ -240,27 +395,32 @@ export function createSandboxGpuCreateAttemptRunner(
         route === "native" &&
         input.gpuRoutePlan === "native-with-fallback" &&
         nativeFallbackHasCleanBaseline;
-      const proof: SandboxGpuProofResult = dockerGpuLocalInference.verifyGpuSandboxAccessAfterReady(
-        input.sandboxGpuConfig,
-        {
-          sandboxName: input.sandboxName,
-          dockerDriverGateway: input.dockerDriverGateway,
-          selectedRoute: route,
-          verifyDirectSandboxGpu: deps.verifyDirectSandboxGpu,
-          verifyGpuOrExit: deferNativeProofFailure
-            ? undefined
-            : dockerGpuCreatePatch.verifyGpuOrExit,
-          reportGpuProofFailure: !deferNativeProofFailure,
-          selectedMode: dockerGpuCreatePatch.selectedMode,
-          runCaptureOpenshell: deps.runCaptureOpenshell,
-          log: console.log,
-        },
-      );
+      let proof: SandboxGpuProofResult;
+      try {
+        proof = await dockerGpuLocalInference.verifyGpuSandboxAccessAfterReady(
+          input.sandboxGpuConfig,
+          {
+            sandboxName: input.sandboxName,
+            dockerDriverGateway: input.dockerDriverGateway,
+            selectedRoute: route,
+            verifyDirectSandboxGpu: deps.verifyDirectSandboxGpu,
+            verifyGpuOrExit: deferNativeProofFailure ? undefined : runtimePatch.verifyGpuOrExit,
+            reportGpuProofFailure: !deferNativeProofFailure,
+            selectedMode: runtimePatch.selectedMode,
+            runCaptureOpenshell: deps.runCaptureOpenshell,
+            log: console.log,
+          },
+        );
+      } catch (error) {
+        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
+        throw error;
+      }
       if (deferNativeProofFailure && proof.status === "failed") {
         if (sandboxGpuPreflight.isExplicitNvidiaSmiDriverProofFailure(proof)) {
           const snapshot = inspectNativeRuntime();
-          if (snapshot.ok && snapshot.nativeGpuAttachmentState === "absent") {
+          if (snapshot?.nativeGpuAttachmentState === "absent") {
             state.nativeRuntimeSnapshot = snapshot;
+            await runtimePatch.rollbackManagedStartupAfterCreateFailure();
             return {
               ok: false,
               route,
@@ -272,6 +432,7 @@ export function createSandboxGpuCreateAttemptRunner(
             } as const;
           }
         }
+        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
         console.error("");
         console.error("  Native sandbox GPU proof failed.");
         console.error(
@@ -283,15 +444,22 @@ export function createSandboxGpuCreateAttemptRunner(
         process.exit(1);
       }
       if (proof.status === "failed") {
+        await runtimePatch.rollbackManagedStartupAfterCreateFailure();
         throw new Error("Sandbox GPU proof returned failed status.");
       }
+    }
+    // GPU-enabled cutover stays reversible until the caller also proves the
+    // configured host-local inference path. Non-GPU workloads have completed
+    // their final authoritative Ready gate here.
+    if (!input.sandboxGpuConfig.sandboxGpuEnabled) {
+      await runtimePatch.commitAfterReady();
     }
     return {
       ok: true,
       route,
-      value: { createResult, dockerGpuCreatePatch },
+      value: { createResult, runtimePatch },
     } as const;
   };
 
-  return { state, runAttempt };
+  return { state, managedRouting, runAttempt };
 }
