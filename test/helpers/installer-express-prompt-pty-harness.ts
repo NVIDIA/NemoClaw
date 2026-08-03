@@ -13,6 +13,15 @@ export type InstallerExpressPtyFixture = {
   timeoutSeconds?: number;
 };
 
+export function killPtyFixtureChildIfRunning(childPid: number | undefined): void {
+  if (childPid === undefined) return;
+  try {
+    process.kill(childPid, "SIGKILL");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+}
+
 export function runExpressPromptWithTty(
   answer: string,
   stdinMode: "pipe" | "tty",

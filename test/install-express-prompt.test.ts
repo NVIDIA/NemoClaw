@@ -7,7 +7,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { runInstallerSourced } from "./helpers/installer-express-prompt-harness";
-import { runExpressPromptWithTty } from "./helpers/installer-express-prompt-pty-harness";
+import {
+  killPtyFixtureChildIfRunning,
+  runExpressPromptWithTty,
+} from "./helpers/installer-express-prompt-pty-harness";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 describe("installer express install prompt (sourced)", () => {
@@ -52,13 +55,7 @@ describe("installer express install prompt (sourced)", () => {
       );
       childPid = undefined;
     } finally {
-      if (childPid !== undefined) {
-        try {
-          process.kill(childPid, "SIGKILL");
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-        }
-      }
+      killPtyFixtureChildIfRunning(childPid);
       fs.rmSync(fixtureDir, { recursive: true, force: true });
     }
   });
