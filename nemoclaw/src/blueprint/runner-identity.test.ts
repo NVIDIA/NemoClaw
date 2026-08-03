@@ -1067,6 +1067,13 @@ describe("blueprint identity wrapper", () => {
         ],
       ],
       [
+        "sandbox delete test-sandbox",
+        [
+          { exitCode: 1, stdout: "", stderr: "sandbox delete denied" },
+          { exitCode: 0, stdout: "", stderr: "" },
+        ],
+      ],
+      [
         "inference set --provider test-provider --model test-model",
         [{ exitCode: 1, stdout: "", stderr: "route failed" }],
       ],

@@ -28,6 +28,7 @@ import {
   type RuntimeIdentityCommandResult,
   type RuntimeIdentityConfig,
   type RuntimeIdentityDeps,
+  type RuntimeIdentityFetch,
   type RuntimeIdentityReceipt,
   removeRuntimeIdentity,
   resolveRuntimeIdentityProfilePath,
@@ -512,6 +513,51 @@ describe("runtime identity contract", () => {
         async () => new Response("server echoed a secret", { status: 400 }),
       ),
     ).rejects.toThrow("Okta token exchange failed with HTTP 400");
+  });
+
+  it.each<[string, RuntimeIdentityFetch, RegExp]>([
+    ["request failure", async () => Promise.reject(new Error("network details")), /request failed/],
+    [
+      "invalid JSON",
+      async () => new Response("not-json", { status: 200 }),
+      /response was not valid JSON/,
+    ],
+    [
+      "unsafe access token",
+      async () => new Response(JSON.stringify({ access_token: "unsafe\ntoken" }), { status: 200 }),
+      /did not contain a safe access token/,
+    ],
+  ])("rejects an Okta exchange %s without disclosing response details", async (_label, fetchImpl, error) => {
+    await expect(
+      exchangeOktaOboToken(
+        {
+          tokenUrl: "https://example.okta.com/oauth2/default/v1/token",
+          clientId: "client-id",
+          clientSecret: "client-secret",
+          subjectToken: "user-subject-token",
+          audience: "api://orders",
+          scopes: ["orders.read"],
+        },
+        fetchImpl,
+      ),
+    ).rejects.toThrow(error);
+  });
+
+  it.each([
+    [
+      "inspection failure",
+      { exitCode: 1, stdout: "", stderr: "private gateway detail" },
+      /Failed to inspect OpenShell provider-policy prerequisite/,
+    ],
+    [
+      "malformed response",
+      { exitCode: 0, stdout: "{", stderr: "" },
+      /requires OpenShell global setting 'providers_v2_enabled=true'/,
+    ],
+  ])("fails before identity mutation after a settings %s", async (_label, response, error) => {
+    responses.set("settings get --global --json", [response]);
+    await expect(prepareRuntimeIdentity(config, deps)).rejects.toThrow(error);
+    expect(calls.map(({ args }) => commandKey(args))).toEqual(["settings get --global --json"]);
   });
 
   it("fails before identity mutation when provider-derived policy is disabled", async () => {
