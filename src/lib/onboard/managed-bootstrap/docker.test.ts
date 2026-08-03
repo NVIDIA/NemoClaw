@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { assert, describe, expect, it, vi } from "vitest";
 
 import { ManagedBootstrapOwnerCleanupRequiredError } from "./adapter";
 import { createDockerManagedBootstrapAdapter } from "./docker";
@@ -56,6 +56,8 @@ describe("Docker managed bootstrap adapter", () => {
       durablePreparation: durable,
     });
     const order = fake.events;
+    expect(order).toContain("authority:recorded");
+    expect(order).toContain("journal:staged");
     expect(order.indexOf("journal:staged")).toBeGreaterThan(order.indexOf("authority:recorded"));
     expect(order).toContain("journal:cutover");
     expect(order).toContain(`stop:${OLD_ID}`);
@@ -125,6 +127,7 @@ describe("Docker managed bootstrap adapter", () => {
     ).rejects.toThrow(
       /logical commit validation failed: Managed-startup shared-state commit helper failed.*injected commit failure.*new workload could not be quiesced.*injected quiesce failure/u,
     );
+    expect(fake.events).not.toContain("shared:rollback");
   });
 
   it("publishes durable rollback authority before deleting the replacement after restart", async () => {
@@ -409,8 +412,8 @@ describe("Docker managed bootstrap adapter", () => {
     const { handle, plan } = authority();
     expect(fake.original).not.toBeNull();
     const labels = fake.original?.Config?.Labels;
-    expect(labels).toBeDefined();
-    Object.assign(labels ?? {}, { "openshell.ai/sandbox-id": replacementSandboxId });
+    assert(labels, "fixture labels are required");
+    labels["openshell.ai/sandbox-id"] = replacementSandboxId;
 
     await expect(
       adapter.cleanupIncompleteCreate({
