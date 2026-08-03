@@ -972,7 +972,13 @@ Follow these steps to reconnect.
    It starts with your user session; NemoClaw does not enable lingering.
    On Linux, NemoClaw attempts to stop a service that reached startup and use the standalone fallback.
    The standalone gateway starts only after NemoClaw verifies exclusive ownership of the gateway port.
-   A Homebrew formula outside the official tap and a foreign or symlinked systemd unit remain hard failures instead of using the fallback.
+   The fallback does not bypass managed-service trust validation or unsafe environment configuration.
+   These conditions remain hard failures:
+
+   - Homebrew formula identity query, metadata, or official-tap validation errors
+   - Foreign or symlinked systemd units, or an untrusted systemd executable identity
+   - An invalid `DOCKER_HOST` or a symlinked service environment file
+
    Without Homebrew on macOS, or without a reachable systemd user manager on Linux, continue with the standalone recovery step below.
 
 1. Check sandbox state.
