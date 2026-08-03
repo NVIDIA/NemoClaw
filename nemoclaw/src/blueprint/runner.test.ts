@@ -584,7 +584,9 @@ describe("runner", () => {
 
       expect(mockExeca).toHaveBeenCalledWith(
         "openshell",
-        ["sandbox", "create", "--from", "openclaw", "--name", "test-sandbox", "--forward", "18789"],
+        "sandbox create --from openclaw --name test-sandbox --forward 18789 --no-tty -- /bin/true".split(
+          " ",
+        ),
         expect.objectContaining({ reject: false }),
       );
     });

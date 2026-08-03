@@ -215,7 +215,7 @@ describe("blueprint name validation (fail-closed integration)", () => {
   it("rollback rejects a plan whose sandbox_name is not an RFC 1035 label", async () => {
     const runDir = `${RUNS_DIR}/nc-run-1`;
     addDir(runDir);
-    // "--rm" would be consumed as a flag by `openshell sandbox stop/remove`.
+    // "--rm" would be consumed as a flag by `openshell sandbox stop/delete`.
     addFile(`${runDir}/plan.json`, JSON.stringify({ sandbox_name: "--rm" }));
 
     await expect(actionRollback("nc-run-1")).rejects.toThrow(/Invalid sandbox name/);

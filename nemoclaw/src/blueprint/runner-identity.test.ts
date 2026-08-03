@@ -431,7 +431,7 @@ describe("blueprint identity wrapper", () => {
         ],
       ],
       [
-        "sandbox create --from openclaw --name test-sandbox --forward 18789",
+        "sandbox create --from openclaw --name test-sandbox --forward 18789 --no-tty -- /bin/true",
         [{ exitCode: 1, stdout: "", stderr: "sandbox already exists" }],
       ],
     ]);
@@ -744,7 +744,7 @@ describe("blueprint identity wrapper", () => {
     );
     expect(mockExeca).toHaveBeenCalledWith(
       "openshell",
-      ["sandbox", "remove", "test-sandbox"],
+      ["sandbox", "delete", "test-sandbox"],
       expect.objectContaining({ reject: false }),
     );
     const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"))?.[1];
@@ -795,7 +795,7 @@ describe("blueprint identity wrapper", () => {
     const commands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
     expect(commands).toContain("sandbox provider detach test-sandbox acme-okta-runtime");
     expect(commands).toContain("provider delete acme-okta-runtime");
-    expect(commands).toContain("sandbox remove test-sandbox");
+    expect(commands).toContain("sandbox delete test-sandbox");
     expect(commands).toContain("provider delete test-provider");
     const planEntry = [...store.entries()].find(([path]) => path.endsWith("/plan.json"))?.[1];
     expect(JSON.parse(planEntry!.content!)).toMatchObject({
@@ -837,7 +837,7 @@ describe("blueprint identity wrapper", () => {
 
     expect(mockExeca).toHaveBeenCalledWith(
       "openshell",
-      ["sandbox", "remove", "test-sandbox"],
+      ["sandbox", "delete", "test-sandbox"],
       expect.objectContaining({ reject: false }),
     );
   });
@@ -872,7 +872,7 @@ describe("blueprint identity wrapper", () => {
 
     const applyCommands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
     expect(applyCommands).not.toContain(
-      "sandbox create --from openclaw --name test-sandbox --forward 18789",
+      "sandbox create --from openclaw --name test-sandbox --forward 18789 --no-tty -- /bin/true",
     );
     expect(applyCommands).toContain("provider get test-provider");
     expect(applyCommands).toContain("inference get");
@@ -902,7 +902,7 @@ describe("blueprint identity wrapper", () => {
 
     const rollbackCommands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
     expect(rollbackCommands).not.toContain("sandbox stop test-sandbox");
-    expect(rollbackCommands).not.toContain("sandbox remove test-sandbox");
+    expect(rollbackCommands).not.toContain("sandbox delete test-sandbox");
     expect(rollbackCommands).toContain("sandbox provider detach test-sandbox acme-okta-runtime");
     expect(rollbackCommands).toContain("provider delete acme-okta-runtime");
   });
@@ -919,7 +919,7 @@ describe("blueprint identity wrapper", () => {
 
     const rollbackCommands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
     expect(rollbackCommands).not.toContain("sandbox stop pre-existing-sandbox");
-    expect(rollbackCommands).not.toContain("sandbox remove pre-existing-sandbox");
+    expect(rollbackCommands).not.toContain("sandbox delete pre-existing-sandbox");
     expect(store.get(`${stateDir}/rolled_back`)?.content).toBeDefined();
   });
 
@@ -977,7 +977,7 @@ describe("blueprint identity wrapper", () => {
     await actionRollback(JSON.parse(planEntry!.content!).run_id);
     const rollbackCommands = mockExeca.mock.calls.map(([, args]) => (args ?? []).join(" "));
     expect(rollbackCommands).toContain("provider delete test-provider");
-    expect(rollbackCommands).not.toContain("sandbox remove test-sandbox");
+    expect(rollbackCommands).not.toContain("sandbox delete test-sandbox");
   });
 
   it("keeps an owned sandbox receipt retryable when removal fails", async () => {
@@ -991,11 +991,11 @@ describe("blueprint identity wrapper", () => {
       }),
     });
     responseQueue([
-      ["sandbox remove owned-sandbox", [{ exitCode: 1, stdout: "", stderr: "remove denied" }]],
+      ["sandbox delete owned-sandbox", [{ exitCode: 1, stdout: "", stderr: "delete denied" }]],
     ]);
 
     await expect(actionRollback("failed-sandbox-removal")).rejects.toThrow(
-      /Failed to remove owned sandbox 'owned-sandbox': remove denied/,
+      /Failed to remove owned sandbox 'owned-sandbox': delete denied/,
     );
     expect(store.get(`${stateDir}/rolled_back`)).toBeUndefined();
   });
@@ -1194,7 +1194,7 @@ describe("blueprint identity wrapper", () => {
     );
     expect(mockExeca).toHaveBeenCalledWith(
       "openshell",
-      ["sandbox", "remove", "test-sandbox"],
+      ["sandbox", "delete", "test-sandbox"],
       expect.objectContaining({ reject: false }),
     );
     expect(mockExeca).toHaveBeenCalledWith(

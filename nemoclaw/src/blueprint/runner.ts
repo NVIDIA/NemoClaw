@@ -389,7 +389,7 @@ function readRollbackSandboxName(value: RollbackPlanSource | null): string {
   }
 
   // The persisted plan is untrusted input at this boundary too: validate before
-  // the name reaches `openshell sandbox stop/remove`, mirroring the apply path.
+  // the name reaches `openshell sandbox stop/delete`, mirroring the apply path.
   return assertValidName(value.sandbox_name, "sandbox name");
 }
 
@@ -1071,6 +1071,10 @@ export async function actionApply(
       for (const port of forwardPorts) {
         createArgs.push("--forward", String(port));
       }
+      // The OpenShell CLI defaults to an interactive shell when no command is
+      // provided. The blueprint runner is headless, so use a no-op command and
+      // leave the created sandbox running after that command exits.
+      createArgs.push("--no-tty", "--", "/bin/true");
 
       const createResult = await runCmd(createArgs, { reject: false });
       sandboxCreatedByApply = createResult.exitCode === 0;
@@ -1268,7 +1272,7 @@ export async function actionApply(
     }
     if (sandboxCreatedByApply) {
       await runCmd(["openshell", "sandbox", "stop", sandboxName], { reject: false });
-      const remove = await runCmd(["openshell", "sandbox", "remove", sandboxName], {
+      const remove = await runCmd(["openshell", "sandbox", "delete", sandboxName], {
         reject: false,
       });
       if (remove.exitCode === 0 || MISSING_SANDBOX_PATTERN.test(remove.stderr)) {
@@ -1409,7 +1413,7 @@ export async function actionRollback(rid: string): Promise<void> {
     const stop = await runCmd(["openshell", "sandbox", "stop", sandboxName], { reject: false });
 
     progress(60, `Removing sandbox ${sandboxName}`);
-    const remove = await runCmd(["openshell", "sandbox", "remove", sandboxName], {
+    const remove = await runCmd(["openshell", "sandbox", "delete", sandboxName], {
       reject: false,
     });
     if (remove.exitCode !== 0 && !MISSING_SANDBOX_PATTERN.test(remove.stderr)) {
