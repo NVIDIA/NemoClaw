@@ -60,7 +60,7 @@ describe("onboard channel state helpers", () => {
     ).toEqual(["discord"]);
   });
 
-  it("uses staged intent for a new sandbox", () => {
+  it("uses the staged plan for a new sandbox", () => {
     expect(
       resolveDisabledChannels("alpha", {
         loadSession: () => null,
@@ -70,7 +70,7 @@ describe("onboard channel state helpers", () => {
     ).toEqual(["slack"]);
   });
 
-  it("uses a matching session when no registry or staged intent exists", () => {
+  it("uses a matching session plan when no registry or staged plan exists", () => {
     expect(
       resolveDisabledChannels("alpha", {
         loadSession: () => sessionWithPlan("alpha", ["telegram"]),
