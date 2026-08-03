@@ -204,12 +204,6 @@ The installer auto-detects NVIDIA Jetson devices (Orin and Thor) and applies req
 If the Jetson setup step fails, verify that you have `sudo` access and that Docker is installed and running.
 
 For JetPack 6 (L4T 36.x), the setup switches iptables to legacy mode and adjusts the Docker daemon configuration.
-The setup also grants the existing `/dev/nvmap` owning group read-write access.
-It writes the NemoClaw-managed `/etc/udev/rules.d/99-zz-nemoclaw-nvmap.rules` rule with mode `0660`, reloads the udev rules, and updates the live device.
-The rule applies the mode when udev recreates `/dev/nvmap`, including after a host reboot.
-This change grants write access to every member of the existing device-owning group, but it does not grant access to other users or run the sandbox as root.
-If `/dev/nvmap` is absent, the setup warns, skips the rule, and continues installation.
-CUDA can still fail until the device exists and you rerun the installer.
 For JetPack 7 (L4T 38.x / Thor), only bridge netfilter and sysctl settings are applied.
 For JetPack 7 (L4T 39.x), bridge netfilter is loaded only when the host is missing it.
 Some R39 images already ship with `br_netfilter` configured and are left untouched.
@@ -2516,63 +2510,25 @@ To skip GPU passthrough entirely, rerun with `--no-gpu` or set `NEMOCLAW_SANDBOX
 
 Automatic GPU onboarding uses the compatibility path directly; it does not make a native attempt first.
 The path recreates the OpenShell-managed Docker container with NVIDIA GPU flags and propagates eligible host group IDs for the supported Jetson GPU device nodes.
-NemoClaw propagates a device group only when the host node grants that group both read and write access and does not grant both permissions to other users.
 Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses that group propagation and CUDA may not initialize.
 
-If CUDA reports `NvRmMemInitNvmap failed with Permission denied` and `cuInit(0)=999`, inspect the host device:
-
-```bash
-stat -c '%A %U:%G %n' /dev/nvmap
-```
-
-The group permission characters must be `rw`, such as the group field in `crw-rw----`.
-On JetPack 6, rerun the NemoClaw installer to apply the persistent udev rule and update the live device:
+If CUDA reports `NvRmMemInitNvmap failed with Permission denied` and `cuInit(0)=999` on JetPack 6, rerun the NemoClaw installer to apply persistent group read-write access to `/dev/nvmap`:
 
 <Warning>
 The installer grants write access to every member of the existing `/dev/nvmap` owning group.
-It also persists mode `0660` when udev recreates the device.
 </Warning>
 
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-Verify the rule content and the live device permissions:
+Verify the live device permissions:
 
 ```bash
-grep -Fx 'KERNEL=="nvmap", MODE="0660"' /etc/udev/rules.d/99-zz-nemoclaw-nvmap.rules
 stat -c '%A %U:%G %n' /dev/nvmap
 ```
 
-The first command must print the exact rule.
-The group permission characters from the second command must be `rw`.
-
-<Warning>
-The following temporary remediation grants write access to every member of the existing `/dev/nvmap` owning group.
-The permission lasts until udev recreates the device, such as during a host reboot.
-</Warning>
-
-If you need to diagnose the failure before rerunning the installer, update the live device and verify its group permissions:
-
-```bash
-sudo chmod g+rw /dev/nvmap
-stat -c '%A %U:%G %n' /dev/nvmap
-```
-
-Clean up the failed sandbox with the command from the onboarding output, then rerun onboarding.
-
-NemoClaw uninstall does not remove the Jetson host rule.
-If you no longer need non-root Jetson GPU passthrough, remove the rule and reload udev:
-
-```bash
-sudo rm /etc/udev/rules.d/99-zz-nemoclaw-nvmap.rules
-sudo udevadm control --reload-rules
-test ! -e /etc/udev/rules.d/99-zz-nemoclaw-nvmap.rules && echo "NemoClaw nvmap rule removed"
-```
-
-The final command must print `NemoClaw nvmap rule removed`.
-Removing the rule does not change the live device mode.
-The remaining platform udev rules determine the mode after udev recreates `/dev/nvmap`, such as during a host reboot.
+The group permission characters must be `rw`, such as the group field in `crw-rw----`.
 
 #### Common compatibility-path recovery
 
