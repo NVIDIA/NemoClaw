@@ -2513,6 +2513,7 @@ The path recreates the OpenShell-managed Docker container with NVIDIA GPU flags 
 Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses that group propagation and CUDA may not initialize.
 
 If CUDA reports `NvRmMemInitNvmap failed with Permission denied` and `cuInit(0)=999` on JetPack 6, rerun the NemoClaw installer to apply persistent group read-write access to `/dev/nvmap`:
+If the device is absent, setup warns and continues without installing the rule.
 
 <Warning>
 The installer grants write access to every member of the existing `/dev/nvmap` owning group.
@@ -2522,13 +2523,16 @@ The installer grants write access to every member of the existing `/dev/nvmap` o
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-Verify the live device permissions:
+Verify the persistent rule and the live device permissions:
 
 ```bash
+grep -Fx 'KERNEL=="nvmap", MODE="0660"' /etc/udev/rules.d/99-zz-nemoclaw-nvmap.rules
 stat -c '%A %U:%G %n' /dev/nvmap
 ```
 
-The group permission characters must be `rw`, such as the group field in `crw-rw----`.
+The rule must match exactly, and the group permission characters must be `rw`, such as the group field in `crw-rw----`.
+The rule reapplies mode `0660` when udev recreates `/dev/nvmap`, including after reboot.
+NemoClaw uninstall does not remove the rule; delete it and reload udev to stop future reapplication, while the live mode remains until device recreation.
 
 #### Common compatibility-path recovery
 
