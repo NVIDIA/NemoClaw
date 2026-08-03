@@ -196,7 +196,7 @@ describe("onboard flow handoffs", () => {
             }
           : null;
       const persisted = runnerSession(initialState, status, failure);
-      const endpointUrl = `${trace}.example.test`;
+      const endpointUrl = `https://${trace}.example.test`;
 
       const result = prepareCoreOnboardFlowContext({
         initial: {
@@ -272,7 +272,7 @@ describe("onboard flow handoffs", () => {
             }
           : null;
       const persisted = runnerSession(coreState, status, failure);
-      const endpointUrl = `${trace}.example.test`;
+      const endpointUrl = `https://${trace}.example.test`;
 
       const result = prepareFinalOnboardFlowContext({
         context: {
