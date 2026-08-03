@@ -273,6 +273,7 @@ export class OnboardRuntime {
       return;
     }
     if (result.type === "complete") {
+      assertOnboardNotInterrupted(current.machine.state, "complete", current.failure);
       assertValidOnboardMachineTransition(current.machine.state, "complete");
       return;
     }
@@ -286,6 +287,7 @@ export class OnboardRuntime {
       }
       return;
     }
+    assertOnboardNotInterrupted(current.machine.state, result.next, current.failure);
     if (current.machine.state === result.next) {
       throw new Error(`Onboarding state result already reached target state: ${result.next}`);
     }

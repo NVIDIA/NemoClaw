@@ -130,7 +130,7 @@ describe("OnboardRuntime", () => {
     expect(events[1]).toMatchObject({ type: "onboard.resumed", state: "init" });
   });
 
-  it("uses status-only step dependencies", async () => {
+  it("keeps step dependencies from changing machine or terminal status", async () => {
     const { runtime, getSession, stepCalls } = createHarness();
 
     await runtime.markStepStarted("preflight");
