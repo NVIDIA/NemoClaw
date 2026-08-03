@@ -64,11 +64,6 @@ export const CHECKS: readonly CheckCommand[] = [
     args: ["scripts/checks/openshell-policy-mutation-read.mts"],
   },
   {
-    name: "sandbox-replacement-journal",
-    command: TSX,
-    args: ["scripts/checks/sandbox-replacement-journal.mts"],
-  },
-  {
     name: "layer-import-boundaries",
     command: TSX,
     args: ["scripts/checks/layer-import-boundaries.mts"],

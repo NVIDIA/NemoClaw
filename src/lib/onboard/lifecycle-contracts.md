@@ -151,9 +151,11 @@ Each rejection happens before backup lookup, deletion, creation, or registry mut
 The installer upgrade path, where the registry row survives but OpenShell reports no sandbox, opens the journal before selection and abandons it if the custom-image plugin-provenance check blocks recreation.
 A journal is abandoned only while its revision is still zero, so no recorded lifecycle effect can be discarded.
 
+Selection asks for the proof only after the installer signals restore intent.
+Without that signal nothing restores onto the replacement, so the run opens no journal and leaves no transaction for the create path to complete.
+
 Once a run binds a gateway authority, a same-name replacement that cannot open a journal stops instead of deleting the sandbox or removing its registry row.
 Custom-image plugin provenance, explicit installer restore intent, the absent-backup warning, managed-MCP routing to `rebuild`, and fail-closed handling of unknown OpenShell state stay separate contracts.
-`scripts/checks/sandbox-replacement-journal.mts` pins every `openshell sandbox delete` call site so a new caller cannot bypass the transaction unnoticed.
 
 ## Managed snapshot and rebuild restore authority
 

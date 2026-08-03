@@ -104,11 +104,11 @@ export function installerRestoreOnRecreateFromEnv(env: NodeJS.ProcessEnv): boole
 }
 
 export interface PreUpgradeBackupSelectInput {
-  sourceProof: SandboxRecreateSourceProof | null;
+  sourceProof: () => SandboxRecreateSourceProof | null;
   gatewayName: string;
   gatewayPort: number;
   registryEntry: SandboxEntry | null;
-  observation: SandboxRecreateObservation;
+  observation: () => SandboxRecreateObservation;
   existingSandboxEntry?: SandboxEntry | null;
   requireOpenClawImagePluginProvenance?: boolean;
   sandboxName: string;
@@ -116,25 +116,26 @@ export interface PreUpgradeBackupSelectInput {
 }
 
 export function selectPreUpgradeBackupForCreate(input: PreUpgradeBackupSelectInput): string | null {
-  assertSandboxRecreateSourceProof(input.sourceProof, {
-    sandboxName: input.sandboxName,
-    gatewayName: input.gatewayName,
-    gatewayPort: input.gatewayPort,
-    registryEntry: input.registryEntry,
-    observation: input.observation,
-  });
   // Installer contract: the installer MUST set
   // NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1 after a successful pre-upgrade
   // backup. A missing flag alongside an existing registry entry means the
   // expected installer signal never arrived (installer bug, partial upgrade, or
   // manual intervention); making the installer always set the flag is a
-  // separate PR.
+  // separate PR. Without that signal nothing restores state onto the
+  // replacement, so this path never opens a journal or asks for a source proof.
   if (!installerRestoreOnRecreateFromEnv(process.env)) {
     console.warn(
       `  Registry entry exists for '${input.sandboxName}' but installer restore flag not set — skipping pre-upgrade backup select.`,
     );
     return null;
   }
+  assertSandboxRecreateSourceProof(input.sourceProof(), {
+    sandboxName: input.sandboxName,
+    gatewayName: input.gatewayName,
+    gatewayPort: input.gatewayPort,
+    registryEntry: input.registryEntry,
+    observation: input.observation(),
+  });
   const latest = sandboxState.getLatestBackup(input.sandboxName);
   assertNotReadyBackupPluginProvenance(
     input.sandboxName,

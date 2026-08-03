@@ -2328,16 +2328,8 @@ async function createSandboxWithBaseImageResolution(
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const openRecreateJournal = (): recreateJournal.OwnedSandboxRecreateRuntime => recreateJournal.openOnboardRecreateJournal({ target: { sandboxName, gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT }, agentName: getRequestedSandboxAgentName(agent) || "openclaw", note, observe: (probeTarget) => getSandboxRecreateObservation(probeTarget.sandboxName, probeTarget.gatewayName), intent: { agent: getRequestedSandboxAgentName(agent) || null, fromDockerfile: fromDockerfile ?? null, provider: provider ?? null, model: model ?? null, preferredInferenceApi: preferredInferenceApi ?? null, sandboxGpuConfig: effectiveSandboxGpuConfig ?? null, gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT, toolDisclosure: effectiveToolDisclosure, dcodeAutoApprovalMode: createIntent?.dcodeAutoApprovalMode ?? null, observabilityEnabled: createIntent?.observabilityEnabled === true, policyTier: createIntent?.policyTier ?? null } });
   let pendingStateRestoreBackupPath: string | null = null;
-  if (!liveExists && existingEntry) {
-    if (!createIntent?.recreateTransaction) recreateRuntime = openRecreateJournal();
-    try {
-      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-      pendingStateRestoreBackupPath = recreateProtection.selectPreUpgradeBackup({ sourceProof: recreateRuntime.sourceProof, gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT, observation: getSandboxRecreateObservation(sandboxName, GATEWAY_NAME) });
-    } catch (error) {
-      if ("abandon" in recreateRuntime) recreateRuntime.abandon();
-      throw error;
-    }
-  }
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  if (!liveExists && existingEntry) ({ runtime: recreateRuntime, backupPath: pendingStateRestoreBackupPath } = recreateProtection.selectJournalBoundPreUpgradeBackup({ runtime: recreateRuntime, openJournal: createIntent?.recreateTransaction ? null : openRecreateJournal, gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT, observe: () => getSandboxRecreateObservation(sandboxName, GATEWAY_NAME) }));
 
   if (liveExists) {
     const existingSandboxState = getSandboxReuseState(sandboxName);

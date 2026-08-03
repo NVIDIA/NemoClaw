@@ -392,7 +392,7 @@ it("rejects an active recreate journal on a different gateway authority (#6492)"
   expect(calls.removeSandbox).not.toHaveBeenCalled();
 });
 
-it("refuses an unjournaled same-name replacement once a gateway authority is bound (#7736)", async () => {
+it("refuses an unjournaled same-name replacement when the bound gateway authority does not match the requested gateway (#7736)", async () => {
   const session = createSession({ sandboxName: "saved", agent: "openclaw" });
   session.steps.sandbox.status = "complete";
   session.machine.state = "agent_setup";
@@ -434,4 +434,59 @@ it("refuses an unjournaled same-name replacement once a gateway authority is bou
   expect(calls.removeSandbox).not.toHaveBeenCalled();
   expect(calls.createSandbox).not.toHaveBeenCalled();
   expect(session.checkpoint?.sandboxRecreate).toBeNull();
+});
+
+it("lets a non-replacing resume proceed without a recreate transaction (#7736)", async () => {
+  const session = createSession({ sandboxName: "saved", agent: "openclaw" });
+  session.steps.sandbox.status = "complete";
+  session.machine.state = "agent_setup";
+  session.checkpoint = {
+    ...deriveCheckpointFromSession(session),
+    sandboxIdentity: decisionSelected({ name: "saved", agent: "openclaw" }),
+    gatewayAuthority: decisionSelected({
+      gatewayName: "nemoclaw-31818",
+      gatewayPort: 31818,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  };
+  const reservedEntry = {
+    name: "saved",
+    provider: "provider",
+    model: "model",
+    endpointUrl: null,
+    preferredInferenceApi: "openai-completions" as const,
+    webSearchEnabled: false,
+    toolDisclosure: "progressive" as const,
+    fromDockerfile: null,
+    hermesAuthMethod: null,
+    gatewayName: "nemoclaw-31818",
+    gatewayPort: 31818,
+    imageTag: "openshell/sandbox-from:new",
+  };
+  const createSandbox = vi.fn(async () => "saved");
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => "missing",
+      getSandboxRegistryEntry: () => reservedEntry,
+      createSandbox,
+    },
+    session,
+  );
+
+  await handleSandboxState({
+    ...baseOptions(deps, session),
+    resume: true,
+    sandboxName: "saved",
+    gatewayName: "nemoclaw-31818",
+  });
+
+  expect(createSandbox).toHaveBeenCalledOnce();
+  expect(calls.removeSandbox).not.toHaveBeenCalled();
+  expect(calls.repairSandbox).not.toHaveBeenCalled();
+  expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
 });

@@ -17,6 +17,7 @@ import {
 } from "./not-ready-recreate";
 import {
   fingerprintSandboxRegistryEntry,
+  type SandboxRecreateObservation,
   SandboxRecreateSourceMismatchError,
   type SandboxRecreateSourceProof,
 } from "./sandbox-recreate-transaction";
@@ -103,16 +104,29 @@ describe("selectPreUpgradeBackupForCreate", () => {
     };
   }
 
-  function select(overrides: Partial<PreUpgradeBackupSelectInput> = {}): string | null {
+  type SelectOverrides = Partial<
+    Omit<PreUpgradeBackupSelectInput, "sourceProof" | "observation">
+  > & {
+    sourceProof?: SandboxRecreateSourceProof | null;
+    observation?: SandboxRecreateObservation;
+    onProofRequested?: () => void;
+  };
+
+  function select(overrides: SelectOverrides = {}): string | null {
+    const { onProofRequested, ...rest } = overrides;
     return selectPreUpgradeBackupForCreate({
-      sourceProof: sourceProof(),
       gatewayName: GATEWAY_NAME,
       gatewayPort: GATEWAY_PORT,
       registryEntry: SOURCE_ENTRY,
-      observation: { state: "missing", liveIdentityFingerprint: null },
       sandboxName: "my-assistant",
       note,
-      ...overrides,
+      ...rest,
+      sourceProof: () => {
+        onProofRequested?.();
+        return "sourceProof" in overrides ? (overrides.sourceProof ?? null) : sourceProof();
+      },
+      observation: () =>
+        overrides.observation ?? { state: "missing", liveIdentityFingerprint: null },
     });
   }
 
@@ -191,6 +205,13 @@ describe("selectPreUpgradeBackupForCreate", () => {
     expect(getLatestBackupSpy).not.toHaveBeenCalled();
     expect(note).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/installer restore flag not set/));
+  });
+
+  it("does not ask for a source proof when installer restore intent is unset (#7736)", () => {
+    const onProofRequested = vi.fn();
+
+    expect(select({ onProofRequested, sourceProof: null })).toBeNull();
+    expect(onProofRequested).not.toHaveBeenCalled();
   });
 
   const CUSTOM_IMAGE_ENTRY: SandboxEntry = {

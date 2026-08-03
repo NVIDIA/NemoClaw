@@ -13,10 +13,27 @@ import type {
 } from "./sandbox-recreate-transaction";
 
 export interface PreUpgradeBackupBinding {
-  sourceProof: SandboxRecreateSourceProof | null;
+  sourceProof: () => SandboxRecreateSourceProof | null;
   gatewayName: string;
   gatewayPort: number;
-  observation: SandboxRecreateObservation;
+  observation: () => SandboxRecreateObservation;
+}
+
+interface SandboxRecreateSourceHolder {
+  readonly sourceProof: SandboxRecreateSourceProof | null;
+}
+
+export interface JournalBoundPreUpgradeBackupInput<Runtime> {
+  runtime: Runtime;
+  openJournal: (() => Runtime) | null;
+  gatewayName: string;
+  gatewayPort: number;
+  observe: () => SandboxRecreateObservation;
+}
+
+export interface JournalBoundPreUpgradeBackupResult<Runtime> {
+  runtime: Runtime;
+  backupPath: string | null;
 }
 
 export interface SandboxRecreateProtectionOptions {
@@ -45,19 +62,42 @@ export function createSandboxRecreateProtection(
 ) {
   const { sandboxName, sandboxEntry, customOpenClawImage, note } = options;
 
+  const selectPreUpgradeBackup = (binding: PreUpgradeBackupBinding): string | null =>
+    deps.selectPreUpgradeBackupForCreate({
+      sourceProof: binding.sourceProof,
+      gatewayName: binding.gatewayName,
+      gatewayPort: binding.gatewayPort,
+      registryEntry: sandboxEntry,
+      observation: binding.observation,
+      existingSandboxEntry: sandboxEntry,
+      requireOpenClawImagePluginProvenance: customOpenClawImage,
+      sandboxName,
+      note,
+    });
+
   return {
-    selectPreUpgradeBackup(binding: PreUpgradeBackupBinding): string | null {
-      return deps.selectPreUpgradeBackupForCreate({
-        sourceProof: binding.sourceProof,
-        gatewayName: binding.gatewayName,
-        gatewayPort: binding.gatewayPort,
-        registryEntry: sandboxEntry,
-        observation: binding.observation,
-        existingSandboxEntry: sandboxEntry,
-        requireOpenClawImagePluginProvenance: customOpenClawImage,
-        sandboxName,
-        note,
-      });
+    selectPreUpgradeBackup,
+    // The journal opens only when selection actually asks for a source proof, so
+    // a run that restores nothing leaves no transaction behind to complete.
+    selectJournalBoundPreUpgradeBackup<Runtime extends SandboxRecreateSourceHolder>(
+      binding: JournalBoundPreUpgradeBackupInput<Runtime>,
+    ): JournalBoundPreUpgradeBackupResult<Runtime> {
+      let runtime = binding.runtime;
+      try {
+        const backupPath = selectPreUpgradeBackup({
+          sourceProof: () => {
+            if (binding.openJournal) runtime = binding.openJournal();
+            return runtime.sourceProof;
+          },
+          gatewayName: binding.gatewayName,
+          gatewayPort: binding.gatewayPort,
+          observation: binding.observe,
+        });
+        return { runtime, backupPath };
+      } catch (error) {
+        if ("abandon" in runtime) (runtime as { abandon(): void }).abandon();
+        throw error;
+      }
     },
     resolveNotReadyOutcome(): notReadyRecreate.NonInteractiveNotReadyOutcome {
       return deps.resolveNotReadyOutcome(sandboxName, note, sandboxEntry, customOpenClawImage);
