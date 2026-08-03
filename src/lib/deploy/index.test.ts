@@ -272,7 +272,7 @@ describe("executeDeploy", () => {
     await expect(executeDeploy(fixture.options)).rejects.toThrow("exit:1");
 
     const errorText = fixture.errors.join("\n");
-    expect(errorText).toContain("Invalid sandbox name: 'bad name'");
+    expect(errorText).toContain('Invalid sandbox name: "bad name"');
     expect(errorText).toContain("Sandbox names cannot contain spaces.");
     expect(errorText).toContain(
       "Allowed format: 1-63 characters, lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number.",

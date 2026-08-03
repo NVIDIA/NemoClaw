@@ -664,6 +664,11 @@ Sandbox names must be lowercase, start with a letter, contain only letters, numb
 The CLI rejects names that do not match these rules.
 It prints a `Try: <suggested-slug>` recovery line whenever it can derive a valid lowercase, hyphen-separated form from the input, so passing `--name MyAssistant` reports `Try: myassistant` and you can rerun with the suggested slug.
 
+The CLI writes the rejected value as a quoted preview instead of raw input.
+The preview reads at most the first 80 UTF-16 code units from the input and escapes each code unit outside printable ASCII as `\uXXXX`.
+Escaping can make the preview longer than 80 output characters.
+This prevents a rejected name from injecting control sequences into terminal or CI output.
+
 Names that collide with global CLI commands are also rejected.
 Reserved names include `onboard`, `list`, `deploy`, `setup`, `start`, `stop`, `status`, `debug`, `uninstall`, `credentials`, and `help`.
 Using a reserved name would cause the CLI to route to the global command instead of the sandbox.
@@ -2024,7 +2029,9 @@ Check the gateway logs and blocked-request output with `openshell term`, and loo
 
 ### Messaging bridge appears running but no messages arrive
 
-Bot tokens for Telegram (`getUpdates`), Discord (gateway), and Slack (Socket Mode) only allow one active consumer per token. If two NemoClaw sandboxes are configured with the same bot token, each one kicks the other off its polling connection and neither delivers messages. `$$nemoclaw status` still reports the bridge as running because the gateway process itself is alive.
+Telegram `getUpdates` allows only one active poller per bot token.
+Reusing Discord or Slack credentials can create competing gateway or Socket Mode sessions and unreliable message delivery.
+`$$nemoclaw status` can still report a bridge as running because the gateway process itself is alive.
 
 For Telegram group chats, first check BotFather privacy mode.
 New Telegram bots default to privacy mode enabled, which prevents group messages from reaching `getUpdates` even when the user mentions the bot.
@@ -2054,10 +2061,13 @@ A repeating line like the following confirms the conflict:
 ```
 
 To fix, run `$$nemoclaw <other-sandbox> destroy` on whichever sandbox should stop polling, or rerun onboarding on it with the channel disabled.
-The same fail-closed policy applies to every supported messaging channel.
-Onboarding, rebuild, and `channels add` abort on a conflict or an incomplete required check, including unavailable credential hashes.
+NemoClaw checks only the sandboxes in the selected OpenShell gateway's sandbox registry.
+It cannot detect or prevent Slack credential reuse across independent OpenShell gateways.
+Run only one active Slack sandbox on each OpenShell gateway.
+Use distinct Slack bot and app tokens for Slack sandboxes on different OpenShell gateways.
+Within the selected registry, onboarding, rebuild, and `channels add` abort on a conflict or an incomplete required check, including unavailable credential hashes.
 Only `channels add <channel> --force` can accept the duplicate-consumer or shared-resource risk.
-Sandboxes created before these checks were added may still be in a conflict loop.
+Sandboxes created before these checks were added, or managed by independent gateways, may still have a conflict without a NemoClaw warning.
 
 </AgentOnly>
 

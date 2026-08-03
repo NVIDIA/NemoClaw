@@ -313,6 +313,25 @@ describe("managed startup shared-state transaction", () => {
     expect(rollbackManagedStartupSharedStateTransaction("openclaw", options)).toBe(true);
   });
 
+  it("rejects a malformed rollback receipt before restoring shared state", () => {
+    const root = agentRoot("openclaw");
+    fs.mkdirSync(root);
+    const config = path.join(root, "openclaw.json");
+    fs.writeFileSync(config, "before\n");
+    beginManagedStartupSharedStateTransaction(managedStartupE2eProfile("openclaw"), options);
+    fs.writeFileSync(config, "changed\n");
+    const manifest = path.join(transactionDirectory, "manifest.json");
+    fs.chmodSync(manifest, 0o600);
+    fs.writeFileSync(manifest, "{malformed\n");
+    fs.chmodSync(manifest, 0o400);
+
+    expect(() => rollbackManagedStartupSharedStateTransaction("openclaw", options)).toThrow(
+      /manifest is not valid JSON/u,
+    );
+    expect(fs.readFileSync(config, "utf8")).toBe("changed\n");
+    expect(fs.existsSync(transactionDirectory)).toBe(true);
+  });
+
   it("rejects an oversized managed output before creating a receipt", () => {
     const root = agentRoot("openclaw");
     fs.mkdirSync(root);
