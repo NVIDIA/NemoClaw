@@ -11,6 +11,7 @@ import {
   copyDualStationSshBinding,
   type DualStationSshBinding,
   encodeDualStationSshBindingHandoff,
+  loadDualStationSshBindingForStatePath,
   loadDualStationSshBindingHandoff,
 } from "../vllm-station-ssh-binding";
 import { managedInferenceHexDigest } from "./catalog-integrity";
@@ -38,6 +39,7 @@ const CONTAINER_ID = /^[a-f0-9]{64}$/;
 const BINDING_HANDLE = /^[A-Za-z0-9_-]{1,8192}$/;
 const RECEIPT_KEYS = [
   "apiKeyFingerprint",
+  "discoveryBindingDigest",
   "headContainerId",
   "localCacheRoot",
   "peerCacheRoot",
@@ -47,12 +49,31 @@ const RECEIPT_KEYS = [
   "sshBinding",
   "workerContainerId",
 ] as const;
+const EXACT_BINDING_KEYS = [
+  "schemaVersion",
+  "peerTarget",
+  "resolvedHost",
+  "sshUser",
+  "port",
+  "lookupHost",
+  "hostKeyDigest",
+  "dockerCliFile",
+  "dockerShimFile",
+  "dockerShimSha256",
+  "knownHostsFile",
+  "knownHostsSha256",
+  "bindingFile",
+  "sshWrapperDirectory",
+  "sshWrapperFile",
+  "sshWrapperSha256",
+] as const satisfies readonly (keyof DualStationSshBinding)[];
 
 interface PersistedReceipt {
   readonly schemaVersion: 1;
   readonly plan: DualSparkVllmPlan;
   readonly planDigest: string;
   readonly sshBinding: string;
+  readonly discoveryBindingDigest: string;
   readonly localCacheRoot: string;
   readonly peerCacheRoot: string;
   readonly apiKeyFingerprint: string;
@@ -74,6 +95,7 @@ export interface LoadedDualSparkVllmRuntime {
   readonly plan: DualSparkVllmPlan;
   readonly peerSshBinding: DualStationSshBinding;
   readonly sshBinding: string;
+  readonly discoveryBindingDigest: string;
   readonly localCacheRoot: string;
   readonly peerCacheRoot: string;
   readonly apiKeyFingerprint: string;
@@ -210,6 +232,12 @@ function parseReceipt(value: unknown): PersistedReceipt {
     plan,
     planDigest: digest,
     sshBinding: requireString(value.sshBinding, "dual-Spark SSH binding", BINDING_HANDLE),
+    discoveryBindingDigest: requireString(
+      value.discoveryBindingDigest,
+      "dual-Spark discovery SSH binding digest",
+      SHA256,
+      64,
+    ),
     localCacheRoot: requireAbsolutePath(value.localCacheRoot, "dual-Spark local cache root"),
     peerCacheRoot: requireAbsolutePath(value.peerCacheRoot, "dual-Spark peer cache root"),
     apiKeyFingerprint: requireString(
@@ -330,6 +358,27 @@ function loadedRuntime(receipt: PersistedReceipt): LoadedDualSparkVllmRuntime {
   return { ...receipt, peerSshBinding: binding };
 }
 
+function bindingDigest(binding: DualStationSshBinding): string {
+  return managedInferenceHexDigest(
+    Object.fromEntries(EXACT_BINDING_KEYS.map((field) => [field, binding[field]])),
+  );
+}
+
+function loadReceiptOwnedDiscoveryBinding(
+  stateDir: string,
+  runtime: LoadedDualSparkVllmRuntime,
+): DualStationSshBinding | null {
+  const binding = loadDualStationSshBindingForStatePath(
+    path.join(stateDir, DUAL_SPARK_MANAGED_SERVING_STATE_FILE),
+    runtime.peerSshBinding.peerTarget,
+    runtime.peerSshBinding.hostKeyDigest,
+  );
+  if (binding && bindingDigest(binding) !== runtime.discoveryBindingDigest) {
+    throw new Error("Dual-Spark discovery SSH binding does not match the runtime receipt identity");
+  }
+  return binding;
+}
+
 export function loadDualSparkVllmRuntimeReceipt(
   options: Pick<DualSparkVllmRuntimeReceiptOptions, "stateDir"> = {},
 ): LoadedDualSparkVllmRuntime | null {
@@ -348,6 +397,7 @@ function sameInput(
     input.peerSshBinding.resolvedHost === existing.peerSshBinding.resolvedHost &&
     input.peerSshBinding.sshUser === existing.peerSshBinding.sshUser &&
     input.peerSshBinding.port === existing.peerSshBinding.port &&
+    bindingDigest(input.peerSshBinding) === existing.discoveryBindingDigest &&
     input.localCacheRoot === existing.localCacheRoot &&
     input.peerCacheRoot === existing.peerCacheRoot &&
     input.apiKeyFingerprint === existing.apiKeyFingerprint &&
@@ -405,6 +455,7 @@ export function persistDualSparkVllmRuntimeReceipt(
       plan,
       planDigest: planDigest(plan),
       sshBinding,
+      discoveryBindingDigest: bindingDigest(input.peerSshBinding),
       localCacheRoot: input.localCacheRoot,
       peerCacheRoot: input.peerCacheRoot,
       apiKeyFingerprint: input.apiKeyFingerprint,
@@ -502,6 +553,7 @@ export async function cleanupInstalledDualSparkVllmRuntime(
   if (!apiKey || dualSparkVllmApiKeyFingerprint(apiKey) !== runtime.apiKeyFingerprint) {
     throw new Error("Managed dual-Spark API key no longer matches the runtime receipt");
   }
+  const discoveryBinding = loadReceiptOwnedDiscoveryBinding(stateDir, runtime);
   const deps = (options.createLifecycleDeps ?? defaultCreateLifecycleDeps)(runtime);
   const cleanup = await cleanupDualSparkManagedVllm(runtime.plan, apiKey, deps, {
     headContainerId: runtime.headContainerId,
@@ -517,7 +569,13 @@ export async function cleanupInstalledDualSparkVllmRuntime(
   ) {
     throw new Error("Managed dual-Spark cleanup returned unexpected container identities");
   }
-  clearDualStationSshBinding(path.join(stateDir, DUAL_SPARK_MANAGED_SERVING_STATE_FILE));
+  const currentDiscoveryBinding = loadReceiptOwnedDiscoveryBinding(stateDir, runtime);
+  if ((discoveryBinding === null) !== (currentDiscoveryBinding === null)) {
+    throw new Error("Dual-Spark discovery SSH binding changed during runtime cleanup");
+  }
+  if (currentDiscoveryBinding) {
+    clearDualStationSshBinding(path.join(stateDir, DUAL_SPARK_MANAGED_SERVING_STATE_FILE));
+  }
   clearReceipt(stateDir);
   return { kind: "removed", removedContainerIds: cleanup.removedContainerIds };
 }

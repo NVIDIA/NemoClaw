@@ -29,7 +29,12 @@ import {
   recoverInstalledDualSparkVllmEndpoint,
 } from "./serving/spark-runtime-receipt";
 import { DUAL_SPARK_MANAGED_SERVING_STATE_FILE } from "./serving/spark-runtime-receipt-path";
-import { copyDualStationSshBinding } from "./vllm-station-ssh-binding";
+import {
+  clearDualStationSshBinding,
+  copyDualStationSshBinding,
+  type DualStationSshBinding,
+  encodeDualStationSshBindingHandoff,
+} from "./vllm-station-ssh-binding";
 import {
   createDualStationSshBindingFixture,
   type DualStationSshBindingFixture,
@@ -57,14 +62,14 @@ afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-function plan(): DualSparkVllmPlan {
+function plan(peerSshBinding: DualStationSshBinding = sshFixture.binding): DualSparkVllmPlan {
   const selection = fixtureDualSparkSelection();
   const sourceTopology = selection.topologyQualification;
   const output = {
     ...sourceTopology.output,
     peer: {
-      target: sshFixture.binding.peerTarget,
-      sshBindingHandle: sshFixture.token,
+      target: peerSshBinding.peerTarget,
+      sshBindingHandle: encodeDualStationSshBindingHandoff(peerSshBinding),
     },
   };
   return materializeDualSparkVllmPlan({
@@ -77,15 +82,32 @@ function plan(): DualSparkVllmPlan {
   });
 }
 
-function input(): PersistDualSparkVllmRuntimeReceiptInput {
+function input(
+  peerSshBinding: DualStationSshBinding = sshFixture.binding,
+): PersistDualSparkVllmRuntimeReceiptInput {
   return {
-    plan: plan(),
-    peerSshBinding: sshFixture.binding,
+    plan: plan(peerSshBinding),
+    peerSshBinding,
     localCacheRoot: "/home/nvidia/.cache/huggingface",
     peerCacheRoot: "/home/nvidia/.cache/huggingface",
     apiKeyFingerprint: dualSparkVllmApiKeyFingerprint(API_KEY),
     headContainerId: HEAD_ID,
     workerContainerId: WORKER_ID,
+  };
+}
+
+function persistWithDiscoveryBinding(): {
+  discoveryBindingPath: string;
+  discoveryStatePath: string;
+  runtime: ReturnType<typeof persistDualSparkVllmRuntimeReceipt>;
+} {
+  fs.mkdirSync(stateDir, { mode: 0o700 });
+  const discoveryStatePath = path.join(stateDir, DUAL_SPARK_MANAGED_SERVING_STATE_FILE);
+  const binding = copyDualStationSshBinding(discoveryStatePath, sshFixture.binding);
+  return {
+    discoveryBindingPath: `${discoveryStatePath}.ssh-binding`,
+    discoveryStatePath,
+    runtime: persistDualSparkVllmRuntimeReceipt(input(binding), { stateDir }),
   };
 }
 
@@ -278,9 +300,7 @@ describe("dual-Spark vLLM runtime receipt", () => {
   });
 
   it("removes only both exact receipt-owned containers before retiring state", async () => {
-    const runtime = persistDualSparkVllmRuntimeReceipt(input(), { stateDir });
-    const discoveryStatePath = path.join(stateDir, DUAL_SPARK_MANAGED_SERVING_STATE_FILE);
-    copyDualStationSshBinding(discoveryStatePath, sshFixture.binding);
+    const { discoveryStatePath, runtime } = persistWithDiscoveryBinding();
     const { deps, removeContainer } = cleanupDeps(runtime.plan);
     await expect(
       cleanupInstalledDualSparkVllmRuntime({
@@ -299,14 +319,30 @@ describe("dual-Spark vLLM runtime receipt", () => {
     expect(fs.existsSync(`${dualSparkVllmRuntimeReceiptPath(stateDir)}.ssh-binding`)).toBe(false);
   });
 
+  it("preserves a replaced canonical discovery binding before container cleanup", async () => {
+    const { discoveryBindingPath, discoveryStatePath, runtime } = persistWithDiscoveryBinding();
+    clearDualStationSshBinding(discoveryStatePath);
+    copyDualStationSshBinding(discoveryStatePath, sshFixture.binding);
+    const { deps, removeContainer } = cleanupDeps(runtime.plan);
+    const createLifecycleDeps = vi.fn(() => deps);
+
+    await expect(
+      cleanupInstalledDualSparkVllmRuntime({
+        stateDir,
+        loadApiKey: () => API_KEY,
+        createLifecycleDeps,
+      }),
+    ).rejects.toThrow("does not match the runtime receipt identity");
+
+    expect(createLifecycleDeps).not.toHaveBeenCalled();
+    expect(removeContainer).not.toHaveBeenCalled();
+    expect(fs.existsSync(discoveryBindingPath)).toBe(true);
+    expect(fs.existsSync(dualSparkVllmRuntimeReceiptPath(stateDir))).toBe(true);
+    expect(fs.existsSync(`${dualSparkVllmRuntimeReceiptPath(stateDir)}.ssh-binding`)).toBe(true);
+  });
+
   it("retains durable ownership when a leftover discovery binding is unsafe to retire", async () => {
-    const runtime = persistDualSparkVllmRuntimeReceipt(input(), { stateDir });
-    const discoveryBindingPath = `${path.join(
-      stateDir,
-      DUAL_SPARK_MANAGED_SERVING_STATE_FILE,
-    )}.ssh-binding`;
-    fs.mkdirSync(discoveryBindingPath, { mode: 0o755 });
-    fs.chmodSync(discoveryBindingPath, 0o755);
+    const { discoveryBindingPath, runtime } = persistWithDiscoveryBinding();
     const snapshots: Record<"head" | "worker", DualSparkNodeSnapshot> = {
       head: snapshot(runtime.plan.roles.head, HEAD_ID),
       worker: snapshot(runtime.plan.roles.worker, WORKER_ID),
@@ -316,6 +352,7 @@ describe("dual-Spark vLLM runtime receipt", () => {
         ...snapshots[rolePlan.role],
         containers: snapshots[rolePlan.role].containers.filter((container) => container.id !== id),
       };
+      if (rolePlan.role === "worker") fs.chmodSync(discoveryBindingPath, 0o755);
       return { ok: true as const };
     });
     const options = {
@@ -329,7 +366,9 @@ describe("dual-Spark vLLM runtime receipt", () => {
       }),
     };
 
-    await expect(cleanupInstalledDualSparkVllmRuntime(options)).rejects.toThrow("unsafe to remove");
+    await expect(cleanupInstalledDualSparkVllmRuntime(options)).rejects.toThrow(
+      "must be an owner-only directory",
+    );
 
     expect(removeContainer).toHaveBeenCalledTimes(2);
     expect(fs.existsSync(discoveryBindingPath)).toBe(true);
@@ -348,9 +387,7 @@ describe("dual-Spark vLLM runtime receipt", () => {
   });
 
   it("retains the receipt and resumes after one exact container removal fails", async () => {
-    const runtime = persistDualSparkVllmRuntimeReceipt(input(), { stateDir });
-    const discoveryStatePath = path.join(stateDir, DUAL_SPARK_MANAGED_SERVING_STATE_FILE);
-    copyDualStationSshBinding(discoveryStatePath, sshFixture.binding);
+    const { discoveryStatePath, runtime } = persistWithDiscoveryBinding();
     const snapshots: Record<"head" | "worker", DualSparkNodeSnapshot> = {
       head: snapshot(runtime.plan.roles.head, HEAD_ID),
       worker: snapshot(runtime.plan.roles.worker, WORKER_ID),
