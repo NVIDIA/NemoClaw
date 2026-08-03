@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { parseAuditExceptionRegistry } from "../scripts/lib/reviewed-npm-audit.mts";
 import { createBuiltInChannelManifestRegistry } from "../src/lib/messaging";
 import { reviewedOpenClawPluginIntegrityByPackageSpec } from "../src/lib/messaging/applier/build/messaging-build-applier.mts";
 
@@ -77,12 +78,20 @@ const MCPORTER_LOCKFILE = path.join(
   "package-lock.json",
 );
 const NPM_AUDIT_EXCEPTION_FILE = path.join(REPO_ROOT, "ci", "npm-audit-exceptions.json");
+const NPM_AUDIT_EXCEPTION_POLICY = fs.readFileSync(NPM_AUDIT_EXCEPTION_FILE, "utf-8");
 const PINNED_MCPORTER_LOCK_SHA256 = createHash("sha256")
   .update(fs.readFileSync(MCPORTER_LOCKFILE))
   .digest("hex");
 const NPM_AUDIT_EXCEPTION_POLICY_SHA256 = createHash("sha256")
-  .update(fs.readFileSync(NPM_AUDIT_EXCEPTION_FILE))
+  .update(NPM_AUDIT_EXCEPTION_POLICY)
   .digest("hex");
+const MCPORTER_AUDIT_EXCEPTIONS = parseAuditExceptionRegistry(NPM_AUDIT_EXCEPTION_POLICY)
+  .exceptions.filter((entry) => entry.graph === "mcporter-runtime")
+  .map((entry) => entry.advisory)
+  .sort();
+const MCPORTER_AUDIT_EXCEPTION_LIST = MCPORTER_AUDIT_EXCEPTIONS.join(",") || "none";
+const MCPORTER_AUDIT_STATUS =
+  MCPORTER_AUDIT_EXCEPTIONS.length > 0 ? "accepted-exceptions" : "clean";
 const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY =
   "sha512-XXhMifYWTgoR6yFN4T3JkHxdPvQCe8k1cNZjVIgXNmk1svCdBWuALfQQicmpemlmWwauIQuHYgBURY6k63e+rw==";
 const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_TARBALL =
@@ -122,9 +131,9 @@ function openClawBaseProvenance(
     sha256: string;
     status: "accepted-exceptions" | "clean";
   }> = {
-    exceptions: "none",
+    exceptions: MCPORTER_AUDIT_EXCEPTION_LIST,
     sha256: NPM_AUDIT_EXCEPTION_POLICY_SHA256,
-    status: "clean",
+    status: MCPORTER_AUDIT_STATUS,
   },
 ): string {
   const lockSha256 =
@@ -1170,8 +1179,10 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "wrong mcporter audit status",
           {
             baseProvenance: openClawBaseProvenance().replace(
-              "mcporter-audit-status=clean",
-              "mcporter-audit-status=accepted-exceptions",
+              `mcporter-audit-status=${MCPORTER_AUDIT_STATUS}`,
+              `mcporter-audit-status=${
+                MCPORTER_AUDIT_STATUS === "clean" ? "accepted-exceptions" : "clean"
+              }`,
             ),
           },
         ],
@@ -1179,7 +1190,7 @@ export function registerOpenClawIntegrityPinTests(group: OpenClawIntegrityPinTes
           "wrong mcporter audit exceptions",
           {
             baseProvenance: openClawBaseProvenance().replace(
-              "mcporter-audit-exceptions=none",
+              `mcporter-audit-exceptions=${MCPORTER_AUDIT_EXCEPTION_LIST}`,
               "mcporter-audit-exceptions=GHSA-aaaa-bbbb-cccc",
             ),
           },
