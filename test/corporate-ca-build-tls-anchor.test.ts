@@ -38,3 +38,63 @@ describe("corporate proxy CA build-time TLS anchor (#6839)", () => {
     expect(anchorIndex).toBeLessThan(auditSignaturesIndex);
   });
 });
+
+describe("DCode corporate proxy CA cold-build trust (#8119)", () => {
+  const baseDockerfile = readFileSync(
+    join(import.meta.dirname, "../agents/langchain-deepagents-code/Dockerfile.base"),
+    "utf-8",
+  );
+  const finalDockerfile = readFileSync(
+    join(import.meta.dirname, "../agents/langchain-deepagents-code/Dockerfile"),
+    "utf-8",
+  );
+
+  // source-shape-contract: security -- DCode cold base builds must establish corporate CA trust before HTTPS dependency fetches
+  it("accepts the corporate CA build arg in the DCode base image before HTTPS fetches", () => {
+    const argIndex = baseDockerfile.indexOf("ARG NEMOCLAW_CORPORATE_CA_B64=");
+    const fromIndex = baseDockerfile.indexOf("FROM node:22-trixie-slim", argIndex);
+    const redeclareIndex = baseDockerfile.indexOf("ARG NEMOCLAW_CORPORATE_CA_B64", fromIndex);
+    const decodeIndex = baseDockerfile.indexOf('if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then');
+    const trustIndex = baseDockerfile.indexOf("update-ca-certificates");
+    const firstSnapshotCurlIndex = baseDockerfile.indexOf("https://snapshot.debian.org/archive");
+
+    for (const [name, index] of Object.entries({
+      argIndex,
+      redeclareIndex,
+      decodeIndex,
+      trustIndex,
+      firstSnapshotCurlIndex,
+    })) {
+      expect(index, name).toBeGreaterThan(-1);
+    }
+    expect(redeclareIndex).toBeLessThan(decodeIndex);
+    expect(decodeIndex).toBeLessThan(trustIndex);
+    expect(trustIndex).toBeLessThan(firstSnapshotCurlIndex);
+  });
+
+  // source-shape-contract: security -- DCode final images must decode the sandbox-specific corporate CA even when the base is reused
+  it("decodes the corporate CA again in the DCode final image", () => {
+    const finalFromIndex = finalDockerfile.indexOf("FROM ${BASE_IMAGE}");
+    const finalArgIndex = finalDockerfile.indexOf("ARG NEMOCLAW_CORPORATE_CA_B64", finalFromIndex);
+    const finalDecodeIndex = finalDockerfile.indexOf(
+      'RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then',
+      finalArgIndex,
+    );
+    const runtimeProbeIndex = finalDockerfile.indexOf(
+      "mcp-tool-discovery-runtime",
+      finalDecodeIndex,
+    );
+
+    for (const [name, index] of Object.entries({
+      finalFromIndex,
+      finalArgIndex,
+      finalDecodeIndex,
+      runtimeProbeIndex,
+    })) {
+      expect(index, name).toBeGreaterThan(-1);
+    }
+    expect(finalFromIndex).toBeLessThan(finalArgIndex);
+    expect(finalArgIndex).toBeLessThan(finalDecodeIndex);
+    expect(finalDecodeIndex).toBeLessThan(runtimeProbeIndex);
+  });
+});

@@ -6,6 +6,8 @@ import fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeAgent, withMockedDocker } from "../../../test/helpers/base-image-test-harness";
+
+import { tmpDir, writeCa } from "../onboard/__test-helpers__/corporate-ca-fixtures";
 import { testTimeout } from "../../../test/helpers/timeouts";
 import {
   createSandboxBaseImageBuildProvenanceKey,
@@ -50,6 +52,7 @@ function makeDifferingImageInspection(
 
 describe("agent base image provisioning", () => {
   beforeEach(() => {
+    vi.stubEnv("NEMOCLAW_CORPORATE_CA_ANCHOR_DIRS", "");
     vi.restoreAllMocks();
   });
 
@@ -366,6 +369,35 @@ describe("agent base image provisioning", () => {
             "deepagents-code==0.1.34 and the immutable security package inventory",
         }),
       );
+    });
+  });
+
+  it("passes the resolved corporate CA into local agent base image builds (#8119)", () => {
+    vi.stubEnv("NEMOCLAW_CORPORATE_CA_BUNDLE", writeCa(tmpDir()));
+    withMockedDocker(({ ensureAgentBaseImage, resolveSandboxBaseImageMock }) => {
+      resolveSandboxBaseImageMock.mockReturnValue({
+        ref: "nemoclaw-dcode-sandbox-base-local:compatible",
+        digest: null,
+        source: "local",
+        glibcVersion: "2.41",
+      });
+
+      ensureAgentBaseImage(
+        makeAgent({
+          name: "langchain-deepagents-code",
+          displayName: "LangChain Deep Agents Code",
+          expectedVersion: "0.1.34",
+          dockerfileBasePath: "/test/root/agents/langchain-deepagents-code/Dockerfile.base",
+          dockerfilePath: "/test/root/agents/langchain-deepagents-code/Dockerfile",
+        }),
+      );
+
+      const options = resolveSandboxBaseImageMock.mock.calls[0]?.[0] as {
+        buildArgs?: Record<string, string>;
+      };
+      const encoded = options.buildArgs?.NEMOCLAW_CORPORATE_CA_B64;
+      expect(encoded).toBeTypeOf("string");
+      expect(Buffer.from(encoded ?? "", "base64").toString("utf8")).toContain("BEGIN CERTIFICATE");
     });
   });
 

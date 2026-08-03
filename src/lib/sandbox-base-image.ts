@@ -378,6 +378,8 @@ function resolveLocalCandidate(
   // useful diagnostic.
   const buildResult = withLocalBuildHeartbeat(() =>
     dockerBuild(options.dockerfilePath, imageRef, options.rootDir || ROOT, {
+      buildArgs: options.buildArgs,
+
       labels: {
         [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: createSandboxBaseImageBuildProvenance(options),
       },

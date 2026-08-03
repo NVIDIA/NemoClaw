@@ -48,6 +48,8 @@ J0N7VBg2CdK6jRjKLQOSOPq3ySCicHhVRI8hxIWotif7mK3jj6D8NRalwmlHgNM=
 const DOCKERFILES = [
   ["OpenClaw", join(import.meta.dirname, "../Dockerfile")],
   ["Hermes", join(import.meta.dirname, "../agents/hermes/Dockerfile")],
+
+  ["Deep Agents Code", join(import.meta.dirname, "../agents/langchain-deepagents-code/Dockerfile")],
 ] as const;
 
 const tmpRoots: string[] = [];
