@@ -85,9 +85,24 @@ and sandbox ID and then enter the destructive cutover. Post-cutover rollback
 publishes `rollback-authorized` before exact replacement deletion; pre-cutover
 staged cleanup removes only the exact prepared replacement without that journal
 transition. Commit publishes `shared-state-committed` before exact backup
-deletion. Cleanup is bound to full runtime IDs. Mutable OpenShell names are read
-only to detect ownership reuse, and unsafe name-only deletion returns a typed
-retention error. The dormant adapter assumes the protocol's single coordinator;
+deletion. Cleanup is bound to full runtime IDs. Its private state root retains
+versioned, identity-addressed transaction records containing the provider and
+sandbox identities, plan and profile
+fingerprints, exact original and replacement IDs, rollback target, and phase.
+Exact commit and cleanup receipts are durable terminal records, so adapter
+recreation does not depend on process-local transaction sets or tombstone maps.
+The image-owned shared-state transaction uses the same identity-bound model: a
+commit atomically moves its pending manifest and backups into a durable receipt
+namespace, compacts that state to an exact commit receipt, and rejects rollback
+when a later image-runtime invocation reads that receipt. The provider may
+retire that receipt only after it proves the external rollback backup is gone,
+so that this receipt does not block the next bootstrap attempt.
+Direct identity lookup reconstructs one known transaction record. The bounded
+[3.12b recovery slice](https://github.com/NVIDIA/NemoClaw/issues/7744) introduces
+unfinished-record enumeration together with phase reconciliation and
+cross-surface resume or rollback. The adapter reads mutable OpenShell names only
+to detect ownership reuse. Unsafe name-only deletion returns a typed retention
+error. The dormant adapter assumes the protocol's single coordinator;
 multi-process lease/arbitration remains an explicit production-activation gate.
 Activation must also inject the selected gateway's canonical state root.
 
