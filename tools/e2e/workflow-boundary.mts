@@ -44,10 +44,7 @@ import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-wo
 import { validateRunnerPressureWorkflow } from "./runner-pressure-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
 import { validateSecurityPostureWorkflow } from "./security-posture-workflow-boundary.mts";
-import {
-  normalizeE2eSelectorIds,
-  selectorsForCanonicalE2eId,
-} from "./selector-aliases.mts";
+import { normalizeE2eSelectorIds, selectorsForCanonicalE2eId } from "./selector-aliases.mts";
 import {
   validateTrustedHermesSwapHelperSource,
   validateTrustedHermesSwapWorkflow,
@@ -3735,8 +3732,8 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
     errors.push("bedrock-runtime-compatible-anthropic strategy.fail-fast must be false");
   }
   const matrix = asRecord(strategy.matrix);
-  if (!Array.isArray(matrix.agent) || matrix.agent.join(",") !== "openclaw") {
-    errors.push("bedrock-runtime-compatible-anthropic matrix.agent must be openclaw");
+  if (!Array.isArray(matrix.agent) || matrix.agent.join(",") !== "openclaw,hermes") {
+    errors.push("bedrock-runtime-compatible-anthropic matrix.agent must be openclaw,hermes");
   }
 
   const jobEnv = asRecord(job.env);

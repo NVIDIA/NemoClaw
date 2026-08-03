@@ -6,12 +6,14 @@ import { describe, expect, it, vi } from "vitest";
 import { createVirtualClock } from "./__test-helpers__/virtual-clock";
 import {
   getNemoclawOpenShellGatewayUserServicePath,
+  getOpenShellGatewayManagedServiceLogCommand,
   getOpenShellGatewayUserServiceBinaryPaths,
   getOpenShellGatewayUserServicePaths,
   getOpenShellUserConfigHome,
   getTrustedActiveOpenShellGatewayUserServicePid,
   hasOpenShellGatewayUserService,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER,
+  OpenShellGatewayServiceTrustError,
   type OpenShellGatewayUserServiceOptions,
   type SpawnSyncLikeResult,
   startOpenShellGatewayUserService,
@@ -69,7 +71,8 @@ function expectHomebrewGateFailureBeforeMutation(
           : spawnResult(),
     );
 
-    expect(() =>
+    let thrown: unknown;
+    try {
       operation({
         commandExists: () => true,
         getuid: () => TEST_UID,
@@ -78,8 +81,12 @@ function expectHomebrewGateFailureBeforeMutation(
         prepareServiceEnv,
         spawnSyncImpl,
         validatePortOwnerForServiceStart,
-      }),
-    ).toThrow(expectedError);
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(OpenShellGatewayServiceTrustError);
+    expect(thrown).toHaveProperty("message", expect.stringContaining(expectedError));
     expect(preparePortForServiceStart).not.toHaveBeenCalled();
     expect(prepareServiceEnv).not.toHaveBeenCalled();
     expect(validatePortOwnerForServiceStart).not.toHaveBeenCalled();
@@ -206,26 +213,27 @@ describe("docker-driver-gateway-service", () => {
 
   it("continues without the Homebrew service only for the exact pinned-tap refusal (#7707)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const options = {
-      commandExists: () => true,
-      getuid: () => TEST_UID,
-      platform: "darwin" as NodeJS.Platform,
-      spawnSyncImpl: vi.fn((command: string, args: string[]) =>
-        command === "launchctl"
-          ? spawnResult(113, LAUNCHCTL_MISSING_OPENSHELL_SERVICE)
-          : args[0] === "info"
-            ? spawnResult(1, HOMEBREW_PINNED_TAP_LOAD_REFUSAL)
-            : spawnResult(),
-      ),
-    };
+    for (const refusalAt of ["list", "info"] as const) {
+      const options = {
+        commandExists: () => true,
+        getuid: () => TEST_UID,
+        platform: "darwin" as NodeJS.Platform,
+        spawnSyncImpl: vi.fn((command: string, args: string[]) =>
+          command === "launchctl"
+            ? spawnResult(113, LAUNCHCTL_MISSING_OPENSHELL_SERVICE)
+            : args[0] === refusalAt
+              ? spawnResult(1, HOMEBREW_PINNED_TAP_LOAD_REFUSAL)
+              : spawnResult(),
+        ),
+      };
 
-    expect(hasOpenShellGatewayUserService(options)).toBe(false);
-    expect(hasOpenShellGatewayUserService(options)).toBe(false);
-    expect(options.spawnSyncImpl).toHaveBeenCalledWith(
-      "launchctl",
-      ["print", `gui/${TEST_UID}/homebrew.mxcl.openshell`],
-      expect.any(Object),
-    );
+      expect(hasOpenShellGatewayUserService(options)).toBe(false);
+      expect(options.spawnSyncImpl).toHaveBeenCalledWith(
+        "launchctl",
+        ["print", `gui/${TEST_UID}/homebrew.mxcl.openshell`],
+        expect.any(Object),
+      );
+    }
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining("using the standalone gateway fallback"),
@@ -242,14 +250,22 @@ describe("docker-driver-gateway-service", () => {
           : spawnResult(),
     );
 
-    expect(() =>
+    let thrown: unknown;
+    try {
       hasOpenShellGatewayUserService({
         commandExists: () => true,
         getuid: () => TEST_UID,
         platform: "darwin",
         spawnSyncImpl: spawn,
-      }),
-    ).toThrow("its launchd service homebrew.mxcl.openshell is loaded");
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(OpenShellGatewayServiceTrustError);
+    expect(thrown).toHaveProperty(
+      "message",
+      expect.stringContaining("its launchd service homebrew.mxcl.openshell is loaded"),
+    );
     expect(spawn.mock.calls.map(([command, args]) => [command, ...args])).toEqual([
       ["brew", "list", "--formula", "openshell"],
       ["brew", "info", "--json=v2", "openshell"],
@@ -426,17 +442,7 @@ describe("docker-driver-gateway-service", () => {
     ).toThrow(expect.not.stringContaining(secret));
   });
 
-  it("still reports a missing formula when brew list returns the pinned-tap refusal (#7707)", () => {
-    expect(() =>
-      hasOpenShellGatewayUserService({
-        commandExists: () => true,
-        platform: "darwin",
-        spawnSyncImpl: () => spawnResult(1, HOMEBREW_PINNED_TAP_LOAD_REFUSAL),
-      }),
-    ).toThrow("official OpenShell Homebrew formula is not installed");
-  });
-
-  it("skips the Homebrew-managed start when the formula identity is unconfirmed (#7707)", async () => {
+  it("skips the managed start when no trusted Homebrew service is selected (#7707)", async () => {
     const startService = vi.fn(() => {
       throw new Error("managed start must not run");
     });
@@ -444,18 +450,7 @@ describe("docker-driver-gateway-service", () => {
       clearDockerDriverGatewayRuntimeFiles: () => {},
       exitOnFailure: false,
       gatewayName: "nemoclaw",
-      hasOpenShellGatewayUserService: () =>
-        hasOpenShellGatewayUserService({
-          commandExists: () => true,
-          getuid: () => TEST_UID,
-          platform: "darwin",
-          spawnSyncImpl: (command: string, args: string[]) =>
-            command === "launchctl"
-              ? spawnResult(113, LAUNCHCTL_MISSING_OPENSHELL_SERVICE)
-              : args[0] === "info"
-                ? spawnResult(1, HOMEBREW_PINNED_TAP_LOAD_REFUSAL)
-                : spawnResult(),
-        }),
+      hasOpenShellGatewayUserService: () => false,
       registerDockerDriverGatewayEndpoint: () => true,
       runCaptureOpenshell: () => "",
       skipSandboxBridgeReachability: true,
@@ -467,14 +462,14 @@ describe("docker-driver-gateway-service", () => {
     expect(startService).not.toHaveBeenCalled();
   });
 
-  it("rejects a missing Homebrew formula when Homebrew is available (#6903)", () => {
-    expect(() =>
+  it("reports no managed service when the Homebrew formula is missing (#8104)", () => {
+    expect(
       hasOpenShellGatewayUserService({
         commandExists: () => true,
         platform: "darwin",
         spawnSyncImpl: () => spawnResult(1, "formula not installed"),
       }),
-    ).toThrow("official OpenShell Homebrew formula is not installed");
+    ).toBe(false);
   });
 
   it("uses the effective XDG config home and accepts only a marked regular unit (#6903)", () => {
@@ -535,7 +530,7 @@ describe("docker-driver-gateway-service", () => {
     });
 
     expect(result).toMatchObject({
-      fallbackAllowed: false,
+      logCommand: "journalctl --user --unit nemoclaw-openshell-gateway --no-pager --lines=200",
       manager: "systemd",
       serviceName: "nemoclaw-openshell-gateway",
       started: true,
@@ -715,7 +710,10 @@ describe("docker-driver-gateway-service", () => {
       },
     });
 
-    expect(result).toMatchObject({ fallbackAllowed: false, started: false });
+    expect(result).toMatchObject({
+      logCommand: "journalctl --user --unit openshell-gateway --no-pager --lines=200",
+      started: false,
+    });
     expect(result.reason).toContain("unknown listener");
     expect(events.some((event) => /^(stop|enable|restart)/.test(event))).toBe(false);
   });
@@ -735,7 +733,13 @@ describe("docker-driver-gateway-service", () => {
       validatePortOwnerForServiceStart: () => events.push("validate-port"),
     });
 
-    expect(result).toMatchObject({ manager: "homebrew", serviceName: "openshell", started: true });
+    expect(result).toMatchObject({
+      logCommand:
+        'tail -n 200 "$(brew --prefix)/var/log/openshell/openshell-gateway.out.log" "$(brew --prefix)/var/log/openshell/openshell-gateway.err.log"',
+      manager: "homebrew",
+      serviceName: "openshell",
+      started: true,
+    });
     expect(events).toEqual([
       "list --formula openshell",
       "info --json=v2 openshell",
@@ -748,10 +752,10 @@ describe("docker-driver-gateway-service", () => {
   });
 
   it.each([
-    ["manager unavailable", "daemon-reload", "Failed to connect to bus", true],
-    ["foreign executable", "show", "", false],
-    ["inactive service", "is-active", "inactive", false],
-  ])("returns the expected fallback decision for a selected systemd service failure: %s (#6903)", (_case, failedCommand, detail, fallbackAllowed) => {
+    ["the manager is unavailable", "daemon-reload", "Failed to connect to bus", false],
+    ["the executable is foreign", "show", "", true],
+    ["the service is inactive", "is-active", "inactive", false],
+  ])("reports the selected systemd log command when %s (#8104)", (_case, failedCommand, detail, standaloneFallbackBlocked) => {
     const result = startOpenShellGatewayUserService({
       commandExists: () => true,
       env: {},
@@ -775,7 +779,23 @@ describe("docker-driver-gateway-service", () => {
       }),
     });
 
-    expect(result).toMatchObject({ fallbackAllowed, started: false });
+    expect(result).toMatchObject({
+      logCommand: "journalctl --user --unit openshell-gateway --no-pager --lines=200",
+      standaloneFallbackBlocked,
+      started: false,
+    });
+  });
+
+  it("selects the managed service log command without service validation (#8104)", () => {
+    expect(getOpenShellGatewayManagedServiceLogCommand({ platform: "darwin" })).toContain(
+      "openshell-gateway.err.log",
+    );
+    expect(
+      getOpenShellGatewayManagedServiceLogCommand({
+        existsSync: (candidate) => candidate === "/lib/systemd/user/openshell-gateway.service",
+        platform: "linux",
+      }),
+    ).toBe("journalctl --user --unit openshell-gateway --no-pager --lines=200");
   });
 
   it("uses managed service only after metadata and direct gRPC health are ready (#6903)", async () => {
@@ -809,7 +829,6 @@ describe("docker-driver-gateway-service", () => {
         },
         startOpenShellGatewayUserService: () => ({
           attempted: true,
-          fallbackAllowed: false,
           started: true,
           statusCommand: "systemctl --user status nemoclaw-openshell-gateway",
         }),
@@ -822,8 +841,28 @@ describe("docker-driver-gateway-service", () => {
     expect(events).toEqual(["register", "sleep", "register", "ready", "clear", "verify"]);
   });
 
-  it("allows detached fallback only before a service authority starts (#6903)", async () => {
+  it.each([
+    [
+      "systemd",
+      "journalctl --user --unit nemoclaw-openshell-gateway --no-pager --lines=200",
+      "systemd" as const,
+      "nemoclaw-openshell-gateway",
+    ],
+    [
+      "Homebrew",
+      'tail -n 200 "$(brew --prefix)/var/log/openshell/openshell-gateway.out.log" "$(brew --prefix)/var/log/openshell/openshell-gateway.err.log"',
+      "homebrew" as const,
+      "openshell",
+    ],
+  ])("prints the %s log command before standalone fallback (#8104)", async (_case, logCommand, manager, serviceName) => {
     const register = vi.fn(() => true);
+    const stopService = vi.fn(() => ({
+      attempted: true,
+      standaloneFallbackAllowed: false,
+      stopped: true,
+    }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
     await expect(
       startPackageManagedDockerDriverGateway({
         clearDockerDriverGatewayRuntimeFiles: vi.fn(),
@@ -835,19 +874,30 @@ describe("docker-driver-gateway-service", () => {
         skipSandboxBridgeReachability: false,
         startOpenShellGatewayUserService: () => ({
           attempted: true,
-          fallbackAllowed: true,
-          reason: "user manager unavailable",
+          logCommand,
+          manager,
+          reason: "managed service failed",
+          serviceName,
           started: false,
         }),
+        stopOpenShellGatewayUserService: stopService,
         verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
       }),
     ).resolves.toBe(false);
     expect(register).not.toHaveBeenCalled();
+    expect(stopService).toHaveBeenCalledOnce();
+    expect(warn.mock.calls.flat().join("\n")).toContain(`Logs: ${logCommand}`);
   });
 
-  it("keeps runtime breadcrumbs when managed service health fails (#6903)", async () => {
+  it("stops an unhealthy managed service before standalone fallback (#8104)", async () => {
     const clear = vi.fn();
     const clock = createVirtualClock();
+    const stopService = vi.fn(() => ({
+      attempted: true,
+      standaloneFallbackAllowed: false,
+      stopped: true,
+    }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await expect(
       startPackageManagedDockerDriverGateway({
         clearDockerDriverGatewayRuntimeFiles: clear,
@@ -864,14 +914,247 @@ describe("docker-driver-gateway-service", () => {
         sleepSeconds: clock.advance,
         startOpenShellGatewayUserService: () => ({
           attempted: true,
-          fallbackAllowed: false,
+          logCommand: "journalctl --user --unit nemoclaw-openshell-gateway --no-pager --lines=200",
           started: true,
           statusCommand: "systemctl --user status nemoclaw-openshell-gateway",
         }),
+        stopOpenShellGatewayUserService: stopService,
         verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
       }),
-    ).rejects.toThrow("configured 1s health deadline");
+    ).resolves.toBe(false);
     expect(clear).not.toHaveBeenCalled();
+    expect(stopService).toHaveBeenCalledOnce();
+    expect(warn.mock.calls.flat().join("\n")).toContain(
+      "journalctl --user --unit nemoclaw-openshell-gateway --no-pager --lines=200",
+    );
+  });
+
+  it("continues to standalone fallback when managed service cleanup fails (#8104)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(
+      startPackageManagedDockerDriverGateway({
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        exitOnFailure: false,
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: () => true,
+        registerDockerDriverGatewayEndpoint: vi.fn(),
+        runCaptureOpenshell: vi.fn(),
+        skipSandboxBridgeReachability: false,
+        startOpenShellGatewayUserService: () => ({
+          attempted: true,
+          reason: "restart failed",
+          started: false,
+        }),
+        stopOpenShellGatewayUserService: () => {
+          throw new Error("service manager unavailable");
+        },
+        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
+      }),
+    ).resolves.toBe(false);
+    expect(warn.mock.calls.flat().join("\n")).toContain(
+      "standalone startup will verify gateway port ownership",
+    );
+  });
+
+  it("blocks standalone fallback after unsafe managed service preparation (#8104)", async () => {
+    const stopService = vi.fn();
+
+    await expect(
+      startPackageManagedDockerDriverGateway({
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        exitOnFailure: false,
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: () => true,
+        registerDockerDriverGatewayEndpoint: vi.fn(),
+        runCaptureOpenshell: vi.fn(),
+        skipSandboxBridgeReachability: false,
+        startOpenShellGatewayUserService: () => ({
+          attempted: true,
+          reason: "unsafe service environment",
+          standaloneFallbackBlocked: true,
+          started: false,
+        }),
+        stopOpenShellGatewayUserService: stopService,
+        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
+      }),
+    ).rejects.toThrow("unsafe service environment");
+    expect(stopService).not.toHaveBeenCalled();
+  });
+
+  it("uses standalone fallback when managed service inspection fails (#8104)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const stopService = vi.fn(() => ({
+      attempted: true,
+      standaloneFallbackAllowed: false,
+      stopped: true,
+    }));
+
+    await expect(
+      startPackageManagedDockerDriverGateway({
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        exitOnFailure: true,
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: () => {
+          throw new Error("inspect failed");
+        },
+        managedServiceLogCommand:
+          'tail -n 200 "$(brew --prefix)/var/log/openshell/openshell-gateway.out.log" "$(brew --prefix)/var/log/openshell/openshell-gateway.err.log"',
+        registerDockerDriverGatewayEndpoint: vi.fn(),
+        runCaptureOpenshell: vi.fn(),
+        skipSandboxBridgeReachability: false,
+        startOpenShellGatewayUserService: vi.fn(),
+        stopOpenShellGatewayUserService: stopService,
+        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
+      }),
+    ).resolves.toBe(false);
+    expect(stopService).toHaveBeenCalledOnce();
+    expect(warn.mock.calls.flat().join("\n")).toContain("openshell-gateway.err.log");
+  });
+
+  it("uses standalone fallback when Homebrew has no OpenShell formula (#8104)", async () => {
+    const startService = vi.fn();
+
+    await expect(
+      startPackageManagedDockerDriverGateway({
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        exitOnFailure: true,
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: () =>
+          hasOpenShellGatewayUserService({
+            commandExists: () => true,
+            platform: "darwin",
+            spawnSyncImpl: () => spawnResult(1, "formula not installed"),
+          }),
+        managedServiceLogCommand: getOpenShellGatewayManagedServiceLogCommand({
+          platform: "darwin",
+        }),
+        registerDockerDriverGatewayEndpoint: vi.fn(),
+        runCaptureOpenshell: vi.fn(),
+        skipSandboxBridgeReachability: false,
+        startOpenShellGatewayUserService: startService,
+        stopOpenShellGatewayUserService: vi.fn(),
+        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
+      }),
+    ).resolves.toBe(false);
+    expect(startService).not.toHaveBeenCalled();
+  });
+
+  it("blocks standalone fallback when managed service inspection fails trust validation (#8104)", async () => {
+    const startService = vi.fn();
+
+    await expect(
+      startPackageManagedDockerDriverGateway({
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        exitOnFailure: false,
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: () => {
+          throw new OpenShellGatewayServiceTrustError("foreign managed service");
+        },
+        managedServiceLogCommand:
+          "journalctl --user --unit nemoclaw-openshell-gateway --no-pager --lines=200",
+        registerDockerDriverGatewayEndpoint: vi.fn(),
+        runCaptureOpenshell: vi.fn(),
+        skipSandboxBridgeReachability: false,
+        startOpenShellGatewayUserService: startService,
+        stopOpenShellGatewayUserService: vi.fn(),
+        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
+      }),
+    ).rejects.toThrow("foreign managed service");
+    expect(startService).not.toHaveBeenCalled();
+  });
+
+  it("blocks standalone fallback when managed service cleanup fails trust validation (#8104)", async () => {
+    await expect(
+      startPackageManagedDockerDriverGateway({
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        exitOnFailure: false,
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: () => true,
+        registerDockerDriverGatewayEndpoint: vi.fn(),
+        runCaptureOpenshell: vi.fn(),
+        skipSandboxBridgeReachability: false,
+        startOpenShellGatewayUserService: () => ({
+          attempted: true,
+          reason: "restart failed",
+          started: false,
+        }),
+        stopOpenShellGatewayUserService: () => ({
+          attempted: true,
+          reason: "foreign managed service",
+          standaloneFallbackAllowed: false,
+          standaloneFallbackBlocked: true,
+          stopped: false,
+        }),
+        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
+      }),
+    ).rejects.toThrow("foreign managed service");
+  });
+
+  it("exits when unhealthy managed service cleanup fails trust validation (#8104)", async () => {
+    const clock = createVirtualClock();
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit(1)");
+    }) as typeof process.exit);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(
+      startPackageManagedDockerDriverGateway({
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        exitOnFailure: true,
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: () => true,
+        healthPollCount: 1,
+        healthPollInterval: 1,
+        isDockerDriverGatewayReady: async () => false,
+        now: clock.now,
+        registerDockerDriverGatewayEndpoint: () => true,
+        runCaptureOpenshell: (args) => (args[0] === "status" ? STATUS_CONNECTED : GATEWAY_INFO),
+        skipSandboxBridgeReachability: false,
+        sleepSeconds: clock.advance,
+        startOpenShellGatewayUserService: () => ({ attempted: true, started: true }),
+        stopOpenShellGatewayUserService: () => ({
+          attempted: true,
+          reason: "foreign managed service",
+          standaloneFallbackAllowed: false,
+          standaloneFallbackBlocked: true,
+          stopped: false,
+        }),
+        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
+      }),
+    ).rejects.toThrow("process.exit(1)");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("uses standalone fallback when managed service startup fails unexpectedly (#8104)", async () => {
+    const stopService = vi.fn(() => ({
+      attempted: true,
+      standaloneFallbackAllowed: false,
+      stopped: true,
+    }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await expect(
+      startPackageManagedDockerDriverGateway({
+        clearDockerDriverGatewayRuntimeFiles: vi.fn(),
+        exitOnFailure: true,
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: () => true,
+        managedServiceLogCommand:
+          "journalctl --user --unit nemoclaw-openshell-gateway --no-pager --lines=200",
+        registerDockerDriverGatewayEndpoint: vi.fn(),
+        runCaptureOpenshell: vi.fn(),
+        skipSandboxBridgeReachability: false,
+        startOpenShellGatewayUserService: () => {
+          throw new Error("systemctl invocation failed");
+        },
+        stopOpenShellGatewayUserService: stopService,
+        verifySandboxBridgeGatewayReachableOrExit: vi.fn(),
+      }),
+    ).resolves.toBe(false);
+    expect(stopService).toHaveBeenCalledOnce();
+    expect(warn.mock.calls.flat().join("\n")).toContain("journalctl --user --unit");
   });
 
   it("stops the trusted systemd gateway unit without disabling it (#7904)", () => {
@@ -925,7 +1208,11 @@ describe("docker-driver-gateway-service", () => {
       ),
     });
 
-    expect(result).toMatchObject({ attempted: true, stopped: false });
+    expect(result).toMatchObject({
+      attempted: true,
+      standaloneFallbackBlocked: true,
+      stopped: false,
+    });
     expect(result.reason).toContain("service identity is not a trusted OpenShell gateway");
     expect(events).toEqual([
       "show nemoclaw-openshell-gateway --property=FragmentPath --property=ExecStart",

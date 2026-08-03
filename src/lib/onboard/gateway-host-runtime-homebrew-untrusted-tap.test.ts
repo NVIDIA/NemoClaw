@@ -30,9 +30,11 @@ vi.mock("node:child_process", async (importOriginal) => {
     ...actual,
     spawnSync: vi.fn((command: string, args: readonly string[]) => {
       commandState.calls.push([command, ...args]);
-      if (command === "brew" && args[0] === "info") return { ...commandState.brewInfo };
-      if (command === "launchctl") return { ...commandState.launchctl };
-      return { status: 0, stderr: "", stdout: "" };
+      return command === "brew" && args[0] === "info"
+        ? { ...commandState.brewInfo }
+        : command === "launchctl"
+          ? { ...commandState.launchctl }
+          : { status: 0, stderr: "", stdout: "" };
     }),
   };
 });
