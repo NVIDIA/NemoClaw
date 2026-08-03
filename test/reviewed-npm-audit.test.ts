@@ -27,6 +27,7 @@ const CONFIG = JSON.parse(
   fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf-8"),
 ) as {
   severityThreshold: "info" | "low" | "moderate" | "high" | "critical";
+  lockedGraphs: Array<{ id: string; reviewedLockSha256: string[] }>;
 };
 const CHECKED_IN_POLICY = parseAuditExceptionRegistry(
   fs.readFileSync(path.join(REPO_ROOT, "ci", "npm-audit-exceptions.json"), "utf-8"),
@@ -120,25 +121,120 @@ function exceptionPolicy(
 
 describe("reviewed npm audit gate", () => {
   it("bounds the managed runtime transition exceptions", () => {
-    expect(CHECKED_IN_POLICY).toEqual({
-      schemaVersion: 1,
-      exceptions: expect.arrayContaining([
-        expect.objectContaining({
-          advisory: "GHSA-4cwx-7wf7-3272",
-          decision: "temporary-risk-acceptance",
-          expires: "2026-08-10",
-          graph: "reviewed-archive-graph",
-          installedVersion: "8.5.0",
-          package: "undici",
-          severity: "high",
-          trackingIssue: "https://github.com/NVIDIA/NemoClaw/pull/8156",
-        }),
-      ]),
-    });
     expect(CHECKED_IN_POLICY.exceptions).toHaveLength(7);
-    expect(new Set(CHECKED_IN_POLICY.exceptions.map((entry) => entry.graph))).toEqual(
-      new Set(["reviewed-archive-graph", "openclaw-runtime", "mcporter-runtime"]),
-    );
+    expect(
+      CHECKED_IN_POLICY.exceptions.map(
+        ({
+          advisory,
+          decision,
+          expires,
+          graph,
+          installedVersion,
+          package: packageName,
+          severity,
+          trackingIssue,
+        }) => ({
+          advisory,
+          decision,
+          expires,
+          graph,
+          installedVersion,
+          package: packageName,
+          severity,
+          trackingIssue,
+        }),
+      ),
+    ).toEqual([
+      {
+        advisory: "GHSA-4cwx-7wf7-3272",
+        decision: "temporary-risk-acceptance",
+        expires: "2026-08-10",
+        graph: "reviewed-archive-graph",
+        installedVersion: "8.5.0",
+        package: "undici",
+        severity: "high",
+        trackingIssue: "https://github.com/NVIDIA/NemoClaw/pull/8156",
+      },
+      {
+        advisory: "GHSA-rgw5-rvv9-x895",
+        decision: "temporary-risk-acceptance",
+        expires: "2026-08-10",
+        graph: "openclaw-runtime",
+        installedVersion: "5.0.8",
+        package: "brace-expansion",
+        severity: "high",
+        trackingIssue: "https://github.com/NVIDIA/NemoClaw/pull/8156",
+      },
+      {
+        advisory: "GHSA-7p8r-x3mc-p8w7",
+        decision: "temporary-risk-acceptance",
+        expires: "2026-08-10",
+        graph: "openclaw-runtime",
+        installedVersion: "3.1.4",
+        package: "fast-uri",
+        severity: "high",
+        trackingIssue: "https://github.com/NVIDIA/NemoClaw/pull/8156",
+      },
+      {
+        advisory: "GHSA-mwp4-54f8-5fhr",
+        decision: "temporary-risk-acceptance",
+        expires: "2026-08-10",
+        graph: "openclaw-runtime",
+        installedVersion: "10.2.0",
+        package: "ip-address",
+        severity: "high",
+        trackingIssue: "https://github.com/NVIDIA/NemoClaw/pull/8156",
+      },
+      {
+        advisory: "GHSA-4cwx-7wf7-3272",
+        decision: "temporary-risk-acceptance",
+        expires: "2026-08-10",
+        graph: "openclaw-runtime",
+        installedVersion: "8.5.0",
+        package: "undici",
+        severity: "high",
+        trackingIssue: "https://github.com/NVIDIA/NemoClaw/pull/8156",
+      },
+      {
+        advisory: "GHSA-7p8r-x3mc-p8w7",
+        decision: "temporary-risk-acceptance",
+        expires: "2026-08-10",
+        graph: "mcporter-runtime",
+        installedVersion: "3.1.4",
+        package: "fast-uri",
+        severity: "high",
+        trackingIssue: "https://github.com/NVIDIA/NemoClaw/pull/8156",
+      },
+      {
+        advisory: "GHSA-mwp4-54f8-5fhr",
+        decision: "temporary-risk-acceptance",
+        expires: "2026-08-10",
+        graph: "mcporter-runtime",
+        installedVersion: "10.2.0",
+        package: "ip-address",
+        severity: "high",
+        trackingIssue: "https://github.com/NVIDIA/NemoClaw/pull/8156",
+      },
+    ]);
+  });
+
+  // source-shape-contract: security -- Exact digest sets bind successor authorization to the intended graph while preserving current trusted states
+  it("binds current and successor locks to their managed runtime graphs (#8156)", () => {
+    expect(
+      Object.fromEntries(
+        CONFIG.lockedGraphs.map(({ id, reviewedLockSha256 }) => [id, reviewedLockSha256]),
+      ),
+    ).toEqual({
+      "openclaw-runtime": [
+        "82489f62febb12da52833c0b1f7f6969f7e21a098c565ef1f91342b1e5e32d88",
+        "fdbee91a3f3a0222ec2e8e34864d09dfcff4711e86ac6bfa4d475af0593acd51",
+        "759b31779f40867f35f15065b582eb1d3efb8fddb1fe43c207507c905fa2a421",
+      ],
+      "mcporter-runtime": [
+        "c31959d7950903f7477ca2e143b3f1f4adfd10f1961fe97db40cd72f62b84830",
+        "962dee34f6b0a493521d1619d1cf030e2630cbdfce8bf0598217202f57078793",
+      ],
+    });
   });
 
   it("fails at high or critical findings while retaining lower severities", () => {
