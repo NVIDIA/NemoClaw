@@ -44,12 +44,15 @@ import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-wo
 import { validateRunnerPressureWorkflow } from "./runner-pressure-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
 import { validateSecurityPostureWorkflow } from "./security-posture-workflow-boundary.mts";
-import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
+import { normalizeE2eSelectorIds, selectorsForCanonicalE2eId } from "./selector-aliases.mts";
 import {
   validateTrustedHermesSwapHelperSource,
   validateTrustedHermesSwapWorkflow,
 } from "./trusted-hermes-swap-workflow-boundary.mts";
-import { validateUploadE2eArtifactsWorkflowBoundary } from "./upload-e2e-artifacts-workflow-boundary.mts";
+import {
+  UPLOAD_E2E_ARTIFACTS_ACTION,
+  validateUploadE2eArtifactsWorkflowBoundary,
+} from "./upload-e2e-artifacts-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_E2E_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -129,7 +132,13 @@ export const RETIRED_CONTROLLER_SELECTOR_IDS = [
   "gateway-health-honest",
   "onboard-negative-paths",
   "openshell-version-pin",
+  "sandbox-rebuild",
   "ubuntu-repo-cli-smoke",
+  "upgrade-stale-sandbox",
+] as const;
+export const RETIRED_CONTROLLER_TARGET_SELECTOR_IDS = [
+  "sandbox-rebuild",
+  "upgrade-stale-sandbox",
 ] as const;
 const LIVE_TEST_FILE_PATTERN = /test\/e2e\/live\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.test\.ts/g;
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
@@ -146,6 +155,7 @@ const COMMON_SECRET_ENV_NAMES = [
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e",
   "hermes-gpu-startup",
+  "openshell-credential-generation-window",
   "staging-brev-launchable",
 ]);
 const ADAPTER_MANAGED_INFERENCE_JOBS = new Set(["hermes-e2e"]);
@@ -567,6 +577,11 @@ const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
   "src/lib/actions/sandbox/restore-gateway-pairing.ts",
   "src/lib/adapters/openshell/restore-gateway-pairing.ts",
 ]);
+const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
+  ["test/e2e/live/openclaw-plugin-runtime-exdev-lifecycle.ts", ["openclaw-plugin-runtime-exdev"]],
+  ["test/e2e/live/openshell-gateway-upgrade-helpers.ts", ["openshell-gateway-upgrade"]],
+  ["test/e2e/live/openshell-gateway-upgrade-old-installer.ts", ["openshell-gateway-upgrade"]],
+]);
 
 export function focusedE2eJobsForChangedFiles(
   changedFiles: readonly string[],
@@ -576,6 +591,9 @@ export function focusedE2eJobsForChangedFiles(
   for (const file of [...new Set(changedFiles)].sort((left, right) => left.localeCompare(right))) {
     for (const job of inventory.liveTestToJobs.get(file) ?? []) {
       addMapValue(matchedFilesByJob, job, file);
+    }
+    for (const job of LIVE_E2E_OWNING_FILE_JOBS.get(file) ?? []) {
+      if (inventory.allowedJobs.includes(job)) addMapValue(matchedFilesByJob, job, file);
     }
     if (RESTORED_GATEWAY_PAIRING_RUNTIME_FILES.has(file)) {
       addMapValue(matchedFilesByJob, "snapshot-commands", file);
@@ -1018,10 +1036,16 @@ function requireNoDispatchInputInterpolation(
 }
 
 function freeStandingJobIf(jobName: string, targetName?: string): string {
-  const targetSelector = targetName
-    ? ` || contains(format(',{0},', inputs.targets), ',${targetName},')`
-    : "";
-  return `\${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',${jobName},')${targetSelector} }}`;
+  const jobSelectors = selectorsForCanonicalE2eId(jobName).map(
+    (selector) => `contains(format(',{0},', inputs.jobs), ',${selector},')`,
+  );
+  const targetSelectors = targetName
+    ? selectorsForCanonicalE2eId(targetName).map(
+        (selector) => `contains(format(',{0},', inputs.targets), ',${selector},')`,
+      )
+    : [];
+  const selectors = [...jobSelectors, ...targetSelectors].join(" || ");
+  return `\${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || ${selectors} }}`;
 }
 
 function explicitOnlyFreeStandingJobIf(jobName: string, targetName?: string): string {
@@ -1973,87 +1997,6 @@ function validateRebuildHermesJob(
   }
 }
 
-function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "sandbox-rebuild";
-  const targetName = "sandbox-rebuild";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing sandbox-rebuild job");
-    return;
-  }
-
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("sandbox-rebuild job must run on ubuntu-latest");
-  }
-  validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
-  if (job["timeout-minutes"] !== 90) {
-    errors.push("sandbox-rebuild job must keep the legacy 90 minute timeout");
-  }
-  const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("sandbox-rebuild job must set NEMOCLAW_RUN_LIVE_E2E=1");
-  }
-  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/sandbox-rebuild") {
-    errors.push(
-      "sandbox-rebuild job must write artifacts under e2e-artifacts/live/sandbox-rebuild",
-    );
-  }
-  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
-    errors.push("sandbox-rebuild job must point NEMOCLAW_CLI_BIN at the repo CLI");
-  }
-  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
-    errors.push("sandbox-rebuild job must force OPENSHELL_GATEWAY=nemoclaw");
-  }
-  for (const secret of [
-    "NVIDIA_INFERENCE_API_KEY",
-    "DOCKERHUB_USERNAME",
-    "DOCKERHUB_TOKEN",
-    "GITHUB_TOKEN",
-  ]) {
-    requireEnvDoesNotExposeSecret(errors, "sandbox-rebuild job", jobEnv, secret);
-  }
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    const stepName = `sandbox-rebuild step '${step.name ?? step.uses ?? "<unnamed>"}'`;
-    const stepEnv = asRecord(step.env);
-    if (step.name !== "Run sandbox rebuild live test") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
-    }
-    if (step.name !== "Authenticate to Docker Hub") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
-      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
-    }
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("sandbox-rebuild job missing checkout step");
-  requireFullShaAction(errors, checkout, "sandbox-rebuild checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("sandbox-rebuild checkout step must set persist-credentials=false");
-  }
-
-  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
-  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
-  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
-  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
-  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
-  requireRunContains(errors, installOpenShell, "-u NVIDIA_INFERENCE_API_KEY");
-  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
-
-  const runVitest = requireJobStep(errors, jobName, steps, "Run sandbox rebuild live test");
-  const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push("sandbox-rebuild step must receive NVIDIA_INFERENCE_API_KEY from secrets");
-  }
-  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
-  requireRunContains(errors, runVitest, "test/e2e/live/sandbox-rebuild.test.ts");
-}
-
 function validateStateBackupRestoreJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "state-backup-restore";
   const targetName = "state-backup-restore";
@@ -2144,97 +2087,6 @@ function validateStateBackupRestoreJob(errors: string[], jobs: WorkflowRecord): 
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
   requireRunContains(errors, runVitest, "test/e2e/live/state-backup-restore.test.ts");
-}
-
-function validateUpgradeStaleSandboxJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "upgrade-stale-sandbox";
-  const targetName = "upgrade-stale-sandbox";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing upgrade-stale-sandbox job");
-    return;
-  }
-
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("upgrade-stale-sandbox job must run on ubuntu-latest");
-  }
-  validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
-  if (job["timeout-minutes"] !== 85) {
-    errors.push("upgrade-stale-sandbox job must keep the two-sandbox 85 minute timeout");
-  }
-
-  const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("upgrade-stale-sandbox job must set NEMOCLAW_RUN_LIVE_E2E=1");
-  }
-  if (
-    jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/upgrade-stale-sandbox"
-  ) {
-    errors.push(
-      "upgrade-stale-sandbox job must write artifacts under e2e-artifacts/live/upgrade-stale-sandbox",
-    );
-  }
-  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
-    errors.push("upgrade-stale-sandbox job must point NEMOCLAW_CLI_BIN at the repo CLI");
-  }
-  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
-    errors.push("upgrade-stale-sandbox job must force OPENSHELL_GATEWAY=nemoclaw");
-  }
-  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-upgrade-stale") {
-    errors.push("upgrade-stale-sandbox job must set NEMOCLAW_SANDBOX_NAME=e2e-upgrade-stale");
-  }
-  if ("DOCKER_CONFIG" in jobEnv) {
-    errors.push("upgrade-stale-sandbox job must not set DOCKER_CONFIG at job level");
-  }
-  for (const secret of [...COMMON_SECRET_ENV_NAMES]) {
-    requireEnvDoesNotExposeSecret(errors, "upgrade-stale-sandbox job", jobEnv, secret);
-  }
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    const stepName = `upgrade-stale-sandbox step '${step.name ?? step.uses ?? "<unnamed>"}'`;
-    const stepEnv = asRecord(step.env);
-    if (step.name !== "Run upgrade stale sandbox live Vitest test") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
-    }
-    if (step.name !== "Authenticate to Docker Hub") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
-      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
-    }
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("upgrade-stale-sandbox job missing checkout step");
-  requireFullShaAction(errors, checkout, "upgrade-stale-sandbox checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("upgrade-stale-sandbox checkout step must set persist-credentials=false");
-  }
-
-  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
-  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
-  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
-  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
-  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
-  requireRunContains(errors, installOpenShell, "-u NVIDIA_INFERENCE_API_KEY");
-  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
-
-  const runVitest = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Run upgrade stale sandbox live Vitest test",
-  );
-  const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push("upgrade-stale-sandbox step must receive NVIDIA_INFERENCE_API_KEY from secrets");
-  }
-  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "tools/e2e/live-vitest-invocation.mts run --test-path");
-  requireRunContains(errors, runVitest, "test/e2e/live/upgrade-stale-sandbox.test.ts");
 }
 
 function validateTokenRotationJob(errors: string[], jobs: WorkflowRecord): void {
@@ -4072,54 +3924,6 @@ export function validateJetsonRunnerDispatchBoundary(workflow: unknown): string[
   return errors;
 }
 
-function validateSandboxRlimitConnectJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "sandbox-rlimits-connect";
-  const job = asRecord(jobs[jobName]);
-  if (job.needs !== "generate-matrix") {
-    errors.push(`${jobName} job must depend on generate-matrix`);
-  }
-  if (job.if !== explicitOnlyFreeStandingJobIf(jobName, jobName)) {
-    errors.push(`${jobName} job must run only when explicitly selected`);
-  }
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push(`${jobName} job must run on ubuntu-latest`);
-  }
-  if (job["timeout-minutes"] !== 60) {
-    errors.push(`${jobName} job must retain its 60 minute connect budget`);
-  }
-
-  const env = asRecord(job.env);
-  if (env.E2E_DEFAULT_ENABLED !== "0") {
-    errors.push(`${jobName} job must remain explicit-only`);
-  }
-  if (env.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push(`${jobName} job must set NEMOCLAW_RUN_LIVE_E2E=1`);
-  }
-  if (env.NEMOCLAW_E2E_CONNECT_RLIMITS !== "1") {
-    errors.push(`${jobName} job must opt in with NEMOCLAW_E2E_CONNECT_RLIMITS=1`);
-  }
-  if (env.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
-    errors.push(`${jobName} job must use the repo CLI launcher`);
-  }
-  if (
-    env.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/sandbox-rlimits-connect"
-  ) {
-    errors.push(`${jobName} job must write artifacts under e2e-artifacts/live/${jobName}`);
-  }
-
-  const run = namedStep(asSteps(job.steps), "Run sandbox rlimit connect live test");
-  if (!run) {
-    errors.push(`${jobName} job missing step: Run sandbox rlimit connect live test`);
-    return;
-  }
-  if (!stringValue(run.run).includes("test/e2e/live/sandbox-rlimits-connect.test.ts")) {
-    errors.push(`${jobName} job must run sandbox-rlimits-connect.test.ts`);
-  }
-  if (asRecord(run.env).NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
-    errors.push(`${jobName} step must receive NVIDIA_API_KEY from secrets`);
-  }
-}
-
 function validateInferenceModeInput(
   errors: string[],
   workflow: WorkflowRecord,
@@ -4329,14 +4133,56 @@ function validateRetiredSelectorCompatibilityJob(errors: string[], jobs: Workflo
     errors.push("workflow missing retired-selector-compatibility job");
     return;
   }
-  const selectorGate = RETIRED_CONTROLLER_SELECTOR_IDS.map(
+  const jobSelectorGate = RETIRED_CONTROLLER_SELECTOR_IDS.map(
     (id) => `contains(format(',{0},', inputs.jobs), ',${id},')`,
   ).join(" || ");
-  const expectedIf = `\${{ inputs.checkout_sha != '' && (${selectorGate}) }}`;
+  const targetSelectorGate = RETIRED_CONTROLLER_TARGET_SELECTOR_IDS.map(
+    (id) => `contains(format(',{0},', inputs.targets), ',${id},')`,
+  ).join(" || ");
+  const expectedIf = `\${{ inputs.checkout_sha != '' && (${jobSelectorGate} || ${targetSelectorGate}) }}`;
   if (job.if !== expectedIf) {
     errors.push(
       "retired-selector-compatibility job selector gate must match retired selector contract",
     );
+  }
+
+  const steps = asSteps(job.steps);
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) {
+    errors.push("retired-selector-compatibility job must check out the candidate revision");
+  } else {
+    requireFullShaAction(errors, checkout, "retired-selector-compatibility checkout");
+    const checkoutWith = asRecord(checkout.with);
+    if (
+      checkoutWith.repository !== "${{ inputs.checkout_repository || github.repository }}" ||
+      checkoutWith.ref !== "${{ inputs.checkout_sha || github.sha }}" ||
+      checkoutWith["persist-credentials"] !== false
+    ) {
+      errors.push("retired-selector-compatibility job must check out the candidate revision");
+    }
+  }
+
+  const verify = namedStep(steps, "Verify retired selector replacements");
+  if (
+    stringValue(verify?.run) !== "npx tsx tools/e2e/retired-selector-compatibility.mts" ||
+    asRecord(verify?.env).JOBS !== "${{ inputs.jobs }}"
+  ) {
+    errors.push("retired-selector-compatibility job must invoke the replacement helper");
+  }
+  if (asRecord(verify?.env).TARGETS !== "${{ inputs.targets }}") {
+    errors.push("retired-selector-compatibility job must forward target selectors");
+  }
+
+  const upload = namedStep(steps, "Upload retired selector compatibility evidence");
+  if (
+    upload?.if !== "always()" ||
+    upload?.uses !== UPLOAD_E2E_ARTIFACTS_ACTION ||
+    !isDeepStrictEqual(asRecord(upload?.with), {
+      name: "e2e-retired-selector-compatibility",
+      path: "e2e-artifacts/live/retired-selector-compatibility/",
+    })
+  ) {
+    errors.push("retired-selector-compatibility job must upload compatibility evidence");
   }
 }
 
@@ -4942,9 +4788,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateRebuildOpenClawJob(errors, jobs);
   validateRebuildHermesJob(errors, jobs, { staleBase: false });
   validateRebuildHermesJob(errors, jobs, { staleBase: true });
-  validateSandboxRebuildJob(errors, jobs);
   validateStateBackupRestoreJob(errors, jobs);
-  validateUpgradeStaleSandboxJob(errors, jobs);
   validateTokenRotationJob(errors, jobs);
   validateMessagingCompatibleEndpointJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery", "gateway-guard-recovery");
@@ -4973,8 +4817,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateIssue2478CrashLoopRecoveryJob(errors, jobs);
 
   validateTunnelLifecycleJob(errors, jobs);
-
-  validateSandboxRlimitConnectJob(errors, jobs);
 
   validateFreeStandingJobSelector(
     errors,

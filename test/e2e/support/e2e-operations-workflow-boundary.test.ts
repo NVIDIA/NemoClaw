@@ -676,10 +676,15 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       buildRuntimeHistory: vi
         .fn()
         .mockResolvedValue("## E2E Nightly Runtime Trend\n\n| Target | Prior median |"),
+      loadPriorNightlySummaries: vi.fn(),
+    };
+    const firstTurnLatency = {
+      readCurrentFirstTurnLatencySample: vi.fn().mockReturnValue(null),
     };
     const runtimeModules = new Map<string, unknown>([
       ["path", { join: (...parts: string[]) => parts.join("/") }],
       ["/workspace/scripts/audit-test-runtime.mts", runtimeAudit],
+      ["/workspace/scripts/scorecard/analyze-first-turn-latency.mts", firstTurnLatency],
       ["/workspace/scripts/scorecard/analyze-runtime-history.mts", runtimeHistory],
       ["/workspace/scripts/scorecard/coordinate-scorecard.mts", coordinator],
       ["/workspace/scripts/scorecard/analyze-trace-timing.mts", traceTiming],
@@ -727,6 +732,13 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       { github: {}, context, core },
       [{ target: "full-e2e" }],
       "/runner/e2e-runtime-summary.json",
+      {
+        currentFirstTurnLatency: null,
+        loadPriorNightlySummaries: runtimeHistory.loadPriorNightlySummaries,
+      },
+    );
+    expect(firstTurnLatency.readCurrentFirstTurnLatencySample).toHaveBeenCalledWith(
+      "/runner/e2e-runtime-audit",
     );
     expect(runtimeAudit.auditTestRuntime.mock.invocationCallOrder[0]).toBeLessThan(
       traceTiming.buildTraceTimingResult.mock.invocationCallOrder[0],
@@ -772,9 +784,11 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
       formatRuntimeAuditSummary: vi.fn(),
     };
     const runtimeHistory = { buildRuntimeHistory: vi.fn() };
+    const firstTurnLatency = { readCurrentFirstTurnLatencySample: vi.fn() };
     const runtimeModules = new Map<string, unknown>([
       ["path", { join: (...parts: string[]) => parts.join("/") }],
       ["/workspace/scripts/audit-test-runtime.mts", runtimeAudit],
+      ["/workspace/scripts/scorecard/analyze-first-turn-latency.mts", firstTurnLatency],
       ["/workspace/scripts/scorecard/analyze-runtime-history.mts", runtimeHistory],
       [
         "/workspace/scripts/scorecard/coordinate-scorecard.mts",
@@ -838,6 +852,7 @@ const interpolatedNeeds = \${{   toJSON ( needs )   }};
     );
     expect(runtimeAudit.formatRuntimeAuditSummary).not.toHaveBeenCalled();
     expect(runtimeAudit.collectRuntimeHistorySamples).not.toHaveBeenCalled();
+    expect(firstTurnLatency.readCurrentFirstTurnLatencySample).not.toHaveBeenCalled();
     expect(runtimeHistory.buildRuntimeHistory).not.toHaveBeenCalled();
     expect(summary.addRaw).toHaveBeenCalledWith(
       expect.stringMatching(

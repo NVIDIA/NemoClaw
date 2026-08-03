@@ -16,6 +16,25 @@ import {
 import { classifyTestDepth } from "../tools/pr-review-advisor/analyze.mts";
 
 const HEAD_SHA = "a".repeat(40);
+const HERMES_MANAGED_POLICY_JOBS = [
+  "bedrock-runtime-compatible-anthropic",
+  "channels-stop-start",
+  "dashboard-remote-bind",
+  "hermes-e2e",
+  "hermes-inference-switch",
+  "hermes-shields-config",
+  "security-posture",
+];
+const HERMES_MANAGED_POLICY_FILES = [
+  "agents/hermes/config/managed-policy.ts",
+  "agents/hermes/hermes-wrapper.py",
+  "agents/hermes/image-build-probes.py",
+  "agents/hermes/managed_policy.py",
+  "agents/hermes/patch-profile-policy-defaults.py",
+  "agents/hermes/seed-dashboard-config.py",
+  "agents/hermes/start.sh",
+  "src/lib/hermes-managed-route.ts",
+];
 
 function plan(...changedFiles: string[]) {
   return buildRiskPlan({ headSha: HEAD_SHA, changedFiles });
@@ -27,7 +46,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(8);
+    expect(first.version).toBe(11);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -42,22 +61,18 @@ describe("deterministic PR risk plan", () => {
     expect(result.requiredTargets).toEqual([]);
   });
 
-  it("keeps every live test behind the control-plane exception and preserves the cloud floor (#6446)", () => {
-    const canonical = plan("test/e2e/live/cloud-onboard.test.ts");
-    const ordinaryLiveTest = plan("test/e2e/live/full.test.ts");
+  it("keeps an unmapped live test behind the control-plane exception and cloud floor (#6446)", () => {
+    const result = plan("test/e2e/live/full.test.ts");
 
-    expect(canonical.families.map((family) => family.id)).toContain("platform-install");
-    expect(canonical.families.map((family) => family.id)).toContain("e2e-control-plane");
-    expect(riskPlanRequiredJobIds(canonical)).toContain("cloud-onboard");
-    expect(ordinaryLiveTest.families.map((family) => family.id)).toEqual(["e2e-control-plane"]);
-    expect(riskPlanRequiredJobIds(ordinaryLiveTest)).toEqual([
+    expect(result.families.map((family) => family.id)).toEqual(["e2e-control-plane"]);
+    expect(riskPlanRequiredJobIds(result)).toEqual([
       "cloud-inference",
       "cloud-onboard",
       "security-posture",
     ]);
   });
 
-  it("hashes trusted focused E2E selections into their canonical jobs", () => {
+  it("maps a workflow-wired live test only to its canonical job (#7921)", () => {
     const changedFiles = ["test/e2e/live/token-rotation.test.ts"];
     const focusedE2eJobs = focusedE2eJobsForChangedFiles(changedFiles);
     const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles, focusedE2eJobs });
@@ -83,7 +98,144 @@ describe("deterministic PR risk plan", () => {
         matchedFiles: ["test/e2e/live/token-rotation.test.ts"],
       }),
     );
+    expect(riskPlanRequiredJobIds(result)).toEqual(["token-rotation"]);
+    expect(result.families.map((family) => family.id)).toEqual(["focused-e2e"]);
     expect(result.planHash).not.toBe(withoutFocusedSelection.planHash);
+  });
+
+  it("selects startup and auth E2E for managed startup delivery changes (#8016)", () => {
+    const changedFiles = [
+      "scripts/lib/entrypoint-env-wrapper.sh",
+      "src/lib/onboard/managed-startup/agent-environment.ts",
+      "src/lib/onboard/sandbox-create-launch.ts",
+    ];
+    const result = plan(...changedFiles);
+    const adjacentOnboardChange = plan("src/lib/onboard/provider-selection.ts");
+
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "focused-e2e",
+        matchedFiles: changedFiles,
+        requiredJobs: [
+          "device-auth-health",
+          "issue-4462-scope-upgrade-approval",
+          "openclaw-inference-switch",
+        ],
+      }),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining([
+        "device-auth-health",
+        "issue-4462-scope-upgrade-approval",
+        "openclaw-inference-switch",
+      ]),
+    );
+    expect(riskPlanRequiredJobIds(adjacentOnboardChange)).toEqual([
+      "onboard-repair",
+      "onboard-resume",
+    ]);
+  });
+
+  it.each(
+    HERMES_MANAGED_POLICY_FILES,
+  )("selects every Hermes managed-policy live E2E job for %s (#8008)", (changedFile) => {
+    const result = plan(changedFile);
+
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "focused-e2e",
+        matchedFiles: [changedFile],
+        requiredJobs: HERMES_MANAGED_POLICY_JOBS,
+      }),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(
+      expect.arrayContaining(HERMES_MANAGED_POLICY_JOBS),
+    );
+  });
+
+  it("does not select managed-policy E2E for an unrelated Hermes runtime file (#8008)", () => {
+    const result = plan("agents/hermes/runtime-version.py");
+
+    expect(result.families).not.toContainEqual(expect.objectContaining({ id: "focused-e2e" }));
+    expect(riskPlanRequiredJobIds(result)).toEqual(["full-e2e", "hermes-e2e", "security-posture"]);
+  });
+
+  it("leaves E2E support-only changes in the fast e2e-support project (#7921)", () => {
+    const changedFiles = ["test/e2e/support/workflow-plan.test.ts"];
+    const focusedE2eJobs = focusedE2eJobsForChangedFiles(changedFiles);
+    const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles, focusedE2eJobs });
+
+    expect(focusedE2eJobs).toEqual([]);
+    expect(result.tier).toBe(0);
+    expect(result.families).toEqual([]);
+    expect(result.requiredJobs).toEqual([]);
+  });
+
+  it("maps a shared gateway live test to the retained migration job (#7921)", () => {
+    const changedFiles = ["test/e2e/live/openshell-gateway-upgrade.test.ts"];
+    const focusedE2eJobs = focusedE2eJobsForChangedFiles(changedFiles);
+    const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles, focusedE2eJobs });
+
+    expect(focusedE2eJobs).toEqual([
+      {
+        id: "openshell-gateway-upgrade",
+        matchedFiles: changedFiles,
+      },
+    ]);
+    expect(riskPlanRequiredJobIds(result)).toEqual(["openshell-gateway-upgrade"]);
+  });
+
+  it("keeps an unknown live test behind the broad control-plane floor (#7921)", () => {
+    const changedFiles = ["test/e2e/live/new-retained-journey.test.ts"];
+    const focusedE2eJobs = focusedE2eJobsForChangedFiles(changedFiles);
+    const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles, focusedE2eJobs });
+
+    expect(focusedE2eJobs).toEqual([]);
+    expect(riskPlanRequiredJobIds(result)).toEqual([
+      "cloud-inference",
+      "cloud-onboard",
+      "security-posture",
+    ]);
+    expect(result.families.map((family) => family.id)).toEqual(["e2e-control-plane"]);
+  });
+
+  it("keeps a renamed live test broad until the new path has an owning job (#7921)", () => {
+    const changedFiles = [
+      "test/e2e/live/token-rotation.test.ts",
+      "test/e2e/live/token-rotation-renamed.test.ts",
+    ];
+    const focusedE2eJobs = focusedE2eJobsForChangedFiles(changedFiles);
+    const result = buildRiskPlan({ headSha: HEAD_SHA, changedFiles, focusedE2eJobs });
+
+    expect(focusedE2eJobs).toEqual([
+      {
+        id: "token-rotation",
+        matchedFiles: ["test/e2e/live/token-rotation.test.ts"],
+      },
+    ]);
+    expect(riskPlanRequiredJobIds(result)).toEqual([
+      "cloud-inference",
+      "cloud-onboard",
+      "security-posture",
+      "token-rotation",
+    ]);
+    expect(
+      result.families.find((family) => family.id === "e2e-control-plane")?.matchedFiles,
+    ).toEqual(["test/e2e/live/token-rotation-renamed.test.ts"]);
+  });
+
+  it("keeps a shared E2E workflow change behind the broad control-plane floor (#7921)", () => {
+    const result = plan(".github/workflows/e2e.yaml");
+
+    expect(riskPlanRequiredJobIds(result)).toEqual([
+      "cloud-inference",
+      "cloud-onboard",
+      "security-posture",
+    ]);
+    expect(result.families.map((family) => family.id)).toEqual([
+      "platform-install",
+      "e2e-control-plane",
+    ]);
   });
 
   it("runs snapshot commands for restored-gateway pairing runtime changes (#7431)", () => {
@@ -198,8 +350,12 @@ describe("deterministic PR risk plan", () => {
     expect(riskPlanRequiredTargetIds(docsAndTestsOnly)).toEqual([]);
   });
 
-  it("selects post-reboot recovery for status delivery recovery changes (#7824)", () => {
-    const changedFile = "src/lib/actions/sandbox/status-snapshot.ts";
+  it.each([
+    "src/lib/actions/sandbox/status-snapshot.ts",
+    "src/lib/onboard/docker-driver-sandbox-recovery.ts",
+    "src/lib/onboard/docker-startup-command-agent.ts",
+    "src/lib/onboard/sandbox-create-step.ts",
+  ])("selects post-reboot recovery for Docker delivery changes in %s (#7824)", (changedFile) => {
     const result = plan(changedFile);
     const adjacentStatusFile = plan("src/lib/actions/sandbox/status-text.ts");
 
@@ -251,7 +407,7 @@ describe("deterministic PR risk plan", () => {
     {
       file: "src/lib/actions/upgrade-sandboxes.ts",
       family: "upgrade-rebuild",
-      jobs: ["state-backup-restore", "upgrade-stale-sandbox"],
+      jobs: ["rebuild-openclaw", "state-backup-restore"],
     },
     {
       file: "src/lib/actions/sandbox/agents/apply.ts",
@@ -414,8 +570,8 @@ describe("deterministic PR risk plan", () => {
       "network-policy",
       "onboard-repair",
       "onboard-resume",
+      "rebuild-openclaw",
       "state-backup-restore",
-      "upgrade-stale-sandbox",
     ]);
   });
 

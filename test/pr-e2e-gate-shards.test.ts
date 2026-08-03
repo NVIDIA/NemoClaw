@@ -58,7 +58,7 @@ describe("PR E2E shard policy", () => {
 
     const nonStringField = temporaryE2eWorkflow(
       workflow.replace(
-        "          - mode: hosted\n            sandbox_name: e2e-hermes-inference-switch",
+        "          - mode: anthropic\n            sandbox_name: e2e-hermes-anthropic-inference-switch",
         "          - mode: 1\n            sandbox_name: e2e-hermes-inference-switch",
       ),
     );

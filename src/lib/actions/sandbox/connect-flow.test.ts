@@ -59,7 +59,7 @@ describe("connectSandbox flow", () => {
     );
     expect(harness.checkAndRecoverSpy).toHaveBeenCalledWith("alpha");
     expect(harness.ensureOllamaAuthProxySpy).toHaveBeenCalledTimes(1);
-    expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
+    expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha");
     expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "connect", "alpha"],
@@ -455,7 +455,12 @@ describe("connectSandbox flow", () => {
 
   it("probe-only mode reports recovered gateways without opening an interactive shell", async () => {
     const harness = createConnectHarness({
-      processCheck: { checked: true, wasRunning: false, recovered: true },
+      processCheck: {
+        checked: true,
+        wasRunning: false,
+        recovered: true,
+        managedControlCompletion: { disposition: "ok", oldPid: 0, newPid: 123 },
+      },
     });
 
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
@@ -464,7 +469,7 @@ describe("connectSandbox flow", () => {
       "alpha",
       expect.objectContaining({ quiet: true }),
     );
-    expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
+    expect(harness.runAutoPairSpy).toHaveBeenCalledWith("alpha");
     expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
       "openshell",
       ["sandbox", "connect", "alpha"],
@@ -473,6 +478,27 @@ describe("connectSandbox flow", () => {
     expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
       "Probe complete: recovered OpenClaw gateway in 'alpha'.",
     );
+  });
+
+  it("probe-only mode reports an ordinary running gateway for an already-running completion (#7919)", async () => {
+    const harness = createConnectHarness({
+      processCheck: {
+        checked: true,
+        wasRunning: false,
+        recovered: true,
+        managedControlCompletion: {
+          disposition: "already-running",
+          oldPid: 123,
+          newPid: 456,
+        },
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Probe complete: OpenClaw gateway is running in 'alpha'.");
+    expect(output).not.toContain("Probe complete: recovered OpenClaw gateway");
   });
 
   it("probe-only mode exits when process inspection cannot run", async () => {

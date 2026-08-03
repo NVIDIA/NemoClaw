@@ -17,7 +17,13 @@ const EXPECTED_SHA = "a".repeat(40);
 const PLAN_HASH = "b".repeat(64);
 const CORRELATION_ID = "123e4567-e89b-42d3-a456-426614174000";
 const REPLACEMENT_FILES = [
+  "src/lib/actions/sandbox/rebuild-finalization.test.ts",
+  "src/lib/actions/sandbox/rebuild-flow-helpers.test.ts",
+  "src/lib/actions/sandbox/rebuild-route-preflight.test.ts",
+  "src/lib/actions/upgrade-sandboxes-recovery.test.ts",
+  "src/lib/sandbox/version.test.ts",
   "src/lib/security/credential-filter-secret-patterns.test.ts",
+  "test/cli/list-share-live-inference.test.ts",
   "test/credential-migration-reconciliation.test.ts",
   "test/package-contract/cli/debug-cli-command.test.ts",
   "test/package-contract/cli/public-cli-contracts.test.ts",
@@ -26,6 +32,7 @@ const REPLACEMENT_FILES = [
   "test/credentials.test.ts",
   "test/package-contract/onboard/invalid-nvidia-key.test.ts",
   "test/install-openshell-version-pin.test.ts",
+  "test/rebuild-stale-recovery.test.ts",
 ] as const;
 
 function workspace(): { artifactRoot: string; output: string; root: string } {
@@ -42,12 +49,17 @@ function workspace(): { artifactRoot: string; output: string; root: string } {
   };
 }
 
-function environment(target: ReturnType<typeof workspace>, jobs: string): NodeJS.ProcessEnv {
+function environment(
+  target: ReturnType<typeof workspace>,
+  jobs: string,
+  targets = "",
+): NodeJS.ProcessEnv {
   return {
     E2E_ARTIFACT_DIR: target.artifactRoot,
     GITHUB_OUTPUT: target.output,
     GITHUB_WORKSPACE: target.root,
     JOBS: jobs,
+    TARGETS: targets,
     NEMOCLAW_E2E_CORRELATION_ID: CORRELATION_ID,
     NEMOCLAW_E2E_EXPECTED_SHA: EXPECTED_SHA,
     NEMOCLAW_E2E_PLAN_HASH: PLAN_HASH,
@@ -70,6 +82,14 @@ describe("retired E2E selector compatibility", () => {
         jobs: "cloud-onboard,gateway-health-honest",
       }),
     ).toEqual([]);
+    expect(
+      selectedRetiredControllerJobs({
+        allowedJobs: ["cloud-onboard"],
+        expectedSha: EXPECTED_SHA,
+        jobs: "sandbox-rebuild",
+        targets: "diagnostics,sandbox-rebuild,upgrade-stale-sandbox",
+      }),
+    ).toEqual(["sandbox-rebuild", "upgrade-stale-sandbox"]);
   });
 
   it("runs each ordinary replacement project once and emits bound signals (#7616)", () => {
@@ -92,8 +112,8 @@ describe("retired E2E selector compatibility", () => {
 
       expect(selected).toEqual([...RETIRED_CONTROLLER_SELECTOR_IDS].sort());
       expect(commands).toEqual([
-        "npx vitest run --project cli src/lib/security/credential-filter-secret-patterns.test.ts",
-        "npx vitest run --project integration test/credential-migration-reconciliation.test.ts test/credentials.test.ts test/gateway-drift-preflight.test.ts test/gateway-health-honest.test.ts",
+        "npx vitest run --project cli src/lib/actions/sandbox/rebuild-finalization.test.ts src/lib/actions/sandbox/rebuild-flow-helpers.test.ts src/lib/actions/sandbox/rebuild-route-preflight.test.ts src/lib/actions/upgrade-sandboxes-recovery.test.ts src/lib/sandbox/version.test.ts src/lib/security/credential-filter-secret-patterns.test.ts",
+        "npx vitest run --project integration test/cli/list-share-live-inference.test.ts test/credential-migration-reconciliation.test.ts test/credentials.test.ts test/gateway-drift-preflight.test.ts test/gateway-health-honest.test.ts test/rebuild-stale-recovery.test.ts",
         "npx vitest run --project installer-integration test/install-openshell-version-pin.test.ts",
         "npx vitest run --project package-contract test/package-contract/cli/debug-cli-command.test.ts test/package-contract/cli/public-cli-contracts.test.ts test/package-contract/onboard/invalid-nvidia-key.test.ts",
       ]);
@@ -125,6 +145,40 @@ describe("retired E2E selector compatibility", () => {
           ),
         ),
       ).toMatchObject({ schemaVersion: 1, status: "passed", selected });
+    } finally {
+      fs.rmSync(target.root, { force: true, recursive: true });
+    }
+  });
+
+  it("runs and reports both rebuild replacements selected through targets (#7615)", () => {
+    const target = workspace();
+    const commands: string[] = [];
+    const suppliedEnvironment = environment(target, "", "sandbox-rebuild,upgrade-stale-sandbox");
+    try {
+      const selected = runRetiredSelectorCompatibility(suppliedEnvironment, {
+        allowedJobs: ["cloud-onboard"],
+        repositoryRoot: target.root,
+        resolveHead: () => EXPECTED_SHA,
+        runCommand: (command, args) => {
+          commands.push([command, ...args].join(" "));
+        },
+      });
+
+      expect(selected).toEqual(["sandbox-rebuild", "upgrade-stale-sandbox"]);
+      expect(commands).toEqual([
+        "npx vitest run --project cli src/lib/actions/sandbox/rebuild-finalization.test.ts src/lib/actions/sandbox/rebuild-flow-helpers.test.ts src/lib/actions/sandbox/rebuild-route-preflight.test.ts src/lib/actions/upgrade-sandboxes-recovery.test.ts src/lib/sandbox/version.test.ts",
+        "npx vitest run --project integration test/cli/list-share-live-inference.test.ts test/rebuild-stale-recovery.test.ts",
+      ]);
+      for (const id of selected) {
+        const signalPath = path.join(target.artifactRoot, id, "risk-signal.json");
+        expect(JSON.parse(fs.readFileSync(signalPath, "utf8"))).toMatchObject({
+          jobId: id,
+          expectedSha: EXPECTED_SHA,
+          testedSha: EXPECTED_SHA,
+          passed: 1,
+          failed: 0,
+        });
+      }
     } finally {
       fs.rmSync(target.root, { force: true, recursive: true });
     }

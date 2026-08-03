@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { captureAuthConfigPath } from "../adapters/http/auth-config-test-helpers";
 import {
@@ -846,6 +846,10 @@ exit 28
 outfile=""
 url=""
 payload=""
+n=$(cat "${HARNESS_COUNTER}")
+n=$((n + 1))
+echo "$n" > "${HARNESS_COUNTER}"
+printf '%s\n' "$@" > "${HARNESS_TMPDIR}/request-$n-args.txt"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
@@ -854,9 +858,6 @@ while [ "$#" -gt 0 ]; do
     *) url="$1"; shift ;;
   esac
 done
-n=$(cat "${HARNESS_COUNTER}")
-n=$((n + 1))
-echo "$n" > "${HARNESS_COUNTER}"
 if echo "$url" | grep -q '/responses'; then
   if printf '%s' "$payload" | grep -q '"stream":true'; then
     if [ -n "$outfile" ]; then
@@ -889,17 +890,31 @@ fi
 printf '200'
 exit 0
 `;
-    withFakeCurlProbe({ script, dirPrefix: "nemoclaw-stream-fallback-" }, ({ lines }) => {
-      const result = probeOpenAiLikeEndpoint(
-        "https://api.example.com/v1",
-        "test-model",
-        "sk-test",
-        { probeStreaming: true },
-      );
+    vi.stubEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", "300");
+    try {
+      withFakeCurlProbe({ script, dirPrefix: "nemoclaw-stream-fallback-" }, ({ lines, tmpDir }) => {
+        const result = probeOpenAiLikeEndpoint(
+          "https://api.example.com/v1",
+          "test-model",
+          "sk-test",
+          { probeStreaming: true },
+        );
 
-      expect(result).toMatchObject({ ok: true, api: "openai-completions" });
-      expect(lines.join("\n")).toMatch(/missing required events/i);
-    });
+        expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+        expect(lines.join("\n")).toMatch(/missing required events/i);
+        expect(fs.readFileSync(path.join(tmpDir, "request-1-args.txt"), "utf8")).toContain(
+          "--max-time\n300\n",
+        );
+        expect(fs.readFileSync(path.join(tmpDir, "request-2-args.txt"), "utf8")).toContain(
+          "--max-time\n5\n",
+        );
+        expect(fs.readFileSync(path.join(tmpDir, "request-3-args.txt"), "utf8")).toContain(
+          "--max-time\n300\n",
+        );
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   // PR #5975 review notes PRA-3 (Standard) and PRA-2 (Required). The unit

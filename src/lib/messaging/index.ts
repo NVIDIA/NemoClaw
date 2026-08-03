@@ -3,6 +3,7 @@
 
 export * from "./applier";
 export * from "./channels";
+export * from "./clone-rebind";
 export * from "./compiler";
 export * from "./diagnostics";
 export * from "./hooks";

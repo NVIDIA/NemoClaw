@@ -37,6 +37,7 @@ NemoClaw sends a provider-specific request that exercises the API surface intend
 For an OpenAI-compatible endpoint, the runtime defaults to `/v1/chat/completions` even when the Responses probe succeeds.
 Set `NEMOCLAW_PREFERRED_API=openai-responses` before onboarding to select `/v1/responses` only after the probe verifies the required streaming behavior.
 Set `NEMOCLAW_PREFERRED_API=openai-completions` to skip the Responses probe and validate Chat Completions only.
+The Responses streaming check waits up to 5 seconds for `response.output_text.delta` before onboarding falls back to Chat Completions.
 
 <AgentOnly variant="deepagents">
 
