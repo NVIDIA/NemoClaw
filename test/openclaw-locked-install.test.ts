@@ -378,7 +378,7 @@ describe("locked OpenClaw production installation (#5896)", () => {
       ]),
     );
     const openclawGraph = audit.lockedGraphs.find(
-      ({ packageSpec }) => packageSpec === PACKAGE_SPEC,
+      ({ packageSpec }: { packageSpec?: string }) => packageSpec === PACKAGE_SPEC,
     );
     expect(openclawGraph).toBeDefined();
     expect(openclawGraph).not.toHaveProperty("reviewedLockSha256");
