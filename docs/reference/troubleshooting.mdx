@@ -2542,20 +2542,26 @@ Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses t
 
 #### Common compatibility-path recovery
 
-If the compatibility attempt fails on any host, onboarding leaves the failed sandbox and diagnostic bundle in place so you can inspect the OpenShell and Docker state.
+After compatibility recreation starts, onboarding keeps the pre-patch container as a rollback backup until the replacement passes the Ready, direct GPU, and applicable local-inference checks.
+If a later check fails, onboarding prints failure diagnostics and attempts to restore the pre-patch container before it exits.
+When rollback succeeds, the pre-patch sandbox remains available.
+When rollback fails, onboarding reports that the pre-patch container was not restored and prints container-cleanup guidance.
+GPU-proof diagnostics are captured before rollback and can print that guidance before the final container state is known.
+Inspect the sandbox and its labeled Docker containers before running a deletion command.
 
 <Note>
 Starting with NemoClaw v0.0.43, the standard installer handles the `/proc/<pid>/task/<tid>/comm` permission case during this patch path.
 If an older release fails direct GPU proof with that path and `Permission denied`, upgrade NemoClaw and rerun onboarding.
 </Note>
 
-The output includes a cleanup command such as:
+When inspection confirms that the failed sandbox remains, delete it with a command such as:
 
 ```bash
 openshell sandbox delete <sandbox-name>
 ```
 
-Fix the NVIDIA Container Toolkit or CDI configuration reported in the diagnostics, clean up the failed sandbox, then rerun onboarding.
+Fix the NVIDIA Container Toolkit or CDI configuration reported in the diagnostics.
+Run the deletion command only after confirming that the pre-patch sandbox was not restored, then rerun onboarding.
 If you do not need GPU access inside the sandbox, rerun with `--no-sandbox-gpu`.
 
 If sandbox creation fails with `CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`, the OpenShell gateway tried `docker create --device nvidia.com/gpu=all` and Docker could not resolve the CDI spec.

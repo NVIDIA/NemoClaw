@@ -2709,7 +2709,7 @@ async function createSandboxWithBaseImageResolution(
   recreateRuntime.advance("creating");
   const {
     createResult,
-    dockerGpuCreatePatch,
+    runtimePatch,
     route: selectedGpuRoute,
     firstCreateOutput,
     registryImageRef,
@@ -2765,7 +2765,7 @@ async function createSandboxWithBaseImageResolution(
   }
 
   if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
-    dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAfterReady(
+    await dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady(
       effectiveSandboxGpuConfig,
       provider,
       {
@@ -2773,11 +2773,10 @@ async function createSandboxWithBaseImageResolution(
         dockerDriverGateway,
         selectedRoute: selectedGpuRoute,
         verifyDirectSandboxGpu,
-        verifyGpuOrExit: dockerGpuCreatePatch.verifyGpuOrExit,
-        selectedMode: dockerGpuCreatePatch.selectedMode,
         runCaptureOpenshell,
         log: console.log,
       },
+      runtimePatch,
     );
   }
 

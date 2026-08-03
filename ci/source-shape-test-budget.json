@@ -528,7 +528,7 @@
     },
     {
       "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps production activation paths disconnected from managed bootstrap",
+      "test": "keeps production activation paths disconnected from driver bootstrap adapters",
       "category": "security"
     },
     {
