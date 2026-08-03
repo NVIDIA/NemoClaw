@@ -57,6 +57,9 @@ const LLAMA_CPP_META_NUMERIC_KEYS = [
   "size",
 ] as const;
 
+const MAX_LLAMA_CPP_SERVED_MODEL_ALIAS_BYTES = 256;
+const LLAMA_CPP_MAX_PROBE_RESPONSE_BYTES = 256 * 1024;
+
 function failure(
   reason: LlamaCppAttachmentFailureReason,
   message: string,
@@ -90,6 +93,9 @@ function hasNativeLlamaCppModelMetadata(entry: LlamaCppModelEntry): boolean {
 export function isSafeLlamaCppServedModelAlias(value: string): boolean {
   const alias = value.trim();
   if (!alias || alias !== value) return false;
+  if (Buffer.byteLength(alias, "utf8") > MAX_LLAMA_CPP_SERVED_MODEL_ALIAS_BYTES) {
+    return false;
+  }
   if (!/^[A-Za-z0-9._:/-]+$/.test(alias)) return false;
   if (/^(?:file:|[A-Za-z]:[\\/]|[./~]|\\\\)/i.test(alias)) return false;
   if (alias.includes("\\") || /\.gguf$/i.test(alias)) return false;
@@ -152,7 +158,7 @@ function probeArgs(authArgs: readonly string[], url: string): string[] {
     "--max-time",
     "5",
     "--max-filesize",
-    "262144",
+    String(LLAMA_CPP_MAX_PROBE_RESPONSE_BYTES),
     ...authArgs,
     url,
   ];
@@ -218,6 +224,7 @@ export function probeLlamaCppAttachment(
   }
   const probe = options.runCurlProbeImpl ?? runCurlProbe;
   const anonymousModels = probe(probeArgs([], `${baseUrl}/v1/models`), {
+    maxResponseBytes: LLAMA_CPP_MAX_PROBE_RESPONSE_BYTES,
     pinnedAddresses: [],
   });
   const anonymousBoundFailure = boundedProbeFailure(anonymousModels);
@@ -243,6 +250,7 @@ export function probeLlamaCppAttachment(
   }
   try {
     const probeOptions: CurlProbeOptions = {
+      maxResponseBytes: LLAMA_CPP_MAX_PROBE_RESPONSE_BYTES,
       trustedConfigFiles: auth.trustedConfigFiles,
       pinnedAddresses: [],
     };

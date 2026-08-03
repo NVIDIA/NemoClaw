@@ -5,7 +5,7 @@ import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { validateCurlProbeArgs } from "../../adapters/http/curl-args";
 import type { CurlProbeOptions, CurlProbeResult } from "../../adapters/http/probe";
-import { probeLlamaCppAttachment } from "./index";
+import { isSafeLlamaCppServedModelAlias, probeLlamaCppAttachment } from "./index";
 
 function response(httpStatus: number, body: string): CurlProbeResult {
   return {
@@ -62,10 +62,20 @@ function scriptedProbe(responses: CurlProbeResult[]) {
     expect(() => validateCurlProbeArgs(argv, options)).not.toThrow();
     const current = responses[index];
     index += 1;
-    if (!current) throw new Error(`unexpected probe ${index}`);
-    return current;
+    expect(current, `unexpected probe ${index}`).toBeDefined();
+    return current!;
   });
 }
+
+describe("isSafeLlamaCppServedModelAlias", () => {
+  it("accepts a served model alias at the 256-byte boundary (#8161)", () => {
+    expect(isSafeLlamaCppServedModelAlias("a".repeat(256))).toBe(true);
+  });
+
+  it("rejects a served model alias beyond the 256-byte boundary (#8161)", () => {
+    expect(isSafeLlamaCppServedModelAlias("a".repeat(257))).toBe(false);
+  });
+});
 
 describe("probeLlamaCppAttachment", () => {
   it("requires an operator-supplied native API key (#8161)", () => {
@@ -94,8 +104,9 @@ describe("probeLlamaCppAttachment", () => {
       model: "team/model-alias",
     });
     expect(probe).toHaveBeenCalledTimes(5);
-    for (const [argv] of probe.mock.calls) {
+    for (const [argv, options] of probe.mock.calls) {
       expect(argv).toEqual(expect.arrayContaining(["--max-time", "5", "--max-filesize", "262144"]));
+      expect(options).toEqual(expect.objectContaining({ maxResponseBytes: 262144 }));
     }
   });
 
@@ -257,8 +268,8 @@ describe("probeLlamaCppAttachment", () => {
         configModes.push(fs.statSync(configPath).mode & 0o777);
       }
       const current = responses[index++];
-      if (!current) throw new Error(`unexpected probe ${index}`);
-      return current;
+      expect(current, `unexpected probe ${index}`).toBeDefined();
+      return current!;
     });
 
     const result = probeLlamaCppAttachment(token, { runCurlProbeImpl: probe });
