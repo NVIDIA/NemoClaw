@@ -337,7 +337,8 @@ function validateMutationAuthoritySurface(
 
 function validateBootstrapSurface(surface: Record<string, unknown>): void {
   if (surface.supported === true) {
-    requireFunction(surface, "prepare", "bootstrap");
+    requireFunction(surface, "createLifecycle", "bootstrap");
+    requireFunction(surface, "createOnboardRouting", "bootstrap");
   }
 }
 

@@ -2711,8 +2711,14 @@ async function createSandboxWithBaseImageResolution(
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
   recreateRuntime.advance("creating");
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const { createResult, dockerGpuCreatePatch, route: selectedGpuRoute, firstCreateOutput, registryImageRef, retainedImageFinalization } = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
+  const {
+    createResult,
+    runtimePatch,
+    route: selectedGpuRoute,
+    firstCreateOutput,
+    registryImageRef,
+    retainedImageFinalization,
+  } = await sandboxGpuCreateFlow.runSandboxGpuCreateFlow(
     {
       sandboxName,
       provider,
@@ -2766,7 +2772,7 @@ async function createSandboxWithBaseImageResolution(
   }
 
   if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
-    dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAfterReady(
+    await dockerGpuLocalInference.verifyGpuSandboxLocalInferenceAndCommitAfterReady(
       effectiveSandboxGpuConfig,
       provider,
       {
@@ -2774,11 +2780,10 @@ async function createSandboxWithBaseImageResolution(
         dockerDriverGateway,
         selectedRoute: selectedGpuRoute,
         verifyDirectSandboxGpu,
-        verifyGpuOrExit: dockerGpuCreatePatch.verifyGpuOrExit,
-        selectedMode: dockerGpuCreatePatch.selectedMode,
         runCaptureOpenshell,
         log: console.log,
       },
+      runtimePatch,
     );
   }
 
@@ -2797,8 +2802,11 @@ async function createSandboxWithBaseImageResolution(
   }
 
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
-  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const resolvedImageTag = sandboxGpuCreateFlow.resolveCreatedSandboxRegistryImageRef(retainedImageFinalization, [registryImageRef, prebuild.imageRef, buildContext.extractBuiltImageRef(`${firstCreateOutput}\n${createResult.output}`), resolveSandboxImageTagFromCreateOutput(`${firstCreateOutput}\n${createResult.output}`, buildId)]);
+  const resolvedImageTag =
+    sandboxGpuCreateFlow.resolveCreatedSandboxRegistryImageRef(retainedImageFinalization, [registryImageRef, prebuild.imageRef, buildContext.extractBuiltImageRef(`${firstCreateOutput}\n${createResult.output}`), resolveSandboxImageTagFromCreateOutput(`${firstCreateOutput}\n${createResult.output}`, buildId)]) ??
+    prebuild.imageRef ??
+    buildContext.extractBuiltImageRef(`${firstCreateOutput}\n${createResult.output}`) ??
+    resolveSandboxImageTagFromCreateOutput(`${firstCreateOutput}\n${createResult.output}`, buildId);
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
   recreateRuntime.recordCreated();
   finalizeCreatedSandbox(

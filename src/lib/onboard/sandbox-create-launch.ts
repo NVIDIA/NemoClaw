@@ -9,9 +9,13 @@ import { appendExtraPlaceholderKeysEnvArg } from "./extra-placeholder-keys";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import { appendHermesDashboardEnvArgs } from "./hermes-dashboard";
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
+import {
+  createManagedBootstrapIdentity,
+  renderManagedBootstrapHeldCommand,
+} from "./managed-bootstrap/adapter";
+import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
 import {
-  DOCKER_SELECTOR_ENV_NAMES,
   prebuildSandboxImageIfEligible,
   type SandboxPrebuildInput,
   type SandboxPrebuildResult,
@@ -59,6 +63,8 @@ export interface SandboxCreateLaunchInput {
   openshellArgv?: OpenshellArgv;
   buildEnv?(): Record<string, string>;
   dockerSelectorEnv?: Readonly<Record<string, string>>;
+  /** Dormant until a complete runtime bundle and durable authority store are selected. */
+  managedStartupRootApplyRequest?: ManagedStartupRootApplyRequest | null;
 }
 
 export interface SandboxCreateLaunch {
@@ -68,6 +74,9 @@ export interface SandboxCreateLaunch {
   envArgs: string[];
   sandboxEnv: Record<string, string>;
   sandboxStartupCommand: string[];
+  intendedSandboxStartupCommand: string[];
+  managedBootstrapIdentity: string | null;
+  managedStartupRootApplyRequest: ManagedStartupRootApplyRequest | null;
 }
 
 export interface SandboxCreateLaunchWithPrebuildInput extends SandboxCreateLaunchInput {
@@ -200,19 +209,26 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   // permits for host-side processes but that must not enter the sandbox.
   delete sandboxEnv.KUBECONFIG;
   delete sandboxEnv.SSH_AUTH_SOCK;
-  if (input.dockerSelectorEnv) {
-    for (const key of DOCKER_SELECTOR_ENV_NAMES) {
-      delete sandboxEnv[key];
-      const value = input.dockerSelectorEnv[key];
-      if (value !== undefined) sandboxEnv[key] = value;
-    }
-  }
 
   // Run without piping through awk; the pipe masked non-zero exit codes
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
   // lets the real exit code flow through to run().
-  const sandboxStartupCommand = ["env", ...envArgs, "nemoclaw-start"];
+  const intendedSandboxStartupCommand = ["env", ...envArgs, "nemoclaw-start"];
+  const managedStartupRootApplyRequest = input.managedStartupRootApplyRequest ?? null;
+  const managedBootstrapIdentity = managedStartupRootApplyRequest
+    ? createManagedBootstrapIdentity()
+    : null;
+  const sandboxStartupCommand =
+    managedStartupRootApplyRequest && managedBootstrapIdentity
+      ? [
+          ...renderManagedBootstrapHeldCommand(
+            managedStartupRootApplyRequest,
+            managedBootstrapIdentity,
+            intendedSandboxStartupCommand,
+          ),
+        ]
+      : intendedSandboxStartupCommand;
   const openshellArgs = ["sandbox", "create", ...input.createArgs, "--", ...sandboxStartupCommand];
   const createCommand = renderSandboxCreateCommand(
     input.createArgs,
@@ -230,6 +246,9 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     envArgs,
     sandboxEnv,
     sandboxStartupCommand,
+    intendedSandboxStartupCommand,
+    managedBootstrapIdentity,
+    managedStartupRootApplyRequest,
   };
 }
 
@@ -244,11 +263,7 @@ export async function prepareSandboxCreateLaunchWithPrebuild(
     sandboxName: input.sandboxName,
   });
   return {
-    ...prepareSandboxCreateLaunch({
-      ...launchInput,
-      createArgs: prebuild.createArgs,
-      dockerSelectorEnv: prebuild.preparedOpenClawLegacyImage?.dockerEnv,
-    }),
+    ...prepareSandboxCreateLaunch({ ...launchInput, createArgs: prebuild.createArgs }),
     prebuild,
   };
 }
