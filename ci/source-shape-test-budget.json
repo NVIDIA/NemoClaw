@@ -517,6 +517,11 @@
       "category": "compatibility"
     },
     {
+      "file": "test/source-architecture.test.ts",
+      "test": "keeps removed step mutation APIs out of production source (#7703)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/pr-limit-policy.test.ts",
       "test": "keeps contributor guidance aligned with the enforced maintainer exemption",
       "category": "compatibility"

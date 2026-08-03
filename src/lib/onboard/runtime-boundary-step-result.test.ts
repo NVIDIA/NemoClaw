@@ -45,26 +45,12 @@ function createRuntimeHarness() {
         Object.assign(current, filterSafeUpdates(updates));
         return current;
       }),
-    markStepCompleteRecordOnly: (stepName, updates: SessionUpdates = {}) =>
-      updateSession((current) => {
-        current.steps[stepName].status = "complete";
-        Object.assign(current, filterSafeUpdates(updates));
-        return current;
-      }),
     markStepSkipped: (stepName) =>
       updateSession((current) => {
         current.steps[stepName].status = "skipped";
         return current;
       }),
     markStepFailed: (stepName, message) =>
-      updateSession((current) => {
-        current.steps[stepName].status = "failed";
-        current.steps[stepName].error = message ?? null;
-        current.status = "failed";
-        current.failure = { step: stepName, message: message ?? null, recordedAt: "now" };
-        return current;
-      }),
-    markStepFailedRecordOnly: (stepName, message) =>
       updateSession((current) => {
         current.steps[stepName].status = "failed";
         current.steps[stepName].error = message ?? null;
@@ -91,19 +77,19 @@ function createRuntimeHarness() {
   };
 }
 
-describe("OnboardRuntimeBoundary record-only step/result pairing", () => {
-  it("pairs record-only step completion with an explicit state result", async () => {
+describe("OnboardRuntimeBoundary step/result pairing", () => {
+  it("pairs step completion with an explicit state result", async () => {
     const { boundary, events } = createRuntimeHarness();
 
     await boundary.recordStateResult(advanceTo("preflight"));
     const completed = await boundary.recordStepCompleteWithStateResult(
       "preflight",
-      { sandboxName: "record-only-sb" },
+      { sandboxName: "paired-step-sb" },
       advanceTo("gateway", { metadata: { state: "preflight" } }),
     );
 
     expect(completed).toMatchObject({
-      sandboxName: "record-only-sb",
+      sandboxName: "paired-step-sb",
       machine: { state: "gateway", revision: 2 },
       steps: { preflight: { status: "complete" } },
     });
@@ -139,7 +125,7 @@ describe("OnboardRuntimeBoundary record-only step/result pairing", () => {
     ]);
   });
 
-  it("pairs record-only step failure with an explicit failure result", async () => {
+  it("pairs step failure with an explicit failure result", async () => {
     const { boundary, events } = createRuntimeHarness();
 
     await boundary.recordStateResult(advanceTo("preflight"));
@@ -163,7 +149,7 @@ describe("OnboardRuntimeBoundary record-only step/result pairing", () => {
     ]);
   });
 
-  it("rejects invalid explicit results before persisting record-only step completion", async () => {
+  it("rejects invalid explicit results before persisting step completion", async () => {
     const { boundary, getSession } = createRuntimeHarness();
 
     await boundary.recordStateResult(advanceTo("preflight"));
@@ -177,7 +163,7 @@ describe("OnboardRuntimeBoundary record-only step/result pairing", () => {
     });
   });
 
-  it("rejects stale state results when record-only steps did not advance the machine", async () => {
+  it("rejects stale state results when step updates did not advance the machine", async () => {
     const { boundary, events } = createRuntimeHarness();
 
     await boundary.recordStateResult(advanceTo("preflight", { metadata: { state: "init" } }));

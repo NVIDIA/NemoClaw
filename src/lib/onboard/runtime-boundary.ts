@@ -112,7 +112,7 @@ export class OnboardRuntimeBoundary {
     result: OnboardStateResult,
   ): Promise<Session> {
     await this.getRuntime().assertResultWillApply(result);
-    await this.getRuntime().markStepCompleteRecordOnly(stepName, updates);
+    await this.getRuntime().markStepComplete(stepName, updates);
     return this.recordStateResult(result);
   }
 
@@ -122,7 +122,7 @@ export class OnboardRuntimeBoundary {
     result: OnboardStateFailedResult,
   ): Promise<Session> {
     await this.getRuntime().assertResultWillApply(result);
-    await this.getRuntime().markStepFailedRecordOnly(stepName, message);
+    await this.getRuntime().markStepFailed(stepName, message);
     return this.recordStateResult(result);
   }
 

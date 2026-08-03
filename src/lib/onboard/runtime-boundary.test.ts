@@ -73,7 +73,6 @@ function createRuntimeHarness(overrides: Partial<Session> = {}) {
         return current;
       });
     },
-    markStepCompleteRecordOnly: () => cloneSession(session ?? createSession()),
     markStepSkipped: (stepName) =>
       updateSession((current) => {
         current.steps[stepName].status = "skipped";
@@ -87,7 +86,6 @@ function createRuntimeHarness(overrides: Partial<Session> = {}) {
         return current;
       });
     },
-    markStepFailedRecordOnly: () => cloneSession(session ?? createSession()),
     completeSession: (updates: SessionUpdates = {}) =>
       updateSession((current) => {
         Object.assign(current, filterSafeUpdates(updates));

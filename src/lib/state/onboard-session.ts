@@ -1394,10 +1394,6 @@ export function markStepStarted(stepName: string): Session {
   return updatedSession;
 }
 
-export function markStepStartedRecordOnly(stepName: string): Session {
-  return markStepStarted(stepName);
-}
-
 export function markStepComplete(stepName: string, updates: SessionUpdates = {}): Session {
   const safeUpdates = filterSafeUpdates(updates);
   return updateSession((session) => {
@@ -1430,13 +1426,6 @@ export function markStepComplete(stepName: string, updates: SessionUpdates = {})
   });
 }
 
-export function markStepCompleteRecordOnly(
-  stepName: string,
-  updates: SessionUpdates = {},
-): Session {
-  return markStepComplete(stepName, updates);
-}
-
 export function markStepSkipped(stepName: string): Session {
   return updateSession((session) => {
     const step = session.steps[stepName];
@@ -1460,10 +1449,6 @@ export function markStepFailed(stepName: string, message: string | null = null):
     step.error = redactSensitiveText(message);
     return session;
   });
-}
-
-export function markStepFailedRecordOnly(stepName: string, message: string | null = null): Session {
-  return markStepFailed(stepName, message);
 }
 
 /**

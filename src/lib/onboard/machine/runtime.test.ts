@@ -9,7 +9,6 @@ import {
   normalizeSession,
   type Session,
   type SessionUpdates,
-  sanitizeFailure,
 } from "../../state/onboard-session";
 import type { OnboardMachineEvent } from "./events";
 import {
@@ -68,15 +67,6 @@ function createHarness(initialSession: Session | null = createSession()) {
         return current;
       });
     },
-    markStepCompleteRecordOnly: (stepName, updates: SessionUpdates = {}) =>
-      updateSession((current) => {
-        const step = current.steps[stepName];
-        if (!step) return current;
-        step.status = "complete";
-        current.lastCompletedStep = stepName;
-        Object.assign(current, filterSafeUpdates(updates));
-        return current;
-      }),
     markStepSkipped: (stepName) =>
       updateSession((current) => {
         const step = current.steps[stepName];
@@ -90,19 +80,10 @@ function createHarness(initialSession: Session | null = createSession()) {
         const step = current.steps[stepName];
         if (!step) return current;
         step.status = "failed";
-        current.status = "failed";
-        current.failure = sanitizeFailure({ step: stepName, message, recordedAt: "now" });
+        step.error = message ?? null;
         return current;
       });
     },
-    markStepFailedRecordOnly: (stepName, message) =>
-      updateSession((current) => {
-        const step = current.steps[stepName];
-        if (!step) return current;
-        step.status = "failed";
-        step.error = message ?? null;
-        return current;
-      }),
     completeSession: (updates: SessionUpdates = {}) =>
       updateSession((current) => {
         Object.assign(current, filterSafeUpdates(updates));
@@ -159,11 +140,12 @@ describe("OnboardRuntime", () => {
     expect(stepCalls).toEqual(["markStepStarted", "markStepComplete", "markStepFailed"]);
     expect(getSession()).toMatchObject({
       sandboxName: "my-assistant",
-      status: "failed",
+      status: "in_progress",
+      failure: null,
       machine: { state: "init", revision: 0 },
       steps: {
         preflight: { status: "complete" },
-        gateway: { status: "failed" },
+        gateway: { status: "failed", error: "boom" },
       },
     });
   });
