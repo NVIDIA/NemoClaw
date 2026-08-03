@@ -349,6 +349,11 @@ Direct edits to these files can be overwritten when NemoClaw regenerates the ima
 Hermes also stores runtime state such as `state.db`, logs, and platform sessions under the `.hermes` tree.
 Messaging sessions such as WhatsApp pairing can remain mutable by design so they survive rebuilds.
 
+When Shields locks the tree, the shared state-directory guard treats any present `credentials`, `identity`, or `pairing` directory as a confidentiality root.
+For Hermes, this normally applies to `pairing`.
+The guard sets the root to `root:sandbox 710`, keeps it traversable but unlistable to the sandbox group, and sets every descendant to `root:root` with no group or world permission bits.
+As a result, a known-name probe for a missing direct child returns `ENOENT`, while directory listing, nested traversal, and protected-file reads return `EACCES`.
+
 | Aspect | Detail |
 |---|---|
 | Default | The Hermes config tree contains NemoClaw-generated config plus mutable runtime state. |
