@@ -1260,10 +1260,10 @@ Run `openshell sandbox list` on the host to check the underlying sandbox state.
 
 ### Deep Agents Config Lock Failure Recovery
 
-A `CRITICAL` Deep Agents config-lock failure reports `fail-closed containment=` or `rollback failed`.
+A `CRITICAL` Deep Agents config-lock diagnostic can report `fail-closed containment=`, `rollback failed`, or that the lock rollback could not restore the trusted posture.
 A containment result identifies one of two confirmed postures or an incomplete containment attempt.
-A `rollback failed` result does not confirm containment.
-It means NemoClaw could not restore or confirm the original trusted posture.
+A `rollback failed` result or lock-rollback diagnostic does not confirm containment.
+Both rollback diagnostics mean NemoClaw could not restore or confirm the original trusted posture.
 
 - **Config-root posture** (`fail-closed containment=config-root`) means NemoClaw installed fresh `0444 root:root` config and hash inodes.
   NemoClaw also confirmed `0500 root:root` on `/sandbox/.deepagents` and `1775 root:sandbox` on `/sandbox`.
@@ -1275,7 +1275,7 @@ Preserve the complete `CRITICAL` diagnostic.
 Do not retry `shields up`.
 Do not run `chmod`, `chown`, or another repair inside the sandbox.
 A confirmed containment posture removes the sandbox identity's access to the Deep Agents configuration.
-An incomplete containment result or `rollback failed` does not establish a trustworthy boundary from which to accept the current bytes.
+An incomplete containment result, a `rollback failed` result, or a lock-rollback diagnostic does not establish a trustworthy boundary from which to accept the current bytes.
 An ordinary `rebuild` cannot turn the current state into a trustworthy snapshot.
 
 If you have a trusted host-side snapshot from before the failure, list the snapshots and record its selector:

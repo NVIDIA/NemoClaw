@@ -1163,7 +1163,7 @@ If the retry still fails, rebuild a known-good baseline with `$$nemoclaw <name> 
 <AgentOnly variant="deepagents">
 
 A `CRITICAL` Deep Agents config-lock failure is not an ordinary unlocked or drifted result.
-The retry and rebuild guidance above does not apply when the diagnostic includes `fail-closed containment=` or `rollback failed`.
+The retry and rebuild guidance above does not apply to a `CRITICAL` Deep Agents config-lock diagnostic.
 Do not retry `shields up` or attempt an in-sandbox repair.
 Follow [Deep Agents Config Lock Failure Recovery](troubleshooting#deep-agents-config-lock-failure-recovery) to restore a trusted snapshot or recreate the sandbox before retrying.
 
