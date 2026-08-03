@@ -138,6 +138,29 @@ export function resolveCreatedSandboxRegistryImageRef(
   return candidates.find((candidate): candidate is string => Boolean(candidate)) ?? null;
 }
 
+type RetainedOpenClawCreateIntent = Parameters<typeof bindRetainedOpenClawGpuRoute>[0];
+type RetainedOpenClawGpuConfig = Parameters<typeof bindRetainedOpenClawGpuRoute>[1];
+type RetainedOpenClawImage = Parameters<typeof createRetainedOpenClawDockerRuntime>[0];
+
+export function resolveRetainedOpenClawCreateIntent(
+  baseResolvedCreateIntent: RetainedOpenClawCreateIntent,
+  sandboxGpuConfig: RetainedOpenClawGpuConfig,
+  dockerDriverGateway: boolean,
+  preparedImage: RetainedOpenClawImage | null | undefined,
+): RetainedOpenClawCreateIntent {
+  const retainedDockerRuntime = preparedImage
+    ? createRetainedOpenClawDockerRuntime(preparedImage)
+    : null;
+  return retainedDockerRuntime
+    ? bindRetainedOpenClawGpuRoute(
+        baseResolvedCreateIntent,
+        sandboxGpuConfig,
+        dockerDriverGateway,
+        retainedDockerRuntime,
+      )
+    : baseResolvedCreateIntent;
+}
+
 function abortUnusedRetainedImage(input: SandboxGpuCreateFlowInput): void {
   const preparedImage = input.prebuild.preparedOpenClawLegacyImage;
   if (!preparedImage) return;
