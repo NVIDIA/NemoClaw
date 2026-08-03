@@ -199,7 +199,11 @@ Docker candidate. The current image definitions still do not package
 modes yet. Later persistence and qualification slices must compile and verify
 the freestanding entrypoint for amd64 and arm64 in every agent image, add those
 artifacts and the image-runtime prerequisites, and provide the canonical durable
-authority store. The remaining integration and qualification work is tracked in
+authority store. Future image packaging must compile the composed
+`managed-bootstrap/image-runtime.ts` entrypoint as
+`managed-startup-image-runtime.cjs`; packaging the standalone managed-startup
+entrypoint does not provide the bootstrap modes. The remaining integration and
+qualification work is tracked in
 [epic #7744](https://github.com/NVIDIA/NemoClaw/issues/7744). Until that complete
 boundary passes protected E2E, every production runtime provider keeps
 bootstrap unsupported.
