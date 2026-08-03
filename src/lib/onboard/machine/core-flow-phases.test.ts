@@ -4,7 +4,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session, type SessionUpdates } from "../../state/onboard-session";
-import { recordInvalidatedTargets } from "../__test-helpers__/machine-recorders";
 import {
   type CoreOnboardFlowPhases,
   createProviderInferenceOnboardFlowPhase,
@@ -15,7 +14,7 @@ import {
   type SandboxOnboardFlowPhaseOptions,
 } from "./core-flow-phases";
 import type { OnboardFlowContext } from "./flow-context";
-import type { OnboardStateResult } from "./result";
+import type { OnboardPrerequisiteRepairEventRecorder } from "./prerequisite-repair";
 import { advanceTo, branchTo } from "./result";
 import type { OnboardSequencePhase } from "./sequence-runner";
 
@@ -72,6 +71,12 @@ function completeStep(): Session["steps"][string] {
     startedAt: "2026-06-09T00:00:00.000Z",
     completedAt: "2026-06-09T00:01:00.000Z",
     error: null,
+  };
+}
+
+function repairRecorder(events: string[] = []): OnboardPrerequisiteRepairEventRecorder {
+  return async (type, options) => {
+    events.push(`${type}:${options.state ?? "unknown"}`);
   };
 }
 
@@ -587,13 +592,6 @@ describe("core onboard flow phases", () => {
         run: runSandbox,
       },
     };
-    const recordStateResult = vi.fn(async () => {
-      throw new Error("compatibility recorder should not run");
-    });
-    const recordInvalidatedStateResult = vi.fn(async () => {
-      throw new Error("invalidation recorder should not run on the strict runner path");
-    });
-
     const result = await runCoreOnboardFlowSlice({
       context: context({
         resume,
@@ -619,8 +617,9 @@ describe("core onboard flow phases", () => {
       },
       phases,
       resume,
-      recordStateResult,
-      recordInvalidatedStateResult,
+      recordRepairEvent: async () => {
+        throw new Error("repair recorder should not run on the exact-entry path");
+      },
     });
 
     expect(phaseCalls).toEqual(["provider_selection", "sandbox"]);
@@ -631,74 +630,215 @@ describe("core onboard flow phases", () => {
       expect.objectContaining({ endpointUrl: "https://example.test/v1" }),
     );
     expect(appliedTransitions).toEqual(["advance:inference", "advance:sandbox", "branch:openclaw"]);
-    expect(recordStateResult).not.toHaveBeenCalled();
-    expect(recordInvalidatedStateResult).not.toHaveBeenCalled();
+    expect(result.context.endpointUrl).toBe("https://example.test/v1");
+    expect(result.context.sandboxName).toBe("created-sandbox");
+    expect(result.session.machine.state).toBe("openclaw");
+  });
+
+  it("runs the sandbox effect once at exact sandbox entry", async () => {
+    const createSandbox = vi.fn(async () => "created-sandbox");
+    const phases = createPhases({ sandboxDeps: { createSandbox } });
+    const appliedTransitions: string[] = [];
+    const repairEvents: string[] = [];
+    let runtimeSession = createSession({
+      machine: {
+        version: 1,
+        state: "sandbox",
+        stateEnteredAt: "2026-06-09T00:02:00.000Z",
+        revision: 7,
+      },
+    });
+
+    const result = await runCoreOnboardFlowSlice({
+      context: context({
+        resume: true,
+        model: "nvidia/test",
+        provider: "nim",
+        endpointUrl: "https://example.test/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      }),
+      runtime: {
+        session: async () => runtimeSession,
+        applyResult: async (stateResult) => {
+          const transition = stateResult as ReturnType<typeof branchTo>;
+          appliedTransitions.push(`${transition.transitionKind}:${transition.next}`);
+          runtimeSession = createSession({
+            machine: {
+              version: 1,
+              state: transition.next,
+              stateEnteredAt: "2026-06-09T00:03:00.000Z",
+              revision: runtimeSession.machine.revision + 1,
+            },
+          });
+          return runtimeSession;
+        },
+      },
+      phases,
+      resume: true,
+      recordRepairEvent: repairRecorder(repairEvents),
+    });
+
+    expect(createSandbox).toHaveBeenCalledOnce();
+    expect(appliedTransitions).toEqual(["branch:agent_setup"]);
+    expect(repairEvents).toEqual([
+      "state.repair.started:provider_selection",
+      "state.repair.completed:provider_selection",
+    ]);
+    expect(result.context.sandboxName).toBe("created-sandbox");
+    expect(result.session.machine.state).toBe("agent_setup");
+  });
+
+  it.each([
+    ["inference", true, ["advance:sandbox", "branch:openclaw"]],
+    ["sandbox", true, ["branch:openclaw"]],
+    ["sandbox", false, ["branch:openclaw"]],
+  ] as const)("repairs provider context before strict %s entry", async (state, resume, expected) => {
+    const calls: string[] = [];
+    const applied: string[] = [];
+    const repairEvents: string[] = [];
+    let runtimeSession = createSession({
+      machine: {
+        version: 1,
+        state,
+        stateEnteredAt: "2026-06-09T00:02:00.000Z",
+        revision: 7,
+      },
+    });
+    const phases: CoreOnboardFlowPhases<CoreContext> = {
+      providerInference: {
+        state: "provider_selection",
+        run: (ctx) => {
+          calls.push("provider_selection");
+          return {
+            context: { ...ctx, endpointUrl: "https://example.test/v1" },
+            result: [
+              advanceTo("inference", { metadata: { state: "provider_selection" } }),
+              advanceTo("sandbox", { metadata: { state: "inference" } }),
+            ],
+          };
+        },
+      },
+      sandbox: {
+        state: "sandbox",
+        run: (ctx) => {
+          calls.push("sandbox");
+          return {
+            context: { ...ctx, sandboxName: "created-sandbox" },
+            result: branchTo("openclaw", { metadata: { state: "sandbox" } }),
+          };
+        },
+      },
+    };
+
+    const result = await runCoreOnboardFlowSlice({
+      context: context({ resume }),
+      runtime: {
+        session: async () => runtimeSession,
+        applyResult: async (stateResult) => {
+          if (stateResult.type === "transition") {
+            applied.push(`${stateResult.transitionKind}:${stateResult.next}`);
+            runtimeSession.machine = {
+              ...runtimeSession.machine,
+              state: stateResult.next,
+              revision: runtimeSession.machine.revision + 1,
+            };
+          }
+          return runtimeSession;
+        },
+      },
+      phases,
+      resume,
+      recordRepairEvent: repairRecorder(repairEvents),
+    });
+
+    expect(calls).toEqual(["provider_selection", "sandbox"]);
+    expect(applied).toEqual(expected);
+    expect(repairEvents).toEqual([
+      "state.repair.started:provider_selection",
+      "state.repair.completed:provider_selection",
+    ]);
     expect(result.context.endpointUrl).toBe("https://example.test/v1");
     expect(result.context.sandboxName).toBe("created-sandbox");
     expect(result.session.machine.state).toBe("openclaw");
   });
 
   it.each([
-    "inference",
-    "sandbox",
     "openclaw",
     "agent_setup",
     "policies",
     "finalizing",
     "post_verify",
-  ] as const)("lets resume sessions at %s pass through core compatibility", async (state) => {
-    const recorded: string[] = [];
-    const applyResult = vi.fn(async () => {
-      throw new Error("downstream resume compatibility should not use the strict runner");
+  ] as const)("repairs core prerequisites without changing resumed %s entry", async (state) => {
+    const repairEvents: string[] = [];
+    const branchState = state === "agent_setup" ? "agent_setup" : "openclaw";
+    const session = createSession({
+      machine: {
+        version: 1,
+        state,
+        stateEnteredAt: "2026-06-09T00:02:00.000Z",
+        revision: 7,
+      },
     });
     const phases: CoreOnboardFlowPhases<CoreContext> = {
       providerInference: {
         state: "provider_selection",
-        run: (ctx) => ({ context: ctx, result: advanceTo("sandbox") }),
+        run: (ctx) => ({
+          context: { ...ctx, endpointUrl: "https://example.test/v1" },
+          result: [
+            advanceTo("inference", { metadata: { state: "provider_selection" } }),
+            advanceTo("sandbox", { metadata: { state: "inference" } }),
+          ],
+        }),
       },
       sandbox: {
         state: "sandbox",
-        run: (ctx) => ({ context: ctx, result: advanceTo("openclaw") }),
+        run: (ctx) => ({
+          context: { ...ctx, sandboxName: "created-sandbox" },
+          result: branchTo(branchState, { metadata: { state: "sandbox" } }),
+        }),
       },
     };
 
-    await runCoreOnboardFlowSlice({
+    const result = await runCoreOnboardFlowSlice({
       context: context({ resume: true }),
       runtime: {
-        session: async () =>
-          createSession({
-            machine: {
-              version: 1,
-              state,
-              stateEnteredAt: "2026-06-09T00:00:00.000Z",
-              revision: 7,
-            },
-          }),
-        applyResult,
+        session: async () => session,
+        applyResult: async () => {
+          throw new Error("prerequisite repair must not apply a machine result");
+        },
       },
       phases,
       resume: true,
-      recordStateResult: async (result) => {
-        recorded.push((result as ReturnType<typeof advanceTo>).next);
-      },
-      recordInvalidatedStateResult: recordInvalidatedTargets(recorded),
+      recordRepairEvent: repairRecorder(repairEvents),
     });
 
-    expect(recorded).toEqual(["sandbox", "openclaw"]);
-    expect(applyResult).not.toHaveBeenCalled();
+    expect(repairEvents).toEqual([
+      "state.repair.started:provider_selection",
+      "state.repair.completed:provider_selection",
+      "state.repair.started:sandbox",
+      "state.repair.completed:sandbox",
+    ]);
+    expect(result.session.machine.state).toBe(state);
+    expect(result.context.sandboxName).toBe("created-sandbox");
   });
 
   it.each([
     "complete",
     "failed",
-  ] as const)("rejects terminal %s sessions before core compatibility side effects", async (state) => {
-    const phase: OnboardSequencePhase<CoreContext> = {
+  ] as const)("rejects terminal %s sessions before core repair effects", async (state) => {
+    const providerInference: OnboardSequencePhase<CoreContext> = {
       state: "provider_selection",
-      run: vi.fn((ctx) => ({ context: ctx, result: advanceTo("sandbox") })),
+      run: vi.fn((ctx) => ({
+        context: ctx,
+        result: advanceTo("sandbox", { metadata: { state: "inference" } }),
+      })),
     };
-    const sandboxPhase: OnboardSequencePhase<CoreContext> = {
+    const sandbox: OnboardSequencePhase<CoreContext> = {
       state: "sandbox",
-      run: vi.fn((ctx) => ({ context: ctx, result: advanceTo("openclaw") })),
+      run: vi.fn((ctx) => ({
+        context: ctx,
+        result: branchTo("openclaw", { metadata: { state: "sandbox" } }),
+      })),
     };
 
     await expect(
@@ -716,93 +856,12 @@ describe("core onboard flow phases", () => {
             }),
           applyResult: async () => createSession(),
         },
-        phases: { providerInference: phase, sandbox: sandboxPhase },
+        phases: { providerInference, sandbox },
         resume: true,
-        recordStateResult: async () => undefined,
-        recordInvalidatedStateResult: recordInvalidatedTargets([]),
+        recordRepairEvent: repairRecorder(),
       }),
     ).rejects.toThrow("Unexpected onboarding live flow state before slice entry");
-    expect(phase.run).not.toHaveBeenCalled();
-    expect(sandboxPhase.run).not.toHaveBeenCalled();
-  });
-
-  it("keeps non-resume ahead-state sessions on the compatibility path", async () => {
-    const calls: string[] = [];
-    const skipped: string[] = [];
-    const applied: string[] = [];
-    let runtimeSession = createSession({
-      machine: {
-        version: 1,
-        state: "sandbox",
-        stateEnteredAt: "2026-06-09T00:02:00.000Z",
-        revision: 7,
-      },
-    });
-    const phases: CoreOnboardFlowPhases<CoreContext> = {
-      providerInference: {
-        state: "provider_selection",
-        run: (ctx) => {
-          calls.push("provider_selection");
-          return {
-            context: ctx,
-            result: [
-              advanceTo("inference", {
-                metadata: { state: "provider_selection", provider: "nim", model: "nvidia/test" },
-              }),
-              advanceTo("sandbox", {
-                metadata: { state: "inference", provider: "nim", model: "nvidia/test" },
-              }),
-            ],
-          };
-        },
-      },
-      sandbox: {
-        state: "sandbox",
-        run: (ctx) => {
-          calls.push("sandbox");
-          return {
-            context: { ...ctx, sandboxName: "created-sandbox" },
-            result: advanceTo("openclaw", { metadata: { state: "sandbox" } }),
-          };
-        },
-      },
-    };
-
-    const result = await runCoreOnboardFlowSlice({
-      context: context(),
-      runtime: {
-        session: async () => runtimeSession,
-        applyResult: async () => {
-          throw new Error("ahead-state compatibility path should not use strict applyResult");
-        },
-      },
-      phases,
-      resume: false,
-      recordStateResult: async (stateResult: OnboardStateResult) => {
-        if (stateResult.type !== "transition") return runtimeSession;
-        const source = stateResult.metadata?.state;
-        applied.push(`${source}->${stateResult.next}`);
-        runtimeSession = createSession({
-          machine: {
-            version: 1,
-            state: stateResult.next,
-            stateEnteredAt: "2026-06-09T00:03:00.000Z",
-            revision: runtimeSession.machine.revision + 1,
-          },
-        });
-        return runtimeSession;
-      },
-      recordInvalidatedStateResult: async (stateResult, invalidation) => {
-        if (stateResult.type !== "transition") return runtimeSession;
-        skipped.push(`${invalidation.sourceState ?? "unknown"}->${stateResult.next}`);
-        return runtimeSession;
-      },
-    });
-
-    expect(calls).toEqual(["provider_selection", "sandbox"]);
-    expect(skipped).toEqual(["provider_selection->inference", "inference->sandbox"]);
-    expect(applied).toEqual(["sandbox->openclaw"]);
-    expect(result.context.sandboxName).toBe("created-sandbox");
-    expect(result.session.machine.state).toBe("openclaw");
+    expect(providerInference.run).not.toHaveBeenCalled();
+    expect(sandbox.run).not.toHaveBeenCalled();
   });
 });
