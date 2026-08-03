@@ -42,22 +42,13 @@ NemoClaw groups its supported capabilities around running, connecting, controlli
 | Operate the lifecycle | Reports host readiness, creates or updates sandboxes, reports status and logs, rebuilds or recovers sandboxes, and creates or restores snapshots. |
 | Connect Model Context Protocol (MCP) servers | Manages authenticated HTTPS Streamable HTTP MCP servers for all supported agent runtimes. OpenShell replaces credential placeholders at approved egress boundaries. |
 | Extend agent workflows | Installs agent skills and publishes Markdown documentation that coding agents can use for setup, operation, security review, and troubleshooting. |
-
 <AgentOnly variant="openclaw,hermes">
-
-| Area | Capability |
-|---|---|
 | Connect messaging channels | Configures supported messaging channels during onboarding or through lifecycle commands. Availability and maturity vary by agent and channel. |
 | Configure web search | Configures a supported Brave Search or Tavily Search path and keeps the service credential outside the sandbox. Provider availability varies by agent. |
-
 </AgentOnly>
 <AgentOnly variant="deepagents">
-
-| Area | Capability |
-|---|---|
 | Operate a terminal agent | Runs the managed `dcode` terminal agent interactively or through its headless JSON workflow. |
 | Export traces | Optionally sends bounded Deep Agents Code traces to an operator-managed host collector. The receiver and exported content require the documented trust controls. |
-
 </AgentOnly>
 
 ## Benefits of Using NemoClaw
