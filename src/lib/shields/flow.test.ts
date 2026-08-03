@@ -54,7 +54,7 @@ type HarnessOptions = {
     path: string;
     detail: string;
   }>;
-  fork?: () => {
+  fork?: (...args: unknown[]) => {
     pid: number;
     disconnect: () => void;
     unref: () => void;
@@ -815,6 +815,7 @@ describe("shields command flow", () => {
     let observedPreparingDuringPolicy = false;
     let observedPreparingDuringUnlock = false;
     let authorizationSawMarker = false;
+    let timerArgs: string[] = [];
     const readOnlyTransition = () => {
       const transitionName = fs
         .readdirSync(stateDir)
@@ -823,18 +824,21 @@ describe("shields command flow", () => {
       return JSON.parse(fs.readFileSync(path.join(stateDir, transitionName!), "utf-8"));
     };
     const harness = createHarness({
-      fork: () => ({
-        pid: 4242,
-        disconnect: vi.fn(),
-        unref: vi.fn(),
-        send: vi.fn(() => {
-          authorizationSawMarker = fs.existsSync(
-            path.join(stateDir, "shields-timer-openclaw.json"),
-          );
-          return true;
-        }),
-        kill: vi.fn(() => true),
-      }),
+      fork: (_modulePath, args) => {
+        timerArgs = args as string[];
+        return {
+          pid: 4242,
+          disconnect: vi.fn(),
+          unref: vi.fn(),
+          send: vi.fn(() => {
+            authorizationSawMarker = fs.existsSync(
+              path.join(stateDir, "shields-timer-openclaw.json"),
+            );
+            return true;
+          }),
+          kill: vi.fn(() => true),
+        };
+      },
       run: () => {
         observedPreparingDuringPolicy = readOnlyTransition().phase === "preparing";
         return { status: 0 };
@@ -867,6 +871,7 @@ describe("shields command flow", () => {
     expect(observedPreparingDuringPolicy).toBe(true);
     expect(observedPreparingDuringUnlock).toBe(true);
     expect(authorizationSawMarker).toBe(true);
+    expect(timerArgs.at(9)).toBe("openclaw");
     expect(transition).toMatchObject({
       version: 1,
       phase: "active",
@@ -875,6 +880,13 @@ describe("shields command flow", () => {
       snapshotPath: expect.stringContaining("policy-snapshot-"),
     });
     expect(fs.existsSync(path.join(stateDir, "shields-timer-openclaw.json"))).toBe(true);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, "shields-timer-openclaw.json"), "utf-8")),
+    ).toMatchObject({
+      agentName: "openclaw",
+      configPath: "/sandbox/.openclaw/openclaw.json",
+      configDir: "/sandbox/.openclaw",
+    });
   });
 
   it("shields down removes the permissive runtime temp directory when the auto-restore timer fails (#7964)", () => {
