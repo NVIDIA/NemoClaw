@@ -21,15 +21,16 @@ function writeModule(root: string, file: string, source: string): void {
 }
 
 function listProductionTypeScriptFiles(directory: string): string[] {
-  return fs
-    .readdirSync(directory, { encoding: "utf8", recursive: true })
-    .filter(
-      (entry) =>
-        entry.endsWith(".ts") &&
-        !entry.endsWith(".test.ts") &&
-        !entry.split(path.sep).includes("__test-helpers__"),
-    )
-    .map((entry) => path.join(directory, entry));
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const entryPath = path.join(directory, entry.name);
+    return entry.isDirectory()
+      ? entry.name === "__test-helpers__"
+        ? []
+        : listProductionTypeScriptFiles(entryPath)
+      : entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")
+        ? [entryPath]
+        : [];
+  });
 }
 
 function budget(overrides: Partial<SourceArchitectureBudget> = {}): SourceArchitectureBudget {
