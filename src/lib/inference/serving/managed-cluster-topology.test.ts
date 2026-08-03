@@ -263,8 +263,6 @@ describe("managed DGX Spark cluster topology qualification", () => {
 
   it("qualifies a three-node ring and assigns deterministic ranks", () => {
     const result = qualifyManagedClusterTopology(threeNodeQualificationInput());
-    if (result.outcome !== "qualified") throw new Error(`${result.code}: ${result.message}`);
-
     expect(result).toMatchObject({ outcome: "qualified" });
     const artifact = (result as Extract<typeof result, { outcome: "qualified" }>).artifact;
     expect(artifact.output.nodes).toEqual([
