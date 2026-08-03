@@ -53,13 +53,19 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-lock-transition-"));
     const lockfile = path.join(root, "package-lock.json");
     fs.writeFileSync(lockfile, "reviewed lock\n");
-    const reviewed = "534ade489fdb2d8ff619a8b110c28fedbd2066e16ebf434738f64a5a44ec9860";
-    const previous = "a".repeat(64);
+    const actualLock = "534ade489fdb2d8ff619a8b110c28fedbd2066e16ebf434738f64a5a44ec9860";
+    const previousLock = "a".repeat(64);
+    const unreviewedLock = "b".repeat(64);
     try {
-      expect(selectReviewedLockSha256(lockfile, [previous, reviewed], "test graph")).toBe(reviewed);
-      expect(() => selectReviewedLockSha256(lockfile, [previous], "test graph")).toThrow(
-        "lock SHA-256 mismatch",
+      expect(selectReviewedLockSha256(lockfile, actualLock, undefined, "test graph")).toBe(
+        actualLock,
       );
+      expect(selectReviewedLockSha256(lockfile, previousLock, actualLock, "test graph")).toBe(
+        actualLock,
+      );
+      expect(() =>
+        selectReviewedLockSha256(lockfile, previousLock, unreviewedLock, "test graph"),
+      ).toThrow("lock SHA-256 mismatch");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

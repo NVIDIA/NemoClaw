@@ -20,6 +20,7 @@ const INTEGRITY =
   "sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==";
 const TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz";
 const LOCK_SHA256 = "82489f62febb12da52833c0b1f7f6969f7e21a098c565ef1f91342b1e5e32d88";
+const REPLACEMENT_LOCK_SHA256 = "847f68ac46f18d17efcd47dd3d8a5944b9dbcd205bc4d1e821ff82aa543eec20";
 const roots: string[] = [];
 
 function sha256(file: string): string {
@@ -362,6 +363,7 @@ describe("locked OpenClaw production installation (#5896)", () => {
     const audit = JSON.parse(
       fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf-8"),
     );
+    expect(audit.schemaVersion).toBe(2);
     expect(audit.archivePackages).toEqual(
       expect.arrayContaining([expect.objectContaining({ packageSpec: PACKAGE_SPEC })]),
     );
@@ -369,11 +371,13 @@ describe("locked OpenClaw production installation (#5896)", () => {
       expect.arrayContaining([
         expect.objectContaining({
           directory: "agents/openclaw/openclaw-runtime",
+          lockSha256: LOCK_SHA256,
           packageSpec: PACKAGE_SPEC,
-          reviewedLockSha256: expect.arrayContaining([LOCK_SHA256]),
+          replacementLockSha256: REPLACEMENT_LOCK_SHA256,
         }),
       ]),
     );
+    expect(audit.lockedGraphs[0]).not.toHaveProperty("reviewedLockSha256");
 
     const baseWorkflow = fs.readFileSync(
       path.join(REPO_ROOT, ".github", "workflows", "base-image.yaml"),
