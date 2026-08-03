@@ -4273,8 +4273,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         process.exit(1);
       },
     });
-    session = coreFlowContext.session;
-    let { sandboxName } = coreFlowContext;
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const runCoreGatewayOpenshell = setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, GATEWAY_NAME);
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -4440,17 +4438,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     });
     setupInferenceFactory.selectGatewayForFollowupOrExit(GATEWAY_NAME, runOpenshell);
     const finalFlowContext = prepareFinalOnboardFlowContext(coreFlowResult);
-    session = finalFlowContext.session;
-    sandboxName = finalFlowContext.sandboxName;
-    const model = finalFlowContext.model;
-    const provider = finalFlowContext.provider;
-    const endpointUrl = finalFlowContext.endpointUrl;
-    const credentialEnv = finalFlowContext.credentialEnv;
-    const hermesAuthMethod = finalFlowContext.hermesAuthMethod;
-    const hermesToolGateways = finalFlowContext.hermesToolGateways;
-    const nimContainer = finalFlowContext.nimContainer;
-    let webSearchConfig = finalFlowContext.webSearchConfig as WebSearchConfig | null;
-    const webSearchSupported = finalFlowContext.webSearchSupported;
     let liveFinalFlowContext: InitialOnboardFlowContext = finalFlowContext;
 
     const finalFlowPhases = createFinalOnboardFlowPhases<
