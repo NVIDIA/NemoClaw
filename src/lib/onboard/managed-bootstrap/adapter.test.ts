@@ -696,9 +696,8 @@ describe("managed bootstrap adapter contract", () => {
       expect(finalizeInput.outcome).toBe("rollback");
       const authorityKey = `${finalizeInput.handle.sandbox.sandboxId}:${finalizeInput.handle.bootstrapIdentity}`;
       ownedByAuthority.delete(authorityKey);
-      if (reservedPorts.get(replacementPort) === authorityKey) {
-        reservedPorts.delete(replacementPort);
-      }
+      expect(reservedPorts.get(replacementPort)).toBe(authorityKey);
+      reservedPorts.delete(replacementPort);
       return rolledBackReceipt(finalizeInput.handle, finalizeInput.snapshot);
     });
 
