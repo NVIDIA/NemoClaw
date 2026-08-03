@@ -61,6 +61,8 @@ import {
 import { checkRebuildGatewayCredentialReuseOrBail } from "./rebuild-provider-preflight";
 import type { RebuildTargetConfig } from "./rebuild-target-preflight";
 
+export { finalizePreparedRebuildImageMessagingPlan } from "./rebuild-custom-image-preflight";
+
 export interface RebuildPreflightPhaseResult {
   sandboxEntry: RebuildSandboxEntry;
   rebuildAgent: string | null;

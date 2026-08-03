@@ -94,6 +94,36 @@ def verify_gateway_runtime_metadata() -> None:
     assert isinstance(home, Path)
 
 
+def verify_gateway_process_identity() -> None:
+    from gateway.status import (
+        _gateway_command_subcommand,
+        looks_like_gateway_command_line,
+        looks_like_gateway_runtime_command_line,
+    )
+
+    renamed = "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real gateway run"
+    upstream = "/opt/hermes/.venv/bin/python /usr/local/bin/hermes gateway run"
+
+    assert looks_like_gateway_command_line(renamed)
+    assert looks_like_gateway_runtime_command_line(renamed)
+    assert _gateway_command_subcommand(renamed) == "run"
+    assert _gateway_command_subcommand(
+        "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real gateway restart"
+    ) == "restart"
+
+    assert looks_like_gateway_command_line(upstream)
+    assert not looks_like_gateway_command_line(
+        "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real gateway status"
+    )
+    assert not looks_like_gateway_command_line(
+        "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real dashboard"
+    )
+    assert not looks_like_gateway_command_line("python -m tui_gateway run")
+    assert not looks_like_gateway_command_line(
+        "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.realish gateway run"
+    )
+
+
 def verify_cron_runtime_source() -> None:
     from cron.executions import EXECUTIONS_FILE
     from hermes_cli.backup import _QUICK_STATE_FILES
@@ -384,6 +414,7 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "discord-create": verify_discord_create,
     "discord-recovery-source": verify_discord_recovery_source,
     "discord-reopen": verify_discord_reopen,
+    "gateway-process-identity": verify_gateway_process_identity,
     "gateway-runtime-metadata": verify_gateway_runtime_metadata,
     "langfuse-credentials": verify_langfuse_credentials,
     "profile-policy": verify_profile_policy,

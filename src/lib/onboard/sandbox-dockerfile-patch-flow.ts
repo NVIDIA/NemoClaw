@@ -11,6 +11,7 @@ import {
   SandboxBaseImageResolutionError,
   type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
+import type { PreservedEnvFile } from "../state/preserved-env";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { DcodeAutoApprovalMode } from "./dcode-auto-approval";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
@@ -48,6 +49,7 @@ export type PrepareSandboxDockerfilePatchInput = {
   preferredInferenceApi: string | null;
   webSearchConfig: WebSearchConfig | null;
   toolDisclosure?: ToolDisclosure;
+  rebuildPreservedEnv?: readonly PreservedEnvFile[];
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
   hermesToolGateways: string[];
   sandboxGpuConfig: SandboxGpuConfig;
@@ -121,6 +123,7 @@ export async function prepareSandboxDockerfilePatch({
   preferredInferenceApi,
   webSearchConfig,
   toolDisclosure = DEFAULT_TOOL_DISCLOSURE,
+  rebuildPreservedEnv,
   dcodeAutoApprovalMode,
   hermesToolGateways,
   sandboxGpuConfig,
@@ -210,6 +213,7 @@ export async function prepareSandboxDockerfilePatch({
       return {
         buildIdPolicy,
         toolDisclosure,
+        ...(rebuildPreservedEnv ? { rebuildPreservedEnv } : {}),
         ...(!fromDockerfile ? { trustedManagedDockerfile: true } : {}),
         ...(!fromDockerfile && managedAgentName === "openclaw"
           ? { wslDashboardExposure: managedOpenClawWslExposure }

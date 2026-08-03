@@ -72,7 +72,7 @@ describe("legacy Hermes shields compatibility", () => {
 
     const runner = requireSource("../runner.js");
     const policy = requireSource("../policy/index.js");
-    const config = requireSource("../sandbox/config.js");
+    const agentConfig = requireSource("../sandbox/agent-config.js");
     const privilegedExec = requireSource("../sandbox/privileged-exec.js");
     const dockerExec = requireSource("../adapters/docker/exec.js");
     const stateDirLock = requireSource("./state-dir-lock.js");
@@ -102,7 +102,7 @@ describe("legacy Hermes shields compatibility", () => {
         ]),
       vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw)),
       vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue("/mock/permissive.yaml"),
-      vi.spyOn(config, "resolveAgentConfig").mockImplementation(() => hermesTarget()),
+      vi.spyOn(agentConfig, "resolveAgentConfig").mockImplementation(() => hermesTarget()),
       privilegedExecArgvSpy,
       dockerExecSpy,
       applyStateDirLockModeSpy,
