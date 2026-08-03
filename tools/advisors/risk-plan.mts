@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 11 as const;
+export const RISK_PLAN_VERSION = 12 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -25,6 +25,12 @@ const MANAGED_STARTUP_E2E_JOB_IDS = [
   "issue-4462-scope-upgrade-approval",
   "openclaw-inference-switch",
 ] as const;
+const HERMES_CLI_ADAPTER_E2E_JOB_IDS = ["channels-stop-start", "mcp-bridge"] as const;
+const HERMES_CLI_ADAPTER_RUNTIME_FILES = new Set([
+  "agents/hermes/hermes-cli-adapter-v1.json",
+  "agents/hermes/hermes-wrapper.py",
+  "agents/hermes/validate-cli-adapter.py",
+]);
 const HERMES_MANAGED_POLICY_E2E_JOB_IDS = [
   "bedrock-runtime-compatible-anthropic",
   "channels-stop-start",
@@ -192,6 +198,11 @@ export function focusedPrE2eJobsForChangedFiles(
         isRuntimeRelevant(file),
     ),
   );
+  const hermesCliAdapterFiles = stableUnique(
+    changedFiles.filter(
+      (file) => HERMES_CLI_ADAPTER_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
+    ),
+  );
   const hermesManagedPolicyFiles = stableUnique(
     changedFiles.filter(
       (file) =>
@@ -201,6 +212,10 @@ export function focusedPrE2eJobsForChangedFiles(
   );
   return [
     ...MANAGED_STARTUP_E2E_JOB_IDS.map((id) => ({ id, matchedFiles: managedStartupFiles })),
+    ...HERMES_CLI_ADAPTER_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: hermesCliAdapterFiles,
+    })),
     ...HERMES_MANAGED_POLICY_E2E_JOB_IDS.map((id) => ({
       id,
       matchedFiles: hermesManagedPolicyFiles,
@@ -372,9 +387,10 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "Sandbox blueprint and agent-runtime changes must preserve equivalent isolation and readiness across supported agents.",
     tier: 3,
-    requiredJobs: ["full-e2e", "hermes-e2e", "security-posture"],
+    requiredJobs: ["full-e2e", "hermes-e2e", "hermes-inference-switch", "security-posture"],
     invariants: [
       "OpenClaw and Hermes both reach readiness through the changed sandbox boundary",
+      "the Hermes runtime and managed inference route agree on the selected provider and model after each route change",
       "the sandbox retains its required security posture and isolation controls",
       "blueprint state agrees with the runtime observed by both supported agents",
     ],
