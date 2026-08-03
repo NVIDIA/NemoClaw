@@ -79,6 +79,16 @@ import {
   selectSandboxGatewayIfRegistered,
   usesGatewayMetadataProbe,
 } from "./sandbox-gateway-routing";
+import {
+  backupSandboxStateWithManagedAuthority,
+  confirmSandboxRuntimeRestore,
+  type PreparedSandboxRuntimeRestore,
+  prepareManagedSnapshotProfileRestore,
+  prepareSandboxRuntimeRestore,
+  readManagedSnapshotProfileAuthority,
+  rejectManagedSnapshotCloneUntilRebind,
+  requireCurrentSnapshotRuntimeProvider,
+} from "./snapshot/dependencies";
 import { formatSnapshotBaselineExclusionSummary } from "./snapshot-baseline-exclusion-summary";
 import { printHermesGatewayRestoreHint } from "./snapshot-hermes-gateway-hint";
 
@@ -678,9 +688,13 @@ function runSnapshotCreate(
     }
     const label = request.name ? ` (--name ${request.name})` : "";
     console.log(`  Creating snapshot of '${sandboxName}'${label}...`);
-    const result = sandboxState.backupSandboxState(sandboxName, {
-      name: request.name ?? null,
-    });
+    const result = backupSandboxStateWithManagedAuthority(
+      sandboxName,
+      {
+        name: request.name ?? null,
+      },
+      { getSandbox: registry.getSandbox },
+    );
     if (result.success) {
       const manifest = result.manifest!;
       const entry = sandboxState.findBackup(sandboxName, manifest.timestamp).match ?? manifest;
@@ -949,6 +963,18 @@ function reconcileSnapshotCustomPolicies(
   }
 }
 
+function readCurrentManagedSnapshotProfileAuthority(entry: SandboxEntry | null) {
+  return entry
+    ? readManagedSnapshotProfileAuthority({
+        sandboxName: entry.name,
+        agentType: entry.agent ?? "",
+        imageTag: entry.imageTag,
+        fromDockerfile: entry.fromDockerfile,
+        workload: entry.workload,
+      })
+    : null;
+}
+
 async function runSnapshotRestore(
   sandboxName: string,
   request: Extract<SnapshotRequest, { kind: "restore" }>,
@@ -1026,12 +1052,92 @@ async function runSnapshotRestoreUnlocked(
     console.log(`  Using latest snapshot ${v}${nameSuffix} (${latest.timestamp})`);
   }
 
+  const snapshotProfileSource = {
+    sandboxName,
+    agentType: resolvedSnapshot.agentType,
+    workload: resolvedSnapshot.workload,
+  };
+  const currentSourceEntry = registry.getSandbox(sandboxName);
+  let hasManagedProfileAuthority = false;
+  let snapshotRestoreAuthority: sandboxState.SnapshotRestoreAuthority | null = null;
+  try {
+    const snapshotAuthority = readManagedSnapshotProfileAuthority(snapshotProfileSource);
+    hasManagedProfileAuthority = snapshotAuthority !== null;
+    if (hasManagedProfileAuthority && !resolvedSnapshot.runtimeSnapshot) {
+      throw new Error("managed snapshot is missing provider runtime authority");
+    }
+    const currentSourceAuthority = readCurrentManagedSnapshotProfileAuthority(currentSourceEntry);
+    const currentTargetAuthority =
+      targetEntry && targetEntry !== currentSourceEntry
+        ? readCurrentManagedSnapshotProfileAuthority(targetEntry)
+        : currentSourceAuthority;
+    if (!hasManagedProfileAuthority && (currentSourceAuthority || currentTargetAuthority)) {
+      throw new Error(
+        "legacy snapshot lacks managed workload and provider runtime authority required by the current source or destination",
+      );
+    }
+    if (isCrossSandboxRestore && hasManagedProfileAuthority) {
+      rejectManagedSnapshotCloneUntilRebind(snapshotProfileSource, targetSandbox);
+    }
+    if (hasManagedProfileAuthority) {
+      snapshotRestoreAuthority = sandboxState.captureSnapshotRestoreAuthority(
+        backupPath,
+        resolvedSnapshot,
+      );
+      if (!snapshotRestoreAuthority) {
+        throw new Error("selected snapshot content changed during restore preflight");
+      }
+    }
+  } catch (error) {
+    console.error(
+      `  Cannot restore managed snapshot authority: ${
+        error instanceof Error ? error.message : String(error)
+      }.`,
+    );
+    console.error(`  Destination '${targetSandbox}' was not changed.`);
+    snapshotExit(1);
+  }
+
+  let preparedRuntimeRestore: PreparedSandboxRuntimeRestore | null = null;
   if (!isCrossSandboxRestore) {
     // Self-restore: target is `sandboxName`. Cannot auto-create; the
     // source pod is the target, so it must already be live.
     if (!targetExists) {
       console.error(`  Sandbox '${targetSandbox}' is not running. Cannot restore snapshot.`);
       snapshotExit(1);
+    }
+    if (hasManagedProfileAuthority) {
+      const currentTarget = registry.getSandbox(targetSandbox);
+      if (!currentTarget || !resolvedSnapshot.runtimeSnapshot) {
+        console.error(
+          `  Cannot restore managed snapshot '${sandboxName}': target or provider runtime authority is missing.`,
+        );
+        snapshotExit(1);
+      }
+      try {
+        const provider = requireCurrentSnapshotRuntimeProvider(currentTarget);
+        const profileRestore = prepareManagedSnapshotProfileRestore(
+          snapshotProfileSource,
+          currentTarget,
+          provider,
+        );
+        if (!profileRestore) {
+          throw new Error("managed profile restore authority is missing");
+        }
+        preparedRuntimeRestore = prepareSandboxRuntimeRestore(
+          provider,
+          currentTarget,
+          resolvedSnapshot.runtimeSnapshot,
+          profileRestore.providerRestoreAuthority,
+        );
+      } catch (error) {
+        console.error(
+          `  Cannot preflight managed snapshot restore: ${
+            error instanceof Error ? error.message : String(error)
+          }.`,
+        );
+        snapshotExit(1);
+      }
     }
   } else {
     // #3756: cross-sandbox restore into a destination that already exists
@@ -1179,13 +1285,74 @@ async function runSnapshotRestoreUnlocked(
     // reconciliation under the active timer generation. Normal auto-restore
     // waits; the absolute deadline may preempt this process and reclaim the
     // token, preventing policy/config mutation after lockdown resumes.
+    const validateManagedRestoreBeforeMutation = preparedRuntimeRestore
+      ? () => {
+          const currentTarget = registry.getSandbox(targetSandbox);
+          if (!currentTarget) {
+            throw new Error(`target '${targetSandbox}' is no longer registered`);
+          }
+          const provider = requireCurrentSnapshotRuntimeProvider(currentTarget);
+          const profileRestore = prepareManagedSnapshotProfileRestore(
+            snapshotProfileSource,
+            currentTarget,
+            provider,
+          );
+          if (!profileRestore) {
+            throw new Error("managed profile restore authority is missing");
+          }
+          const prepared = preparedRuntimeRestore;
+          if (!prepared) throw new Error("managed runtime restore authority is missing");
+          // The state layer invokes this after local tar staging and
+          // immediately before its first remote filesystem mutation.
+          preparedRuntimeRestore = prepareSandboxRuntimeRestore(
+            provider,
+            currentTarget,
+            prepared.source,
+            profileRestore.providerRestoreAuthority,
+          );
+        }
+      : null;
     if (targetSandbox !== sandboxName) {
       console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
     } else {
       console.log(`  Restoring snapshot into '${sandboxName}'...`);
     }
-    const result = sandboxState.restoreSandboxState(targetSandbox, backupPath);
+    if (Boolean(snapshotRestoreAuthority) !== Boolean(validateManagedRestoreBeforeMutation)) {
+      console.error(
+        `  Cannot restore managed snapshot '${sandboxName}': content authority and the runtime mutation fence must both be present.`,
+      );
+      console.error(`  Destination '${targetSandbox}' was not changed.`);
+      snapshotExit(1);
+    }
+    const result =
+      snapshotRestoreAuthority && validateManagedRestoreBeforeMutation
+        ? sandboxState.restoreSandboxState(targetSandbox, backupPath, {
+            authority: snapshotRestoreAuthority,
+            validateBeforeMutation: validateManagedRestoreBeforeMutation,
+          })
+        : sandboxState.restoreSandboxState(targetSandbox, backupPath);
     if (result.success) {
+      if (preparedRuntimeRestore) {
+        const currentTarget = registry.getSandbox(targetSandbox);
+        if (!currentTarget) {
+          console.error(
+            `  Managed snapshot state was restored, but target '${targetSandbox}' is no longer registered.`,
+          );
+          snapshotExit(1);
+        }
+        try {
+          const provider = requireCurrentSnapshotRuntimeProvider(currentTarget);
+          confirmSandboxRuntimeRestore(provider, currentTarget, preparedRuntimeRestore);
+        } catch (error) {
+          console.error(
+            `  Managed snapshot state was restored, but provider restore proof failed: ${
+              error instanceof Error ? error.message : String(error)
+            }.`,
+          );
+          console.error("  Retry this exact snapshot after the runtime provider stabilizes.");
+          snapshotExit(1);
+        }
+      }
       console.log(
         `  ${G}\u2713${R} Restored ${result.restoredDirs.length} directories, ${result.restoredFiles.length} files`,
       );
@@ -1205,6 +1372,9 @@ async function runSnapshotRestoreUnlocked(
       }
       if (result.failedFiles.length > 0) {
         console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
+      }
+      if (result.error) {
+        console.error(`  Reason: ${result.error}`);
       }
       snapshotExit(1);
     }
@@ -1245,7 +1415,7 @@ export async function runSandboxSnapshot(
 ) {
   switch (request.kind) {
     case "create": {
-      runSnapshotCreate(sandboxName, request);
+      await withSandboxMutationLock(sandboxName, () => runSnapshotCreate(sandboxName, request));
       break;
     }
     case "list": {

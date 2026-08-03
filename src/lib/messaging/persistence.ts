@@ -131,6 +131,7 @@ export function compactSandboxMessagingPlanForPersistence(
 
 export function normalizePersistedSandboxMessagingPlanShape(
   plan: MaybeCompactMessagingPlan,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
 ): SandboxMessagingPlan {
   const manifestRegistry = createBuiltInChannelManifestRegistry();
   const disabledChannels = plan.disabledChannels.filter(
@@ -138,9 +139,19 @@ export function normalizePersistedSandboxMessagingPlanShape(
   );
   const disabledSet = new Set(disabledChannels);
   const channels = plan.channels.map((channel) =>
-    normalizePersistedChannel(channel, disabledSet, manifestRegistry.get(channel.channelId)),
+    normalizePersistedChannel(
+      channel,
+      disabledSet,
+      manifestRegistry.get(channel.channelId),
+      environment,
+    ),
   );
-  const credentialBindings = normalizePersistedCredentialBindings(plan, channels, manifestRegistry);
+  const credentialBindings = normalizePersistedCredentialBindings(
+    plan,
+    channels,
+    manifestRegistry,
+    environment,
+  );
   const normalizedPlan: SandboxMessagingPlan = {
     ...plan,
     channels,
@@ -184,6 +195,7 @@ function normalizePersistedChannel(
   channel: MaybeCompactMessagingChannelPlan,
   disabledSet: ReadonlySet<string>,
   manifest: ChannelManifest | undefined,
+  environment: Readonly<Record<string, string | undefined>>,
 ): SandboxMessagingChannelPlan {
   const disabled = channel.disabled ?? disabledSet.has(channel.channelId);
   const configured = channel.configured ?? true;
@@ -194,7 +206,13 @@ function normalizePersistedChannel(
   const active =
     channel.active ?? (configured && !disabled && requiredInputsAvailable(manifest, inputs));
   const hostForward = manifest
-    ? planHostForward(manifest, inputs, active && !disabled, createBuiltInRenderTemplateResolver())
+    ? planHostForward(
+        manifest,
+        inputs,
+        active && !disabled,
+        createBuiltInRenderTemplateResolver(),
+        environment,
+      )
     : undefined;
 
   return {
@@ -308,6 +326,7 @@ function normalizePersistedCredentialBindings(
   plan: MaybeCompactMessagingPlan,
   channels: readonly SandboxMessagingChannelPlan[],
   manifestRegistry: ReturnType<typeof createBuiltInChannelManifestRegistry>,
+  environment: Readonly<Record<string, string | undefined>>,
 ): SandboxMessagingCredentialBindingPlan[] {
   const persisted = plan.credentialBindings ?? [];
   if (
@@ -337,6 +356,7 @@ function normalizePersistedCredentialBindings(
     planForBindings,
     manifests,
     new Map(channels.map((channel) => [channel.channelId, channel.inputs] as const)),
+    environment,
   );
   return generated.map((binding) => overlayPersistedCredentialBinding(binding, persisted));
 }
@@ -345,12 +365,16 @@ function credentialBindingsFromManifests(
   plan: SandboxMessagingPlan,
   manifests: readonly ChannelManifest[],
   inputRegistry: ReadonlyMap<string, readonly SandboxMessagingInputReference[]>,
+  environment: Readonly<Record<string, string | undefined>>,
 ): SandboxMessagingCredentialBindingPlan[] {
   const context = compilerContext(plan);
   return manifests.flatMap((manifest) =>
-    planCredentialBindings(manifest, context, inputRegistry.get(manifest.id) ?? []).map((binding) =>
-      overlayPersistedCredentialBinding(binding, plan.credentialBindings),
-    ),
+    planCredentialBindings(
+      manifest,
+      context,
+      inputRegistry.get(manifest.id) ?? [],
+      environment,
+    ).map((binding) => overlayPersistedCredentialBinding(binding, plan.credentialBindings)),
   );
 }
 
