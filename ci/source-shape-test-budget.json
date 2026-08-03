@@ -432,11 +432,6 @@
       "category": "security"
     },
     {
-      "file": "test/root-package-lock-security.test.ts",
-      "test": "pins every brace-expansion copy past the affected ranges",
-      "category": "security"
-    },
-    {
       "file": "test/platform-vitest-main-workflow.test.ts",
       "test": "pins and verifies the Node.js archive in the trusted WSL helper",
       "category": "security"
@@ -533,7 +528,7 @@
     },
     {
       "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps production activation paths disconnected from managed bootstrap",
+      "test": "keeps production activation paths disconnected from driver bootstrap adapters",
       "category": "security"
     },
     {
