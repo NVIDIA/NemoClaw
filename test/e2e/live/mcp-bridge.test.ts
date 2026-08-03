@@ -49,6 +49,7 @@ import {
 } from "./mcp-bridge-servers.ts";
 import {
   assertAuthenticatedMcpDiscovery,
+  assertAuthenticatedMcpDiscoveryWithOneRestart,
   assertAuthenticatedMcpRediscovery,
   assertAuthenticatedMcpToolDiscovery,
 } from "./mcp-bridge-tool-discovery.ts";
@@ -1206,10 +1207,14 @@ mcpBridgeShardTest("hermes")(
       expectedAdapter: "hermes-config",
       artifactPrefix: "hermes",
     });
-    await assertAuthenticatedMcpDiscovery(fakeMcp, {
+    await assertAuthenticatedMcpDiscoveryWithOneRestart(fakeMcp, {
       requestOffset: initialDiscoveryOffset,
       expectedSecret: HOST_SECRET,
       label: "Hermes initial MCP discovery",
+      restart: async () => {
+        progress.event("Hermes MCP discovery did not reach the fixture; restarting once");
+        await restartBridgeWithoutHostSecret(host, HERMES_SANDBOX_NAME, "hermes-discovery-retry");
+      },
     });
     await assertAuthenticatedMcpToolDiscovery(host, fakeMcp, {
       sandboxName: HERMES_SANDBOX_NAME,

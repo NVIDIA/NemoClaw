@@ -11,6 +11,7 @@ import {
 } from "../live/mcp-bridge-servers.ts";
 import {
   hasSuccessfulAuthenticatedMcpDiscovery,
+  shouldRetryMcpDiscoveryAfterRestart,
   shouldRetryMcpToolDiscoveryTransportFailure,
 } from "../live/mcp-bridge-tool-discovery.ts";
 
@@ -213,6 +214,16 @@ describe("authenticated MCP tool discovery transport retry", () => {
         1,
       ),
     ).toBe(false);
+  });
+});
+
+describe("authenticated MCP discovery restart retry", () => {
+  it("retries when no request reached the fixture", () => {
+    expect(shouldRetryMcpDiscoveryAfterRestart([])).toBe(true);
+  });
+
+  it("does not retry after the fixture received a request", () => {
+    expect(shouldRetryMcpDiscoveryAfterRestart([request("initialize")])).toBe(false);
   });
 });
 

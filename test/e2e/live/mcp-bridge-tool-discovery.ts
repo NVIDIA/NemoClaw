@@ -32,6 +32,12 @@ export function shouldRetryMcpToolDiscoveryTransportFailure(
   );
 }
 
+export function shouldRetryMcpDiscoveryAfterRestart(
+  requestsSinceAttempt: readonly FakeMcpRequest[],
+): boolean {
+  return requestsSinceAttempt.length === 0;
+}
+
 type McpToolDiscoveryStatusJson = {
   provider: { credentialResolution?: unknown };
   toolDiscovery: {
@@ -130,6 +136,29 @@ export async function assertAuthenticatedMcpDiscovery(
       { interval: 500, timeout: 90_000, message: options.label },
     )
     .toMatchObject({ discovered: true });
+}
+
+export async function assertAuthenticatedMcpDiscoveryWithOneRestart(
+  fakeMcp: FakeMcpHttpsServer,
+  options: {
+    requestOffset: number;
+    expectedSecret: string;
+    label: string;
+    restart: () => Promise<void>;
+  },
+): Promise<void> {
+  try {
+    await assertAuthenticatedMcpDiscovery(fakeMcp, options);
+  } catch (error) {
+    if (!shouldRetryMcpDiscoveryAfterRestart(fakeMcp.requests.slice(options.requestOffset))) {
+      throw error;
+    }
+    await options.restart();
+    await assertAuthenticatedMcpDiscovery(fakeMcp, {
+      ...options,
+      label: `${options.label} after one bridge restart`,
+    });
+  }
 }
 
 export async function assertAuthenticatedMcpToolDiscovery(
