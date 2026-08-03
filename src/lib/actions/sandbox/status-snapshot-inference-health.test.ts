@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { ProviderHealthStatus } from "../../inference/health";
 import type { SandboxEntry } from "../../state/registry";
@@ -43,6 +43,59 @@ function snapshotDeps(
 }
 
 describe("collectSandboxStatusSnapshot inference route health", () => {
+  it("restores the guarded agent and host-forward chain before probing a Docker-recovered sandbox", async () => {
+    const order: string[] = [];
+    const gateway: SandboxInferenceRouteHealth = {
+      ok: true,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: 200,
+      detail: "reachable",
+    };
+    const options = snapshotDeps(gateway);
+    options.deps.reconcile = async () => {
+      order.push("reconcile");
+      return {
+        state: "present",
+        output: "Phase: Ready",
+        recoveredSandbox: true,
+        recoverySandboxVia: "started-stopped-original",
+      };
+    };
+    const recoverSandboxProcesses = vi.fn(() => {
+      order.push("recover-agent-and-forward");
+      return {
+        checked: true,
+        wasRunning: false,
+        recovered: true,
+        forwardRecovered: true,
+      };
+    });
+    options.deps.probeSandboxInferenceGatewayHealthImpl = async () => {
+      order.push("probe-inference");
+      return gateway;
+    };
+
+    await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: { ...options.deps, recoverSandboxProcesses },
+    });
+
+    expect(recoverSandboxProcesses).toHaveBeenCalledWith("alpha", { quiet: true });
+    expect(order).toEqual(["reconcile", "recover-agent-and-forward", "probe-inference"]);
+  });
+
+  it("does not mutate the agent or host forward during an ordinary present status lookup", async () => {
+    const options = snapshotDeps(null);
+    const recoverSandboxProcesses = vi.fn();
+
+    await collectSandboxStatusSnapshot("alpha", {
+      ...options,
+      deps: { ...options.deps, recoverSandboxProcesses },
+    });
+
+    expect(recoverSandboxProcesses).not.toHaveBeenCalled();
+  });
+
   it("labels a reachable route okLabel: reachable, not a bare healthy claim (#6846)", async () => {
     const gateway: SandboxInferenceRouteHealth = {
       ok: true,

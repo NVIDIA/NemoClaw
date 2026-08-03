@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { decisionSelected } from "../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../state/onboard-checkpoint-migrate";
@@ -11,6 +14,8 @@ import type {
 } from "../state/onboard-checkpoint-types";
 import { createSession } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
+import { createDockerRuntimeProviderBundle } from "./runtime-provider/docker";
+import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import {
   advanceSandboxRecreateTransaction,
   beginSandboxRecreateTransaction,
@@ -21,7 +26,9 @@ import {
   fingerprintSandboxRegistryEntry,
   matchingSandboxRecreateTransaction,
   planSandboxRecreateRecovery,
+  retireReplacedSandboxWorkload,
   type SandboxRecreateObservation,
+  sandboxRecreateSourceWorkloadEntry,
   selectedGatewayForSandboxRecreate,
 } from "./sandbox-recreate-transaction";
 
@@ -30,6 +37,7 @@ const TX_ID = "11111111-1111-4111-8111-111111111111";
 const TARGET_GENERATION = "22222222-2222-4222-8222-222222222222";
 const SOURCE_ID = fingerprintSandboxRecreateValue("openshell-source-id");
 const TARGET_ID = fingerprintSandboxRecreateValue("target-id");
+const FOREIGN_ID = fingerprintSandboxRecreateValue("foreign-openshell-source-id");
 const TARGET_INTENT = fingerprintSandboxRecreateValue({
   agent: "openclaw",
   provider: "nvidia",
@@ -42,6 +50,14 @@ const SOURCE_ENTRY: SandboxEntry = {
   credentialEnv: "NVIDIA_API_KEY",
   gatewayName: "nemoclaw-31818",
   gatewayPort: 31818,
+  openshellDriver: "docker",
+  imageTag: "openshell/sandbox-from:old",
+  workload: {
+    schemaVersion: 1,
+    kind: "legacy-dockerfile",
+    reference: "openshell/sandbox-from:old",
+    shared: false,
+  },
 };
 
 function beginInput(observation: SandboxRecreateObservation) {
@@ -70,6 +86,15 @@ function transactionAt(
     gatewayPort: 31818,
     sourceRegistryFingerprint: fingerprintSandboxRegistryEntry(SOURCE_ENTRY),
     sourceLiveIdentityFingerprint: SOURCE_ID,
+    sourceWorkload: {
+      openshellDriver: "docker",
+      imageTag: "openshell/sandbox-from:old",
+      workload: {
+        kind: "legacy-dockerfile",
+        reference: "openshell/sandbox-from:old",
+        shared: false,
+      },
+    },
     targetIntentFingerprint: TARGET_INTENT,
     targetGeneration: TARGET_GENERATION,
     targetLiveIdentityFingerprint: TARGET_ID,
@@ -96,9 +121,57 @@ describe("sandbox recreate journal", () => {
       phase: "planned",
     });
     expect(session.checkpoint?.sandboxRecreate).toBe(transaction);
+    expect(sandboxRecreateSourceWorkloadEntry(transaction)).toMatchObject({
+      name: "alpha",
+      openshellDriver: "docker",
+      imageTag: "openshell/sandbox-from:old",
+      workload: SOURCE_ENTRY.workload,
+    });
     const serialized = JSON.stringify(transaction);
     expect(serialized).not.toContain("NVIDIA_API_KEY");
     expect(serialized).not.toContain("model-a");
+  });
+
+  it("retains a shared source image after reconstructing an interrupted replacement", () => {
+    const source = {
+      ...SOURCE_ENTRY,
+      workload: { ...SOURCE_ENTRY.workload, shared: true },
+    } as unknown as SandboxEntry;
+    const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
+    const transaction = beginSandboxRecreateTransaction(session, {
+      ...beginInput({ state: "ready", liveIdentityFingerprint: SOURCE_ID }),
+      sourceEntry: source,
+    });
+    const restoredSource = sandboxRecreateSourceWorkloadEntry(transaction);
+    const removeImage = vi.fn(() => ({ status: 0 }));
+    const runtimeProviders = createRuntimeProviderBundleRegistry([
+      ["docker", createDockerRuntimeProviderBundle({ removeImage })],
+    ]);
+    const replacement: SandboxEntry = {
+      ...SOURCE_ENTRY,
+      imageTag: "openshell/sandbox-from:new",
+      workload: {
+        schemaVersion: 1,
+        kind: "legacy-dockerfile",
+        reference: "openshell/sandbox-from:new",
+        shared: false,
+      },
+      lifecycleGeneration: TARGET_GENERATION,
+      lifecycleLiveIdentityFingerprint: TARGET_ID,
+    };
+
+    expect(restoredSource?.workload?.shared).toBe(true);
+    expect(
+      retireReplacedSandboxWorkload(
+        "alpha",
+        TARGET_GENERATION,
+        TARGET_ID,
+        restoredSource ?? SOURCE_ENTRY,
+        replacement,
+        { runtimeProviders },
+      ),
+    ).toEqual({ status: "skipped", reason: "shared-image" });
+    expect(removeImage).not.toHaveBeenCalled();
   });
 
   it("starts at deleted when the source is already absent", () => {
@@ -241,6 +314,99 @@ describe("sandbox recreate journal", () => {
       revision: 4,
       targetLiveIdentityFingerprint: TARGET_ID,
     });
+  });
+
+  it("proves the journaled source at the delete edge before onboarding removes it", () => {
+    const session = createSession({ sandboxName: "alpha" });
+    beginSandboxRecreateTransaction(
+      session,
+      beginInput({ state: "ready", liveIdentityFingerprint: SOURCE_ID }),
+    );
+    let observation: SandboxRecreateObservation = {
+      state: "ready",
+      liveIdentityFingerprint: SOURCE_ID,
+    };
+    const runtime = createSandboxRecreateRuntime(
+      {
+        loadSession: () => session,
+        updateSession: (mutator) => {
+          mutator(session);
+          return session;
+        },
+      },
+      {
+        id: TX_ID,
+        targetGeneration: TARGET_GENERATION,
+        targetIntentFingerprint: TARGET_INTENT,
+      },
+      "alpha",
+      "nemoclaw-31818",
+      SOURCE_ENTRY,
+      () => observation,
+      () => undefined,
+    );
+
+    observation = { state: "ready", liveIdentityFingerprint: FOREIGN_ID };
+    expect(() => runtime.beginDelete()).toThrow(/not the journaled source/i);
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "planned", revision: 0 });
+
+    observation = { state: "ready", liveIdentityFingerprint: SOURCE_ID };
+    expect(runtime.beginDelete()).toBe("source");
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "deleting" });
+
+    observation = { state: "missing", liveIdentityFingerprint: null };
+    expect(runtime.beginDelete()).toBe("missing");
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "deleting" });
+  });
+
+  it("scopes the delete edge to the journaled gateway, not the ambient one", () => {
+    const session = createSession({ sandboxName: "alpha" });
+    beginSandboxRecreateTransaction(
+      session,
+      beginInput({ state: "ready", liveIdentityFingerprint: SOURCE_ID }),
+    );
+    const probedGateways: string[] = [];
+    const sessionStore = {
+      loadSession: () => session,
+      updateSession: (mutator: (current: typeof session) => void) => {
+        mutator(session);
+        return session;
+      },
+    };
+    const request = {
+      id: TX_ID,
+      targetGeneration: TARGET_GENERATION,
+      targetIntentFingerprint: TARGET_INTENT,
+    };
+    const observe = (_sandboxName: string, gatewayName: string): SandboxRecreateObservation => {
+      probedGateways.push(gatewayName);
+      return { state: "ready", liveIdentityFingerprint: SOURCE_ID };
+    };
+
+    const runtime = createSandboxRecreateRuntime(
+      sessionStore,
+      request,
+      "alpha",
+      "nemoclaw-31818",
+      SOURCE_ENTRY,
+      observe,
+      () => undefined,
+    );
+    runtime.beginDelete();
+
+    expect(runtime.journaledGatewayName).toBe("nemoclaw-31818");
+    expect(new Set(probedGateways)).toEqual(new Set(["nemoclaw-31818"]));
+    expect(() =>
+      createSandboxRecreateRuntime(
+        sessionStore,
+        request,
+        "alpha",
+        "nemoclaw",
+        SOURCE_ENTRY,
+        observe,
+        () => undefined,
+      ),
+    ).toThrow(/does not match the requested replacement/i);
   });
 
   it("recovers or rejects at every resumed-onboard mutation boundary (#6492)", () => {
@@ -391,12 +557,29 @@ describe("sandbox recreate recovery", () => {
       planSandboxRecreateRecovery(
         transactionAt("planned"),
         { state: "ready", liveIdentityFingerprint: SOURCE_ID },
-        { ...SOURCE_ENTRY, model: "changed-out-of-band" },
+        { ...SOURCE_ENTRY, imageTag: "changed-out-of-band" },
       ),
     ).toMatchObject({
       action: "reject",
       reason: expect.stringMatching(/source registry row changed/),
     });
+  });
+
+  it("keeps the preserved source row after the replacement reserves its inference route", () => {
+    expect(
+      planSandboxRecreateRecovery(
+        transactionAt("deleted"),
+        { state: "missing", liveIdentityFingerprint: null },
+        {
+          ...SOURCE_ENTRY,
+          pendingRouteReservation: true,
+          reservationSessionId: "session-9",
+          model: "model-b",
+          endpointUrl: "https://api.example.test/v1",
+          gatewayPort: undefined,
+        },
+      ),
+    ).toEqual({ action: "continue_create" });
   });
 
   it("rejects a same-name live sandbox with a different source identity", () => {
@@ -458,6 +641,78 @@ describe("sandbox recreate recovery", () => {
       action: "reject",
       reason: expect.stringMatching(/did not commit the journaled generation/),
     });
+  });
+});
+
+describe("source registry fingerprint", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("survives the route reservation the replacement onboard writes (#1904)", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-recreate-journal-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("../state/registry");
+      registry.registerSandbox({
+        name: "alpha",
+        agent: "openclaw",
+        agentVersion: "2026.3.11",
+        createdAt: ISO,
+        imageTag: "nemoclaw/openclaw:2026.3.11",
+        provider: "compatible-endpoint",
+        model: "model-a",
+        endpointUrl: "https://api.example.test/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-responses",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+      });
+      const journaled = fingerprintSandboxRegistryEntry(
+        registry.getSandbox("alpha") as SandboxEntry,
+      );
+
+      expect(
+        registry.reserveSandboxInferenceRoute("alpha", {
+          provider: "compatible-endpoint",
+          model: "model-a",
+          endpointUrl: "https://api.example.test/v1",
+          endpointSource: "onboard",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          preferredInferenceApi: "openai-responses",
+          gatewayName: "nemoclaw",
+          reservationSessionId: "session-9",
+        }),
+      ).toBe(true);
+      expect(fingerprintSandboxRegistryEntry(registry.getSandbox("alpha") as SandboxEntry)).toBe(
+        journaled,
+      );
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("changes when the row records another sandbox", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-recreate-journal-"));
+    vi.stubEnv("HOME", home);
+    vi.resetModules();
+    try {
+      const registry = await import("../state/registry");
+      registry.registerSandbox({ name: "alpha", agent: "openclaw", createdAt: ISO });
+      const journaled = fingerprintSandboxRegistryEntry(
+        registry.getSandbox("alpha") as SandboxEntry,
+      );
+
+      registry.updateSandbox("alpha", { createdAt: "2026-07-28T20:00:00.000Z" });
+
+      expect(
+        fingerprintSandboxRegistryEntry(registry.getSandbox("alpha") as SandboxEntry),
+      ).not.toBe(journaled);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
   });
 });
 

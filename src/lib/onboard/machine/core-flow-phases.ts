@@ -69,9 +69,12 @@ export interface SandboxOnboardFlowPhaseOptions<
   gatewayName: string;
   authoritativeResumeConfig?: boolean;
   authoritativePolicyTier?: string | null;
+
+  recreateJournalTargetIntentFingerprint?: string | null;
   resumeAgentChanged: boolean;
   requestedObservabilityEnabled?: boolean | null;
   requestedDcodeAutoApprovalMode?: DcodeAutoApprovalMode | null;
+  rebuildPreservedEnv?: readonly import("../../state/preserved-env").PreservedEnvFile[];
   endpointProvenance: EndpointProvenanceOptions;
   recreateSandbox: (requested?: boolean) => boolean;
   controlUiPort: number | null;
@@ -160,6 +163,8 @@ export function createProviderInferenceOnboardFlowPhase<
         hermesToolGateways: context.hermesToolGateways,
         preferredInferenceApi: context.preferredInferenceApi,
         compatibleEndpointReasoning: context.compatibleEndpointReasoning,
+
+        compatibleEndpointReasoningEffort: context.compatibleEndpointReasoningEffort,
         nimContainer: context.nimContainer,
         webSearchConfig: context.webSearchConfig,
       },
@@ -183,6 +188,9 @@ export function createProviderInferenceOnboardFlowPhase<
         hermesToolGateways: providerInferenceResult.hermesToolGateways,
         preferredInferenceApi: providerInferenceResult.preferredInferenceApi,
         compatibleEndpointReasoning: providerInferenceResult.compatibleEndpointReasoning,
+
+        compatibleEndpointReasoningEffort:
+          providerInferenceResult.compatibleEndpointReasoningEffort,
         nimContainer: providerInferenceResult.nimContainer,
         webSearchConfig: providerInferenceResult.webSearchConfig,
       }),
@@ -212,10 +220,13 @@ export function createSandboxOnboardFlowPhase<
       gatewayName: options.gatewayName,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       authoritativePolicyTier: options.authoritativePolicyTier,
+
+      recreateJournalTargetIntentFingerprint: options.recreateJournalTargetIntentFingerprint,
       endpointSource: endpointProvenance.endpointSource,
       resumeAgentChanged: options.resumeAgentChanged,
       requestedObservabilityEnabled: options.requestedObservabilityEnabled,
       requestedDcodeAutoApprovalMode: options.requestedDcodeAutoApprovalMode,
+      rebuildPreservedEnv: options.rebuildPreservedEnv,
       recreateSandbox: options.recreateSandbox,
       session: context.session,
       sandboxName: context.sandboxName,

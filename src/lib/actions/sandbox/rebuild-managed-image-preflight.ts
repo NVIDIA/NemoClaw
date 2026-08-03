@@ -19,6 +19,11 @@ import {
   OPENCLAW_SANDBOX_BASE_IMAGE,
   SANDBOX_BASE_TAG,
 } from "../../sandbox-base-image";
+import {
+  applyReasoningEffortEnv,
+  REASONING_EFFORT_ENV,
+  type ReasoningEffort,
+} from "../../onboard/reasoning-mode";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 import {
@@ -35,6 +40,7 @@ export type ManagedDcodeRebuildImageInput = {
   provider: string;
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: "true" | "false" | null;
+  compatibleEndpointReasoningEffort: ReasoningEffort | null;
   webSearchConfig: WebSearchConfig | null;
   toolDisclosure: ToolDisclosure;
   dcodeAutoApprovalMode: DcodeAutoApprovalMode;
@@ -110,6 +116,7 @@ export async function prepareManagedDcodeRebuildImage(
   const imageTag = (deps.createImageTag ?? defaultImageTag)();
   const previousDockerGpuPatchNetwork = process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK;
   const previousReasoning = process.env.NEMOCLAW_REASONING;
+  const previousReasoningEffort = process.env[REASONING_EFFORT_ENV];
   let cleanupBuildContext: (() => boolean) | null = null;
   let imageBuilt = false;
   let retainBuildContext = false;
@@ -120,8 +127,10 @@ export async function prepareManagedDcodeRebuildImage(
     delete process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK;
     if (input.provider === "compatible-endpoint") {
       process.env.NEMOCLAW_REASONING = input.compatibleEndpointReasoning ?? "false";
+      applyReasoningEffortEnv(input.compatibleEndpointReasoningEffort);
     } else {
       delete process.env.NEMOCLAW_REASONING;
+      delete process.env[REASONING_EFFORT_ENV];
     }
 
     const staged = stage({
@@ -218,5 +227,7 @@ export async function prepareManagedDcodeRebuildImage(
     }
     if (previousReasoning === undefined) delete process.env.NEMOCLAW_REASONING;
     else process.env.NEMOCLAW_REASONING = previousReasoning;
+    if (previousReasoningEffort === undefined) delete process.env[REASONING_EFFORT_ENV];
+    else process.env[REASONING_EFFORT_ENV] = previousReasoningEffort;
   }
 }

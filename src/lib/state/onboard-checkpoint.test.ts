@@ -55,6 +55,15 @@ function recreateTransaction(): CheckpointSandboxRecreateTransaction {
     gatewayPort: 31818,
     sourceRegistryFingerprint: "a".repeat(64),
     sourceLiveIdentityFingerprint: "b".repeat(64),
+    sourceWorkload: {
+      openshellDriver: "docker",
+      imageTag: "openshell/sandbox-from:old",
+      workload: {
+        kind: "legacy-dockerfile",
+        reference: "openshell/sandbox-from:old",
+        shared: false,
+      },
+    },
     targetIntentFingerprint: "c".repeat(64),
     targetGeneration: "22222222-2222-4222-8222-222222222222",
     targetLiveIdentityFingerprint: null,
@@ -208,6 +217,49 @@ describe("checkpoint schema inspection", () => {
       status: "loaded",
       checkpoint,
     });
+  });
+
+  it("loads an older recreate journal without a source workload receipt", () => {
+    const serialized = serializedRecreateCheckpoint();
+    delete (serialized.sandboxRecreate as Record<string, unknown>).sourceWorkload;
+
+    const result = inspectCheckpoint(serialized);
+
+    expect(result.status).toBe("loaded");
+    expect(
+      result.status === "loaded" && result.checkpoint.sandboxRecreate?.sourceWorkload,
+    ).toBeNull();
+  });
+
+  it("rejects a source-workload cleanup receipt whose reference does not match its image", () => {
+    const serialized = serializedRecreateCheckpoint();
+    const transaction = serialized.sandboxRecreate as Record<string, unknown>;
+    transaction.sourceWorkload = {
+      openshellDriver: "docker",
+      imageTag: "openshell/sandbox-from:old",
+      workload: {
+        kind: "legacy-dockerfile",
+        reference: "openshell/sandbox-from:different",
+        shared: false,
+      },
+    };
+
+    expect(inspectCheckpoint(serialized)).toEqual({ status: "corrupt" });
+  });
+
+  it("rejects a source-workload cleanup receipt without a boolean sharing state", () => {
+    const serialized = serializedRecreateCheckpoint();
+    const transaction = serialized.sandboxRecreate as Record<string, unknown>;
+    transaction.sourceWorkload = {
+      openshellDriver: "docker",
+      imageTag: "openshell/sandbox-from:old",
+      workload: {
+        kind: "legacy-dockerfile",
+        reference: "openshell/sandbox-from:old",
+      },
+    };
+
+    expect(inspectCheckpoint(serialized)).toEqual({ status: "corrupt" });
   });
 
   it.each([

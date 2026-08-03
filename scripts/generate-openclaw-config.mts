@@ -638,6 +638,29 @@ function coerceCompatDict(value: unknown): JsonObject {
   throw new Error("NEMOCLAW_INFERENCE_COMPAT_B64 must decode to a JSON object or null");
 }
 
+const REASONING_EFFORT_VALUES = ["low", "medium", "high"];
+const REASONING_EFFORT_DEFAULT = "default";
+const REASONING_EFFORT_PROVIDER = "compatible-endpoint";
+
+// OpenClaw merges params.extra_body into openai-completions request bodies, so
+// this is the config-level route to a reasoning_effort the endpoint receives.
+function buildReasoningEffortParams(env: Env): JsonObject {
+  const raw = (env.NEMOCLAW_REASONING_EFFORT || "").trim().toLowerCase();
+  const upstreamProvider = (env.NEMOCLAW_UPSTREAM_PROVIDER || "").trim();
+  if (!raw || raw === REASONING_EFFORT_DEFAULT) return {};
+  if (upstreamProvider !== REASONING_EFFORT_PROVIDER) return {};
+  if (!REASONING_EFFORT_VALUES.includes(raw)) {
+    throw new Error(
+      `NEMOCLAW_REASONING_EFFORT must be one of: ${[
+        ...REASONING_EFFORT_VALUES,
+        REASONING_EFFORT_DEFAULT,
+      ].join(", ")}`,
+    );
+  }
+  if ((env.NEMOCLAW_INFERENCE_API as string) !== "openai-completions") return {};
+  return { params: { extra_body: { reasoning_effort: raw } } };
+}
+
 // Canonical primary-agent entry. Always written first into agents.list, always
 // flagged default: true. Pinning the slot here prevents the extra-agents env
 // from displacing the primary agent: OpenClaw's resolveDefaultAgentId falls
@@ -1161,6 +1184,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const toolDisclosure = readToolDisclosureEnv(env);
 
   const reasoning = (env.NEMOCLAW_REASONING || "false") === "true";
+  const reasoningEffortParams = buildReasoningEffortParams(env);
   const inferenceInputs = (env.NEMOCLAW_INFERENCE_INPUTS || "text")
     .split(",")
     .map((value) => value.trim())
@@ -1302,6 +1326,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
       id: model,
       name: primaryModelRef,
       reasoning,
+      ...reasoningEffortParams,
       input: inferenceInputs,
       cost: {
         input: 0,
@@ -1337,6 +1362,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
       id: secondaryModelId,
       name: ref,
       reasoning,
+      ...reasoningEffortParams,
       input: inferenceInputs,
       cost: {
         input: 0,

@@ -399,6 +399,7 @@ export async function prepareDcodeReplacementBeforeMutation(
         model: target.model,
         preferredInferenceApi: target.preferredInferenceApi,
         compatibleEndpointReasoning: resumeConfig.compatibleEndpointReasoning,
+        compatibleEndpointReasoningEffort: resumeConfig.compatibleEndpointReasoningEffort,
         webSearchConfig,
         toolDisclosure: input.toolDisclosure,
         dcodeAutoApprovalMode: input.dcodeAutoApprovalMode,

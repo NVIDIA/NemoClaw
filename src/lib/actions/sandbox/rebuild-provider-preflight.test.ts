@@ -28,6 +28,7 @@ function config(overrides: Partial<RebuildResumeConfig> = {}): RebuildResumeConf
     credentialEnv: "COMPATIBLE_API_KEY",
     preferredInferenceApi: "openai-completions",
     compatibleEndpointReasoning: null,
+    compatibleEndpointReasoningEffort: null,
     pinEndpoint: true,
     endpointUrl: "https://inference.example.test/v1",
     registryInferenceRoute: {

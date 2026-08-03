@@ -53,6 +53,26 @@ describe("Docker host advisories (#3213)", () => {
     }
   });
 
+  it("reports an invalid DOCKER_HOST instead of a docker-group remediation (#7731)", () => {
+    const result = runAdvisories(
+      DOCKER_HOST_ADVISORY_CHECKS,
+      host({ dockerServiceActive: true, dockerHostInvalid: true }),
+      { phase: "preflight.host" },
+    );
+
+    expect(result.advisories.map((advisory) => advisory.id)).toEqual(["invalid_docker_host"]);
+  });
+
+  it("reports an invalid DOCKER_HOST even when the endpoint is reachable (#7731)", () => {
+    const result = runAdvisories(
+      DOCKER_HOST_ADVISORY_CHECKS,
+      host({ dockerReachable: true, dockerHostInvalid: true }),
+      { phase: "preflight.host" },
+    );
+
+    expect(result.advisories.map((advisory) => advisory.id)).toEqual(["invalid_docker_host"]);
+  });
+
   it("re-evaluates Docker state on resume", () => {
     const context = host({ dockerInstalled: false });
     const cachedResults = new Map([["install_docker", null]]);
@@ -66,6 +86,7 @@ describe("Docker host advisories (#3213)", () => {
     expect(result.executedCheckIds).toEqual([
       "enable_docker_desktop_wsl_integration",
       "install_docker",
+      "invalid_docker_host",
       "docker_group_permission",
       "start_docker",
     ]);

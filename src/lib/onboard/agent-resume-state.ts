@@ -34,6 +34,7 @@ export function clearAgentScopedResumeState(session: Session, selectedAgentName:
   session.webSearchConfig = null;
   session.messagingPlan = null;
   if (session.sandboxPromptProgress) {
+    session.sandboxPromptProgress.sandboxName = false;
     session.sandboxPromptProgress.webSearch = false;
     session.sandboxPromptProgress.messaging = false;
   }

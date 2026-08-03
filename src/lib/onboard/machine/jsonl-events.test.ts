@@ -3,9 +3,10 @@
 
 import { spawn } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
+import { createSession } from "../../state/onboard-session";
 import {
   addOnboardMachineEventListener,
+  buildOnboardMachineContext,
   clearOnboardMachineEventListeners,
   emitOnboardMachineEvent,
   type OnboardMachineEvent,
@@ -225,6 +226,29 @@ describe("onboard JSONL events", () => {
     );
 
     expect(event.payload.context).toMatchObject({ credentialEnv });
+  });
+
+  it.each([
+    ["high", "high"],
+    [null, "endpoint-default"],
+  ] as const)("reports the effective non-secret reasoning effort (%s) (#7659)", (stored, expected) => {
+    const context = buildOnboardMachineContext(
+      createSession({
+        provider: "compatible-endpoint",
+        preferredInferenceApi: "openai-completions",
+        compatibleEndpointReasoningEffort: stored,
+      }),
+    );
+    const event = toOnboardJsonlEvent(sampleEvent({ context }));
+
+    expect(event.payload.context).toMatchObject({ reasoningEffort: expected });
+  });
+
+  it("omits reasoning effort outside compatible OpenAI Completions routes", () => {
+    const context = buildOnboardMachineContext(createSession({ provider: "nvidia-prod" }));
+    const event = toOnboardJsonlEvent(sampleEvent({ context }));
+
+    expect(event.payload.context).not.toHaveProperty("reasoningEffort");
   });
 
   it.each([

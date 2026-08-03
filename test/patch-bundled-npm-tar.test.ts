@@ -28,7 +28,7 @@ function writeJson(file: string, value: object): void {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function fixture(npmVersion: "10.9.7" | "11.13.0", tarVersion: string) {
+function fixture(npmVersion: "10.9.7" | "11.13.0" | "11.16.0", tarVersion: string) {
   const root = temporaryDirectory();
   const npmRoot = path.join(root, "npm");
   const replacementRoot = path.join(root, "replacement");
@@ -61,7 +61,8 @@ afterEach(() => {
 describe("npm bundled node-tar remediation", () => {
   it.each([
     ["Node 22 npm", "10.9.7", "7.5.11"],
-    ["Node 24 npm", "11.13.0", "7.5.13"],
+    ["Node.js 24.16 npm", "11.13.0", "7.5.13"],
+    ["Node.js 24.18 npm", "11.16.0", "7.5.15"],
   ] as const)("replaces the complete affected tree for %s", (_label, npmVersion, tarVersion) => {
     const target = fixture(npmVersion, tarVersion);
 

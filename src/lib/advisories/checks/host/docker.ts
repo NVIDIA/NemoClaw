@@ -66,6 +66,34 @@ export const installDocker: AdvisoryCheck<HostAssessment> = {
   },
 };
 
+export const invalidDockerHost: AdvisoryCheck<HostAssessment> = {
+  id: "invalid_docker_host",
+  phase: "preflight.host",
+  severity: "blocking",
+  resumeSafe: false,
+  check(host) {
+    if (!host.dockerHostInvalid || !host.dockerInstalled || host.isWsl) {
+      return null;
+    }
+    return hostAdvisory(invalidDockerHost, {
+      title: "Fix the DOCKER_HOST endpoint",
+      kind: "manual",
+      reason:
+        "DOCKER_HOST is set to an endpoint onboarding cannot use. " +
+        "Onboarding supports only an absolute unix:// Docker socket. " +
+        "The socket path cannot contain a single quote or line break. " +
+        "TCP and SSH endpoints and relative paths are not supported, even when reachable. " +
+        "This is a DOCKER_HOST configuration problem, not a docker-group permission or stopped-daemon issue.",
+      commands: [
+        "unset DOCKER_HOST   # use Docker's default socket",
+        "# or point it at a local socket, for example:",
+        "export DOCKER_HOST=unix:///var/run/docker.sock",
+        "nemoclaw onboard",
+      ],
+    });
+  },
+};
+
 export const addUserToDockerGroup: AdvisoryCheck<HostAssessment> = {
   id: "docker_group_permission",
   phase: "preflight.host",
@@ -73,6 +101,7 @@ export const addUserToDockerGroup: AdvisoryCheck<HostAssessment> = {
   resumeSafe: false,
   check(host) {
     if (
+      host.dockerHostInvalid ||
       !host.dockerInstalled ||
       host.dockerReachable ||
       host.isWsl ||
@@ -107,7 +136,13 @@ export const startDocker: AdvisoryCheck<HostAssessment> = {
   resumeSafe: false,
   check(host) {
     const likelyGroupIssue = host.platform === "linux" && host.dockerServiceActive === true;
-    if (!host.dockerInstalled || host.dockerReachable || host.isWsl || likelyGroupIssue)
+    if (
+      host.dockerHostInvalid ||
+      !host.dockerInstalled ||
+      host.dockerReachable ||
+      host.isWsl ||
+      likelyGroupIssue
+    )
       return null;
     return hostAdvisory(startDocker, {
       title: "Start Docker",
@@ -126,6 +161,7 @@ export const startDocker: AdvisoryCheck<HostAssessment> = {
 export const DOCKER_HOST_ADVISORY_CHECKS = Object.freeze([
   enableDockerDesktopWslIntegration,
   installDocker,
+  invalidDockerHost,
   addUserToDockerGroup,
   startDocker,
 ]);

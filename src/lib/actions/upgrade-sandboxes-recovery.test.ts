@@ -306,6 +306,26 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     );
   });
 
+  it("forwards two stale shared-route sandboxes through upgrade-sandboxes --auto (#7615, #7798)", async () => {
+    const names = ["alpha", "beta"];
+    const harness = createRecoveryHarness(names, {
+      liveOutput: names.map((name) => `${name} Ready`).join("\n"),
+      staleNames: names,
+    });
+
+    await expect(harness.upgradeSandboxes(["--auto"])).resolves.toBeUndefined();
+
+    expect(harness.rebuildSpy).toHaveBeenNthCalledWith(1, "alpha", ["--yes"], {
+      recoveryManifest: undefined,
+      throwOnError: true,
+    });
+    expect(harness.rebuildSpy).toHaveBeenNthCalledWith(2, "beta", ["--yes"], {
+      recoveryManifest: undefined,
+      throwOnError: true,
+    });
+    expect(harness.rebuildSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("fails closed for a probed v0.0.55 custom image with matching backup agent version", async () => {
     const probedAgentVersion = "2026.5.27";
     const harness = createRecoveryHarness(["custom-box"], {

@@ -32,7 +32,11 @@ import {
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { preflightRebuildMessagingConflicts } from "./rebuild-messaging-conflict-preflight";
 import { stageRebuildMessagingPlanOrBail } from "./rebuild-messaging-phase";
-import { checkRebuildGatewaySchemaPreflight } from "./rebuild-preflight-guards";
+import {
+  checkRebuildGatewaySchemaPreflight,
+  commitRebuildRoutePreflight,
+  type RebuildRoutePreflightReceipt,
+} from "./rebuild-preflight-guards";
 import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import {
   hydrateMessagingConfigForRebuild,
@@ -75,6 +79,7 @@ export interface RebuildPreparedTarget {
   messagingPlan: SandboxMessagingPlan | null;
   baseImagePreflight: RebuildAgentBaseImagePreflight;
   preparedImage: PreparedRebuildImage | null;
+  routePreflightReceipt: RebuildRoutePreflightReceipt;
 }
 
 /** Carry the outer resolver's verified provenance into the inner onboard build. */
@@ -279,11 +284,21 @@ export async function prepareRebuildTargetPreflights(args: {
         fromDockerfile,
         credentialEnv,
       );
-      if (!registry.updateSandbox(sandboxName, validatedRegistryUpdate)) {
-        bail("Sandbox registry entry disappeared during rebuild preflight");
+      const routePreflight = commitRebuildRoutePreflight({
+        sandboxName,
+        gatewayName: recreateOptions.targetGatewayName,
+        targetUpdate: validatedRegistryUpdate,
+      });
+      if (!routePreflight.ok) {
+        bail(routePreflight.message);
         return null;
       }
       Object.assign(sandboxEntry, validatedRegistryUpdate);
+      if (routePreflight.receipt.migratedSandboxNames.length > 0) {
+        console.log(
+          `Migrated legacy shared-gateway credential metadata for: ${routePreflight.receipt.migratedSandboxNames.join(", ")}`,
+        );
+      }
       if (preparedImage) {
         recreateOptions.preparedImageRebuild = {
           buildContext: preparedImage,
@@ -299,6 +314,7 @@ export async function prepareRebuildTargetPreflights(args: {
         messagingPlan,
         baseImagePreflight,
         preparedImage,
+        routePreflightReceipt: routePreflight.receipt,
       };
     } finally {
       if (!retainPreparedImage && preparedImage) disposePreparedBuildContext(preparedImage);

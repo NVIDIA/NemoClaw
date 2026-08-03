@@ -14,7 +14,6 @@ export const EXPECTED_VITEST_PROJECTS = [
   "plugin",
   "e2e-support",
   "e2e-live",
-  "e2e-branch-validation",
 ] as const;
 
 type ExpectedVitestProject = (typeof EXPECTED_VITEST_PROJECTS)[number];
@@ -91,7 +90,6 @@ export function expectedProjectForTestPath(file: string): ExpectedVitestProject 
   if (normalized.startsWith("test/package-contract/")) return "package-contract";
   if (normalized.startsWith("test/e2e/support/")) return "e2e-support";
   if (normalized.startsWith("test/e2e/live/")) return "e2e-live";
-  if (normalized === "test/e2e/brev-e2e.test.ts") return "e2e-branch-validation";
   if (normalized.startsWith("test/e2e/")) return undefined;
   if (normalized.startsWith("test/")) return "integration";
   return undefined;
@@ -226,7 +224,6 @@ function runVitest(args: readonly string[]): string {
     encoding: "utf8",
     env: {
       ...process.env,
-      NEMOCLAW_RUN_BRANCH_VALIDATION_E2E: "1",
       NEMOCLAW_RUN_LIVE_E2E: "1",
     },
     maxBuffer: 10 * 1024 * 1024,

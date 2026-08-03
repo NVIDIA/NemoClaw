@@ -5,7 +5,11 @@ import { describe, expect, it } from "vitest";
 import { SandboxConfigError } from "../sandbox/config";
 import type { ConfigObject } from "../security/credential-filter";
 import { InferenceSetError, runInferenceSet } from "./inference-set";
-import { baseSession, createDeps } from "./inference-set.test-support";
+import {
+  baseSession,
+  createCompatibleProviderCapture,
+  createDeps,
+} from "./inference-set.test-support";
 
 describe("runInferenceSet degraded state handling", () => {
   it("aborts before mutating any layer when the sandbox config read fails (#6997)", async () => {
@@ -129,6 +133,13 @@ describe("runInferenceSet degraded state handling", () => {
       session: baseSession({
         provider: "nvidia-prod",
         model: "nvidia/nemotron-3-super-120b-a12b",
+      }),
+      captureOpenshell: createCompatibleProviderCapture({
+        name: "compatible-endpoint",
+        type: "openai",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        configKey: "OPENAI_BASE_URL",
+        initiallyPresent: false,
       }),
     });
     deps.calls.readSandboxConfig.mockImplementation(() => structuredClone(persistedConfig));

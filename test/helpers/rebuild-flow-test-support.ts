@@ -3,7 +3,11 @@
 
 import { type MockInstance, vi } from "vitest";
 import type { SandboxGatewayState } from "../../src/lib/actions/sandbox/gateway-state";
-import type { RebuildImagePreflightResult } from "../../src/lib/actions/sandbox/rebuild-custom-image-preflight";
+import type {
+  finalizePreparedRebuildImageMessagingPlan,
+  RebuildImagePreflightResult,
+} from "../../src/lib/actions/sandbox/rebuild-custom-image-preflight";
+import type { PreservedEnvFile } from "../../src/lib/state/preserved-env";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import type { VersionCheckResult } from "../../src/lib/sandbox/version";
 import type { SandboxRemovalReceipt } from "../../src/lib/state/registry";
@@ -67,6 +71,9 @@ export type RebuildFlowOverrides = {
   agentPolicyAdditionsContent?: string;
   preflightWithProductionBaselineResolver?: boolean;
   preflightAuthoritativeRebuildTarget?: (options: Record<string, unknown>) => Promise<void> | void;
+  revalidateRebuildRouteBeforeDelete?: (
+    receipt: Record<string, unknown>,
+  ) => { ok: true; receipt: Record<string, unknown> } | { ok: false; message: string };
   sandboxEntry?: Record<string, unknown>;
   sandboxBaseImageLabelsOutput?: string;
   sessionSandboxName?: string;
@@ -105,6 +112,7 @@ export type RebuildFlowOverrides = {
     error?: Error;
   };
   backupPolicyPresets?: string[];
+  backupPreservedEnv?: PreservedEnvFile[];
   ensureValidatedBraveSearchCredential?: () => Promise<unknown>;
   ensureValidatedWebSearchCredential?: () => Promise<unknown>;
   hermesCredentialKeys?: string[] | null;
@@ -112,6 +120,7 @@ export type RebuildFlowOverrides = {
   versionCheck?: VersionCheckResult;
   hydrateCredentialEnv?: (credentialEnv: string) => string | null;
   customImagePreflight?: RebuildImagePreflightResult;
+  finalizePreparedImage?: typeof finalizePreparedRebuildImageMessagingPlan;
   defaultSelectionRevision?: number;
   preDeleteDefaultSelectionRevision?: number;
   removalReceipt?: SandboxRemovalReceipt | null;
@@ -155,6 +164,7 @@ export type RebuildFlowHarness = {
   restoreSandboxEntryIfMissingSpy: MockInstance;
   restoreMcpBridgesAfterRebuildSpy: MockInstance;
   warnUnpreservedUserManagedFilesSpy: MockInstance;
+  finalizePreparedImageSpy: MockInstance;
   session: RebuildFlowSession;
 };
 export const originalSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
@@ -177,10 +187,23 @@ function createStep(status: string): RebuildFlowStep {
 }
 export function createRebuildFlowSession(machineSnapshotVersion: number): RebuildFlowSession {
   return {
+    sessionId: "rebuild-flow-session",
+    updatedAt: "2026-06-01T00:00:00.000Z",
     sandboxName: "alpha",
+    agent: null,
     provider: "ollama-local",
     model: "nvidia/nemotron",
     credentialEnv: null,
+    checkpoint: null,
+    webSearchConfig: null,
+    resourceProfile: null,
+    messagingPlan: null,
+    sandboxPromptProgress: {
+      sandboxName: true,
+      webSearch: false,
+      messaging: false,
+      resourceProfile: false,
+    },
     metadata: {},
     hermesToolGateways: [],
     lastStepStarted: null,

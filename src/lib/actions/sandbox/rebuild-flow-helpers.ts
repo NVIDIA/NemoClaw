@@ -39,7 +39,8 @@ import {
   type TrustedLocalBaseImageOverride,
 } from "../../sandbox-base-image";
 import * as shields from "../../shields";
-import * as registry from "../../state/registry";
+import type { SandboxEntry } from "../../state/registry";
+import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
 import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import {
@@ -48,12 +49,13 @@ import {
   printWrongGatewayActiveGuidance,
 } from "./gateway-state";
 import { openRebuildShieldsWindow, type RebuildShieldsWindow } from "./rebuild-shields";
+import * as snapshotBackup from "./snapshot/backup-authority";
 
-export type RebuildSandboxEntry = registry.SandboxEntry & { agents?: unknown[] };
+export type RebuildSandboxEntry = SandboxEntry & { agents?: unknown[] };
 
 export type RebuildLiveState = {
   staleRecovery: boolean;
-  staleRegistrySnapshot: ReturnType<typeof registry.load> | null;
+  staleRegistrySnapshot: ReturnType<typeof loadRegistry> | null;
 };
 
 export type RebuildAgentBaseImageOptions = {
@@ -224,7 +226,7 @@ export async function resolveRebuildLiveState(
     );
     return {
       staleRecovery: true,
-      staleRegistrySnapshot: JSON.parse(JSON.stringify(registry.load())),
+      staleRegistrySnapshot: JSON.parse(JSON.stringify(loadRegistry())),
     };
   }
 
@@ -445,7 +447,13 @@ export function backupSandboxStateForRebuild(
 
   console.log("  Backing up sandbox state...");
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
-  const backup = sandboxState.backupSandboxState(sandboxName);
+  const backup = snapshotBackup.backupSandboxStateWithManagedAuthority(
+    sandboxName,
+    {},
+    {
+      getSandbox: (name) => loadRegistry().sandboxes[name] ?? null,
+    },
+  );
   log(
     `Backup result: success=${backup.success}, backed=${backup.backedUpDirs.join(",")}; files=${backup.backedUpFiles.join(",")}, failed=${backup.failedDirs.join(",")}; failedFiles=${backup.failedFiles.join(",")}`,
   );

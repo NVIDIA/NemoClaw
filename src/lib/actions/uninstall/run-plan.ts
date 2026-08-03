@@ -1415,10 +1415,18 @@ function inspectOtherGatewayEnvironments(
       // Never follow or dismiss a symlink or non-directory: a surprising shape
       // may hide live gateway state, so keep the conservative treatment.
       if (entry.isSymbolicLink() || !entry.isDirectory()) return true;
-      // A per-port directory whose gateway OpenShell no longer knows is an
-      // orphan; dismiss it only when the live set positively lacks it.
       const port = Number(entry.name);
       if (!Number.isInteger(port) || port < 1 || port > 65535) return true;
+      // A directory named for the gateway being uninstalled is that gateway's
+      // own state, never a sibling. Path identity alone does not catch it: for
+      // the default port `selectedRoot` is the shared root, so
+      // `<shared>/gateways/<DEFAULT_GATEWAY_PORT>` never equals it and the
+      // selected gateway counts itself as a sibling, scoping cleanup to
+      // preserve resources nothing else owns (#7987). Match on port identity
+      // like every other sibling filter here and like `listGatewayStateRoots`.
+      if (port === GATEWAY_PORT) return false;
+      // A per-port directory whose gateway OpenShell no longer knows is an
+      // orphan; dismiss it only when the live set positively lacks it.
       const live = liveGatewayNames();
       if (live === null) return true;
       return live.has(resolveGatewayName(port));
@@ -1719,7 +1727,14 @@ function executePlan(
         ) {
           return { ok: false };
         }
-        removePath(paths.selectedGatewayLocalStateDir, runtime);
+        if (!options.keepOpenShell && !externallySupervised)
+          removePath(paths.selectedGatewayLocalStateDir, runtime);
+        else
+          runtime.log(
+            externallySupervised
+              ? "Keeping OpenShell gateway configuration used by the externally supervised gateway."
+              : "Keeping OpenShell gateway configuration as requested.",
+          );
         runtime.log(
           "Legacy sibling gateway rows remain; kept the shared default-root state for their recovery.",
         );
@@ -1748,16 +1763,28 @@ function executePlan(
       )
         ok = false;
       if (scopedToSelectedGateway) {
-        removePath(paths.selectedGatewayLocalStateDir, runtime);
+        if (!options.keepOpenShell && !externallySupervised)
+          removePath(paths.selectedGatewayLocalStateDir, runtime);
+        else
+          runtime.log(
+            externallySupervised
+              ? "Keeping OpenShell gateway configuration used by the externally supervised gateway."
+              : "Keeping OpenShell gateway configuration as requested.",
+          );
         if (GATEWAY_PORT === DEFAULT_GATEWAY_PORT && !options.keepOpenShell) {
           const envCleanup = removeNemoclawOpenShellGatewayEnv(paths, runtime);
           if (!envCleanup.ok) ok = false;
         }
         runtime.log("Sibling gateways remain; kept shared OpenShell and NemoClaw config.");
       } else {
-        removePath(paths.gatewayLocalStateDir, runtime);
-        if (options.keepOpenShell)
-          runtime.log("Keeping OpenShell gateway configuration as requested.");
+        if (!options.keepOpenShell && !externallySupervised)
+          removePath(paths.gatewayLocalStateDir, runtime);
+        if (options.keepOpenShell || externallySupervised)
+          runtime.log(
+            externallySupervised
+              ? "Keeping OpenShell gateway configuration used by the externally supervised gateway."
+              : "Keeping OpenShell gateway configuration as requested.",
+          );
         else if (GATEWAY_PORT === DEFAULT_GATEWAY_PORT) {
           const envCleanup = removeNemoclawOpenShellGatewayEnv(paths, runtime);
           if (!envCleanup.ok) ok = false;
