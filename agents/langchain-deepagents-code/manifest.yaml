@@ -43,8 +43,10 @@ config:
 # .state and skills — otherwise skills are silently lost on rebuild.
 state_dirs:
   - .state
-  - skills
-  - agent/skills
+  - path: skills
+    shields: read-only
+  - path: agent/skills
+    shields: read-only
 
 # ── Top-level durable state files ───────────────────────────────
 # config.toml mixes DCode preferences with NemoClaw-managed model routing.

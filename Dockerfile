@@ -96,6 +96,7 @@ COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/open
 COPY scripts/lib/clean_runtime_shell_env_shim.py /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py
 COPY scripts/lib/normalize_mutable_config_perms.py /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py
 COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
+COPY agents/openclaw/state-lock-plan.json /usr/local/share/nemoclaw/state-lock-plan.json
 COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py
 COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
@@ -977,12 +978,14 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
     && chown root:root /usr/local/bin/nemoclaw-gateway-control \
         /usr/local/lib/nemoclaw/gateway-supervisor.sh \
         /usr/local/lib/nemoclaw/state-dir-guard.py \
+        /usr/local/share/nemoclaw/state-lock-plan.json \
         /usr/local/lib/nemoclaw/openclaw-config-guard.py \
         /usr/local/lib/nemoclaw/managed-gateway-control.py \
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
     && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py \
         /usr/local/lib/nemoclaw/openclaw-config-guard.py \
         /usr/local/lib/nemoclaw/managed-gateway-control.py \
+    && chmod 444 /usr/local/share/nemoclaw/state-lock-plan.json \
     && chmod 444 /usr/local/lib/nemoclaw/gateway-supervisor.sh \
         /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
@@ -1651,6 +1654,7 @@ RUN check_metadata() { \
     && check_metadata /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts 'root:root:755' \
     && check_metadata /usr/local/bin/nemoclaw-gateway-control 'root:root:700' \
     && check_metadata /usr/local/lib/nemoclaw/state-dir-guard.py 'root:root:500' \
+    && check_metadata /usr/local/share/nemoclaw/state-lock-plan.json 'root:root:444' \
     && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644' \
     && check_metadata /scripts/checks/node-tar-image-scan.mts 'root:root:755' \
     && install -d -m 0755 /usr/local/share/nemoclaw \

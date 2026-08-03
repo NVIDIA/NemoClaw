@@ -212,6 +212,11 @@ describe("OpenShell policy boundary package contract", () => {
     expect(validation).toEqual([true, false]);
   });
 
+  it("ships agent manifests and generated state lock plans (#8006)", () => {
+    expect(packageFiles(repoRoot)).toContain("agents/*/manifest.yaml");
+    expect(packageFiles(repoRoot)).toContain("agents/*/state-lock-plan.json");
+  });
+
   it("ships an out-of-tree runtime sandbox-policy schema validator", { timeout: 90_000 }, () => {
     const productionDependencyTree = spawnSync(
       "npm",

@@ -41,9 +41,16 @@ function normalizeReadModesForDockerCopy(rootDir: string): void {
 }
 
 function stageOpenClawRuntimeGraphs(rootDir: string, buildCtx: string): void {
+  const sourceAgentDir = path.join(rootDir, "agents", "openclaw");
+  const stagedAgentDir = path.join(buildCtx, "agents", "openclaw");
+  fs.mkdirSync(stagedAgentDir, { recursive: true });
+  fs.copyFileSync(
+    path.join(sourceAgentDir, "state-lock-plan.json"),
+    path.join(stagedAgentDir, "state-lock-plan.json"),
+  );
   for (const runtimeName of ["mcporter-runtime", "openclaw-runtime", "wechat-runtime"]) {
-    const sourceDir = path.join(rootDir, "agents", "openclaw", runtimeName);
-    const stagedDir = path.join(buildCtx, "agents", "openclaw", runtimeName);
+    const sourceDir = path.join(sourceAgentDir, runtimeName);
+    const stagedDir = path.join(stagedAgentDir, runtimeName);
     fs.mkdirSync(stagedDir, { recursive: true });
     for (const fileName of ["package.json", "package-lock.json"]) {
       fs.copyFileSync(path.join(sourceDir, fileName), path.join(stagedDir, fileName));

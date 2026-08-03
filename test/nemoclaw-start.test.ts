@@ -9,6 +9,8 @@ import path from "node:path";
 import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
 
+import { extractShellFunctionFromSource } from "./helpers/shell-source";
+
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "scripts", "lib");
 const INSTALLED_APPROVAL_POLICY = "/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py";
@@ -186,37 +188,6 @@ _nemoclaw_test_time = lambda: _nemoclaw_test_clock[0]
 def _nemoclaw_test_sleep(seconds): _nemoclaw_test_clock.__setitem__(0, _nemoclaw_test_clock[0] + min(max(float(seconds), 0), 0.25))
 `,
     );
-}
-
-function extractShellFunctionFromSource(src: string, name: string): string {
-  const header = `${name}() {`;
-  const start = src.indexOf(header);
-  if (start === -1) {
-    throw new Error(`Expected ${name} in scripts/nemoclaw-start.sh`);
-  }
-  const bodyStart = start + header.length;
-  const lines = src.slice(bodyStart).split(/(?<=\n)/);
-  let offset = 0;
-  let heredocEnd: string | undefined;
-  for (const line of lines) {
-    const bareLine = line.replace(/\r?\n$/, "");
-    if (heredocEnd) {
-      offset += line.length;
-      if (bareLine === heredocEnd) {
-        heredocEnd = undefined;
-      }
-      continue;
-    }
-    const heredoc = line.match(/<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/);
-    if (heredoc) {
-      heredocEnd = heredoc[1];
-    }
-    if (bareLine === "}") {
-      return `${name}() {${src.slice(bodyStart, bodyStart + offset)}\n}`;
-    }
-    offset += line.length;
-  }
-  throw new Error(`Expected closing brace for ${name} in scripts/nemoclaw-start.sh`);
 }
 
 function runEmbeddedPreload(
@@ -2265,7 +2236,6 @@ describe("NC-2227-01: legacy migration behavior", () => {
     return [
       "path_has_immutable_bit",
       "ensure_mutable_for_migration",
-      "restore_immutable_if_possible",
       "chown_tree_no_symlink_follow",
       "legacy_symlinks_exist",
       "assert_no_legacy_layout",
@@ -2278,7 +2248,11 @@ describe("NC-2227-01: legacy migration behavior", () => {
   function runMigration(
     configDir: string,
     dataDir: string,
-    opts: { fakeRoot?: boolean; fakeSandboxOwner?: boolean; fakeRootConfigOwner?: boolean } = {},
+    opts: {
+      fakeRoot?: boolean;
+      fakeSandboxOwner?: boolean;
+      fakeRootConfigOwner?: boolean;
+    } = {},
   ) {
     const script = path.join(path.dirname(configDir), `migration-${Date.now()}.sh`);
     const prelude = [

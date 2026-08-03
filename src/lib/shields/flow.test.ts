@@ -86,6 +86,7 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   const privilegedExec = requireDist("../sandbox/privileged-exec.js");
   const dockerExec = requireDist("../adapters/docker/exec.js");
   const audit = requireDist("./audit.js");
+  const stateDirLock = requireDist("./state-dir-lock.js");
   const childProcess = requireDist("node:child_process");
   let openClawPosture: "locked" | "mutable" = "mutable";
 
@@ -108,6 +109,14 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
     configFile: "openclaw.json",
     configPath: "/sandbox/.openclaw/openclaw.json",
     format: "json",
+    stateLockPlan: {
+      version: 1,
+      readOnlyRoots: ["skills"],
+      confidentialRoots: [],
+      readOnlyPrefixes: [],
+      confidentialPrefixes: [],
+      writableSubpaths: [],
+    },
   });
   vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "openclaw", openshellDriver: "docker" });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [{ name: "openclaw" }] });
@@ -131,6 +140,23 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   );
   vi.spyOn(dockerExec, "dockerSpawnSync").mockImplementation((argv: unknown) => {
     const args = Array.isArray(argv) ? argv.map(String) : [];
+    if (args.includes("cat") && args.includes("/usr/local/share/nemoclaw/state-lock-plan.json")) {
+      return {
+        status: 0,
+        signal: null,
+        stdout: `${JSON.stringify({
+          version: 1,
+          readOnlyRoots: ["skills"],
+          confidentialRoots: [],
+          readOnlyPrefixes: [],
+          confidentialPrefixes: [],
+          writableSubpaths: [],
+        })}\n`,
+        stderr: "",
+        pid: 0,
+        output: [],
+      } as never;
+    }
     const action = ["preflight", "lock", "unlock"].find((candidate) => args.includes(candidate));
     const openClawGuard = args.some((arg) => arg.endsWith("openclaw-config-guard.py"));
     const shouldFailOpenClawGuard = Boolean(
@@ -206,6 +232,7 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
           : "";
   });
   const auditSpy = vi.spyOn(audit, "appendAuditEntry").mockImplementation(() => undefined);
+  vi.spyOn(stateDirLock, "stateLockPlanCompatibilityIssues").mockReturnValue([]);
 
   const shields = requireDist(shieldsModulePath);
   logSpy.mockClear();

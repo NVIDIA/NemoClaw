@@ -23,12 +23,15 @@ import type {
   AgentHealthProbe,
   AgentLegacyPaths,
   AgentMcpCapability,
+  AgentStateDirectory,
   AgentStateFile,
+  AgentStateLockPlan,
   AgentVersionScheme,
 } from "./definition-types";
 import {
   loadManifestRecord,
   readBoolean,
+  readConfigShieldsFiles,
   readDashboard,
   readHealthProbe,
   readInference,
@@ -43,6 +46,12 @@ import {
   readVersionScheme,
 } from "./manifest-readers";
 import { type AgentRuntime, readAgentRuntime } from "./runtime-manifest";
+import {
+  buildStateLockPlan,
+  readStateDirectories,
+  stateDirectoryPaths,
+  stateDirectoryPrefixes,
+} from "./state-directory-contract";
 import { type AgentWebAuth, readWebAuth } from "./web-auth";
 
 export type {
@@ -57,8 +66,13 @@ export type {
   AgentMcpAdapter,
   AgentMcpCapability,
   AgentMcpSupport,
+  AgentStateDirectory,
+  AgentStateDirectoryPath,
+  AgentStateDirectoryPrefix,
+  AgentStateDirectoryShields,
   AgentStateFile,
   AgentStateFileStrategy,
+  AgentStateLockPlan,
   AgentVersionScheme,
   StateFileFreshHeader,
   StateFileKeyAllowlistRestoreOwnership,
@@ -153,17 +167,22 @@ export function loadAgent(name: string): AgentDefinition {
   const webAuth = readWebAuth(raw);
   const healthProbe = readHealthProbe(raw);
   const config = readObject(raw, "config");
+  const configShieldsFiles = readConfigShieldsFiles(config);
   const inference = readInference(raw);
   const mcp = readMcpCapability(raw);
-  const stateDirs = readStringArray(raw, "state_dirs");
-  const runtimeAuthStateDirs = readStringArray(raw, "runtime_auth_state_dirs");
-  for (const dir of runtimeAuthStateDirs ?? []) {
-    if (!stateDirs?.includes(dir)) {
-      throw new Error(
-        `Agent manifest field 'runtime_auth_state_dirs' entry '${dir}' must also be listed in 'state_dirs'`,
-      );
-    }
+  if (raw.runtime_auth_state_dirs !== undefined) {
+    throw new Error(
+      "Agent manifest field 'runtime_auth_state_dirs' was replaced by state_dirs entries with backup: false",
+    );
   }
+  const stateDirectories = readStateDirectories(raw);
+  const stateDirs = stateDirectoryPaths(stateDirectories);
+  const stateDirPrefixes = stateDirectoryPrefixes(stateDirectories);
+  const backupStateDirs = stateDirectoryPaths(stateDirectories, { backup: true });
+  const backupStateDirPrefixes = stateDirectoryPrefixes(stateDirectories, { backup: true });
+  const nonBackupStateDirs = stateDirectoryPaths(stateDirectories, { backup: false });
+  const nonBackupStateDirPrefixes = stateDirectoryPrefixes(stateDirectories, { backup: false });
+  const stateLockPlan = buildStateLockPlan(stateDirectories);
   const stateFiles = readStateFiles(raw);
   const userManagedFiles = readUserManagedFiles(raw);
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
@@ -188,8 +207,6 @@ export function loadAgent(name: string): AgentDefinition {
     config,
     inference,
     mcp,
-    state_dirs: stateDirs,
-    runtime_auth_state_dirs: runtimeAuthStateDirs,
     state_files: stateFiles,
     user_managed_files: userManagedFiles,
     _legacy_paths: legacyPathConfig,
@@ -238,6 +255,7 @@ export function loadAgent(name: string): AgentDefinition {
         configFile: readString(config ?? {}, "config_file") ?? "openclaw.json",
         envFile: readString(config ?? {}, "env_file") ?? null,
         format: readString(config ?? {}, "format") ?? "json",
+        shieldsFiles: configShieldsFiles,
       };
     },
 
@@ -249,12 +267,36 @@ export function loadAgent(name: string): AgentDefinition {
       return mcp;
     },
 
-    get stateDirs(): string[] {
-      return stateDirs ?? [];
+    get stateDirectories(): AgentStateDirectory[] {
+      return stateDirectories;
     },
 
-    get runtimeAuthStateDirs(): string[] {
-      return runtimeAuthStateDirs ?? [];
+    get stateDirs(): string[] {
+      return stateDirs;
+    },
+
+    get stateDirPrefixes(): string[] {
+      return stateDirPrefixes;
+    },
+
+    get backupStateDirs(): string[] {
+      return backupStateDirs;
+    },
+
+    get backupStateDirPrefixes(): string[] {
+      return backupStateDirPrefixes;
+    },
+
+    get nonBackupStateDirs(): string[] {
+      return nonBackupStateDirs;
+    },
+
+    get nonBackupStateDirPrefixes(): string[] {
+      return nonBackupStateDirPrefixes;
+    },
+
+    get stateLockPlan(): AgentStateLockPlan {
+      return stateLockPlan;
     },
 
     get stateFiles(): AgentStateFile[] {

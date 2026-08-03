@@ -21,6 +21,36 @@ export interface AgentConfigPaths {
   configFile: string;
   envFile: string | null;
   format: string;
+  shieldsFiles: string[];
+}
+
+export type AgentStateDirectoryShields = "read-only" | "confidential";
+
+interface AgentStateDirectoryBehavior {
+  backup: boolean;
+  shields?: AgentStateDirectoryShields;
+}
+
+export interface AgentStateDirectoryPath extends AgentStateDirectoryBehavior {
+  kind: "path";
+  path: string;
+  writableSubpaths: string[];
+}
+
+export interface AgentStateDirectoryPrefix extends AgentStateDirectoryBehavior {
+  kind: "prefix";
+  prefix: string;
+}
+
+export type AgentStateDirectory = AgentStateDirectoryPath | AgentStateDirectoryPrefix;
+
+export interface AgentStateLockPlan {
+  version: 1;
+  readOnlyRoots: string[];
+  confidentialRoots: string[];
+  readOnlyPrefixes: string[];
+  confidentialPrefixes: string[];
+  writableSubpaths: string[];
 }
 
 export type AgentStateFileStrategy = "copy" | "sqlite_backup";
@@ -119,8 +149,6 @@ export interface AgentDefinition {
   config?: ManifestRecord;
   inference?: AgentInference;
   mcp?: AgentMcpCapability;
-  state_dirs?: string[];
-  runtime_auth_state_dirs?: string[];
   state_files?: AgentStateFile[];
   user_managed_files?: string[];
   _legacy_paths?: StringMap;
@@ -135,8 +163,14 @@ export interface AgentDefinition {
   readonly configPaths: AgentConfigPaths;
   readonly inferenceProviderOptions: string[];
   readonly mcpCapability: AgentMcpCapability;
+  readonly stateDirectories: AgentStateDirectory[];
   readonly stateDirs: string[];
-  readonly runtimeAuthStateDirs: string[];
+  readonly stateDirPrefixes: string[];
+  readonly backupStateDirs: string[];
+  readonly backupStateDirPrefixes: string[];
+  readonly nonBackupStateDirs: string[];
+  readonly nonBackupStateDirPrefixes: string[];
+  readonly stateLockPlan: AgentStateLockPlan;
   readonly stateFiles: AgentStateFile[];
   readonly userManagedFiles: string[];
   readonly versionCommand: string;

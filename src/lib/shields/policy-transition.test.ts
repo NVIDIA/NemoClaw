@@ -37,6 +37,14 @@ describe("shields policy transition", () => {
       configFile: "config.json",
       configPath: "/sandbox/.deepagents/config.json",
       format: "json",
+      stateLockPlan: {
+        version: 1,
+        readOnlyRoots: ["skills"],
+        confidentialRoots: [],
+        readOnlyPrefixes: [],
+        confidentialPrefixes: [],
+        writableSubpaths: [],
+      },
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -103,6 +111,14 @@ describe("shields config lock without a shipped config hash", () => {
       configPath: CONFIG_PATH,
       format: "toml",
       sensitiveFiles: [HASH_PATH],
+      stateLockPlan: {
+        version: 1 as const,
+        readOnlyRoots: ["skills"],
+        confidentialRoots: [],
+        readOnlyPrefixes: [],
+        confidentialPrefixes: [],
+        writableSubpaths: [],
+      },
     };
   }
 

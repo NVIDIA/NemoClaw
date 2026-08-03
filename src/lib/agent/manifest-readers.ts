@@ -63,6 +63,22 @@ export function readStringArray(record: ManifestRecord, key: string): string[] |
   return value.filter((entry): entry is string => typeof entry === "string");
 }
 
+export function readConfigShieldsFiles(config: ManifestRecord | undefined): string[] {
+  const value = config?.shields_files;
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw new Error("Agent manifest field 'config.shields_files' must be an array");
+  }
+  return value.map((entry, index) => {
+    if (typeof entry !== "string") {
+      throw new Error(
+        `Agent manifest field 'config.shields_files[${String(index)}]' must be a string`,
+      );
+    }
+    return entry;
+  });
+}
+
 const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
 const STATE_FILE_FIELDS = new Set(["path", "strategy", "restore"]);
 
