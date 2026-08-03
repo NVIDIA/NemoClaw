@@ -442,7 +442,7 @@ describe("managed bootstrap adapter contract", () => {
   it.each([
     "throws before launch",
     "returns without launch",
-  ] as const)("does not clean up an unmaterialized create that %s", async (failureMode) => {
+  ] as const)("does not clean up when createHeldWorkload %s", async (failureMode) => {
     const fixture = adapterFor("langchain-deepagents-code");
     const create = vi.mocked(fixture.adapter.createHeldWorkload);
     if (failureMode === "throws before launch") {
@@ -466,7 +466,7 @@ describe("managed bootstrap adapter contract", () => {
   it.each([
     "throws after launch",
     "returns an invalid handle",
-  ] as const)("runs exact incomplete-create cleanup when create %s", async (failureMode) => {
+  ] as const)("runs exact cleanup when createHeldWorkload %s", async (failureMode) => {
     const fixture = adapterFor("langchain-deepagents-code");
     const original = fixture.adapter.createHeldWorkload;
     switch (failureMode) {
@@ -520,7 +520,7 @@ describe("managed bootstrap adapter contract", () => {
     });
   });
 
-  it("rejects incomplete-create cleanup for a different materialized sandbox", async () => {
+  it("rejects post-launch createHeldWorkload cleanup for a different sandbox", async () => {
     const fixture = adapterFor("langchain-deepagents-code");
     vi.mocked(fixture.adapter.createHeldWorkload).mockImplementationOnce(async (input) => {
       await input.launch({

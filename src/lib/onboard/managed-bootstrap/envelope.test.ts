@@ -57,6 +57,7 @@ describe("managed bootstrap envelope", () => {
       rootApplyRequest: request,
     });
     expect(() => parseManagedBootstrapEnvelope(` ${serialized}`)).toThrow(/canonical/u);
+    expect(() => parseManagedBootstrapEnvelope(`${serialized}\0`)).toThrow(/contains NUL/u);
     expect(() =>
       serializeManagedBootstrapEnvelope({
         bootstrapIdentity: "not-an-identity",
@@ -78,10 +79,31 @@ describe("managed bootstrap envelope", () => {
     ).toEqual({ schemaVersion: 1, ...completion });
   });
 
+  it("reports image completion field failures precisely", () => {
+    const completion = {
+      agent: "openclaw",
+      bootstrapIdentity: "b".repeat(64),
+      profileFingerprint: requestFor("openclaw").profileFingerprint,
+      transactionPending: true,
+    } as const;
+    expect(() =>
+      serializeManagedBootstrapImageCompletion({ ...completion, bootstrapIdentity: "invalid" }),
+    ).toThrow(/identity is invalid/u);
+    expect(() =>
+      serializeManagedBootstrapImageCompletion({ ...completion, agent: "invalid" as never }),
+    ).toThrow(/agent is invalid/u);
+    expect(() =>
+      serializeManagedBootstrapImageCompletion({
+        ...completion,
+        transactionPending: "invalid" as never,
+      }),
+    ).toThrow(/transaction state is invalid/u);
+  });
+
   it("bounds image-owned completion input before parsing", () => {
     expect(() =>
       parseManagedBootstrapImageCompletion(" ".repeat(MANAGED_BOOTSTRAP_COMPLETION_MAX_BYTES + 1)),
     ).toThrow(/too large/u);
-    expect(() => parseManagedBootstrapImageCompletion("{}\0")).toThrow(/empty or too large/u);
+    expect(() => parseManagedBootstrapImageCompletion("{}\0")).toThrow(/contains NUL/u);
   });
 });

@@ -58,11 +58,8 @@ export function serializeManagedBootstrapEnvelope(input: {
 }
 
 export function parseManagedBootstrapEnvelope(text: string): ManagedBootstrapEnvelope {
-  if (
-    text.length === 0 ||
-    Buffer.byteLength(text, "utf8") > MANAGED_BOOTSTRAP_ENVELOPE_MAX_BYTES ||
-    text.includes("\0")
-  ) {
+  if (text.includes("\0")) fail("serialized envelope contains NUL");
+  if (text.length === 0 || Buffer.byteLength(text, "utf8") > MANAGED_BOOTSTRAP_ENVELOPE_MAX_BYTES) {
     fail("serialized envelope is empty or too large");
   }
   let parsed: unknown;
@@ -107,11 +104,15 @@ export function serializeManagedBootstrapImageCompletion(
 ): string {
   if (
     !BOOTSTRAP_IDENTITY_RE.test(completion.bootstrapIdentity) ||
-    !BOOTSTRAP_IDENTITY_RE.test(completion.profileFingerprint) ||
-    !["openclaw", "hermes", "langchain-deepagents-code"].includes(completion.agent) ||
-    typeof completion.transactionPending !== "boolean"
+    !BOOTSTRAP_IDENTITY_RE.test(completion.profileFingerprint)
   ) {
     fail("image completion identity is invalid");
+  }
+  if (!["openclaw", "hermes", "langchain-deepagents-code"].includes(completion.agent)) {
+    fail("image completion agent is invalid");
+  }
+  if (typeof completion.transactionPending !== "boolean") {
+    fail("image completion transaction state is invalid");
   }
   return `${JSON.stringify({
     agent: completion.agent,
@@ -125,10 +126,10 @@ export function serializeManagedBootstrapImageCompletion(
 export function parseManagedBootstrapImageCompletion(
   text: string,
 ): ManagedBootstrapImageCompletion {
+  if (text.includes("\0")) fail("image completion contains NUL");
   if (
     text.length === 0 ||
-    Buffer.byteLength(text, "utf8") > MANAGED_BOOTSTRAP_COMPLETION_MAX_BYTES ||
-    text.includes("\0")
+    Buffer.byteLength(text, "utf8") > MANAGED_BOOTSTRAP_COMPLETION_MAX_BYTES
   ) {
     fail("image completion is empty or too large");
   }
