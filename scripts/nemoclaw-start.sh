@@ -4713,50 +4713,53 @@ start_plugin_registry_refresh() {
 # config reloader can SIGUSR1-restart the gateway in-process; in containers a
 # failed restart parks the process alive with its listener closed ("gateway
 # startup failed: ... Process will stay alive"). The #2757 respawn loop only
-# observes process exit, so an alive-but-deaf gateway would stay wedged until
-# a human runs `nemoclaw <sandbox> recover`. This watchdog probes the local
-# health endpoint and — once it has seen the gateway serve at least once —
-# kills it after sustained not-serving probes so the respawn loop relaunches
-# it. Arming only after the first serving probe means a slow first boot is
-# never killed; failed first boots stay the respawn loop's and HEALTHCHECK's
-# job.
+# observes process exit, so a gateway process that is alive but not serving
+# would remain in that state until a human runs `nemoclaw <sandbox> recover`.
+# This watchdog probes the local health endpoint. Once the gateway has returned
+# a serving response, the watchdog kills it after the configured number of
+# not-serving probes without another serving response so the respawn loop can
+# relaunch it. A slow first boot is never killed because the watchdog does not
+# arm before the first serving response. Failed first boots stay the respawn
+# loop's and HEALTHCHECK's job.
 #
 # "Serving" uses the same response requirement as the boot-time readiness gate
 # (openclaw_gateway_healthy): /health must answer 200 or 401. Before #7377 the
-# watchdog instead armed on "curl did not exit 7", so only an unbroken streak
+# watchdog instead armed on "curl did not exit 7", so only an unbroken series
 # of pure connection-refused probes could ever trigger recovery. Every other
-# wedge signature read as "serving" and silently reset the streak:
+# not-serving outcome read as "serving" and silently reset the count:
 #
-#   * curl 28 — the socket accepts but nothing answers within the timeout
-#   * curl 52/56 — accepted then dropped without a reply, which is what the
+#   * curl 28: the socket accepts but nothing answers within the timeout
+#   * curl 52/56: accepted then dropped without a reply, which is what the
 #     `gateway closed (1006 abnormal closure (no close frame))` transport
 #     error on the WebSocket side looks like from an HTTP probe
-#   * curl 0 with an HTTP error status — the process answers /health but is
+#   * curl 0 with an HTTP error status: the process answers /health but is
 #     not serving sessions
 #
 # Those outcomes were delegated to the Docker HEALTHCHECK, but an unhealthy
 # OpenShell sandbox container is never restarted by anything, so the gateway
-# stayed wedged indefinitely. Worse, a wedge that alternated between refused
-# and any other failure reset the consecutive-refusal counter on every other
-# probe and never reached the threshold at all, leaving an alive watchdog that
+# stopped serving indefinitely. A gateway that alternated between refused and
+# any other failure also reset the consecutive-refusal counter on every other
+# probe and never reached the threshold, leaving a running watchdog that
 # logged nothing and recovered nothing (#7377).
 #
-# Probes that fail for local reasons (curl missing or unable to run at all)
-# stay inconclusive: they neither arm the watchdog nor count toward the
-# threshold, so a broken probe can never turn into a kill loop.
+# A missing `curl` command disables the watchdog before it probes. Other local
+# failures that prevent a probe from running are inconclusive. They preserve
+# the armed state and not-serving count, so a broken probe cannot create a kill
+# loop.
 #
-# Source boundary: the wedge itself originates inside OpenClaw's gateway
+# Source boundary: the condition originates inside OpenClaw's gateway
 # lifecycle, which can leave the process running after its listener is gone
 # instead of exiting. NemoClaw cannot repair that from outside the process, so
 # it does two things it can do: the generated config pins `gateway.reload.mode`
-# to `hot` to remove the most common trigger, and this watchdog turns the
-# surviving cases back into process exits that the #2757 respawn loop already
-# handles. Remove this watchdog once an OpenClaw gateway that cannot serve
-# exits on its own — at that point the respawn loop observes the exit directly
-# and no external prober is needed.
+# to `hot` to remove the configuration-change trigger, and this watchdog
+# turns the surviving cases back into process exits that the #2757 respawn loop
+# already handles. Remove this watchdog once an OpenClaw gateway that cannot
+# serve exits on its own. The respawn loop then observes the exit directly, so
+# no external probe is needed.
 
-# Human-readable cause for a non-serving probe, used in the watchdog's log
-# lines so an operator can tell a refused port from a wedged-but-listening one.
+# Human-readable cause for a not-serving probe, used in the watchdog's log
+# lines so an operator can distinguish a refused port from one that accepts a
+# connection but does not serve a response.
 gateway_watchdog_curl_reason() {
   case "$1" in
     7) printf 'connection refused' ;;
@@ -4769,9 +4772,9 @@ gateway_watchdog_curl_reason() {
 }
 
 # Classify one health probe of the local gateway port.
-#   0 — serving: /health answered 200 or 401
-#   1 — not serving: refused, timed out, reset, or answered an HTTP error
-#   2 — inconclusive: the probe itself could not run; change no watchdog state
+#   0: serving: /health answered 200 or 401
+#   1: not serving: refused, timed out, reset, or answered an HTTP error
+#   2: inconclusive: the probe itself could not run; change no watchdog state
 # GATEWAY_WATCHDOG_PROBE_REASON carries the cause for the two failure returns.
 gateway_watchdog_probe_gateway() {
   local port="$1"
@@ -4811,34 +4814,35 @@ gateway_pid_is_openclaw_gateway() {
   printf '%s' "$cmdline" | grep -qE 'openclaw([ -]gateway| gateway run|$)'
 }
 
-# Positive integer guard used by the gateway watchdog env validation. Extracted
-# so a regression test can exercise the regex against trailing-non-digit and
-# zero/garbage inputs without spinning up the whole watcher.
+# Positive integer guard used by the gateway watchdog environment variable
+# validation. Extracted so a regression test can exercise the regex against
+# trailing non-digit and zero or invalid inputs without starting the watcher.
 gateway_watchdog_positive_int_ok() {
   [[ "$1" =~ ^[1-9][0-9]*$ ]]
 }
 
 start_gateway_serving_watchdog() {
   (
-    local interval unhealthy_threshold armed=0 unhealthy_streak=0
+    local interval not_serving_threshold armed=0 not_serving_count=0
     local pid start_identity extra tracked_identity last_identity="" msg
     local probe_rc inconclusive_logged=0
     interval="${NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS:-30}"
-    # Env name kept from #4710 for compatibility; it now bounds consecutive
-    # not-serving probes rather than consecutive connection-refused ones.
-    unhealthy_threshold="${NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD:-4}"
-    # Both knobs must be positive integers: a zero/garbage interval would
-    # busy-loop the probe, and a zero threshold would kill on the first
-    # refusal. Fall back to the defaults rather than trusting bad input.
+    # Environment variable name kept from #4710 for compatibility; it now
+    # sets the number of not-serving probes since the last serving response
+    # that triggers recovery.
+    not_serving_threshold="${NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD:-4}"
+    # Both environment values must be positive integers. A zero or invalid
+    # interval would busy-loop the probe, and a zero threshold would kill on
+    # the first refusal. Fall back to the defaults for invalid input.
     # gateway_watchdog_positive_int_ok uses regex (=~), not glob, so trailing
     # non-digit input like "12x" or "30abc" is rejected, not coerced.
     if ! gateway_watchdog_positive_int_ok "$interval"; then
       echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS='${interval}'; defaulting to 30" >&2
       interval=30
     fi
-    if ! gateway_watchdog_positive_int_ok "$unhealthy_threshold"; then
-      echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD='${unhealthy_threshold}'; defaulting to 4" >&2
-      unhealthy_threshold=4
+    if ! gateway_watchdog_positive_int_ok "$not_serving_threshold"; then
+      echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD='${not_serving_threshold}'; defaulting to 4" >&2
+      not_serving_threshold=4
     fi
     [ -n "${_DASHBOARD_PORT:-}" ] || exit 0
     if ! command -v curl >/dev/null 2>&1; then
@@ -4855,7 +4859,7 @@ start_gateway_serving_watchdog() {
         '' | *[!0-9]*)
           last_identity=""
           armed=0
-          unhealthy_streak=0
+          not_serving_count=0
           continue
           ;;
       esac
@@ -4863,38 +4867,39 @@ start_gateway_serving_watchdog() {
         '' | *[!0-9]*)
           last_identity=""
           armed=0
-          unhealthy_streak=0
+          not_serving_count=0
           continue
           ;;
       esac
       if [ -n "$extra" ]; then
         last_identity=""
         armed=0
-        unhealthy_streak=0
+        not_serving_count=0
         continue
       fi
       tracked_identity="${pid}:${start_identity}"
-      # A respawned gateway must earn its own armed state — never inherit
-      # the previous process identity's serve history, even if the kernel has
-      # already recycled the same numeric PID for the replacement.
+      # A respawned gateway must earn its own armed state. It must not inherit
+      # the previous process identity's serving history, even if the kernel
+      # has already recycled the same numeric PID for the replacement.
       if [ "$tracked_identity" != "$last_identity" ]; then
         last_identity="$tracked_identity"
         armed=0
-        unhealthy_streak=0
+        not_serving_count=0
       fi
       if ! openclaw_supervised_pid_is_live "$pid" "$start_identity"; then
         # Process exit is the respawn loop's signal, not ours.
         last_identity=""
         armed=0
-        unhealthy_streak=0
+        not_serving_count=0
         continue
       fi
       probe_rc=0
       gateway_watchdog_probe_gateway "$_DASHBOARD_PORT" || probe_rc=$?
       if [ "$probe_rc" -eq 2 ]; then
-        # A probe that could not run tells us nothing about the gateway. Hold
-        # the current armed state and streak, and say so once per episode so
-        # the silence is not mistaken for a healthy gateway.
+        # A probe that could not run tells us nothing about the gateway.
+        # Preserve the current armed state and not-serving count. Log once
+        # until a conclusive probe so silence is not mistaken for a serving
+        # gateway.
         if [ "$inconclusive_logged" -eq 0 ]; then
           echo "[gateway-watchdog] health probe inconclusive (${GATEWAY_WATCHDOG_PROBE_REASON}); leaving gateway pid $pid untouched (#7377)" >&2
           inconclusive_logged=1
@@ -4904,29 +4909,29 @@ start_gateway_serving_watchdog() {
       inconclusive_logged=0
       if [ "$probe_rc" -eq 0 ]; then
         armed=1
-        unhealthy_streak=0
+        not_serving_count=0
         continue
       fi
       [ "$armed" -eq 1 ] || continue
-      unhealthy_streak=$((unhealthy_streak + 1))
-      if [ "$unhealthy_streak" -lt "$unhealthy_threshold" ]; then
-        echo "[gateway-watchdog] gateway pid $pid alive but not serving port ${_DASHBOARD_PORT}: ${GATEWAY_WATCHDOG_PROBE_REASON} ($unhealthy_streak/$unhealthy_threshold) (#7377)" >&2
+      not_serving_count=$((not_serving_count + 1))
+      if [ "$not_serving_count" -lt "$not_serving_threshold" ]; then
+        echo "[gateway-watchdog] gateway pid $pid alive but not serving port ${_DASHBOARD_PORT}: ${GATEWAY_WATCHDOG_PROBE_REASON} ($not_serving_count/$not_serving_threshold) (#7377)" >&2
         continue
       fi
       if ! gateway_pid_is_openclaw_gateway "$pid"; then
         echo "[gateway-watchdog] pid $pid no longer looks like the openclaw gateway; not killing (#4710)" >&2
         armed=0
-        unhealthy_streak=0
+        not_serving_count=0
         continue
       fi
       if ! openclaw_supervised_pid_is_live "$pid" "$start_identity"; then
         echo "[gateway-watchdog] pid $pid start identity changed; not killing (#4710)" >&2
         last_identity=""
         armed=0
-        unhealthy_streak=0
+        not_serving_count=0
         continue
       fi
-      msg="[gateway-watchdog] CRITICAL: gateway pid $pid is alive but stopped serving port ${_DASHBOARD_PORT} — ${GATEWAY_WATCHDOG_PROBE_REASON} ($unhealthy_streak consecutive not-serving probes); killing it so the respawn loop can relaunch (#7377)"
+      msg="[gateway-watchdog] CRITICAL: gateway pid $pid is alive but stopped serving port ${_DASHBOARD_PORT}: ${GATEWAY_WATCHDOG_PROBE_REASON} ($not_serving_count not-serving probes since the last serving response); killing it so the respawn loop can relaunch (#7377)"
       echo "$msg" >&2
       append_openclaw_gateway_log_line "$msg" || true
       record_gateway_watchdog_kill "$tracked_identity"
@@ -4939,7 +4944,7 @@ start_gateway_serving_watchdog() {
         kill -KILL "$pid" 2>/dev/null || true
       fi
       armed=0
-      unhealthy_streak=0
+      not_serving_count=0
     done
   ) &
   GATEWAY_WATCHDOG_PID=$!

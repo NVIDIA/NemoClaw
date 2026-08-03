@@ -4,10 +4,11 @@
 // Gateway serving watchdog coverage for scripts/nemoclaw-start.sh (#4710,
 // #7377). The OpenClaw gateway can stop serving while its process stays alive
 // (a failed in-process SIGUSR1 restart parks it with no usable listener), and
-// the #2757 respawn loop only sees process exit. The watchdog must recognise
-// every not-serving shape -- refused, stalled, reset, or an HTTP error reply
-// -- and kill the gateway so the respawn loop can relaunch it, while never
-// touching a gateway that has not served yet or one whose probe could not run.
+// the #2757 respawn loop only sees process exit. The watchdog must recognize
+// every not-serving outcome: refused, timed out, reset, or an HTTP error
+// response. It must kill the gateway so the respawn loop can relaunch it while
+// never touching a gateway that has not served yet or one whose probe could
+// not run.
 // Split from test/nemoclaw-start-gateway-health.test.ts, which is at its size
 // budget (ci/test-file-size-budget.json).
 
@@ -65,13 +66,13 @@ function runWatchdog(opts: {
 }): {
   result: ReturnType<typeof spawnSync>;
   fakeAlive: boolean;
-  wedgeLog: string;
+  gatewayLog: string;
   tmpDir: string;
 } {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-watchdog-"));
   const planFile = path.join(tmpDir, "curl-plan.txt");
-  const wedgeLogFile = path.join(tmpDir, "gateway.log");
-  fs.writeFileSync(wedgeLogFile, "", { mode: 0o644 });
+  const gatewayLogFile = path.join(tmpDir, "gateway.log");
+  fs.writeFileSync(gatewayLogFile, "", { mode: 0o644 });
   const pidFile = path.join(tmpDir, "gateway.pid");
   const procRoot = path.join(tmpDir, "proc");
   fs.writeFileSync(planFile, `${opts.curlPlan.join("\n")}\n`);
@@ -119,7 +120,7 @@ function runWatchdog(opts: {
     `mkdir -p ${JSON.stringify(procRoot)}/$FAKE_GATEWAY_PID`,
     `printf '%s' ${JSON.stringify(opts.cmdline ?? "openclaw-gateway")} >${JSON.stringify(procRoot)}/$FAKE_GATEWAY_PID/cmdline`,
     `write_proc_stat "$FAKE_GATEWAY_PID" "$$" "$FAKE_GATEWAY_START" >${JSON.stringify(procRoot)}/$FAKE_GATEWAY_PID/stat`,
-    watchdogFunctions(wedgeLogFile),
+    watchdogFunctions(gatewayLogFile),
     'capture_openclaw_pid_start_identity() { printf -v "$2" "%s" "watchdog-test"; }',
     'record_gateway_pid "$FAKE_GATEWAY_PID" "$FAKE_GATEWAY_START"',
     ...(opts.curlUnavailable ? ['_SAVED_PATH="$PATH"', 'PATH=""'] : []),
@@ -156,13 +157,13 @@ function runWatchdog(opts: {
 
   const stdout = typeof result.stdout === "string" ? result.stdout : "";
   const fakeAlive = /^FAKE_ALIVE=1$/m.test(stdout);
-  const wedgeLog = readFileIfPresent(wedgeLogFile) ?? "";
-  return { result, fakeAlive, wedgeLog, tmpDir };
+  const gatewayLog = readFileIfPresent(gatewayLogFile) ?? "";
+  return { result, fakeAlive, gatewayLog, tmpDir };
 }
 
 describe("gateway serving watchdog (#4710, #7377)", () => {
-  it("kills an alive-but-deaf gateway after sustained connection-refused and logs CRITICAL", () => {
-    const { result, fakeAlive, wedgeLog, tmpDir } = runWatchdog({
+  it("kills a gateway after four refused probes following a serving response", () => {
+    const { result, fakeAlive, gatewayLog, tmpDir } = runWatchdog({
       curlPlan: [0, 7, 7, 7, 7],
       expectKill: true,
     });
@@ -171,19 +172,19 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
       expect(fakeAlive).toBe(false);
       expect(result.stderr).toContain("stopped serving port 18789");
       expect(result.stderr).toContain("connection refused");
-      expect(wedgeLog).toContain("[gateway-watchdog] CRITICAL");
-      expect(wedgeLog).toContain("stopped serving port 18789");
-      expect(wedgeLog).toContain("(#7377)");
+      expect(gatewayLog).toContain("[gateway-watchdog] CRITICAL");
+      expect(gatewayLog).toContain("stopped serving port 18789");
+      expect(gatewayLog).toContain("(#7377)");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
-  it("never arms — and never kills — when the gateway has not served yet", () => {
+  it("does not arm or kill when the gateway has not served yet", () => {
     // A gateway that is still booting (or failed to boot) refuses from the
     // start; that case belongs to the respawn loop and the Docker
     // HEALTHCHECK, not the watchdog.
-    const { result, fakeAlive, wedgeLog, tmpDir } = runWatchdog({
+    const { result, fakeAlive, gatewayLog, tmpDir } = runWatchdog({
       curlPlan: [7],
       expectKill: false,
     });
@@ -191,15 +192,15 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
       expect(fakeAlive).toBe(true);
       expect(result.stderr).not.toContain("stopped serving port 18789");
-      expect(wedgeLog).toBe("");
+      expect(gatewayLog).toBe("");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
-  it("resets the streak when a probe serves again", () => {
-    // Three failures (below the threshold of four), recovery, three more —
-    // the streak must reset at each success and the gateway must survive.
+  it("resets the not-serving count after a serving response", () => {
+    // Three not-serving probes, a serving response, and three more leave each
+    // count below the threshold of four, so the gateway must survive.
     const { result, fakeAlive, tmpDir } = runWatchdog({
       curlPlan: [0, 7, 7, 7, 0, 7, 7, 7, 0],
       expectKill: false,
@@ -216,15 +217,15 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
 
   // One case per transport outcome gateway_watchdog_probe_gateway classifies as
   // not serving, so narrowing that set fails the suite rather than silently
-  // leaving a wedge shape unrecovered.
+  // leaving a not-serving outcome unrecovered.
   it.each([
-    ["a probe timeout", 28, "probe timeout"],
-    ["an empty reply", 52, "empty reply from gateway"],
-    ["a send error", 55, "send error"],
-    ["a connection reset", 56, "connection reset"],
-  ])("recovers a gateway wedged behind %s (#7377)", (_label, exitCode, reason) => {
+    ["probe timeout", 28, "probe timeout"],
+    ["empty reply", 52, "empty reply from gateway"],
+    ["send error", 55, "send error"],
+    ["connection reset", 56, "connection reset"],
+  ])("recovers a gateway after repeated %s probes (#7377)", (_label, exitCode, reason) => {
     // A listener that accepts and then stalls or drops the connection is just
-    // as unusable as a refused port — this is the `1006 abnormal closure`
+    // as unusable as a refused port. This is the `1006 abnormal closure`
     // signature users see from `openclaw health`. Before #7377 these outcomes
     // counted as "listener present", so the watchdog silently rearmed forever
     // and the sandbox never recovered.
@@ -244,7 +245,8 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
 
   it("recovers a gateway that answers /health with an HTTP error (#7377)", () => {
     // The process replies but is not serving sessions. Only 200/401 count as
-    // serving, matching the response requirement the boot-time readiness gate uses.
+    // serving, matching the response requirement the boot-time readiness gate
+    // uses.
     const { result, fakeAlive, tmpDir } = runWatchdog({
       curlPlan: [0, "0:503", "0:503", "0:503", "0:503"],
       expectKill: true,
@@ -272,7 +274,7 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
     }
   });
 
-  it("counts a wedge that alternates failure modes toward one threshold (#7377)", () => {
+  it("counts alternating not-serving outcomes toward the threshold (#7377)", () => {
     // The reported sandboxes showed a refused port on a manual probe yet were
     // never recovered: the old counter demanded four *consecutive* refusals,
     // so any intervening timeout or reset reset it to zero forever.
@@ -283,16 +285,16 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
     try {
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
       expect(fakeAlive).toBe(false);
-      expect(result.stderr).toContain("(4 consecutive not-serving probes)");
+      expect(result.stderr).toContain("(4 not-serving probes since the last serving response)");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
-  it("holds its state and reports once when the probe itself cannot run (#7377)", () => {
-    // curl exit codes outside the transport set mean a broken probe, not a
+  it("reports an inconclusive probe sequence once without killing the gateway (#7377)", () => {
+    // `curl` exit codes outside the transport set mean a broken probe, not a
     // broken gateway. Escalating them would turn a missing or failing curl
-    // into an endless kill loop against a perfectly healthy gateway.
+    // into an endless kill loop against a gateway that may still be serving.
     const { result, fakeAlive, tmpDir } = runWatchdog({
       curlPlan: [0, 127, 127, 127, 127, 127],
       expectKill: false,
@@ -309,7 +311,7 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
     }
   });
 
-  it("disables itself without signalling the gateway when curl is unavailable (#7377)", () => {
+  it("disables itself without signaling the gateway when curl is unavailable (#7377)", () => {
     // With no probe command there is no evidence either way, so the watchdog
     // must stand down rather than run blind against a live gateway.
     const { result, fakeAlive, tmpDir } = runWatchdog({
@@ -321,18 +323,20 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
     try {
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
       expect(fakeAlive).toBe(true);
-      expect(result.stderr).toContain("curl is unavailable; serving watchdog disabled");
+      expect(result.stderr).toContain(
+        "[gateway-watchdog] curl is unavailable; serving watchdog disabled (#7377)",
+      );
       expect(result.stderr).not.toContain("stopped serving port 18789");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
-  it("carries an armed streak across an inconclusive probe (#7377)", () => {
-    // An inconclusive probe holds the streak rather than clearing it, so an
+  it("preserves the not-serving count across an inconclusive probe (#7377)", () => {
+    // An inconclusive probe preserves the count rather than clearing it, so an
     // intermittent local probe failure cannot postpone recovery indefinitely.
-    // Two failures, one inconclusive probe, two more failures — that is four
-    // classified failures and must still reach the default threshold.
+    // Two not-serving probes, one inconclusive probe, and two more not-serving
+    // probes reach the default threshold of four.
     const { result, fakeAlive, tmpDir } = runWatchdog({
       curlPlan: [0, 7, 7, 127, 7, 7],
       expectKill: true,
@@ -341,7 +345,7 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
       expect(fakeAlive).toBe(false);
       expect(result.stderr).toContain("health probe inconclusive");
-      expect(result.stderr).toContain("(4 consecutive not-serving probes)");
+      expect(result.stderr).toContain("(4 not-serving probes since the last serving response)");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -364,7 +368,7 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
     }
   });
 
-  it("honors the refused-threshold env override", () => {
+  it("honors the refused-threshold environment variable", () => {
     const { result, fakeAlive, tmpDir } = runWatchdog({
       curlPlan: [0, 7, 7],
       env: { NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD: "2" },
@@ -373,14 +377,14 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
     try {
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
       expect(fakeAlive).toBe(false);
-      expect(result.stderr).toContain("2 consecutive not-serving probes");
+      expect(result.stderr).toContain("2 not-serving probes since the last serving response");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
-  it("falls back to defaults when the env knobs are not positive integers", () => {
-    // A zero/garbage interval would busy-loop the probe; a zero threshold
+  it("uses defaults for invalid watchdog environment values", () => {
+    // A zero or invalid interval would busy-loop the probe; a zero threshold
     // would kill on the first refusal. Both must be rejected with a warning
     // while the watchdog keeps working on the defaults.
     const { result, fakeAlive, tmpDir } = runWatchdog({
@@ -401,7 +405,7 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
       );
       // Default threshold of 4 still applies.
       expect(fakeAlive).toBe(false);
-      expect(result.stderr).toContain("4 consecutive not-serving probes");
+      expect(result.stderr).toContain("4 not-serving probes since the last serving response");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -410,15 +414,15 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
   it("does not inherit the armed state when the pidfile switches to a new gateway PID", () => {
     // A fast respawn can replace the pidfile between probes without the
     // watchdog ever observing the old PID as dead. The new gateway must earn
-    // its own armed state — otherwise its boot-time refusals would count
+    // its own armed state. Otherwise, its boot-time refusals would count
     // against the predecessor's serve history and it could be killed while
     // still starting up.
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-watchdog-swap-"));
     try {
       const planFile = path.join(tmpDir, "curl-plan.txt");
       const probeLog = path.join(tmpDir, "probes.log");
-      const wedgeLogFile = path.join(tmpDir, "gateway.log");
-      fs.writeFileSync(wedgeLogFile, "", { mode: 0o644 });
+      const gatewayLogFile = path.join(tmpDir, "gateway.log");
+      fs.writeFileSync(gatewayLogFile, "", { mode: 0o644 });
       const pidFile = path.join(tmpDir, "gateway.pid");
       const procRoot = path.join(tmpDir, "proc");
       // First probe arms on gateway A; everything after refuses.
@@ -460,7 +464,7 @@ describe("gateway serving watchdog (#4710, #7377)", () => {
         `printf 'openclaw-gateway' >${JSON.stringify(procRoot)}/$GATEWAY_B/cmdline`,
         `write_proc_stat "$GATEWAY_A" "$$" "$GATEWAY_A_START" >${JSON.stringify(procRoot)}/$GATEWAY_A/stat`,
         `write_proc_stat "$GATEWAY_B" "$$" "$GATEWAY_B_START" >${JSON.stringify(procRoot)}/$GATEWAY_B/stat`,
-        watchdogFunctions(wedgeLogFile),
+        watchdogFunctions(gatewayLogFile),
         'capture_openclaw_pid_start_identity() { printf -v "$2" "%s" "watchdog-test"; }',
         'record_gateway_pid "$GATEWAY_A" "$GATEWAY_A_START"',
         "start_gateway_serving_watchdog",
