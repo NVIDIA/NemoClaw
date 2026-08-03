@@ -105,14 +105,14 @@ describe("NemoCUA terminal onboarding", () => {
   });
 
   it("records qualified runtime readiness when terminal setup resumes (#7755)", async () => {
+    const responses: ReadonlyArray<readonly [RegExp, string]> = [
+      [/NEMOCLAW_AGENT_BINARY_CHECK/, "NEMOCLAW_AGENT_BINARY_CHECK:ok"],
+      [/^nemocua-runtime version$/, "nemocua-runtime 0.0.20-dev-v3"],
+      [/^nemocua-runtime smoke$/, "NEMOCLAW_AGENT_SMOKE_EXIT:0"],
+    ];
     const runCaptureOpenshell = vi.fn((args: string[]) => {
       const command = args.at(-1) ?? "";
-      if (command.includes("NEMOCLAW_AGENT_BINARY_CHECK")) {
-        return "NEMOCLAW_AGENT_BINARY_CHECK:ok";
-      }
-      if (command === "nemocua-runtime version") return "nemocua-runtime 0.0.20-dev-v3";
-      if (command === "nemocua-runtime smoke") return "NEMOCLAW_AGENT_SMOKE_EXIT:0";
-      return "";
+      return responses.find(([pattern]) => pattern.test(command))?.[1] ?? "";
     });
     const context = createContext(runCaptureOpenshell);
 
