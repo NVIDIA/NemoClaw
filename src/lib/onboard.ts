@@ -2587,12 +2587,10 @@ async function createSandboxWithBaseImageResolution(
     }
     sandboxLifecycle.removeSandboxUnlessSessionReservation(previousEntry, sandboxName);
   }
-
   applyExtraProviderReconciliation({
     extraProviders: resolvedCreateIntent.extraProviders,
     staleExtraProviders: resolvedCreateIntent.staleExtraProviders ?? [],
   });
-
   // Stage build context — use the custom Dockerfile path when provided,
   // otherwise use the optimised default that only sends what the build needs.
   // The build context contains source code, scripts, and potentially API keys
@@ -2678,6 +2676,7 @@ async function createSandboxWithBaseImageResolution(
       preferredInferenceApi,
       webSearchConfig,
       toolDisclosure: effectiveToolDisclosure,
+      rebuildPreservedEnv: createIntent?.rebuildPreservedEnv,
       ...(isManagedDcodeAgent ? { dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode } : {}),
       hermesToolGateways,
       sandboxGpuConfig: effectiveSandboxGpuConfig,
@@ -4364,6 +4363,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       resumeAgentChanged,
       requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
       requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
+      rebuildPreservedEnv: opts.rebuildPreservedEnv,
       endpointProvenance,
       recreateSandbox: isRecreateSandbox,
       controlUiPort: _preflightDashboardPort,

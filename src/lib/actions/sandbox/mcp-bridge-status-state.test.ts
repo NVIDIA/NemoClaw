@@ -219,7 +219,7 @@ registry.registerSandbox({ name: "openclaw-sandbox", agent: "openclaw" });
       }>;
     };
     expect(payload.invalid.exitCode).toBe(2);
-    expect(payload.invalid.message).toContain("Invalid MCP server name '__proto__'");
+    expect(payload.invalid.message).toContain('Invalid MCP server name "__proto__"');
     expect(payload.inherited).toHaveLength(1);
     expect(payload.inherited[0]).toMatchObject({
       server: "constructor",
