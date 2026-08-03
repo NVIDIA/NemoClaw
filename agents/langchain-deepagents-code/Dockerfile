@@ -34,6 +34,57 @@ RUN /opt/mcp-tool-discovery-runtime/node_modules/.bin/esbuild \
         --outfile=/out/managed-startup-image-runtime.cjs \
     && chmod 0444 /out/managed-startup-image-runtime.cjs
 
+# Compile the bootstrap boundary on the target platform. The output is a
+# freestanding static ELF; only its reviewed, non-executable Bash body remains
+# interpreted at runtime after the native boundary has scrubbed process control.
+FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS managed-bootstrap-entrypoint-builder
+ARG TARGETARCH
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils gcc \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /opt/nemoclaw-managed-bootstrap-build
+COPY scripts/managed-bootstrap-entrypoint.c ./
+COPY scripts/managed-bootstrap-trampoline.sh ./
+# hadolint ignore=DL4006
+RUN set -eu; \
+    target_arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
+    case "$target_arch" in \
+        amd64) expected_machine='Advanced Micro Devices X86-64' ;; \
+        arm64) expected_machine='AArch64' ;; \
+        *) echo "ERROR: unsupported managed bootstrap target architecture: $target_arch" >&2; exit 1 ;; \
+    esac; \
+    install -d -o root -g root -m 0755 /out/usr/local/bin /out/usr/local/lib/nemoclaw; \
+    gcc \
+        -std=c11 -O2 -Wall -Wextra -Werror \
+        -DNEMOCLAW_MANAGED_BOOTSTRAP_FREESTANDING=1 \
+        -ffreestanding -fno-asynchronous-unwind-tables -fno-builtin -fno-ident \
+        -fno-pie -fno-stack-protector -fno-unwind-tables \
+        -no-pie -nostdlib -static \
+        -Wl,--build-id=none -Wl,-z,noexecstack \
+        managed-bootstrap-entrypoint.c -o /tmp/nemoclaw-managed-bootstrap; \
+    install -o root -g root -m 0755 \
+        /tmp/nemoclaw-managed-bootstrap /out/usr/local/bin/nemoclaw-managed-bootstrap; \
+    install -o root -g root -m 0444 \
+        managed-bootstrap-trampoline.sh \
+        /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh; \
+    binary=/out/usr/local/bin/nemoclaw-managed-bootstrap; \
+    body=/out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh; \
+    test -f "$binary" && test ! -L "$binary"; \
+    test -f "$body" && test ! -L "$body"; \
+    test "$(stat -c '%u:%g:%a' "$binary")" = '0:0:755'; \
+    test "$(stat -c '%u:%g:%a' "$body")" = '0:0:444'; \
+    /bin/bash -n "$body"; \
+    test "$(readelf -hW "$binary" | sed -n 's/^[[:space:]]*Class:[[:space:]]*//p')" = 'ELF64'; \
+    test "$(readelf -hW "$binary" | sed -n 's/^[[:space:]]*Type:[[:space:]]*//p')" = 'EXEC (Executable file)'; \
+    test "$(readelf -hW "$binary" | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')" = "$expected_machine"; \
+    program_headers="$(readelf -lW "$binary")"; \
+    case "$program_headers" in *INTERP*) echo 'ERROR: managed bootstrap ELF has an interpreter' >&2; exit 1 ;; esac; \
+    readelf -dW "$binary" | grep -Fq 'There is no dynamic section'; \
+    test -z "$(nm --undefined-only "$binary")"; \
+    strings "$binary" | grep -Fq '/usr/local/bin/nemoclaw-managed-bootstrap'; \
+    strings "$binary" | grep -Fq '/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh'
+
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
@@ -92,7 +143,8 @@ COPY agents/langchain-deepagents-code/dcode-session-supervisor.py /usr/local/lib
 COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
 COPY agents/langchain-deepagents-code/start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
-COPY scripts/managed-bootstrap-trampoline.sh /usr/local/bin/nemoclaw-managed-bootstrap
+COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap
+COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 # The first-party profile plugin uses Deep Agents' supported entry-point hook to
 # register managed aliases without modifying third-party package source. The
@@ -105,7 +157,13 @@ COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
 # regressionTest: the stripped-base gate must reach this marker, then fail import.
 # removalCondition: remove when installation validates dependencies atomically.
 # hadolint ignore=DL4006
-RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/nemoclaw_observability.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py /opt/nemoclaw-deepagents-code/validate-observability.py /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
+RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \
+    && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \
+    && test "$(stat -c '%u:%g:%a' /usr/local/bin/nemoclaw-managed-bootstrap)" = '0:0:755' \
+    && test -f /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
+    && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
+    && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh)" = '0:0:444' \
+    && chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/validate-nemotron-ultra-profile.py /opt/nemoclaw-deepagents-code/progressive_tool_disclosure.py /opt/nemoclaw-deepagents-code/nemoclaw_observability.py /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py /opt/nemoclaw-deepagents-code/validate-observability.py /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
     && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-session-supervisor.py \
     && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/dcode-session-supervisor.py)" = "0:0:755" \
     && install -o root -g root -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-managed-exec \
@@ -259,7 +317,13 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
 
 # Gate the completed local filesystem for dynamically built managed images.
 COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
-RUN install -d -m 0755 /usr/local/share/nemoclaw \
+RUN test -f /usr/local/bin/nemoclaw-managed-bootstrap \
+    && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \
+    && test "$(stat -c '%U:%G:%a' /usr/local/bin/nemoclaw-managed-bootstrap)" = 'root:root:755' \
+    && test -f /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
+    && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
+    && test "$(stat -c '%U:%G:%a' /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh)" = 'root:root:444' \
+    && install -d -m 0755 /usr/local/share/nemoclaw \
     && node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts \
         --root / --image build:deepagents-code \
         > /usr/local/share/nemoclaw/node-tar-inventory.json \

@@ -24,6 +24,8 @@ import {
 const CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const IMMUTABLE_IMAGE_RE = /^sha256:[a-f0-9]{64}$/u;
 const IMMUTABLE_REFERENCE_RE = /^(?:sha256:[a-f0-9]{64}|[^\s@]+@sha256:[a-f0-9]{64})$/u;
+const MANAGED_BOOTSTRAP = "/usr/local/bin/nemoclaw-managed-bootstrap";
+const MANAGED_BOOTSTRAP_BODY = "/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh";
 const RUNTIME = "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs";
 const HOLD = "/usr/local/bin/nemoclaw-managed-startup-hold";
 const FIXED_ROOT_ENV = [
@@ -204,6 +206,74 @@ function exactProxyEnvironment(): string {
   ].join("\n");
 }
 
+function verifyManagedBootstrapNativeBoundary(
+  containerId: string,
+  platform: ManagedImageDirectE2eInputs["platform"],
+): void {
+  docker([
+    "exec",
+    "--user",
+    "0:0",
+    containerId,
+    "/bin/sh",
+    "-eu",
+    "-c",
+    [
+      `test -f ${MANAGED_BOOTSTRAP}`,
+      `test ! -L ${MANAGED_BOOTSTRAP}`,
+      `test "$(stat -c '%u:%g:%a' ${MANAGED_BOOTSTRAP})" = '0:0:755'`,
+      `test -f ${MANAGED_BOOTSTRAP_BODY}`,
+      `test ! -L ${MANAGED_BOOTSTRAP_BODY}`,
+      `test "$(stat -c '%u:%g:%a' ${MANAGED_BOOTSTRAP_BODY})" = '0:0:444'`,
+      `test ! -x ${MANAGED_BOOTSTRAP_BODY}`,
+    ].join("\n"),
+  ]);
+
+  const expectedMachine = platform === "linux/amd64" ? 62 : 183;
+  docker([
+    "exec",
+    "--user",
+    "0:0",
+    containerId,
+    "/usr/local/bin/node",
+    "-e",
+    `
+const fs = require("node:fs");
+const image = fs.readFileSync(${JSON.stringify(MANAGED_BOOTSTRAP)});
+const fail = (detail) => { throw new Error("invalid managed bootstrap ELF: " + detail); };
+if (image.length < 64) fail("truncated header");
+if (image.subarray(0, 4).toString("hex") !== "7f454c46") fail("magic");
+if (image[4] !== 2 || image[5] !== 1 || image[6] !== 1) fail("class, byte order, or version");
+if (image.readUInt16LE(16) !== 2) fail("not an executable file");
+if (image.readUInt16LE(18) !== Number(process.argv[1])) fail("wrong target architecture");
+const programOffset = Number(image.readBigUInt64LE(32));
+const programEntrySize = image.readUInt16LE(54);
+const programCount = image.readUInt16LE(56);
+if (!Number.isSafeInteger(programOffset) || programEntrySize < 56) fail("program header bounds");
+if (programOffset + programEntrySize * programCount > image.length) fail("truncated program headers");
+for (let index = 0; index < programCount; index += 1) {
+  const type = image.readUInt32LE(programOffset + index * programEntrySize);
+  if (type === 2) fail("dynamic segment");
+  if (type === 3) fail("interpreter segment");
+}
+`,
+    String(expectedMachine),
+  ]);
+
+  const smoke = docker(["exec", "--user", "0:0", containerId, MANAGED_BOOTSTRAP], {
+    ignoreError: true,
+    timeout: 30_000,
+  });
+  if (
+    smoke.status === 0 ||
+    !smoke.stderr.includes(
+      "[SECURITY] Managed bootstrap trampoline: managed bootstrap arguments are incomplete",
+    )
+  ) {
+    throw new Error(`managed bootstrap native smoke failed: ${commandDetail(smoke)}`);
+  }
+}
+
 export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): void {
   const request = requestFor(input.agent);
   const payload = serializeManagedStartupRootApplyRequest(request);
@@ -297,6 +367,7 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
     ) {
       throw new Error("managed profile or corporate CA entered Docker argv/env metadata");
     }
+    verifyManagedBootstrapNativeBoundary(containerId, input.platform);
 
     const applied = docker(rootRuntimeArgs(containerId, input.agent, "--apply-root-stdin"), {
       input: payload,

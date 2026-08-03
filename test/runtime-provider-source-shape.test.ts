@@ -241,14 +241,29 @@ describe("runtime provider central source boundary", () => {
     expect(dockerProvider.match(/recovery:\s*unsupported\(/gu)).toHaveLength(2);
   });
 
-  // source-shape-contract: security -- Image packaging must expose only the reviewed dormant native boundary sources until every required bootstrap runtime asset is activated together
-  it("keeps managed-bootstrap assets out of image packaging", () => {
+  // source-shape-contract: security -- Every managed image must package the same reviewed native boundary while provider activation remains independently gated
+  it("packages the dormant managed-bootstrap native boundary for every agent image", () => {
     const entrypoint = read("scripts/managed-bootstrap-entrypoint.c");
     const trampoline = read("scripts/managed-bootstrap-trampoline.sh");
     const packagingSources = packagingPaths.map((path) => [path, read(path)] as const);
     expect(entrypoint).toMatch(/exec_process\(NEMOCLAW_MANAGED_BOOTSTRAP_BASH/u);
     expect(entrypoint).toMatch(/NEMOCLAW_MANAGED_BOOTSTRAP_FREESTANDING/u);
     expect(trampoline).toMatch(/Non-executable image-owned bootstrap body/u);
+    for (const dockerfilePath of [
+      "Dockerfile",
+      "agents/hermes/Dockerfile",
+      "agents/langchain-deepagents-code/Dockerfile",
+    ]) {
+      const dockerfile = read(dockerfilePath);
+      expect(dockerfile).toContain(" AS managed-bootstrap-entrypoint-builder");
+      expect(dockerfile).toContain("COPY scripts/managed-bootstrap-entrypoint.c ./");
+      expect(dockerfile).toContain(
+        "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap",
+      );
+      expect(dockerfile).toContain(
+        "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh",
+      );
+    }
     expect(
       packagingSources
         .filter(([, source]) => packagedBootstrapAsset.test(source))
