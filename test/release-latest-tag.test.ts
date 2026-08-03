@@ -470,6 +470,16 @@ describe("release-latest-tag.sh", () => {
     expect(
       run(fixture.work, ["git", "tag", "--list", "nemoclaw-release-signing-preflight-*"]),
     ).toBe("");
+    expect(
+      run(fixture.work, [
+        "git",
+        "ls-remote",
+        "--tags",
+        "origin",
+        "v0.0.2",
+        "nemoclaw-release-signing-preflight-*",
+      ]),
+    ).toBe("");
 
     const cutResult = cutFromPlan(fixture, planPath, plan.confirmationPhrase);
 

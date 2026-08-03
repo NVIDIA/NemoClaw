@@ -275,7 +275,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
       "Keep the candidate SHA, E2E failure classifications, rerun ledger, and waiver rationale out of the public Announcement",
     );
     expect(releaseNotes).toContain(
-      "Never include internal E2E failure classifications, rerun details, or waiver rationale in the public Announcement",
+      "Never include the candidate SHA, internal E2E failure classifications, rerun details, or waiver rationale in the public Announcement",
     );
   });
 
