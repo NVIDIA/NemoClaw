@@ -29,6 +29,16 @@ type ApiRequestInput = {
   request?: { signal?: AbortSignal };
 };
 
+type WorkflowRunListInput = ApiRequestInput & {
+  event: string;
+  head_sha: string;
+  owner: string;
+  page: number;
+  per_page: number;
+  repo: string;
+  status: string;
+};
+
 type HarnessOptions = {
   abortSignalsImmediately?: boolean;
   approvalErrors?: ApiFailure[];
@@ -147,7 +157,7 @@ function createHarness(options: HarnessOptions = {}) {
       ? async () => Promise.reject(options.permissionError)
       : async () => ({ data: permissionResponse }),
   );
-  const listWorkflowRunsForRepo = vi.fn(async () => {
+  const listWorkflowRunsForRepo = vi.fn(async (_input: WorkflowRunListInput) => {
     const failure = workflowRunErrors.shift();
     await (failure ? Promise.reject(failure) : Promise.resolve());
     const runs = options.runsByPoll?.[workflowRunPoll] ?? [];
@@ -171,12 +181,6 @@ function createHarness(options: HarnessOptions = {}) {
     workflowRunRead += 1;
     return { data: run };
   });
-  const paginate = vi.fn(
-    async (
-      endpoint: () => Promise<{ data: { workflow_runs: unknown[] } }>,
-      _parameters: Record<string, unknown>,
-    ) => (await endpoint()).data.workflow_runs,
-  );
   const info = vi.fn();
   const warning = vi.fn();
   const setTimeout = vi.fn((resolve: () => void, _delay: number) => {
@@ -203,7 +207,6 @@ function createHarness(options: HarnessOptions = {}) {
     getPullRequest,
     getWorkflowRun,
     github: {
-      paginate,
       rest: {
         actions: { approveWorkflowRun, getWorkflowRun, listWorkflowRunsForRepo },
         pulls: { get: getPullRequest },
@@ -212,7 +215,6 @@ function createHarness(options: HarnessOptions = {}) {
     },
     info,
     listWorkflowRunsForRepo,
-    paginate,
     setTimeout,
     warning,
   };
@@ -302,10 +304,11 @@ describe("maintainer PR workflow-run approval", () => {
     await runScript(harness);
 
     expect(harness.listWorkflowRunsForRepo).toHaveBeenCalledTimes(12);
-    expect(harness.paginate).toHaveBeenCalledWith(harness.listWorkflowRunsForRepo, {
+    expect(harness.listWorkflowRunsForRepo).toHaveBeenCalledWith({
       event: "pull_request",
       head_sha: HEAD_SHA,
       owner: "NVIDIA",
+      page: 1,
       per_page: 100,
       request: { signal: expect.anything() },
       repo: "NemoClaw",
@@ -316,6 +319,29 @@ describe("maintainer PR workflow-run approval", () => {
     expect(harness.approveWorkflowRun.mock.calls.map(([input]) => input.run_id)).toEqual([
       101, 102,
     ]);
+  });
+
+  it("uses a fresh bounded request for every workflow-run page", async () => {
+    const firstPage = Array.from({ length: 100 }, (_value, index) =>
+      actionRequiredRun(1_000 + index, { head_sha: MOVED_HEAD_SHA }),
+    );
+    const harness = createHarness({
+      runsByPoll: [firstPage, [actionRequiredRun(101)]],
+    });
+
+    await runScript(harness);
+
+    const firstRequest = harness.listWorkflowRunsForRepo.mock.calls[0]?.[0];
+    const secondRequest = harness.listWorkflowRunsForRepo.mock.calls[1]?.[0];
+    expect(firstRequest).toMatchObject({ page: 1, request: { signal: expect.anything() } });
+    expect(secondRequest).toMatchObject({ page: 2, request: { signal: expect.anything() } });
+    expect(firstRequest?.request?.signal).not.toBe(secondRequest?.request?.signal);
+    expect(harness.approveWorkflowRun).toHaveBeenCalledWith({
+      owner: "NVIDIA",
+      repo: "NemoClaw",
+      request: { signal: expect.anything() },
+      run_id: 101,
+    });
   });
 
   it("reports completed approvals when the polling budget ends", async () => {

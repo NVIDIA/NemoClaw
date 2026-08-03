@@ -349,6 +349,33 @@ jobs:
               throw new Error(`${label} exhausted its bounded retry loop`);
             }
 
+            async function listExactHeadWorkflowRunsRequiringApproval(prNumber, headSha) {
+              const runs = [];
+              const perPage = 100;
+              for (let page = 1; ; page += 1) {
+                const label =
+                  `List exact-head workflow runs for PR #${prNumber}, page ${page}`;
+                const response = await withTransientApiRetry(label, () =>
+                  github.rest.actions.listWorkflowRunsForRepo({
+                    owner,
+                    repo,
+                    event: 'pull_request',
+                    head_sha: headSha,
+                    status: 'action_required',
+                    page,
+                    per_page: perPage,
+                    request: { signal: requestSignalFor(label) },
+                  }),
+                );
+                const pageRuns = response.data?.workflow_runs;
+                if (!Array.isArray(pageRuns)) {
+                  throw new Error(`${label} returned an invalid workflow_runs value`);
+                }
+                runs.push(...pageRuns);
+                if (pageRuns.length < perPage) return runs;
+              }
+            }
+
             const eventPullRequest = validateEventPullRequest(context.payload.pull_request);
             const initialPullRequest = await loadLivePullRequest(eventPullRequest.number);
             const expectedHeadSha = liveHeadSha(initialPullRequest, eventPullRequest.number);
@@ -387,25 +414,9 @@ jobs:
                 return;
               }
 
-              const runs = await withTransientApiRetry(
-                `List exact-head workflow runs for PR #${eventPullRequest.number}`,
-                () =>
-                  github.paginate(
-                    github.rest.actions.listWorkflowRunsForRepo,
-                    {
-                      owner,
-                      repo,
-                      event: 'pull_request',
-                      head_sha: expectedHeadSha,
-                      status: 'action_required',
-                      per_page: 100,
-                      request: {
-                        signal: requestSignalFor(
-                          `List exact-head workflow runs for PR #${eventPullRequest.number}`,
-                        ),
-                      },
-                    },
-                  ),
+              const runs = await listExactHeadWorkflowRunsRequiringApproval(
+                eventPullRequest.number,
+                expectedHeadSha,
               );
 
               for (const run of runs) {
