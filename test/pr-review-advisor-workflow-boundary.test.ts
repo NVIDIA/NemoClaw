@@ -937,7 +937,7 @@ process.exitCode = valid ? 0 : 1;`,
 
     try {
       fs.mkdirSync(input.outDir, { recursive: true });
-      fs.writeFileSync(resultPath, partialResult);
+      fs.writeFileSync(resultPath, partialResult, { flag: "wx", mode: 0o600 });
 
       expect(() =>
         runPrReviewAdvisorAnalysis(input, {
