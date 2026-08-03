@@ -43,6 +43,28 @@ spec.loader.exec_module(g)
 ran = []
 CONFIG_HASH = "/sandbox/.openclaw/.config-hash"
 classify_resealable_drift = g._is_resealable_config_hash_permissions_drift
+identity = g.Identity(root_uid=0, root_gid=0, sandbox_uid=1000, sandbox_gid=1000)
+
+class Opened:
+    config_path = "/sandbox/.openclaw"
+
+opened = Opened()
+
+def snapshot(name, uid, gid, mode, flags=0):
+    return g.FileSnapshot(name, 1, 1, uid, gid, mode, 0, 0, 0, 1, b"x", (), flags)
+
+locked_pair = (
+    snapshot("openclaw.json", 0, 0, 0o444),
+    snapshot(".config-hash", 0, 0, 0o444),
+)
+drifted_hash_pair = (
+    locked_pair[0],
+    snapshot(".config-hash", 1000, 1000, 0o660),
+)
+writable_config_pair = (
+    snapshot("openclaw.json", 1000, 1000, 0o660),
+    drifted_hash_pair[1],
+)
 
 def stub(name, result=None):
     def _run(*a, **k):
@@ -64,9 +86,17 @@ def check(cond, msg):
 g._has_clamped_locked_dir_posture = lambda *a, **k: False
 g._has_locked_dir_posture = lambda *a, **k: True
 g._settle_pending_transaction_for_lock = stub("settle")
-g._snapshot_pair = stub("snapshot_pair", ("openclaw.json", ".config-hash"))
-g._verify_locked_files = stub("verify")
-g._is_resealable_config_hash_permissions_drift = lambda *a, **k: True
+pair_results = iter(
+    [drifted_hash_pair, locked_pair]
+    if scenario == "perms-drift-reseals"
+    else [writable_config_pair]
+    if scenario == "unsafe-file-posture-reraised"
+    else [locked_pair]
+)
+def snapshot_pair(*a, **k):
+    ran.append("snapshot_pair")
+    return next(pair_results)
+g._snapshot_pair = snapshot_pair
 g._freeze = stub("freeze")
 g._repair_absent_hash_for_lock = stub("repair_hash")
 g._snapshot_raw_pair = stub("snapshot_raw", ("raw-a", "raw-b"))
@@ -76,17 +106,10 @@ g._commit_locked_dirs = stub("commit")
 g._force_fail_closed_lock = stub("fail_closed", [])
 
 def lock():
-    return g._transition("lock", object(), object())
+    return g._transition("lock", opened, identity)
 
 if scenario == "perms-drift-reseals":
-    outcomes = iter([g.GuardError("config-not-locked", CONFIG_HASH, "drift"), None])
-    def verify(*a, **k):
-        ran.append("verify")
-        o = next(outcomes)
-        if o is not None:
-            raise o
-    g._verify_locked_files = verify
-    lock()  # perms-only drift must fall through to re-seal, not raise
+    lock()  # The real classifier must route only the known drift to re-seal.
     check("freeze" in ran and "install" in ran and "commit" in ran, "expected re-seal")
     check(g._resealed_drift is True, "expected resealedDrift flag set for the result JSON")
     check("fail_closed" not in ran, "re-seal path must not fall into fail-closed")
@@ -100,8 +123,6 @@ elif scenario == "other-error-reraised":
     check(code == "startup-not-ready", "expected re-raise, got %r" % code)
     check("install" not in ran, "must not re-seal")
 elif scenario == "unsafe-file-posture-reraised":
-    g._verify_locked_files = raising("verify", "config-not-locked")
-    g._is_resealable_config_hash_permissions_drift = lambda *a, **k: False
     code = None
     try:
         lock()
@@ -110,11 +131,7 @@ elif scenario == "unsafe-file-posture-reraised":
     check(code == "config-not-locked", "expected unsafe posture rejection, got %r" % code)
     check("install" not in ran, "must not re-seal an unsafe file posture")
 elif scenario == "classifies-only-known-hash-drift":
-    identity = g.Identity(root_uid=0, root_gid=0, sandbox_uid=1000, sandbox_gid=1000)
-    def snapshot(name, uid, gid, mode, flags=0):
-        return g.FileSnapshot(name, 1, 1, uid, gid, mode, 0, 0, 0, 1, b"x", (), flags)
-    locked_config = snapshot("openclaw.json", 0, 0, 0o444)
-    drifted_hash = snapshot(".config-hash", 1000, 1000, 0o660)
+    locked_config, drifted_hash = drifted_hash_pair
     check(classify_resealable_drift((locked_config, drifted_hash), identity), "expected known drift")
     writable_config = snapshot("openclaw.json", 1000, 1000, 0o660)
     check(not classify_resealable_drift((writable_config, drifted_hash), identity), "writable config")
@@ -133,7 +150,7 @@ elif scenario == "content-drift-fails-closed":
     check("verify" not in ran and "install" not in ran, "must not verify or re-seal")
 elif scenario == "clean-verify-only":
     lock()  # clean locked pair: verify-only, no raise
-    check("verify" in ran and "freeze" not in ran and "install" not in ran, "expected verify-only")
+    check("snapshot_pair" in ran and "freeze" not in ran and "install" not in ran, "expected verify-only")
     check(g._resealed_drift is False, "clean pair must not flag a reseal")
 else:
     raise SystemExit("unknown scenario: " + scenario)
