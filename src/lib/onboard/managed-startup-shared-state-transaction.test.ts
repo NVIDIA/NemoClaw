@@ -10,9 +10,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { ManagedStartupAgent, ManagedStartupProfile } from "./managed-startup/profile";
+import { fingerprintManagedStartupProfile } from "./managed-startup/profile";
 import {
   beginManagedStartupSharedStateTransaction,
+  clearManagedStartupSharedStateCommitReceipt,
   commitManagedStartupSharedStateTransaction,
+  getManagedStartupSharedStateTransactionStatus,
+  MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY,
   type ManagedStartupSharedTransactionOptions,
   rollbackManagedStartupSharedStateTransaction,
 } from "./managed-startup/shared-state-transaction";
@@ -64,6 +68,13 @@ describe("managed startup shared-state transaction", () => {
     return path.join(
       sandboxRoot,
       agent === "openclaw" ? ".openclaw" : agent === "hermes" ? ".hermes" : ".deepagents",
+    );
+  }
+
+  function commitReceiptDirectory(): string {
+    return path.join(
+      path.dirname(transactionDirectory),
+      path.basename(MANAGED_STARTUP_SHARED_COMMIT_RECEIPT_DIRECTORY),
     );
   }
 
@@ -246,6 +257,192 @@ describe("managed startup shared-state transaction", () => {
     expect(commitManagedStartupSharedStateTransaction("openclaw", options)).toBe(false);
   });
 
+  it("fsyncs every transaction namespace before exposing a pending receipt", () => {
+    const root = agentRoot("openclaw");
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(root, "openclaw.json"), "before\n");
+    const open = vi.spyOn(fs, "openSync");
+    const fsync = vi.spyOn(fs, "fsyncSync");
+
+    expect(
+      beginManagedStartupSharedStateTransaction(managedStartupE2eProfile("openclaw"), options),
+    ).toBe(true);
+
+    const transactionParent = path.dirname(transactionDirectory);
+    const backupDirectory = path.join(transactionDirectory, "backups");
+    expect(open).toHaveBeenCalledWith(transactionParent, fs.constants.O_RDONLY);
+    expect(open).toHaveBeenCalledWith(transactionDirectory, fs.constants.O_RDONLY);
+    expect(open).toHaveBeenCalledWith(backupDirectory, fs.constants.O_RDONLY);
+    // File contents plus parent, backup, and manifest directory entries all
+    // reach stable storage before the transaction is returned as pending.
+    expect(fsync.mock.calls.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it.each([
+    "openclaw",
+    "hermes",
+    "langchain-deepagents-code",
+  ] as const)("persists one exact compact %s bootstrap commit across fresh calls, forbids rollback, and retires it for the next attempt", (agent) => {
+    const profile = managedStartupE2eProfile(agent);
+    const bootstrapIdentity = "b".repeat(64);
+    const nextBootstrapIdentity = "d".repeat(64);
+    const boundOptions = { ...options, bootstrapIdentity };
+    const root = agentRoot(agent);
+    fs.mkdirSync(root);
+    const config = path.join(
+      root,
+      agent === "openclaw" ? "openclaw.json" : agent === "hermes" ? "config.yaml" : "config.toml",
+    );
+    fs.writeFileSync(config, "before\n");
+
+    expect(beginManagedStartupSharedStateTransaction(profile, boundOptions)).toBe(true);
+    fs.writeFileSync(config, "committed\n");
+    expect(
+      getManagedStartupSharedStateTransactionStatus(
+        {
+          agent,
+          profileFingerprint: fingerprintManagedStartupProfile(profile),
+          bootstrapIdentity,
+        },
+        options,
+      ),
+    ).toBe("pending");
+    expect(() =>
+      getManagedStartupSharedStateTransactionStatus(
+        {
+          agent,
+          profileFingerprint: "e".repeat(64),
+          bootstrapIdentity,
+        },
+        options,
+      ),
+    ).toThrow(/expected agent, profile fingerprint, or bootstrap identity/u);
+    expect(commitManagedStartupSharedStateTransaction(agent, boundOptions)).toBe(true);
+
+    const receiptDirectory = commitReceiptDirectory();
+    const receiptFile = path.join(receiptDirectory, "receipt.json");
+    expect(fs.existsSync(transactionDirectory)).toBe(false);
+    expect(fs.readdirSync(receiptDirectory)).toEqual(["receipt.json"]);
+    expect(mode(receiptDirectory)).toBe(0o700);
+    expect(mode(receiptFile)).toBe(0o400);
+    expect(JSON.parse(fs.readFileSync(receiptFile, "utf8"))).toEqual({
+      schemaVersion: 1,
+      agent,
+      profileFingerprint: fingerprintManagedStartupProfile(profile),
+      bootstrapIdentity,
+    });
+
+    // These calls reconstruct state solely from the image-owned receipt.
+    expect(
+      getManagedStartupSharedStateTransactionStatus(
+        {
+          agent,
+          profileFingerprint: fingerprintManagedStartupProfile(profile),
+          bootstrapIdentity,
+        },
+        options,
+      ),
+    ).toBe("committed");
+    expect(commitManagedStartupSharedStateTransaction(agent, boundOptions)).toBe(true);
+    expect(() => rollbackManagedStartupSharedStateTransaction(agent, boundOptions)).toThrow(
+      /durably committed and cannot be rolled back/u,
+    );
+    expect(() =>
+      getManagedStartupSharedStateTransactionStatus(
+        {
+          agent,
+          profileFingerprint: "e".repeat(64),
+          bootstrapIdentity,
+        },
+        options,
+      ),
+    ).toThrow(/different bootstrap attempt/u);
+    expect(fs.readFileSync(config, "utf8")).toBe("committed\n");
+
+    expect(clearManagedStartupSharedStateCommitReceipt(agent, boundOptions)).toBe(true);
+    expect(fs.existsSync(receiptDirectory)).toBe(false);
+    expect(
+      getManagedStartupSharedStateTransactionStatus(
+        {
+          agent,
+          profileFingerprint: fingerprintManagedStartupProfile(profile),
+          bootstrapIdentity,
+        },
+        options,
+      ),
+    ).toBe("none");
+
+    const nextOptions = { ...options, bootstrapIdentity: nextBootstrapIdentity };
+    expect(beginManagedStartupSharedStateTransaction(profile, nextOptions)).toBe(true);
+    expect(rollbackManagedStartupSharedStateTransaction(agent, nextOptions)).toBe(true);
+  });
+
+  it.each([
+    "during-compact-receipt-write",
+    "before-backup-removal",
+    "during-backup-removal",
+    "after-backup-removal",
+    "after-manifest-removal",
+  ] as const)("recovers an atomically established commit interrupted %s", (interruption) => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const bootstrapIdentity = "b".repeat(64);
+    const boundOptions = { ...options, bootstrapIdentity };
+    const root = agentRoot("openclaw");
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(root, "openclaw.json"), "before\n");
+    beginManagedStartupSharedStateTransaction(profile, boundOptions);
+    fs.writeFileSync(path.join(root, "openclaw.json"), "committed\n");
+
+    const originalRmSync = fs.rmSync.bind(fs);
+    const rm = vi.spyOn(fs, "rmSync").mockImplementation(((
+      target: fs.PathLike,
+      removeOptions?: fs.RmDirOptions,
+    ) =>
+      String(target).endsWith(`${path.sep}backups`)
+        ? (() => {
+            throw new Error("injected post-rename cleanup interruption");
+          })()
+        : originalRmSync(target, removeOptions)) as typeof fs.rmSync);
+    expect(() => commitManagedStartupSharedStateTransaction("openclaw", boundOptions)).toThrow(
+      /injected post-rename cleanup interruption/u,
+    );
+    rm.mockRestore();
+
+    expect(fs.existsSync(transactionDirectory)).toBe(false);
+    const committedDirectory = commitReceiptDirectory();
+    const backups = path.join(committedDirectory, "backups");
+    const manifest = path.join(committedDirectory, "manifest.json");
+    const applyInterruption: Record<typeof interruption, () => void> = {
+      "during-compact-receipt-write": () =>
+        fs.renameSync(
+          path.join(committedDirectory, "receipt.json"),
+          path.join(committedDirectory, ".receipt.json.1234567890abcdef12345678"),
+        ),
+      "before-backup-removal": () => undefined,
+      "during-backup-removal": () => {
+        const [firstBackup] = fs.readdirSync(backups);
+        expect(firstBackup).toBeTruthy();
+        fs.unlinkSync(path.join(backups, firstBackup!));
+      },
+      "after-backup-removal": () => originalRmSync(backups, { force: false, recursive: true }),
+      "after-manifest-removal": () => fs.unlinkSync(manifest),
+    };
+    applyInterruption[interruption]();
+    expect(
+      getManagedStartupSharedStateTransactionStatus(
+        {
+          agent: "openclaw",
+          profileFingerprint: fingerprintManagedStartupProfile(profile),
+          bootstrapIdentity,
+        },
+        options,
+      ),
+    ).toBe("committed");
+    expect(commitManagedStartupSharedStateTransaction("openclaw", boundOptions)).toBe(true);
+    expect(fs.readdirSync(committedDirectory)).toEqual(["receipt.json"]);
+    expect(clearManagedStartupSharedStateCommitReceipt("openclaw", boundOptions)).toBe(true);
+  });
+
   it("resumes the same pending profile idempotently and rejects profile drift", () => {
     const root = agentRoot("openclaw");
     fs.mkdirSync(root);
@@ -258,8 +455,60 @@ describe("managed startup shared-state transaction", () => {
         managedStartupE2eProfile("openclaw", true),
         options,
       ),
-    ).toThrow(/belongs to a different profile/u);
+    ).toThrow(/belongs to a different agent, profile fingerprint, or bootstrap attempt/u);
     expect(rollbackManagedStartupSharedStateTransaction("openclaw", options)).toBe(true);
+  });
+
+  it("validates a directly mounted copied receipt under an unchanged 0755 image parent", () => {
+    const root = agentRoot("openclaw");
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(root, "openclaw.json"), "{}\n");
+    const profile = managedStartupE2eProfile("openclaw");
+    const bootstrapIdentity = "b".repeat(64);
+    const boundOptions = { ...options, bootstrapIdentity };
+    beginManagedStartupSharedStateTransaction(profile, boundOptions);
+
+    const imageParent = path.join(temporaryRoot, "image-var-lib-nemoclaw");
+    const copiedReceipt = path.join(imageParent, "managed-startup-shared-state-transaction-v1");
+    fs.mkdirSync(imageParent, { mode: 0o755 });
+    fs.chmodSync(imageParent, 0o755);
+    fs.cpSync(transactionDirectory, copiedReceipt, {
+      recursive: true,
+      preserveTimestamps: true,
+    });
+    // Node 22.23 normalizes copied directory modes to 0755. Recreate the
+    // protected modes that the container-copy fixture is intended to model.
+    fs.chmodSync(copiedReceipt, 0o700);
+    fs.chmodSync(path.join(copiedReceipt, "backups"), 0o700);
+
+    expect(
+      getManagedStartupSharedStateTransactionStatus(
+        {
+          agent: "openclaw",
+          profileFingerprint: fingerprintManagedStartupProfile(profile),
+          bootstrapIdentity,
+        },
+        {
+          ...boundOptions,
+          transactionDirectory: copiedReceipt,
+        },
+      ),
+    ).toBe("pending");
+
+    fs.chmodSync(imageParent, 0o700);
+    expect(() =>
+      getManagedStartupSharedStateTransactionStatus(
+        {
+          agent: "openclaw",
+          profileFingerprint: fingerprintManagedStartupProfile(profile),
+          bootstrapIdentity,
+        },
+        {
+          ...boundOptions,
+          transactionDirectory: copiedReceipt,
+        },
+      ),
+    ).toThrow(/must be .* mode 755/u);
   });
 
   it("rejects planted target and ancestor symlinks before creating a receipt", () => {
