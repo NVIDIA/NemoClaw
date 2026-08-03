@@ -70,6 +70,7 @@ import {
   createFileDockerManagedBootstrapJournalStore,
   DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION,
   DOCKER_MANAGED_BOOTSTRAP_JOURNAL_SCHEMA_VERSION,
+  type DockerManagedBootstrapFinalizationContext,
   type DockerManagedBootstrapFinalizationRecord,
   type DockerManagedBootstrapJournal,
   DockerManagedBootstrapJournalAcknowledgementLostError,
@@ -1826,6 +1827,28 @@ export function createDockerManagedBootstrapAdapter(
     }
     return record;
   };
+  const persistFinalizationRecord = (
+    record: DockerManagedBootstrapFinalizationRecord,
+    context: DockerManagedBootstrapFinalizationContext,
+  ): ManagedBootstrapFinalizationReceipt => {
+    const serialized = serializeDockerManagedBootstrapFinalizationRecord(record);
+    try {
+      deps.journalStore.recordFinalization(record, context);
+    } catch (error) {
+      const recovered = deps.journalStore.loadFinalization(record.bootstrapIdentity, context);
+      if (
+        !recovered ||
+        serializeDockerManagedBootstrapFinalizationRecord(recovered) !== serialized
+      ) {
+        throw error;
+      }
+    }
+    const persisted = deps.journalStore.loadFinalization(record.bootstrapIdentity, context);
+    if (!persisted || serializeDockerManagedBootstrapFinalizationRecord(persisted) !== serialized) {
+      throw new Error("Managed bootstrap finalization receipt was not durably re-readable.");
+    }
+    return persisted.cleanupReceipt;
+  };
   const persistFinalization = (
     handle: ManagedBootstrapHeldWorkloadHandle,
     phase: "committed" | "rolled-back",
@@ -1846,23 +1869,7 @@ export function createDockerManagedBootstrapAdapter(
       commitReceipt,
       cleanupReceipt,
     } satisfies DockerManagedBootstrapFinalizationRecord);
-    const serialized = serializeDockerManagedBootstrapFinalizationRecord(record);
-    try {
-      deps.journalStore.recordFinalization(record, context);
-    } catch (error) {
-      const recovered = deps.journalStore.loadFinalization(handle.bootstrapIdentity, context);
-      if (
-        !recovered ||
-        serializeDockerManagedBootstrapFinalizationRecord(recovered) !== serialized
-      ) {
-        throw error;
-      }
-    }
-    const persisted = deps.journalStore.loadFinalization(handle.bootstrapIdentity, context);
-    if (!persisted || serializeDockerManagedBootstrapFinalizationRecord(persisted) !== serialized) {
-      throw new Error("Managed bootstrap finalization receipt was not durably re-readable.");
-    }
-    return persisted.cleanupReceipt;
+    return persistFinalizationRecord(record, context);
   };
   const completedRollback = (
     handle: ManagedBootstrapHeldWorkloadHandle,
@@ -2001,23 +2008,7 @@ export function createDockerManagedBootstrapAdapter(
       commitReceipt,
       cleanupReceipt,
     } satisfies DockerManagedBootstrapFinalizationRecord);
-    const serialized = serializeDockerManagedBootstrapFinalizationRecord(record);
-    try {
-      deps.journalStore.recordFinalization(record, journal);
-    } catch (error) {
-      const recovered = deps.journalStore.loadFinalization(journal.bootstrapIdentity, journal);
-      if (
-        !recovered ||
-        serializeDockerManagedBootstrapFinalizationRecord(recovered) !== serialized
-      ) {
-        throw error;
-      }
-    }
-    const persisted = deps.journalStore.loadFinalization(journal.bootstrapIdentity, journal);
-    if (!persisted || serializeDockerManagedBootstrapFinalizationRecord(persisted) !== serialized) {
-      throw new Error("Managed bootstrap recovered finalization was not durably re-readable.");
-    }
-    return persisted.cleanupReceipt;
+    return persistFinalizationRecord(record, journal);
   };
   const recoveredReceipt = (
     journal: DockerBootstrapTransaction,

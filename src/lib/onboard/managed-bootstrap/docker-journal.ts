@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { ManagedStartupAgent } from "../managed-startup/profile";
+import { MANAGED_STARTUP_AGENTS, type ManagedStartupAgent } from "../managed-startup/profile";
 import type {
   ManagedBootstrapCompletionReceipt,
   ManagedBootstrapDurablePreparationReceipt,
@@ -222,7 +222,7 @@ function exactLegacyPhase(
 }
 
 function exactAgent(value: unknown): ManagedStartupAgent {
-  if (!["openclaw", "hermes", "langchain-deepagents-code"].includes(String(value))) {
+  if (!MANAGED_STARTUP_AGENTS.includes(value as ManagedStartupAgent)) {
     fail("agent is unsupported");
   }
   return value as ManagedStartupAgent;

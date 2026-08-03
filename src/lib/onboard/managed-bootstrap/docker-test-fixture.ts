@@ -70,6 +70,7 @@ export type DockerFixtureAcknowledgement =
 export type DockerFixtureOptions = {
   readonly agent?: ManagedStartupAgent;
   readonly dockerRemoveFailures?: readonly Error[];
+  readonly dockerRemoveResults?: readonly FixtureCommandResult[];
   readonly dockerInspectUnknownIds?: readonly string[];
   readonly dockerStartResults?: Readonly<Record<string, FixtureCommandResult>>;
   readonly journalCreateFailures?: readonly Error[];
@@ -224,6 +225,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
   let sharedState: "committed" | "none" | "pending" = options.sharedState ?? "none";
   const events: string[] = [];
   const dockerRemoveFailures = [...(options.dockerRemoveFailures ?? [])];
+  const dockerRemoveResults = [...(options.dockerRemoveResults ?? [])];
   const journalCreateFailures = [...(options.journalCreateFailures ?? [])];
   const journalRemoveFailures = [...(options.journalRemoveFailures ?? [])];
   const sharedReceiptClearFailures = [...(options.sharedReceiptClearFailures ?? [])];
@@ -505,17 +507,21 @@ export function fixture(options: DockerFixtureOptions = {}) {
         default:
           throw injectedFailure;
       }
-      switch (id) {
-        case OLD_ID:
-          original = null;
-          break;
-        case NEW_ID:
-          replacement = null;
-          break;
+      const result = dockerRemoveResults.shift() ?? ok();
+      switch (result.status) {
+        case 0:
+          switch (id) {
+            case OLD_ID:
+              original = null;
+              break;
+            case NEW_ID:
+              replacement = null;
+              break;
+          }
       }
       return losesAcknowledgement("container:remove")
         ? { status: 1, stderr: "lost rm acknowledgement" }
-        : ok();
+        : result;
     }),
     runCaptureOpenshell: vi.fn(() => `Name: alpha\nID: ${options.ownerId ?? "sandbox-alpha"}\n`),
     runOpenshell: vi.fn(() => ok()),

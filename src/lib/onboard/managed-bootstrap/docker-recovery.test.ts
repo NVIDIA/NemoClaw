@@ -297,6 +297,61 @@ describe("Docker managed bootstrap restart recovery", () => {
     expect(dockerMutationEvents(fake.events)).toEqual(mutationsAfterFailedRetirement);
   });
 
+  it("retains durable commit authority after a non-zero Docker removal result", async () => {
+    const fake = fixture({
+      dockerRemoveFailures: [new Error("injected crash before exact Docker removal")],
+      dockerRemoveResults: [{ status: 1, stderr: "injected non-zero Docker removal" }],
+      sharedState: "pending",
+    });
+    const transaction = await prepareTransaction(fake);
+    const replacement = await transaction.adapter.activateBootstrapReplacement({
+      handle: transaction.handle,
+      snapshot: transaction.snapshot,
+      prepared: transaction.prepared,
+      durablePreparation: transaction.durable,
+    });
+    const completion = await transaction.adapter.awaitBootstrap({
+      handle: transaction.handle,
+      snapshot: transaction.snapshot,
+      replacement,
+      timeoutSecs: 1,
+    });
+
+    await expect(
+      transaction.adapter.finalizeBootstrap({
+        outcome: "commit",
+        handle: transaction.handle,
+        snapshot: transaction.snapshot,
+        prepared: transaction.prepared,
+        durablePreparation: transaction.durable,
+        replacement,
+        completion,
+      }),
+    ).rejects.toThrow("crash before exact Docker removal");
+
+    const restarted = createDockerManagedBootstrapAdapter(fake.deps);
+    await expect(restarted.recoverUnfinishedTransactions()).resolves.toMatchObject({
+      receipts: [],
+      failures: [
+        {
+          sourcePhase: "shared-state-committed",
+          code: "durable-cleanup-pending",
+          detail: expect.stringContaining("injected non-zero Docker removal"),
+        },
+      ],
+    });
+    expect(fake.journal?.phase).toBe("shared-state-committed");
+    expect(fake.finalization).toBeNull();
+    expect(fake.original).not.toBeNull();
+
+    await expect(restarted.recoverUnfinishedTransactions()).resolves.toMatchObject({
+      receipts: [{ sourcePhase: "shared-state-committed", outcome: "committed" }],
+      failures: [],
+    });
+    expect(fake.journal).toBeNull();
+    expect(fake.finalization?.phase).toBe("committed");
+  });
+
   it("compacts a terminal commit journal after another restart interruption", async () => {
     const fake = fixture({
       agent: "langchain-deepagents-code",
