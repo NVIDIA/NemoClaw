@@ -68,7 +68,6 @@ export interface ManagedBootstrapRuntimeCreateLifecycleInput {
   readonly launchArgv: readonly string[];
   readonly heldWorkloadArgv: readonly string[];
   readonly authorityStore: ManagedBootstrapAuthorityStore;
-  /** Protected tests can wrap the real provider adapter at this boundary. */
   readonly adapterOverride?: ManagedBootstrapAdapter;
   readonly route: ManagedBootstrapRuntimeRoute;
   readonly persistStartupCommand: boolean;
@@ -79,7 +78,7 @@ export interface ManagedBootstrapRuntimeCreateLifecycleInput {
   readonly onPatchFailure?: (error: unknown) => never;
   readonly network: {
     readonly inferenceProvider: string;
-    readonly dockerDriverGateway: boolean;
+    readonly gatewayUsesContainerBridge: boolean;
     readonly gatewayPort: number;
   };
   readonly dependencies: ManagedBootstrapRuntimeDependencies;

@@ -8,7 +8,11 @@ import {
   CHECKPOINT_SCHEMA_VERSION,
   type OnboardCheckpoint,
 } from "../state/onboard-checkpoint-types";
-import { planEffectGroupReplay, planSandboxCreateReplay } from "./checkpoint-replay";
+import {
+  checkpointSandboxIdentityMatches,
+  planEffectGroupReplay,
+  planSandboxCreateReplay,
+} from "./checkpoint-replay";
 import { bindingRevalidationGuidance, revalidateCheckpointBindings } from "./checkpoint-revalidate";
 
 const ISO = "2026-01-01T00:00:00.000Z";
@@ -30,6 +34,60 @@ function checkpoint(overrides: Partial<OnboardCheckpoint> = {}): OnboardCheckpoi
     ...overrides,
   };
 }
+
+describe("checkpointSandboxIdentityMatches", () => {
+  it("accepts a selected checkpoint identity that matches the requested sandbox", () => {
+    expect(
+      checkpointSandboxIdentityMatches(
+        {
+          checkpoint: checkpoint(),
+          machine: { state: "sandbox" },
+        },
+        "my-sandbox",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a selected checkpoint identity that names another sandbox", () => {
+    expect(
+      checkpointSandboxIdentityMatches(
+        {
+          checkpoint: checkpoint(),
+          machine: { state: "sandbox" },
+        },
+        "other-sandbox",
+      ),
+    ).toBe(false);
+  });
+
+  it("uses the checkpoint identity when legacy name progress disagrees", () => {
+    expect(
+      checkpointSandboxIdentityMatches(
+        {
+          checkpoint: checkpoint({ sandboxIdentity: decisionUnset() }),
+          machine: { state: "sandbox" },
+          sandboxName: "my-sandbox",
+          sandboxPromptProgress: { sandboxName: true },
+        },
+        "my-sandbox",
+      ),
+    ).toBe(false);
+  });
+
+  it("uses legacy name progress only when no checkpoint exists", () => {
+    expect(
+      checkpointSandboxIdentityMatches(
+        {
+          checkpoint: null,
+          machine: { state: "sandbox" },
+          sandboxName: "my-sandbox",
+          sandboxPromptProgress: { sandboxName: true },
+        },
+        "my-sandbox",
+      ),
+    ).toBe(true);
+  });
+});
 
 describe("planEffectGroupReplay", () => {
   it("runs an unrecorded effect group", () => {

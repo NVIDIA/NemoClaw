@@ -16,6 +16,7 @@ import {
   type DockerManagedBootstrapJournal,
   parseDockerManagedBootstrapFinalizationRecord,
   parseDockerManagedBootstrapJournal,
+  sameDockerManagedBootstrapReceipt,
   serializeDockerManagedBootstrapFinalizationRecord,
   serializeDockerManagedBootstrapJournal,
 } from "./docker-journal";
@@ -234,7 +235,51 @@ describe("Docker managed bootstrap journal", () => {
     ).toBe(`${JSON.stringify(journal)}\n`);
   });
 
-  it("enumerates unfinished records and persists exact terminal receipts across restart", () => {
+  it("compares equivalent receipts independent of property insertion order", () => {
+    const preparation = journal.preparationReceipt;
+    const reorderedPreparation = {
+      recordedAt: preparation.recordedAt,
+      recordId: preparation.recordId,
+      authorityFingerprint: preparation.authorityFingerprint,
+      bootstrapIdentity: preparation.bootstrapIdentity,
+      sandbox: {
+        driverId: preparation.sandbox.driverId,
+        sandboxId: preparation.sandbox.sandboxId,
+        sandboxName: preparation.sandbox.sandboxName,
+      },
+      schemaVersion: preparation.schemaVersion,
+    } satisfies typeof preparation;
+    expect(
+      sameDockerManagedBootstrapReceipt("preparation", preparation, reorderedPreparation),
+    ).toBe(true);
+
+    const completion = finalization.commitReceipt;
+    const reorderedCompletion = {
+      completedAt: completion.completedAt,
+      transactionPending: completion.transactionPending,
+      bootstrapIdentity: completion.bootstrapIdentity,
+      profileFingerprint: completion.profileFingerprint,
+      replacementSpecHash: completion.replacementSpecHash,
+      originalSpecHash: completion.originalSpecHash,
+      runtimeImageContentId: completion.runtimeImageContentId,
+      image: {
+        manifestDigest: completion.image.manifestDigest,
+        repository: completion.image.repository,
+      },
+      runtimeId: completion.runtimeId,
+      sandbox: {
+        driverId: completion.sandbox.driverId,
+        sandboxId: completion.sandbox.sandboxId,
+        sandboxName: completion.sandbox.sandboxName,
+      },
+      schemaVersion: completion.schemaVersion,
+    } satisfies typeof completion;
+    expect(sameDockerManagedBootstrapReceipt("completion", completion, reorderedCompletion)).toBe(
+      true,
+    );
+  });
+
+  it("enumerates unfinished records and reloads exact terminal receipts from a new journal store", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
     roots.push(root);
     const first = createFileDockerManagedBootstrapJournalStore(root);
@@ -258,7 +303,26 @@ describe("Docker managed bootstrap journal", () => {
     ).toThrow("finalization record changed");
   });
 
-  it("persists the exact completion receipt for restart reconstruction", () => {
+  it("ignores interrupted atomic-write sidecars during unfinished enumeration", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
+    roots.push(root);
+    const store = createFileDockerManagedBootstrapJournalStore(root);
+    store.create(journal);
+    const directory = path.join(root, DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY);
+    for (const target of [
+      `${IDENTITY}.json`,
+      `${IDENTITY}.json.decision`,
+      `${IDENTITY}.json.finalized`,
+    ]) {
+      fs.writeFileSync(path.join(directory, `.${target}.${process.pid}.abcdef.tmp`), "partial", {
+        mode: 0o600,
+      });
+    }
+
+    expect(store.listUnfinished()).toEqual([journal]);
+  });
+
+  it("reloads the exact completion receipt from a new journal store", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
     roots.push(root);
     const first = createFileDockerManagedBootstrapJournalStore(root);

@@ -20,8 +20,8 @@ import { stopSandbox } from "../../actions/sandbox/stop";
 import { loadAgent } from "../../agent/defs";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
-import { MANAGED_IMAGE_REPOSITORIES } from "../managed-image/contract";
 import { createDockerManagedBootstrapSurface } from "../managed-bootstrap/docker-runtime";
+import { MANAGED_IMAGE_REPOSITORIES } from "../managed-image/contract";
 import {
   encodeManagedStartupProfile,
   type ManagedStartupProfile,

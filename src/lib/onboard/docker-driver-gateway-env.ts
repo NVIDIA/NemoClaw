@@ -20,10 +20,13 @@ import {
 } from "./docker-driver-gateway-config";
 import { buildDockerDriverGatewayLocalTlsEnv } from "./docker-driver-gateway-local-tls";
 import {
+  getOpenShellGatewayManagedServiceLogCommand,
   getOpenShellUserConfigHome,
   hasOpenShellGatewayUserService,
+  OpenShellGatewayServiceEnvironmentError,
   type PackageManagedDockerDriverGatewayOptions,
   startPackageManagedDockerDriverGateway,
+  stopOpenShellGatewayUserService,
 } from "./docker-driver-gateway-service";
 
 export { getGatewayHttpsEndpoint, startPackageManagedDockerDriverGateway };
@@ -348,15 +351,24 @@ export function startPackageManagedDockerDriverGatewayWithEnvOverride(
     hasOpenShellGatewayUserService:
       options.hasOpenShellGatewayUserService ??
       (() => hasOpenShellGatewayUserService({ env, home: effectiveHome })),
+    managedServiceLogCommand:
+      options.managedServiceLogCommand ?? getOpenShellGatewayManagedServiceLogCommand(),
     prepareOpenShellGatewayUserServiceEnv: () => {
-      const serviceGatewayEnv = { ...gatewayEnv };
-      delete serviceGatewayEnv.DOCKER_HOST;
-      const dockerHost = normalizePackageServiceDockerHost(env.DOCKER_HOST);
-      if (dockerHost) serviceGatewayEnv.DOCKER_HOST = dockerHost;
-      writeDockerGatewayDebEnvOverrideFile(() => serviceGatewayEnv, {
-        env,
-        home: effectiveHome,
-      });
+      try {
+        const serviceGatewayEnv = { ...gatewayEnv };
+        delete serviceGatewayEnv.DOCKER_HOST;
+        const dockerHost = normalizePackageServiceDockerHost(env.DOCKER_HOST);
+        if (dockerHost) serviceGatewayEnv.DOCKER_HOST = dockerHost;
+        writeDockerGatewayDebEnvOverrideFile(() => serviceGatewayEnv, {
+          env,
+          home: effectiveHome,
+        });
+      } catch (error) {
+        throw new OpenShellGatewayServiceEnvironmentError(error);
+      }
     },
+    stopOpenShellGatewayUserService:
+      options.stopOpenShellGatewayUserService ??
+      (() => stopOpenShellGatewayUserService({ env, home: effectiveHome })),
   });
 }

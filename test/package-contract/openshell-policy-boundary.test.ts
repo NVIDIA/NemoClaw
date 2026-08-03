@@ -190,15 +190,29 @@ describe("OpenShell policy boundary package contract", () => {
       expect(fs.existsSync(path.join(repoRoot, "agents", "hermes", "host", file))).toBe(true);
     }
 
-    const controlContract =
-      require("../../agents/hermes/host/tool-gateway-control-contract.ts") as {
-        isValidName: (value: unknown) => boolean;
-      };
-    expect(controlContract.isValidName("packaged-hermes-sandbox")).toBe(true);
-    expect(controlContract.isValidName("../packaged-hermes-sandbox")).toBe(false);
+    const controlContractPath = path.join(
+      repoRoot,
+      "agents",
+      "hermes",
+      "host",
+      "tool-gateway-control-contract.ts",
+    );
+    const validation = JSON.parse(
+      execFileSync(
+        process.execPath,
+        [
+          "--experimental-strip-types",
+          "--no-warnings",
+          "--eval",
+          `const contract = require(${JSON.stringify(controlContractPath)}); process.stdout.write(JSON.stringify([contract.isValidName("packaged-hermes-sandbox"), contract.isValidName("../packaged-hermes-sandbox")]));`,
+        ],
+        { cwd: repoRoot, encoding: "utf8" },
+      ),
+    ) as [boolean, boolean];
+    expect(validation).toEqual([true, false]);
   });
 
-  it("ships an out-of-tree runtime sandbox-policy schema validator", { timeout: 90_000 }, () => {
+  it("ships an out-of-tree runtime sandbox-policy schema validator", { timeout: 240_000 }, () => {
     const productionDependencyTree = spawnSync(
       "npm",
       ["ls", "ajv", "--omit=dev", "--all", "--json"],

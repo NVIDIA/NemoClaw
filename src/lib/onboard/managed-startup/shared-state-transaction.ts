@@ -1078,7 +1078,9 @@ export function beginManagedStartupSharedStateTransaction(
       pending.profileFingerprint !== profileFingerprint ||
       pending.bootstrapIdentity !== options.bootstrapIdentity
     ) {
-      fail("a pending managed startup transaction belongs to a different profile");
+      fail(
+        "a pending managed startup transaction belongs to a different agent, profile fingerprint, or bootstrap attempt",
+      );
     }
     verifyAllBackups(pending.files, options);
     return false;
@@ -1399,8 +1401,8 @@ export function commitManagedStartupSharedStateTransaction(
 /**
  * Retire one exact durable bootstrap commit only after the runtime owner has
  * proven its external rollback backup is gone. This prevents a completed
- * attempt's image-owned receipt from blocking a later legitimate bootstrap in
- * the same persisted workload.
+ * attempt's image-owned receipt from blocking a later bootstrap with a
+ * different identity in the same persisted workload.
  */
 export function clearManagedStartupSharedStateCommitReceipt(
   expectedAgent: ManagedStartupAgent,
@@ -1459,7 +1461,9 @@ export function getManagedStartupSharedStateTransactionStatus(
       manifest.profileFingerprint !== expected.profileFingerprint ||
       manifest.bootstrapIdentity !== expected.bootstrapIdentity
     ) {
-      fail("pending transaction does not match the expected bootstrap identity");
+      fail(
+        "pending transaction does not match the expected agent, profile fingerprint, or bootstrap identity",
+      );
     }
     verifyAllBackups(manifest.files, options);
     return "pending";
