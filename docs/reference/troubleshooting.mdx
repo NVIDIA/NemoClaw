@@ -137,6 +137,7 @@ It rejects remote endpoints and relative socket paths before service startup.
 ### Onboarding reports `invalid_docker_host`
 
 The `invalid_docker_host` advisory means that `DOCKER_HOST` is not an absolute local `unix://` socket path that NemoClaw can write to the managed OpenShell gateway service environment.
+NemoClaw does not use the standalone gateway fallback when this validation fails.
 Remove the override to use Docker's default local socket:
 
 ```bash
@@ -931,14 +932,27 @@ Follow these steps to reconnect.
    brew services restart openshell
    ```
 
+   If the Homebrew service cannot be inspected, started, or made healthy during onboarding, NemoClaw prints this command for the formula logs:
+
+   ```bash
+   tail -n 200 "$(brew --prefix)/var/log/openshell/openshell-gateway.out.log" "$(brew --prefix)/var/log/openshell/openshell-gateway.err.log"
+   ```
+
+   NemoClaw attempts to stop a service that reached startup and use the standalone fallback.
+   The standalone gateway starts only after NemoClaw verifies exclusive ownership of the gateway port.
    If Homebrew is present but `openshell` is missing or comes from another tap, rerun the NemoClaw installer.
-   Onboarding does not use the standalone fallback while Homebrew is present.
 
    On Linux package installs, inspect and restart the upstream service.
 
    ```bash
    systemctl --user status openshell-gateway
    systemctl --user restart openshell-gateway
+   ```
+
+   If the service cannot be inspected, started, or made healthy during onboarding, NemoClaw prints this command for its logs:
+
+   ```bash
+   journalctl --user --unit openshell-gateway --no-pager --lines=200
    ```
 
    On Linux tarball installs, inspect and restart the marked NemoClaw service.
@@ -948,8 +962,16 @@ Follow these steps to reconnect.
    systemctl --user restart nemoclaw-openshell-gateway
    ```
 
+   For this service, NemoClaw prints the following log command after an onboarding failure:
+
+   ```bash
+   journalctl --user --unit nemoclaw-openshell-gateway --no-pager --lines=200
+   ```
+
    The tarball unit is under `$XDG_CONFIG_HOME/systemd/user`, or `~/.config/systemd/user` when `XDG_CONFIG_HOME` is not absolute.
    It starts with your user session; NemoClaw does not enable lingering.
+   On Linux, NemoClaw attempts to stop a service that reached startup and use the standalone fallback.
+   The standalone gateway starts only after NemoClaw verifies exclusive ownership of the gateway port.
    Without Homebrew on macOS, or without a reachable systemd user manager on Linux, continue with the standalone recovery step below.
 
 1. Check sandbox state.

@@ -43,7 +43,7 @@ describe("package-managed Docker-driver gateway env service", () => {
           skipSandboxBridgeReachability: false,
           startOpenShellGatewayUserService: (opts) => {
             opts?.prepareServiceEnv?.();
-            return { attempted: true, fallbackAllowed: false, started: true };
+            return { attempted: true, started: true };
           },
           verifySandboxBridgeGatewayReachableOrExit: async () => undefined,
         }),
@@ -69,7 +69,7 @@ describe("package-managed Docker-driver gateway env service", () => {
     const envFile = path.join(tempHome, ".config", "openshell", "gateway.env");
     const startService = vi.fn((opts?: { prepareServiceEnv?: () => void }) => {
       opts?.prepareServiceEnv?.();
-      return { attempted: true, fallbackAllowed: false, started: true };
+      return { attempted: true, started: true };
     });
 
     try {
@@ -126,7 +126,7 @@ describe("package-managed Docker-driver gateway env service", () => {
           skipSandboxBridgeReachability: false,
           startOpenShellGatewayUserService: (opts) => {
             opts?.prepareServiceEnv?.();
-            return { attempted: true, fallbackAllowed: false, started: true };
+            return { attempted: true, started: true };
           },
           verifySandboxBridgeGatewayReachableOrExit: async () => undefined,
         }),
