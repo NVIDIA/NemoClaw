@@ -15,6 +15,7 @@ import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced
 
 describe("installer express install prompt (sourced)", () => {
   it.each([
+    undefined,
     Number.NaN,
     -1,
     0,
@@ -44,7 +45,6 @@ describe("installer express install prompt (sourced)", () => {
 
   it("drains PTY output after the child exits", () => {
     const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pty-tail-"));
-    const remove = vi.spyOn(fs, "rmSync");
     try {
       const result = runExpressPromptWithTty("", "tty", "DGX Spark", {}, "prompt", [], {
         mode: "post-exit-tail",
@@ -55,12 +55,8 @@ describe("installer express install prompt (sourced)", () => {
       expect(result.error, output).toBeUndefined();
       expect(result.status, output).toBe(0);
       expect(output).toContain("PTY_POST_EXIT_TAIL");
-      expect(remove).toHaveBeenCalledWith(expect.stringContaining("nemoclaw-express-prompt-"), {
-        recursive: true,
-        force: true,
-      });
+      expect(fs.existsSync(result.temporaryDirectory)).toBe(false);
     } finally {
-      remove.mockRestore();
       fs.rmSync(fixtureDir, { recursive: true, force: true });
     }
   });

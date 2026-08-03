@@ -186,7 +186,7 @@ sys.exit(exit_code)
     harnessFixture?.mode ?? DEFAULT_INSTALLER_EXPRESS_PTY_HARNESS_MODE;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-prompt-"));
   try {
-    return spawnSync(
+    const result = spawnSync(
       python,
       [
         "-c",
@@ -213,6 +213,7 @@ sys.exit(exit_code)
         },
       },
     );
+    return Object.assign(result, { temporaryDirectory: tmp });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
