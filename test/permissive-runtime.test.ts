@@ -7,7 +7,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { buildRuntimePermissivePolicy } from "../src/lib/shields/permissive-runtime.js";
+import {
+  buildRuntimePermissivePolicy,
+  type ExactManagedMcpPolicy,
+} from "../src/lib/shields/permissive-runtime.js";
 
 const BASE_PERMISSIVE = YAML.stringify({
   filesystem_policy: {
@@ -46,6 +49,51 @@ afterEach(() => {
 });
 
 describe("buildRuntimePermissivePolicy (#3942)", () => {
+  it("preserves exact managed MCP entries without copying unrelated live egress (#7952)", () => {
+    const managedPolicy: ExactManagedMcpPolicy = {
+      key: "mcp_bridge_alpha",
+      networkPolicy: {
+        endpoints: [{ host: "alpha.example.com", port: 443, protocol: "mcp" }],
+        binaries: [{ path: "/opt/hermes/.venv/bin/python*" }],
+      },
+      policyName: "mcp-bridge-alpha",
+      server: "alpha",
+    };
+    const liveYaml = YAML.stringify({
+      filesystem_policy: { read_write: ["/proc"] },
+      network_policies: {
+        mcp_bridge_alpha: managedPolicy.networkPolicy,
+        unrelated_live_entry: {
+          endpoints: [{ host: "unrelated.example.com", port: 443 }],
+        },
+      },
+    });
+
+    const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      livePolicyYaml: liveYaml,
+      managedMcpPolicies: [managedPolicy],
+      readBasePolicy: () =>
+        YAML.stringify({
+          ...YAML.parse(BASE_PERMISSIVE),
+          network_policies: {
+            permissive_baseline: {
+              endpoints: [{ host: "*", port: 443 }],
+            },
+          },
+        }),
+    });
+    trackTempForCleanup(out, "/unused-base.yaml");
+
+    const result = YAML.parse(fs.readFileSync(out, "utf-8"));
+    expect(result.network_policies).toMatchObject({
+      mcp_bridge_alpha: managedPolicy.networkPolicy,
+      permissive_baseline: {
+        endpoints: [{ host: "*", port: 443 }],
+      },
+    });
+    expect(result.network_policies).not.toHaveProperty("unrelated_live_entry");
+  });
+
   it("preserves /proc when the live GPU sandbox has it in read_write", () => {
     const liveYaml = YAML.stringify({
       filesystem_policy: {
@@ -165,6 +213,25 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       },
     });
     expect(out).toBe(basePath);
+  });
+
+  it("fails closed when the base cannot be read with managed MCP policies active (#7952)", () => {
+    expect(() =>
+      buildRuntimePermissivePolicy("/path/to/static.yaml", {
+        livePolicyYaml: "version: 1\nnetwork_policies: {}\n",
+        managedMcpPolicies: [
+          {
+            key: "mcp_bridge_alpha",
+            networkPolicy: {},
+            policyName: "mcp-bridge-alpha",
+            server: "alpha",
+          },
+        ],
+        readBasePolicy: () => {
+          throw new Error("ENOENT");
+        },
+      }),
+    ).toThrow(/Cannot read the Shields-down policy/);
   });
 
   it("returns the static base path when base YAML is unparseable", () => {

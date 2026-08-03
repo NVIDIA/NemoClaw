@@ -114,6 +114,14 @@ NemoClaw does not signal that process because portable process inspection cannot
 After the owner releases the lock, auto-restore restores the restrictive policy and config posture.
 The ownership check includes both the process ID and process start identity so PID reuse does not grant control over an unrelated process.
 
+Before a manual Shields transition replaces a policy, NemoClaw requires exact Model Context Protocol (MCP) agreement among the sandbox registry, generated-policy record, and live gateway policy.
+`shields down` carries the proven managed MCP policy entries into the relaxed policy.
+Restoration removes snapshot-time managed MCP entries before it overlays current exact entries.
+If exact agreement is absent, a manual Shields transition refuses the replacement policy.
+At an expired deadline, auto-restore omits unproven managed MCP policy entries, restores lockdown, and records the omission count in its audit entry.
+An MCP server removed during the shields-down window stays removed.
+A surviving server keeps its recorded endpoint and address pins while its policy ownership remains exact.
+
 When an interactive command takes over an expired timer, NemoClaw makes up to 7 restoration attempts over an additional 30-second completion-grace window.
 The deadline gate remains closed during those attempts.
 If restoration cannot commit, NemoClaw records durable containment before the command returns an error.

@@ -58,7 +58,7 @@ export const MUTATION_READS: readonly AuditedMutationRead[] = [
   },
   {
     relativePath: "src/lib/shields/index.ts",
-    expectedReadCalls: 1,
+    expectedReadCalls: 3,
     baseCommand: "runCapture(buildPolicyGetCommand(sandboxName))",
     unsafeBaseCommand: "runCapture(buildPolicyGetCommand(sandboxName), {",
     fullCommand: "runCapture(buildPolicyGetFullCommand(sandboxName))",
