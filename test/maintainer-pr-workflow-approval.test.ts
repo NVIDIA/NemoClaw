@@ -20,10 +20,23 @@ type ApprovalWorkflow = {
   jobs: Record<string, WorkflowJob>;
 };
 
+type ApiFailure = {
+  code?: string;
+  status?: number;
+};
+
+type ApiRequestInput = {
+  request?: { signal?: AbortSignal };
+};
+
 type HarnessOptions = {
+  abortSignalsImmediately?: boolean;
+  approvalErrors?: ApiFailure[];
   author?: string;
+  dateNowValues?: number[];
   eventHead?: string;
   headRepository?: string;
+  hungPullRequestAttempts?: number;
   liveHeads?: string[];
   permission?: {
     permission?: string;
@@ -31,7 +44,11 @@ type HarnessOptions = {
     user?: { login?: string };
   };
   permissionError?: { status: number };
+  pullRequestErrors?: ApiFailure[];
   runsByPoll?: unknown[][];
+  workflowRunGetErrors?: ApiFailure[];
+  workflowRunsByGet?: unknown[];
+  workflowRunErrors?: ApiFailure[];
 };
 
 const WORKFLOW_PATH = ".github/workflows/approve-maintainer-pr-workflow-runs.yaml";
@@ -62,10 +79,44 @@ function actionRequiredRun(id: number, overrides: Record<string, unknown> = {}) 
 function createHarness(options: HarnessOptions = {}) {
   const author = options.author ?? "maintainer";
   const liveHeads = options.liveHeads ?? [HEAD_SHA];
+  const approvalErrors = [...(options.approvalErrors ?? [])];
+  const pullRequestErrors = [...(options.pullRequestErrors ?? [])];
+  const workflowRunGetErrors = [...(options.workflowRunGetErrors ?? [])];
+  const workflowRunErrors = [...(options.workflowRunErrors ?? [])];
+  const dateNowValues = options.dateNowValues ?? [0];
+  let dateNowRead = 0;
+  let hungPullRequestAttempts = options.hungPullRequestAttempts ?? 0;
   let pullRequestRead = 0;
+  let workflowRunRead = 0;
   let workflowRunPoll = 0;
 
-  const getPullRequest = vi.fn(async () => {
+  const dateNow = vi.fn(
+    () => dateNowValues[Math.min(dateNowRead++, dateNowValues.length - 1)] ?? 0,
+  );
+  const abortSignalTimeout = vi.fn((_delayMs: number) => {
+    const controller = new AbortController();
+    options.abortSignalsImmediately ? queueMicrotask(() => controller.abort()) : undefined;
+    return controller.signal;
+  });
+  const abortSignal = { timeout: abortSignalTimeout };
+
+  const getPullRequest = vi.fn(async (input: ApiRequestInput = {}) => {
+    const hungRequest =
+      hungPullRequestAttempts > 0
+        ? new Promise<void>((_resolve, reject) => {
+            const signal = input.request?.signal;
+            const rejectRequest = () =>
+              reject(
+                Object.assign(new Error("request aborted"), { code: "ETIMEDOUT", status: 500 }),
+              );
+            signal?.addEventListener("abort", rejectRequest, { once: true });
+            signal?.aborted ? rejectRequest() : undefined;
+          })
+        : Promise.resolve();
+    hungPullRequestAttempts = Math.max(0, hungPullRequestAttempts - 1);
+    await hungRequest;
+    const failure = pullRequestErrors.shift();
+    if (failure) throw failure;
     const headSha = liveHeads[Math.min(pullRequestRead, liveHeads.length - 1)];
     pullRequestRead += 1;
     return {
@@ -96,11 +147,27 @@ function createHarness(options: HarnessOptions = {}) {
       : async () => ({ data: permissionResponse }),
   );
   const listWorkflowRunsForRepo = vi.fn(async () => {
+    const failure = workflowRunErrors.shift();
+    if (failure) throw failure;
     const runs = options.runsByPoll?.[workflowRunPoll] ?? [];
     workflowRunPoll += 1;
     return { data: { total_count: runs.length, workflow_runs: runs } };
   });
-  const approveWorkflowRun = vi.fn().mockResolvedValue({ status: 201 });
+  const approveWorkflowRun = vi.fn(async () => {
+    const failure = approvalErrors.shift();
+    if (failure) throw failure;
+    return { status: 201 };
+  });
+  const getWorkflowRun = vi.fn(async ({ run_id: runId }: { run_id: number }) => {
+    const failure = workflowRunGetErrors.shift();
+    await (failure ? Promise.reject(failure) : Promise.resolve());
+    const configuredRuns = options.workflowRunsByGet ?? [];
+    const run =
+      configuredRuns[Math.min(workflowRunRead, configuredRuns.length - 1)] ??
+      actionRequiredRun(runId);
+    workflowRunRead += 1;
+    return { data: run };
+  });
   const paginate = vi.fn(
     async (
       endpoint: () => Promise<{ data: { workflow_runs: unknown[] } }>,
@@ -115,6 +182,8 @@ function createHarness(options: HarnessOptions = {}) {
   });
 
   return {
+    abortSignal,
+    abortSignalTimeout,
     approveWorkflowRun,
     context: {
       payload: {
@@ -126,12 +195,14 @@ function createHarness(options: HarnessOptions = {}) {
       repo: { owner: "NVIDIA", repo: "NemoClaw" },
     },
     core: { info, warning },
+    dateNow,
     getCollaboratorPermissionLevel,
     getPullRequest,
+    getWorkflowRun,
     github: {
       paginate,
       rest: {
-        actions: { approveWorkflowRun, listWorkflowRunsForRepo },
+        actions: { approveWorkflowRun, getWorkflowRun, listWorkflowRunsForRepo },
         pulls: { get: getPullRequest },
         repos: { getCollaboratorPermissionLevel },
       },
@@ -146,12 +217,17 @@ function createHarness(options: HarnessOptions = {}) {
 
 async function runScript(harness: ReturnType<typeof createHarness>): Promise<void> {
   expect(script).toEqual(expect.any(String));
-  await new AsyncFunction("github", "context", "core", "setTimeout", script as string)(
-    harness.github,
-    harness.context,
-    harness.core,
-    harness.setTimeout,
-  );
+  await new AsyncFunction(
+    "github",
+    "context",
+    "core",
+    "setTimeout",
+    "AbortSignal",
+    "Date",
+    script as string,
+  )(harness.github, harness.context, harness.core, harness.setTimeout, harness.abortSignal, {
+    now: harness.dateNow,
+  });
 }
 
 describe("maintainer PR workflow-run approval", () => {
@@ -179,6 +255,18 @@ describe("maintainer PR workflow-run approval", () => {
     expect(script).not.toContain("github.rest.repos.getContent");
     expect(script).not.toContain("github.rest.git");
     expect(script).not.toContain("require(");
+    expect(script).toContain("const API_RETRY_ATTEMPTS = 3;");
+    expect(script).toContain("const API_RETRY_BASE_DELAY_MS = 250;");
+    expect(script).toContain("const API_RETRY_MAX_DELAY_MS = 1000;");
+    expect(script).toContain("const API_REQUEST_TIMEOUT_MS = 10000;");
+    expect(script).toContain("const SCRIPT_BUDGET_MS = 105000;");
+    expect(script).toContain("AbortSignal.timeout");
+    expect(script).toContain("github.rest.actions.getWorkflowRun");
+    expect(script).not.toContain("requestTimeoutFor");
+    expect(script).not.toContain("request: { timeout:");
+    const scriptBudgetMs = Number(script?.match(/const SCRIPT_BUDGET_MS = (\d+);/u)?.[1]);
+    expect(scriptBudgetMs).toBeGreaterThan(0);
+    expect(scriptBudgetMs).toBeLessThan(Number(job["timeout-minutes"]) * 60_000);
   });
 
   it.each([
@@ -196,12 +284,14 @@ describe("maintainer PR workflow-run approval", () => {
     expect(harness.getCollaboratorPermissionLevel).toHaveBeenCalledWith({
       owner: "NVIDIA",
       repo: "NemoClaw",
+      request: { signal: expect.anything() },
       username: "maintainer",
     });
     expect(harness.approveWorkflowRun).toHaveBeenCalledOnce();
     expect(harness.approveWorkflowRun).toHaveBeenCalledWith({
       owner: "NVIDIA",
       repo: "NemoClaw",
+      request: { signal: expect.anything() },
       run_id: 101,
     });
   });
@@ -221,6 +311,7 @@ describe("maintainer PR workflow-run approval", () => {
       head_sha: HEAD_SHA,
       owner: "NVIDIA",
       per_page: 100,
+      request: { signal: expect.anything() },
       repo: "NemoClaw",
       status: "action_required",
     });
@@ -229,6 +320,235 @@ describe("maintainer PR workflow-run approval", () => {
     expect(harness.approveWorkflowRun.mock.calls.map(([input]) => input.run_id)).toEqual([
       101, 102,
     ]);
+  });
+
+  it("recovers from a transient pulls.get failure before trusting live PR metadata", async () => {
+    const harness = createHarness({
+      pullRequestErrors: [{ status: 504 }],
+      runsByPoll: [[actionRequiredRun(101)]],
+    });
+
+    await runScript(harness);
+
+    expect(harness.approveWorkflowRun).toHaveBeenCalledOnce();
+    expect(harness.warning).toHaveBeenCalledWith(
+      expect.stringContaining("Load live PR #42 failed transiently with HTTP 504"),
+    );
+    expect(harness.setTimeout).toHaveBeenCalledWith(expect.any(Function), 250);
+  });
+
+  it("aborts and retries a hung API request with a fresh bounded signal", async () => {
+    const harness = createHarness({
+      abortSignalsImmediately: true,
+      hungPullRequestAttempts: 3,
+    });
+
+    await expect(runScript(harness)).rejects.toMatchObject({
+      code: "ETIMEDOUT",
+      status: 500,
+    });
+
+    expect(harness.getPullRequest).toHaveBeenCalledTimes(3);
+    expect(harness.abortSignalTimeout).toHaveBeenCalledTimes(3);
+    expect(harness.abortSignalTimeout).toHaveBeenNthCalledWith(1, 10_000);
+    expect(harness.abortSignalTimeout).toHaveBeenNthCalledWith(2, 10_000);
+    expect(harness.abortSignalTimeout).toHaveBeenNthCalledWith(3, 10_000);
+    const requestSignals = harness.getPullRequest.mock.calls.map(
+      ([input]) => input.request?.signal,
+    );
+    expect(new Set(requestSignals).size).toBe(3);
+  });
+
+  it("bounds an aborting request by the remaining script budget", async () => {
+    const harness = createHarness({
+      abortSignalsImmediately: true,
+      dateNowValues: [0, 104_500, 105_000],
+      hungPullRequestAttempts: 1,
+    });
+
+    await expect(runScript(harness)).rejects.toThrow(
+      "Load live PR #42 exceeded the bounded 105000ms script budget",
+    );
+
+    expect(harness.getPullRequest).toHaveBeenCalledOnce();
+    expect(harness.abortSignalTimeout).toHaveBeenCalledOnce();
+    expect(harness.abortSignalTimeout).toHaveBeenCalledWith(500);
+  });
+
+  it("recovers from transient workflow-run listing failures with bounded backoff", async () => {
+    const harness = createHarness({
+      runsByPoll: [[actionRequiredRun(101)]],
+      workflowRunErrors: [{ status: 502 }, { status: 504 }],
+    });
+
+    await runScript(harness);
+
+    expect(harness.listWorkflowRunsForRepo).toHaveBeenCalledTimes(14);
+    expect(harness.approveWorkflowRun).toHaveBeenCalledOnce();
+    expect(harness.setTimeout).toHaveBeenCalledWith(expect.any(Function), 250);
+    expect(harness.setTimeout).toHaveBeenCalledWith(expect.any(Function), 500);
+  });
+
+  it("revalidates exact-head authority before retrying a transient approval failure", async () => {
+    const harness = createHarness({
+      approvalErrors: [{ status: 504 }],
+      runsByPoll: [[actionRequiredRun(101)]],
+    });
+
+    await runScript(harness);
+
+    expect(harness.approveWorkflowRun).toHaveBeenCalledTimes(2);
+    expect(harness.getCollaboratorPermissionLevel).toHaveBeenCalledTimes(3);
+    expect(harness.warning).toHaveBeenCalledWith(
+      expect.stringContaining("Approve workflow run 101 returned HTTP 504"),
+    );
+    expect(harness.setTimeout).toHaveBeenCalledWith(expect.any(Function), 250);
+  });
+
+  it("records an accepted-but-504 approval as success after an exact-run recheck", async () => {
+    const harness = createHarness({
+      approvalErrors: [{ status: 504 }, { status: 403 }],
+      runsByPoll: [[actionRequiredRun(101)]],
+      workflowRunsByGet: [
+        actionRequiredRun(101),
+        actionRequiredRun(101, { conclusion: null, status: "queued" }),
+      ],
+    });
+
+    await runScript(harness);
+
+    expect(harness.approveWorkflowRun).toHaveBeenCalledTimes(2);
+    expect(harness.getWorkflowRun).toHaveBeenCalledTimes(2);
+    expect(harness.getWorkflowRun).toHaveBeenLastCalledWith({
+      owner: "NVIDIA",
+      repo: "NemoClaw",
+      request: { signal: expect.anything() },
+      run_id: 101,
+    });
+    expect(harness.info).toHaveBeenCalledWith(
+      expect.stringContaining("no longer requires approval after an ambiguous approval response"),
+    );
+    expect(harness.info).not.toHaveBeenCalledWith(
+      expect.stringContaining("Approved pull_request workflow run 101"),
+    );
+    expect(harness.info).toHaveBeenCalledWith("Approved 1 exact-head workflow run(s) for PR #42");
+  });
+
+  it.each([
+    403, 404,
+  ])("records a concurrent approval as an exact-state no-op after HTTP %i", async (status) => {
+    const harness = createHarness({
+      approvalErrors: [{ status }],
+      runsByPoll: [[actionRequiredRun(101)]],
+      workflowRunsByGet: [actionRequiredRun(101, { conclusion: null, status: "queued" })],
+    });
+
+    await runScript(harness);
+
+    expect(harness.approveWorkflowRun).toHaveBeenCalledOnce();
+    expect(harness.getWorkflowRun).toHaveBeenCalledOnce();
+    expect(harness.info).toHaveBeenCalledWith(
+      expect.stringContaining("no longer requires approval after an ambiguous approval response"),
+    );
+    expect(harness.info).toHaveBeenCalledWith("Approved 1 exact-head workflow run(s) for PR #42");
+  });
+
+  it("fails closed after exhausting ambiguous approval retries", async () => {
+    const finalFailure = { status: 504 };
+    const harness = createHarness({
+      approvalErrors: [{ status: 504 }, { status: 504 }, finalFailure],
+      runsByPoll: [[actionRequiredRun(101)]],
+    });
+
+    await expect(runScript(harness)).rejects.toBe(finalFailure);
+
+    expect(harness.approveWorkflowRun).toHaveBeenCalledTimes(3);
+    expect(harness.getWorkflowRun).toHaveBeenCalledTimes(3);
+    expect(harness.getCollaboratorPermissionLevel).toHaveBeenCalledTimes(4);
+  });
+
+  it("fails closed when exact-run reconciliation cannot be read", async () => {
+    const recheckFailure = { status: 403 };
+    const harness = createHarness({
+      approvalErrors: [{ status: 504 }],
+      runsByPoll: [[actionRequiredRun(101)]],
+      workflowRunGetErrors: [recheckFailure],
+    });
+
+    await expect(runScript(harness)).rejects.toBe(recheckFailure);
+
+    expect(harness.approveWorkflowRun).toHaveBeenCalledOnce();
+    expect(harness.getWorkflowRun).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed when an ambiguous approval recheck returns another run identity", async () => {
+    const harness = createHarness({
+      approvalErrors: [{ status: 504 }],
+      runsByPoll: [[actionRequiredRun(101)]],
+      workflowRunsByGet: [actionRequiredRun(101, { head_sha: MOVED_HEAD_SHA })],
+    });
+
+    await expect(runScript(harness)).rejects.toThrow(
+      `Workflow run 101 no longer matches exact PR #${PR_NUMBER} at ${HEAD_SHA}`,
+    );
+
+    expect(harness.approveWorkflowRun).toHaveBeenCalledOnce();
+    expect(harness.getWorkflowRun).toHaveBeenCalledOnce();
+  });
+
+  it("abandons an approval retry when the PR head changes during backoff", async () => {
+    const harness = createHarness({
+      approvalErrors: [{ status: 504 }],
+      liveHeads: [HEAD_SHA, HEAD_SHA, HEAD_SHA, MOVED_HEAD_SHA],
+      runsByPoll: [[actionRequiredRun(101)]],
+    });
+
+    await runScript(harness);
+
+    expect(harness.approveWorkflowRun).toHaveBeenCalledOnce();
+    expect(harness.warning).toHaveBeenCalledWith(
+      expect.stringContaining("head changed before workflow-run approval"),
+    );
+    expect(harness.info).not.toHaveBeenCalledWith(
+      expect.stringContaining("Approved pull_request workflow run 101"),
+    );
+  });
+
+  it("abandons an approval retry when the author loses permission", async () => {
+    const harness = createHarness({
+      approvalErrors: [{ status: 504 }],
+      runsByPoll: [[actionRequiredRun(101)]],
+    });
+    harness.getCollaboratorPermissionLevel
+      .mockResolvedValueOnce({
+        data: { permission: "write", role_name: "write", user: { login: "maintainer" } },
+      })
+      .mockResolvedValueOnce({
+        data: { permission: "write", role_name: "write", user: { login: "maintainer" } },
+      })
+      .mockResolvedValueOnce({
+        data: { permission: "read", role_name: "triage", user: { login: "maintainer" } },
+      });
+
+    await runScript(harness);
+
+    expect(harness.approveWorkflowRun).toHaveBeenCalledOnce();
+    expect(harness.getWorkflowRun).toHaveBeenCalledOnce();
+    expect(harness.warning).toHaveBeenCalledWith(
+      expect.stringContaining("no longer has write, maintain, or admin permission"),
+    );
+  });
+
+  it("does not retry a non-transient GitHub API failure", async () => {
+    const failure = { status: 403 };
+    const harness = createHarness({ workflowRunErrors: [failure] });
+
+    await expect(runScript(harness)).rejects.toBe(failure);
+
+    expect(harness.listWorkflowRunsForRepo).toHaveBeenCalledOnce();
+    expect(harness.approveWorkflowRun).not.toHaveBeenCalled();
+    expect(harness.setTimeout).not.toHaveBeenCalled();
+    expect(harness.warning).not.toHaveBeenCalledWith(expect.stringContaining("failed transiently"));
   });
 
   it.each([

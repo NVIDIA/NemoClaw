@@ -38,7 +38,86 @@ jobs:
             const TRUSTED_BASE_PERMISSIONS = new Set(['write', 'admin']);
             const POLL_ATTEMPTS = 12;
             const POLL_INTERVAL_MS = 5000;
+            const API_RETRY_ATTEMPTS = 3;
+            const API_RETRY_BASE_DELAY_MS = 250;
+            const API_RETRY_MAX_DELAY_MS = 1000;
+            const API_REQUEST_TIMEOUT_MS = 10000;
+            const SCRIPT_BUDGET_MS = 105000;
+            const RETRYABLE_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+            // GitHub documents 403 and 404 for approval requests that cannot
+            // be applied. 409 and 422 are also possible conflict responses.
+            // None is accepted on status alone: an exact-run GET must prove
+            // that the run no longer requires approval.
+            const APPROVAL_POST_STATE_HTTP_STATUSES = new Set([403, 404, 409, 422]);
+            const RETRYABLE_NETWORK_CODES = new Set([
+              'EAI_AGAIN',
+              'ECONNREFUSED',
+              'ECONNRESET',
+              'ETIMEDOUT',
+            ]);
             const { owner, repo } = context.repo;
+            const scriptDeadlineMs = Date.now() + SCRIPT_BUDGET_MS;
+
+            function remainingScriptBudgetMs() {
+              return Math.max(0, scriptDeadlineMs - Date.now());
+            }
+
+            function requestSignalFor(label) {
+              const remainingMs = remainingScriptBudgetMs();
+              if (remainingMs <= 0) {
+                throw new Error(`${label} exceeded the bounded ${SCRIPT_BUDGET_MS}ms script budget`);
+              }
+              // @octokit/request 10.x consumes request.signal, not the legacy
+              // request.timeout option. A fresh signal is required per retry.
+              return AbortSignal.timeout(Math.min(API_REQUEST_TIMEOUT_MS, remainingMs));
+            }
+
+            async function waitWithinScriptBudget(label, delayMs) {
+              if (remainingScriptBudgetMs() <= delayMs) {
+                throw new Error(`${label} exceeded the bounded ${SCRIPT_BUDGET_MS}ms script budget`);
+              }
+              await new Promise((resolve) => setTimeout(resolve, delayMs));
+            }
+
+            function apiErrorStatus(error) {
+              const status = Number(error?.status ?? error?.response?.status);
+              return Number.isInteger(status) ? status : null;
+            }
+
+            function apiErrorCode(error) {
+              return typeof error?.code === 'string' ? error.code.toUpperCase() : '';
+            }
+
+            function isRetryableApiError(error) {
+              const status = apiErrorStatus(error);
+              return (
+                (status !== null && RETRYABLE_HTTP_STATUSES.has(status)) ||
+                RETRYABLE_NETWORK_CODES.has(apiErrorCode(error))
+              );
+            }
+
+            async function withTransientApiRetry(label, operation) {
+              for (let attempt = 1; attempt <= API_RETRY_ATTEMPTS; attempt += 1) {
+                try {
+                  return await operation();
+                } catch (error) {
+                  if (!isRetryableApiError(error) || attempt === API_RETRY_ATTEMPTS) {
+                    throw error;
+                  }
+                  const delayMs = Math.min(
+                    API_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+                    API_RETRY_MAX_DELAY_MS,
+                  );
+                  const status = apiErrorStatus(error);
+                  const identity = status === null ? apiErrorCode(error) : `HTTP ${status}`;
+                  core.warning(
+                    `${label} failed transiently with ${identity}; retrying attempt ${attempt + 1}/${API_RETRY_ATTEMPTS} in ${delayMs}ms`,
+                  );
+                  await waitWithinScriptBudget(label, delayMs);
+                }
+              }
+              throw new Error(`${label} exhausted its bounded retry loop`);
+            }
 
             function validateEventPullRequest(value) {
               if (!value || typeof value !== 'object') {
@@ -73,11 +152,16 @@ jobs:
             }
 
             async function loadLivePullRequest(prNumber) {
-              const response = await github.rest.pulls.get({
-                owner,
-                repo,
-                pull_number: prNumber,
-              });
+              const response = await withTransientApiRetry(
+                `Load live PR #${prNumber}`,
+                () =>
+                  github.rest.pulls.get({
+                    owner,
+                    repo,
+                    pull_number: prNumber,
+                    request: { signal: requestSignalFor(`Load live PR #${prNumber}`) },
+                  }),
+              );
               const pullRequest = response.data;
               if (pullRequest?.number !== prNumber || pullRequest?.state !== 'open') {
                 throw new Error(`PR #${prNumber} is not an open pull request`);
@@ -94,11 +178,18 @@ jobs:
 
             async function loadAuthorPermission(author) {
               try {
-                const response = await github.rest.repos.getCollaboratorPermissionLevel({
-                  owner,
-                  repo,
-                  username: author,
-                });
+                const response = await withTransientApiRetry(
+                  `Load collaborator permission for ${author}`,
+                  () =>
+                    github.rest.repos.getCollaboratorPermissionLevel({
+                      owner,
+                      repo,
+                      username: author,
+                      request: {
+                        signal: requestSignalFor(`Load collaborator permission for ${author}`),
+                      },
+                    }),
+                );
                 const responseLogin = response.data.user?.login;
                 if (
                   typeof responseLogin !== 'string' ||
@@ -120,13 +211,12 @@ jobs:
               return TRUSTED_BASE_PERMISSIONS.has(basePermission);
             }
 
-            function belongsToExactPullRequest(run, prNumber, headSha) {
+            function hasExactWorkflowRunIdentity(run, prNumber, headSha, runId) {
               if (
                 !Number.isInteger(run?.id) ||
                 run.id <= 0 ||
+                run.id !== runId ||
                 run.event !== 'pull_request' ||
-                run.status !== 'completed' ||
-                run.conclusion !== 'action_required' ||
                 String(run.head_sha ?? '').toLowerCase() !== headSha ||
                 repositoryName(run.head_repository?.full_name) !==
                   repositoryName(`${owner}/${repo}`)
@@ -141,6 +231,122 @@ jobs:
                     String(pullRequest.head?.sha ?? '').toLowerCase() === headSha,
                 )
               );
+            }
+
+            function belongsToExactPullRequest(run, prNumber, headSha) {
+              return (
+                hasExactWorkflowRunIdentity(run, prNumber, headSha, run?.id) &&
+                run.status === 'completed' &&
+                run.conclusion === 'action_required'
+              );
+            }
+
+            async function exactWorkflowRunStillRequiresApproval(prNumber, headSha, runId) {
+              const label = `Recheck exact workflow run ${runId}`;
+              const response = await withTransientApiRetry(
+                label,
+                () =>
+                  github.rest.actions.getWorkflowRun({
+                    owner,
+                    repo,
+                    run_id: runId,
+                    request: { signal: requestSignalFor(label) },
+                  }),
+              );
+              const run = response.data;
+              if (!hasExactWorkflowRunIdentity(run, prNumber, headSha, runId)) {
+                throw new Error(
+                  `Workflow run ${runId} no longer matches exact PR #${prNumber} at ${headSha}`,
+                );
+              }
+              if (typeof run.status !== 'string' || run.status.length === 0) {
+                throw new Error(`Workflow run ${runId} returned an invalid status`);
+              }
+              return run.status === 'completed' && run.conclusion === 'action_required';
+            }
+
+            async function approveExactWorkflowRun(prNumber, headSha, author, runId) {
+              const label = `Approve workflow run ${runId}`;
+              let approvalMayHaveSucceeded = false;
+              for (let attempt = 1; attempt <= API_RETRY_ATTEMPTS; attempt += 1) {
+                // Revalidate all mutable authority before every approval
+                // attempt, including retries after an ambiguous API failure.
+                const liveBeforeApproval = await loadLivePullRequest(prNumber);
+                if (liveHeadSha(liveBeforeApproval, prNumber) !== headSha) {
+                  core.warning(
+                    `PR #${prNumber} head changed before workflow-run approval; no further runs approved`,
+                  );
+                  return { approved: false, stop: true };
+                }
+                if (!isSameRepositoryHead(liveBeforeApproval)) {
+                  core.warning(
+                    `PR #${prNumber} head repository changed; no further runs approved`,
+                  );
+                  return { approved: false, stop: true };
+                }
+                if (
+                  String(liveBeforeApproval.user?.login ?? '').toLowerCase() !==
+                  author.toLowerCase()
+                ) {
+                  throw new Error(
+                    `PR #${prNumber} author changed during workflow-run discovery`,
+                  );
+                }
+                const livePermission = await loadAuthorPermission(author);
+                if (!livePermission || !hasWritePermission(livePermission)) {
+                  core.warning(
+                    `PR #${prNumber} author ${author} no longer has write, maintain, or admin permission; no further runs approved`,
+                  );
+                  return { approved: false, stop: true };
+                }
+
+                try {
+                  await github.rest.actions.approveWorkflowRun({
+                    owner,
+                    repo,
+                    run_id: runId,
+                    request: { signal: requestSignalFor(label) },
+                  });
+                  return { approved: true, noOp: false, stop: false };
+                } catch (error) {
+                  const status = apiErrorStatus(error);
+                  const transient = isRetryableApiError(error);
+                  const postStateResponse =
+                    status !== null && APPROVAL_POST_STATE_HTTP_STATUSES.has(status);
+                  if (!transient && !postStateResponse) throw error;
+
+                  if (transient) {
+                    approvalMayHaveSucceeded = true;
+                  }
+
+                  const delayMs = Math.min(
+                    API_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+                    API_RETRY_MAX_DELAY_MS,
+                  );
+                  const identity = status === null ? apiErrorCode(error) : `HTTP ${status}`;
+                  const ambiguity = approvalMayHaveSucceeded
+                    ? 'an approval request may have succeeded'
+                    : 'another approver may have completed the request';
+                  core.warning(
+                    `${label} returned ${identity}; ${ambiguity}, rechecking exact run state in ${delayMs}ms`,
+                  );
+                  await waitWithinScriptBudget(label, delayMs);
+
+                  const stillRequiresApproval = await exactWorkflowRunStillRequiresApproval(
+                    prNumber,
+                    headSha,
+                    runId,
+                  );
+                  if (!stillRequiresApproval) {
+                    core.info(
+                      `Workflow run ${runId} no longer requires approval after an ambiguous approval response; recording success without another approval request`,
+                    );
+                    return { approved: true, noOp: true, stop: false };
+                  }
+                  if (!transient || attempt === API_RETRY_ATTEMPTS) throw error;
+                }
+              }
+              throw new Error(`${label} exhausted its bounded retry loop`);
             }
 
             const eventPullRequest = validateEventPullRequest(context.payload.pull_request);
@@ -181,16 +387,25 @@ jobs:
                 return;
               }
 
-              const runs = await github.paginate(
-                github.rest.actions.listWorkflowRunsForRepo,
-                {
-                  owner,
-                  repo,
-                  event: 'pull_request',
-                  head_sha: expectedHeadSha,
-                  status: 'action_required',
-                  per_page: 100,
-                },
+              const runs = await withTransientApiRetry(
+                `List exact-head workflow runs for PR #${eventPullRequest.number}`,
+                () =>
+                  github.paginate(
+                    github.rest.actions.listWorkflowRunsForRepo,
+                    {
+                      owner,
+                      repo,
+                      event: 'pull_request',
+                      head_sha: expectedHeadSha,
+                      status: 'action_required',
+                      per_page: 100,
+                      request: {
+                        signal: requestSignalFor(
+                          `List exact-head workflow runs for PR #${eventPullRequest.number}`,
+                        ),
+                      },
+                    },
+                  ),
               );
 
               for (const run of runs) {
@@ -205,51 +420,24 @@ jobs:
                   continue;
                 }
 
-                const liveBeforeApproval = await loadLivePullRequest(eventPullRequest.number);
-                if (
-                  liveHeadSha(liveBeforeApproval, eventPullRequest.number) !==
-                  expectedHeadSha
-                ) {
-                  core.warning(
-                    `PR #${eventPullRequest.number} head changed before workflow-run approval; no further runs approved`,
-                  );
-                  return;
-                }
-                if (!isSameRepositoryHead(liveBeforeApproval)) {
-                  core.warning(
-                    `PR #${eventPullRequest.number} head repository changed; no further runs approved`,
-                  );
-                  return;
-                }
-                if (
-                  String(liveBeforeApproval.user?.login ?? '').toLowerCase() !==
-                  author.toLowerCase()
-                ) {
-                  throw new Error(
-                    `PR #${eventPullRequest.number} author changed during workflow-run discovery`,
-                  );
-                }
-                const livePermission = await loadAuthorPermission(author);
-                if (!livePermission || !hasWritePermission(livePermission)) {
-                  core.warning(
-                    `PR #${eventPullRequest.number} author ${author} no longer has write, maintain, or admin permission; no further runs approved`,
-                  );
-                  return;
-                }
-
-                await github.rest.actions.approveWorkflowRun({
-                  owner,
-                  repo,
-                  run_id: run.id,
-                });
-                approvedRunIds.add(run.id);
-                core.info(
-                  `Approved pull_request workflow run ${run.id} for PR #${eventPullRequest.number} at ${expectedHeadSha}`,
+                const approval = await approveExactWorkflowRun(
+                  eventPullRequest.number,
+                  expectedHeadSha,
+                  author,
+                  run.id,
                 );
+                if (approval.stop) return;
+                if (!approval.approved) continue;
+                approvedRunIds.add(run.id);
+                if (!approval.noOp) {
+                  core.info(
+                    `Approved pull_request workflow run ${run.id} for PR #${eventPullRequest.number} at ${expectedHeadSha}`,
+                  );
+                }
               }
 
               if (attempt + 1 < POLL_ATTEMPTS) {
-                await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+                await waitWithinScriptBudget('Workflow-run polling', POLL_INTERVAL_MS);
               }
             }
 
