@@ -363,6 +363,7 @@ describe("locked OpenClaw production installation (#5896)", () => {
     const audit = JSON.parse(
       fs.readFileSync(path.join(REPO_ROOT, "ci", "reviewed-npm-audit.json"), "utf-8"),
     );
+    expect(audit.schemaVersion).toBe(2);
     expect(audit.archivePackages).toEqual(
       expect.arrayContaining([expect.objectContaining({ packageSpec: PACKAGE_SPEC })]),
     );
@@ -376,6 +377,11 @@ describe("locked OpenClaw production installation (#5896)", () => {
         }),
       ]),
     );
+    const openclawGraph = audit.lockedGraphs.find(
+      (graph: { packageSpec?: string }) => graph.packageSpec === PACKAGE_SPEC,
+    );
+    expect(openclawGraph).toBeDefined();
+    expect(openclawGraph).not.toHaveProperty("reviewedLockSha256");
 
     const baseWorkflow = fs.readFileSync(
       path.join(REPO_ROOT, ".github", "workflows", "base-image.yaml"),
