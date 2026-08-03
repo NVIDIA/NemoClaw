@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import { assertEndpointResolvesPublic } from "../../inference/endpoint-ssrf-preflight";
-import { validateCurlProbeArgs } from "./curl-args";
+import { buildBoundedCurlProbeSpawnArgs, validateCurlProbeArgs } from "./curl-args";
 
 describe("validateCurlProbeArgs — credential-leak defence", () => {
   it("allows a fixed response-byte cap for bounded llama.cpp probes (#8161)", () => {
@@ -12,6 +12,23 @@ describe("validateCurlProbeArgs — credential-leak defence", () => {
       validateCurlProbeArgs(["-sS", "--max-filesize", "262144", "http://127.0.0.1:8081/v1/models"])
         .args,
     ).toEqual(["-sS", "--max-filesize", "262144"]);
+  });
+
+  it("rebuilds bounded llama.cpp probe argv from validated fields (#8161)", () => {
+    expect(
+      buildBoundedCurlProbeSpawnArgs(
+        ["-sS", "--max-filesize", "262144"],
+        "http://127.0.0.1:8081/v1/models",
+        "\n__NEMOCLAW_HTTP_STATUS_test__:",
+      ),
+    ).toEqual([
+      "-sS",
+      "--max-filesize",
+      "262144",
+      "-w",
+      "\n__NEMOCLAW_HTTP_STATUS_test__:%{http_code}",
+      "http://127.0.0.1:8081/v1/models",
+    ]);
   });
 
   it("rejects an inline Authorization header so credentials cannot reach argv", () => {

@@ -394,3 +394,12 @@ export function buildCurlProbeSpawnArgs(
   // lgtm[js/file-access-to-http] URL/argv are validated; file-backed config paths must be explicitly trusted.
   return [...args, ...outputArgs, ...statusArgs, url];
 }
+
+export function buildBoundedCurlProbeSpawnArgs(
+  args: string[],
+  url: string,
+  statusMarker: string,
+): string[] {
+  // lgtm[js/file-access-to-http] URL/argv are validated; the status marker is generated in-process.
+  return [...args, "-w", `${statusMarker}%{http_code}`, url];
+}

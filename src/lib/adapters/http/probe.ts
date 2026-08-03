@@ -17,7 +17,11 @@ import type { ProbeResult } from "../../onboard/types";
 import { buildScrubbedCurlProbeEnv, scrubCredentialEnv } from "../../security/credential-env";
 import { ROOT } from "../../state/paths";
 import { addTraceEvent, withTraceSpan } from "../../trace";
-import { buildCurlProbeSpawnArgs, validateCurlProbeArgs } from "./curl-args";
+import {
+  buildBoundedCurlProbeSpawnArgs,
+  buildCurlProbeSpawnArgs,
+  validateCurlProbeArgs,
+} from "./curl-args";
 
 export type CurlProbeResult = ProbeResult;
 
@@ -296,7 +300,7 @@ function runCurlProbeImpl(argv: string[], opts: CurlProbeOptions = {}): CurlProb
     const curlArgs =
       maxResponseBytes === null
         ? buildCurlProbeSpawnArgs(args, url, bodyFile, "json")
-        : [...args, "-w", `${statusMarker}%{http_code}`, url];
+        : buildBoundedCurlProbeSpawnArgs(args, url, statusMarker);
     const maxBuffer =
       maxResponseBytes === null
         ? undefined
