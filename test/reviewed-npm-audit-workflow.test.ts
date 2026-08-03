@@ -13,6 +13,7 @@ import {
   materializeSourceGraph,
   normalizeOpenClawSignatureAlias,
   shouldAuditTargetSourceGraph,
+  shouldDeferSameTreeSourceGraph,
 } from "../scripts/audit-reviewed-npm-graph.mts";
 import { verifyInstalledNpmLock } from "../scripts/lib/reviewed-npm-archive.mts";
 import type { AuditPolicyResult } from "../scripts/lib/reviewed-npm-audit.mts";
@@ -337,13 +338,12 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     }
   });
 
-  it("keeps a dependency required when the lock also marks it optional (#8116)", () => {
+  it("requires a dependency declared only in dependencies (#8116)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-required-"));
     const destination = path.join(root, "materialized");
     const { sourceLock, sourcePackage } = writeProductionSourceGraph(root, {
       dependencies: { "shared-package": "1.0.0" },
       integrity: "sha512-fixture",
-      optionalDependencies: { "shared-package": "1.0.0" },
       resolved: "https://registry.npmjs.org/fixture-package/-/fixture-package-1.0.0.tgz",
       version: "1.0.0",
     });
@@ -364,6 +364,38 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
       );
       expect(installCalled).toBe(false);
       expect(fs.existsSync(destination)).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lets optionalDependencies override a duplicate dependencies entry (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-optional-"));
+    const destination = path.join(root, "materialized");
+    const { sourceLock, sourcePackage } = writeProductionSourceGraph(root, {
+      dependencies: { "shared-package": "1.0.0" },
+      integrity: "sha512-fixture",
+      optionalDependencies: { "shared-package": "1.0.0" },
+      resolved: "https://registry.npmjs.org/fixture-package/-/fixture-package-1.0.0.tgz",
+      version: "1.0.0",
+    });
+    try {
+      expect(
+        materializeSourceGraph(
+          sourcePackage,
+          sourceLock,
+          destination,
+          "https://registry.npmjs.org",
+          (directory) => {
+            const packageDirectory = path.join(directory, "node_modules", "fixture-package");
+            fs.mkdirSync(packageDirectory, { recursive: true });
+            fs.writeFileSync(
+              path.join(packageDirectory, "package.json"),
+              `${JSON.stringify({ name: "fixture-package", version: "1.0.0" }, null, 2)}\n`,
+            );
+          },
+        ),
+      ).toBe(destination);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -574,11 +606,10 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     }
   });
 
-  it("defers the same-tree audit only for the reviewed root graph (#8116)", () => {
+  it("defers only the reviewed root manifest and lock digests (#8116)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-roots-"));
     const lockDriftRoot = path.join(root, "lock-drift");
     const manifestDriftRoot = path.join(root, "manifest-drift");
-    const trustedAlias = path.join(root, "trusted-alias");
     const targetRoot = path.join(root, "target");
     try {
       fs.mkdirSync(lockDriftRoot);
@@ -594,13 +625,27 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
         path.join(REPO_ROOT, "package-lock.json"),
         path.join(manifestDriftRoot, "package-lock.json"),
       );
-      fs.symlinkSync(REPO_ROOT, trustedAlias, process.platform === "win32" ? "junction" : "dir");
-
       expect(shouldAuditTargetSourceGraph(REPO_ROOT, targetRoot)).toBe(true);
-      expect(shouldAuditTargetSourceGraph(REPO_ROOT, REPO_ROOT)).toBe(false);
-      expect(shouldAuditTargetSourceGraph(REPO_ROOT, trustedAlias)).toBe(false);
       expect(shouldAuditTargetSourceGraph(lockDriftRoot, lockDriftRoot)).toBe(true);
       expect(shouldAuditTargetSourceGraph(manifestDriftRoot, manifestDriftRoot)).toBe(true);
+      expect(
+        shouldDeferSameTreeSourceGraph(
+          "8367ca8a60a645df0aa267c21f38e85badbd873c5f7a73be5adc815117051331",
+          "a10b5705136e8750f3a9640972ef3ccbceb227eb5e8a9fd8b49f275a5c5dcdaf",
+        ),
+      ).toBe(true);
+      expect(
+        shouldDeferSameTreeSourceGraph(
+          "8367ca8a60a645df0aa267c21f38e85badbd873c5f7a73be5adc815117051331",
+          "0".repeat(64),
+        ),
+      ).toBe(false);
+      expect(
+        shouldDeferSameTreeSourceGraph(
+          "0".repeat(64),
+          "a10b5705136e8750f3a9640972ef3ccbceb227eb5e8a9fd8b49f275a5c5dcdaf",
+        ),
+      ).toBe(false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

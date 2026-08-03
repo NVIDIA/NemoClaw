@@ -1,4 +1,20 @@
 {
   "schemaVersion": 1,
-  "exceptions": []
+  "exceptions": [
+    {
+      "advisory": "GHSA-rgw5-rvv9-x895",
+      "package": "brace-expansion",
+      "installedVersion": "5.0.8",
+      "graph": "openclaw-runtime",
+      "severity": "high",
+      "decision": "temporary-risk-acceptance",
+      "expires": "2026-08-10",
+      "owner": "NemoClaw security maintainers",
+      "trackingIssue": "https://github.com/NVIDIA/NemoClaw/pull/8126",
+      "rationale": "PR #8126 upgrades the affected OpenClaw runtime dependency to 5.0.9 and removes this exception.",
+      "compensatingControls": [
+        "OpenClaw runs inside an OpenShell sandbox, so the affected code executes in the agent runtime instead of the host-side OpenShell gateway."
+      ]
+    }
+  ]
 }

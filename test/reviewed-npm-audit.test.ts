@@ -28,9 +28,10 @@ const CONFIG = JSON.parse(
 ) as {
   severityThreshold: "info" | "low" | "moderate" | "high" | "critical";
 };
-const EMPTY_POLICY = parseAuditExceptionRegistry(
+const CHECKED_IN_POLICY = parseAuditExceptionRegistry(
   fs.readFileSync(path.join(REPO_ROOT, "ci", "npm-audit-exceptions.json"), "utf-8"),
 );
+const EMPTY_POLICY: AuditExceptionRegistry = { schemaVersion: 1, exceptions: [] };
 const NOW = new Date("2026-07-21T12:00:00Z");
 
 function withInstalledGraph(
@@ -118,8 +119,28 @@ function exceptionPolicy(
 }
 
 describe("reviewed npm audit gate", () => {
-  it("uses an empty exception registry by default", () => {
-    expect(EMPTY_POLICY).toEqual({ schemaVersion: 1, exceptions: [] });
+  it("bounds the OpenClaw brace-expansion exception (#8126)", () => {
+    expect(CHECKED_IN_POLICY).toEqual({
+      schemaVersion: 1,
+      exceptions: [
+        {
+          advisory: "GHSA-rgw5-rvv9-x895",
+          compensatingControls: [
+            "OpenClaw runs inside an OpenShell sandbox, so the affected code executes in the agent runtime instead of the host-side OpenShell gateway.",
+          ],
+          decision: "temporary-risk-acceptance",
+          expires: "2026-08-10",
+          graph: "openclaw-runtime",
+          installedVersion: "5.0.8",
+          owner: "NemoClaw security maintainers",
+          package: "brace-expansion",
+          rationale:
+            "PR #8126 upgrades the affected OpenClaw runtime dependency to 5.0.9 and removes this exception.",
+          severity: "high",
+          trackingIssue: "https://github.com/NVIDIA/NemoClaw/pull/8126",
+        },
+      ],
+    });
   });
 
   it("fails at high or critical findings while retaining lower severities", () => {

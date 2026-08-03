@@ -286,7 +286,9 @@ function lockDependencies(
           `reviewed npm lock has an invalid dependency name: ${location || "root package"}: ${name}`,
         );
       }
-      dependencies.set(name, (dependencies.get(name) ?? true) && optional);
+      // npm gives optionalDependencies precedence when a package appears in
+      // both maps, so the later optional map must replace the required entry.
+      dependencies.set(name, optional);
     }
   }
 
@@ -328,7 +330,7 @@ function lockDependencies(
         );
       }
       const optional = (peerMeta as Record<string, unknown> | undefined)?.optional === true;
-      dependencies.set(name, (dependencies.get(name) ?? true) && optional);
+      if (!dependencies.has(name)) dependencies.set(name, optional);
     }
   }
   return [...dependencies].map(([name, optional]) => ({ name, optional }));

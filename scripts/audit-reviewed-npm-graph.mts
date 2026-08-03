@@ -466,9 +466,16 @@ export function shouldAuditTargetSourceGraph(
   assertRegularFile(sourceLock, "NemoClaw CLI lockfile");
   const manifestSha256 = createHash("sha256").update(fs.readFileSync(sourceManifest)).digest("hex");
   const lockSha256 = createHash("sha256").update(fs.readFileSync(sourceLock)).digest("hex");
+  return !shouldDeferSameTreeSourceGraph(manifestSha256, lockSha256);
+}
+
+export function shouldDeferSameTreeSourceGraph(
+  manifestSha256: string,
+  lockSha256: string,
+): boolean {
   return (
-    manifestSha256 !== DEFERRED_SAME_TREE_SOURCE_MANIFEST_SHA256 ||
-    lockSha256 !== DEFERRED_SAME_TREE_SOURCE_LOCK_SHA256
+    manifestSha256 === DEFERRED_SAME_TREE_SOURCE_MANIFEST_SHA256 &&
+    lockSha256 === DEFERRED_SAME_TREE_SOURCE_LOCK_SHA256
   );
 }
 
