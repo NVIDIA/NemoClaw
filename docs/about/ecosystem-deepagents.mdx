@@ -1,22 +1,23 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "NemoClaw Ecosystem"
+title: "Ecosystem"
 sidebar-title: "Ecosystem"
-description: "Learn how NemoClaw combines OpenShell with LangChain Deep Agents Code, and when to use the reference stack or integrate OpenShell directly."
-description-agent: "Explains the NemoClaw ecosystem for Deep Agents Code and OpenShell. Use when users need to choose NemoClaw or a custom OpenShell integration for Deep Agents Code."
+description: "How LangChain Deep Agents Code, OpenShell, and NemoClaw form one managed terminal-agent stack."
+description-agent: "Explains how LangChain Deep Agents Code, OpenShell, and NemoClaw fit together, what NemoClaw adds for the managed dcode path, and when to use NemoClaw versus custom OpenShell integration. Use when users ask how Deep Agents relates to NemoClaw and OpenShell."
 keywords: ["nemoclaw deep agents ecosystem", "dcode openshell sandbox", "nemo-deepagents", "langchain deep agents code"]
 content:
   type: "concept"
 agent-variants: ["deepagents"]
 ---
-The NemoClaw ecosystem brings together NemoClaw onboarding and lifecycle operations, OpenShell isolation, and the LangChain Deep Agents Code runtime.
-Use [Overview](overview) for product capabilities and [Architecture Overview](how-it-works) for internal design and boundaries.
+NemoClaw provides onboarding, lifecycle management, policy, and inference routing for LangChain Deep Agents Code in OpenShell containers.
+Use the `nemo-deepagents` CLI alias when you work from the Deep Agents guide; it is equivalent to `nemoclaw` with `langchain-deepagents-code` pre-selected.
 
-## Understanding the NemoClaw Ecosystem
+This page explains how Deep Agents, OpenShell, and NemoClaw fit together, and when to choose NemoClaw or a custom OpenShell integration.
 
-For Deep Agents Code, the NemoClaw ecosystem comprises three pieces with distinct scopes: NemoClaw, OpenShell, and LangChain Deep Agents Code.
-The `nemo-deepagents` CLI alias preselects Deep Agents Code for `nemoclaw`.
+## How the Stack Fits Together
+
+A NemoClaw deployment for Deep Agents combines three pieces with distinct scopes: LangChain Deep Agents Code, OpenShell, and NemoClaw.
 The following diagram shows how they fit together.
 
 ```mermaid
@@ -52,7 +53,7 @@ The following table shows the scope of each component in the stack.
 | OpenShell | The execution environment: sandbox lifecycle, network, filesystem, process policy, inference routing, and the operator-facing `openshell` CLI for those primitives. |
 | NemoClaw | The NVIDIA reference stack on the host: `nemo-deepagents` and `nemoclaw` CLI paths, versioned blueprint, managed Deep Agents integration layer, managed inference and Model Context Protocol (MCP) servers, host readiness reporting, trace export, and lifecycle operations. |
 
-## Choosing Between NemoClaw and OpenShell
+## NemoClaw Path versus OpenShell Path
 
 Both paths assume OpenShell can sandbox a workload.
 The difference is who owns the integration work.
@@ -62,16 +63,7 @@ The difference is who owns the integration work.
 | **NemoClaw path** | You adopt the reference stack. NemoClaw's Deep Agents blueprint encodes the image, managed `dcode` launchers, default policies, inference configuration, and state handling so `nemo-deepagents onboard` creates a tested Deep Agents-on-OpenShell setup with less custom integration work. |
 | **OpenShell path** | You use OpenShell as the platform and supply your own container, Deep Agents install steps, policy YAML, provider setup, and runtime wrappers. OpenShell stays the sandbox and policy engine; nothing requires NemoClaw's blueprint or CLI. |
 
-Use the following criteria to choose a path.
-
-| Situation | Prefer |
-|-----------|--------|
-| You want Deep Agents with NVIDIA defaults, managed inference routing, and the documented install and onboard flow. | NemoClaw (`nemo-deepagents`) |
-| You need maximum flexibility for custom images, a layout that does not match the NemoClaw Deep Agents blueprint, or an unsupported Deep Agents extension path. | OpenShell with your own integration |
-| You are standardizing on a managed terminal coding agent with sandbox policy and OpenShell-managed credentials. | NemoClaw (`nemo-deepagents`) |
-| You are building internal platform abstractions where the NemoClaw CLI or blueprint is not the right fit. | OpenShell and your orchestration |
-
-## How NemoClaw and OpenShell Work Together
+## What NemoClaw Adds Beyond Custom OpenShell
 
 You can run Deep Agents inside OpenShell without NemoClaw by building your own image, writing policy YAML, registering providers, and wiring inference routes yourself.
 That path is valid when you need full control over the container layout.
@@ -92,9 +84,18 @@ The following table compares custom OpenShell integration with `nemo-deepagents 
 | Lifecycle state | Not included unless you build it. | NemoClaw preserves manifest-declared Deep Agents state and omits credential-bearing user files from snapshots and rebuilds. |
 | Host readiness and operations | You inspect host prerequisites and operate OpenShell resources directly. | NemoClaw provides read-only host readiness reporting, sandbox status and logs, recovery guidance, rebuild, snapshot, restore, and uninstall workflows. |
 
-## Next Steps
+## When to Use Which
 
-Use these topics to evaluate the product, inspect its architecture, or start the Deep Agents workflow.
+Use the following table to choose NemoClaw or custom OpenShell integration.
+
+| Situation | Prefer |
+|-----------|--------|
+| You want Deep Agents with NVIDIA defaults, managed inference routing, and the documented install and onboard flow. | NemoClaw (`nemo-deepagents`) |
+| You need maximum flexibility for custom images, a layout that does not match the NemoClaw Deep Agents blueprint, or an unsupported Deep Agents extension path. | OpenShell with your own integration |
+| You are standardizing on a managed terminal coding agent with sandbox policy and OpenShell-managed credentials. | NemoClaw (`nemo-deepagents`) |
+| You are building internal platform abstractions where the NemoClaw CLI or blueprint is not the right fit. | OpenShell and your orchestration |
+
+## Related Topics
 
 - [Overview](overview) defines NemoClaw's capabilities, benefits, and use cases.
 - [Architecture Overview](how-it-works) describes how NemoClaw runs, the blueprint, sandbox creation, routing, and protection layers for Deep Agents.

@@ -1,22 +1,23 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "NemoClaw Ecosystem"
+title: "Ecosystem"
 sidebar-title: "Ecosystem"
-description: "Learn how NemoClaw combines OpenShell with Hermes, and when to use the reference stack or integrate OpenShell directly."
-description-agent: "Explains the NemoClaw ecosystem for Hermes and OpenShell. Use when users need to choose NemoClaw or a direct OpenShell integration for Hermes."
+description: "How Hermes, OpenShell, and NemoClaw form one stack, where NemoClaw sits, what it adds beyond a custom OpenShell deployment, and when to use the reference integration versus OpenShell alone."
+description-agent: "Explains how Hermes, OpenShell, and NemoClaw form the ecosystem, NemoClaw's position in the stack, what NemoClaw adds beyond integrating OpenShell yourself, and when to prefer NemoHermes versus OpenShell. Use when users ask about Hermes, OpenShell, and NemoClaw together, or when to use NemoClaw versus OpenShell for Hermes."
 keywords: ["nemoclaw ecosystem", "hermes agent", "nemohermes", "nemoclaw vs openshell", "run hermes openshell sandbox"]
 content:
   type: "concept"
 agent-variants: ["hermes"]
 ---
-The NemoClaw ecosystem brings together NemoClaw onboarding and lifecycle operations, [OpenShell](https://github.com/NVIDIA/OpenShell) isolation, and the [Hermes](https://hermes-agent.nousresearch.com/docs/) agent runtime.
-Use [Overview](overview) for product capabilities and [Architecture Overview](how-it-works) for internal design and boundaries.
+NemoClaw provides onboarding, lifecycle management, and Hermes operations in OpenShell containers.
+Use the `nemohermes` CLI alias when you work from the Hermes agent guide; it is equivalent to `nemoclaw` with the Hermes agent pre-selected.
 
-## Understanding the NemoClaw Ecosystem
+This page explains how these projects fit together, where NemoClaw sits relative to [OpenShell](https://github.com/NVIDIA/OpenShell) and [Hermes](https://hermes-agent.nousresearch.com/docs/), and when to choose NemoHermes or OpenShell directly.
 
-For Hermes, the NemoClaw ecosystem comprises three pieces with distinct scopes: NemoClaw, OpenShell, and Hermes.
-The `nemohermes` CLI alias preselects Hermes for `nemoclaw`.
+## How the Stack Fits Together
+
+A NemoClaw deployment for Hermes combines three pieces with distinct scopes: Hermes, OpenShell, and NemoClaw.
 The following diagram shows how they fit together.
 
 ```mermaid
@@ -53,7 +54,7 @@ The following table shows the scope of each component in the stack.
 | [OpenShell](https://github.com/NVIDIA/OpenShell) | The execution environment: sandbox lifecycle, network, filesystem, and process policy, inference routing, and the operator-facing `openshell` CLI for those primitives. |
 | NemoClaw | The NVIDIA reference stack on the host: `nemohermes` and `nemoclaw` CLI paths, versioned blueprint, managed inference and Model Context Protocol (MCP) servers, messaging-channel setup, host readiness reporting, and lifecycle operations. |
 
-## Choosing Between NemoClaw and OpenShell
+## NemoClaw Path versus OpenShell Path
 
 Both paths assume OpenShell can sandbox a workload.
 The difference is who owns the integration work.
@@ -63,16 +64,7 @@ The difference is who owns the integration work.
 | **NemoClaw path** | You adopt the reference stack. NemoClaw's Hermes blueprint encodes a hardened image, default policies, and orchestration so `nemohermes onboard` can create a tested Hermes-on-OpenShell setup with less custom integration work. |
 | **OpenShell path** | You use OpenShell as the platform and supply your own container, Hermes install steps, policy YAML, provider setup, and host bridges. OpenShell stays the sandbox and policy engine; nothing requires NemoClaw's blueprint or CLI. |
 
-Use the following criteria to choose a path.
-
-| Situation | Prefer |
-|-----------|--------|
-| You want Hermes with minimal assembly, NVIDIA defaults, and the documented install and onboard flow. | NemoClaw (`nemohermes`) |
-| You need maximum flexibility for custom images, a layout that does not match the NemoClaw Hermes blueprint, or a workload outside this reference stack. | OpenShell with your own integration |
-| You are standardizing on the NVIDIA reference for always-on Hermes agents with policy and inference routing. | NemoClaw (`nemohermes`) |
-| You are building internal platform abstractions where the NemoClaw CLI or blueprint is not the right fit. | OpenShell and your orchestration |
-
-## How NemoClaw and OpenShell Work Together
+## What NemoClaw Adds Beyond Custom OpenShell
 
 You can run Hermes inside OpenShell without NemoClaw by building your own image, writing policy YAML, registering providers, and wiring inference routes yourself.
 That path is valid when you need full control over the container layout.
@@ -94,9 +86,18 @@ The following table compares custom OpenShell integration with `nemohermes onboa
 | Host readiness and operations | You inspect host prerequisites and operate OpenShell resources directly. | NemoClaw provides read-only host readiness reporting, sandbox status and logs, recovery guidance, rebuild, snapshot, restore, and uninstall workflows. |
 | Process count limits | You set process count limits manually with `--ulimit` or orchestrator configuration. | NemoClaw applies a best-effort `ulimit -u 512` in the container entrypoint. Refer to the platform and hardening guidance for hosts that cannot enforce the complete control set. |
 
-## Next Steps
+## When to Use Which
 
-Use these topics to evaluate the product, inspect its architecture, or start the Hermes workflow.
+Use the following table to choose NemoHermes or OpenShell.
+
+| Situation | Prefer |
+|-----------|--------|
+| You want Hermes with minimal assembly, NVIDIA defaults, and the documented install and onboard flow. | NemoClaw (`nemohermes`) |
+| You need maximum flexibility for custom images, a layout that does not match the NemoClaw Hermes blueprint, or a workload outside this reference stack. | OpenShell with your own integration |
+| You are standardizing on the NVIDIA reference for always-on Hermes agents with policy and inference routing. | NemoClaw (`nemohermes`) |
+| You are building internal platform abstractions where the NemoClaw CLI or blueprint is not the right fit. | OpenShell (and your orchestration) |
+
+## Related Topics
 
 - [Overview](overview) defines NemoClaw's capabilities, benefits, and use cases.
 - [How It Works](how-it-works) describes how NemoClaw runs, the blueprint, sandbox creation, routing, and protection layers for Hermes.
