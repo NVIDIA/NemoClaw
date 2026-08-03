@@ -437,6 +437,12 @@ jobs:
               }
 
               if (attempt + 1 < POLL_ATTEMPTS) {
+                if (remainingScriptBudgetMs() <= POLL_INTERVAL_MS) {
+                  core.warning(
+                    `Workflow-run polling stopped after ${attempt + 1}/${POLL_ATTEMPTS} attempts because the bounded ${SCRIPT_BUDGET_MS}ms script budget ended`,
+                  );
+                  break;
+                }
                 await waitWithinScriptBudget('Workflow-run polling', POLL_INTERVAL_MS);
               }
             }

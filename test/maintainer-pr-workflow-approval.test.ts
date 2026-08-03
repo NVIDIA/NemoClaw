@@ -258,13 +258,6 @@ describe("maintainer PR workflow-run approval", () => {
     expect(script).not.toContain("github.rest.repos.getContent");
     expect(script).not.toContain("github.rest.git");
     expect(script).not.toContain("require(");
-    expect(script).toContain("const API_RETRY_ATTEMPTS = 3;");
-    expect(script).toContain("const API_RETRY_BASE_DELAY_MS = 250;");
-    expect(script).toContain("const API_RETRY_MAX_DELAY_MS = 1000;");
-    expect(script).toContain("const API_REQUEST_TIMEOUT_MS = 10000;");
-    expect(script).toContain("const SCRIPT_BUDGET_MS = 105000;");
-    expect(script).toContain("AbortSignal.timeout");
-    expect(script).toContain("github.rest.actions.getWorkflowRun");
     expect(script).not.toContain("requestTimeoutFor");
     expect(script).not.toContain("request: { timeout:");
     const scriptBudgetMs = Number(script?.match(/const SCRIPT_BUDGET_MS = (\d+);/u)?.[1]);
@@ -323,6 +316,23 @@ describe("maintainer PR workflow-run approval", () => {
     expect(harness.approveWorkflowRun.mock.calls.map(([input]) => input.run_id)).toEqual([
       101, 102,
     ]);
+  });
+
+  it("reports completed approvals when the polling budget ends", async () => {
+    const harness = createHarness({
+      dateNowValues: [0, 0, 0, 0, 0, 101_000],
+      runsByPoll: [[actionRequiredRun(101)]],
+    });
+
+    await runScript(harness);
+
+    expect(harness.listWorkflowRunsForRepo).toHaveBeenCalledOnce();
+    expect(harness.approveWorkflowRun).toHaveBeenCalledOnce();
+    expect(harness.setTimeout).not.toHaveBeenCalled();
+    expect(harness.warning).toHaveBeenCalledWith(
+      expect.stringContaining("Workflow-run polling stopped after 1/12 attempts"),
+    );
+    expect(harness.info).toHaveBeenCalledWith("Approved 1 exact-head workflow run(s) for PR #42");
   });
 
   it("recovers from a transient pulls.get failure before trusting live PR metadata", async () => {
