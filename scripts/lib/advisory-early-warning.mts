@@ -199,7 +199,11 @@ export function parseInventoryFromAuditConfig(config: unknown, origin: string): 
  * Build an installed-package inventory from a lockfile-version-3 package-lock
  * subset: every `node_modules/...` entry that records an installed version.
  */
-export function parseInventoryFromPackageLock(lock: unknown, origin: string): InventoryEntry[] {
+export function parseInventoryFromPackageLock(
+  lock: unknown,
+  origin: string,
+  options: Readonly<{ omitDev?: boolean }> = {},
+): InventoryEntry[] {
   if (typeof lock !== "object" || lock === null) return [];
   const packages = (lock as Record<string, unknown>).packages;
   if (typeof packages !== "object" || packages === null || Array.isArray(packages)) return [];
@@ -210,6 +214,7 @@ export function parseInventoryFromPackageLock(lock: unknown, origin: string): In
     const pathName = location.slice(marker + "node_modules/".length);
     if (pathName.length === 0) continue;
     if (typeof entry !== "object" || entry === null) continue;
+    if (options.omitDev && (entry as Record<string, unknown>).dev === true) continue;
     const version = (entry as Record<string, unknown>).version;
     if (typeof version !== "string" || version.length === 0) continue;
     // Aliased installs (`npm install alias@npm:real-name`) live under the alias

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -46,6 +47,10 @@ const TARGET_REPO_ROOT = fs.realpathSync(
 );
 const CONFIG_PATH = resolveTrustedAuditConfigPath(TRUSTED_REPO_ROOT);
 const SEVERITIES: readonly Severity[] = ["info", "low", "moderate", "high", "critical"];
+const SOURCE_GRAPH = {
+  id: "nemoclaw-cli",
+  label: "NemoClaw CLI locked production graph",
+} as const;
 const OPENCLAW_DOMEXCEPTION_ALIAS = {
   actualName: "@nolyfill/domexception",
   aliasPackagePath: "node_modules/openclaw/node_modules/node-domexception",
@@ -230,6 +235,28 @@ function assertRegularFile(file: string, label: string): void {
   }
 }
 
+export function materializeSourceGraph(
+  sourcePackage: string,
+  sourceLock: string,
+  destination: string,
+): string {
+  assertRegularFile(sourcePackage, "NemoClaw CLI package manifest");
+  assertRegularFile(sourceLock, "NemoClaw CLI lockfile");
+  const lockSha256 = createHash("sha256").update(fs.readFileSync(sourceLock)).digest("hex");
+  fs.mkdirSync(destination);
+  fs.copyFileSync(sourcePackage, path.join(destination, "package.json"));
+  const installedLock = path.join(destination, "package-lock.json");
+  fs.copyFileSync(sourceLock, installedLock);
+  run("npm", ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"], destination);
+  const installedLockSha256 = createHash("sha256")
+    .update(fs.readFileSync(installedLock))
+    .digest("hex");
+  if (installedLockSha256 !== lockSha256) {
+    throw new Error("NemoClaw CLI lockfile changed while materializing its production graph");
+  }
+  return destination;
+}
+
 export function normalizeOpenClawSignatureAlias(directory: string): void {
   const {
     actualName,
@@ -332,6 +359,43 @@ function auditLockedGraph(
   return result;
 }
 
+function auditSourceGraph(
+  config: AuditConfig,
+  tempRoot: string,
+  exceptionFile: string,
+  artifactDirectory: string,
+  npmVersion: string,
+) {
+  const sourcePackage = targetRepositoryPath("package.json", "NemoClaw CLI package manifest");
+  const sourceLock = targetRepositoryPath("package-lock.json", "NemoClaw CLI lockfile");
+  const sourceManifest = readJsonObject(sourcePackage, "NemoClaw CLI package manifest");
+  if (typeof sourceManifest.name !== "string" || typeof sourceManifest.version !== "string") {
+    throw new Error("NemoClaw CLI package manifest must declare its name and version");
+  }
+  const directory = materializeSourceGraph(
+    sourcePackage,
+    sourceLock,
+    path.join(tempRoot, "source-graph"),
+  );
+  const result = runReviewedNpmAudit({
+    directory,
+    exceptionFile,
+    graph: SOURCE_GRAPH.id,
+    provenance: {
+      label: SOURCE_GRAPH.label,
+      nodeVersion: process.version,
+      npmVersion,
+      packageSpecs: [`${sourceManifest.name}@${sourceManifest.version}`],
+    },
+    reportFile: path.join(artifactDirectory, "source-graph.json"),
+    resultFile: path.join(artifactDirectory, "source-graph-policy.json"),
+    threshold: config.severityThreshold,
+    throwOnBlock: false,
+  });
+  run("npm", ["audit", "signatures", "--omit=dev"], directory);
+  return result;
+}
+
 function main(): void {
   const config = readConfig();
   const expectedNode = `v${config.nodeVersion}`;
@@ -346,7 +410,11 @@ function main(): void {
   const exceptionRegistry = readAuditExceptionRegistry(exceptionFile);
   assertExceptionGraphs(
     exceptionRegistry.policy,
-    new Set([config.archiveGraphId, ...config.lockedGraphs.map((graph) => graph.id)]),
+    new Set([
+      SOURCE_GRAPH.id,
+      config.archiveGraphId,
+      ...config.lockedGraphs.map((graph) => graph.id),
+    ]),
   );
   fs.rmSync(artifactDirectory, { recursive: true, force: true });
   fs.mkdirSync(artifactDirectory, { recursive: true });
@@ -354,6 +422,10 @@ function main(): void {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-audit-"));
   try {
     const reports = [
+      {
+        label: SOURCE_GRAPH.label,
+        result: auditSourceGraph(config, tempRoot, exceptionFile, artifactDirectory, npmVersion),
+      },
       {
         label: "reviewed archive graph",
         result: runReviewedNpmAudit({

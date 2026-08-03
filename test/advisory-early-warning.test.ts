@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { loadReviewedInventory } from "../scripts/advisory-early-warning-scan.mts";
 import {
   compareSemver,
   correlateAdvisories,
@@ -261,6 +265,60 @@ describe("advisory early warning inventory parsing", () => {
       { name: "@scope/pkg", version: "1.0.0", origin: "fixture-lock.json" },
       { name: "tar", version: "7.5.20", origin: "fixture-lock.json" },
     ]);
+  });
+
+  it("omits development packages from a production lock inventory", () => {
+    const lock = {
+      lockfileVersion: 3,
+      packages: {
+        "node_modules/fast-uri": { version: "3.1.5" },
+        "node_modules/dev-only": { version: "1.0.0", dev: true },
+      },
+    };
+    expect(parseInventoryFromPackageLock(lock, "fixture-lock.json", { omitDev: true })).toEqual([
+      { name: "fast-uri", version: "3.1.5", origin: "fixture-lock.json" },
+    ]);
+  });
+
+  it("includes the root production lock in the reviewed inventory (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-advisory-inventory-"));
+    try {
+      fs.mkdirSync(path.join(root, "ci"));
+      fs.mkdirSync(path.join(root, "runtime"));
+      fs.writeFileSync(
+        path.join(root, "ci", "reviewed-npm-audit.json"),
+        `${JSON.stringify({
+          archivePackages: [{ packageSpec: "openclaw@2026.7.1" }],
+          lockedGraphs: [{ directory: "runtime", packageSpec: "mcporter@0.7.3" }],
+        })}\n`,
+      );
+      fs.writeFileSync(
+        path.join(root, "package-lock.json"),
+        `${JSON.stringify({
+          lockfileVersion: 3,
+          packages: {
+            "node_modules/fast-uri": { version: "3.1.5" },
+            "node_modules/dev-only": { version: "1.0.0", dev: true },
+          },
+        })}\n`,
+      );
+      fs.writeFileSync(
+        path.join(root, "runtime", "package-lock.json"),
+        `${JSON.stringify({
+          lockfileVersion: 3,
+          packages: { "node_modules/tar": { version: "7.5.20" } },
+        })}\n`,
+      );
+
+      expect(loadReviewedInventory(root)).toEqual([
+        { name: "openclaw", version: "2026.7.1", origin: "ci/reviewed-npm-audit.json" },
+        { name: "mcporter", version: "0.7.3", origin: "ci/reviewed-npm-audit.json" },
+        { name: "fast-uri", version: "3.1.5", origin: "package-lock.json" },
+        { name: "tar", version: "7.5.20", origin: "runtime/package-lock.json" },
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("inventories aliased lock entries under their real package name", () => {

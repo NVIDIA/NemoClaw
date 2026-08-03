@@ -6,7 +6,10 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { normalizeOpenClawSignatureAlias } from "../scripts/audit-reviewed-npm-graph.mts";
+import {
+  materializeSourceGraph,
+  normalizeOpenClawSignatureAlias,
+} from "../scripts/audit-reviewed-npm-graph.mts";
 import { readYaml } from "./helpers/e2e-workflow-contract";
 
 type WorkflowStep = {
@@ -146,6 +149,39 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     expect(helper).toContain("const NPM_AUDIT_ATTEMPT_TIMEOUT_MS = 45_000");
     expect(helper).toContain("timeout: NPM_AUDIT_ATTEMPT_TIMEOUT_MS");
     expect(driver).not.toContain('resolveTargetPath(\n  "ci/reviewed-npm-audit.json"');
+  });
+
+  it("materializes the NemoClaw production graph without changing its lock (#8116)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-"));
+    const source = path.join(root, "source");
+    const destination = path.join(root, "materialized");
+    const manifest = { name: "source-graph-fixture", private: true, version: "1.0.0" };
+    const lock = {
+      name: manifest.name,
+      version: manifest.version,
+      lockfileVersion: 3,
+      requires: true,
+      packages: { "": manifest },
+    };
+    const lockSource = `${JSON.stringify(lock, null, 2)}\n`;
+    try {
+      fs.mkdirSync(source);
+      fs.writeFileSync(path.join(source, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+      fs.writeFileSync(path.join(source, "package-lock.json"), lockSource);
+
+      expect(
+        materializeSourceGraph(
+          path.join(source, "package.json"),
+          path.join(source, "package-lock.json"),
+          destination,
+        ),
+      ).toBe(destination);
+      expect(fs.readFileSync(path.join(destination, "package-lock.json"), "utf-8")).toBe(
+        lockSource,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("normalizes only the reviewed OpenClaw npm alias for registry signature verification", () => {
