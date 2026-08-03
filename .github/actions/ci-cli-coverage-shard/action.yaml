@@ -57,6 +57,45 @@ runs:
         node-version: "22"
         cache: npm
 
+    - name: Install pinned Pi search tools
+      shell: bash
+      env:
+        FD_FIND_VERSION: "9.0.0-1"
+        RIPGREP_VERSION: "14.1.0-1"
+      run: |
+        set -euo pipefail
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends \
+          "fd-find=${FD_FIND_VERSION}" \
+          "ripgrep=${RIPGREP_VERSION}"
+
+        INSTALLED_FD_FIND_VERSION="$(dpkg-query -W -f='${Version}' fd-find)"
+        INSTALLED_RIPGREP_VERSION="$(dpkg-query -W -f='${Version}' ripgrep)"
+        if [ "$INSTALLED_FD_FIND_VERSION" != "$FD_FIND_VERSION" ]; then
+          echo "::error::fd-find package version $INSTALLED_FD_FIND_VERSION does not match $FD_FIND_VERSION"
+          exit 1
+        fi
+        if [ "$INSTALLED_RIPGREP_VERSION" != "$RIPGREP_VERSION" ]; then
+          echo "::error::ripgrep package version $INSTALLED_RIPGREP_VERSION does not match $RIPGREP_VERSION"
+          exit 1
+        fi
+
+        command -v fdfind >/dev/null
+        command -v rg >/dev/null
+        EXPECTED_FD_BINARY_VERSION="${FD_FIND_VERSION%%-*}"
+        EXPECTED_RG_BINARY_VERSION="${RIPGREP_VERSION%%-*}"
+        FD_BINARY_VERSION="$(fdfind --version)"
+        RG_BINARY_VERSION="$(rg --version)"
+        RG_BINARY_VERSION="${RG_BINARY_VERSION%%$'\n'*}"
+        if [ "$FD_BINARY_VERSION" != "fdfind $EXPECTED_FD_BINARY_VERSION" ]; then
+          echo "::error::fdfind binary version $FD_BINARY_VERSION does not match fdfind $EXPECTED_FD_BINARY_VERSION"
+          exit 1
+        fi
+        if [ "$RG_BINARY_VERSION" != "ripgrep $EXPECTED_RG_BINARY_VERSION" ]; then
+          echo "::error::rg binary version $RG_BINARY_VERSION does not match ripgrep $EXPECTED_RG_BINARY_VERSION"
+          exit 1
+        fi
+
     - name: Install dependencies
       shell: bash
       run: |
