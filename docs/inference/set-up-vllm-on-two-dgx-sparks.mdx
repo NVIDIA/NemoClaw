@@ -164,7 +164,8 @@ The explicit target still must match the exact reciprocal rail topology.
 ## Understand the Distributed Runtime
 
 The compiled managed inference catalog reads profile selection, artifacts, runtime resources, serving arguments, preparation, and readiness checks from preset and recipe YAML.
-Maintainers can add another profile that uses the registered dual-Spark topology, materializer, lifecycle, and preparation adapters by adding preset and recipe YAML without TypeScript changes.
+Maintainers can add another profile that uses the registered dual-Spark topology, materializer, lifecycle, and preparation adapters by adding preset and recipe YAML without TypeScript changes or a committed generated artifact.
+The build compiles those YAML definitions into the packaged runtime catalog automatically.
 A profile that needs a different execution contract requires a registered adapter.
 
 The compiled profile pins these artifacts:
@@ -222,7 +223,7 @@ Run a full uninstall to remove the exact receipt-owned pair.
 $$nemoclaw uninstall
 ```
 
-Full uninstall revalidates both exact container IDs before it removes them and retires the receipt, copied SSH binding, and any leftover temporary discovery claim associated with that receipt.
+Full uninstall revalidates both exact container IDs before it removes them and retires the receipt, copied SSH binding, and only the exact leftover temporary discovery claim recorded by that receipt.
 If revalidation, removal, or safe claim retirement fails, uninstall stops before other cleanup and preserves the receipt for a retry.
 A gateway-scoped uninstall preserves the host-global pair, receipt, SSH binding, and API key while another gateway remains.
 Pair cleanup does not delete the Hugging Face model cache.

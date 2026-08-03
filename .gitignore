@@ -9,6 +9,7 @@ coverage/
 dist/
 docs/_build/
 node_modules/
+src/lib/inference/serving/generated/catalog.ts
 
 # OS metadata
 .DS_Store

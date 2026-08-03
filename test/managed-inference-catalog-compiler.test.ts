@@ -11,20 +11,24 @@ import {
   compileManagedInferenceCatalogSources,
   type ManagedInferenceCatalogSource,
 } from "../scripts/managed-inference/compile-catalog.mts";
-import type { SystemReadinessReport } from "../src/lib/readiness/types.js";
 import type {
   ManagedInferenceReadinessSource,
   ManagedInferenceServingPreset,
   ManagedInferenceServingRecipe,
   ResolvedManagedInferenceSelection,
 } from "../src/lib/inference/serving/catalog-types.js";
-import { fixtureDualSparkSelection } from "../src/lib/inference/serving/dual-spark-fixture.test-support.js";
+import {
+  FIXTURE_DUAL_SPARK_PRESET_ID,
+  fixtureDualSparkSelection,
+} from "../src/lib/inference/serving/dual-spark-fixture.test-support.js";
 import { materializeDualSparkVllmPlan } from "../src/lib/inference/serving/dual-spark-materialize.js";
 import type { DualSparkTopologyOutput } from "../src/lib/inference/serving/dual-spark-topology.js";
 import { resolveManagedInferenceServing } from "../src/lib/inference/serving/resolver.js";
+import type { SystemReadinessReport } from "../src/lib/readiness/types.js";
 
 const REPOSITORY_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SOURCE_DIRECTORIES = ["managed-inference/presets", "managed-inference/recipes"] as const;
+const FIXTURE_DUAL_SPARK_RECIPE_ID = fixtureDualSparkSelection().recipe.metadata.id;
 
 function catalogSources(): ManagedInferenceCatalogSource[] {
   return SOURCE_DIRECTORIES.flatMap((directory) =>
@@ -48,9 +52,15 @@ function replaceDefinition<TDefinition>(
   kind: "ServingPreset" | "ServingRecipe",
   replace: (definition: TDefinition) => TDefinition,
 ): ManagedInferenceCatalogSource[] {
-  const replacementIndex = sources.findIndex(
-    (source) => (parse(source.contents) as { readonly kind?: unknown }).kind === kind,
-  );
+  const fixtureId =
+    kind === "ServingPreset" ? FIXTURE_DUAL_SPARK_PRESET_ID : FIXTURE_DUAL_SPARK_RECIPE_ID;
+  const replacementIndex = sources.findIndex((source) => {
+    const definition = parse(source.contents) as {
+      readonly kind?: unknown;
+      readonly metadata?: { readonly id?: unknown };
+    };
+    return definition.kind === kind && definition.metadata?.id === fixtureId;
+  });
   expect(replacementIndex).toBeGreaterThanOrEqual(0);
   return sources.map((source, index) =>
     index === replacementIndex
@@ -66,14 +76,16 @@ function syntheticProfileSources(
   sources: readonly ManagedInferenceCatalogSource[],
 ): ManagedInferenceCatalogSource[] {
   const compiled = compileManagedInferenceCatalogSources(sources).catalog;
-  const sourceRecipe = compiled.recipes[0]?.definition;
   const sourcePreset = compiled.presets.find(
-    ({ definition }) => definition.spec.plan.recipeRef === sourceRecipe?.metadata.id,
+    ({ definition }) => definition.metadata.id === FIXTURE_DUAL_SPARK_PRESET_ID,
+  )?.definition;
+  expect(sourcePreset).toBeDefined();
+  const presetTemplate = sourcePreset as ManagedInferenceServingPreset;
+  const sourceRecipe = compiled.recipes.find(
+    ({ definition }) => definition.metadata.id === presetTemplate.spec.plan.recipeRef,
   )?.definition;
   expect(sourceRecipe).toBeDefined();
-  expect(sourcePreset).toBeDefined();
   const recipeTemplate = sourceRecipe as ManagedInferenceServingRecipe;
-  const presetTemplate = sourcePreset as ManagedInferenceServingPreset;
 
   const recipe: ManagedInferenceServingRecipe = {
     ...recipeTemplate,
@@ -124,7 +136,7 @@ function syntheticProfileSources(
         ),
       },
       readiness: {
-        ...sourceRecipe.spec.readiness,
+        ...recipeTemplate.spec.readiness,
         timeoutSeconds: 900,
         expectedModel: "synthetic-model",
       },
@@ -212,25 +224,29 @@ function matchingReadinessSources(
 }
 
 describe("managed inference catalog compiler", () => {
-  it("produces identical canonical JSON regardless of source enumeration order", () => {
+  it("produces an identical generated TypeScript module regardless of source enumeration order", () => {
     const sources = catalogSources();
-    expect(compileManagedInferenceCatalogSources(sources).json).toBe(
-      compileManagedInferenceCatalogSources([...sources].reverse()).json,
+    const generated = compileManagedInferenceCatalogSources(sources).module;
+    expect(generated).toBe(compileManagedInferenceCatalogSources([...sources].reverse()).module);
+    expect(generated).toMatch(
+      /const generatedCatalog: CompiledManagedInferenceCatalog = \{[\s\S]+\};\n\nexport default generatedCatalog;\n$/u,
     );
   });
 
   it("compiles a synthetic second YAML-only profile without schema or TypeScript changes", () => {
-    const compiled = compileManagedInferenceCatalogSources(
-      syntheticProfileSources(catalogSources()),
-    );
-    expect(compiled.catalog.presets).toHaveLength(2);
-    expect(compiled.catalog.recipes).toHaveLength(2);
+    const sources = catalogSources();
+    const base = compileManagedInferenceCatalogSources(sources).catalog;
+    const compiled = compileManagedInferenceCatalogSources(syntheticProfileSources(sources));
+    expect(compiled.catalog.presets).toHaveLength(base.presets.length + 1);
+    expect(compiled.catalog.recipes).toHaveLength(base.recipes.length + 1);
     expect(compiled.catalog.presets.map(({ definition }) => definition.metadata.id)).toContain(
       "vllm.synthetic-model.generic-topology",
     );
     expect(compiled.catalog.recipes.map(({ definition }) => definition.metadata.id)).toContain(
       "vllm.synthetic-model.generic-topology.v1",
     );
+    expect(compiled.module).toContain("vllm.synthetic-model.generic-topology");
+    expect(compiled.module).toContain("vllm.synthetic-model.generic-topology.v1");
   });
 
   it("resolves and materializes the second YAML-only profile without profile-specific code", () => {
@@ -345,7 +361,9 @@ describe("managed inference catalog compiler", () => {
 
   it("derives a new definition digest when YAML profile data changes", () => {
     const sources = catalogSources();
-    const before = compileManagedInferenceCatalogSources(sources).catalog.recipes[0];
+    const before = compileManagedInferenceCatalogSources(sources).catalog.recipes.find(
+      ({ definition }) => definition.metadata.id === FIXTURE_DUAL_SPARK_RECIPE_ID,
+    );
     const changed = replaceDefinition<ManagedInferenceServingRecipe>(
       sources,
       "ServingRecipe",
@@ -363,7 +381,11 @@ describe("managed inference catalog compiler", () => {
         },
       }),
     );
-    const after = compileManagedInferenceCatalogSources(changed).catalog.recipes[0];
+    const after = compileManagedInferenceCatalogSources(changed).catalog.recipes.find(
+      ({ definition }) => definition.metadata.id === FIXTURE_DUAL_SPARK_RECIPE_ID,
+    );
+    expect(before).toBeDefined();
+    expect(after).toBeDefined();
     expect(after?.definitionDigest).not.toBe(before?.definitionDigest);
   });
 
