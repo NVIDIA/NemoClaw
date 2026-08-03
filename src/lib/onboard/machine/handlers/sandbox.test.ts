@@ -548,7 +548,7 @@ describe("handleSandboxState", () => {
     );
   });
 
-  it("reuses a ready sandbox with registry messaging authority on resume", async () => {
+  it("reuses a Ready sandbox with the registry messaging plan during resume", async () => {
     const registryPlan = makeMinimalPlan("saved", "openclaw", ["telegram"]);
     const session = createSession({
       sandboxName: "saved",
@@ -1205,7 +1205,7 @@ describe("handleSandboxState", () => {
     expect(writePlanToEnv).toHaveBeenCalledWith(registryPlan);
   });
 
-  it("prefers registry plan over env-staged plan for an existing sandbox", async () => {
+  it("uses the registry plan instead of a staged plan for an existing sandbox", async () => {
     const registryPlan = makeMinimalPlan("my-assistant");
     const rebuiltPlan = makeMinimalPlan("my-assistant", "openclaw", ["telegram"], ["telegram"]);
     const session = createSession({ sandboxName: "my-assistant", messagingPlan: registryPlan });

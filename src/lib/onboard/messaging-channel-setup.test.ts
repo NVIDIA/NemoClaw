@@ -101,7 +101,7 @@ describe("getRegistrySandboxMessagingAuthority", () => {
     vi.restoreAllMocks();
   });
 
-  it("keeps staged intent authoritative for a pending registry reservation", () => {
+  it("uses the staged plan for a pending registry reservation", () => {
     const entry = { name: "alpha", pendingRouteReservation: true } as const;
     const registryPlan = messagingPlan("alpha", "rebuild");
     const stagedPlan = messagingPlan("alpha", "onboard");
@@ -118,7 +118,7 @@ describe("getRegistrySandboxMessagingAuthority", () => {
     ).toEqual({ source: "staged", plan: stagedPlan });
   });
 
-  it("uses registry intent for a registered sandbox", () => {
+  it("uses the registry plan for a registered sandbox", () => {
     const entry = { name: "alpha" };
     const registryPlan = messagingPlan("alpha", "rebuild");
     vi.spyOn(registry, "getSandbox").mockReturnValue(entry);

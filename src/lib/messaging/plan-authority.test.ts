@@ -27,12 +27,7 @@ function plan(
 }
 
 describe("messaging plan authority", () => {
-  it.each([
-    "onboard",
-    "resume",
-    "rebuild",
-    "channel mutation",
-  ])("uses the registry plan for an existing sandbox during %s", () => {
+  it("uses the registry plan when the registry is authoritative", () => {
     const registryPlan = plan("alpha", "rebuild");
 
     expect(
@@ -45,7 +40,7 @@ describe("messaging plan authority", () => {
     ).toEqual({ source: "registry", plan: registryPlan });
   });
 
-  it("treats an empty registry plan as authoritative for an existing sandbox", () => {
+  it("returns the registry source with no plan when the registry is authoritative", () => {
     expect(
       resolveMessagingPlanAuthority({
         sandboxName: "alpha",
@@ -56,7 +51,7 @@ describe("messaging plan authority", () => {
     ).toEqual({ source: "registry", plan: null });
   });
 
-  it("uses staged then matching-session intent for a new target", () => {
+  it("uses a staged plan before a matching session plan when the registry is not authoritative", () => {
     const staged = plan("alpha", "onboard");
     const session = plan("alpha", "onboard");
     const base = {

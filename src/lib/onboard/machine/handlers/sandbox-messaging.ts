@@ -309,7 +309,7 @@ async function selectionFromCompletedMessagingCheckpoint<Agent>(
   durablePlan: SandboxMessagingPlan | null = options.session?.messagingPlan ?? null,
   reconcileCheckpoint = true,
 ): Promise<SandboxMessagingSelection> {
-  // A completed checkpoint makes the session copy authoritative. The process
+  // After the checkpoint completes, the selected registry or session plan is authoritative. The process
   // plan may already have refreshed hashes, so it cannot prove that a newly
   // exported credential passed the channel's validation hooks.
   const diverged = reconcileCheckpoint

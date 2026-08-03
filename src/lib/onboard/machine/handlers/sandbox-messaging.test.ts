@@ -264,7 +264,7 @@ describe("reconcileReusedSandboxMessaging", () => {
 });
 
 describe("reconcileSandboxMessaging plan authority", () => {
-  it("uses registry intent for an existing sandbox before staged intent", async () => {
+  it("uses the registry plan before a staged plan for an existing sandbox", async () => {
     const registryPlan = telegramPlan(hashCredential("123456:registry-token") ?? "");
     const deps = reconcileDeps([mixedChannelPlan()]);
     deps.getRegistrySandboxMessagingAuthority.mockReturnValueOnce({
