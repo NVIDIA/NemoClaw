@@ -1421,7 +1421,8 @@ When OpenShell reports an active policy version, the displayed YAML `version` li
 If the sandbox is running an outdated agent version, the output includes an `Update` line with the available version and a `$$nemoclaw <name> rebuild` hint.
 
 <AgentOnly variant="openclaw,hermes">
-When other sandboxes have the same messaging channel enabled (Telegram, Discord, or Slack) with the same bot token, the output includes a cross-sandbox overlap warning so you can resolve the conflict before messages start dropping.
+When NemoClaw detects a messaging overlap between sandboxes in the selected OpenShell gateway's sandbox registry, the output includes a cross-sandbox overlap warning.
+The command cannot report overlaps in an independent OpenShell gateway's registry.
 The command also tails `/tmp/gateway.log` inside the default sandbox and flags Telegram `409 Conflict` errors that indicate a duplicate consumer for the bot token.
 </AgentOnly>
 
@@ -1507,7 +1508,7 @@ The rebuild reuses the existing sandbox name and preserved manifest-defined stat
 Run a focused health check for one sandbox and the host services it depends on.
 The command checks the local CLI build, Docker daemon, OpenShell CLI, NemoClaw gateway container, gateway port mapping, live sandbox state, inference route, configured-provider model invocation, Ollama reachability, and the cloudflared tunnel state.
 <AgentOnly variant="openclaw,hermes">
-For gateway-based agents, it also reports messaging channel conflicts.
+For gateway-based agents, it also reports messaging channel conflicts within the selected OpenShell gateway's sandbox registry.
 </AgentOnly>
 
 `doctor` also checks whether the sandbox registry contains the metadata required for snapshot, rebuild, upgrade, recovery, and reboot.
@@ -2099,6 +2100,9 @@ $$nemoclaw my-assistant channels add telegram
 | `--force` | Add the channel despite a credential conflict, shared-resource conflict, or incomplete required check. This flag is the only conflict override. |
 
 Slack requires both `SLACK_BOT_TOKEN` (bot user OAuth) and `SLACK_APP_TOKEN` (app-level Socket Mode token); the command prompts for each in turn.
+The conflict check compares only sandboxes in the selected OpenShell gateway's sandbox registry.
+It cannot detect Slack token reuse across independent OpenShell gateways.
+Run only one active Slack sandbox on each OpenShell gateway, and use distinct Slack bot and app tokens across gateways.
 Optional Slack allowlists come from `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` at rebuild time.
 Telegram and Discord mention mode default to `1` when no environment, session, or saved state value exists for that setting.
 Discord applies that default only when a server ID is configured.
@@ -2805,7 +2809,8 @@ Before backup or deletion, `rebuild` also refuses an incomplete MCP destroy tran
 It also refuses a pending baseline exclusion transaction before opening a shields-down window, starting backup, or deleting the sandbox, and prints the exact `policy exclude` or `policy restore` command to rerun.
 For a prepared-only transaction, the redacted diagnostic points to `$$nemoclaw <name> mcp remove <server> --force` when the sandbox is still live.
 For a pending or both-marker transaction, it points to `$$nemoclaw <name> destroy` because the registry records that OpenShell deletion was already confirmed.
-Before backup or deletion, rebuild checks the staged messaging configuration for credentials or channel resources already used by another registered sandbox.
+Before backup or deletion, rebuild checks the staged messaging configuration against other sandboxes in the selected OpenShell gateway's sandbox registry.
+A rebuild cannot detect messaging conflicts in an independent OpenShell gateway's registry.
 A conflict aborts with the original sandbox registered and intact so you can resolve the conflict before retrying.
 After OpenShell accepts the sandbox deletion, `rebuild` waits until OpenShell explicitly reports that the old sandbox is absent.
 Only then can NemoClaw perform any required local registry removal and begin creating the replacement.
@@ -3163,7 +3168,7 @@ Supervisor-owned agent runtime processes remain managed inside their sandbox.
 Show the global sandbox list and the status of host auxiliary services (for example cloudflared).
 This command is host-wide. It summarizes registered sandboxes, the default sandbox's live inference route, gateway health, and host services.
 <AgentOnly variant="openclaw,hermes">
-For gateway-based messaging agents, it also reports messaging overlap warnings.
+For gateway-based messaging agents, it also reports messaging overlap warnings within the selected OpenShell gateway's sandbox registry.
 </AgentOnly>
 Use `$$nemoclaw <name> status` when you need one sandbox's live health and recovery guidance.
 Pass `--json` for machine-readable output with registered sandboxes, service state, inference routes, and health details.
