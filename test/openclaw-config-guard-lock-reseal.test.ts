@@ -42,6 +42,7 @@ spec.loader.exec_module(g)
 
 ran = []
 CONFIG_HASH = "/sandbox/.openclaw/.config-hash"
+classify_resealable_drift = g._is_resealable_config_hash_permissions_drift
 
 def stub(name, result=None):
     def _run(*a, **k):
@@ -65,6 +66,7 @@ g._has_locked_dir_posture = lambda *a, **k: True
 g._settle_pending_transaction_for_lock = stub("settle")
 g._snapshot_pair = stub("snapshot_pair", ("openclaw.json", ".config-hash"))
 g._verify_locked_files = stub("verify")
+g._is_resealable_config_hash_permissions_drift = lambda *a, **k: True
 g._freeze = stub("freeze")
 g._repair_absent_hash_for_lock = stub("repair_hash")
 g._snapshot_raw_pair = stub("snapshot_raw", ("raw-a", "raw-b"))
@@ -97,6 +99,29 @@ elif scenario == "other-error-reraised":
         code = e.code
     check(code == "startup-not-ready", "expected re-raise, got %r" % code)
     check("install" not in ran, "must not re-seal")
+elif scenario == "unsafe-file-posture-reraised":
+    g._verify_locked_files = raising("verify", "config-not-locked")
+    g._is_resealable_config_hash_permissions_drift = lambda *a, **k: False
+    code = None
+    try:
+        lock()
+    except g.GuardError as e:
+        code = e.code
+    check(code == "config-not-locked", "expected unsafe posture rejection, got %r" % code)
+    check("install" not in ran, "must not re-seal an unsafe file posture")
+elif scenario == "classifies-only-known-hash-drift":
+    identity = g.Identity(root_uid=0, root_gid=0, sandbox_uid=1000, sandbox_gid=1000)
+    def snapshot(name, uid, gid, mode, flags=0):
+        return g.FileSnapshot(name, 1, 1, uid, gid, mode, 0, 0, 0, 1, b"x", (), flags)
+    locked_config = snapshot("openclaw.json", 0, 0, 0o444)
+    drifted_hash = snapshot(".config-hash", 1000, 1000, 0o660)
+    check(classify_resealable_drift((locked_config, drifted_hash), identity), "expected known drift")
+    writable_config = snapshot("openclaw.json", 1000, 1000, 0o660)
+    check(not classify_resealable_drift((writable_config, drifted_hash), identity), "writable config")
+    unexpected_hash = snapshot(".config-hash", 0, 0, 0o644)
+    check(not classify_resealable_drift((locked_config, unexpected_hash), identity), "unknown hash")
+    flagged_hash = snapshot(".config-hash", 1000, 1000, 0o660, g.FS_IMMUTABLE_FL)
+    check(not classify_resealable_drift((locked_config, flagged_hash), identity), "flagged hash")
 elif scenario == "content-drift-fails-closed":
     g._snapshot_pair = raising("snapshot_pair", "config-hash-mismatch")
     code = None
@@ -135,6 +160,14 @@ describe("openclaw-config-guard lock re-seal on perms-only drift (#7985)", () =>
 
   it("re-raises a guard error that is not config-not-locked", () => {
     expect(runScenario("other-error-reraised")).toBe("OK");
+  });
+
+  it("rejects file-level drift outside the known .config-hash posture", () => {
+    expect(runScenario("unsafe-file-posture-reraised")).toBe("OK");
+  });
+
+  it("classifies only the known hash-sidecar permission drift as recoverable", () => {
+    expect(runScenario("classifies-only-known-hash-drift")).toBe("OK");
   });
 
   it("still fails closed on content or structural drift", () => {

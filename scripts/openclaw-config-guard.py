@@ -2941,6 +2941,32 @@ def _verify_locked_files(
             )
 
 
+def _is_resealable_config_hash_permissions_drift(
+    snapshots: tuple[FileSnapshot, FileSnapshot], identity: Identity
+) -> bool:
+    config, hash_record = snapshots
+    blocking_flags = FS_IMMUTABLE_FL | FS_APPEND_FL
+    config_stays_locked = (
+        config.uid == identity.root_uid
+        and config.gid == identity.root_gid
+        and config.mode == 0o444
+        and not (
+            config.inode_flags is not None
+            and config.inode_flags & blocking_flags
+        )
+    )
+    hash_has_known_reconciler_posture = (
+        hash_record.uid == identity.sandbox_uid
+        and hash_record.gid == identity.sandbox_gid
+        and hash_record.mode == 0o660
+        and not (
+            hash_record.inode_flags is not None
+            and hash_record.inode_flags & blocking_flags
+        )
+    )
+    return config_stays_locked and hash_has_known_reconciler_posture
+
+
 def _verify_locked_posture(
     opened: OpenConfig,
     snapshots: tuple[FileSnapshot, FileSnapshot],
@@ -3446,13 +3472,16 @@ def _transition(
                 _verify_locked_files(opened, pair, identity)
                 return
             except GuardError as verify_error:
-                if verify_error.code != "config-not-locked":
+                if verify_error.code != "config-not-locked" or not (
+                    _is_resealable_config_hash_permissions_drift(pair, identity)
+                ):
                     raise
-                # Locked dir, but a canonical file drifted perms-only (e.g. an
-                # in-sandbox reconciler re-permissioned .config-hash after the
-                # lock: #4663 / #7985). Re-seal below instead of failing closed:
-                # the dir is root-owned (content cannot be swapped), and content
-                # drift already failed above in _snapshot_pair's hash check.
+                # The config remains root-owned and read-only, while the
+                # in-sandbox reconciler re-permissioned only .config-hash after
+                # the lock (#4663 / #7985). Re-seal below instead of failing
+                # closed: the root-owned directory prevents replacement, the
+                # config cannot be written, and _snapshot_pair verified that the
+                # sidecar still authenticates those config bytes.
                 # Source: the writer is the upstream OpenClaw in-sandbox gateway/
                 # doctor perm-normalizer, which NemoClaw does not own, so the
                 # correct fix is this host-authenticated relock re-seal, not a
