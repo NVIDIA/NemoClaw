@@ -146,6 +146,25 @@ function telegramPlan(credentialHash: string): SandboxMessagingPlan {
   };
 }
 
+function slackPlan(credentialHash: string): SandboxMessagingPlan {
+  const plan = telegramPlan(credentialHash);
+  return {
+    ...plan,
+    channels: plan.channels.map((channel) => ({
+      ...channel,
+      channelId: "slack",
+      displayName: "Slack",
+    })),
+    credentialBindings: plan.credentialBindings.map((binding) => ({
+      ...binding,
+      channelId: "slack",
+      providerName: "alpha-slack-bridge",
+      providerEnvKey: "SLACK_BOT_TOKEN",
+      placeholder: "openshell:resolve:env:SLACK_BOT_TOKEN",
+    })),
+  };
+}
+
 function completedCheckpointSession(
   plan: SandboxMessagingPlan,
   stagedCredentialProviders: string[] = [],
@@ -186,7 +205,7 @@ function reconcileDeps(plans: readonly (SandboxMessagingPlan | null)[]) {
   return {
     note: vi.fn(),
     showMessagingStage: vi.fn(),
-    getRecordedMessagingChannelsForResume: vi.fn(() => null),
+    getRecordedMessagingChannelsForResume: vi.fn((): string[] | null => null),
     setupMessagingChannels: vi.fn(
       async (
         _agent: unknown,
@@ -282,6 +301,52 @@ describe("reconcileSandboxMessaging plan authority", () => {
 
     expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
     expect(result).toEqual({ plan: registryPlan, selectedChannels: ["telegram"] });
+  });
+
+  it("uses the staged plan before a matching session plan during resume for a pending target", async () => {
+    const sessionPlan = telegramPlan(hashCredential("123456:session-token") ?? "");
+    const stagedPlan = slackPlan(hashCredential("staged-slack-token") ?? "");
+    const deps = reconcileDeps([stagedPlan]);
+    deps.providerMatchesGatewayCredential.mockReturnValueOnce(true);
+    const session = withMessagingCheckpoint(
+      completedCheckpointSession(sessionPlan, ["alpha-slack-bridge"]),
+      ["telegram"],
+    );
+
+    const result = await reconcileSandboxMessaging({
+      resume: true,
+      session,
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "alpha-slack-bridge",
+      "generic",
+      "SLACK_BOT_TOKEN",
+    );
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(result).toEqual({ plan: stagedPlan, selectedChannels: ["slack"] });
+  });
+
+  it("does not reuse a staged plan that targets another sandbox", async () => {
+    const mismatchedPlan = {
+      ...slackPlan(hashCredential("staged-slack-token") ?? ""),
+      sandboxName: "beta",
+    };
+    const deps = reconcileDeps([mismatchedPlan]);
+    deps.getRecordedMessagingChannelsForResume.mockReturnValueOnce(["telegram"]);
+
+    const result = await reconcileSandboxMessaging({
+      resume: true,
+      session: null,
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(result).toEqual({ plan: null, selectedChannels: ["telegram"] });
   });
 });
 
