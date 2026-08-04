@@ -179,13 +179,13 @@ describe("injected managed transport wrapper", () => {
     await waitForDiagnostic(stderr);
     const event = emittedEvent(stderr);
 
-    expect(event.phase).toBe("response_headers");
+    expect(event.transport_phase).toBe("response_headers");
     expect(event.http_status).toBe("503");
     expect(event.target).toBe("mcp.test:8443");
     expect(event.server).toContain("<REDACTED>");
     expect(event.x_request_id).toContain("<REDACTED>");
     expect(event.x_envoy_response_flags).toBe("UF,URX");
-    expect(event.trace_id).toMatch(/^[0-9a-f]{32}$/);
+    expect(event.diagnostic_id).toMatch(/^[0-9a-f]{32}$/);
     expect(stderr.join("")).not.toContain("header-secret-value");
     expect(stderr.join("")).not.toContain("request-secret-value");
     expect(stderr.join("")).not.toContain("session=leaky");
@@ -198,7 +198,7 @@ describe("injected managed transport wrapper", () => {
     ["app_connect", "fetch failed", "ECONNREFUSED"],
     ["response_headers", "headers timed out", "UND_ERR_HEADERS_TIMEOUT"],
     ["request", "request aborted", "UND_ERR_ABORTED"],
-  ])("classifies an injected %s failure (#7957)", async (phase, message, code) => {
+  ])("classifies an injected %s failure (#7957)", async (transportPhase, message, code) => {
     const { wrap, stderr } = loadHelper();
     const error = Object.assign(new Error(message), { code });
     const inner = async () => {
@@ -209,7 +209,7 @@ describe("injected managed transport wrapper", () => {
       wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")("https://mcp.test/rpc"),
     ).rejects.toBe(error);
 
-    expect(emittedEvent(stderr).phase).toBe(phase);
+    expect(emittedEvent(stderr).transport_phase).toBe(transportPhase);
   });
 
   it("emits the canonical injected failure fields (#7957)", async () => {
@@ -234,7 +234,7 @@ describe("injected managed transport wrapper", () => {
       route: "proxy_configured",
       proxy: "127.0.0.1:3128",
       target: "mcp.test:443",
-      phase: "policy",
+      transport_phase: "policy",
       cause_code: "ECONNRESET",
       session_present: "false",
     });
@@ -245,7 +245,7 @@ describe("injected managed transport wrapper", () => {
         message: "CONNECT tunnel failed, response 403",
       },
     ]);
-    expect(event.trace_id).toMatch(/^[0-9a-f]{32}$/);
+    expect(event.diagnostic_id).toMatch(/^[0-9a-f]{32}$/);
   });
 
   it("returns the failing response unchanged so the caller still owns the body (#7957)", async () => {
@@ -299,7 +299,7 @@ describe("injected managed transport wrapper", () => {
 
     expect(returned).toBe(response);
     await waitForDiagnostic(stderr);
-    expect(emittedEvent(stderr).phase).toBe("response_headers");
+    expect(emittedEvent(stderr).transport_phase).toBe("response_headers");
   });
 
   it("rethrows a transport failure without retrying it (#7957)", async () => {
@@ -320,8 +320,8 @@ describe("injected managed transport wrapper", () => {
       wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")("https://mcp.test/rpc"),
     ).rejects.toThrow("fetch failed");
     expect(calls).toBe(1);
-    expect(emittedEvent(stderr).phase).toBe("app_connect");
-    expect(emittedEvent(stderr).trace_id).toMatch(/^[0-9a-f]{32}$/);
+    expect(emittedEvent(stderr).transport_phase).toBe("app_connect");
+    expect(emittedEvent(stderr).diagnostic_id).toMatch(/^[0-9a-f]{32}$/);
     expect(stderr.join("")).not.toContain("access-secret-value");
     expect(stderr.join("")).not.toContain("refresh-secret-value");
     expect(stderr.join("")).not.toContain("client-secret-value");
@@ -356,7 +356,7 @@ describe("injected managed transport wrapper", () => {
       wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")("https://mcp.test/rpc"),
     ).rejects.toThrow();
 
-    expect(emittedEvent(stderr).phase).toBe("policy");
+    expect(emittedEvent(stderr).transport_phase).toBe("policy");
   });
 
   it("reports proxy configuration without claiming the fetch used it (#7957)", async () => {
@@ -385,7 +385,7 @@ describe("injected managed transport wrapper", () => {
     expect(emittedEvent(stderr).route).toBe("unknown");
   });
 
-  it("mints a distinct trace identifier for each failed response (#7957)", async () => {
+  it("mints a distinct diagnostic identifier for each failed response (#7957)", async () => {
     const first = loadHelper();
     const second = loadHelper();
     const inner = async () => new Response("", { status: 502 });
@@ -400,11 +400,11 @@ describe("injected managed transport wrapper", () => {
     )("https://mcp.test/rpc");
     await Promise.all([waitForDiagnostic(first.stderr), waitForDiagnostic(second.stderr)]);
 
-    const firstTraceId = emittedEvent(first.stderr).trace_id;
-    const secondTraceId = emittedEvent(second.stderr).trace_id;
-    expect(firstTraceId).toMatch(/^[0-9a-f]{32}$/);
-    expect(secondTraceId).toMatch(/^[0-9a-f]{32}$/);
-    expect(firstTraceId).not.toBe(secondTraceId);
+    const firstDiagnosticId = emittedEvent(first.stderr).diagnostic_id;
+    const secondDiagnosticId = emittedEvent(second.stderr).diagnostic_id;
+    expect(firstDiagnosticId).toMatch(/^[0-9a-f]{32}$/);
+    expect(secondDiagnosticId).toMatch(/^[0-9a-f]{32}$/);
+    expect(firstDiagnosticId).not.toBe(secondDiagnosticId);
   });
 
   it("reports session presence without the identifier (#7957)", async () => {

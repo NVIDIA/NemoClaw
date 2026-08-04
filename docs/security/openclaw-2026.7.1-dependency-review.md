@@ -472,27 +472,32 @@ Reviewed behavior:
   The peer address is not recorded.
 - Session state is reported as a boolean.
   The `mcp-session-id` value is never emitted.
-- A thrown failure is classified as `policy`, `connect`, `tls`, `app_connect`, `response_headers`, or `request`.
+- The `transport_phase` field classifies a thrown failure as `policy`, `connect`, `tls`, `app_connect`, `response_headers`, or `request`.
   A policy denial takes precedence over its accompanying transport code.
-  Without a higher-priority phase signal, a thrown `UND_ERR_HEADERS_TIMEOUT` failure is classified as `response_headers`.
+  Without a higher-priority transport-phase signal, a thrown `UND_ERR_HEADERS_TIMEOUT` failure is classified as `response_headers`.
   That diagnostic has no response headers or `http_status` because `fetch` did not return a response.
-- A returned non-2xx response is also classified as `response_headers`.
+- A returned non-2xx response sets `transport_phase=response_headers`.
   It carries `http_status` and any allowlisted response headers that are present.
 - The fetch boundary does not expose the JSON-RPC operation, so the diagnostic records the endpoint without an `operation` field.
-- Each emitted diagnostic receives a local 32-character hexadecimal `trace_id`.
+- Each emitted diagnostic receives a local 32-character hexadecimal `diagnostic_id`.
 - The wrapper is inert unless `OPENSHELL_SANDBOX=1`, so it does not change host-side behavior.
 
-This patch does not correlate its `trace_id` with an OpenShell audit event.
+`diagnostic_id` is not a distributed trace identifier and does not correlate with an OpenShell audit event.
 `NVIDIA/OpenShell#2508` tracks span emission from the sandbox supervisor, and the OCSF `http_request` object in the pinned OpenShell `0.0.85` has no slot for a request-scoped correlation identifier, so a shared identifier is not representable today.
 The local identifier distinguishes application-side diagnostics, but operators still correlate each diagnostic with OpenShell audit events by endpoint and time.
+
+Managed transport diagnostics remains separate from `scripts/patch-openclaw-mcp-reliability.mts`.
+The diagnostics patch wraps every failed remote Streamable HTTP fetch and has its own exact-shape audit and removal condition.
+The reliability patch owns startup catalog and retry behavior.
+The two patches compose independently.
 
 The injected helper in `scripts/patch-openclaw-managed-transport-diagnostics.mts` is the shipped runtime source of truth.
 `test/openclaw-managed-transport-diagnostics-patch.test.ts` executes that exact helper.
 It pins the compiled preimage, patch idempotence, fail-closed rejection of an unrecognized shape, and the untouched SSE boundary.
-It also covers failure-only emission, no-retry and unchanged-response contracts, asynchronous body sampling, byte and time bounds, redaction, the header allowlist, local trace identifiers, session-presence reporting, phase classification, route evidence, and sandbox gating.
+It also covers failure-only emission, no-retry and unchanged-response contracts, asynchronous body sampling, byte and time bounds, redaction, the header allowlist, local diagnostic identifiers, session-presence reporting, transport-phase classification, route evidence, and sandbox gating.
 A reusable source schema is deferred until a production consumer requires one.
 
-Removal criterion: drop this patch when the reviewed OpenClaw release emits phase-classified, redacted transport diagnostics for remote MCP fetch failures.
+Removal criterion: drop this patch when the reviewed OpenClaw release emits redacted diagnostics classified by transport phase for remote MCP fetch failures.
 
 ## Gateway Startup Migration Compatibility
 

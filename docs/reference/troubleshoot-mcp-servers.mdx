@@ -105,19 +105,20 @@ $$nemoclaw <sandbox> logs --tail 100
 [nemoclaw] route=proxy_configured
 [nemoclaw] proxy=127.0.0.1:3128
 [nemoclaw] target=mcp.example.com:443
-[nemoclaw] phase=response_headers
+[nemoclaw] transport_phase=response_headers
 [nemoclaw] http_status=503
 [nemoclaw] elapsed_ms=1512
 [nemoclaw] server=envoy
 [nemoclaw] x_envoy_response_flags=UF,URX
 [nemoclaw] session_present=true
-[nemoclaw] trace_id=<generated-id>
+[nemoclaw] diagnostic_id=<generated-id>
 ```
 
-Read `phase` first. It states which step failed:
+Read `transport_phase` first.
+It states which transport step failed:
 
-| Phase | What failed |
-|-------|-------------|
+| Transport phase | What failed |
+|-----------------|-------------|
 | `policy` | The network policy refused the destination |
 | `connect` | The proxy CONNECT tunnel failed for a reason other than a denial |
 | `tls` | TLS setup or certificate validation failed |
@@ -151,8 +152,9 @@ $$nemoclaw <sandbox> logs --audit --tail 200
 ```
 
 Match on `target` and the timestamp.
-`trace_id` is a local identifier created for each diagnostic.
-It does not appear in OpenShell audit events, so correlation is by endpoint and time until OpenShell records a shared identifier.
+`diagnostic_id` is a local identifier created for one line group.
+It is not a distributed trace identifier and does not appear in OpenShell audit events.
+Correlate with OpenShell by endpoint and time until OpenShell records a shared identifier.
 </AgentOnly>
 
 ## Policy or Provider Ownership Drifted

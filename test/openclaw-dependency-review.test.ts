@@ -209,7 +209,9 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("port, and a redacted message");
     expect(review).toContain("a thrown `UND_ERR_HEADERS_TIMEOUT` failure");
     expect(review).toContain("no response headers or `http_status`");
-    expect(review).toContain("A returned non-2xx response is also classified");
+    expect(review).toContain("The `transport_phase` field classifies a thrown failure");
+    expect(review).toContain("A returned non-2xx response sets `transport_phase=response_headers`");
+    expect(review).toContain("transport-phase signal");
     expect(review).toContain("does not inspect a 2xx response body");
     expect(review).toContain("without an `operation` field");
     expect(review).toContain("structured credentials such as `access_token`");
@@ -218,6 +220,14 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("inert unless `OPENSHELL_SANDBOX=1`");
     expect(review).toContain("test/openclaw-managed-transport-diagnostics-patch.test.ts");
     expect(review).toContain("executes that exact helper");
+    expect(review).toContain("local 32-character hexadecimal `diagnostic_id`");
+    expect(review).toContain("not a distributed trace identifier");
+    expect(review).toContain(
+      "Managed transport diagnostics remains separate from `scripts/patch-openclaw-mcp-reliability.mts`.",
+    );
+    expect(review).toContain("wraps every failed remote Streamable HTTP fetch");
+    expect(review).toContain("The reliability patch owns startup catalog and retry behavior.");
+    expect(review).toContain("The two patches compose independently.");
     expect(review).toContain(
       "A reusable source schema is deferred until a production consumer requires one.",
     );
