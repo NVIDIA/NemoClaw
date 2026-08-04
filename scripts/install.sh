@@ -238,6 +238,7 @@ resolve_nemoclaw_gateway_port() {
     NEMOCLAW_OLLAMA_PROXY_PORT
     NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT
     NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT
+    NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT
   )
   local -a configured_ports=(
     "${NEMOCLAW_DASHBOARD_PORT:-18789}"
@@ -246,6 +247,7 @@ resolve_nemoclaw_gateway_port() {
     "${NEMOCLAW_OLLAMA_PROXY_PORT:-11435}"
     "${NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT:-11436}"
     "${NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT:-11437}"
+    "${NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT:-11438}"
   )
   local i configured_port
   for i in "${!configured_ports[@]}"; do

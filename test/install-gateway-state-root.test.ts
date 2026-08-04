@@ -219,6 +219,7 @@ save_usage_notice_acceptance_shell "test-version"`,
     "NEMOCLAW_OLLAMA_PROXY_PORT",
     "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
     "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
+    "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
   ])("rejects %s on fixed llama.cpp port 8081 before writing selected state", (envName) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-llamacpp-port-"));
     try {
