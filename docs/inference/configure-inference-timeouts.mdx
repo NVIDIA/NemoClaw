@@ -21,13 +21,15 @@ Use the error location to select the correct setting.
 | `NEMOCLAW_AGENT_TIMEOUT` | OpenClaw per-request inference | `600` seconds |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | Ollama, vLLM, NIM, and compatible-endpoint validation during onboarding | `180` seconds |
 | `NEMOCLAW_SANDBOX_READY_TIMEOUT` | Image build, gateway upload, and in-sandbox boot after creation | `180` seconds |
-| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | OpenShell command re-registration after policy application, plus gateway health and re-registration during managed OpenClaw or Hermes recovery | `120` seconds |
+| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | OpenShell command re-registration after policy application, plus gateway health and re-registration during managed OpenClaw or Hermes recovery | `30`, `90`, or `120` seconds, depending on the recovery phase |
 
 The readiness timeout does not govern inference requests or provider validation.
 
 `NEMOCLAW_AGENT_TIMEOUT` requires a positive integer; onboarding rejects any other value.
 `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` and `NEMOCLAW_SANDBOX_READY_TIMEOUT` accept finite, nonnegative seconds, round fractional values, and use their defaults for invalid or negative values.
-`NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` accepts finite, nonnegative seconds, preserves fractional values, and uses its default for invalid or negative values.
+`NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` accepts finite, nonnegative seconds and preserves fractional values.
+A valid value overrides the internal budget for the current recovery phase.
+An unset, blank, invalid, or negative value uses 30 seconds for OpenClaw gateway health, 90 seconds for Hermes gateway health, and 120 seconds for recreated-sandbox OpenShell registration when the recovery path does not supply another budget.
 
 ## Increase the OpenClaw Request Timeout
 
@@ -86,7 +88,7 @@ export NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS=300
 $$nemoclaw <sandbox-name> recover
 ```
 
-An explicit recovery override takes precedence over internal per-agent and per-call-site budgets.
+A valid finite, nonnegative recovery override takes precedence over internal per-agent and per-call-site budgets.
 
 </AgentOnly>
 
