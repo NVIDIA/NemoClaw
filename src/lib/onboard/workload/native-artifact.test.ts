@@ -7,11 +7,6 @@ import { describe, expect, it } from "vitest";
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { encodeManagedStartupProfile } from "../managed-startup/profile";
 import {
-  NATIVE_ARTIFACT_SOURCE_REPOSITORY,
-  NATIVE_ARTIFACT_WORKLOAD_AGENT,
-  NATIVE_ARTIFACT_WORKLOAD_CONTRACT_VERSION,
-  NATIVE_ARTIFACT_WORKLOAD_PLATFORM,
-  NATIVE_ARTIFACT_WORKLOAD_RECEIPT_SCHEMA_VERSION,
   NativeArtifactWorkloadContractError,
   parseNativeArtifactWorkloadReceiptV1,
 } from "./native-artifact";
@@ -67,23 +62,8 @@ function executable(value: Record<string, unknown>): Record<string, unknown> {
 
 describe("native OpenClaw artifact workload contract", () => {
   it("accepts an immutable Windows artifact and credential-free launch receipt (#8178)", () => {
-    const parsed = parseNativeArtifactWorkloadReceiptV1(receipt());
-    expect(parsed).toMatchObject({
-      schemaVersion: NATIVE_ARTIFACT_WORKLOAD_RECEIPT_SCHEMA_VERSION,
-      contractVersion: NATIVE_ARTIFACT_WORKLOAD_CONTRACT_VERSION,
-      agent: NATIVE_ARTIFACT_WORKLOAD_AGENT,
-      platform: NATIVE_ARTIFACT_WORKLOAD_PLATFORM,
-      artifact: { source: { repository: NATIVE_ARTIFACT_SOURCE_REPOSITORY } },
-    });
-    expect(parsed.launch).toEqual({
-      executable: {
-        relativePath: "runtime/node.exe",
-        digest: `sha256:${"c".repeat(64)}`,
-      },
-      arguments: ["agent/openclaw.mjs", "gateway", "run"],
-      workingDirectory: ".",
-      environmentNames: ["NEMOCLAW_MANAGED_STARTUP_PROFILE"],
-    });
+    const expected = receipt();
+    expect(parseNativeArtifactWorkloadReceiptV1(expected)).toEqual(expected);
   });
 
   it.each([
@@ -97,6 +77,10 @@ describe("native OpenClaw artifact workload contract", () => {
     ],
     ["source revision", (value: Record<string, unknown>) => (source(value).revision = "main")],
     ["agent version", (value: Record<string, unknown>) => (artifact(value).version = "latest")],
+    [
+      "oversized agent version",
+      (value: Record<string, unknown>) => (artifact(value).version = `1.2.3-${"a".repeat(257)}`),
+    ],
   ])("rejects an inexact %s (#8178)", (_label, mutate) => {
     const value = receipt();
     mutate(value);
@@ -112,6 +96,30 @@ describe("native OpenClaw artifact workload contract", () => {
     "agent/../node.exe",
     "agent//node.exe",
   ])("rejects non-canonical executable path %j (#8178)", (relativePath) => {
+    const value = receipt();
+    executable(value).relativePath = relativePath;
+    expect(() => parseNativeArtifactWorkloadReceiptV1(value)).toThrow(/canonical relative path/u);
+  });
+
+  it.each([
+    "../agent",
+    "agent/../work",
+    "agent//work",
+    "agent/work.",
+    "agent/work ",
+  ])("rejects non-canonical working directory %j (#8178)", (workingDirectory) => {
+    const value = receipt();
+    launch(value).workingDirectory = workingDirectory;
+    expect(() => parseNativeArtifactWorkloadReceiptV1(value)).toThrow(/canonical relative path/u);
+  });
+
+  it.each([
+    "bin/claw.exe.",
+    "bin/claw.exe ",
+    "bin/CON",
+    "bin/nul.txt",
+    "COM1/runtime",
+  ])("rejects Windows-normalizing executable path %j (#8178)", (relativePath) => {
     const value = receipt();
     executable(value).relativePath = relativePath;
     expect(() => parseNativeArtifactWorkloadReceiptV1(value)).toThrow(/canonical relative path/u);
@@ -136,6 +144,14 @@ describe("native OpenClaw artifact workload contract", () => {
   it("requires canonical uppercase environment-variable names (#8178)", () => {
     const value = receipt();
     launch(value).environmentNames = ["Path"];
+    expect(() => parseNativeArtifactWorkloadReceiptV1(value)).toThrow(
+      /environmentNames\[0\] has an unsupported format/u,
+    );
+  });
+
+  it("rejects an oversized environment-variable name (#8178)", () => {
+    const value = receipt();
+    launch(value).environmentNames = ["A".repeat(257)];
     expect(() => parseNativeArtifactWorkloadReceiptV1(value)).toThrow(
       /environmentNames\[0\] has an unsupported format/u,
     );

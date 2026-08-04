@@ -60,9 +60,11 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const REVISION_PATTERN = /^[0-9a-f]{40}$/u;
 const VERSION_PATTERN = /^[0-9]+(?:\.[0-9]+){2,3}(?:[-.][0-9A-Za-z][0-9A-Za-z.-]*)?$/u;
 const ENVIRONMENT_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/u;
+const WINDOWS_RESERVED_PATH_SEGMENT_PATTERN = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/iu;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
 const MAX_PATH_BYTES = 4096;
 const MAX_ARGUMENT_BYTES = 4096;
+const MAX_PATTERN_BYTES = 256;
 const MAX_ARGUMENTS = 128;
 const MAX_ENVIRONMENT_NAMES = 128;
 
@@ -110,7 +112,11 @@ function requireLiteral<T extends string | number | boolean>(
 }
 
 function requirePattern(value: unknown, pattern: RegExp, field: string): string {
-  if (typeof value !== "string" || !pattern.test(value)) {
+  if (
+    typeof value !== "string" ||
+    Buffer.byteLength(value, "utf8") > MAX_PATTERN_BYTES ||
+    !pattern.test(value)
+  ) {
     throw new NativeArtifactWorkloadContractError(`${field} has an unsupported format`);
   }
   return value;
@@ -131,7 +137,15 @@ function requireRelativePath(value: unknown, field: string, allowDot = false): s
   const segments = value.split("/");
   if (
     segments.length === 0 ||
-    segments.some((segment) => segment === "" || segment === "." || segment === "..")
+    segments.some(
+      (segment) =>
+        segment === "" ||
+        segment === "." ||
+        segment === ".." ||
+        segment.endsWith(".") ||
+        segment.endsWith(" ") ||
+        WINDOWS_RESERVED_PATH_SEGMENT_PATTERN.test(segment),
+    )
   ) {
     throw new NativeArtifactWorkloadContractError(`${field} must be a canonical relative path`);
   }
@@ -278,6 +292,15 @@ export function parseNativeArtifactWorkloadReceiptV1(
   if (typeof contract.encodedProfile !== "string") {
     throw new NativeArtifactWorkloadContractError("contract.encodedProfile must be a string");
   }
+  let profile: ReturnType<typeof decodeManagedStartupProfile>;
+  try {
+    profile = decodeManagedStartupProfile(contract.encodedProfile);
+  } catch (error) {
+    throw new NativeArtifactWorkloadContractError(
+      "contract.encodedProfile failed closed validation",
+      { cause: error },
+    );
+  }
   if (
     createHash("sha256").update(contract.encodedProfile, "utf8").digest("hex") !==
     startupProfileSha256
@@ -286,18 +309,9 @@ export function parseNativeArtifactWorkloadReceiptV1(
       "contract.startupProfileSha256 does not match contract.encodedProfile",
     );
   }
-  try {
-    const profile = decodeManagedStartupProfile(contract.encodedProfile);
-    if (profile.agent !== agent) {
-      throw new NativeArtifactWorkloadContractError(
-        `contract.encodedProfile belongs to '${profile.agent}', not '${agent}'`,
-      );
-    }
-  } catch (error) {
-    if (error instanceof NativeArtifactWorkloadContractError) throw error;
+  if (profile.agent !== agent) {
     throw new NativeArtifactWorkloadContractError(
-      "contract.encodedProfile failed closed validation",
-      { cause: error },
+      `contract.encodedProfile belongs to '${profile.agent}', not '${agent}'`,
     );
   }
 
