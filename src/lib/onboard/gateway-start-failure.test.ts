@@ -125,4 +125,26 @@ describe("createFinalGatewayStartFailureHandler", () => {
     expect(output).not.toContain("fghijklmno");
     expect(output).toMatch(/NVIDIA_API_KEY=ghp_\*+/);
   });
+
+  it("prints the legacy destroy verb from the deps-level supportsLifecycleCommands when no per-call override is given (#8139)", () => {
+    const printed: string[] = [];
+    const handleFailure = createFinalGatewayStartFailureHandler({
+      getGatewayName: () => "nemoclaw-test",
+      collectDiagnostics: () => "",
+      cleanupGateway: vi.fn(),
+      supportsLifecycleCommands: () => true,
+    });
+
+    expect(() =>
+      handleFailure({
+        retries: 0,
+        printError: (message = "") => printed.push(message),
+        exitProcess: (code): never => {
+          throw new Error(`exit ${code}`);
+        },
+      }),
+    ).toThrow("exit 1");
+
+    expect(printed).toContain("    openshell gateway destroy -g nemoclaw-test");
+  });
 });
