@@ -921,6 +921,12 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
       "Hermes image tests must resolve the Hermes base image exactly once with the canonical action before the secret-boundary probe",
     );
   }
+  if (baseImageResolver?.if !== undefined) {
+    errors.push("Hermes base-image resolver must run unconditionally");
+  }
+  if (baseImageResolver?.["continue-on-error"] !== undefined) {
+    errors.push("Hermes base-image resolver must fail closed");
+  }
   const rootEntrypoint = requireStep(
     errors,
     testJobName,

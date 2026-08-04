@@ -191,6 +191,39 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
+  it("rejects replacing the Hermes base-image resolver with another action", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];
+    const resolver = consumer.steps!.find((step) => step.name === "Resolve Hermes base image")!;
+    resolver.uses = "./.github/actions/resolve-sandbox-base-image";
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes image tests must resolve the Hermes base image exactly once with the canonical action before the secret-boundary probe",
+    );
+  });
+
+  it("rejects conditionally skipping the Hermes base-image resolver", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];
+    const resolver = consumer.steps!.find((step) => step.name === "Resolve Hermes base image")!;
+    resolver.if = "${{ false }}";
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes base-image resolver must run unconditionally",
+    );
+  });
+
+  it("rejects tolerating a Hermes base-image resolver failure", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];
+    const resolver = consumer.steps!.find((step) => step.name === "Resolve Hermes base image")!;
+    resolver["continue-on-error"] = true;
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes base-image resolver must fail closed",
+    );
+  });
+
   it("rejects a renamed duplicate Hermes base-image resolver", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];
