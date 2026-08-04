@@ -35,6 +35,9 @@ interface TimerMarker {
   restoreAt: string;
   processToken?: string;
   allowLegacyHermesProtocol?: boolean;
+  agentName?: string;
+  configPath?: string;
+  configDir?: string;
   leaseOwnerPid?: number;
   leaseOwnerStartIdentity?: string;
 }
@@ -52,6 +55,11 @@ function isTimerMarker(value: unknown): value is TimerMarker {
     (value.processToken === undefined || typeof value.processToken === "string") &&
     (value.allowLegacyHermesProtocol === undefined ||
       typeof value.allowLegacyHermesProtocol === "boolean") &&
+    (value.agentName === undefined || typeof value.agentName === "string") &&
+    (value.configPath === undefined || typeof value.configPath === "string") &&
+    (value.configDir === undefined || typeof value.configDir === "string") &&
+    ((value.configPath === undefined && value.configDir === undefined) ||
+      (typeof value.configPath === "string" && typeof value.configDir === "string")) &&
     (value.leaseOwnerPid === undefined ||
       (typeof value.leaseOwnerPid === "number" &&
         Number.isInteger(value.leaseOwnerPid) &&

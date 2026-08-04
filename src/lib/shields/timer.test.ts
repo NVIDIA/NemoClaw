@@ -11,6 +11,7 @@ import { getMcpLifecycleLockPath } from "../state/mcp-lifecycle-lock";
 const shieldsIndexMock = vi.hoisted(() => ({
   lockAgentConfig: vi.fn() as unknown,
   prepareAutoRestoreTransitionTakeover: vi.fn(),
+  resolvePersistedAutoRestoreTarget: vi.fn() as unknown,
 }));
 
 const PROCESS_TOKEN = "a".repeat(32);
@@ -34,19 +35,14 @@ vi.mock("../policy", () => ({
   ]),
 }));
 
-vi.mock("../sandbox/agent-config", () => ({
-  DEFAULT_AGENT_CONFIG: Symbol("DEFAULT_AGENT_CONFIG"),
-  resolveAgentConfig: vi.fn(() => ({
-    configPath: "/sandbox/.openclaw/openclaw.json",
-    configDir: "/sandbox/.openclaw",
-  })),
-}));
-
 vi.mock("./index", () => ({
   get lockAgentConfig() {
     return shieldsIndexMock.lockAgentConfig;
   },
   prepareAutoRestoreTransitionTakeover: shieldsIndexMock.prepareAutoRestoreTransitionTakeover,
+  get resolvePersistedAutoRestoreTarget() {
+    return shieldsIndexMock.resolvePersistedAutoRestoreTarget;
+  },
 }));
 
 describe("shields timer authorization", () => {
@@ -56,6 +52,25 @@ describe("shields timer authorization", () => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "shields-timer-"));
     vi.stubEnv("HOME", tmpHome);
     shieldsIndexMock.lockAgentConfig = vi.fn();
+    shieldsIndexMock.resolvePersistedAutoRestoreTarget = vi.fn(
+      (
+        _sandboxName: string,
+        marker: { agentName?: string; configPath?: string; configDir?: string },
+      ) =>
+        marker.configPath && marker.configDir
+          ? {
+              ...(marker.agentName ? { agentName: marker.agentName } : {}),
+              configPath: marker.configPath,
+              configDir: marker.configDir,
+              sensitiveFiles: [
+                `${marker.configDir.replace(/\/+$/, "")}/.config-hash`,
+                ...(marker.agentName === "hermes"
+                  ? [`${marker.configDir.replace(/\/+$/, "")}/.env`]
+                  : []),
+              ],
+            }
+          : undefined,
+    );
     vi.resetModules();
     vi.clearAllMocks();
   });
@@ -188,6 +203,9 @@ describe("shields timer authorization", () => {
         restoreAt: restoreAtIso,
         processToken: PROCESS_TOKEN,
         allowLegacyHermesProtocol: true,
+        agentName: "openclaw",
+        configPath: "/sandbox/.hermes/config.yaml",
+        configDir: "/sandbox/.hermes",
       }),
     );
 
@@ -199,6 +217,9 @@ describe("shields timer authorization", () => {
       "/sandbox/.hermes",
       PROCESS_TOKEN,
       "1",
+      "",
+      "",
+      "openclaw",
     ]);
     const ordinary = timer.parseTimerArgs([
       sandboxName,
@@ -208,12 +229,43 @@ describe("shields timer authorization", () => {
       "/sandbox/.hermes",
       PROCESS_TOKEN,
       "0",
+      "",
+      "",
+      "openclaw",
+    ]);
+    const mismatchedAgent = timer.parseTimerArgs([
+      sandboxName,
+      snapshotPath,
+      restoreAtIso,
+      "/sandbox/.hermes/config.yaml",
+      "/sandbox/.hermes",
+      PROCESS_TOKEN,
+      "1",
+      "",
+      "",
+      "langchain-deepagents-code",
+    ]);
+    const mismatchedTarget = timer.parseTimerArgs([
+      sandboxName,
+      snapshotPath,
+      restoreAtIso,
+      "/sandbox/.openclaw/openclaw.json",
+      "/sandbox/.openclaw",
+      PROCESS_TOKEN,
+      "1",
+      "",
+      "",
+      "openclaw",
     ]);
 
     expect(authorized).not.toBeNull();
+    expect(mismatchedAgent).not.toBeNull();
+    expect(mismatchedTarget).not.toBeNull();
     expect(authorized?.allowLegacyHermesProtocol).toBe(true);
     expect(timer.markerMatchesCurrentTimer(authorized!)).toBe(true);
     expect(timer.markerMatchesCurrentTimer(ordinary!)).toBe(false);
+    expect(timer.markerMatchesCurrentTimer(mismatchedAgent!)).toBe(false);
+    expect(timer.markerMatchesCurrentTimer(mismatchedTarget!)).toBe(false);
     expect(
       timer.parseTimerArgs([sandboxName, snapshotPath, restoreAtIso, "", "", PROCESS_TOKEN, "yes"]),
     ).toBeNull();
@@ -562,13 +614,6 @@ describe("shields timer authorization", () => {
       chattrApplied: true,
       fileHashes: sealedHashes,
     }));
-    const agentConfigModule = await import("../sandbox/agent-config");
-    (agentConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
-      agentName: "openclaw",
-      configPath,
-      configDir,
-      sensitiveFiles: [sensitiveHashPath],
-    });
     const indexModule = await import("./index");
     (indexModule.lockAgentConfig as ReturnType<typeof vi.fn>).mockImplementation(lockMock);
 
@@ -599,6 +644,76 @@ describe("shields timer authorization", () => {
     expect(fs.existsSync(markerPath)).toBe(false);
   });
 
+  it("preserves the Deep Agents lock protocol through shared target resolution (#7977)", async () => {
+    const stateDir = path.join(tmpHome, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+
+    const sandboxName = "dcode-safety";
+    const agentName = "langchain-deepagents-code";
+    const configPath = "/sandbox/.deepagents/config.toml";
+    const configDir = "/sandbox/.deepagents";
+    const sensitiveHashPath = `${configDir}/.config-hash`;
+    const snapshotPath = path.join(stateDir, "snapshot.yaml");
+    const restoreAtIso = new Date(Date.now() + 60_000).toISOString();
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  default: {}\n");
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify({
+        pid: process.pid,
+        sandboxName,
+        snapshotPath,
+        restoreAt: restoreAtIso,
+        processToken: PROCESS_TOKEN,
+        agentName,
+      }),
+    );
+
+    const lockMock = vi.fn(() => ({
+      chattrApplied: false,
+      fileHashes: {
+        [configPath]: "a".repeat(64),
+        [sensitiveHashPath]: "b".repeat(64),
+      },
+    }));
+    const indexModule = await import("./index");
+    (indexModule.lockAgentConfig as ReturnType<typeof vi.fn>).mockImplementation(lockMock);
+
+    const timer = await import("./timer");
+    const args = timer.parseTimerArgs([
+      sandboxName,
+      snapshotPath,
+      restoreAtIso,
+      configPath,
+      configDir,
+      PROCESS_TOKEN,
+      "0",
+      "",
+      "",
+      agentName,
+    ]);
+    expect(args).not.toBeNull();
+
+    const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args);
+    const fallbackTarget = {
+      agentName,
+      configPath,
+      configDir,
+      sensitiveFiles: [sensitiveHashPath],
+    };
+
+    expect(shieldsIndexMock.resolvePersistedAutoRestoreTarget).toHaveBeenCalledWith(
+      sandboxName,
+      args,
+    );
+    expect(exitCode).toBe(0);
+    expect(lockMock).toHaveBeenCalledTimes(2);
+    expect(lockMock).toHaveBeenNthCalledWith(1, sandboxName, fallbackTarget, false, false);
+    expect(lockMock).toHaveBeenNthCalledWith(2, sandboxName, fallbackTarget, false, false);
+    expect(fs.existsSync(markerPath)).toBe(false);
+  });
+
   it("leaves shields down and audits when the lock helper export is unavailable", async () => {
     const stateDir = path.join(tmpHome, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
@@ -625,13 +740,6 @@ describe("shields timer authorization", () => {
       }),
     );
 
-    const agentConfigModule = await import("../sandbox/agent-config");
-    (agentConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
-      agentName: "openclaw",
-      configPath,
-      configDir,
-      sensitiveFiles: [],
-    });
     shieldsIndexMock.lockAgentConfig = undefined;
 
     const timer = await import("./timer");
@@ -723,13 +831,6 @@ describe("shields timer authorization", () => {
     };
     const lockMock = vi.fn(() => ({ chattrApplied: true, fileHashes: sealedHashes }));
 
-    const agentConfigModule = await import("../sandbox/agent-config");
-    (agentConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
-      agentName: "openclaw",
-      configPath,
-      configDir,
-      sensitiveFiles: [sensitiveHashPath],
-    });
     const indexModule = await import("./index");
     (indexModule.lockAgentConfig as ReturnType<typeof vi.fn>).mockImplementation(lockMock);
 
@@ -796,13 +897,6 @@ describe("shields timer authorization", () => {
         );
       });
 
-    const agentConfigModule = await import("../sandbox/agent-config");
-    (agentConfigModule.resolveAgentConfig as ReturnType<typeof vi.fn>).mockReturnValue({
-      agentName: "openclaw",
-      configPath,
-      configDir,
-      sensitiveFiles: [sensitiveHashPath],
-    });
     const indexModule = await import("./index");
     (indexModule.lockAgentConfig as ReturnType<typeof vi.fn>).mockImplementation(lockMock);
 
