@@ -22,7 +22,21 @@ function retryableFailure(id: number, reason: string, title = "Retryable E2E fai
 }
 
 function gateOutput(checkRuns: unknown[]) {
-  const currentCheckId = Math.max(...checkRuns.map((check) => (check as { id: number }).id));
+  const orderedCheckIds = checkRuns
+    .map((check) => (check as { id: number }).id)
+    .sort((left, right) => left - right);
+  const checkRunsWithTiming = checkRuns.map((check) => {
+    const record = check as Record<string, unknown> & { id: number };
+    const position = orderedCheckIds.indexOf(record.id);
+    return {
+      ...record,
+      started_at:
+        position === 0
+          ? "2026-01-01T00:01:30Z"
+          : `2026-01-01T00:02:${String(position).padStart(2, "0")}Z`,
+    };
+  });
+  const currentCheckId = orderedCheckIds.at(-1)!;
   return JSON.parse(
     runGate({
       body: SIGNED_BODY,
@@ -35,7 +49,9 @@ function gateOutput(checkRuns: unknown[]) {
             }
           : check,
       ),
-      coordinationCheckPages: [{ total_count: checkRuns.length, check_runs: checkRuns }],
+      coordinationCheckPages: [
+        { total_count: checkRunsWithTiming.length, check_runs: checkRunsWithTiming },
+      ],
     }).stdout,
   );
 }
@@ -43,7 +59,10 @@ function gateOutput(checkRuns: unknown[]) {
 function expectIncompleteEvidence(checkRuns: unknown[]) {
   expect(gateOutput(checkRuns).gates.ci).toMatchObject({
     pass: false,
-    failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
+    failingChecks: [
+      "E2E / PR Gate: latest attempt evidence incomplete",
+      "initialize: latest attempt evidence incomplete",
+    ],
   });
 }
 

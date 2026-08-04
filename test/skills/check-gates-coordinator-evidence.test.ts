@@ -698,6 +698,15 @@ describe("maintainer merge-gate E2E coordinator evidence", () => {
         startedAt: "2026-01-01T23:59:55Z",
         completedAt: "2026-01-02T00:00:44Z",
       }),
+      seedRun: {
+        createdAt: "2026-01-01T23:59:59Z",
+        updatedAt: "2026-01-02T00:00:11Z",
+        jobs: seedJobs().map((job) => ({
+          ...job,
+          startedAt: "2026-01-02T00:00:00Z",
+          completedAt: "2026-01-02T00:00:11Z",
+        })),
+      },
       coordinatorRunPartitions: [
         {
           createdRange: "2026-01-01T00:00:00Z..2026-01-01T12:00:00Z",

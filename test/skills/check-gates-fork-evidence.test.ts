@@ -196,7 +196,10 @@ describe("maintainer merge-gate fork evidence", () => {
 
     expect(output.gates.ci).toMatchObject({
       pass: false,
-      failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
+      failingChecks: [
+        "E2E / PR Gate: latest attempt evidence incomplete",
+        "initialize: latest attempt evidence incomplete",
+      ],
     });
   });
 });

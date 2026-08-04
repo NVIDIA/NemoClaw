@@ -542,7 +542,10 @@ describe("maintainer merge-gate contributor compliance", () => {
 
     expect(output.gates.ci).toMatchObject({
       pass: false,
-      failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
+      failingChecks: [
+        "E2E / PR Gate: latest attempt evidence incomplete",
+        "initialize: latest attempt evidence incomplete",
+      ],
     });
   });
 
@@ -897,39 +900,41 @@ describe("maintainer merge-gate contributor compliance", () => {
     });
   });
   it("uses an envelope-bound E2E run when a later association-less label run is skipped", () => {
-    const result = runGate(
-      e2eRunFixture(
-        [
-          [400, 40, "SUCCESS"],
-          [401, 41, "SKIPPED"],
-        ],
-        {
-          "400": {
-            ...exactDiffGateRun("success", [
-              { id: 40, name: "E2E / PR Gate" },
-              {
-                id: 42,
-                name: "initialize",
-                startedAt: "2026-01-01T00:01:00Z",
-                completedAt: "2026-01-01T00:03:00Z",
-              },
-            ]),
-            pullRequests: [],
-            createdAt: "2026-01-01T00:01:00Z",
-            updatedAt: "2026-01-01T00:03:00Z",
-          },
-          "401": {
-            ...exactDiffGateRun("skipped", [
-              { id: 41, name: "E2E / PR Gate", conclusion: "skipped" },
-            ]),
-            pullRequests: [],
-            createdAt: "2026-01-01T00:04:00Z",
-            updatedAt: "2026-01-01T00:05:00Z",
-            displayTitle: `E2E Gate PR #42 head ${HEAD_SHA} base ${BASE_SHA} gate false`,
-          },
+    const fixture = e2eRunFixture(
+      [
+        [400, 40, "SUCCESS"],
+        [401, 41, "SKIPPED"],
+      ],
+      {
+        "400": {
+          ...exactDiffGateRun("success", [
+            { id: 40, name: "E2E / PR Gate" },
+            {
+              id: 42,
+              name: "initialize",
+              startedAt: "2026-01-01T00:01:00Z",
+              completedAt: "2026-01-01T00:03:00Z",
+            },
+          ]),
+          pullRequests: [],
+          createdAt: "2026-01-01T00:01:00Z",
+          updatedAt: "2026-01-01T00:03:00Z",
         },
-      ),
+        "401": {
+          ...exactDiffGateRun("skipped", [
+            { id: 41, name: "E2E / PR Gate", conclusion: "skipped" },
+          ]),
+          pullRequests: [],
+          createdAt: "2026-01-01T00:04:00Z",
+          updatedAt: "2026-01-01T00:05:00Z",
+          displayTitle: `E2E Gate PR #42 head ${HEAD_SHA} base ${BASE_SHA} gate false`,
+        },
+      },
     );
+    const result = runGate({
+      ...fixture,
+      statusChecks: fixture.statusChecks?.filter((check) => check.name !== "initialize"),
+    });
 
     expect(JSON.parse(result.stdout)).toMatchObject({
       allPass: true,
