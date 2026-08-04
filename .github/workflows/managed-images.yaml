@@ -583,21 +583,24 @@ jobs:
             slack: ["@openclaw/slack", "2026.7.1"],
             whatsapp: ["@openclaw/whatsapp", "2026.7.1"],
             msteams: ["@openclaw/msteams", "2026.7.1"],
+            googlechat: ["@openclaw/googlechat", "2026.7.1"],
           };
+          const projectsRoot = "/sandbox/.openclaw/npm/projects";
+          const installedPackages = fs
+            .readdirSync(projectsRoot, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .flatMap((entry) => {
+              const manifestPath = path.join(projectsRoot, entry.name, "package.json");
+              if (!fs.existsSync(manifestPath) || !fs.lstatSync(manifestPath).isFile()) return [];
+              const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+              return [{ name: manifest.name, version: manifest.version }];
+            });
           for (const [id, [name, version]] of Object.entries(packages)) {
-            const install = config.plugins?.installs?.[id];
-            if (
-              !install ||
-              typeof install.installPath !== "string" ||
-              config.plugins?.entries?.[id]?.enabled !== false
-            ) {
-              throw new Error(`managed OpenClaw plugin ${id} is missing or active`);
-            }
-            const manifest = JSON.parse(
-              fs.readFileSync(path.join(install.installPath, "package.json"), "utf8"),
+            const matches = installedPackages.filter(
+              (installed) => installed.name === name && installed.version === version,
             );
-            if (manifest.name !== name || manifest.version !== version) {
-              throw new Error(`managed OpenClaw plugin ${id} has an unexpected package identity`);
+            if (matches.length !== 1 || config.plugins?.entries?.[id]?.enabled !== false) {
+              throw new Error(`managed OpenClaw plugin ${id} is missing, duplicated, or active`);
             }
           }
           for (const id of ["telegram", "tavily"]) {
@@ -612,6 +615,7 @@ jobs:
             "slack",
             "whatsapp",
             "msteams",
+            "googlechat",
           ]) {
             if (config.channels?.[id]?.enabled !== false) {
               throw new Error(`managed OpenClaw channel ${id} is not explicitly disabled`);
@@ -634,7 +638,7 @@ jobs:
               raise SystemExit("managed Hermes optional platform is not explicitly disabled")
           if metadata.version("microsoft-teams-apps") != "2.0.13.4":
               raise SystemExit("managed Hermes microsoft-teams-apps version is wrong")
-          if metadata.version("aiohttp") != "3.14.1":
+          if metadata.version("aiohttp") != "3.14.3":
               raise SystemExit("managed Hermes aiohttp version is wrong")
           VALIDATE_HERMES_UNION
               ;;
