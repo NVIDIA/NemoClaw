@@ -3,10 +3,20 @@
 
 import { createHash } from "node:crypto";
 
-import {
-  PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH,
-  PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID,
-} from "../../scripts/checks/protected-managed-image-contract.ts";
+import * as importedProtectedManagedImageContract from "../../scripts/checks/protected-managed-image-contract.ts";
+
+// The root TypeScript package is exposed as CJS under the exact
+// `node --import tsx` workflow execution mode, but as an ESM namespace under
+// Vitest. Normalize both representations before reading shared identifiers.
+const protectedManagedImageContract = (
+  "default" in importedProtectedManagedImageContract &&
+  importedProtectedManagedImageContract.default
+    ? importedProtectedManagedImageContract.default
+    : importedProtectedManagedImageContract
+) as typeof import("../../scripts/checks/protected-managed-image-contract.ts");
+
+const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
+  protectedManagedImageContract;
 
 export const RISK_PLAN_VERSION = 13 as const;
 
