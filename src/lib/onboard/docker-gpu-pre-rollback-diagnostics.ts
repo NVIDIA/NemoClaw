@@ -152,14 +152,17 @@ export function captureDockerGpuPreRollbackDiagnostics(
     selectedMode: result.mode,
   };
   const diagnosticDeps = boundedDiagnosticsDeps(deps);
-  const additionalSensitiveValues = primeSensitiveDiagnosticValues(
-    sandboxName,
-    result,
-    diagnosticDeps,
-  );
+  // Preserve the short-lived failure verdict before optional inspect
+  // enrichment can consume the shared capture budget. The replacement State
+  // is the only source of its exit code once rollback removes the container.
   const snapshot = captureDockerGpuPatchSandboxSnapshot(
     sandboxName,
     { patchedContainerId: result.newContainerId },
+    diagnosticDeps,
+  );
+  const additionalSensitiveValues = primeSensitiveDiagnosticValues(
+    sandboxName,
+    result,
     diagnosticDeps,
   );
   let patchedContainerLogs = "";

@@ -230,23 +230,20 @@ export function collectDockerGpuPatchDiagnostics(
       ? "present"
       : (context?.replacementPresence ?? "unknown");
   let cleanupDisposition: DockerGpuPatchDiagnostics["cleanupDisposition"];
+  let cleanupCommands: string[] = [];
   if (cleanupPendingRollback) {
     cleanupDisposition = "pending_rollback";
-  } else if (prePatchRestored && replacementPresence === "present" && replacementId) {
+  } else if (!prePatchRestored) {
     cleanupDisposition = "manual";
-  } else if (prePatchRestored && replacementPresence === "absent") {
+    cleanupCommands = dockerGpuPatchCleanupCommands(sandboxName).map(redactor.redactText);
+  } else if (replacementPresence === "absent") {
     cleanupDisposition = "not_required";
-  } else if (prePatchRestored) {
-    cleanupDisposition = "unknown";
-  } else {
+  } else if (replacementPresence === "present" && replacementId) {
     cleanupDisposition = "manual";
+    cleanupCommands = dockerGpuReplacementCleanupCommands(replacementId).map(redactor.redactText);
+  } else {
+    cleanupDisposition = "unknown";
   }
-  const cleanupCommands =
-    cleanupDisposition === "manual" && prePatchRestored && replacementId
-      ? dockerGpuReplacementCleanupCommands(replacementId).map(redactor.redactText)
-      : cleanupDisposition === "manual" && !prePatchRestored
-        ? dockerGpuPatchCleanupCommands(sandboxName).map(redactor.redactText)
-        : [];
   const errorText = redactor.redactText(
     options.error instanceof Error
       ? options.error.message

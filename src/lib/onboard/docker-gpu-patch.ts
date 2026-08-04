@@ -194,6 +194,14 @@ function snapshotInspectDeps(
   return inner;
 }
 
+function classificationMatchesSelectedMode(
+  classification: DockerGpuPatchFailureClassification,
+  selectedMode: DockerGpuPatchMode | null,
+): boolean {
+  if (!selectedMode) return false;
+  return classification.summaryLines.includes(`patched_create_option=${selectedMode.label}`);
+}
+
 export function printDockerGpuPatchFailureAndExit(
   sandboxName: string,
   error: unknown,
@@ -218,11 +226,13 @@ export function printDockerGpuPatchFailureAndExit(
     inspectDeps,
   );
   // Prefer the earlier verdict only when the fresh snapshot cannot inspect the
-  // replacement container after rollback (#7996).
+  // replacement container after rollback and the verdict describes this
+  // failure's exact create option (#7996).
   const observedClassification = classifyDockerGpuPatchFailure(snapshot, selectedMode);
   const classification =
     deps.preRollbackClassification?.kind === "patched_container_failed" &&
-    snapshot.patchedContainerState === null
+    snapshot.patchedContainerState === null &&
+    classificationMatchesSelectedMode(deps.preRollbackClassification, selectedMode)
       ? deps.preRollbackClassification
       : observedClassification;
   const diagnostics = collectDockerGpuPatchDiagnostics(

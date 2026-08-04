@@ -28,6 +28,15 @@ type DockerRenameFn = (
 ) => DockerRunResult;
 type DockerRunFn = (args: readonly string[], opts?: DockerRunOptions) => DockerRunResult;
 
+const REPLACEMENT_PRESENCE_ATTEMPTS = 3;
+const REPLACEMENT_PRESENCE_RETRY_SECONDS = 0.5;
+
+function sleepBeforeReplacementPresenceRetry(seconds: number): void {
+  if (seconds <= 0 || !Number.isFinite(seconds)) return;
+  const buffer = new Int32Array(new SharedArrayBuffer(4));
+  Atomics.wait(buffer, 0, 0, seconds * 1000);
+}
+
 export type DockerGpuPatchRollbackOutcome = {
   rolledBack: boolean;
   replacementStopConfirmed: boolean;
@@ -41,6 +50,7 @@ export type ResolvedDockerGpuPatchRollbackDeps = {
   dockerRm: DockerContainerFn;
   dockerRename: DockerRenameFn;
   dockerStart: DockerContainerFn;
+  sleep: (seconds: number) => void;
 };
 
 export function resolveDockerGpuPatchRollbackDeps(
@@ -52,6 +62,7 @@ export function resolveDockerGpuPatchRollbackDeps(
     dockerRm: deps.dockerRm ?? defaultDockerRm,
     dockerRename: deps.dockerRename ?? defaultDockerRename,
     dockerStart: deps.dockerStart ?? defaultDockerStart,
+    sleep: deps.sleep ?? sleepBeforeReplacementPresenceRetry,
   };
 }
 
@@ -66,16 +77,23 @@ function observeReplacementPresence(
 ): DockerGpuPatchRollbackOutcome["replacementPresence"] {
   const exactId = fullDockerContainerId(containerId);
   if (!exactId) return "unknown";
-  const result = deps.dockerRun(
-    ["ps", "-a", "--no-trunc", "--filter", `id=${exactId}`, "--format", "{{.ID}}"],
-    options,
-  );
-  if (!hasZeroDockerExitStatus(result)) return "unknown";
-  const ids = outputText(result.stdout)
-    .split(/\r?\n/u)
-    .map((value) => value.trim())
-    .filter(Boolean);
-  return ids.some((id) => fullDockerContainerId(id) === exactId) ? "present" : "absent";
+  for (let attempt = 0; attempt < REPLACEMENT_PRESENCE_ATTEMPTS; attempt += 1) {
+    const result = deps.dockerRun(
+      ["ps", "-a", "--no-trunc", "--filter", `id=${exactId}`, "--format", "{{.ID}}"],
+      options,
+    );
+    if (hasZeroDockerExitStatus(result)) {
+      const ids = outputText(result.stdout)
+        .split(/\r?\n/u)
+        .map((value) => value.trim())
+        .filter(Boolean);
+      return ids.some((id) => fullDockerContainerId(id) === exactId) ? "present" : "absent";
+    }
+    if (attempt + 1 < REPLACEMENT_PRESENCE_ATTEMPTS) {
+      deps.sleep(REPLACEMENT_PRESENCE_RETRY_SECONDS);
+    }
+  }
+  return "unknown";
 }
 
 export function rollbackToBackupContainer(

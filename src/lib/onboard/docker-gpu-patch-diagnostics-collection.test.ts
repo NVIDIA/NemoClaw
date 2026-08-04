@@ -181,6 +181,39 @@ describe("Docker GPU patch diagnostics", () => {
     }
   });
 
+  it("keeps cleanup unknown when a present replacement lacks an exact ID (#7996)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-invalid-id-"));
+    try {
+      const diagnostics = collectDockerGpuPatchDiagnostics(
+        "alpha",
+        {
+          context: {
+            sandboxName: "alpha",
+            newContainerId: "short-container-id",
+            rolledBack: true,
+            replacementStopConfirmed: false,
+            replacementRemovalConfirmed: false,
+            replacementPresence: "present",
+          },
+        },
+        {
+          dockerCapture: vi.fn(() => ""),
+          dockerLogs: vi.fn(() => ""),
+          homedir: () => tmpDir,
+          now: () => new Date("2026-05-12T00:00:02Z"),
+        },
+      );
+
+      const summary = fs.readFileSync(path.join(diagnostics?.dir || "", "summary.txt"), "utf-8");
+      expect(diagnostics?.cleanupCommands).toEqual([]);
+      expect(diagnostics?.cleanupDisposition).toBe("unknown");
+      expect(summary).toContain("replacement_presence=present");
+      expect(summary).toContain("cleanup_required=unknown");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses exact-ID cleanup when post-rollback inspection finds the replacement (#7996)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-inspect-"));
     const replacementId = "b".repeat(64);

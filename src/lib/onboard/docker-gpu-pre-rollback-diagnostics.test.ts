@@ -213,6 +213,36 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
     expect(captured?.classification.hints ?? []).toEqual([]);
   });
 
+  it("captures replacement state before optional enrichment exhausts the shared budget (#7996)", () => {
+    const clock = [0, 0, 0, 0];
+    vi.spyOn(Date, "now").mockImplementation(() => clock.shift() ?? 10_001);
+    const dockerCapture = vi.fn((args: readonly string[]) =>
+      args.join(" ") === "inspect --format {{json .State}} new-container-id"
+        ? JSON.stringify({ Status: "exited", Running: false, ExitCode: 127 })
+        : "",
+    );
+    const runCaptureOpenshell = vi.fn((args: string[]) =>
+      args.join(" ") === "sandbox get alpha" ? "Phase: Error\n" : "alpha  Error\n",
+    );
+
+    const captured = captureDockerGpuPreRollbackDiagnostics("alpha", patchResult(), {
+      dockerCapture,
+      dockerLogs: vi.fn(() => ""),
+      homedir: () => "relative-home",
+      runCaptureOpenshell,
+    });
+
+    expect(captured?.classification).toMatchObject({
+      kind: "patched_container_failed",
+      summaryLines: expect.arrayContaining(["patched_container_exit_code=127"]),
+    });
+    expect(dockerCapture).toHaveBeenCalledTimes(1);
+    expect(dockerCapture).toHaveBeenCalledWith(
+      ["inspect", "--format", "{{json .State}}", "new-container-id"],
+      expect.objectContaining({ timeout: 2_000 }),
+    );
+  });
+
   it.each([
     ["GNU", "/usr/bin/env: \u2018nemoclaw-start\u2019: No such file or directory\n"],
     ["BusyBox", "env: can't execute 'nemoclaw-start': No such file or directory\n"],

@@ -196,6 +196,60 @@ describe("finalizeDockerGpuPatchBackup", () => {
     });
   });
 
+  it("retries a failed replacement observation before confirming absence (#7996)", () => {
+    const newContainerId = "c".repeat(64);
+    const dockerRun = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1, stderr: "daemon unavailable" })
+      .mockReturnValueOnce({ status: 0, stdout: "" });
+    const sleep = vi.fn();
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result: { ...deferredCreateResult(), newContainerId },
+        supervisorReady: false,
+      },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 1 })),
+        dockerRun,
+        dockerRename: vi.fn(() => ({ status: 0 })),
+        dockerStart: vi.fn(() => ({ status: 0 })),
+        sleep,
+      },
+    );
+
+    expect(outcome.replacementPresence).toBe("absent");
+    expect(dockerRun).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledWith(0.5);
+  });
+
+  it("keeps replacement presence unknown after repeated daemon errors (#7996)", () => {
+    const newContainerId = "d".repeat(64);
+    const dockerRun = vi.fn(() => ({ status: 1, stderr: "daemon unavailable" }));
+    const sleep = vi.fn();
+    const outcome = finalizeDockerGpuPatchBackup(
+      {
+        result: { ...deferredCreateResult(), newContainerId },
+        supervisorReady: false,
+      },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 1 })),
+        dockerRun,
+        dockerRename: vi.fn(() => ({ status: 0 })),
+        dockerStart: vi.fn(() => ({ status: 0 })),
+        sleep,
+      },
+    );
+
+    expect(outcome.replacementPresence).toBe("unknown");
+    expect(dockerRun).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenNthCalledWith(1, 0.5);
+    expect(sleep).toHaveBeenNthCalledWith(2, 0.5);
+  });
+
   it("stops rollback before start when rename has no exit status", () => {
     const dockerStart = vi.fn(() => ({ status: 0 }));
     const outcome = finalizeDockerGpuPatchBackup(

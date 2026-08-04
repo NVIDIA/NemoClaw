@@ -14,7 +14,7 @@ import {
 const PRE_ROLLBACK: DockerGpuPatchFailureClassification = {
   kind: "patched_container_failed",
   headline: "Patched GPU container exited with code 127 (--gpus all).",
-  summaryLines: ["patched_container_exit_code=127"],
+  summaryLines: ["patched_container_exit_code=127", "patched_create_option=--gpus all"],
   hints: [
     "Container logs show that the sandbox image does not provide the NemoClaw-managed `nemoclaw-start` command.",
   ],
@@ -89,6 +89,24 @@ describe("Docker GPU patch failure reporting (#7996)", () => {
 
     expect(stderr).toContain("OpenShell sandbox entered Error phase");
     expect(stderr).not.toContain("code 127");
+  });
+
+  it("keeps the fresh verdict when the pre-rollback create option does not match (#7996)", () => {
+    const stderr = printAndCapture({
+      runCaptureOpenshell: vi.fn(() => "alpha   Error   1m ago\n"),
+      dockerCapture: vi.fn(() => ""),
+      context: {
+        sandboxName: "alpha",
+        newContainerId: "new-container-id",
+        selectedMode: buildDockerGpuMode("cdi"),
+        rolledBack: true,
+      },
+      preRollbackClassification: PRE_ROLLBACK,
+    });
+
+    expect(stderr).toContain("OpenShell sandbox entered Error phase");
+    expect(stderr).not.toContain("code 127");
+    expect(stderr).not.toContain("patched_container_exit_code=127");
   });
 
   it("falls back to the observed verdict when no pre-rollback verdict was captured", () => {
