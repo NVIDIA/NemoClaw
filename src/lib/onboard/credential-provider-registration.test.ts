@@ -276,6 +276,97 @@ describe("credential provider registration", () => {
     ).toEqual([]);
   });
 
+  it("ignores a tokenless provider outside the required plan (#7718)", async () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const required: MessagingTokenDef = {
+      name: "alpha-discord-bridge",
+      envKey: "DISCORD_BOT_TOKEN",
+      token: null,
+    };
+    const runOpenshell = vi.fn(() =>
+      providerMetadata("alpha-discord-bridge", "generic", "DISCORD_BOT_TOKEN"),
+    );
+    const deps = registrationDeps(runOpenshell, session);
+    const registration = createCredentialProviderRegistration(deps);
+
+    const registered = await registration.stageSandboxCredentialProviders(
+      sandboxInput(requiredBindings([required])),
+      async () => ({
+        messagingTokenDefs: [
+          required,
+          {
+            name: "alpha-extra-team-token",
+            envKey: "TEAM_TOKEN",
+            token: null,
+          },
+        ],
+      }),
+    );
+
+    expect(registered).toEqual([]);
+    expect(deps.updateSession).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      condition: "the app provider is missing",
+      appProvider: { status: 1, stdout: "", stderr: "not found" },
+      error:
+        "A required credential provider is missing and no credential is available to recreate it.",
+    },
+    {
+      condition: "the app provider binding differs",
+      appProvider: providerMetadata("alpha-slack-app", "generic", "OTHER_SLACK_APP_TOKEN"),
+      error: "An existing credential provider does not match the required binding.",
+    },
+  ])("rejects partial Slack credentials before mutation when $condition (#7718)", async ({
+    appProvider,
+    error,
+  }) => {
+    const session = {
+      stagedCredentialProviders: ["alpha-slack-bridge", "alpha-slack-app"],
+    } as unknown as Session;
+    const missing = { status: 1, stdout: "", stderr: "not found" };
+    const success = { status: 0, stdout: "", stderr: "" };
+    const responses = new Map([
+      ["provider get -g test-gateway alpha-slack-bridge", missing],
+      ["provider get -g test-gateway alpha-slack-app", appProvider],
+    ]);
+    const runOpenshell = vi.fn((args: string[]) => responses.get(args.join(" ")) ?? success);
+    const deps = registrationDeps(runOpenshell, session);
+    const registration = createCredentialProviderRegistration(deps);
+    const tokenDefs: MessagingTokenDef[] = [
+      {
+        name: "alpha-slack-bridge",
+        envKey: "SLACK_BOT_TOKEN",
+        token: "xoxb-current-token",
+      },
+      {
+        name: "alpha-slack-app",
+        envKey: "SLACK_APP_TOKEN",
+        token: null,
+      },
+    ];
+
+    await expect(
+      registration.stageSandboxCredentialProviders(
+        {
+          ...sandboxInput(requiredBindings(tokenDefs)),
+          enabledChannels: ["slack"],
+        },
+        async () => ({ messagingTokenDefs: tokenDefs }),
+      ),
+    ).rejects.toThrow(error);
+
+    expect(session.stagedCredentialProviders).toEqual(["alpha-slack-bridge", "alpha-slack-app"]);
+    expect(deps.updateSession).not.toHaveBeenCalled();
+    expect(
+      runOpenshell.mock.calls
+        .map(([args]) => args)
+        .filter((args) => args[0] === "provider" && (args[1] === "create" || args[1] === "update")),
+    ).toEqual([]);
+  });
+
   it.each([
     {
       mismatch: "name",

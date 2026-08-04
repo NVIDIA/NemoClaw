@@ -613,6 +613,15 @@ class SandboxStateFlow<
     };
   }
 
+  private checkpointChangedExplicitSandboxName(
+    state: SandboxStepState<WebSearchConfig>,
+  ): SandboxStepState<WebSearchConfig> {
+    const explicitName = this.options.sandboxName;
+    const recordedName = state.session?.sandboxName;
+    if (!explicitName || !recordedName || recordedName === explicitName) return state;
+    return this.checkpointSandboxName(state, explicitName);
+  }
+
   private resolveResumeDecision(state: SandboxStepState<WebSearchConfig>): SandboxResumeDecision {
     const storedMessagingConfig = this.deps.getStoredMessagingChannelConfig(
       state.sandboxName,
@@ -1991,7 +2000,9 @@ class SandboxStateFlow<
       this.options.sandboxName,
       this.deps,
     );
-    const initialState = this.applyObservabilityRequest(this.prepareWebSearchSupport());
+    const initialState = this.checkpointChangedExplicitSandboxName(
+      this.applyObservabilityRequest(this.prepareWebSearchSupport()),
+    );
     const decision = this.resolveResumeDecision(initialState);
     const completedState =
       decision.kind === "reuse"

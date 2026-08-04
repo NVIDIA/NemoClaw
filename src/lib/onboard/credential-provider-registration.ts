@@ -81,6 +81,8 @@ function setStagedCredentialProviderReceipts(
 const BINDING_PLAN_ERROR = "Credential provider plan does not match the required bindings.";
 const EXISTING_BINDING_ERROR =
   "An existing credential provider does not match the required binding.";
+const MISSING_BINDING_ERROR =
+  "A required credential provider is missing and no credential is available to recreate it.";
 
 function isCanonicalBinding(binding: CheckpointProviderBinding): boolean {
   return [binding.name, binding.type, binding.credentialEnv].every(
@@ -91,6 +93,7 @@ function isCanonicalBinding(binding: CheckpointProviderBinding): boolean {
 function validatePlannedCredentialProviderBindings(
   tokenDefs: readonly MessagingTokenDef[],
   requiredBindings: readonly CheckpointProviderBinding[],
+  hasPreparedCredential: (tokenDef: MessagingTokenDef) => boolean,
 ): ReadonlyMap<string, CheckpointProviderBinding> {
   const requiredByName = new Map<string, CheckpointProviderBinding>();
   for (const binding of requiredBindings) {
@@ -108,6 +111,7 @@ function validatePlannedCredentialProviderBindings(
       credentialEnv: tokenDef.envKey,
     };
     const required = requiredByName.get(binding.name);
+    if (!required && !hasPreparedCredential(tokenDef)) continue;
     if (
       !isCanonicalBinding(binding) ||
       plannedByName.has(binding.name) ||
@@ -162,19 +166,29 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     );
   }
 
-  function canRegisterCredential(
-    tokenDef: MessagingTokenDef,
+  function preflightRequiredCredentialProviderBindings(
+    requiredBindings: readonly CheckpointProviderBinding[],
+    plannedTokenDefs: ReadonlyMap<string, MessagingTokenDef>,
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
-  ): boolean {
-    if (!providers.providerExistsInGateway(tokenDef.name, runOpenshell)) return true;
-    return gatewayProviderMetadata.matchesGatewayCredentialOnlyProviderBinding(
-      providers.readGatewayProviderMetadata(tokenDef.name, runOpenshell, deps.getGatewayName()),
-      {
-        name: tokenDef.name,
-        type: tokenDef.providerType || "generic",
-        credentialKey: tokenDef.envKey,
-      },
-    );
+  ): void {
+    for (const binding of requiredBindings) {
+      if (!providers.providerExistsInGateway(binding.name, runOpenshell)) {
+        const tokenDef = plannedTokenDefs.get(binding.name);
+        if (!tokenDef || !deps.normalizeCredentialValue(tokenDef.token)) {
+          throw new Error(MISSING_BINDING_ERROR);
+        }
+        continue;
+      }
+      const matches = gatewayProviderMetadata.matchesGatewayCredentialOnlyProviderBinding(
+        providers.readGatewayProviderMetadata(binding.name, runOpenshell, deps.getGatewayName()),
+        {
+          name: binding.name,
+          type: binding.type,
+          credentialKey: binding.credentialEnv,
+        },
+      );
+      if (!matches) throw new Error(EXISTING_BINDING_ERROR);
+    }
   }
 
   async function stageSandboxCredentialProviders<Agent>(
@@ -182,26 +196,29 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     prepareCredentialProviders: PrepareCredentialProviders<Agent>,
   ): Promise<readonly CheckpointProviderBinding[]> {
     const messaging = await prepareCredentialProviders(input);
+    const plannedBindings = validatePlannedCredentialProviderBindings(
+      messaging.messagingTokenDefs,
+      input.requiredBindings,
+      (tokenDef) => Boolean(deps.normalizeCredentialValue(tokenDef.token)),
+    );
+    const plannedTokenDefs = new Map(
+      messaging.messagingTokenDefs.map((tokenDef) => [tokenDef.name, tokenDef]),
+    );
     const tokenDefs = messaging.messagingTokenDefs.filter((tokenDef) =>
       deps.normalizeCredentialValue(tokenDef.token),
     );
-    const plannedBindings = validatePlannedCredentialProviderBindings(
-      tokenDefs,
-      input.requiredBindings,
-    );
     const runOpenshell = gatewayRunner();
-    const registerableTokenDefs = tokenDefs.filter((tokenDef) =>
-      canRegisterCredential(tokenDef, runOpenshell),
+    preflightRequiredCredentialProviderBindings(
+      input.requiredBindings,
+      plannedTokenDefs,
+      runOpenshell,
     );
-    if (registerableTokenDefs.length !== tokenDefs.length) {
-      throw new Error(EXISTING_BINDING_ERROR);
-    }
     setStagedCredentialProviderReceipts(
       tokenDefs.map((tokenDef) => tokenDef.name),
       false,
       deps,
     );
-    const registered = upsertMessagingProviders(registerableTokenDefs, {}, runOpenshell);
+    const registered = upsertMessagingProviders(tokenDefs, {}, runOpenshell);
     setStagedCredentialProviderReceipts(registered, true, deps);
     return registered.map((name) => {
       const binding = plannedBindings.get(name);
