@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ALL_GATEWAY_PORTS_ENV,
   type AllGatewayPortsDeps,
@@ -17,6 +21,11 @@ const OPTIONS: UninstallRunOptions = {
   deleteModels: false,
   keepOpenShell: false,
 };
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.resetModules();
+});
 
 function sweepDeps(overrides: AllGatewayPortsDeps = {}) {
   const error = vi.fn();
@@ -148,6 +157,57 @@ describe("uninstall across every gateway port (#7791)", () => {
       requireCompleteGatewayProcessCleanup: true,
       retainedGatewayPorts: [],
     });
+  });
+
+  it("removes host-global dual-Station credentials when a non-default port finishes the sweep", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-all-ports-"));
+    const sharedStateDir = path.join(home, ".nemoclaw");
+    const selectedStateDir = path.join(sharedStateDir, "gateways", "9123");
+    const apiKeyPath = path.join(sharedStateDir, "dual-station-vllm-api-key");
+    fs.mkdirSync(selectedStateDir, { recursive: true });
+    fs.writeFileSync(path.join(selectedStateDir, "selected-only"), "remove me\n");
+    fs.writeFileSync(apiKeyPath, "ab".repeat(32), { mode: 0o600 });
+
+    try {
+      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "9123");
+      vi.resetModules();
+      const { runUninstallAllGatewayPorts: runNonDefaultSweep } = await import(
+        "./all-gateway-ports"
+      );
+      const result = runNonDefaultSweep(OPTIONS, {
+        commandExists: () => true,
+        env: { HOME: home, NEMOCLAW_GATEWAY_PORT: "9123" },
+        existsSync: fs.existsSync,
+        home,
+        isTty: false,
+        kill: () => true,
+        listGatewayPorts: () => [8080, 9123],
+        log: vi.fn(),
+        resolveGatewayTeardownAuthority: ({ gatewayName, gatewayPort }) => ({
+          gatewayName,
+          gatewayPort,
+          mode: "nemoclaw-managed",
+          source: "standalone",
+          endpoint: null,
+          stateDir: null,
+          supervisor: null,
+          requiredCapabilities: [],
+        }),
+        rmSync: fs.rmSync,
+        run: (command, args) =>
+          command === "openshell" && args.join(" ") === "gateway list -o json"
+            ? { status: 0, stdout: JSON.stringify([{ name: "nemoclaw-9123" }]), stderr: "" }
+            : { status: 0, stdout: "", stderr: "" },
+        runDocker: () => ({ status: 0, stdout: "", stderr: "" }),
+        runPortPass: () => 0,
+      });
+
+      expect(result).toEqual({ exitCode: 0, ports: [8080, 9123] });
+      expect(fs.existsSync(apiKeyPath)).toBe(false);
+      expect(fs.existsSync(selectedStateDir)).toBe(false);
+    } finally {
+      fs.rmSync(home, { force: true, recursive: true });
+    }
   });
 
   it("returns nonzero when an undiscovered environment remains after the only selected pass", () => {

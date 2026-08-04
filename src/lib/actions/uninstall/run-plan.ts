@@ -1235,6 +1235,7 @@ function removeManagedDualStationRuntime(
   runtime: UninstallRuntime,
 ): boolean {
   const sharedStateDir = path.dirname(paths.managedSwapMarkerPath);
+  const apiKeyPath = path.join(sharedStateDir, DUAL_STATION_VLLM_API_KEY_FILE);
   let receiptPaths: string[];
   try {
     receiptPaths = discoverDualStationVllmRuntimeReceiptStateDirs(
@@ -1259,12 +1260,18 @@ function removeManagedDualStationRuntime(
       }
     }
   }
-  if (!receiptFound) return true;
+  if (!receiptFound) {
+    removePath(apiKeyPath, runtime);
+    return true;
+  }
   const result = runtime.runDualStationRuntimeCleanup({
     env: runtime.env,
     stdio: "inherit",
   });
-  if (result.status === 0) return true;
+  if (result.status === 0) {
+    removePath(apiKeyPath, runtime);
+    return true;
+  }
   runtime.error(
     "Managed dual-Station cleanup did not complete. NemoClaw did not start the remaining uninstall steps. Resolve the reported cleanup error and retry uninstall.",
   );
