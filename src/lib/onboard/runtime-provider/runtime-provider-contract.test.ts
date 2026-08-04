@@ -121,6 +121,7 @@ describe("RuntimeProviderBundle registry contract", () => {
         "workload",
         "lifecycle",
         "mutationAuthority",
+        "stateMutation",
         "bootstrap",
         "snapshot",
         "recovery",
@@ -130,6 +131,7 @@ describe("RuntimeProviderBundle registry contract", () => {
         expect(bundle[surface].providerId, `${providerId}.${surface}`).toBe(providerId);
       }
       expect(bundle.bootstrap).toMatchObject({ supported: false });
+      expect(bundle.stateMutation).toMatchObject({ supported: false });
       expect(bundle.snapshot).toMatchObject(
         providerId === "docker"
           ? {
@@ -287,10 +289,10 @@ describe("RuntimeProviderBundle registry contract", () => {
 
   it("rejects a missing surface and every surface identity mismatch", () => {
     const bundle = mxcBundle();
-    const { cleanup: _cleanup, ...missingCleanup } = bundle;
+    const { stateMutation: _stateMutation, ...missingStateMutation } = bundle;
     expect(() =>
-      createRuntimeProviderBundleRegistry([["mxc", missingCleanup as RuntimeProviderBundle]]),
-    ).toThrow(/missing cleanup surface/u);
+      createRuntimeProviderBundleRegistry([["mxc", missingStateMutation as RuntimeProviderBundle]]),
+    ).toThrow(/missing stateMutation surface/u);
 
     for (const surface of [
       "plan",
@@ -300,6 +302,7 @@ describe("RuntimeProviderBundle registry contract", () => {
       "workload",
       "lifecycle",
       "mutationAuthority",
+      "stateMutation",
       "bootstrap",
       "snapshot",
       "recovery",
@@ -371,6 +374,19 @@ describe("RuntimeProviderBundle registry contract", () => {
       }),
     ],
     [
+      "stateMutation",
+      (bundle: RuntimeProviderBundle) => ({
+        ...bundle.stateMutation,
+        supported: true,
+        reason: undefined,
+        contractVersion: 2,
+        acquire: vi.fn(),
+        assertFenced: vi.fn(),
+        activate: vi.fn(),
+        recover: vi.fn(),
+      }),
+    ],
+    [
       "bootstrap",
       (bundle: RuntimeProviderBundle) => ({
         ...bundle.bootstrap,
@@ -432,6 +448,25 @@ describe("RuntimeProviderBundle registry contract", () => {
         ["mxc", replaceSurface(bundle, "lifecycle", incomplete)],
       ]),
     ).toThrow(/lifecycle\.verifyStarted must be a function/u);
+  });
+
+  it("rejects supported state mutation without the complete durable-fence protocol", () => {
+    const bundle = mxcBundle();
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "stateMutation", {
+            providerId: "mxc",
+            supported: true,
+            contractVersion: 1,
+            acquire: vi.fn(),
+            assertFenced: vi.fn(),
+            activate: vi.fn(),
+          }),
+        ],
+      ]),
+    ).toThrow(/stateMutation\.recover must be a function/u);
   });
 
   it("rejects cleanup without a side-effect-free ownership plan", () => {

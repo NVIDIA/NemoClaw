@@ -100,6 +100,7 @@ describe("runtime provider central source boundary", () => {
       current: read("src/lib/onboard/runtime-provider/current.ts"),
       docker: read("src/lib/onboard/runtime-provider/docker.ts"),
       registry: read("src/lib/onboard/runtime-provider/registry.ts"),
+      stateMutation: read("src/lib/onboard/runtime-provider/state-mutation.ts"),
     };
 
     for (const [name, source] of Object.entries(driverNeutralActions)) {
@@ -129,6 +130,10 @@ describe("runtime provider central source boundary", () => {
       [providerContract.current, providerContract.docker, providerContract.registry].join("\n"),
     ).not.toMatch(/managed-bootstrap/u);
     expect(providerContract.current).not.toMatch(/\b(?:podman|mxc)\b/iu);
+    expect(providerContract.stateMutation).not.toMatch(/\b(?:docker|podman|hermes|mxc)\b/iu);
+    expect(providerContract.stateMutation).not.toMatch(
+      /(?:child_process|execFile|spawn|shell|command|callback)/iu,
+    );
   });
 
   it("inventories every dormant managed-bootstrap protocol source", () => {
@@ -154,6 +159,7 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/runtime-provider/docker.ts",
       "src/lib/onboard/runtime-provider/registry.ts",
       "src/lib/onboard/runtime-provider/snapshot.ts",
+      "src/lib/onboard/runtime-provider/state-mutation.ts",
     ]);
   });
 
