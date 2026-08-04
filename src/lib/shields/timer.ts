@@ -6,14 +6,13 @@
 // restores the captured policy snapshot.
 //
 // Usage (internal — called by shields.ts via fork()):
-//   node shields-timer.js <sandbox-name> <snapshot-path> <restore-at-iso> <config-path> <config-dir> <process-token> <allow-legacy-hermes>
+//   node shields-timer.js <sandbox-name> <snapshot-path> <restore-at-iso> <config-path> <config-dir> <process-token> <allow-legacy-hermes> <lease-owner-pid> <lease-owner-start> <agent-name>
 
 import fs from "node:fs";
 import path from "node:path";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types";
 import { buildPolicySetCommand } from "../policy";
 import { run } from "../runner";
-import { resolveAgentConfig } from "../sandbox/agent-config";
 import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";
@@ -42,6 +41,7 @@ interface TimerArgs {
   markerPath: string;
   configPath?: string;
   configDir?: string;
+  agentName?: string;
   processToken?: string;
   allowLegacyHermesProtocol: boolean;
   leaseOwnerPid?: number;
@@ -64,6 +64,7 @@ function parseTimerArgs(argv: string[]): TimerArgs | null {
     allowLegacyHermes,
     leaseOwnerPidRaw,
     leaseOwnerStartIdentityRaw,
+    agentNameRaw,
   ] = argv;
   const restoreAtMs = restoreAtIso ? new Date(restoreAtIso).getTime() : Number.NaN;
   const leaseOwnerPid = leaseOwnerPidRaw ? Number(leaseOwnerPidRaw) : undefined;
@@ -91,6 +92,7 @@ function parseTimerArgs(argv: string[]): TimerArgs | null {
     markerPath: path.join(STATE_DIR, `shields-timer-${sandboxName}.json`),
     configPath,
     configDir,
+    ...(agentNameRaw ? { agentName: agentNameRaw } : {}),
     processToken,
     allowLegacyHermesProtocol: allowLegacyHermes === "1",
     ...(leaseOwnerPid && leaseOwnerStartIdentity ? { leaseOwnerPid, leaseOwnerStartIdentity } : {}),
@@ -172,7 +174,10 @@ function markerRecordMatchesCurrentTimer(marker: UnknownRecord | null, args: Tim
     marker.processToken === args.processToken &&
     (marker.allowLegacyHermesProtocol === true) === args.allowLegacyHermesProtocol &&
     marker.leaseOwnerPid === args.leaseOwnerPid &&
-    marker.leaseOwnerStartIdentity === args.leaseOwnerStartIdentity
+    marker.leaseOwnerStartIdentity === args.leaseOwnerStartIdentity &&
+    marker.agentName === args.agentName &&
+    (marker.configPath === undefined || marker.configPath === args.configPath) &&
+    (marker.configDir === undefined || marker.configDir === args.configDir)
   );
 }
 
@@ -318,48 +323,27 @@ async function runRestoreTimer(args: TimerArgs): Promise<void> {
           // lockAgentConfig runs each operation independently and verifies the
           // on-disk state — it throws if verification fails.
           //
-          // NC-2227-03: Resolve the full agent config target (including sensitive
-          // files like .config-hash, .env) so the timer re-locks the same scope
-          // that interactive `shields up` uses. Fall back to the bare configPath/
-          // configDir from argv if resolution fails (e.g., registry unavailable).
+          // NC-2227-03: Reuse resolved registry metadata only when configPath,
+          // configDir, and the optional agentName match the timer arguments.
+          // Otherwise the persisted paths remain the recovery authority. This
+          // keeps older markers without agentName pinned by path while preserving
+          // the full sensitive-file set whenever the registry still describes the
+          // same target.
           let lockVerified = true;
           let lockedChattr: boolean | null = null;
           let lockedHashes: { [path: string]: string } | null = null;
           if (args.configPath) {
-            let lockTarget: {
-              agentName?: string;
-              configPath: string;
-              configDir: string;
-              sensitiveFiles?: string[];
-            } | null = null;
-            try {
-              // Always prefer the resolved target — even DEFAULT_AGENT_CONFIG
-              // carries the OpenClaw sensitiveFiles (.config-hash) that
-              // shields-up locks and that the content seal hashes. Dropping
-              // them here would persist a partial fileHashes map and the next
-              // `shields status` would flag the missing entries as drift.
-              lockTarget = resolveAgentConfig(args.sandboxName);
-            } catch {
-              // Resolver itself threw (registry unavailable). Fall back to
-              // argv-supplied paths, but still infer sensitiveFiles from
-              // configDir so the locked set matches what shields-up uses.
-              if (args.configDir) {
-                lockTarget = {
-                  configPath: args.configPath,
-                  configDir: args.configDir,
-                  sensitiveFiles: [`${args.configDir}/.config-hash`],
-                };
-              } else {
-                lockVerified = false;
-                appendAudit({
-                  action: "shields_auto_restore_lock_warning",
-                  sandbox: args.sandboxName,
-                  timestamp: now,
-                  restored_by: "auto_timer",
-                  warning: "Missing config directory for auto-restore re-lock verification",
-                  lock_verified: false,
-                });
-              }
+            const lockTarget = shields.resolvePersistedAutoRestoreTarget(args.sandboxName, args);
+            if (!lockTarget) {
+              lockVerified = false;
+              appendAudit({
+                action: "shields_auto_restore_lock_warning",
+                sandbox: args.sandboxName,
+                timestamp: now,
+                restored_by: "auto_timer",
+                warning: "Missing config directory for auto-restore re-lock verification",
+                lock_verified: false,
+              });
             }
             if (lockTarget) {
               try {

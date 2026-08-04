@@ -5,12 +5,14 @@
 
 Date: 2026-07-25
 
+Last updated: 2026-08-03
+
 ## Scope
 
 This review covers the sandbox dependency changes that:
 
 - standardize the OpenClaw, Hermes, and Deep Agents Code base images on fixed Debian `libexpat1=2.8.2-1`, `libjq1=1.8.2-1`, `jq=1.8.2-1`, `vim-common=2:9.2.0782-1`, and `vim-tiny=2:9.2.0782-1` packages, with the reviewed `libonig5=6.9.9-1+b1` jq runtime dependency;
-- replace the `brace-expansion@5.0.7` copy inside the reviewed `npm@11.18.0` package with `brace-expansion@5.0.8`; and
+- replace the `brace-expansion@5.0.7` copy inside the reviewed `npm@11.18.0` package with `brace-expansion@5.0.9`; and
 - verify the security-relevant dual-life module versions shipped by the checksum-pinned Perl 5.44.0 build.
 
 The OpenClaw base image retains its existing reviewed jq and Expat identities, while the Hermes and Deep Agents Code base images move to the same package boundary.
@@ -25,7 +27,7 @@ These changes preserve the existing supported image behavior and do not create a
 | Oniguruma | Distro-selected jq runtime dependency | All managed images: `libonig5=6.9.9-1+b1` | Debian Snapshot `20260724T000000Z` and architecture-specific SHA-256 values below |
 | Expat | OpenClaw: `2.8.2-1`; Hermes and Deep Agents Code: distro-selected package | All managed images: `libexpat1=2.8.2-1` | Debian Snapshot `20260724T000000Z` and architecture-specific SHA-256 values below |
 | npm | `npm@11.18.0` | unchanged | Existing reviewed npm archive and integrity |
-| npm private `brace-expansion` | `5.0.7` | `5.0.8` | Registry tarball and SHA-512 integrity below |
+| npm private `brace-expansion` | `5.0.7` | `5.0.9` | Registry tarball and SHA-512 integrity below |
 | Perl | `5.44.0-1nemoclaw1` | unchanged | Existing CPAN archive SHA-256 and complete upstream test suite |
 
 The fixed Vim source package is later than every reviewed 9.2 patch boundary.
@@ -44,9 +46,9 @@ The immutable Debian package SHA-256 values are:
 
 The reviewed npm replacement is:
 
-- version: `brace-expansion@5.0.8`;
-- integrity: `sha512-JZyDyq3D4AUifKTPOB7DELf6XsB3WdPuNxCtob1vFXPsSXhdAiHBWJ/tJ8HAc9aH84BK+5JFZLNkJKx3G9kzQg==`; and
-- tarball: `https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.8.tgz`.
+- version: `brace-expansion@5.0.9`;
+- integrity: `sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==`; and
+- tarball: `https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz`.
 
 ## Contract audit
 
@@ -79,14 +81,17 @@ The final reviewed dependency set and range evidence is:
 | `libjq1` | `1.7.1-6+deb13u2..1.8.2-1` | `1.8.2-1` | exact dpkg identity and matching `jq` runtime |
 | `jq` | `1.7.1-6+deb13u2..1.8.2-1` | `1.8.2-1` | exact dpkg identity, `jq-1.8.2`, and a JSON expression probe |
 | `vim-common` and `vim-tiny` | `2:9.1.1230-2..2:9.2.0782-1` | `2:9.2.0782-1` | exact dpkg identities and Vim 9.2 runtime probe |
-| npm private `brace-expansion` | `5.0.7..5.0.8` | `5.0.8` | complete-tree identity, dependency-shape, SRI, rollback, and npm/npx ordering guards |
+| npm private `brace-expansion` | `>=4.0.0 <5.0.9` | `5.0.9` | complete-tree identity, dependency-shape, SRI, rollback, and npm/npx ordering guards |
 | Perl and reviewed dual-life modules | Perl `5.43.10..5.44.0`; `HTTP::Tiny < 0.095`; `IO::Compress < 2.223` | Perl `5.44.0`; `HTTP::Tiny 0.096`; `IO::Compress 2.223`; component identities listed below | native package identity and direct interpreter/module version probes |
 
 ### Bundled npm package compatibility
 
 The npm release remains `11.18.0`.
 Its private dependency tree contains one top-level `brace-expansion@5.0.7` package with the existing `balanced-match@^4.0.2` contract.
-The replacement `5.0.8` package preserves that dependency contract, and its Node engine floor is compatible with the Node 22 and Node 24 base images.
+The initial replacement selected `5.0.8` to address `GHSA-mh99-v99m-4gvg`.
+`GHSA-rgw5-rvv9-x895` affects versions `>=4.0.0 <5.0.9`, and `5.0.9` fixes the advisory.
+The current `5.0.9` replacement preserves the dependency contract and declares `engines.node` as `20 || >=22`.
+This engine range includes the Node 22 and Node 24 base images.
 
 The replacement helper:
 
@@ -138,7 +143,7 @@ The core interpreter version check also remains the binding for core-language fi
 
 ### DEP-2 affected package inside npm's private tree
 
-- Range: `brace-expansion 5.0.7..5.0.8`
+- Range: `brace-expansion >=4.0.0 <5.0.9`
 - Surface: transitive bundled npm dependency
 - Severity: high
 - Confidence: high
@@ -176,7 +181,7 @@ The core interpreter version check also remains the binding for core-language fi
 
 Remove the Debian snapshot override only when the supported Debian suite publishes packages at or beyond every reviewed fix boundary and the replacements pass the same amd64 and arm64 package and runtime checks for all managed base images.
 
-Remove the private brace-expansion helper only when every pinned Node base installs a reviewed npm release whose complete private tree contains no brace-expansion version below 5.0.8.
+Remove the private brace-expansion helper only when every pinned Node base installs a reviewed npm release whose complete private tree contains no brace-expansion version below 5.0.9.
 Updating the npm archive without revisiting this helper must fail the image contract.
 
 ## Verification
