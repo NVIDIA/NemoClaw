@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { webcrypto } from "node:crypto";
 import vm from "node:vm";
 
 import { describe, expect, it } from "vitest";
@@ -10,6 +11,10 @@ import {
   MARKER,
   patchManagedTransportDiagnosticsText,
 } from "../scripts/patch-openclaw-managed-transport-diagnostics.mts";
+import {
+  buildManagedTransportFailure,
+  formatManagedTransportFailure,
+} from "../src/lib/observability/managed-transport.js";
 
 /**
  * Mirrors the reviewed `openclaw@2026.7.1`
@@ -50,7 +55,6 @@ function bundleMcpRuntimeFixture(): string {
 interface HelperHarness {
   wrap: (
     inner: typeof fetch,
-    serverName: string,
     serverUrl: string,
   ) => (input: unknown, init?: RequestInit) => Promise<Response>;
   stderr: string[];
@@ -62,13 +66,18 @@ function loadHelper(env: Record<string, string> = { OPENSHELL_SANDBOX: "1" }): H
     Headers,
     URL,
     Date,
+    TextDecoder,
+    TextEncoder,
     Object,
     JSON,
     Number,
     Boolean,
     String,
     Set,
+    clearTimeout,
+    crypto: webcrypto,
     process: { env, stderr: { write: (chunk: string) => stderr.push(chunk) } },
+    setTimeout,
   });
   const wrap = vm.runInContext(
     `${INJECTED_DIAGNOSTIC_HELPER}\nnemoClawManagedTransportFetch;`,
@@ -78,13 +87,18 @@ function loadHelper(env: Record<string, string> = { OPENSHELL_SANDBOX: "1" }): H
 }
 
 function emittedEvent(stderr: string[]): Record<string, string> {
-  const fields: Record<string, string> = {};
-  for (const line of stderr.join("").split("\n")) {
-    const text = line.replace(/^\[nemoclaw\] /, "");
-    const separator = text.indexOf("=");
-    if (separator > 0) fields[text.slice(0, separator)] = text.slice(separator + 1);
-  }
-  return fields;
+  return Object.fromEntries(
+    stderr
+      .join("")
+      .split("\n")
+      .map((line) => line.replace(/^\[nemoclaw\] /, ""))
+      .filter((line) => line.includes("="))
+      .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
+  );
+}
+
+function settleDiagnostics(delayMs = 20): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 describe("patchManagedTransportDiagnosticsText", () => {
@@ -94,7 +108,7 @@ describe("patchManagedTransportDiagnosticsText", () => {
     expect(result.status).toBe("patched");
     expect(result.text).toContain(MARKER);
     expect(result.text).toContain(
-      "\t\t\tfetch: nemoClawManagedTransportFetch(httpFetch, serverName, resolved.url),",
+      "\t\t\tfetch: nemoClawManagedTransportFetch(httpFetch, resolved.url),",
     );
   });
 
@@ -141,7 +155,6 @@ describe("injected managed transport wrapper", () => {
 
     const response = await wrap(
       inner as unknown as typeof fetch,
-      "docs",
       "https://mcp.test/rpc",
     )("https://mcp.test/rpc");
 
@@ -149,15 +162,15 @@ describe("injected managed transport wrapper", () => {
     expect(stderr).toEqual([]);
   });
 
-  it("classifies a proxy denial and keeps the safe envoy diagnostics (#7957)", async () => {
+  it("records a failed proxy response with the canonical safe headers (#7957)", async () => {
     const { wrap, stderr } = loadHelper();
     const inner = async () =>
       new Response("upstream connect error", {
         status: 503,
         headers: {
           "content-type": "text/plain",
-          server: "envoy",
-          "x-request-id": "req-42",
+          server: "envoy client_secret=header-secret-value",
+          "x-request-id": "req-42 access_token=request-secret-value",
           "x-envoy-response-flags": "UF,URX",
           "set-cookie": "session=leaky",
         },
@@ -165,18 +178,64 @@ describe("injected managed transport wrapper", () => {
 
     await wrap(
       inner as unknown as typeof fetch,
-      "docs",
       "https://mcp.test:8443/rpc",
     )("https://mcp.test:8443/rpc");
+    await settleDiagnostics();
     const event = emittedEvent(stderr);
 
     expect(event.phase).toBe("response_headers");
     expect(event.http_status).toBe("503");
     expect(event.target).toBe("mcp.test:8443");
-    expect(event.server).toBe("envoy");
-    expect(event["x-request-id"]).toBe("req-42");
-    expect(event["x-envoy-response-flags"]).toBe("UF,URX");
+    expect(event.server).toContain("<REDACTED>");
+    expect(event.x_request_id).toContain("<REDACTED>");
+    expect(event.x_envoy_response_flags).toBe("UF,URX");
+    expect(event.trace_id).toMatch(/^[0-9a-f]{32}$/);
+    expect(stderr.join("")).not.toContain("header-secret-value");
+    expect(stderr.join("")).not.toContain("request-secret-value");
     expect(stderr.join("")).not.toContain("session=leaky");
+  });
+
+  it("matches the shared schema and classification contract (#7957)", async () => {
+    const { wrap, stderr } = loadHelper({
+      OPENSHELL_SANDBOX: "1",
+      HTTPS_PROXY: "http://127.0.0.1:3128",
+    });
+    const error = Object.assign(new Error("CONNECT tunnel failed, response 403"), {
+      code: "ECONNRESET",
+    });
+    const inner = async () => {
+      throw error;
+    };
+
+    await expect(
+      wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")("https://mcp.test/rpc"),
+    ).rejects.toBe(error);
+
+    const event = emittedEvent(stderr);
+    const expected = emittedEvent([
+      formatManagedTransportFailure(
+        buildManagedTransportFailure({
+          consumer: "mcp",
+          route: "trusted_env_proxy",
+          proxy: "127.0.0.1:3128",
+          target: "mcp.test:443",
+          error,
+          traceId: "0".repeat(32),
+        }),
+      ),
+    ]);
+
+    expect(event).toMatchObject({
+      consumer: expected.consumer,
+      route: expected.route,
+      proxy: expected.proxy,
+      target: expected.target,
+      phase: expected.phase,
+      cause_code: expected.cause_code,
+      cause_chain: expected.cause_chain,
+      session_present: expected.session_present,
+    });
+    expect(event.trace_id).toMatch(/^[0-9a-f]{32}$/);
   });
 
   it("returns the failing response unchanged so the caller still owns the body (#7957)", async () => {
@@ -189,11 +248,48 @@ describe("injected managed transport wrapper", () => {
 
     const response = await wrap(
       inner as unknown as typeof fetch,
-      "docs",
       "https://mcp.test/rpc",
     )("https://mcp.test/rpc");
 
     expect(await response.json()).toEqual({ error: "nope" });
+  });
+
+  it("redacts credentials before enforcing the diagnostic body byte bound (#7957)", async () => {
+    const { wrap, stderr } = loadHelper();
+    const body = `access_token="access-secret-value" refresh_token="refresh-secret-value" client_secret="client-secret-value" ${"é".repeat(4000)}`;
+    const inner = async () =>
+      new Response(body, {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      });
+
+    await wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")("https://mcp.test/rpc");
+    await settleDiagnostics();
+    const captured = JSON.parse(emittedEvent(stderr).error_body) as string;
+
+    expect(captured).not.toContain("access-secret-value");
+    expect(captured).not.toContain("refresh-secret-value");
+    expect(captured).not.toContain("client-secret-value");
+    expect(Buffer.byteLength(captured, "utf8")).toBeLessThanOrEqual(2048);
+  });
+
+  it("returns before a diagnostic body clone can stall (#7957)", async () => {
+    const { wrap, stderr } = loadHelper();
+    const body = new ReadableStream<Uint8Array>({ start: () => {} });
+    const response = new Response(body, {
+      status: 500,
+      headers: { "content-type": "text/plain" },
+    });
+    const inner = async () => response;
+
+    const returned = await Promise.race([
+      wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")("https://mcp.test/rpc"),
+      new Promise((resolve) => setTimeout(() => resolve("timed out"), 50)),
+    ]);
+
+    expect(returned).toBe(response);
+    await settleDiagnostics(300);
+    expect(emittedEvent(stderr).phase).toBe("response_headers");
   });
 
   it("rethrows a transport failure without retrying it (#7957)", async () => {
@@ -201,7 +297,9 @@ describe("injected managed transport wrapper", () => {
     let calls = 0;
     const inner = async () => {
       calls += 1;
-      const error = new Error("fetch failed");
+      const error = new Error(
+        'fetch failed access_token="access-secret-value" refresh_token="refresh-secret-value" client_secret="client-secret-value"',
+      );
       Object.assign(error, {
         cause: Object.assign(new Error("connect"), { code: "ECONNREFUSED" }),
       });
@@ -209,14 +307,31 @@ describe("injected managed transport wrapper", () => {
     };
 
     await expect(
-      wrap(
-        inner as unknown as typeof fetch,
-        "docs",
-        "https://mcp.test/rpc",
-      )("https://mcp.test/rpc"),
+      wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")("https://mcp.test/rpc"),
     ).rejects.toThrow("fetch failed");
     expect(calls).toBe(1);
     expect(emittedEvent(stderr).phase).toBe("app_connect");
+    expect(emittedEvent(stderr).trace_id).toMatch(/^[0-9a-f]{32}$/);
+    expect(stderr.join("")).not.toContain("access-secret-value");
+    expect(stderr.join("")).not.toContain("refresh-secret-value");
+    expect(stderr.join("")).not.toContain("client-secret-value");
+  });
+
+  it("preserves the original failure when diagnostic property access throws (#7957)", async () => {
+    const { wrap } = loadHelper();
+    const error = new Error("fetch failed");
+    Object.defineProperty(error, "code", {
+      get: () => {
+        throw new Error("hostile error getter");
+      },
+    });
+    const inner = async () => {
+      throw error;
+    };
+
+    await expect(
+      wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")("https://mcp.test/rpc"),
+    ).rejects.toBe(error);
   });
 
   it("classifies a policy denial ahead of its accompanying transport code (#7957)", async () => {
@@ -228,11 +343,7 @@ describe("injected managed transport wrapper", () => {
     };
 
     await expect(
-      wrap(
-        inner as unknown as typeof fetch,
-        "docs",
-        "https://mcp.test/rpc",
-      )("https://mcp.test/rpc"),
+      wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")("https://mcp.test/rpc"),
     ).rejects.toThrow();
 
     expect(emittedEvent(stderr).phase).toBe("policy");
@@ -245,26 +356,44 @@ describe("injected managed transport wrapper", () => {
     });
     const inner = async () => new Response("", { status: 502 });
 
-    await wrap(
-      inner as unknown as typeof fetch,
-      "docs",
-      "https://mcp.test/rpc",
-    )("https://mcp.test/rpc");
+    await wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")("https://mcp.test/rpc");
+    await settleDiagnostics();
     const event = emittedEvent(stderr);
 
     expect(event.route).toBe("trusted_env_proxy");
     expect(event.proxy).toBe("127.0.0.1:3128");
   });
 
+  it("mints a distinct trace identifier for each failed response (#7957)", async () => {
+    const first = loadHelper();
+    const second = loadHelper();
+    const inner = async () => new Response("", { status: 502 });
+
+    await first.wrap(
+      inner as unknown as typeof fetch,
+      "https://mcp.test/rpc",
+    )("https://mcp.test/rpc");
+    await second.wrap(
+      inner as unknown as typeof fetch,
+      "https://mcp.test/rpc",
+    )("https://mcp.test/rpc");
+    await settleDiagnostics();
+
+    const firstTraceId = emittedEvent(first.stderr).trace_id;
+    const secondTraceId = emittedEvent(second.stderr).trace_id;
+    expect(firstTraceId).toMatch(/^[0-9a-f]{32}$/);
+    expect(secondTraceId).toMatch(/^[0-9a-f]{32}$/);
+    expect(firstTraceId).not.toBe(secondTraceId);
+  });
+
   it("reports session presence without the identifier (#7957)", async () => {
     const { wrap, stderr } = loadHelper();
     const inner = async () => new Response("", { status: 502 });
 
-    await wrap(
-      inner as unknown as typeof fetch,
-      "docs",
-      "https://mcp.test/rpc",
-    )("https://mcp.test/rpc", { headers: { "mcp-session-id": "7f3c9a02-secret-session" } });
+    await wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")("https://mcp.test/rpc", {
+      headers: { "mcp-session-id": "7f3c9a02-secret-session" },
+    });
+    await settleDiagnostics();
 
     expect(emittedEvent(stderr).session_present).toBe("true");
     expect(stderr.join("")).not.toContain("7f3c9a02-secret-session");
@@ -273,7 +402,7 @@ describe("injected managed transport wrapper", () => {
   it("stays inert outside the sandbox boundary (#7957)", async () => {
     const { wrap, stderr } = loadHelper({});
     const inner = async () => new Response("", { status: 503 });
-    const wrapped = wrap(inner as unknown as typeof fetch, "docs", "https://mcp.test/rpc");
+    const wrapped = wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc");
 
     expect(wrapped).toBe(inner);
     await wrapped("https://mcp.test/rpc");

@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Buffer } from "node:buffer";
 import { randomBytes } from "node:crypto";
 
 import { isSafeEndpoint } from "../actions/sandbox/exec-policy-hint-detection";
-import { redactSensitiveText } from "../security/redact";
+import { redactFull } from "../security/redact";
 
 export const MANAGED_TRANSPORT_FAILURE_EVENT = "managed_transport_failure";
 
@@ -51,7 +52,10 @@ const MAX_CAUSE_DEPTH = 8;
 const MAX_CAUSE_MESSAGE_LENGTH = 240;
 const MAX_HEADER_VALUE_LENGTH = 256;
 const MAX_ERROR_BODY_LENGTH = 2048;
+const MAX_REDACTION_LOOKAHEAD = 512;
 const PRINTABLE_ASCII_RE = /^[\x20-\x7e]*$/;
+const SAFE_LABEL_RE = /^[A-Za-z0-9_.:/-]+$/;
+const TRACE_ID_RE = /^[0-9a-f]{32}$/;
 
 const SAFE_RESPONSE_HEADERS: ReadonlySet<string> = new Set([
   "content-type",
@@ -108,11 +112,16 @@ export function redactSessionIdentifiers(value: string): string {
   return value.replace(SESSION_IDENTIFIER_RE, "$1 <REDACTED>");
 }
 
-function safeMessage(value: unknown): string | undefined {
+function redactDiagnosticText(value: unknown, maxLength: number): string | undefined {
   if (typeof value !== "string" || value.length === 0) return undefined;
-  const redacted = redactSensitiveText(redactSessionIdentifiers(value));
-  if (!redacted) return undefined;
-  return redacted.slice(0, MAX_CAUSE_MESSAGE_LENGTH);
+  const boundedInput = value.slice(0, maxLength + MAX_REDACTION_LOOKAHEAD);
+  const redacted = redactFull(redactSessionIdentifiers(boundedInput)).replace(/[\r\n\t]/g, " ");
+  const bounded = Buffer.from(redacted, "utf8").subarray(0, maxLength).toString("utf8");
+  return bounded.replace(/\uFFFD$/, "") || undefined;
+}
+
+function safeMessage(value: unknown): string | undefined {
+  return redactDiagnosticText(value, MAX_CAUSE_MESSAGE_LENGTH);
 }
 
 function safeCode(value: unknown): string | undefined {
@@ -169,7 +178,8 @@ export function collectSafeResponseHeaders(
     const value = Array.isArray(rawValue) ? rawValue.join(", ") : rawValue;
     if (typeof value !== "string" || value.length === 0) continue;
     if (value.length > MAX_HEADER_VALUE_LENGTH || !PRINTABLE_ASCII_RE.test(value)) continue;
-    safe[name] = value;
+    const redacted = redactDiagnosticText(value, MAX_HEADER_VALUE_LENGTH);
+    if (redacted) safe[name] = redacted;
   }
   return safe;
 }
@@ -183,8 +193,7 @@ export function captureErrorBody(
   if (typeof body !== "string" || body.length === 0) return undefined;
   const normalized = (contentType ?? "").split(";")[0].trim().toLowerCase();
   if (!ERROR_BODY_CONTENT_TYPES.includes(normalized)) return undefined;
-  const bounded = redactSessionIdentifiers(body.slice(0, MAX_ERROR_BODY_LENGTH));
-  return redactSensitiveText(bounded) ?? undefined;
+  return redactDiagnosticText(body, MAX_ERROR_BODY_LENGTH);
 }
 
 export interface ManagedTransportOutcome {
@@ -245,6 +254,15 @@ function safeEndpoint(value: string | undefined): string | undefined {
   return value && isSafeEndpoint(value) ? value : undefined;
 }
 
+function safeLabel(value: string | undefined): string | undefined {
+  if (!value || value.length > 128 || !SAFE_LABEL_RE.test(value)) return undefined;
+  return value;
+}
+
+function safeTraceId(value: string | undefined): string {
+  return value && TRACE_ID_RE.test(value) ? value : newManagedTransportTraceId();
+}
+
 export function buildManagedTransportFailure(
   input: ManagedTransportFailureInput,
 ): ManagedTransportFailure {
@@ -252,15 +270,16 @@ export function buildManagedTransportFailure(
   const responseHeaders = collectSafeResponseHeaders(input.responseHeaders ?? null);
   const failure: ManagedTransportFailure = {
     event: MANAGED_TRANSPORT_FAILURE_EVENT,
-    consumer: input.consumer,
+    consumer: safeLabel(input.consumer) ?? "unknown",
     route: input.route ?? "unknown",
     phase: classifyManagedTransportPhase(input, causeChain),
     causeChain,
     responseHeaders,
     sessionPresent: input.sessionPresent === true,
-    traceId: input.traceId ?? newManagedTransportTraceId(),
+    traceId: safeTraceId(input.traceId),
   };
-  if (input.operation) failure.operation = input.operation;
+  const operation = safeLabel(input.operation);
+  if (operation) failure.operation = operation;
   const proxy = safeEndpoint(input.proxy);
   if (proxy) failure.proxy = proxy;
   const target = safeEndpoint(input.target);

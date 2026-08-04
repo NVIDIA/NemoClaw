@@ -1013,10 +1013,11 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-r
 
 # Emit a redacted managed-transport diagnostic when a remote Streamable HTTP MCP
 # request fails. OpenClaw 2026.7.1 surfaces only the transport error text, which
-# does not say whether policy, CONNECT, TLS, the upstream connection, response
-# headers, or the response stream failed. The wrapper is failure-only, never
-# retries, never alters the request, and never reads a 2xx body, so streaming
-# responses stay behaviorally unchanged. It is inert unless OPENSHELL_SANDBOX=1.
+# does not say whether policy, CONNECT, TLS, the upstream connection, the
+# request, or response headers failed. The fetch-boundary wrapper is
+# failure-only, never retries, never alters the request, and never reads a 2xx
+# body, so streaming responses stay behaviorally unchanged. It is inert unless
+# OPENSHELL_SANDBOX=1.
 #
 # Removal criterion: drop when upstream OpenClaw emits phase-classified,
 # redacted transport diagnostics for remote MCP fetch failures.

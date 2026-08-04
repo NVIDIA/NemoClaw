@@ -15,9 +15,7 @@ import {
 
 function errorWith(fields: Record<string, unknown>, cause?: unknown): Error {
   const error = new Error(String(fields.message ?? "failed"));
-  Object.assign(error, fields);
-  if (cause !== undefined) Object.assign(error, { cause });
-  return error;
+  return Object.assign(error, fields, cause === undefined ? {} : { cause });
 }
 
 describe("classifyManagedTransportPhase", () => {
@@ -117,10 +115,16 @@ describe("describeErrorCauseChain", () => {
 
   it("redacts credentials carried in a cause message (#7957)", () => {
     const chain = describeErrorCauseChain(
-      errorWith({ message: "upstream rejected authorization: Bearer sk-live-secret-value" }),
+      errorWith({
+        message:
+          'upstream rejected authorization: Bearer sk-live-secret-value access_token="access-secret-value" refresh_token="refresh-secret-value" client_secret="client-secret-value"',
+      }),
     );
 
     expect(chain[0].message).not.toContain("sk-live-secret-value");
+    expect(chain[0].message).not.toContain("access-secret-value");
+    expect(chain[0].message).not.toContain("refresh-secret-value");
+    expect(chain[0].message).not.toContain("client-secret-value");
     expect(chain[0].message).toContain("<REDACTED>");
   });
 
@@ -181,12 +185,14 @@ describe("captureErrorBody", () => {
   });
 
   it("bounds the captured body and removes credentials inside it (#7957)", () => {
-    const body = `token=sk-live-secret-value ${"a".repeat(4000)}`;
+    const body = `access_token="access-secret-value" refresh_token="refresh-secret-value" client_secret="client-secret-value" ${"é".repeat(4000)}`;
     const captured = captureErrorBody(500, "application/json", body);
 
     expect(captured).toBeDefined();
-    expect(captured).not.toContain("sk-live-secret-value");
-    expect((captured ?? "").length).toBeLessThanOrEqual(2048);
+    expect(captured).not.toContain("access-secret-value");
+    expect(captured).not.toContain("refresh-secret-value");
+    expect(captured).not.toContain("client-secret-value");
+    expect(Buffer.byteLength(captured ?? "", "utf8")).toBeLessThanOrEqual(2048);
   });
 });
 
@@ -238,6 +244,19 @@ describe("buildManagedTransportFailure", () => {
 
   it("defaults the route to unknown so an uninstrumented consumer stays honest (#7957)", () => {
     expect(buildManagedTransportFailure({ consumer: "messaging" }).route).toBe("unknown");
+  });
+
+  it("drops line-breaking labels and replaces an invalid trace identifier (#7957)", () => {
+    const failure = buildManagedTransportFailure({
+      consumer: "mcp\nforged=true",
+      operation: "tools/list\nforged=true",
+      traceId: "not-a-trace-id\nforged=true",
+    });
+
+    expect(failure.consumer).toBe("unknown");
+    expect(failure.operation).toBeUndefined();
+    expect(failure.traceId).toMatch(/^[0-9a-f]{32}$/);
+    expect(formatManagedTransportFailure(failure)).not.toContain("forged=true");
   });
 
   it("serves a non-MCP consumer with the same schema (#7957)", () => {

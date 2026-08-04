@@ -197,6 +197,12 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("The sibling SSE transport boundary is deliberately left unwrapped.");
     expect(review).toContain("Failure-only.");
     expect(review).toContain("never retries, never alters the request");
+    expect(review).toContain("returns the original response before it samples `response.clone()`");
+    expect(review).toContain("waits at most 250 ms");
+    expect(review).toContain("reads at most 2,048 response bytes");
+    expect(review).toContain("does not inspect a 2xx response body");
+    expect(review).toContain("without an `operation` field");
+    expect(review).toContain("structured credentials such as `access_token`");
     expect(review).toContain("The peer address is not recorded.");
     expect(review).toContain("The `mcp-session-id` value is never emitted.");
     expect(review).toContain("inert unless `OPENSHELL_SANDBOX=1`");
