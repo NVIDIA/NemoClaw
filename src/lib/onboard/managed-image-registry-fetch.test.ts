@@ -74,6 +74,38 @@ describe("managed image registry transport", () => {
     }
   });
 
+  it("cancels an HTTPS registry fetch after the proxy tunnel is established", async () => {
+    const tunnels: string[] = [];
+    const abortController = new AbortController();
+    let destroyTunnel: (() => void) | undefined;
+
+    const proxy = createServer();
+    proxy.on("connect", (request, socket) => {
+      tunnels.push(request.url ?? "");
+      destroyTunnel = () => socket.destroy();
+      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n", () => {
+        abortController.abort();
+      });
+    });
+    const proxyPort = await listen(proxy);
+    const session = createManagedImageRegistryFetchSession({
+      environment: {
+        HTTP_PROXY: `http://127.0.0.1:${proxyPort}`,
+        NEMOCLAW_CORPORATE_CA_IMPORT: "0",
+      },
+    });
+
+    try {
+      await expect(
+        session.fetchImpl("https://registry.invalid/v2/", { signal: abortController.signal }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(tunnels).toEqual(["registry.invalid:443"]);
+    } finally {
+      destroyTunnel?.();
+      await session.close();
+    }
+  });
+
   it("honors normalized NO_PROXY without mutating the global dispatcher", async () => {
     let proxyTunnels = 0;
     const proxy = createServer();
