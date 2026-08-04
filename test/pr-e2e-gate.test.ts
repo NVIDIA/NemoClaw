@@ -99,7 +99,7 @@ function emptyPrGateCheckRunsRoute() {
 function exactPrGateCheck(overrides: Record<string, unknown> = {}) {
   return {
     id: 17,
-    name: "E2E / PR Gate Coordination",
+    name: "E2E / PR Gate",
     head_sha: HEAD_SHA,
     external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
     status: "in_progress",
@@ -470,7 +470,7 @@ describe("PR E2E controller", () => {
     ).toThrow(/mismatched workflow dispatch URLs/u);
   });
 
-  it("dispatches from a safe descendant of the triggering workflow commit", async () => {
+  it("dispatches from a safe descendant in GitHub comparison commit order", async () => {
     const requests: RecordedGitHubRequest[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
@@ -488,11 +488,12 @@ describe("PR E2E controller", () => {
             () =>
               githubResponse({
                 status: "ahead",
-                ahead_by: 1,
+                ahead_by: 2,
                 behind_by: 0,
+                total_commits: 2,
                 base_commit: { sha: WORKFLOW_SHA },
                 merge_base_commit: { sha: WORKFLOW_SHA },
-                head_commit: { sha: ADVANCED_WORKFLOW_SHA },
+                commits: [{ sha: "f".repeat(40) }, { sha: ADVANCED_WORKFLOW_SHA }],
                 files: [{ filename: "docs/quickstart.mdx" }],
               }),
           ),
@@ -584,9 +585,10 @@ describe("PR E2E controller", () => {
                 status: "ahead",
                 ahead_by: 1,
                 behind_by: 0,
+                total_commits: 1,
                 base_commit: { sha: WORKFLOW_SHA },
                 merge_base_commit: { sha: WORKFLOW_SHA },
-                head_commit: { sha: ADVANCED_WORKFLOW_SHA },
+                commits: [{ sha: ADVANCED_WORKFLOW_SHA }],
                 files,
               }),
           ),
@@ -623,7 +625,20 @@ describe("PR E2E controller", () => {
         behind_by: 1,
         base_commit: { sha: WORKFLOW_SHA },
         merge_base_commit: { sha: WORKFLOW_SHA },
-        head_commit: { sha: ADVANCED_WORKFLOW_SHA },
+        files: [{ filename: "docs/quickstart.mdx" }],
+      },
+      error: /not a validated descendant/u,
+    },
+    {
+      label: "an incomplete descendant commit list",
+      comparison: {
+        status: "ahead",
+        ahead_by: 2,
+        behind_by: 0,
+        total_commits: 2,
+        base_commit: { sha: WORKFLOW_SHA },
+        merge_base_commit: { sha: WORKFLOW_SHA },
+        commits: [{ sha: ADVANCED_WORKFLOW_SHA }],
         files: [{ filename: "docs/quickstart.mdx" }],
       },
       error: /not a validated descendant/u,
@@ -634,9 +649,10 @@ describe("PR E2E controller", () => {
         status: "ahead",
         ahead_by: 1,
         behind_by: 0,
+        total_commits: 1,
         base_commit: { sha: WORKFLOW_SHA },
         merge_base_commit: { sha: WORKFLOW_SHA },
-        head_commit: { sha: ADVANCED_WORKFLOW_SHA },
+        commits: [{ sha: ADVANCED_WORKFLOW_SHA }],
         files: Array.from({ length: 300 }, (_, index) => ({
           filename: `docs/generated-${index}.mdx`,
         })),
@@ -711,9 +727,10 @@ describe("PR E2E controller", () => {
                 status: "ahead",
                 ahead_by: 1,
                 behind_by: 0,
+                total_commits: 1,
                 base_commit: { sha: WORKFLOW_SHA },
                 merge_base_commit: { sha: WORKFLOW_SHA },
-                head_commit: { sha: ADVANCED_WORKFLOW_SHA },
+                commits: [{ sha: ADVANCED_WORKFLOW_SHA }],
                 files: [{ filename: "docs/quickstart.mdx" }],
               }),
           ),
@@ -1356,7 +1373,7 @@ describe("PR E2E controller", () => {
         (request) => request.url.endsWith("/check-runs") && request.method === "POST",
       );
       expect(checkCreation?.body).toMatchObject({
-        name: "E2E / PR Gate Coordination",
+        name: "E2E / PR Gate",
         head_sha: HEAD_SHA,
         external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
         status: "in_progress",
