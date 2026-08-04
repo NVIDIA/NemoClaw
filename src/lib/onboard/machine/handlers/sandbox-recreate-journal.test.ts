@@ -3,7 +3,7 @@
 
 import { expect, it, vi } from "vitest";
 
-import { decisionSelected } from "../../../state/onboard-checkpoint-decision";
+import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../../state/onboard-checkpoint-migrate";
 import { createSession, type Session } from "../../../state/onboard-session";
 import {
@@ -418,6 +418,36 @@ it("refuses an unjournaled same-name replacement when the bound gateway authorit
     {
       getSandboxReuseState: () => "not_ready",
       getSandboxRecreateObservation,
+    },
+    session,
+  );
+
+  await expect(
+    handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+      gatewayName: "nemoclaw",
+    }),
+  ).rejects.toThrow(/no recreate transaction proves ownership/i);
+  expect(calls.repairSandbox).not.toHaveBeenCalled();
+  expect(calls.removeSandbox).not.toHaveBeenCalled();
+  expect(calls.createSandbox).not.toHaveBeenCalled();
+  expect(session.checkpoint?.sandboxRecreate).toBeNull();
+});
+
+it("refuses an unjournaled legacy same-name repair without gateway authority (#7736)", async () => {
+  const session = createSession({ sandboxName: "saved", agent: "openclaw" });
+  session.steps.sandbox.status = "complete";
+  session.machine.state = "agent_setup";
+  session.checkpoint = {
+    ...deriveCheckpointFromSession(session),
+    sandboxIdentity: decisionSelected({ name: "saved", agent: "openclaw" }),
+    gatewayAuthority: decisionUnset(),
+  };
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => "not_ready",
     },
     session,
   );
