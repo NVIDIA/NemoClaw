@@ -143,6 +143,8 @@ The preflight derives every required execution and these dispatch groups from th
 - `parallelExplicit`: explicit-only selectors that require neither the Launchable E2E job nor runner confirmation; and
 - `conditional`: Jetson or another lane that must not queue until its authoritative runner inventory is confirmed online.
 
+An explicit-only job may declare `RELEASE_E2E_ACTIVATION_PATH` in its workflow environment. The preflight includes that job and all of its expanded executions only when the exact relative path exists at the candidate SHA. When the path is absent, the job is a dormant lane: do not dispatch it and do not treat it as missing release evidence.
+
 First feed applicable existing runs for the candidate SHA into the ledger.
 Dispatch only groups that still lack green evidence.
 When no applicable exact Brev evidence exists, load `nemoclaw-maintainer-e2e` and dispatch full mode for that SHA.
