@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   resolveGatewayTeardownAuthority: vi.fn(),
   stopHostGatewayProcesses: vi.fn(),
   stopStaleDashboardListeners: vi.fn(),
+  GatewayAuthorityError: class GatewayAuthorityError extends Error {},
 }));
 
 vi.mock("../../adapters/docker/volume", () => ({
@@ -21,6 +22,10 @@ vi.mock("../../onboard/host-gateway-process", () => ({
 }));
 vi.mock("../../onboard/gateway-teardown-authority", () => ({
   resolveGatewayTeardownAuthority: mocks.resolveGatewayTeardownAuthority,
+  GatewayAuthorityError: mocks.GatewayAuthorityError,
+  gatewayAuthorityFailureLines: (error: unknown, operation: string) => [
+    `  Refusing ${operation}: ${String((error as Error).message)}`,
+  ],
 }));
 vi.mock("../../onboard/stale-gateway-cleanup", () => ({
   stopStaleDashboardListeners: mocks.stopStaleDashboardListeners,
@@ -142,6 +147,8 @@ describe("cleanupGatewayAfterLastSandbox", () => {
   });
 
   it("fails before local cleanup when the gateway authority cannot be revalidated (#6576)", () => {
+    // A failure that is not an authority refusal still aborts outright: #6576's
+    // contract is that nothing may touch the gateway before authority is proven.
     mocks.resolveGatewayTeardownAuthority.mockImplementationOnce(() => {
       throw new Error("authority drift");
     });
@@ -149,6 +156,27 @@ describe("cleanupGatewayAfterLastSandbox", () => {
 
     expect(() => cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell)).toThrow(
       "authority drift",
+    );
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(mocks.stopStaleDashboardListeners).not.toHaveBeenCalled();
+    expect(mocks.stopHostGatewayProcesses).not.toHaveBeenCalled();
+    expect(mocks.dockerRemoveVolumesByPrefix).not.toHaveBeenCalled();
+  });
+
+  it("reports an authority migration and skips cleanup without aborting destroy (#8103)", () => {
+    // Same #6576 guarantee — no gateway effect runs — but the typed refusal is
+    // reported instead of thrown, so `destroy` can still finish removing the
+    // sandbox it has already deleted.
+    mocks.resolveGatewayTeardownAuthority.mockImplementationOnce(() => {
+      throw new mocks.GatewayAuthorityError("authority changed since onboarding");
+    });
+    const runOpenshell = vi.fn(() => ({ status: 0, stdout: "", stderr: "" }));
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(() => cleanupGatewayAfterLastSandbox("nemoclaw", runOpenshell)).not.toThrow();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining("authority changed since onboarding"),
     );
     expect(runOpenshell).not.toHaveBeenCalled();
     expect(mocks.stopStaleDashboardListeners).not.toHaveBeenCalled();

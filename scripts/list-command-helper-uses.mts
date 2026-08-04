@@ -65,7 +65,7 @@ const DEFAULT_NAMES = Object.freeze([
   "execaCommandSync",
 ]);
 const DEFAULT_ROOTS = Object.freeze(["src", "test", "scripts"]);
-const EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".cjs", ".mjs"]);
+const EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".cjs", ".mjs"]);
 const EXTERNAL_ONLY_NAMES = new Set([
   "exec",
   "execSync",

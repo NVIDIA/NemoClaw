@@ -13,8 +13,11 @@ function runRetireReleaseLabel(fakeGh: string, args = ["v1.2.3"]) {
   const bin = path.join(tmp, "bin");
   fs.mkdirSync(bin);
   const ghPath = path.join(bin, "gh");
+  const sleepPath = path.join(bin, "sleep");
   fs.writeFileSync(ghPath, fakeGh);
   fs.chmodSync(ghPath, 0o755);
+  fs.writeFileSync(sleepPath, "#!/usr/bin/env bash\nexit 0\n");
+  fs.chmodSync(sleepPath, 0o755);
   try {
     return spawnSync(
       process.execPath,
@@ -63,6 +66,38 @@ esac
         { number: 42, title: "needs more work", type: "pr" },
         { number: 84, title: "still open", type: "issue" },
       ],
+      retired: true,
+    });
+  });
+
+  it("retries stale item and label reads before completing retirement", () => {
+    const result = runRetireReleaseLabel(`#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "api repos/NVIDIA/NemoClaw/git/matching-refs/tags/v1.2.4") printf '[]' ;;
+  "label list"*"--search v1.2.4"*) printf '[{"name":"v1.2.4"}]' ;;
+  "label list"*"--search v1.2.3"*)
+    if test -f "$0.deleted"; then
+      if test -f "$0.label-stale"; then printf '[]';
+      else : > "$0.label-stale"; printf '[{"name":"v1.2.3"}]'; fi
+    else printf '[{"name":"v1.2.3"}]'; fi ;;
+  "pr list"*)
+    if test -f "$0.pr-moved"; then
+      if test -f "$0.pr-stale"; then printf '[]';
+      else : > "$0.pr-stale"; printf '[{"number":42,"title":"stale result"}]'; fi
+    else printf '[{"number":42,"title":"needs more work"}]'; fi ;;
+  "pr edit 42"*) : > "$0.pr-moved" ;;
+  "issue list"*) printf '[]' ;;
+  "label delete v1.2.3"*) : > "$0.deleted" ;;
+  *) echo "unexpected gh args: $*" >&2; exit 9 ;;
+esac
+`);
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      from: "v1.2.3",
+      to: "v1.2.4",
+      moved: [{ number: 42, title: "needs more work", type: "pr" }],
       retired: true,
     });
   });

@@ -43,7 +43,7 @@ function githubResponse(value?: unknown, status = 200): Response {
 function exactPrGateCheck(overrides: Record<string, unknown> = {}) {
   return {
     id: 17,
-    name: "E2E / PR Gate Coordination",
+    name: "E2E / PR Gate",
     head_sha: HEAD_SHA,
     external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
     status: "in_progress",
@@ -258,7 +258,7 @@ describe("PR E2E controller retry history", () => {
         (request) => request.url.endsWith("/check-runs") && request.method === "POST",
       );
       expect(creation?.body).toMatchObject({
-        name: "E2E / PR Gate Coordination",
+        name: "E2E / PR Gate",
         head_sha: HEAD_SHA,
         external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
         status: "in_progress",

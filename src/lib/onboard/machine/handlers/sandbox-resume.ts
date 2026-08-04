@@ -17,6 +17,7 @@ export interface SandboxResumeSignals {
   readonly sandboxStepComplete: boolean;
   readonly sandboxReuseState: string;
   readonly inferenceRouteConfigChanged: boolean;
+  readonly compatibleEndpointReasoningChanged: boolean;
   readonly webSearchConfigChanged: boolean;
   readonly sandboxGpuConfigChanged: boolean;
   readonly recreateSandboxRequested: boolean;
@@ -63,6 +64,23 @@ export function hasHermesCompatibleAnthropicInferenceRouteDrift({
     registryEntry.model !== model ||
     registryEntry.preferredInferenceApi !== preferredInferenceApi
   );
+}
+
+export function hasCompatibleEndpointReasoningDrift({
+  provider,
+  compatibleEndpointReasoning,
+  registryEntry,
+}: {
+  readonly provider: string | null | undefined;
+  readonly compatibleEndpointReasoning: string | null | undefined;
+  readonly registryEntry: SandboxEntry | null;
+}): boolean {
+  if (provider !== "compatible-endpoint") return false;
+  const desired =
+    compatibleEndpointReasoning === "true" || compatibleEndpointReasoning === "false"
+      ? compatibleEndpointReasoning
+      : null;
+  return (registryEntry?.compatibleEndpointReasoning ?? null) !== desired;
 }
 
 export function resolveToolDisclosureResumeSignals(
@@ -138,6 +156,7 @@ function canReuseSandbox(signals: SandboxResumeSignals): boolean {
   return (
     !signals.resumeAgentChanged &&
     !signals.inferenceRouteConfigChanged &&
+    !signals.compatibleEndpointReasoningChanged &&
     !signals.inferenceSelectionChanged &&
     !signals.webSearchConfigChanged &&
     !signals.sandboxGpuConfigChanged &&
@@ -174,6 +193,13 @@ function toolDisclosureResumeDecision(signals: SandboxResumeSignals): SandboxRes
 }
 
 function compatibilityResumeDecision(signals: SandboxResumeSignals): SandboxResumeDecision | null {
+  if (signals.compatibleEndpointReasoningChanged && signals.sandboxReuseState === "ready") {
+    return {
+      kind: "recreate",
+      note: "  [resume] Compatible endpoint reasoning capability changed; recreating sandbox.",
+      removeRegistryEntry: false,
+    };
+  }
   if (signals.inferenceSelectionChanged) {
     return {
       kind: "recreate",
