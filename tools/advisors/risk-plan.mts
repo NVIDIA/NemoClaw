@@ -3,7 +3,22 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 12 as const;
+import * as importedProtectedManagedImageContract from "../../scripts/checks/protected-managed-image-contract.ts";
+
+// The root TypeScript package is exposed as CJS under the exact
+// `node --import tsx` workflow execution mode, but as an ESM namespace under
+// Vitest. Normalize both representations before reading shared identifiers.
+const protectedManagedImageContract = (
+  "default" in importedProtectedManagedImageContract &&
+  importedProtectedManagedImageContract.default
+    ? importedProtectedManagedImageContract.default
+    : importedProtectedManagedImageContract
+) as typeof import("../../scripts/checks/protected-managed-image-contract.ts");
+
+const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
+  protectedManagedImageContract;
+
+export const RISK_PLAN_VERSION = 13 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -62,6 +77,7 @@ export type RiskFamilyId =
   | "openclaw-image"
   | "credentials-security"
   | "e2e-control-plane"
+  | "managed-image-multiarch"
   | "sandbox-boundary"
   | "focused-e2e";
 
@@ -388,6 +404,25 @@ export const RISK_RULES: readonly RiskRule[] = [
       file.startsWith("test/e2e/") ||
       file.startsWith(".github/actions/prepare-e2e/") ||
       file.startsWith(".github/actions/upload-e2e-artifacts/"),
+  },
+  {
+    id: "managed-image-multiarch",
+    summary:
+      "Protected managed-image qualification must build and directly start every shipped agent on each supported architecture from exact base and candidate digests.",
+    tier: 3,
+    requiredJobs: [PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID],
+    invariants: [
+      "OpenClaw, Hermes, and Deep Agents Code use platform-specific digest-pinned bases from one exact PR head and cohort",
+      "each built image is addressed by its isolated-registry digest and exercises the managed root-stdin and sandbox-hold startup boundary",
+      "amd64 and arm64 shards emit exact head, base, platform, cohort, image, and direct-start evidence before cleanup",
+      "the isolated registry is removed before a shard can publish passing risk evidence",
+    ],
+    // Bootstrap contract: this first trusted-controller slice recognizes only
+    // the activation marker. The follow-on candidate adds that marker and
+    // broadens the runtime paths after this job exists on trusted main, which
+    // lets the follow-on prove its own exact head without loading PR-authored
+    // workflow structure into the controller.
+    matches: (file) => file === PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH,
   },
   {
     id: "sandbox-boundary",
