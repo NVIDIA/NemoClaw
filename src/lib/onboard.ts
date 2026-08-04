@@ -27,7 +27,6 @@ const {
   createRemoteModelValidator,
   resolveCompatibleEndpointInput,
 }: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
-const setupNimFlow: typeof import("./onboard/setup-nim-flow") = require("./onboard/setup-nim-flow");
 const openrouterSelection: typeof import("./onboard/openrouter-selection") = require("./onboard/openrouter-selection");
 const setupNimOllama: typeof import("./onboard/setup-nim-ollama") = require("./onboard/setup-nim-ollama");
 const inferenceInputCapability = require("./onboard/inference-input-capability");
@@ -52,7 +51,6 @@ const sandboxCreatePlanMaterialization: typeof import("./onboard/sandbox-create-
 const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
 const onboardEntryOptions: typeof import("./onboard/entry-options") = require("./onboard/entry-options");
 const intentDraft: typeof import("./onboard/intent-draft") = require("./onboard/intent-draft");
-const onboardSessionBootstrap: typeof import("./onboard/session-bootstrap") = require("./onboard/session-bootstrap");
 const channelState: typeof import("./onboard/channel-state") = require("./onboard/channel-state");
 const {
   ensureOllamaLoopbackSystemdOverride,
@@ -452,7 +450,7 @@ const promptValidatedSandboxName = sandboxAgent.createPromptValidatedSandboxName
   cliDisplayName,
   isNonInteractive,
   checkpointSandboxName: (sandboxName, agent) =>
-    onboardSessionBootstrap.checkpointSandboxName(sandboxName, agent, onboardSession.updateSession),
+    onboardEntryOptions.checkpointSandboxName(sandboxName, agent, onboardSession.updateSession),
   exit: process.exit,
 });
 const modelRouter: typeof import("./onboard/model-router") = require("./onboard/model-router");
@@ -1100,7 +1098,7 @@ const handleVllmSelection = createSetupNimVllmHandler({
   exitProcess: (code) => process.exit(code),
 });
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-const handleLlamaCppSelection = setupNimFlow.createLlamaCppSelectionHandler({ isNonInteractive, resolveCredential: resolveProviderCredential, ensureNamedCredential: (envName, label) => credentialPrompt.ensureNamedCredential(envName, label), returningToProviderSelection: credentialPrompt.returningToProviderSelection, probeLlamaCppAttachment: setupNimFlow.probeLlamaCppAttachment, validateOpenAiLikeSelection, error: (message) => console.error(message), log: (message) => console.log(message), exitProcess: (code): never => process.exit(code) });
+const handleLlamaCppSelection = intentDraft.createLlamaCppSelectionHandler({ isNonInteractive, resolveCredential: resolveProviderCredential, ensureNamedCredential: (envName, label) => credentialPrompt.ensureNamedCredential(envName, label), returningToProviderSelection: credentialPrompt.returningToProviderSelection, probeLlamaCppAttachment: intentDraft.probeLlamaCppAttachment, validateOpenAiLikeSelection, error: (message) => console.error(message), log: (message) => console.log(message), exitProcess: (code): never => process.exit(code) });
 const ollamaModelSize: typeof import("./inference/ollama/model-size") = require("./inference/ollama/model-size");
 function isOpenshellInstalled(): boolean {
   return resolveOpenshell() !== null;
@@ -3977,7 +3975,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   try {
     onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
     let selectedMessagingChannels: string[] = [];
-    let { session, fromDockerfile } = await onboardSessionBootstrap.prepareOnboardSessionValidated(
+    let { session, fromDockerfile } = await onboardEntryOptions.prepareOnboardSessionValidated(
       {
         resume,
         fresh,
@@ -4107,7 +4105,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     const recordedSandboxName =
       session?.steps?.sandbox?.status === "complete" ? session?.sandboxName || null : null;
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    const checkpointedSandboxName = onboardSessionBootstrap.getCheckpointedSandboxName(resume, agent, session);
+    const checkpointedSandboxName = onboardEntryOptions.getCheckpointedSandboxName(resume, agent, session);
     const gatewaySandboxName = resume
       ? (recordedSandboxName ?? requestedSandboxName ?? checkpointedSandboxName)
       : null;

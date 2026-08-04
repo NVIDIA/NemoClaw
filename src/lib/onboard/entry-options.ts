@@ -7,6 +7,12 @@ import {
   wrapOnboard as wrapStationExpressOnboard,
 } from "./station-express-resume";
 
+export {
+  checkpointSandboxName,
+  getCheckpointedSandboxName,
+  prepareOnboardSessionValidated,
+} from "./session-bootstrap";
+
 export interface OnboardEntryOptionsInput {
   opts: {
     resume?: boolean;

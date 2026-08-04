@@ -4,7 +4,12 @@
 // Route related read-only discovery through the feature boundary so the
 // onboarding entrypoint keeps one dependency for draft collection.
 export { loadResourceProfiles } from "../../resources-cmd";
-export { createSetupNim, discoverInferenceIntentChoices } from "../setup-nim-flow";
+export {
+  createLlamaCppSelectionHandler,
+  createSetupNim,
+  discoverInferenceIntentChoices,
+  probeLlamaCppAttachment,
+} from "../setup-nim-flow";
 export * from "./boundary";
 export * from "./controller";
 export * from "./deps";
