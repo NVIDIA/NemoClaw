@@ -52,6 +52,48 @@ describe("gateway restart failure markers", () => {
   });
 });
 
+describe("gateway restart failure classification precedence", () => {
+  function classify(stdout: string, stderr = "") {
+    return classifyGatewayRestartFailure({ status: 1, stdout, stderr });
+  }
+
+  it.each([
+    ["SUPERVISOR_NOT_RUNNING", "supervisor not running"],
+    [MARKERS.SECRET_BOUNDARY_REFUSED, "secret-boundary refusal"],
+    [MARKERS.GATEWAY_UNSAFE_CONFIG_PATH, "unsafe config path"],
+    ["HERMES_MCP_CONFIG_DRIFT", "MCP reconciliation refusal"],
+    ["HERMES_CONFIG_HASH_MISMATCH", "config hash mismatch"],
+  ] as const)("classifies %s ahead of the health timeout it causes", (marker, layer) => {
+    expect(classify([marker, "GATEWAY_HEALTH_TIMEOUT"].join("\n"))).toMatchObject({ layer });
+  });
+
+  it("classifies a stopped supervisor ahead of the generic control-unavailable markers", () => {
+    expect(classify(["SUPERVISOR_NOT_RUNNING", "SUPERVISOR_UNAVAILABLE"].join("\n"))).toMatchObject(
+      { layer: "supervisor not running" },
+    );
+  });
+
+  it("keeps the replacement-stage layer when a generic control marker co-occurs", () => {
+    const output = [
+      "SUPERVISOR_UNAVAILABLE",
+      "NEMOCLAW_CONTROL_STAGE=await-replacement",
+      "SUPERVISOR_BUSY",
+    ].join("\n");
+    expect(classify(output)).toMatchObject({ layer: "supervisor unavailable" });
+  });
+
+  it("classifies MCP drift ahead of the config hash mismatch reported with it", () => {
+    const output = ["HERMES_MCP_CONFIG_DRIFT", "HERMES_CONFIG_HASH_MISMATCH"].join("\n");
+    expect(classify(output)).toMatchObject({ layer: "MCP reconciliation refusal" });
+  });
+
+  it("applies the same precedence when markers split across stdout and stderr", () => {
+    expect(classify("GATEWAY_HEALTH_TIMEOUT", "SUPERVISOR_NOT_RUNNING")).toMatchObject({
+      layer: "supervisor not running",
+    });
+  });
+});
+
 describe("restartSandboxGateway — host-mediated gateway restart", () => {
   function silenceConsole() {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -409,6 +451,118 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
       });
       expect(console.log).not.toHaveBeenCalledWith(
         expect.stringContaining("Gateway restarted; health passed"),
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it("reports every failed auxiliary forward in declaration order", () => {
+    const restore = silenceConsole();
+    try {
+      const deps = baseDeps({
+        ensureHermesDashboardPortForwardIfEnabled: vi.fn(() => false),
+        recoverMessagingHostForward: vi.fn(() => false),
+        recoverDeclaredAgentForwardPorts: vi.fn(() => false),
+      });
+      const result = restartSandboxGateway("alpha", { deps });
+
+      expect(result).toMatchObject({ ok: false, failureLayer: "forward recovery failure" });
+      expect(result.ok).toBe(false);
+      const failure = result as Extract<typeof result, { ok: false }>;
+      expect(failure.detail).toBe(
+        "gateway health passed but the Hermes dashboard host forward, " +
+          "the messaging webhook host forward, one or more agent-declared host forwards " +
+          "could not be re-established",
+      );
+      const errorOutput = vi.mocked(console.error).mock.calls.join("\n");
+      expect(errorOutput).toContain(
+        "the Hermes dashboard host forward, the messaging webhook host forward, " +
+          "one or more agent-declared host forwards",
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it("omits recovered and not-enabled auxiliary forwards from the failure detail", () => {
+    const restore = silenceConsole();
+    try {
+      const deps = baseDeps({
+        ensureHermesDashboardPortForwardIfEnabled: vi.fn(() => true),
+        recoverMessagingHostForward: vi.fn(() => false),
+        recoverDeclaredAgentForwardPorts: vi.fn(() => null),
+      });
+      const result = restartSandboxGateway("alpha", { deps });
+
+      expect(result).toMatchObject({ ok: false, failureLayer: "forward recovery failure" });
+      expect(result.ok).toBe(false);
+      const failure = result as Extract<typeof result, { ok: false }>;
+      expect(failure.detail).toBe(
+        "gateway health passed but the messaging webhook host forward could not be re-established",
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it("reports the agent-declared host forwards when only their recovery fails", () => {
+    const restore = silenceConsole();
+    try {
+      const deps = baseDeps({
+        recoverDeclaredAgentForwardPorts: vi.fn(() => false),
+      });
+      const result = restartSandboxGateway("alpha", { deps });
+
+      expect(result).toMatchObject({
+        ok: false,
+        failureLayer: "forward recovery failure",
+        detail:
+          "gateway health passed but one or more agent-declared host forwards could not be re-established",
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  it("returns a recovered result when no auxiliary forward is enabled", () => {
+    const restore = silenceConsole();
+    try {
+      const deps = baseDeps();
+      const result = restartSandboxGateway("alpha", { deps });
+
+      expect(result).toEqual({
+        ok: true,
+        restarted: true,
+        healthPassed: true,
+        forwardRecovered: true,
+      });
+      expect(console.error).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it("reports the primary forward failure ahead of failed auxiliary forwards", () => {
+    const restore = silenceConsole();
+    try {
+      const deps = baseDeps({
+        ensureSandboxPortForward: vi.fn(() => false),
+        ensureHermesDashboardPortForwardIfEnabled: vi.fn(() => false),
+        recoverMessagingHostForward: vi.fn(() => false),
+        recoverDeclaredAgentForwardPorts: vi.fn(() => false),
+      });
+      const result = restartSandboxGateway("alpha", { deps });
+
+      expect(result).toMatchObject({
+        ok: false,
+        failureLayer: "forward recovery failure",
+        detail:
+          "gateway health passed but the primary dashboard/API host forward could not be re-established",
+      });
+      expect(result.ok).toBe(false);
+      expect((result as Extract<typeof result, { ok: false }>).detail).not.toContain(
+        "messaging webhook",
       );
     } finally {
       restore();

@@ -482,7 +482,14 @@ async function destroySandboxUnlocked(
     }
     console.error(`  Failed to destroy sandbox '${sandboxName}'.`);
     if (destructiveResult.gatewayUnreachable) {
-      if (destructiveResult.mcpOwnershipRequiresGateway) {
+      if (destructiveResult.shieldsRelockRequiresGateway) {
+        console.error(
+          `  The OpenShell gateway is unreachable and shields could not be re-locked before delete. Local state was preserved so the auto-restore timer can still lock the config when the gateway returns.`,
+        );
+        console.error(
+          `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot safely discard a record whose config lock is unconfirmed.`,
+        );
+      } else if (destructiveResult.mcpOwnershipRequiresGateway) {
         console.error(
           `  The OpenShell gateway is unreachable. Local state was preserved because it contains MCP ownership required for exact provider cleanup.`,
         );
