@@ -17,6 +17,7 @@ const LARGE_OLLAMA_FIT_MEMORY_MB = Math.max(
 );
 
 import {
+  buildOllamaProbeOptions,
   CONTAINER_REACHABILITY_IMAGE,
   DEFAULT_OLLAMA_MODEL,
   getBootstrapOllamaModelOptions,
@@ -40,6 +41,8 @@ import {
   probeOllamaAuthProxyHealth,
   QWEN3_6_OLLAMA_MODEL,
   resetOllamaContainerPortCache,
+  resetOllamaHostCache,
+  setResolvedOllamaHost,
   validateLocalProvider,
   validateOllamaModel,
 } from "./local";
@@ -82,11 +85,26 @@ describe("local inference helpers", () => {
   });
 
   afterEach(() => {
+    resetOllamaHostCache();
     if (originalSandboxHostUrl === undefined) {
       delete process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV];
     } else {
       process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV] = originalSandboxHostUrl;
     }
+  });
+
+  it("uses Docker-context validation only for Windows-host Ollama (#8127)", () => {
+    expect(buildOllamaProbeOptions(false)).toMatchObject({
+      allowHostDockerInternal: false,
+      probeFromDocker: null,
+    });
+
+    setResolvedOllamaHost("host.docker.internal");
+
+    expect(buildOllamaProbeOptions(false)).toMatchObject({
+      allowHostDockerInternal: true,
+      probeFromDocker: { expectedPort: 11434 },
+    });
   });
 
   it("returns the expected base URL for vllm-local", () => {

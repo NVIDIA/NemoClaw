@@ -436,6 +436,10 @@ describe("shouldSkipResponsesProbe", () => {
     expect(shouldSkipResponsesProbe("openrouter-api")).toBe(true);
   });
 
+  it("skips the Responses probe for completions-only llama.cpp attachment (#8161)", () => {
+    expect(shouldSkipResponsesProbe("llama-cpp-local")).toBe(true);
+  });
+
   it("does not skip the Responses probe for other providers", () => {
     expect(shouldSkipResponsesProbe("openai-api")).toBe(false);
     expect(shouldSkipResponsesProbe("anthropic-prod")).toBe(false);

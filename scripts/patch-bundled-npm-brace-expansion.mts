@@ -25,12 +25,18 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { fileURLToPath } from "node:url";
 
 export const AFFECTED_BRACE_EXPANSION_VERSION = "5.0.7";
-export const FIXED_BRACE_EXPANSION_VERSION = "5.0.8";
+export const FIXED_BRACE_EXPANSION_VERSION = "5.0.9";
 export const FIXED_BRACE_EXPANSION_INTEGRITY =
-  "sha512-JZyDyq3D4AUifKTPOB7DELf6XsB3WdPuNxCtob1vFXPsSXhdAiHBWJ/tJ8HAc9aH84BK+5JFZLNkJKx3G9kzQg==";
+  "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==";
 export const FIXED_BRACE_EXPANSION_TARBALL =
-  "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.8.tgz";
+  "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz";
 export const REVIEWED_NPM_VERSION = "11.18.0";
+
+const REVIEWED_BRACE_EXPANSION_VERSIONS = new Set([
+  AFFECTED_BRACE_EXPANSION_VERSION,
+  "5.0.8",
+  FIXED_BRACE_EXPANSION_VERSION,
+]);
 
 type JsonRecord = Record<string, unknown>;
 
@@ -156,7 +162,8 @@ export function inspectBundledNpmBraceExpansion(npmRoot: string): BundledNpmBrac
   const version = braceManifest.version;
   if (
     braceManifest.name !== "brace-expansion" ||
-    (version !== AFFECTED_BRACE_EXPANSION_VERSION && version !== FIXED_BRACE_EXPANSION_VERSION) ||
+    typeof version !== "string" ||
+    !REVIEWED_BRACE_EXPANSION_VERSIONS.has(version) ||
     dependencies["balanced-match"] !== "^4.0.2"
   ) {
     throw new Error(

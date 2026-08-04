@@ -209,6 +209,7 @@ describe("RuntimeProviderBundle registry contract", () => {
         printReadinessFailureIfEnabled: vi.fn(),
         verifyGpuOrExit: vi.fn(async (verify) => verify("alpha")),
       },
+      recoverUnfinished: vi.fn(async () => ({ receipts: [], failures: [] })),
       prepareNetwork: vi.fn(async () => undefined),
       runCreate: vi.fn(),
     }));

@@ -748,6 +748,7 @@ describe("state-dir-guard", () => {
   it.each([
     ["OpenClaw", "NEMOCLAW_TEST_OPENCLAW_FAIL_CLOSED"],
     ["Hermes", "NEMOCLAW_TEST_HERMES_FAIL_CLOSED"],
+    ["Deep Agents", "NEMOCLAW_TEST_DEEP_AGENTS_FAIL_CLOSED"],
   ])("leaves the %s config root fail-closed when a state-tree budget aborts lock", (_agent, env) => {
     const { configDir } = fixture();
     const pluginsDir = path.join(configDir, "plugins");
@@ -776,6 +777,25 @@ describe("state-dir-guard", () => {
     } finally {
       fs.closeSync(staleFd);
     }
+  });
+
+  it.each([
+    ["OpenClaw", "NEMOCLAW_TEST_OPENCLAW_FAIL_CLOSED"],
+    ["Hermes", "NEMOCLAW_TEST_HERMES_FAIL_CLOSED"],
+    ["Deep Agents", "NEMOCLAW_TEST_DEEP_AGENTS_FAIL_CLOSED"],
+  ])("restores traversal of the %s config root only after a successful lock", (_agent, env) => {
+    const { configDir } = fixture();
+    const pluginsDir = path.join(configDir, "plugins");
+    fs.mkdirSync(pluginsDir);
+    fs.writeFileSync(path.join(pluginsDir, "plugin.js"), "module.exports = true;\n");
+
+    const result = runGuard("lock", configDir, { [env]: "1" });
+
+    expect(result.status).toBe(0);
+    expect(result.lines).toContainEqual(
+      expect.objectContaining({ type: "result", action: "lock", status: "ok" }),
+    );
+    expect(mode(configDir)).toBe(0o755);
   });
 
   it("serializes an orphaned recursive unlock ahead of the restoring lock", async () => {

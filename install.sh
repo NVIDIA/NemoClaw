@@ -154,7 +154,7 @@ bootstrap_usage() {
   printf "                                 Exact JSON array of pre-fingerprint managed sandbox names\n"
   printf "    NEMOCLAW_PROVIDER            build | openrouter | openai | anthropic | anthropicCompatible\n"
   printf "                                 | gemini | ollama | custom | nim-local | vllm | routed\n"
-  printf "                                 | hermes-provider\n"
+  printf "                                 | hermes-provider | llama-cpp\n"
   printf "                                 (aliases: cloud -> build, nim -> nim-local)\n"
   printf "    NEMOCLAW_POLICY_MODE         suggested | custom | skip\n"
   printf "\n"
