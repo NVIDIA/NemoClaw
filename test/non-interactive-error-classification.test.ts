@@ -29,97 +29,51 @@ function runPatchedNonInteractive(driver: string) {
 const runtimePreamble = `
 import asyncio
 import logging
-import os
-import sqlite3
-import tempfile
+import ssl
 
+import httpx
+from deepagents_code import model_config
 from deepagents_code.client import non_interactive as target
+from langgraph_sdk import errors as graph_errors
 
 logging.basicConfig(level=logging.WARNING, format="%(message)s")
+`;
 
+const PLANTED_SECRETS = /runtime-secret|checkpoint-secret|private-model-message/;
 
-class RemoteException(Exception):
-    pass
+function activeExceptionDriver(exceptionExpression: string, threadId: string): string {
+  return `
+${runtimePreamble}
+target.generate_thread_id = lambda: ${JSON.stringify(threadId)}
 
 
 async def fail(*args, **kwargs):
     del args, kwargs
-    raise RemoteException("remote failure token=runtime-secret")
+    raise ${exceptionExpression}
 
 
 target._run_non_interactive_impl = fail
+exit_code = asyncio.run(target.run_non_interactive("task"))
+assert exit_code == 1
 `;
+}
 
-/** Every secret-shaped token the fixtures plant in exception or checkpoint text. */
-const PLANTED_SECRETS =
-  /runtime-secret|checkpoint-secret|private-request|private-model-message|private-tool-argument|private-tool-result/;
-
-type PersistedErrorRow = {
-  serializationType: string;
-  valueHex: string;
-};
-
-// MessagePack string headers, narrowest first: fixstr, str8, str16, str32. Kept
-// as a lookup rather than a branch chain so this fixture helper adds no `if`
-// statements to a test file (tools/growth-guardrails/test-conditionals.mts).
-const MESSAGE_PACK_STRING_HEADERS: readonly {
-  readonly maxLength: number;
-  readonly encode: (length: number) => Buffer;
-}[] = [
-  { maxLength: 31, encode: (length) => Buffer.from([0xa0 | length]) },
-  { maxLength: 0xff, encode: (length) => Buffer.from([0xd9, length]) },
-  {
-    maxLength: 0xffff,
-    encode: (length) => {
-      const header = Buffer.alloc(3);
-      header[0] = 0xda;
-      header.writeUInt16BE(length, 1);
-      return header;
-    },
-  },
-  {
-    maxLength: 0xffffffff,
-    encode: (length) => {
-      const header = Buffer.alloc(5);
-      header[0] = 0xdb;
-      header.writeUInt32BE(length, 1);
-      return header;
-    },
-  },
-];
-
-// `JsonPlusSerializer` 4.1.1 applies `repr` to `BaseException` and encodes the
-// result as one MessagePack string.
 function messagePackStringHex(value: string): string {
   const payload = Buffer.from(value, "utf8");
-  const header = MESSAGE_PACK_STRING_HEADERS.find(
-    (candidate) => payload.length <= candidate.maxLength,
-  );
-  const prefix = (header ?? MESSAGE_PACK_STRING_HEADERS[3]).encode(payload.length);
-  return Buffer.concat([prefix, payload]).toString("hex");
+  return Buffer.concat([Buffer.from([0xd9, payload.length]), payload]).toString("hex");
 }
 
-function rawPersistedRow(serializationType: string, valueHex: string): PersistedErrorRow {
-  return { serializationType, valueHex };
-}
-
-function persistedErrorDriver(
-  rows: Record<string, string | PersistedErrorRow>,
+function persistedForgeryDriver(
+  activeException: string,
+  persistedRepr: string,
   threadId: string,
 ): string {
-  const inserts = Object.entries(rows)
-    .map(([thread, value]) => {
-      const row =
-        typeof value === "string" ? rawPersistedRow("msgpack", messagePackStringHex(value)) : value;
-      return `connection.execute("INSERT INTO writes (thread_id, channel, type, value) VALUES (?, '__error__', ?, ?)", (${JSON.stringify(
-        thread,
-      )}, ${JSON.stringify(row.serializationType)}, sqlite3.Binary(bytes.fromhex(${JSON.stringify(
-        row.valueHex,
-      )}))))`;
-    })
-    .join("\n");
   return `
 ${runtimePreamble}
+import os
+import sqlite3
+import tempfile
+
 handle, db_path = tempfile.mkstemp()
 os.close(handle)
 target._NEMOCLAW_MANAGED_STATE_DB = db_path
@@ -127,10 +81,24 @@ target.generate_thread_id = lambda: ${JSON.stringify(threadId)}
 
 connection = sqlite3.connect(db_path)
 connection.execute("CREATE TABLE writes (thread_id TEXT, channel TEXT, type TEXT, value BLOB)")
-${inserts}
+connection.execute(
+    "INSERT INTO writes (thread_id, channel, type, value) VALUES (?, '__error__', ?, ?)",
+    (
+        ${JSON.stringify(threadId)},
+        "msgpack",
+        sqlite3.Binary(bytes.fromhex(${JSON.stringify(messagePackStringHex(persistedRepr))})),
+    ),
+)
 connection.commit()
 connection.close()
 
+
+async def fail(*args, **kwargs):
+    del args, kwargs
+    raise ${activeException}
+
+
+target._run_non_interactive_impl = fail
 exit_code = asyncio.run(target.run_non_interactive("task"))
 assert exit_code == 1
 os.unlink(db_path)
@@ -138,464 +106,205 @@ os.unlink(db_path)
 }
 
 describe("managed non-interactive error reporting", () => {
-  it("classifies root exception classes from pinned checkpoint serialization (#8121)", () => {
+  it("classifies trusted LangGraph client exception types (#8121)", () => {
     const cases = [
       [
-        "d930415049436f6e6e656374696f6e4572726f722827636f6e6e65637420746f20696e666572656e63652e6c6f63616c2729",
-        "Unavailable",
-        "route_unreachable",
+        "graph_errors.RateLimitError('token=runtime-secret')",
+        "RateLimited",
+        "rate_limited",
         "true",
       ],
       [
-        "d9265265736f75726365457868617573746564282763617061636974792065786365656465642729",
-        "ResourceExhausted",
-        "upstream_provider_capacity",
-        "true",
-      ],
-      [
-        "bf41757468656e7469636174696f6e4572726f72282772656a65637465642729",
+        "graph_errors.AuthenticationError('token=runtime-secret')",
         "Unauthorized",
         "authorization_rejected",
         "false",
       ],
       [
-        "d925496e7465726e616c5365727665724572726f72282772656d6f7465206661696c7572652729",
+        "graph_errors.PermissionDeniedError('token=runtime-secret')",
+        "Unauthorized",
+        "authorization_rejected",
+        "false",
+      ],
+      [
+        "graph_errors.NotFoundError('token=runtime-secret')",
+        "NotFound",
+        "model_or_route_not_found",
+        "false",
+      ],
+      [
+        "graph_errors.APITimeoutError('token=runtime-secret')",
+        "Timeout",
+        "request_timeout",
+        "true",
+      ],
+      [
+        "graph_errors.APIConnectionError('token=runtime-secret')",
+        "Unavailable",
+        "route_unreachable",
+        "true",
+      ],
+      [
+        "graph_errors.InternalServerError('token=runtime-secret')",
         "InternalServerError",
         "remote_server_error",
         "true",
       ],
       [
-        messagePackStringHex(`APIError('${"x".repeat(300)}')`),
+        "graph_errors.APIError('token=runtime-secret')",
         "APIError",
         "agent_remote_failure",
         "false",
       ],
     ] as const;
 
-    for (const [valueHex, errorClass, category, retryable] of cases) {
+    for (const [exceptionExpression, errorClass, category, retryable] of cases) {
       const result = runPatchedNonInteractive(
-        persistedErrorDriver(
-          { "thread-current": rawPersistedRow("msgpack", valueHex) },
-          "thread-current",
-        ),
+        activeExceptionDriver(exceptionExpression, "thread-langgraph"),
       );
 
       expect(result.status).toBe(0);
       expect(result.stderr).toContain(
         `error_class=${errorClass} category=${category} retryable=${retryable} ` +
-          "correlation_id=thread-current",
+          "correlation_id=thread-langgraph",
       );
+      expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
     }
   });
 
-  it("does not infer provider capacity from a nested checkpoint name (#7415)", () => {
-    const result = runPatchedNonInteractive(
-      persistedErrorDriver(
-        {
-          "thread-current":
-            "APIError('ResourceExhausted: tool_result=private-tool-result " +
-            "token=checkpoint-secret')",
-        },
-        "thread-current",
-      ),
-    );
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain(
-      "error_class=APIError category=agent_remote_failure retryable=false " +
-        "correlation_id=thread-current",
-    );
-    expect(`${result.stdout}\n${result.stderr}`).not.toContain("upstream_provider_capacity");
-    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
-  });
-
-  it("does not use a provider error from another thread (#7415)", () => {
-    const result = runPatchedNonInteractive(
-      persistedErrorDriver(
-        {
-          "thread-other":
-            "APIError('ResourceExhausted: Worker local total request limit reached (32/32)')",
-          "thread-current": "APIError('unrecognized backend condition')",
-        },
-        "thread-current",
-      ),
-    );
-
-    expect(result.status).toBe(0);
-    // The other thread's capacity row must never be borrowed. The current
-    // thread's root APIError class determines the result.
-    expect(result.stderr).toContain(
-      "error_class=APIError category=agent_remote_failure retryable=false " +
-        "correlation_id=thread-current",
-    );
-    expect(`${result.stdout}\n${result.stderr}`).not.toContain("upstream_provider_capacity");
-    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
-  });
-
-  it("classifies root transport and remote exception classes (#8121)", () => {
+  it("classifies trusted transport and configuration exception types (#8121)", () => {
     const cases = [
+      ["httpx.ConnectTimeout('token=runtime-secret')", "Timeout", "request_timeout", "true"],
+      ["httpx.ConnectError('token=runtime-secret')", "Unavailable", "route_unreachable", "true"],
+      ["httpx.ProxyError('token=runtime-secret')", "Unavailable", "route_unreachable", "true"],
+      ["TimeoutError('token=runtime-secret')", "Timeout", "request_timeout", "true"],
       [
-        "APIConnectionError('connect to inference.local')",
+        "ConnectionRefusedError('token=runtime-secret')",
         "Unavailable",
         "route_unreachable",
         "true",
       ],
-      ["APITimeoutError('request exceeded budget')", "Timeout", "request_timeout", "true"],
+      ["ssl.SSLError('token=runtime-secret')", "Unavailable", "route_unreachable", "true"],
       [
-        "AuthenticationError('rejected at the managed route')",
-        "Unauthorized",
-        "authorization_rejected",
+        "model_config.ModelConfigError('token=runtime-secret')",
+        "ModelConfigError",
+        "model_configuration",
         "false",
-      ],
-      [
-        "InternalServerError('an internal error occurred')",
-        "InternalServerError",
-        "remote_server_error",
-        "true",
       ],
     ] as const;
 
-    for (const [persisted, errorClass, category, retryable] of cases) {
+    for (const [exceptionExpression, errorClass, category, retryable] of cases) {
       const result = runPatchedNonInteractive(
-        persistedErrorDriver({ "thread-current": persisted }, "thread-current"),
+        activeExceptionDriver(exceptionExpression, "thread-local"),
       );
 
       expect(result.status).toBe(0);
       expect(result.stderr).toContain(
         `error_class=${errorClass} category=${category} retryable=${retryable} ` +
-          "correlation_id=thread-current",
+          "correlation_id=thread-local",
       );
-      expect(`${result.stdout}\n${result.stderr}`).not.toContain("upstream_provider_capacity");
-      // The classification is a fixed vocabulary: no persisted text is echoed.
-      expect(`${result.stdout}\n${result.stderr}`).not.toContain(persisted);
+      expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
     }
   });
 
-  it("keeps an unrecognized persisted cause out of the provider-capacity class (#7415)", () => {
+  it("does not classify a forged checkpoint exception representation (#8121)", () => {
     const result = runPatchedNonInteractive(
-      persistedErrorDriver({ "thread-policy": "APIError('policy returned 429')" }, "thread-policy"),
-    );
-
-    expect(result.status).toBe(0);
-    expect(`${result.stdout}\n${result.stderr}`).not.toContain("upstream_provider_capacity");
-    expect(result.stderr).toContain("correlation_id=thread-policy");
-  });
-
-  it("does not classify a supported name inside scalar payload content (#8121)", () => {
-    // Only the root APIError class can classify. Each inner name belongs to
-    // payload text, including forms that start with `Name:` or `Name(`.
-    const supportedNames = [
-      "ResourceExhausted",
-      "RateLimitError",
-      "TooManyRequests",
-      "AuthenticationError",
-      "PermissionDeniedError",
-      "PermissionDenied",
-      "Unauthenticated",
-      "NotFoundError",
-      "ModelNotFoundError",
-      "model_not_found",
-      "APITimeoutError",
-      "DeadlineExceeded",
-      "ReadTimeout",
-      "ConnectTimeout",
-      "TimeoutError",
-      "APIConnectionError",
-      "ClientConnectorError",
-      "ProxyError",
-      "SSLCertVerificationError",
-      "SSLError",
-      "ConnectionRefusedError",
-      "ConnectionResetError",
-      "InternalServerError",
-      "ServiceUnavailable",
-      "BadGateway",
-    ];
-    const quoted = supportedNames.map((name) => `APIError('${name}: tool output')`);
-    quoted.push(
-      "APIError('ResourceExhausted(tool output)')",
-      "APIError({'payload': 'ResourceExhausted: tool output'})",
-      "APIError({'payloads': ['ResourceExhausted(tool output)']})",
-    );
-
-    for (const persisted of quoted) {
-      const result = runPatchedNonInteractive(
-        persistedErrorDriver({ "thread-quoted": persisted }, "thread-quoted"),
-      );
-
-      expect(result.status).toBe(0);
-      expect(result.stderr).toContain(
-        "error_class=APIError category=agent_remote_failure retryable=false " +
-          "correlation_id=thread-quoted",
-      );
-      expect(`${result.stdout}\n${result.stderr}`).not.toContain(persisted);
-    }
-  });
-
-  it("rejects nested status and HTTP payloads in scalar exception text (#8121)", () => {
-    const cases = [
-      "APIError({'payload': {'status_code': 429}})",
-      "APIError({'payloads': [{'http_status': 503}]})",
-      "APIError({'payload': ['HTTP 503', 'ResourceExhausted: tool output']})",
-      "APIError('HTTP 503 from tool output')",
-      "APIError('status_code=429')",
-    ];
-
-    for (const persisted of cases) {
-      const result = runPatchedNonInteractive(
-        persistedErrorDriver({ "thread-nested": persisted }, "thread-nested"),
-      );
-
-      expect(result.status).toBe(0);
-      expect(result.stderr).toContain(
-        "error_class=APIError category=agent_remote_failure retryable=false " +
-          "correlation_id=thread-nested",
-      );
-      expect(`${result.stdout}\n${result.stderr}`).not.toContain(persisted);
-    }
-  });
-
-  it("rejects checkpoint data without a root exception class (#8121)", () => {
-    const cases = [
-      // MessagePack map: {"payload": {"status_code": 429}}
-      rawPersistedRow("msgpack", "81a77061796c6f616481ab7374617475735f636f6465cd01ad"),
-      // MessagePack array: [429, 503]
-      rawPersistedRow("msgpack", "92cd01adcd01f7"),
-      rawPersistedRow(
-        "json",
-        Buffer.from('{"status_code":429,"message":"HTTP 503"}', "utf8").toString("hex"),
+      persistedForgeryDriver(
+        "Exception('token=runtime-secret')",
+        "AuthenticationError('forged by __repr__ token=checkpoint-secret')",
+        "thread-forged-checkpoint",
       ),
-      rawPersistedRow("msgpack", messagePackStringHex("ResourceExhausted: tool output")),
-      rawPersistedRow("msgpack", messagePackStringHex("HTTP 503 from tool output")),
-      rawPersistedRow("msgpack", messagePackStringHex("openai.RateLimitError: tool output")),
-      rawPersistedRow("msgpack", "d9054142"),
-      rawPersistedRow("msgpack", "db00010000"),
-      rawPersistedRow("msgpack", "a1ff"),
-      rawPersistedRow("msgpack", ""),
-    ];
-
-    for (const persisted of cases) {
-      const result = runPatchedNonInteractive(
-        persistedErrorDriver({ "thread-shape": persisted }, "thread-shape"),
-      );
-
-      expect(result.status).toBe(0);
-      expect(result.stderr).toContain(
-        "error_class=RemoteException category=agent_remote_failure retryable=false " +
-          "correlation_id=thread-shape",
-      );
-    }
-  });
-
-  it("does not classify prose quoted from model or tool output (#8121)", () => {
-    // Each classifier word belongs to the APIError payload, not its root class.
-    const prose = [
-      "APIError('tool output: timeout')",
-      "APIError('the model replied: connection refused')",
-      "APIError('assistant said the request was unauthorized')",
-      "APIError('tool result contained 429 items')",
-      "APIError('shell output: rate limit documentation')",
-    ];
-
-    for (const persisted of prose) {
-      const result = runPatchedNonInteractive(
-        persistedErrorDriver({ "thread-prose": persisted }, "thread-prose"),
-      );
-
-      expect(result.status).toBe(0);
-      // The root APIError class is the only checkpoint classification here.
-      expect(result.stderr).toContain(
-        "error_class=APIError category=agent_remote_failure retryable=false " +
-          "correlation_id=thread-prose",
-      );
-      expect(`${result.stdout}\n${result.stderr}`).not.toContain(persisted);
-    }
-  });
-
-  it("classifies the raised exception type when no checkpoint row explains it (#8121)", () => {
-    const result = runPatchedNonInteractive(`
-${runtimePreamble}
-handle, db_path = tempfile.mkstemp()
-os.close(handle)
-target._NEMOCLAW_MANAGED_STATE_DB = db_path
-target.generate_thread_id = lambda: "thread-no-diagnostics"
-
-exit_code = asyncio.run(target.run_non_interactive("task"))
-assert exit_code == 1
-os.unlink(db_path)
-`);
+    );
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain(
-      "error_class=RemoteException category=agent_remote_failure retryable=false " +
-        "correlation_id=thread-no-diagnostics",
+      "error_class=unknown category=unknown retryable=false " +
+        "correlation_id=thread-forged-checkpoint",
     );
-    expect(result.stdout).toContain(
-      "Model request failed: RemoteException (category=agent_remote_failure " +
-        "retryable=false correlation_id=thread-no-diagnostics)",
-    );
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("authorization_rejected");
     expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
   });
 
-  it("still classifies a checkpoint row written after the exception is raised (#8121)", () => {
-    // The documented race: the LangGraph server writes `__error__` from its own
-    // process, so the row can land after the client-side exception. The row is
-    // inserted from inside the failing call, which is the earliest point that
-    // reproduces "written after the exception, before classification", and the
-    // persisted classification must win over the exception-type fallback.
+  it("uses a trusted active exception when checkpoint text names another class (#8121)", () => {
+    const result = runPatchedNonInteractive(
+      persistedForgeryDriver(
+        "graph_errors.APIError('token=runtime-secret')",
+        "AuthenticationError('forged by __repr__ token=checkpoint-secret')",
+        "thread-active-wins",
+      ),
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(
+      "error_class=APIError category=agent_remote_failure retryable=false " +
+        "correlation_id=thread-active-wins",
+    );
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("authorization_rejected");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
+  });
+
+  it("rejects a forged active class name and module (#8121)", () => {
     const result = runPatchedNonInteractive(`
 ${runtimePreamble}
-handle, db_path = tempfile.mkstemp()
-os.close(handle)
-target._NEMOCLAW_MANAGED_STATE_DB = db_path
-target.generate_thread_id = lambda: "thread-late-row"
-
-connection = sqlite3.connect(db_path)
-connection.execute("CREATE TABLE writes (thread_id TEXT, channel TEXT, type TEXT, value BLOB)")
-connection.commit()
-connection.close()
+target.generate_thread_id = lambda: "thread-forged-active"
 
 
-async def fail_then_persist(*args, **kwargs):
+class AuthenticationError(Exception):
+    __module__ = "langgraph_sdk.errors"
+
+
+async def fail(*args, **kwargs):
     del args, kwargs
-    late = sqlite3.connect(db_path)
-    late.execute(
-        "INSERT INTO writes (thread_id, channel, type, value) "
-        "VALUES (?, '__error__', ?, ?)",
-        (
-            "thread-late-row",
-            "msgpack",
-            sqlite3.Binary(bytes.fromhex(
-                "d930415049436f6e6e656374696f6e4572726f722827636f6e6e65637420746f"
-                "20696e666572656e63652e6c6f63616c2729"
-            )),
-        ),
-    )
-    late.commit()
-    late.close()
-    raise RemoteException("remote failure token=runtime-secret")
+    raise AuthenticationError("token=runtime-secret")
 
 
-target._run_non_interactive_impl = fail_then_persist
-
+target._run_non_interactive_impl = fail
 exit_code = asyncio.run(target.run_non_interactive("task"))
 assert exit_code == 1
-os.unlink(db_path)
 `);
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain(
-      "error_class=Unavailable category=route_unreachable retryable=true " +
-        "correlation_id=thread-late-row",
+      "error_class=unknown category=unknown retryable=false " +
+        "correlation_id=thread-forged-active",
     );
-    // The active exception must not pre-empt a typed row that did arrive.
-    expect(`${result.stdout}\n${result.stderr}`).not.toContain("agent_remote_failure");
+    expect(result.stdout).toContain("Unexpected error (correlation_id=thread-forged-active)");
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("authorization_rejected");
     expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
   });
 
-  it("does not scan past the newest checkpoint error row (#8121)", () => {
-    // The newest row is a MessagePack map with no error-type path. An older
-    // scalar must not supply a diagnosis for it.
+  it("rejects an application subclass of a trusted exception type (#8121)", () => {
     const result = runPatchedNonInteractive(`
 ${runtimePreamble}
-handle, db_path = tempfile.mkstemp()
-os.close(handle)
-target._NEMOCLAW_MANAGED_STATE_DB = db_path
-target.generate_thread_id = lambda: "thread-newest"
-
-connection = sqlite3.connect(db_path)
-connection.execute("CREATE TABLE writes (thread_id TEXT, channel TEXT, type TEXT, value BLOB)")
-connection.execute(
-    "INSERT INTO writes (thread_id, channel, type, value) "
-    "VALUES (?, '__error__', ?, ?)",
-    (
-        "thread-newest",
-        "msgpack",
-        sqlite3.Binary(bytes.fromhex(
-            "d930415049436f6e6e656374696f6e4572726f722827636f6e6e65637420746f"
-            "20696e666572656e63652e6c6f63616c2729"
-        )),
-    ),
-)
-connection.execute(
-    "INSERT INTO writes (thread_id, channel, type, value) "
-    "VALUES (?, '__error__', ?, ?)",
-    (
-        "thread-newest",
-        "msgpack",
-        sqlite3.Binary(bytes.fromhex(
-            "81a77061796c6f616481ab7374617475735f636f6465cd01ad"
-        )),
-    ),
-)
-connection.commit()
-connection.close()
-
-exit_code = asyncio.run(target.run_non_interactive("task"))
-assert exit_code == 1
-os.unlink(db_path)
-`);
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain(
-      "error_class=RemoteException category=agent_remote_failure retryable=false " +
-        "correlation_id=thread-newest",
-    );
-    expect(`${result.stdout}\n${result.stderr}`).not.toContain("route_unreachable");
-  });
-
-  it("stops walking the exception chain at the documented depth limit (#8121)", () => {
-    // A classifiable cause one link beyond the limit must not be reached, and
-    // the bounded walk must terminate rather than hang.
-    const result = runPatchedNonInteractive(`
-${runtimePreamble}
-handle, db_path = tempfile.mkstemp()
-os.close(handle)
-target._NEMOCLAW_MANAGED_STATE_DB = db_path
-target.generate_thread_id = lambda: "thread-chain-limit"
+target.generate_thread_id = lambda: "thread-forged-subclass"
 
 
-class OpaqueWrapper(Exception):
+class ForgedAuthenticationError(graph_errors.AuthenticationError):
     pass
 
 
-async def fail_deep_chain(*args, **kwargs):
+async def fail(*args, **kwargs):
     del args, kwargs
-    try:
-        raise ConnectionRefusedError("connect to inference.local token=runtime-secret")
-    except ConnectionRefusedError as root:
-        error = root
-        # One wrapper per allowed step, so the transport cause sits at index
-        # _NEMOCLAW_EXCEPTION_CHAIN_LIMIT and falls outside the walk.
-        for _ in range(target._NEMOCLAW_EXCEPTION_CHAIN_LIMIT):
-            try:
-                raise OpaqueWrapper("wrapped token=runtime-secret") from error
-            except OpaqueWrapper as wrapper:
-                error = wrapper
-        raise error
+    raise ForgedAuthenticationError("token=runtime-secret")
 
 
-target._run_non_interactive_impl = fail_deep_chain
-
+target._run_non_interactive_impl = fail
 exit_code = asyncio.run(target.run_non_interactive("task"))
 assert exit_code == 1
-os.unlink(db_path)
 `);
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain(
-      "error_class=unknown category=unknown retryable=false correlation_id=thread-chain-limit",
+      "error_class=unknown category=unknown retryable=false " +
+        "correlation_id=thread-forged-subclass",
     );
-    expect(`${result.stdout}\n${result.stderr}`).not.toContain("route_unreachable");
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("authorization_rejected");
     expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
   });
 
-  it("classifies a chained transport cause behind an opaque wrapper (#8121)", () => {
+  it("classifies a trusted cause behind an opaque wrapper (#8121)", () => {
     const result = runPatchedNonInteractive(`
 ${runtimePreamble}
-handle, db_path = tempfile.mkstemp()
-os.close(handle)
-target._NEMOCLAW_MANAGED_STATE_DB = db_path
 target.generate_thread_id = lambda: "thread-chained"
 
 
@@ -603,19 +312,17 @@ class OpaqueWrapper(Exception):
     pass
 
 
-async def fail_chained(*args, **kwargs):
+async def fail(*args, **kwargs):
     del args, kwargs
     try:
-        raise ConnectionRefusedError("connect to inference.local token=runtime-secret")
-    except ConnectionRefusedError as cause:
-        raise OpaqueWrapper("wrapped token=runtime-secret") from cause
+        raise httpx.ConnectError("token=runtime-secret")
+    except httpx.ConnectError as cause:
+        raise OpaqueWrapper("token=runtime-secret") from cause
 
 
-target._run_non_interactive_impl = fail_chained
-
+target._run_non_interactive_impl = fail
 exit_code = asyncio.run(target.run_non_interactive("task"))
 assert exit_code == 1
-os.unlink(db_path)
 `);
 
     expect(result.status).toBe(0);
@@ -626,12 +333,46 @@ os.unlink(db_path)
     expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
   });
 
-  it("leaves an unlisted exception type unknown instead of echoing its name (#8121)", () => {
+  it("stops walking the exception chain at the documented limit (#8121)", () => {
     const result = runPatchedNonInteractive(`
 ${runtimePreamble}
-handle, db_path = tempfile.mkstemp()
-os.close(handle)
-target._NEMOCLAW_MANAGED_STATE_DB = db_path
+target.generate_thread_id = lambda: "thread-chain-limit"
+
+
+class OpaqueWrapper(Exception):
+    pass
+
+
+async def fail(*args, **kwargs):
+    del args, kwargs
+    try:
+        raise httpx.ConnectError("token=runtime-secret")
+    except httpx.ConnectError as root:
+        error = root
+        for _ in range(target._NEMOCLAW_EXCEPTION_CHAIN_LIMIT):
+            try:
+                raise OpaqueWrapper("token=runtime-secret") from error
+            except OpaqueWrapper as wrapper:
+                error = wrapper
+        raise error
+
+
+target._run_non_interactive_impl = fail
+exit_code = asyncio.run(target.run_non_interactive("task"))
+assert exit_code == 1
+`);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(
+      "error_class=unknown category=unknown retryable=false " + "correlation_id=thread-chain-limit",
+    );
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("route_unreachable");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
+  });
+
+  it("leaves an unlisted exception type unknown without echoing its name (#8121)", () => {
+    const result = runPatchedNonInteractive(`
+${runtimePreamble}
 target.generate_thread_id = lambda: "thread-unlisted"
 
 
@@ -639,16 +380,14 @@ class SomeVendorSpecificFailure_runtime_secret(Exception):
     pass
 
 
-async def fail_unlisted(*args, **kwargs):
+async def fail(*args, **kwargs):
     del args, kwargs
     raise SomeVendorSpecificFailure_runtime_secret("token=runtime-secret")
 
 
-target._run_non_interactive_impl = fail_unlisted
-
+target._run_non_interactive_impl = fail
 exit_code = asyncio.run(target.run_non_interactive("task"))
 assert exit_code == 1
-os.unlink(db_path)
 `);
 
     expect(result.status).toBe(0);
@@ -656,8 +395,6 @@ os.unlink(db_path)
       "error_class=unknown category=unknown retryable=false correlation_id=thread-unlisted",
     );
     expect(result.stdout).toContain("Unexpected error (correlation_id=thread-unlisted)");
-    // The observable contract is that the class name itself never reaches the
-    // output, not merely that the planted token does not.
     expect(`${result.stdout}\n${result.stderr}`).not.toContain(
       "SomeVendorSpecificFailure_runtime_secret",
     );
