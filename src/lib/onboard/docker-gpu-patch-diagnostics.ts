@@ -229,15 +229,18 @@ export function collectDockerGpuPatchDiagnostics(
     snapshotConfirmsReplacementPresent || inspectConfirmsReplacementPresent
       ? "present"
       : (context?.replacementPresence ?? "unknown");
-  const cleanupDisposition = cleanupPendingRollback
-    ? "pending_rollback"
-    : prePatchRestored && replacementPresence === "present" && replacementId
-      ? "manual"
-      : prePatchRestored && replacementPresence === "absent"
-        ? "not_required"
-        : prePatchRestored
-          ? "unknown"
-          : "manual";
+  let cleanupDisposition: DockerGpuPatchDiagnostics["cleanupDisposition"];
+  if (cleanupPendingRollback) {
+    cleanupDisposition = "pending_rollback";
+  } else if (prePatchRestored && replacementPresence === "present" && replacementId) {
+    cleanupDisposition = "manual";
+  } else if (prePatchRestored && replacementPresence === "absent") {
+    cleanupDisposition = "not_required";
+  } else if (prePatchRestored) {
+    cleanupDisposition = "unknown";
+  } else {
+    cleanupDisposition = "manual";
+  }
   const cleanupCommands =
     cleanupDisposition === "manual" && prePatchRestored && replacementId
       ? dockerGpuReplacementCleanupCommands(replacementId).map(redactor.redactText)

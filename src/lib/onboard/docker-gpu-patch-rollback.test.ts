@@ -134,7 +134,6 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
     let restoredPresent = true;
     let restoredRunning = false;
     let replacementPresent = true;
-    let replacementRemovalAttempts = 0;
     let retryPresent = false;
     let unrelatedPresent = true;
     const stopTargets: string[] = [];
@@ -148,72 +147,115 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
         replacementPresent ? replacementId : null,
         retryPresent ? retryId : null,
       ].filter((value): value is string => value !== null);
-    const inspectFor = (target: string): DockerContainerInspect[] => {
-      if (target === restoredId && restoredPresent) {
-        return [{ ...inspectFixture(), Id: restoredId, Name: `/${restoredName}` }];
-      }
-      if (target === replacementId && replacementPresent) {
-        return [
-          {
-            Id: replacementId,
-            Name: "/failed-replacement",
-            Config: { Image: "openshell/sandbox:abc", Env: [], Labels: {} },
-            State: { Running: false },
-            HostConfig: {},
-            NetworkSettings: { Networks: {} },
-          },
-        ];
-      }
-      if (target === retryId && retryPresent) {
-        return [{ ...inspectFixture(), Id: retryId, Name: `/${originalName}` }];
-      }
-      return [];
+    const inspectByTarget: Record<string, () => DockerContainerInspect[]> = {
+      [restoredId]: () =>
+        restoredPresent ? [{ ...inspectFixture(), Id: restoredId, Name: `/${restoredName}` }] : [],
+      [replacementId]: () =>
+        replacementPresent
+          ? [
+              {
+                Id: replacementId,
+                Name: "/failed-replacement",
+                Config: { Image: "openshell/sandbox:abc", Env: [], Labels: {} },
+                State: { Running: false },
+                HostConfig: {},
+                NetworkSettings: { Networks: {} },
+              },
+            ]
+          : [],
+      [retryId]: () =>
+        retryPresent ? [{ ...inspectFixture(), Id: retryId, Name: `/${originalName}` }] : [],
     };
-    const dockerCapture = vi.fn((args: readonly string[]) => {
-      if (args[0] === "ps") return `${alphaContainerIds().join("\n")}\n`;
-      if (args[0] === "info") return "";
-      if (args[0] === "inspect") {
-        const target = String(args.at(-1));
-        return JSON.stringify(inspectFor(target));
-      }
-      return "";
-    });
-    const dockerRun = vi.fn((args: readonly string[]) => {
-      if (args[0] === "ps") {
-        return {
-          status: 0,
-          stdout: replacementPresent ? `${replacementId}\n` : "",
-        };
-      }
-      return { status: 0, stdout: "probe-id\n" };
-    });
+    const captureByCommand: Record<string, (args: readonly string[]) => string> = {
+      ps: () => `${alphaContainerIds().join("\n")}\n`,
+      info: () => "",
+      inspect: (args) => JSON.stringify(inspectByTarget[String(args.at(-1))]?.() ?? []),
+    };
+    const dockerCapture = vi.fn(
+      (args: readonly string[]) => captureByCommand[String(args[0])]?.(args) ?? "",
+    );
+    const runByCommand: Record<string, () => { status: number; stdout: string }> = {
+      ps: () => ({
+        status: 0,
+        stdout: replacementPresent ? `${replacementId}\n` : "",
+      }),
+    };
+    const dockerRun = vi.fn(
+      (args: readonly string[]) =>
+        runByCommand[String(args[0])]?.() ?? { status: 0, stdout: "probe-id\n" },
+    );
+    const stopHandlers = new Map<string, () => void>([
+      [
+        restoredId,
+        () => {
+          restoredRunning = false;
+        },
+      ],
+    ]);
     const dockerStop = vi.fn((target: string) => {
       stopTargets.push(target);
-      if (target === restoredId) restoredRunning = false;
+      stopHandlers.get(target)?.();
       return { status: 0 };
     });
+    const successfulRemoval = () => ({ status: 0 });
+    const replacementRemovalHandlers = [
+      () => ({ status: 1, stderr: "daemon timeout" }),
+      () => {
+        replacementPresent = false;
+        return successfulRemoval();
+      },
+    ];
+    const removalHandlers = new Map<string, () => { status: number; stderr?: string }>([
+      [replacementId, () => (replacementRemovalHandlers.shift() ?? successfulRemoval)()],
+      [
+        unrelatedId,
+        () => {
+          unrelatedPresent = false;
+          return successfulRemoval();
+        },
+      ],
+      [
+        unrelatedName,
+        () => {
+          unrelatedPresent = false;
+          return successfulRemoval();
+        },
+      ],
+    ]);
+    const removeRestored = () => {
+      restoredPresent = false;
+      return successfulRemoval();
+    };
+    removalHandlers.set(restoredName, removeRestored);
     const dockerRm = vi.fn((target: string) => {
       removeTargets.push(target);
-      if (target === replacementId) {
-        replacementRemovalAttempts += 1;
-        if (replacementRemovalAttempts === 1) {
-          return { status: 1, stderr: "daemon timeout" };
-        }
-        replacementPresent = false;
-        return { status: 0 };
-      }
-      if (target === restoredName) restoredPresent = false;
-      if (target === unrelatedId || target === unrelatedName) unrelatedPresent = false;
-      return { status: 0 };
+      return removalHandlers.get(target)?.() ?? successfulRemoval();
     });
+    const updateRestoredName = (next: string) => {
+      removalHandlers.delete(restoredName);
+      restoredName = next;
+      removalHandlers.set(restoredName, removeRestored);
+    };
+    const renameHandlers = new Map<string, (next: string) => void>([
+      [initialBackupName, updateRestoredName],
+      [restoredId, updateRestoredName],
+    ]);
     const dockerRename = vi.fn((from: string, to: string) => {
       renameTargets.push(from, to);
-      if (from === initialBackupName || from === restoredId) restoredName = to;
+      renameHandlers.get(from)?.(to);
       return { status: 0 };
     });
+    const startHandlers = new Map<string, () => void>([
+      [
+        originalName,
+        () => {
+          restoredRunning = true;
+        },
+      ],
+    ]);
     const dockerStart = vi.fn((target: string) => {
       startTargets.push(target);
-      if (target === originalName) restoredRunning = true;
+      startHandlers.get(target)?.();
       return { status: 0 };
     });
     const dockerRunDetached = vi.fn(() => {
@@ -292,8 +334,8 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
       // rerunning onboarding. The restored sandbox and unrelated beta sandbox
       // remain outside that cleanup boundary.
       const cleanupCommand = diagnostics?.cleanupCommands[0];
-      if (!cleanupCommand) throw new Error("expected one replacement cleanup command");
-      const cleanupTarget = JSON.parse(cleanupCommand.slice("docker rm -f ".length));
+      expect(cleanupCommand).toBeDefined();
+      const cleanupTarget = JSON.parse(String(cleanupCommand).slice("docker rm -f ".length));
       expect(cleanupTarget).toBe(replacementId);
       expect(dockerRm(cleanupTarget).status).toBe(0);
       expect(alphaContainerIds()).toEqual([restoredId]);
