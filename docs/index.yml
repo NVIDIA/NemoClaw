@@ -101,6 +101,9 @@ navigation:
                   - page: "Set Up vLLM"
                     path: _build/agent-variants/inference/set-up-vllm.openclaw.generated.mdx
                     slug: set-up-vllm
+                  - page: "Set Up vLLM on Two DGX Sparks"
+                    path: _build/agent-variants/inference/set-up-vllm-on-two-dgx-sparks.openclaw.generated.mdx
+                    slug: set-up-vllm-on-two-dgx-sparks
                   - page: "Set Up vLLM on Two DGX Stations"
                     path: _build/agent-variants/inference/set-up-vllm-on-two-dgx-stations.openclaw.generated.mdx
                     slug: set-up-vllm-on-two-dgx-stations
@@ -507,6 +510,9 @@ navigation:
                   - page: "Set Up vLLM"
                     path: _build/agent-variants/inference/set-up-vllm.deepagents.generated.mdx
                     slug: set-up-vllm
+                  - page: "Set Up vLLM on Two DGX Sparks"
+                    path: _build/agent-variants/inference/set-up-vllm-on-two-dgx-sparks.deepagents.generated.mdx
+                    slug: set-up-vllm-on-two-dgx-sparks
                   - page: "Set Up vLLM on Two DGX Stations"
                     path: _build/agent-variants/inference/set-up-vllm-on-two-dgx-stations.deepagents.generated.mdx
                     slug: set-up-vllm-on-two-dgx-stations
@@ -835,6 +841,9 @@ navigation:
                   - page: "Set Up vLLM"
                     path: _build/agent-variants/inference/set-up-vllm.hermes.generated.mdx
                     slug: set-up-vllm
+                  - page: "Set Up vLLM on Two DGX Sparks"
+                    path: _build/agent-variants/inference/set-up-vllm-on-two-dgx-sparks.hermes.generated.mdx
+                    slug: set-up-vllm-on-two-dgx-sparks
                   - page: "Set Up vLLM on Two DGX Stations"
                     path: _build/agent-variants/inference/set-up-vllm-on-two-dgx-stations.hermes.generated.mdx
                     slug: set-up-vllm-on-two-dgx-stations
