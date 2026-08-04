@@ -557,7 +557,10 @@ jobs:
             exit 1
           fi
           reference="$IMAGE@$digest"
-          docker buildx imagetools inspect "$reference" >/dev/null
+          scripts/checks/validate-managed-base-index.sh \
+            "$reference" \
+            "${platform_digests[linux/amd64]}" \
+            "${platform_digests[linux/arm64]}"
 
           scripts/export-managed-base-image-contract.sh \
             "$AGENT" \
@@ -701,7 +704,10 @@ jobs:
             exit 1
           fi
           reference="$IMAGE@$digest"
-          docker buildx imagetools inspect "$reference" >/dev/null
+          scripts/checks/validate-managed-base-index.sh \
+            "$reference" \
+            "${platform_digests[linux/amd64]}" \
+            "${platform_digests[linux/arm64]}"
 
           scripts/export-managed-base-image-contract.sh \
             "$AGENT" \
@@ -847,7 +853,10 @@ jobs:
             exit 1
           fi
           reference="$IMAGE@$digest"
-          docker buildx imagetools inspect "$reference" >/dev/null
+          scripts/checks/validate-managed-base-index.sh \
+            "$reference" \
+            "${platform_digests[linux/amd64]}" \
+            "${platform_digests[linux/arm64]}"
 
           scripts/export-managed-base-image-contract.sh \
             "$AGENT" \

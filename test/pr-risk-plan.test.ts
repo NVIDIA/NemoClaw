@@ -316,7 +316,12 @@ describe("deterministic PR risk plan", () => {
   it("keeps the protected managed-image lane dormant until its trusted activation marker (#7744)", () => {
     const activation = "ci/protected-managed-image-multiarch-activation-v1.json";
     const result = plan(activation);
-    const preActivationRuntime = plan("scripts/checks/run-managed-image-direct-e2e.ts");
+    const preActivationPaths = [
+      "scripts/checks/run-managed-image-direct-e2e.ts",
+      "scripts/checks/build-protected-managed-images.sh",
+      "scripts/checks/protected-managed-image-contract.ts",
+      "test/e2e/live/managed-image-multiarch-startup.test.ts",
+    ];
 
     expect(result.families).toContainEqual(
       expect.objectContaining({
@@ -326,7 +331,11 @@ describe("deterministic PR risk plan", () => {
       }),
     );
     expect(riskPlanRequiredJobIds(result)).toEqual(["managed-image-multiarch-startup"]);
-    expect(preActivationRuntime.families).toEqual([]);
+    for (const file of preActivationPaths) {
+      expect(plan(file).families.map((family) => family.id)).not.toContain(
+        "managed-image-multiarch",
+      );
+    }
   });
 
   it("runs snapshot commands for restored-gateway pairing runtime changes (#7431)", () => {

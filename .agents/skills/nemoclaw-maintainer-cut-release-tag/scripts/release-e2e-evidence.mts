@@ -292,13 +292,17 @@ function releaseActivationPath(job: JsonRecord, jobId: string): string | undefin
 
 function candidatePathExists(candidateSha: string, candidatePath: string): boolean {
   try {
-    execFileSync("git", ["cat-file", "-e", `${candidateSha}:${candidatePath}`], {
+    const output = execFileSync("git", ["ls-tree", "--name-only", candidateSha, "--", candidatePath], {
       cwd: REPO_ROOT,
-      stdio: "ignore",
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
     });
-    return true;
-  } catch {
-    return false;
+    return output.trim() === candidatePath;
+  } catch (error) {
+    throw new Error(
+      `could not inspect release E2E activation path ${candidatePath} at candidate ${candidateSha}`,
+      { cause: error },
+    );
   }
 }
 

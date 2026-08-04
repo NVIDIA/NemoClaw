@@ -590,6 +590,7 @@ describe("base-image publication behavior", () => {
         'docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"',
       );
       expect(manifestScript).toContain('"amd64,arm64"');
+      expect(manifestScript).toContain("scripts/checks/validate-managed-base-index.sh");
       expect(manifestScript).toContain("scripts/export-managed-base-image-contract.sh");
       for (const step of (manifestJob?.steps ?? []).filter((step) => step.uses)) {
         expect(step.uses, step.name).toMatch(FULL_SHA_ACTION);

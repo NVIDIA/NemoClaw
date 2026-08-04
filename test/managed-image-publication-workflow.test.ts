@@ -266,6 +266,7 @@ describe("complete managed-image publication workflow", () => {
       expect(manifest.env?.AGENT).toBe(expectedPublisher.agent);
       expect(manifest.run).toContain('reference="$IMAGE@$digest"');
       expect(manifest.run).toContain("--format '{{.Manifest.Digest}}'");
+      expect(manifest.run).toContain("scripts/checks/validate-managed-base-index.sh");
       expect(manifest.run).toContain("scripts/export-managed-base-image-contract.sh");
       expect(manifest.run).toContain('"${platform_digests[linux/amd64]}"');
       expect(manifest.run).toContain('"${platform_digests[linux/arm64]}"');

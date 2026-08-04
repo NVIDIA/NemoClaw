@@ -62,8 +62,9 @@ export type ProtectedManagedImageEvidenceIdentity = Pick<
 };
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
-const SHA_PATTERN = /^[a-f0-9]{40}$/u;
-const COHORT_PATTERN = /^protected-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$/u;
+export const PROTECTED_MANAGED_IMAGE_SHA_PATTERN = /^[a-f0-9]{40}$/u;
+export const PROTECTED_MANAGED_IMAGE_COHORT_PATTERN =
+  /^protected-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$/u;
 const BASE_REPOSITORIES: Readonly<Record<ManagedStartupAgent, string>> = Object.freeze({
   openclaw: "ghcr.io/nvidia/nemoclaw/sandbox-base",
   hermes: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
@@ -230,11 +231,11 @@ export function parseProtectedManagedImageEvidence(
     typeof evidence.headSha !== "string" ||
     typeof evidence.baseSha !== "string" ||
     typeof evidence.workflowSha !== "string" ||
-    !SHA_PATTERN.test(evidence.headSha) ||
-    !SHA_PATTERN.test(evidence.baseSha) ||
-    !SHA_PATTERN.test(evidence.workflowSha) ||
+    !PROTECTED_MANAGED_IMAGE_SHA_PATTERN.test(evidence.headSha) ||
+    !PROTECTED_MANAGED_IMAGE_SHA_PATTERN.test(evidence.baseSha) ||
+    !PROTECTED_MANAGED_IMAGE_SHA_PATTERN.test(evidence.workflowSha) ||
     typeof evidence.cohort !== "string" ||
-    !COHORT_PATTERN.test(evidence.cohort) ||
+    !PROTECTED_MANAGED_IMAGE_COHORT_PATTERN.test(evidence.cohort) ||
     typeof evidence.contractSha256 !== "string" ||
     !DIGEST_PATTERN.test(evidence.contractSha256)
   ) {
