@@ -2,29 +2,56 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getMessagingChannelConfigFromPlan } from "../messaging/plan-validation";
+import type { SandboxMessagingPlan } from "../messaging/manifest";
 import {
-  type MessagingChannelConfig,
-  mergeMessagingChannelConfigs,
-} from "../messaging-channel-config";
+  type RegistryMessagingAuthority,
+  resolveMessagingPlanAuthority,
+} from "../messaging/plan-authority";
+import type { MessagingChannelConfig } from "../messaging-channel-config";
 import type { Session } from "../state/onboard-session";
-import { getRegistrySandboxMessagingAuthority } from "./messaging-channel-setup";
+import {
+  getRegistrySandboxMessagingAuthority,
+  readMessagingPlanFromEnv,
+} from "./messaging-channel-setup";
+
+type StoredMessagingChannelConfigDeps = {
+  readMessagingPlanFromEnv(): SandboxMessagingPlan | null;
+  getRegistryMessagingAuthority(sandboxName: string): RegistryMessagingAuthority;
+};
+
+const defaultDeps: StoredMessagingChannelConfigDeps = {
+  readMessagingPlanFromEnv,
+  getRegistryMessagingAuthority: getRegistrySandboxMessagingAuthority,
+};
 
 export function getStoredMessagingChannelConfig(
   sandboxName: string | null,
   session: Session | null,
+  deps: StoredMessagingChannelConfigDeps = defaultDeps,
 ): MessagingChannelConfig | null {
-  const registryConfig = sandboxName
-    ? getMessagingChannelConfigFromPlan(getRegistrySandboxMessagingAuthority(sandboxName).plan)
-    : null;
+  const stagedPlan = deps.readMessagingPlanFromEnv();
+  const resolvedSandboxName =
+    sandboxName ??
+    stagedPlan?.sandboxName ??
+    session?.sandboxName ??
+    session?.messagingPlan?.sandboxName ??
+    null;
   const sessionMatchesSandbox =
-    !session?.sandboxName || !sandboxName || session.sandboxName === sandboxName;
-  const sessionConfig = sessionMatchesSandbox
-    ? getMessagingChannelConfigFromPlan(session?.messagingPlan)
-    : null;
-  const legacySessionConfig = sessionMatchesSandbox
-    ? getLegacySessionMessagingChannelConfig(session)
-    : null;
-  return mergeMessagingChannelConfigs(legacySessionConfig, registryConfig, sessionConfig);
+    !session?.sandboxName || !resolvedSandboxName || session.sandboxName === resolvedSandboxName;
+  const authority = resolvedSandboxName
+    ? resolveMessagingPlanAuthority({
+        sandboxName: resolvedSandboxName,
+        registry: deps.getRegistryMessagingAuthority(resolvedSandboxName),
+        stagedPlan,
+        sessionPlan: sessionMatchesSandbox ? (session?.messagingPlan ?? null) : null,
+      })
+    : { source: "none" as const, plan: null };
+  const selectedConfig = getMessagingChannelConfigFromPlan(authority.plan);
+  const legacySessionConfig =
+    sessionMatchesSandbox && authority.source === "none"
+      ? getLegacySessionMessagingChannelConfig(session)
+      : null;
+  return selectedConfig ?? legacySessionConfig;
 }
 
 export function messagingChannelConfigsEqual(

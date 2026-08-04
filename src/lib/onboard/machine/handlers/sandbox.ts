@@ -1259,7 +1259,12 @@ class SandboxStateFlow<
     group: ProviderEffectGroupName,
     checkpoint: OnboardCheckpoint | null,
   ): Promise<void> {
-    if (!this.resumesSandboxPrompts || (!webSearchConfig && enabledChannels.length === 0)) return;
+    if (
+      !this.resumesSandboxPrompts ||
+      (!webSearchConfig && enabledChannels.length === 0 && requiredBindings.length === 0)
+    ) {
+      return;
+    }
     const requiredBindingsByName = new Map(
       requiredBindings.map((binding) => [binding.name, binding]),
     );

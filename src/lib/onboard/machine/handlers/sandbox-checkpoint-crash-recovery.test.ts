@@ -166,6 +166,23 @@ function sessionWithCheckpoint(checkpoint: OnboardCheckpoint): Session {
   return session;
 }
 
+function discordMessagingPlan(): ReturnType<typeof makeMinimalPlan> {
+  return {
+    ...makeMinimalPlan("my-assistant", "openclaw", ["discord"]),
+    credentialBindings: [
+      {
+        channelId: "discord",
+        credentialId: "discordBotToken",
+        sourceInput: "botToken",
+        providerName: "my-assistant-discord-bridge",
+        providerEnvKey: "DISCORD_BOT_TOKEN",
+        placeholder: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+        credentialAvailable: true,
+      },
+    ],
+  };
+}
+
 describe("sandbox crash-recovery replay (#5961, #6228)", () => {
   it("reuses a surviving sandbox with a legacy pre-reasoning fingerprint", async () => {
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
@@ -768,20 +785,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
         true,
       );
     const session = createSession({ sessionId: "sess-1", agent: "openclaw", mode });
-    const messagingPlan = {
-      ...makeMinimalPlan("my-assistant", "openclaw", ["discord"]),
-      credentialBindings: [
-        {
-          channelId: "discord",
-          credentialId: "discordBotToken",
-          sourceInput: "botToken",
-          providerName: "my-assistant-discord-bridge",
-          providerEnvKey: "DISCORD_BOT_TOKEN",
-          placeholder: "openshell:resolve:env:DISCORD_BOT_TOKEN",
-          credentialAvailable: true,
-        },
-      ],
-    };
+    const messagingPlan = discordMessagingPlan();
     const { deps, getSession } = createDeps(
       {
         getSandboxReuseState: () => "missing",
@@ -806,7 +810,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
       sandboxName: "my-assistant",
     });
 
-    expect(stageSandboxCredentialProviders).toHaveBeenCalledTimes(1);
+    expect(stageSandboxCredentialProviders).toHaveBeenCalledTimes(2);
     expect(
       runOpenshell.mock.calls.filter(([args]) => args[0] === "provider" && args[1] === "create"),
     ).toHaveLength(1);
@@ -815,6 +819,47 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(resumedSession.checkpoint?.bindings.registeredProviders).toEqual([
       { name: "my-assistant-discord-bridge", type: "generic", credentialEnv: "DISCORD_BOT_TOKEN" },
     ]);
+  });
+
+  it("rejects receipt recovery when a required messaging provider did not survive", async () => {
+    const messagingPlan = discordMessagingPlan();
+    const stageSandboxCredentialProviders = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("gateway connection dropped mid-registration"))
+      .mockResolvedValueOnce([]);
+    const providerMatchesGatewayCredential = vi.fn(() => false);
+    const session = createSession({ sessionId: "sess-1", agent: "openclaw" });
+    const { deps, calls, getSession } = createDeps(
+      {
+        getSandboxReuseState: () => "missing",
+        readMessagingPlanFromEnv: () => messagingPlan,
+        stageSandboxCredentialProviders,
+        providerMatchesGatewayCredential,
+      },
+      session,
+    );
+
+    await expect(
+      handleSandboxState({ ...baseOptions(deps, session), resume: false }),
+    ).rejects.toThrow("gateway connection dropped mid-registration");
+
+    const crashedSession = getSession();
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, crashedSession),
+        resume: true,
+        sandboxName: "my-assistant",
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(stageSandboxCredentialProviders).toHaveBeenCalledTimes(2);
+    expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "my-assistant-discord-bridge",
+      "generic",
+      "DISCORD_BOT_TOKEN",
+    );
+    expect(getSession().checkpoint?.effectGroups.messaging_providers).toBeUndefined();
+    expect(calls.createSandbox).not.toHaveBeenCalled();
   });
 
   it("rejects reuse when the recorded build/policy fingerprint drifted from the current request (#7022)", async () => {

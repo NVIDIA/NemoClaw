@@ -10,6 +10,7 @@ import { getStoredMessagingChannelConfig } from "./messaging-config";
 
 describe("getStoredMessagingChannelConfig", () => {
   afterEach(() => {
+    delete process.env.NEMOCLAW_MESSAGING_PLAN_B64;
     vi.restoreAllMocks();
   });
 
@@ -55,21 +56,72 @@ describe("getStoredMessagingChannelConfig", () => {
     expect(getHydratedMessagingPlanFromEntry).not.toHaveBeenCalled();
   });
 
-  it("reads messaging config from a registered sandbox", () => {
-    const entry = { name: "demo" };
-    vi.spyOn(registry, "getSandbox").mockReturnValue(entry);
-    vi.spyOn(registry, "getHydratedMessagingPlanFromEntry").mockReturnValue(makePlan());
+  it("uses registry config instead of conflicting session config for a registered sandbox", () => {
+    const registryPlan = makePlan("demo", "0");
+    const sessionPlan = makePlan("demo", "1");
 
-    expect(getStoredMessagingChannelConfig("demo", null)).toEqual({
+    expect(
+      getStoredMessagingChannelConfig(
+        "demo",
+        { sandboxName: "demo", messagingPlan: sessionPlan } as Session,
+        {
+          readMessagingPlanFromEnv: () => null,
+          getRegistryMessagingAuthority: () => ({ authoritative: true, plan: registryPlan }),
+        },
+      ),
+    ).toEqual({
       TELEGRAM_REQUIRE_MENTION: "0",
     });
   });
+
+  it("uses staged config instead of conflicting session config for a pending sandbox", () => {
+    const stagedPlan = makePlan("demo", "0");
+    const sessionPlan = makePlan("demo", "1");
+
+    expect(
+      getStoredMessagingChannelConfig(
+        "demo",
+        { sandboxName: "demo", messagingPlan: sessionPlan } as Session,
+        {
+          readMessagingPlanFromEnv: () => stagedPlan,
+          getRegistryMessagingAuthority: () => ({ authoritative: false, plan: null }),
+        },
+      ),
+    ).toEqual({
+      TELEGRAM_REQUIRE_MENTION: "0",
+    });
+  });
+
+  it("does not use legacy session fields when the registry records no messaging plan", () => {
+    expect(
+      getStoredMessagingChannelConfig(
+        "demo",
+        { sandboxName: "demo", telegramConfig: { requireMention: true } } as Session,
+        {
+          readMessagingPlanFromEnv: () => null,
+          getRegistryMessagingAuthority: () => ({ authoritative: true, plan: null }),
+        },
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects a registry plan that targets another sandbox", () => {
+    expect(() =>
+      getStoredMessagingChannelConfig("demo", null, {
+        readMessagingPlanFromEnv: () => null,
+        getRegistryMessagingAuthority: () => ({
+          authoritative: true,
+          plan: makePlan("other", "0"),
+        }),
+      }),
+    ).toThrow("Registry messaging plan targets 'other', not 'demo'.");
+  });
 });
 
-function makePlan(): SandboxMessagingPlan {
+function makePlan(sandboxName = "demo", requireMention = "0"): SandboxMessagingPlan {
   return {
     schemaVersion: 1,
-    sandboxName: "demo",
+    sandboxName,
     agent: "openclaw",
     workflow: "onboard",
     channels: [
@@ -89,7 +141,7 @@ function makePlan(): SandboxMessagingPlan {
             required: false,
             sourceEnv: "TELEGRAM_REQUIRE_MENTION",
             statePath: "telegramConfig.requireMention",
-            value: "0",
+            value: requireMention,
           },
         ],
         hooks: [],
