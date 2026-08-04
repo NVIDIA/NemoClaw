@@ -905,6 +905,22 @@ function canonicalJson(value: unknown): string {
     .join(",")}}`;
 }
 
+/** Compare durable provider receipts by canonical value, independent of object key order. */
+export function sameManagedBootstrapDurablePreparationReceipt(
+  left: ManagedBootstrapDurablePreparationReceipt,
+  right: ManagedBootstrapDurablePreparationReceipt,
+): boolean {
+  return canonicalJson(left) === canonicalJson(right);
+}
+
+/** Compare completion receipts by canonical value, independent of object key order. */
+export function sameManagedBootstrapCompletionReceipt(
+  left: ManagedBootstrapCompletionReceipt,
+  right: ManagedBootstrapCompletionReceipt,
+): boolean {
+  return canonicalJson(left) === canonicalJson(right);
+}
+
 export function assertManagedBootstrapIdentity(value: string): void {
   if (!SHA256_RE.test(value)) {
     protocolFail("identity must be 32 random bytes encoded as lowercase hex");

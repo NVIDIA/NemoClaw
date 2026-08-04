@@ -14,6 +14,7 @@ import {
   type StagedBuildContext,
   stageOptimizedSandboxBuildContext,
 } from "../sandbox/build-context";
+import { SandboxBaseImageResolutionError } from "../sandbox-base-image";
 import {
   CUSTOM_BUILD_CONTEXT_WARN_BYTES,
   createCustomBuildContextFilter,
@@ -100,7 +101,15 @@ export function stageCreateSandboxBuildContext(
       log(
         `  This is the managed ${input.agent.displayName} Dockerfile; staging the repository root as the Docker build context.`,
       );
-      build = input.createAgentSandbox(input.agent);
+      try {
+        build = input.createAgentSandbox(input.agent);
+      } catch (err) {
+        if (err instanceof SandboxBaseImageResolutionError) {
+          error(`  ${err.message}`);
+          exit(1);
+        }
+        throw err;
+      }
       return {
         ...build,
         origin,
@@ -163,7 +172,15 @@ export function stageCreateSandboxBuildContext(
     }
     build = { buildCtx, stagedDockerfile };
   } else if (input.agent) {
-    build = input.createAgentSandbox(input.agent);
+    try {
+      build = input.createAgentSandbox(input.agent);
+    } catch (err) {
+      if (err instanceof SandboxBaseImageResolutionError) {
+        error(`  ${err.message}`);
+        exit(1);
+      }
+      throw err;
+    }
   } else {
     build = (input.stageDefaultSandboxBuildContext ?? stageOptimizedSandboxBuildContext)(
       input.root,
