@@ -164,7 +164,7 @@ interface GenericServingRecipe extends ServingRecipeEnvelope {
   };
 }
 
-interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
+export interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
   readonly spec: {
     readonly backend: "install-llama-cpp";
     readonly providerId: "llama-cpp-local";
@@ -188,8 +188,10 @@ interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
     };
     readonly runtime: {
       readonly image: string;
+      readonly imageDownloadSizeBytes: number;
       readonly platforms: readonly ("linux/amd64" | "linux/arm64")[];
       readonly containerRuntime: "docker";
+      readonly networkExposure: "loopback";
       readonly hosts: 1;
       readonly cuda: { readonly baseImage: string; readonly minimumDriverVersion: string };
       readonly gpu: {
@@ -212,11 +214,20 @@ interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
     };
     readonly serve: {
       readonly protocol: "openai-completions";
+      readonly authentication: "bearer";
       readonly port: 8081;
       readonly chatTemplate: string;
       readonly contextSize: number;
       readonly slots: 1;
       readonly idleSleepSeconds: -1;
+      readonly batchSize: number;
+      readonly microBatchSize: number;
+      readonly flashAttention: "enabled";
+      readonly kvCache: {
+        readonly key: "f16" | "q8_0";
+        readonly value: "f16" | "q8_0";
+      };
+      readonly speculativeDecoding: "disabled";
       readonly limits: {
         readonly maxRequestBodyBytes: number;
         readonly maxPromptTokens: number;

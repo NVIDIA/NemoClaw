@@ -46,9 +46,7 @@ const {
   readTimerMarker,
   clearTimerMarker,
   isProcessAlive,
-  readProcessState,
   readProcessStartIdentity,
-  listDescendantProcessIdentities,
   processInspectionDeadlineAfter,
   processInspectionDeadlineReached,
   verifyTimerMarkerIdentity,
@@ -64,12 +62,18 @@ const { cleanupTempDir } = require("../onboard/temp-files");
 const { verifyShieldsLockState }: typeof import("./verify-lock") = require("./verify-lock");
 const { relockAndReconfirm }: typeof import("./relock-reconfirm") = require("./relock-reconfirm");
 const {
-  inspectShieldsTransitionLockOwner,
+  inspectAnyShieldsTransitionLockOwner,
   isShieldsTransitionLockUnavailable,
-  takeoverShieldsTransitionLock,
   withShieldsTransitionLock,
 }: typeof import("./transition-lock") = require("./transition-lock");
 const {
+  beginCommittedMcpLifecycleContainmentSync,
+  getMcpLifecycleLockPath,
+  isMcpLifecycleLockHeld,
+  durableMcpLifecycleContainmentFailure,
+  withMcpLifecycleDeadlineFenceSync,
+  withMcpLifecycleLockSync,
+  withTimerBoundAutoRestoreLock,
   withTimerBoundShieldsMutationLock,
 }: typeof import("./timer-bound-lock") = require("./timer-bound-lock");
 const {
@@ -101,13 +105,19 @@ const {
 }: typeof import("./mutable-config-repair") = require("./mutable-config-repair");
 type MutableConfigPermsInspection = import("./mutable-config-perms").MutableConfigPermsInspection;
 type MutableConfigRepairResult = import("./mutable-config-perms").MutableConfigRepairResult;
-type ProcessIdentity = import("./timer-control").ProcessIdentity;
-
+type TimerMarker = import("./timer-control").TimerMarker;
 const STATE_DIR = resolveNemoclawStateDir();
 const SHIELDS_TRANSITION_POLL_MS = 50;
 const SHIELDS_TRANSITION_HANDOFF_GRACE_MS = 500;
 const SHIELDS_TRANSITION_TERMINATE_GRACE_MS = 1000;
+const INTERACTIVE_CONTAINMENT_COMMIT_MAX_ATTEMPTS =
+  Math.floor(SHIELDS_TRANSITION_HANDOFF_GRACE_MS / SHIELDS_TRANSITION_POLL_MS) + 1;
 const AUTO_RESTORE_COMPLETION_GRACE_MS = 30_000;
+// Retry on the detached timer's cadence for one additional completion-grace
+// window before converting the live deadline fence into durable containment.
+const INTERACTIVE_AUTO_RESTORE_RETRY_MS = 5_000;
+const INTERACTIVE_AUTO_RESTORE_MAX_ATTEMPTS =
+  Math.floor(AUTO_RESTORE_COMPLETION_GRACE_MS / INTERACTIVE_AUTO_RESTORE_RETRY_MS) + 1;
 const HERMES_RUNTIME_CONFIG_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py";
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
 const HERMES_RESTART_SEAL_STATE = "/run/nemoclaw/hermes-restart-seal.json";
@@ -127,6 +137,33 @@ type ShieldsDownTransition = {
 };
 
 const transitionPollBuffer = new Int32Array(new SharedArrayBuffer(4));
+
+function sameTimerMarkerGeneration(current: TimerMarker | null, expected: TimerMarker): boolean {
+  return (
+    current?.pid === expected.pid &&
+    current.sandboxName === expected.sandboxName &&
+    current.snapshotPath === expected.snapshotPath &&
+    current.restoreAt === expected.restoreAt &&
+    current.processToken === expected.processToken &&
+    current.allowLegacyHermesProtocol === expected.allowLegacyHermesProtocol &&
+    current.leaseOwnerPid === expected.leaseOwnerPid &&
+    current.leaseOwnerStartIdentity === expected.leaseOwnerStartIdentity
+  );
+}
+
+function assertTimerMarkerGeneration(sandboxName: string, expected: TimerMarker): void {
+  if (!sameTimerMarkerGeneration(readTimerMarker(sandboxName), expected)) {
+    throw new Error("Auto-restore authority changed before Shields transition takeover");
+  }
+}
+
+function appendAuditEntryBestEffort(entry: Parameters<typeof appendAuditEntry>[0]): void {
+  try {
+    appendAuditEntry(entry);
+  } catch {
+    // A failed diagnostic write must not release an active recovery gate.
+  }
+}
 
 function shieldsDownTransitionPath(sandboxName: string, processToken: string): string {
   return path.join(STATE_DIR, `shields-transition-${sandboxName}-${processToken}.json`);
@@ -195,6 +232,22 @@ function writeShieldsDownTransition(
   }
 }
 
+function writeTimerMarkerAtomic(sandboxName: string, marker: TimerMarker): void {
+  const markerPath = timerMarkerPath(sandboxName);
+  fs.mkdirSync(path.dirname(markerPath), { recursive: true, mode: 0o700 });
+  const tempPath = `${markerPath}.${String(process.pid)}.${randomBytes(8).toString("hex")}.tmp`;
+  try {
+    fs.writeFileSync(tempPath, JSON.stringify(marker), { flag: "wx", mode: 0o600 });
+    fs.renameSync(tempPath, markerPath);
+  } finally {
+    try {
+      fs.rmSync(tempPath, { force: true });
+    } catch {
+      // Best effort. The authoritative path was either atomically replaced or unchanged.
+    }
+  }
+}
+
 function clearShieldsDownTransition(sandboxName: string, processToken: string): void {
   try {
     fs.rmSync(shieldsDownTransitionPath(sandboxName, processToken), { force: true });
@@ -227,9 +280,33 @@ function readExactProcessStatus(
   return alive ? "current" : "gone";
 }
 
+function persistUnresolvedShieldsContainment(
+  sandboxName: string,
+  processToken: string,
+  reason: string,
+  assertTakeoverAuthority?: () => void,
+): void {
+  const containmentPath = `${getMcpLifecycleLockPath(sandboxName, STATE_DIR)}.containment`;
+  if (fs.existsSync(containmentPath)) return;
+  try {
+    beginCommittedMcpLifecycleContainmentSync(
+      sandboxName,
+      processToken,
+      reason,
+      STATE_DIR,
+      assertTakeoverAuthority,
+    );
+  } catch (error) {
+    if (isDurableContainmentFailure(error)) throw error;
+    if (fs.existsSync(containmentPath)) return;
+    throw error;
+  }
+}
+
 function waitForShieldsDownForwardCommit(
   sandboxName: string,
   processToken: string,
+  assertTakeoverAuthority?: () => void,
 ): ShieldsDownTransition | null {
   let observed = readShieldsDownTransition(sandboxName, processToken);
   if (!observed) return null;
@@ -258,150 +335,41 @@ function waitForShieldsDownForwardCommit(
   }
 
   if (observed.phase === "preparing") {
-    // The absolute shields-down deadline has expired while the forward owner
-    // is still able to weaken policy/config. Preempt that exact process
-    // instance, then restore from the captured snapshot. Waiting forever would
-    // turn the requested timeout into an unbounded mutable window.
-    stopTimedOutShieldsDownTree(observed.ownerPid, observed.ownerStartIdentity);
+    const ownerStatus = readExactProcessStatus(
+      observed.ownerPid,
+      observed.ownerStartIdentity,
+      processInspectionDeadlineAfter(SHIELDS_TRANSITION_TERMINATE_GRACE_MS),
+    );
+    if (ownerStatus === "gone") {
+      assertTakeoverAuthority?.();
+      try {
+        persistUnresolvedShieldsContainment(
+          sandboxName,
+          processToken,
+          `Shields recovery owner PID ${String(
+            observed.ownerPid,
+          )} exited without descendant-containment proof`,
+          assertTakeoverAuthority,
+        );
+      } catch (error) {
+        if (isDurableContainmentFailure(error)) throw error;
+        assertTakeoverAuthority?.();
+        throw durableMcpLifecycleContainmentFailure(
+          error,
+          getMcpLifecycleLockPath(sandboxName, STATE_DIR),
+        );
+      }
+      throw new Error(
+        "Shields-down forward owner exited before committing its final mutation; durable containment requires operator resolution",
+      );
+    }
+    throw new Error(
+      "Shields-down forward owner is still active; automatic recovery is waiting behind the deadline gate",
+    );
   }
   return observed;
 }
 
-function excludeRecoveryProcessTree(
-  descendants: ProcessIdentity[],
-  recovery: Pick<ProcessIdentity, "pid" | "startIdentity">,
-  recoveryDescendants: ProcessIdentity[],
-): ProcessIdentity[] {
-  const identityKey = ({ pid, startIdentity }: Pick<ProcessIdentity, "pid" | "startIdentity">) =>
-    `${String(pid)}\0${startIdentity}`;
-  const excludedIdentities = new Set<string>([recovery, ...recoveryDescendants].map(identityKey));
-  return descendants.filter((descendant) => !excludedIdentities.has(identityKey(descendant)));
-}
-
-function stopTimedOutShieldsDownTree(ownerPid: number, ownerStartIdentity: string): void {
-  let freezeDeadline = processInspectionDeadlineAfter(SHIELDS_TRANSITION_TERMINATE_GRACE_MS);
-  const waitForKnownExactProcess = (
-    pid: number,
-    startIdentity: string,
-    deadline: number,
-  ): Exclude<ExactProcessStatus, "unknown"> => {
-    while (true) {
-      const status = readExactProcessStatus(pid, startIdentity, deadline);
-      if (status !== "unknown") return status;
-      if (processInspectionDeadlineReached(deadline)) {
-        throw new Error("Timed-out shields-down process identity could not be verified safely");
-      }
-      Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
-    }
-  };
-  const signalExact = (
-    pid: number,
-    startIdentity: string,
-    signal: NodeJS.Signals,
-    deadline: number,
-  ): void => {
-    if (waitForKnownExactProcess(pid, startIdentity, deadline) === "gone") return;
-    try {
-      process.kill(pid, signal);
-    } catch (error) {
-      const errno = error as NodeJS.ErrnoException;
-      if (errno.code !== "ESRCH") throw error;
-    }
-  };
-  const waitForExactStop = (pid: number, startIdentity: string): "gone" | "stopped" => {
-    while (true) {
-      const state = readProcessState(pid, freezeDeadline);
-      const status = readExactProcessStatus(pid, startIdentity, freezeDeadline);
-      if (status === "gone" || state?.startsWith("Z")) return "gone";
-      if (status === "current" && /^[Tt]/.test(state ?? "")) return "stopped";
-      if (processInspectionDeadlineReached(freezeDeadline)) {
-        throw new Error("Timed-out shields-down process tree could not be frozen safely");
-      }
-      Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
-    }
-  };
-  if (waitForKnownExactProcess(ownerPid, ownerStartIdentity, freezeDeadline) === "gone") return;
-  // Stop the exact owner before enumerating its descendants so it cannot launch
-  // another weakening subprocess while takeover is being established.
-  signalExact(ownerPid, ownerStartIdentity, "SIGSTOP", freezeDeadline);
-  if (waitForExactStop(ownerPid, ownerStartIdentity) === "gone") return;
-  freezeDeadline = processInspectionDeadlineAfter(SHIELDS_TRANSITION_TERMINATE_GRACE_MS);
-  const recoveryStartIdentity = readProcessStartIdentity(process.pid, freezeDeadline);
-  if (recoveryStartIdentity === null) {
-    throw new Error("Cannot identify the auto-restore recovery process safely");
-  }
-  const recoveryTree = listDescendantProcessIdentities(process.pid, freezeDeadline);
-  if (recoveryTree === null) {
-    throw new Error("Cannot identify the auto-restore recovery process tree safely");
-  }
-  const tracked = new Map<number, { startIdentity: string; depth: number }>();
-  let observedQuiescentPass = false;
-  for (let pass = 0; pass < 8; pass += 1) {
-    if (waitForExactStop(ownerPid, ownerStartIdentity) === "gone") {
-      throw new Error("Timed-out shields-down process tree could not be frozen safely");
-    }
-    const descendants = listDescendantProcessIdentities(ownerPid, freezeDeadline);
-    if (descendants === null) {
-      throw new Error("Cannot enumerate timed-out shields-down subprocesses safely");
-    }
-    let added = false;
-    const recoveryIsInsideOwnerTree = descendants.some(
-      ({ pid }: { pid: number }) => pid === process.pid,
-    );
-    const passDescendants = excludeRecoveryProcessTree(
-      descendants,
-      { pid: process.pid, startIdentity: recoveryStartIdentity },
-      recoveryIsInsideOwnerTree ? recoveryTree : [],
-    );
-    for (const descendant of passDescendants) {
-      const previous = tracked.get(descendant.pid);
-      if (!previous || previous.startIdentity !== descendant.startIdentity) added = true;
-      tracked.set(descendant.pid, {
-        startIdentity: descendant.startIdentity,
-        depth: descendant.depth,
-      });
-      signalExact(descendant.pid, descendant.startIdentity, "SIGSTOP", freezeDeadline);
-    }
-    for (const descendant of passDescendants) {
-      waitForExactStop(descendant.pid, descendant.startIdentity);
-    }
-    if (!added) {
-      observedQuiescentPass = true;
-      break;
-    }
-    Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
-  }
-  if (!observedQuiescentPass) {
-    throw new Error("Timed-out shields-down process tree could not be frozen safely");
-  }
-
-  const deepestFirst = [...tracked.entries()].sort((a, b) => b[1].depth - a[1].depth);
-  const killDeadline = processInspectionDeadlineAfter(SHIELDS_TRANSITION_TERMINATE_GRACE_MS);
-  for (const [pid, identity] of deepestFirst) {
-    signalExact(pid, identity.startIdentity, "SIGKILL", killDeadline);
-  }
-  signalExact(ownerPid, ownerStartIdentity, "SIGKILL", killDeadline);
-
-  const exactProcessIsGone = (pid: number, startIdentity: string): boolean => {
-    const state = readProcessState(pid, killDeadline);
-    return (
-      state?.startsWith("Z") === true ||
-      readExactProcessStatus(pid, startIdentity, killDeadline) === "gone"
-    );
-  };
-  while (!processInspectionDeadlineReached(killDeadline)) {
-    const survivor = deepestFirst.some(
-      ([pid, identity]) => !exactProcessIsGone(pid, identity.startIdentity),
-    );
-    if (!survivor && exactProcessIsGone(ownerPid, ownerStartIdentity)) {
-      return;
-    }
-    Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
-  }
-  throw new Error("Timed-out shields-down process tree could not be stopped safely");
-}
-
-// ---------------------------------------------------------------------------
 // privileged sandbox exec — bypasses the sandbox's Landlock context
 //
 // openshell sandbox exec runs commands INSIDE the Landlock domain, so it
@@ -943,30 +911,271 @@ function getShieldsPostureWithoutHostLock(
   return { ...describeShieldsMode(mode), state };
 }
 
-function prepareExpiredAutoRestoreHostLockTakeover(sandboxName: string): void {
+type ExpiredAutoRestoreTakeover = {
+  marker: TimerMarker & { processToken: string };
+};
+
+function inspectExpiredAutoRestoreMarker(sandboxName: string): TimerMarker | null {
   const state = loadShieldsState(sandboxName);
-  if (state._isCorrupt || state.shieldsDown !== true) return;
+  if (state._isCorrupt || state.shieldsDown !== true) return null;
   const marker = readTimerMarker(sandboxName);
-  if (!marker?.processToken || !/^[0-9a-f]{32}$/.test(marker.processToken)) return;
+  if (!marker) return null;
   const restoreAtMs = new Date(marker.restoreAt).getTime();
   const now = Date.now();
-  if (!Number.isFinite(restoreAtMs) || restoreAtMs > now) return;
+  if (!Number.isFinite(restoreAtMs) || restoreAtMs > now) return null;
   if (
     isProcessAlive(marker.pid) &&
     verifyTimerMarkerIdentity(marker).verified &&
     now <= restoreAtMs + AUTO_RESTORE_COMPLETION_GRACE_MS
   ) {
-    return;
+    return null;
   }
-  prepareAutoRestoreTransitionTakeover(sandboxName, marker.processToken, marker.snapshotPath);
+  return marker;
+}
+
+function inspectExpiredAutoRestoreTakeover(
+  sandboxName: string,
+  marker = inspectExpiredAutoRestoreMarker(sandboxName),
+): ExpiredAutoRestoreTakeover | null {
+  if (!marker?.processToken || !/^[0-9a-f]{32}$/.test(marker.processToken)) return null;
+  return {
+    marker: marker as TimerMarker & { processToken: string },
+  };
+}
+
+function failInteractiveAutoRestoreClosed(
+  sandboxName: string,
+  marker: TimerMarker & { processToken: string },
+  message: string,
+): never {
+  const containmentPath = `${getMcpLifecycleLockPath(sandboxName, STATE_DIR)}.containment`;
+  let notifiedError: string | null = null;
+  let lastContainmentError: string | null = null;
+  // Retry a durable containment commit for one normal transition-handoff
+  // window. A persistent state-directory failure returns to the operator only
+  // through the coded failure that keeps the owned lifecycle gates.
+  for (let attempt = 0; attempt < INTERACTIVE_CONTAINMENT_COMMIT_MAX_ATTEMPTS; attempt += 1) {
+    assertTimerMarkerGeneration(sandboxName, marker);
+    try {
+      persistUnresolvedShieldsContainment(
+        sandboxName,
+        marker.processToken,
+        `Interactive auto-restore could not complete safely: ${message}`,
+        () => assertTimerMarkerGeneration(sandboxName, marker),
+      );
+      break;
+    } catch (error) {
+      if (isDurableContainmentFailure(error)) throw error;
+      if (fs.existsSync(containmentPath)) break;
+      assertTimerMarkerGeneration(sandboxName, marker);
+      const containmentError = error instanceof Error ? error.message : String(error);
+      lastContainmentError = containmentError;
+      if (containmentError !== notifiedError) {
+        appendAuditEntryBestEffort({
+          action: "shields_up_failed",
+          sandbox: sandboxName,
+          timestamp: new Date().toISOString(),
+          restored_by: "auto_timer",
+          policy_snapshot: marker.snapshotPath,
+          error: `Durable containment commit failed; retrying behind the deadline gate: ${containmentError}`,
+        });
+        notifiedError = containmentError;
+      }
+      if (attempt + 1 < INTERACTIVE_CONTAINMENT_COMMIT_MAX_ATTEMPTS) {
+        Atomics.wait(transitionPollBuffer, 0, 0, SHIELDS_TRANSITION_POLL_MS);
+      }
+    }
+  }
+  if (!fs.existsSync(containmentPath)) {
+    throw durableMcpLifecycleContainmentFailure(
+      new Error(
+        `${message}. Durable containment could not be committed after ${String(
+          INTERACTIVE_CONTAINMENT_COMMIT_MAX_ATTEMPTS,
+        )} attempts: ${lastContainmentError ?? "unknown state-directory failure"}. Correct the state-directory write failure and retry the command before running another sandbox mutation`,
+      ),
+      getMcpLifecycleLockPath(sandboxName, STATE_DIR),
+    );
+  }
+  throw new Error(`${message}. Durable sandbox mutation containment requires operator resolution`);
+}
+
+function isDurableContainmentFailure(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as Error & { code?: string }).code === "NEMOCLAW_DURABLE_CONTAINMENT"
+  );
+}
+
+function retryInlineAutoRestore(
+  sandboxName: string,
+  marker: TimerMarker & { processToken: string },
+): void {
+  let notifiedError: string | null = null;
+  for (let attempt = 0; attempt < INTERACTIVE_AUTO_RESTORE_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const recoveredState = recoverExpiredAutoRestoreGate(sandboxName, true);
+      if (!recoveredState._isCorrupt && recoveredState.shieldsDown !== true) {
+        return;
+      }
+      assertTimerMarkerGeneration(sandboxName, marker);
+      const message = "Inline auto-restore did not complete; retrying under the lifecycle gate";
+      if (message !== notifiedError) {
+        appendAuditEntryBestEffort({
+          action: "shields_up_failed",
+          sandbox: sandboxName,
+          timestamp: new Date().toISOString(),
+          restored_by: "auto_timer",
+          policy_snapshot: marker.snapshotPath,
+          error: message,
+        });
+        notifiedError = message;
+      }
+    } catch (error) {
+      if (isDurableContainmentFailure(error)) throw error;
+      assertTimerMarkerGeneration(sandboxName, marker);
+      const message = error instanceof Error ? error.message : String(error);
+      if (message !== notifiedError) {
+        appendAuditEntryBestEffort({
+          action: "shields_up_failed",
+          sandbox: sandboxName,
+          timestamp: new Date().toISOString(),
+          restored_by: "auto_timer",
+          policy_snapshot: marker.snapshotPath,
+          error: message,
+        });
+        notifiedError = message;
+      }
+    }
+    if (attempt + 1 < INTERACTIVE_AUTO_RESTORE_MAX_ATTEMPTS) {
+      Atomics.wait(transitionPollBuffer, 0, 0, INTERACTIVE_AUTO_RESTORE_RETRY_MS);
+    }
+  }
+  failInteractiveAutoRestoreClosed(
+    sandboxName,
+    marker,
+    `Inline auto-restore exhausted ${String(
+      INTERACTIVE_AUTO_RESTORE_MAX_ATTEMPTS,
+    )} attempts: ${notifiedError ?? "recovery did not complete"}`,
+  );
+}
+
+function withExpiredAutoRestoreDeadlineFence<T>(
+  sandboxName: string,
+  command: string,
+  operation: (allowInlineRecovery: boolean) => T,
+): T {
+  const expiredMarker = inspectExpiredAutoRestoreMarker(sandboxName);
+  const takeover = inspectExpiredAutoRestoreTakeover(sandboxName, expiredMarker);
+  const runWithHostLock = (callback: () => T) =>
+    withTimerBoundShieldsMutationLock(sandboxName, command, callback);
+  const recoverThenRun = () =>
+    withTimerBoundAutoRestoreLock(sandboxName, command, () => {
+      if (takeover) retryInlineAutoRestore(sandboxName, takeover.marker);
+      return operation(false);
+    });
+  if (isMcpLifecycleLockHeld(sandboxName, STATE_DIR)) {
+    if (!expiredMarker || !takeover) {
+      return runWithHostLock(() => operation(true));
+    }
+    const { marker } = takeover;
+    prepareAutoRestoreTransitionTakeover(
+      sandboxName,
+      marker.processToken,
+      marker.snapshotPath,
+      () => assertTimerMarkerGeneration(sandboxName, marker),
+    );
+    // This lifecycle owner is what the live timer is waiting on. Run the
+    // nested operation without re-entering recovery against that timer.
+    return runWithHostLock(() => operation(false));
+  }
+  if (!takeover) {
+    return withMcpLifecycleLockSync(sandboxName, () => runWithHostLock(() => operation(true)), {
+      stateDir: STATE_DIR,
+    });
+  }
+
+  const { marker } = takeover;
+  const assertTakeoverAuthority = () => assertTimerMarkerGeneration(sandboxName, marker);
+  return withMcpLifecycleDeadlineFenceSync(
+    sandboxName,
+    marker.processToken,
+    () => {
+      let notifiedError: string | null = null;
+      for (let attempt = 0; attempt < INTERACTIVE_AUTO_RESTORE_MAX_ATTEMPTS; attempt += 1) {
+        try {
+          prepareAutoRestoreTransitionTakeover(
+            sandboxName,
+            marker.processToken,
+            marker.snapshotPath,
+            assertTakeoverAuthority,
+          );
+          return recoverThenRun();
+        } catch (error) {
+          if (isDurableContainmentFailure(error)) throw error;
+          assertTakeoverAuthority();
+          if (fs.existsSync(`${getMcpLifecycleLockPath(sandboxName, STATE_DIR)}.containment`)) {
+            throw error;
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          if (message !== notifiedError) {
+            appendAuditEntryBestEffort({
+              action: "shields_up_failed",
+              sandbox: sandboxName,
+              timestamp: new Date().toISOString(),
+              restored_by: "auto_timer",
+              policy_snapshot: marker.snapshotPath,
+              error: message,
+            });
+            notifiedError = message;
+          }
+          if (attempt + 1 < INTERACTIVE_AUTO_RESTORE_MAX_ATTEMPTS) {
+            Atomics.wait(transitionPollBuffer, 0, 0, INTERACTIVE_AUTO_RESTORE_RETRY_MS);
+          }
+        }
+      }
+      return failInteractiveAutoRestoreClosed(
+        sandboxName,
+        marker,
+        `Auto-restore transition takeover exhausted ${String(
+          INTERACTIVE_AUTO_RESTORE_MAX_ATTEMPTS,
+        )} attempts: ${notifiedError ?? "transition ownership did not become available"}`,
+      );
+    },
+    {
+      stateDir: STATE_DIR,
+      throwOnCommittedContainment: true,
+      onContainment: ({ kind, ownerPid, reason }) => {
+        if (kind === "verified-live-wait") {
+          appendAuditEntryBestEffort({
+            action: "shields_auto_restore_lock_warning",
+            sandbox: sandboxName,
+            timestamp: new Date().toISOString(),
+            restored_by: "auto_timer",
+            policy_snapshot: marker.snapshotPath,
+            warning: reason,
+          });
+          return;
+        }
+        appendAuditEntryBestEffort({
+          action: "shields_up_failed",
+          sandbox: sandboxName,
+          timestamp: new Date().toISOString(),
+          restored_by: "auto_timer",
+          policy_snapshot: marker.snapshotPath,
+          error: `${reason}${ownerPid ? ` Contained owner PID: ${String(ownerPid)}.` : ""}`,
+        });
+      },
+    },
+  );
 }
 
 function getShieldsPosture(sandboxName: string, allowInlineRecovery = false): ShieldsPosture {
   if (!allowInlineRecovery) return getShieldsPostureWithoutHostLock(sandboxName, false);
   validateName(sandboxName, "sandbox name");
-  prepareExpiredAutoRestoreHostLockTakeover(sandboxName);
-  return withTimerBoundShieldsMutationLock(sandboxName, "recover expired shields posture", () =>
-    getShieldsPostureWithoutHostLock(sandboxName, true),
+  return withExpiredAutoRestoreDeadlineFence(
+    sandboxName,
+    "recover expired shields posture",
+    (allowInlineRecovery) => getShieldsPostureWithoutHostLock(sandboxName, allowInlineRecovery),
   );
 }
 
@@ -2086,15 +2295,14 @@ function unlockAgentConfig(
 
 function inspectMutableConfigPerms(sandboxName: string): MutableConfigPermsInspection {
   validateName(sandboxName, "sandbox name");
-  prepareExpiredAutoRestoreHostLockTakeover(sandboxName);
-  return withTimerBoundShieldsMutationLock(
+  return withExpiredAutoRestoreDeadlineFence(
     sandboxName,
     "inspect mutable config permissions",
-    () => {
+    (allowInlineRecovery) => {
       const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
       return inspectMutableConfigPermsCore(
         target,
-        getShieldsPostureWithoutHostLock(sandboxName, true).mode,
+        getShieldsPostureWithoutHostLock(sandboxName, allowInlineRecovery).mode,
         (p) => privilegedSandboxExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", p]),
       );
     },
@@ -2103,29 +2311,35 @@ function inspectMutableConfigPerms(sandboxName: string): MutableConfigPermsInspe
 
 function repairMutableConfigPerms(sandboxName: string): MutableConfigRepairResult {
   validateName(sandboxName, "sandbox name");
-  prepareExpiredAutoRestoreHostLockTakeover(sandboxName);
-  return withTimerBoundShieldsMutationLock(sandboxName, "repair mutable config permissions", () => {
-    const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
-    return repairMutableConfigPermsCore(
-      target,
-      getShieldsPostureWithoutHostLock(sandboxName, true).mode,
-      () => normalizeMutableOpenClawConfig(sandboxName, target.configDir),
-    );
-  });
+  return withExpiredAutoRestoreDeadlineFence(
+    sandboxName,
+    "repair mutable config permissions",
+    (allowInlineRecovery) => {
+      const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
+      return repairMutableConfigPermsCore(
+        target,
+        getShieldsPostureWithoutHostLock(sandboxName, allowInlineRecovery).mode,
+        () => normalizeMutableOpenClawConfig(sandboxName, target.configDir),
+      );
+    },
+  );
 }
 
 function restoreLockedStateDirStartupAccess(sandboxName: string): void {
   validateName(sandboxName, "sandbox name");
-  prepareExpiredAutoRestoreHostLockTakeover(sandboxName);
-  withTimerBoundShieldsMutationLock(sandboxName, "restore locked startup access", () => {
-    const posture = getShieldsPostureWithoutHostLock(sandboxName, true);
-    if (!posture.locked) return;
-    const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
-    const issues = restoreStateDirStartupAccess(stateDirLockExec(sandboxName), target.configDir);
-    if (issues.length > 0) {
-      throw new Error(`Locked startup access could not be restored: ${issues.join(", ")}`);
-    }
-  });
+  withExpiredAutoRestoreDeadlineFence(
+    sandboxName,
+    "restore locked startup access",
+    (allowInlineRecovery) => {
+      const posture = getShieldsPostureWithoutHostLock(sandboxName, allowInlineRecovery);
+      if (!posture.locked) return;
+      const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
+      const issues = restoreStateDirStartupAccess(stateDirLockExec(sandboxName), target.configDir);
+      if (issues.length > 0) {
+        throw new Error(`Locked startup access could not be restored: ${issues.join(", ")}`);
+      }
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -2448,8 +2662,16 @@ function synchronizeAutoRestoreTransition(
   sandboxName: string,
   processToken: string,
   snapshotPath: string,
+  options: {
+    retainTransition?: boolean;
+    assertTakeoverAuthority?: () => void;
+  } = {},
 ): void {
-  const transition = waitForShieldsDownForwardCommit(sandboxName, processToken);
+  const transition = waitForShieldsDownForwardCommit(
+    sandboxName,
+    processToken,
+    options.assertTakeoverAuthority,
+  );
   if (!transition) return;
   if (transition.snapshotPath !== snapshotPath) {
     throw new Error("Auto-restore snapshot does not match shields-down transition ownership");
@@ -2470,49 +2692,59 @@ function synchronizeAutoRestoreTransition(
       `Policy restore after shields-down handoff exited with status ${String(status)}`,
     );
   }
-  clearShieldsDownTransition(sandboxName, processToken);
+  if (!options.retainTransition) {
+    clearShieldsDownTransition(sandboxName, processToken);
+  }
 }
 
 function prepareAutoRestoreTransitionTakeover(
   sandboxName: string,
   processToken: string,
   snapshotPath: string,
+  assertTakeoverAuthority?: () => void,
 ): void {
   if (!/^[0-9a-f]{32}$/.test(processToken)) {
     throw new Error("Invalid auto-restore transition takeover token");
   }
-
   const transition = readShieldsDownTransition(sandboxName, processToken);
   if (transition && transition.snapshotPath !== snapshotPath) {
     throw new Error("Auto-restore snapshot does not match shields-down transition ownership");
   }
   if (transition) {
-    // This waits briefly for the forward commit and stops its exact process
-    // tree if the deadline fired while it was still weakening the sandbox.
-    waitForShieldsDownForwardCommit(sandboxName, processToken);
+    waitForShieldsDownForwardCommit(sandboxName, processToken, assertTakeoverAuthority);
   }
 
-  const owner = inspectShieldsTransitionLockOwner(sandboxName, processToken);
+  const owner = inspectAnyShieldsTransitionLockOwner(sandboxName);
   if (!owner) return;
-  // The same timer token is also propagated to config/inference/restart
-  // mutations made during the mutable window. At expiry those operations
-  // are weaker than restoring lockdown and may be preempted safely. The stop
-  // helper pins the exact identity and fails closed if it cannot be read.
-  stopTimedOutShieldsDownTree(owner.pid, owner.processStartIdentity);
-  const takeover = takeoverShieldsTransitionLock(
-    sandboxName,
+  const ownerStatus = readExactProcessStatus(
     owner.pid,
     owner.processStartIdentity,
-    processToken,
+    processInspectionDeadlineAfter(SHIELDS_TRANSITION_TERMINATE_GRACE_MS),
   );
-  if (
-    !takeover.removed &&
-    takeover.reason !== "missing" &&
-    takeover.reason !== "path-changed" &&
-    takeover.reason !== "owner-mismatch"
-  ) {
-    throw new Error(`Cannot take over expired shields transition lock: ${takeover.reason}`);
+  if (ownerStatus === "gone") {
+    assertTakeoverAuthority?.();
+    try {
+      persistUnresolvedShieldsContainment(
+        sandboxName,
+        processToken,
+        `Shields recovery owner PID ${String(owner.pid)} exited without descendant-containment proof`,
+        assertTakeoverAuthority,
+      );
+    } catch (error) {
+      if (isDurableContainmentFailure(error)) throw error;
+      assertTakeoverAuthority?.();
+      throw durableMcpLifecycleContainmentFailure(
+        error,
+        getMcpLifecycleLockPath(sandboxName, STATE_DIR),
+      );
+    }
+    throw new Error(
+      "Shields transition owner exited without descendant-containment proof; durable containment requires operator resolution",
+    );
   }
+  throw new Error(
+    "Shields transition owner is still active; automatic recovery is waiting behind the deadline gate",
+  );
 }
 
 function synchronizeAutoRestoreWithShieldsDown(sandboxName: string): void {
@@ -2525,7 +2757,36 @@ function synchronizeAutoRestoreWithShieldsDown(sandboxName: string): void {
   ) {
     return;
   }
-  synchronizeAutoRestoreTransition(sandboxName, timerMarker.processToken, timerMarker.snapshotPath);
+  synchronizeAutoRestoreTransition(
+    sandboxName,
+    timerMarker.processToken,
+    timerMarker.snapshotPath,
+    {
+      retainTransition: true,
+      assertTakeoverAuthority: () => assertTimerMarkerGeneration(sandboxName, timerMarker),
+    },
+  );
+}
+
+function completeAutoRestoreTransition(
+  sandboxName: string,
+  processToken: string,
+  snapshotPath: string,
+): boolean {
+  const marker = readTimerMarker(sandboxName);
+  if (
+    marker?.pid !== process.pid ||
+    marker.processToken !== processToken ||
+    marker.snapshotPath !== snapshotPath
+  ) {
+    return false;
+  }
+  const transition = readShieldsDownTransition(sandboxName, processToken);
+  if (transition && transition.snapshotPath !== snapshotPath) {
+    throw new Error("Auto-restore completion does not match shields-down transition ownership");
+  }
+  clearShieldsDownTransition(sandboxName, processToken);
+  return true;
 }
 
 function lockAgentConfigWithoutHostLock(
@@ -2702,20 +2963,10 @@ function recoverExpiredAutoRestoreInline(
     if (Date.now() <= restoreAtMs + AUTO_RESTORE_COMPLETION_GRACE_MS) {
       return { attempted: false, restored: false };
     }
-    const timerStartIdentity = readProcessStartIdentity(marker.pid);
-    if (!timerStartIdentity) {
-      console.error(
-        "  Recovery warning: expired auto-restore timer identity cannot be pinned safely.",
-      );
-      return { attempted: true, restored: false };
-    }
-    try {
-      stopTimedOutShieldsDownTree(marker.pid, timerStartIdentity);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`  Recovery warning: ${message}`);
-      return { attempted: true, restored: false };
-    }
+    console.error(
+      "  Recovery warning: the expired auto-restore timer is still active; refusing portable process-tree preemption and waiting for it to exit.",
+    );
+    return { attempted: true, restored: false };
   }
 
   console.error(
@@ -2724,8 +2975,12 @@ function recoverExpiredAutoRestoreInline(
 
   if (marker.processToken && /^[0-9a-f]{32}$/.test(marker.processToken)) {
     try {
-      synchronizeAutoRestoreTransition(sandboxName, marker.processToken, marker.snapshotPath);
+      synchronizeAutoRestoreTransition(sandboxName, marker.processToken, marker.snapshotPath, {
+        retainTransition: true,
+        assertTakeoverAuthority: () => assertTimerMarkerGeneration(sandboxName, marker),
+      });
     } catch (error) {
+      if (isDurableContainmentFailure(error)) throw error;
       const message = error instanceof Error ? error.message : String(error);
       appendAuditEntry({
         action: "shields_up_failed",
@@ -2983,35 +3238,26 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
         },
       );
       if (!timerChild.pid) throw new Error("auto-restore timer did not report a process id");
-      fs.writeFileSync(
-        timerMarkerPath(sandboxName),
-        JSON.stringify({
-          pid: timerChild.pid,
-          sandboxName,
-          snapshotPath,
-          restoreAt: restoreAt.toISOString(),
-          processToken,
-          allowLegacyHermesProtocol: opts.allowLegacyHermesProtocol === true,
-          agentName: target.agentName,
-          configPath: target.configPath,
-          configDir: target.configDir,
-          ...(leaseOwnerPid !== null && leaseOwnerStartIdentity
-            ? { leaseOwnerPid, leaseOwnerStartIdentity }
-            : {}),
-        }),
-        { mode: 0o600 },
-      );
+      writeTimerMarkerAtomic(sandboxName, {
+        pid: timerChild.pid,
+        sandboxName,
+        snapshotPath,
+        restoreAt: restoreAt.toISOString(),
+        processToken,
+        allowLegacyHermesProtocol: opts.allowLegacyHermesProtocol === true,
+        agentName: target.agentName,
+        configPath: target.configPath,
+        configDir: target.configDir,
+        ...(leaseOwnerPid !== null && leaseOwnerStartIdentity
+          ? { leaseOwnerPid, leaseOwnerStartIdentity }
+          : {}),
+      });
       if (!timerChild.send({ type: "authorize", processToken })) {
         throw new Error("auto-restore timer authorization channel closed early");
       }
       timerChild.disconnect();
       timerChild.unref();
     } catch (err) {
-      try {
-        timerChild?.kill("SIGTERM");
-      } catch {
-        // Best effort; without a matching marker the child has no authority.
-      }
       clearTimerMarker(sandboxName);
       clearShieldsDownTransition(sandboxName, processToken);
       cleanupRuntimePolicyFile();
@@ -3437,7 +3683,7 @@ function shieldsUp(
 ): void {
   validateName(sandboxName, "sandbox name");
   try {
-    return withTimerBoundShieldsMutationLock(sandboxName, "shields up", () =>
+    return withExpiredAutoRestoreDeadlineFence(sandboxName, "shields up", () =>
       shieldsUpWithoutHostLock(sandboxName, opts),
     );
   } catch (error) {
@@ -3592,9 +3838,10 @@ function shieldsStatus(
         shieldsStatusWithoutHostLock(sandboxName, false, deps),
       );
     }
-    prepareExpiredAutoRestoreHostLockTakeover(sandboxName);
-    return withTimerBoundShieldsMutationLock(sandboxName, "shields status", () =>
-      shieldsStatusWithoutHostLock(sandboxName, true, deps),
+    return withExpiredAutoRestoreDeadlineFence(
+      sandboxName,
+      "shields status",
+      (allowInlineRecovery) => shieldsStatusWithoutHostLock(sandboxName, allowInlineRecovery, deps),
     );
   } catch (error) {
     return completeDeferredShieldsExit(error);
@@ -3655,9 +3902,9 @@ function clearShieldsState(sandboxName: string): void {
 
 export {
   clearShieldsState,
+  completeAutoRestoreTransition,
   DEFAULT_TIMEOUT_SECONDS,
   deriveShieldsMode,
-  excludeRecoveryProcessTree,
   getShieldsPosture,
   inspectMutableConfigPerms,
   isShieldsDown,

@@ -14,6 +14,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
     handleAgentSetup: vi.fn(async () => undefined),
     context: vi.fn(() => ({ ctx: true })),
     ensureDashboard: vi.fn(() => 18789),
+    persistDashboardPort: vi.fn(),
     skipped: vi.fn(async (stepName: string) => {
       session.steps[stepName].status = "skipped";
       return session;
@@ -36,6 +37,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       handleAgentSetup: calls.handleAgentSetup,
       agentSetupContext: calls.context,
       ensureAgentDashboardForward: calls.ensureDashboard,
+      persistDashboardPort: calls.persistDashboardPort,
       recordStepSkipped: calls.skipped,
       isOpenclawReady: calls.openclawReady,
       skippedStepMessage: calls.skippedMessage,
@@ -99,6 +101,27 @@ describe("handleAgentSetupState", () => {
       updates: undefined,
       metadata: { state: "agent_setup" },
     });
+  });
+
+  it("persists the bumped dashboard port returned by the forward (#8214)", async () => {
+    const { deps, calls } = createDeps({});
+    calls.ensureDashboard.mockReturnValue(18791);
+    const agent = { name: "hermes", displayName: "Hermes" };
+
+    await handleAgentSetupState({ ...baseOptions(deps, agent), resume: true });
+
+    expect(calls.ensureDashboard).toHaveBeenCalledWith("my-assistant", agent);
+    expect(calls.persistDashboardPort).toHaveBeenCalledWith("my-assistant", 18791);
+  });
+
+  it("does not persist a dashboard port when the agent manages no dashboard (#8214)", async () => {
+    const { deps, calls } = createDeps({});
+    calls.ensureDashboard.mockReturnValue(0);
+    const agent = { name: "hermes", displayName: "Hermes" };
+
+    await handleAgentSetupState({ ...baseOptions(deps, agent), resume: true });
+
+    expect(calls.persistDashboardPort).not.toHaveBeenCalled();
   });
 
   it("skips OpenClaw setup on resume when OpenClaw is ready", async () => {
