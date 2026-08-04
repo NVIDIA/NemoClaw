@@ -810,6 +810,116 @@ describe("shields command flow", () => {
     }
   });
 
+  it("lets an expired timer preempt its token-bound destroy owner and restore lockdown", {
+    timeout: 20_000,
+  }, async () => {
+    const transitionLockPath = path.join(import.meta.dirname, "transition-lock.ts");
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const sandboxName = "destroy-deadline";
+    const processToken = "e".repeat(32);
+    const snapshotPath = path.join(stateDir, "policy-snapshot-destroy.yaml");
+    const readyPath = path.join(stateDir, "destroy-owner.ready");
+    const lockPath = path.join(stateDir, `shields-transition-lock-${sandboxName}.json`);
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+    const statePath = path.join(stateDir, `shields-${sandboxName}.json`);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  test: {}\n");
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        shieldsDown: true,
+        shieldsDownAt: new Date(Date.now() - 60_000).toISOString(),
+        shieldsDownTimeout: 60,
+        shieldsDownReason: "destroy takeover coverage",
+        shieldsDownPolicy: "permissive",
+        shieldsPolicySnapshotPath: snapshotPath,
+        updatedAt: new Date().toISOString(),
+      }),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify({
+        pid: 999_999,
+        sandboxName,
+        snapshotPath,
+        restoreAt: new Date(Date.now() - 1_000).toISOString(),
+        processToken,
+      }),
+      { mode: 0o600 },
+    );
+
+    const owner = spawn(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "-e",
+        [
+          `const {withShieldsTransitionLock}=require(${JSON.stringify(transitionLockPath)})`,
+          "const fs=require('fs')",
+          "const [name,token,ready]=process.argv.slice(1)",
+          "withShieldsTransitionLock(name,'destroy sandbox',()=>{fs.writeFileSync(ready,'ready');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10000)},{takeoverToken:token})",
+        ].join(";"),
+        sandboxName,
+        processToken,
+        readyPath,
+      ],
+      { env: { ...process.env, HOME: tmpDir }, stdio: "ignore" },
+    );
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(fs.existsSync(readyPath)).toBe(true);
+          expect(fs.existsSync(lockPath)).toBe(true);
+        },
+        { timeout: 5_000, interval: 10 },
+      );
+      const timerControl = requireDist("./timer-control.js");
+      const ownerStartIdentity = timerControl.readProcessStartIdentity(owner.pid);
+      expect(ownerStartIdentity).toBeTypeOf("string");
+      const harness = createHarness({
+        dockerExecFileSync: (argv: unknown) => {
+          const args = Array.isArray(argv) ? argv.map(String) : [];
+          switch (true) {
+            case args.includes("sha256sum"):
+              return `${"a".repeat(64)}  ${String(args.at(-1))}\n`;
+            case args.includes("lsattr"):
+              return `----i---------e----- ${String(args.at(-1))}\n`;
+            case args.includes("stat"):
+              return args.at(-1) === "/sandbox"
+                ? "1775 root:sandbox\n"
+                : args.at(-1) === "/sandbox/.openclaw"
+                  ? "755 root:root\n"
+                  : "444 root:root\n";
+            default:
+              return "";
+          }
+        },
+      });
+
+      harness.shieldsStatus(sandboxName);
+
+      const ownerState = timerControl.readProcessState(owner.pid);
+      expect(ownerState === null || ownerState.startsWith("Z")).toBe(true);
+      expect(fs.existsSync(lockPath)).toBe(false);
+      expect(JSON.parse(fs.readFileSync(statePath, "utf-8"))).toMatchObject({
+        shieldsDown: false,
+        shieldsDownAt: null,
+      });
+      expect(fs.existsSync(markerPath)).toBe(false);
+      expect(harness.runSpy).toHaveBeenCalledWith(
+        ["openshell", "policy", "set"],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      expect(harness.logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
+    } finally {
+      owner.kill("SIGCONT");
+      owner.kill("SIGKILL");
+    }
+  });
+
   it("publishes preparing recovery ownership before weakening and active only after unlock", () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     let observedPreparingDuringPolicy = false;

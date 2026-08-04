@@ -21,6 +21,16 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-cloud-onboard";
 const CHECKS_DIR = path.join(REPO_ROOT, "test/e2e/e2e-cloud-experimental/checks");
 const LIVE_TIMEOUT_MS = 60 * 60_000;
+const REASONING_MODEL_PROBE = String.raw`
+const fs = require("node:fs");
+const expectedModel = process.argv[1];
+const config = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"));
+const models = config.models?.providers?.inference?.models ?? [];
+const model = models.find((entry) => entry?.id === expectedModel);
+const evidence = { modelReasoning: model?.reasoning };
+console.log(JSON.stringify(evidence));
+process.exit(evidence.modelReasoning === true ? 0 : 1);
+`;
 
 validateSandboxName(SANDBOX_NAME);
 
@@ -81,6 +91,7 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
       "install and onboard cloud sandbox",
       "verify migrated gateway credential",
       "validate installed CLI and corporate CA trust",
+      "verify compatible endpoint reasoning propagation",
       "collect scoped diagnostics from onboarded sandbox",
       "run cloud inference and security checks",
       "remove cloud sandbox",
@@ -125,6 +136,7 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
       "successful onboard removes plaintext credentials.json",
       "sandbox appears healthy after cloud onboarding",
       "explicit corporate CA source is baked and merged with OpenShell trust inside the sandbox",
+      "validated compatible-endpoint reasoning reaches both the built image environment and OpenClaw model metadata",
       "installed CLI creates a non-empty diagnostics archive for the registered sandbox",
       "cloud split checks cover inference.local, security leak checks, and Landlock/read-only behavior",
       "cleanup verifies sandbox removal",
@@ -174,6 +186,7 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
         NEMOCLAW_INSTALL_REF: ref,
         NEMOCLAW_INSTALL_TAG: ref,
         NEMOCLAW_INSTALL_SCRIPT_URL: installUrl,
+        NEMOCLAW_REASONING: "true",
       }),
       redactionValues,
       timeoutMs: 25 * 60_000,
@@ -234,6 +247,40 @@ test("cloud onboard: public installer creates healthy sandbox with security chec
     timeoutMs: 60_000,
   });
   expect(corporateCaProbe.exitCode, resultText(corporateCaProbe)).toBe(0);
+
+  progress.phase("verify compatible endpoint reasoning propagation");
+  const imageEnvironment = await host.command(
+    "bash",
+    [
+      "-lc",
+      `set -eu; container_id="$(docker ps --filter ${shellQuote(
+        `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`,
+      )} --format '{{.ID}}' | head -n 1)"; test -n "$container_id"; reasoning="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container_id" | sed -n 's/^NEMOCLAW_REASONING=//p')"; case "$reasoning" in true|false) printf '%s\n' "$reasoning" ;; *) exit 1 ;; esac`,
+    ],
+    {
+      artifactName: "phase-2-compatible-endpoint-reasoning-image-environment",
+      env: testEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  expect(imageEnvironment.exitCode, resultText(imageEnvironment)).toBe(0);
+  const imageReasoning = imageEnvironment.stdout.trim();
+  const reasoningProbe = await sandbox.exec(
+    SANDBOX_NAME,
+    ["node", "-e", REASONING_MODEL_PROBE, hosted.model],
+    {
+      artifactName: "phase-2-compatible-endpoint-reasoning",
+      env: testEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  expect(reasoningProbe.exitCode, resultText(reasoningProbe)).toBe(0);
+  const reasoningEvidence = JSON.parse(reasoningProbe.stdout.trim()) as {
+    modelReasoning: boolean;
+  };
+  const combinedReasoningEvidence = { imageReasoning, ...reasoningEvidence };
+  expect(combinedReasoningEvidence).toEqual({ imageReasoning: "true", modelReasoning: true });
+  await artifacts.writeJson("compatible-endpoint-reasoning.json", combinedReasoningEvidence);
 
   progress.phase("collect scoped diagnostics from onboarded sandbox");
   const diagnosticsArchive = path.join(installCwd, "cloud-onboard-debug.tar.gz");

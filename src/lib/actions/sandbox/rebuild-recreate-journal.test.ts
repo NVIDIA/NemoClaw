@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   captureOpenshell: vi.fn(),
-  resolveGatewayTeardownAuthority: vi.fn(),
+  resolveGatewayRebuildAuthority: vi.fn(),
 }));
 
 vi.mock("../../adapters/openshell/runtime", () => ({
@@ -14,7 +14,7 @@ vi.mock("../../adapters/openshell/runtime", () => ({
 }));
 
 vi.mock("../../onboard/gateway-teardown-authority", () => ({
-  resolveGatewayTeardownAuthority: mocks.resolveGatewayTeardownAuthority,
+  resolveGatewayRebuildAuthority: mocks.resolveGatewayRebuildAuthority,
 }));
 
 import type { Session } from "../../state/onboard-session";
@@ -212,7 +212,7 @@ describe("rebuild replacement journal", () => {
       gatewayName: "nemoclaw-9090",
       gatewayPort: 9090,
     } as registry.SandboxEntry);
-    mocks.resolveGatewayTeardownAuthority.mockReturnValue({
+    mocks.resolveGatewayRebuildAuthority.mockReturnValue({
       gatewayName: "nemoclaw-9090",
       gatewayPort: 9090,
       mode: "nemoclaw-managed",
@@ -253,13 +253,14 @@ describe("rebuild replacement journal", () => {
   it("selects the exact gateway authority the journal records", () => {
     open();
 
-    expect(mocks.resolveGatewayTeardownAuthority).toHaveBeenCalledWith({
+    expect(mocks.resolveGatewayRebuildAuthority).toHaveBeenCalledWith({
       gatewayName: "nemoclaw-9090",
       gatewayPort: 9090,
     });
     const authority = session.checkpoint?.gatewayAuthority;
     expect(authority?.kind).toBe("selected");
     expect(authority?.kind === "selected" && authority.value.gatewayPort).toBe(9090);
+    expect(authority?.kind === "selected" && authority.value.source).toBe("standalone");
   });
 
   it("starts at deleted when the source sandbox is already absent", () => {
