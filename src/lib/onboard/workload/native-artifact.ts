@@ -296,10 +296,9 @@ export function parseNativeArtifactWorkloadReceiptV1(
   try {
     profile = decodeManagedStartupProfile(contract.encodedProfile);
   } catch (error) {
-    throw new NativeArtifactWorkloadContractError(
-      "contract.encodedProfile failed closed validation",
-      { cause: error },
-    );
+    throw new NativeArtifactWorkloadContractError("contract.encodedProfile failed validation", {
+      cause: error,
+    });
   }
   if (
     createHash("sha256").update(contract.encodedProfile, "utf8").digest("hex") !==

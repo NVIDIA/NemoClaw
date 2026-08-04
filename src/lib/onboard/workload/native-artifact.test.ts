@@ -61,7 +61,7 @@ function executable(value: Record<string, unknown>): Record<string, unknown> {
 }
 
 describe("native OpenClaw artifact workload contract", () => {
-  it("accepts an immutable Windows artifact and credential-free launch receipt (#8178)", () => {
+  it("accepts a Windows artifact receipt with fixed digests and credential-free launch data (#8178)", () => {
     const expected = receipt();
     expect(parseNativeArtifactWorkloadReceiptV1(expected)).toEqual(expected);
   });
@@ -76,9 +76,9 @@ describe("native OpenClaw artifact workload contract", () => {
       (value: Record<string, unknown>) => (executable(value).digest = "c".repeat(64)),
     ],
     ["source revision", (value: Record<string, unknown>) => (source(value).revision = "main")],
-    ["agent version", (value: Record<string, unknown>) => (artifact(value).version = "latest")],
+    ["artifact version", (value: Record<string, unknown>) => (artifact(value).version = "latest")],
     [
-      "oversized agent version",
+      "oversized artifact version",
       (value: Record<string, unknown>) => (artifact(value).version = `1.2.3-${"a".repeat(257)}`),
     ],
   ])("rejects an inexact %s (#8178)", (_label, mutate) => {
@@ -185,7 +185,7 @@ describe("native OpenClaw artifact workload contract", () => {
     }
   });
 
-  it("requires credential proxy replay and shared immutable ownership (#8178)", () => {
+  it("requires credential proxy replay and the shared artifact flag (#8178)", () => {
     for (const field of ["credentialProxyReplayRequired", "shared"] as const) {
       const value = receipt();
       value[field] = false;
