@@ -10,6 +10,7 @@ import {
 
 const MODEL_ID = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/u;
 const MODEL_REVISION = /^[0-9a-f]{40,64}$/u;
+const SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/u;
 const MAX_PATH_BYTES = 4_096;
 const MAX_REPLACEMENT_BYTES = 64 * 1_024;
 
@@ -20,6 +21,8 @@ export type ManagedClusterVllmPreparationRecipe =
       readonly snapshotCopy: {
         /** Normalized path relative to the immutable model snapshot. */
         readonly sourcePath: string;
+        /** Digest required before model-snapshot code can enter the runtime package. */
+        readonly digest: string;
         /** Normalized absolute destination inside the pinned vLLM image. */
         readonly targetPath: string;
       };
@@ -44,6 +47,7 @@ export type ManagedClusterVllmPreparationPlan =
       readonly ref: typeof SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF;
       readonly snapshotCopy: {
         readonly sourcePath: string;
+        readonly digest: string;
         readonly targetPath: string;
       };
       readonly exactTextReplacement: {
@@ -126,7 +130,11 @@ function preparationRecipe(value: unknown): ManagedClusterVllmPreparationRecipe 
     throw new Error(`unsupported model preparation ${String(value.ref)}`);
   }
   if (!isRecord(value.snapshotCopy)) throw new Error("snapshot copy preparation is invalid");
-  exactKeys(value.snapshotCopy, ["sourcePath", "targetPath"], "snapshot copy preparation");
+  exactKeys(
+    value.snapshotCopy,
+    ["digest", "sourcePath", "targetPath"],
+    "snapshot copy preparation",
+  );
   if (!isRecord(value.exactTextReplacement)) {
     throw new Error("exact-text replacement preparation is invalid");
   }
@@ -146,10 +154,17 @@ function preparationRecipe(value: unknown): ManagedClusterVllmPreparationRecipe 
   if (expectedText === replacementText) {
     throw new Error("exact-text replacement must change the matched text");
   }
+  if (
+    typeof value.snapshotCopy.digest !== "string" ||
+    !SHA256_DIGEST.test(value.snapshotCopy.digest)
+  ) {
+    throw new Error("snapshot copy digest must be an exact SHA-256 digest");
+  }
   return {
     ref: SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
     snapshotCopy: {
       sourcePath: snapshotRelativePath(value.snapshotCopy.sourcePath),
+      digest: value.snapshotCopy.digest,
       targetPath: containerPath(value.snapshotCopy.targetPath, "snapshot copy target path"),
     },
     exactTextReplacement: {
@@ -193,6 +208,7 @@ export function materializeManagedClusterVllmPreparation(
     ref: preparation.ref,
     snapshotCopy: {
       sourcePath: `${snapshotRoot}/${preparation.snapshotCopy.sourcePath}`,
+      digest: preparation.snapshotCopy.digest,
       targetPath: preparation.snapshotCopy.targetPath,
     },
     exactTextReplacement: preparation.exactTextReplacement,

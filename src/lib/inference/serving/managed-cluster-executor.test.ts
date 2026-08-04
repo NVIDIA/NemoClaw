@@ -221,6 +221,11 @@ describe("managed-cluster vLLM executor", () => {
       { ref: typeof NO_PREPARATION_REF }
     >;
     expect(command).toContain(boundedPreparation.snapshotCopy.targetPath);
+    expect(command).toContain(boundedPreparation.snapshotCopy.digest);
+    expect(command).toContain("snapshot copy source digest mismatch");
+    expect(command.indexOf("snapshot copy source digest mismatch")).toBeLessThan(
+      command.indexOf("install -m 0644 --"),
+    );
     expect(command).toContain("preparation source text did not match exactly once");
     expect(command).not.toContain("--api-key");
     expect(command).not.toContain("$VLLM_API_KEY");

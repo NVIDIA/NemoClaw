@@ -1,18 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type {
-  ReadinessEntityKind,
-  ServingCatalogRegistries,
-  ServingRecipe,
-  ManagedInferenceServingRecipe,
-  ManagedInferenceTopologyQualification,
-} from "./types.js";
 import {
   getManagedClusterTopologyArtifactError,
   MANAGED_CLUSTER_TOPOLOGY_ID,
   MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
 } from "./managed-cluster-topology.js";
+import type {
+  ManagedInferenceServingRecipe,
+  ManagedInferenceTopologyQualification,
+  ReadinessEntityKind,
+  ServingCatalogRegistries,
+  ServingRecipe,
+} from "./types.js";
 
 export const MANAGED_CLUSTER_VLLM_MATERIALIZER_REF = "vllm.managed-cluster/v1" as const;
 export const MANAGED_CLUSTER_VLLM_LIFECYCLE_REF = "vllm.managed-cluster.lifecycle/v1" as const;
@@ -68,6 +68,7 @@ const MANAGED_CLUSTER_TOPOLOGY_OUTPUT_SCHEMA =
   "nemoclaw.nvidia.com/managed-cluster-topology/v1" as const;
 const MANAGED_CLUSTER_PLAN_SCHEMA = "nemoclaw.nvidia.com/managed-cluster-vllm-plan/v1" as const;
 const LOWERCASE_STABLE_ID = /^[a-z0-9][a-z0-9._/-]{0,159}$/u;
+const SHA256_DIGEST = /^sha256:[0-9a-f]{64}$/u;
 const MANAGED_CLUSTER_MATERIALIZER_OWNED_ENVIRONMENT = new Set([
   "GLOO_SOCKET_IFNAME",
   "HEADLESS",
@@ -249,6 +250,7 @@ interface SnapshotPreparationInput {
   readonly ref: typeof SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF;
   readonly snapshotCopy: {
     readonly sourcePath: string;
+    readonly digest: string;
     readonly targetPath: string;
   };
   readonly exactTextReplacement: {
@@ -320,8 +322,9 @@ function validateSnapshotPreparationRecipe(
   }
   if (
     !preparation.snapshotCopy ||
-    !hasExactKeys(preparation.snapshotCopy, ["sourcePath", "targetPath"]) ||
+    !hasExactKeys(preparation.snapshotCopy, ["digest", "sourcePath", "targetPath"]) ||
     !safeRelativeSnapshotPath(preparation.snapshotCopy.sourcePath) ||
+    !SHA256_DIGEST.test(preparation.snapshotCopy.digest) ||
     !safeAbsoluteContainerPath(preparation.snapshotCopy.targetPath)
   ) {
     return "snapshot preparation copy paths are invalid";

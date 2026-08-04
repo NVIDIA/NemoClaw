@@ -37,6 +37,7 @@ export type ServingModelPreparation =
       readonly ref: "snapshot-copy-and-exact-text-replacement/v1";
       readonly snapshotCopy: {
         readonly sourcePath: string;
+        readonly digest: string;
         readonly targetPath: string;
       };
       readonly exactTextReplacement: {

@@ -40,6 +40,7 @@ describe("managed cluster vLLM preparation materializer", () => {
         ref: SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
         snapshotCopy: {
           sourcePath: "artifacts/tokenizer.py",
+          digest: `sha256:${"4".repeat(64)}`,
           targetPath: "/opt/alternate-vllm/tokenizers/model.py",
         },
         exactTextReplacement: {
@@ -58,6 +59,7 @@ describe("managed cluster vLLM preparation materializer", () => {
       modelDownloadSizeBytes: MODEL.downloadSizeBytes,
       snapshotCopy: {
         sourcePath: `/models/alternate-cache/hub/models--example-org--Synthetic-Model/snapshots/${MODEL.revision}/artifacts/tokenizer.py`,
+        digest: `sha256:${"4".repeat(64)}`,
         targetPath: "/opt/alternate-vllm/tokenizers/model.py",
       },
       exactTextReplacement: {
@@ -75,7 +77,11 @@ describe("managed cluster vLLM preparation materializer", () => {
       error: /snapshot copy source path must be a normalized relative POSIX path/u,
       preparation: {
         ref: SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
-        snapshotCopy: { sourcePath: "../escape.py", targetPath: "/opt/vllm/copied.py" },
+        snapshotCopy: {
+          sourcePath: "../escape.py",
+          digest: `sha256:${"4".repeat(64)}`,
+          targetPath: "/opt/vllm/copied.py",
+        },
         exactTextReplacement: {
           targetPath: "/opt/vllm/reasoning.py",
           expectedText: "before",
@@ -88,7 +94,28 @@ describe("managed cluster vLLM preparation materializer", () => {
       error: /snapshot copy target path must be a normalized absolute container path/u,
       preparation: {
         ref: SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
-        snapshotCopy: { sourcePath: "safe.py", targetPath: "relative/copied.py" },
+        snapshotCopy: {
+          sourcePath: "safe.py",
+          digest: `sha256:${"4".repeat(64)}`,
+          targetPath: "relative/copied.py",
+        },
+        exactTextReplacement: {
+          targetPath: "/opt/vllm/reasoning.py",
+          expectedText: "before",
+          replacementText: "after",
+        },
+      },
+    },
+    {
+      label: "invalid snapshot digest",
+      error: /snapshot copy digest must be an exact SHA-256 digest/u,
+      preparation: {
+        ref: SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
+        snapshotCopy: {
+          sourcePath: "safe.py",
+          digest: "sha256:not-a-digest",
+          targetPath: "/opt/vllm/copied.py",
+        },
         exactTextReplacement: {
           targetPath: "/opt/vllm/reasoning.py",
           expectedText: "before",
@@ -101,7 +128,11 @@ describe("managed cluster vLLM preparation materializer", () => {
       error: /exact-text replacement must change the matched text/u,
       preparation: {
         ref: SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
-        snapshotCopy: { sourcePath: "safe.py", targetPath: "/opt/vllm/copied.py" },
+        snapshotCopy: {
+          sourcePath: "safe.py",
+          digest: `sha256:${"4".repeat(64)}`,
+          targetPath: "/opt/vllm/copied.py",
+        },
         exactTextReplacement: {
           targetPath: "/opt/vllm/reasoning.py",
           expectedText: "same",

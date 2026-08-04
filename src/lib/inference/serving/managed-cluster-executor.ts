@@ -20,12 +20,11 @@ import {
   NO_PREPARATION_REF,
   SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
 } from "./adapter-registry.js";
+import { managedInferenceDigest, managedInferenceHexDigest } from "./catalog-integrity.js";
 import {
   getManagedInferenceCompiledPreset,
   getManagedInferenceCompiledRecipe,
 } from "./catalog-loader.js";
-import { managedInferenceDigest, managedInferenceHexDigest } from "./catalog-integrity.js";
-import type { ManagedInferenceServingRecipe } from "./types.js";
 import {
   isRelatedManagedVllmContainer,
   type ManagedClusterApiProbeRequest,
@@ -63,6 +62,7 @@ import {
   MANAGED_CLUSTER_TOPOLOGY_ID,
   MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
 } from "./managed-cluster-topology.js";
+import type { ManagedInferenceServingRecipe } from "./types.js";
 
 const API_KEY_PATTERN = /^[a-f0-9]{64}$/;
 const CONTAINER_ID_PATTERN = /^[a-f0-9]{64}$/;
@@ -109,6 +109,15 @@ content = target.read_text(encoding="utf-8")
 if content.count(existing) != 1:
     raise SystemExit("preparation source text did not match exactly once")
 target.write_text(content.replace(existing, replacement), encoding="utf-8")
+`.trim();
+
+const VERIFY_FILE_SHA256_SCRIPT = String.raw`
+import hashlib, pathlib, sys
+target = pathlib.Path(sys.argv[1])
+expected = sys.argv[2]
+actual = "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()
+if actual != expected:
+    raise SystemExit("snapshot copy source digest mismatch")
 `.trim();
 
 export interface ManagedClusterExecutorStageTarget {
@@ -466,6 +475,13 @@ function preparationCommand(rolePlan: ManagedClusterVllmRolePlan): string {
   if (preparation.ref === SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF) {
     command.push(
       `test -f ${shellQuote(preparation.snapshotCopy.sourcePath)}`,
+      [
+        "python3",
+        "-c",
+        shellQuote(VERIFY_FILE_SHA256_SCRIPT),
+        shellQuote(preparation.snapshotCopy.sourcePath),
+        shellQuote(preparation.snapshotCopy.digest),
+      ].join(" "),
       `install -m 0644 -- ${shellQuote(preparation.snapshotCopy.sourcePath)} ${shellQuote(preparation.snapshotCopy.targetPath)}`,
       [
         "python3",

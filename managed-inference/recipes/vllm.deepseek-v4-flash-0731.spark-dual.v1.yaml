@@ -29,6 +29,7 @@ spec:
       ref: snapshot-copy-and-exact-text-replacement/v1
       snapshotCopy:
         sourcePath: encoding/encoding_dsv4.py
+        digest: sha256:abc0d26120250dda0ae077dc64aa28836026e61e970854aaeb792445e6a0dde6
         targetPath: /usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4_encoding.py
       exactTextReplacement:
         targetPath: /usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4.py
@@ -113,7 +114,6 @@ spec:
     arguments:
       - name: --port
         value: 8000
-      - name: --trust-remote-code
       - name: --kv-cache-dtype
         value: nvfp4_ds_mla
       - name: --block-size

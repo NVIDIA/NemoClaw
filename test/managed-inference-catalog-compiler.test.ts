@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -80,6 +80,16 @@ describe("managed inference YAML profile contract", () => {
 
     expect(catalog.recipes.some(({ metadata }) => metadata.id === syntheticRecipeId)).toBe(true);
     expect(catalog.presets.some(({ metadata }) => metadata.id === syntheticPresetId)).toBe(true);
+  });
+
+  it("does not enable arbitrary remote model code in shipped managed recipes (#8129)", () => {
+    const unsafeRecipes = compile(catalogSources())
+      .recipes.filter((recipe) =>
+        recipe.spec.serve?.arguments?.some(({ name }) => name === "--trust-remote-code"),
+      )
+      .map(({ metadata }) => metadata.id);
+
+    expect(unsafeRecipes).toEqual([]);
   });
 
   it("keeps shipped profile identities out of production TypeScript (#8129)", () => {

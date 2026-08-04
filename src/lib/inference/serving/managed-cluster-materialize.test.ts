@@ -7,14 +7,8 @@ import {
   NO_PREPARATION_REF,
   SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
 } from "./adapter-registry.js";
-import { loadManagedInferenceCatalog } from "./catalog-loader.js";
 import { managedInferenceDigest } from "./catalog-integrity.js";
-import type {
-  CompiledManagedInferenceCatalog,
-  ManagedInferenceServingPreset,
-  ManagedInferenceServingRecipe,
-  ResolvedManagedInferenceSelection,
-} from "./types.js";
+import { loadManagedInferenceCatalog } from "./catalog-loader.js";
 import { fixtureManagedClusterSelection } from "./managed-cluster-fixture.test-support.js";
 import {
   MANAGED_CLUSTER_PRESET_LABEL,
@@ -26,6 +20,12 @@ import {
   managedClusterTopologyOutputDigest,
   managedClusterTopologySubjectDigest,
 } from "./managed-cluster-topology.js";
+import type {
+  CompiledManagedInferenceCatalog,
+  ManagedInferenceServingPreset,
+  ManagedInferenceServingRecipe,
+  ResolvedManagedInferenceSelection,
+} from "./types.js";
 
 interface SyntheticProfile {
   readonly catalog: CompiledManagedInferenceCatalog;
@@ -134,6 +134,7 @@ function syntheticSecondProfile(
           ref: SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
           snapshotCopy: {
             sourcePath: "assets/synthetic_tokenizer.py",
+            digest: `sha256:${"4".repeat(64)}`,
             targetPath: "/opt/synthetic-vllm/tokenizers/copied.py",
           },
           exactTextReplacement: {
@@ -413,6 +414,7 @@ describe("managed-cluster vLLM materializer", () => {
       modelRevision: selection.recipe.spec.model.revision,
       modelDownloadSizeBytes: selection.recipe.spec.model.downloadSizeBytes,
       snapshotCopy: {
+        digest: boundedConfigured.snapshotCopy.digest,
         targetPath: boundedConfigured.snapshotCopy.targetPath,
       },
       exactTextReplacement: boundedConfigured.exactTextReplacement,
@@ -457,6 +459,7 @@ describe("managed-cluster vLLM materializer", () => {
           sourcePath: expect.stringContaining(
             "/models/cache/hub/models--example-org--Synthetic-Model/",
           ),
+          digest: `sha256:${"4".repeat(64)}`,
           targetPath: "/opt/synthetic-vllm/tokenizers/copied.py",
         },
         exactTextReplacement: {

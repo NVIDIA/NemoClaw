@@ -95,6 +95,8 @@ Apply network controls before you start the distributed containers.
 The pinned image runs as root in both containers.
 Each container receives all host GPUs, `/dev/infiniband`, Docker host networking, host inter-process communication, `64 GB` of shared memory, and unlimited locked memory.
 The launch does not use a read-only root filesystem, drop Linux capabilities, or set `no-new-privileges`.
+The serving command does not enable vLLM's `--trust-remote-code` switch.
+Before it copies the pinned snapshot's required encoder module into the runtime package, it verifies that file against the recipe's exact SHA-256 digest.
 The head binds HTTP port `8000` only to the qualified primary rail address.
 vLLM applies bearer API key authentication to its authenticated API routes, including the inventory and chat routes that NemoClaw verifies.
 The API key does not authenticate every endpoint on port `8000`.

@@ -777,11 +777,15 @@
               "type": "object",
               "required": [
                 "sourcePath",
+                "digest",
                 "targetPath"
               ],
               "properties": {
                 "sourcePath": {
                   "$ref": "#/$defs/relativePath"
+                },
+                "digest": {
+                  "$ref": "#/$defs/sha256"
                 },
                 "targetPath": {
                   "$ref": "#/$defs/absolutePath"
