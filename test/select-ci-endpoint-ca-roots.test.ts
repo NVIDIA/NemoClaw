@@ -219,7 +219,7 @@ describe("CI endpoint CA root selection", () => {
 
     writeCiEndpointCaRootsOutput(output, "replacement");
 
-    expect(calls).toEqual(["lstat", "open", "fstat", "lstat", "truncate"]);
+    expect(calls).toEqual(["open", "fstat", "lstat", "truncate"]);
     expect(fs.readFileSync(output, "utf8")).toBe("replacement");
     expect(fs.statSync(output).mode & 0o777).toBe(0o600);
   });
@@ -229,12 +229,14 @@ describe("CI endpoint CA root selection", () => {
     const created = spawnSync("mkfifo", [output], { encoding: "utf8", timeout: 5_000 });
     expect(created.status, created.stderr).toBe(0);
     const openSync = vi.spyOn(fs, "openSync");
+    const ftruncateSync = vi.spyOn(fs, "ftruncateSync");
 
     expect(() => writeCiEndpointCaRootsOutput(output, "replacement")).toThrow(
-      "output must be an existing regular file with exactly one link",
+      "output must be an existing regular file that is not a symlink",
     );
 
-    expect(openSync).not.toHaveBeenCalled();
+    expect(openSync).toHaveBeenCalledOnce();
+    expect(ftruncateSync).not.toHaveBeenCalled();
     expect(fs.lstatSync(output).isFIFO()).toBe(true);
   });
 
@@ -245,12 +247,14 @@ describe("CI endpoint CA root selection", () => {
     fs.writeFileSync(target, "target", { mode: 0o640 });
     fs.symlinkSync(target, output);
     const openSync = vi.spyOn(fs, "openSync");
+    const ftruncateSync = vi.spyOn(fs, "ftruncateSync");
 
     expect(() => writeCiEndpointCaRootsOutput(output, "replacement")).toThrow(
-      "output must be an existing regular file with exactly one link",
+      "output must be an existing regular file that is not a symlink",
     );
 
-    expect(openSync).not.toHaveBeenCalled();
+    expect(openSync).toHaveBeenCalledOnce();
+    expect(ftruncateSync).not.toHaveBeenCalled();
     expect(fs.lstatSync(output).isSymbolicLink()).toBe(true);
     expect(fs.readFileSync(target, "utf8")).toBe("target");
     expect(fs.statSync(target).mode & 0o777).toBe(0o640);
@@ -265,12 +269,14 @@ describe("CI endpoint CA root selection", () => {
       fs.writeFileSync(output, "unchanged", { mode: 0o640 });
       fs.linkSync(output, linked);
       const openSync = vi.spyOn(fs, "openSync");
+      const ftruncateSync = vi.spyOn(fs, "ftruncateSync");
 
       expect(() => writeCiEndpointCaRootsOutput(output, "replacement")).toThrow(
-        "output must be an existing regular file with exactly one link",
+        "output must remain the same regular file with exactly one link",
       );
 
-      expect(openSync).not.toHaveBeenCalled();
+      expect(openSync).toHaveBeenCalledOnce();
+      expect(ftruncateSync).not.toHaveBeenCalled();
       for (const file of [output, linked]) {
         expect(fs.readFileSync(file, "utf8")).toBe("unchanged");
         expect(fs.statSync(file).mode & 0o777).toBe(0o640);

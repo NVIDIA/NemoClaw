@@ -220,14 +220,9 @@ export function writeCiEndpointCaRootsOutput(outputPath: string, bundle: string)
     throw new Error("output requires O_NOFOLLOW support");
   }
 
-  const beforeOpen = fs.lstatSync(outputPath);
-  if (!beforeOpen.isFile() || beforeOpen.isSymbolicLink() || beforeOpen.nlink !== 1) {
-    throw new Error("output must be an existing regular file with exactly one link");
-  }
-
   let fd: number;
   try {
-    // lgtm[js/file-system-race] Pre-open and post-open device and inode checks bind the descriptor to the validated path.
+    // Open without following symlinks or blocking on special files, then validate before writing.
     fd = fs.openSync(
       outputPath,
       fs.constants.O_WRONLY | noFollow | (fs.constants.O_NONBLOCK ?? 0),
@@ -246,8 +241,6 @@ export function writeCiEndpointCaRootsOutput(outputPath: string, bundle: string)
       !afterOpen.isFile() ||
       afterOpen.isSymbolicLink() ||
       afterOpen.nlink !== 1 ||
-      beforeOpen.dev !== opened.dev ||
-      beforeOpen.ino !== opened.ino ||
       opened.dev !== afterOpen.dev ||
       opened.ino !== afterOpen.ino
     ) {
