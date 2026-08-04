@@ -148,5 +148,30 @@ describe("DCode rebuild orchestrator", () => {
     expect(prepareDcodeReplacementBeforeMutation).not.toHaveBeenCalled();
     expect(ensureAgentBaseImage).not.toHaveBeenCalled();
     expect(orchestrator.preparedReplacement).toBeNull();
+
+    await expect(
+      orchestrator.revalidateBeforeDelete(
+        resumeConfig,
+        "progressive",
+        "thread-opt-in",
+        false,
+        19_080,
+      ),
+    ).resolves.toBe(true);
+
+    vi.mocked(revalidateManagedDcodeWorkloadAtMutationEdge).mockResolvedValueOnce(false);
+    await expect(
+      orchestrator.checkAtDeleteEdge(resumeConfig, "progressive", "thread-opt-in", false, 19_080),
+    ).resolves.toEqual({
+      ok: false,
+      message: "Managed DCode workload validation failed before sandbox deletion.",
+    });
+
+    vi.mocked(revalidateManagedDcodeWorkloadAtMutationEdge).mockImplementationOnce(
+      async ({ bail: managedBail }) => managedBail("managed authority changed", 74),
+    );
+    await expect(
+      orchestrator.checkAtDeleteEdge(resumeConfig, "progressive", "thread-opt-in", false, 19_080),
+    ).resolves.toEqual({ ok: false, message: "managed authority changed", code: 74 });
   });
 });

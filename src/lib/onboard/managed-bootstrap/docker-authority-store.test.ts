@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createManagedBootstrapPreparedAuthority } from "./adapter";
 import { createDockerManagedBootstrapAdapter } from "./docker";
@@ -69,6 +69,28 @@ describe("Docker managed bootstrap authority store", () => {
       bootstrapIdentity: IDENTITY,
     });
     expect(prepared.fake.journal).toMatchObject({ phase: "staged" });
+  });
+
+  it("returns the original durable receipt when recording is retried", async () => {
+    const prepared = await preparedFixture();
+    const journalStore = prepared.fake.deps.journalStore;
+    expect(journalStore).toBeDefined();
+    const create = vi.fn(journalStore!.create.bind(journalStore));
+    const strictJournalStore = { ...journalStore!, create };
+    const times = [new Date("2026-08-04T12:00:00.000Z"), new Date("2026-08-04T12:00:01.000Z")];
+    const now = vi.fn(() => times.shift() ?? new Date("2026-08-04T12:00:02.000Z"));
+    const store = createDockerManagedBootstrapAuthorityStore("unused", {
+      journalStore: strictJournalStore,
+      now,
+    });
+
+    const first = await store.recordPreparedAuthority(prepared.preparedAuthority);
+    const retried = await store.recordPreparedAuthority(prepared.preparedAuthority);
+
+    expect(retried).toEqual(first);
+    expect(retried.recordedAt).toBe("2026-08-04T12:00:00.000Z");
+    expect(create).toHaveBeenCalledOnce();
+    expect(now).toHaveBeenCalledOnce();
   });
 
   it("does not reinterpret an ordinary persistence failure as an acknowledgement loss", async () => {

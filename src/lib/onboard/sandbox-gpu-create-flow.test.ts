@@ -294,6 +294,7 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     };
     input.managedBootstrap = {
       bootstrapIdentity: launch.managedBootstrapIdentity!,
+      stateRoot: "/tmp/nemoclaw-mxc-bootstrap",
       runtimeProvider,
       authorityStore: {
         async recordPreparedAuthority(authority) {

@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { beforeEach, describe, it } from "vitest";
+import { beforeEach, describe, it, vi } from "vitest";
 import YAML from "yaml";
 
 import {
@@ -45,7 +45,7 @@ const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
 beforeEach(() => {
-  process.env.NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK = "1";
+  vi.stubEnv("NEMOCLAW_TEST_MANAGED_IMAGE_FALLBACK", "1");
 });
 describe("onboard messaging", () => {
   it("creates providers for messaging tokens and attaches them to the sandbox", {

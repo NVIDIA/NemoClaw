@@ -238,6 +238,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
   const copyJournal = () => (journal ? structuredClone(journal) : null);
   const store: DockerManagedBootstrapJournalStore = {
     create(value) {
+      void (journal === null ? journal : failFixture("managed bootstrap journal already exists"));
       journal = structuredClone(value);
       events.push("journal:staged");
       const injectedFailure = journalCreateFailures.shift();

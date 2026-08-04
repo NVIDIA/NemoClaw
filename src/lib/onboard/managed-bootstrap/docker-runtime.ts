@@ -120,7 +120,9 @@ function createDockerLifecycle(
         }
       : {}),
   });
-  const adapter = input.adapterOverride ?? createDockerManagedBootstrapAdapter(input.dependencies);
+  const adapter =
+    input.adapterOverride ??
+    createDockerManagedBootstrapAdapter({ ...input.dependencies, stateRoot: input.stateRoot });
   const createPlan = {
     schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
     sandboxName: input.sandboxName,

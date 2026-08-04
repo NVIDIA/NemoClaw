@@ -86,6 +86,22 @@ export function createDockerManagedBootstrapAuthorityStore(
   return Object.freeze({
     async recordPreparedAuthority(authority: ManagedBootstrapPreparedAuthority) {
       const prepared = exactPreparedJournal(authority);
+      const existing = journalStore.load(authority.bootstrapIdentity);
+      if (existing) {
+        const receipt = existing.preparationReceipt;
+        if (!receipt) {
+          throw new Error(
+            "Managed bootstrap Docker prepared authority conflicts with its durable journal.",
+          );
+        }
+        const expected = Object.freeze({ ...prepared, preparationReceipt: receipt });
+        if (!sameJournal(existing, expected)) {
+          throw new Error(
+            "Managed bootstrap Docker prepared authority conflicts with its durable journal.",
+          );
+        }
+        return receipt;
+      }
       const receipt = durableReceipt(authority, now());
       const expected = Object.freeze({ ...prepared, preparationReceipt: receipt });
       try {

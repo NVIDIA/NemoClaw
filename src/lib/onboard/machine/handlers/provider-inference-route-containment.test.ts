@@ -118,8 +118,6 @@ function createDeps() {
     reserveSandboxInferenceRoute: calls.reserveRoute,
     registryUpdateSandbox: calls.updateSandbox,
     promptValidatedSandboxName: vi.fn(async () => "target-sandbox"),
-    assessHost: () => ({ cpus: 8 }),
-    formatSandboxBuildEstimateNote: () => "estimate",
     formatOnboardConfigSummary: ({ provider, model, sandboxName }) =>
       `summary:${provider}/${model}/${sandboxName}`,
     promptYesNoOrDefault: vi.fn(async () => true),

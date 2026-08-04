@@ -279,7 +279,9 @@ export function createDcodeRebuildOrchestrator(
           scope.cleanup();
           return {
             ok: false,
-            message: "DCode replacement validation failed before sandbox deletion.",
+            message: managedWorkloadRebuild
+              ? "Managed DCode workload validation failed before sandbox deletion."
+              : "DCode replacement validation failed before sandbox deletion.",
           };
         }
         return { ok: true };

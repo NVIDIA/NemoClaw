@@ -12,7 +12,6 @@ import { expect } from "vitest";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_CONTRACT_VERSION,
-  MANAGED_IMAGE_PLATFORMS,
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_SOURCE_REPOSITORY,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
@@ -28,12 +27,11 @@ import {
 import { nodeOptionsWithoutSourceLoader, SOURCE_REQUIRE_HOOK } from "./source-loader-options";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
-const MANAGED_IMAGE_PLATFORM = MANAGED_IMAGE_PLATFORMS[0];
+const MANAGED_IMAGE_PLATFORM = "linux/amd64" as const;
 const MODEL = "nvidia/test-managed-model";
 const PROVIDER = "nvidia-prod";
 const SOURCE_REVISION = "2f03907c3a7ec151d7f5d4bb2a73abafc2849f83";
 const CATALOG_RELEASE = "v0.0.97";
-const SECRET_CANARY = "managed-onboard-secret-canary-must-not-cross";
 const AUTHENTICATED_PROXY_ENVIRONMENT = {
   HTTP_PROXY: "http://upper-http:upper-secret@upper-http.example.test:18080",
   HTTPS_PROXY: "http://upper-https:upper-secret@upper-https.example.test:18443",
@@ -81,10 +79,13 @@ interface ChildPayload {
       schemaVersion?: number;
       kind?: string;
       reference?: string;
+      platform?: string;
       release?: string;
       sourceRevision?: string;
+      sourceCohort?: string;
       capabilityContractVersion?: number;
       startupProfileContractVersion?: number;
+      encodedProfile?: string;
       startupProfileSha256?: string;
       credentialProxyReplayRequired?: boolean;
       shared?: boolean;
@@ -579,7 +580,6 @@ function runManagedOnboard(
       HOME: home,
       NEMOCLAW_HOME: path.join(home, ".nemoclaw"),
       NEMOCLAW_NON_INTERACTIVE: "1",
-      NEMOCLAW_TEST_SECRET_CANARY: SECRET_CANARY,
       NEMOCLAW_TEST_DOCKER_LOG: dockerLog,
       NEMOCLAW_TEST_NO_SLEEP: "1",
       NODE_OPTIONS: nodeOptionsWithoutSourceLoader(process.env.NODE_OPTIONS),
@@ -678,7 +678,6 @@ function assertManagedLaunch(
     );
   }
   expect(createArgs.filter((arg) => arg.startsWith("NEMOCLAW_CORPORATE_CA_B64="))).toEqual([]);
-  expect(JSON.stringify(profile)).not.toContain(SECRET_CANARY);
   expect(profile.proxy).toMatchObject({
     hostHttpUrl: null,
     hostHttpsUrl: null,

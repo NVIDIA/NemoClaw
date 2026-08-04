@@ -92,7 +92,6 @@ export interface ManagedWorkloadOnboardRuntime {
   ensurePreparedProfile(
     workload: PreparedSandboxWorkloadSource,
   ): BuiltManagedStartupOnboardProfile | null;
-  resolveCreateIntent(intent: SandboxCreateIntent): SandboxCreateIntent;
 }
 
 function requireBootstrapProvider(provider: RuntimeProviderBundle | null): BootstrapProvider {
@@ -154,6 +153,7 @@ export function createManagedWorkloadOnboardRuntime(
       }
       return input.managedWorkloadRebuild.replacementProfile;
     }
+    if (preparedProfile) return preparedProfile;
     const inferenceApi =
       input.agentName === "langchain-deepagents-code"
         ? "openai-completions"
@@ -167,7 +167,7 @@ export function createManagedWorkloadOnboardRuntime(
       input.provider,
       inferenceApi,
     );
-    preparedProfile ??= buildManagedStartupOnboardProfile({
+    preparedProfile = buildManagedStartupOnboardProfile({
       agentName: input.agentName,
       inference: {
         routeProvider: inference.providerKey,
@@ -189,11 +189,7 @@ export function createManagedWorkloadOnboardRuntime(
     return preparedProfile;
   };
 
-  const resolveCreateIntent = (intent: SandboxCreateIntent): SandboxCreateIntent => {
-    return intent;
-  };
-
-  return { runtimeProvider, ensurePreparedWorkload, ensurePreparedProfile, resolveCreateIntent };
+  return { runtimeProvider, ensurePreparedWorkload, ensurePreparedProfile };
 }
 
 export interface PrepareOnboardSandboxWorkloadLaunchInput {
@@ -278,9 +274,8 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       ? input.workload.source.reference
       : `${requireLegacyBuildContext(legacyBuildContext).buildCtx}/Dockerfile`;
   const messagingTokenDefs = await input.plan.rebindMessagingTokenDefs();
-  const createIntent = input.runtime.resolveCreateIntent(input.plan.intent);
   const createPlan = input.dependencies.materializeSandboxCreatePlan({
-    intent: createIntent,
+    intent: input.plan.intent,
     fromRef,
     messagingTokenDefs: [...messagingTokenDefs],
     runProviderPreDeleteCleanup: input.plan.runProviderPreDeleteCleanup,
@@ -293,7 +288,7 @@ export async function prepareOnboardSandboxWorkloadLaunch(
       createPlan.initialSandboxPolicy.cleanup,
     );
   }
-  if (createIntent.sandboxGpuLogMessage) log(createIntent.sandboxGpuLogMessage);
+  if (input.plan.intent.sandboxGpuLogMessage) log(input.plan.intent.sandboxGpuLogMessage);
   log(
     `  Creating sandbox '${input.launchInput.sandboxName}' (this takes a few minutes on first run)...`,
   );
@@ -389,6 +384,7 @@ export function resolveOnboardManagedBootstrapLaunch(input: {
   }
   return {
     bootstrapIdentity: input.bootstrapIdentity,
+    stateRoot: input.stateRoot,
     runtimeProvider,
     authorityStore: runtimeProvider.bootstrap.createAuthorityStore({ stateRoot: input.stateRoot }),
     request: input.request,

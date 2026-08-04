@@ -558,12 +558,12 @@
     },
     {
       "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps production activation paths disconnected from driver bootstrap adapters",
+      "test": "keeps central activation paths disconnected from driver bootstrap adapters",
       "category": "security"
     },
     {
       "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps registered providers bootstrap-unsupported",
+      "test": "composes Docker bootstrap locally while keeping Kubernetes unsupported",
       "category": "security"
     },
     {

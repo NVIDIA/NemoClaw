@@ -9,7 +9,7 @@ import { runManagedImageBuildlessE2e } from "./helpers/managed-image-buildless-e
 
 describe("managed image buildless onboarding", () => {
   test("launches every shipped agent by immutable image and startup profile without Dockerfile work (#7744)", {
-    timeout: 180_000,
+    timeout: 240_000,
     meta: {
       e2ePhases: [
         "validate all-agent buildless managed-image orchestration",

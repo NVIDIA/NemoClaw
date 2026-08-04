@@ -234,8 +234,6 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     ): boolean;
     registryUpdateSandbox(sandboxName: string, updates: { nimContainer?: string | null }): void;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
-    assessHost(): Host;
-    formatSandboxBuildEstimateNote(host: Host): string | null;
     formatOnboardConfigSummary(options: {
       provider: string;
       model: string;

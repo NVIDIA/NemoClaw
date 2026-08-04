@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import * as managedWorkload from "../../onboard/workload/rebuild";
 import * as registry from "../../state/registry";
@@ -23,20 +23,29 @@ const handoff = {
 } as managedWorkload.ManagedWorkloadRebuildHandoff;
 
 describe("managed workload rebuild mutation guard", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("accepts the unchanged provider-bound workload authority", () => {
-    vi.spyOn(registry, "getSandbox").mockReturnValue(entry);
-    vi.spyOn(managedWorkload, "managedWorkloadRebuildHandoffMatchesEntry").mockReturnValue(true);
-
-    expect(revalidateManagedWorkloadRebuildBeforeDelete("alpha", handoff)).toBeNull();
-  });
-
   it("blocks deletion when durable workload authority changes", () => {
     vi.spyOn(registry, "getSandbox").mockReturnValue(entry);
-    vi.spyOn(managedWorkload, "managedWorkloadRebuildHandoffMatchesEntry").mockReturnValue(false);
+
+    expect(revalidateManagedWorkloadRebuildBeforeDelete("alpha", handoff)).toEqual({
+      ok: false,
+      message: "Managed workload authority changed before sandbox deletion.",
+    });
+  });
+
+  it("blocks deletion when the sandbox entry disappeared", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+
+    expect(revalidateManagedWorkloadRebuildBeforeDelete("alpha", handoff)).toEqual({
+      ok: false,
+      message: "Managed workload authority changed before sandbox deletion.",
+    });
+  });
+
+  it("blocks deletion when the recorded runtime provider is unknown", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      ...entry,
+      openshellDriver: "not-a-provider",
+    } as SandboxEntry);
 
     expect(revalidateManagedWorkloadRebuildBeforeDelete("alpha", handoff)).toEqual({
       ok: false,
@@ -106,5 +115,30 @@ describe("managed workload rebuild mutation guard", () => {
         openClawReasoningEffort: "high",
       },
     );
+
+    vi.spyOn(
+      managedRebuildProfileDependencies,
+      "resolveManagedStartupInferenceRoute",
+    ).mockReturnValue({
+      providerKey: "compatible-endpoint",
+      primaryModelRef: "reasoning-model",
+      inferenceBaseUrl: "http://127.0.0.1:8080/v1",
+      inferenceApi: "unsupported-api",
+      inferenceCompat: null,
+    });
+    expect(() =>
+      prepareManagedRebuildProfileHandoff({
+        catalogHandoff,
+        targetConfig,
+        recreateOptions: {
+          controlUiPort: 18_789,
+          toolDisclosure: "progressive",
+          dcodeAutoApprovalMode: "disabled",
+          observabilityEnabled: false,
+        } as unknown as RebuildRecreateOnboardOpts,
+        messagingPlan: null,
+        environment: {},
+      }),
+    ).toThrow("Unsupported managed startup inference API 'unsupported-api'.");
   });
 });

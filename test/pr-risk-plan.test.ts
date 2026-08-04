@@ -415,6 +415,11 @@ describe("deterministic PR risk plan", () => {
         "managed-image-protected-runtime",
       ]),
     );
+    expect(
+      plan("src/lib/actions/sandbox/rebuilding-status.ts").families.some(
+        (family) => family.id === "managed-image-protected-runtime",
+      ),
+    ).toBe(false);
   });
 
   it("loads protected multiarch identifiers through the workflow node loader (#7744)", () => {

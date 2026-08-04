@@ -183,8 +183,6 @@ function createPhases(
       reserveSandboxInferenceRoute: vi.fn(() => true),
       registryUpdateSandbox: vi.fn(),
       promptValidatedSandboxName: vi.fn(async () => "my-sandbox"),
-      assessHost: () => ({ memoryGb: 64 }),
-      formatSandboxBuildEstimateNote: () => null,
       formatOnboardConfigSummary: () => "summary",
       promptYesNoOrDefault: vi.fn(async () => true),
       cliName: () => "nemoclaw",

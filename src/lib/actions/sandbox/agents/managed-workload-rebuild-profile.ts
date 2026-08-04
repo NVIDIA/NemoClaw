@@ -14,7 +14,23 @@ import {
 import type { RebuildRecreateOnboardOpts } from "../rebuild-gpu-opt-out";
 import type { RebuildTargetConfig } from "../rebuild-target-preflight";
 
-export const managedRebuildProfileDependencies = { resolveContextWindowForModel };
+export const managedRebuildProfileDependencies = {
+  resolveContextWindowForModel,
+  resolveManagedStartupInferenceRoute,
+};
+
+type ManagedStartupInferenceApi = "openai-completions" | "openai-responses" | "anthropic-messages";
+
+function requireManagedStartupInferenceApi(api: string): ManagedStartupInferenceApi {
+  switch (api) {
+    case "openai-completions":
+    case "openai-responses":
+    case "anthropic-messages":
+      return api;
+    default:
+      throw new Error(`Unsupported managed startup inference API '${api}'.`);
+  }
+}
 
 export function resolveManagedRebuildOpenClawReasoning(
   provider: string,
@@ -47,7 +63,7 @@ export function prepareManagedRebuildProfileHandoff(input: {
   const manageDashboard = shouldManageDashboardForAgent(targetConfig.agentDefinition);
   const effectiveDashboardPort = manageDashboard ? (recreateOptions.controlUiPort ?? 0) : 0;
   const chatUiUrl = manageDashboard ? `http://127.0.0.1:${String(effectiveDashboardPort)}` : "";
-  const inference = resolveManagedStartupInferenceRoute(
+  const inference = managedRebuildProfileDependencies.resolveManagedStartupInferenceRoute(
     agent,
     resumeConfig.provider,
     resumeConfig.model,
@@ -86,10 +102,7 @@ export function prepareManagedRebuildProfileHandoff(input: {
         routedBaseUrl: inference.inferenceBaseUrl,
         upstreamEndpointUrl:
           agent === "langchain-deepagents-code" ? resumeConfig.endpointUrl : null,
-        api: inference.inferenceApi as
-          | "openai-completions"
-          | "openai-responses"
-          | "anthropic-messages",
+        api: requireManagedStartupInferenceApi(inference.inferenceApi),
         primaryModelRef: agent === "openclaw" ? inference.primaryModelRef : null,
         compatibility: agent === "openclaw" ? (inference.inferenceCompat ?? {}) : null,
       },
