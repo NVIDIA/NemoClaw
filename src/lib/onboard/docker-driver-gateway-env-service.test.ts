@@ -43,7 +43,7 @@ describe("package-managed Docker-driver gateway env service", () => {
           skipSandboxBridgeReachability: false,
           startOpenShellGatewayUserService: (opts) => {
             opts?.prepareServiceEnv?.();
-            return { attempted: true, fallbackAllowed: false, started: true };
+            return { attempted: true, started: true };
           },
           verifySandboxBridgeGatewayReachableOrExit: async () => undefined,
         }),
@@ -59,16 +59,17 @@ describe("package-managed Docker-driver gateway env service", () => {
   });
 
   it.each([
-    "tcp://attacker.example:2375",
-    "ssh://docker.example",
-    "unix://relative/docker.sock",
-    "unix:///tmp/docker's.sock",
-  ])("rejects unsafe package-service Docker endpoint %s (#6903)", async (dockerHost) => {
+    ["a TCP Docker endpoint", "tcp://attacker.example:2375"],
+    ["an SSH Docker endpoint", "ssh://docker.example"],
+    ["a relative Unix socket", "unix://relative/docker.sock"],
+    ["a Unix socket with a single quote", "unix:///tmp/docker's.sock"],
+    ["a Unix socket with a trailing newline", "unix:///tmp/docker.sock\n"],
+  ])("rejects %s for a package service (#6903)", async (_case, dockerHost) => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
     const envFile = path.join(tempHome, ".config", "openshell", "gateway.env");
     const startService = vi.fn((opts?: { prepareServiceEnv?: () => void }) => {
       opts?.prepareServiceEnv?.();
-      return { attempted: true, fallbackAllowed: false, started: true };
+      return { attempted: true, started: true };
     });
 
     try {
@@ -125,11 +126,18 @@ describe("package-managed Docker-driver gateway env service", () => {
           skipSandboxBridgeReachability: false,
           startOpenShellGatewayUserService: (opts) => {
             opts?.prepareServiceEnv?.();
-            return { attempted: true, fallbackAllowed: false, started: true };
+            return { attempted: true, started: true };
           },
           verifySandboxBridgeGatewayReachableOrExit: async () => undefined,
         }),
-      ).rejects.toThrow("Refusing to write symlinked OpenShell gateway env file");
+      ).rejects.toMatchObject({
+        name: "OpenShellGatewayServiceEnvironmentError",
+        cause: expect.objectContaining({
+          message: expect.stringContaining(
+            "Refusing to write symlinked OpenShell gateway env file",
+          ),
+        }),
+      });
 
       expect(fs.readFileSync(targetFile, "utf-8")).toBe("KEEP_ME=1\n");
     } finally {

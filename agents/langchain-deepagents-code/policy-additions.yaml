@@ -23,6 +23,7 @@ filesystem_policy:
   read_write:
     - /sandbox
     - /sandbox/.deepagents
+    - /run/nemoclaw-dcode-mcp
     - /tmp
     - /dev/null
 

@@ -4424,7 +4424,6 @@ ensure_station_express_pair() {
         || error "The explicit DGX Station peer could not be qualified; refusing single-Station fallback."
       station_dual_pair_resume_pending \
         && error "Dual DGX Station preparation returned a single-Station result while exact pair resume state is pending; refusing to discard it."
-      clear_station_express_resume
       if [ "${_STATION_EXPRESS_MODEL_WAS_EXPLICIT:-0}" = "0" ]; then
         NEMOCLAW_VLLM_MODEL="$STATION_ULTRA_VLLM_MODEL"
         NEMOCLAW_MODEL="$STATION_ULTRA_SERVED_MODEL"

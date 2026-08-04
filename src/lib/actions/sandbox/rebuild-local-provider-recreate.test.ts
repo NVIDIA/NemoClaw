@@ -149,12 +149,7 @@ describe("rebuild local-provider recreation", () => {
     credentialEnv,
     setup,
   }) => {
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
-      status: 1,
-      output: "",
-      stdout: "",
-      stderr: "Error: sandbox alpha not found",
-    });
+    let sourceDeleted = false;
     let harness!: RebuildFlowHarness;
     let setupResult: SetupResult | undefined;
     harness = createRebuildFlowHarness({
@@ -174,8 +169,9 @@ describe("rebuild local-provider recreation", () => {
     });
     harness.session.provider = provider;
     harness.session.model = model;
-    harness.runOpenshellSpy.mockImplementation((args: string[]) =>
-      args[0] === "sandbox" && args[1] === "get"
+    harness.runOpenshellSpy.mockImplementation((args: string[]) => {
+      sourceDeleted ||= args.join(" ") === "sandbox delete -g nemoclaw alpha";
+      return args[0] === "sandbox" && args[1] === "get"
         ? {
             status: 1,
             stdout: "",
@@ -185,8 +181,15 @@ describe("rebuild local-provider recreation", () => {
             status: args[0] === "provider" && args[1] === "get" ? 1 : 0,
             stdout: "",
             stderr: "",
-          },
-    );
+          };
+    });
+    const liveSource = "Name: alpha\nId: sbx-alpha-source\nPhase: Ready\n";
+    harness.captureOpenshellSpy.mockImplementation((args: unknown) => {
+      const argv = Array.isArray(args) ? args.map(String) : [];
+      return argv.join(" ") === "sandbox get -g nemoclaw alpha" && !sourceDeleted
+        ? { status: 0, output: liveSource, stdout: liveSource, stderr: "" }
+        : { status: 1, output: "", stdout: "", stderr: "Error: sandbox alpha not found" };
+    });
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),

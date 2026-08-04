@@ -1,11 +1,53 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { InferenceSetError, runInferenceSet } from "./inference-set";
 import { createDeps } from "./inference-set.test-support";
 
 describe("runInferenceSet failure handling", () => {
+  it("fails before OpenShell or config mutation for an unknown durable runtime provider", async () => {
+    const deps = createDeps({
+      config: {},
+      entry: { name: "alpha", agent: "openclaw", openshellDriver: "unknown-runtime" },
+    });
+
+    await expect(
+      runInferenceSet({ provider: "nvidia-prod", model: "nvidia/model-a" }, deps),
+    ).rejects.toThrow(/unknown-runtime.*not registered/u);
+    expect(deps.calls.prepareRunOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
+  it("rechecks live runtime authority inside the sandbox mutation lock", async () => {
+    const initial = { name: "alpha", agent: "openclaw", openshellDriver: "docker" } as const;
+    const changed = {
+      name: "alpha",
+      agent: "openclaw",
+      openshellDriver: "unknown-runtime",
+    } as const;
+    const deps = createDeps({ config: {}, entry: initial });
+    deps.getSandbox = vi.fn().mockReturnValueOnce(initial).mockReturnValue(changed);
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "nvidia-prod",
+          model: "nvidia/model-a",
+          sandboxName: "alpha",
+        },
+        deps,
+      ),
+    ).rejects.toThrow(/unknown-runtime.*not registered/u);
+
+    expect(deps.calls.prepareRunOpenshell).toHaveBeenCalledOnce();
+    expect(deps.calls.withGatewayRouteMutationLock).not.toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
   it("resolves the OpenShell runner before entering the async mutation lock", async () => {
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },

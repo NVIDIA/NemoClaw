@@ -201,7 +201,12 @@ function runWorkflowShellStepWithJobs(
   }
 }
 
-function runLoggedPackageScript(script: string): string[][] {
+type LoggedPackageScript = {
+  calls: string[][];
+  stderr: string;
+};
+
+function runLoggedPackageScriptWithOutput(script: string): LoggedPackageScript {
   const temp = mkdtempSync(join(tmpdir(), "nemoclaw-package-script-"));
   const fakeBin = join(temp, "bin");
   const commandLog = join(temp, "commands.jsonl");
@@ -229,14 +234,21 @@ function runLoggedPackageScript(script: string): string[][] {
       },
     });
     expect(result.status, `Package script failed: ${result.stderr}`).toBe(0);
-    return readFileSync(commandLog, "utf8")
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as string[]);
+    return {
+      calls: readFileSync(commandLog, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as string[]),
+      stderr: result.stderr,
+    };
   } finally {
     rmSync(temp, { force: true, recursive: true });
   }
+}
+
+function runLoggedPackageScript(script: string): string[][] {
+  return runLoggedPackageScriptWithOutput(script).calls;
 }
 
 function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): boolean {
@@ -619,8 +631,8 @@ describe("pull request and main workflow contracts", () => {
     ).toBe(true);
   });
 
-  // source-shape-contract: compatibility -- Repository checks must follow every authoritative dependency-pin input and consumer
-  it("runs repository checks for every operational dependency-pin authority and consumer", () => {
+  // source-shape-contract: compatibility -- Repository validation must preserve file routing, command scopes, and aliases
+  it("preserves repository validation file routing, command scopes, and compatibility aliases", () => {
     const hooks = prekConfig.repos.flatMap((repo) => repo.hooks ?? []);
     const repositoryChecks = hooks.find((candidate) => candidate.id === "repository-checks");
     const files = new RegExp(repositoryChecks?.files ?? "(?!)", "u");
@@ -636,6 +648,7 @@ describe("pull request and main workflow contracts", () => {
       "agents/hermes/mcp-config-transaction.py",
       "nemoclaw-blueprint/blueprint.yaml",
       "nemoclaw/package.json",
+      "package.json",
       "scripts/brev-launchable-ci-cpu.sh",
       "scripts/check-installer-hash.sh",
       "scripts/install-openshell.sh",
@@ -647,6 +660,61 @@ describe("pull request and main workflow contracts", () => {
     }
     expect(files.test("dependency-pins.yaml")).toBe(false);
     expect(files.test("docs/reference/commands.mdx")).toBe(false);
+
+    const scripts = packageJson.scripts;
+    const cliCoverageCalls = runLoggedPackageScript(scripts["test:coverage:cli"]);
+    const pluginCoverageCalls = runLoggedPackageScript(scripts["test:coverage:plugin"]);
+    const broadCheckCalls = runLoggedPackageScript(scripts.check);
+    const routinePrCalls = runLoggedPackageScript(scripts["validate:pr"]);
+    const repositoryCheckCalls = runLoggedPackageScript(scripts["checks:repository"]);
+    const legacyRepositoryChecks = runLoggedPackageScriptWithOutput(scripts.checks);
+
+    expect(cliCoverageCalls.map(([command]) => command)).toEqual(
+      "npm npm tsx vitest tsx".split(" "),
+    );
+    expect(cliCoverageCalls[3]).toEqual(
+      expect.arrayContaining(["--project", "cli", "integration", "--coverage"]),
+    );
+    expect(cliCoverageCalls[4]).toEqual(
+      "tsx|scripts/check-coverage-ratchet.mts|coverage/cli/coverage-summary.json|ci/coverage-threshold-cli.json|CLI coverage".split(
+        "|",
+      ),
+    );
+    expect(pluginCoverageCalls[0]).toEqual(
+      expect.arrayContaining([
+        "--project",
+        "plugin",
+        "--coverage.include=nemoclaw/src/**/*.ts",
+        "--coverage.include=nemoclaw/src/**/*.cts",
+      ]),
+    );
+    expect(pluginCoverageCalls[1]).toEqual(
+      "tsx|scripts/check-coverage-ratchet.mts|coverage/plugin/coverage-summary.json|ci/coverage-threshold-plugin.json|Plugin coverage".split(
+        "|",
+      ),
+    );
+    expect(broadCheckCalls.map((call) => call.join(" "))).toEqual([
+      "npx prek run --all-files --stage pre-commit",
+      "npx prek run --all-files --stage manual",
+    ]);
+    expect(routinePrCalls.map((call) => call.join(" "))).toEqual([
+      "npx prek run --from-ref origin/main --to-ref HEAD --stage pre-commit",
+      "npx commitlint --from origin/main --to HEAD",
+      "npx prek run --from-ref origin/main --to-ref HEAD --stage pre-push",
+    ]);
+    expect(repositoryCheckCalls.map((call) => call.join(" "))).toEqual([
+      "tsx scripts/checks/run.mts",
+    ]);
+    expect(scripts["check:diff"]).toBe("npm run validate:pr");
+    expect(legacyRepositoryChecks.calls.map((call) => call.join(" "))).toEqual([
+      "npm run checks:repository",
+    ]);
+    expect(legacyRepositoryChecks.stderr).toContain("npm run validate:pr");
+    expect(legacyRepositoryChecks.stderr).toContain("npm run checks:repository");
+    expect(legacyRepositoryChecks.stderr).toContain("runs only narrow repository checks");
+    expect(scripts.lint).toContain("npm run checks:repository");
+    expect(scripts["lint:fix"]).toContain("npm run checks:repository");
+    expect(repositoryChecks?.entry).toBe("npm run checks:repository");
   });
 
   // source-shape-contract: compatibility -- Pre-commit routing must apply the declarative guard to every supported test location
@@ -727,76 +795,6 @@ describe("pull request and main workflow contracts", () => {
       expect(jsFiles.test(path), path).toBe(true);
     }
     expect(jsFiles.test("docs/_components/nemoclaw.js")).toBe(false);
-  });
-
-  it("executes repo-wide coverage and diff-scoped automatic hook commands", () => {
-    const scripts = packageJson.scripts;
-    const cliCoverageCalls = runLoggedPackageScript(scripts["test:coverage:cli"]);
-    const pluginCoverageCalls = runLoggedPackageScript(scripts["test:coverage:plugin"]);
-    const repoCheckCalls = runLoggedPackageScript(scripts.check);
-    const diffCheckCalls = runLoggedPackageScript(scripts["check:diff"]);
-
-    expect(cliCoverageCalls.map(([command]) => command)).toEqual([
-      "npm",
-      "npm",
-      "tsx",
-      "vitest",
-      "tsx",
-    ]);
-    expect(cliCoverageCalls[3]).toEqual(
-      expect.arrayContaining(["--project", "cli", "integration", "--coverage"]),
-    );
-    expect(cliCoverageCalls[4]).toEqual([
-      "tsx",
-      "scripts/check-coverage-ratchet.mts",
-      "coverage/cli/coverage-summary.json",
-      "ci/coverage-threshold-cli.json",
-      "CLI coverage",
-    ]);
-    expect(pluginCoverageCalls[0]).toEqual(
-      expect.arrayContaining([
-        "--project",
-        "plugin",
-        "--coverage.include=nemoclaw/src/**/*.ts",
-        "--coverage.include=nemoclaw/src/**/*.cts",
-      ]),
-    );
-    expect(pluginCoverageCalls[1]).toEqual([
-      "tsx",
-      "scripts/check-coverage-ratchet.mts",
-      "coverage/plugin/coverage-summary.json",
-      "ci/coverage-threshold-plugin.json",
-      "Plugin coverage",
-    ]);
-    expect(repoCheckCalls).toEqual([
-      ["npx", "prek", "run", "--all-files", "--stage", "pre-commit"],
-      ["npx", "prek", "run", "--all-files", "--stage", "manual"],
-    ]);
-    expect(diffCheckCalls).toEqual([
-      [
-        "npx",
-        "prek",
-        "run",
-        "--from-ref",
-        "origin/main",
-        "--to-ref",
-        "HEAD",
-        "--stage",
-        "pre-commit",
-      ],
-      ["npx", "commitlint", "--from", "origin/main", "--to", "HEAD"],
-      [
-        "npx",
-        "prek",
-        "run",
-        "--from-ref",
-        "origin/main",
-        "--to-ref",
-        "HEAD",
-        "--stage",
-        "pre-push",
-      ],
-    ]);
   });
 
   // source-shape-contract: security -- Pull requests must execute base-trusted actions while main uses reviewed repository actions

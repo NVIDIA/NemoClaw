@@ -1,7 +1,7 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Sandbox base native package review: libssh2 and Python HTMLParser
+# Sandbox Base Native Package Review for libssh2 and Python HTMLParser
 
 Date: 2026-07-27
 
@@ -62,7 +62,7 @@ The completed production images repeat the inventory, package, file, and runtime
 
 ## Concern ledger
 
-### SEC-1: libssh2 1.11.1 lacks four upstream memory-safety fixes
+### SEC-1 libssh2 1.11.1 Lacks Four Upstream Memory-Safety Fixes
 
 - Surface: native SSH2 client library
 - Severity: high
@@ -71,7 +71,7 @@ The completed production images repeat the inventory, package, file, and runtime
 - Disposition: backport, build, test, package, runtime-proof
 - Validation: native amd64 and arm64 image builds passed for all managed images.
 
-### SEC-2: Python 3.13.5 HTMLParser repeatedly rescans incomplete input
+### SEC-2 Python 3.13.5 HTMLParser Repeatedly Rescans Incomplete Input
 
 - Surface: Python standard library
 - Severity: high

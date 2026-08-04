@@ -35,6 +35,16 @@ OBSERVABILITY_MODULE = "nemoclaw_observability.py"
 MANAGED_RUNTIME_SOURCE_PATH = Path(__file__).with_name("managed-dcode-runtime.py")
 
 MAIN_MARKER = "    args = parser.parse_args()\n"
+NON_INTERACTIVE_CALL_MARKER = '''                            message=args.non_interactive_message,
+'''
+NON_INTERACTIVE_CALL_PATCH = '''                            message=args.non_interactive_message,
+                            output_format=output_format,
+                            timeout_seconds=timeout,
+'''
+NON_INTERACTIVE_TIMEOUT_MARKER = '''                        timeout=timeout,
+'''
+NON_INTERACTIVE_TIMEOUT_PATCH = '''                        timeout=(None if output_format == "json" else timeout),
+'''
 ENTRYPOINT_MARKER = "from deepagents_code.main import cli_main\n"
 ENTRYPOINT_PATCH = '''# NemoClaw-managed Deep Agents Code hardening v2.
 import os
@@ -501,7 +511,10 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     """Return only the NemoClaw-managed inference constructor contract."""
     del model_name
     from deepagents_code.model_config import ModelConfig, ModelConfigError
-    from deepagents_code._nemoclaw_managed import managed_inference_base_url
+    from deepagents_code._nemoclaw_managed import (
+        managed_inference_base_url,
+        managed_reasoning_effort,
+    )
 
     if provider not in {"openai", "openrouter"}:
         raise ModelConfigError(
@@ -517,6 +530,9 @@ def _get_provider_kwargs(provider: str, *, model_name: str | None = None) -> dic
     }
     if provider == "openai":
         kwargs["use_responses_api"] = False
+        reasoning_effort = managed_reasoning_effort()
+        if reasoning_effort is not None:
+            kwargs["extra_body"] = {"reasoning_effort": reasoning_effort}
     return kwargs
 '''
 
@@ -763,10 +779,18 @@ NON_INTERACTIVE_ERROR_PATCH = '''    except Exception:
 '''
 
 NON_INTERACTIVE_PATCH = r'''
+import asyncio as _nemoclaw_asyncio
+import contextlib as _nemoclaw_contextlib
+import contextvars as _nemoclaw_contextvars
+import io as _nemoclaw_io
+import json as _nemoclaw_json
 import logging as _nemoclaw_logging
 import os as _nemoclaw_os
 import re as _nemoclaw_re
 import sqlite3 as _nemoclaw_sqlite3
+import sys as _nemoclaw_sys
+import threading as _nemoclaw_threading
+import time as _nemoclaw_time
 
 # NemoClaw-managed Deep Agents Code hardening v2.
 _NEMOCLAW_PROVIDER_CAPACITY_ERROR = _nemoclaw_re.compile(
@@ -777,6 +801,292 @@ _NEMOCLAW_PROVIDER_CAPACITY_ERROR = _nemoclaw_re.compile(
 )
 
 _NEMOCLAW_MANAGED_STATE_DB = "/sandbox/.deepagents/.state/sessions.db"
+_NEMOCLAW_JSON_SCHEMA_VERSION = 1
+_NEMOCLAW_JSON_MAX_BYTES = 1_048_576
+_NEMOCLAW_JSON_ENVELOPE_RESERVE_BYTES = 4_096
+
+
+class _NemoClawOutputLimitError(RuntimeError):
+    """Stop a managed JSON run before its response can exceed the envelope."""
+
+
+class _NemoClawJsonRun:
+    """Collect one bounded non-interactive result without exposing partial text."""
+
+    def __init__(self, stdout):
+        self.stdout = stdout
+        self.started = _nemoclaw_time.monotonic()
+        self.phase = "process"
+        self.thread_id = None
+        self.response_parts = []
+        self.response_bytes = 0
+        self.encoded_response_bytes = 0
+        self.output_limit = False
+        self.unexpected_stdout = False
+
+    def append_response(self, text):
+        encoded = text.encode("utf-8")
+        encoded_json = _nemoclaw_json.dumps(text, ensure_ascii=True)[1:-1].encode("ascii")
+        next_encoded_size = self.encoded_response_bytes + len(encoded_json)
+        if next_encoded_size > (
+            _NEMOCLAW_JSON_MAX_BYTES - _NEMOCLAW_JSON_ENVELOPE_RESERVE_BYTES
+        ):
+            self.output_limit = True
+            raise _NemoClawOutputLimitError(
+                "managed non-interactive JSON response exceeded its output limit"
+            )
+        self.response_parts.append(text)
+        self.response_bytes += len(encoded)
+        self.encoded_response_bytes = next_encoded_size
+
+    def completion(self, *, include_response_bytes):
+        return {
+            "thread_id": self.thread_id,
+            "duration_ms": max(
+                0,
+                int((_nemoclaw_time.monotonic() - self.started) * 1000),
+            ),
+            "response_bytes": self.response_bytes if include_response_bytes else 0,
+        }
+
+
+class _NemoClawUnexpectedStdout(_nemoclaw_io.TextIOBase):
+    """Suppress Python stdout that bypasses the managed assistant-text writer."""
+
+    def __init__(self, run):
+        self._run = run
+
+    @property
+    def encoding(self):
+        return "utf-8"
+
+    def write(self, text):
+        if text:
+            self._run.unexpected_stdout = True
+        return len(text)
+
+    def flush(self):
+        return None
+
+    def isatty(self):
+        return False
+
+
+@_nemoclaw_contextlib.contextmanager
+def _nemoclaw_capture_process_stdout(run):
+    """Suppress direct and child-process writes to the stdout descriptor."""
+    run.stdout.flush()
+    read_fd, write_fd = _nemoclaw_os.pipe()
+    _nemoclaw_os.set_blocking(read_fd, False)
+    stop_drain = _nemoclaw_threading.Event()
+
+    def drain_stdout():
+        try:
+            while not stop_drain.is_set():
+                try:
+                    chunk = _nemoclaw_os.read(read_fd, 65_536)
+                except BlockingIOError:
+                    stop_drain.wait(0.01)
+                    continue
+                if not chunk:
+                    return
+                run.unexpected_stdout = True
+            try:
+                if _nemoclaw_os.read(read_fd, 65_536):
+                    run.unexpected_stdout = True
+            except BlockingIOError:
+                pass
+        finally:
+            _nemoclaw_os.close(read_fd)
+
+    drain_thread = _nemoclaw_threading.Thread(
+        target=drain_stdout,
+        name="nemoclaw-json-stdout-drain",
+        daemon=True,
+    )
+    saved_stdout_fd = _nemoclaw_os.dup(1)
+    redirected = False
+    try:
+        _nemoclaw_os.dup2(write_fd, 1)
+        redirected = True
+        _nemoclaw_os.close(write_fd)
+        write_fd = None
+        drain_thread.start()
+        yield
+    finally:
+        if redirected:
+            try:
+                run.stdout.flush()
+            finally:
+                _nemoclaw_os.dup2(saved_stdout_fd, 1)
+        _nemoclaw_os.close(saved_stdout_fd)
+        if write_fd is not None:
+            _nemoclaw_os.close(write_fd)
+        stop_drain.set()
+        if drain_thread.ident is not None:
+            drain_thread.join(timeout=1)
+        else:
+            _nemoclaw_os.close(read_fd)
+
+
+_nemoclaw_json_run = _nemoclaw_contextvars.ContextVar(
+    "nemoclaw_managed_json_run",
+    default=None,
+)
+_nemoclaw_original_write_text = _write_text
+_nemoclaw_original_write_newline = _write_newline
+_nemoclaw_original_generate_thread_id = generate_thread_id
+_nemoclaw_original_run_agent_loop = _run_agent_loop
+
+
+def _write_text(text):
+    """Capture assistant text only while the managed JSON boundary is active."""
+    run = _nemoclaw_json_run.get()
+    if run is None:
+        return _nemoclaw_original_write_text(text)
+    run.append_response(text)
+
+
+def _write_newline():
+    """Keep the text-mode presentation newline out of the JSON response."""
+    if _nemoclaw_json_run.get() is None:
+        return _nemoclaw_original_write_newline()
+    return None
+
+
+def generate_thread_id():
+    """Record the upstream thread identifier as completion metadata."""
+    thread_id = _nemoclaw_original_generate_thread_id()
+    run = _nemoclaw_json_run.get()
+    if run is not None:
+        run.thread_id = thread_id
+    return thread_id
+
+
+async def _run_agent_loop(*args, **kwargs):
+    """Mark failures after this boundary as agent failures."""
+    run = _nemoclaw_json_run.get()
+    if run is not None:
+        run.phase = "agent"
+    return await _nemoclaw_original_run_agent_loop(*args, **kwargs)
+
+
+def _nemoclaw_json_status(exit_code, run):
+    if run.output_limit:
+        return "output_limit", 1
+    if exit_code == 0:
+        return "success", 0
+    if exit_code == 124:
+        return "turn_limit", 124
+    if exit_code == 130:
+        return "cancelled", 130
+    if run.phase == "agent":
+        return "agent_failure", exit_code
+    return "process_failure", exit_code
+
+
+def _nemoclaw_write_json_envelope(run, status, exit_code):
+    success = status == "success"
+    data = {
+        "status": status,
+        "exit_code": exit_code,
+        "response": "".join(run.response_parts) if success else None,
+        "completion": run.completion(include_response_bytes=success),
+    }
+    envelope = {
+        "schema_version": _NEMOCLAW_JSON_SCHEMA_VERSION,
+        "command": "non-interactive",
+        "data": data,
+    }
+    payload = _nemoclaw_json.dumps(
+        envelope,
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    if len(payload.encode("utf-8")) + 1 > _NEMOCLAW_JSON_MAX_BYTES:
+        status = "output_limit"
+        exit_code = 1
+        envelope["data"] = {
+            "status": status,
+            "exit_code": exit_code,
+            "response": None,
+            "completion": run.completion(include_response_bytes=False),
+        }
+        payload = _nemoclaw_json.dumps(
+            envelope,
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
+    if len(payload.encode("utf-8")) + 1 > _NEMOCLAW_JSON_MAX_BYTES:
+        print(
+            "dcode: failed to produce a bounded non-interactive JSON envelope.",
+            file=_nemoclaw_sys.stderr,
+        )
+        return 1
+    try:
+        run.stdout.write(f"{payload}\n")
+        run.stdout.flush()
+    except Exception:
+        print(
+            "dcode: failed to write the managed non-interactive JSON envelope.",
+            file=_nemoclaw_sys.stderr,
+        )
+        return 1
+    return exit_code
+
+
+async def _nemoclaw_run_json_non_interactive(timeout_seconds, *args, **kwargs):
+    run = _NemoClawJsonRun(_nemoclaw_sys.stdout)
+    token = _nemoclaw_json_run.set(run)
+    guard = _NemoClawUnexpectedStdout(run)
+    try:
+        with _nemoclaw_capture_process_stdout(run):
+            with _nemoclaw_contextlib.redirect_stdout(guard):
+                try:
+                    operation = _nemoclaw_original_run_non_interactive(
+                        *args,
+                        **kwargs,
+                    )
+                    if timeout_seconds is None:
+                        exit_code = await operation
+                    else:
+                        exit_code = await _nemoclaw_asyncio.wait_for(
+                            operation,
+                            timeout=timeout_seconds,
+                        )
+                except TimeoutError:
+                    print(
+                        f"dcode: agent timed out after {timeout_seconds}s.",
+                        file=_nemoclaw_sys.stderr,
+                    )
+                    status, exit_code = "timeout", 124
+                except _nemoclaw_asyncio.CancelledError:
+                    print(
+                        "dcode: managed non-interactive run was cancelled.",
+                        file=_nemoclaw_sys.stderr,
+                    )
+                    status, exit_code = "cancelled", 130
+                except _NemoClawOutputLimitError:
+                    status, exit_code = "output_limit", 1
+                except Exception:
+                    print(
+                        "dcode: managed non-interactive execution failed.",
+                        file=_nemoclaw_sys.stderr,
+                    )
+                    status = (
+                        "agent_failure" if run.phase == "agent" else "process_failure"
+                    )
+                    exit_code = 1
+                else:
+                    status, exit_code = _nemoclaw_json_status(exit_code, run)
+    finally:
+        _nemoclaw_json_run.reset(token)
+    if run.unexpected_stdout:
+        print(
+            "dcode: managed JSON mode suppressed unexpected stdout.",
+            file=_nemoclaw_sys.stderr,
+        )
+    return _nemoclaw_write_json_envelope(run, status, exit_code)
 
 
 def _nemoclaw_classify_persisted_error(thread_id):
@@ -849,6 +1159,8 @@ _nemoclaw_original_run_non_interactive = run_non_interactive
 
 async def run_non_interactive(*args, **kwargs):
     """Enforce the managed headless boundary at the final Python call site."""
+    output_format = kwargs.pop("output_format", "text")
+    timeout_seconds = kwargs.pop("timeout_seconds", None)
     settings.shell_allow_list = None
     kwargs["startup_cmd"] = None
     from deepagents_code.config import CLI_MAX_RETRIES_KEY
@@ -871,6 +1183,14 @@ async def run_non_interactive(*args, **kwargs):
     kwargs["enable_interpreter"] = False
     kwargs["interpreter_ptc"] = None
     kwargs["rubric_model"] = None
+    if output_format == "json":
+        kwargs["quiet"] = True
+        kwargs["stream"] = True
+        return await _nemoclaw_run_json_non_interactive(
+            timeout_seconds,
+            *args,
+            **kwargs,
+        )
     return await _nemoclaw_original_run_non_interactive(*args, **kwargs)
 
 
@@ -1421,9 +1741,10 @@ def main() -> None:
             else ""
         )
         analytics_guard = 'os.environ["LANGGRAPH_CLI_NO_ANALYTICS"] = "1"'
-        auto_approval_guards = (
+        capability_guards = (
             "def managed_auto_approval_mode() -> str:",
             "def managed_auto_approval_enabled() -> bool:",
+            "def managed_reasoning_effort() -> str | None:",
         )
         if (
             PATCH_MARKER not in helper_source
@@ -1438,7 +1759,7 @@ def main() -> None:
                     for line in helper_source.splitlines()
                 )
                 != 1
-                for guard in auto_approval_guards
+                for guard in capability_guards
             )
         ):
             raise RuntimeError(
@@ -1483,6 +1804,14 @@ def main() -> None:
             raise RuntimeError(
                 "Managed package non-interactive error patch is incomplete in "
                 f"{paths['non_interactive']}"
+            )
+        if texts["main"].count(NON_INTERACTIVE_CALL_PATCH) != 1:
+            raise RuntimeError(
+                f"Managed package JSON call patch is incomplete in {paths['main']}"
+            )
+        if texts["main"].count(NON_INTERACTIVE_TIMEOUT_PATCH) != 1:
+            raise RuntimeError(
+                f"Managed package JSON timeout patch is incomplete in {paths['main']}"
             )
         return
     if marker_states != {False} or helper_path.exists():
@@ -1660,12 +1989,30 @@ def main() -> None:
             "Expected one Deep Agents Code non-interactive error marker in "
             f"{paths['non_interactive']}"
         )
+    if texts["main"].count(NON_INTERACTIVE_CALL_MARKER) != 1:
+        raise RuntimeError(
+            f"Expected one Deep Agents Code non-interactive call marker in {paths['main']}"
+        )
+    if texts["main"].count(NON_INTERACTIVE_TIMEOUT_MARKER) != 1:
+        raise RuntimeError(
+            f"Expected one Deep Agents Code non-interactive timeout marker in {paths['main']}"
+        )
     transformed = dict(texts)
     transformed["entrypoint"] = texts["entrypoint"].replace(
         ENTRYPOINT_MARKER, ENTRYPOINT_PATCH, 1
     )
     transformed["main"] = texts["main"].replace(
         MAIN_MARKER, f"{MAIN_MARKER}{MAIN_PATCH}", 1
+    )
+    transformed["main"] = transformed["main"].replace(
+        NON_INTERACTIVE_CALL_MARKER,
+        NON_INTERACTIVE_CALL_PATCH,
+        1,
+    )
+    transformed["main"] = transformed["main"].replace(
+        NON_INTERACTIVE_TIMEOUT_MARKER,
+        NON_INTERACTIVE_TIMEOUT_PATCH,
+        1,
     )
     transformed["app"] = _append_patch(paths["app"], texts["app"], APP_PATCH)
     transformed["auth_store"] = _append_patch(

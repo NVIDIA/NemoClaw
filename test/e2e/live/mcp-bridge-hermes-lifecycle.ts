@@ -50,7 +50,7 @@ export async function assertHermesConfig(
  * restart the real gateway, and prove the locked files and transaction state
  * remain current.
  */
-export async function assertHermesManagedAddSurvivesLockedGatewayRestart(
+export async function assertHermesManagedAddSurvivesLockedGatewayRestartAndStateLayout(
   host: HostCliClient,
   sandbox: SandboxClient,
   sandboxName: string,
@@ -89,7 +89,11 @@ export async function assertHermesManagedAddSurvivesLockedGatewayRestart(
       [
         "set -eu",
         "test \"$(stat -c '%a %U:%G' /sandbox)\" = '1775 root:sandbox'",
-        "test \"$(stat -c '%a %U:%G' /sandbox/.hermes)\" = '755 root:root'",
+        "test \"$(stat -c '%a %U:%G' /sandbox/.hermes)\" = '3770 root:sandbox'",
+        "for path in /sandbox/.hermes/gateway /sandbox/.hermes/runtime; do",
+        "  test \"$(stat -c '%a %U:%G' \"$path\")\" = '2770 gateway:sandbox'",
+        "done",
+        "test \"$(stat -c '%a %U:%G' /sandbox/.hermes/cron)\" = '755 root:sandbox'",
         "for path in /sandbox/.hermes/config.yaml /sandbox/.hermes/.env /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash; do",
         "  test \"$(stat -c '%a %U:%G' \"$path\")\" = '444 root:root'",
         "done",
@@ -191,7 +195,7 @@ export async function assertHermesManagedAddSurvivesLockedGatewayRestart(
  * require its real rollback reload to restore the prior config, both integrity
  * anchors, and a healthy managed gateway in the live sandbox.
  */
-async function assertHermesReloadRollback(
+export async function assertHermesReloadRollback(
   sandbox: SandboxClient,
   sandboxName: string,
   mcpUrl: string,
@@ -285,7 +289,7 @@ async function assertHermesReloadRollback(
   expectExitZero(result, "Hermes failed MCP reload restores config, hashes, and gateway");
   expect(JSON.parse(result.stdout)).toEqual({
     ok: true,
-    state: "current",
+    state: "matched",
   });
 }
 

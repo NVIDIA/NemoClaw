@@ -258,7 +258,7 @@ describe("sandbox base-image release resolution", () => {
     ).toThrow("versioned base image");
   });
 
-  it("tries the nearest release-tag base before latest for source checkouts (#6456)", () => {
+  it("prefers the exact source-SHA base over a nearby release tag for source checkouts (#6456)", () => {
     sourceMocks.nearestTags.mockReturnValue(["v0.0.78"]);
     const sourceShaRef = `${IMAGE_NAME}:12345678`;
     installDockerState({ present: [NEAREST_RELEASE_REF, sourceShaRef] });
@@ -266,14 +266,16 @@ describe("sandbox base-image release resolution", () => {
     const resolved = resolveSandboxBaseImage(resolutionOptions());
 
     expect(resolved).toMatchObject({
-      ref: NEAREST_RELEASE_REF,
-      source: "version-tag",
+      ref: sourceShaRef,
+      source: "source-sha",
     });
-    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(NEAREST_RELEASE_REF, {
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(sourceShaRef, {
       ignoreError: true,
       suppressOutput: true,
     });
-    expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(sourceShaRef, expect.anything());
+    expect(dockerMocks.imageInspect.mock.calls.map(([ref]) => ref)).not.toContain(
+      NEAREST_RELEASE_REF,
+    );
     expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 

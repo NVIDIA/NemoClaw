@@ -71,7 +71,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
   // handles `gateway_error` by printing an actionable block + exit(1), so a
   // synthesized fallback keeps the user-visible contract intact.
   const snapshot = await collectSandboxStatusSnapshot(sandboxName, {
-    suppressInferenceProbe: preflight.suppressInferenceProbe,
+    preflight,
   });
   const {
     sb,
@@ -88,7 +88,10 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
   // recovery hint (#4495) and the Docker health line below (#3975).
   const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
   const phase = lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
-  const effectivePreflight = withoutTerminalPhasePreflight(preflight, phase);
+  const effectivePreflight = withoutTerminalPhasePreflight(
+    snapshot.postRecoveryPreflight ?? preflight,
+    phase,
+  );
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   printSandboxStatusPreflightHeader(effectivePreflight);
   if (effectivePreflight.exitCode !== 0) {

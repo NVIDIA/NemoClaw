@@ -13,16 +13,20 @@ import {
   WILDCARD_GATEWAY_BIND_ADDRESS,
 } from "../core/gateway-address";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../core/ports";
+import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 import {
   DOCKER_DRIVER_GATEWAY_JWT_TTL_SECS,
   prepareDockerDriverGatewayConfigEnv,
 } from "./docker-driver-gateway-config";
 import { buildDockerDriverGatewayLocalTlsEnv } from "./docker-driver-gateway-local-tls";
 import {
+  getOpenShellGatewayManagedServiceLogCommand,
   getOpenShellUserConfigHome,
   hasOpenShellGatewayUserService,
+  OpenShellGatewayServiceEnvironmentError,
   type PackageManagedDockerDriverGatewayOptions,
   startPackageManagedDockerDriverGateway,
+  stopOpenShellGatewayUserService,
 } from "./docker-driver-gateway-service";
 
 export { getGatewayHttpsEndpoint, startPackageManagedDockerDriverGateway };
@@ -256,9 +260,7 @@ function formatEnvironmentFileAssignment(key: string, value: string): string {
 function normalizePackageServiceDockerHost(value: string | undefined): string | undefined {
   const candidate = String(value || "").trim();
   if (!candidate) return undefined;
-  const prefix = "unix://";
-  const socketPath = candidate.startsWith(prefix) ? candidate.slice(prefix.length) : "";
-  if (path.isAbsolute(socketPath) && !/[\0\r\n']/.test(socketPath)) {
+  if (isSupportedGatewayDockerHost(value)) {
     return candidate;
   }
   throw new Error(
@@ -349,15 +351,24 @@ export function startPackageManagedDockerDriverGatewayWithEnvOverride(
     hasOpenShellGatewayUserService:
       options.hasOpenShellGatewayUserService ??
       (() => hasOpenShellGatewayUserService({ env, home: effectiveHome })),
+    managedServiceLogCommand:
+      options.managedServiceLogCommand ?? getOpenShellGatewayManagedServiceLogCommand(),
     prepareOpenShellGatewayUserServiceEnv: () => {
-      const serviceGatewayEnv = { ...gatewayEnv };
-      delete serviceGatewayEnv.DOCKER_HOST;
-      const dockerHost = normalizePackageServiceDockerHost(env.DOCKER_HOST);
-      if (dockerHost) serviceGatewayEnv.DOCKER_HOST = dockerHost;
-      writeDockerGatewayDebEnvOverrideFile(() => serviceGatewayEnv, {
-        env,
-        home: effectiveHome,
-      });
+      try {
+        const serviceGatewayEnv = { ...gatewayEnv };
+        delete serviceGatewayEnv.DOCKER_HOST;
+        const dockerHost = normalizePackageServiceDockerHost(env.DOCKER_HOST);
+        if (dockerHost) serviceGatewayEnv.DOCKER_HOST = dockerHost;
+        writeDockerGatewayDebEnvOverrideFile(() => serviceGatewayEnv, {
+          env,
+          home: effectiveHome,
+        });
+      } catch (error) {
+        throw new OpenShellGatewayServiceEnvironmentError(error);
+      }
     },
+    stopOpenShellGatewayUserService:
+      options.stopOpenShellGatewayUserService ??
+      (() => stopOpenShellGatewayUserService({ env, home: effectiveHome })),
   });
 }
