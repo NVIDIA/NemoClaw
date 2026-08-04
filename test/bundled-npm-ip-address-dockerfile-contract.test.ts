@@ -29,12 +29,18 @@ const copyInstruction =
 const patchInstruction =
   "RUN node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts";
 
+function instructionBody(source: string, start: number): string {
+  return source.slice(start).split(/\n(?=\S)/u, 1)[0] ?? "";
+}
+
 describe("bundled npm ip-address image remediation contract", () => {
   it("binds the replacement to the reviewed npm and registry artifact", () => {
     expect(REVIEWED_NPM_VERSION).toBe(UPGRADED_NPM_VERSION);
     expect(REVIEWED_NPM_VERSION).toBe("11.18.0");
     expect(FIXED_IP_ADDRESS_VERSION).toBe("10.3.1");
-    expect(FIXED_IP_ADDRESS_INTEGRITY).toMatch(/^sha512-[A-Za-z0-9+/]+=*$/u);
+    expect(FIXED_IP_ADDRESS_INTEGRITY).toBe(
+      "sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==",
+    );
     expect(FIXED_IP_ADDRESS_TARBALL).toBe(
       "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz",
     );
@@ -51,7 +57,9 @@ describe("bundled npm ip-address image remediation contract", () => {
     expect(copy, file).toBeGreaterThanOrEqual(0);
     expect(upgrade, file).toBeGreaterThan(copy);
     expect(patch, file).toBeGreaterThan(upgrade);
-    expect(source.slice(patch)).toContain("--npm-root /usr/local/lib/node_modules/npm");
+    expect(instructionBody(source, patch), file).toContain(
+      "--npm-root /usr/local/lib/node_modules/npm",
+    );
   });
 
   it.each(finalDockerfiles)("reasserts the private package fix in the completed %s", (file) => {
@@ -69,6 +77,8 @@ describe("bundled npm ip-address image remediation contract", () => {
     expect(tarPatch, file).toBeGreaterThan(copy);
     expect(bracePatch, file).toBeGreaterThan(tarPatch);
     expect(ipAddressPatch, file).toBeGreaterThan(bracePatch);
-    expect(source.slice(ipAddressPatch)).toContain("--npm-root /usr/local/lib/node_modules/npm");
+    expect(instructionBody(source, ipAddressPatch), file).toContain(
+      "--npm-root /usr/local/lib/node_modules/npm",
+    );
   });
 });

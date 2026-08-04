@@ -76,6 +76,21 @@ function rejectUnsafeTree(root: string): void {
   }
 }
 
+function removeBackup(backupPath: string): void {
+  try {
+    rmSync(backupPath, { force: true, recursive: true });
+  } catch (cleanupError) {
+    try {
+      rmSync(backupPath, { force: true, recursive: true });
+    } catch (retryError) {
+      throw new AggregateError(
+        [cleanupError, retryError],
+        `verified replacement retained but affected backup cleanup failed: ${backupPath}`,
+      );
+    }
+  }
+}
+
 function isContainedBinSymlink(
   nodeModulesRoot: string,
   directory: string,
@@ -242,16 +257,19 @@ export function patchBundledNpmIpAddress(options: {
     renameSync(stagedPath, livePath);
     const fixed = verifyBundledNpmIpAddress(npmRoot);
     rollbackRequired = false;
-    try {
-      rmSync(backupPath, { force: true, recursive: true });
-    } catch {
-      rmSync(backupPath, { force: true, recursive: true });
-    }
+    removeBackup(backupPath);
     return fixed;
   } catch (error) {
     if (rollbackRequired) {
-      rmSync(livePath, { force: true, recursive: true });
-      renameSync(backupPath, livePath);
+      try {
+        rmSync(livePath, { force: true, recursive: true });
+        renameSync(backupPath, livePath);
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          `npm bundled ip-address rollback failed; ${backupPath} retains the original tree`,
+        );
+      }
     }
     throw error;
   } finally {

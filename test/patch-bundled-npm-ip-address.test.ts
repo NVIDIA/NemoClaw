@@ -13,6 +13,7 @@ import {
   FIXED_IP_ADDRESS_VERSION,
   patchBundledNpmIpAddress,
   patchBundledNpmIpAddressFromRegistry,
+  REVIEWED_NPM_VERSION,
   verifyBundledNpmIpAddress,
 } from "../scripts/lib/patch-bundled-npm-ip-address.mts";
 
@@ -44,7 +45,10 @@ function fixture(ipAddressVersion: string) {
   const root = temporaryDirectory();
   const npmRoot = path.join(root, "npm");
   const replacementRoot = path.join(root, "replacement");
-  writeJson(path.join(npmRoot, "package.json"), { name: "npm", version: "11.18.0" });
+  writeJson(path.join(npmRoot, "package.json"), {
+    name: "npm",
+    version: REVIEWED_NPM_VERSION,
+  });
   writeJson(
     path.join(npmRoot, "node_modules", "ip-address", "package.json"),
     packageManifest(ipAddressVersion),
@@ -80,7 +84,7 @@ describe("npm bundled ip-address remediation", () => {
 
     expect(patchBundledNpmIpAddress(target)).toMatchObject({
       ipAddressVersion: FIXED_IP_ADDRESS_VERSION,
-      npmVersion: "11.18.0",
+      npmVersion: REVIEWED_NPM_VERSION,
       state: "fixed",
     });
     expect(fs.existsSync(path.join(target.npmRoot, "node_modules", "ip-address", "old.js"))).toBe(
@@ -221,6 +225,87 @@ describe("npm bundled ip-address remediation", () => {
         .readdirSync(path.join(target.npmRoot, "node_modules"))
         .some((entry) => entry.startsWith("ip-address.nemoclaw-backup-")),
     ).toBe(false);
+  });
+
+  it("fails closed when the affected backup cannot be removed", () => {
+    const target = fixture(AFFECTED_IP_ADDRESS_VERSION);
+    const originalRmSync = fs.rmSync.bind(fs);
+    const rmSpy = vi
+      .spyOn(fs, "rmSync")
+      .mockImplementationOnce(originalRmSync)
+      .mockImplementationOnce(() => {
+        throw new Error("injected backup cleanup failure");
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("injected backup cleanup retry failure");
+      })
+      .mockImplementation(originalRmSync);
+    syncBuiltinESMExports();
+
+    let failure: unknown;
+    try {
+      patchBundledNpmIpAddress(target);
+    } catch (error) {
+      failure = error;
+    } finally {
+      rmSpy.mockRestore();
+      syncBuiltinESMExports();
+    }
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors.map(String)).toEqual([
+      "Error: injected backup cleanup failure",
+      "Error: injected backup cleanup retry failure",
+    ]);
+    expect(verifyBundledNpmIpAddress(target.npmRoot)).toMatchObject({ state: "fixed" });
+    expect(
+      fs
+        .readdirSync(path.join(target.npmRoot, "node_modules"))
+        .some((entry) => entry.startsWith("ip-address.nemoclaw-backup-")),
+    ).toBe(true);
+  });
+
+  it("reports the original patch failure when rollback also fails", () => {
+    const target = fixture(AFFECTED_IP_ADDRESS_VERSION);
+    const livePath = path.join(target.npmRoot, "node_modules", "ip-address");
+    const originalRenameSync = fs.renameSync.bind(fs);
+    const renameSpy = vi
+      .spyOn(fs, "renameSync")
+      .mockImplementationOnce((oldPath, newPath) => {
+        originalRenameSync(oldPath, newPath);
+        writeJson(path.join(livePath, "package.json"), {
+          ...packageManifest(FIXED_IP_ADDRESS_VERSION),
+          main: "unexpected.js",
+        });
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("injected rollback rename failure");
+      })
+      .mockImplementation(originalRenameSync);
+    syncBuiltinESMExports();
+
+    let failure: unknown;
+    try {
+      patchBundledNpmIpAddress(target);
+    } catch (error) {
+      failure = error;
+    } finally {
+      renameSpy.mockRestore();
+      syncBuiltinESMExports();
+    }
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors.map(String)).toEqual([
+      expect.stringContaining("npm bundled ip-address identity or package contract has drifted"),
+      "Error: injected rollback rename failure",
+    ]);
+    const backup = fs
+      .readdirSync(path.join(target.npmRoot, "node_modules"))
+      .find((entry) => entry.startsWith("ip-address.nemoclaw-backup-"));
+    expect(backup).toBeDefined();
+    expect(fs.existsSync(path.join(target.npmRoot, "node_modules", String(backup), "old.js"))).toBe(
+      true,
+    );
   });
 
   it("fails closed on npm layout drift and unsafe package members", () => {
