@@ -5,22 +5,13 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { dirname, join, relative } from "node:path";
 
 import { resolveSourceBuildIdentity } from "../../core/version";
+import { getManagedInferenceServingCatalogRegistries } from "./adapter-registry";
 import { compileTrustedServingCatalog, serializeCompiledServingCatalog } from "./catalog";
 import type {
   ServingCatalogRegistries,
   ServingCatalogSchemas,
   ServingCatalogSource,
 } from "./types";
-
-// Bootstrap only: valid while the catalog has no definitions. Production definitions must
-// inject populated registries; tracked by https://github.com/NVIDIA/NemoClaw/issues/8144.
-const EMPTY_REGISTRIES: ServingCatalogRegistries = {
-  receipts: new Set(),
-  materializers: new Set(),
-  lifecycles: new Set(),
-  readinessContracts: new Set(),
-  readiness: new Map(),
-};
 
 function readJson(path: string): object {
   return JSON.parse(readFileSync(path, "utf8")) as object;
@@ -64,15 +55,23 @@ export interface GenerateServingCatalogOptions {
   registries?: ServingCatalogRegistries;
 }
 
-export function generateServingCatalog(options: GenerateServingCatalogOptions): string {
-  const outputPath =
-    options.outputPath ?? join(options.rootDir, "dist", "managed-inference", "catalog.json");
-  const catalog = compileTrustedServingCatalog({
+function compileServingCatalog(options: GenerateServingCatalogOptions) {
+  return compileTrustedServingCatalog({
     sources: loadSources(options.rootDir),
     sourceRevision: resolveSourceBuildIdentity({ rootDir: options.rootDir }).sourceRevision,
     schemas: loadSchemas(options.rootDir),
-    registries: options.registries ?? EMPTY_REGISTRIES,
+    registries: options.registries ?? getManagedInferenceServingCatalogRegistries(),
   });
+}
+
+export function checkServingCatalog(options: GenerateServingCatalogOptions): void {
+  compileServingCatalog(options);
+}
+
+export function generateServingCatalog(options: GenerateServingCatalogOptions): string {
+  const outputPath =
+    options.outputPath ?? join(options.rootDir, "dist", "managed-inference", "catalog.json");
+  const catalog = compileServingCatalog(options);
   mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, serializeCompiledServingCatalog(catalog));
   return outputPath;
@@ -80,5 +79,6 @@ export function generateServingCatalog(options: GenerateServingCatalogOptions): 
 
 if (require.main === module) {
   const rootDir = join(__dirname, "..", "..", "..", "..");
-  generateServingCatalog({ rootDir });
+  if (process.argv.includes("--check")) checkServingCatalog({ rootDir });
+  else generateServingCatalog({ rootDir });
 }

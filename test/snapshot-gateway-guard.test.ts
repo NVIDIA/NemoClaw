@@ -196,6 +196,7 @@ function makeVmRestoreToEnv(
   const cloneReadyMarker = path.join(home, "clone-1-ready");
   const cloneRunningMarker = path.join(home, "clone-1-running");
   const gatewayLifecycleLog = path.join(home, "gateway-lifecycle.log");
+  const dashboardBind = process.env.WSL_DISTRO_NAME ? "0.0.0.0" : "127.0.0.1";
   writeExecutable(path.join(localBin, "openshell"), [
     'case "$1 $2" in',
     '  "gateway info") printf "Gateway Info\\n\\nGateway: nemoclaw\\nGateway endpoint: https://127.0.0.1:8080/\\n"; exit 0 ;;',
@@ -208,7 +209,7 @@ function makeVmRestoreToEnv(
     '    printf "NEMOCLAW_DCODE_PROBE=no-runtime\\n"; exit 0 ;;',
     '  "sandbox ssh-config") printf "Host openshell-alpha\\n  HostName 127.0.0.1\\n  User sandbox\\n"; exit 0 ;;',
     `  "sandbox create") touch ${JSON.stringify(cloneReadyMarker)} ${JSON.stringify(cloneRunningMarker)}; printf "created clone-1\\n"; exit 0 ;;`,
-    `  "forward list") printf "SANDBOX BIND PORT PID STATUS\\nclone-1 127.0.0.1 ${String(dashboardPort)} 4242 running\\n"; exit 0 ;;`,
+    `  "forward list") printf "SANDBOX BIND PORT PID STATUS\\nclone-1 ${dashboardBind} ${String(dashboardPort)} 4242 running\\n"; exit 0 ;;`,
     '  "forward stop") exit 1 ;;',
     "esac",
     'if [ "$1" = "status" ]; then exit 0; fi',

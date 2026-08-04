@@ -76,7 +76,7 @@ function exactAgent(value: string): ManagedStartupAgent {
 function readExpected(argv: readonly string[]): ManagedBootstrapImageRuntimeExpected {
   if (argv.length !== 7) {
     fail(
-      "usage: managed-startup-image-runtime [--recover-bootstrap-claim|--apply-bootstrap-file|--verify-bootstrap-completion] --agent <agent> --profile-fingerprint <sha256> --bootstrap-identity <sha256>",
+      "usage: managed-startup-image-runtime [--recover-bootstrap-claim|--apply-bootstrap-file|--verify-bootstrap-completion|--wait-for-completion] --agent <agent> --profile-fingerprint <sha256> --bootstrap-identity <sha256>",
     );
   }
   const valueAfter = (flag: string): string => {
@@ -494,7 +494,8 @@ export function verifyManagedBootstrapImageCompletion(
   startupCompletionFile: string = MANAGED_STARTUP_COMPLETION_FILE,
   runtimeEnvironmentFile: string = MANAGED_STARTUP_RUNTIME_ENV_FILE,
 ): ManagedBootstrapImageCompletion {
-  requireRoot();
+  // The sandbox-owned hold is the verifier. Root ownership, one-link
+  // regular-file checks, and mode 0444 protect each handoff it consumes.
   const { bytes, stat } = readStableRegularFileSnapshot(
     completionFile,
     MANAGED_BOOTSTRAP_COMPLETION_MAX_BYTES,
@@ -524,6 +525,37 @@ export function verifyManagedBootstrapImageCompletion(
   return completion;
 }
 
+export function waitForManagedBootstrapImageCompletion(
+  expected: ManagedBootstrapImageRuntimeExpected,
+  timeoutSeconds = 600,
+  completionFile: string = MANAGED_BOOTSTRAP_COMPLETION_FILE,
+  startupCompletionFile: string = MANAGED_STARTUP_COMPLETION_FILE,
+  runtimeEnvironmentFile: string = MANAGED_STARTUP_RUNTIME_ENV_FILE,
+): ManagedBootstrapImageCompletion {
+  if (!Number.isSafeInteger(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 3600) {
+    fail("managed bootstrap completion wait timeout must be an integer from 1 to 3600 seconds");
+  }
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  while (true) {
+    try {
+      return verifyManagedBootstrapImageCompletion(
+        expected,
+        completionFile,
+        startupCompletionFile,
+        runtimeEnvironmentFile,
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (Date.now() >= deadline) {
+        fail(
+          `managed bootstrap completion was not published within ${String(timeoutSeconds)} seconds`,
+        );
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+    }
+  }
+}
+
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
   if (argv[0] === "--recover-bootstrap-claim") {
     const expected = readExpected(argv);
@@ -548,6 +580,16 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   if (argv[0] === "--verify-bootstrap-completion") {
     const expected = readExpected(argv);
     const completion = verifyManagedBootstrapImageCompletion(expected);
+    console.log(
+      `[managed-startup] verified ${expected.agent} profile ${expected.profileFingerprint} bootstrap ${expected.bootstrapIdentity}${
+        completion.transactionPending ? "; transaction pending" : ""
+      }`,
+    );
+    return;
+  }
+  if (argv[0] === "--wait-for-completion") {
+    const expected = readExpected(argv);
+    const completion = waitForManagedBootstrapImageCompletion(expected);
     console.log(
       `[managed-startup] verified ${expected.agent} profile ${expected.profileFingerprint} bootstrap ${expected.bootstrapIdentity}${
         completion.transactionPending ? "; transaction pending" : ""

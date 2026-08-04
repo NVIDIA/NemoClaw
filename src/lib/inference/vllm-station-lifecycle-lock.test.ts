@@ -10,7 +10,9 @@ import {
   type DualStationControllerUidFileStat,
   readDualStationControllerUid,
   withDualStationVllmLifecycleLock,
+  withHostGlobalVllmLifecycleLock,
 } from "./vllm-station-lifecycle-lock";
+import { managedVllmStateDir } from "./vllm-api-key";
 
 function controllerUidStat(
   kind: "directory" | "file",
@@ -110,6 +112,37 @@ describe("dual-Station controller UID binding", () => {
       expect(operation).not.toHaveBeenCalled();
       expect(fs.existsSync(stateDir)).toBe(false);
     } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("shares the managed-state home even when passwd and HOME directories differ", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-vllm-lock-"));
+    const passwdHome = path.join(root, "passwd-home");
+    const managedHome = path.join(root, "managed-home");
+    fs.mkdirSync(passwdHome, { mode: 0o700 });
+    fs.mkdirSync(managedHome, { mode: 0o700 });
+    const userInfo = os.userInfo();
+    const userInfoSpy = vi.spyOn(os, "userInfo").mockReturnValue({
+      ...userInfo,
+      homedir: passwdHome,
+    });
+    vi.stubEnv("HOME", managedHome);
+
+    try {
+      expect(managedVllmStateDir()).toBe(path.join(managedHome, ".nemoclaw"));
+      await withHostGlobalVllmLifecycleLock(
+        () => {
+          expect(
+            fs.existsSync(path.join(managedHome, ".nemoclaw", "state", "mcp-lifecycle-locks")),
+          ).toBe(true);
+          expect(fs.existsSync(path.join(passwdHome, ".nemoclaw"))).toBe(false);
+        },
+        { pollIntervalMs: 5, timeoutMs: 250, corruptLockGraceMs: 5 },
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      userInfoSpy.mockRestore();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
