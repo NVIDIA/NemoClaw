@@ -64,6 +64,20 @@ spec:
     gid: 10001
     port: 8081
     entrypoint: /usr/local/bin/llama-server
+    requiredPaths:
+      - /usr/local/bin/llama-server
+      - /usr/local/share/licenses/llama.cpp/AUTHORS
+      - /usr/local/share/licenses/llama.cpp/LICENSE
+    forbiddenPaths:
+      - /bin/bash
+      - /bin/dash
+      - /bin/rbash
+      - /bin/sh
+      - /opt/llama.cpp/ui
+      - /usr/bin/bash
+      - /usr/bin/dash
+      - /usr/bin/rbash
+      - /usr/bin/sh
     packages:
       ca-certificates: 20260601~24.04.1
       libcurl4t64: 8.5.0-2ubuntu10.11

@@ -84,7 +84,9 @@ describe("llama.cpp image PR workflow", () => {
       cuda_runtime_image: "${{ steps.manifest.outputs.cuda_runtime_image }}",
       image: "${{ steps.manifest.outputs.image }}",
       matrix: "${{ steps.manifest.outputs.matrix }}",
+      runtime_forbidden_paths: "${{ steps.manifest.outputs.runtime_forbidden_paths }}",
       runtime_gid: "${{ steps.manifest.outputs.runtime_gid }}",
+      runtime_required_paths: "${{ steps.manifest.outputs.runtime_required_paths }}",
       runtime_uid: "${{ steps.manifest.outputs.runtime_uid }}",
       source_archive_sha256: "${{ steps.manifest.outputs.source_archive_sha256 }}",
       source_revision: "${{ steps.manifest.outputs.source_revision }}",
@@ -134,6 +136,9 @@ describe("llama.cpp image PR workflow", () => {
     expect(validate.run).toContain("--read-only");
     expect(validate.run).toContain("--tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777");
     expect(validate.run).toContain('grep -F "$SOURCE_REVISION"');
-    expect(validate.run).toContain("test ! -e /opt/llama.cpp/ui");
+    expect(validate.run).toContain('docker export "$container_id"');
+    expect(validate.run).toContain("RUNTIME_REQUIRED_PATHS");
+    expect(validate.run).toContain("RUNTIME_FORBIDDEN_PATHS");
+    expect(validate.run).not.toContain("--entrypoint /bin/sh");
   });
 });

@@ -28,7 +28,9 @@ jobs:
       cuda_runtime_image: ${{ steps.manifest.outputs.cuda_runtime_image }}
       image: ${{ steps.manifest.outputs.image }}
       matrix: ${{ steps.manifest.outputs.matrix }}
+      runtime_forbidden_paths: ${{ steps.manifest.outputs.runtime_forbidden_paths }}
       runtime_gid: ${{ steps.manifest.outputs.runtime_gid }}
+      runtime_required_paths: ${{ steps.manifest.outputs.runtime_required_paths }}
       runtime_uid: ${{ steps.manifest.outputs.runtime_uid }}
       source_archive_sha256: ${{ steps.manifest.outputs.source_archive_sha256 }}
       source_revision: ${{ steps.manifest.outputs.source_revision }}
@@ -100,7 +102,9 @@ jobs:
           CUDA_RUNTIME_IMAGE: ${{ needs.config.outputs.cuda_runtime_image }}
           IMAGE: nemoclaw-llama-cpp-pr:${{ matrix.arch }}-${{ github.sha }}
           PLATFORM: ${{ matrix.platform }}
+          RUNTIME_FORBIDDEN_PATHS: ${{ needs.config.outputs.runtime_forbidden_paths }}
           RUNTIME_GID: ${{ needs.config.outputs.runtime_gid }}
+          RUNTIME_REQUIRED_PATHS: ${{ needs.config.outputs.runtime_required_paths }}
           RUNTIME_UID: ${{ needs.config.outputs.runtime_uid }}
           SOURCE_ARCHIVE_SHA256: ${{ needs.config.outputs.source_archive_sha256 }}
           SOURCE_REVISION: ${{ needs.config.outputs.source_revision }}
@@ -141,16 +145,22 @@ jobs:
             "$IMAGE" --version 2>&1 | tee "$RUNNER_TEMP/llama-server-version.txt"
           grep -F "$SOURCE_REVISION" "$RUNNER_TEMP/llama-server-version.txt"
 
-          docker run --rm \
-            --network none \
-            --read-only \
-            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
-            --entrypoint /bin/sh \
-            "$IMAGE" -eu -c '
-              test -x /usr/local/bin/llama-server
-              test -r /usr/local/share/licenses/llama.cpp/LICENSE
-              test -r /usr/local/share/licenses/llama.cpp/AUTHORS
-              test ! -e /opt/llama.cpp/ui
-              test "$(id -u)" = "$1"
-              test "$(id -g)" = "$2"
-            ' -- "$RUNTIME_UID" "$RUNTIME_GID"
+          container_id="$(docker create "$IMAGE" --version)"
+          trap 'docker rm --force "$container_id" >/dev/null 2>&1 || true' EXIT
+          filesystem_paths="$(docker export "$container_id" | tar --list --file - | sed 's#^\./##')"
+          while IFS= read -r required_path; do
+            if ! grep --fixed-strings --line-regexp "${required_path#/}" <<< "$filesystem_paths" >/dev/null; then
+              echo "ERROR: required image path is missing: $required_path" >&2
+              exit 1
+            fi
+          done < <(jq --raw-output '.[]' <<< "$RUNTIME_REQUIRED_PATHS")
+          while IFS= read -r forbidden_path; do
+            if awk -v path="${forbidden_path#/}" \
+              '$0 == path || index($0, path "/") == 1 { found = 1 } END { exit !found }' \
+              <<< "$filesystem_paths"; then
+              echo "ERROR: forbidden image path is present: $forbidden_path" >&2
+              exit 1
+            fi
+          done < <(jq --raw-output '.[]' <<< "$RUNTIME_FORBIDDEN_PATHS")
+          docker rm "$container_id" >/dev/null
+          trap - EXIT

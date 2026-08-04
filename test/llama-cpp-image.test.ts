@@ -42,9 +42,11 @@ type ImageManifest = {
     repository?: string;
     runtime?: {
       entrypoint?: string;
+      forbiddenPaths?: string[];
       gid?: number;
       packages?: Record<string, string>;
       port?: number;
+      requiredPaths?: string[];
       uid?: number;
       writablePaths?: string[];
     };
@@ -84,7 +86,12 @@ describe("declarative llama.cpp server image", () => {
         repository: "ghcr.io/nvidia/nemoclaw/llama-cpp-server",
         runtime: {
           entrypoint: "/usr/local/bin/llama-server",
+          forbiddenPaths: expect.arrayContaining(["/bin/sh", "/usr/bin/sh"]),
           port: 8081,
+          requiredPaths: expect.arrayContaining([
+            "/usr/local/bin/llama-server",
+            "/usr/local/share/licenses/llama.cpp/LICENSE",
+          ]),
           writablePaths: ["/tmp"],
         },
         source: { repository: "https://github.com/ggml-org/llama.cpp" },
@@ -135,7 +142,9 @@ describe("declarative llama.cpp server image", () => {
       cuda_dev_image: manifest.spec?.cuda?.developmentBase,
       cuda_runtime_image: manifest.spec?.cuda?.runtimeBase,
       image: manifest.spec?.repository,
+      runtime_forbidden_paths: JSON.stringify(manifest.spec?.runtime?.forbiddenPaths),
       runtime_gid: String(manifest.spec?.runtime?.gid),
+      runtime_required_paths: JSON.stringify(manifest.spec?.runtime?.requiredPaths),
       runtime_uid: String(manifest.spec?.runtime?.uid),
       source_archive_sha256: manifest.spec?.source?.archiveSha256,
       source_revision: manifest.spec?.source?.revision,
@@ -152,8 +161,8 @@ describe("declarative llama.cpp server image", () => {
 
   it.each([
     [
-      "a base image outside the allowed registries",
-      manifestSource.replace("docker.io/nvidia/cuda@", "registry.example.invalid/cuda@"),
+      "a non-NVIDIA base image",
+      manifestSource.replace("docker.io/nvidia/cuda@", "docker.io/example/cuda@"),
     ],
     [
       "a runner that does not match the platform",
@@ -176,6 +185,10 @@ describe("declarative llama.cpp server image", () => {
         "      ggmlBackendDl: true",
         "      ggmlBackendDl: true\n      ggmlWidgets: true",
       ),
+    ],
+    [
+      "an unexpected top-level field",
+      manifestSource.replace("kind: ServerImageBuild", "kind: ServerImageBuild\nunexpected: true"),
     ],
   ])("rejects %s before exporting image build inputs (#8231)", (_case, candidate) => {
     expect(() => loadLlamaCppImageConfig(candidate)).toThrow();
@@ -218,6 +231,11 @@ describe("declarative llama.cpp server image", () => {
     expect(dockerfile).toContain("ENV CC=${C_COMPILER}");
     expect(dockerfile).toContain("CXX=${CXX_COMPILER}");
     expect(dockerfile).toContain("CUDAHOSTCXX=${CUDA_HOST_CXX_COMPILER}");
+    for (const shellPath of manifest.spec?.runtime?.forbiddenPaths?.filter(
+      (forbiddenPath) => forbiddenPath !== "/opt/llama.cpp/ui",
+    ) ?? []) {
+      expect(dockerfile).toContain(shellPath);
+    }
     expect(dockerfile).toContain("sha256sum --check --strict");
     expect(dockerfile).toContain("cp LICENSE AUTHORS");
     expect(dockerfile).not.toContain("# syntax=");

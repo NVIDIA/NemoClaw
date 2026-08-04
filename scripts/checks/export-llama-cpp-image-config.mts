@@ -22,9 +22,11 @@ type ServerImageManifest = {
     repository?: unknown;
     runtime?: {
       entrypoint?: unknown;
+      forbiddenPaths?: unknown;
       gid?: unknown;
       packages?: unknown;
       port?: unknown;
+      requiredPaths?: unknown;
       uid?: unknown;
       writablePaths?: unknown;
     };
@@ -36,7 +38,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "../..");
 const manifestPath = path.join(repoRoot, "managed-inference", "images", "llama-cpp", "image.yaml");
 
-const digestReference = /^(?:docker\.io|ghcr\.io)\/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$/u;
+const nvidiaCudaDigestReference = /^docker\.io\/nvidia\/cuda@sha256:[0-9a-f]{64}$/u;
 const fullRevision = /^[0-9a-f]{40}$/u;
 const sha256 = /^sha256:[0-9a-f]{64}$/u;
 
@@ -65,8 +67,41 @@ function matchesExactRecord(value: unknown, expected: Record<string, unknown>): 
   );
 }
 
+function assertExactKeys(value: unknown, name: string, expected: string[]): void {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    JSON.stringify(Object.keys(value).sort()) !== JSON.stringify([...expected].sort())
+  ) {
+    throw new Error(`invalid ${name} fields`);
+  }
+}
+
 export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "utf8")) {
   const manifest = YAML.parse(source) as ServerImageManifest;
+  assertExactKeys(manifest, "manifest", ["apiVersion", "kind", "metadata", "spec"]);
+  assertExactKeys(manifest.metadata, "metadata", ["id"]);
+  assertExactKeys(manifest.spec, "spec", [
+    "build",
+    "cuda",
+    "platforms",
+    "repository",
+    "runtime",
+    "source",
+  ]);
+  assertExactKeys(manifest.spec?.build, "build", ["cmake", "compiler", "packages", "target"]);
+  assertExactKeys(manifest.spec?.cuda, "cuda", ["developmentBase", "runtimeBase"]);
+  assertExactKeys(manifest.spec?.runtime, "runtime", [
+    "entrypoint",
+    "forbiddenPaths",
+    "gid",
+    "packages",
+    "port",
+    "requiredPaths",
+    "uid",
+    "writablePaths",
+  ]);
+  assertExactKeys(manifest.spec?.source, "source", ["archiveSha256", "repository", "revision"]);
   if (
     manifest?.apiVersion !== "nemoclaw.nvidia.com/managed-inference/v1" ||
     manifest?.kind !== "ServerImageBuild" ||
@@ -113,6 +148,22 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
     libcurl4t64: "8.5.0-2ubuntu10.11",
     libgomp1: "14.2.0-4ubuntu2~24.04.1",
   };
+  const expectedRequiredPaths = [
+    "/usr/local/bin/llama-server",
+    "/usr/local/share/licenses/llama.cpp/AUTHORS",
+    "/usr/local/share/licenses/llama.cpp/LICENSE",
+  ];
+  const expectedForbiddenPaths = [
+    "/bin/bash",
+    "/bin/dash",
+    "/bin/rbash",
+    "/bin/sh",
+    "/opt/llama.cpp/ui",
+    "/usr/bin/bash",
+    "/usr/bin/dash",
+    "/usr/bin/rbash",
+    "/usr/bin/sh",
+  ];
   const cmake = spec?.build?.cmake;
   if (
     spec?.source?.repository !== "https://github.com/ggml-org/llama.cpp" ||
@@ -123,6 +174,8 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
     !matchesExactRecord(spec?.runtime?.packages, expectedRuntimePackages) ||
     spec?.runtime?.entrypoint !== "/usr/local/bin/llama-server" ||
     spec?.runtime?.port !== 8081 ||
+    JSON.stringify(spec?.runtime?.requiredPaths) !== JSON.stringify(expectedRequiredPaths) ||
+    JSON.stringify(spec?.runtime?.forbiddenPaths) !== JSON.stringify(expectedForbiddenPaths) ||
     JSON.stringify(spec?.runtime?.writablePaths) !== JSON.stringify(["/tmp"])
   ) {
     throw new Error("invalid llama.cpp server image build or runtime contract");
@@ -133,6 +186,7 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
   }
 
   const include = platforms.map((entry) => {
+    assertExactKeys(entry, "platform", ["cudaArchitectures", "platform", "runner"]);
     const platform = requiredString(entry?.platform, "platform", /^linux\/(?:amd64|arm64)$/u);
     const expectedRunner = platform === "linux/amd64" ? "ubuntu-24.04" : "ubuntu-24.04-arm";
     if (entry?.runner !== expectedRunner) {
@@ -161,12 +215,12 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
     cuda_dev_image: requiredString(
       spec?.cuda?.developmentBase,
       "CUDA development base",
-      digestReference,
+      nvidiaCudaDigestReference,
     ),
     cuda_runtime_image: requiredString(
       spec?.cuda?.runtimeBase,
       "CUDA runtime base",
-      digestReference,
+      nvidiaCudaDigestReference,
     ),
     image: requiredString(
       spec?.repository,
@@ -175,6 +229,8 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
     ),
     matrix: JSON.stringify({ include }),
     runtime_gid: requiredRuntimeId(spec?.runtime?.gid, "runtime gid"),
+    runtime_forbidden_paths: JSON.stringify(expectedForbiddenPaths),
+    runtime_required_paths: JSON.stringify(expectedRequiredPaths),
     runtime_uid: requiredRuntimeId(spec?.runtime?.uid, "runtime uid"),
     source_archive_sha256: requiredString(
       spec?.source?.archiveSha256,

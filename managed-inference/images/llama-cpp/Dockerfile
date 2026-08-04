@@ -104,7 +104,16 @@ RUN apt-get update \
     && groupadd --gid "${RUNTIME_GID}" nemoclaw-llama \
     && useradd --uid "${RUNTIME_UID}" --gid "${RUNTIME_GID}" \
       --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin nemoclaw-llama \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f \
+      /bin/bash \
+      /bin/dash \
+      /bin/rbash \
+      /bin/sh \
+      /usr/bin/bash \
+      /usr/bin/dash \
+      /usr/bin/rbash \
+      /usr/bin/sh
 
 COPY --from=build --chmod=0555 /opt/llama.cpp/bin/llama-server /usr/local/bin/llama-server
 COPY --from=build --chmod=0555 /opt/llama.cpp/lib/ /opt/llama.cpp/lib/
