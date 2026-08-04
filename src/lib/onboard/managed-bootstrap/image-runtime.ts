@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 
 import {
   applyManagedStartupRootRequest,
@@ -37,6 +38,19 @@ export interface ManagedBootstrapImageRuntimeExpected {
 }
 
 interface ManagedBootstrapEnvelopeSnapshot {
+  readonly bytes: Buffer;
+  readonly request: ManagedStartupRootApplyRequest;
+  readonly stat: fs.BigIntStats;
+}
+
+export interface ManagedBootstrapEnvelopeClaimPaths {
+  readonly directory: string;
+  readonly file: string;
+  readonly requestFile: string;
+}
+
+interface ManagedBootstrapEnvelopeClaim extends ManagedBootstrapEnvelopeClaimPaths {
+  readonly bytes: Buffer;
   readonly request: ManagedStartupRootApplyRequest;
   readonly stat: fs.BigIntStats;
 }
@@ -61,7 +75,7 @@ function exactAgent(value: string): ManagedStartupAgent {
 function readExpected(argv: readonly string[]): ManagedBootstrapImageRuntimeExpected {
   if (argv.length !== 7) {
     fail(
-      "usage: managed-startup-image-runtime [--apply-bootstrap-file|--verify-bootstrap-completion] --agent <agent> --profile-fingerprint <sha256> --bootstrap-identity <sha256>",
+      "usage: managed-startup-image-runtime [--recover-bootstrap-claim|--apply-bootstrap-file|--verify-bootstrap-completion] --agent <agent> --profile-fingerprint <sha256> --bootstrap-identity <sha256>",
     );
   }
   const valueAfter = (flag: string): string => {
@@ -107,7 +121,7 @@ function readManagedBootstrapEnvelopeSnapshot(
   ) {
     fail("managed bootstrap envelope identity does not match the replacement");
   }
-  return { request: envelope.rootApplyRequest, stat };
+  return { bytes, request: envelope.rootApplyRequest, stat };
 }
 
 export function readManagedBootstrapEnvelope(
@@ -117,30 +131,277 @@ export function readManagedBootstrapEnvelope(
   return readManagedBootstrapEnvelopeSnapshot(expected, requestFile).request;
 }
 
-function requireManagedBootstrapEnvelopeIdentity(
-  requestFile: string,
-  expected: fs.BigIntStats,
-): void {
-  let current: fs.BigIntStats;
+export function managedBootstrapEnvelopeClaimPaths(
+  requestFile: string = MANAGED_BOOTSTRAP_REQUEST_FILE,
+): ManagedBootstrapEnvelopeClaimPaths {
+  if (!path.isAbsolute(requestFile)) fail("managed bootstrap request path must be absolute");
+  const directory = path.join(
+    path.dirname(requestFile),
+    `.${path.basename(requestFile)}.nemoclaw-claim`,
+  );
+  return { directory, file: path.join(directory, "request"), requestFile };
+}
+
+function lstatManagedBootstrapPath(target: string): fs.BigIntStats | null {
   try {
-    current = fs.lstatSync(requestFile, { bigint: true });
-  } catch {
-    fail("managed bootstrap envelope changed before cleanup");
+    return fs.lstatSync(target, { bigint: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    fail(`could not inspect managed bootstrap path ${target}`);
   }
+}
+
+function sameStableManagedBootstrapFile(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.nlink === right.nlink &&
+    left.uid === right.uid &&
+    left.gid === right.gid &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
+  );
+}
+
+function sameClaimedManagedBootstrapFile(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.nlink === right.nlink &&
+    left.uid === right.uid &&
+    left.gid === right.gid &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs
+  );
+}
+
+function isProtectedManagedBootstrapFile(stat: fs.BigIntStats, expectedLinks = 1n): boolean {
+  return (
+    stat.isFile() &&
+    stat.nlink === expectedLinks &&
+    stat.uid === 0n &&
+    stat.gid === 0n &&
+    Number(stat.mode & 0o777n) === 0o400
+  );
+}
+
+function requirePrivateManagedBootstrapClaimDirectory(directory: string): void {
+  const stat = lstatManagedBootstrapPath(directory);
   if (
-    !current.isFile() ||
-    current.dev !== expected.dev ||
-    current.ino !== expected.ino ||
-    current.mode !== expected.mode ||
-    current.nlink !== 1n ||
-    current.uid !== 0n ||
-    current.gid !== 0n ||
-    current.size !== expected.size ||
-    current.mtimeNs !== expected.mtimeNs ||
-    current.ctimeNs !== expected.ctimeNs
+    stat === null ||
+    !stat.isDirectory() ||
+    stat.isSymbolicLink() ||
+    stat.uid !== 0n ||
+    stat.gid !== 0n ||
+    Number(stat.mode & 0o777n) !== 0o700
   ) {
-    fail("managed bootstrap envelope changed before cleanup");
+    fail("managed bootstrap claim directory must be root:root mode 0700");
   }
+}
+
+function removeManagedBootstrapClaimDirectory(directory: string): void {
+  try {
+    fs.rmdirSync(directory);
+  } catch {
+    fail("could not remove managed bootstrap claim directory");
+  }
+}
+
+function requireSafeManagedBootstrapClaimParent(directory: string): void {
+  const parent = lstatManagedBootstrapPath(path.dirname(directory));
+  if (
+    parent === null ||
+    !parent.isDirectory() ||
+    parent.isSymbolicLink() ||
+    parent.uid !== 0n ||
+    parent.gid !== 0n ||
+    Number(parent.mode & 0o022n) !== 0
+  ) {
+    fail("managed bootstrap claim parent must be a protected root-owned directory");
+  }
+}
+
+function managedBootstrapClaimEntries(directory: string): string[] {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(directory);
+  } catch {
+    fail("could not inspect managed bootstrap claim directory contents");
+  }
+  return entries.sort();
+}
+
+function ensurePrivateManagedBootstrapClaimDirectory(directory: string): void {
+  requireSafeManagedBootstrapClaimParent(directory);
+  const current = lstatManagedBootstrapPath(directory);
+  if (current !== null) {
+    requirePrivateManagedBootstrapClaimDirectory(directory);
+    return;
+  }
+  try {
+    fs.mkdirSync(directory, { mode: 0o700 });
+    fs.chownSync(directory, 0, 0);
+    fs.chmodSync(directory, 0o700);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+      fail("could not create private managed bootstrap envelope claim");
+    }
+  }
+  requirePrivateManagedBootstrapClaimDirectory(directory);
+}
+
+interface OpenManagedBootstrapEnvelopeSnapshot extends ManagedBootstrapEnvelopeSnapshot {
+  readonly descriptor: number;
+}
+
+function openManagedBootstrapEnvelopeSnapshot(
+  expected: ManagedBootstrapImageRuntimeExpected,
+  target: string,
+): OpenManagedBootstrapEnvelopeSnapshot {
+  requireRoot();
+  if (typeof fs.constants.O_NOFOLLOW !== "number") {
+    fail("O_NOFOLLOW is unavailable for managed bootstrap envelope reads");
+  }
+  const nonblock = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | nonblock);
+  } catch {
+    fail(`refusing unsafe or unreadable managed bootstrap envelope ${target}`);
+  }
+
+  try {
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    if (
+      !isProtectedManagedBootstrapFile(before) ||
+      before.size < 1n ||
+      before.size > BigInt(MANAGED_BOOTSTRAP_ENVELOPE_MAX_BYTES)
+    ) {
+      fail("managed bootstrap envelope must be a bounded root:root mode 0400 file with one link");
+    }
+    const bytes = Buffer.alloc(Number(before.size));
+    let offset = 0;
+    while (offset < bytes.length) {
+      const bytesRead = fs.readSync(descriptor, bytes, offset, bytes.length - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    const overflow = Buffer.alloc(1);
+    const overflowBytes = fs.readSync(descriptor, overflow, 0, 1, offset);
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    if (
+      offset !== bytes.length ||
+      overflowBytes !== 0 ||
+      !sameStableManagedBootstrapFile(before, after)
+    ) {
+      fail("managed bootstrap envelope changed while it was authenticated");
+    }
+    const envelope = parseManagedBootstrapEnvelope(bytes.toString("utf8"));
+    if (
+      envelope.bootstrapIdentity !== expected.bootstrapIdentity ||
+      envelope.rootApplyRequest.agent !== expected.agent ||
+      envelope.rootApplyRequest.profileFingerprint !== expected.profileFingerprint
+    ) {
+      fail("managed bootstrap envelope identity does not match the replacement");
+    }
+    return { bytes, descriptor, request: envelope.rootApplyRequest, stat: after };
+  } catch (error) {
+    try {
+      fs.closeSync(descriptor);
+    } catch {
+      // Preserve the authentication failure.
+    }
+    throw error;
+  }
+}
+
+function claimManagedBootstrapEnvelope(
+  expected: ManagedBootstrapImageRuntimeExpected,
+  requestFile: string,
+): ManagedBootstrapEnvelopeClaim {
+  const paths = managedBootstrapEnvelopeClaimPaths(requestFile);
+  ensurePrivateManagedBootstrapClaimDirectory(paths.directory);
+  const entries = managedBootstrapClaimEntries(paths.directory);
+  if (entries.length === 1 && entries[0] === path.basename(paths.file)) {
+    const resumed = readManagedBootstrapEnvelopeSnapshot(expected, paths.file);
+    return { ...paths, ...resumed };
+  }
+  if (entries.length !== 0) {
+    fail("managed bootstrap claim directory contains unexpected entries");
+  }
+
+  const opened = openManagedBootstrapEnvelopeSnapshot(expected, requestFile);
+  let claimed: ManagedBootstrapEnvelopeSnapshot;
+  try {
+    try {
+      fs.renameSync(requestFile, paths.file);
+    } catch {
+      fail("could not atomically claim managed bootstrap envelope");
+    }
+    const descriptorAfterRename = fs.fstatSync(opened.descriptor, { bigint: true });
+    claimed = readManagedBootstrapEnvelopeSnapshot(expected, paths.file);
+    if (
+      !sameClaimedManagedBootstrapFile(opened.stat, descriptorAfterRename) ||
+      !sameStableManagedBootstrapFile(descriptorAfterRename, claimed.stat) ||
+      !opened.bytes.equals(claimed.bytes)
+    ) {
+      fail("managed bootstrap envelope changed before its atomic claim");
+    }
+  } finally {
+    try {
+      fs.closeSync(opened.descriptor);
+    } catch {
+      fail("could not close authenticated managed bootstrap envelope");
+    }
+  }
+  return { ...paths, ...claimed };
+}
+
+export function recoverManagedBootstrapEnvelopeClaim(
+  expected: ManagedBootstrapImageRuntimeExpected,
+  requestFile: string = MANAGED_BOOTSTRAP_REQUEST_FILE,
+): boolean {
+  requireRoot();
+  const paths = managedBootstrapEnvelopeClaimPaths(requestFile);
+  requireSafeManagedBootstrapClaimParent(paths.directory);
+  const directoryStat = lstatManagedBootstrapPath(paths.directory);
+  if (directoryStat === null) return false;
+  requirePrivateManagedBootstrapClaimDirectory(paths.directory);
+  const entries = managedBootstrapClaimEntries(paths.directory);
+  if (entries.length === 0) {
+    if (lstatManagedBootstrapPath(requestFile) !== null) return true;
+    removeManagedBootstrapClaimDirectory(paths.directory);
+    return false;
+  }
+  if (entries.length !== 1 || entries[0] !== path.basename(paths.file)) {
+    fail("managed bootstrap claim directory contains unexpected entries");
+  }
+  readManagedBootstrapEnvelopeSnapshot(expected, paths.file);
+  return true;
+}
+
+function consumeManagedBootstrapEnvelopeClaim(
+  expected: ManagedBootstrapImageRuntimeExpected,
+  claim: ManagedBootstrapEnvelopeClaim,
+): void {
+  requireSafeManagedBootstrapClaimParent(claim.directory);
+  requirePrivateManagedBootstrapClaimDirectory(claim.directory);
+  const current = readManagedBootstrapEnvelopeSnapshot(expected, claim.file);
+  if (
+    !sameStableManagedBootstrapFile(current.stat, claim.stat) ||
+    !current.bytes.equals(claim.bytes)
+  ) {
+    fail("managed bootstrap envelope claim changed before completion cleanup");
+  }
+  try {
+    fs.unlinkSync(claim.file);
+  } catch {
+    fail("could not consume managed bootstrap envelope claim");
+  }
+  removeManagedBootstrapClaimDirectory(claim.directory);
 }
 
 export async function applyManagedBootstrapEnvelope(
@@ -149,11 +410,10 @@ export async function applyManagedBootstrapEnvelope(
   requestFile: string = MANAGED_BOOTSTRAP_REQUEST_FILE,
   completionFile: string = MANAGED_BOOTSTRAP_COMPLETION_FILE,
 ): Promise<ManagedStartupRootApplyResult> {
-  const envelope = readManagedBootstrapEnvelopeSnapshot(expected, requestFile);
-  const result = await applyManagedStartupRootRequest(envelope.request, env, {
+  const claim = claimManagedBootstrapEnvelope(expected, requestFile);
+  const result = await applyManagedStartupRootRequest(claim.request, env, {
     bootstrapIdentity: expected.bootstrapIdentity,
   });
-  requireManagedBootstrapEnvelopeIdentity(requestFile, envelope.stat);
   atomicWriteRootFile(
     completionFile,
     serializeManagedBootstrapImageCompletion({
@@ -164,8 +424,7 @@ export async function applyManagedBootstrapEnvelope(
     }),
     0o444,
   );
-  requireManagedBootstrapEnvelopeIdentity(requestFile, envelope.stat);
-  fs.unlinkSync(requestFile);
+  consumeManagedBootstrapEnvelopeClaim(expected, claim);
   return result;
 }
 
@@ -206,6 +465,16 @@ export function verifyManagedBootstrapImageCompletion(
 }
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
+  if (argv[0] === "--recover-bootstrap-claim") {
+    const expected = readExpected(argv);
+    const pending = recoverManagedBootstrapEnvelopeClaim(expected);
+    console.log(
+      pending
+        ? `[managed-startup] found pending ${expected.agent} bootstrap request claim`
+        : `[managed-startup] no pending ${expected.agent} bootstrap request claim`,
+    );
+    return;
+  }
   if (argv[0] === "--apply-bootstrap-file") {
     const expected = readExpected(argv);
     const result = await applyManagedBootstrapEnvelope(expected);

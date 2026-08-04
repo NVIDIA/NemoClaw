@@ -27,6 +27,8 @@ import {
   applyManagedBootstrapEnvelope,
   type ManagedBootstrapImageRuntimeExpected,
   main as mainManagedBootstrapImageRuntime,
+  managedBootstrapEnvelopeClaimPaths,
+  recoverManagedBootstrapEnvelopeClaim,
 } from "./managed-bootstrap/image-runtime";
 import { mapManagedStartupProfileToAgentEnvironment } from "./managed-startup/agent-environment";
 import {
@@ -396,6 +398,8 @@ describe("managed startup image runtime", () => {
       { readonly contents: string | Buffer; readonly mode: number }
     > = new Map(),
   ): {
+    readonly beforeRename: (callback: ((source: string, target: string) => void) | null) => void;
+    readonly beforeUnlink: (callback: ((target: string) => void) | null) => void;
     readonly hasFile: (target: string) => boolean;
     readonly readFile: (target: string) => string | null;
     readonly writeFile: (target: string, contents: string | Buffer, mode: number) => void;
@@ -416,16 +420,30 @@ describe("managed startup image runtime", () => {
           : Buffer.from(file.contents, "utf8"),
       ]),
     );
+    const directoryModes = new Map([...directories].map((target) => [target, 0o755]));
     const fileModes = new Map([...seededFiles].map(([target, file]) => [target, file.mode]));
     let nextFileInode = 2n;
     const fileInodes = new Map<string, bigint>();
+    const fileCtimes = new Map<string, bigint>();
     for (const target of files.keys()) {
       fileInodes.set(target, nextFileInode);
+      fileCtimes.set(target, 1n);
       nextFileInode += 1n;
     }
     const descriptorTargets = new Map<number, string>();
+    const descriptorSnapshots = new Map<
+      number,
+      {
+        readonly bytes: Buffer;
+        readonly ctimeNs: bigint;
+        readonly ino: bigint;
+        readonly mode: number;
+      }
+    >();
     const pendingFiles = new Map<string, Buffer>();
     const pendingModes = new Map<string, number>();
+    let renameObserver: ((source: string, target: string) => void) | null = null;
+    let unlinkObserver: ((target: string) => void) | null = null;
     let nextDescriptor = 91;
     const stat = (kind: "directory" | "file", mode: number) =>
       ({
@@ -437,13 +455,30 @@ describe("managed startup image runtime", () => {
         nlink: 1,
         uid: 0,
       }) as fs.Stats;
-    const bigFileStat = (target: string, bytes: Buffer, mode: number) =>
+    const bigDirectoryStat = (target: string) =>
       ({
         ctimeNs: 1n,
         dev: 1n,
         gid: 0n,
-        ino: fileInodes.get(target) ?? missing(),
+        ino: 1n,
+        isDirectory: () => true,
+        isFile: () => false,
+        isSymbolicLink: () => false,
+        mode: BigInt(0o040000 | (directoryModes.get(target) ?? 0o755)),
+        mtimeNs: 1n,
+        nlink: 1n,
+        size: 0n,
+        uid: 0n,
+      }) as fs.BigIntStats;
+    const bigFileStat = (bytes: Buffer, mode: number, ino: bigint, ctimeNs: bigint) =>
+      ({
+        ctimeNs,
+        dev: 1n,
+        gid: 0n,
+        ino,
+        isDirectory: () => false,
         isFile: () => true,
+        isSymbolicLink: () => false,
         mode: BigInt(0o100000 | mode),
         mtimeNs: 1n,
         nlink: 1n,
@@ -464,6 +499,7 @@ describe("managed startup image runtime", () => {
       void (files.get(resolved) ?? missing());
       files.delete(resolved);
       fileInodes.delete(resolved);
+      fileCtimes.delete(resolved);
       fileModes.delete(resolved);
     };
 
@@ -476,31 +512,75 @@ describe("managed startup image runtime", () => {
       const bytes = files.get(resolved);
       const mode = fileModes.get(resolved) ?? 0o444;
       return directories.has(resolved)
-        ? stat("directory", 0o755)
+        ? options?.bigint
+          ? bigDirectoryStat(resolved)
+          : stat("directory", directoryModes.get(resolved) ?? 0o755)
         : bytes === undefined
           ? missing()
           : options?.bigint
-            ? bigFileStat(resolved, bytes, mode)
+            ? bigFileStat(
+                bytes,
+                mode,
+                fileInodes.get(resolved) ?? missing(),
+                fileCtimes.get(resolved) ?? missing(),
+              )
             : stat("file", mode);
     }) as typeof fs.lstatSync);
-    vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "mkdirSync").mockImplementation(((
+      target: fs.PathLike,
+      options?: { mode?: number },
+    ) => {
+      const resolved = String(target);
+      if (directories.has(resolved) || files.has(resolved)) {
+        throw Object.assign(new Error("exists"), { code: "EEXIST" });
+      }
+      directories.add(resolved);
+      directoryModes.set(resolved, options?.mode ?? 0o777);
+      return undefined;
+    }) as typeof fs.mkdirSync);
     vi.spyOn(fs, "chownSync").mockImplementation(() => undefined);
-    vi.spyOn(fs, "chmodSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "chmodSync").mockImplementation(((target: fs.PathLike, mode: fs.Mode) => {
+      const resolved = String(target);
+      const numeric = typeof mode === "number" ? mode : Number.parseInt(mode, 8);
+      if (directories.has(resolved)) directoryModes.set(resolved, numeric);
+      else if (files.has(resolved)) fileModes.set(resolved, numeric);
+      else missing();
+    }) as typeof fs.chmodSync);
     vi.spyOn(fs, "existsSync").mockReturnValue(false);
     vi.spyOn(fs, "openSync").mockImplementation(((target: fs.PathLike, _flags, mode) => {
       const resolved = String(target);
-      return (resolved === MANAGED_STARTUP_RUNTIME_ENV_FILE ||
-        resolved === MANAGED_STARTUP_COMPLETION_FILE) &&
+      const descriptor =
+        (resolved === MANAGED_STARTUP_RUNTIME_ENV_FILE ||
+          resolved === MANAGED_STARTUP_COMPLETION_FILE) &&
         !files.has(resolved)
-        ? missing()
-        : allocateDescriptor(resolved, typeof mode === "number" ? mode : 0o600);
+          ? missing()
+          : allocateDescriptor(resolved, typeof mode === "number" ? mode : 0o600);
+      const bytes = files.get(resolved);
+      if (bytes !== undefined) {
+        descriptorSnapshots.set(descriptor, {
+          bytes: Buffer.from(bytes),
+          ctimeNs: fileCtimes.get(resolved) ?? missing(),
+          ino: fileInodes.get(resolved) ?? missing(),
+          mode: fileModes.get(resolved) ?? 0o444,
+        });
+      }
+      return descriptor;
     }) as typeof fs.openSync);
     vi.spyOn(fs, "fstatSync").mockImplementation(((descriptor: number) => {
+      const snapshot = descriptorSnapshots.get(descriptor);
+      if (snapshot !== undefined) {
+        return bigFileStat(snapshot.bytes, snapshot.mode, snapshot.ino, snapshot.ctimeNs);
+      }
       const target = descriptorTargets.get(descriptor);
       const bytes = target === undefined ? undefined : files.get(target);
       return bytes === undefined
         ? missing()
-        : bigFileStat(target as string, bytes, fileModes.get(target as string) ?? 0o444);
+        : bigFileStat(
+            bytes,
+            fileModes.get(target as string) ?? 0o444,
+            fileInodes.get(target as string) ?? missing(),
+            fileCtimes.get(target as string) ?? missing(),
+          );
     }) as typeof fs.fstatSync);
     vi.spyOn(fs, "readSync").mockImplementation(((
       descriptor: number,
@@ -510,7 +590,10 @@ describe("managed startup image runtime", () => {
       position: number | null,
     ) => {
       const target = descriptorTargets.get(descriptor);
-      const bytes = (target === undefined ? undefined : files.get(target)) ?? missing();
+      const bytes =
+        descriptorSnapshots.get(descriptor)?.bytes ??
+        (target === undefined ? undefined : files.get(target)) ??
+        missing();
       const start = position ?? 0;
       const count = Math.min(length, Math.max(0, bytes.length - start));
       bytes.copy(buffer as Buffer, offset, start, start + count);
@@ -530,24 +613,89 @@ describe("managed startup image runtime", () => {
       pendingModes.set(target, typeof mode === "number" ? mode : Number.parseInt(mode, 8));
     });
     vi.spyOn(fs, "fsyncSync").mockImplementation(() => undefined);
-    vi.spyOn(fs, "closeSync").mockImplementation(() => undefined);
+    vi.spyOn(fs, "closeSync").mockImplementation((descriptor) => {
+      descriptorSnapshots.delete(descriptor);
+      descriptorTargets.delete(descriptor);
+    });
     vi.spyOn(fs, "renameSync").mockImplementation((source, target) => {
-      const pending = pendingFiles.get(String(source)) ?? missing();
-      files.set(String(target), pending);
-      fileInodes.set(String(target), nextFileInode);
-      nextFileInode += 1n;
-      fileModes.set(String(target), pendingModes.get(String(source)) ?? 0o444);
-      pendingFiles.delete(String(source));
-      pendingModes.delete(String(source));
+      const resolvedSource = String(source);
+      const resolvedTarget = String(target);
+      renameObserver?.(resolvedSource, resolvedTarget);
+      const pending = pendingFiles.get(resolvedSource);
+      if (pending !== undefined) {
+        if (files.has(resolvedTarget)) deleteExistingFile(resolvedTarget);
+        files.set(resolvedTarget, pending);
+        fileInodes.set(resolvedTarget, nextFileInode);
+        fileCtimes.set(resolvedTarget, 1n);
+        nextFileInode += 1n;
+        fileModes.set(resolvedTarget, pendingModes.get(resolvedSource) ?? 0o444);
+        pendingFiles.delete(resolvedSource);
+        pendingModes.delete(resolvedSource);
+      } else {
+        const sourceBytes = files.get(resolvedSource) ?? missing();
+        const sourceInode = fileInodes.get(resolvedSource) ?? missing();
+        const sourceMode = fileModes.get(resolvedSource) ?? missing();
+        const sourceCtime = fileCtimes.get(resolvedSource) ?? missing();
+        if (files.has(resolvedTarget)) deleteExistingFile(resolvedTarget);
+        files.set(resolvedTarget, sourceBytes);
+        fileInodes.set(resolvedTarget, sourceInode);
+        fileModes.set(resolvedTarget, sourceMode);
+        fileCtimes.set(resolvedTarget, sourceCtime + 1n);
+        for (const [descriptor, snapshot] of descriptorSnapshots) {
+          if (snapshot.ino === sourceInode) {
+            descriptorSnapshots.set(descriptor, { ...snapshot, ctimeNs: sourceCtime + 1n });
+          }
+        }
+        files.delete(resolvedSource);
+        fileInodes.delete(resolvedSource);
+        fileModes.delete(resolvedSource);
+        fileCtimes.delete(resolvedSource);
+      }
       runtimeWrites.push(
-        ...(String(target) === MANAGED_STARTUP_RUNTIME_ENV_FILE ? [pending.toString("utf8")] : []),
+        ...(resolvedTarget === MANAGED_STARTUP_RUNTIME_ENV_FILE
+          ? [(files.get(resolvedTarget) ?? missing()).toString("utf8")]
+          : []),
       );
     });
     vi.spyOn(fs, "unlinkSync").mockImplementation(((target: fs.PathLike) => {
-      deleteExistingFile(String(target));
+      const resolved = String(target);
+      unlinkObserver?.(resolved);
+      const removedPendingFile = pendingFiles.delete(resolved);
+      pendingModes.delete(resolved);
+      if (removedPendingFile) return;
+      deleteExistingFile(resolved);
     }) as typeof fs.unlinkSync);
+    vi.spyOn(fs, "readdirSync").mockImplementation(((target: fs.PathLike) => {
+      const resolved = String(target);
+      if (!directories.has(resolved)) return missing();
+      const prefix = `${resolved}/`;
+      return [...files.keys(), ...directories]
+        .filter((entry) => entry.startsWith(prefix))
+        .map((entry) => entry.slice(prefix.length))
+        .filter((entry) => entry.length > 0 && !entry.includes("/"));
+    }) as typeof fs.readdirSync);
+    vi.spyOn(fs, "rmdirSync").mockImplementation(((target: fs.PathLike) => {
+      const resolved = String(target);
+      if (!directories.has(resolved)) return missing();
+      const prefix = `${resolved}/`;
+      if (
+        [...files.keys(), ...directories].some(
+          (entry) => entry !== resolved && entry.startsWith(prefix),
+        )
+      ) {
+        throw Object.assign(new Error("not empty"), { code: "ENOTEMPTY" });
+      }
+      directories.delete(resolved);
+      directoryModes.delete(resolved);
+    }) as typeof fs.rmdirSync);
 
     return {
+      beforeRename: (callback) => {
+        renameObserver = callback;
+      },
+      beforeUnlink: (callback) => {
+        unlinkObserver = callback;
+      },
       hasFile: (target) => files.has(target),
       readFile: (target) => files.get(target)?.toString("utf8") ?? null,
       writeFile: (target, contents, mode) => {
@@ -556,6 +704,7 @@ describe("managed startup image runtime", () => {
           Buffer.isBuffer(contents) ? Buffer.from(contents) : Buffer.from(contents, "utf8"),
         );
         fileInodes.set(target, nextFileInode);
+        fileCtimes.set(target, 1n);
         nextFileInode += 1n;
         fileModes.set(target, mode);
       },
@@ -655,8 +804,8 @@ describe("managed startup image runtime", () => {
     const encodedProfile = encodeManagedStartupProfile(profile);
     const fingerprint = fingerprintManagedStartupProfile(profile);
     const bootstrapIdentity = "b".repeat(64);
-    const requestFile = "/var/lib/nemoclaw-managed-bootstrap-request.json";
-    const completionFile = "/run/nemoclaw/managed-bootstrap-completion.json";
+    const requestFile = MANAGED_BOOTSTRAP_REQUEST_FILE;
+    const completionFile = MANAGED_BOOTSTRAP_COMPLETION_FILE;
     const rootApplyRequest = createManagedStartupRootApplyRequest({
       agent: profile.agent,
       encodedProfile,
@@ -724,13 +873,48 @@ describe("managed startup image runtime", () => {
         transactionPending: true,
       },
     );
+  });
 
-    fs.unlinkSync(completionFile);
-    filesystem.writeFile(
-      requestFile,
-      serializeManagedBootstrapEnvelope({ bootstrapIdentity, rootApplyRequest }),
-      0o400,
+  it("applies and verifies bootstrap completion through the CLI modes", async () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    const fingerprint = fingerprintManagedStartupProfile(profile);
+    const bootstrapIdentity = "b".repeat(64);
+    const rootApplyRequest = createManagedStartupRootApplyRequest({
+      agent: profile.agent,
+      encodedProfile,
+    });
+    mockRootReplayFilesystem(
+      [],
+      new Map([
+        [
+          MANAGED_BOOTSTRAP_REQUEST_FILE,
+          {
+            contents: serializeManagedBootstrapEnvelope({
+              bootstrapIdentity,
+              rootApplyRequest,
+            }),
+            mode: 0o400,
+          },
+        ],
+      ]),
     );
+    vi.spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction").mockReturnValue(
+      true,
+    );
+    coordinatorMock.coordinateManagedStartupApplication.mockResolvedValue({
+      adapterApplied: false,
+      application: {
+        status: "committed",
+        stateDirectory: "/var/lib/nemoclaw/managed-startup",
+        generationDirectory: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}`,
+        profilePath: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}/profile.json`,
+        corporateCaPath: null,
+        fingerprint,
+        expectedAgent: "openclaw",
+        profile,
+      },
+    });
     vi.spyOn(
       sharedStateTransaction,
       "getManagedStartupSharedStateTransactionStatus",
@@ -755,13 +939,40 @@ describe("managed startup image runtime", () => {
     );
   });
 
+  it.each([
+    ["unsafe metadata", 0o444, "b".repeat(64), /mode 0400/u],
+    ["mismatched identity", 0o400, "c".repeat(64), /identity does not match/u],
+  ])("rejects bootstrap envelope %s without consuming the canonical request", async (_label, mode, envelopeIdentity, error) => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const fingerprint = fingerprintManagedStartupProfile(profile);
+    const bootstrapIdentity = "b".repeat(64);
+    const expected = { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity };
+    const request = serializeManagedBootstrapEnvelope({
+      bootstrapIdentity: envelopeIdentity,
+      rootApplyRequest: createManagedStartupRootApplyRequest({
+        agent: profile.agent,
+        encodedProfile: encodeManagedStartupProfile(profile),
+      }),
+    });
+    const filesystem = mockRootReplayFilesystem(
+      [],
+      new Map([[MANAGED_BOOTSTRAP_REQUEST_FILE, { contents: request, mode }]]),
+    );
+
+    await expect(applyManagedBootstrapEnvelope(expected, {})).rejects.toThrow(error);
+    expect(filesystem.readFile(MANAGED_BOOTSTRAP_REQUEST_FILE)).toBe(request);
+    expect(filesystem.hasFile(managedBootstrapEnvelopeClaimPaths().file)).toBe(false);
+    expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
+  });
+
   it("retains the exact bootstrap request after failure and consumes it after a successful retry", async () => {
     const profile = managedStartupE2eProfile("openclaw");
     const encodedProfile = encodeManagedStartupProfile(profile);
     const fingerprint = fingerprintManagedStartupProfile(profile);
     const bootstrapIdentity = "b".repeat(64);
-    const requestFile = "/var/lib/nemoclaw-managed-bootstrap-request.json";
-    const completionFile = "/run/nemoclaw/managed-bootstrap-completion.json";
+    const expected = { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity };
+    const requestFile = MANAGED_BOOTSTRAP_REQUEST_FILE;
+    const completionFile = MANAGED_BOOTSTRAP_COMPLETION_FILE;
     const filesystem = mockRootReplayFilesystem(
       [],
       new Map([
@@ -807,7 +1018,20 @@ describe("managed startup image runtime", () => {
         completionFile,
       ),
     ).rejects.toThrow("application failed");
-    expect(filesystem.hasFile(requestFile)).toBe(true);
+    const claim = managedBootstrapEnvelopeClaimPaths(requestFile);
+    expect(filesystem.hasFile(requestFile)).toBe(false);
+    expect(filesystem.hasFile(claim.file)).toBe(true);
+    fs.chmodSync(path.dirname(claim.directory), 0o777);
+    expect(() => recoverManagedBootstrapEnvelopeClaim(expected, requestFile)).toThrow(
+      "claim parent must be a protected root-owned directory",
+    );
+    fs.chmodSync(path.dirname(claim.directory), 0o755);
+    expect(
+      recoverManagedBootstrapEnvelopeClaim(
+        { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity },
+        requestFile,
+      ),
+    ).toBe(true);
     expect(filesystem.hasFile(completionFile)).toBe(false);
 
     await expect(
@@ -819,6 +1043,7 @@ describe("managed startup image runtime", () => {
       ),
     ).resolves.toMatchObject({ fingerprint, transactionPending: true });
     expect(filesystem.hasFile(requestFile)).toBe(false);
+    expect(filesystem.hasFile(claim.file)).toBe(false);
     expect(
       parseManagedBootstrapImageCompletion(filesystem.readFile(completionFile) ?? ""),
     ).toMatchObject({
@@ -840,13 +1065,13 @@ describe("managed startup image runtime", () => {
     },
     {
       label: "injected",
-      requestFile: "/var/lib/nemoclaw-managed-bootstrap-request.json",
+      requestFile: "/run/nemoclaw/injected-managed-bootstrap-request.json",
       completionFile: "/run/nemoclaw/injected-managed-bootstrap-completion.json",
       apply: (expected: ManagedBootstrapImageRuntimeExpected) =>
         applyManagedBootstrapEnvelope(
           expected,
           {},
-          "/var/lib/nemoclaw-managed-bootstrap-request.json",
+          "/run/nemoclaw/injected-managed-bootstrap-request.json",
           "/run/nemoclaw/injected-managed-bootstrap-completion.json",
         ),
     },
@@ -855,7 +1080,7 @@ describe("managed startup image runtime", () => {
     readonly requestFile: string;
     readonly completionFile: string;
     readonly apply: (expected: ManagedBootstrapImageRuntimeExpected) => Promise<unknown>;
-  }>)("preserves a replaced $label request and publishes no false completion", async ({
+  }>)("preserves a newly staged $label request after claiming the exact attempt", async ({
     requestFile,
     completionFile,
     apply,
@@ -908,10 +1133,228 @@ describe("managed startup image runtime", () => {
       };
     });
 
-    await expect(apply(expected)).rejects.toThrow("envelope changed before cleanup");
+    await expect(apply(expected)).resolves.toMatchObject({
+      fingerprint,
+      transactionPending: true,
+    });
+    expect(filesystem.readFile(requestFile)).toBe(replacement);
+    expect(
+      parseManagedBootstrapImageCompletion(filesystem.readFile(completionFile) ?? ""),
+    ).toMatchObject({ bootstrapIdentity, profileFingerprint: fingerprint });
+    expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    {
+      label: "default",
+      requestFile: MANAGED_BOOTSTRAP_REQUEST_FILE,
+      completionFile: MANAGED_BOOTSTRAP_COMPLETION_FILE,
+    },
+    {
+      label: "injected",
+      requestFile: "/run/nemoclaw/preclaim-managed-bootstrap-request.json",
+      completionFile: "/run/nemoclaw/preclaim-managed-bootstrap-completion.json",
+    },
+  ])("preserves a pre-claim $label replacement without publishing completion", async ({
+    requestFile,
+    completionFile,
+  }) => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    const fingerprint = fingerprintManagedStartupProfile(profile);
+    const bootstrapIdentity = "b".repeat(64);
+    const expected = { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity };
+    const rootApplyRequest = createManagedStartupRootApplyRequest({
+      agent: profile.agent,
+      encodedProfile,
+    });
+    const replacement = serializeManagedBootstrapEnvelope({
+      bootstrapIdentity: "c".repeat(64),
+      rootApplyRequest,
+    });
+    const filesystem = mockRootReplayFilesystem(
+      [],
+      new Map([
+        [
+          requestFile,
+          {
+            contents: serializeManagedBootstrapEnvelope({
+              bootstrapIdentity,
+              rootApplyRequest,
+            }),
+            mode: 0o400,
+          },
+        ],
+      ]),
+    );
+    const claim = managedBootstrapEnvelopeClaimPaths(requestFile);
+    filesystem.beforeRename((source, target) => {
+      if (source === requestFile && target === claim.file) {
+        filesystem.writeFile(requestFile, replacement, 0o400);
+      }
+    });
+
+    await expect(
+      applyManagedBootstrapEnvelope(expected, {}, requestFile, completionFile),
+    ).rejects.toThrow(/identity does not match|changed before its atomic claim/u);
+    expect(filesystem.hasFile(requestFile)).toBe(false);
+    expect(filesystem.readFile(claim.file)).toBe(replacement);
+    expect(filesystem.hasFile(completionFile)).toBe(false);
+    expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
+    expect(() => recoverManagedBootstrapEnvelopeClaim(expected, requestFile)).toThrow(
+      "identity does not match",
+    );
+  });
+
+  it.each([
+    {
+      label: "default",
+      requestFile: MANAGED_BOOTSTRAP_REQUEST_FILE,
+      completionFile: MANAGED_BOOTSTRAP_COMPLETION_FILE,
+    },
+    {
+      label: "injected",
+      requestFile: "/run/nemoclaw/failure-managed-bootstrap-request.json",
+      completionFile: "/run/nemoclaw/failure-managed-bootstrap-completion.json",
+    },
+  ])("keeps the $label private claim across completion failure and a new canonical request", async ({
+    requestFile,
+    completionFile,
+  }) => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    const fingerprint = fingerprintManagedStartupProfile(profile);
+    const bootstrapIdentity = "b".repeat(64);
+    const expected = { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity };
+    const rootApplyRequest = createManagedStartupRootApplyRequest({
+      agent: profile.agent,
+      encodedProfile,
+    });
+    const original = serializeManagedBootstrapEnvelope({ bootstrapIdentity, rootApplyRequest });
+    const replacement = serializeManagedBootstrapEnvelope({
+      bootstrapIdentity: "c".repeat(64),
+      rootApplyRequest,
+    });
+    const filesystem = mockRootReplayFilesystem(
+      [],
+      new Map([[requestFile, { contents: original, mode: 0o400 }]]),
+    );
+    const claim = managedBootstrapEnvelopeClaimPaths(requestFile);
+    vi.spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction").mockReturnValue(
+      true,
+    );
+    coordinatorMock.coordinateManagedStartupApplication.mockResolvedValue({
+      adapterApplied: false,
+      application: {
+        status: "committed",
+        stateDirectory: "/var/lib/nemoclaw/managed-startup",
+        generationDirectory: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}`,
+        profilePath: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}/profile.json`,
+        corporateCaPath: null,
+        fingerprint,
+        expectedAgent: "openclaw",
+        profile,
+      },
+    });
+    filesystem.beforeRename((_source, target) => {
+      if (target === completionFile) {
+        filesystem.writeFile(requestFile, replacement, 0o400);
+        throw new Error("completion publication interrupted");
+      }
+    });
+
+    await expect(
+      applyManagedBootstrapEnvelope(expected, {}, requestFile, completionFile),
+    ).rejects.toThrow("could not atomically write");
+    expect(filesystem.readFile(claim.file)).toBe(original);
     expect(filesystem.readFile(requestFile)).toBe(replacement);
     expect(filesystem.hasFile(completionFile)).toBe(false);
-    expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledOnce();
+
+    filesystem.beforeRename(null);
+    vi.spyOn(
+      sharedStateTransaction,
+      "getManagedStartupSharedStateTransactionStatus",
+    ).mockReturnValue("pending");
+    await expect(
+      applyManagedBootstrapEnvelope(expected, {}, requestFile, completionFile),
+    ).resolves.toMatchObject({ fingerprint, transactionPending: true });
+    expect(filesystem.hasFile(claim.file)).toBe(false);
+    expect(filesystem.readFile(requestFile)).toBe(replacement);
+    expect(
+      parseManagedBootstrapImageCompletion(filesystem.readFile(completionFile) ?? ""),
+    ).toMatchObject({ bootstrapIdentity, profileFingerprint: fingerprint });
+  });
+
+  it("recovers an empty claim directory and a completion-published claim cleanup interruption", async () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    const fingerprint = fingerprintManagedStartupProfile(profile);
+    const bootstrapIdentity = "b".repeat(64);
+    const expected = { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity };
+    const requestFile = "/run/nemoclaw/crash-managed-bootstrap-request.json";
+    const completionFile = "/run/nemoclaw/crash-managed-bootstrap-completion.json";
+    const original = serializeManagedBootstrapEnvelope({
+      bootstrapIdentity,
+      rootApplyRequest: createManagedStartupRootApplyRequest({
+        agent: profile.agent,
+        encodedProfile,
+      }),
+    });
+    const filesystem = mockRootReplayFilesystem(
+      [],
+      new Map([[requestFile, { contents: original, mode: 0o400 }]]),
+    );
+    const claim = managedBootstrapEnvelopeClaimPaths(requestFile);
+    let interruptClaim = true;
+    filesystem.beforeRename((source, target) => {
+      if (interruptClaim && source === requestFile && target === claim.file) {
+        throw new Error("claim interrupted");
+      }
+    });
+    await expect(
+      applyManagedBootstrapEnvelope(expected, {}, requestFile, completionFile),
+    ).rejects.toThrow("could not atomically claim");
+    expect(recoverManagedBootstrapEnvelopeClaim(expected, requestFile)).toBe(true);
+
+    interruptClaim = false;
+    vi.spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction").mockReturnValue(
+      true,
+    );
+    coordinatorMock.coordinateManagedStartupApplication.mockResolvedValue({
+      adapterApplied: false,
+      application: {
+        status: "committed",
+        stateDirectory: "/var/lib/nemoclaw/managed-startup",
+        generationDirectory: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}`,
+        profilePath: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}/profile.json`,
+        corporateCaPath: null,
+        fingerprint,
+        expectedAgent: "openclaw",
+        profile,
+      },
+    });
+    let interruptCleanup = true;
+    filesystem.beforeUnlink((target) => {
+      if (interruptCleanup && target === claim.file) {
+        throw new Error("claim cleanup interrupted");
+      }
+    });
+    await expect(
+      applyManagedBootstrapEnvelope(expected, {}, requestFile, completionFile),
+    ).rejects.toThrow("could not consume managed bootstrap envelope claim");
+    expect(filesystem.hasFile(completionFile)).toBe(true);
+    expect(filesystem.hasFile(claim.file)).toBe(true);
+
+    interruptCleanup = false;
+    vi.spyOn(
+      sharedStateTransaction,
+      "getManagedStartupSharedStateTransactionStatus",
+    ).mockReturnValue("pending");
+    await expect(
+      applyManagedBootstrapEnvelope(expected, {}, requestFile, completionFile),
+    ).resolves.toMatchObject({ fingerprint, transactionPending: true });
+    expect(filesystem.hasFile(claim.file)).toBe(false);
+    expect(filesystem.hasFile(completionFile)).toBe(true);
   });
 
   it.each([
