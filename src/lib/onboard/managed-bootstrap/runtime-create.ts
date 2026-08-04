@@ -90,6 +90,42 @@ export interface ManagedBootstrapRuntimeCreateLaunchResult<T> {
   readonly receipt: ManagedBootstrapCreateReceipt;
 }
 
+export type ManagedBootstrapTerminalOutcome = "commit" | "rollback";
+
+export interface ManagedBootstrapTerminalFinalizer {
+  commit(): Promise<void>;
+  rollback(): Promise<void>;
+}
+
+/**
+ * Claim one terminal outcome before driver finalization starts. Duplicate calls
+ * for that outcome share the in-flight promise; the opposite outcome fails
+ * closed even when finalization loses acknowledgement.
+ */
+export function createManagedBootstrapTerminalFinalizer(
+  finalize: (outcome: ManagedBootstrapTerminalOutcome) => Promise<void>,
+): ManagedBootstrapTerminalFinalizer {
+  let claimedOutcome: ManagedBootstrapTerminalOutcome | null = null;
+  let pending: Promise<void> | null = null;
+  const run = (outcome: ManagedBootstrapTerminalOutcome): Promise<void> => {
+    if (claimedOutcome === outcome && pending !== null) return pending;
+    if (claimedOutcome !== null) {
+      return Promise.reject(
+        new Error(
+          `Managed bootstrap ${outcome} is no longer legal after ${claimedOutcome} finalization began.`,
+        ),
+      );
+    }
+    claimedOutcome = outcome;
+    pending = Promise.resolve().then(() => finalize(outcome));
+    return pending;
+  };
+  return Object.freeze({
+    commit: () => run("commit"),
+    rollback: () => run("rollback"),
+  });
+}
+
 export interface ManagedBootstrapRuntimeCreateLifecycle {
   readonly launchArgv: readonly string[];
   readonly patch: ManagedBootstrapRuntimePatch;

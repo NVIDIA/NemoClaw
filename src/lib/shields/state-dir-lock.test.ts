@@ -181,6 +181,26 @@ describe("recursive state-dir lock host wiring", () => {
     expect(invocation?.input).toContain("Descriptor-safe recursive state-directory");
   });
 
+  it("uses the current host guard for the narrow startup repair (#8112)", () => {
+    const { calls, privileged } = createExec();
+
+    expect(restoreStateDirStartupAccess(privileged, "/sandbox/.openclaw")).toEqual([]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.cmd).toEqual([
+      "timeout",
+      "--signal=TERM",
+      "--kill-after=5s",
+      "12m",
+      "python3",
+      "-I",
+      "-",
+      "startup",
+      "--config-dir",
+      "/sandbox/.openclaw",
+    ]);
+    expect(calls[0]?.input).toContain('choices=("preflight", "lock", "unlock", "startup")');
+  });
+
   it("injects the host helper and plan for agents without an image recovery plan", () => {
     const { calls, privileged } = createExec();
 
@@ -262,26 +282,6 @@ describe("recursive state-dir lock host wiring", () => {
     };
 
     expect(stateLockPlanCompatibilityIssues(privileged, expected, true)).toEqual([]);
-  });
-
-  it("uses the current host guard for the narrow startup repair (#8112)", () => {
-    const { calls, privileged } = createExec();
-
-    expect(restoreStateDirStartupAccess(privileged, "/sandbox/.openclaw")).toEqual([]);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.cmd).toEqual([
-      "timeout",
-      "--signal=TERM",
-      "--kill-after=5s",
-      "12m",
-      "python3",
-      "-I",
-      "-",
-      "startup",
-      "--config-dir",
-      "/sandbox/.openclaw",
-    ]);
-    expect(calls[0]?.input).toContain('choices=("preflight", "lock", "unlock", "startup")');
   });
 
   it("surfaces structured helper findings and rejects contradictory exit contracts", () => {

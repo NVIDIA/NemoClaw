@@ -49,6 +49,17 @@ function defaultDependencies(): AgentConfigDependencies {
   return { getSandbox: registry.getSandbox, loadAgent: agentDefs.loadAgent };
 }
 
+export function resolveAgentStateLockContract(
+  agentName: string,
+  loadAgent: AgentConfigDependencies["loadAgent"] = defaultDependencies().loadAgent,
+): Pick<AgentConfigTarget, "stateLockPlan" | "stateLockPlanInImage"> {
+  const agent = loadAgent(agentName);
+  return {
+    stateLockPlan: agent.stateLockPlan,
+    stateLockPlanInImage: agent.stateLockPlanInImage,
+  };
+}
+
 function requireCanonicalConfigDir(value: string): string {
   if (
     !path.posix.isAbsolute(value) ||

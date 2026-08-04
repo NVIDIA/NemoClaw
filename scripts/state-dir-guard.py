@@ -2048,7 +2048,7 @@ def _run_guard_unserialized(
     action: Action,
     config_dir: str,
     identity: Identity,
-    plan: AgentStateLockPlan | None,
+    plan: AgentStateLockPlan,
 ) -> GuardResult:
     """Run one guard action.  ``identity`` is explicit for focused tests."""
 
@@ -2059,7 +2059,6 @@ def _run_guard_unserialized(
         return _restore_empty_credentials_startup_access(
             normalized_config, identity, deadline
         )
-    assert plan is not None
     fail_closed_config_root = action == "lock" and (
         normalized_config in PRODUCTION_FAIL_CLOSED_CONFIG_DIRS
         or os.environ.get("NEMOCLAW_TEST_OPENCLAW_FAIL_CLOSED") == "1"
@@ -2303,7 +2302,7 @@ def run_guard(
     action: Action,
     config_dir: str,
     identity: Identity,
-    plan: AgentStateLockPlan | None,
+    plan: AgentStateLockPlan,
 ) -> GuardResult:
     """Serialize production OpenClaw recursive transitions with its top guard."""
 
@@ -2407,12 +2406,8 @@ def _load_plan(args: argparse.Namespace) -> AgentStateLockPlan:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
-    # Startup repair is intentionally plan-independent: it changes only the
-    # named credentials root after independently verifying its sealed posture.
-    # This lets the current host helper repair older images before their
-    # generated state-lock plan is available.
     try:
-        plan = None if args.action == "startup" else _load_plan(args)
+        plan = _load_plan(args)
     except PlanValidationError as exc:
         result = GuardResult(action=args.action)
         result.issues.append(Issue("invalid-plan", args.config_dir, str(exc)))

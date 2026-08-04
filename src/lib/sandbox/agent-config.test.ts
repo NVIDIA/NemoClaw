@@ -3,7 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { AgentStateLockPlan } from "../agent/definition-types";
-import { type AgentConfigDependencies, resolveAgentConfig } from "./agent-config";
+import {
+  type AgentConfigDependencies,
+  resolveAgentConfig,
+  resolveAgentStateLockContract,
+} from "./agent-config";
 
 const PLAN: AgentStateLockPlan = {
   version: 1,
@@ -39,6 +43,16 @@ function dependencies(overrides: Partial<AgentConfigDependencies> = {}): AgentCo
 }
 
 describe("agent config resolution", () => {
+  it("loads the state lock contract for an explicit agent", () => {
+    const loadAgent = vi.fn(() => openClawAgent());
+
+    expect(resolveAgentStateLockContract("openclaw", loadAgent)).toEqual({
+      stateLockPlan: PLAN,
+      stateLockPlanInImage: true,
+    });
+    expect(loadAgent).toHaveBeenCalledWith("openclaw");
+  });
+
   it("loads the OpenClaw contract when no agent is registered", () => {
     const loadAgent = vi.fn(() => openClawAgent());
 

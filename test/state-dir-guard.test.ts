@@ -263,7 +263,7 @@ function fixture(configDirName = ".agent"): { root: string; configDir: string } 
 }
 
 function runGuardWithPlanSource(
-  action: "preflight" | "lock" | "unlock",
+  action: "preflight" | "lock" | "unlock" | "startup",
   configDir: string,
   planFlag: "--plan-json" | "--plan-file",
   planValue: string,
@@ -283,26 +283,12 @@ function runGuardWithPlanSource(
 }
 
 function runGuard(
-  action: "preflight" | "lock" | "unlock",
+  action: "preflight" | "lock" | "unlock" | "startup",
   configDir: string,
   env: Record<string, string> = {},
   plan: unknown = DEFAULT_PLAN,
 ) {
   return runGuardWithPlanSource(action, configDir, "--plan-json", JSON.stringify(plan), env);
-}
-
-function runStartupGuard(configDir: string, env: Record<string, string> = {}) {
-  const result = spawnSync(
-    "python3",
-    ["-c", RUN_BUNDLED_GUARD_AS_CURRENT_USER, GUARD_PATH, "startup", configDir],
-    { encoding: "utf-8", timeout: 15_000, env: { ...process.env, ...env } },
-  );
-  const lines = result.stdout
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as GuardLine);
-  return { ...result, lines };
 }
 
 function mode(filePath: string): number {
@@ -1215,14 +1201,14 @@ describe("state-dir-guard", () => {
     fs.mkdirSync(credentialsDir);
     fs.chmodSync(credentialsDir, 0o700);
 
-    const restored = runStartupGuard(configDir);
+    const restored = runGuard("startup", configDir);
 
     expect(restored.status, JSON.stringify(restored.lines)).toBe(0);
     expect(mode(credentialsDir)).toBe(0o710);
 
     fs.writeFileSync(path.join(credentialsDir, "token.json"), "secret\n", { mode: 0o600 });
 
-    const nonemptyStartup = runStartupGuard(configDir);
+    const nonemptyStartup = runGuard("startup", configDir);
 
     expect(nonemptyStartup.status, nonemptyStartup.stderr).toBe(0);
     expect(mode(credentialsDir)).toBe(0o700);

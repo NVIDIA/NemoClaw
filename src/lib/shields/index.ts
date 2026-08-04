@@ -56,7 +56,10 @@ const {
 } = require("./timer-control");
 const { resolveNemoclawStateDir } = require("../state/paths");
 const { appendAuditEntry } = require("./audit");
-const { resolveAgentConfig } = require("../sandbox/agent-config");
+const {
+  resolveAgentConfig,
+  resolveAgentStateLockContract,
+}: typeof import("../sandbox/agent-config") = require("../sandbox/agent-config");
 const {
   buildRuntimePermissivePolicy,
 }: typeof import("./permissive-runtime") = require("./permissive-runtime");
@@ -828,6 +831,18 @@ function ensureConfigHashSensitiveFile<T extends AgentConfigTarget>(target: T): 
   if (sensitiveFiles.includes(hashPath)) return target;
   return { ...target, sensitiveFiles: [...sensitiveFiles, hashPath] } as T;
 }
+function loadMarkerAgentStateLockPlan(
+  agentName: string | undefined,
+): Pick<AgentConfigTarget, "stateLockPlan" | "stateLockPlanInImage"> {
+  if (!agentName) return { stateLockPlanInImage: false };
+  try {
+    return resolveAgentStateLockContract(agentName);
+  } catch {
+    // A marker path remains authoritative, but a missing agent definition
+    // cannot authorize a state-directory mutation.
+    return { stateLockPlanInImage: false };
+  }
+}
 
 function resolvePersistedAutoRestoreTarget(
   sandboxName: string,
@@ -844,7 +859,8 @@ function resolvePersistedAutoRestoreTarget(
       configHashPath(marker.configDir),
       ...(marker.agentName === "hermes" ? [`${marker.configDir.replace(/\/+$/, "")}/.env`] : []),
     ],
-  } as AgentConfigTarget;
+    ...loadMarkerAgentStateLockPlan(marker.agentName),
+  };
 
   try {
     const resolved = ensureConfigHashSensitiveFile(resolveConfig(sandboxName));
@@ -2471,7 +2487,13 @@ function lockAgentConfigUnderMutationLock(
       if (rollbackLocked) {
         try {
           rollbackIssues.push(
-            ...restoreStateDirLockPosture(stateDirLockExec(sandboxName), target.configDir, true),
+            ...restoreStateDirLockPosture(
+              stateDirLockExec(sandboxName),
+              target.configDir,
+              true,
+              requireStateLockPlan(target),
+              target.stateLockPlanInImage,
+            ),
           );
         } catch (rollbackError) {
           rollbackIssues.push(

@@ -532,7 +532,13 @@ describe("shields config lock without a shipped config hash", () => {
 
     expect(lockCalls[0].slice(4)).toEqual([CONFIG_DIR, CONFIG_PATH]);
     expect(unlockCalls).toHaveLength(0);
-    expect(restoreStateDirLockPostureSpy).toHaveBeenCalledWith(expect.anything(), CONFIG_DIR, true);
+    expect(restoreStateDirLockPostureSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      CONFIG_DIR,
+      true,
+      target().stateLockPlan,
+      false,
+    );
     expect(stateDirGuardActions).toEqual(["preflight", "lock"]);
     expect(entries.get(CONFIG_DIR)).toEqual({ mode: "755", owner: "root:root" });
     expect(entries.get(CONFIG_PATH)).toEqual({ mode: "444", owner: "root:root" });
