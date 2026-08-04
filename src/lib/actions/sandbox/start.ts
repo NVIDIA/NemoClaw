@@ -18,9 +18,28 @@ function verifyGateway(sandboxName: string): Promise<void> {
   return connectSandbox(sandboxName, { probeOnly: true });
 }
 
-function restoreStartupState(sandboxName: string): void {
+function restoreProcessState(sandboxName: string): void {
   const { restoreSandboxStartupState } = require("./connect") as typeof import("./connect");
   restoreSandboxStartupState(sandboxName);
+}
+
+function restoreLockedStartupAccess(sandboxName: string): void {
+  const { restoreLockedStateDirStartupAccess } =
+    require("../../shields") as typeof import("../../shields");
+  restoreLockedStateDirStartupAccess(sandboxName);
+}
+
+export interface SandboxStartupStateDeps {
+  restoreLockedStartupAccess?: (sandboxName: string) => void;
+  restoreProcessState?: (sandboxName: string) => void;
+}
+
+export function restoreStoppedSandboxStartupState(
+  sandboxName: string,
+  deps: SandboxStartupStateDeps = {},
+): void {
+  (deps.restoreLockedStartupAccess ?? restoreLockedStartupAccess)(sandboxName);
+  (deps.restoreProcessState ?? restoreProcessState)(sandboxName);
 }
 
 export interface SandboxStartDeps {
@@ -64,7 +83,7 @@ export async function startSandbox(
 
   await resolved.lifecycle.verifyStarted(input, async (name) => {
     log("  Restoring sandbox startup state…");
-    (deps.restoreStartupState ?? restoreStartupState)(name);
+    (deps.restoreStartupState ?? restoreStoppedSandboxStartupState)(name);
     log("  Checking gateway health and host forwards…");
     await (deps.verifyGateway ?? verifyGateway)(name);
   });

@@ -10,7 +10,7 @@ import {
 } from "../../onboard/runtime-provider/docker";
 import { createRuntimeProviderBundleRegistry } from "../../onboard/runtime-provider/registry";
 import type { SandboxEntry } from "../../state/registry";
-import { type SandboxStartDeps, startSandbox } from "./start";
+import { restoreStoppedSandboxStartupState, type SandboxStartDeps, startSandbox } from "./start";
 
 function sandbox(values: Partial<SandboxEntry> = {}): SandboxEntry {
   return { name: "my-sandbox", ...values };
@@ -83,6 +83,22 @@ function harness(overrides: Partial<SandboxStartDeps> = {}) {
 }
 
 describe("startSandbox", () => {
+  it("restores sealed access before recovering sandbox processes (#8112)", () => {
+    const restoreAccess = vi.fn();
+    const restoreProcesses = vi.fn();
+
+    restoreStoppedSandboxStartupState("my-sandbox", {
+      restoreLockedStartupAccess: restoreAccess,
+      restoreProcessState: restoreProcesses,
+    });
+
+    expect(restoreAccess).toHaveBeenCalledWith("my-sandbox");
+    expect(restoreProcesses).toHaveBeenCalledWith("my-sandbox");
+    expect(restoreAccess.mock.invocationCallOrder[0]).toBeLessThan(
+      restoreProcesses.mock.invocationCallOrder[0],
+    );
+  });
+
   it("restores startup state before probing readiness after a stopped container starts (#8112)", async () => {
     const h = harness();
 

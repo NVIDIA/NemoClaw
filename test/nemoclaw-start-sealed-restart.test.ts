@@ -1,0 +1,154 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+
+const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
+
+function extractShellFunction(src: string, name: string): string {
+  const header = `${name}() {`;
+  const start = src.indexOf(header);
+  if (start === -1) throw new Error(`Expected ${name} in scripts/nemoclaw-start.sh`);
+  const bodyStart = start + header.length;
+  const lines = src.slice(bodyStart).split(/(?<=\n)/);
+  let offset = 0;
+  let heredocEnd: string | undefined;
+  for (const line of lines) {
+    const bareLine = line.replace(/\r?\n$/, "");
+    if (heredocEnd) {
+      offset += line.length;
+      if (bareLine === heredocEnd) heredocEnd = undefined;
+      continue;
+    }
+    const heredoc = line.match(/<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/);
+    if (heredoc) heredocEnd = heredoc[1];
+    if (bareLine === "}") return `${name}() {${src.slice(bodyStart, bodyStart + offset)}\n}`;
+    offset += line.length;
+  }
+  throw new Error(`Expected closing brace for ${name} in scripts/nemoclaw-start.sh`);
+}
+
+describe("nemoclaw-start sealed restart", () => {
+  it("preserves the sealed gateway token during non-root startup with Shields up (#8112)", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const script = [
+      "set -euo pipefail",
+      extractShellFunction(src, "needs_gateway_token_for_current_command"),
+      extractShellFunction(src, "prepare_gateway_token_for_current_command"),
+      "id() { echo 998; }",
+      "openclaw_config_dir_owner() { echo root; }",
+      "_read_gateway_token() { echo sealed-token; }",
+      'ensure_gateway_token() { echo "SHOULD_NOT_ROTATE"; exit 75; }',
+      'ensure_gateway_token_if_missing() { echo "SHOULD_NOT_ENSURE"; exit 76; }',
+      "NEMOCLAW_CMD=()",
+      "prepare_gateway_token_for_current_command",
+    ].join("\n");
+
+    const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain("SHOULD_NOT");
+    expect(result.stderr).toContain(
+      "Shields are up; preserving the sealed gateway token for startup",
+    );
+    expect(result.stderr).not.toContain("sealed-token");
+  });
+
+  it("refuses non-root startup when the sealed config has no gateway token (#8112)", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const script = [
+      "set -euo pipefail",
+      extractShellFunction(src, "needs_gateway_token_for_current_command"),
+      extractShellFunction(src, "prepare_gateway_token_for_current_command"),
+      "id() { echo 998; }",
+      "openclaw_config_dir_owner() { echo root; }",
+      "_read_gateway_token() { :; }",
+      'ensure_gateway_token() { echo "SHOULD_NOT_ROTATE"; exit 75; }',
+      'ensure_gateway_token_if_missing() { echo "SHOULD_NOT_ENSURE"; exit 76; }',
+      "NEMOCLAW_CMD=()",
+      "prepare_gateway_token_for_current_command",
+    ].join("\n");
+
+    const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).not.toContain("SHOULD_NOT");
+    expect(result.stderr).toContain(
+      "Shields are up but the sealed OpenClaw config has no gateway token",
+    );
+  });
+
+  it("preserves an unreadable sealed auth profile during non-root startup (#8112)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sealed-auth-test-"));
+    const authPath = path.join(home, ".openclaw", "agents", "main", "agent", "auth-profiles.json");
+    const before = JSON.stringify({
+      "openai:manual": {
+        type: "api_key",
+        provider: "openai",
+        keyRef: { source: "env", id: "NVIDIA_INFERENCE_API_KEY" },
+        profileId: "openai:manual",
+      },
+    });
+    fs.mkdirSync(path.dirname(authPath), { recursive: true });
+    fs.writeFileSync(authPath, before, { mode: 0o000 });
+    const script = [
+      "set -euo pipefail",
+      `eval "$(sed -n '/^write_auth_profile() {$/,/^}$/p' "$1")"`,
+      "id() { echo 998; }",
+      "openclaw_config_dir_owner() { echo root; }",
+      "write_auth_profile",
+    ].join("\n");
+
+    try {
+      const result = spawnSync("bash", ["-s", "--", START_SCRIPT], {
+        input: script,
+        env: {
+          PATH: process.env.PATH,
+          HOME: home,
+          NVIDIA_INFERENCE_API_KEY: "secret",
+          NEMOCLAW_INFERENCE_PROVIDER_ID: "openai",
+        },
+        encoding: "utf-8",
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).toContain("preserving the sealed OpenClaw auth profile");
+      expect(fs.statSync(authPath).mode & 0o777).toBe(0o000);
+      fs.chmodSync(authPath, 0o600);
+      expect(fs.readFileSync(authPath, "utf-8")).toBe(before);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a missing sealed auth profile during non-root startup (#8112)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-missing-sealed-auth-test-"));
+    const script = [
+      "set -euo pipefail",
+      `eval "$(sed -n '/^write_auth_profile() {$/,/^}$/p' "$1")"`,
+      "id() { echo 998; }",
+      "openclaw_config_dir_owner() { echo root; }",
+      "write_auth_profile",
+    ].join("\n");
+
+    try {
+      const result = spawnSync("bash", ["-s", "--", START_SCRIPT], {
+        input: script,
+        env: {
+          PATH: process.env.PATH,
+          HOME: home,
+          NVIDIA_INFERENCE_API_KEY: "secret",
+          NEMOCLAW_INFERENCE_PROVIDER_ID: "openai",
+        },
+        encoding: "utf-8",
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("sealed OpenClaw auth profile is unavailable");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
