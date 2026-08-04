@@ -133,6 +133,25 @@ describe("startSandbox", () => {
     );
   });
 
+  it("attempts startup restoration again when start is rerun after a failure (#8112)", async () => {
+    const h = harness();
+    h.restoreStartupState.mockImplementationOnce(() => {
+      throw new Error("restore failed");
+    });
+
+    await expect(startSandbox("my-sandbox", h.deps)).rejects.toThrow("restore failed");
+    expect(h.verifyGateway).not.toHaveBeenCalled();
+
+    const result = await startSandbox("my-sandbox", h.deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(h.restoreStartupState).toHaveBeenCalledTimes(2);
+    expect(h.verifyGateway).toHaveBeenCalledOnce();
+    expect(h.restoreStartupState.mock.invocationCallOrder[1]).toBeLessThan(
+      h.verifyGateway.mock.invocationCallOrder[0],
+    );
+  });
+
   it("reports the started container by name (#6026)", async () => {
     const h = harness();
 
