@@ -170,6 +170,13 @@ NemoClaw's focused remediation and locked-install tests, audit validation,
 registry-signature verification, and provenance verification provide
 compensating evidence for the reviewed archive.
 
+Undici 8.10.0 forwards plain HTTP targets through a configured HTTP or HTTPS proxy by default.
+It sends an HTTP/1.1 absolute-form request target unless `proxyTunnel` is enabled.
+Undici 8.5.0 used CONNECT by default for the same target.
+NemoClaw's managed image registry requests use HTTPS, so they continue to use CONNECT.
+The proxy fixture returns `200` for an ordinary HTTP request and `502` for CONNECT.
+It verifies the body, method, host, and full target URL for forwarding.
+
 The OpenClaw core and mcporter graphs resolve `express-rate-limit@8.5.2` and
 its declared `ip-address@^10.2.0` dependency to affected `10.2.0`.
 The high-severity `GHSA-mwp4-54f8-5fhr` affects releases through `10.3.0`

@@ -332,6 +332,11 @@
       "category": "security"
     },
     {
+      "file": "test/mcp-tool-discovery-image-contract.test.ts",
+      "test": "pins reviewed packages and retains the production audit command (#8177)",
+      "category": "security"
+    },
+    {
       "file": "test/mcp-openshell-workflow.test.ts",
       "test": "keeps the setup docs aligned with the stable default",
       "category": "compatibility"
