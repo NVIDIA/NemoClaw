@@ -666,6 +666,62 @@ function validateMessagingPlanBoundaryBuild(
   }
 }
 
+function validateHermesMessagingPlanCaFixture(
+  errors: string[],
+  job: SandboxImagesWorkflowJob,
+): void {
+  const step = findStep(job, "Build and verify Hermes messaging plan boundary");
+  const run = normalizedShell(step?.run);
+  const helperInvocation =
+    'node --experimental-strip-types scripts/checks/select-ci-endpoint-ca-roots.mts --output "$compact_ca_bundle"';
+  const compactEncoding = 'corporate_ca_b64="$(base64 -w 0 "$compact_ca_bundle")"';
+  const sourceHash = 'corporate_ca_sha256="$(sha256sum "$compact_ca_bundle" | cut -d \' \' -f 1)"';
+  const installedHash =
+    "installed_ca_sha256=\"$( docker run --rm --network none --entrypoint sha256sum nemoclaw-hermes-plan-boundary /usr/local/share/nemoclaw/corporate-ca.pem | cut -d ' ' -f 1 )\"";
+  const matchingHash = 'test "$installed_ca_sha256" = "$corporate_ca_sha256"';
+  const parseProof =
+    "docker run --rm --network none --entrypoint openssl nemoclaw-hermes-plan-boundary crl2pkcs7 -nocrl -certfile /usr/local/share/nemoclaw/corporate-ca.pem -out /dev/null";
+  const orderedFragments = [
+    'compact_ca_bundle="$(mktemp)"',
+    "trap 'rm -f \"$compact_ca_bundle\"' EXIT",
+    helperInvocation,
+    compactEncoding,
+    sourceHash,
+    "check-messaging-plan-image-boundary.mts plan",
+    "check-production-build-args.sh",
+    'docker build "${build_args[@]}" -t nemoclaw-hermes-plan-boundary',
+    installedHash,
+    matchingHash,
+    parseProof,
+    "check-messaging-plan-image-boundary.mts verify",
+  ];
+  for (const fragment of orderedFragments) {
+    if (!run.includes(fragment)) {
+      errors.push(`hermes messaging plan image boundary must include ${fragment}`);
+    }
+  }
+  if (
+    run.split("select-ci-endpoint-ca-roots.mts").length - 1 !== 1 ||
+    !run.includes(`${helperInvocation} ${compactEncoding}`)
+  ) {
+    errors.push(`hermes messaging plan image boundary must include exactly ${helperInvocation}`);
+  }
+  if (
+    run.includes("/etc/ssl/certs/ca-certificates.crt") ||
+    /base64 -w 0 "?\$\{?system_ca_bundle\}?"?/u.test(run)
+  ) {
+    errors.push(
+      "hermes messaging plan image boundary must not encode the system CA bundle directly",
+    );
+  }
+  const positions = orderedFragments.map((fragment) => run.indexOf(fragment));
+  if (
+    positions.some((position, index) => position < 0 || position <= (positions[index - 1] ?? -1))
+  ) {
+    errors.push("hermes messaging plan image boundary CA fixture steps are out of order");
+  }
+}
+
 function validateMessagingPlanImageBoundary(
   errors: string[],
   workflow: SandboxImagesWorkflow,
@@ -704,14 +760,11 @@ function validateMessagingPlanImageBoundary(
     agent: "hermes",
     baseArgName: "BASE_IMAGE",
     baseEnvName: "HERMES_BASE_IMAGE",
-    extraRequiredFragments: [
-      'corporate_ca_bundle=/etc/ssl/certs/ca-certificates.crt test -s "$corporate_ca_bundle" corporate_ca_b64="$(base64 -w 0 "$corporate_ca_bundle")"',
-      '--build-arg "NEMOCLAW_CORPORATE_CA_B64=${corporate_ca_b64}"',
-      "docker run --rm --network none --entrypoint openssl nemoclaw-hermes-plan-boundary crl2pkcs7 -nocrl -certfile /usr/local/share/nemoclaw/corporate-ca.pem -out /dev/null",
-    ],
+    extraRequiredFragments: ['--build-arg "NEMOCLAW_CORPORATE_CA_B64=${corporate_ca_b64}"'],
     stepName: "Build and verify Hermes messaging plan boundary",
     target: "nemoclaw-hermes-plan-boundary",
   });
+  validateHermesMessagingPlanCaFixture(errors, job);
 
   const builds = dockerBuildLines(job);
   if (
