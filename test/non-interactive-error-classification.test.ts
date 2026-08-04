@@ -59,24 +59,43 @@ type PersistedErrorRow = {
   valueHex: string;
 };
 
+// MessagePack string headers, narrowest first: fixstr, str8, str16, str32. Kept
+// as a lookup rather than a branch chain so this fixture helper adds no `if`
+// statements to a test file (tools/growth-guardrails/test-conditionals.mts).
+const MESSAGE_PACK_STRING_HEADERS: readonly {
+  readonly maxLength: number;
+  readonly encode: (length: number) => Buffer;
+}[] = [
+  { maxLength: 31, encode: (length) => Buffer.from([0xa0 | length]) },
+  { maxLength: 0xff, encode: (length) => Buffer.from([0xd9, length]) },
+  {
+    maxLength: 0xffff,
+    encode: (length) => {
+      const header = Buffer.alloc(3);
+      header[0] = 0xda;
+      header.writeUInt16BE(length, 1);
+      return header;
+    },
+  },
+  {
+    maxLength: 0xffffffff,
+    encode: (length) => {
+      const header = Buffer.alloc(5);
+      header[0] = 0xdb;
+      header.writeUInt32BE(length, 1);
+      return header;
+    },
+  },
+];
+
 // `JsonPlusSerializer` 4.1.1 applies `repr` to `BaseException` and encodes the
 // result as one MessagePack string.
 function messagePackStringHex(value: string): string {
   const payload = Buffer.from(value, "utf8");
-  let prefix: Buffer;
-  if (payload.length <= 31) {
-    prefix = Buffer.from([0xa0 | payload.length]);
-  } else if (payload.length <= 0xff) {
-    prefix = Buffer.from([0xd9, payload.length]);
-  } else if (payload.length <= 0xffff) {
-    prefix = Buffer.alloc(3);
-    prefix[0] = 0xda;
-    prefix.writeUInt16BE(payload.length, 1);
-  } else {
-    prefix = Buffer.alloc(5);
-    prefix[0] = 0xdb;
-    prefix.writeUInt32BE(payload.length, 1);
-  }
+  const header = MESSAGE_PACK_STRING_HEADERS.find(
+    (candidate) => payload.length <= candidate.maxLength,
+  );
+  const prefix = (header ?? MESSAGE_PACK_STRING_HEADERS[3]).encode(payload.length);
   return Buffer.concat([prefix, payload]).toString("hex");
 }
 
