@@ -80,6 +80,25 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output.allPass).toBe(false);
   });
 
+  it("fails closed when the base branch changes during gate evaluation", () => {
+    const finalCurrentBaseSha = "c".repeat(40);
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        finalCurrentBaseSha,
+      }).stdout,
+    );
+
+    expect(output.gates.conflicts).toMatchObject({
+      pass: false,
+      details: "Base branch revision changed during gate evaluation; rerun the gate checker",
+      baseSha: BASE_SHA,
+      currentBaseSha: finalCurrentBaseSha,
+    });
+    expect(output.allPass).toBe(false);
+  });
+
   it("fails closed while GitHub has not determined mergeability", () => {
     const result = runGate({
       body: "Signed-off-by: Example User <user@example.com>",
@@ -139,12 +158,12 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output.allPass).toBe(false);
   });
 
-  it("makes the PR revision snapshot the final remote read", () => {
+  it("makes the final PR revision snapshot the final remote read", () => {
     const output = JSON.parse(
       runGate({
         body: "Signed-off-by: Example User <user@example.com>",
         verified: true,
-        finalPrAfterCurrentBase: { headRefOid: "c".repeat(40) },
+        finalPrAfterFinalCi: { headRefOid: "c".repeat(40) },
       }).stdout,
     );
 

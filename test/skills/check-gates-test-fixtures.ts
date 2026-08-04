@@ -141,6 +141,8 @@ interface ComplianceFixture {
   mergeable?: string;
   mergeStateStatus?: string;
   currentBaseSha?: string | null;
+  finalCurrentBaseSha?: string | null;
+  files?: Array<{ path: string; status: string }>;
   verified: boolean;
   reason?: string;
   actionRunAttempts?: Record<string, ActionRunFixture>;
@@ -156,6 +158,7 @@ interface ComplianceFixture {
   finalPr?: Record<string, unknown>;
   finalPrAfterCurrentBase?: Record<string, unknown>;
   finalPrAfterCiEvidence?: Record<string, unknown>;
+  finalPrAfterFinalCi?: Record<string, unknown>;
 }
 
 interface ComparatorFixture extends ComplianceFixture {
@@ -394,7 +397,7 @@ function runGate(fixture: ComplianceFixture) {
     title: "fix(policy): align maintainer workflow",
     url: "https://github.com/NVIDIA/NemoClaw/pull/42",
     body: fixture.body,
-    files: [],
+    files: fixture.files ?? [],
     statusCheckRollup: fixture.statusChecks ?? defaultStatusChecks,
     mergeable: fixture.mergeable ?? "MERGEABLE",
     mergeStateStatus: fixture.mergeStateStatus ?? "CLEAN",
@@ -418,6 +421,10 @@ function runGate(fixture: ComplianceFixture) {
   const finalPrAfterCiEvidence = {
     ...finalPrAfterCurrentBase,
     ...fixture.finalPrAfterCiEvidence,
+  };
+  const finalPrAfterFinalCi = {
+    ...finalPrAfterCiEvidence,
+    ...fixture.finalPrAfterFinalCi,
   };
   const contributorCommitPages = (
     fixture.contributorCommitPages ?? [
@@ -474,6 +481,34 @@ function runGate(fixture: ComplianceFixture) {
             fixture.currentBaseSha === null
               ? null
               : { target: { oid: fixture.currentBaseSha ?? BASE_SHA } },
+        },
+      },
+    },
+  });
+  const finalCurrentBaseSha =
+    fixture.finalCurrentBaseSha === undefined
+      ? fixture.currentBaseSha
+      : fixture.finalCurrentBaseSha;
+  const finalPrIdentityOutput = JSON.stringify({
+    data: {
+      repository: {
+        pullRequest: {
+          title: finalPrAfterFinalCi.title,
+          body: finalPrAfterFinalCi.body,
+          state: finalPrAfterFinalCi.state,
+          isDraft: finalPrAfterFinalCi.isDraft,
+          mergeable: finalPrAfterFinalCi.mergeable,
+          mergeStateStatus: finalPrAfterFinalCi.mergeStateStatus,
+          headRefOid: finalPrAfterFinalCi.headRefOid,
+          baseRefOid: finalPrAfterFinalCi.baseRefOid,
+          headRefName: finalPrAfterFinalCi.headRefName,
+          baseRefName: finalPrAfterFinalCi.baseRefName,
+          headRepository: finalPrAfterFinalCi.headRepository,
+          headRepositoryOwner: finalPrAfterFinalCi.headRepositoryOwner,
+          baseRef:
+            finalCurrentBaseSha === null
+              ? null
+              : { target: { oid: finalCurrentBaseSha ?? BASE_SHA } },
         },
       },
     },
@@ -680,14 +715,22 @@ function runGate(fixture: ComplianceFixture) {
         partition.finalPageTotalCounts ?? partition.pageTotalCounts,
         partition.finalRunOverrides ?? partition.runOverrides,
       );
+      const projection =
+        "{total_count,workflow_runs:[.workflow_runs[]|{id,run_attempt,event,display_title,path," +
+        "head_branch,head_sha,status,conclusion,repository:{full_name:.repository.full_name}," +
+        "head_repository:{full_name:.head_repository.full_name},created_at,updated_at}]}";
       const query =
-        "api --paginate --slurp repos/NVIDIA/NemoClaw/actions/workflows/pr-e2e-gate.yaml/runs?event=" +
+        "api --paginate --jq " +
+        projection +
+        " repos/NVIDIA/NemoClaw/actions/workflows/pr-e2e-gate.yaml/runs?event=" +
         event +
         "&created=" +
         encodeURIComponent(partition.createdRange) +
         "&per_page=100";
       const marker = path.join(tmp, `coordinator-partition-${partitionIndex}-seen`);
-      return `  ${shellSingleQuote(query)}) if mkdir ${shellSingleQuote(marker)} 2>/dev/null; then printf '%s' ${shellSingleQuote(JSON.stringify(pages))}; else printf '%s' ${shellSingleQuote(JSON.stringify(finalPages))}; fi ;;`;
+      const output = pages.map((page) => JSON.stringify(page)).join("\n");
+      const finalOutput = finalPages.map((page) => JSON.stringify(page)).join("\n");
+      return `  ${shellSingleQuote(query)}) if mkdir ${shellSingleQuote(marker)} 2>/dev/null; then printf '%s' ${shellSingleQuote(output)}; else printf '%s' ${shellSingleQuote(finalOutput)}; fi ;;`;
     })
     .join("\n");
   const coordinationCheckMarker = path.join(tmp, "coordination-checks-seen");
@@ -703,10 +746,11 @@ if [ -d ${shellSingleQuote(finalPrReadMarker)} ]; then
   exit 9
 fi
 case "$*" in
-  "pr view"*) if mkdir ${shellSingleQuote(path.join(tmp, "pr-view-seen"))} 2>/dev/null; then printf '%s' ${shellSingleQuote(JSON.stringify(pr))}; elif mkdir ${shellSingleQuote(path.join(tmp, "pr-before-final-ci-seen"))} 2>/dev/null; then printf '%s' ${shellSingleQuote(JSON.stringify(finalPrAfterCurrentBase))}; else mkdir -p ${shellSingleQuote(finalPrReadMarker)}; printf '%s' ${shellSingleQuote(JSON.stringify(finalPrAfterCiEvidence))}; fi ;;
+  "pr view"*) if mkdir ${shellSingleQuote(path.join(tmp, "pr-view-seen"))} 2>/dev/null; then printf '%s' ${shellSingleQuote(JSON.stringify(pr))}; elif mkdir ${shellSingleQuote(path.join(tmp, "pr-before-final-ci-seen"))} 2>/dev/null; then printf '%s' ${shellSingleQuote(JSON.stringify(finalPrAfterCurrentBase))}; else printf '%s' ${shellSingleQuote(JSON.stringify(finalPrAfterCiEvidence))}; fi ;;
   *"ContributorCommits"*) printf '%s' ${shellSingleQuote(contributorCommitOutput)} ;;
   *"ContributorReviews"*) printf '%s' ${shellSingleQuote(contributorReviewOutput)} ;;
   *"CurrentBaseRef"*) mkdir -p ${shellSingleQuote(path.join(tmp, "current-base-seen"))}; printf '%s' ${shellSingleQuote(currentBaseOutput)} ;;
+  *"FinalPrIdentity"*) mkdir -p ${shellSingleQuote(finalPrReadMarker)}; printf '%s' ${shellSingleQuote(finalPrIdentityOutput)} ;;
   "api graphql"*) printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}' ;;
   "api repos/NVIDIA/NemoClaw/issues/42/comments"*) printf '%s' '{"id":1,"body":"ordinary comment","user":{"login":"reviewer"},"updated_at":"2026-01-01T00:00:00Z"}' ;;
   "api repos/NVIDIA/NemoClaw/pulls/42/commits"*) printf '%s' ${shellSingleQuote(commitOutput)} ;;

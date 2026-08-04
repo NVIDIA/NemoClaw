@@ -109,6 +109,7 @@ interface CoordinatorFixture {
   includeInitialSeedEvidence?: boolean;
   observationTime?: string;
   seedRun?: Partial<ActionRunFixture>;
+  currentBaseSha?: string | null;
 }
 
 const LIVE_FORK_COORDINATOR_RANGES = [
@@ -134,7 +135,6 @@ function authorizedForkLifecycleFixture(
     ...e2eManualCoordinatorRun(),
     createdAt: "2026-08-04T14:38:13Z",
     updatedAt: "2026-08-04T14:57:43Z",
-    headSha: "d".repeat(40),
     jobs: coordinatorJobs({
       startedAt: "2026-08-04T14:38:14Z",
       completedAt: "2026-08-04T14:57:42Z",
@@ -276,6 +276,7 @@ function runGateWithCoordinator({
   includeInitialSeedEvidence = true,
   observationTime,
   seedRun = {},
+  currentBaseSha,
 }: CoordinatorFixture = {}) {
   const defaultCoordinator = e2eCoordinatorRun();
   const jobs = seedRun.jobs ?? seedJobs();
@@ -299,6 +300,7 @@ function runGateWithCoordinator({
     verified: true,
     headRepository,
     observationTime,
+    currentBaseSha,
     statusChecks,
     coordinatorRunPages,
     coordinatorRunPartitions,
@@ -359,11 +361,25 @@ describe("maintainer merge-gate E2E coordinator evidence", () => {
     });
   });
 
+  it("authenticates coordinator runs against the captured workflow revision", () => {
+    const workflowSha = "d".repeat(40);
+    const result = runGateWithCoordinator({
+      coordinator: { headSha: workflowSha },
+      currentBaseSha: workflowSha,
+    });
+    const output = JSON.parse(result.stdout);
+
+    expect(output.gates.ci).toMatchObject({ pass: true });
+    expect(output.gates.conflicts).toMatchObject({
+      pass: false,
+      baseSha: BASE_SHA,
+      currentBaseSha: workflowSha,
+    });
+    expect(output.allPass).toBe(false);
+  });
+
   it("rejects a manual coordinator for a fork with no automatic predecessor", () => {
-    const manualCoordinator = {
-      ...e2eManualCoordinatorRun(),
-      headSha: "d".repeat(40),
-    };
+    const manualCoordinator = e2eManualCoordinatorRun();
     const result = runGateWithCoordinator({
       headRepository: "example/fork",
       coordinator: manualCoordinator,
@@ -1335,6 +1351,10 @@ describe("maintainer merge-gate E2E coordinator evidence", () => {
     {
       condition: "the coordinator uses another workflow path",
       coordinator: { path: ".github/workflows/pr.yaml" },
+    },
+    {
+      condition: "the coordinator uses another trusted workflow revision",
+      coordinator: { headSha: "d".repeat(40) },
     },
     {
       condition: "the coordinator belongs to another repository",

@@ -409,9 +409,24 @@ const E2E_COORDINATOR_MAX_PARTITIONS = Math.ceil(
   E2E_COORDINATOR_INVENTORY_MAX_MS / E2E_COORDINATOR_PARTITION_MS,
 );
 const GITHUB_WORKFLOW_RUN_RESULT_CAP = 1000;
+const E2E_COORDINATOR_RUN_PAGE_PROJECTION =
+  "{total_count,workflow_runs:[.workflow_runs[]|{id,run_attempt,event,display_title,path," +
+  "head_branch,head_sha,status,conclusion,repository:{full_name:.repository.full_name}," +
+  "head_repository:{full_name:.head_repository.full_name},created_at,updated_at}]}";
 
 function formatGitHubTimestamp(value: number): string {
   return new Date(value).toISOString().replace(".000Z", "Z");
+}
+
+function ghJsonPages(args: string[]): unknown[] | null {
+  const output = run("gh", args);
+  if (!output) return null;
+  try {
+    return output.split("\n").map((page) => JSON.parse(page));
+  } catch {
+    process.stderr.write(`[check-gates] gh JSON page parse failed for: gh ${args.join(" ")}\n`);
+    return null;
+  }
 }
 
 function e2eCoordinatorRunPartitions(
@@ -482,6 +497,7 @@ function parseE2eCoordinatorRun(
   value: unknown,
   repo: string,
   exactDiff: ExactDiffIdentity,
+  trustedWorkflowSha: string | null,
 ): E2eCoordinatorRunMetadata | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -511,7 +527,8 @@ function parseE2eCoordinatorRun(
     record.path !== E2E_COORDINATOR_WORKFLOW_PATH ||
     record.head_branch !== "main" ||
     !/^[0-9a-f]{40}$/u.test(headSha) ||
-    (event === "workflow_run" && headSha !== exactDiff.baseSha) ||
+    trustedWorkflowSha === null ||
+    headSha !== trustedWorkflowSha ||
     !status ||
     !ACTION_STATUSES.has(status) ||
     (conclusion !== null &&
@@ -576,14 +593,15 @@ function evaluateE2eCoordinatorCandidate(
   listedValue: unknown,
   repo: string,
   exactDiff: ExactDiffIdentity,
+  trustedWorkflowSha: string | null,
   coordinationStartedAt: number,
   coordinationCompletedAt: number,
 ): E2eCoordinatorCandidateEvaluation {
-  const listedRun = parseE2eCoordinatorRun(listedValue, repo, exactDiff);
+  const listedRun = parseE2eCoordinatorRun(listedValue, repo, exactDiff, trustedWorkflowSha);
   if (!listedRun) return { result: false };
   const firstRunResponse = ghJson(["api", "repos/" + repo + "/actions/runs/" + listedRun.id]);
   if (firstRunResponse === null) return { result: null };
-  const firstRun = parseE2eCoordinatorRun(firstRunResponse, repo, exactDiff);
+  const firstRun = parseE2eCoordinatorRun(firstRunResponse, repo, exactDiff, trustedWorkflowSha);
   if (!firstRun || !sameE2eCoordinatorRun(listedRun, firstRun)) return { result: false };
 
   const jobPages = ghJson([
@@ -640,7 +658,12 @@ function evaluateE2eCoordinatorCandidate(
 
   const refreshedRunResponse = ghJson(["api", "repos/" + repo + "/actions/runs/" + firstRun.id]);
   if (refreshedRunResponse === null) return { result: null };
-  const refreshedRun = parseE2eCoordinatorRun(refreshedRunResponse, repo, exactDiff);
+  const refreshedRun = parseE2eCoordinatorRun(
+    refreshedRunResponse,
+    repo,
+    exactDiff,
+    trustedWorkflowSha,
+  );
   if (!refreshedRun || !sameE2eCoordinatorRun(firstRun, refreshedRun)) {
     return { result: false };
   }
@@ -736,6 +759,7 @@ function evaluateE2eCoordinatorCandidate(
 function fetchE2eCoordinatorEvidence(
   repo: string,
   exactDiff: ExactDiffIdentity,
+  trustedWorkflowSha: string | null,
   historyStartedAt: number,
   coordinationStartedAt: number,
   coordinationCompletedAt: number,
@@ -752,10 +776,11 @@ function fetchE2eCoordinatorEvidence(
           ".." +
           formatGitHubTimestamp(partition.completedAt),
       );
-      const pages = ghJson([
+      const pages = ghJsonPages([
         "api",
         "--paginate",
-        "--slurp",
+        "--jq",
+        E2E_COORDINATOR_RUN_PAGE_PROJECTION,
         "repos/" +
           repo +
           "/actions/workflows/pr-e2e-gate.yaml/runs?event=" +
@@ -861,6 +886,7 @@ function fetchE2eCoordinatorEvidence(
       candidate,
       repo,
       exactDiff,
+      trustedWorkflowSha,
       coordinationStartedAt,
       coordinationCompletedAt,
     );
@@ -1113,6 +1139,7 @@ function e2eCoordinationHistoryStartedAt(
 function fetchE2eCoordinationEvidence(
   repo: string,
   exactDiff: ExactDiffIdentity,
+  trustedWorkflowSha: string | null,
 ): E2eCoordinationEvidence {
   const checkSnapshot = fetchE2eCoordinationCheckSnapshot(repo, exactDiff);
   if (!checkSnapshot) return { valid: null };
@@ -1143,6 +1170,7 @@ function fetchE2eCoordinationEvidence(
     ? fetchE2eCoordinatorEvidence(
         repo,
         exactDiff,
+        trustedWorkflowSha,
         historyStartedAt,
         startedAt,
         completedAt,
@@ -2246,10 +2274,11 @@ function checkCi(
   statusCheckRollup: StatusCheck[] | null,
   repo: string,
   exactDiff: ExactDiffIdentity,
+  trustedWorkflowSha: string | null,
 ): CiEvaluation {
   const e2eCoordinationEvidence =
     statusCheckRollup && statusCheckRollup.length > 0
-      ? fetchE2eCoordinationEvidence(repo, exactDiff)
+      ? fetchE2eCoordinationEvidence(repo, exactDiff, trustedWorkflowSha)
       : { valid: false };
   return {
     gate: evaluateCiRollup(statusCheckRollup, repo, exactDiff, e2eCoordinationEvidence),
@@ -2719,7 +2748,7 @@ function checkContributorCompliance(
 // Main
 // ---------------------------------------------------------------------------
 
-interface PrRevisionSnapshot {
+interface PrRevisionIdentity {
   title: string;
   body: string;
   state: string;
@@ -2731,6 +2760,9 @@ interface PrRevisionSnapshot {
   headRefName: string;
   baseRefName: string;
   headRepository: string;
+}
+
+interface PrRevisionSnapshot extends PrRevisionIdentity {
   statusCheckRollup: StatusCheck[];
 }
 
@@ -2813,9 +2845,98 @@ function fetchPrRevisionSnapshot(repo: string, number: number): PrRevisionSnapsh
   };
 }
 
+function fetchFinalPrIdentitySnapshot(
+  repo: string,
+  number: number,
+): { revision: PrRevisionIdentity; currentBaseSha: string } | null {
+  const [owner, name, extra] = repo.split("/");
+  if (!owner || !name || extra) return null;
+
+  const response = ghJson([
+    "api",
+    "graphql",
+    "-F",
+    `owner=${owner}`,
+    "-F",
+    `name=${name}`,
+    "-F",
+    `number=${number}`,
+    "-f",
+    `query=query FinalPrIdentity($owner: String!, $name: String!, $number: Int!) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $number) {
+          title
+          body
+          state
+          isDraft
+          mergeable
+          mergeStateStatus
+          headRefOid
+          baseRefOid
+          headRefName
+          baseRefName
+          headRepository { name nameWithOwner }
+          headRepositoryOwner { login }
+          baseRef { target { oid } }
+        }
+      }
+    }`,
+  ]) as {
+    data?: { repository?: { pullRequest?: Record<string, unknown> } };
+  } | null;
+  const record = response?.data?.repository?.pullRequest;
+  if (!record) return null;
+
+  const headRepository = parseHeadRepository(record.headRepository, record.headRepositoryOwner);
+  const baseRef =
+    typeof record.baseRef === "object" && record.baseRef !== null && !Array.isArray(record.baseRef)
+      ? (record.baseRef as Record<string, unknown>)
+      : null;
+  const target =
+    typeof baseRef?.target === "object" && baseRef.target !== null && !Array.isArray(baseRef.target)
+      ? (baseRef.target as Record<string, unknown>)
+      : null;
+  const currentBaseSha = target?.oid;
+  if (
+    typeof record.title !== "string" ||
+    typeof record.body !== "string" ||
+    typeof record.state !== "string" ||
+    typeof record.isDraft !== "boolean" ||
+    typeof record.mergeable !== "string" ||
+    typeof record.mergeStateStatus !== "string" ||
+    typeof record.headRefOid !== "string" ||
+    !/^[0-9a-f]{40}$/iu.test(record.headRefOid) ||
+    typeof record.baseRefOid !== "string" ||
+    !/^[0-9a-f]{40}$/iu.test(record.baseRefOid) ||
+    typeof record.headRefName !== "string" ||
+    typeof record.baseRefName !== "string" ||
+    typeof currentBaseSha !== "string" ||
+    !/^[0-9a-f]{40}$/iu.test(currentBaseSha) ||
+    !headRepository
+  ) {
+    return null;
+  }
+  return {
+    revision: {
+      title: record.title,
+      body: record.body,
+      state: record.state,
+      isDraft: record.isDraft,
+      mergeable: record.mergeable,
+      mergeStateStatus: record.mergeStateStatus,
+      headRefOid: record.headRefOid,
+      baseRefOid: record.baseRefOid,
+      headRefName: record.headRefName,
+      baseRefName: record.baseRefName,
+      headRepository,
+    },
+    currentBaseSha,
+  };
+}
+
 function checkFinalRevision(
-  captured: PrRevisionSnapshot,
-  current: PrRevisionSnapshot | null,
+  captured: PrRevisionIdentity,
+  current: PrRevisionIdentity | null,
   currentBaseSha: string | null,
 ): ReturnType<typeof checkConflicts> {
   if (!current) {
@@ -2924,7 +3045,8 @@ function main(): void {
     headRefName: prData.headRefName,
     headRepository,
   };
-  const initialCi = checkCi(prData.statusCheckRollup, repo, exactDiff);
+  const currentBaseSha = fetchCurrentBaseSha(repo, prNumber);
+  const initialCi = checkCi(prData.statusCheckRollup, repo, exactDiff, currentBaseSha);
   const coderabbit = checkCodeRabbit(repo, prNumber);
   const riskyCodeTested = checkRiskyCodeTested(prData.files ?? []);
   const contributorCompliance = checkContributorCompliance(
@@ -2952,7 +3074,6 @@ function main(): void {
     headRepository,
     statusCheckRollup: prData.statusCheckRollup,
   };
-  const currentBaseSha = fetchCurrentBaseSha(repo, prNumber);
   const revisionBeforeFinalCi = fetchPrRevisionSnapshot(repo, prNumber);
   const finalCiActionEvidence = createCiActionEvidenceCache();
   const evaluatedRollupCi = checkFinalCi(
@@ -2963,7 +3084,7 @@ function main(): void {
     finalCiActionEvidence,
   );
   const finalE2eEvidence = evaluatedRollupCi.pass
-    ? fetchE2eCoordinationEvidence(repo, exactDiff)
+    ? fetchE2eCoordinationEvidence(repo, exactDiff, currentBaseSha)
     : { valid: false };
   const evaluatedCi = checkFinalE2eEvidence(
     evaluatedRollupCi,
@@ -2981,14 +3102,47 @@ function main(): void {
     finalE2eEvidence,
     finalCiActionEvidence,
   );
+  const finalIdentity = fetchFinalPrIdentitySnapshot(repo, prNumber);
+  const finalRevision = finalIdentity?.revision ?? null;
+  const finalCurrentBaseSha = finalIdentity?.currentBaseSha ?? null;
+  const stableCurrentBaseSha =
+    currentBaseSha && finalCurrentBaseSha && currentBaseSha === finalCurrentBaseSha
+      ? finalCurrentBaseSha
+      : null;
+  const baseRevisionGate: ReturnType<typeof checkConflicts> =
+    stableCurrentBaseSha !== null
+      ? {
+          pass: true,
+          details: "Base branch revision remained stable during gate evaluation",
+          mergeable: capturedRevision.mergeable,
+          mergeStateStatus: capturedRevision.mergeStateStatus,
+          baseSha: capturedRevision.baseRefOid,
+          currentBaseSha: stableCurrentBaseSha,
+        }
+      : {
+          pass: false,
+          details:
+            currentBaseSha && finalCurrentBaseSha
+              ? "Base branch revision changed during gate evaluation; rerun the gate checker"
+              : "Unable to verify the current base branch revision",
+          mergeable: capturedRevision.mergeable,
+          mergeStateStatus: capturedRevision.mergeStateStatus,
+          baseSha: capturedRevision.baseRefOid,
+          ...(finalCurrentBaseSha ? { currentBaseSha: finalCurrentBaseSha } : {}),
+        };
   const revisionBeforeFinalCiGate = checkFinalRevision(
     capturedRevision,
     revisionBeforeFinalCi,
-    currentBaseSha,
+    stableCurrentBaseSha,
   );
-  const conflicts = revisionBeforeFinalCiGate.pass
-    ? checkFinalRevision(revisionBeforeFinalCi!, currentRevision, currentBaseSha)
+  const revisionAfterFinalEvidenceGate = revisionBeforeFinalCiGate.pass
+    ? checkFinalRevision(revisionBeforeFinalCi!, currentRevision, stableCurrentBaseSha)
     : revisionBeforeFinalCiGate;
+  const conflicts = !baseRevisionGate.pass
+    ? baseRevisionGate
+    : revisionAfterFinalEvidenceGate.pass
+      ? checkFinalRevision(currentRevision!, finalRevision, stableCurrentBaseSha)
+      : revisionAfterFinalEvidenceGate;
 
   const output: GateOutput = {
     pr: prNumber,
