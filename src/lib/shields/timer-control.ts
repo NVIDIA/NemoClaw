@@ -3,11 +3,14 @@
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import path from "node:path";
 import { performance } from "node:perf_hooks";
 
-import { isObjectRecord } from "../core/json-types";
-import { resolveNemoclawStateDir } from "../state/paths";
+import {
+  readShieldsTimerMarker,
+  readShieldsTimerTakeoverToken,
+  type ShieldsTimerMarker,
+  shieldsTimerMarkerPath,
+} from "../state/mcp-lifecycle-lock/shields-timer-authority";
 
 const DEFAULT_PROCESS_INSPECTION_TIMEOUT_MS = 5_000;
 
@@ -28,76 +31,16 @@ function processInspectionDeadlineReached(deadline: number): boolean {
   return performance.now() >= deadline;
 }
 
-interface TimerMarker {
-  pid: number;
-  sandboxName: string;
-  snapshotPath: string;
-  restoreAt: string;
-  processToken?: string;
-  allowLegacyHermesProtocol?: boolean;
-  agentName?: string;
-  configPath?: string;
-  configDir?: string;
-  leaseOwnerPid?: number;
-  leaseOwnerStartIdentity?: string;
-}
-
-function isTimerMarker(value: unknown): value is TimerMarker {
-  if (!isObjectRecord(value)) return false;
-  const pid = value.pid;
-  return (
-    typeof pid === "number" &&
-    Number.isInteger(pid) &&
-    pid > 0 &&
-    typeof value.sandboxName === "string" &&
-    typeof value.snapshotPath === "string" &&
-    typeof value.restoreAt === "string" &&
-    (value.processToken === undefined || typeof value.processToken === "string") &&
-    (value.allowLegacyHermesProtocol === undefined ||
-      typeof value.allowLegacyHermesProtocol === "boolean") &&
-    (value.agentName === undefined || typeof value.agentName === "string") &&
-    (value.configPath === undefined || typeof value.configPath === "string") &&
-    (value.configDir === undefined || typeof value.configDir === "string") &&
-    ((value.configPath === undefined && value.configDir === undefined) ||
-      (typeof value.configPath === "string" && typeof value.configDir === "string")) &&
-    (value.leaseOwnerPid === undefined ||
-      (typeof value.leaseOwnerPid === "number" &&
-        Number.isInteger(value.leaseOwnerPid) &&
-        value.leaseOwnerPid > 0)) &&
-    (value.leaseOwnerStartIdentity === undefined ||
-      typeof value.leaseOwnerStartIdentity === "string") &&
-    ((value.leaseOwnerPid === undefined && value.leaseOwnerStartIdentity === undefined) ||
-      (typeof value.leaseOwnerPid === "number" &&
-        typeof value.leaseOwnerStartIdentity === "string" &&
-        value.leaseOwnerStartIdentity.length > 0))
-  );
-}
-
 function timerMarkerPath(sandboxName: string): string {
-  return path.join(resolveNemoclawStateDir(), `shields-timer-${sandboxName}.json`);
+  return shieldsTimerMarkerPath(sandboxName);
 }
 
-function readTimerMarker(sandboxName: string): TimerMarker | null {
-  const p = timerMarkerPath(sandboxName);
-  if (!fs.existsSync(p)) return null;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(p, "utf-8"));
-    return isTimerMarker(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+function readTimerMarker(sandboxName: string): ShieldsTimerMarker | null {
+  return readShieldsTimerMarker(sandboxName);
 }
 
 function readAutoRestoreTakeoverToken(sandboxName: string): string | undefined {
-  const marker = readTimerMarker(sandboxName);
-  if (
-    marker?.sandboxName !== sandboxName ||
-    typeof marker.processToken !== "string" ||
-    !/^[0-9a-f]{32}$/.test(marker.processToken)
-  ) {
-    return undefined;
-  }
-  return marker.processToken;
+  return readShieldsTimerTakeoverToken(sandboxName);
 }
 
 interface ClearTimerMarkerResult {
@@ -201,66 +144,6 @@ function readProcessStartIdentity(
   }
 }
 
-interface ProcessIdentity {
-  pid: number;
-  startIdentity: string;
-  depth: number;
-}
-
-function listDescendantProcessIdentities(
-  rootPid: number,
-  deadline = processInspectionDeadline(),
-): ProcessIdentity[] | null {
-  if (!Number.isInteger(rootPid) || rootPid <= 0) return null;
-  let rows: Array<{ pid: number; ppid: number }> = [];
-  try {
-    const timeout = remainingProcessInspectionTimeout(deadline);
-    if (timeout === null) return null;
-    rows = execFileSync("ps", ["-e", "-o", "pid=,ppid="], {
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout,
-    })
-      .toString()
-      .split("\n")
-      .map((line) => line.trim().split(/\s+/))
-      .filter((parts) => parts.length >= 2)
-      .map(([pid, ppid]) => ({ pid: Number(pid), ppid: Number(ppid) }))
-      .filter((row) => Number.isInteger(row.pid) && Number.isInteger(row.ppid));
-  } catch {
-    return null;
-  }
-
-  const descendants: Array<{ pid: number; depth: number }> = [];
-  let frontier = [{ pid: rootPid, depth: 0 }];
-  const seen = new Set<number>([rootPid]);
-  while (frontier.length > 0) {
-    const next: Array<{ pid: number; depth: number }> = [];
-    for (const parent of frontier) {
-      for (const row of rows) {
-        if (row.ppid !== parent.pid || seen.has(row.pid)) continue;
-        seen.add(row.pid);
-        const child = { pid: row.pid, depth: parent.depth + 1 };
-        descendants.push(child);
-        next.push(child);
-      }
-    }
-    frontier = next;
-  }
-
-  const identities: ProcessIdentity[] = [];
-  for (const { pid, depth } of descendants) {
-    const startIdentity = readProcessStartIdentity(pid, deadline);
-    if (startIdentity) {
-      identities.push({ pid, startIdentity, depth });
-    } else if (isProcessAlive(pid, deadline)) {
-      // A live descendant that cannot be identity-pinned must not be signaled;
-      // callers fail closed instead of risking PID-reuse collateral damage.
-      return null;
-    }
-  }
-  return identities.sort((a, b) => b.depth - a.depth);
-}
-
 function readProcessCommandLine(
   pid: number,
   deadline = processInspectionDeadline(),
@@ -292,7 +175,10 @@ function readProcessCommandLine(
   }
 }
 
-function verifyTimerMarkerIdentity(marker: TimerMarker): { verified: boolean; warning?: string } {
+function verifyTimerMarkerIdentity(marker: ShieldsTimerMarker): {
+  verified: boolean;
+  warning?: string;
+} {
   const commandLine = readProcessCommandLine(marker.pid);
   if (!commandLine) {
     return {
@@ -333,7 +219,6 @@ interface KillTimerResult {
 function killTimer(sandboxName: string): KillTimerResult {
   const marker = readTimerMarker(sandboxName);
   let wasAlive = false;
-  let terminated = false;
   const warnings: string[] = [];
 
   if (marker) {
@@ -344,22 +229,15 @@ function killTimer(sandboxName: string): KillTimerResult {
         if (verification.warning) {
           warnings.push(verification.warning);
         }
-      } else {
-        try {
-          process.kill(marker.pid, "SIGTERM");
-          terminated = true;
-        } catch (error) {
-          const errno = error as NodeJS.ErrnoException;
-          if (errno.code !== "ESRCH") {
-            warnings.push(
-              `Failed to terminate shields timer PID ${String(marker.pid)} for sandbox '${sandboxName}': ${errno.message}`,
-            );
-          }
-        }
       }
     }
   }
 
+  // Marker removal is cooperative cancellation and revokes the timer's exact
+  // recovery generation. Do not signal a verified live timer: it may own the
+  // lifecycle deadline fence, and an unhandled signal could bypass its finally
+  // cleanup and strand the fence. Recovery loops re-check marker authority and
+  // unwind their locks after this revocation.
   const markerClear = clearTimerMarker(sandboxName);
   if (markerClear.warning) {
     warnings.push(markerClear.warning);
@@ -369,17 +247,16 @@ function killTimer(sandboxName: string): KillTimerResult {
     markerFound: marker !== null,
     markerPid: marker?.pid ?? null,
     wasAlive,
-    terminated,
+    terminated: false,
     warnings,
   };
 }
 
-export type { ClearTimerMarkerResult, KillTimerResult, ProcessIdentity, TimerMarker };
+export type { ClearTimerMarkerResult, KillTimerResult, ShieldsTimerMarker as TimerMarker };
 export {
   clearTimerMarker,
   isProcessAlive,
   killTimer,
-  listDescendantProcessIdentities,
   processInspectionDeadlineAfter,
   processInspectionDeadlineReached,
   readAutoRestoreTakeoverToken,

@@ -47,6 +47,14 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)managed-inference\/(?:presets|recipes|schemas)\/[^/]+\.(?:json|yaml)$/,
+    testsToRun: runTests(
+      "src/lib/inference/serving/catalog.test.ts",
+      "src/lib/inference/serving/resolver.test.ts",
+      "test/managed-inference-catalog-compiler.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)(?:Dockerfile|agents\/(?:hermes|langchain-deepagents-code)\/Dockerfile)$/,
     testsToRun: runTests("src/lib/onboard/managed-startup-profile.test.ts"),
   },
@@ -112,7 +120,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-e2e-gate\.yaml$/,
-    testsToRun: runTests("test/pr-e2e-gate-workflow.test.ts", "test/pr-e2e-required.test.ts"),
+    testsToRun: runTests("test/pr-e2e-gate-workflow.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-merge-conflict-fixer\.yaml$/,

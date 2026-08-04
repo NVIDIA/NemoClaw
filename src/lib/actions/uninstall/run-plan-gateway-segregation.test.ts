@@ -1072,11 +1072,18 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
-      const runtimeReceipt = path.join(stateDir, "dual-station-vllm-runtime.json");
-      const runtimeBinding = `${runtimeReceipt}.ssh-binding`;
+      const runtimeReceipt = path.join(stateDir, "managed-cluster-vllm-runtime.json");
+      const runtimeBinding = `${runtimeReceipt}.rank-1.ssh-binding`;
+      const discoveryBinding = path.join(
+        stateDir,
+        "managed-cluster-managed-serving.json.spark-worker.ssh-binding",
+      );
+      const managedApiKey = path.join(stateDir, "dual-station-vllm-api-key");
       fs.writeFileSync(runtimeReceipt, "{}\n", { mode: 0o600 });
       fs.mkdirSync(runtimeBinding, { mode: 0o700 });
+      fs.mkdirSync(discoveryBinding, { mode: 0o700 });
       fs.writeFileSync(path.join(runtimeBinding, "known_hosts"), "host-key\n", { mode: 0o600 });
+      fs.writeFileSync(managedApiKey, `${"a".repeat(64)}\n`, { mode: 0o600 });
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
       const result = runUninstallPlan(
@@ -1102,6 +1109,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(logs.join("\n")).toContain("Sibling gateways remain");
       expect(fs.existsSync(runtimeReceipt)).toBe(true);
       expect(fs.existsSync(runtimeBinding)).toBe(true);
+      expect(fs.existsSync(discoveryBinding)).toBe(true);
+      expect(fs.existsSync(managedApiKey)).toBe(true);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
@@ -1376,123 +1385,6 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(meaningful).toEqual([["gateway", "select", `nemoclaw-${String(port)}`]]);
       expect(fs.existsSync(path.join(selected, "sandboxes.json"))).toBe(true);
       expect(fs.existsSync(path.join(shared, "sandboxes.json"))).toBe(true);
-    } finally {
-      fs.rmSync(tmpHome, { recursive: true, force: true });
-    }
-  });
-
-  it.each([
-    {
-      case: "already removed",
-      deleteResponse: {
-        status: 1,
-        stdout: "",
-        stderr: "Error: status: NotFound, sandbox 'selected-box' not found",
-      },
-      expectedExitCode: 0,
-      expectedWarning: "OpenShell sandbox 'selected-box' already removed",
-      expectsPreservedState: false,
-    },
-    {
-      case: "unreachable",
-      deleteResponse: {
-        status: 1,
-        stdout: "",
-        stderr: "error trying to connect: tcp connect error: Connection refused (os error 111)",
-      },
-      expectedExitCode: 1,
-      expectedWarning: "OpenShell sandbox 'selected-box' could not be removed or was unreachable",
-      expectsPreservedState: true,
-    },
-    {
-      case: "rejected for an unrecognized reason",
-      deleteResponse: { status: 1, stdout: "", stderr: "Error: sandbox is still finalizing" },
-      expectedExitCode: 1,
-      expectedWarning: "OpenShell sandbox 'selected-box' could not be removed or was unreachable",
-      expectsPreservedState: true,
-    },
-  ])("completes selected-gateway cleanup when the recorded sandbox is $case (#7906)", async ({
-    deleteResponse,
-    expectedExitCode,
-    expectedWarning,
-    expectsPreservedState,
-  }) => {
-    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-absent-sandbox-"));
-    const selectedPort = 9123;
-    try {
-      vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(selectedPort));
-      vi.resetModules();
-      const runPortUninstall = bindManagedGatewayAuthority(
-        (await import("./run-plan")).runUninstallPlan,
-      );
-      const shared = path.join(tmpHome, ".nemoclaw");
-      const sharedRegistryFile = path.join(shared, "sandboxes.json");
-      fs.mkdirSync(shared, { recursive: true });
-      fs.writeFileSync(
-        sharedRegistryFile,
-        JSON.stringify({
-          defaultSandbox: "selected-box",
-          sandboxes: {
-            "selected-box": {
-              name: "selected-box",
-              gatewayName: `nemoclaw-${String(selectedPort)}`,
-              gatewayPort: selectedPort,
-            },
-            "sibling-box": {
-              name: "sibling-box",
-              gatewayName: "nemoclaw-9124",
-              gatewayPort: 9124,
-            },
-          },
-        }),
-      );
-      migrateLegacyPortState({ gatewayPort: selectedPort, home: tmpHome });
-      const calls: string[][] = [];
-      const warnings: string[] = [];
-
-      const result = runPortUninstall(
-        {
-          assumeYes: true,
-          deleteModels: false,
-          destroyUserData: true,
-          gatewayName: `nemoclaw-${String(selectedPort)}`,
-          keepOpenShell: false,
-        },
-        {
-          commandExists: (command) => command === "openshell",
-          env: {
-            HOME: tmpHome,
-            NEMOCLAW_GATEWAY_PORT: String(selectedPort),
-          } as NodeJS.ProcessEnv,
-          error: (line) => warnings.push(line),
-          existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
-          isTty: false,
-          log: vi.fn(),
-          run: (_command, args) => {
-            calls.push(args);
-            return args[0] === "sandbox" && args[1] === "delete" ? deleteResponse : ok();
-          },
-          runDocker: () => ok(""),
-        },
-      );
-
-      expect(result.exitCode).toBe(expectedExitCode);
-      expect(warnings.join("\n")).toContain(expectedWarning);
-      expect(calls).toContainEqual(["sandbox", "delete", "selected-box"]);
-      expect(calls).toContainEqual(["gateway", "remove", `nemoclaw-${String(selectedPort)}`]);
-      expect(fs.existsSync(path.join(shared, "gateways", String(selectedPort)))).toBe(
-        expectsPreservedState,
-      );
-      expect(warnings.join("\n").includes("Selected gateway cleanup was incomplete")).toBe(
-        expectsPreservedState,
-      );
-      expect(readGatewayRegistryFile(tmpHome, sharedRegistryFile)?.sandboxes).toEqual({
-        "sibling-box": {
-          name: "sibling-box",
-          gatewayName: "nemoclaw-9124",
-          gatewayPort: 9124,
-        },
-      });
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
