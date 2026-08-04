@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 import {
   buildRiskPlan,
@@ -16,6 +19,7 @@ import {
 import { classifyTestDepth } from "../tools/pr-review-advisor/analyze.mts";
 
 const HEAD_SHA = "a".repeat(40);
+const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_SANDBOX_BOUNDARY_JOBS = [
   "full-e2e",
   "hermes-e2e",
@@ -336,6 +340,31 @@ describe("deterministic PR risk plan", () => {
         "managed-image-multiarch",
       );
     }
+  });
+
+  it("loads protected multiarch identifiers through the workflow node loader (#7744)", () => {
+    const source = [
+      'const risk = await import("./tools/advisors/risk-plan.mts");',
+      'const boundary = await import("./tools/e2e/managed-image-multiarch-workflow-boundary.mts");',
+      'const activation = "ci/protected-managed-image-multiarch-activation-v1.json";',
+      'const job = "managed-image-multiarch-startup";',
+      'const plan = risk.buildRiskPlan({ headSha: "a".repeat(40), changedFiles: [activation] });',
+      'if (!plan.requiredJobs.some((value) => value.id === job)) throw new Error("risk plan loader contract failed");',
+      'const errors = boundary.validateManagedImageMultiarchWorkflow({ jobs: { [job]: { steps: [{ name: "Validate candidate activation contract", run: "" }] } } });',
+      'if (!errors.some((value) => value.includes(activation))) throw new Error("workflow boundary loader contract failed");',
+      "console.log(JSON.stringify({ activation, job }));",
+    ].join("\n");
+    const result = spawnSync(
+      process.execPath,
+      ["--import", "tsx", "--input-type=module", "-e", source],
+      { cwd: REPO_ROOT, encoding: "utf8" },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      activation: "ci/protected-managed-image-multiarch-activation-v1.json",
+      job: "managed-image-multiarch-startup",
+    });
   });
 
   it("runs snapshot commands for restored-gateway pairing runtime changes (#7431)", () => {
