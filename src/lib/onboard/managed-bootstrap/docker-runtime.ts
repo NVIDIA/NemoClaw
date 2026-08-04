@@ -43,6 +43,8 @@ function dockerReplacementOptions(
   input: ManagedBootstrapRuntimeCreateLifecycleInput,
 ) {
   const backend = input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic";
+  const extraGroupGids =
+    backend === "jetson" && input.route === "compatibility" ? detectTegraDeviceGroupGids() : [];
   return {
     values: {
       gpuModeArgs: [...mode.args],
@@ -52,8 +54,9 @@ function dockerReplacementOptions(
       requiredUlimits: input.requiredLimits.map(
         (limit) => `${limit.name}=${limit.soft}:${limit.hard}`,
       ),
-      extraGroupGids:
-        backend === "jetson" && input.route === "compatibility" ? detectTegraDeviceGroupGids() : [],
+      extraGroupGids,
+      preserveJetsonDeviceGroupMembership:
+        extraGroupGids.length > 0 && input.request.agent === "openclaw",
     },
   };
 }

@@ -263,7 +263,7 @@ export function recreateOpenShellDockerSandboxContainer(
         );
       }
     }
-    if (selection.mode.kind !== "startup-command" && options.backend === "jetson") {
+    if (options.backend === "jetson") {
       const tegraGroupGids = d.detectTegraDeviceGroupGids();
       if (tegraGroupGids.length > 0) {
         cloneOptions.extraGroupGids = tegraGroupGids;

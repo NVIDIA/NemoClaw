@@ -373,9 +373,10 @@ export function buildDockerGpuCloneRunArgs(
 
   const sandboxCommand = openshellSandboxCommandEnvValue(options.openshellSandboxCommand);
   let sawSandboxCommand = false;
-  for (const env of stringArray(config.Env).filter(
-    (entry) => !gpuAugment || !GPU_ENV_KEYS.has(envKey(entry)),
-  )) {
+  for (const env of stringArray(config.Env).filter((entry) => {
+    const key = envKey(entry);
+    return key !== JETSON_DEVICE_GROUP_GIDS_ENV && (!gpuAugment || !GPU_ENV_KEYS.has(key));
+  })) {
     const key = envKey(env);
     if (key === OPENSHELL_SANDBOX_COMMAND_ENV && sandboxCommand) {
       sawSandboxCommand = true;
@@ -460,13 +461,11 @@ export function buildDockerGpuCloneRunArgs(
 
   const entrypoint = stringArray(config.Entrypoint);
   const replacementEntrypoint = String(options.containerEntrypoint ?? "").trim();
-  if (preserveJetsonGroups && (replacementEntrypoint || options.containerCommand)) {
-    throw new Error("Jetson device-group bootstrap conflicts with a replacement process.");
-  }
-  if (preserveJetsonGroups && entrypoint.length === 0) {
+  const replacementProcess = Boolean(replacementEntrypoint || options.containerCommand);
+  if (preserveJetsonGroups && !replacementProcess && entrypoint.length === 0) {
     throw new Error("Jetson device-group bootstrap requires the OpenShell supervisor entrypoint.");
   }
-  if (preserveJetsonGroups) {
+  if (preserveJetsonGroups && !replacementProcess) {
     args.push("--entrypoint", JETSON_DEVICE_GROUP_BOOTSTRAP);
   } else if (replacementEntrypoint) {
     args.push("--entrypoint", replacementEntrypoint);
@@ -476,11 +475,12 @@ export function buildDockerGpuCloneRunArgs(
   const originalCommandArgs = sandboxCommand
     ? []
     : [...entrypoint.slice(1), ...stringArray(config.Cmd)];
-  const commandArgs = preserveJetsonGroups
-    ? [entrypoint[0], ...originalCommandArgs]
-    : options.containerCommand
-      ? [...options.containerCommand]
-      : originalCommandArgs;
+  const commandArgs =
+    preserveJetsonGroups && !replacementProcess
+      ? [entrypoint[0], ...originalCommandArgs]
+      : options.containerCommand
+        ? [...options.containerCommand]
+        : originalCommandArgs;
   args.push(image, ...commandArgs);
   return args;
 }

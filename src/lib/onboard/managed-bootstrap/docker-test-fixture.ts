@@ -351,9 +351,13 @@ export function fixture(options: DockerFixtureOptions = {}) {
           const name = String(args[args.indexOf("--name") + 1] ?? "");
           const entrypoint = String(args[args.indexOf("--entrypoint") + 1] ?? "");
           const imageIndex = args.indexOf(IMAGE);
-          const env = args.flatMap((value, index) =>
-            value === "--env" ? [String(args[index + 1] ?? "")] : [],
-          );
+          const flagValues = (flag: string) =>
+            args.flatMap((value, index) => (value === flag ? [String(args[index + 1] ?? "")] : []));
+          const env = flagValues("--env");
+          const groupAdds = flagValues("--group-add");
+          const capAdds = flagValues("--cap-add");
+          const securityOptions = flagValues("--security-opt");
+          const runtime = flagValues("--runtime").at(-1);
           replacement = {
             ...structuredClone(source),
             Id: NEW_ID,
@@ -364,6 +368,13 @@ export function fixture(options: DockerFixtureOptions = {}) {
               Env: env,
               Entrypoint: [entrypoint],
               Cmd: args.slice(imageIndex + 1),
+            },
+            HostConfig: {
+              ...structuredClone(source.HostConfig),
+              ...(capAdds.length > 0 ? { CapAdd: capAdds } : {}),
+              ...(groupAdds.length > 0 ? { GroupAdd: groupAdds } : {}),
+              ...(runtime ? { Runtime: runtime } : {}),
+              ...(securityOptions.length > 0 ? { SecurityOpt: securityOptions } : {}),
             },
             State: { Running: false, Paused: false, Restarting: false, Dead: false },
           };

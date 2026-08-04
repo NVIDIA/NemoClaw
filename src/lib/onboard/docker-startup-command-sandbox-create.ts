@@ -33,6 +33,8 @@ export function createDockerSandboxRecreator(options: {
         requiredUlimits: options.requiredUlimits,
         timeoutSecs: options.gpuOptions.timeoutSecs,
         waitForSupervisor,
+        backend: options.gpuOptions.backend,
+        preserveJetsonDeviceGroupMembership: options.gpuOptions.preserveJetsonDeviceGroupMembership,
       },
       deps,
     );

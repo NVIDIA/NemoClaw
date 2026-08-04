@@ -18,6 +18,8 @@ export function recreateOpenShellDockerSandboxWithStartupCommand(
     openshellSandboxCommand: readonly string[];
     requiredUlimits?: readonly import("./docker-gpu-patch-types").DockerUlimit[] | null;
     expectedOldContainerId?: string | null;
+    backend?: "generic" | "jetson";
+    preserveJetsonDeviceGroupMembership?: boolean;
   },
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchResult {

@@ -36,6 +36,24 @@ _nemoclaw_supervisor_environment_bytes="$4"
 [ "${5:-}" = "--" ] || fail "supervisor environment delimiter is missing"
 shift 5
 
+# Read the reserved group input from the sealed supervisor environment.
+# The native resume path rewinds and validates FD 9 before supervisor exec.
+_nemoclaw_jetson_device_group_gids=""
+_nemoclaw_jetson_device_group_gids_seen=0
+for ((_nemoclaw_environment_index = 0; _nemoclaw_environment_index < _nemoclaw_supervisor_environment_count; _nemoclaw_environment_index++)); do
+  IFS= read -r -d '' _nemoclaw_environment_entry <&9 \
+    || fail "supervisor environment transport ended before Jetson group validation"
+  case "$_nemoclaw_environment_entry" in
+    NEMOCLAW_JETSON_DEVICE_GROUP_GIDS=*)
+      [ "$_nemoclaw_jetson_device_group_gids_seen" -eq 0 ] \
+        || fail "Jetson device-group input is duplicated"
+      _nemoclaw_jetson_device_group_gids="${_nemoclaw_environment_entry#*=}"
+      _nemoclaw_jetson_device_group_gids_seen=1
+      ;;
+  esac
+done
+unset _nemoclaw_environment_entry _nemoclaw_environment_index
+
 if [ "$(/usr/bin/id -u 9<&-)" -ne 0 ] || [ "$(/usr/bin/id -g 9<&-)" -ne 0 ]; then
   fail "must run as root"
 fi
@@ -88,6 +106,16 @@ if [ "$_nemoclaw_agent_workdir" != "/sandbox" ] \
 fi
 [ "$_nemoclaw_request" = "/var/lib/nemoclaw-managed-bootstrap-request.json" ] \
   || fail "request file path is not the fixed bootstrap path"
+
+if [ "$_nemoclaw_jetson_device_group_gids_seen" -eq 1 ]; then
+  [ "$_nemoclaw_agent" = "openclaw" ] \
+    || fail "Jetson device-group input requires the OpenClaw agent"
+  [[ "$_nemoclaw_jetson_device_group_gids" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]] \
+    || fail "Jetson device-group input is invalid"
+  # Update the sandbox account before the OpenShell supervisor calls initgroups().
+  NEMOCLAW_JETSON_DEVICE_GROUP_GIDS="$_nemoclaw_jetson_device_group_gids" \
+    /usr/local/lib/nemoclaw/jetson-device-group-bootstrap.sh /usr/bin/true 9<&-
+fi
 
 _nemoclaw_runtime="/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs"
 _nemoclaw_request_directory="${_nemoclaw_request%/*}"
