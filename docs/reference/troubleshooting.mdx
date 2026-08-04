@@ -677,10 +677,47 @@ The in-sandbox OpenClaw gateway can drop its HTTP listener while its process sta
 A restart-class configuration change makes the gateway restart itself in place, and if that restart fails the process parks with no listener (`/tmp/gateway.log` shows `gateway startup failed: ... Process will stay alive`).
 Docker then marks the container `(unhealthy)` even though `pgrep` still finds the gateway.
 
-NemoClaw prevents and self-heals this:
+NemoClaw prevents restart-class configuration changes from causing this condition and recovers a gateway that stops serving:
 
 - The generated sandbox config pins `gateway.reload.mode` to `hot`, so configuration changes never make the gateway restart itself out from under the sandbox supervisor.
-- A serving watchdog inside the sandbox kills a gateway that stops listening after it has served, and the supervisor relaunches it (look for `[gateway-watchdog]` lines in `$$nemoclaw <name> logs`).
+- A serving watchdog inside the sandbox stops a gateway process that no longer serves after returning at least one serving response, and the supervisor relaunches it.
+
+The watchdog treats the gateway as serving only while the local health endpoint answers `200` or `401`, the same response requirement the sandbox applies when it waits for the gateway at startup.
+After the gateway returns a serving response, these probe outcomes count as not serving:
+
+- The connection is refused.
+- The probe times out.
+- The connection is accepted and then closed without a response.
+- The health endpoint returns an HTTP status other than `200` or `401`.
+
+The watchdog logs the cause of each not-serving probe only after a serving response.
+It stops the gateway after four not-serving probes without an intervening serving response.
+At the default 30-second interval, this takes roughly two minutes when there are no inconclusive probes.
+Look for `[gateway-watchdog]` lines in `$$nemoclaw <name> logs`.
+
+If the watchdog reports `health probe inconclusive`, the probe itself could not run inside the sandbox.
+An inconclusive probe leaves the gateway untouched and preserves the number of not-serving probes since the last serving response.
+If `curl` is missing, the watchdog reports this exact diagnostic:
+
+```text
+[gateway-watchdog] curl is unavailable; serving watchdog disabled (#7377)
+```
+
+This diagnostic means that the watchdog is disabled.
+For a custom image, add `curl` to the image first.
+Then rebuild the sandbox:
+
+```bash
+$$nemoclaw <name> rebuild --yes
+```
+
+When the gateway is not serving, `openclaw health` can report `gateway_transport_error`, often `1006 abnormal closure (no close frame)`, while the container stays `running` with no restarts.
+An agent reply can come from the OpenClaw CLI's embedded in-process fallback instead of the gateway.
+Therefore, an agent reply does not confirm that the gateway is serving.
+
+The watchdog converts a gateway that cannot serve into a process exit that the sandbox supervisor already knows how to relaunch.
+It does not correct the OpenClaw lifecycle condition that left the process running.
+It stays necessary until an OpenClaw gateway that cannot serve exits on its own.
 
 Because of the `hot` pin, restart-class configuration changes made inside the sandbox log `config reload requires gateway restart; hot mode ignoring` and do not take effect until the gateway restarts.
 For example, `openclaw plugins install` logs that message until the gateway restarts.
