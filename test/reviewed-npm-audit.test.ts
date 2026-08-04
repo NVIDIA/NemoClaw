@@ -119,7 +119,7 @@ function exceptionPolicy(
 }
 
 describe("reviewed npm audit gate", () => {
-  it("uses an empty exception registry by default", () => {
+  it("removes the checked-in brace-expansion exception after remediation (#8116)", () => {
     expect(CHECKED_IN_POLICY).toEqual(EMPTY_POLICY);
   });
 
