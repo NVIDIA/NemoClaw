@@ -9,4 +9,10 @@ if (invokedAs === "nemo-deepagents") {
   process.env.NEMOCLAW_INVOKED_AS = "nemo-deepagents";
 }
 
-require("../dist/nemoclaw");
+const { log } = require("../dist/lib/cli/logger");
+const { mainPromise } = require("../dist/nemoclaw");
+mainPromise.catch((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  log.error(`Error: ${message}`);
+  process.exitCode = 1;
+});
