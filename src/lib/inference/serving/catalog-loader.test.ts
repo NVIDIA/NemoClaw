@@ -6,8 +6,11 @@ import {
   MANAGED_CLUSTER_VLLM_LIFECYCLE_REF,
   MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
 } from "./adapter-registry";
+import { servingCatalogDigest } from "./catalog";
 import {
   assertManagedInferenceCatalog,
+  loadManagedInferenceCatalog,
+  loadServingCatalog,
   managedInferenceCatalogFromServingCatalog,
 } from "./catalog-loader";
 import type { CompiledServingCatalog, ServingPreset, ServingRecipe } from "./types";
@@ -82,6 +85,16 @@ function managedCatalogValidationError(catalog: CompiledServingCatalog): string 
   }
 }
 
+function expectOnlyManagedVllmDefinitions(catalog: CompiledServingCatalog): void {
+  const { catalogDigest, ...catalogContents } = catalog;
+
+  expect(catalogDigest).toBe(servingCatalogDigest(catalogContents));
+  expect(catalog.recipes.length).toBeGreaterThan(0);
+  expect(catalog.recipes.every(({ spec }) => spec.backend === "vllm")).toBe(true);
+  expect(catalog.presets.length).toBeGreaterThan(0);
+  expect(catalog.presets.every(({ spec }) => spec.plan.backend === "vllm")).toBe(true);
+}
+
 describe("managed inference catalog loader", () => {
   it("accepts an empty managed catalog", () => {
     assertManagedInferenceCatalog(EMPTY_CATALOG);
@@ -107,6 +120,23 @@ describe("managed inference catalog loader", () => {
 
     expect(managedCatalog.recipes).toEqual([]);
     expect(managedCatalog.presets).toEqual([]);
-    expect(managedCatalog.catalogDigest).toBe(EMPTY_CATALOG.catalogDigest);
+    expect(managedCatalog.catalogDigest).not.toBe(EMPTY_CATALOG.catalogDigest);
+    const { catalogDigest, ...catalogContents } = managedCatalog;
+    expect(catalogDigest).toBe(servingCatalogDigest(catalogContents));
+  });
+
+  it("retains managed vLLM definitions while projecting the mixed serving catalog (#8173)", () => {
+    const servingCatalog = loadServingCatalog();
+
+    expect(servingCatalog.recipes.some(({ spec }) => spec.backend === "vllm")).toBe(true);
+    expect(servingCatalog.recipes.some(({ spec }) => spec.backend === "install-llama-cpp")).toBe(
+      true,
+    );
+
+    expectOnlyManagedVllmDefinitions(managedInferenceCatalogFromServingCatalog(servingCatalog));
+  });
+
+  it("excludes host-local definitions through the public managed loader (#8173)", () => {
+    expectOnlyManagedVllmDefinitions(loadManagedInferenceCatalog());
   });
 });

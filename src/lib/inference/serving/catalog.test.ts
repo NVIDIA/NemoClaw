@@ -420,6 +420,49 @@ describe("managed inference serving catalog compiler", () => {
     expect(() => compile([recipe])).toThrow("does not satisfy the ServingRecipe schema");
   });
 
+  it.each([
+    [
+      "top-level topology bindings",
+      "  backend: install-llama-cpp",
+      `  backend: install-llama-cpp
+  bindings:
+    cluster:
+      type: topologyQualificationOutput
+      qualificationId: test.qualification
+      schemaVersion: 1
+      outputSchema: test.output`,
+    ],
+    [
+      "managed model preparation",
+      "    servedName: test-model",
+      `    servedName: test-model
+    preparation:
+      ref: none/v1`,
+    ],
+    [
+      "managed runtime networking",
+      "    networkExposure: loopback",
+      `    networkExposure: loopback
+    networkMode: host`,
+    ],
+    [
+      "managed cluster execution sizing",
+      "    receiptRef: test.receipt/v1",
+      `    receiptRef: test.receipt/v1
+    nodeCount: 1`,
+    ],
+    [
+      "an executable override",
+      "    authentication: bearer",
+      `    authentication: bearer
+    executable: /usr/local/bin/llama-server`,
+    ],
+  ])("rejects generic-only %s in a llama.cpp recipe (#8173)", (_case, expected, replacement) => {
+    const recipe = replaceSource(llamaCppRecipeSource(), expected, replacement);
+
+    expect(() => compile([recipe])).toThrow("does not satisfy the ServingRecipe schema");
+  });
+
   it("rejects a llama.cpp readiness model that differs from the served name (#8181)", () => {
     const wrongExpectedModel = replaceSource(
       llamaCppRecipeSource(),

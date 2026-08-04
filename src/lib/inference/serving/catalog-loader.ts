@@ -9,7 +9,7 @@ import {
   MANAGED_CLUSTER_VLLM_LIFECYCLE_REF,
   MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
 } from "./adapter-registry.js";
-import { parseCompiledServingCatalogJson } from "./catalog.js";
+import { parseCompiledServingCatalogJson, servingCatalogDigest } from "./catalog.js";
 import { immutableManagedInferenceCopy } from "./catalog-integrity.js";
 import type {
   CompiledManagedInferenceCatalog,
@@ -107,10 +107,12 @@ export function managedInferenceCatalogFromServingCatalog(
 ): CompiledManagedInferenceCatalog {
   const recipes = catalog.recipes.filter(isManagedClusterRecipeCandidate);
   const recipeIds = new Set(recipes.map(({ metadata }) => metadata.id));
-  const presets = catalog.presets.filter(
-    (preset) => recipeIds.has(preset.spec.plan.recipeRef) || preset.spec.plan.backend === "vllm",
-  );
-  const managedCatalog = { ...catalog, recipes, presets };
+  const presets = catalog.presets.filter((preset) => recipeIds.has(preset.spec.plan.recipeRef));
+  const definitionIds = new Set([...recipeIds, ...presets.map(({ metadata }) => metadata.id)]);
+  const sources = catalog.sources.filter(({ id }) => definitionIds.has(id));
+  const { catalogDigest: _catalogDigest, ...catalogContents } = catalog;
+  const payload = { ...catalogContents, recipes, presets, sources };
+  const managedCatalog = { ...payload, catalogDigest: servingCatalogDigest(payload) };
   assertManagedInferenceCatalog(managedCatalog);
   return managedCatalog;
 }

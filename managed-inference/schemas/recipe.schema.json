@@ -1079,6 +1079,16 @@
                   }
                 }
               }
+            },
+            "propertyNames": {
+              "not": {
+                "enum": [
+                  "downloadSizeBytes",
+                  "gated",
+                  "installFastSafetensors",
+                  "preparation"
+                ]
+              }
             }
           },
           "runtime": {
@@ -1105,27 +1115,23 @@
               "gpu": {},
               "resources": {}
             },
-            "not": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "architecture": {}
-                  },
-                  "required": [
-                    "architecture"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "components": {}
-                  },
-                  "required": [
-                    "components"
-                  ]
-                }
-              ]
+            "propertyNames": {
+              "not": {
+                "enum": [
+                  "pullTimeoutSeconds",
+                  "architecture",
+                  "networkMode",
+                  "ipcMode",
+                  "sharedMemoryBytes",
+                  "gpuRequest",
+                  "devices",
+                  "ulimits",
+                  "modelCache",
+                  "temporaryFilesystems",
+                  "environment",
+                  "components"
+                ]
+              }
             }
           },
           "execution": {
@@ -1139,6 +1145,18 @@
               "receiptRef": {},
               "materializerRef": {},
               "lifecycleRef": {}
+            },
+            "propertyNames": {
+              "not": {
+                "enum": [
+                  "topologyBinding",
+                  "nodeCount",
+                  "tensorParallelSize",
+                  "pipelineParallelSize",
+                  "distributedExecutorBackend",
+                  "rendezvousPort"
+                ]
+              }
             }
           },
           "serve": {
@@ -1181,14 +1199,13 @@
               "speculativeDecoding": {},
               "limits": {}
             },
-            "not": {
-              "type": "object",
-              "properties": {
-                "arguments": {}
-              },
-              "required": [
-                "arguments"
-              ]
+            "propertyNames": {
+              "not": {
+                "enum": [
+                  "executable",
+                  "arguments"
+                ]
+              }
             }
           },
           "readiness": {
@@ -1214,6 +1231,11 @@
           },
           "capabilities": {
             "type": "object"
+          }
+        },
+        "propertyNames": {
+          "not": {
+            "const": "bindings"
           }
         }
       },
