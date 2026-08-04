@@ -186,7 +186,10 @@ describe("runUpdateAction", () => {
     expect(spawnSyncImpl).toHaveBeenCalledWith(
       "bash",
       ["-o", "pipefail", "-lc", NEMOCLAW_UPDATE_COMMAND],
-      expect.objectContaining({ stdio: "inherit" }),
+      expect.objectContaining({
+        env: expect.objectContaining({ NEMOCLAW_REINSTALL_CLI: "1" }),
+        stdio: "inherit",
+      }),
     );
     expect(log).toHaveBeenCalledWith(expect.stringContaining("reinstalling anyway (--fresh)"));
   });
