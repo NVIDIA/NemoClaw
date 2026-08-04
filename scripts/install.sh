@@ -252,6 +252,9 @@ resolve_nemoclaw_gateway_port() {
     configured_port="${configured_ports[$i]}"
     configured_port="${configured_port#"${configured_port%%[![:space:]]*}"}"
     configured_port="${configured_port%"${configured_port##*[![:space:]]}"}"
+    if [[ "$configured_port" =~ ^0*8081$ ]]; then
+      error "${configured_names[$i]} must not overlap the fixed llama.cpp inference port (8081)."
+    fi
     if [[ "$configured_port" =~ ^[0-9]+$ ]] && [ "$port" -eq "$configured_port" ]; then
       error "NEMOCLAW_GATEWAY_PORT conflicts with ${configured_names[$i]} ($configured_port)."
     fi
