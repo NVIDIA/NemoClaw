@@ -59,6 +59,18 @@ const SAFE_CREDENTIAL_PLACEHOLDER_LITERALS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Context-anchored secret shapes mirrored from
+ * src/lib/security/secret-patterns.ts. The plugin package cannot import
+ * src/lib at runtime, so a repository-level parity test pins this copy.
+ */
+export const CONTEXT_SECRET_PATTERNS: readonly RegExp[] = [
+  /(?<=Bearer\s+)[A-Za-z0-9_.+/=-]{10,}/gi,
+  /(?<=(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}_(?:KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)|(?:X[-_])?API[-_]KEY|TOKEN|SECRET|CREDENTIAL|PASSWORD|PASSWD|PASS)["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]{10,}/gi,
+  /(?<=(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9]{1,128}(?:Token|Secret|Credential)|[A-Za-z0-9]{0,128}(?:[Aa]ccess|[Rr]efresh|[Cc]lient|[Bb]earer|[Aa]uth|[Aa][Pp][Ii]|[Pp]rivate|[Ss]igning|[Ss]ession|[Bb]ot|[Aa]pp|[Rr]esolved)Key|[A-Za-z0-9]{1,128}(?:Password|Passwd|Pass))["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]{10,}/g,
+  /(?<=(?:^|[^A-Za-z0-9])KEY["']?(?:[ \t]{0,32}[=:][ \t]{0,32}|[ \t]{1,32})["']?)[^\s'"]{10,}/g,
+];
+
+/**
  * High-confidence raw secret shapes used as a value-level backstop.
  * Kept aligned with TOKEN_PREFIX / STRUCTURED / SECRET_BLOCK patterns from
  * src/lib/security/secret-patterns.ts (plugin package cannot import src/lib).
@@ -83,8 +95,8 @@ const VALUE_SECRET_PATTERNS: readonly RegExp[] = [
   /tvly-[A-Za-z0-9_-]{10,}/,
   /lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*/,
   /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{10,}\b/,
-  /(?<=Bearer\s+)[A-Za-z0-9_.+/=-]{10,}/i,
   /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----/,
+  ...CONTEXT_SECRET_PATTERNS,
 ];
 
 function hasPassCredentialSegment(key: string): boolean {
@@ -115,7 +127,12 @@ export function isCredentialField(key: string): boolean {
 }
 
 export function valueLooksLikeSecret(value: string): boolean {
-  return VALUE_SECRET_PATTERNS.some((pattern) => pattern.test(value));
+  return VALUE_SECRET_PATTERNS.some((pattern) => {
+    pattern.lastIndex = 0;
+    const matched = pattern.test(value);
+    pattern.lastIndex = 0;
+    return matched;
+  });
 }
 
 export function isSafeCredentialPlaceholder(value: unknown): boolean {
