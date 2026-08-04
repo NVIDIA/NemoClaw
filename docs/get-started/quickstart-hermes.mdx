@@ -44,8 +44,15 @@ Review the [Prerequisites](prerequisites) before you begin.
   </Step>
 
   <Step title="Complete Onboarding">
-    If the installer offers **Express**, decline it to continue with interactive Hermes onboarding.
     Select **Hermes Agent** when the installer prompts you to choose an agent.
+
+    <Note>
+      On supported platforms, the installer can offer **Express** before the agent-selection prompt.
+      **Express** uses preselected settings for that platform and runs onboarding non-interactively.
+      Decline **Express** to continue with this interactive Hermes flow.
+      Refer to [Use Docker and supported platforms](#use-docker-and-supported-platforms) for more information.
+    </Note>
+
     Enter `my-hermes` as the sandbox name, or press Enter to accept the suggested `hermes` name.
     If you accept the suggested name, use `hermes` instead of `my-hermes` in the commands that follow.
     Choose an inference provider and model, then provide its credential when prompted.

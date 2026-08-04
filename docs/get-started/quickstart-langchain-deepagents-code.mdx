@@ -47,8 +47,15 @@ Review the [Prerequisites](prerequisites) before you begin.
   </Step>
 
   <Step title="Complete Onboarding">
-    If the installer offers **Express**, decline it to continue with interactive Deep Agents onboarding.
     Select **LangChain Deep Agents Code** when the installer prompts you to choose an agent.
+
+    <Note>
+      On supported platforms, the installer can offer **Express** before the agent-selection prompt.
+      **Express** uses preselected settings for that platform and runs onboarding non-interactively.
+      Decline **Express** to continue with this interactive LangChain Deep Agents Code flow.
+      Refer to [Use Docker and supported platforms](#use-docker-and-supported-platforms) for more information.
+    </Note>
+
     Enter `my-deepagents` as the sandbox name, or press Enter to accept the suggested `deepagents-code` name.
     If you accept the suggested name, use `deepagents-code` instead of `my-deepagents` in the commands that follow.
     Choose an inference provider and model, then provide its credential when prompted.
