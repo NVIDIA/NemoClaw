@@ -36,19 +36,19 @@ Review the [Prerequisites](prerequisites) before you begin.
 
 <Steps>
   <Step title="Install NemoClaw for Hermes">
-    Select Hermes, then run the hosted installer.
+    Run the hosted installer.
 
     ```bash
-    export NEMOCLAW_AGENT=hermes
-    export NEMOCLAW_SANDBOX_NAME=my-hermes
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
     ```
   </Step>
 
   <Step title="Complete Onboarding">
-    If the installer offers Express, you can accept it to use managed local inference for that platform.
-    Otherwise, choose an inference provider and model, then provide its credential when prompted.
-    The install command uses `my-hermes` as the sandbox name.
+    If the installer offers Express, decline it to continue with interactive Hermes onboarding.
+    Select **Hermes Agent** when the installer prompts you to choose an agent.
+    Enter `my-hermes` as the sandbox name, or press Enter to accept the suggested `hermes` name.
+    If you accept the suggested name, use `hermes` instead of `my-hermes` in the commands that follow.
+    Choose an inference provider and model, then provide its credential when prompted.
     For a first run, skip optional web search and messaging setup, then accept the suggested network policy tier.
   </Step>
 

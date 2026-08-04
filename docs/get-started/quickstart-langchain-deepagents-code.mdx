@@ -39,19 +39,19 @@ Review the [Prerequisites](prerequisites) before you begin.
 
 <Steps>
   <Step title="Install NemoClaw for Deep Agents">
-    Select Deep Agents, then run the hosted installer.
+    Run the hosted installer.
 
     ```bash
-    export NEMOCLAW_AGENT=langchain-deepagents-code
-    export NEMOCLAW_SANDBOX_NAME=my-deepagents
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
     ```
   </Step>
 
   <Step title="Complete Onboarding">
-    If the installer offers Express, you can accept it to use managed local inference for that platform.
-    Otherwise, choose an inference provider and model, then provide its credential when prompted.
-    The install command uses `my-deepagents` as the sandbox name.
+    If the installer offers Express, decline it to continue with interactive Deep Agents onboarding.
+    Select **LangChain Deep Agents Code** when the installer prompts you to choose an agent.
+    Enter `my-deepagents` as the sandbox name, or press Enter to accept the suggested `deepagents-code` name.
+    If you accept the suggested name, use `deepagents-code` instead of `my-deepagents` in the commands that follow.
+    Choose an inference provider and model, then provide its credential when prompted.
     Accept the suggested network policy tier for a first run.
   </Step>
 
