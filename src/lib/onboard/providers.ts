@@ -16,6 +16,11 @@ const {
 const openrouter = require("../inference/openrouter");
 const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
+const {
+  LLAMA_CPP_CREDENTIAL_ENV,
+  LLAMA_CPP_HOST_OPENAI_BASE_URL,
+  LLAMA_CPP_PROVIDER_NAME,
+} = require("../inference/llama-cpp/contract");
 const { readGatewayProviderMetadata } = require("./gateway-provider-metadata");
 
 // ── Constants ────────────────────────────────────────────────────
@@ -59,6 +64,7 @@ const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "gemini",
   "hermesProvider",
   "ollama",
+  "llama-cpp",
   "custom",
   "nim-local",
   "vllm",
@@ -69,7 +75,7 @@ const NON_INTERACTIVE_PROVIDER_KEYS = new Set([
   "start-windows-ollama",
 ]);
 const NON_INTERACTIVE_PROVIDER_VALID_VALUES =
-  "Valid values: build, openrouter, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
+  "Valid values: build, openrouter, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, llama-cpp, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama";
 const PROVIDER_KEY_ROUTE_VALUES = new Set(
   [
     "inference",
@@ -172,10 +178,25 @@ const REMOTE_PROVIDER_CONFIG = {
     defaultModel: "",
     skipVerify: true,
   },
+  "llama-cpp": {
+    label: "Local llama.cpp",
+    providerName: LLAMA_CPP_PROVIDER_NAME,
+    providerType: "openai",
+    credentialEnv: LLAMA_CPP_CREDENTIAL_ENV,
+    endpointUrl: LLAMA_CPP_HOST_OPENAI_BASE_URL,
+    helpUrl: null,
+    modelMode: "input",
+    defaultModel: "",
+    skipVerify: true,
+  },
 };
 
 // Providers that run on the host and need the local-inference policy preset.
 const LOCAL_INFERENCE_PROVIDERS = ["ollama-local", "vllm-local"];
+// Host-endpoint providers that need the declarative local-inference network policy.
+// Keep this separate from LOCAL_INFERENCE_PROVIDERS: llama.cpp is operator-owned,
+// credential-bearing, endpoint-bearing, and must never enter managed lifecycle paths.
+const LOCAL_INFERENCE_POLICY_PROVIDERS = [...LOCAL_INFERENCE_PROVIDERS, "llama-cpp-local"];
 
 // Re-exported alias matching the existing onboard.ts call sites. The canonical
 // definitions live in inference-config.ts so that getProviderSelectionConfig
@@ -204,6 +225,8 @@ function getProviderLabel(provider) {
       return "Local vLLM";
     case "ollama-local":
       return "Local Ollama";
+    case "llama-cpp-local":
+      return "Local llama.cpp";
     default:
       return provider;
   }
@@ -223,6 +246,8 @@ function getEffectiveProviderName(providerKey) {
       return "ollama-local";
     case "vllm":
       return "vllm-local";
+    case "llama-cpp":
+      return "llama-cpp-local";
     case "routed":
       return "nvidia-router";
     default:
@@ -567,6 +592,7 @@ module.exports = {
   GEMINI_ENDPOINT_URL,
   REMOTE_PROVIDER_CONFIG,
   LOCAL_INFERENCE_PROVIDERS,
+  LOCAL_INFERENCE_POLICY_PROVIDERS,
   OLLAMA_PROXY_CREDENTIAL_ENV,
   VLLM_LOCAL_CREDENTIAL_ENV,
   DISCORD_SNOWFLAKE_RE,

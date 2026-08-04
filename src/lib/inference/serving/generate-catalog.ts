@@ -15,8 +15,10 @@ import type {
 // Bootstrap only: valid while the catalog has no definitions. Production definitions must
 // inject populated registries; tracked by https://github.com/NVIDIA/NemoClaw/issues/8144.
 const EMPTY_REGISTRIES: ServingCatalogRegistries = {
+  receipts: new Set(),
   materializers: new Set(),
   lifecycles: new Set(),
+  readinessContracts: new Set(),
   readiness: new Map(),
 };
 

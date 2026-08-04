@@ -247,6 +247,10 @@ function cutFromPlan(
   ]);
 }
 
+function preflightFromPlan(fixture: Fixture, planPath: string): ReturnType<typeof spawnSync> {
+  return runScript(fixture.work, ["bash", cutScriptPath, "--plan", planPath, "--preflight-only"]);
+}
+
 function waitForLatest(fixture: Fixture, planPath: string): ReturnType<typeof spawnSync> {
   return runScript(fixture.work, [
     "bash",
@@ -458,6 +462,25 @@ describe("release-latest-tag.sh", () => {
     const planPath = path.join(fixture.root, "release", "plan.json");
     const { plan } = createPlan(fixture, planPath, releaseCommit);
 
+    const preflightResult = preflightFromPlan(fixture, planPath);
+
+    expect(preflightResult.status).toBe(0);
+    expect(preflightResult.stdout).toContain("signing preflight passed for v0.0.2");
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
+    expect(
+      run(fixture.work, ["git", "tag", "--list", "nemoclaw-release-signing-preflight-*"]),
+    ).toBe("");
+    expect(
+      run(fixture.work, [
+        "git",
+        "ls-remote",
+        "--tags",
+        "origin",
+        "v0.0.2",
+        "nemoclaw-release-signing-preflight-*",
+      ]),
+    ).toBe("");
+
     const cutResult = cutFromPlan(fixture, planPath, plan.confirmationPhrase);
 
     expect(cutResult.status).toBe(0);
@@ -488,6 +511,31 @@ describe("release-latest-tag.sh", () => {
       lkgPeeledCommitBefore: fixture.firstCommit,
       lkgPeeledCommitAfter: fixture.firstCommit,
     });
+  });
+
+  it("rejects signing preflight when the configured signer is unavailable", () => {
+    const fixture = createFixture();
+    pushTag(fixture, "v0.0.1", fixture.firstCommit);
+    const releaseCommit = commit(fixture, "planned release commit");
+    const planPath = path.join(fixture.root, "release", "plan.json");
+    createPlan(fixture, planPath, releaseCommit);
+    run(fixture.work, ["git", "config", "gpg.format", "openpgp"]);
+    run(fixture.work, [
+      "git",
+      "config",
+      "gpg.program",
+      path.join(fixture.root, "missing-release-signer"),
+    ]);
+    run(fixture.work, ["git", "config", "user.signingkey", "missing-release-key"]);
+
+    const preflightResult = preflightFromPlan(fixture, planPath);
+
+    expect(preflightResult.status).not.toBe(0);
+    expect(preflightResult.stderr).toContain("missing-release-signer");
+    expect(localTagObject(fixture, "v0.0.2")).toBe("");
+    expect(
+      run(fixture.work, ["git", "tag", "--list", "nemoclaw-release-signing-preflight-*"]),
+    ).toBe("");
   });
 
   it("rejects a distinct latest tag object even when it peels to the release commit", () => {
