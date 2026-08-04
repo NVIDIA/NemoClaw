@@ -24,6 +24,12 @@ import {
   SUPPORTED_AGENTS,
 } from "./docker-test-fixture";
 
+function expectEventBefore(events: readonly string[], before: string, after: string): void {
+  expect(events).toContain(before);
+  expect(events).toContain(after);
+  expect(events.indexOf(before)).toBeLessThan(events.indexOf(after));
+}
+
 describe("Docker managed bootstrap adapter", () => {
   it("publishes durable commit authority before deleting the rollback backup after lost acknowledgements", async () => {
     const fake = fixture({
@@ -35,6 +41,7 @@ describe("Docker managed bootstrap adapter", () => {
         "container:stop",
         "journal:create",
         "journal:cutover",
+        "journal:completion",
         "journal:remove",
         "journal:shared-state-committed",
       ],
@@ -71,12 +78,8 @@ describe("Docker managed bootstrap adapter", () => {
       durablePreparation: reorderedDurable,
     });
     const order = fake.events;
-    expect(order).toContain("authority:recorded");
-    expect(order).toContain("journal:staged");
-    expect(order.indexOf("journal:staged")).toBeGreaterThan(order.indexOf("authority:recorded"));
-    expect(order).toContain("journal:cutover");
-    expect(order).toContain(`stop:${OLD_ID}`);
-    expect(order.indexOf("journal:cutover")).toBeLessThan(order.indexOf(`stop:${OLD_ID}`));
+    expectEventBefore(order, "authority:recorded", "journal:staged");
+    expectEventBefore(order, "journal:cutover", `stop:${OLD_ID}`);
     expect(fake.journal).toMatchObject({
       phase: "cutover",
       originalRuntimeId: OLD_ID,
@@ -124,11 +127,8 @@ describe("Docker managed bootstrap adapter", () => {
       completion: reorderedCommitReceipt,
     });
     expect(finalized).toMatchObject({ outcome: "committed" });
-    expect(fake.events).toContain("journal:shared-state-committed");
-    expect(fake.events).toContain(`rm:${OLD_ID}`);
-    expect(fake.events.indexOf("journal:shared-state-committed")).toBeLessThan(
-      fake.events.indexOf(`rm:${OLD_ID}`),
-    );
+    expectEventBefore(fake.events, "journal:shared-state-committed", `rm:${OLD_ID}`);
+    expectEventBefore(fake.events, "finalization:committed", "journal:removed");
     expect(fake.journal).toBeNull();
     expect(fake.finalization).toMatchObject({ phase: "committed", commitReceipt });
     expect(fake.sharedState).toBe("none");
@@ -255,12 +255,10 @@ describe("Docker managed bootstrap adapter", () => {
         completion: null,
       }),
     ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
-    expect(fake.events).toContain("journal:rollback-authorized");
-    expect(fake.events).toContain(`rm:${NEW_ID}`);
-    expect(fake.events.indexOf("journal:rollback-authorized")).toBeLessThan(
-      fake.events.indexOf(`rm:${NEW_ID}`),
-    );
-    expect(fake.journal).toBeNull();
+    expectEventBefore(fake.events, "journal:rollback-authorized", `rm:${NEW_ID}`);
+    expectEventBefore(fake.events, `rm:${NEW_ID}`, "journal:owner-cleanup-required");
+    expect(fake.finalization).toBeNull();
+    expect(fake.journal?.phase).toBe("owner-cleanup-required");
     expect(fake.replacement).toBeNull();
     expect(fake.original).not.toBeNull();
     expect(fake.original?.Name).toBe("/openshell-alpha");
@@ -302,12 +300,10 @@ describe("Docker managed bootstrap adapter", () => {
         completion: null,
       }),
     ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
-    expect(fake.events).toContain("journal:rollback-authorized");
-    expect(fake.events).toContain(`rm:${NEW_ID}`);
-    expect(fake.events.indexOf("journal:rollback-authorized")).toBeLessThan(
-      fake.events.indexOf(`rm:${NEW_ID}`),
-    );
-    expect(fake.journal).toBeNull();
+    expectEventBefore(fake.events, "journal:rollback-authorized", `rm:${NEW_ID}`);
+    expectEventBefore(fake.events, `rm:${NEW_ID}`, "journal:owner-cleanup-required");
+    expect(fake.finalization).toBeNull();
+    expect(fake.journal?.phase).toBe("owner-cleanup-required");
   });
 
   it("fences rollback when image-owned shared state is already committed", async () => {
@@ -411,8 +407,12 @@ describe("Docker managed bootstrap adapter", () => {
         completion: null,
       }),
     ).rejects.toBeInstanceOf(ManagedBootstrapOwnerCleanupRequiredError);
-    expect(fake.journal).toBeNull();
+    expect(fake.journal?.phase).toBe("owner-cleanup-required");
+    expect(fake.finalization).toBeNull();
     expect(fake.replacement).toBeNull();
+    expect(fake.original?.State?.Running).toBe(false);
+    expectEventBefore(fake.events, "shared:rollback", `rm:${NEW_ID}`);
+    expectEventBefore(fake.events, `rm:${NEW_ID}`, "journal:owner-cleanup-required");
     expect(
       vi.mocked(fake.deps.dockerRun!).mock.calls.some(([args]) => {
         const agentIndex = args.indexOf("--agent");

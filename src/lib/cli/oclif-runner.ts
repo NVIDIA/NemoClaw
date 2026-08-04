@@ -25,6 +25,14 @@ function getOclifExitCode(error: unknown): number | null {
   return typeof oclif?.exit === "number" ? oclif.exit : null;
 }
 
+function hasOclifParseErrorShape(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  if (typeof getOclifExitCode(error) !== "number") return false;
+  return (
+    Object.hasOwn(error, "parse") && typeof (error as { showHelp?: unknown }).showHelp === "boolean"
+  );
+}
+
 function isOclifParseError(error: unknown): boolean {
   const name =
     error && typeof error === "object"
@@ -32,6 +40,7 @@ function isOclifParseError(error: unknown): boolean {
       : "";
   const message = error instanceof Error ? error.message : "";
   return (
+    hasOclifParseErrorShape(error) ||
     name === "NonExistentFlagsError" ||
     name === "RequiredArgsError" ||
     name === "UnexpectedArgsError" ||

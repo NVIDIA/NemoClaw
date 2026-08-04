@@ -576,7 +576,6 @@ describe("deterministic PR risk plan", () => {
     "tools/advisors/io.mts",
     "tools/advisors/risk-plan.mts",
     "tools/e2e/pr-e2e-gate.mts",
-    "tools/e2e/pr-e2e-required.mts",
     "tools/e2e/risk-signal.ts",
     "tools/e2e/private-file.mts",
     "tools/e2e/workflow-plan.mts",

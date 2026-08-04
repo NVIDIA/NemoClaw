@@ -62,6 +62,10 @@ import {
   setupGpuFlowMocks,
   VERIFIED_GPU_PROOF as VERIFIED_PROOF,
 } from "./__test-helpers__/sandbox-gpu-create-flow";
+import {
+  MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+  type ManagedBootstrapRecoveryReport,
+} from "./managed-bootstrap/adapter";
 import type {
   ManagedBootstrapRuntimeCreateLifecycleInput,
   ManagedBootstrapRuntimePatch,
@@ -166,7 +170,7 @@ beforeEach(() => setupGpuFlowMocks(mocks));
 afterEach(resetGpuFlowMocks);
 
 describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
-  it("runs an MXC-style bundle without a Docker branch in central orchestration", async () => {
+  it("recovers before an MXC-style create without a Docker branch in central orchestration", async () => {
     const input = createInput();
     input.sandboxGpuConfig = {
       mode: "0",
@@ -201,11 +205,40 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     input.sandboxEnv = launch.sandboxEnv;
     input.sandboxStartupCommand = launch.sandboxStartupCommand;
     const patch = createPatch() as unknown as ManagedBootstrapRuntimePatch;
+    const recoveryReport = (
+      sandboxName: string | null,
+      detail = "opaque MXC recovery detail",
+    ): ManagedBootstrapRecoveryReport =>
+      Object.freeze({
+        receipts: Object.freeze([]),
+        failures: Object.freeze([
+          Object.freeze({
+            schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+            providerId: "mxc",
+            sourcePhase: "provider-owned-cleanup",
+            sandbox:
+              sandboxName === null
+                ? null
+                : Object.freeze({
+                    sandboxName,
+                    sandboxId: `mxc-${sandboxName}`,
+                    driverId: "mxc",
+                  }),
+            bootstrapIdentity: "e".repeat(64),
+            code: "mxc-recovery-retry",
+            retryable: true,
+            detail,
+          }),
+        ]),
+      });
+    const recoverUnfinished = vi.fn(async () => recoveryReport("bravo"));
+    const prepareNetwork = vi.fn(async () => undefined);
     const createLifecycle = vi.fn(
       (lifecycleInput: ManagedBootstrapRuntimeCreateLifecycleInput) => ({
         launchArgv: ["mxc-launch", ...lifecycleInput.launchArgv.slice(1)],
         patch,
-        prepareNetwork: vi.fn(async () => undefined),
+        recoverUnfinished,
+        prepareNetwork,
         runCreate: async <T>(
           start: (held: {
             readonly heldWorkloadArgv: readonly string[];
@@ -284,6 +317,15 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
     vi.mocked(deps.runCaptureOpenshell).mockImplementation((args) =>
       args[1] === "get" ? "ID: mxc-alpha\n" : "alpha Ready",
     );
+    recoverUnfinished.mockRejectedValueOnce(new Error("unfinished recovery failed"));
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow(
+      "unfinished recovery failed",
+    );
+    expect(prepareNetwork).not.toHaveBeenCalled();
+    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
+    recoverUnfinished.mockClear();
+    createLifecycle.mockClear();
 
     const result = await runSandboxGpuCreateFlow(input, deps);
 
@@ -297,10 +339,38 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
       input.sandboxEnv,
       expect.anything(),
     );
+    expect(recoverUnfinished.mock.invocationCallOrder[0]).toBeLessThan(
+      prepareNetwork.mock.invocationCallOrder[0],
+    );
+    expect(prepareNetwork.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.streamSandboxCreate.mock.invocationCallOrder[0],
+    );
     expect(mocks.createDockerGpuSandboxCreatePatch).not.toHaveBeenCalled();
     expect(mocks.queryOpenShellDockerSandboxContainers).not.toHaveBeenCalled();
     expect(mocks.queryOpenShellDockerSandboxRuntimeSnapshot).not.toHaveBeenCalled();
     expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
+
+    expect(vi.mocked(console.warn).mock.calls.flat().join("\n")).toContain(
+      "unrelated sandbox 'bravo'",
+    );
+    const recoverySecret = "opaque-recovery-token";
+    recoverUnfinished.mockResolvedValueOnce(
+      recoveryReport("alpha", `Authorization: Bearer ${recoverySecret}`),
+    );
+    prepareNetwork.mockClear();
+    mocks.streamSandboxCreate.mockClear();
+    mockExit();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).rejects.toThrow("process.exit:1");
+    expect(prepareNetwork).not.toHaveBeenCalled();
+    expect(mocks.streamSandboxCreate).not.toHaveBeenCalled();
+    expect(errorOutput()).toContain("recovery stopped before sandbox 'alpha' was created");
+    expect(errorOutput()).toContain("Transaction");
+    expect(errorOutput()).toContain("durable sandbox ID mxc-alpha");
+    expect(errorOutput()).toContain("OpenShell's sandbox get command");
+    expect(errorOutput()).toContain("never delete a runtime by mutable sandbox name");
+    expect(errorOutput()).toContain("Authorization: Bearer <REDACTED>");
+    expect(errorOutput()).not.toContain(recoverySecret);
   });
 });
 

@@ -313,29 +313,40 @@ Restore the baseline entry before applying a preset that intentionally owns the 
 
 To recover from baseline drift, first check whether the release changed the entry's content or removed it entirely (`$$nemoclaw <sandbox-name> policy explain` or `doctor` reports which).
 
-If the entry still exists with different content, clear the stale record, review the current scope, and explicitly approve it again only if you still accept the impact:
+If the entry still exists with different content, `policy restore <key> --force` restores the current baseline entry and clears the stale exclusion record.
+This allows the entry's listed egress before you can exclude it again.
+Preview the restore and exclusion scopes before applying either change:
 
 ```bash
-$$nemoclaw <sandbox-name> policy restore <key>
+$$nemoclaw <sandbox-name> policy restore <key> --dry-run
+$$nemoclaw <sandbox-name> policy restore <key> --force
 $$nemoclaw <sandbox-name> policy exclude <key> --dry-run
 $$nemoclaw <sandbox-name> policy exclude <key> --force
 ```
 
-If the release removed the entry entirely, `policy exclude <key>` fails with "Unknown baseline entry" because there is nothing left to exclude.
-Clear the stale record instead:
+If the release removed the entry entirely, `policy exclude <key>` fails with `Unknown baseline entry '<key>'.` because there is nothing left to exclude.
+Preview the stale-record cleanup, then clear the record without changing live egress:
 
 ```bash
-$$nemoclaw <sandbox-name> policy restore <key>
+$$nemoclaw <sandbox-name> policy restore <key> --dry-run
+$$nemoclaw <sandbox-name> policy restore <key> --force
 ```
 
 List active exclusions with `policy list`.
 `policy explain`, `status`, `doctor`, and snapshot and rebuild summaries also disclose active exclusions and their reduced-support impact.
 Status and doctor compare each approval with the active agent baseline and verify that the excluded key is absent from the live OpenShell policy.
 An unreadable live policy is unverified, while a live policy that contains the key is a mismatch that requires repair before you rely on the exclusion.
-Restore an entry against the current baseline and clear its exclusion:
+When the current baseline still defines the entry, `policy restore <key> --force` allows the entry's listed egress again and clears its exclusion.
+When the baseline no longer defines the entry, the command clears only the stale exclusion record.
+Preview the applicable result before you apply it:
 
 ```bash
-$$nemoclaw <sandbox-name> policy restore <key>
+$$nemoclaw <sandbox-name> policy restore <key> --dry-run
+$$nemoclaw <sandbox-name> policy restore <key> --force
 ```
+
+Both restore paths require acknowledgement unless you use `--dry-run`.
+Interactive runs prompt for confirmation when no acknowledgement flag is present.
+Non-interactive runs require `--force`, `--yes`, or `-y`.
 
 Excluding a baseline entry leaves agent features that depend on it unsupported for that sandbox.

@@ -298,9 +298,9 @@ It removes unsafe symlinks, special entries, and protected-root names that are n
 For protected regular files, lockdown publishes a fresh inode, severing hardlinks while preserving file content, read/execute mode, timestamps, and supported extended attributes; this also revokes write authority held through a descriptor opened before `shields up`.
 The OpenClaw gateway (a member of the `sandbox` group) keeps read access to plugin and agent code; the sandbox user can no longer write them.
 The same workflow also locks the secret-bearing `credentials`, `identity`, and `pairing` directories.
-The guard sets each confidentiality root to `root:sandbox 710`.
+The guard sets each confidentiality root to `root:sandbox 0710`, including a non-empty `credentials` directory.
 It sets every nested directory and file to `root:root` and removes all group and world permission bits.
-The sandbox user and gateway cannot list a confidentiality root, traverse its nested directories, or read its protected files.
+The sandbox group cannot list, create, or remove entries in a confidentiality root, and neither the sandbox user nor gateway can read stored secrets.
 They can inspect metadata for a direct child only when they already know its name.
 Probing a missing direct child, such as the legacy `credentials/oauth.json`, returns `ENOENT` instead of `EACCES`.
 Restoring the mutable-default posture returns those directories to `sandbox:sandbox 2770`.

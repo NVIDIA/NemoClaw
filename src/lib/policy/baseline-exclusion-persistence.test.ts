@@ -380,6 +380,26 @@ describe("restoreBaselineEntry persistence boundary (#7178)", () => {
     for (const mock of Object.values(mocks)) mock.mockReset();
   });
 
+  it.each([
+    ["changes", "nous_research", "stale-preview-digest", [RECORDED]],
+    ["appears", "nous_research", null, [RECORDED]],
+    ["disappears", "legacy_entry", LIVE_DIGEST, [{ ...RECORDED, key: "legacy_entry" }]],
+  ] as const)("does not mutate when the baseline entry %s after the operator preview", (_change, key, expectedTargetDigest, exclusions) => {
+    mocks.getBaselineExclusions.mockReturnValue([...exclusions]);
+
+    expect(restoreBaselineEntry("alpha", key, { nonFatal: true, expectedTargetDigest })).toBe(
+      false,
+    );
+
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.beginBaselineExclusionTransition).not.toHaveBeenCalled();
+    expect(mocks.clearBaselineExclusionTransition).not.toHaveBeenCalled();
+    expect(mocks.commitBaselineExclusionTransition).not.toHaveBeenCalled();
+    expect(mocks.removeBaselineExclusion).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("changed after preview"));
+  });
+
   it("does not widen live egress when its durable transaction cannot be recorded", () => {
     mocks.beginBaselineExclusionTransition.mockReturnValue(false);
 
@@ -548,8 +568,12 @@ describe("restoreBaselineEntry persistence boundary (#7178)", () => {
 
     expect(restoreBaselineEntry("alpha", "nous_research", { nonFatal: true })).toBe(false);
 
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.beginBaselineExclusionTransition).not.toHaveBeenCalled();
     expect(mocks.commitBaselineExclusionTransition).not.toHaveBeenCalled();
     expect(mocks.clearBaselineExclusionTransition).not.toHaveBeenCalled();
+    expect(mocks.removeBaselineExclusion).not.toHaveBeenCalled();
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("current release baseline for 'nous_research' is unreadable"),
     );

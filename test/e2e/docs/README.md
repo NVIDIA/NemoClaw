@@ -278,26 +278,24 @@ test/e2e/
   ledger. The advisor uses it as recommendation context, while the controller
   applies it independently without model output.
 
-- `.github/workflows/pr-e2e-gate.yaml` reserves the internal
-  `E2E / PR Gate Coordination` check for every PR SHA, including forks,
-  before `CI / Pull Request` completes. Its default-branch
-  `pull_request_target` path also publishes the native GitHub Actions job named
-  `E2E / PR Gate`. The read-only observer runs from `github.workflow_sha`,
-  validates the live PR head and base, waits for the matching trusted
-  coordination identity, and mirrors the terminal verdict into the required
-  job. Its summary is static, while the job log includes the validated trusted
-  controller-run link. Authorization states remain pending while the maintainer
-  decision is recorded. During rollout, the observer also accepts the former
-  `E2E / PR Gate` custom-check name for the same PR/base SHA identity. The
-  controller builds the risk plan from GitHub's complete file list. Internal
-  revisions normally dispatch every selected job and verify each expected
-  `risk-signal.json`; this remains automatic when their `e2e-control-plane`
-  matches are drawn only from the trusted controller workflow and scripts.
-  Other or mixed internal
-  control-plane revisions require a maintainer-authorized run for the PR SHA; only
-  its verified evidence can pass coordination. Risky forks require protected
-  approval before the trusted workflow runs their exact repository and SHA with
-  E2E credentials. See [NemoClaw E2E CI](../README.md) for the full lifecycle.
+- `.github/workflows/pr-e2e-gate.yaml` reserves the internal custom check named
+  `E2E / PR Gate` on every exact PR head, including forks, before
+  `CI / Pull Request` completes. Its default-branch `pull_request_target` path
+  validates the live PR head and base and seeds the in-progress check. The
+  trusted completed-CI or authorized-dispatch path validates the exact diff and
+  records the terminal verdict directly in that same required check. There is
+  no separate polling Actions job. The coordinator has a 330-minute job budget
+  and allows a selected E2E child 140 minutes. During rollout, maintainer gate
+  inspection accepts the former `E2E / PR Gate Coordination` custom-check name
+  only when the current `E2E / PR Gate` check is absent. The exact-diff
+  reservation identity includes both the PR head and base SHAs. After eligible
+  PR CI passes, every internal revision with selected jobs or targets dispatches
+  its plan and verifies each expected `risk-signal.json`. This behavior includes
+  all internal E2E control-plane revisions. A fork revision with selected
+  credential-bearing work remains pending until a repository maintainer or
+  administrator launches the `approve-e2e` workflow operation for the exact
+  head and base SHAs. See
+  [NemoClaw E2E CI](../README.md) for the full lifecycle.
 
 - `.github/workflows/e2e.yaml` runs selected or all supported
   live E2E targets and uploads an explicit artifact allowlist with
@@ -316,7 +314,7 @@ test/e2e/
   These per-target timing summaries are artifact evidence only.
   The Slack and GitHub scorecard timing comparison remains scoped to the
   dedicated `cloud-onboard` artifact.
-  PR E2E dispatches authenticate the controller-owned coordination check before
+  PR E2E dispatches authenticate the controller-owned required check before
   checking out the PR revision, then validate the PR SHA and controller
   metadata before preparation. Direct manual dispatches cannot reuse the PR
   input shape to run fork code. Selected runs attach
