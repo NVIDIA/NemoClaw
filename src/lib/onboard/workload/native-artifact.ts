@@ -45,7 +45,7 @@ export interface NativeArtifactWorkloadReceiptV1 {
     };
     readonly arguments: readonly string[];
     readonly workingDirectory: string;
-    /** Names only. Credential values and literal environment assignments are not receipt data. */
+    /** Environment-variable names only; literal assignments are not accepted. */
     readonly environmentNames: readonly string[];
   };
   readonly startupProfileContractVersion: typeof MANAGED_STARTUP_PROFILE_SCHEMA_VERSION;

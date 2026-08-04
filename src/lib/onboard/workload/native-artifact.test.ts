@@ -61,7 +61,7 @@ function executable(value: Record<string, unknown>): Record<string, unknown> {
 }
 
 describe("native OpenClaw artifact workload contract", () => {
-  it("accepts a Windows artifact receipt with fixed digests and credential-free launch data (#8178)", () => {
+  it("accepts exact artifact identity and validated launch intent (#8178)", () => {
     const expected = receipt();
     expect(parseNativeArtifactWorkloadReceiptV1(expected)).toEqual(expected);
   });
