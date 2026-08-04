@@ -43,10 +43,14 @@ export const RUNTIME_IDENTITY_OBO_E2E_OPTIONS = {
   },
 } as const;
 
-export async function runRuntimeIdentityOboE2EScenario(
-  context: RuntimeIdentityOboContext,
-): Promise<void> {
-  const { artifacts, cleanup, host, progress, sandbox, skip } = context;
+export async function runRuntimeIdentityOboE2EScenario({
+  artifacts,
+  cleanup,
+  host,
+  progress,
+  sandbox,
+  skip,
+}: RuntimeIdentityOboContext): Promise<void> {
   const artifactPrefix = "tc-inf-14";
   await requireLivePrerequisites(host, skip);
 
