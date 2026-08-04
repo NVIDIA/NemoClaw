@@ -825,7 +825,9 @@ describe("runSandboxSnapshot restore: gateway pairing on a freshly created desti
       provider: "nvidia-nim",
       model: "nvidia/model-a",
     } as f.SandboxRecord;
-    f.getSandboxMock.mockImplementation((name) => (name === "alpha" ? alphaEntry : registeredClone));
+    f.getSandboxMock.mockImplementation((name) =>
+      name === "alpha" ? alphaEntry : registeredClone,
+    );
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
