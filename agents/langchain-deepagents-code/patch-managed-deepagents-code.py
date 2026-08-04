@@ -796,82 +796,86 @@ import time as _nemoclaw_time
 # Checkpoint-text classifiers (#8121). Every entry maps a persisted `__error__`
 # row to a fixed (error_class, category, retryable) triple; no substring of the
 # matched row is ever emitted, so a credential inside the persisted text cannot
-# reach the log line or the console. Patterns stay structural (status code plus
-# an adjacent status word, or an exception/status token) so an ordinary model
-# response quoted inside an error cannot be misattributed to a transport or
-# authorization failure. Order is most-specific first; the first match wins.
+# reach the log line or the console.
+#
+# Only structural evidence classifies: an exception or gRPC/HTTP status *name*,
+# or a named status *field* carrying a code. Prose is deliberately excluded,
+# because a persisted row embeds model output and tool results — classifying on
+# words such as "timeout" or "connection refused" would let quoted tool text
+# ("tool output: timeout") produce a confident transport verdict for an
+# unrelated failure. A row with no structural indicator stays unclassified and
+# falls through to the exception-type fallback, then to `unknown`.
+# Order is most-specific first; the first match wins.
 _NEMOCLAW_PERSISTED_ERROR_CLASSIFIERS = (
     (
         # `ResourceExhausted` is the provider's own status name, so the bare
         # token is specific enough; #7415's longer "Worker local total request
         # limit reached (n/m)" wording is one message under that status and must
         # not be required, or a reworded capacity error falls back to unknown.
-        _nemoclaw_re.compile(
-            r"\bResourceExhausted\b",
-            _nemoclaw_re.IGNORECASE,
-        ),
+        _nemoclaw_re.compile(r"\bResourceExhausted\b"),
         ("ResourceExhausted", "upstream_provider_capacity", "true"),
     ),
     (
-        _nemoclaw_re.compile(
-            r"""\b(?:RateLimitError|TooManyRequests)\b
-                |\b429\b\s*(?:too\s+many|rate)
-                |\brate[_\s-]?limit(?:ed|_exceeded)?\b""",
-            _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
-        ),
+        _nemoclaw_re.compile(r"\b(?:RateLimitError|TooManyRequests)\b"),
         ("RateLimited", "rate_limited", "true"),
     ),
     (
         _nemoclaw_re.compile(
-            r"""\b(?:AuthenticationError|PermissionDeniedError|Unauthenticated
-                |PermissionDenied)\b
-                |\b40[13]\b\s*(?:unauthorized|forbidden)
-                |\b(?:unauthorized|forbidden|invalid\s+api\s+key)\b""",
-            _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
+            r"""\b(?:AuthenticationError|PermissionDeniedError|PermissionDenied
+                |Unauthenticated)\b""",
+            _nemoclaw_re.VERBOSE,
         ),
         ("Unauthorized", "authorization_rejected", "false"),
     ),
     (
-        _nemoclaw_re.compile(
-            r"""\b(?:NotFoundError|model_not_found)\b
-                |\b404\b\s*not\s+found
-                |\bmodel\b[^\n]{0,80}?\bdoes\s+not\s+exist\b""",
-            _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
-        ),
+        _nemoclaw_re.compile(r"\b(?:NotFoundError|ModelNotFoundError|model_not_found)\b"),
         ("NotFound", "model_or_route_not_found", "false"),
     ),
     (
         _nemoclaw_re.compile(
             r"""\b(?:APITimeoutError|DeadlineExceeded|ReadTimeout|ConnectTimeout
-                |TimeoutError)\b
-                |\b(?:timed\s+out|timeout)\b""",
-            _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
+                |TimeoutError)\b""",
+            _nemoclaw_re.VERBOSE,
         ),
         ("Timeout", "request_timeout", "true"),
     ),
     (
         _nemoclaw_re.compile(
             r"""\b(?:APIConnectionError|ClientConnectorError|ProxyError|SSLError
-                |ConnectionRefusedError|ConnectionResetError)\b
-                |\bconnection\s+(?:refused|reset|error|aborted)\b
-                |\b(?:getaddrinfo|name\s+or\s+service\s+not\s+known
-                    |temporary\s+failure\s+in\s+name\s+resolution)\b
-                |\b(?:certificate\s+verify\s+failed|tls\s+handshake)\b""",
-            _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
+                |SSLCertVerificationError|ConnectionRefusedError
+                |ConnectionResetError)\b""",
+            _nemoclaw_re.VERBOSE,
         ),
         ("Unavailable", "route_unreachable", "true"),
     ),
     (
-        _nemoclaw_re.compile(
-            r"""\b(?:InternalServerError|ServiceUnavailable|BadGateway)\b
-                |\b5(?:00|02|03|04)\b\s*(?:internal|bad\s+gateway
-                    |service\s+unavailable|gateway\s+timeout)
-                |\ban\s+internal\s+error\s+occurred\b""",
-            _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
-        ),
+        _nemoclaw_re.compile(r"\b(?:InternalServerError|ServiceUnavailable|BadGateway)\b"),
         ("InternalServerError", "remote_server_error", "true"),
     ),
 )
+
+# Status codes only count when they appear in a named status field, never as a
+# bare number that model or tool text could contain. Names are matched
+# case-sensitively above and here where they are class names; the field name
+# itself is matched case-insensitively because serializers disagree on case.
+_NEMOCLAW_STATUS_CODE_FIELD = _nemoclaw_re.compile(
+    r"""["']?\b(?:http_status|http_status_code|status_code|statusCode|status)\b["']?
+            \s*[:=]\s*["']?(\d{3})\b
+        |\bHTTP(?:/\d(?:\.\d)?)?\s+(\d{3})\b""",
+    _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
+)
+
+_NEMOCLAW_STATUS_CODE_CLASSIFIERS = {
+    "401": ("Unauthorized", "authorization_rejected", "false"),
+    "403": ("Unauthorized", "authorization_rejected", "false"),
+    "404": ("NotFound", "model_or_route_not_found", "false"),
+    "408": ("Timeout", "request_timeout", "true"),
+    "429": ("RateLimited", "rate_limited", "true"),
+    "500": ("InternalServerError", "remote_server_error", "true"),
+    "502": ("Unavailable", "route_unreachable", "true"),
+    "503": ("Unavailable", "route_unreachable", "true"),
+    "504": ("Timeout", "request_timeout", "true"),
+}
 
 # Exception-type fallback (#8121). When no checkpoint row explains the failure,
 # classify from the raised exception's type name only — never from its message,
@@ -1197,6 +1201,18 @@ async def _nemoclaw_run_json_non_interactive(timeout_seconds, *args, **kwargs):
     return _nemoclaw_write_json_envelope(run, status, exit_code)
 
 
+def _nemoclaw_classify_error_text(text):
+    """Classify one persisted row from structural evidence only (#8121)."""
+    for pattern, classification in _NEMOCLAW_PERSISTED_ERROR_CLASSIFIERS:
+        if pattern.search(text):
+            return classification
+    match = _NEMOCLAW_STATUS_CODE_FIELD.search(text)
+    if match:
+        code = match.group(1) or match.group(2)
+        return _NEMOCLAW_STATUS_CODE_CLASSIFIERS.get(code)
+    return None
+
+
 def _nemoclaw_classify_persisted_error(thread_id):
     """Classify the observed upstream error persisted for one managed thread."""
     if (
@@ -1223,9 +1239,9 @@ def _nemoclaw_classify_persisted_error(thread_id):
                     if isinstance(value, str)
                     else value.decode("utf-8", errors="replace")
                 )
-                for pattern, classification in _NEMOCLAW_PERSISTED_ERROR_CLASSIFIERS:
-                    if pattern.search(text):
-                        return classification
+                classification = _nemoclaw_classify_error_text(text)
+                if classification:
+                    return classification
         finally:
             conn.close()
     except Exception:

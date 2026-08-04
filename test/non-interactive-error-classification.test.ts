@@ -149,12 +149,23 @@ os.unlink(db_path)
 
   it("classifies transport and remote failures without claiming provider capacity (#8121)", () => {
     const cases = [
-      ["APIError('MCP connection refused')", "Unavailable", "route_unreachable", "true"],
-      ["APIError('gateway timeout')", "Timeout", "request_timeout", "true"],
-      ["APIError('401 Unauthorized')", "Unauthorized", "authorization_rejected", "false"],
-      ["APIError('429 too many requests')", "RateLimited", "rate_limited", "true"],
       [
-        "{'error': 'APIError', 'message': 'An internal error occurred'}",
+        "APIConnectionError('connect to inference.local')",
+        "Unavailable",
+        "route_unreachable",
+        "true",
+      ],
+      ["APITimeoutError('request exceeded budget')", "Timeout", "request_timeout", "true"],
+      [
+        "AuthenticationError('rejected at the managed route')",
+        "Unauthorized",
+        "authorization_rejected",
+        "false",
+      ],
+      ["{'error': 'upstream', 'status_code': 429}", "RateLimited", "rate_limited", "true"],
+      ["HTTP 503 from the managed route", "Unavailable", "route_unreachable", "true"],
+      [
+        "InternalServerError('an internal error occurred')",
         "InternalServerError",
         "remote_server_error",
         "true",
@@ -185,6 +196,34 @@ os.unlink(db_path)
     expect(result.status).toBe(0);
     expect(`${result.stdout}\n${result.stderr}`).not.toContain("upstream_provider_capacity");
     expect(result.stderr).toContain("correlation_id=thread-policy");
+  });
+
+  it("does not classify prose quoted from model or tool output (#8121)", () => {
+    // Each row carries a classifier word only inside quoted content, with no
+    // exception name and no named status field, so the checkpoint text must
+    // stay unclassified and the exception-type fallback must decide instead.
+    const prose = [
+      "APIError('tool output: timeout')",
+      "APIError('the model replied: connection refused')",
+      "APIError('assistant said the request was unauthorized')",
+      "APIError('tool result contained 429 items')",
+      "APIError('shell output: rate limit documentation')",
+    ];
+
+    for (const persisted of prose) {
+      const result = runPatchedNonInteractive(
+        persistedErrorDriver({ "thread-prose": persisted }, "thread-prose"),
+      );
+
+      expect(result.status).toBe(0);
+      // The RemoteException fallback classification is the only verdict here:
+      // no transport, timeout, authorization, or rate-limit claim is made.
+      expect(result.stderr).toContain(
+        "error_class=RemoteException category=agent_remote_failure retryable=false " +
+          "correlation_id=thread-prose",
+      );
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain(persisted);
+    }
   });
 
   it("classifies the raised exception type when no checkpoint row explains it (#8121)", () => {
@@ -278,6 +317,11 @@ os.unlink(db_path)
       "error_class=unknown category=unknown retryable=false correlation_id=thread-unlisted",
     );
     expect(result.stdout).toContain("Unexpected error (correlation_id=thread-unlisted)");
+    // The observable contract is that the class name itself never reaches the
+    // output, not merely that the planted token does not.
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain(
+      "SomeVendorSpecificFailure_runtime_secret",
+    );
     expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
   });
 });
