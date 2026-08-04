@@ -7,10 +7,13 @@ import { providerNameToOptionKey } from "./provider-recovery";
 import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-route-handoff";
 
 interface ProviderDiscoveryDeps {
-  remoteProviderConfig: Record<string, { providerName: string; defaultModel?: string }>;
+  remoteProviderConfig: Record<string, { providerName: string }>;
   isNonInteractive(): boolean;
   getNonInteractiveProvider(): string | null;
-  getNonInteractiveModel(providerKey: string): string | null;
+  getNonInteractiveModel(
+    providerKey: string,
+    options?: { allowProviderModelFallback?: boolean },
+  ): string | null;
   readRecordedProvider(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
@@ -106,30 +109,24 @@ export function prepareProviderDiscovery(options: {
   } = options;
   const nonInteractive = deps.isNonInteractive();
   const requestedProvider = deps.getNonInteractiveProvider();
-  let requestedModel = nonInteractive
-    ? deps.getNonInteractiveModel(requestedProvider || "build")
-    : null;
-  // When the user switches to a different provider via NEMOCLAW_PROVIDER, do
-  // not carry the previous provider's default model into the new provider's
-  // endpoint validation. If NEMOCLAW_MODEL matches the old provider's default
-  // exactly, it was almost certainly set for the old provider and has no
-  // meaning for the new one — reset it so the new provider uses its own
-  // default instead of failing validation with a cross-provider model ID
-  // (#8135).
-  if (requestedModel && requestedProvider) {
+  let providerChanged = false;
+  if (nonInteractive && requestedProvider) {
     const recordedProviderName = deps.readRecordedProvider(sandboxName, recoverySessionId);
     const recordedProviderKey = providerNameToOptionKey(
       deps.remoteProviderConfig,
       recordedProviderName,
       { hasNimContainer: false },
     );
-    if (recordedProviderKey && recordedProviderKey !== requestedProvider) {
-      const oldConfig = deps.remoteProviderConfig[recordedProviderKey];
-      if (oldConfig?.defaultModel && requestedModel === oldConfig.defaultModel) {
-        requestedModel = null;
-      }
-    }
+    providerChanged = Boolean(recordedProviderKey && recordedProviderKey !== requestedProvider);
   }
+  // NEMOCLAW_PROVIDER_MODEL is a provider-specific compatibility fallback.
+  // Do not carry it across a provider switch. NEMOCLAW_MODEL remains explicit
+  // input for the current run and keeps precedence in getNonInteractiveModel.
+  const requestedModel = nonInteractive
+    ? deps.getNonInteractiveModel(requestedProvider || "build", {
+        allowProviderModelFallback: !providerChanged,
+      })
+    : null;
   const recoveredRegistryRoute =
     rebuildRegistryInferenceRoute?.sandboxName === sandboxName &&
     rebuildRegistryInferenceRoute.route.source === "registry"

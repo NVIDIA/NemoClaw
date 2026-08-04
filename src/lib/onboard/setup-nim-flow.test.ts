@@ -17,21 +17,18 @@ const REMOTE_PROVIDER_CONFIG: SetupNimFlowDeps["remoteProviderConfig"] = {
     providerName: "nvidia-prod",
     endpointUrl: "https://integrate.api.nvidia.com/v1",
     credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-    defaultModel: "nvidia/nemotron-3-super-120b-a12b",
   },
   openai: {
     label: "OpenAI",
     providerName: "openai-api",
     endpointUrl: "https://api.openai.com/v1",
     credentialEnv: "OPENAI_API_KEY",
-    defaultModel: "gpt-5.4",
   },
   openrouter: {
     label: "OpenRouter",
     providerName: "openrouter-api",
     endpointUrl: "https://openrouter.ai/api/v1",
     credentialEnv: "OPENROUTER_API_KEY",
-    defaultModel: "nvidia/nemotron-3-super-120b-a12b",
   },
   custom: {
     label: "Other OpenAI-compatible endpoint",
@@ -44,7 +41,6 @@ const REMOTE_PROVIDER_CONFIG: SetupNimFlowDeps["remoteProviderConfig"] = {
     providerName: "anthropic-api",
     endpointUrl: "https://api.anthropic.com",
     credentialEnv: "ANTHROPIC_API_KEY",
-    defaultModel: "claude-sonnet-4-6",
   },
   anthropicCompatible: {
     label: "Other Anthropic-compatible endpoint",
@@ -57,7 +53,6 @@ const REMOTE_PROVIDER_CONFIG: SetupNimFlowDeps["remoteProviderConfig"] = {
     providerName: "gemini-api",
     endpointUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
     credentialEnv: "GEMINI_API_KEY",
-    defaultModel: "gemini-2.5-flash",
   },
 };
 
@@ -684,7 +679,7 @@ describe("createSetupNim", () => {
     });
   });
 
-  it("resets NEMOCLAW_MODEL to provider default when it matches prior provider's default on provider switch (#8135)", async () => {
+  it("does not carry the provider-model fallback across a provider switch (#8135)", async () => {
     const note = vi.fn();
     const readRecordedProvider = vi.fn(() => "nvidia-prod");
     const readRecordedNimContainer = vi.fn(() => null);
@@ -710,7 +705,10 @@ describe("createSetupNim", () => {
       makeDeps({
         isNonInteractive: () => true,
         getNonInteractiveProvider: () => "openai",
-        getNonInteractiveModel: () => "nvidia/nemotron-3-super-120b-a12b",
+        getNonInteractiveModel: (_providerKey, options) =>
+          options?.allowProviderModelFallback === false
+            ? null
+            : "nvidia/nemotron-3-super-120b-a12b",
         note,
         readRecordedProvider,
         readRecordedNimContainer,
@@ -725,6 +723,42 @@ describe("createSetupNim", () => {
     expect(note).toHaveBeenCalledWith("  [non-interactive] Provider: openai");
     expect(result).toMatchObject({
       model: "gpt-5.4",
+      provider: "openai-api",
+    });
+  });
+
+  it("preserves an explicit model that matches the recorded provider default after a provider switch (#8135)", async () => {
+    const readRecordedProvider = vi.fn(() => "nvidia-prod");
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (args, state) => {
+        expect(args).toMatchObject({
+          selected: { key: "openai", label: "OpenAI" },
+          requestedModel: "nvidia/nemotron-3-super-120b-a12b",
+          sandboxName: "drift-sandbox",
+        });
+        state.model = args.requestedModel;
+        state.provider = "openai-api";
+        state.endpointUrl = "https://api.openai.com/v1";
+        state.credentialEnv = "OPENAI_API_KEY";
+        state.preferredInferenceApi = "openai-responses";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "openai",
+        getNonInteractiveModel: () => "nvidia/nemotron-3-super-120b-a12b",
+        readRecordedProvider,
+        handleRemoteProviderSelection,
+      }),
+    );
+
+    const result = await setupNim(null, "drift-sandbox", null, true);
+
+    expect(handleRemoteProviderSelection).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      model: "nvidia/nemotron-3-super-120b-a12b",
       provider: "openai-api",
     });
   });
