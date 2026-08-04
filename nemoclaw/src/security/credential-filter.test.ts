@@ -97,6 +97,9 @@ describe("plugin credential-filter", () => {
     expect(valueLooksLikeSecret("sk-abcdefghijklmnopqrstuvwxyz")).toBe(true);
     expect(valueLooksLikeSecret("glpat-abcdefghijklmnopqrst")).toBe(true);
     expect(valueLooksLikeSecret("nvcf-abcdefghij")).toBe(true);
+    expect(valueLooksLikeSecret("GITHUB_TOKEN=opaque-secret-value-123")).toBe(true);
+    expect(valueLooksLikeSecret("apiKey=opaque-secret-value-123")).toBe(true);
+    expect(valueLooksLikeSecret("KEY=opaque-secret-value-123")).toBe(true);
     expect(valueLooksLikeSecret("not-a-secret")).toBe(false);
   });
 
