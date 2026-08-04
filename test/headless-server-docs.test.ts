@@ -99,10 +99,10 @@ describe("headless server deployment guide contracts", () => {
       "OpenClaw generates a new gateway token when the sandbox container starts with mutable configuration",
     );
     expect(openclawGuide).toContain(
-      "preserves the sealed token because the workload user cannot replace the protected configuration",
+      "preserves the sealed token because the sandbox user cannot replace the protected configuration",
     );
     expect(openclawGuide).toContain(
-      "| OpenClaw gateway token | Rotated when mutable configuration starts; preserved for a non-root start while Shields are up |",
+      "| OpenClaw gateway token | Rotated when the container starts with mutable configuration; preserved for a non-root start while Shields are up |",
     );
     expect(openclawGuide).not.toContain("Hermes preserves its `API_SERVER_KEY`");
 
