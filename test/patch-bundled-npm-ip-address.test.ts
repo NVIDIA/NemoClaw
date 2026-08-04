@@ -196,14 +196,15 @@ describe("npm bundled ip-address remediation", () => {
     const target = fixture(AFFECTED_IP_ADDRESS_VERSION);
     const originalRmSync = fs.rmSync.bind(fs);
     let injectedCleanupFailure = false;
-    const rmSpy = vi.spyOn(fs, "rmSync").mockImplementation((targetPath, options) => {
-      if (!injectedCleanupFailure && String(targetPath).includes("ip-address.nemoclaw-backup-")) {
+    const rmSpy = vi
+      .spyOn(fs, "rmSync")
+      .mockImplementationOnce(originalRmSync)
+      .mockImplementationOnce((targetPath) => {
         injectedCleanupFailure = true;
         originalRmSync(path.join(String(targetPath), "old.js"), { force: true });
         throw new Error("injected partial backup cleanup failure");
-      }
-      return originalRmSync(targetPath, options);
-    });
+      })
+      .mockImplementation(originalRmSync);
     syncBuiltinESMExports();
 
     try {
