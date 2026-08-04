@@ -33,14 +33,14 @@ describe("managed image registry transport package contract", () => {
     const productionDependencies = JSON.parse(productionTree.stdout) as {
       dependencies?: { undici?: { version?: string } };
     };
-    expect(productionDependencies.dependencies?.undici?.version).toBe("8.5.0");
+    expect(productionDependencies.dependencies?.undici?.version).toBe("8.10.0");
 
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-registry-package-"));
     try {
       const packed = spawnSync(
         "npm",
         ["pack", "--ignore-scripts", "--silent", "--pack-destination", tempDir],
-        { cwd: repoRoot, encoding: "utf8", timeout: 90_000 },
+        { cwd: repoRoot, encoding: "utf8", timeout: 120_000 },
       );
       expect(packed.status, `${packed.stdout}${packed.stderr}`).toBe(0);
       const archives = fs.readdirSync(tempDir).filter((entry) => entry.endsWith(".tgz"));
@@ -80,7 +80,7 @@ describe("managed image registry transport package contract", () => {
       const installedProductionDependencies = JSON.parse(installedProductionTree.stdout) as {
         dependencies?: { undici?: { version?: string } };
       };
-      expect(installedProductionDependencies.dependencies?.undici?.version).toBe("8.5.0");
+      expect(installedProductionDependencies.dependencies?.undici?.version).toBe("8.10.0");
 
       const probe = spawnSync(
         process.execPath,

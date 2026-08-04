@@ -813,7 +813,10 @@ On ordinary native Linux, the compatibility path uses an available NVIDIA CDI sp
 On Docker Desktop WSL, the compatibility path skips CDI and tries Docker `--gpus all` before the NVIDIA runtime.
 On Jetson/Tegra hosts, the compatibility path uses the NVIDIA runtime and adds eligible host group IDs for the supported GPU device nodes.
 These include selected `/dev/nvmap`, `/dev/nvhost-*`, and `/dev/nvgpu/igpu0/*` nodes plus real `/dev/dri/renderD*` character devices.
-If the compatibility attempt fails, onboarding keeps its diagnostics and the failed sandbox in place and prints a manual cleanup command.
+After compatibility recreation starts, onboarding keeps the pre-patch container as a rollback backup until the replacement passes the Ready, GPU, and applicable local-inference checks.
+If a later check fails, onboarding prints failure diagnostics and attempts to restore the pre-patch container.
+If rollback fails, onboarding reports that the pre-patch container was not restored and prints container-cleanup guidance.
+GPU-proof diagnostics are captured before rollback and can print that guidance before the final container state is known, so inspect the sandbox and its labeled Docker containers before running a deletion command.
 
 Prerequisites:
 
@@ -1159,6 +1162,15 @@ $$nemoclaw my-assistant shields down --timeout 5m --reason "maintenance"
 
 If `shields up` reports that the config remains unlocked or drifted, confirm that the sandbox is running and ready, then retry `$$nemoclaw <name> shields up`.
 If the retry still fails, rebuild a known-good baseline with `$$nemoclaw <name> rebuild --yes`.
+
+<AgentOnly variant="deepagents">
+
+A `CRITICAL` Deep Agents config-lock failure is not an ordinary unlocked or drifted result.
+The retry and rebuild guidance above does not apply to a `CRITICAL` Deep Agents config-lock diagnostic.
+Do not retry `shields up` or attempt an in-sandbox repair.
+Follow [Deep Agents Config Lock Failure Recovery](troubleshooting#deep-agents-config-lock-failure-recovery) to restore a trusted snapshot or recreate the sandbox before retrying.
+
+</AgentOnly>
 
 Host-side config and inference writes, snapshot mutation, sandbox destruction, and shields transitions serialize per sandbox.
 When a timed shields-down window reaches its deadline, auto-restore can interrupt the exact process tree holding that transition and restore lockdown.
