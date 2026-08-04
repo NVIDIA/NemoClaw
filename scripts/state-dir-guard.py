@@ -66,7 +66,7 @@ MAX_ALLOCATED_BYTES_PER_PASS = 8 * 1024 * 1024 * 1024
 MAX_COPIED_BYTES_PER_PASS = 8 * 1024 * 1024 * 1024
 MAX_GUARD_SECONDS = 10 * 60
 PRODUCTION_FAIL_CLOSED_CONFIG_DIRS = frozenset(
-    {"/sandbox/.openclaw", "/sandbox/.hermes"}
+    {"/sandbox/.openclaw", "/sandbox/.hermes", "/sandbox/.deepagents"}
 )
 OPENCLAW_MUTATION_MUTEX_PATH = "/run/nemoclaw/openclaw-config-mutation.lock"
 # Keep this exact source/target contract aligned with
@@ -1711,6 +1711,7 @@ def _run_guard_unserialized(
         normalized_config in PRODUCTION_FAIL_CLOSED_CONFIG_DIRS
         or os.environ.get("NEMOCLAW_TEST_OPENCLAW_FAIL_CLOSED") == "1"
         or os.environ.get("NEMOCLAW_TEST_HERMES_FAIL_CLOSED") == "1"
+        or os.environ.get("NEMOCLAW_TEST_DEEP_AGENTS_FAIL_CLOSED") == "1"
     )
     config_fd = -1
     try:
