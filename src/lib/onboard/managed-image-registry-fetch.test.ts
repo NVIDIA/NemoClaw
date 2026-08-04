@@ -36,19 +36,19 @@ afterEach(async () => {
 });
 
 describe("managed image registry transport", () => {
-  it("routes the default registry fetch through the bounded host proxy", async () => {
-    const routes: string[] = [];
+  it("forwards a plain HTTP registry fetch through the configured host proxy", async () => {
+    const requests: Array<{ host: string | undefined; method: string | undefined; url: string }> =
+      [];
     const proxy = createServer((request, response) => {
-      routes.push(request.url ?? "");
+      requests.push({
+        host: request.headers.host,
+        method: request.method,
+        url: request.url ?? "",
+      });
       response.end("proxied");
     });
-    // Keep the fixture valid if the proxy transport selects CONNECT.
-    proxy.on("connect", (request, socket) => {
-      routes.push(request.url ?? "");
-      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-      socket.once("data", () => {
-        socket.end("HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nproxied");
-      });
+    proxy.on("connect", (_request, socket) => {
+      socket.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
     });
     const proxyPort = await listen(proxy);
     const session = createManagedImageRegistryFetchSession({
@@ -62,8 +62,13 @@ describe("managed image registry transport", () => {
       const response = await session.fetchImpl("http://registry.invalid/v2/");
       expect(response.status).toBe(200);
       expect(await response.text()).toBe("proxied");
-      expect(routes).toHaveLength(1);
-      expect(["http://registry.invalid/v2/", "registry.invalid:80"]).toContain(routes[0]);
+      expect(requests).toEqual([
+        {
+          host: "registry.invalid",
+          method: "GET",
+          url: "http://registry.invalid/v2/",
+        },
+      ]);
     } finally {
       await session.close();
     }

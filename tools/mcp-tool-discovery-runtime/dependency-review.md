@@ -24,7 +24,10 @@ The client bundle includes the SDK's AJV validation path, including `ajv-formats
 
 ## 2026-08-03 security refresh
 
-The strict image producer for NemoClaw `v0.0.100` failed before image creation because the committed runtime lock resolved three packages in newly reported advisory ranges. NemoClaw `main` at `3f3eb6139e089c24397d6a499a10fcde4bdc84da` reproduced the same failure. The audit boundary worked as designed and remains unchanged. Issue #8177 records the exact source, producer run, failure receipt, and resume condition.
+The NemoClaw `v0.0.100` sandbox image build stopped before creating an image because the committed runtime lock resolved three packages in newly reported advisory ranges.
+NemoClaw `main` at `3f3eb6139e089c24397d6a499a10fcde4bdc84da` reproduced the same failure.
+The audit boundary worked as designed and remains unchanged.
+Issue #8177 records the source, build run, failure receipt, and resume condition.
 
 Registry metadata binds each audited range:
 
