@@ -382,6 +382,8 @@ describe("complete managed-image publication workflow", () => {
       const promotionIndex = manifestRun.indexOf("publication_metadata=");
       expect(manifestRun.indexOf("candidate_tag=")).toBeLessThan(validationIndex);
       expect(validationIndex).toBeLessThan(promotionIndex);
+      expect(manifestRun).toContain("published_digest=");
+      expect(manifestRun).toContain('if [ "$published_digest" != "$digest" ]; then');
       expect(manifestRun).not.toContain("first_tag=");
       expect(manifestRun).not.toContain('imagetools create "${tag_args[@]}" "${sources[@]}"');
       expect(step(basePublisher, "Checkout").with?.["persist-credentials"]).toBe(false);

@@ -65,8 +65,11 @@ const arm64Attestation = attestationDescriptor(arm64WorkloadDigest, arm64Attesta
 
 type Fixture = {
   amd64Source?: string;
+  amd64SourceDigestArgument?: string;
   arm64Source?: string;
+  arm64SourceDigestArgument?: string;
   published?: string;
+  reference?: string;
 };
 
 function runValidator(fixture: Fixture = {}) {
@@ -101,17 +104,25 @@ esac
   );
 
   try {
-    return spawnSync(validator, [`${image}@${indexDigest}`, amd64SourceDigest, arm64SourceDigest], {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
-        FIXTURE_ROOT: temporaryRoot,
-        FINAL_REFERENCE: `${image}@${indexDigest}`,
-        AMD64_SOURCE_REFERENCE: `${image}@${amd64SourceDigest}`,
-        ARM64_SOURCE_REFERENCE: `${image}@${arm64SourceDigest}`,
+    return spawnSync(
+      validator,
+      [
+        fixture.reference ?? `${image}@${indexDigest}`,
+        fixture.amd64SourceDigestArgument ?? amd64SourceDigest,
+        fixture.arm64SourceDigestArgument ?? arm64SourceDigest,
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          FIXTURE_ROOT: temporaryRoot,
+          FINAL_REFERENCE: `${image}@${indexDigest}`,
+          AMD64_SOURCE_REFERENCE: `${image}@${amd64SourceDigest}`,
+          ARM64_SOURCE_REFERENCE: `${image}@${arm64SourceDigest}`,
+        },
       },
-    });
+    );
   } finally {
     fs.rmSync(temporaryRoot, { force: true, recursive: true });
   }
@@ -126,6 +137,32 @@ describe("managed base index validation", () => {
       "linux/amd64": amd64WorkloadDigest,
       "linux/arm64": arm64WorkloadDigest,
     });
+  });
+
+  it("rejects a mutable managed base reference (#7744)", () => {
+    const mutable = runValidator({ reference: `${image}:latest` });
+
+    expect(mutable.status).not.toBe(0);
+    expect(mutable.stderr).toContain("managed base index reference must be immutable");
+  });
+
+  it("rejects a malformed platform source digest argument (#7744)", () => {
+    const malformed = runValidator({ amd64SourceDigestArgument: "sha256:not-a-digest" });
+
+    expect(malformed.status).not.toBe(0);
+    expect(malformed.stderr).toContain("managed base platform source digest is invalid");
+  });
+
+  it("rejects platform source digest arguments assigned to the wrong architecture (#7744)", () => {
+    const swapped = runValidator({
+      amd64SourceDigestArgument: arm64SourceDigest,
+      arm64SourceDigestArgument: amd64SourceDigest,
+    });
+
+    expect(swapped.status).not.toBe(0);
+    expect(swapped.stderr).toContain(
+      "source index must contain exactly one linux/amd64 descriptor",
+    );
   });
 
   it("rejects a retagged index whose workload descriptor is stale (#7744)", () => {

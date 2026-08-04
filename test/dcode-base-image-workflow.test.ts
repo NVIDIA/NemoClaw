@@ -485,6 +485,8 @@ describe("base-image publication behavior", () => {
     expect(openClawValidationIndex).toBeLessThan(openClawPromotionIndex);
     expect(openClawManifestScript.slice(openClawPromotionIndex)).toContain('"${tag_args[@]}"');
     expect(openClawManifestScript.slice(openClawPromotionIndex)).toContain('"$reference"');
+    expect(openClawManifestScript).toContain("published_digest=");
+    expect(openClawManifestScript).toContain('if [ "$published_digest" != "$digest" ]; then');
     for (const step of (manifestJob?.steps ?? []).filter((step) => step.uses)) {
       expect(step.uses, step.name).toMatch(FULL_SHA_ACTION);
     }
@@ -628,6 +630,8 @@ describe("base-image publication behavior", () => {
       expect(validationIndex).toBeLessThan(promotionIndex);
       expect(manifestScript.slice(promotionIndex)).toContain('"${tag_args[@]}"');
       expect(manifestScript.slice(promotionIndex)).toContain('"$reference"');
+      expect(manifestScript).toContain("published_digest=");
+      expect(manifestScript).toContain('if [ "$published_digest" != "$digest" ]; then');
       for (const step of (manifestJob?.steps ?? []).filter((step) => step.uses)) {
         expect(step.uses, step.name).toMatch(FULL_SHA_ACTION);
       }
