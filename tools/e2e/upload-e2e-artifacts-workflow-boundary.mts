@@ -151,6 +151,13 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "managed-image-protected-runtime",
+    {
+      name: "e2e-managed-image-protected-runtime",
+      path: "e2e-artifacts/live/managed-image-protected-runtime/",
+    },
+  ],
+  [
     "network-policy",
     {
       name: "e2e-network-policy-${{ matrix.scenario }}",
