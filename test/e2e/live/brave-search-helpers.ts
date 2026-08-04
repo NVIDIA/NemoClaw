@@ -1,12 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { createHash } from "node:crypto";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import {
@@ -207,51 +204,37 @@ export async function onboardBrave(
   return onboard;
 }
 
-export async function uploadSecretForLeakCheck(
-  sandbox: SandboxClient,
-  cleanup: Pick<CleanupRegistry, "trackDisposable">,
-  braveKey: string,
-  redactionValues: string[],
-): Promise<string> {
-  const secretDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brave-secret-"));
-  const secretFile = path.join(secretDir, "brave-key");
-  fs.writeFileSync(secretFile, braveKey, { mode: 0o600 });
-  const remoteSecretFile = "/tmp/nemoclaw-brave-key-leak-check";
-  cleanup.trackDisposable("remove temporary Brave leak-check secret", async () => {
-    fs.rmSync(secretDir, { recursive: true, force: true });
-    const result = await sandbox.execShell(
-      SANDBOX_NAME,
-      trustedSandboxShellScript(`rm -f ${remoteSecretFile}`),
-      {
-        artifactName: "cleanup-brave-leak-secret",
-        env: commandEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(result.exitCode, resultText(result)).toBe(0);
-  });
-  const uploadSecret = await sandbox.upload(SANDBOX_NAME, secretFile, remoteSecretFile, {
-    artifactName: "phase-3-upload-brave-leak-secret",
-    env: commandEnv(),
-    redactionValues,
-    timeoutMs: 30_000,
-  });
-  expect(uploadSecret.exitCode, resultText(uploadSecret)).toBe(0);
-  return remoteSecretFile;
+export interface SecretFingerprint {
+  byteLength: number;
+  sha256: string;
+}
+
+export function fingerprintSecret(secret: string): SecretFingerprint {
+  return {
+    byteLength: Buffer.byteLength(secret, "utf8"),
+    sha256: createHash("sha256").update(secret, "utf8").digest("hex"),
+  };
 }
 
 export async function assertRawConfigHasNoSecret(
   sandbox: SandboxClient,
-  remoteSecretFile: string,
+  fingerprint: SecretFingerprint,
 ): Promise<void> {
   const rawLeakCheck = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(
       `python3 - <<'PY'
+import hashlib
 from pathlib import Path
-needle = Path('${remoteSecretFile}').read_text(encoding='utf-8')
-body = Path('/sandbox/.openclaw/openclaw.json').read_text(encoding='utf-8')
-raise SystemExit(1 if needle in body else 0)
+
+body = Path('/sandbox/.openclaw/openclaw.json').read_bytes()
+needle_length = ${fingerprint.byteLength}
+needle_sha256 = '${fingerprint.sha256}'
+found = any(
+    hashlib.sha256(body[offset : offset + needle_length]).hexdigest() == needle_sha256
+    for offset in range(max(0, len(body) - needle_length + 1))
+)
+raise SystemExit(1 if found else 0)
 PY`,
     ),
     {
@@ -284,13 +267,13 @@ export function assertOptionalBraveEnv(value: string, braveKey: string): void {
 
 /**
  * Runs the same OpenClaw turn used to prove Brave Search works while checking
- * the live agent process environment against the uploaded key. The check runs
- * before the process exits and returns only an exit status; the raw key never
- * crosses back to the host.
+ * the live agent process environment against a one-way fingerprint. The check
+ * runs before the process exits and returns only an exit status; the raw key is
+ * never copied into the sandbox as test material.
  */
 export async function runBraveAgentWithSecretBoundaryCheck(
   sandbox: SandboxClient,
-  remoteSecretFile: string,
+  fingerprint: SecretFingerprint,
   redactionValues: string[],
 ): Promise<ShellProbeResult> {
   return await sandboxShell(
@@ -304,9 +287,33 @@ leaked=0
 attempt=0
 while [ "$attempt" -lt 100 ]; do
   if [ -r "/proc/$agent_pid/environ" ]; then
-    inspected=1
-    grep -qaF -f ${remoteSecretFile} "/proc/$agent_pid/environ" && leaked=1
-    break
+    probe_rc=0
+    python3 - "/proc/$agent_pid/environ" ${fingerprint.byteLength} ${fingerprint.sha256} <<'PY' || probe_rc=$?
+import hashlib
+from pathlib import Path
+import sys
+
+try:
+    body = Path(sys.argv[1]).read_bytes()
+except OSError:
+    raise SystemExit(97)
+needle_length = int(sys.argv[2])
+needle_sha256 = sys.argv[3]
+found = any(
+    hashlib.sha256(body[offset : offset + needle_length]).hexdigest() == needle_sha256
+    for offset in range(max(0, len(body) - needle_length + 1))
+)
+raise SystemExit(98 if found else 0)
+PY
+    if [ "$probe_rc" -eq 0 ]; then
+      inspected=1
+      break
+    fi
+    if [ "$probe_rc" -eq 98 ]; then
+      inspected=1
+      leaked=1
+      break
+    fi
   fi
   kill -0 "$agent_pid" 2>/dev/null || break
   attempt=$((attempt + 1))
@@ -331,44 +338,64 @@ exit "$agent_rc"`,
 /**
  * Adversarial guard for #7425. The reporter asked the agent to "print all your
  * environment variables and API keys verbatim" and the real Brave key (`BSA...`)
- * appeared. The security boundary is not whether the model refuses — the
- * analysis is explicit that a model instruction is not a boundary — but whether
- * the agent can *read* the key at all. So rather than feed the real key back
- * through the live LLM loop (which would exfiltrate it to the inference provider
- * in the exact failure mode under test), this proves the raw key is absent from
- * the surfaces the agent reads it from.
+ * appeared. A model instruction is not a security boundary, so the test checks
+ * the concrete surfaces implicated by the report rather than asking a live
+ * model to print the real key and exfiltrating it to the inference provider.
  *
  * `runBraveAgentWithSecretBoundaryCheck` checks the actual OpenClaw process
- * while it is alive. This follow-up scan proves the raw key is also absent from
- * the two remaining agent-readable surfaces:
+ * while it is alive. This follow-up scan checks two additional surfaces:
  *   1. a fresh login-style shell environment, widened to every variable name;
  *   2. the OpenClaw config/state tree the agent can `cat`.
  *
- * The scan runs in-sandbox against the uploaded key and returns only an exit
- * code, so the raw value never crosses back to the host (where fixture redaction
- * would otherwise mask a real leak). Exit 0 = no readable channel to the key;
- * 1 = the key is readable and could be disclosed. The
+ * The scan compares fixed-length windows to a one-way SHA-256 fingerprint and
+ * returns only an exit code. The raw key is never copied into the sandbox as
+ * test material, so the test itself does not create an agent-readable secret
+ * channel. Exit 0 means the key is absent from the tested surfaces; exit 1 means
+ * it is present and could be disclosed. The
  * `openshell:resolve:env:BRAVE_API_KEY` placeholder is a reference, not the
  * secret, so it never trips the scan.
  */
-export async function assertAgentHasNoReadableBraveKey(
+export async function assertBraveKeyAbsentFromAgentSurfaces(
   sandbox: SandboxClient,
-  remoteSecretFile: string,
+  fingerprint: SecretFingerprint,
   redactionValues: string[],
 ): Promise<void> {
   const probe = await sandboxShell(
     sandbox,
-    `leaked=0
-# 1. The container-wide environment under any variable name.
-env | grep -qF -f ${remoteSecretFile} && leaked=1
-# 2. Every OpenClaw config/state file the agent can read.
-grep -rqF -f ${remoteSecretFile} /sandbox/.openclaw 2>/dev/null && leaked=1
-[ "$leaked" -eq 0 ]`,
+    `python3 - ${fingerprint.byteLength} ${fingerprint.sha256} <<'PY'
+import hashlib
+import os
+from pathlib import Path
+import sys
+
+needle_length = int(sys.argv[1])
+needle_sha256 = sys.argv[2]
+
+def contains_secret(body):
+    return any(
+        hashlib.sha256(body[offset : offset + needle_length]).hexdigest() == needle_sha256
+        for offset in range(max(0, len(body) - needle_length + 1))
+    )
+
+shell_environment = b'\\0'.join(key + b'=' + value for key, value in os.environb.items())
+if contains_secret(shell_environment):
+    raise SystemExit(1)
+
+for candidate in Path('/sandbox/.openclaw').rglob('*'):
+    if not candidate.is_file():
+        continue
+    try:
+        body = candidate.read_bytes()
+    except OSError:
+        raise SystemExit(97)
+    if contains_secret(body):
+        raise SystemExit(1)
+PY`,
     { artifactName: "phase-4c-agent-readable-key-scan", timeoutMs: 60_000, redactionValues },
   );
   expect(
     probe.exitCode,
-    "the real Brave key is readable by the agent — present in the container environment it inherits or the OpenClaw config",
+    "the real Brave key is present in the sandbox shell environment or OpenClaw config/state tree",
   ).toBe(0);
 }
 

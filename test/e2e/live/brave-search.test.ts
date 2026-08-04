@@ -5,8 +5,8 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
-  assertAgentHasNoReadableBraveKey,
   assertBraveConfig,
+  assertBraveKeyAbsentFromAgentSurfaces,
   assertBraveResponse,
   assertDockerAvailable,
   assertOptionalBraveEnv,
@@ -15,11 +15,11 @@ import {
   cleanupBraveState,
   commandEnv,
   extractOpenClawAgentText,
+  fingerprintSecret,
   onboardBrave,
   runBraveAgentWithSecretBoundaryCheck,
   SANDBOX_NAME,
   sandboxShell,
-  uploadSecretForLeakCheck,
 } from "./brave-search-helpers.ts";
 
 const LIVE_TIMEOUT_MS = 35 * 60_000;
@@ -51,7 +51,7 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
       "OpenClaw web search config is enabled and selects provider=brave",
       "the real BRAVE_API_KEY is absent from openclaw.json and sandbox shell env",
       "OpenClaw agent can perform a Brave-backed web search",
-      "the real BRAVE_API_KEY is absent from every agent-readable surface (env and OpenClaw config)",
+      "the real BRAVE_API_KEY is absent from the live agent environment and OpenClaw config/state tree",
       "curl from inside the sandbox can query Brave using the placeholder token header",
     ],
   });
@@ -96,13 +96,8 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
   });
   expect(config.exitCode, resultText(config)).toBe(0);
 
-  const remoteSecretFile = await uploadSecretForLeakCheck(
-    sandbox,
-    cleanup,
-    braveKey,
-    redactionValues,
-  );
-  await assertRawConfigHasNoSecret(sandbox, remoteSecretFile);
+  const secretFingerprint = fingerprintSecret(braveKey);
+  await assertRawConfigHasNoSecret(sandbox, secretFingerprint);
   const placeholder = assertBraveConfig(config.stdout);
 
   const envCheck = await sandbox.exec(
@@ -121,7 +116,7 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
   progress.phase("run Brave-backed OpenClaw search");
   const agent = await runBraveAgentWithSecretBoundaryCheck(
     sandbox,
-    remoteSecretFile,
+    secretFingerprint,
     redactionValues,
   );
   expect(resultText(agent)).not.toMatch(
@@ -136,10 +131,10 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
   // #7425 reproduction, reframed to the real boundary. The reporter's leak came
   // from the raw key being readable by the agent (a generic-typed provider
   // injects it into the sandbox env), not from the model choosing to print it.
-  // The benign search above proves Brave still works; this proves the agent has
-  // no readable channel to the real key, so it cannot disclose it for any prompt
-  // — without feeding the key through the live LLM loop.
-  await assertAgentHasNoReadableBraveKey(sandbox, remoteSecretFile, redactionValues);
+  // The benign search above proves Brave still works; the checks cover the live
+  // agent environment plus the sandbox shell and OpenClaw config/state surfaces
+  // without feeding the key through the live LLM loop.
+  await assertBraveKeyAbsentFromAgentSurfaces(sandbox, secretFingerprint, redactionValues);
 
   progress.phase("query Brave API through credential resolver");
   const curl = await sandboxShell(
