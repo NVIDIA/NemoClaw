@@ -653,7 +653,9 @@ async function run(input: Inputs): Promise<void> {
   let ownedContainerId: string | null = null;
   let initialSandboxPolicy: InitialSandboxPolicy | null = null;
   let failureInjectionQualified = false;
-  let primaryError: unknown = null;
+  let primaryError: unknown;
+  let hasPrimaryError = false;
+  const cleanupErrors: string[] = [];
   try {
     await assertGatewayPortAvailable();
     const image = parseImmutableManifestReference(input.image);
@@ -767,7 +769,7 @@ async function run(input: Inputs): Promise<void> {
     } as RuntimeProviderBundle & {
       readonly bootstrap: Extract<RuntimeProviderBootstrapSurface, { readonly supported: true }>;
     };
-    let flow: Awaited<ReturnType<typeof runSandboxGpuCreateFlow>>;
+    let flow: Awaited<ReturnType<typeof runSandboxGpuCreateFlow>> | null = null;
     try {
       flow = await runSandboxGpuCreateFlow(
         {
@@ -828,32 +830,37 @@ async function run(input: Inputs): Promise<void> {
         process.stdout.write(
           `Injected managed-bootstrap completion failure removed the failed exact ${input.agent} sandbox before harness cleanup.\n`,
         );
-        return;
+      } else {
+        throw error;
       }
-      throw error;
-    }
-    const expectedRoute = gpuEnabled ? "native" : "none";
-    if (flow.route !== expectedRoute || flow.createResult.status !== 0) {
-      throw new Error(
-        `production managed-bootstrap flow did not complete the exact PR image create: route=${flow.route} status=${flow.createResult.status}`,
-      );
     }
 
-    await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv, !gpuEnabled);
-    ownedContainerId = assertExactSandboxImage(input, networkName, launch.sandboxEnv);
-    if (gpuEnabled) {
-      assertProtectedLocalInference(onboard, input, launch.sandboxEnv);
-      await flow.runtimePatch.commitAfterReady();
-      await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv);
+    if (!failureInjectionQualified) {
+      if (!flow) {
+        throw new Error("production managed-bootstrap flow returned no result");
+      }
+      const expectedRoute = gpuEnabled ? "native" : "none";
+      if (flow.route !== expectedRoute || flow.createResult.status !== 0) {
+        throw new Error(
+          `production managed-bootstrap flow did not complete the exact PR image create: route=${flow.route} status=${flow.createResult.status}`,
+        );
+      }
+
+      await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv, !gpuEnabled);
+      ownedContainerId = assertExactSandboxImage(input, networkName, launch.sandboxEnv);
+      if (gpuEnabled) {
+        assertProtectedLocalInference(onboard, input, launch.sandboxEnv);
+        await flow.runtimePatch.commitAfterReady();
+        await waitForCommittedSandboxProbe(onboard, input, launch.sandboxEnv);
+      }
+      process.stdout.write(
+        `OpenShell launched exact ${input.agent} PR image ${input.image} through the production managed-bootstrap sequence${gpuEnabled ? ` with real NVIDIA GPU access and ${input.localProvider} inference.local completion` : ""}.\n`,
+      );
     }
-    process.stdout.write(
-      `OpenShell launched exact ${input.agent} PR image ${input.image} through the production managed-bootstrap sequence${gpuEnabled ? ` with real NVIDIA GPU access and ${input.localProvider} inference.local completion` : ""}.\n`,
-    );
   } catch (error) {
     primaryError = error;
-    throw error;
+    hasPrimaryError = true;
   } finally {
-    const cleanupErrors: string[] = [];
     if (onboard) {
       commandResult(
         onboard.openshellArgv(["sandbox", "delete", input.sandbox]),
@@ -945,21 +952,32 @@ async function run(input: Inputs): Promise<void> {
     } catch (error) {
       cleanupErrors.push(error instanceof Error ? error.message : String(error));
     }
-    fs.rmSync(stateDir, { recursive: true, force: true });
-    if (cleanupErrors.length > 0) {
-      const cleanupDetail = `managed-image OpenShell cleanup failed: ${cleanupErrors.join("; ")}`;
-      if (primaryError) {
-        const primaryDetail =
-          primaryError instanceof Error ? primaryError.message : String(primaryError);
-        throw new Error(`${primaryDetail}; ${cleanupDetail}`, { cause: primaryError });
-      }
-      throw new Error(cleanupDetail);
+    try {
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    } catch (error) {
+      cleanupErrors.push(error instanceof Error ? error.message : String(error));
     }
-    if (failureInjectionQualified) {
-      process.stdout.write(
-        `Managed-bootstrap failure injection left no sandbox, container, network, or harness state orphan for ${input.agent}.\n`,
-      );
+  }
+
+  const cleanupDetail =
+    cleanupErrors.length > 0
+      ? `managed-image OpenShell cleanup failed: ${cleanupErrors.join("; ")}`
+      : null;
+  if (hasPrimaryError) {
+    if (cleanupDetail) {
+      const primaryDetail =
+        primaryError instanceof Error ? primaryError.message : String(primaryError);
+      throw new Error(`${primaryDetail}; ${cleanupDetail}`, { cause: primaryError });
     }
+    throw primaryError;
+  }
+  if (cleanupDetail) {
+    throw new Error(cleanupDetail);
+  }
+  if (failureInjectionQualified) {
+    process.stdout.write(
+      `Managed-bootstrap failure injection left no sandbox, container, network, or harness state orphan for ${input.agent}.\n`,
+    );
   }
 }
 
