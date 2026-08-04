@@ -40,6 +40,8 @@ export type ResolveBaseImageOptions = {
   imageName: string;
   dockerfilePath: string;
   inputPaths?: string[];
+
+  buildArgs?: Record<string, string>;
   localTag: string;
   envVar?: string;
   label?: string;

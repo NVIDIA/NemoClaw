@@ -5,12 +5,13 @@
 
 import os from "node:os";
 
+import { GATEWAY_PORT } from "../core/ports";
 import { resolveGatewayName, type SandboxGatewayBinding } from "../onboard/gateway-binding";
-import {
-  resolveGatewayTeardownAuthority,
-  type GatewayTeardownAuthorityResolver,
-} from "../onboard/gateway-teardown-authority";
 import { isExternallySupervised } from "../onboard/gateway-ownership";
+import {
+  type GatewayTeardownAuthorityResolver,
+  resolveGatewayTeardownAuthority,
+} from "../onboard/gateway-teardown-authority";
 import {
   type HostGatewayProcessDeps,
   type StopHostGatewayResult,
@@ -86,7 +87,10 @@ export function releaseManagedGatewayPort(
     warn(
       `Skipping gateway port release for sandbox ${JSON.stringify(options.sandboxName)}: ` +
         "no valid gateway binding is registered for it (the entry is missing, " +
-        "invalid, or unreadable). Resolve the registry entry, then re-run stop.",
+        "invalid, or unreadable). The registry is read from the state root that " +
+        `NEMOCLAW_GATEWAY_PORT=${String(GATEWAY_PORT)} selects, so a sandbox onboarded ` +
+        "under a different gateway port is not visible here: rerun stop with that " +
+        "port set. Otherwise resolve the registry entry, then rerun stop.",
     );
     return {
       port: null,

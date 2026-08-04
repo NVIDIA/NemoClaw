@@ -9,8 +9,8 @@ import {
 } from "../messaging/channels";
 import { requiredObservabilityPolicyPresets } from "./observability-policy-presets";
 
-const { LOCAL_INFERENCE_PROVIDERS } = require("./providers") as {
-  LOCAL_INFERENCE_PROVIDERS: string[];
+const { LOCAL_INFERENCE_POLICY_PROVIDERS } = require("./providers") as {
+  LOCAL_INFERENCE_POLICY_PROVIDERS: string[];
 };
 
 import { isOpenclawAgent, requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
@@ -36,7 +36,7 @@ export function getSuggestedPolicyPresets({
 }: SuggestedPolicyPresetOptions = {}): string[] {
   const suggestions = ["pypi", "npm"];
 
-  if (provider && LOCAL_INFERENCE_PROVIDERS.includes(provider)) {
+  if (provider && LOCAL_INFERENCE_POLICY_PROVIDERS.includes(provider)) {
     suggestions.push("local-inference");
   }
   if (isOpenclawAgent(agent)) {

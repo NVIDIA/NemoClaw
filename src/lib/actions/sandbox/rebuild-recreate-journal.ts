@@ -5,7 +5,7 @@ import { checkpointGatewayAuthority } from "../../onboard/gateway-authority-chec
 import {
   GatewayAuthorityError,
   gatewayAuthorityFailureLines,
-  resolveGatewayTeardownAuthority,
+  resolveGatewayRebuildAuthority,
 } from "../../onboard/gateway-teardown-authority";
 import {
   observeSandboxOnGateway,
@@ -108,10 +108,11 @@ export function openRebuildRecreateJournal(
   const observe = input.observe ?? observeRebuildSandbox;
   // Authority revalidation runs before the destroy phase. Handing the refusal
   // to the caller lets rebuild report the migration and its remedy instead of
-  // crashing with a Node stack trace (#8103).
-  let authority: ReturnType<typeof resolveGatewayTeardownAuthority>;
+  // crashing with a Node stack trace (#8103). The dedicated rebuild resolver
+  // permits its narrowly defined managed-service migration.
+  let authority: ReturnType<typeof resolveGatewayRebuildAuthority>;
   try {
-    authority = resolveGatewayTeardownAuthority({
+    authority = resolveGatewayRebuildAuthority({
       gatewayName: target.gatewayName,
       gatewayPort: target.gatewayPort,
     });

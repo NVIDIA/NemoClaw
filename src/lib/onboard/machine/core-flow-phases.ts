@@ -23,7 +23,7 @@ import {
   type ProviderInferenceStateOptions,
 } from "./handlers/provider-inference";
 import { handleSandboxState, type SandboxStateOptions } from "./handlers/sandbox";
-import { UnexpectedLiveOnboardFlowSliceStateError } from "./live-flow-slice";
+import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 import {
   type OnboardPrerequisiteRepairEventRecorder,
   runOnboardPrerequisiteRepair,
@@ -31,6 +31,8 @@ import {
 import type { OnboardMachineRunnerResult, OnboardMachineRunnerRuntime } from "./runner";
 import { runOnboardSequenceWithRunner, type OnboardSequencePhase } from "./sequence-runner";
 import type { OnboardMachineState } from "./types";
+
+export { prepareCoreOnboardFlowContext, prepareFinalOnboardFlowContext } from "./flow-handoff";
 
 export interface EndpointProvenanceOptions {
   endpointSource?: InferenceEndpointSource | null;
@@ -67,6 +69,7 @@ export interface SandboxOnboardFlowPhaseOptions<
   gatewayName: string;
   authoritativeResumeConfig?: boolean;
   authoritativePolicyTier?: string | null;
+
   recreateJournalTargetIntentFingerprint?: string | null;
   resumeAgentChanged: boolean;
   requestedObservabilityEnabled?: boolean | null;
@@ -160,6 +163,7 @@ export function createProviderInferenceOnboardFlowPhase<
         hermesToolGateways: context.hermesToolGateways,
         preferredInferenceApi: context.preferredInferenceApi,
         compatibleEndpointReasoning: context.compatibleEndpointReasoning,
+
         compatibleEndpointReasoningEffort: context.compatibleEndpointReasoningEffort,
         nimContainer: context.nimContainer,
         webSearchConfig: context.webSearchConfig,
@@ -184,6 +188,7 @@ export function createProviderInferenceOnboardFlowPhase<
         hermesToolGateways: providerInferenceResult.hermesToolGateways,
         preferredInferenceApi: providerInferenceResult.preferredInferenceApi,
         compatibleEndpointReasoning: providerInferenceResult.compatibleEndpointReasoning,
+
         compatibleEndpointReasoningEffort:
           providerInferenceResult.compatibleEndpointReasoningEffort,
         nimContainer: providerInferenceResult.nimContainer,
@@ -215,6 +220,7 @@ export function createSandboxOnboardFlowPhase<
       gatewayName: options.gatewayName,
       authoritativeResumeConfig: options.authoritativeResumeConfig,
       authoritativePolicyTier: options.authoritativePolicyTier,
+
       recreateJournalTargetIntentFingerprint: options.recreateJournalTargetIntentFingerprint,
       endpointSource: endpointProvenance.endpointSource,
       resumeAgentChanged: options.resumeAgentChanged,
@@ -281,7 +287,7 @@ export async function runCoreOnboardFlowSlice<Context extends OnboardFlowContext
       ]
     : ["provider_selection", "inference", "sandbox", "openclaw", "agent_setup"];
   if (!allowedStates.includes(state)) {
-    throw new UnexpectedLiveOnboardFlowSliceStateError(
+    throw new UnexpectedOnboardFlowSliceStateError(
       state,
       ["provider_selection", "inference", "sandbox"],
       allowedStates.filter(
