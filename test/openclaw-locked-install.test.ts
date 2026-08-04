@@ -19,12 +19,9 @@ const PACKAGE_SPEC = "openclaw@2026.7.1";
 const INTEGRITY =
   "sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==";
 const TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz";
-const LOCK_SHA256 = "82489f62febb12da52833c0b1f7f6969f7e21a098c565ef1f91342b1e5e32d88";
-const REPLACEMENT_LOCK_SHA256 = "759b31779f40867f35f15065b582eb1d3efb8fddb1fe43c207507c905fa2a421";
+const LOCK_SHA256 = "759b31779f40867f35f15065b582eb1d3efb8fddb1fe43c207507c905fa2a421";
 const MCPORTER_PACKAGE_SPEC = "mcporter@0.7.3";
-const MCPORTER_LOCK_SHA256 = "c31959d7950903f7477ca2e143b3f1f4adfd10f1961fe97db40cd72f62b84830";
-const MCPORTER_REPLACEMENT_LOCK_SHA256 =
-  "962dee34f6b0a493521d1619d1cf030e2630cbdfce8bf0598217202f57078793";
+const MCPORTER_LOCK_SHA256 = "962dee34f6b0a493521d1619d1cf030e2630cbdfce8bf0598217202f57078793";
 const roots: string[] = [];
 
 function sha256(file: string): string {
@@ -177,8 +174,10 @@ describe("locked OpenClaw production installation (#5896)", () => {
     const verified = verifyReviewedNpmLock(lockRequest(), reviewedMetadata);
     expect(verified).toHaveLength(307);
     expect(verified).toContain(PACKAGE_SPEC);
-    expect(verified).toContain("brace-expansion@5.0.8");
-    expect(verified).toContain("fast-uri@3.1.4");
+    expect(verified).toContain("brace-expansion@5.0.9");
+    expect(verified).toContain("fast-uri@3.1.5");
+    expect(verified).toContain("ip-address@10.3.1");
+    expect(verified).toContain("undici@8.10.0");
     expect(sha256(LOCKFILE)).toBe(LOCK_SHA256);
   });
 
@@ -377,26 +376,22 @@ describe("locked OpenClaw production installation (#5896)", () => {
           directory: "agents/openclaw/openclaw-runtime",
           lockSha256: LOCK_SHA256,
           packageSpec: PACKAGE_SPEC,
-          replacementLockSha256: REPLACEMENT_LOCK_SHA256,
         }),
         expect.objectContaining({
           directory: "agents/openclaw/mcporter-runtime",
           lockSha256: MCPORTER_LOCK_SHA256,
           packageSpec: MCPORTER_PACKAGE_SPEC,
-          replacementLockSha256: MCPORTER_REPLACEMENT_LOCK_SHA256,
         }),
       ]),
     );
-    const openclawGraph = audit.lockedGraphs.find(
-      ({ packageSpec }: { packageSpec?: string }) => packageSpec === PACKAGE_SPEC,
-    );
-    expect(openclawGraph).toBeDefined();
-    expect(openclawGraph).not.toHaveProperty("reviewedLockSha256");
-    const mcporterGraph = audit.lockedGraphs.find(
-      ({ packageSpec }: { packageSpec?: string }) => packageSpec === MCPORTER_PACKAGE_SPEC,
-    );
-    expect(mcporterGraph).toBeDefined();
-    expect(mcporterGraph).not.toHaveProperty("reviewedLockSha256");
+    expect(audit.lockedGraphs).toHaveLength(2);
+    expect(
+      audit.lockedGraphs.map(({ packageSpec }: { packageSpec?: string }) => packageSpec).sort(),
+    ).toEqual([MCPORTER_PACKAGE_SPEC, PACKAGE_SPEC].sort());
+    for (const graph of audit.lockedGraphs) {
+      expect(graph).not.toHaveProperty("replacementLockSha256");
+      expect(graph).not.toHaveProperty("reviewedLockSha256");
+    }
 
     const baseWorkflow = fs.readFileSync(
       path.join(REPO_ROOT, ".github", "workflows", "base-image.yaml"),
