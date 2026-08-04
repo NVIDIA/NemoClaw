@@ -1090,12 +1090,12 @@ const handleVllmSelection = createSetupNimVllmHandler({
   applyVllmRuntimeContextWindow: localInference.applyVllmRuntimeContextWindow, isDgxSparkHost: () => nim.detectNvidiaPlatform() === "spark", isNemoClawManagedVllmRunning: vllmInference.isNemoClawManagedVllmRunning, persistConfiguredDualStationVllmRuntimeReceipt: vllmInference.persistConfiguredDualStationVllmRuntimeReceipt,
   exitProcess: (code) => process.exit(code),
 });
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+const handleLlamaCppSelection = setupNimFlow.createLlamaCppSelectionHandler({ isNonInteractive, resolveCredential: resolveProviderCredential, ensureNamedCredential: (envName, label) => credentialPrompt.ensureNamedCredential(envName, label), returningToProviderSelection: credentialPrompt.returningToProviderSelection, probeLlamaCppAttachment: setupNimFlow.probeLlamaCppAttachment, validateOpenAiLikeSelection, error: (message) => console.error(message), log: (message) => console.log(message), exitProcess: (code): never => process.exit(code) });
 const ollamaModelSize: typeof import("./inference/ollama/model-size") = require("./inference/ollama/model-size");
-
 function isOpenshellInstalled(): boolean {
   return resolveOpenshell() !== null;
 }
-
 function installOpenshell(): OpenShellInstallResult {
   return openshellPinFlow.runOpenshellInstall({
     scriptsDir: SCRIPTS,
@@ -1111,7 +1111,6 @@ function installOpenshell(): OpenShellInstallResult {
     log: console.log,
   });
 }
-
 function areRequiredDockerDriverBinariesPresent(
   platform: NodeJS.Platform = process.platform,
   binaries: DockerDriverBinaryOverrides = {},
@@ -2613,8 +2612,7 @@ async function createSandboxWithBaseImageResolution(
           ),
       },
     );
-  // Returns true if the build context was fully removed, false otherwise.
-  // The caller uses this to decide whether the process 'exit' safety net
+  // The caller uses the cleanup result to decide whether the process 'exit' safety net
   // can be deregistered — if inline cleanup fails, we leave the handler
   // armed so the temp dir is still removed on process exit.
   const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
@@ -2673,6 +2671,7 @@ async function createSandboxWithBaseImageResolution(
       chatUiUrl,
       provider,
       endpointUrl: createIntent?.endpointUrl ?? null,
+      compatibleEndpointReasoning: createIntent?.compatibleEndpointReasoning,
       preferredInferenceApi,
       webSearchConfig,
       toolDisclosure: effectiveToolDisclosure,
@@ -3557,6 +3556,7 @@ function getSetupNimDeps(): SetupNimDeps {
         isNonInteractive,
         abortNonInteractive,
       ),
+    handleLlamaCppSelection,
     handleRemoteProviderSelection,
     handleNimLocalSelection,
     handleRunningOllamaSelection,
@@ -3771,7 +3771,7 @@ const computeSetupPresetSuggestions = (
   options: SetupPresetSuggestionOptions = {},
 ): string[] =>
   computeSetupPresetSuggestionsImpl(
-    { policies, tiers, localInferenceProviders: LOCAL_INFERENCE_PROVIDERS },
+    { policies, tiers, localInferenceProviders: [...LOCAL_INFERENCE_PROVIDERS, "llama-cpp-local"] },
     tierName,
     options,
   );
@@ -3784,7 +3784,7 @@ async function setupPoliciesWithSelection(
       {
         policies,
         tiers,
-        localInferenceProviders: LOCAL_INFERENCE_PROVIDERS,
+        localInferenceProviders: [...LOCAL_INFERENCE_PROVIDERS, "llama-cpp-local"],
         step,
         note,
         isNonInteractive,

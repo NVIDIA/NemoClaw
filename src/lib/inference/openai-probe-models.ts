@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { resolveMaxTokensField } from "./max-tokens-field";
+import { MIN_PROBE_REPLY_TOKENS, resolveMaxTokensField } from "./max-tokens-field";
 
 export function isDeepSeekV4ProModel(model: unknown): boolean {
   return String(model || "").toLowerCase() === "deepseek-ai/deepseek-v4-pro";
@@ -16,7 +16,7 @@ export function getChatCompletionsProbePayload(model: string): Record<string, un
   const payload = {
     model,
     messages: [{ role: "user", content: "Reply with exactly: OK" }],
-    [maxTokensField]: 8,
+    [maxTokensField]: MIN_PROBE_REPLY_TOKENS,
   };
 
   if (isDeepSeekV4ProModel(model)) {
@@ -33,7 +33,7 @@ export function getChatCompletionsProbePayload(model: string): Record<string, un
   if (isKimiK26Model(model)) {
     return {
       ...payload,
-      [maxTokensField]: 8,
+      [maxTokensField]: MIN_PROBE_REPLY_TOKENS,
       chat_template_kwargs: { thinking: false },
     };
   }
