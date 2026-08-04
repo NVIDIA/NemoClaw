@@ -6,16 +6,13 @@ import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
   assertBraveConfig,
-  assertBraveKeyAbsentFromAgentSurfaces,
   assertBraveResponse,
+  assertBraveShellCredentialBoundary,
   assertDockerAvailable,
-  assertOptionalBraveEnv,
-  assertRawConfigHasNoSecret,
   cleanupBraveNemoClawSandbox,
   cleanupBraveState,
   commandEnv,
   extractOpenClawAgentText,
-  fingerprintSecret,
   onboardBrave,
   runBraveAgentWithSecretBoundaryCheck,
   SANDBOX_NAME,
@@ -32,7 +29,7 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
       "onboard Brave-enabled OpenClaw sandbox",
       "validate Brave policy and secret isolation",
       "run Brave-backed OpenClaw search",
-      "assert agent cannot read the real Brave key",
+      "assert sandbox shell cannot read the real Brave key",
       "query Brave API through credential resolver",
     ],
   },
@@ -49,9 +46,9 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
       "onboard succeeds with BRAVE_API_KEY present",
       "the brave network policy preset includes api.search.brave.com",
       "OpenClaw web search config is enabled and selects provider=brave",
-      "the real BRAVE_API_KEY is absent from openclaw.json and sandbox shell env",
+      "OpenClaw stores a BRAVE_API_KEY placeholder rather than the raw key",
       "OpenClaw agent can perform a Brave-backed web search",
-      "the real BRAVE_API_KEY is absent from the live agent environment and OpenClaw config/state tree",
+      "BRAVE_API_KEY is absent or a placeholder in the live agent and sandbox shell environments",
       "curl from inside the sandbox can query Brave using the placeholder token header",
     ],
   });
@@ -96,29 +93,10 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
   });
   expect(config.exitCode, resultText(config)).toBe(0);
 
-  const secretFingerprint = fingerprintSecret(braveKey);
-  await assertRawConfigHasNoSecret(sandbox, secretFingerprint);
   const placeholder = assertBraveConfig(config.stdout);
 
-  const envCheck = await sandbox.exec(
-    SANDBOX_NAME,
-    ["sh", "-lc", "printenv BRAVE_API_KEY || true"],
-    {
-      artifactName: "phase-3-sandbox-brave-env",
-      env: commandEnv(),
-      redactionValues,
-      timeoutMs: 30_000,
-    },
-  );
-  expect(envCheck.exitCode, resultText(envCheck)).toBe(0);
-  assertOptionalBraveEnv(envCheck.stdout, braveKey);
-
   progress.phase("run Brave-backed OpenClaw search");
-  const agent = await runBraveAgentWithSecretBoundaryCheck(
-    sandbox,
-    secretFingerprint,
-    redactionValues,
-  );
+  const agent = await runBraveAgentWithSecretBoundaryCheck(sandbox, redactionValues);
   expect(resultText(agent)).not.toMatch(
     /SsrFBlockedError|Blocked hostname|ECONNREFUSED|EAI_AGAIN|gateway unavailable|network connection error/i,
   );
@@ -127,14 +105,14 @@ test("Brave search preset wires policy/config, hides the real key, and performs 
     /nvidia|geforce|cuda|gpu/i,
   );
 
-  progress.phase("assert agent cannot read the real Brave key");
+  progress.phase("assert sandbox shell cannot read the real Brave key");
   // #7425 reproduction, reframed to the real boundary. The reporter's leak came
   // from the raw key being readable by the agent (a generic-typed provider
   // injects it into the sandbox env), not from the model choosing to print it.
   // The benign search above proves Brave still works; the checks cover the live
-  // agent environment plus the sandbox shell and OpenClaw config/state surfaces
-  // without feeding the key through the live LLM loop.
-  await assertBraveKeyAbsentFromAgentSurfaces(sandbox, secretFingerprint, redactionValues);
+  // agent and sandbox login-shell environment without feeding the key through
+  // the live LLM loop or deriving portable test material from it.
+  await assertBraveShellCredentialBoundary(sandbox, redactionValues);
 
   progress.phase("query Brave API through credential resolver");
   const curl = await sandboxShell(
