@@ -27,7 +27,6 @@ import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 import { nemoclawStateRoot, resolveHome } from "../state/state-root";
 import {
-  type BackupShieldsWindow,
   type BackupShieldsWindowOptions,
   openBackupShieldsWindow,
   relockBackupShieldsWindow,
@@ -79,26 +78,13 @@ interface BackupAllSandboxAttempt {
   mutationLockError?: unknown;
 }
 
-interface BackupAllSandboxSetup {
-  window: BackupShieldsWindow | null;
-  startedForBackup: StartedForBackup | null;
-  stoppedContainerUnavailable: boolean;
-  stoppedContainerCleanupError: Error | null;
-}
-
 function returnStartedSandboxToStopped(
   sandboxName: string,
   startedForBackup: StartedForBackup,
-  cause?: unknown,
 ): Error | null {
   const failureDetail =
     "could not return its container to the stopped state; the container was left running";
   const failureMessage = `Backup cleanup failed for '${sandboxName}': ${failureDetail}.`;
-  if (cause !== undefined) {
-    const error = new Error(failureMessage, { cause });
-    console.error(`  ${RD}✗${R} ${sandboxName}: backup cleanup failed (${failureDetail})`);
-    return error;
-  }
   try {
     if (returnSandboxContainerToStopped(startedForBackup.containerName)) {
       console.log(`  ${D}Returned '${sandboxName}' to its stopped state.${R}`);
@@ -127,36 +113,27 @@ async function backupSandboxWithinShieldsWindow(
   ) => sandboxState.BackupResult | Promise<sandboxState.BackupResult>,
 ): Promise<BackupAllSandboxAttempt> {
   const shieldsWindowOptions = backupAllShieldsWindowOptions(sandboxName);
-  let enteredOpenLock = false;
-  let setup: BackupAllSandboxSetup;
+  let enteredTransactionLock = false;
   try {
-    setup = await withSandboxMutationLock(sandboxName, () => {
-      enteredOpenLock = true;
+    return await withSandboxMutationLock(sandboxName, async () => {
+      enteredTransactionLock = true;
       const startedForBackup = shouldStartStoppedContainer
         ? startStoppedSandboxContainerForBackup(sandboxName)
         : null;
       if (shouldStartStoppedContainer && !startedForBackup) {
         return {
-          window: null,
-          startedForBackup: null,
+          result: null,
+          orphanManifestMessage: null,
+          shieldsWindowOpened: false,
           stoppedContainerUnavailable: true,
-          stoppedContainerCleanupError: null,
         };
       }
       if (startedForBackup) {
         console.log(`  Starting stopped sandbox '${sandboxName}' to back it up...`);
       }
+      let window;
       try {
-        const window = openBackupShieldsWindow(sandboxName, shieldsWindowOptions);
-        return {
-          window,
-          startedForBackup,
-          stoppedContainerUnavailable: false,
-          stoppedContainerCleanupError:
-            !window && startedForBackup
-              ? returnStartedSandboxToStopped(sandboxName, startedForBackup)
-              : null,
-        };
+        window = openBackupShieldsWindow(sandboxName, shieldsWindowOptions);
       } catch (error) {
         if (!startedForBackup) throw error;
         const cleanupError = returnStartedSandboxToStopped(sandboxName, startedForBackup);
@@ -168,9 +145,113 @@ async function backupSandboxWithinShieldsWindow(
         }
         throw error;
       }
+      if (!window) {
+        const cleanupError = startedForBackup
+          ? returnStartedSandboxToStopped(sandboxName, startedForBackup)
+          : null;
+        if (cleanupError) throw cleanupError;
+        return {
+          result: null,
+          orphanManifestMessage: null,
+          shieldsWindowOpened: false,
+          stoppedContainerUnavailable: false,
+        };
+      }
+
+      console.log(`  Backing up '${sandboxName}'...`);
+      let result: sandboxState.BackupResult | null = null;
+      let orphanManifestMessage: string | null = null;
+      let backupError: unknown;
+      let hasBackupError = false;
+      let relockError: Error | null = null;
+      let stoppedContainerCleanupError: Error | null = null;
+      try {
+        result = await backup(startedForBackup);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        // Preserve the narrow pre-upgrade orphan exception, but classify it inside
+        // this window so a previously locked sandbox is always relocked before the
+        // caller counts the attempt as skipped.
+        if (/^Agent '[^']+' not found: .+\/manifest\.yaml$/.test(message)) {
+          orphanManifestMessage = message;
+        } else {
+          backupError = err;
+          hasBackupError = true;
+        }
+      } finally {
+        // One lifecycle transaction excludes concurrent NemoClaw destroy and
+        // recreate operations through the shields-down window, backup, and
+        // cleanup. If auto-restore expires, its deadline gate blocks new
+        // lifecycle mutations and waits for this owner. The relock path binds
+        // to the active timer token before the lifecycle lock is released.
+        try {
+          if (!relockBackupShieldsWindow(sandboxName, window, true, shieldsWindowOptions)) {
+            relockError = shieldsRelockError(sandboxName);
+          }
+        } catch (error) {
+          relockError = shieldsRelockError(sandboxName, error);
+        } finally {
+          if (startedForBackup) {
+            stoppedContainerCleanupError = returnStartedSandboxToStopped(
+              sandboxName,
+              startedForBackup,
+            );
+          }
+        }
+      }
+
+      if (relockError) {
+        if (hasBackupError) {
+          throw new AggregateError(
+            [
+              backupError,
+              relockError,
+              ...(stoppedContainerCleanupError ? [stoppedContainerCleanupError] : []),
+            ],
+            `Backup for '${sandboxName}' failed and Shields lockdown could not be restored; aborting remaining backups.`,
+          );
+        }
+        if (orphanManifestMessage) {
+          throw new AggregateError(
+            [
+              new Error(orphanManifestMessage),
+              relockError,
+              ...(stoppedContainerCleanupError ? [stoppedContainerCleanupError] : []),
+            ],
+            `Backup for '${sandboxName}' encountered an orphan manifest and Shields lockdown could not be restored; aborting remaining backups.`,
+          );
+        }
+        if (stoppedContainerCleanupError) {
+          throw new AggregateError(
+            [relockError, stoppedContainerCleanupError],
+            `Shields lockdown could not be restored for '${sandboxName}' and its started container could not be returned to the stopped state; aborting remaining backups.`,
+          );
+        }
+        throw relockError;
+      }
+      if (stoppedContainerCleanupError && hasBackupError) {
+        throw new AggregateError(
+          [backupError, stoppedContainerCleanupError],
+          `Backup for '${sandboxName}' failed and its started container could not be returned to the stopped state; aborting remaining backups.`,
+        );
+      }
+      if (stoppedContainerCleanupError && orphanManifestMessage) {
+        throw new AggregateError(
+          [new Error(orphanManifestMessage), stoppedContainerCleanupError],
+          `Backup for '${sandboxName}' encountered an orphan manifest and its started container could not be returned to the stopped state; aborting remaining backups.`,
+        );
+      }
+      if (stoppedContainerCleanupError) throw stoppedContainerCleanupError;
+      if (hasBackupError) throw backupError;
+      return {
+        result,
+        orphanManifestMessage,
+        shieldsWindowOpened: true,
+        stoppedContainerUnavailable: false,
+      };
     });
   } catch (error) {
-    if (enteredOpenLock) throw error;
+    if (enteredTransactionLock) throw error;
     return {
       result: null,
       orphanManifestMessage: null,
@@ -179,130 +260,6 @@ async function backupSandboxWithinShieldsWindow(
       mutationLockError: error,
     };
   }
-  if (setup.stoppedContainerUnavailable) {
-    return {
-      result: null,
-      orphanManifestMessage: null,
-      shieldsWindowOpened: false,
-      stoppedContainerUnavailable: true,
-    };
-  }
-  if (!setup.window) {
-    if (setup.stoppedContainerCleanupError) throw setup.stoppedContainerCleanupError;
-    return {
-      result: null,
-      orphanManifestMessage: null,
-      shieldsWindowOpened: false,
-      stoppedContainerUnavailable: false,
-    };
-  }
-  const window = setup.window;
-
-  console.log(`  Backing up '${sandboxName}'...`);
-  let result: sandboxState.BackupResult | null = null;
-  let orphanManifestMessage: string | null = null;
-  let backupError: unknown;
-  let hasBackupError = false;
-  let relockError: Error | null = null;
-  let stoppedContainerCleanupError: Error | null = null;
-  try {
-    result = await withSandboxMutationLock(sandboxName, () => backup(setup.startedForBackup));
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    // Preserve the narrow pre-upgrade orphan exception, but classify it inside
-    // this window so a previously locked sandbox is always relocked before the
-    // caller counts the attempt as skipped.
-    if (/^Agent '[^']+' not found: .+\/manifest\.yaml$/.test(message)) {
-      orphanManifestMessage = message;
-    } else {
-      backupError = err;
-      hasBackupError = true;
-    }
-  } finally {
-    let enteredRelockLock = false;
-    try {
-      await withSandboxMutationLock(
-        sandboxName,
-        () => {
-          enteredRelockLock = true;
-          try {
-            if (!relockBackupShieldsWindow(sandboxName, window, true, shieldsWindowOptions)) {
-              relockError = shieldsRelockError(sandboxName);
-            }
-          } catch (error) {
-            relockError = shieldsRelockError(sandboxName, error);
-          } finally {
-            if (setup.startedForBackup) {
-              stoppedContainerCleanupError = returnStartedSandboxToStopped(
-                sandboxName,
-                setup.startedForBackup,
-              );
-            }
-          }
-        },
-        { timeoutMs: 30_000 },
-      );
-    } catch (error) {
-      relockError ??= shieldsRelockError(sandboxName, error);
-      if (!enteredRelockLock && setup.startedForBackup) {
-        stoppedContainerCleanupError = returnStartedSandboxToStopped(
-          sandboxName,
-          setup.startedForBackup,
-          error,
-        );
-      }
-    }
-  }
-
-  if (relockError) {
-    if (hasBackupError) {
-      throw new AggregateError(
-        [
-          backupError,
-          relockError,
-          ...(stoppedContainerCleanupError ? [stoppedContainerCleanupError] : []),
-        ],
-        `Backup for '${sandboxName}' failed and Shields lockdown could not be restored; aborting remaining backups.`,
-      );
-    }
-    if (orphanManifestMessage) {
-      throw new AggregateError(
-        [
-          new Error(orphanManifestMessage),
-          relockError,
-          ...(stoppedContainerCleanupError ? [stoppedContainerCleanupError] : []),
-        ],
-        `Backup for '${sandboxName}' encountered an orphan manifest and Shields lockdown could not be restored; aborting remaining backups.`,
-      );
-    }
-    if (stoppedContainerCleanupError) {
-      throw new AggregateError(
-        [relockError, stoppedContainerCleanupError],
-        `Shields lockdown could not be restored for '${sandboxName}' and its started container could not be returned to the stopped state; aborting remaining backups.`,
-      );
-    }
-    throw relockError;
-  }
-  if (stoppedContainerCleanupError && hasBackupError) {
-    throw new AggregateError(
-      [backupError, stoppedContainerCleanupError],
-      `Backup for '${sandboxName}' failed and its started container could not be returned to the stopped state; aborting remaining backups.`,
-    );
-  }
-  if (stoppedContainerCleanupError && orphanManifestMessage) {
-    throw new AggregateError(
-      [new Error(orphanManifestMessage), stoppedContainerCleanupError],
-      `Backup for '${sandboxName}' encountered an orphan manifest and its started container could not be returned to the stopped state; aborting remaining backups.`,
-    );
-  }
-  if (stoppedContainerCleanupError) throw stoppedContainerCleanupError;
-  if (hasBackupError) throw backupError;
-  return {
-    result,
-    orphanManifestMessage,
-    shieldsWindowOpened: true,
-    stoppedContainerUnavailable: false,
-  };
 }
 
 export async function backupAll(): Promise<void> {

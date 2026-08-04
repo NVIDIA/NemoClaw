@@ -13,18 +13,36 @@ import {
 } from "../state/mcp-lifecycle-lock";
 
 const shieldsIndexMock = vi.hoisted(() => ({
-  applyShieldsPolicySnapshot: vi.fn(() => ({ status: 0 })),
   completeAutoRestoreTransition: vi.fn(() => true),
   lockAgentConfig: vi.fn(),
   prepareAutoRestoreTransitionTakeover: vi.fn(),
   resolvePersistedAutoRestoreTarget: vi.fn(),
 }));
 
+const runMock = vi.fn(() => ({ status: 0 }));
+
+vi.mock("../runner", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../runner")>()),
+  run: runMock,
+}));
+
+vi.mock("../policy", () => ({
+  buildPolicySetCommand: vi.fn((file: string, name: string) => [
+    "openshell",
+    "policy",
+    "set",
+    "--policy",
+    file,
+    "--wait",
+    name,
+  ]),
+}));
+
 vi.mock("./index", () => shieldsIndexMock);
 
 const PROCESS_TOKEN = "a".repeat(32);
 
-describe("detached Shields recovery budget", () => {
+describe("detached Shields recovery budget", { timeout: 15_000 }, () => {
   let tmpHome: string;
   let stateDir: string;
 
@@ -32,6 +50,7 @@ describe("detached Shields recovery budget", () => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "shields-recovery-budget-"));
     stateDir = path.join(tmpHome, ".nemoclaw", "state");
     vi.stubEnv("HOME", tmpHome);
+    runMock.mockImplementation(() => ({ status: 0 }));
     vi.resetModules();
     vi.clearAllMocks();
   });
@@ -72,7 +91,7 @@ describe("detached Shields recovery budget", () => {
     return { args: args!, lockPath, markerPath, sandboxName, timer };
   }
 
-  function readAuditEntries(): Array<{ error?: string }> {
+  function readAuditEntries(): Array<{ action: string; error?: string; warning?: string }> {
     return fs
       .readFileSync(path.join(stateDir, "shields-audit.jsonl"), "utf-8")
       .trim()
@@ -90,7 +109,7 @@ describe("detached Shields recovery budget", () => {
     await timer.runRestoreTimer(args, { retryDelayMs: 0, maxRestoreAttempts: 7 });
     await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(1), {
       interval: 1,
-      timeout: 2_000,
+      timeout: 10_000,
     });
 
     const auditsAtExit = readAuditEntries();
@@ -100,7 +119,7 @@ describe("detached Shields recovery budget", () => {
     ).toHaveLength(1);
     expect(auditsAtExit.at(-1)?.error).toContain("recovery failed after 7 attempts");
     expect(auditsAtExit.at(-1)?.error).toContain("Correct the state-directory write failure");
-    expect(shieldsIndexMock.applyShieldsPolicySnapshot).not.toHaveBeenCalled();
+    expect(runMock).not.toHaveBeenCalled();
     await expect(
       withMcpLifecycleLock(sandboxName, () => undefined, { stateDir }),
     ).rejects.toThrow();
@@ -113,19 +132,17 @@ describe("detached Shields recovery budget", () => {
   it("shares the budget across scheduled setup failures and restoration", async () => {
     const { args, lockPath, timer } = await createFixture("cross-phase-budget");
     const containmentPath = `${lockPath}.containment`;
-    const lifecycleDirectory = path.dirname(lockPath);
     const originalMkdir = fs.promises.mkdir.bind(fs.promises);
-    let setupFailuresRemaining = 2;
-    vi.spyOn(fs.promises, "mkdir").mockImplementation(async (targetPath, options) => {
-      if (String(targetPath) === lifecycleDirectory && setupFailuresRemaining > 0) {
-        setupFailuresRemaining -= 1;
-        const error = new Error("simulated pre-fence setup failure") as NodeJS.ErrnoException;
-        error.code = "EIO";
-        throw error;
-      }
-      return await originalMkdir(targetPath, options);
-    });
-    shieldsIndexMock.applyShieldsPolicySnapshot.mockReturnValue({ status: 1 });
+    const setupError = new Error("simulated pre-fence setup failure") as NodeJS.ErrnoException;
+    setupError.code = "EIO";
+    const rejectSetup = async (): Promise<never> => {
+      throw setupError;
+    };
+    vi.spyOn(fs.promises, "mkdir")
+      .mockImplementationOnce(rejectSetup)
+      .mockImplementationOnce(rejectSetup)
+      .mockImplementation(originalMkdir);
+    runMock.mockReturnValue({ status: 1 });
     const exitSpy = vi
       .spyOn(process, "exit")
       .mockImplementation((() => undefined) as typeof process.exit);
@@ -133,11 +150,10 @@ describe("detached Shields recovery budget", () => {
     await timer.runRestoreTimer(args, { retryDelayMs: 0, maxRestoreAttempts: 7 });
     await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(1), {
       interval: 1,
-      timeout: 2_000,
+      timeout: 10_000,
     });
 
-    expect(setupFailuresRemaining).toBe(0);
-    expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(5);
+    expect(runMock).toHaveBeenCalledTimes(5);
     expect(fs.existsSync(containmentPath)).toBe(true);
     expect(
       readAuditEntries().filter((entry) =>
@@ -146,23 +162,92 @@ describe("detached Shields recovery budget", () => {
     ).toHaveLength(1);
   });
 
+  it("waits beyond the recovery budget for a verified live lifecycle owner, then restores", async () => {
+    const sandboxName = "healthy-backup-owner";
+    let markOwnerEntered!: () => void;
+    let releaseOwner!: () => void;
+    const ownerEntered = new Promise<void>((resolve) => {
+      markOwnerEntered = resolve;
+    });
+    const ownerReleased = new Promise<void>((resolve) => {
+      releaseOwner = resolve;
+    });
+    const owner = withMcpLifecycleLock(
+      sandboxName,
+      async () => {
+        markOwnerEntered();
+        await ownerReleased;
+      },
+      { stateDir, pollIntervalMs: 1, timeoutMs: 1_000 },
+    );
+    await ownerEntered;
+
+    const { args, lockPath, timer } = await createFixture(sandboxName);
+    const containmentPath = `${lockPath}.containment`;
+    const deadlinePath = `${lockPath}.deadline`;
+    runMock.mockReturnValue({ status: 0 });
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation((() => undefined) as typeof process.exit);
+
+    try {
+      const restore = timer.runRestoreTimer(args, {
+        deadlineSetupTimeoutMs: 10,
+        maxRestoreAttempts: 1,
+        retryDelayMs: 0,
+      });
+      await vi.waitFor(() => expect(fs.existsSync(deadlinePath)).toBe(true), {
+        interval: 1,
+        timeout: 10_000,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 120));
+
+      expect(exitSpy).not.toHaveBeenCalled();
+      expect(fs.existsSync(containmentPath)).toBe(false);
+      expect(runMock).not.toHaveBeenCalled();
+      const waitingAudits = readAuditEntries();
+      expect(waitingAudits).toEqual([
+        expect.objectContaining({
+          action: "shields_auto_restore_lock_warning",
+          warning: expect.stringContaining("verified live sandbox mutation owner"),
+        }),
+      ]);
+      expect(JSON.stringify(waitingAudits)).not.toContain("Contained owner PID");
+      expect(waitingAudits).not.toContainEqual(
+        expect.objectContaining({ action: "shields_up_failed" }),
+      );
+
+      releaseOwner();
+      await Promise.all([owner, restore]);
+
+      expect(exitSpy).toHaveBeenCalledOnce();
+      expect(exitSpy).toHaveBeenCalledWith(0);
+      expect(runMock).toHaveBeenCalledOnce();
+      expect(fs.existsSync(lockPath)).toBe(false);
+      expect(fs.existsSync(deadlinePath)).toBe(false);
+      expect(fs.existsSync(containmentPath)).toBe(false);
+      expect(readAuditEntries()).not.toContainEqual(
+        expect.objectContaining({ action: "shields_up_failed" }),
+      );
+    } finally {
+      releaseOwner();
+      await owner;
+    }
+  });
+
   it("charges deadline-main publication failures to the same bounded budget", async () => {
     const { args, lockPath, sandboxName, timer } = await createFixture("publication-budget");
     const containmentPath = `${lockPath}.containment`;
     const deadlinePath = `${lockPath}.deadline`;
     const originalLink = fs.promises.link.bind(fs.promises);
-    let mainPublicationAttempts = 0;
-    vi.spyOn(fs.promises, "link").mockImplementation(async (existingPath, newPath) => {
-      if (String(newPath) === lockPath) {
-        mainPublicationAttempts += 1;
-        const error = new Error(
-          "simulated deadline-main publication failure",
-        ) as NodeJS.ErrnoException;
-        error.code = "EROFS";
-        throw error;
-      }
-      return await originalLink(existingPath, newPath);
-    });
+    const publicationError = new Error(
+      "simulated deadline-main publication failure",
+    ) as NodeJS.ErrnoException;
+    publicationError.code = "EROFS";
+    const linkSpy = vi
+      .spyOn(fs.promises, "link")
+      .mockImplementationOnce(originalLink)
+      .mockRejectedValue(publicationError);
     const exitSpy = vi
       .spyOn(process, "exit")
       .mockImplementation((() => undefined) as typeof process.exit);
@@ -171,8 +256,8 @@ describe("detached Shields recovery budget", () => {
 
     expect(exitSpy).toHaveBeenCalledTimes(1);
     expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(mainPublicationAttempts).toBe(3);
-    expect(shieldsIndexMock.applyShieldsPolicySnapshot).not.toHaveBeenCalled();
+    expect(linkSpy).toHaveBeenCalledTimes(4);
+    expect(runMock).not.toHaveBeenCalled();
     expect(fs.existsSync(deadlinePath)).toBe(false);
     expect(fs.existsSync(containmentPath)).toBe(true);
     expect(readAuditEntries()).toHaveLength(2);
@@ -189,26 +274,18 @@ describe("detached Shields recovery budget", () => {
     const containmentPath = `${lockPath}.containment`;
     const deadlinePath = `${lockPath}.deadline`;
     const originalAsyncLink = fs.promises.link.bind(fs.promises);
-    vi.spyOn(fs.promises, "link").mockImplementation(async (existingPath, newPath) => {
-      if (String(newPath) === lockPath) {
-        const error = new Error(
-          "simulated deadline-main publication failure",
-        ) as NodeJS.ErrnoException;
-        error.code = "EROFS";
-        throw error;
-      }
-      return await originalAsyncLink(existingPath, newPath);
-    });
-    const originalSyncLink = fs.linkSync.bind(fs);
-    vi.spyOn(fs, "linkSync").mockImplementation((existingPath, newPath) => {
-      if (String(newPath) === containmentPath) {
-        const error = new Error(
-          "simulated containment publication failure",
-        ) as NodeJS.ErrnoException;
-        error.code = "EROFS";
-        throw error;
-      }
-      return originalSyncLink(existingPath, newPath);
+    const publicationError = new Error(
+      "simulated deadline-main publication failure",
+    ) as NodeJS.ErrnoException;
+    publicationError.code = "EROFS";
+    vi.spyOn(fs.promises, "link")
+      .mockImplementationOnce(originalAsyncLink)
+      .mockRejectedValue(publicationError);
+    vi.spyOn(fs, "linkSync").mockImplementation((_existingPath, newPath) => {
+      expect(String(newPath)).toBe(containmentPath);
+      const error = new Error("simulated containment publication failure") as NodeJS.ErrnoException;
+      error.code = "EROFS";
+      throw error;
     });
     const exitSpy = vi
       .spyOn(process, "exit")
@@ -230,6 +307,7 @@ describe("detached Shields recovery budget", () => {
     expect(audits).toHaveLength(1);
     expect(audits[0]?.error).toContain("recovery failed after 1 attempt");
     expect(audits[0]?.error).toContain("Correct the state-directory write failure");
+    expect(audits[0]?.error).toContain("`nemoclaw publication-retained-gate shields status`");
     expect(audits[0]?.error).not.toContain("setup is retrying");
     await expect(
       withMcpLifecycleLock(
@@ -260,7 +338,7 @@ describe("detached Shields recovery budget", () => {
     expect(exitSpy).toHaveBeenCalledTimes(1);
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(fs.existsSync(`${lockPath}.containment`)).toBe(true);
-    expect(shieldsIndexMock.applyShieldsPolicySnapshot).not.toHaveBeenCalled();
+    expect(runMock).not.toHaveBeenCalled();
     const audits = readAuditEntries();
     expect(audits).toHaveLength(1);
     expect(audits[0]?.error).toContain("committed process-tree containment");

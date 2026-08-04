@@ -1177,27 +1177,19 @@ When a timed shields-down window reaches its deadline, auto-restore closes the p
 The gate blocks new mutations and waits for the recorded live owner to release its exact lock generation before auto-restore restores lockdown.
 NemoClaw does not signal that process because portable process inspection cannot prove that all descendants stopped.
 An interactive command can take over an expired timer.
-The interactive takeover makes up to 7 restoration attempts.
-The detached auto-restore timer makes up to 7 total recovery attempts across deadline setup and restoration.
-Both paths wait 5 seconds between failed attempts, for up to 30 seconds of retry delay.
+Interactive recovery has separate transition-takeover and restoration phases.
+Each phase makes up to 7 attempts and waits 5 seconds between failures, for up to 30 seconds of retry delay per phase.
+Detached recovery uses one 7-attempt budget across deadline setup, main-generation publication, and restoration.
 The deadline gate remains closed during those attempts.
 If restoration cannot commit, NemoClaw attempts to record durable containment.
 If that containment commit also fails, NemoClaw retains any exact lifecycle and deadline gates it already owns.
 A state-directory failure that prevented gate publication also prevents normal mutation-lock acquisition.
-Correct the reported state-directory write failure, then retry a NemoClaw command for the sandbox to obtain exact-generation recovery guidance.
-The interactive command returns an error, or the detached timer exits with a failure status.
+Correct the reported state-directory write failure, then run `$$nemoclaw <name> shields status` to resume recovery or receive exact-generation recovery guidance.
+When recovery cannot complete, an interactive command returns an error, or the detached timer exits with a failure status.
 NemoClaw also records durable containment when an owner exits before it can prove that the owner's descendants stopped, or when ownership becomes ambiguous.
 Durable containment, retained exact gates, or the fail-closed state-directory error blocks new mutations until you complete exact-generation operator recovery.
 Stop all NemoClaw processes for the sandbox, then follow the paths, identities, tokens, and removal order in the reported error.
 Verify each recorded generation is unchanged, remove only the exact stale generations first, and remove the exact containment generation last.
-
-Before a manual Shields transition replaces a policy, NemoClaw requires exact agreement among the sandbox registry, generated-policy record, and live gateway policy.
-`shields down` carries the proven managed MCP policy entries into the relaxed policy.
-Restoration removes snapshot-time managed MCP entries before it overlays current exact entries.
-If exact agreement is absent, a manual Shields transition refuses the replacement policy.
-At an expired deadline, auto-restore omits unproven managed MCP policy entries, restores lockdown, and records the omission count in its audit entry.
-An MCP server removed during the shields-down window stays removed.
-A surviving server keeps its recorded endpoint and address pins while its policy ownership remains exact.
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -2961,12 +2953,11 @@ A registered docker-driver sandbox whose container is stopped is started for the
 If the container cannot be returned to the stopped state, the command fails and reports that the container was left running.
 Sandboxes that are not running and cannot be started this way are skipped with remediation guidance.
 
-For each eligible sandbox, `backup-all` acquires the lifecycle lock to open a 30-minute shields-down window when needed.
-It reacquires the lock under that exact timer generation while it copies sandbox state.
-After the copy, it uses a third lock interval with a 30-second acquisition budget to restore the previous Shields posture.
-If the timer expires during the copy, the deadline gate blocks new mutations and waits for the exact backup owner to finish without signaling it.
+For each eligible sandbox, `backup-all` holds one lifecycle transaction through the complete backup.
+Within that transaction, it starts a stopped container when required, opens a 30-minute shields-down window when the sandbox starts with Shields up, copies sandbox state, restores the previous Shields state, and returns any container it started to the stopped state.
+If the timer expires during the transaction, the deadline gate blocks new mutations and waits for the exact backup owner to finish without signaling it.
 An initial lock or unlock failure marks that sandbox as failed, and `backup-all` continues with the next sandbox.
-A failure to restore the previous Shields posture stops `backup-all` before it processes another sandbox.
+A failure to restore the previous Shields state stops `backup-all` before it processes another sandbox.
 
 ```bash
 $$nemoclaw backup-all
@@ -2992,7 +2983,7 @@ Auto-restore does not signal the backup process.
 If ownership becomes ambiguous, NemoClaw attempts to record durable containment and reports exact-generation recovery guidance.
 If the containment commit fails, NemoClaw retains any exact lifecycle and deadline gates it already owns.
 A state-directory failure that prevented gate publication also prevents normal mutation-lock acquisition.
-Correct the reported state-directory write failure, then retry a NemoClaw command for the sandbox to obtain exact-generation recovery guidance.
+Correct the reported state-directory write failure, then run `$$nemoclaw <name> shields status` to resume recovery or receive exact-generation recovery guidance.
 When the sandbox has active baseline exclusions, successful output lists their keys and repeats that excluded egress leaves dependent agent features unsupported for that sandbox.
 
 ```bash
@@ -3031,7 +3022,7 @@ Auto-restore does not signal the restore process.
 If ownership becomes ambiguous, NemoClaw attempts to record durable containment and reports exact-generation recovery guidance.
 If the containment commit fails, NemoClaw retains any exact lifecycle and deadline gates it already owns.
 A state-directory failure that prevented gate publication also prevents normal mutation-lock acquisition.
-Correct the reported state-directory write failure, then retry a NemoClaw command for the sandbox to obtain exact-generation recovery guidance.
+Correct the reported state-directory write failure, then run `$$nemoclaw <name> shields status` to resume recovery or receive exact-generation recovery guidance.
 
 The selector accepts any of:
 

@@ -72,7 +72,8 @@ export function readShieldsTimerMarker(
   stateDir = resolveNemoclawStateDir(),
 ): ShieldsTimerMarker | null {
   try {
-    return readShieldsTimerMarkerFile(shieldsTimerMarkerPath(sandboxName, stateDir));
+    const marker = readShieldsTimerMarkerFile(shieldsTimerMarkerPath(sandboxName, stateDir));
+    return marker?.sandboxName === sandboxName ? marker : null;
   } catch {
     return null;
   }

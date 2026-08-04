@@ -10,7 +10,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { CLI_NAME } from "../cli/branding";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types";
+import { buildPolicySetCommand } from "../policy";
+import { run } from "../runner";
 import {
   beginCommittedMcpLifecycleContainmentSync,
   durableMcpLifecycleContainmentFailure,
@@ -58,6 +61,7 @@ interface TimerArgs {
 interface TimerRuntimeOptions {
   retryDelayMs?: number;
   maxRestoreAttempts?: number;
+  deadlineSetupTimeoutMs?: number;
 }
 
 interface RecoveryAttemptBudget {
@@ -70,6 +74,7 @@ type RestoreAttemptOutcome = "complete" | "retry" | "revoked";
 const STATE_DIR = resolveNemoclawStateDir();
 const AUTO_RESTORE_RETRY_MS = 5_000;
 const AUTO_RESTORE_MAX_ATTEMPTS = 7;
+const AUTO_RESTORE_AUTHORITY_POLL_MS = 250;
 
 function parseTimerArgs(argv: string[]): TimerArgs | null {
   const [
@@ -266,10 +271,14 @@ async function runRestoreTimerWithBudget(
     (runtimeOptions.maxRestoreAttempts ?? 0) > 0
       ? runtimeOptions.maxRestoreAttempts!
       : AUTO_RESTORE_MAX_ATTEMPTS;
+  const deadlineSetupTimeoutMs =
+    Number.isFinite(runtimeOptions.deadlineSetupTimeoutMs) &&
+    (runtimeOptions.deadlineSetupTimeoutMs ?? 0) > 0
+      ? Math.floor(runtimeOptions.deadlineSetupTimeoutMs!)
+      : 5_000;
   let exitCode = 0;
   let retryScheduled = false;
   let terminalContainment = false;
-  let managedMcpWarning: string | undefined;
   const scheduleRetry = (): boolean => {
     if (!markerMatchesCurrentTimer(args)) return false;
     retryScheduled = true;
@@ -302,7 +311,7 @@ async function runRestoreTimerWithBudget(
       const message = error instanceof Error ? error.message : String(error);
       return durableMcpLifecycleContainmentFailure(
         new Error(
-          `${reason}; durable containment could not be committed: ${message}. Correct the state-directory write failure, then retry a NemoClaw command for this sandbox to obtain exact-generation recovery guidance`,
+          `${reason}; durable containment could not be committed: ${message}. Correct the state-directory write failure, then run \`${CLI_NAME} ${args.sandboxName} shields status\` to resume recovery or receive exact-generation recovery guidance`,
         ),
         lockPath,
         { retainOwnedLifecycleGates: true },
@@ -361,16 +370,10 @@ async function runRestoreTimerWithBudget(
           }
 
           // Restore policy (slow — openshell policy set --wait blocks)
-          const result = shields.applyShieldsPolicySnapshot(args.sandboxName, args.snapshotPath, {
-            transitionProcessToken: args.processToken,
-            deadlineAuthoritative: true,
+          const result = run(buildPolicySetCommand(args.snapshotPath, args.sandboxName), {
+            ignoreError: true,
           });
           const status = typeof result.status === "number" ? result.status : 1;
-          managedMcpWarning = result.managedMcpOmissions?.length
-            ? `Auto-restore omitted ${String(
-                result.managedMcpOmissions.length,
-              )} unproven managed MCP policy entries`
-            : undefined;
 
           if (status !== 0) {
             appendAudit({
@@ -495,7 +498,6 @@ async function runRestoreTimerWithBudget(
               restored_by: "auto_timer",
               policy_snapshot: args.snapshotPath,
               scheduled_restore_at: args.restoreAtIso,
-              ...(managedMcpWarning ? { warning: managedMcpWarning } : {}),
             });
             cleanupOwnedTimerMarker(args);
             exitCode = 0;
@@ -568,7 +570,7 @@ async function runRestoreTimerWithBudget(
       {
         stateDir: STATE_DIR,
         pollIntervalMs: 50,
-        timeoutMs: 5_000,
+        timeoutMs: deadlineSetupTimeoutMs,
         throwOnCommittedContainment: true,
         onSetupFailure: async () => {
           const attempt = (recoveryBudget.attemptsUsed += 1);
@@ -576,7 +578,18 @@ async function runRestoreTimerWithBudget(
           await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
           assertTakeoverAuthority();
         },
-        onContainment: ({ ownerPid, reason }) => {
+        onContainment: ({ kind, ownerPid, reason }) => {
+          if (kind === "verified-live-wait") {
+            appendAudit({
+              action: "shields_auto_restore_lock_warning",
+              sandbox: args.sandboxName,
+              timestamp: new Date().toISOString(),
+              restored_by: "auto_timer",
+              policy_snapshot: args.snapshotPath,
+              warning: reason,
+            });
+            return;
+          }
           appendAudit({
             action: "shields_up_failed",
             sandbox: args.sandboxName,
@@ -629,31 +642,59 @@ function main(): void {
   }
 
   let scheduled = false;
-  const authorize = (): void => {
-    if (scheduled || !markerMatchesCurrentTimer(args)) return;
+  const authorize = (): boolean => {
+    if (scheduled) return true;
+    if (!markerMatchesCurrentTimer(args)) return false;
     scheduled = true;
-    setTimeout(
+    const restoreTimeout = setTimeout(
       () => {
+        clearInterval(authorityPoll);
+        if (!markerMatchesCurrentTimer(args)) {
+          process.exit(0);
+          return;
+        }
         void runRestoreTimer(args);
       },
       Math.max(0, args.restoreAtMs - Date.now()),
     );
+    const authorityPoll = setInterval(() => {
+      if (markerMatchesCurrentTimer(args)) return;
+      clearTimeout(restoreTimeout);
+      clearInterval(authorityPoll);
+      process.exit(0);
+    }, AUTO_RESTORE_AUTHORITY_POLL_MS);
+    return true;
   };
 
   // The parent publishes the PID/token marker before authorizing this child.
   // Without this barrier a short timeout can fire in the fork-to-marker gap,
   // causing the child to exit before the parent records a now-dead timer PID.
   process.on("message", (message: unknown) => {
+    const request = message as {
+      type?: unknown;
+      processToken?: unknown;
+      acknowledge?: unknown;
+    };
     if (
       typeof message === "object" &&
       message !== null &&
-      (message as { type?: unknown }).type === "authorize" &&
-      (message as { processToken?: unknown }).processToken === args.processToken
+      request.type === "authorize" &&
+      request.processToken === args.processToken
     ) {
-      authorize();
+      const authorized = authorize();
+      if (
+        authorized &&
+        request.acknowledge === true &&
+        process.connected &&
+        process.send !== undefined
+      ) {
+        process.send({ type: "authorized", processToken: args.processToken }, () => undefined);
+      }
     }
   });
-  process.once("disconnect", authorize);
+  process.once("disconnect", () => {
+    authorize();
+  });
 }
 
 if (require.main === module) {
