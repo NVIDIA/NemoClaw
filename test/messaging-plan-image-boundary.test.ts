@@ -169,7 +169,7 @@ function successfulDockerRunner(agent: Agent, openClawInspect = openClawInspectR
             ] as unknown as string[],
             result: {
               status: 0,
-              stdout: JSON.stringify({ "microsoft-teams-apps": "2.0.13.4", aiohttp: "3.14.1" }),
+              stdout: JSON.stringify({ "microsoft-teams-apps": "2.0.13.4", aiohttp: "3.14.3" }),
             },
           },
         ]),
@@ -225,7 +225,7 @@ describe("messaging plan image boundary helper", () => {
     expect(planSpecs).toEqual(manifestSpecs);
     expect(OPENCLAW_TEAMS_PACKAGE_SPEC).toBe("npm:@openclaw/msteams@{{openclaw.version}}");
     expect(HERMES_TEAMS_PACKAGE_SPEC).toBe("microsoft-teams-apps==2.0.13.4");
-    expect(HERMES_AIOHTTP_PACKAGE_SPEC).toBe("aiohttp==3.14.1");
+    expect(HERMES_AIOHTTP_PACKAGE_SPEC).toBe("aiohttp==3.14.3");
   });
 
   it("emits agent-specific Teams render, install, and runtime outputs", () => {

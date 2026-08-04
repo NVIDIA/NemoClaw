@@ -1,0 +1,84 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingPreset
+
+metadata:
+  id: vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731
+  displayName: DeepSeek V4 Flash 0731 on two DGX Sparks
+
+spec:
+  selection: automatic
+  priority: 400
+
+  requirements:
+    all:
+      - readiness:
+          scope: everyNode
+          kind: qualification
+          id: host.platform.dgx_spark
+          status: qualified
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.platform.supported
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.platform.dgx_spark
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.docker.available
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.docker.daemon_reachable
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.docker.runtime_supported
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.docker.storage_compatible
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.gpu.nvidia_available
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.gpu.container_toolkit_available
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.gpu.cdi_healthy
+          state: present
+      - fact: cluster.nodeCount
+        state: present
+        operator: equals
+        value: 2
+      - topologyQualification:
+          id: host-cluster.direct-cx7
+          schemaVersion: 1
+          status: qualified
+
+  plan:
+    backend: vllm
+    recipeRef: vllm.deepseek-v4-flash-0731.spark-dual.v1
+    bindings:
+      sparkTopology:
+        valueFromTopologyQualification:
+          id: host-cluster.direct-cx7
+          schemaVersion: 1
+          output: topology

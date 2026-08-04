@@ -77,6 +77,21 @@
       "category": "security"
     },
     {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "accepts the corporate CA build arg in the DCode base image before HTTPS fetches",
+      "category": "security"
+    },
+    {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "decodes the corporate CA again in the DCode final image",
+      "category": "security"
+    },
+    {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "trusts the corporate CA before the DCode discovery runtime npm install",
+      "category": "security"
+    },
+    {
       "file": "test/dcode-base-image-workflow.test.ts",
       "test": "accepts every discovered publisher and rejects supply-chain mutations",
       "category": "security"
@@ -332,6 +347,11 @@
       "category": "security"
     },
     {
+      "file": "test/mcp-tool-discovery-image-contract.test.ts",
+      "test": "pins reviewed packages and retains the production audit command (#8177)",
+      "category": "security"
+    },
+    {
       "file": "test/mcp-openshell-workflow.test.ts",
       "test": "keeps the setup docs aligned with the stable default",
       "category": "compatibility"
@@ -527,6 +547,11 @@
       "category": "compatibility"
     },
     {
+      "file": "test/source-architecture.test.ts",
+      "test": "keeps removed step mutation APIs out of production source (#7703)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/runtime-provider-source-shape.test.ts",
       "test": "keeps the dormant managed-bootstrap protocol driver-neutral",
       "category": "security"
@@ -543,7 +568,7 @@
     },
     {
       "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps managed-bootstrap assets out of image packaging",
+      "test": "packages the dormant managed-bootstrap native boundary for every agent image",
       "category": "security"
     },
     {

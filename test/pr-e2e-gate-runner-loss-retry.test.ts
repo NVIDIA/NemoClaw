@@ -80,7 +80,7 @@ function state(): PrGateState {
 function checkRun(id: number, overrides: Record<string, unknown> = {}) {
   return {
     id,
-    name: "E2E / PR Gate Coordination",
+    name: "E2E / PR Gate",
     head_sha: HEAD_SHA,
     external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
     status: "completed",

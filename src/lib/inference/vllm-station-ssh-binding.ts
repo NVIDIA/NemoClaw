@@ -728,6 +728,34 @@ export function loadDualStationSshBinding(
   return validateDualStationSshBindingFiles(binding);
 }
 
+/** Load the sole validated binding owned by one resume-state path, if present. */
+export function loadDualStationSshBindingForStatePath(
+  statePath: string,
+  expectedPeerTarget: string,
+  expectedHostKeyDigest: string,
+): DualStationSshBinding | null {
+  const runtimeDirectory = dualStationSshBindingDirectory(statePath);
+  try {
+    assertDirectory(runtimeDirectory, 0o700, "Station SSH binding root");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  const entries = fs.readdirSync(runtimeDirectory, { withFileTypes: true });
+  if (
+    entries.length !== 1 ||
+    !entries[0]?.isDirectory() ||
+    !VERSION_DIRECTORY_PATTERN.test(entries[0].name)
+  ) {
+    throw new Error("Station SSH binding root does not contain one exact binding");
+  }
+  return loadDualStationSshBinding(
+    path.join(runtimeDirectory, entries[0].name, "binding.json"),
+    expectedPeerTarget,
+    expectedHostKeyDigest,
+  );
+}
+
 export function encodeDualStationSshBindingHandoff(binding: DualStationSshBinding): string {
   const canonical = validateDualStationSshBindingFiles(binding);
   const handoff: BindingHandoff = {

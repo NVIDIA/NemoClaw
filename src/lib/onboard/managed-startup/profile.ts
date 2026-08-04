@@ -732,6 +732,7 @@ export const MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS = {
     { input: "MCPORTER_0_7_3_TARBALL", reason: "release-composition" },
     { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
     { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
+    { input: "TARGETARCH", reason: "platform-build" },
     { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
   ],
   hermes: [
@@ -752,8 +753,12 @@ export const MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS = {
     { input: "NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_VALIDATOR_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256", reason: "integrity-pin" },
+    { input: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256", reason: "integrity-pin" },
+    { input: "NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256", reason: "integrity-pin" },
+    { input: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256", reason: "integrity-pin" },
     { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
     { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
+    { input: "TARGETARCH", reason: "platform-build" },
     { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
   ],
   "langchain-deepagents-code": [
@@ -761,6 +766,7 @@ export const MANAGED_STARTUP_PROFILE_EXCLUDED_DOCKER_INPUTS = {
     { input: "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION", reason: "release-composition" },
     { input: "NEMOCLAW_BUILD_ID", reason: "build-provenance" },
     { input: "NEMOCLAW_DARWIN_VM_COMPAT", reason: "platform-build" },
+    { input: "TARGETARCH", reason: "platform-build" },
     { input: "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER", reason: "fixed-image-contract" },
   ],
 } as const satisfies Record<ManagedStartupAgent, readonly ManagedStartupExcludedDockerInput[]>;
