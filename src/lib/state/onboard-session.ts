@@ -49,11 +49,6 @@ import {
   preserveInvalidSessionToolDisclosure,
   type ToolDisclosure,
 } from "./onboard-session-tool-disclosure";
-import {
-  RECORD_ONLY_STEP_MUTATION_OPTIONS,
-  type StepMutationOptions,
-  shouldUpdateMachine,
-} from "./onboard-step-mutation";
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 import { nemoclawStateRoot } from "./state-root";
 
@@ -1382,11 +1377,7 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   return saveSession(next);
 }
 
-function markStepStartedWithOptions(
-  stepName: string,
-  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
-): Session {
-  let shouldEmit = false;
+export function markStepStarted(stepName: string): Session {
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
@@ -1398,28 +1389,14 @@ function markStepStartedWithOptions(
     session.lastStepStarted = stepName;
     session.failure = null;
     session.status = "in_progress";
-    const state = machineStateFromOnboardSessionStep(stepName);
-    shouldEmit = Boolean(state && shouldUpdateMachine(options));
-    if (state && shouldEmit) transitionMachineSnapshot(session, state, now);
     return session;
   });
-  if (shouldEmit) {
-    emitOnboardMachineEvent(
-      createOnboardMachineEvent({ type: "state.entered", session: updatedSession, step: stepName }),
-    );
-  }
   return updatedSession;
 }
 
-function markStepCompleteWithOptions(
-  stepName: string,
-  updates: SessionUpdates = {},
-  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
-): Session {
+export function markStepComplete(stepName: string, updates: SessionUpdates = {}): Session {
   const safeUpdates = filterSafeUpdates(updates);
-  const hasUpdates = Object.keys(safeUpdates).length > 0;
-  let shouldEmit = false;
-  const updatedSession = updateSession((session) => {
+  return updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
     // Spark managed-vLLM Express intents (#7231) carry no receipt/served state
@@ -1445,62 +1422,12 @@ function markStepCompleteWithOptions(
     Object.assign(session, safeUpdates);
     if (stationExpressIntent) session.stationExpressIntent = stationExpressIntent;
     else if (sparkExpressComplete) session.stationExpressIntent = null;
-    const nextState = nextMachineStateAfterCompletedStep(stepName, session);
-    shouldEmit = Boolean(nextState && shouldUpdateMachine(options));
-    if (nextState && shouldEmit) transitionMachineSnapshot(session, nextState, now);
     return session;
   });
-  if (hasUpdates) {
-    emitOnboardMachineEvent(
-      createOnboardMachineEvent({
-        type: "context.updated",
-        session: updatedSession,
-        step: stepName,
-        metadata: { fields: Object.keys(safeUpdates) },
-      }),
-    );
-  }
-  if (shouldEmit) {
-    emitOnboardMachineEvent(
-      createOnboardMachineEvent({
-        type: "state.completed",
-        session: updatedSession,
-        step: stepName,
-      }),
-    );
-  }
-  return updatedSession;
-}
-
-export function markStepStarted(
-  stepName: string,
-  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
-): Session {
-  return markStepStartedWithOptions(stepName, options);
-}
-
-export function markStepStartedRecordOnly(stepName: string): Session {
-  return markStepStartedWithOptions(stepName, RECORD_ONLY_STEP_MUTATION_OPTIONS);
-}
-
-export function markStepComplete(
-  stepName: string,
-  updates: SessionUpdates = {},
-  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
-): Session {
-  return markStepCompleteWithOptions(stepName, updates, options);
-}
-
-export function markStepCompleteRecordOnly(
-  stepName: string,
-  updates: SessionUpdates = {},
-): Session {
-  return markStepCompleteWithOptions(stepName, updates, RECORD_ONLY_STEP_MUTATION_OPTIONS);
 }
 
 export function markStepSkipped(stepName: string): Session {
-  let shouldEmit = false;
-  const updatedSession = updateSession((session) => {
+  return updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
     if (step.status === "complete" || step.status === "failed" || step.status === "skipped")
@@ -1509,75 +1436,19 @@ export function markStepSkipped(stepName: string): Session {
     step.startedAt = null;
     step.completedAt = null;
     step.error = null;
-    shouldEmit = true;
     return session;
   });
-  if (shouldEmit) {
-    emitOnboardMachineEvent(
-      createOnboardMachineEvent({ type: "state.skipped", session: updatedSession, step: stepName }),
-    );
-  }
-  return updatedSession;
 }
 
-function markStepFailedWithOptions(
-  stepName: string,
-  message: string | null = null,
-  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
-): Session {
-  let shouldEmit = false;
-  const updatedSession = updateSession((session) => {
+export function markStepFailed(stepName: string, message: string | null = null): Session {
+  return updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
-    const now = new Date().toISOString();
     step.status = "failed";
     step.completedAt = null;
     step.error = redactSensitiveText(message);
-    shouldEmit = shouldUpdateMachine(options);
-    if (shouldEmit) {
-      session.failure = sanitizeFailure({
-        step: stepName,
-        message,
-        recordedAt: now,
-        interrupted: false,
-      });
-      session.status = "failed";
-      transitionMachineSnapshot(session, "failed", now);
-    }
     return session;
   });
-  if (shouldEmit) {
-    emitOnboardMachineEvent(
-      createOnboardMachineEvent({
-        type: "state.failed",
-        session: updatedSession,
-        step: stepName,
-        error: message,
-      }),
-    );
-    emitOnboardMachineEvent(
-      createOnboardMachineEvent({
-        type: "onboard.failed",
-        session: updatedSession,
-        state: "failed",
-        step: stepName,
-        error: message,
-      }),
-    );
-  }
-  return updatedSession;
-}
-
-export function markStepFailed(
-  stepName: string,
-  message: string | null = null,
-  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
-): Session {
-  return markStepFailedWithOptions(stepName, message, options);
-}
-
-export function markStepFailedRecordOnly(stepName: string, message: string | null = null): Session {
-  return markStepFailedWithOptions(stepName, message, RECORD_ONLY_STEP_MUTATION_OPTIONS);
 }
 
 /**

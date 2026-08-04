@@ -388,6 +388,17 @@ describe("platform readiness qualification (#7410)", () => {
     });
   });
 
+  it("classifies the exact GB300WS 7.5.0 build 2026-05-13-18-42-38 as supported-ai-developer-tools (#7979)", () => {
+    expect(
+      collectStationIdentity(
+        noOtaStationRelease({ version: "7.5.0", buildDate: "2026-05-13-18-42-38" }),
+      ),
+    ).toMatchObject({
+      stationProfile: "supported-ai-developer-tools",
+      stationGb300PciGpu: true,
+    });
+  });
+
   it.each([
     ["different lineage", { prettyName: "NVIDIA DGX Server" }],
     ["older no-OTA version", { version: "7.5.0" }],

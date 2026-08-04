@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { checkpointGatewayAuthority } from "../../onboard/gateway-authority-checkpoint";
-import { resolveGatewayTeardownAuthority } from "../../onboard/gateway-teardown-authority";
+import { resolveGatewayRebuildAuthority } from "../../onboard/gateway-teardown-authority";
 import {
   observeSandboxOnGateway,
   type SandboxRecreateObserver,
@@ -97,7 +97,7 @@ export function openRebuildRecreateJournal(
 ): RebuildRecreateJournal {
   const { target, agentName, targetIntentFingerprint, log } = input;
   const observe = input.observe ?? observeRebuildSandbox;
-  const authority = resolveGatewayTeardownAuthority({
+  const authority = resolveGatewayRebuildAuthority({
     gatewayName: target.gatewayName,
     gatewayPort: target.gatewayPort,
   });

@@ -69,7 +69,10 @@ import {
   withDualStationManagedVllmLifecycle,
 } from "./vllm-station-cluster-lifecycle";
 import { stageDualStationModelSnapshot } from "./vllm-station-model-staging";
-import { persistDualStationVllmRuntimeReceipt } from "./vllm-station-runtime-receipt";
+import {
+  persistDualStationVllmRuntimeReceipt,
+  recoverInstalledDualStationVllmRuntime,
+} from "./vllm-station-runtime-receipt";
 import {
   findUnwritableModelCachePath,
   formatStorageBytes,
@@ -894,34 +897,53 @@ export type PersistConfiguredDualStationVllmRuntimeResult =
  */
 export async function persistConfiguredDualStationVllmRuntimeReceipt(): Promise<PersistConfiguredDualStationVllmRuntimeResult> {
   const configuredPeer = String(process.env[NEMOCLAW_DGX_STATION_PEER_ENV] ?? "").trim();
-  if (!configuredPeer) {
-    return {
-      ok: false,
-      reason: "the managed dual-Station peer configuration is missing",
-    };
-  }
-
-  const capability = probeDualStationVllmCapability();
-  if (capability.kind !== "ready") {
-    const reason =
-      capability.kind === "unavailable"
-        ? capability.reason
-        : "the configured dual-Station peer disappeared";
-    return { ok: false, reason };
+  let configuredPlan: DualStationVllmPlan | null = null;
+  if (configuredPeer) {
+    const capability = probeDualStationVllmCapability();
+    if (capability.kind !== "ready") {
+      const reason =
+        capability.kind === "unavailable"
+          ? capability.reason
+          : "the configured dual-Station peer disappeared";
+      return { ok: false, reason };
+    }
+    configuredPlan = capability.plan;
   }
 
   try {
     return await withDualStationManagedVllmLifecycle(async () => {
-      const preflight = preflightDualStationManagedVllm(capability.plan);
+      let plan: DualStationVllmPlan;
+      let receiptAlreadyPersisted = false;
+      if (configuredPlan) {
+        plan = configuredPlan;
+      } else {
+        const recovered = recoverInstalledDualStationVllmRuntime();
+        if (recovered.kind === "not-installed") {
+          return {
+            ok: false,
+            reason: "the managed dual-Station peer configuration is missing",
+          };
+        }
+        if (recovered.kind === "unsafe") {
+          return {
+            ok: false,
+            reason: `the managed dual-Station cleanup receipt is unsafe: ${recovered.reason}`,
+          };
+        }
+        plan = recovered.plan;
+        receiptAlreadyPersisted = true;
+      }
+      const preflight = preflightDualStationManagedVllm(plan);
       if (!preflight.ok) return { ok: false, reason: preflight.reason };
-      if (!areDualStationManagedVllmContainersRunning(capability.plan)) {
+      if (!areDualStationManagedVllmContainersRunning(plan)) {
         return {
           ok: false,
-          reason: "the managed dual-Station containers changed before receipt persistence",
+          reason: "the managed dual-Station containers changed before cleanup ownership validation",
         };
       }
+      if (receiptAlreadyPersisted) return { ok: true, persisted: true };
       try {
-        persistDualStationVllmRuntimeReceipt(capability.plan);
+        persistDualStationVllmRuntimeReceipt(plan);
       } catch (error) {
         return { ok: false, reason: (error as Error).message };
       }

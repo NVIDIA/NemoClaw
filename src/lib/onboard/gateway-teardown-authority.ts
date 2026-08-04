@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Exact-target gateway authority resolution for teardown and provider credential mutations.
+ * Exact-target gateway authority resolution for rebuild, teardown, and provider credential mutations.
  *
  * Onboarding binds authority before gateway effects. Credentials add and reset,
  * stop, final-sandbox cleanup, and uninstall can run after onboarding exits.
@@ -48,7 +48,20 @@ export type GatewayTeardownAuthorityResolver = (
   deps?: GatewayTeardownAuthorityDeps,
 ) => GatewayOwner;
 
-type GatewayAuthorityEffect = "credential mutation" | "teardown";
+type GatewayAuthorityEffect = "credential mutation" | "rebuild" | "teardown";
+
+function isManagedPackagedServiceMigration(
+  recorded: GatewayOwner,
+  resolved: GatewayOwner,
+): boolean {
+  return (
+    recorded.mode === "nemoclaw-managed" &&
+    resolved.mode === "nemoclaw-managed" &&
+    recorded.source === "packaged-service" &&
+    resolved.source === "standalone" &&
+    sameGatewayOwner(recorded, { ...resolved, source: "packaged-service" })
+  );
+}
 
 function loadTargetSession(target: GatewayTeardownTarget, env: NodeJS.ProcessEnv): Session | null {
   const sessionFile = path.join(
@@ -67,16 +80,21 @@ function loadTargetSession(target: GatewayTeardownTarget, env: NodeJS.ProcessEnv
 
 /**
  * Resolve the current owner and revalidate checkpointed authority for the exact
- * gateway before teardown or provider credential mutation. A declaration or
- * recorded-owner change is an explicit migration. It does not permit the
- * operation to use another owner.
+ * gateway before rebuild, teardown, or provider credential mutation. A
+ * declaration or recorded-owner change is an explicit migration. Only the
+ * transactional managed-service rebuild migration may adopt another owner.
  */
 function resolveGatewayEffectAuthority(
   target: GatewayTeardownTarget,
   effect: GatewayAuthorityEffect,
   deps: GatewayTeardownAuthorityDeps,
 ): GatewayOwner {
-  const operation = effect === "teardown" ? "gateway teardown" : "provider credential mutation";
+  const operation =
+    effect === "teardown"
+      ? "gateway teardown"
+      : effect === "rebuild"
+        ? "sandbox rebuild"
+        : "provider credential mutation";
   if (resolveGatewayName(target.gatewayPort) !== target.gatewayName) {
     throw new Error(
       `Refusing ${operation} for noncanonical target '${target.gatewayName}@${String(target.gatewayPort)}'.`,
@@ -116,14 +134,15 @@ function resolveGatewayEffectAuthority(
         `the recorded authority targets '${recorded.gatewayName}@${String(recorded.gatewayPort)}'.`,
     );
   }
-  if (!sameGatewayOwner(recorded, resolved)) {
-    throw new Error(
-      "Gateway lifecycle authority changed since onboarding " +
-        `(${describeGatewayOwnerForError(recorded)} -> ${describeGatewayOwnerForError(resolved)}). ` +
-        `Changing authority requires a fresh onboarding run; ${operation} will not perform gateway effects.`,
-    );
+  if (sameGatewayOwner(recorded, resolved)) return recorded;
+  if (effect === "rebuild" && isManagedPackagedServiceMigration(recorded, resolved)) {
+    return resolved;
   }
-  return recorded;
+  throw new Error(
+    "Gateway lifecycle authority changed since onboarding " +
+      `(${describeGatewayOwnerForError(recorded)} -> ${describeGatewayOwnerForError(resolved)}). ` +
+      `Changing authority requires a fresh onboarding run; ${operation} will not perform gateway effects.`,
+  );
 }
 
 export function resolveGatewayTeardownAuthority(
@@ -131,6 +150,20 @@ export function resolveGatewayTeardownAuthority(
   deps: GatewayTeardownAuthorityDeps = {},
 ): GatewayOwner {
   return resolveGatewayEffectAuthority(target, "teardown", deps);
+}
+
+/**
+ * Resolve authority for a transactional sandbox rebuild. A rebuild may adopt
+ * the one-way managed-service migration introduced when a previously recorded
+ * packaged gateway is no longer selected and NemoClaw uses its standalone
+ * service. The rebuild journal persists the returned owner before any MCP or
+ * sandbox mutation.
+ */
+export function resolveGatewayRebuildAuthority(
+  target: GatewayTeardownTarget,
+  deps: GatewayTeardownAuthorityDeps = {},
+): GatewayOwner {
+  return resolveGatewayEffectAuthority(target, "rebuild", deps);
 }
 
 /** Revalidate the exact checkpointed authority before a provider credential mutation. */

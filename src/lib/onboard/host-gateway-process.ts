@@ -50,6 +50,8 @@ export interface StopHostGatewayOptions {
 
 export interface StopHostGatewayResult {
   failed: number[];
+  /** Whether a requested pgrep fallback completed with a usable result. */
+  orphanScanComplete?: boolean;
   skippedDeadPids: number[];
   skippedNonMatchingPids: number[];
   stopped: number[];
@@ -283,6 +285,7 @@ export function stopHostGatewayProcesses(
   const candidates = new Map<number, Set<string>>();
   const result: StopHostGatewayResult = {
     failed: [],
+    orphanScanComplete: true,
     skippedDeadPids: [],
     skippedNonMatchingPids: [],
     stopped: [],
@@ -313,6 +316,7 @@ export function stopHostGatewayProcesses(
   if (useFallback) {
     const sweep = pgrepHostGatewayPids(deps);
     pgrepRan = sweep.scanned;
+    result.orphanScanComplete = pgrepRan;
     for (const pid of sweep.pids) addPid(candidates, pid, "pgrep");
   }
 

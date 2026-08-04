@@ -14,6 +14,12 @@ import {
   formatGatewayHealthWaitLimit,
 } from "./gateway-health-wait";
 import { isDockerDriverGatewayHttpReady } from "./gateway-http-readiness";
+import {
+  getBlueprintMaxOpenshellVersion,
+  getBlueprintMinOpenshellVersion,
+  shouldAllowOpenshellAboveBlueprintMax,
+  versionGte,
+} from "./openshell-version";
 
 export const OPENSHELL_GATEWAY_USER_SERVICE = "openshell-gateway";
 export const NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE = "nemoclaw-openshell-gateway";
@@ -27,9 +33,15 @@ export interface OpenShellGatewayUserServiceOptions {
   commandExists?: (command: string) => boolean;
   env?: NodeJS.ProcessEnv;
   existsSync?: (filePath: string) => boolean;
+  /** Test seam: read the version output of the package-managed gateway binary. */
+  getUpstreamGatewayVersion?: (binaryPath: string) => string | null;
+  /** Test seam: the blueprint version window the gateway binary must satisfy. */
+  getUpstreamGatewayVersionBounds?: () => UpstreamGatewayVersionBounds;
   home?: string;
   lstatSync?: typeof fs.lstatSync;
   platform?: NodeJS.Platform;
+  /** Sink for the one-shot notice emitted when a package unit is declined. */
+  warn?: (message: string) => void;
   preparePortForServiceStart?: () => void;
   prepareServiceEnv?: () => void;
   readFileSync?: (filePath: string, encoding: BufferEncoding) => string;
@@ -157,6 +169,119 @@ export function getOpenShellGatewayUserServicePaths(): string[] {
 
 export function getOpenShellGatewayUserServiceBinaryPaths(): string[] {
   return ["/usr/local/bin/openshell-gateway", "/usr/bin/openshell-gateway"];
+}
+
+/**
+ * SOURCE_OF_TRUTH_REVIEW
+ * invalidState: a package-managed OpenShell gateway unit runs a gateway binary
+ *   outside the blueprint version window NemoClaw just enforced on the CLI. The
+ *   package unit hard-codes an absolute `ExecStart` under `/usr/bin`, so
+ *   reinstalling a supported CLI into the user-local bin directory does not
+ *   change which gateway actually starts — NemoClaw ends up driving a gateway
+ *   it has already classified as unsupported (#8094).
+ * sourceBoundary: the OpenShell package owns its unit and binaries; NemoClaw
+ *   cannot rewrite either. What NemoClaw does own is the choice of whether to
+ *   adopt that unit, so the version window is enforced at adoption time.
+ * whyNotSourceFix: editing or masking a distro-owned unit would fight the
+ *   package manager and break on the next package upgrade; declining to adopt
+ *   it keeps NemoClaw's own managed unit as the single source of truth.
+ * regressionTest: docker-driver-gateway-service-version-gate.test.ts
+ * removalCondition: remove once the upstream unit resolves its gateway binary
+ *   through PATH (or a NemoClaw-supplied override) so a supported user-local
+ *   build is honoured without replacing the unit.
+ */
+export type UpstreamGatewayVersionBounds = { min: string | null; max: string | null };
+
+export type UpstreamGatewayVersionVerdict =
+  | { supported: true }
+  | { supported: false; binaryPath: string; version: string; message: string };
+
+function defaultUpstreamGatewayVersionBounds(): UpstreamGatewayVersionBounds {
+  return { min: getBlueprintMinOpenshellVersion(), max: getBlueprintMaxOpenshellVersion() };
+}
+
+function readUpstreamGatewayVersion(
+  binaryPath: string,
+  opts: Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">,
+): string | null {
+  const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+  try {
+    const result = spawnSyncImpl(binaryPath, ["-V"], {
+      encoding: "utf-8",
+      env: opts.env ?? process.env,
+      timeout: 10_000,
+    });
+    if (result.status !== 0) return null;
+    const output = text(result.stdout).trim();
+    return output || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Decide whether the package-managed gateway binary may be adopted.
+ *
+ * An undetermined version keeps the pre-#8094 behaviour (adopt): this gate only
+ * declines when NemoClaw positively knows the binary is out of the supported
+ * window, mirroring how `ensureOpenshellForOnboard` guards both of its version
+ * checks on a resolved version.
+ */
+export function checkUpstreamGatewayVersion(
+  binaryPath: string | null,
+  opts: Pick<
+    OpenShellGatewayUserServiceOptions,
+    | "env"
+    | "getUpstreamGatewayVersion"
+    | "getUpstreamGatewayVersionBounds"
+    | "platform"
+    | "spawnSyncImpl"
+  > = {},
+): UpstreamGatewayVersionVerdict {
+  if (!binaryPath) return { supported: true };
+  const readVersion =
+    opts.getUpstreamGatewayVersion ?? ((p: string) => readUpstreamGatewayVersion(p, opts));
+  const versionOutput = readVersion(binaryPath);
+  const version = /([0-9]+\.[0-9]+\.[0-9]+)/.exec(versionOutput ?? "")?.[1];
+  if (!version) return { supported: true };
+  const bounds = (opts.getUpstreamGatewayVersionBounds ?? defaultUpstreamGatewayVersionBounds)();
+  const belowMin = Boolean(bounds.min) && !versionGte(version, bounds.min as string);
+  const aboveMax =
+    Boolean(bounds.max) &&
+    !versionGte(bounds.max as string, version) &&
+    !shouldAllowOpenshellAboveBlueprintMax(
+      versionOutput,
+      opts.platform ?? process.platform,
+      opts.env ?? process.env,
+    );
+  if (!belowMin && !aboveMax) return { supported: true };
+  const bound = belowMin ? `minimum ${bounds.min}` : `maximum ${bounds.max}`;
+  return {
+    supported: false,
+    binaryPath,
+    version,
+    message:
+      `  Ignoring the system OpenShell gateway service: ${binaryPath} is ${version}, ` +
+      `outside the ${bound} supported by this NemoClaw release.\n` +
+      "  NemoClaw will manage its own gateway service instead. To use the system service, " +
+      "install a supported OpenShell package or remove the existing one.",
+  };
+}
+
+let warnedUnsupportedUpstreamGateway = false;
+
+function warnUnsupportedUpstreamGateway(
+  verdict: Extract<UpstreamGatewayVersionVerdict, { supported: false }>,
+  opts: Pick<OpenShellGatewayUserServiceOptions, "warn">,
+): void {
+  if (warnedUnsupportedUpstreamGateway) return;
+  warnedUnsupportedUpstreamGateway = true;
+  (opts.warn ?? ((message: string) => console.error(message)))(verdict.message);
+}
+
+/** Test seam: forget the warn-once latch between cases. */
+export function resetUpstreamGatewayVersionWarning(): void {
+  warnedUnsupportedUpstreamGateway = false;
 }
 
 function effectiveHome(home: string | undefined, env: NodeJS.ProcessEnv | undefined): string {
@@ -367,7 +492,11 @@ function resolveOpenShellGatewayUserService(
   }
   if (platform !== "linux") return null;
   if (hasUpstreamOpenShellGatewayUserService(opts)) {
-    return {
+    // The package unit hard-codes an absolute ExecStart, so a supported
+    // user-local build cannot override it. Adopting it while it runs an
+    // out-of-window gateway is how #8094 got a 0.0.85 CLI driving a 0.0.91
+    // gateway; decline instead and let NemoClaw manage its own service.
+    const upstreamService: OpenShellGatewayUserServiceTarget = {
       logCommand: getSystemdGatewayLogCommand(OPENSHELL_GATEWAY_USER_SERVICE),
       manager: "systemd",
       serviceName: OPENSHELL_GATEWAY_USER_SERVICE,
@@ -375,6 +504,24 @@ function resolveOpenShellGatewayUserService(
       trustedBinaryPaths: getOpenShellGatewayUserServiceBinaryPaths(),
       trustedUnitPaths: getOpenShellGatewayUserServicePaths(),
     };
+    const env = opts.env ?? process.env;
+    const identity = validateSystemdServiceIdentity(upstreamService, {
+      env,
+      spawnSyncImpl: opts.spawnSyncImpl ?? spawnSync,
+    });
+    // A failed systemctl query leaves the version unknown and preserves the
+    // existing adoption behaviour. Positive evidence of a foreign unit or
+    // executable must fail closed and continue to the NemoClaw fallback.
+    if (identity.ok || !identity.trustFailure) {
+      const verdict = checkUpstreamGatewayVersion(
+        identity.ok ? identity.execStartPath : null,
+        opts,
+      );
+      if (verdict.supported) {
+        return upstreamService;
+      }
+      warnUnsupportedUpstreamGateway(verdict, opts);
+    }
   }
 
   const env = opts.env ?? process.env;
@@ -451,7 +598,7 @@ function extractSystemdExecStartPath(execStart: string): string | null {
 function validateSystemdServiceIdentity(
   service: OpenShellGatewayUserServiceTarget,
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
-): { ok: boolean; reason?: string; trustFailure?: boolean } {
+): { ok: true; execStartPath: string } | { ok: false; reason?: string; trustFailure?: boolean } {
   const result = runSystemctlUser(
     ["show", service.serviceName, "--property=FragmentPath", "--property=ExecStart"],
     opts,
@@ -464,7 +611,7 @@ function validateSystemdServiceIdentity(
 function validateSystemdServiceIdentityFromProperties(
   service: OpenShellGatewayUserServiceTarget,
   properties: Record<string, string>,
-): { ok: boolean; reason?: string; trustFailure?: boolean } {
+): { ok: true; execStartPath: string } | { ok: false; reason?: string; trustFailure?: boolean } {
   const fragmentPath = path.normalize(properties.FragmentPath ?? "");
   const execStartPath = extractSystemdExecStartPath(properties.ExecStart ?? "");
   const trustedUnit = service.trustedUnitPaths.some(
@@ -473,13 +620,14 @@ function validateSystemdServiceIdentityFromProperties(
   const trustedBinary =
     execStartPath !== null &&
     service.trustedBinaryPaths.some((candidate) => path.normalize(candidate) === execStartPath);
-  return trustedUnit && trustedBinary
-    ? { ok: true }
-    : {
-        ok: false,
-        reason: `service identity is not a trusted OpenShell gateway (${fragmentPath})`,
-        trustFailure: true,
-      };
+  if (trustedUnit && trustedBinary && execStartPath !== null) {
+    return { ok: true, execStartPath };
+  }
+  return {
+    ok: false,
+    reason: `service identity is not a trusted OpenShell gateway (${fragmentPath})`,
+    trustFailure: true,
+  };
 }
 
 export function getTrustedActiveOpenShellGatewayUserServicePid(
@@ -599,6 +747,21 @@ function serviceFailure(
   };
 }
 
+function serviceDeclined(
+  service: OpenShellGatewayUserServiceTarget,
+  reason: string,
+): OpenShellGatewayUserServiceStartResult {
+  return {
+    attempted: false,
+    logCommand: service.logCommand,
+    manager: service.manager,
+    reason,
+    serviceName: service.serviceName,
+    started: false,
+    statusCommand: service.statusCommand,
+  };
+}
+
 function runHook(
   hook: (() => void) | undefined,
   service: OpenShellGatewayUserServiceTarget,
@@ -658,6 +821,16 @@ export function startOpenShellGatewayUserService(
         identity.reason ?? "service identity is invalid",
         identity.trustFailure,
       );
+    if (service.serviceName === OPENSHELL_GATEWAY_USER_SERVICE) {
+      const verdict = checkUpstreamGatewayVersion(identity.execStartPath, opts);
+      if (!verdict.supported) {
+        warnUnsupportedUpstreamGateway(verdict, opts);
+        return serviceDeclined(
+          service,
+          `package-managed gateway changed before startup: ${verdict.binaryPath} is ${verdict.version}`,
+        );
+      }
+    }
   }
 
   const ownershipFailure = runHook(

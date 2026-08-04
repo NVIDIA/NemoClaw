@@ -20,6 +20,19 @@ function writeModule(root: string, file: string, source: string): void {
   fs.writeFileSync(destination, source);
 }
 
+function listProductionTypeScriptFiles(directory: string): string[] {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const entryPath = path.join(directory, entry.name);
+    return entry.isDirectory()
+      ? entry.name === "__test-helpers__"
+        ? []
+        : listProductionTypeScriptFiles(entryPath)
+      : entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")
+        ? [entryPath]
+        : [];
+  });
+}
+
 function budget(overrides: Partial<SourceArchitectureBudget> = {}): SourceArchitectureBudget {
   return {
     fanIn: { defaultMax: 10 },
@@ -40,6 +53,20 @@ describe("source architecture budget (#7692)", () => {
     });
 
     expect(evaluateSourceArchitectureBudget(report, parsed)).toEqual([]);
+  });
+
+  // source-shape-contract: compatibility -- Removed step-mutation APIs must stay absent so step helpers cannot persist machine transitions
+  test("keeps removed step mutation APIs out of production source (#7703)", () => {
+    const productionSources = ["src/lib/onboard", "src/lib/state"]
+      .flatMap((directory) => listProductionTypeScriptFiles(path.join(REPO_ROOT, directory)))
+      .map((file) => fs.readFileSync(file, "utf8"));
+
+    expect(productionSources.join("")).not.toMatch(
+      /LEGACY_MACHINE_STEP_MUTATION_OPTIONS|RecordOnly|onboard-step-mutation/,
+    );
+    expect(fs.existsSync(path.join(REPO_ROOT, "src/lib/state/onboard-step-mutation.ts"))).toBe(
+      false,
+    );
   });
 
   test("rejects a new runtime cycle and names its files", ({ resources }) => {

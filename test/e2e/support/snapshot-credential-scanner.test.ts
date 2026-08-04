@@ -24,6 +24,7 @@ describe("snapshot credential scanner", () => {
       "GOOGLE_API_KEY",
       "AWS_BEARER_TOKEN_BEDROCK",
       "COMPATIBLE_ANTHROPIC_API_KEY",
+      "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
     ]) {
       expect(SUPPORTED_CREDENTIAL_ENV_NAMES.has(name), name).toBe(true);
     }
