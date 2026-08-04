@@ -9,6 +9,7 @@ import {
   CONTAINER_STATE_LOCK_PLAN,
   preflightStateDirLock,
   restoreStateDirLockPosture,
+  restoreStateDirStartupAccess,
   stateLockPlanCompatibilityIssues,
 } from "./state-dir-lock";
 
@@ -261,6 +262,26 @@ describe("recursive state-dir lock host wiring", () => {
     };
 
     expect(stateLockPlanCompatibilityIssues(privileged, expected, true)).toEqual([]);
+  });
+
+  it("uses the current host guard for the narrow startup repair (#8112)", () => {
+    const { calls, privileged } = createExec();
+
+    expect(restoreStateDirStartupAccess(privileged, "/sandbox/.openclaw")).toEqual([]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.cmd).toEqual([
+      "timeout",
+      "--signal=TERM",
+      "--kill-after=5s",
+      "12m",
+      "python3",
+      "-I",
+      "-",
+      "startup",
+      "--config-dir",
+      "/sandbox/.openclaw",
+    ]);
+    expect(calls[0]?.input).toContain('choices=("preflight", "lock", "unlock", "startup")');
   });
 
   it("surfaces structured helper findings and rejects contradictory exit contracts", () => {

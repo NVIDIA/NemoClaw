@@ -35,7 +35,7 @@ const PLAN_ARRAY_FIELDS = [
 ] as const;
 const PLAN_FIELDS = new Set(["$comment", "version", ...PLAN_ARRAY_FIELDS]);
 
-type GuardAction = "preflight" | "lock" | "unlock";
+type GuardAction = "preflight" | "lock" | "unlock" | "startup";
 
 type GuardIssue = {
   type: "issue";
@@ -183,7 +183,10 @@ function parseGuardOutput(action: GuardAction, result: PrivilegedExecResult): st
     }
     if (
       record.type === "result" &&
-      (record.action === "preflight" || record.action === "lock" || record.action === "unlock") &&
+      (record.action === "preflight" ||
+        record.action === "lock" ||
+        record.action === "unlock" ||
+        record.action === "startup") &&
       (record.status === "ok" || record.status === "failed") &&
       typeof record.issueCount === "number" &&
       Number.isInteger(record.issueCount)
@@ -301,6 +304,22 @@ function runStateDirGuard(
   return parseGuardOutput(action, privileged.run(command, input));
 }
 
+function runHostStateDirGuard(
+  privileged: PrivilegedExec,
+  action: GuardAction,
+  configDir: string,
+): string[] {
+  let input: string;
+  try {
+    input = readHostHelper();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return [`host state-dir helper cannot be read: ${message}`];
+  }
+  const command = [...CONTAINER_TIMEOUT, "python3", "-I", "-", action, "--config-dir", configDir];
+  return parseGuardOutput(action, privileged.run(command, input));
+}
+
 // Read-only recursive validation. Call this before top-level config mutation so
 // a hostile nested link, hardlink, special entry, or cross-device mount fails
 // without partially changing the protected tree.
@@ -366,4 +385,14 @@ export function restoreStateDirLockPosture(
     plan,
     stateLockPlanInImage,
   );
+}
+
+// Existing sandboxes may contain an older in-image guard, so startup always
+// injects the trusted helper shipped with the current host CLI. The startup
+// action changes only an empty, already sealed credentials root.
+export function restoreStateDirStartupAccess(
+  privileged: PrivilegedExec,
+  configDir: string,
+): string[] {
+  return runHostStateDirGuard(privileged, "startup", configDir);
 }

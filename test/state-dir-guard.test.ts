@@ -291,6 +291,20 @@ function runGuard(
   return runGuardWithPlanSource(action, configDir, "--plan-json", JSON.stringify(plan), env);
 }
 
+function runStartupGuard(configDir: string, env: Record<string, string> = {}) {
+  const result = spawnSync(
+    "python3",
+    ["-c", RUN_BUNDLED_GUARD_AS_CURRENT_USER, GUARD_PATH, "startup", configDir],
+    { encoding: "utf-8", timeout: 15_000, env: { ...process.env, ...env } },
+  );
+  const lines = result.stdout
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as GuardLine);
+  return { ...result, lines };
+}
+
 function mode(filePath: string): number {
   return fs.lstatSync(filePath).mode & 0o7777;
 }
@@ -1193,6 +1207,26 @@ describe("state-dir-guard", () => {
     expect(mode(executablePath)).toBe(0o770);
     expect(mode(path.join(configDir, "agents"))).toBe(0o2770);
     expect(mode(agentDir)).toBe(0o2770);
+  });
+
+  it("restores startup traversal only for an empty sealed credentials root (#8112)", () => {
+    const { configDir } = fixture();
+    const credentialsDir = path.join(configDir, "credentials");
+    fs.mkdirSync(credentialsDir);
+    fs.chmodSync(credentialsDir, 0o700);
+
+    const restored = runStartupGuard(configDir);
+
+    expect(restored.status, JSON.stringify(restored.lines)).toBe(0);
+    expect(mode(credentialsDir)).toBe(0o710);
+
+    fs.writeFileSync(path.join(credentialsDir, "token.json"), "secret\n", { mode: 0o600 });
+
+    const nonemptyStartup = runStartupGuard(configDir);
+
+    expect(nonemptyStartup.status, nonemptyStartup.stderr).toBe(0);
+    expect(mode(credentialsDir)).toBe(0o700);
+    expect(mode(path.join(credentialsDir, "token.json"))).toBe(0o600);
   });
 
   it("creates a missing sessions carveout during lock so a first-boot agent can write sessions (#7545)", () => {
