@@ -466,7 +466,7 @@ it("refuses an unjournaled legacy same-name repair without gateway authority (#7
   expect(session.checkpoint?.sandboxRecreate).toBeNull();
 });
 
-it("lets a non-replacing resume proceed without a recreate transaction (#7736)", async () => {
+it("creates a missing sandbox from a preserved registry row without removing the row (#7736)", async () => {
   const session = createSession({ sandboxName: "saved", agent: "openclaw" });
   session.steps.sandbox.status = "complete";
   session.machine.state = "agent_setup";
