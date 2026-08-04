@@ -64,7 +64,7 @@ describe("policy round-trip documentation examples", () => {
     expect(commands).toContain("Do not pass `--raw` output to `openshell policy set`");
   });
 
-  it("defines the matching policy states after a restore warning", () => {
+  it("defines the matching policy states after a restore warning (#8210)", () => {
     for (const docPath of SNAPSHOT_RESTORE_DOCS) {
       expect(readDoc(docPath), docPath).toContain(
         "recorded in the sandbox registry and active on the gateway, or absent from both",

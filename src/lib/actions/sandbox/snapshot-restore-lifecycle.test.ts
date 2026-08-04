@@ -144,7 +144,7 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
     expect(f.lifecycleMock.events).toContain("lock:restore sandbox snapshot");
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
     expect(f.shieldsMock.repairMutableConfigPermsMock).toHaveBeenCalledWith("alpha");
-    expect(f.applyPresetMock).toHaveBeenCalledWith("alpha", "github");
+    expect(f.applyPresetMock).toHaveBeenCalledWith("alpha", "github", { nonFatal: true });
   });
 
   it("hardens an active timer window before force-deleting a restore destination", async () => {
@@ -732,24 +732,104 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 });
 
 describe("runSandboxSnapshot restore: gateway pairing on a freshly created destination", () => {
-  it("continues to gateway pairing after a nonfatal policy failure", async () => {
+  const removedCustomPolicy = {
+    name: "legacy-custom",
+    content: "network_policies:\n  legacy-custom: {}\n",
+    sourcePath: "/policies/legacy-custom.yaml",
+  };
+  const appliedCustomPolicy = {
+    name: "new-custom",
+    content: "network_policies:\n  new-custom: {}\n",
+    sourcePath: "/policies/new-custom.yaml",
+  };
+
+  it.each([
+    {
+      label: "built-in preset application",
+      snapshot: { ...f.latestBackupFixture, policyPresets: ["github"] },
+      configureFailure: () => f.applyPresetMock.mockReturnValue(false),
+      expectedWarning: "github (apply failed)",
+      assertMutation: () =>
+        expect(f.applyPresetMock).toHaveBeenCalledWith("beta", "github", { nonFatal: true }),
+    },
+    {
+      label: "built-in OTLP removal",
+      snapshot: { ...f.latestBackupFixture, policyPresets: [] },
+      configureFailure: () => {
+        f.getPresetContentGatewayStateMock.mockReturnValue("match");
+        f.removePresetMock.mockReturnValue(false);
+      },
+      expectedWarning:
+        "observability-otlp-local (remove failed; exact content still live after remove)",
+      assertMutation: () =>
+        expect(f.removePresetMock).toHaveBeenCalledWith("beta", "observability-otlp-local", {
+          nonFatal: true,
+        }),
+    },
+    {
+      label: "custom policy removal",
+      snapshot: { ...f.latestBackupFixture, policyPresets: [], customPolicies: [] },
+      configureFailure: () => {
+        f.getCustomPoliciesMock.mockReturnValue([removedCustomPolicy]);
+        f.removePresetMock.mockReturnValue(false);
+      },
+      expectedWarning: "legacy-custom (remove failed)",
+      assertMutation: () =>
+        expect(f.removePresetMock).toHaveBeenCalledWith("beta", removedCustomPolicy.name, {
+          nonFatal: true,
+        }),
+    },
+    {
+      label: "custom policy application",
+      snapshot: {
+        ...f.latestBackupFixture,
+        policyPresets: [],
+        customPolicies: [appliedCustomPolicy],
+      },
+      configureFailure: () => f.applyPresetContentMock.mockReturnValue(false),
+      expectedWarning: "new-custom (apply failed)",
+      assertMutation: () =>
+        expect(f.applyPresetContentMock).toHaveBeenCalledWith(
+          "beta",
+          appliedCustomPolicy.name,
+          appliedCustomPolicy.content,
+          { custom: { sourcePath: appliedCustomPolicy.sourcePath }, nonFatal: true },
+        ),
+    },
+  ])("warns before gateway pairing and continues after $label failure (#8210)", async ({
+    snapshot,
+    configureFailure,
+    expectedWarning,
+    assertMutation,
+  }) => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-pairing-"));
     tempHomes.push(tempHome);
     vi.stubEnv("HOME", tempHome);
     vi.spyOn(console, "log").mockImplementation(() => {});
-    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    f.getSandboxMock.mockImplementation((name) =>
-      name === "alpha"
-        ? {
-            name: "alpha",
-            agent: "openclaw",
-            imageTag: "nemoclaw-alpha:test",
-            openshellDriver: "docker",
-            provider: "nvidia-nim",
-            model: "nvidia/model-a",
-          }
-        : null,
-    );
+    const events: string[] = [];
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation((...args) => {
+      events.push(`warn:${args.join(" ")}`);
+    });
+    f.establishRestoredSandboxGatewayPairingMock.mockImplementation(() => {
+      events.push("pairing");
+    });
+    let registeredClone: f.SandboxRecord | null = null;
+    f.registerSandboxMock.mockImplementation((entry) => {
+      registeredClone = entry as f.SandboxRecord;
+    });
+    f.getSandboxMock.mockImplementation((name) => {
+      if (name === "alpha") {
+        return {
+          name: "alpha",
+          agent: "openclaw",
+          imageTag: "nemoclaw-alpha:test",
+          openshellDriver: "docker",
+          provider: "nvidia-nim",
+          model: "nvidia/model-a",
+        };
+      }
+      return registeredClone;
+    });
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
@@ -757,11 +837,8 @@ describe("runSandboxSnapshot restore: gateway pairing on a freshly created desti
         "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
       }),
     );
-    f.getLatestBackupMock.mockReturnValue({
-      ...f.latestBackupFixture,
-      policyPresets: ["github"],
-    });
-    f.applyPresetMock.mockReturnValue(false);
+    f.getLatestBackupMock.mockReturnValue(snapshot);
+    configureFailure();
     f.restoreSandboxStateMock.mockReturnValue({
       success: true,
       restoredDirs: ["workspace"],
@@ -776,8 +853,11 @@ describe("runSandboxSnapshot restore: gateway pairing on a freshly created desti
     ).resolves.toBeUndefined();
 
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
-    expect(f.applyPresetMock).toHaveBeenCalledWith("beta", "github", { nonFatal: true });
-    expect(consoleWarn.mock.calls.flat().join("\n")).toContain("github (apply failed)");
+    assertMutation();
+    expect(consoleWarn.mock.calls.flat().join("\n")).toContain(expectedWarning);
+    const warningIndex = events.findIndex((event) => event.includes(expectedWarning));
+    expect(warningIndex).toBeGreaterThanOrEqual(0);
+    expect(warningIndex).toBeLessThan(events.indexOf("pairing"));
     expect(f.establishRestoredSandboxGatewayPairingMock).toHaveBeenCalledWith("beta");
   });
 
