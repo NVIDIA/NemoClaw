@@ -2076,7 +2076,7 @@ export function runUninstallPlan(
     externallySupervised = isExternallySupervised(
       runtime.resolveGatewayTeardownAuthority(
         { gatewayName: expectedGatewayName, gatewayPort: GATEWAY_PORT },
-        { env: runtime.env },
+        { allowMissingPackagedServiceTeardown: true, env: runtime.env },
       ),
     );
   } catch (error) {
