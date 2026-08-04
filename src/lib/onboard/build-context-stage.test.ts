@@ -85,7 +85,7 @@ describe("stageCreateSandboxBuildContext", () => {
     fs.writeFileSync(agentDockerfile, "FROM scratch\nCOPY agents/hermes/plugin/ /opt/plugin/\n");
     const agentBuild = {
       buildCtx: makeTmpDir("nemoclaw-agent-staged-"),
-      stagedDockerfile: path.join(os.tmpdir(), "agent.Dockerfile"),
+      stagedDockerfile: path.join(makeTmpDir("nemoclaw-agent-staged-df-"), "agent.Dockerfile"),
     };
     const createAgentSandbox = vi.fn(() => agentBuild);
     const agent = { name: "hermes", displayName: "Hermes", dockerfilePath: agentDockerfile } as any;
@@ -188,7 +188,7 @@ describe("stageCreateSandboxBuildContext", () => {
     fs.symlinkSync(agentDockerfile, linkedDockerfile);
     const agentBuild = {
       buildCtx: makeTmpDir("nemoclaw-agent-staged-link-"),
-      stagedDockerfile: path.join(os.tmpdir(), "agent.Dockerfile"),
+      stagedDockerfile: path.join(makeTmpDir("nemoclaw-agent-staged-link-df-"), "agent.Dockerfile"),
     };
     const createAgentSandbox = vi.fn(() => agentBuild);
     const agent = { name: "hermes", displayName: "Hermes", dockerfilePath: agentDockerfile } as any;
@@ -370,7 +370,7 @@ describe("stageCreateSandboxBuildContext", () => {
   });
 
   it("converts a SandboxBaseImageResolutionError from the --from=<agent Dockerfile> path to a clean exit (#8102)", () => {
-    const agentDockerfilePath = path.join(os.tmpdir(), "agent.Dockerfile");
+    const agentDockerfilePath = path.join(makeTmpDir("nemoclaw-8102-from-"), "agent.Dockerfile");
     fs.writeFileSync(agentDockerfilePath, "FROM scratch\n");
     const errors: string[] = [];
     const resolutionError = new SandboxBaseImageResolutionError(
@@ -419,11 +419,11 @@ describe("stageCreateSandboxBuildContext", () => {
   it("delegates to agent or default build-context staging when no custom Dockerfile is supplied", () => {
     const agentBuild = {
       buildCtx: makeTmpDir("nemoclaw-agent-build-"),
-      stagedDockerfile: path.join(os.tmpdir(), "agent.Dockerfile"),
+      stagedDockerfile: path.join(makeTmpDir("nemoclaw-agent-build-df-"), "agent.Dockerfile"),
     };
     const defaultBuild = {
       buildCtx: makeTmpDir("nemoclaw-default-build-"),
-      stagedDockerfile: path.join(os.tmpdir(), "default.Dockerfile"),
+      stagedDockerfile: path.join(makeTmpDir("nemoclaw-default-build-df-"), "default.Dockerfile"),
     };
     const createAgentSandbox = vi.fn(() => agentBuild);
     const stageDefaultSandboxBuildContext = vi.fn(() => defaultBuild);
