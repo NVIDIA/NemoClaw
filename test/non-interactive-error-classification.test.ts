@@ -323,6 +323,137 @@ os.unlink(db_path)
     expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
   });
 
+  it("still classifies a checkpoint row written after the exception is raised (#8121)", () => {
+    // The documented race: the LangGraph server writes `__error__` from its own
+    // process, so the row can land after the client-side exception. The row is
+    // inserted from inside the failing call, which is the earliest point that
+    // reproduces "written after the exception, before classification", and the
+    // persisted classification must win over the exception-type fallback.
+    const result = runPatchedNonInteractive(`
+${runtimePreamble}
+handle, db_path = tempfile.mkstemp()
+os.close(handle)
+target._NEMOCLAW_MANAGED_STATE_DB = db_path
+target.generate_thread_id = lambda: "thread-late-row"
+
+connection = sqlite3.connect(db_path)
+connection.execute("CREATE TABLE writes (thread_id TEXT, channel TEXT, value BLOB)")
+connection.commit()
+connection.close()
+
+
+async def fail_then_persist(*args, **kwargs):
+    del args, kwargs
+    late = sqlite3.connect(db_path)
+    late.execute(
+        "INSERT INTO writes (thread_id, channel, value) VALUES (?, '__error__', ?)",
+        ("thread-late-row", "APIConnectionError('connect to inference.local')"),
+    )
+    late.commit()
+    late.close()
+    raise RemoteException("remote failure token=runtime-secret")
+
+
+target._run_non_interactive_impl = fail_then_persist
+
+exit_code = asyncio.run(target.run_non_interactive("task"))
+assert exit_code == 1
+os.unlink(db_path)
+`);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(
+      "error_class=Unavailable category=route_unreachable retryable=true " +
+        "correlation_id=thread-late-row",
+    );
+    // The exception-type fallback must not pre-empt a row that did arrive.
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("agent_remote_failure");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
+  });
+
+  it("scans only the newest rows within the persisted-row limit (#8121)", () => {
+    // 21 rows for the thread: the oldest carries the only classifiable cause,
+    // so it sits one row outside the 20-row window and must not be reached.
+    const result = runPatchedNonInteractive(`
+${runtimePreamble}
+handle, db_path = tempfile.mkstemp()
+os.close(handle)
+target._NEMOCLAW_MANAGED_STATE_DB = db_path
+target.generate_thread_id = lambda: "thread-row-limit"
+
+connection = sqlite3.connect(db_path)
+connection.execute("CREATE TABLE writes (thread_id TEXT, channel TEXT, value BLOB)")
+connection.execute(
+    "INSERT INTO writes (thread_id, channel, value) VALUES (?, '__error__', ?)",
+    ("thread-row-limit", "APIConnectionError('connect to inference.local')"),
+)
+for index in range(target._NEMOCLAW_PERSISTED_ERROR_ROW_LIMIT):
+    connection.execute(
+        "INSERT INTO writes (thread_id, channel, value) VALUES (?, '__error__', ?)",
+        ("thread-row-limit", f"APIError('unrecognized backend condition {index}')"),
+    )
+connection.commit()
+connection.close()
+
+exit_code = asyncio.run(target.run_non_interactive("task"))
+assert exit_code == 1
+os.unlink(db_path)
+`);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(
+      "error_class=RemoteException category=agent_remote_failure retryable=false " +
+        "correlation_id=thread-row-limit",
+    );
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("route_unreachable");
+  });
+
+  it("stops walking the exception chain at the documented depth limit (#8121)", () => {
+    // A classifiable cause one link beyond the limit must not be reached, and
+    // the bounded walk must terminate rather than hang.
+    const result = runPatchedNonInteractive(`
+${runtimePreamble}
+handle, db_path = tempfile.mkstemp()
+os.close(handle)
+target._NEMOCLAW_MANAGED_STATE_DB = db_path
+target.generate_thread_id = lambda: "thread-chain-limit"
+
+
+class OpaqueWrapper(Exception):
+    pass
+
+
+async def fail_deep_chain(*args, **kwargs):
+    del args, kwargs
+    try:
+        raise ConnectionRefusedError("connect to inference.local token=runtime-secret")
+    except ConnectionRefusedError as root:
+        error = root
+        # One wrapper per allowed step, so the transport cause sits at index
+        # _NEMOCLAW_EXCEPTION_CHAIN_LIMIT and falls outside the walk.
+        for _ in range(target._NEMOCLAW_EXCEPTION_CHAIN_LIMIT):
+            try:
+                raise OpaqueWrapper("wrapped token=runtime-secret") from error
+            except OpaqueWrapper as wrapper:
+                error = wrapper
+        raise error
+
+
+target._run_non_interactive_impl = fail_deep_chain
+
+exit_code = asyncio.run(target.run_non_interactive("task"))
+assert exit_code == 1
+os.unlink(db_path)
+`);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(
+      "error_class=unknown category=unknown retryable=false correlation_id=thread-chain-limit",
+    );
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("route_unreachable");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
+  });
+
   it("classifies a chained transport cause behind an opaque wrapper (#8121)", () => {
     const result = runPatchedNonInteractive(`
 ${runtimePreamble}
