@@ -600,6 +600,8 @@ describe("maintainer merge-gate E2E coordinator evidence", () => {
           pass: false,
           failingChecks: [
             "E2E / PR Gate: latest attempt evidence incomplete",
+            "cancel-superseded: latest attempt evidence incomplete",
+            "coordinate: latest attempt evidence incomplete",
             "initialize: latest attempt evidence incomplete",
           ],
         },
