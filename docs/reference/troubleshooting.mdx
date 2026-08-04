@@ -2688,14 +2688,12 @@ To skip GPU passthrough entirely, rerun with `--no-gpu` or set `NEMOCLAW_SANDBOX
 
 Automatic GPU onboarding uses the compatibility path directly; it does not make a native attempt first.
 The path recreates the OpenShell-managed Docker container with NVIDIA GPU flags.
+Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses the compatibility patch and CUDA may not initialize.
+
 <AgentOnly variant="openclaw">
 
 It also keeps eligible Jetson GPU device group memberships when OpenShell starts the nonroot sandbox user.
 The compatibility policy permits read-only access to the NVIDIA runtime library directory at `/opt/nvidia/l4t-gpu-libs` when that path is present.
-
-</AgentOnly>
-
-Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses the compatibility patch and CUDA may not initialize.
 
 If CUDA reports `NvRmMemInitNvmap failed with Permission denied` and `cuInit(0)=999` on JetPack 6, rerun the NemoClaw installer to apply persistent group read-write access to `/dev/nvmap`:
 If the device is absent, setup warns and continues without installing the rule.
@@ -2718,8 +2716,6 @@ stat -c '%A %U:%G %n' /dev/nvmap
 The rule must match exactly, and the group permission characters must be `rw`, such as the group field in `crw-rw----`.
 The rule reapplies mode `0660` when udev recreates `/dev/nvmap`, including after reboot.
 NemoClaw uninstall does not remove the rule; delete it and reload udev to stop future reapplication, while the live mode remains until device recreation.
-
-<AgentOnly variant="openclaw">
 
 After onboarding recreates the sandbox, verify CUDA as the nonroot sandbox user:
 

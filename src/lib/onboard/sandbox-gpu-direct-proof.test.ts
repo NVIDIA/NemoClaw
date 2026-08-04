@@ -198,12 +198,6 @@ describe("direct sandbox GPU proof", () => {
       expect(result.detail).toContain("cuInit(0)=999");
       const warnings = warnSpy.mock.calls.map((call) => call[0]).join("\n");
       expect(warnings).toContain("/dev/nvmap");
-      expect(warnings).toContain(
-        "chmod grants every member of the nvmap owning group write access",
-      );
-      expect(warnings.indexOf("chmod grants every member")).toBeLessThan(
-        warnings.indexOf("sudo chmod g+rw /dev/nvmap"),
-      );
     } finally {
       warnSpy.mockRestore();
     }

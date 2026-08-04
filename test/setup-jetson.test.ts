@@ -451,4 +451,28 @@ describe("setup-jetson JetPack 6 nvmap access", () => {
     );
     expect(result.commandLog).toContain("chmod g+rw /dev/nvmap");
   });
+
+  it.each([
+    "hermes",
+    "langchain-deepagents-code",
+  ])("does not change nvmap access for the %s agent (#7610)", (agent) => {
+    const result = withJetsonReleaseSandbox(
+      ({ commandLogPath, headArgsPath, releasePath, stubDir }) => {
+        writeFileSync(
+          releasePath,
+          "# R36 (release), REVISION: 5.1, GCID: 12345678, BOARD: t186ref\n",
+        );
+        return spawnSetupJetson(stubDir, headArgsPath, commandLogPath, {
+          NEMOCLAW_AGENT: agent,
+          NEMOCLAW_TEST_STAT_OUTPUT: "character special file|cr--r-----",
+        });
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.commandLog).not.toContain("tee /etc/udev/rules.d/99-zz-nemoclaw-nvmap.rules");
+    expect(result.commandLog).not.toContain("chmod g+rw /dev/nvmap");
+    expect(result.stdout).not.toContain("/dev/nvmap grants its owning group read-write access");
+    expect(result.stderr).not.toContain("/dev/nvmap owning group write access");
+  });
 });

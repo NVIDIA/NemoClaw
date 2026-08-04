@@ -218,7 +218,9 @@ except Exception:
     os.unlink(tmp)
     raise
 PYEOF
-      configure_nvmap_group_access
+      if [[ "${NEMOCLAW_AGENT:-openclaw}" == "openclaw" ]]; then
+        configure_nvmap_group_access
+      fi
       ;;
     jp7-r38)
       # JP7 R38 does not need iptables or Docker daemon.json changes.
