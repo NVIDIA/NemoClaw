@@ -26,6 +26,8 @@ import {
   type InferenceSwitchWorkflow,
   validateInferenceSwitchWorkflow,
 } from "./inference-switch-workflow-boundary.mts";
+import { validateManagedImageMultiarchWorkflow } from "./managed-image-multiarch-workflow-boundary.mts";
+import { validateManagedImageProtectedRuntimeWorkflow } from "./managed-image-protected-runtime-workflow-boundary.mts";
 import {
   type OpenClawPluginRuntimeExdevWorkflow,
   validateOpenClawPluginRuntimeExdevWorkflow,
@@ -2492,7 +2494,9 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
     requireCanonicalDockerHubCleanupRun(errors, jobName, cleanup);
 
     const checkoutIndex = steps.findIndex((step) =>
-      stringValue(step.uses).startsWith("actions/checkout@"),
+      jobName === "managed-image-protected-runtime"
+        ? step.name === "Checkout exact protected runtime candidate source"
+        : stringValue(step.uses).startsWith("actions/checkout@"),
     );
     const authIndex = steps.indexOf(auth);
     const cleanupIndex = steps.indexOf(cleanup);
@@ -4237,6 +4241,8 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   errors.push(...validateHermesDashboardWorkflow(workflow as unknown as HermesDashboardWorkflow));
   errors.push(...validateHermesGpuStartupWorkflow(workflow));
   errors.push(...validateInferenceSwitchWorkflow(workflow as unknown as InferenceSwitchWorkflow));
+  errors.push(...validateManagedImageMultiarchWorkflow(workflow));
+  errors.push(...validateManagedImageProtectedRuntimeWorkflow(workflow));
   errors.push(
     ...validateOpenClawPluginRuntimeExdevWorkflow(
       workflow as unknown as OpenClawPluginRuntimeExdevWorkflow,
