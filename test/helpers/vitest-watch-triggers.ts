@@ -92,6 +92,15 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/setup-jetson.test.ts"),
   },
   {
+    pattern:
+      /(?:^|\/)(?:\.github\/workflows\/base-image\.yaml|scripts\/export-managed-base-image-contract\.sh)$/,
+    testsToRun: runTests(
+      "test/managed-base-image-contract.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+      "test/dcode-base-image-workflow.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)scripts\/e2e\/sanitize-trace-timing\.py$/,
     testsToRun: runTests(
       "test/e2e/support/e2e-scorecard.test.ts",
