@@ -77,7 +77,7 @@ runner.run = (command, opts = {}) => {
 };
 runner.runCapture = (command) => {
   const normalized = _n(command);
-  if (normalized.includes("sandbox get my-assistant")) return "";
+  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return "";
   if (normalized.includes("sandbox list")) return "my-assistant Ready";
   const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
   if (mockedCapture !== null) return mockedCapture;

@@ -226,12 +226,16 @@ describe("managed startup coordinator", () => {
     expect(dependencies.commitApplication).toHaveBeenCalledTimes(1);
   });
 
-  it("reapplies a pending adapter after a crash at the commit boundary", async () => {
+  it("does not reapply after a durable commit loses its acknowledgement", async () => {
     const prepared = preparedFor("langchain-deepagents-code");
+    const recovered = preparedFor("langchain-deepagents-code", "already-committed");
     const dependencies = dependenciesFor(prepared);
     const { adapters, applyByAgent } = adaptersFor();
+    dependencies.prepareApplication
+      .mockResolvedValueOnce(prepared)
+      .mockResolvedValueOnce(recovered);
     dependencies.commitApplication.mockRejectedValueOnce(
-      new Error("simulated process interruption"),
+      new Error("simulated lost commit acknowledgement"),
     );
 
     await expect(
@@ -240,7 +244,7 @@ describe("managed startup coordinator", () => {
         adapters,
         dependencies,
       ),
-    ).rejects.toThrow("simulated process interruption");
+    ).rejects.toThrow("simulated lost commit acknowledgement");
 
     const retried = await coordinateManagedStartupApplication(
       inputFor("langchain-deepagents-code"),
@@ -248,7 +252,8 @@ describe("managed startup coordinator", () => {
       dependencies,
     );
     expect(retried.application.status).toBe("committed");
-    expect(applyByAgent["langchain-deepagents-code"]).toHaveBeenCalledTimes(2);
+    expect(retried.adapterApplied).toBe(false);
+    expect(applyByAgent["langchain-deepagents-code"]).toHaveBeenCalledTimes(1);
     expect(dependencies.commitApplication).toHaveBeenCalledTimes(2);
   });
 });

@@ -6,6 +6,7 @@ import { assessHost } from "../onboard/preflight";
 import { createHostReadinessReport } from "./host";
 
 const NOW = new Date("2026-06-01T12:00:00Z");
+const SOURCE_REVISION = "21e60ae287e8c2a184f71406ac8b418f046330d1";
 const DOCKER_INFO = JSON.stringify({
   CgroupVersion: "2",
   Driver: "overlay2",
@@ -61,7 +62,11 @@ describe("readiness process effects (#7412)", () => {
         runCaptureImpl,
       }),
     );
-    const options = { nemoclawVersion: "0.1.0", now: () => NOW };
+    const options = {
+      nemoclawVersion: "0.1.0",
+      sourceRevision: SOURCE_REVISION,
+      now: () => NOW,
+    };
     const collectionOptions = {
       assess,
       collectPlatformIdentity: () => ({

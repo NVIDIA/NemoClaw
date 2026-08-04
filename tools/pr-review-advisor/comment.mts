@@ -55,6 +55,11 @@ type ReviewAdvisorResult = {
       safetyBoundary?: string;
     };
   }>;
+  terminologyReview?: {
+    status?: string;
+    noChangesReason?: string | null;
+    decisions?: readonly LaneTerminologyDecision[];
+  };
   e2e?: {
     coverage?: {
       requiredTests?: Array<{ id?: string; reason?: string }>;
@@ -118,6 +123,37 @@ type FindingCounts = {
 type LaneFingerprints = {
   findings: string;
   e2e: string;
+  terminology: string;
+};
+
+type LaneTerminologyDecision = {
+  term?: string;
+  disposition?: string;
+  recommendation?: string;
+  semanticImpact?: string;
+  source?: { file?: string; line?: number; headSha?: string };
+};
+
+type TrustedLaneTerminologyDecision = {
+  term: string;
+  change: "introduced" | "expanded" | "redefined";
+  disposition: "established" | "justified" | "define" | "replace" | "conflict";
+  meaning: string;
+  contrast: string | null;
+  existingTerm: string | null;
+  semanticImpact: string;
+  recommendation: string;
+  file: string;
+  line: number;
+};
+
+type LaneE2eRecommendation = {
+  id: string;
+};
+
+type LaneE2eRecommendations = {
+  recommended: LaneE2eRecommendation[];
+  optional: LaneE2eRecommendation[];
 };
 
 export type AdvisorLaneReport = {
@@ -126,6 +162,8 @@ export type AdvisorLaneReport = {
   counts?: FindingCounts;
   confidence?: "low" | "medium" | "high";
   fingerprints?: LaneFingerprints;
+  e2e?: LaneE2eRecommendations;
+  terminology?: TrustedLaneTerminologyDecision[];
 };
 
 export type AdvisorLaneReports = {
@@ -379,6 +417,7 @@ export function buildComment({
       ? `**Status:** ${escapeCommentText(result.summary.oneLine)}\n`
       : "";
   const findingsDetails = renderFindingsDetails(findingRecords);
+  const terminologyDetails = renderTerminologyDetails(result);
   const e2eDetails = renderE2eDetails(result);
   const laneDetails = renderAdvisorLanes(lanes);
   const details = runUrl ? `\n[Workflow run details](${runUrl})` : "";
@@ -397,7 +436,7 @@ export function buildComment({
 **Advisor assessment:** ${posture}
 **Next action:** ${nextAction(findingRecords)}
 **Findings:** ${compactCount(blockerCount, "blocker")} · ${compactCount(warningCount, "warning")} · ${compactCount(suggestionCount, "suggestion")}
-${informational}${laneDetails}${reviewHistory}${e2eDetails}${findingsDetails}${details}
+${informational}${laneDetails}${reviewHistory}${terminologyDetails}${e2eDetails}${findingsDetails}${details}
 
 This automated review informs maintainers. Warnings and suggestions do not require a response. A maintainer decides whether to merge.
 
@@ -415,9 +454,11 @@ function renderAdvisorLanes(lanes?: AdvisorLaneReports): string {
   ];
   const comparison = renderLaneComparison(lanes.primary, lanes.secondOpinion);
   if (comparison) lines.push(`- **Model comparison:** ${comparison}`);
+  lines.push(...renderSecondOpinionTerminology(lanes.primary, lanes.secondOpinion));
+  lines.push(...renderSecondOpinionE2eRecommendations(lanes.primary, lanes.secondOpinion));
   lines.push(
     "",
-    "_Nemotron output stays in workflow artifacts and does not change the assessment above._",
+    "_Second-opinion terminology and E2E selections are advisory. They do not change the primary assessment or E2E / PR Gate._",
     "",
   );
   return `${lines.join("\n")}\n`;
@@ -466,12 +507,119 @@ function renderLaneComparison(
     primary.fingerprints.e2e === secondOpinion.fingerprints.e2e
       ? "normalized E2E selections match"
       : "normalized E2E selections differ";
+  const terminologyComparison =
+    primary.fingerprints.terminology === secondOpinion.fingerprints.terminology
+      ? "normalized terminology decisions match"
+      : "normalized terminology decisions differ";
   const countComparison = differences.every((difference) =>
     difference.startsWith("the same number"),
   )
     ? "severity counts match"
     : `Nemotron reported ${differences.join(", ")}`;
-  return `${findingComparison}; ${e2eComparison}; ${countComparison}.`;
+  return `${findingComparison}; ${terminologyComparison}; ${e2eComparison}; ${countComparison}.`;
+}
+
+function renderSecondOpinionTerminology(
+  primary: AdvisorLaneReport,
+  secondOpinion: AdvisorLaneReport,
+): string[] {
+  if (
+    primary.status !== "completed" ||
+    secondOpinion.status !== "completed" ||
+    primary.partial ||
+    secondOpinion.partial ||
+    !primary.terminology ||
+    !secondOpinion.terminology
+  ) {
+    return [];
+  }
+  const primaryBySource = new Map(
+    primary.terminology.map((decision) => [terminologyDecisionKey(decision), decision]),
+  );
+  const secondOnly = secondOpinion.terminology.filter(
+    (decision) => !primaryBySource.has(terminologyDecisionKey(decision)),
+  );
+  const conflicts = secondOpinion.terminology.filter((decision) => {
+    const primaryDecision = primaryBySource.get(terminologyDecisionKey(decision));
+    return primaryDecision && primaryDecision.disposition !== decision.disposition;
+  });
+  if (secondOnly.length === 0 && conflicts.length === 0) return [];
+
+  const total = secondOnly.length + conflicts.length;
+  const lines = [
+    "",
+    "<details>",
+    `<summary>${compactCount(total, "terminology difference")} from the second opinion</summary>`,
+    "",
+    "_Advisory only. These are normalized differences from the primary terminology receipt._",
+    "",
+  ];
+  for (const decision of conflicts.slice(0, 10)) {
+    const primaryDecision = primaryBySource.get(terminologyDecisionKey(decision));
+    lines.push(
+      `- <code>${escapeLocationHtml(decision.term)}</code> at <code>${escapeLocationHtml(`${decision.file}:${decision.line}`)}</code>: primary classified it as <code>${escapeLocationHtml(primaryDecision?.disposition || "unknown")}</code>; the second opinion classified it as <code>${escapeLocationHtml(decision.disposition)}</code>.`,
+    );
+  }
+  for (const decision of secondOnly.slice(0, Math.max(0, 10 - conflicts.length))) {
+    lines.push(
+      `- <code>${escapeLocationHtml(decision.term)}</code> at <code>${escapeLocationHtml(`${decision.file}:${decision.line}`)}</code>: selected only by the second-opinion lane as <code>${escapeLocationHtml(decision.disposition)}</code>.`,
+    );
+  }
+  if (total > 10) lines.push(`- _${total - 10} more._`);
+  lines.push("", "</details>");
+  return lines;
+}
+
+function terminologyDecisionKey(decision: TrustedLaneTerminologyDecision): string {
+  return `${decision.term.toLocaleLowerCase()}\0${decision.file}\0${decision.line}`;
+}
+
+function renderSecondOpinionE2eRecommendations(
+  primary: AdvisorLaneReport,
+  secondOpinion: AdvisorLaneReport,
+): string[] {
+  if (
+    primary.status !== "completed" ||
+    secondOpinion.status !== "completed" ||
+    primary.partial ||
+    secondOpinion.partial ||
+    !primary.e2e ||
+    !secondOpinion.e2e
+  ) {
+    return [];
+  }
+
+  const primaryIds = new Set(
+    [...primary.e2e.recommended, ...primary.e2e.optional].map(({ id }) => id),
+  );
+  const additionalIds = new Set<string>();
+  const additional = [...secondOpinion.e2e.recommended, ...secondOpinion.e2e.optional].filter(
+    ({ id }) => {
+      if (primaryIds.has(id) || additionalIds.has(id)) return false;
+      additionalIds.add(id);
+      return true;
+    },
+  );
+  if (additional.length === 0) return [];
+
+  const lines = [
+    "",
+    "<details>",
+    `<summary>${compactCount(additional.length, "additional E2E selection")} from the second opinion</summary>`,
+    "",
+    "_Advisory only. The primary lane did not select these E2E jobs or targets._",
+    "",
+  ];
+  for (const recommendation of additional.slice(0, E2E_RENDER_LIMIT)) {
+    lines.push(
+      `- <code>${escapeLocationHtml(recommendation.id)}</code>: The completed second-opinion lane identified E2E coverage that the primary lane omitted.`,
+    );
+  }
+  if (additional.length > E2E_RENDER_LIMIT) {
+    lines.push(`- _${additional.length - E2E_RENDER_LIMIT} more._`);
+  }
+  lines.push("", "</details>");
+  return lines;
 }
 
 function countDifference(difference: number, label: string): string {
@@ -479,6 +627,38 @@ function countDifference(difference: number, label: string): string {
   const direction = difference > 0 ? "more" : "fewer";
   const count = Math.abs(difference);
   return `${count} ${direction} ${count === 1 ? label : `${label}s`}`;
+}
+
+function renderTerminologyDetails(result?: ReviewAdvisorResult): string {
+  if (typeof result?.headSha !== "string") return "";
+  const decisions = Array.isArray(result?.terminologyReview?.decisions)
+    ? result.terminologyReview.decisions.filter(
+        (decision) =>
+          typeof decision.term === "string" &&
+          typeof decision.disposition === "string" &&
+          typeof decision.recommendation === "string" &&
+          typeof decision.source?.file === "string" &&
+          Number.isInteger(decision.source.line) &&
+          decision.source.headSha === result?.headSha,
+      )
+    : [];
+  if (decisions.length === 0) return "";
+  const lines = [
+    "",
+    "<details>",
+    `<summary>${compactCount(decisions.length, "semantic terminology decision")}</summary>`,
+    "",
+    "_Terminology decisions are advisory. They affect the assessment only when a separate finding identifies concrete semantic impact._",
+    "",
+  ];
+  for (const decision of decisions.slice(0, 10)) {
+    lines.push(
+      `- **${escapeCommentText(decision.disposition || "decision")} — ${escapeCommentText(decision.term || "term")}** at <code>${escapeLocationHtml(`${decision.source?.file}:${decision.source?.line}`)}</code>: ${escapeCommentText(decision.recommendation || "Review the term.")}`,
+    );
+  }
+  if (decisions.length > 10) lines.push(`- _${decisions.length - 10} more._`);
+  lines.push("", "</details>", "");
+  return `${lines.join("\n")}\n`;
 }
 
 function renderE2eDetails(result?: ReviewAdvisorResult): string {
@@ -536,40 +716,44 @@ function renderE2eDetails(result?: ReviewAdvisorResult): string {
 }
 
 function trustedCoverageIds(
-  items: Array<{ id?: string; reason?: string }> | undefined,
+  items: unknown,
   inventory: TrustedE2eRecommendationInventory,
 ): string[] {
   const allowedIds = new Set([...inventory.allowedJobIds, ...inventory.liveSupportedTargetIds]);
   const seen = new Set<string>();
-  return (items ?? []).flatMap((item) => {
+  const entries = Array.isArray(items) ? items : [];
+  return entries.flatMap((item) => {
+    if (!isRecord(item)) return [];
     const id = item.id;
-    if (!id || !allowedIds.has(id) || seen.has(id)) return [];
+    if (typeof id !== "string" || !allowedIds.has(id) || seen.has(id)) return [];
     seen.add(id);
     return [id];
   });
 }
 
 function trustedTargetIds(
-  items:
-    | Array<{
-        id?: string;
-        workflow?: string;
-        selectorType?: string;
-        required?: boolean;
-        reason?: string;
-      }>
-    | undefined,
+  items: unknown,
   required: boolean,
   inventory: TrustedE2eRecommendationInventory,
   changedCredentialFreeJobIds: ReadonlySet<string>,
 ): string[] {
   const allowedJobs = new Set(inventory.allowedJobIds);
   const allowedTargets = new Set(inventory.liveSupportedTargetIds);
+  const allowedSelectorTypes = new Set<string>(inventory.selectorTypes);
   const seen = new Set<string>();
-  return (items ?? []).flatMap((item) => {
+  const entries = Array.isArray(items) ? items : [];
+  return entries.flatMap((item) => {
+    if (!isRecord(item)) return [];
     const id = item.id;
     const selectorType = item.selectorType;
-    if (!id || item.workflow !== inventory.workflow || item.required !== required) return [];
+    if (
+      typeof id !== "string" ||
+      typeof selectorType !== "string" ||
+      !allowedSelectorTypes.has(selectorType) ||
+      item.workflow !== inventory.workflow ||
+      item.required !== required
+    )
+      return [];
     const trustedTuple =
       (selectorType === "all" && id === inventory.fanoutId) ||
       (selectorType === "job" && (allowedJobs.has(id) || changedCredentialFreeJobIds.has(id))) ||
@@ -633,6 +817,8 @@ function trustedLaneStructure(
       counts: FindingCounts;
       confidence?: "low" | "medium" | "high";
       fingerprints: LaneFingerprints;
+      e2e: LaneE2eRecommendations;
+      terminology: TrustedLaneTerminologyDecision[];
     }
   | undefined {
   if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.findings)) return undefined;
@@ -646,14 +832,110 @@ function trustedLaneStructure(
   }
   const summary = isRecord(value.summary) ? value.summary : undefined;
   const confidence = trustedLaneConfidence(summary?.confidence);
+  const e2e = trustedLaneE2eRecommendations(value as ReviewAdvisorResult);
+  const terminology = trustedLaneTerminology(value.terminologyReview, value.headSha);
+  if (!terminology) return undefined;
   return {
     counts,
     ...(confidence ? { confidence } : {}),
+    e2e,
+    terminology,
     fingerprints: {
       findings: opaqueFingerprint(normalizedFindingRecords(value.findings)),
       e2e: opaqueFingerprint(e2eDecisionSets(value.e2e)),
+      terminology: opaqueFingerprint(terminology ?? []),
     },
   };
+}
+
+function trustedLaneTerminology(
+  value: unknown,
+  headSha: unknown,
+): TrustedLaneTerminologyDecision[] | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || typeof headSha !== "string") return undefined;
+  if (!oneOf(value.status, ["clear", "candidates", "limited"] as const)) return undefined;
+  if (!Array.isArray(value.decisions) || value.decisions.length > 20) return undefined;
+  if (!nullableBoundedText(value.noChangesReason)) return undefined;
+  if (
+    value.decisions.length > 0 &&
+    (value.status !== "candidates" || value.noChangesReason !== null)
+  ) {
+    return undefined;
+  }
+  if (
+    value.decisions.length === 0 &&
+    (value.status === "candidates" || !boundedText(value.noChangesReason))
+  ) {
+    return undefined;
+  }
+  const decisions: TrustedLaneTerminologyDecision[] = [];
+  const ids = new Set<string>();
+  for (const decision of value.decisions) {
+    if (!isRecord(decision) || !isRecord(decision.source)) return undefined;
+    const disposition = decision.disposition;
+    if (
+      !boundedText(decision.id, 80) ||
+      !/^T-[0-9]+$/u.test(decision.id) ||
+      ids.has(decision.id) ||
+      !boundedText(decision.term, 80) ||
+      // Keep this trusted-publisher inventory independent from analyzer code. The
+      // publisher runs from the base SHA and validates untrusted lane artifacts.
+      !oneOf(decision.change, ["introduced", "expanded", "redefined"] as const) ||
+      !oneOf(disposition, ["established", "justified", "define", "replace", "conflict"] as const) ||
+      !boundedText(decision.meaning) ||
+      !nullableBoundedText(decision.contrast) ||
+      !nullableBoundedText(decision.existingTerm) ||
+      !oneOf(decision.semanticImpact, [
+        "none",
+        "behavior",
+        "security",
+        "support",
+        "evidence",
+        "test",
+        "release",
+      ] as const) ||
+      !boundedText(decision.recommendation) ||
+      !boundedText(decision.traceId, 80) ||
+      !boundedText(decision.source.file, 500) ||
+      !Number.isInteger(decision.source.line) ||
+      Number(decision.source.line) < 1 ||
+      decision.source.headSha !== headSha ||
+      (disposition === "justified" && !boundedText(decision.contrast)) ||
+      (disposition === "replace" && !boundedText(decision.existingTerm))
+    ) {
+      return undefined;
+    }
+    ids.add(decision.id);
+    decisions.push({
+      term: decision.term.trim(),
+      change: decision.change,
+      disposition,
+      meaning: decision.meaning.trim(),
+      contrast: typeof decision.contrast === "string" ? decision.contrast.trim() : null,
+      existingTerm: typeof decision.existingTerm === "string" ? decision.existingTerm.trim() : null,
+      semanticImpact: decision.semanticImpact,
+      recommendation: decision.recommendation.trim(),
+      file: decision.source.file,
+      line: Number(decision.source.line),
+    });
+  }
+  return decisions.sort((left, right) => stableJson(left).localeCompare(stableJson(right)));
+}
+
+function boundedText(value: unknown, maxLength = 2000): value is string {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= maxLength;
+}
+
+function nullableBoundedText(value: unknown): value is string | null {
+  return value === null || (typeof value === "string" && value.length <= 2000);
+}
+
+function oneOf<const Values extends readonly string[]>(
+  value: unknown,
+  values: Values,
+): value is Values[number] {
+  return typeof value === "string" && values.includes(value as Values[number]);
 }
 
 function normalizedFindingRecords(value: unknown[]): unknown[] {
@@ -665,6 +947,43 @@ function normalizedFindingRecords(value: unknown[]): unknown[] {
 
 function trustedLaneConfidence(value: unknown): "low" | "medium" | "high" | undefined {
   return value === "low" || value === "medium" || value === "high" ? value : undefined;
+}
+
+function trustedLaneE2eRecommendations(result: ReviewAdvisorResult): LaneE2eRecommendations {
+  const inventory = commentE2eInventory();
+  const changedCredentialFreeJobIds = trustedChangedCredentialFreeJobIds(result);
+  const coverage = result.e2e?.coverage;
+  const targets = result.e2e?.targets;
+  return {
+    recommended: trustedLaneE2eTier(
+      Array.isArray(coverage?.requiredTests) ? coverage.requiredTests : undefined,
+      Array.isArray(targets?.required) ? targets.required : undefined,
+      true,
+      inventory,
+      changedCredentialFreeJobIds,
+    ),
+    optional: trustedLaneE2eTier(
+      Array.isArray(coverage?.optionalTests) ? coverage.optionalTests : undefined,
+      Array.isArray(targets?.optional) ? targets.optional : undefined,
+      false,
+      inventory,
+      changedCredentialFreeJobIds,
+    ),
+  };
+}
+
+function trustedLaneE2eTier(
+  coverageItems: unknown[] | undefined,
+  targetItems: unknown[] | undefined,
+  required: boolean,
+  inventory: TrustedE2eRecommendationInventory,
+  changedCredentialFreeJobIds: ReadonlySet<string>,
+): LaneE2eRecommendation[] {
+  const ids = uniqueE2eIds([
+    ...trustedTargetIds(targetItems, required, inventory, changedCredentialFreeJobIds),
+    ...trustedCoverageIds(coverageItems, inventory),
+  ]);
+  return ids.map((id) => ({ id }));
 }
 
 function e2eDecisionSets(value: unknown): Record<string, string[]> {
