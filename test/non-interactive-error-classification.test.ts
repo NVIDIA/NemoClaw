@@ -41,20 +41,36 @@ logging.basicConfig(level=logging.WARNING, format="%(message)s")
 
 const PLANTED_SECRETS = /runtime-secret|checkpoint-secret|private-model-message/;
 
-function activeExceptionDriver(exceptionExpression: string, threadId: string): string {
+function activeExceptionCasesDriver(
+  cases: ReadonlyArray<readonly [string, string, string, string]>,
+): string {
+  const pythonCases = cases
+    .map(
+      ([exceptionExpression], index) =>
+        `(${exceptionExpression}, ${JSON.stringify(`thread-trusted-${index}`)})`,
+    )
+    .join(",\n    ");
+
   return `
 ${runtimePreamble}
-target.generate_thread_id = lambda: ${JSON.stringify(threadId)}
+cases = [
+    ${pythonCases}
+]
+assert set(target._NEMOCLAW_EXCEPTION_CLASSIFIERS) == {
+    type(exception) for exception, _thread_id in cases
+}
 
 
-async def fail(*args, **kwargs):
-    del args, kwargs
-    raise ${exceptionExpression}
+for exception, thread_id in cases:
+    target.generate_thread_id = lambda thread_id=thread_id: thread_id
 
+    async def fail(*args, _exception=exception, **kwargs):
+        del args, kwargs
+        raise _exception
 
-target._run_non_interactive_impl = fail
-exit_code = asyncio.run(target.run_non_interactive("task"))
-assert exit_code == 1
+    target._run_non_interactive_impl = fail
+    exit_code = asyncio.run(target.run_non_interactive("task"))
+    assert exit_code == 1
 `;
 }
 
@@ -106,7 +122,7 @@ os.unlink(db_path)
 }
 
 describe("managed non-interactive error reporting", () => {
-  it("classifies trusted LangGraph client exception types (#8121)", () => {
+  it("classifies every trusted exact exception type (#8121)", () => {
     const cases = [
       [
         "graph_errors.RateLimitError('token=runtime-secret')",
@@ -151,60 +167,92 @@ describe("managed non-interactive error reporting", () => {
         "true",
       ],
       [
+        "graph_errors.APIStatusError('token=runtime-secret')",
+        "APIError",
+        "agent_remote_failure",
+        "false",
+      ],
+      [
         "graph_errors.APIError('token=runtime-secret')",
         "APIError",
         "agent_remote_failure",
         "false",
       ],
-    ] as const;
-
-    for (const [exceptionExpression, errorClass, category, retryable] of cases) {
-      const result = runPatchedNonInteractive(
-        activeExceptionDriver(exceptionExpression, "thread-langgraph"),
-      );
-
-      expect(result.status).toBe(0);
-      expect(result.stderr).toContain(
-        `error_class=${errorClass} category=${category} retryable=${retryable} ` +
-          "correlation_id=thread-langgraph",
-      );
-      expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
-    }
-  });
-
-  it("classifies trusted transport and configuration exception types (#8121)", () => {
-    const cases = [
       ["httpx.ConnectTimeout('token=runtime-secret')", "Timeout", "request_timeout", "true"],
+      ["httpx.ReadTimeout('token=runtime-secret')", "Timeout", "request_timeout", "true"],
+      ["httpx.WriteTimeout('token=runtime-secret')", "Timeout", "request_timeout", "true"],
+      ["httpx.PoolTimeout('token=runtime-secret')", "Timeout", "request_timeout", "true"],
       ["httpx.ConnectError('token=runtime-secret')", "Unavailable", "route_unreachable", "true"],
+      ["httpx.ReadError('token=runtime-secret')", "Unavailable", "route_unreachable", "true"],
+      ["httpx.WriteError('token=runtime-secret')", "Unavailable", "route_unreachable", "true"],
+      ["httpx.CloseError('token=runtime-secret')", "Unavailable", "route_unreachable", "true"],
       ["httpx.ProxyError('token=runtime-secret')", "Unavailable", "route_unreachable", "true"],
+      [
+        "ssl.SSLCertVerificationError('token=runtime-secret')",
+        "Unavailable",
+        "route_unreachable",
+        "true",
+      ],
+      ["ssl.SSLError('token=runtime-secret')", "Unavailable", "route_unreachable", "true"],
       ["TimeoutError('token=runtime-secret')", "Timeout", "request_timeout", "true"],
+      ["ConnectionError('token=runtime-secret')", "Unavailable", "route_unreachable", "true"],
+      [
+        "ConnectionAbortedError('token=runtime-secret')",
+        "Unavailable",
+        "route_unreachable",
+        "true",
+      ],
       [
         "ConnectionRefusedError('token=runtime-secret')",
         "Unavailable",
         "route_unreachable",
         "true",
       ],
-      ["ssl.SSLError('token=runtime-secret')", "Unavailable", "route_unreachable", "true"],
+      ["ConnectionResetError('token=runtime-secret')", "Unavailable", "route_unreachable", "true"],
+      ["BrokenPipeError('token=runtime-secret')", "Unavailable", "route_unreachable", "true"],
       [
         "model_config.ModelConfigError('token=runtime-secret')",
         "ModelConfigError",
         "model_configuration",
         "false",
       ],
+      [
+        "model_config.NoCredentialsConfiguredError('token=runtime-secret')",
+        "ModelConfigError",
+        "model_configuration",
+        "false",
+      ],
+      [
+        "model_config.UnknownProviderError('token=runtime-secret')",
+        "ModelConfigError",
+        "model_configuration",
+        "false",
+      ],
+      [
+        "model_config.MissingCredentialsError('token=runtime-secret')",
+        "ModelConfigError",
+        "model_configuration",
+        "false",
+      ],
+      [
+        "model_config.MissingProviderPackageError('token=runtime-secret')",
+        "ModelConfigError",
+        "model_configuration",
+        "false",
+      ],
     ] as const;
 
-    for (const [exceptionExpression, errorClass, category, retryable] of cases) {
-      const result = runPatchedNonInteractive(
-        activeExceptionDriver(exceptionExpression, "thread-local"),
-      );
+    const result = runPatchedNonInteractive(activeExceptionCasesDriver(cases));
 
-      expect(result.status).toBe(0);
+    expect(result.status).toBe(0);
+    for (const [index, [, errorClass, category, retryable]] of cases.entries()) {
+      const threadId = `thread-trusted-${index}`;
       expect(result.stderr).toContain(
         `error_class=${errorClass} category=${category} retryable=${retryable} ` +
-          "correlation_id=thread-local",
+          `correlation_id=${threadId}`,
       );
-      expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
     }
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
   });
 
   it("does not classify a forged checkpoint exception representation (#8121)", () => {
