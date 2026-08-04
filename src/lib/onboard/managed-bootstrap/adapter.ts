@@ -18,6 +18,7 @@ export const MANAGED_BOOTSTRAP_IDENTITY_BYTES = 32;
 const SHA256_RE = /^[a-f0-9]{64}$/u;
 const MANIFEST_DIGEST_RE = /^sha256:[a-f0-9]{64}$/u;
 const ENV_ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=/u;
+const MAX_MANAGED_BOOTSTRAP_RECOVERY_RECORDS = 4096;
 const PROCESS_INJECTION_ENV_KEYS = new Set([
   "BASHOPTS",
   "BASH_ENV",
@@ -239,6 +240,42 @@ export interface ManagedBootstrapFinalizationReceipt {
   readonly finalizedAt: string;
 }
 
+/**
+ * Driver-neutral evidence that one durable, process-orphaned transaction was
+ * reconciled without reconstructing authority from mutable runtime names.
+ */
+export interface ManagedBootstrapRecoveryReceipt {
+  readonly schemaVersion: typeof MANAGED_BOOTSTRAP_SCHEMA_VERSION;
+  readonly providerId: string;
+  /** Provider-owned phase name retained for diagnostics, never central routing. */
+  readonly sourcePhase: string;
+  readonly sandbox: ManagedBootstrapSandboxIdentity;
+  readonly bootstrapIdentity: string;
+  readonly outcome: "committed" | "rolled-back";
+  readonly finalization: ManagedBootstrapFinalizationReceipt;
+}
+
+/** Bounded provider-owned evidence that one durable transaction still needs attention. */
+export interface ManagedBootstrapRecoveryFailure {
+  readonly schemaVersion: typeof MANAGED_BOOTSTRAP_SCHEMA_VERSION;
+  readonly providerId: string;
+  /** Null when the durable record could not prove its provider-owned phase. */
+  readonly sourcePhase: string | null;
+  /** Null when the durable record could not prove its sandbox identity. */
+  readonly sandbox: ManagedBootstrapSandboxIdentity | null;
+  readonly bootstrapIdentity: string;
+  /** Provider-owned diagnostic code. Central orchestration must not branch on this value. */
+  readonly code: string;
+  readonly retryable: boolean;
+  readonly detail: string;
+}
+
+/** Lossless provider-neutral recovery output for one bounded enumeration pass. */
+export interface ManagedBootstrapRecoveryReport {
+  readonly receipts: readonly ManagedBootstrapRecoveryReceipt[];
+  readonly failures: readonly ManagedBootstrapRecoveryFailure[];
+}
+
 export class ManagedBootstrapDurableCommitCleanupPendingError extends Error {
   readonly bootstrapIdentity: string;
   readonly cleanupRuntimeId: string;
@@ -297,6 +334,25 @@ export class ManagedBootstrapOwnerCleanupRequiredError extends Error {
   }
 }
 
+export class ManagedBootstrapRecoveryBlockedError extends Error {
+  readonly sandboxName: string;
+  readonly failures: readonly ManagedBootstrapRecoveryFailure[];
+
+  constructor(sandboxName: string, failures: readonly ManagedBootstrapRecoveryFailure[]) {
+    const first = failures[0];
+    super(
+      `Managed bootstrap recovery blocks sandbox '${sandboxName}' because ${String(
+        failures.length,
+      )} durable transaction${failures.length === 1 ? "" : "s"} still need attention.${
+        first ? ` First failure ${first.bootstrapIdentity} (${first.code}): ${first.detail}` : ""
+      }`,
+    );
+    this.name = "ManagedBootstrapRecoveryBlockedError";
+    this.sandboxName = sandboxName;
+    this.failures = Object.freeze([...failures]);
+  }
+}
+
 export function attachManagedBootstrapRollbackError(failure: Error, rollbackError: unknown): void {
   (
     failure as Error & {
@@ -310,6 +366,12 @@ export function attachManagedBootstrapRollbackError(failure: Error, rollbackErro
 }
 
 export interface ManagedBootstrapAdapter {
+  /**
+   * Enumerate durable unfinished records and reconcile each through the owning
+   * provider. Implementations must be restart-safe and idempotent.
+   */
+  recoverUnfinishedTransactions(): Promise<ManagedBootstrapRecoveryReport>;
+
   /** Return only after one durable sandbox/driver identity reports Ready. */
   createHeldWorkload(
     input: ManagedBootstrapCreateInput,
@@ -376,6 +438,172 @@ export interface ManagedBootstrapAdapter {
   }): Promise<ManagedBootstrapFinalizationReceipt>;
 }
 
+function normalizeRecoveryReceipt(
+  candidate: ManagedBootstrapRecoveryReceipt,
+): ManagedBootstrapRecoveryReceipt {
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate) ||
+    candidate.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION ||
+    !["committed", "rolled-back"].includes(String(candidate.outcome))
+  ) {
+    protocolFail("recovery receipt has an invalid schema or outcome");
+  }
+  assertOpaqueString(candidate.providerId, "recovery provider ID");
+  assertOpaqueString(candidate.sourcePhase, "recovery source phase");
+  assertSandboxIdentity(candidate.sandbox);
+  if (candidate.sandbox.driverId !== candidate.providerId) {
+    protocolFail("recovery provider does not own the recovered sandbox");
+  }
+  if (!SHA256_RE.test(candidate.bootstrapIdentity)) {
+    protocolFail("recovery bootstrap identity must be lowercase SHA-256");
+  }
+  const finalization = candidate.finalization;
+  if (
+    typeof finalization !== "object" ||
+    finalization === null ||
+    Array.isArray(finalization) ||
+    finalization.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION ||
+    finalization.outcome !== candidate.outcome ||
+    finalization.bootstrapIdentity !== candidate.bootstrapIdentity ||
+    !isDeepStrictEqual(finalization.sandbox, candidate.sandbox) ||
+    typeof finalization.heldWorkloadRemoved !== "boolean" ||
+    typeof finalization.alreadyRolledBack !== "boolean"
+  ) {
+    protocolFail("recovery finalization does not match its durable identity");
+  }
+  if (
+    (finalization.restoredRuntimeId !== null && !SHA256_RE.test(finalization.restoredRuntimeId)) ||
+    (finalization.restoredSpecHash !== null && !SHA256_RE.test(finalization.restoredSpecHash)) ||
+    (finalization.restoredRuntimeId === null) !== (finalization.restoredSpecHash === null) ||
+    (candidate.outcome === "committed" &&
+      (finalization.restoredRuntimeId !== null ||
+        finalization.heldWorkloadRemoved ||
+        finalization.alreadyRolledBack))
+  ) {
+    protocolFail("recovery finalization state is inconsistent");
+  }
+  assertTimestamp(finalization.finalizedAt, "recovery finalization timestamp");
+  return Object.freeze({
+    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+    providerId: candidate.providerId,
+    sourcePhase: candidate.sourcePhase,
+    sandbox: Object.freeze({ ...candidate.sandbox }),
+    bootstrapIdentity: candidate.bootstrapIdentity,
+    outcome: candidate.outcome,
+    finalization: Object.freeze({
+      ...finalization,
+      sandbox: Object.freeze({ ...candidate.sandbox }),
+    }),
+  });
+}
+
+function normalizeRecoveryFailure(
+  candidate: ManagedBootstrapRecoveryFailure,
+): ManagedBootstrapRecoveryFailure {
+  if (
+    typeof candidate !== "object" ||
+    candidate === null ||
+    Array.isArray(candidate) ||
+    candidate.schemaVersion !== MANAGED_BOOTSTRAP_SCHEMA_VERSION ||
+    typeof candidate.retryable !== "boolean"
+  ) {
+    protocolFail("recovery failure has an invalid schema");
+  }
+  assertOpaqueString(candidate.providerId, "recovery failure provider ID", 256);
+  if (candidate.sourcePhase !== null) {
+    assertOpaqueString(candidate.sourcePhase, "recovery failure source phase", 256);
+  }
+  if (candidate.sandbox !== null) {
+    assertSandboxIdentity(candidate.sandbox);
+    if (candidate.sandbox.driverId !== candidate.providerId) {
+      protocolFail("recovery failure provider does not own the durable sandbox");
+    }
+  }
+  if (!SHA256_RE.test(candidate.bootstrapIdentity)) {
+    protocolFail("recovery failure bootstrap identity must be lowercase SHA-256");
+  }
+  assertOpaqueString(candidate.code, "recovery failure code", 256);
+  assertOpaqueString(candidate.detail, "recovery failure detail", 8 * 1024);
+  return Object.freeze({
+    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+    providerId: candidate.providerId,
+    sourcePhase: candidate.sourcePhase,
+    sandbox: candidate.sandbox === null ? null : Object.freeze({ ...candidate.sandbox }),
+    bootstrapIdentity: candidate.bootstrapIdentity,
+    code: candidate.code,
+    retryable: candidate.retryable,
+    detail: candidate.detail,
+  });
+}
+
+/** Recover process-orphaned work without relying on coordinator WeakMap state. */
+export async function recoverManagedBootstrapTransactions(
+  adapter: ManagedBootstrapAdapter,
+): Promise<ManagedBootstrapRecoveryReport> {
+  const candidates = await adapter.recoverUnfinishedTransactions();
+  if (
+    typeof candidates !== "object" ||
+    candidates === null ||
+    Array.isArray(candidates) ||
+    !Array.isArray(candidates.receipts) ||
+    !Array.isArray(candidates.failures)
+  ) {
+    protocolFail("provider recovery must return bounded receipt and failure arrays");
+  }
+  if (
+    candidates.receipts.length + candidates.failures.length >
+    MAX_MANAGED_BOOTSTRAP_RECOVERY_RECORDS
+  ) {
+    protocolFail("provider recovery returned too many records");
+  }
+  const receipts = candidates.receipts.map(normalizeRecoveryReceipt);
+  const failures = candidates.failures.map(normalizeRecoveryFailure);
+  const identities = [...receipts, ...failures].map(({ bootstrapIdentity }) => bootstrapIdentity);
+  if (new Set(identities).size !== identities.length) {
+    protocolFail("provider recovery returned duplicate bootstrap identities");
+  }
+  const byBootstrapIdentity = (
+    left: ManagedBootstrapRecoveryReceipt | ManagedBootstrapRecoveryFailure,
+    right: ManagedBootstrapRecoveryReceipt | ManagedBootstrapRecoveryFailure,
+  ) => left.bootstrapIdentity.localeCompare(right.bootstrapIdentity);
+  return Object.freeze({
+    receipts: Object.freeze([...receipts].sort(byBootstrapIdentity)),
+    failures: Object.freeze([...failures].sort(byBootstrapIdentity)),
+  });
+}
+
+/** Block only failures that can own the requested name; warn for exact unrelated sandboxes. */
+export function enforceManagedBootstrapRecoveryForSandbox(
+  report: ManagedBootstrapRecoveryReport,
+  sandboxName: string,
+  warn: (message: string) => void,
+): ManagedBootstrapRecoveryReport {
+  assertOpaqueString(sandboxName, "recovery target sandbox name");
+  const blocking = report.failures.filter(
+    (failure) => failure.sandbox === null || failure.sandbox.sandboxName === sandboxName,
+  );
+  for (const failure of report.failures) {
+    if (failure.sandbox === null || failure.sandbox.sandboxName === sandboxName) continue;
+    warn(
+      `Managed bootstrap recovery retained unrelated sandbox '${failure.sandbox.sandboxName}' ` +
+        `(${failure.bootstrapIdentity}, ${failure.code}).`,
+    );
+  }
+  if (blocking.length > 0) {
+    throw new ManagedBootstrapRecoveryBlockedError(
+      sandboxName,
+      Object.freeze(
+        [...blocking].sort((left, right) =>
+          left.bootstrapIdentity.localeCompare(right.bootstrapIdentity),
+        ),
+      ),
+    );
+  }
+  return report;
+}
+
 export interface ManagedBootstrapPreparationInput {
   readonly create: ManagedBootstrapCreateInput;
   readonly request: ManagedStartupRootApplyRequest;
@@ -404,12 +632,16 @@ function protocolFail(message: string): never {
   throw new Error(`Managed bootstrap protocol violation: ${message}`);
 }
 
-function assertOpaqueString(value: unknown, label: string): asserts value is string {
+function assertOpaqueString(
+  value: unknown,
+  label: string,
+  maxBytes = 64 * 1024,
+): asserts value is string {
   if (
     typeof value !== "string" ||
     value.length === 0 ||
     value.includes("\0") ||
-    Buffer.byteLength(value, "utf8") > 64 * 1024
+    Buffer.byteLength(value, "utf8") > maxBytes
   ) {
     protocolFail(`${label} must be one bounded non-empty string`);
   }
