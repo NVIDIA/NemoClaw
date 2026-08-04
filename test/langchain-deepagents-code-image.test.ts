@@ -1040,12 +1040,19 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(requirementsLock).toContain("uv==0.11.33");
     expect(requirementsLock).toContain("aiohttp==3.14.3");
     expect(requirementsLock).toContain("cryptography==50.0.0");
+    expect(requirementsLock).not.toContain("aiohttp==3.14.1");
+    expect(requirementsLock).not.toContain("cryptography==49.0.0");
     expect(requirementsLock).toContain("mcp==1.28.1");
     expect(requirementsLock).toContain("pillow==12.3.0");
     expect(requirementsLock).toContain("pyasn1==0.6.4");
-    expect(readAgentFile("Dockerfile.base")).toContain(
-      "'aiohttp': '3.14.3', 'cryptography': '50.0.0', 'deepagents-code': '0.1.34'",
-    );
+    const dockerfileBase = readAgentFile("Dockerfile.base");
+    for (const [name, expectedVersion] of [
+      ["aiohttp", "3.14.3"],
+      ["cryptography", "50.0.0"],
+      ["deepagents-code", "0.1.34"],
+    ] as const) {
+      expect(dockerfileBase).toContain(`'${name}': '${expectedVersion}'`);
+    }
     expect(review).toContain(`Adapter module SHA-256: \`${sha256(adapterModule)}\``);
     expect(review).toContain(`Adapter project metadata SHA-256: \`${sha256(adapterMetadata)}\``);
     expect(review).toContain("Adapter dependency audit result: `No known vulnerabilities found`");

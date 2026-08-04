@@ -77,14 +77,15 @@ index c630b3c..fd28f6a 100644
  feishu = ["lark-oapi==1.6.8", "qrcode==7.4.2"]
  google = [
    # Required by the google-workspace skill (Gmail, Calendar, Drive, Contacts,
-@@ -267,9 +272,8 @@ youtube = [
+@@ -267,9 +272,9 @@ youtube = [
    "youtube-transcript-api==1.2.4",
  ]
  # `hermes dashboard` (localhost SPA + API).  Not in core to keep the default install lean.
 -# starlette==1.0.1 pinned for CVE-2026-48710 (BadHost) — fastapi pulls Starlette
 -# transitively and pre-1.0.1 is the vulnerable range. See the mcp extra above.
 -web = ["fastapi==0.133.1", "uvicorn[standard]==0.41.0", "starlette==1.0.1", "python-multipart==0.0.27"]
-+# starlette==1.3.1 includes the latest reviewed request parsing and URL fixes.
++# starlette==1.3.1 pinned for GHSA-82w8-qh3p-5jfq because FastAPI pulls
++# Starlette transitively. Keep the patched floor aligned with the mcp extra.
 +web = ["fastapi==0.133.1", "uvicorn[standard]==0.41.0", "starlette==1.3.1", "python-multipart==0.0.27"]
  all = [
    # Policy (2026-05-12): `[all]` includes only extras that genuinely

@@ -161,6 +161,17 @@ describe("Hermes 0.19.0 dependency review", () => {
     ]) {
       expect(securityDependenciesPatch).toContain(selection);
     }
+    const addedPatchLines = securityDependenciesPatch
+      .split("\n")
+      .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+      .join("\n");
+    for (const supersededSelection of [
+      '"aiohttp==3.14.1"',
+      '"cryptography==48.0.1"',
+      '"alibabacloud-dingtalk==2.2.42"',
+    ]) {
+      expect(addedPatchLines).not.toContain(supersededSelection);
+    }
     for (const installedVersion of [
       "'aiohttp': '3.14.3'",
       "'cryptography': '50.0.0'",
@@ -171,6 +182,8 @@ describe("Hermes 0.19.0 dependency review", () => {
     ]) {
       expect(dockerfileBase).toContain(installedVersion);
     }
+    expect(dockerfileBase).not.toContain("'aiohttp': '3.14.1'");
+    expect(dockerfileBase).not.toContain("'cryptography': '48.0.1'");
     expect(dockerfileBase).toContain("python-multipart==0.0.32");
     expect(dockerfileBase).toContain(
       "sha256:be54b7f3fa167bb83e4fcd936b887b708f4e57fe75911c02aebf53efaf8d938e",
@@ -187,6 +200,9 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(review).toContain("`aiohttp==3.14.3`");
     expect(review).toContain("`cryptography==50.0.0`");
     expect(review).toContain("`alibabacloud-dingtalk==2.2.54`");
+    expect(review).toContain("confirms 94 unique third-party package names");
+    expect(review).toContain("Tornado `6.5.7` is the lowest version");
+    expect(review).toContain("source-distribution-only");
     expect(review).toContain("`mcp==1.28.1`");
     expect(review).toContain("`Pillow==12.3.0`");
     expect(review).toContain("`starlette==1.3.1`");

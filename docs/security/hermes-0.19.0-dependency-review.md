@@ -162,6 +162,7 @@ The wrapper recognizes the reviewed `--safe-mode` CLI flag without adding a new 
 ## Dependency closure, licenses, and advisories
 
 The selected `anthropic messaging web pty mcp` Python graph contains 94 third-party packages after the reviewed security constraints are applied.
+A frozen uv `0.11.33` export of those five extras confirms 94 unique third-party package names; the optional DingTalk compatibility changes remain outside that selected graph.
 In the unpatched upstream release transition from `v2026.7.1`, the selected graph changes only `slack-bolt` from `1.27.0` to `1.29.0` and `slack-sdk` from `3.40.1` to `3.43.0`; the downstream security selections are recorded below.
 Both changed packages remain MIT licensed.
 
@@ -173,9 +174,13 @@ A Python 3.13 FastAPI `TestClient` probe covered ordinary forms, file upload, an
 
 The source patch changes the published constraints and `uv.lock` as one transaction rather than overlaying packages after `uv sync`.
 The August 3 refresh moves `aiohttp` from `3.14.1` to `3.14.3` and `cryptography` from `48.0.1` to `50.0.0`, clearing `GHSA-cq5v-8q36-5273` and `GHSA-g6cj-pr64-35w5`.
+Tornado `6.5.7` is the lowest version that clears all three recorded Tornado advisories: `6.5.6` clears `GHSA-3x9g-8vmp-wqvf` and `GHSA-mgf9-4vpg-hj56`, while `6.5.7` clears `GHSA-pw6j-qg29-8w7f`.
+The complete exact-source patch retains the previously reviewed MCP, Pillow, Starlette, and Tornado selections because it must apply the full downstream security delta to the unmodified Hermes release metadata.
 Hermes does not install the `azure` or `dingtalk` extras in its managed `anthropic messaging web pty mcp` runtime, but its published lock resolves every optional extra.
 `msal==1.36.0` and the `alibabacloud-dingtalk==2.2.42` dependency chain capped cryptography below 49, so a lock-consistent security refresh also selects `msal==1.37.0` and `alibabacloud-dingtalk==2.2.54`.
 The latter permits `alibabacloud-tea-openapi==0.3.16`, removes the obsolete `cryptography<49` constraint, adds `alibabacloud-tea-xml==0.0.3`, and no longer resolves `darabonba-core` or `websocket-client` through that optional chain.
+The two selected Alibaba Cloud Tea packages are source-distribution-only and their PyPI JSON metadata omits dependency declarations; uv `0.11.33` derives the dependency metadata from the source distributions and freezes their source hashes in `uv.lock`.
+The managed runtime does not build or install those packages because it does not select the DingTalk extra.
 These compatibility-only lock changes remain MIT or Apache-2.0 licensed and do not change the packages installed in the managed runtime extras.
 
 The August 3, 2026 point-in-time targeted audit reports no advisory for `aiohttp==3.14.3`, `cryptography==50.0.0`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, or `tornado==6.5.7`.
