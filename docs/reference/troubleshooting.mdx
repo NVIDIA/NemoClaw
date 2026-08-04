@@ -390,6 +390,46 @@ These dashboard ports are separate from the gateway-wide inference route.
 
 </AgentOnly>
 
+### A Gateway Port Stays Bound After Uninstall or Re-Onboard
+
+A gateway port that keeps listening after you uninstall, or that keeps serving after you re-onboard without `NEMOCLAW_GATEWAY_PORT` set, can belong to a second environment.
+
+Onboarding under a non-default `NEMOCLAW_GATEWAY_PORT` registers the sandbox on gateway `nemoclaw-<port>` and stores its registry and state under `~/.nemoclaw/gateways/<port>/`.
+Every later command reads the state root that its own `NEMOCLAW_GATEWAY_PORT` selects, so a command run without that variable operates on port `8080` and neither reuses nor stops the other environment.
+Clearing the variable does not move an existing sandbox back to the default port.
+
+List the gateways the host still has:
+
+```bash
+openshell gateway list
+```
+
+If the gateway name and its port-scoped state remain, treat it as a second environment and select that port for cleanup.
+If the gateway is absent but the port still listens, cleanup did not stop the listener; follow the process or service remediation printed by uninstall before you retry.
+
+Remove one environment by selecting its port:
+
+```bash
+NEMOCLAW_GATEWAY_PORT=9000 $$nemoclaw uninstall
+```
+
+Remove every gateway port in one run:
+
+```bash
+$$nemoclaw uninstall --all-gateway-ports
+```
+
+After you confirm uninstall and it exits with status `0`, run `openshell gateway list` again.
+For a NemoClaw-managed gateway without `--keep-openshell`, the gateway name that uninstall removed must be absent.
+An externally supervised gateway or a run with `--keep-openshell` preserves the gateway process and its resources.
+
+The same scoping applies to `$$nemoclaw <name> stop`.
+When `stop` reports that no valid gateway binding is registered for a sandbox, the sandbox can be registered under a different gateway port.
+Rerun `stop` with that `NEMOCLAW_GATEWAY_PORT` value set.
+If that does not find the sandbox, resolve the missing, invalid, or unreadable registry entry that the command reports.
+
+Refer to [Uninstall NemoClaw](../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) for the full sweep contract.
+
 ### A shared inference route conflicts with another sandbox
 
 Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for route time-sharing, provider-global compatibility, and status drift fields.

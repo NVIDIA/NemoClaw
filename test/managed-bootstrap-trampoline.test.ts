@@ -603,10 +603,12 @@ exec /usr/bin/env -i NEMOCLAW_MANAGED_BOOTSTRAP_RESUME=1 ${JSON.stringify(
 
   it.each(
     MANAGED_STARTUP_AGENTS,
-  )("consumes the protected %s request before exact supervisor exec and drops bootstrap variables", (agent) => {
+  )("consumes the protected %s request or recovered claim before exact supervisor exec and drops bootstrap variables", (agent) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bootstrap-trampoline-"));
     try {
       const request = path.join(directory, "request.json");
+      const claimDirectory = path.join(directory, ".request.json.nemoclaw-claim");
+      const claim = path.join(claimDirectory, "request");
       const completion = path.join(directory, "completion");
       const runtime = path.join(directory, "runtime.cjs");
       const sandbox = path.join(directory, "sandbox");
@@ -647,7 +649,8 @@ test ! -e /proc/self/fd/9
 printf 'node:%s:home=%s:path=%s:lang=%s:capability=%s\\n' "$*" "$HOME" "$PATH" "$LANG" "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" >>${JSON.stringify(trace)}
 case "$*" in
   *--apply-bootstrap-file*)
-    /bin/rm -f ${JSON.stringify(request)}
+    /bin/rm -f ${JSON.stringify(request)} ${JSON.stringify(claim)}
+    if test -d ${JSON.stringify(claimDirectory)}; then /bin/rmdir ${JSON.stringify(claimDirectory)}; fi
     printf '%s\\n' '${agent}:${"a".repeat(64)}:${"b".repeat(64)}' >${JSON.stringify(completion)}
     ;;
   *--verify-bootstrap-completion*)
@@ -662,6 +665,7 @@ esac
 set -e
 test ! -e /proc/self/fd/9
 test ! -e "$REQUEST"
+test ! -e "$CLAIM"
 test "$#" -eq 3
 test "$1" = "supervise"
 test "$2" = "two words"
@@ -722,6 +726,7 @@ printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capab
       ];
       const environment = {
         REQUEST: request,
+        CLAIM: claim,
         TRACE: trace,
         BASH_ENV: path.join(directory, "bash-env"),
         "BASH_FUNC_attacker%%": `() { /usr/bin/touch ${attackerFunction}; }`,
@@ -745,6 +750,7 @@ printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capab
       expect(fs.existsSync(loader.earlyTrace)).toBe(false);
       expect(fs.existsSync(loader.afterTrace)).toBe(true);
       expect(fs.readFileSync(trace, "utf8").trim().split("\n")).toEqual([
+        `node:${runtime} --recover-bootstrap-claim --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,
         `node:${runtime} --apply-bootstrap-file --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,
         `node:${runtime} --verify-bootstrap-completion --agent ${agent} --profile-fingerprint ${fingerprint} --bootstrap-identity ${identity}:home=/root:path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:lang=C.UTF-8:capability=1`,
         "startup after validation",
@@ -753,9 +759,23 @@ printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capab
 
       execFileSync(entrypoint, argv, { env: environment });
       let lines = fs.readFileSync(trace, "utf8").trim().split("\n");
+      expect(lines.filter((line) => line.includes("--recover-bootstrap-claim"))).toHaveLength(2);
       expect(lines.filter((line) => line.includes("--apply-bootstrap-file"))).toHaveLength(1);
       expect(lines.filter((line) => line.startsWith("supervisor:"))).toHaveLength(2);
       expect(lines.filter((line) => line === "startup after validation")).toHaveLength(2);
+
+      fs.rmSync(completion);
+      fs.mkdirSync(claimDirectory, { mode: 0o700 });
+      fs.writeFileSync(claim, "{}\n", { mode: 0o400 });
+      execFileSync(entrypoint, argv, { env: environment });
+      expect(fs.existsSync(request)).toBe(false);
+      expect(fs.existsSync(claim)).toBe(false);
+      expect(fs.existsSync(claimDirectory)).toBe(false);
+      lines = fs.readFileSync(trace, "utf8").trim().split("\n");
+      expect(lines.filter((line) => line.includes("--recover-bootstrap-claim"))).toHaveLength(3);
+      expect(lines.filter((line) => line.includes("--apply-bootstrap-file"))).toHaveLength(2);
+      expect(lines.filter((line) => line.startsWith("supervisor:"))).toHaveLength(3);
+      expect(lines.filter((line) => line === "startup after validation")).toHaveLength(3);
 
       fs.writeFileSync(completion, `${agent}:${fingerprint}:${"c".repeat(64)}\n`);
       const tamperedRestart = spawnSync(entrypoint, argv, {
@@ -764,9 +784,9 @@ printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capab
       });
       expect(tamperedRestart.status).not.toBe(0);
       lines = fs.readFileSync(trace, "utf8").trim().split("\n");
-      expect(lines.filter((line) => line.includes("--apply-bootstrap-file"))).toHaveLength(1);
-      expect(lines.filter((line) => line.startsWith("supervisor:"))).toHaveLength(2);
-      expect(lines.filter((line) => line === "startup after validation")).toHaveLength(2);
+      expect(lines.filter((line) => line.includes("--apply-bootstrap-file"))).toHaveLength(2);
+      expect(lines.filter((line) => line.startsWith("supervisor:"))).toHaveLength(3);
+      expect(lines.filter((line) => line === "startup after validation")).toHaveLength(3);
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
     }
