@@ -383,10 +383,12 @@ async function waitForCommittedSandboxProbe(
   );
 }
 
-function localInferenceBaseUrl(input: Inputs): string {
-  if (!input.localProvider) throw new Error("local provider is required");
-  const route = resolveManagedImageLocalInferenceRoute(input.localProvider);
-  const configured = String(process.env.NEMOCLAW_E2E_LOCAL_INFERENCE_BASE_URL ?? "").trim();
+export function managedImageLocalInferenceBaseUrl(
+  localProvider: ManagedImageLocalInferenceKind,
+  configuredValue = process.env.NEMOCLAW_E2E_LOCAL_INFERENCE_BASE_URL,
+): string {
+  const route = resolveManagedImageLocalInferenceRoute(localProvider);
+  const configured = String(configuredValue ?? "").trim();
   const value = configured || route.defaultBaseUrl;
   let parsed: URL;
   try {
@@ -407,6 +409,11 @@ function localInferenceBaseUrl(input: Inputs): string {
     throw new Error("protected local inference must use http://host.openshell.internal:<port>/v1");
   }
   return value.replace(/\/+$/u, "");
+}
+
+function localInferenceBaseUrl(input: Inputs): string {
+  if (!input.localProvider) throw new Error("local provider is required");
+  return managedImageLocalInferenceBaseUrl(input.localProvider);
 }
 
 function configureLocalInferenceRoute(

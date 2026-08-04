@@ -13,6 +13,7 @@ import {
   withManagedImageLocalInferenceProfile,
 } from "../scripts/checks/managed-image-protected-runtime-contract.ts";
 import {
+  managedImageLocalInferenceBaseUrl,
   managedImageOpenShellBasePolicyPath,
   managedImageOpenShellCommittedProbe,
   managedImageOpenShellProbe,
@@ -37,6 +38,28 @@ describe("protected managed-image runtime contract", () => {
       pathname: "/v1",
       protocol: "http:",
     });
+  });
+
+  it("accepts an exact protected local-inference URL override", () => {
+    expect(
+      managedImageLocalInferenceBaseUrl("ollama", "http://host.openshell.internal:11435/v1/"),
+    ).toBe("http://host.openshell.internal:11435/v1");
+  });
+
+  it.each([
+    ["HTTPS", "https://host.openshell.internal:11435/v1"],
+    ["another host", "http://example.invalid:11435/v1"],
+    ["a missing port", "http://host.openshell.internal/v1"],
+    ["port zero", "http://host.openshell.internal:0/v1"],
+    ["an out-of-range port", "http://host.openshell.internal:65536/v1"],
+    ["another path", "http://host.openshell.internal:11435/v2"],
+    ["credentials", "http://user:secret@host.openshell.internal:11435/v1"],
+    ["a query", "http://host.openshell.internal:11435/v1?model=other"],
+    ["a fragment", "http://host.openshell.internal:11435/v1#other"],
+  ])("rejects a protected local-inference override with %s", (_case, value) => {
+    expect(() => managedImageLocalInferenceBaseUrl("ollama", value)).toThrow(
+      /protected local inference/u,
+    );
   });
 
   it.each([
