@@ -203,6 +203,7 @@ describe("inference selection validation", () => {
     vi.stubEnv("NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS", "llm.corp.example");
     const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const capabilityCache = new OnboardInferenceCapabilityCache();
     const helpers = createInferenceSelectionValidationHelpers({
       isNonInteractive: () => false,
       agentProductName: () => "OpenClaw",
@@ -218,6 +219,8 @@ describe("inference selection validation", () => {
         "https://llm.corp.example/v1",
         "model-a",
         "COMPATIBLE_API_KEY",
+        null,
+        capabilityCache,
       );
       expect(result).toMatchObject({
         ok: true,
@@ -225,6 +228,15 @@ describe("inference selection validation", () => {
         pinnedAddresses: ["10.0.0.8"],
       });
       expect(result.ok && result.trustedPrivateCapability?.addresses).toEqual(["10.0.0.8"]);
+      expect(
+        result.ok &&
+          capabilityCache.takeCompletedOpenAiChat({
+            endpointUrl: "https://llm.corp.example/v1",
+            model: "model-a",
+            pinnedAddresses: result.pinnedAddresses,
+            trustedPrivateCapability: result.trustedPrivateCapability,
+          }),
+      ).toBe(false);
       expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
         "https://llm.corp.example/v1",
         "model-a",
@@ -461,6 +473,7 @@ describe("inference selection validation", () => {
 
   it("probes a custom endpoint that resolves to a public address (#6293)", async () => {
     const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));
+    const capabilityCache = new OnboardInferenceCapabilityCache();
     const helpers = createInferenceSelectionValidationHelpers({
       isNonInteractive: () => false,
       agentProductName: () => "OpenClaw",
@@ -470,19 +483,27 @@ describe("inference selection validation", () => {
       resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
 
-    await expect(
-      helpers.validateCustomOpenAiLikeSelection(
-        "Custom endpoint",
-        "https://vllm.public.test/v1",
-        "model-a",
-        "COMPATIBLE_API_KEY",
-      ),
-    ).resolves.toEqual({
+    const result = await helpers.validateCustomOpenAiLikeSelection(
+      "Custom endpoint",
+      "https://vllm.public.test/v1",
+      "model-a",
+      "COMPATIBLE_API_KEY",
+      null,
+      capabilityCache,
+    );
+    expect(result).toEqual({
       ok: true,
       api: "openai-completions",
       pinnedAddresses: ["93.184.216.34"],
     });
     expect(probeOpenAiLikeEndpoint).toHaveBeenCalled();
+    expect(
+      capabilityCache.takeCompletedOpenAiChat({
+        endpointUrl: "https://vllm.public.test/v1",
+        model: "model-a",
+        pinnedAddresses: ["93.184.216.34"],
+      }),
+    ).toBe(true);
   });
 
   it("requests streaming validation for OpenClaw custom Anthropic endpoints (#6289)", async () => {

@@ -72,7 +72,7 @@ Required PR workflows must identify the PR number, PR SHA, and base SHA.
 - GitHub usually associates the run with the PR.
   For a fork run with an empty association, require the Actions event, workflow path, fork repository, branch, and PR SHA to match the current PR.
   The PR and installer workflows must also name the exact PR, PR SHA, and base SHA.
-  The E2E controller must still enclose the trusted required check.
+  The trusted required check must carry the same PR SHA and base SHA identity.
 - If GitHub omits `headRepository.nameWithOwner`, derive it only from the returned repository name and repository-owner login.
   Fail closed when those fields are missing, malformed, or contradictory.
 - Treat an all-skipped `gate false` run from an older workflow version as non-evidence.

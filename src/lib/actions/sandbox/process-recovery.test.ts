@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { parseManagedGatewayControlCompletion } from "./gateway-restart";
 // Import source directly so this test cannot pass against a stale build.
 import {
   confirmRecoveredSandboxGatewayManaged,
@@ -39,6 +40,36 @@ const OPENSHELL_RELAY_TARGET_REFUSED_STDERR = `Error:   × code: 'The service is
 `;
 const OPENSHELL_TRANSIENT_ERROR_PHASE_STDERR =
   "Error: sandbox 'recreated-box' is not ready (phase: Error); wait for it to reach Ready state.\n";
+
+describe("managed gateway control completion", () => {
+  const nonce = "a".repeat(64);
+
+  it.each([
+    ["ok", 0, 4242],
+    ["ok", 4242, 4242],
+    ["already-running", 4242, 4242],
+    ["already-running", 4242, 5252],
+  ] as const)("preserves the exact %s controller disposition (#7919)", (disposition, oldPid, newPid) => {
+    expect(
+      parseManagedGatewayControlCompletion({
+        status: 0,
+        stdout: `v1 ${nonce} complete ${disposition} ${oldPid} ${newPid}\nGATEWAY_PID=${newPid}`,
+        stderr: "",
+      }),
+    ).toEqual({ disposition, oldPid, newPid });
+  });
+
+  it.each([
+    [`v1 ${nonce} complete already-running 4242 4242\nGATEWAY_PID=5252`, ""],
+    [`v1 ${nonce} complete ok 0 4242\nGATEWAY_PID=4242\nextra`, ""],
+    [`v1 ${nonce} complete changed 0 4242\nGATEWAY_PID=4242`, ""],
+    [`v1 ${nonce} complete ok 0 9007199254740992\nGATEWAY_PID=9007199254740992`, ""],
+    [`v1 ${nonce} complete ok 0 4242\nGATEWAY_PID=4242`, "unexpected warning"],
+    ["GATEWAY_PID=4242", ""],
+  ])("rejects malformed or unstructured controller output (#7919)", (stdout, stderr) => {
+    expect(parseManagedGatewayControlCompletion({ status: 0, stdout, stderr })).toBeNull();
+  });
+});
 
 describe("recreated sandbox OpenShell readiness", () => {
   afterEach(() => {
@@ -466,7 +497,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(sleeps).toEqual([3, 3]);
   });
 
-  it("does not let the legacy gateway timeout shorten the sandbox readiness budget (#7273)", () => {
+  it("lets the recovery wait override replace an explicit readiness budget", () => {
     vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "1");
     vi.stubEnv("NEMOCLAW_SANDBOX_READY_TIMEOUT", "6");
     const captureOpenshellImpl = vi.fn(() => ({
@@ -485,8 +516,8 @@ describe("recreated sandbox OpenShell readiness", () => {
         timeoutSeconds: Number(process.env.NEMOCLAW_SANDBOX_READY_TIMEOUT),
       }),
     ).toBe(false);
-    expect(captureOpenshellImpl).toHaveBeenCalledTimes(3);
-    expect(sleeps).toEqual([3, 3]);
+    expect(captureOpenshellImpl).toHaveBeenCalledOnce();
+    expect(sleeps).toEqual([]);
   });
 });
 

@@ -56,6 +56,25 @@ describe("Hermes onboard smoke verification", () => {
     ]);
   });
 
+  it("reuses a matching DNS-pinned Chat Completions validation without another request", async () => {
+    const calls = await runVerifyOnboardSmokeHarness([
+      {
+        credentialEnv: "NOUS_API_KEY",
+        endpointUrl: "https://pinned.example/v1",
+        model: "pinned/model",
+        pinnedAddresses: ["93.184.216.34"],
+        provider: "hermes-provider",
+        selectedChatCapability: true,
+      },
+    ]);
+
+    expect(calls.filter((call) => call[0] === "runCurlProbe")).toHaveLength(0);
+    expect(calls).toContainEqual([
+      "log",
+      "  ✓ Reusing selected Chat Completions validation: hermes-provider / pinned/model",
+    ]);
+  });
+
   it("fails when the selected capability cannot be safely cached", async () => {
     await expect(
       runVerifyOnboardSmokeHarness([

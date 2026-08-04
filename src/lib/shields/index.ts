@@ -56,7 +56,7 @@ const {
 } = require("./timer-control");
 const { resolveNemoclawStateDir } = require("../state/paths");
 const { appendAuditEntry } = require("./audit");
-const { resolveAgentConfig } = require("../sandbox/config");
+const { resolveAgentConfig } = require("../sandbox/agent-config");
 const {
   buildRuntimePermissivePolicy,
 }: typeof import("./permissive-runtime") = require("./permissive-runtime");
@@ -65,6 +65,7 @@ const { verifyShieldsLockState }: typeof import("./verify-lock") = require("./ve
 const { relockAndReconfirm }: typeof import("./relock-reconfirm") = require("./relock-reconfirm");
 const {
   inspectShieldsTransitionLockOwner,
+  isShieldsTransitionLockUnavailable,
   takeoverShieldsTransitionLock,
   withShieldsTransitionLock,
 }: typeof import("./transition-lock") = require("./transition-lock");
@@ -72,6 +73,9 @@ const {
   withTimerBoundShieldsMutationLock,
 }: typeof import("./timer-bound-lock") = require("./timer-bound-lock");
 const {
+  buildConfigHashRepairCommand,
+  buildDeepAgentsConfigLockCommand,
+  DEEP_AGENTS_CONFIG_LOCK_ERROR_PROTOCOL_PREFIX,
   parseSha256Output,
   isHashVerificationIssue,
   isSha256Hex,
@@ -753,6 +757,40 @@ type AgentConfigTarget = {
   sensitiveFiles?: string[];
 };
 
+const DEEP_AGENTS_NAME = "langchain-deepagents-code";
+const DEEP_AGENTS_CONFIG_DIR = "/sandbox/.deepagents";
+const DEEP_AGENTS_CONFIG_PATH = `${DEEP_AGENTS_CONFIG_DIR}/config.toml`;
+const DEEP_AGENTS_CONFIG_HASH_PATH = `${DEEP_AGENTS_CONFIG_DIR}/.config-hash`;
+
+function isDeepAgentsTarget(target: AgentConfigTarget): boolean {
+  return target.agentName === DEEP_AGENTS_NAME;
+}
+
+function assertCanonicalDeepAgentsTarget(target: AgentConfigTarget): void {
+  if (!isDeepAgentsTarget(target)) return;
+  const files = [target.configPath, ...(target.sensitiveFiles || [])];
+  if (
+    target.configDir !== DEEP_AGENTS_CONFIG_DIR ||
+    target.configPath !== DEEP_AGENTS_CONFIG_PATH ||
+    files.length !== 2 ||
+    files[0] !== DEEP_AGENTS_CONFIG_PATH ||
+    files[1] !== DEEP_AGENTS_CONFIG_HASH_PATH
+  ) {
+    throw new Error(
+      `Deep Agents shields require the canonical protected-file set under ${DEEP_AGENTS_CONFIG_DIR}`,
+    );
+  }
+}
+
+function requiresProtectedSandboxParent(target: AgentConfigTarget): boolean {
+  return (
+    target.configDir.startsWith("/sandbox/") &&
+    (target.agentName === "openclaw" ||
+      target.agentName === "hermes" ||
+      target.agentName === "langchain-deepagents-code")
+  );
+}
+
 function configHashPath(configDir: string): string {
   return `${configDir.replace(/\/+$/, "")}/.config-hash`;
 }
@@ -762,6 +800,38 @@ function ensureConfigHashSensitiveFile<T extends AgentConfigTarget>(target: T): 
   const sensitiveFiles = target.sensitiveFiles || [];
   if (sensitiveFiles.includes(hashPath)) return target;
   return { ...target, sensitiveFiles: [...sensitiveFiles, hashPath] } as T;
+}
+
+function resolvePersistedAutoRestoreTarget(
+  sandboxName: string,
+  marker: { agentName?: string; configPath?: string; configDir?: string },
+  resolveConfig: (sandboxName: string) => AgentConfigTarget = resolveAgentConfig,
+): AgentConfigTarget | undefined {
+  if (!marker.configPath || !marker.configDir) return undefined;
+
+  const persistedTarget: AgentConfigTarget = {
+    ...(marker.agentName ? { agentName: marker.agentName } : {}),
+    configPath: marker.configPath,
+    configDir: marker.configDir,
+    sensitiveFiles: [
+      configHashPath(marker.configDir),
+      ...(marker.agentName === "hermes" ? [`${marker.configDir.replace(/\/+$/, "")}/.env`] : []),
+    ],
+  };
+
+  try {
+    const resolved = ensureConfigHashSensitiveFile(resolveConfig(sandboxName));
+    return (!marker.agentName || resolved.agentName === marker.agentName) &&
+      resolved.configPath === marker.configPath &&
+      resolved.configDir === marker.configDir
+      ? resolved
+      : persistedTarget;
+  } catch {
+    // The host-side timer marker is the recovery authority when the registry
+    // is unavailable. Keep the original target instead of silently selecting
+    // another agent's default configuration.
+    return persistedTarget;
+  }
 }
 
 const { DeferredShieldsExit }: typeof import("./deferred-exit") = require("./deferred-exit");
@@ -775,6 +845,11 @@ function failShieldsCommand(message: string, _shouldThrow?: boolean): never {
 }
 
 function completeDeferredShieldsExit(error: unknown, shouldThrow = false): never {
+  if (isShieldsTransitionLockUnavailable(error)) {
+    console.error(`  ${error.summary}`);
+    if (error.recovery) console.error(`  Recovery: ${error.recovery}`);
+    return failShieldsCommand(error.summary, shouldThrow);
+  }
   if (error instanceof DeferredShieldsExit && !shouldThrow) {
     process.exit(error.exitCode);
   }
@@ -1043,6 +1118,15 @@ function transitionOpenClawTopConfig(
       `Config not ${action === "unlock" ? "unlocked" : "locked"}: ${result.issues.join(", ")}`,
     );
   }
+  if (result.resealedDrift) {
+    // The guard found an already-locked config whose canonical file had drifted
+    // perms-only (a reconciler re-permissioned it after the lock) and re-sealed
+    // it in place instead of failing closed (#4663 / #7985). Surface the
+    // self-heal so a rebuild/relock does not fix drift invisibly.
+    console.log(
+      "  Re-sealed a perms-only config-lock drift (config dir stays root-owned; contents intact).",
+    );
+  }
   return result.chattrApplied;
 }
 
@@ -1115,8 +1199,9 @@ def config_child_name(config_dir, path):
 file_mode = int(sys.argv[1], 8)
 dir_mode = int(sys.argv[2], 8)
 uid, gid = resolve_user_group(sys.argv[3])
-config_dir = os.path.normpath(sys.argv[4])
-files = sys.argv[5:]
+restore_mutable_parent = sys.argv[4] == "1"
+config_dir = os.path.normpath(sys.argv[5])
+files = sys.argv[6:]
 
 parent_dir = os.path.dirname(config_dir)
 config_name = os.path.basename(config_dir)
@@ -1181,8 +1266,12 @@ finally:
             restore_errors.append(str(exc))
         os.close(dir_fd)
     try:
-        os.fchown(parent_fd, parent_stat.st_uid, parent_stat.st_gid)
-        os.fchmod(parent_fd, stat.S_IMODE(parent_stat.st_mode))
+        if unlock_ok and restore_mutable_parent:
+            os.fchown(parent_fd, uid, gid)
+            os.fchmod(parent_fd, 0o755)
+        else:
+            os.fchown(parent_fd, parent_stat.st_uid, parent_stat.st_gid)
+            os.fchmod(parent_fd, stat.S_IMODE(parent_stat.st_mode))
     except OSError as exc:
         restore_errors.append(str(exc))
     os.close(parent_fd)
@@ -1573,9 +1662,95 @@ function unlockConfigPathsNoSymlinkFollow(
     fileMode,
     dirMode,
     "sandbox:sandbox",
+    requiresProtectedSandboxParent(target) ? "1" : "0",
     target.configDir,
     ...filesToUnlock,
   ]);
+}
+
+function writeAbsentConfigHashNoSymlinkFollow(
+  sandboxName: string,
+  target: AgentConfigTarget,
+): void {
+  privilegedSandboxExec(
+    sandboxName,
+    buildConfigHashRepairCommand(target.configDir, target.configPath),
+  );
+}
+
+type DeepAgentsConfigLockFailureStatus =
+  | "config-root"
+  | "sandbox-parent"
+  | "incomplete"
+  | "rollback-failed"
+  | "transaction-failed";
+
+const DEEP_AGENTS_CONFIG_LOCK_GENERIC_ERROR = "Deep Agents config lock transaction failed.";
+const DEEP_AGENTS_CONFIG_LOCK_PROTOCOL_MAX_BYTES = 128;
+
+function parseDeepAgentsConfigLockFailure(
+  error: unknown,
+): DeepAgentsConfigLockFailureStatus | null {
+  const stderr = (error as { stderr?: unknown } | null)?.stderr;
+  if (typeof stderr !== "string" && !Buffer.isBuffer(stderr)) return null;
+
+  const byteLength = Buffer.isBuffer(stderr) ? stderr.length : Buffer.byteLength(stderr);
+  if (byteLength === 0 || byteLength > DEEP_AGENTS_CONFIG_LOCK_PROTOCOL_MAX_BYTES) return null;
+
+  let line = Buffer.isBuffer(stderr) ? stderr.toString("utf8") : stderr;
+  if (line.endsWith("\n")) line = line.slice(0, -1);
+  if (!line || line.includes("\n") || line.includes("\r")) return null;
+
+  const prefix = `${DEEP_AGENTS_CONFIG_LOCK_ERROR_PROTOCOL_PREFIX}:`;
+  if (!line.startsWith(prefix)) return null;
+  const status = line.slice(prefix.length);
+  switch (status) {
+    case "config-root":
+    case "sandbox-parent":
+    case "incomplete":
+    case "rollback-failed":
+    case "transaction-failed":
+      return status;
+    default:
+      return null;
+  }
+}
+
+function lockDeepAgentsTopConfig(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  failClosedOnError: boolean,
+): void {
+  assertCanonicalDeepAgentsTarget(target);
+  let outcome: string;
+  try {
+    outcome = privilegedSandboxExecCapture(
+      sandboxName,
+      buildDeepAgentsConfigLockCommand(target.configDir, target.configPath, failClosedOnError),
+    );
+  } catch (error) {
+    const status = parseDeepAgentsConfigLockFailure(error);
+    if (status === "config-root") {
+      console.error(
+        "  CRITICAL: Deep Agents lock failed after containment began. NemoClaw confirmed fail-closed containment at the config root. Restore this sandbox from a trusted snapshot or recreate it before retrying. fail-closed containment=config-root",
+      );
+    } else if (status === "sandbox-parent") {
+      console.error(
+        "  CRITICAL: Deep Agents lock failed after containment began. NemoClaw confirmed fail-closed containment at the sandbox parent because NemoClaw could not confirm the complete config-root posture. In-sandbox recovery is unavailable. Restore this sandbox from a trusted snapshot or recreate it before retrying. fail-closed containment=sandbox-parent",
+      );
+    } else if (status === "incomplete") {
+      console.error(
+        "  CRITICAL: Deep Agents lock failed after containment began, and NemoClaw could not confirm fail-closed containment. Do not retry or repair from inside the sandbox. Restore this sandbox from a trusted snapshot or recreate it before retrying. fail-closed containment=incomplete",
+      );
+    } else if (status === "rollback-failed") {
+      console.error(
+        "  CRITICAL: Deep Agents config lock transaction could not restore its original posture. Restore this sandbox from a trusted snapshot or recreate it before retrying. rollback failed",
+      );
+    }
+    throw new Error(DEEP_AGENTS_CONFIG_LOCK_GENERIC_ERROR);
+  }
+  if (outcome === "hash-created" || outcome === "hash-existing") return;
+  throw new Error("Deep Agents config lock returned an unexpected result.");
 }
 
 function legacyDataDirFor(configDir: string): string {
@@ -1746,7 +1921,7 @@ function unlockAgentConfigUnderMutationLock(
       issues.push(`config dir stat failed: ${msg}`);
     }
 
-    if (openClawProtocol) {
+    if (requiresProtectedSandboxParent(target) && target.agentName !== "hermes") {
       try {
         const parentPerms = privilegedSandboxExecCapture(sandboxName, [
           "stat",
@@ -1985,6 +2160,7 @@ function lockAgentConfigUnderMutationLock(
   const errors: string[] = [];
   const filesToLock = [target.configPath, ...(target.sensitiveFiles || [])];
   const openClawProtocol = target.agentName === "openclaw";
+  const deepAgentsProtocol = isDeepAgentsTarget(target);
   let transaction: {
     token: string;
     originalLocked: boolean;
@@ -1992,13 +2168,19 @@ function lockAgentConfigUnderMutationLock(
   } | null = null;
   const legacyHermesProtocol = target.agentName === "hermes" && protocol === "legacy";
   let openClawMutationStarted = false;
+  let deepAgentsLockSucceeded = false;
   let chattrSucceeded = target.agentName === "hermes" && !legacyHermesProtocol ? false : true;
 
   // Agents without a descriptor-sealed top-level transaction retain the
-  // historical validate-before-mutate ordering. OpenClaw and current Hermes
-  // must revoke writes to their canonical config first: otherwise an agent can
-  // plant one invalid nested entry and veto the auto-restore deadline forever.
-  if (!openClawProtocol && (target.agentName !== "hermes" || legacyHermesProtocol)) {
+  // historical validate-before-mutate ordering. OpenClaw, sealed Hermes, and
+  // Deep Agents must revoke writes to their canonical config first. Otherwise,
+  // an agent can plant one invalid nested entry and prevent the deadline from
+  // restoring Shields up.
+  if (
+    !openClawProtocol &&
+    !deepAgentsProtocol &&
+    (target.agentName !== "hermes" || legacyHermesProtocol)
+  ) {
     const preflightIssues = preflightStateDirLock(stateDirLockExec(sandboxName), target.configDir);
     if (preflightIssues.length > 0) {
       throw new Error(`Config not locked: ${preflightIssues.join(", ")}`);
@@ -2022,6 +2204,12 @@ function lockAgentConfigUnderMutationLock(
     } else if (legacyHermesProtocol) {
       transitionLegacyHermesConfig(sandboxName, target, "lock", filesToLock);
     } else if (target.agentName !== "hermes") {
+      if (isDeepAgentsTarget(target)) {
+        lockDeepAgentsTopConfig(sandboxName, target, !rollbackLocked);
+        deepAgentsLockSucceeded = true;
+      } else {
+        writeAbsentConfigHashNoSymlinkFollow(sandboxName, target);
+      }
       for (const f of filesToLock) {
         try {
           privilegedSandboxExec(sandboxName, ["chmod", "444", f]);
@@ -2099,7 +2287,8 @@ function lockAgentConfigUnderMutationLock(
       // parent metadata. Verify the recursively locked tree while rollback is
       // still available, then verify the parent after the final commit below.
       verifyParentProtection:
-        (target.agentName === "hermes" && transaction === null) || openClawProtocol,
+        requiresProtectedSandboxParent(target) &&
+        (target.agentName !== "hermes" || transaction === null),
       exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
       assertLegacyLayout: assertNoLegacyStateLayout,
     });
@@ -2203,6 +2392,37 @@ function lockAgentConfigUnderMutationLock(
             `  CRITICAL: OpenClaw lock rollback could not restore the trusted posture. Restore from a trusted backup and recreate the sandbox. ${rollbackSummary}`,
           );
         }
+      }
+    } else if (deepAgentsLockSucceeded) {
+      const rollbackIssues: string[] = [];
+      if (rollbackLocked) {
+        try {
+          rollbackIssues.push(
+            ...restoreStateDirLockPosture(stateDirLockExec(sandboxName), target.configDir, true),
+          );
+        } catch (rollbackError) {
+          rollbackIssues.push(
+            `state-directory rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+          );
+        }
+        try {
+          rollbackIssues.push(
+            ...verifyShieldsLockState(sandboxName, target, {
+              verifyParentProtection: true,
+              exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
+              assertLegacyLayout: assertNoLegacyStateLayout,
+            }).issues,
+          );
+        } catch (rollbackError) {
+          rollbackIssues.push(
+            `locked rollback verification failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+          );
+        }
+      }
+      if (rollbackIssues.length > 0) {
+        console.error(
+          `  CRITICAL: Deep Agents lock rollback could not restore the trusted posture. Restore this sandbox from a trusted snapshot or recreate it before retrying. ${rollbackIssues.join(", ")}`,
+        );
       }
     }
     throw error;
@@ -2505,10 +2725,12 @@ function recoverExpiredAutoRestoreInline(
     }
   }
 
+  const cachedTarget = resolvePersistedAutoRestoreTarget(sandboxName, marker);
   const activation = activateLockdownFromSnapshot(
     sandboxName,
     marker.snapshotPath,
     marker.allowLegacyHermesProtocol === true,
+    cachedTarget,
   );
   const nowIso = new Date().toISOString();
   if (!activation.ok) {
@@ -2674,6 +2896,17 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     return failShieldsCommand(`Unknown policy "${policyName}"`, opts.throwOnError);
   }
 
+  // Every exit after the permissive merge builds a temp policy directory must
+  // remove it. The apply below has always cleaned up, but the timer-failure
+  // and saveShieldsState-failure early exits between here and there historically
+  // leaked one 0700 nemoclaw-permissive-runtime-* directory per failed
+  // attempt. Route all three exits through one cleanup. See #7964.
+  const cleanupRuntimePolicyFile = () => {
+    if (policyFileIsTemp) {
+      cleanupTempDir(policyFile, "nemoclaw-permissive-runtime");
+    }
+  };
+
   const now = new Date().toISOString();
   let transition: ShieldsDownTransition | null = null;
 
@@ -2727,6 +2960,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
           opts.allowLegacyHermesProtocol === true ? "1" : "0",
           leaseOwnerPid === null ? "" : String(leaseOwnerPid),
           leaseOwnerStartIdentity ?? "",
+          target.agentName ?? "",
         ],
         {
           detached: true,
@@ -2743,6 +2977,9 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
           restoreAt: restoreAt.toISOString(),
           processToken,
           allowLegacyHermesProtocol: opts.allowLegacyHermesProtocol === true,
+          agentName: target.agentName,
+          configPath: target.configPath,
+          configDir: target.configDir,
           ...(leaseOwnerPid !== null && leaseOwnerStartIdentity
             ? { leaseOwnerPid, leaseOwnerStartIdentity }
             : {}),
@@ -2762,6 +2999,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       }
       clearTimerMarker(sandboxName);
       clearShieldsDownTransition(sandboxName, processToken);
+      cleanupRuntimePolicyFile();
       const message = err instanceof Error ? err.message : String(err);
       console.error(`  Cannot start auto-restore timer: ${message}`);
       return failShieldsCommand(`Cannot start auto-restore timer: ${message}`, opts.throwOnError);
@@ -2782,6 +3020,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       clearShieldsDownTransition(sandboxName, transition.processToken);
       killTimer(sandboxName);
     }
+    cleanupRuntimePolicyFile();
     throw error;
   }
 
@@ -2789,9 +3028,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   try {
     run(buildPolicySetCommand(policyFile, sandboxName));
   } finally {
-    if (policyFileIsTemp) {
-      cleanupTempDir(policyFile, "nemoclaw-permissive-runtime");
-    }
+    cleanupRuntimePolicyFile();
   }
 
   // 2b. Return config to default mutable state.
@@ -2926,7 +3163,7 @@ function shieldsUpWithoutHostLock(
     const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
     const { issues } = verifyShieldsLockState(sandboxName, target, {
       verifyChattr: state.chattrApplied === true,
-      verifyParentProtection: target.agentName === "openclaw" || target.agentName === "hermes",
+      verifyParentProtection: requiresProtectedSandboxParent(target),
       exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
       assertLegacyLayout: assertNoLegacyStateLayout,
       expectedHashes: state.fileHashes,
@@ -3239,7 +3476,7 @@ function shieldsStatusWithoutHostLock(
         const target = ensureConfigHashSensitiveFile(resolveConfig(sandboxName));
         driftIssues = verify(sandboxName, target, {
           verifyChattr: state.chattrApplied === true,
-          verifyParentProtection: target.agentName === "openclaw" || target.agentName === "hermes",
+          verifyParentProtection: requiresProtectedSandboxParent(target),
           exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
           assertLegacyLayout: assertNoLegacyStateLayout,
           expectedHashes: state.fileHashes,
@@ -3415,6 +3652,7 @@ export {
   parseDuration,
   prepareAutoRestoreTransitionTakeover,
   repairMutableConfigPerms,
+  resolvePersistedAutoRestoreTarget,
   shieldsDown,
   shieldsStatus,
   shieldsUp,

@@ -11,6 +11,7 @@ import {
   resolveRestoredPolicyRegistryState,
 } from "./rebuild-post-restore-phase";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
+import * as snapshotRestore from "./snapshot/restore-authority";
 
 const BUILTIN_OBSERVABILITY_CONTENT =
   "network_policies:\n  observability-otlp-local:\n    name: observability-otlp-local\n";
@@ -44,7 +45,7 @@ describe("rebuild policy restore fidelity", () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const log = vi.fn();
-    vi.spyOn(sandboxState, "restoreRecreatedSandboxState").mockReturnValue({
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockReturnValue({
       success: false,
       restoredDirs: [],
       restoredFiles: [],
@@ -76,7 +77,7 @@ describe("rebuild policy restore fidelity", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const parsePresetPolicyKeys = vi.spyOn(policies, "parsePresetPolicyKeys");
     const restoreRecreatedSandboxState = vi
-      .spyOn(sandboxState, "restoreRecreatedSandboxState")
+      .spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority")
       .mockReturnValue({
         success: true,
         restoredDirs: [],
@@ -104,9 +105,14 @@ describe("rebuild policy restore fidelity", () => {
       log: vi.fn(),
     });
 
-    expect(restoreRecreatedSandboxState).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backup", {
-      targetAgentType: "openclaw",
-    });
+    expect(restoreRecreatedSandboxState).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ backupPath: "/tmp/rebuild-backup" }),
+      {
+        targetAgentType: "openclaw",
+      },
+      { getSandbox: expect.any(Function) },
+    );
     expect(applyPreset).toHaveBeenCalledOnce();
     expect(applyPreset).toHaveBeenCalledWith("alpha", "npm");
     for (const entry of customPolicies) {

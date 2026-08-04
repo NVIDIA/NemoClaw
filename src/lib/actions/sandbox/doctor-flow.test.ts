@@ -294,6 +294,34 @@ describe("runSandboxDoctor flow", () => {
     },
   );
 
+  it("fails the JSON host check for an unknown durable runtime provider", async () => {
+    const harness = createDoctorHarness();
+    harness.getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      model: "registry-model",
+      provider: "ollama-local",
+      openshellDriver: "unknown-runtime",
+      openshellVersion: "0.0.72",
+      nemoclawVersion: "0.0.83",
+      fromDockerfile: null,
+      dashboardPort: 18789,
+      imageTag: "nemoclaw-openclaw:test",
+      gatewayName: "nemoclaw-19080",
+      gatewayPort: 19080,
+    });
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(report?.checks).toContainEqual({
+      group: "Host",
+      label: "Runtime provider",
+      status: "fail",
+      detail: "Runtime provider 'unknown-runtime' is not registered for this operation.",
+      hint: "restore a supported durable runtime provider identity before retrying",
+    });
+  });
+
   it.each([
     ["high", "high"],
     [null, "endpoint-default"],

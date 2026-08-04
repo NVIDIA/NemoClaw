@@ -8,8 +8,11 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { loadAgent } from "../agent/defs";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
+import { encodeManagedStartupProfile } from "./managed-startup/profile";
+import { createManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { createOpenshellCliHelpers } from "./openshell-cli";
 import {
   buildSandboxRuntimeEnvArgs,
@@ -61,9 +64,92 @@ describe("buildSandboxRuntimeEnvArgs", () => {
     expect(omitted).toContain("NEMOCLAW_DASHBOARD_PORT=19000");
     expect(omitted).toContain("NEMOCLAW_PROXY_HOST=host.docker.internal");
   });
+
+  // OpenShell exports OPENSHELL_SANDBOX as the boolean "1" to sandbox processes,
+  // so this injection is the sandbox's only source for its own name. Without it
+  // the in-sandbox hints print a `<name>` placeholder instead of a copyable
+  // host-side command. It used to be injected only for LangChain Deep Agents
+  // Code.
+  it("injects NEMOCLAW_SANDBOX_NAME for every agent (#7795)", () => {
+    const base = {
+      chatUiUrl: "http://127.0.0.1:19000/",
+      manageDashboard: true,
+      getDashboardForwardPort: () => "19000",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+      env: {} as NodeJS.ProcessEnv,
+      sandboxName: "my-assistant",
+    };
+
+    for (const agentName of ["openclaw", "hermes", "langchain-deepagents-code"]) {
+      const envArgs = buildSandboxRuntimeEnvArgs({
+        ...base,
+        agent: { name: agentName, configPaths: { dir: "/sandbox/.openclaw" } } as any,
+      }).envArgs;
+      expect(envArgs, `${agentName} should receive the sandbox name`).toContain(
+        "NEMOCLAW_SANDBOX_NAME=my-assistant",
+      );
+    }
+  });
+
+  it("omits NEMOCLAW_SANDBOX_NAME when no sandbox name is known", () => {
+    const envArgs = buildSandboxRuntimeEnvArgs({
+      agent: { name: "openclaw", configPaths: { dir: "/sandbox/.openclaw" } } as any,
+      chatUiUrl: "http://127.0.0.1:19000/",
+      manageDashboard: true,
+      getDashboardForwardPort: () => "19000",
+      hermesDashboardState: disabledHermesDashboardState,
+      extraPlaceholderKeys: [],
+      env: {} as NodeJS.ProcessEnv,
+    }).envArgs;
+    expect(envArgs.some((arg) => arg.startsWith("NEMOCLAW_SANDBOX_NAME="))).toBe(false);
+  });
 });
 
 describe("prepareSandboxCreateLaunch", () => {
+  it.each([
+    "openclaw",
+    "hermes",
+    "langchain-deepagents-code",
+  ] as const)("renders one identity-bound held launch for %s without exposing the startup profile", (agentName) => {
+    const request = createManagedStartupRootApplyRequest({
+      agent: agentName,
+      encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile(agentName)),
+    });
+    const result = prepareSandboxCreateLaunch({
+      agent: loadAgent(agentName),
+      chatUiUrl: "",
+      createArgs: ["--name", `${agentName}-sandbox`],
+      env: {},
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      openshellArgv: (args) => ["openshell", ...args],
+      buildEnv: () => ({}),
+      managedStartupRootApplyRequest: request,
+    });
+
+    expect(result.intendedSandboxStartupCommand).toEqual([
+      "env",
+      ...result.envArgs,
+      "nemoclaw-start",
+    ]);
+    expect(result.managedBootstrapIdentity).toMatch(/^[a-f0-9]{64}$/u);
+    expect(result.sandboxStartupCommand).toEqual([
+      ...result.intendedSandboxStartupCommand.slice(0, -1),
+      "/usr/local/bin/nemoclaw-managed-startup-hold",
+      "--agent",
+      agentName,
+      "--profile-fingerprint",
+      request.profileFingerprint,
+      "--bootstrap-identity",
+      result.managedBootstrapIdentity,
+    ]);
+    expect(result.createArgv.join("\n")).not.toContain(request.encodedProfile);
+  });
+
   it("builds the sandbox create command and runtime env envelope", () => {
     const openshellShellCommand = vi.fn((args: string[]) => `openshell ${args.join(" ")}`);
     const result = prepareSandboxCreateLaunch({
@@ -129,9 +215,10 @@ describe("prepareSandboxCreateLaunch", () => {
       env: {
         NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: " 30 ",
         NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: " 0.25 ",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: " 99 ",
         NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",
         NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
-        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "99",
         NEMOCLAW_PROVIDER_KEY: "must-not-enter-the-sandbox",
       },
       extraPlaceholderKeys: [],
@@ -150,12 +237,11 @@ describe("prepareSandboxCreateLaunch", () => {
       "OPENCLAW_WORKSPACE_DIR=/sandbox/.openclaw/workspace",
       "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=30",
       "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS=3",
+      "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS=0.25",
+      "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS=99",
       "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS=10",
       "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=600",
     ]);
-    expect(result.sandboxStartupCommand.join(" ")).not.toContain(
-      "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
-    );
     expect(result.sandboxStartupCommand.join(" ")).not.toContain("NEMOCLAW_PROVIDER_KEY");
   });
 
@@ -164,7 +250,11 @@ describe("prepareSandboxCreateLaunch", () => {
       agent: loadAgent("hermes"),
       chatUiUrl: "http://127.0.0.1:18789/",
       createArgs: [],
-      env: { NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30" },
+      env: {
+        NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS: "1",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "3",
+      },
       extraPlaceholderKeys: [],
       getDashboardForwardPort: () => "18789",
       hermesDashboardState: {

@@ -751,6 +751,10 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     "runtimeAudit.formatRuntimeAuditSummary",
     "scripts/scorecard/analyze-runtime-history.mts",
     "runtimeHistory.buildRuntimeHistory",
+    "scripts/scorecard/analyze-first-turn-latency.mts",
+    "firstTurnLatency.readCurrentFirstTurnLatencySample",
+    "currentFirstTurnLatency",
+    "runtimeHistory.loadPriorNightlySummaries",
     "core.summary",
     "scorecardData",
     "slackData",
@@ -815,8 +819,7 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   requirePinnedAction(errors, runtimeUpload, "scorecard runtime summary upload");
   if (
     !String(runtimeUpload.uses ?? "").startsWith(E2E_ARTIFACT_ACTION) ||
-    runtimeUpload.if !==
-      "${{ always() && github.event_name == 'schedule' && steps.scorecard.outcome == 'success' }}" ||
+    runtimeUpload.if !== "${{ always() && github.event_name == 'schedule' }}" ||
     runtimeUpload.with?.name !== "e2e-runtime-summary" ||
     runtimeUpload.with?.path !== "${{ runner.temp }}/e2e-runtime-summary.json"
   ) {
