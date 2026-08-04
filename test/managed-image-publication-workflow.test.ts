@@ -363,14 +363,29 @@ describe("complete managed-image publication workflow", () => {
         `base-image workflow is missing ${expectedPublisher.agent} manifest publisher`,
       );
       const manifest = step(basePublisher, "Create and verify multi-platform manifest");
+      const manifestRun = manifest.run ?? "";
       expect(manifest.id).toBe("manifest");
       expect(manifest.env?.AGENT).toBe(expectedPublisher.agent);
       expect(manifest.run).toContain('reference="$IMAGE@$digest"');
-      expect(manifest.run).toContain("--format '{{.Manifest.Digest}}'");
+      expect(manifest.run).toContain('.["containerimage.descriptor"].digest');
+      expect(manifest.run).toContain('--metadata-file "$candidate_metadata"');
       expect(manifest.run).toContain("scripts/checks/validate-managed-base-index.sh");
+      expect(manifest.run).toContain("declare -A source_digests=()");
+      expect(manifest.run).toContain('"${source_digests[linux/amd64]}"');
+      expect(manifest.run).toContain('"${source_digests[linux/arm64]}"');
+      expect(manifest.run).toContain("platform_digests_json=");
+      expect(manifest.run).toContain("declare -A platform_digests=()");
       expect(manifest.run).toContain("scripts/export-managed-base-image-contract.sh");
       expect(manifest.run).toContain('"${platform_digests[linux/amd64]}"');
       expect(manifest.run).toContain('"${platform_digests[linux/arm64]}"');
+      const validationIndex = manifestRun.indexOf("scripts/checks/validate-managed-base-index.sh");
+      const promotionIndex = manifestRun.indexOf("publication_metadata=");
+      expect(manifestRun.indexOf("candidate_tag=")).toBeLessThan(validationIndex);
+      expect(validationIndex).toBeLessThan(promotionIndex);
+      expect(manifestRun).toContain("published_digest=");
+      expect(manifestRun).toContain('if [ "$published_digest" != "$digest" ]; then');
+      expect(manifestRun).not.toContain("first_tag=");
+      expect(manifestRun).not.toContain('imagetools create "${tag_args[@]}" "${sources[@]}"');
       expect(step(basePublisher, "Checkout").with?.["persist-credentials"]).toBe(false);
       expect(step(basePublisher, "Upload managed base image contract").with?.name).toBe(
         expectedPublisher.artifact,
