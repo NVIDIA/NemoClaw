@@ -257,17 +257,18 @@ describe("uninstall OpenShell gateway user service", () => {
         commandExists: (command) => command === "systemctl",
         run: (command, args) => {
           calls.push([command, ...args]);
-          return command === "openshell" && args[0] === "gateway" && args[1] === "select"
-            ? { status: 1, stdout: "", stderr: "no such gateway" }
+          return command === "openshell" && args[0] === "sandbox"
+            ? { status: 1, stdout: "", stderr: "sandbox unreachable" }
             : ok();
         },
       },
       [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
     );
 
-    // `openshell gateway select` failed, so uninstall refuses the sandbox
-    // deletion and returns before it disables the unit. A rerun needs the
-    // OpenShell gateway service still running.
+    // The sandbox delete failed, so uninstall returns before it disables the
+    // unit and a rerun still finds the OpenShell gateway service running.
+    // `openshell gateway remove` still runs ahead of that return; that is the
+    // pre-existing absent-resource behavior #7906 tracks, not this change.
     expect(result.exitCode).toBe(1);
     expect(fs.existsSync(servicePath)).toBe(true);
     expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
