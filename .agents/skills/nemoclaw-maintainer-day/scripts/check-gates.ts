@@ -1074,7 +1074,7 @@ function selectedE2eLineageTiming(
       !Number.isFinite(startedAt) ||
       !Number.isFinite(completedAt) ||
       startedAt > completedAt ||
-      (timing.at(-1)?.startedAt ?? Number.NEGATIVE_INFINITY) > startedAt
+      (timing.at(-1)?.completedAt ?? Number.NEGATIVE_INFINITY) > startedAt
     ) {
       return null;
     }

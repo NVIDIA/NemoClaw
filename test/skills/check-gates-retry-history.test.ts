@@ -25,6 +25,7 @@ function gateOutput(checkRuns: unknown[]) {
   const orderedCheckIds = checkRuns
     .map((check) => (check as { id: number }).id)
     .sort((left, right) => left - right);
+  const lastPosition = orderedCheckIds.length - 1;
   const checkRunsWithTiming = checkRuns.map((check) => {
     const record = check as Record<string, unknown> & { id: number };
     const position = orderedCheckIds.indexOf(record.id);
@@ -34,6 +35,12 @@ function gateOutput(checkRuns: unknown[]) {
         position === 0
           ? "2026-01-01T00:01:30Z"
           : `2026-01-01T00:02:${String(position).padStart(2, "0")}Z`,
+      completed_at:
+        position === lastPosition
+          ? "2026-01-01T00:02:30Z"
+          : position === 0
+            ? "2026-01-01T00:01:31Z"
+            : `2026-01-01T00:02:${String(position + 1).padStart(2, "0")}Z`,
     };
   });
   const currentCheckId = orderedCheckIds.at(-1)!;

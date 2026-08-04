@@ -578,6 +578,35 @@ describe("maintainer merge-gate E2E coordinator evidence", () => {
     });
   });
 
+  it("rejects a retry check that starts before the previous check completes", () => {
+    const fixture = delayedRetryFixture();
+    const result = runGateWithCoordinator({
+      ...fixture,
+      coordinationCheckPages: [
+        {
+          total_count: 2,
+          check_runs: [
+            retryableFailure(7999, "2026-08-04T14:07:50Z", "2026-08-04T14:28:07Z"),
+            coordinationCheck(fixture.customCheck),
+          ],
+        },
+      ],
+    });
+
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      allPass: false,
+      gates: {
+        ci: {
+          pass: false,
+          failingChecks: [
+            "E2E / PR Gate: latest attempt evidence incomplete",
+            "initialize: latest attempt evidence incomplete",
+          ],
+        },
+      },
+    });
+  });
+
   it("rejects a stale seed with no predecessor for a newer coordination check", () => {
     const result = runGateWithCoordinator(delayedRetryFixture());
 
