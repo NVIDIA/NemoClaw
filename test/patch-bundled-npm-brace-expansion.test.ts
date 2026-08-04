@@ -91,6 +91,18 @@ describe("npm bundled brace-expansion remediation", () => {
     ).toBe("fixed\n");
   });
 
+  it("upgrades the previous remediation release", () => {
+    const target = fixture("5.0.8");
+
+    expect(patchBundledNpmBraceExpansion(target)).toMatchObject({
+      braceExpansionVersion: FIXED_BRACE_EXPANSION_VERSION,
+      state: "fixed",
+    });
+    expect(
+      fs.existsSync(path.join(target.npmRoot, "node_modules", "brace-expansion", "old.js")),
+    ).toBe(false);
+  });
+
   it("does not invoke npm or npx until the private package is replaced and verified", () => {
     const target = fixture(AFFECTED_BRACE_EXPANSION_VERSION);
     const commands: string[] = [];
