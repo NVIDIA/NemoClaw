@@ -289,6 +289,7 @@ export function blockRebuildOnPendingBaselineTransition(
     `Re-run: ${CLI_NAME} ${sandboxName} policy ${transition.operation} ${key}`,
     `Pending baseline policy ${transition.operation} for '${key}' blocks rebuild.`,
     bail,
+    1,
   );
   return true;
 }
@@ -309,7 +310,10 @@ export function isSingleAgentRebuildSupported(
   return true;
 }
 
-export function acquireRebuildOnboardLock(sandboxName: string, bail: RebuildBail): () => void {
+export function acquireRebuildOnboardLock(
+  sandboxName: string,
+  bail: RebuildBail,
+): (() => void) | null {
   const lock = onboardSession.acquireOnboardLock(
     `${CLI_NAME} ${sandboxName} rebuild --authoritative-resume`,
   );
@@ -321,6 +325,7 @@ export function acquireRebuildOnboardLock(sandboxName: string, bail: RebuildBail
       "Could not acquire onboard lock before rebuild",
       bail,
     );
+    return null;
   }
   let released = false;
   const release = () => {

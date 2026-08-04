@@ -206,6 +206,7 @@ export async function runRebuildPreflightPhase(
   let retainBaseImagePreflight = false;
   try {
     const releaseOnboardLock = acquireRebuildOnboardLock(sandboxName, bail);
+    if (!releaseOnboardLock) return null;
     let retainOnboardLock = false;
     try {
       assertRebuildEntryUnchanged(sandboxName, JSON.stringify(expectedSandboxEntry), bail);

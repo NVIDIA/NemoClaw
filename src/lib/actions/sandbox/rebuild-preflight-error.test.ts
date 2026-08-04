@@ -34,4 +34,18 @@ describe("printRebuildPreflightFailure (#7794)", () => {
     expect(output).toContain("something broke.");
     expect(output).toContain("Try again.");
   });
+
+  it("preserves an explicit bail exit code", () => {
+    const bail = vi.fn() as unknown as (message: string, code?: number) => never;
+
+    printRebuildPreflightFailure(
+      "policy restore is pending.",
+      "Repair the pending transition.",
+      "pending policy transition",
+      bail,
+      1,
+    );
+
+    expect(bail).toHaveBeenCalledWith("pending policy transition", 1);
+  });
 });

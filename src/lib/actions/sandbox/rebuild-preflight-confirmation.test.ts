@@ -4,13 +4,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as openshellResolve from "../../adapters/openshell/resolve";
 import { redact } from "../../security/redact";
+import * as onboardSession from "../../state/onboard-session";
 import * as sandboxSession from "../../state/sandbox-session";
 import {
   confirmSandboxRebuildIfNeeded,
   countActiveSandboxSessionsForRebuild,
   createRebuildCommandContext,
 } from "./rebuild-preflight-confirmation";
-import { isSingleAgentRebuildSupported } from "./rebuild-preflight-guards";
+import {
+  acquireRebuildOnboardLock,
+  isSingleAgentRebuildSupported,
+} from "./rebuild-preflight-guards";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -167,6 +171,29 @@ describe("createRebuildCommandContext bail behaviour (#6376)", () => {
 });
 
 describe("rebuild preflight guards", () => {
+  it("stops after a failed onboard-lock acquisition without releasing another run's lock (#7794)", () => {
+    vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({
+      acquired: false,
+      lockFile: "/tmp/nemoclaw-onboard.lock",
+      stale: false,
+      holderPid: 4242,
+      holderCommand: "nemoclaw onboard",
+    });
+    const release = vi
+      .spyOn(onboardSession, "releaseOnboardLock")
+      .mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const bail = vi.fn() as unknown as (message: string, code?: number) => never;
+
+    expect(acquireRebuildOnboardLock("alpha", bail)).toBeNull();
+
+    expect(bail).toHaveBeenCalledWith("Could not acquire onboard lock before rebuild");
+    expect(release).not.toHaveBeenCalled();
+    const output = error.mock.calls.flat().join("\n");
+    expect(output).toContain("another nemoclaw onboarding run is already in progress.");
+    expect(output).toContain("Lock holder PID: 4242.");
+  });
+
   it("rejects a multi-agent sandbox before later rebuild work", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const bail = (message: string): never => {
