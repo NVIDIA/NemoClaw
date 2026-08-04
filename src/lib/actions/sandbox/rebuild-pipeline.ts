@@ -254,6 +254,7 @@ async function rebuildSandboxUnlocked(
         agentName: rebuildAgent || "openclaw",
         targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
         log,
+        onAuthorityRefusal: (lines) => bail(lines.join("\n")),
       });
 
       // An earlier run of this rebuild already registered and proved the

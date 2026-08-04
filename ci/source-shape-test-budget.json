@@ -568,7 +568,7 @@
     },
     {
       "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps managed-bootstrap assets out of image packaging",
+      "test": "packages the dormant managed-bootstrap native boundary for every agent image",
       "category": "security"
     },
     {
