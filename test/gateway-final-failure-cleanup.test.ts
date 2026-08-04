@@ -9,6 +9,7 @@ type FinalGatewayStartFailureOptions = {
   cleanupGateway?: () => void;
   exitProcess?: (code: number) => never;
   printError?: (message?: string) => void;
+  supportsLifecycleCommands?: () => boolean;
 };
 
 type OnboardGatewayFailureInternals = {
@@ -64,7 +65,7 @@ describe("final gateway startup failure cleanup", () => {
     expect(errors).toContain("    gateway log line");
     expect(errors).toContain("  Cleanup attempted.");
     expect(errors).toContain("    openshell gateway remove nemoclaw");
-    expect(errors).toContain("    openshell gateway destroy -g nemoclaw");
+    expect(errors).not.toContain("    openshell gateway destroy -g nemoclaw");
     if (process.platform === "linux") {
       expect(errors).toContain(
         "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
@@ -109,5 +110,34 @@ describe("final gateway startup failure cleanup", () => {
     expect(errors).toContain("  Diagnostic command attempted before cleanup:");
     expect(errors).toContain("    openshell doctor logs --name nemoclaw");
     expect(errors).toContain("  If gateway cleanup did not complete, run:");
+  });
+
+  it("prints the legacy gateway destroy verb only when the installed OpenShell advertises it (#8139)", () => {
+    const collect = (supportsLifecycleCommands: boolean): string[] => {
+      const errors: string[] = [];
+      expect(() =>
+        handleFinalGatewayStartFailure({
+          retries: 0,
+          collectDiagnostics: () => "",
+          cleanupGateway: () => {},
+          exitProcess: (code: number): never => {
+            throw new Error(`exit ${code}`);
+          },
+          printError: (message = "") => {
+            errors.push(message);
+          },
+          supportsLifecycleCommands: () => supportsLifecycleCommands,
+        }),
+      ).toThrow("exit 1");
+      return errors;
+    };
+
+    const modern = collect(false);
+    expect(modern).toContain("    openshell gateway remove nemoclaw");
+    expect(modern.join("\n")).not.toContain("gateway destroy");
+
+    const legacy = collect(true);
+    expect(legacy).toContain("    openshell gateway remove nemoclaw");
+    expect(legacy).toContain("    openshell gateway destroy -g nemoclaw");
   });
 });

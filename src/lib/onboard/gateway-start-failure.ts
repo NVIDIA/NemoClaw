@@ -4,6 +4,7 @@
 import { compactText } from "../core/url-utils";
 import { redact } from "../security/redact";
 import { classifyGatewayStartFailure } from "../validation";
+import { gatewayRemovalHintLines } from "./gateway-removal-hint";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 
@@ -14,12 +15,14 @@ export type FinalGatewayStartFailureOptions = {
   cleanupGateway?: () => void;
   exitProcess?: (code: number) => never;
   printError?: (message?: string) => void;
+  supportsLifecycleCommands?: () => boolean;
 };
 
 export type FinalGatewayStartFailureDeps = {
   getGatewayName(): string;
   collectDiagnostics(): string | null | undefined;
   cleanupGateway(): void;
+  supportsLifecycleCommands?(): boolean;
 };
 
 export function normalizeGatewayStartError(error: unknown): Error {
@@ -66,6 +69,7 @@ export function createFinalGatewayStartFailureHandler(deps: FinalGatewayStartFai
     cleanupGateway = deps.cleanupGateway,
     exitProcess = (code) => process.exit(code),
     printError = (message = "") => console.error(message),
+    supportsLifecycleCommands = deps.supportsLifecycleCommands ?? (() => false),
   }: FinalGatewayStartFailureOptions): never {
     if (dockerUnreachable) {
       printDockerDaemonRecovery(printError);
@@ -107,9 +111,9 @@ export function createFinalGatewayStartFailureHandler(deps: FinalGatewayStartFai
     printError("    openshell doctor check");
     printError("");
     printError("  If gateway cleanup did not complete, run:");
-    printError(`    openshell gateway remove ${gatewayName}`);
-    printError("    # For OpenShell releases that still expose lifecycle commands:");
-    printError(`    openshell gateway destroy -g ${gatewayName}`);
+    for (const line of gatewayRemovalHintLines(gatewayName, supportsLifecycleCommands())) {
+      printError(line);
+    }
     if (process.platform === "linux") {
       printError(
         "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",

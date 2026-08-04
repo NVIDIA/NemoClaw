@@ -1332,6 +1332,7 @@ const handleFinalGatewayStartFailure = createFinalGatewayStartFailureHandler({
       timeout: 10_000,
     }),
   cleanupGateway: destroyGateway,
+  supportsLifecycleCommands: () => gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
 });
 
 function getGatewayClusterContainerState(): string {
