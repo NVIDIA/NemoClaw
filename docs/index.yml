@@ -675,6 +675,9 @@ navigation:
               - page: "Security Best Practices"
                 path: _build/agent-variants/security/best-practices.deepagents.generated.mdx
                 slug: best-practices
+              - page: "Configure Corporate CA Trust"
+                path: _build/agent-variants/security/configure-corporate-ca-trust.deepagents.generated.mdx
+                slug: configure-corporate-ca-trust
               - page: "Credential Storage"
                 path: _build/agent-variants/security/credential-storage.deepagents.generated.mdx
                 slug: credential-storage
