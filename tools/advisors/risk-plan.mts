@@ -18,7 +18,7 @@ const protectedManagedImageContract = (
 const { PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID } =
   protectedManagedImageContract;
 
-export const RISK_PLAN_VERSION = 14 as const;
+export const RISK_PLAN_VERSION = 15 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -68,6 +68,23 @@ const HERMES_MANAGED_POLICY_FILES = new Set([
 const MANAGED_IMAGE_PROTECTED_RUNTIME_ACTIVATION =
   "ci/protected-managed-image-runtime-activation-v1.json";
 const MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID = "managed-image-protected-runtime" as const;
+const MANAGED_IMAGE_PROTECTED_RUNTIME_INPUTS = new Set([
+  MANAGED_IMAGE_PROTECTED_RUNTIME_ACTIVATION,
+  "src/lib/onboard.ts",
+  "src/lib/onboard/sandbox-create-intent-types.ts",
+  "src/lib/onboard/sandbox-create-plan-materialization.ts",
+  "src/lib/onboard/sandbox-create-plan.ts",
+  "src/lib/onboard/sandbox-registration.ts",
+]);
+const MANAGED_IMAGE_PROTECTED_RUNTIME_INPUT_PREFIXES = [
+  "scripts/checks/run-managed-image-openshell-e2e.",
+  "src/lib/actions/sandbox/rebuild",
+  "src/lib/onboard/managed-bootstrap/",
+  "src/lib/onboard/managed-workload/",
+  "src/lib/onboard/runtime-provider/",
+  "src/lib/onboard/workload/",
+  "test/e2e/live/managed-image-protected-runtime.",
+] as const;
 // The activation-only phase is complete. Any input that can change bytes or
 // startup policy in a shipped managed image must requalify the exact all-agent
 // amd64/arm64 cohort; the positive and adjacent-path cases in
@@ -465,17 +482,20 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "Protected managed-image runtime qualification must retain real GPU access, host-local Ollama, NVIDIA NIM, vLLM, transactional rollback, and exact cleanup for every shipped agent.",
     tier: 3,
-    requiredJobs: [MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID],
+    requiredJobs: [MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID, "managed-image-multiarch-startup"],
     invariants: [
       "OpenClaw, Hermes, and Deep Agents Code run from exact PR image digests through the production managed-bootstrap path",
+      "the exact all-agent image cohort passes native linux/amd64 and linux/arm64 startup qualification",
       "real NVIDIA GPU access and host-local Ollama, NVIDIA NIM, and vLLM inference.local completions are all required",
       "bootstrap completion failure removes the exact failed sandbox, container, network, and transaction state for every agent",
       "NGC credentials remain host-scoped and never enter a managed sandbox or persisted artifact",
     ],
-    // The trusted workflow and validator land before activation. The follow-on
-    // activation slice broadens this boundary to runtime inputs after the
-    // protected job exists on main and can safely qualify candidate code.
-    matches: (file) => file === MANAGED_IMAGE_PROTECTED_RUNTIME_ACTIVATION,
+    // The trusted workflow and validator are already on main. Activation now
+    // binds every production bootstrap/rebuild input to both exact all-agent
+    // multiarch startup and the native-GPU local-inference runtime proof.
+    matches: (file) =>
+      MANAGED_IMAGE_PROTECTED_RUNTIME_INPUTS.has(file) ||
+      MANAGED_IMAGE_PROTECTED_RUNTIME_INPUT_PREFIXES.some((prefix) => file.startsWith(prefix)),
   },
   {
     id: "sandbox-boundary",

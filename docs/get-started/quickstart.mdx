@@ -140,7 +140,7 @@ Use these details when your first-run path needs more control.
     Export the relevant API key before starting the installer when you do not want the wizard to prompt for it.
     Refer to [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for provider requirements, model choices, and local-server setup.
 
-    Web search and messaging are optional build-time choices.
+    Web search and messaging are optional managed startup choices.
     Add them when you need them, then rerun onboarding and accept sandbox recreation when you change those choices later.
     Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) and [Network Policies](../network-policy/approve-network-requests) before enabling them.
   </Accordion>
@@ -216,14 +216,16 @@ Use these details when your first-run path needs more control.
     The wizard runs preflight checks, starts or reuses the OpenShell gateway, asks for an inference provider and model, collects required credentials, and asks for a sandbox name.
     It prints a review summary before it registers the provider with OpenShell.
 
-    After confirmation, NemoClaw registers inference, prompts for optional web search and messaging channels, builds and starts the sandbox, sets up OpenClaw, and applies the selected network policy tier and presets.
+    After confirmation, NemoClaw registers inference, prompts for optional web search and messaging channels, creates and starts the sandbox, sets up OpenClaw, and applies the selected network policy tier and presets.
 
     At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
 
     <Note>
-    Onboarding builds the sandbox image with a managed `NEMOCLAW_DISABLE_DEVICE_AUTH=1` compatibility setting so the dashboard is usable during setup.
+    Stock onboarding selects the exact OpenClaw image digest from the installed CLI release's complete all-agent catalog.
+    It does not stage or build an OpenClaw Dockerfile.
+    NemoClaw applies the managed `NEMOCLAW_DISABLE_DEVICE_AUTH=1` compatibility setting through the transactional startup profile so the dashboard is usable during setup.
     NemoClaw records that this value came from onboarding rather than reporting it as an operator-selected opt-out.
-    This build-time setting is baked into the image and setting it after onboarding does not affect an existing sandbox.
+    Setting the value in the host environment after onboarding does not affect an existing sandbox.
     </Note>
 
     If registered sandboxes already exist, the installer prepares the current NemoClaw CLI without replacing OpenShell and requires a fresh backup of every registered sandbox before it changes the gateway.
@@ -275,7 +277,7 @@ Use these details when your first-run path needs more control.
 
     For an OpenAI-compatible endpoint using HTTP on `localhost`, `127.0.0.1`, or `[::1]` and port `8000`, `11434`, or `11435`, press Enter at the API key prompt to select no authentication.
 
-    After you enter a sandbox name, the wizard asks for final confirmation before it registers the provider, prompts for integrations, and builds the sandbox image.
+    After you enter a sandbox name, the wizard asks for final confirmation before it registers the provider, prompts for integrations, and creates the sandbox.
 
     ```text
       ──────────────────────────────────────────────────
@@ -288,7 +290,6 @@ Use these details when your first-run path needs more control.
       Managed tools: none
       Messaging:     none
       Sandbox name:  my-gpt-claw
-      Note:          Sandbox build typically takes 5–15 minutes on this host.
       ──────────────────────────────────────────────────
       Web search and messaging channels will be prompted next.
       Apply this configuration? [Y/n]:
@@ -303,7 +304,7 @@ Use these details when your first-run path needs more control.
     After confirmation, NemoClaw registers the selected provider with the OpenShell gateway and sets the `inference.local` route.
     The wizard asks whether to enable web search and offers Brave Search or Tavily Search.
     Provide `BRAVE_API_KEY` for Brave Search or `TAVILY_API_KEY` for Tavily Search when prompted.
-    NemoClaw validates the selected key before it builds the sandbox, registers a sandbox-scoped OpenShell provider, and writes only an OpenShell resolver placeholder into the OpenClaw configuration.
+    NemoClaw validates the selected key before it creates the sandbox, registers a sandbox-scoped OpenShell provider, and writes only an OpenShell resolver placeholder into the OpenClaw configuration.
     OpenShell replaces the placeholder with the real key at egress.
 
     For non-interactive onboarding, select the provider explicitly and export its key.
@@ -323,13 +324,13 @@ Use these details when your first-run path needs more control.
     The wizard also offers Telegram, Discord, Slack, WeChat, and WhatsApp.
     Press a channel number to toggle it, then press Enter to continue.
     Leave every channel unselected to skip messaging setup.
-    When you select a channel, NemoClaw validates the token format before it bakes the channel configuration into the sandbox.
+    When you select a channel, NemoClaw validates the token format before it applies the channel configuration through the managed startup profile.
     For example, Slack bot tokens must start with `xoxb-`.
     WeChat and WhatsApp are experimental.
     Refer to [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) before enabling them.
 
-    After the sandbox image builds and OpenClaw starts, NemoClaw asks which network policy tier to apply.
-    Web search and messaging selections happen first so the sandbox image and policy suggestions stay aligned.
+    After the managed startup completes and OpenClaw starts, NemoClaw asks which network policy tier to apply.
+    Web search and messaging selections happen first so the startup profile and policy suggestions stay aligned.
     The default Balanced tier includes common development presets, such as npm, PyPI, Hugging Face, and Homebrew, plus the matching `brave` or `tavily` preset.
     Add the `weather` preset explicitly for read-only weather lookups.
     OpenClaw sandboxes also receive the `openclaw-pricing` preset automatically so session-cost records can populate without manual configuration.
@@ -388,7 +389,7 @@ Use these details when your first-run path needs more control.
     The wizard starts a background dashboard port forward and prints its URL in the ready summary.
     The default host port is `18789`.
     When that port is occupied, NemoClaw uses the next free dashboard port, such as `18790`, and includes the port in the URL.
-    If the selected port becomes occupied after the sandbox build begins, onboarding rolls back the new sandbox and asks you to retry rather than print an unreachable URL.
+    If the selected port becomes occupied after sandbox creation begins, onboarding rolls back the new sandbox and asks you to retry rather than print an unreachable URL.
     The installation transcript does not print the gateway token.
     Use `nemoclaw my-gpt-claw dashboard-url --quiet` to print the complete authenticated URL explicitly.
 

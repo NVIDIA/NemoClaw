@@ -166,7 +166,8 @@ Use these details when your first-run path needs more control.
     DGX Spark, qualifying DGX Station hosts, and Windows Subsystem for Linux (WSL) can offer the recommended express install mode after the third-party software notice.
     Press Enter at the express install prompt to apply preset settings, switch the remaining onboarding to non-interactive mode, and select the managed local inference path for that platform.
     Enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
-    The first Hermes build can take several minutes because NemoClaw builds the Hermes sandbox base image when it is not already cached.
+    The first Hermes startup can take several minutes while Docker pulls the exact Hermes image digest for the installed NemoClaw release.
+    Stock onboarding does not stage or build a Hermes Dockerfile.
     Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles and headless setup.
     Refer to [Set Up vLLM on Two DGX Stations](../inference/local-inference/set-up-vllm-on-two-dgx-stations) for the Deferred paired workflow.
     Refer to [Platform Support](../reference/platform-support) for current validation status.
@@ -174,7 +175,7 @@ Use these details when your first-run path needs more control.
 
   <Accordion title="Onboarding and Integration Details">
     The wizard asks for an inference provider, model, required credential, and sandbox name before it prints the review summary.
-    After confirmation, NemoClaw registers inference, prompts for optional Tavily Search and supported messaging channels, builds and starts the sandbox, sets up Hermes, and applies the selected network policy tier and presets.
+    After confirmation, NemoClaw registers inference, prompts for optional Tavily Search and supported messaging channels, creates and starts the sandbox, sets up Hermes, and applies the selected network policy tier and presets.
     At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
 
     The default Hermes sandbox name is `hermes`.
@@ -197,7 +198,8 @@ Use these details when your first-run path needs more control.
     NemoClaw removes `nous-web` from the effective managed-tool selection while preserving selected Nous image, audio, browser, and code tools.
     API-key mode is inference-only and does not enable managed tool gateways.
 
-    After you select a provider and model, review the summary and confirm the build.
+    After you select a provider and model, review the summary and confirm sandbox creation.
+    Stock onboarding selects the exact Hermes image digest from the installed CLI release's complete all-agent catalog and applies Hermes configuration through the transactional startup profile.
     NemoClaw writes Hermes configuration into `/sandbox/.hermes`, routes model traffic through `inference.local`, and starts the Hermes gateway inside the sandbox.
     The Hermes image includes runtime dependencies for supported NemoClaw messaging integrations, the API service, and its health endpoint.
     The base image does not include unsupported Hermes integrations.
@@ -225,7 +227,7 @@ Use these details when your first-run path needs more control.
     Use the provider variables from [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) when you choose another provider.
     Set `NEMOCLAW_WEB_SEARCH_PROVIDER=none` to disable web search explicitly.
     When the selector is unset, Hermes enables Tavily automatically when `TAVILY_API_KEY` is available and ignores `BRAVE_API_KEY`.
-    Changing or disabling Tavily requires sandbox recreation because the backend, credential attachment, and policy selection are build-time inputs.
+    Changing or disabling Tavily requires sandbox recreation because the backend, credential attachment, and policy selection are managed startup inputs.
     Rerun onboarding with the new selection and accept recreation, or pass `--recreate-sandbox`.
   </Accordion>
 

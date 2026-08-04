@@ -85,7 +85,7 @@ function expectCredentialBindingFailure({
   expect(() =>
     materializeSandboxCreatePlan({
       intent,
-      buildCtx: "/tmp/nemoclaw-build-1",
+      fromRef: "/tmp/nemoclaw-build-1/Dockerfile",
       messagingTokenDefs: materializedTokenDefs,
       prepareInitialSandboxCreatePolicy: preparePolicy,
       runProviderPreDeleteCleanup: cleanupProviders,
@@ -257,7 +257,7 @@ describe("resolveSandboxCreateIntent", () => {
 
     const result = materializeSandboxCreatePlan({
       intent,
-      buildCtx: "/tmp/nemoclaw-build-1",
+      fromRef: "/tmp/nemoclaw-build-1/Dockerfile",
       messagingTokenDefs: tokenDefs,
       prepareInitialSandboxCreatePolicy: vi.fn(() => {
         events.push("policy");
@@ -328,7 +328,7 @@ describe("resolveSandboxCreateIntent", () => {
     expect(() =>
       materializeSandboxCreatePlan({
         intent,
-        buildCtx: "/tmp/nemoclaw-build-1",
+        fromRef: "/tmp/nemoclaw-build-1/Dockerfile",
         messagingTokenDefs: [],
         prepareInitialSandboxCreatePolicy: vi.fn(() => ({
           policyPath: "/tmp/policy.yaml",
