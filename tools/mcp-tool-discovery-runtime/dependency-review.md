@@ -14,10 +14,10 @@ The shared image runtime uses the official `@modelcontextprotocol/sdk` client so
 - Locked production graph: `package-lock.json` (lockfile version 3)
 - Build-only tools: `typescript@6.0.3`, `@types/node@25.5.2`, and `esbuild@0.27.4` (not copied into the final image)
 - Security overrides:
-  - `@hono/node-server@2.0.11` — `sha512-bjD221KPLoJTWUwso1J6fGKiTXEUFedG/s0visavY4zakFPkeGURMRNly+FhBHs7T8Dz4qHaZIMX9ZoJHSJtKA==`
-  - `fast-uri@3.1.5` — `sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==`
-  - `hono@4.12.34` — `sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==`
-  - `ip-address@10.3.1` — `sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==`
+  - `@hono/node-server@2.0.12`: `sha512-eWpQYr67tqJLeaSUl0Q+TquuYfUdTibpOJlUMV2FfUP7+KqCC5TufnwnlXL6mobZBJbGAYRd7ZvEBDCbLInjhg==`
+  - `fast-uri@3.1.5`: `sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==`
+  - `hono@4.12.34`: `sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==`
+  - `ip-address@10.3.1`: `sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==`
 
 OpenClaw's `mcporter` dependency graph also resolves the official SDK but remains separately locked. This runtime keeps a direct lock because Hermes and LangChain Deep Agents Code must not depend on OpenClaw's adapter package.
 The client bundle includes the SDK's AJV validation path, including `ajv-formats` and `fast-uri`, plus `content-type` for standards-compliant response media-type parsing. The `fast-uri` override and `content-type` license are therefore runtime-relevant. The bundle does not include the SDK's Hono server adapter or its `hono` and `ip-address` dependencies, but those packages remain part of the installed production graph that the image build audits. The build enforces the exact reviewed bundle-package allowlist and emits `BUNDLED_PACKAGES.json` alongside the generated third-party license notice. The exact overrides keep the installed graph outside the affected ranges for `GHSA-7p8r-x3mc-p8w7`, `GHSA-8j4g-w8fx-2239`, `GHSA-mwp4-54f8-5fhr`, `GHSA-4xrf-jv44-h6hh`, and `GHSA-22jq-vg5j-6vgg` without changing the SDK client pin.
@@ -45,14 +45,22 @@ Concern ledger:
 
 The audited adjacent range contains 10 upstream commits. The published `1.30.0` tag resolves to commit `2d889f2b329e46680ec9bdd565de4616c497825a`, descends from the published `v1.29.0` tag at `e12cbd7078db388152f6e839abdbe09ba01f3f32`, and contains the required client media-type fix at `69749aa5081ddfe675d36da8d96c7e27d83742b8`. The npm publication's `gitHead` matches the target tag, and its registry signature and build provenance verify.
 
-The required client change replaces case-sensitive substring checks with parsed, normalized media types when selecting JSON or SSE response handling. This fixes standards-valid case variants such as `Text/Event-Stream; Charset=UTF-8`. The remaining commits affect SDK server error formatting, server SSE keepalive lifecycle, stdio buffering, upstream tests and workflows, Zod type compatibility, the server-only Hono version range, and the release version. NemoClaw's bundled client does not include the server or stdio implementations, and the committed Hono override remains `2.0.11`.
+The required client change replaces case-sensitive substring checks with parsed, normalized media types when selecting JSON or SSE response handling. This fixes standards-valid case variants such as `Text/Event-Stream; Charset=UTF-8`. The remaining commits affect SDK server error formatting, server SSE keepalive lifecycle, stdio buffering, upstream tests and workflows, Zod type compatibility, the server-only Hono version range, and the release version. NemoClaw's bundled client does not include the server or stdio implementations. The committed `@hono/node-server` override is `2.0.12`.
 
 Concern ledger:
 
-- `MCP-SDK-130-1` — Client response dispatch rejected case-variant SSE media types. Surface: managed MCP tool discovery initialization and `tools/list`. Resolution: migrate to the official parsed-media-type implementation and cover the full session with a case-variant SSE fixture. Validation: `npm test`.
-- `MCP-SDK-130-2` — `content-type@1.0.5` becomes executable bundle input. Surface: response media-type parsing and bundled notices. Resolution: add it to the exact bundle allowlist and verify its MIT text in the generated notice. Validation: `npm run bundle`.
-- `MCP-SDK-130-3` — The upstream package widens its Hono server range. Surface: resolved install graph only; the Hono server adapter is absent from the client bundle. Resolution: retain the existing exact `@hono/node-server@2.0.11` security override. Validation: the lock diff and `BUNDLED_PACKAGES.json`.
-- `MCP-SDK-130-4` — Other adjacent commits could alter unrelated transports or server behavior. Surface: upstream stdio and server entry points. Resolution: no migration because NemoClaw imports only `client/index.js` and `client/streamableHttp.js`; classify those commits as no runtime impact. Validation: esbuild's exact input graph.
+- `MCP-SDK-130-1`: Client response dispatch rejected case-variant SSE media types. Surface: managed MCP tool discovery initialization and `tools/list`. Resolution: migrate to the official parsed-media-type implementation and cover the full session with a case-variant SSE fixture. Validation: `npm test`.
+- `MCP-SDK-130-2`: `content-type@1.0.5` becomes executable bundle input. Surface: response media-type parsing and bundled notices. Resolution: add it to the exact bundle allowlist and verify its MIT text in the generated notice. Validation: `npm run bundle`.
+- `MCP-SDK-130-3`: The upstream package widens its Hono server range. Surface: resolved install graph only; the Hono server adapter is absent from the client bundle. Resolution: use the reviewed `@hono/node-server@2.0.12` patch release. Validation: the lock diff and `BUNDLED_PACKAGES.json`.
+- `MCP-SDK-130-4`: Other adjacent commits could alter unrelated transports or server behavior. Surface: upstream stdio and server entry points. Resolution: no migration because NemoClaw imports only `client/index.js` and `client/streamableHttp.js`; classify those commits as no runtime impact. Validation: esbuild's exact input graph.
+
+## `@hono/node-server` 2.0.12 review
+
+A current image build rejected the `2.0.11` registry attestation, while a later build accepted the same pinned archive. The installer correctly stopped on the rejection. Version `2.0.12` is the next patch release and remains within the SDK's declared `^1.19.9 || ^2.0.5` range. It keeps the MIT license, Node.js `>=20` engine, `hono@^4` peer dependency, package exports, and lack of install scripts.
+
+The `v2.0.11..v2.0.12` source range contains three commits: a test transport replacement, a response-header fix for foreign `Response` objects, and the release commit. The server adapter remains outside NemoClaw's executable client bundle. The annotated tag and release commit are unsigned. The exact npm package has a verified registry signature and SLSA provenance tied to release commit `a813b6cdaa15baac3ead84e9e6ed5b72b2353c96`. Upstream Node.js 20, 22, and 24 checks, Windows checks, build checks, and the npm publication check passed.
+
+The reviewed archive is `https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.12.tgz` with integrity `sha512-eWpQYr67tqJLeaSUl0Q+TquuYfUdTibpOJlUMV2FfUP7+KqCC5TufnwnlXL6mobZBJbGAYRd7ZvEBDCbLInjhg==`. Its current registry signature and provenance verify. This patch keeps the fail-closed signature check and adds no exception.
 
 ## Build and audit contract
 

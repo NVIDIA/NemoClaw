@@ -26,10 +26,10 @@ describe("MCP tool discovery image contract", () => {
     );
     const reviewedPackages = {
       "@hono/node-server": {
-        version: "2.0.11",
-        resolved: "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz",
+        version: "2.0.12",
+        resolved: "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.12.tgz",
         integrity:
-          "sha512-bjD221KPLoJTWUwso1J6fGKiTXEUFedG/s0visavY4zakFPkeGURMRNly+FhBHs7T8Dz4qHaZIMX9ZoJHSJtKA==",
+          "sha512-eWpQYr67tqJLeaSUl0Q+TquuYfUdTibpOJlUMV2FfUP7+KqCC5TufnwnlXL6mobZBJbGAYRd7ZvEBDCbLInjhg==",
       },
       "fast-uri": {
         version: "3.1.5",
