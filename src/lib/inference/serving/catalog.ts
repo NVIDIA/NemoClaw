@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { posix } from "node:path";
 
 import Ajv2020, { type AnySchema, type ValidateFunction } from "ajv/dist/2020.js";
 import { parseDocument } from "yaml";
@@ -192,12 +193,18 @@ function validateRecipeSemantics(
 
   const modelFiles = new Set<string>();
   for (const file of recipe.spec.model.files ?? []) {
-    if (modelFiles.has(file.path)) {
+    const normalizedPath = posix.normalize(file.path);
+    if (normalizedPath !== file.path) {
       throw new ServingCatalogValidationError(
-        `Recipe ${recipe.metadata.id} repeats model file ${file.path}.`,
+        `Recipe ${recipe.metadata.id} uses noncanonical model file path ${file.path}.`,
       );
     }
-    modelFiles.add(file.path);
+    if (modelFiles.has(normalizedPath)) {
+      throw new ServingCatalogValidationError(
+        `Recipe ${recipe.metadata.id} repeats model file ${normalizedPath}.`,
+      );
+    }
+    modelFiles.add(normalizedPath);
   }
 
   if (isLlamaCppServingRecipe(recipe)) {

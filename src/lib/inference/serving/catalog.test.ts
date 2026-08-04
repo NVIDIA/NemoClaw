@@ -653,6 +653,61 @@ describe("managed inference serving catalog compiler", () => {
     ).toThrow("does not satisfy the ServingRecipe schema");
   });
 
+  it("accepts only exact immutable model revision forms (#8144)", () => {
+    for (const revision of ["e".repeat(40), "e".repeat(64), `sha256:${"e".repeat(64)}`]) {
+      expect(() =>
+        compile([
+          replaceSource(recipeSource(), `revision: ${MODEL_REVISION}`, `revision: ${revision}`),
+        ]),
+      ).not.toThrow();
+    }
+    for (const revision of ["e".repeat(41), "e".repeat(63)]) {
+      expect(() =>
+        compile([
+          replaceSource(recipeSource(), `revision: ${MODEL_REVISION}`, `revision: ${revision}`),
+        ]),
+      ).toThrow("does not satisfy the ServingRecipe schema");
+    }
+  });
+
+  it("rejects duplicate source paths and YAML aliases (#8144)", () => {
+    const duplicatePath = { ...presetSource(), path: recipeSource().path };
+    expect(() => compile([recipeSource(), duplicatePath])).toThrow(
+      `Catalog source path ${recipeSource().path} is duplicated`,
+    );
+
+    const recipe = recipeSource("test.recipe.alias");
+    const aliasedRecipe = {
+      ...recipe,
+      contents: recipe.contents
+        .replace("id: test/model", "id: &model-id test/model")
+        .replace("servedName: test-model", "servedName: *model-id"),
+    };
+    expect(() => compile([aliasedRecipe])).toThrow("cannot use YAML aliases");
+  });
+
+  it("rejects duplicate structured arguments and model files (#8144)", () => {
+    const duplicateArgument = replaceSource(
+      recipeSource("test.recipe.duplicate-argument"),
+      "      - name: --port\n        value: 8081",
+      "      - name: --port\n        value: 8081\n      - name: --port\n        value: 8082",
+    );
+    expect(() => compile([duplicateArgument])).toThrow("repeats structured argument --port");
+
+    const duplicateModelFile = replaceSource(
+      recipeSource("test.recipe.duplicate-model-file"),
+      `      - path: model.gguf\n        digest: sha256:${"d".repeat(64)}`,
+      `      - path: model.gguf\n        digest: sha256:${"d".repeat(64)}\n      - path: model.gguf\n        digest: sha256:${"e".repeat(64)}`,
+    );
+    expect(() => compile([duplicateModelFile])).toThrow("repeats model file model.gguf");
+
+    for (const path of ["./model.gguf", "models//model.gguf", "models/./model.gguf", "models/", "models\\model.gguf", "C:\\model.gguf"]) {
+      expect(() => compile([replaceSource(recipeSource(), "path: model.gguf", `path: ${path}`)])).toThrow(
+        "does not satisfy the ServingRecipe schema",
+      );
+    }
+  });
+
   it("rejects adapter and readiness IDs outside the injected registries (#8144)", () => {
     expect(() =>
       compile([recipeSource()], {
@@ -668,6 +723,17 @@ describe("managed inference serving catalog compiler", () => {
         }),
       ]),
     ).toThrow("references unknown readiness entity test.readiness.unknown");
+
+    const mismatchedKind = presetSource("test.preset.kind-mismatch");
+    expect(() =>
+      compile([
+        recipeSource(),
+        {
+          ...mismatchedKind,
+          contents: mismatchedKind.contents.replace("kind: capability", "kind: observation"),
+        },
+      ]),
+    ).toThrow("uses test.runtime.present as observation, but the readiness registry declares capability");
   });
 
   it("rejects duplicate automatic selectors at one priority (#8144)", () => {

@@ -77,6 +77,21 @@
       "category": "security"
     },
     {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "accepts the corporate CA build arg in the DCode base image before HTTPS fetches",
+      "category": "security"
+    },
+    {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "decodes the corporate CA again in the DCode final image",
+      "category": "security"
+    },
+    {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "trusts the corporate CA before the DCode discovery runtime npm install",
+      "category": "security"
+    },
+    {
       "file": "test/dcode-base-image-workflow.test.ts",
       "test": "accepts every discovered publisher and rejects supply-chain mutations",
       "category": "security"
@@ -272,6 +287,11 @@
       "category": "security"
     },
     {
+      "file": "test/hermes-final-image-layout.test.ts",
+      "test": "verifies CLI adapter integrity before executing its validator",
+      "category": "security"
+    },
+    {
       "file": "test/openclaw-final-image-layout.test.ts",
       "test": "uses grouped legacy-compatible payload layers at their cache boundaries (#7611)",
       "category": "compatibility"
@@ -324,6 +344,11 @@
     {
       "file": "test/messaging-image-env-contract.test.ts",
       "test": "%s keeps the full plan in build processes but not final runtime environments (#5896)",
+      "category": "security"
+    },
+    {
+      "file": "test/mcp-tool-discovery-image-contract.test.ts",
+      "test": "pins reviewed packages and retains the production audit command (#8177)",
       "category": "security"
     },
     {
@@ -522,13 +547,18 @@
       "category": "compatibility"
     },
     {
+      "file": "test/source-architecture.test.ts",
+      "test": "keeps removed step mutation APIs out of production source (#7703)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/runtime-provider-source-shape.test.ts",
       "test": "keeps the dormant managed-bootstrap protocol driver-neutral",
       "category": "security"
     },
     {
       "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps production activation paths disconnected from managed bootstrap",
+      "test": "keeps production activation paths disconnected from driver bootstrap adapters",
       "category": "security"
     },
     {
