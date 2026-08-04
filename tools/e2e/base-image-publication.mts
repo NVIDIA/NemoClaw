@@ -247,52 +247,10 @@ function defaultGit(args: string[]): string {
 export function expandBaseImagePushPaths(
   expectedSha: string,
   paths: readonly string[],
-  runGit: (args: string[]) => string = defaultGit,
 ): string[] {
   sha(expectedSha, "expected SHA");
-  const expanded = new Set<string>();
-
-  for (const path of paths) {
-    const matcher = REVIEWED_PATH_GLOBS.get(path);
-    if (!matcher) {
-      expanded.add(path);
-      continue;
-    }
-
-    const matches = runGit([
-      "log",
-      "--first-parent",
-      "--diff-merges=first-parent",
-      "--format=",
-      "--name-only",
-      expectedSha,
-      "--",
-      `:(glob)${path}`,
-    ])
-      .split(/\r?\n/u)
-      .filter((candidate) => candidate.length > 0);
-    if (matches.length === 0) {
-      throw new Error(`reviewed base-image push glob did not match Git history: ${path}`);
-    }
-    for (const candidate of matches) {
-      if (
-        !SAFE_PATH_PATTERN.test(candidate) ||
-        candidate.startsWith("/") ||
-        candidate.includes("//") ||
-        candidate
-          .split("/")
-          .some((segment) => segment === "" || segment === "." || segment === "..")
-      ) {
-        throw new Error(`reviewed base-image push glob expanded to an unsafe path: ${candidate}`);
-      }
-      if (!matcher.test(candidate)) {
-        throw new Error(`Git returned a path outside reviewed base-image push glob ${path}`);
-      }
-      expanded.add(candidate);
-    }
-  }
-
-  return [...expanded].sort();
+  return [...new Set(paths.map((path) => (REVIEWED_PATH_GLOBS.has(path) ? `:(glob)${path}` : path)))]
+    .sort();
 }
 
 export function resolveFirstParentHistory(
@@ -312,7 +270,7 @@ export function resolveFirstParentHistory(
   if (runGit(["rev-parse", "--is-shallow-repository"]) !== "false") {
     throw new Error("base-image publication gate requires a complete Git history");
   }
-  const expandedPaths = expandBaseImagePushPaths(expectedSha, paths, runGit);
+  const expandedPaths = expandBaseImagePushPaths(expectedSha, paths);
   if (expandedPaths.length === 0) {
     throw new Error("base-image push paths did not resolve to any Git paths");
   }
