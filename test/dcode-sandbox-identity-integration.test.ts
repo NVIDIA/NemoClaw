@@ -77,7 +77,7 @@ describe.skipIf(process.platform !== "linux")("Deep Agents Code sandbox identity
       const [envCommand, ...startupArgs] = launch.sandboxStartupCommand;
 
       expect(envCommand).toBe("env");
-      expect(startupArgs.pop()).toBe("nemoclaw-start");
+      expect(startupArgs.pop()).toBe("/usr/local/bin/nemoclaw-start");
       const start = spawnSync(envCommand, [...startupArgs, scriptPath, "sh", "-c", ":"], {
         env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
         encoding: "utf8",

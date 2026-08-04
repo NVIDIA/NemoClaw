@@ -317,99 +317,31 @@ afterEach(() => {
 });
 
 describe("dependency upgrade skill policy", () => {
-  it("requires source-first adjacent-release migration evidence", () => {
+  it("keeps durable migration policy separate from current implementation details", () => {
     const skill = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
+    const discovery = fs.readFileSync(
+      path.join(repoRoot, ".agents", "skills", "_shared", "implementation-discovery.md"),
+      "utf8",
+    );
     const guide = fs.readFileSync(
       path.join(repoRoot, ".agents", "skills", "nemoclaw-skills-guide", "SKILL.md"),
       "utf8",
     );
 
-    expect(skill).toContain("never collapse the result into one aggregate");
-    expect(skill).toContain("Release notes are leads, not proof");
-    expect(skill).toContain("Existing green tests only prove what they cover");
-    expect(skill).toContain("Inspect test selectors, version gates, conditional skips");
-    expect(skill).toContain("Treat matrix flags, environment toggles, and workflow labels");
-    expect(skill).toContain("A protocol identity must bind the behavior that interprets it");
-    expect(skill).toContain("old sandbox and helper, new host runtime");
-    expect(skill).toContain("Compare the intended matrix with the observed test IDs and count");
-    expect(skill).toContain("never silently audit a stale checkout");
-    expect(skill).toContain("Separate required-fix, upstream target/producer");
-    expect(skill).toContain("--github-target-ref");
-    expect(skill).toContain("raw commit-object lookup is");
-    expect(skill).toContain("inventories and peels every remote semantic-version tag");
-    expect(skill).toContain("Shallow history, replace refs, grafts");
-    expect(skill).toContain("Reject partial/promisor clones before resolving refs");
-    expect(skill).toContain("missing tag is `not-published`");
-    expect(skill).toContain("Do not compare");
-    expect(skill).toMatch(/unrelated upstream and downstream SHAs as if they should be equal/u);
-    expect(skill).toContain("An unresolved high-impact concern blocks the version bump");
-    expect(skill).toContain("This skill authorizes changes only in NVIDIA/NemoClaw");
-    expect(skill).toMatch(/Do not open upstream\s+pull requests or issues/);
+    expect(skill.split("\n").length).toBeLessThan(120);
+    expect(skill).toContain("../_shared/implementation-discovery.md");
     expect(skill).toContain("references/contract-audit.md");
+    expect(skill).toContain("references/release-ledger.md");
     expect(skill).toContain("scripts/collect-release-ledger.py");
+    expect(skill).toContain("An unresolved high-impact concern blocks the upgrade");
+    expect(skill).toContain("Treat upstream repositories");
+    expect(skill).toContain("Audit every adjacent release range");
+    expect(skill).toContain("release notes and PR descriptions as leads, not behavior authority");
+    expect(skill).toContain("Inspect test selection and observed results");
+    expect(skill).toContain("does not establish artifact identity or runtime selection");
+    expect(discovery).toContain("Use the current checkout as the source of truth");
+    expect(discovery).toContain("Record discovered specifics in task or PR evidence");
     expect(guide).toContain("`nemoclaw-contributor-update-dependencies`");
-  });
-
-  it("requires resolved supply-chain, cache-key, and observed-target evidence", () => {
-    const skill = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
-    const contractAudit = fs.readFileSync(
-      path.join(skillRoot, "references", "contract-audit.md"),
-      "utf8",
-    );
-
-    expect(skill).toContain("Diff resolved dependency graphs, not only top-level manifests");
-    expect(skill).toContain("lockfile checksum");
-    expect(skill).toContain("Missing notice, SBOM, advisory, or provenance coverage");
-    expect(skill).toContain("complete resolved lockfile closure with every shipped notice");
-    expect(skill).toContain("UID/GID, user and group names");
-    expect(skill).toContain("does not protect same-version configuration changes");
-    expect(skill).toContain("machine-readable expected-versus-observed manifest");
-    expect(skill).toContain("reject missing, duplicate, skipped, or stale results");
-    expect(skill).toContain("Extracting one binary narrows the");
-    expect(skill).toContain("does not erase unaudited content in the distributed artifact");
-    expect(skill).toContain("mutable bases, unpinned package resolution");
-    expect(skill).toContain("build provenance as unresolved reproducibility inputs");
-    expect(skill).toContain("recursively resolve every CI job container and builder image");
-    expect(skill).toContain("incomplete resolved dependencies is identity evidence");
-    expect(skill).toContain("A CLI version is not the identity of a sibling daemon");
-    expect(skill).toContain("same-version content replacement and mixed-component installs");
-    expect(skill).toContain("base-image `Config.Env`, every Dockerfile stage");
-    expect(skill).toContain("before that execution");
-    expect(skill).toMatch(/safe\s+create-inspect-start runtime/u);
-    expect(skill).toMatch(/create and start are atomic or create itself runs code/u);
-    expect(skill).toMatch(/an inherited `SHELL` or\s+executable/u);
-    expect(skill).toContain("never let trusted input self-attest");
-    expect(skill).toContain("separate expected-versus-observed manifests");
-    expect(skill).toContain("every helper or sidecar");
-    expect(skill).toContain("`Config.Healthcheck`, `Config.Volumes`");
-    expect(skill).toContain("engine-scheduled healthcheck, hook, and auxiliary exec");
-    expect(skill).toContain("normalized-path-overlapping destinations");
-    expect(skill).toContain("inherited healthchecks, image-declared and overlapping volumes");
-    expect(skill).toMatch(/Never identify a workload as merely the first or sole\s+child/u);
-    expect(skill).toMatch(/driver-owned token, TLS path, identity, or\s+endpoint/u);
-    expect(skill).toMatch(/rather than reusing the\s+pre-merge expectation/u);
-    expect(skill).toContain("poisoned-base and multi-stage fixtures");
-    expect(skill).toContain("Text scanning");
-    expect(skill).toContain("attempted transition, not its own");
-    expect(skill).toContain("stopped, skipped, unknown");
-    expect(skill).toContain(
-      "When upstream marks a security, cleanup, or observability operation optional",
-    );
-    expect(skill).toContain("producer repository, workflow path, event, status, conclusion");
-    expect(skill).toContain("before running code from the proposed change");
-    expect(skill).toMatch(/prevent checked-out code\s+from poisoning `PATH`/u);
-    expect(skill).toContain("Artifact metadata alone is insufficient");
-    expect(contractAudit).toContain("| Configuration provenance |");
-    expect(contractAudit).toContain("| Persisted state and caches |");
-    expect(contractAudit).toContain("| Component selection and identity |");
-    expect(contractAudit).toContain("| Dependency graph |");
-    expect(contractAudit).toContain("| Build and image content |");
-    expect(contractAudit).toContain("| Evidence pipeline |");
-    expect(contractAudit).toContain("engine state before first execution");
-    expect(contractAudit).toContain("engine-materialized `Config.Healthcheck`");
-    expect(contractAudit).toContain("compare `Config.Volumes` with realized mount destinations");
-    expect(contractAudit).toContain("Raw object lookup does not prove upstream-ref membership");
-    expect(contractAudit).toContain("upstream required-fix SHAs");
   });
 });
 

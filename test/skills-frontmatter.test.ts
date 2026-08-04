@@ -88,7 +88,41 @@ describe("repo skill markdown files", () => {
     });
   }
 
-  it("keeps messaging channel support guidance manifest-owned", () => {
+  it("keeps contributor implementation skills concise and discovery-based", () => {
+    const names = [
+      "nemoclaw-contributor-update-dependencies",
+      "nemoclaw-contributor-onboard-messaging-channel",
+      "nemoclaw-contributor-update-docs",
+    ];
+
+    for (const name of names) {
+      const raw = fs.readFileSync(path.join(skillsRoot, name, "SKILL.md"), "utf8");
+      expect(raw.split("\n").length, `${name} must stay concise`).toBeLessThan(120);
+      expect(raw, `${name} must discover current implementation details`).toContain(
+        "../_shared/implementation-discovery.md",
+      );
+    }
+
+    const discovery = fs.readFileSync(
+      path.join(skillsRoot, "_shared", "implementation-discovery.md"),
+      "utf8",
+    );
+    expect(discovery.split("\n").length).toBeLessThan(35);
+    expect(discovery).toContain("Before implementation");
+    expect(discovery).toContain("nemoclaw-maintainer-security-code-review");
+    expect(discovery).not.toContain("rg --files");
+    expect(discovery).not.toContain("Follow imports and call sites");
+  });
+
+  it("links fallback validation to current contributor requirements", () => {
+    const documentationReview = fs.readFileSync(
+      path.join(skillsRoot, "_shared", "documentation-writing-review.md"),
+      "utf8",
+    );
+    expect(documentationReview).toContain("../../../AGENTS.md#pr-requirements");
+  });
+
+  it("derives messaging channel architecture from the current checkout", () => {
     const skillFile = path.join(
       skillsRoot,
       "nemoclaw-contributor-onboard-messaging-channel",
@@ -96,9 +130,11 @@ describe("repo skill markdown files", () => {
     );
     const raw = fs.readFileSync(skillFile, "utf8");
 
-    expect(raw).toContain("through `supportedAgents`");
-    expect(raw).toContain("Do not edit agent manifests for channel availability");
-    expect(raw).not.toContain("so supported platforms match the manifest `supportedAgents`");
+    expect(raw.split("\n").length).toBeLessThan(120);
+    expect(raw).toContain("../_shared/implementation-discovery.md");
+    expect(raw).toContain("path, or registration inventory");
+    expect(raw).not.toContain("src/lib/messaging/channels/");
+    expect(raw).not.toContain("supportedAgents");
   });
 
   it("keeps contributor PR creation anchored to the trusted base template", () => {

@@ -22,7 +22,7 @@
       "src/lib/credentials/store.ts": 46,
       "src/lib/inference/config.ts": 29,
       "src/lib/inference/web-search.ts": 21,
-      "src/lib/messaging/channels/index.ts": 26,
+      "src/lib/messaging/channels/index.ts": 25,
       "src/lib/onboard/gateway-binding.ts": 49,
       "src/lib/runner.ts": 89,
       "src/lib/security/redact.ts": 51,

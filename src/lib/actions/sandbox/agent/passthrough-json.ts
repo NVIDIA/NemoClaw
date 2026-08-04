@@ -29,7 +29,7 @@ function text(value: string | Buffer | null | undefined): string {
   return typeof value === "string" ? value : "";
 }
 
-function defaultGetOpenshellBinary(): string {
+export function defaultGetOpenshellBinary(): string {
   // Lazy require keeps this module unit-testable under Vitest's TS loader; the
   // OpenShell runtime imports runner/platform modules that only exist in built
   // CLI layouts.
