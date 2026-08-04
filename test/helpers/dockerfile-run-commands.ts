@@ -71,6 +71,29 @@ export function dockerfileInstructions(source: string): DockerfileInstruction[] 
   return instructions;
 }
 
+function collapseDockerfileContinuations(source: string): {
+  readonly originalIndexes: readonly number[];
+  readonly text: string;
+} {
+  const characters: string[] = [];
+  const originalIndexes: number[] = [];
+
+  for (let index = 0; index < source.length; index += 1) {
+    if (source[index] === "\\" && source[index + 1] === "\n") {
+      index += 1;
+      continue;
+    }
+    if (source[index] === "\\" && source[index + 1] === "\r" && source[index + 2] === "\n") {
+      index += 2;
+      continue;
+    }
+    characters.push(source[index]);
+    originalIndexes.push(index);
+  }
+
+  return { originalIndexes, text: characters.join("") };
+}
+
 function unquotedTextIndexes(source: string, text: string): number[] {
   const indexes: number[] = [];
   let quote: "'" | '"' | "`" | null = null;
@@ -129,15 +152,16 @@ export function requireSingleReviewedDockerfileRunCommand(
 
   for (const instruction of dockerfileInstructions(source)) {
     if (instruction.keyword !== "RUN") continue;
-    const containsCommand = instruction.body.includes(command);
+    const collapsed = collapseDockerfileContinuations(instruction.body);
+    const containsCommand = collapsed.text.includes(command);
     const hasUnsupportedShellConstruct = ["$(", "${", "`"].some((token) =>
-      instruction.body.includes(token),
+      collapsed.text.includes(token),
     );
     if (containsCommand && hasUnsupportedShellConstruct) {
       unreviewedInstructions += 1;
       continue;
     }
-    const commandIndexes = unquotedTextIndexes(instruction.body, command);
+    const commandIndexes = unquotedTextIndexes(collapsed.text, command);
     if (commandIndexes.length === 0) continue;
     if (
       commandIndexes.length !== 1 ||
@@ -147,7 +171,7 @@ export function requireSingleReviewedDockerfileRunCommand(
       continue;
     }
     matches.push({
-      commandStart: instruction.bodyStart + commandIndexes[0],
+      commandStart: instruction.bodyStart + collapsed.originalIndexes[commandIndexes[0]],
       instruction,
     });
   }

@@ -8,6 +8,7 @@ const command = "node --experimental-strip-types /scripts/patch-bundled-npm-tar.
 const corporateCaPath = "/usr/local/share/nemoclaw/corporate-ca.pem";
 const requiredArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
 const invocation = [command, ...requiredArguments].join(" ");
+const splicedCommand = command.replace("strip-types", "strip-\\\ntypes");
 
 describe("Dockerfile RUN command discovery", () => {
   it("ignores command text in comments, strings, and non-RUN instructions", () => {
@@ -62,10 +63,13 @@ describe("Dockerfile RUN command discovery", () => {
   });
 
   it.each([
-    ["a command substitution", `RUN printf '%s\\n' "$(${invocation})"\n`],
-    ["backticks", `RUN printf '%s\\n' \`${invocation}\`\n`],
-    ["a parameter expansion", `RUN : \${#PATH}; ${invocation}\n`],
-  ])("rejects an extra invocation hidden by %s", (_label, hiddenInvocation) => {
+    ["inside a command substitution", `RUN printf '%s\\n' "$(${invocation})"\n`],
+    ["inside backticks", `RUN printf '%s\\n' \`${invocation}\`\n`],
+    ["after a parameter-length expansion", `RUN : \${#PATH}; ${invocation}\n`],
+    ["inside a split command substitution", `RUN printf '%s\\n' "$\\\n(${invocation})"\n`],
+    ["after a split parameter-length expansion", `RUN : $\\\r\n{#PATH}; ${invocation}\n`],
+    ["with a spliced command token", `RUN ${splicedCommand} ${requiredArguments.join(" ")}\n`],
+  ])("rejects an extra invocation %s", (_label, hiddenInvocation) => {
     const source = [`RUN ${invocation}`, hiddenInvocation].join("\n");
 
     expect(() =>
