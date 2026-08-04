@@ -47,6 +47,13 @@ const BASELINE_EXCLUSION_KEY = "openclaw_docs";
 const LIVE_TIMEOUT_MS = 36 * 60_000;
 const INFERENCE_API_KEY = "nvapi-snapshot-commands-fixture-credential";
 const INFERENCE_MODEL = "snapshot-commands-model";
+const SOURCE_PAIRING_NEGATIVE_CONTROL_MODEL = "snapshot-commands-source-pairing-negative-control";
+const SOURCE_PAIRING_NEGATIVE_CONTROL = "/tmp/nemoclaw-snapshot-source-pairing-negative-control";
+const SOURCE_PAIRING_NEGATIVE_CONTROL_REQUEST = JSON.stringify({
+  model: SOURCE_PAIRING_NEGATIVE_CONTROL_MODEL,
+  messages: [{ role: "user", content: "source sandbox pairing negative control" }],
+  max_tokens: 1,
+});
 const OPENCLAW_MAIN_SESSION_STORE = "/sandbox/.openclaw/agents/main/sessions/sessions.json";
 const PROTECTED_CREDENTIALS_DIR = "/sandbox/.openclaw/credentials";
 const PROTECTED_CREDENTIAL_FILE = `${PROTECTED_CREDENTIALS_DIR}/backup-all-fixture.json`;
@@ -136,6 +143,12 @@ async function expectAuthenticatedGatewayPairing(
 set -eu
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
+if [ -e ${JSON.stringify(SOURCE_PAIRING_NEGATIVE_CONTROL)} ]; then
+  curl -fsS https://inference.local/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    --data ${JSON.stringify(SOURCE_PAIRING_NEGATIVE_CONTROL_REQUEST)} >/dev/null
+  exit 97
+fi
 openclaw agent --agent main --json -m "ping" \
   --session-id ${JSON.stringify(sessionId)}
 `),
@@ -328,7 +341,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       "baseline exclusions remain active in registry and live policy across rebuild",
       "snapshot restore --to carries baseline exclusions into clone registry and live policy",
       "snapshot restore --to returns only after restored gateway pairing is authenticated",
-      "post-restore verification stores its unique session only in the clone and sends one authenticated inference request",
+      "post-restore clone verification sends one clone-fixture request, stores its unique session only in the clone, and sends no source-sandbox negative-control request",
       "latest snapshot restore recovers latest workspace state",
       "timestamp-targeted restore recovers the first snapshot state",
       "snapshot directory excludes credential-bearing env/json files",
@@ -547,45 +560,83 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     CLONE_SANDBOX_NAME,
     "phase-4-clone-baseline-exclusion",
   );
-  const clonePairingRequestOffset = inference.requests().length;
-  const pairingSessionId = await expectAuthenticatedGatewayPairing(
-    sandbox,
-    CLONE_SANDBOX_NAME,
-    inferenceConfig,
-    "phase-4-verify-clone-gateway-pairing",
-  );
-  const clonePairingRequests = inference
-    .requests()
-    .slice(clonePairingRequestOffset)
-    .filter(
+  try {
+    const installSourcePairingNegativeControl = await sandbox.exec(
+      SANDBOX_NAME,
+      ["sh", "-lc", `set -eu; umask 077; : > ${JSON.stringify(SOURCE_PAIRING_NEGATIVE_CONTROL)}`],
+      {
+        artifactName: "phase-4-install-source-pairing-negative-control",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(
+      installSourcePairingNegativeControl.exitCode,
+      "source-pairing-negative-control-setup-failed",
+    ).toBe(0);
+    const clonePairingRequestOffset = inference.requests().length;
+    const pairingSessionId = await expectAuthenticatedGatewayPairing(
+      sandbox,
+      CLONE_SANDBOX_NAME,
+      inferenceConfig,
+      "phase-4-verify-clone-gateway-pairing",
+    );
+    const pairingRequestDelta = inference.requests().slice(clonePairingRequestOffset);
+    const clonePairingRequests = pairingRequestDelta.filter(
       (request) => request.path === "/v1/chat/completions" && request.model === INFERENCE_MODEL,
     );
-  await expectSandboxSessionPresence(
-    sandbox,
-    CLONE_SANDBOX_NAME,
-    pairingSessionId,
-    true,
-    "phase-4-verify-clone-session-owner",
-  );
-  await expectSandboxSessionPresence(
-    sandbox,
-    SANDBOX_NAME,
-    pairingSessionId,
-    false,
-    "phase-4-verify-primary-session-non-owner",
-  );
-  await artifacts.writeJson("phase-4-pairing-inference-request-deltas.json", {
-    cloneAuthenticatedCount: clonePairingRequests.filter((request) => request.auth === "ok").length,
-    cloneSessionOwned: true,
-    primarySessionOwned: false,
-  });
-  expect(clonePairingRequests.length, "clone-pairing-inference-request-count").toBe(1);
-  expect(
-    clonePairingRequests[0]?.auth === "ok" &&
-      clonePairingRequests[0]?.model === INFERENCE_MODEL &&
-      clonePairingRequests[0]?.path === "/v1/chat/completions",
-    "clone-pairing-inference-request-classification",
-  ).toBe(true);
+    const sourcePairingNegativeControlRequests = pairingRequestDelta.filter(
+      (request) =>
+        request.path === "/v1/chat/completions" &&
+        request.model === SOURCE_PAIRING_NEGATIVE_CONTROL_MODEL,
+    );
+    await expectSandboxSessionPresence(
+      sandbox,
+      CLONE_SANDBOX_NAME,
+      pairingSessionId,
+      true,
+      "phase-4-verify-clone-session-owner",
+    );
+    await expectSandboxSessionPresence(
+      sandbox,
+      SANDBOX_NAME,
+      pairingSessionId,
+      false,
+      "phase-4-verify-source-session-non-owner",
+    );
+    await artifacts.writeJson("phase-4-pairing-inference-request-deltas.json", {
+      cloneAuthenticatedCount: clonePairingRequests.filter((request) => request.auth === "ok")
+        .length,
+      cloneSessionOwned: true,
+      sourceNegativeControlCount: sourcePairingNegativeControlRequests.length,
+      sourceSessionOwned: false,
+    });
+    expect(clonePairingRequests.length, "clone-pairing-inference-request-count").toBe(1);
+    expect(
+      clonePairingRequests[0]?.auth === "ok" &&
+        clonePairingRequests[0]?.model === INFERENCE_MODEL &&
+        clonePairingRequests[0]?.path === "/v1/chat/completions",
+      "clone-pairing-inference-request-classification",
+    ).toBe(true);
+    expect(
+      sourcePairingNegativeControlRequests.length,
+      "source-pairing-negative-control-request-count",
+    ).toBe(0);
+  } finally {
+    const removeSourcePairingNegativeControl = await sandbox.exec(
+      SANDBOX_NAME,
+      ["rm", "-f", SOURCE_PAIRING_NEGATIVE_CONTROL],
+      {
+        artifactName: "phase-4-remove-source-pairing-negative-control",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(
+      removeSourcePairingNegativeControl.exitCode,
+      "source-pairing-negative-control-cleanup-failed",
+    ).toBe(0);
+  }
   const destroyClone = await host.command("nemoclaw", [CLONE_SANDBOX_NAME, "destroy", "--yes"], {
     artifactName: "phase-4-destroy-clone",
     env: commandEnv(),

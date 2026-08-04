@@ -22,6 +22,16 @@ const HERMES_INTEGRITY_FILES = [
     target: "/usr/local/lib/nemoclaw/hermes-wrapper.py",
   },
   {
+    arg: "NEMOCLAW_HERMES_CLI_ADAPTER_SHA256",
+    source: "agents/hermes/hermes-cli-adapter-v1.json",
+    target: "/usr/local/share/nemoclaw/hermes-cli-adapter-v1.json",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256",
+    source: "agents/hermes/validate-cli-adapter.py",
+    target: "/usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py",
+  },
+  {
     arg: "NEMOCLAW_HERMES_VALIDATOR_SHA256",
     source: "agents/hermes/validate-env-secret-boundary.py",
     target: "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
@@ -255,7 +265,11 @@ describe("Hermes final image layout", () => {
       },
       {
         stage: "hermes-wrapper-payload",
-        copies: ["COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py"],
+        copies: [
+          "COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py",
+          "COPY agents/hermes/validate-cli-adapter.py /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py",
+          "COPY agents/hermes/hermes-cli-adapter-v1.json /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json",
+        ],
       },
       {
         stage: "hermes-scan-payload",
@@ -313,10 +327,7 @@ describe("Hermes final image layout", () => {
       'RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]',
     );
     const metadataCheck = indexOfRequired(finalStage, "RUN check_metadata()");
-    const modeNormalize = indexOfRequired(
-      finalStage,
-      "RUN chmod 755 /usr/local/lib/nemoclaw/hermes-wrapper.py /scripts/checks/node-tar-image-scan.mts",
-    );
+    const modeNormalize = indexOfRequired(finalStage, "RUN chmod 755 \\");
     const imageScan = indexOfRequired(
       finalStage,
       "node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts",
@@ -343,6 +354,8 @@ describe("Hermes final image layout", () => {
       "/usr/local/bin/nemoclaw-gateway-control 'root:root 700'",
       "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444'",
       "/usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755'",
+      "/usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py 'root:root 755'",
+      "/usr/local/share/nemoclaw/hermes-cli-adapter-v1.json 'root:root 444'",
       "/scripts/checks/node-tar-image-scan.mts 'root:root 755'",
     ]) {
       expect(finalStage).toContain(`check_metadata ${metadataContract}`);
@@ -375,6 +388,20 @@ describe("Hermes final image layout", () => {
       expect(dockerfile).toContain(`COPY ${entry.source} ${entry.target}`);
       expect(declaredDigest, `${entry.arg} must match ${entry.source}`).toBe(digest);
     }
+  });
+
+  // source-shape-contract: security -- Adapter bytes must pass their committed integrity gate before the image build executes validator code
+  it("verifies CLI adapter integrity before executing its validator", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+    const adapterIntegrityGate = dockerfile.match(
+      /RUN printf '%s  %s\\n' \\\n\s+"\$NEMOCLAW_HERMES_WRAPPER_SHA256"[^]*?\| sha256sum -c - \\\n\s+\|\| \{ echo "ERROR: Hermes CLI adapter integrity mismatch" >&2; exit 1; \}/u,
+    );
+    const adapterValidation = dockerfile.indexOf(
+      "RUN /opt/hermes/.venv/bin/python -I \\\n        /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py \\",
+    );
+
+    expect(adapterIntegrityGate).not.toBeNull();
+    expect(adapterValidation).toBeGreaterThan(adapterIntegrityGate?.index ?? -1);
   });
 
   it("rejects retired OpenClaw state represented as a directory", () => {
