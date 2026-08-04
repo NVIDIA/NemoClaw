@@ -14,9 +14,11 @@
  */
 
 import * as registry from "../state/registry";
+import { gatewayRemovalHintLines } from "./gateway-removal-hint";
 
 export type GpuPassthroughRecoveryOptions = {
   missingRuntimePlatform?: "jetson" | null;
+  supportsLifecycleCommands?: boolean;
 };
 
 /**
@@ -53,9 +55,7 @@ export function gpuPassthroughRecoveryLines(
       "  Existing gateway was started without GPU passthrough.",
       "  No sandboxes are registered, so onboard attempted safe gateway replacement automatically.",
       "  If the retry still fails, clear the stale gateway state and re-onboard with GPU enabled:",
-      "    openshell gateway remove nemoclaw",
-      "    # For OpenShell releases that still expose lifecycle commands:",
-      "    openshell gateway destroy -g nemoclaw",
+      ...gatewayRemovalHintLines("nemoclaw", options.supportsLifecycleCommands ?? false),
       "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
       "    nemoclaw onboard --gpu",
     ];

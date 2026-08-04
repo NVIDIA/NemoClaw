@@ -27,13 +27,13 @@ describe("gpuPassthroughRecoveryLines", () => {
     expect(joined).toContain("Existing gateway was started without GPU passthrough");
     expect(joined).toContain("attempted safe gateway replacement automatically");
     expect(joined).toContain("openshell gateway remove nemoclaw");
-    expect(joined).toContain("openshell gateway destroy -g nemoclaw");
+    expect(joined).not.toContain("openshell gateway destroy -g nemoclaw");
     expect(joined).toContain("sudo pkill -f openshell-gateway");
     expect(joined).toContain("nemoclaw onboard --gpu");
     expect(joined).not.toContain("nemoclaw uninstall");
     // Must NOT suggest the per-sandbox `nemoclaw <name> destroy` form — there
-    // is nothing to destroy. (`openshell gateway destroy -g` is fine; it's
-    // the legacy gateway-lifecycle verb, not a sandbox destroy.)
+    // is nothing to destroy. The legacy `openshell gateway destroy -g` verb is
+    // also absent: current OpenShell rejects it (#8139).
     expect(joined).not.toMatch(/nemoclaw [a-z-]+ destroy/);
   });
 
@@ -89,6 +89,25 @@ describe("gpuPassthroughRecoveryLines", () => {
     expect(joined).toContain("missing NVIDIA runtime");
     expect(joined).not.toContain("destroy --yes");
     expect(joined).not.toContain("nemoclaw onboard --gpu");
+  });
+
+  it("emits the legacy gateway destroy verb only when the installed OpenShell advertises it (#8139)", () => {
+    const modern = gpuPassthroughRecoveryLines([], { supportsLifecycleCommands: false }).join("\n");
+    expect(modern).toContain("openshell gateway remove nemoclaw");
+    expect(modern).not.toContain("gateway destroy");
+
+    const legacy = gpuPassthroughRecoveryLines([], { supportsLifecycleCommands: true }).join("\n");
+    expect(legacy).toContain("openshell gateway remove nemoclaw");
+    expect(legacy).toContain("openshell gateway destroy -g nemoclaw");
+  });
+
+  it("keeps the legacy verb out of the sandbox-destroy branches regardless of CLI support", () => {
+    for (const names of [["alpha"], ["alpha", "beta"]]) {
+      const joined = gpuPassthroughRecoveryLines(names, {
+        supportsLifecycleCommands: true,
+      }).join("\n");
+      expect(joined).not.toContain("gateway destroy");
+    }
   });
 });
 
