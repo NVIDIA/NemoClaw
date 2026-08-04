@@ -306,7 +306,24 @@ describe("llama.cpp image PR workflow", () => {
     expect(crypto.run).toContain('--source-ref "$EXPECTED_REF"');
     expect(crypto.run).toContain('--source-digest "$EXPECTED_REVISION"');
     expect(receipt.run).toContain("scripts/checks/verify-llama-cpp-image-publication-evidence.sh");
-    expect(JSON.stringify(workflow)).not.toMatch(/(?:latest|stable|release)-?alias/iu);
+    const publicationJobs = [
+      "publish-platform",
+      "assemble-candidate",
+      "scan-candidate",
+      "attest-candidate",
+      "verify-candidate",
+    ].map((name) => required(workflow.jobs?.[name], `${name} job is missing`));
+    const shellTags = publicationJobs.flatMap((job) =>
+      (job.steps ?? []).flatMap((step) =>
+        [...(step.run ?? "").matchAll(/--tag\s+("[^"]+"|'[^']+'|\S+)/gu)].map((match) => match[1]),
+      ),
+    );
+    const actionTags = publicationJobs.flatMap((job) =>
+      (job.steps ?? []).flatMap((step) =>
+        step.with?.tags === undefined ? [] : [String(step.with.tags)],
+      ),
+    );
+    expect([...shellTags, ...actionTags]).toEqual(['"$IMAGE:$CANDIDATE_TAG"']);
   });
 
   it("uses an isolated reusable workflow for SPDX, SLSA, and keyless index signing (#8250)", () => {

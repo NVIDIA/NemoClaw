@@ -280,7 +280,11 @@ sbom_expected="$temporary_root/sbom-expected.txt"
   printf '\n'
   jq -cS . "$sbom_arm64" | sha256_file /dev/stdin
   printf '\n'
-} | sort >"$sbom_expected"
+} | sort -u >"$sbom_expected"
+if [ "$(wc -l <"$sbom_expected" | tr -d '[:space:]')" -ne 2 ]; then
+  echo "ERROR: amd64 and arm64 SPDX documents must be distinct." >&2
+  exit 1
+fi
 sbom_actual="$temporary_root/sbom-actual.txt"
 sbom_attestation_count="$(jq -er 'length' "$sbom_verification")"
 for ((index = 0; index < sbom_attestation_count; index += 1)); do
@@ -300,9 +304,8 @@ for ((index = 0; index < sbom_attestation_count; index += 1)); do
   jq -cS .predicate "$statement" | sha256_file /dev/stdin
   printf '\n'
 done | sort -u >"$sbom_actual"
-if ! while IFS= read -r expected_hash; do
-  grep --fixed-strings --line-regexp "$expected_hash" "$sbom_actual" >/dev/null
-done <"$sbom_expected"; then
+missing_sbom_hashes="$(comm -23 "$sbom_expected" "$sbom_actual")"
+if [ -n "$missing_sbom_hashes" ]; then
   echo "ERROR: verified SBOM attestations do not match both platform documents." >&2
   exit 1
 fi

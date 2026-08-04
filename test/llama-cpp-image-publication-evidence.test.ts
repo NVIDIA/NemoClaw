@@ -35,6 +35,7 @@ type FixtureOptions = {
   anonymousMismatch?: boolean;
   anonymousPullFailure?: "amd64" | "arm64";
   duplicateSbom?: boolean;
+  identicalSbomDocuments?: boolean;
   indexArm64Digest?: string;
   provenanceDigest?: string;
   provenanceTimestamps?: unknown[];
@@ -84,7 +85,7 @@ function runEvidence(options: FixtureOptions = {}) {
   const candidateDigest = sha256(candidate);
   const reference = `${image}@${candidateDigest}`;
   const amd64Sbom = spdx("amd64");
-  const arm64Sbom = spdx("arm64");
+  const arm64Sbom = options.identicalSbomDocuments ? amd64Sbom : spdx("arm64");
   const sbomStatement = (predicate: ReturnType<typeof spdx>) => ({
     _type: "https://in-toto.io/Statement/v1",
     predicateType: "https://spdx.dev/Document",
@@ -327,6 +328,7 @@ describe("llama.cpp image publication evidence verifier", () => {
     ["anonymous bytes mismatch", { anonymousMismatch: true }],
     ["anonymous arm64 pull failure", { anonymousPullFailure: "arm64" as const }],
     ["duplicate SBOM predicate", { duplicateSbom: true }],
+    ["identical platform SBOM documents", { identicalSbomDocuments: true }],
     ["SBOM subject mismatch", { sbomDigest: "0".repeat(64) }],
     ["provenance subject mismatch", { provenanceDigest: "0".repeat(64) }],
     ["missing provenance transparency evidence", { provenanceTimestamps: [] }],
