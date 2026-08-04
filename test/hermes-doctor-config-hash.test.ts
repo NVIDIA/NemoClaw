@@ -65,6 +65,13 @@ describe("Hermes doctor and config hash boundary", () => {
     const binDir = path.join(tmp, "usr-local-bin");
     const libDir = path.join(tmp, "usr-local-lib-nemoclaw");
     const preloadsDir = path.join(libDir, "preloads");
+    const compiledRuntimePreload = path.join(
+      libDir,
+      "preloads-compiled-channels",
+      "whatsapp",
+      "runtime",
+      "whatsapp-hermes-session.js",
+    );
     const buildMcpDigestPath = path.join(libDir, "build-hermes-mcp-digest.py");
     const mcpConfigTransactionPath = path.join(libDir, "hermes-mcp-config-transaction.py");
     const langfuseCredentialPatcherPath = path.join(
@@ -112,6 +119,7 @@ describe("Hermes doctor and config hash boundary", () => {
         path.join(libDir, "state-dir-guard.py"),
         path.join(libDir, "managed-gateway-control.py"),
         path.join(libDir, "sandbox-rlimits.sh"),
+        compiledRuntimePreload,
         path.join(preloadsDir, "gateway-safety-net.js"),
         path.join(nestedDir, "ciao-preload.js"),
         bashrcPath,
@@ -164,6 +172,7 @@ describe("Hermes doctor and config hash boundary", () => {
       expect(mode(preloadsDir)).toBe("755");
       expect(mode(nestedDir)).toBe("755");
       expect(mode(path.join(preloadsDir, "gateway-safety-net.js"))).toBe("444");
+      expect(mode(path.join(preloadsDir, "whatsapp-hermes-session.js"))).toBe("444");
       expect(mode(path.join(nestedDir, "ciao-preload.js"))).toBe("444");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

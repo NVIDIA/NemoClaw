@@ -1101,6 +1101,14 @@ describe("Hermes sandbox provisioning", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-helper-modes-"));
     const localBin = path.join(tmp, "usr", "local", "bin");
     const localLib = path.join(tmp, "usr", "local", "lib", "nemoclaw");
+    const preloadsDir = path.join(localLib, "preloads");
+    const compiledRuntimePreload = path.join(
+      localLib,
+      "preloads-compiled-channels",
+      "whatsapp",
+      "runtime",
+      "whatsapp-hermes-session.js",
+    );
     const etcDir = path.join(tmp, "etc");
     const profileDir = path.join(etcDir, "profile.d");
     const bashrcPath = path.join(etcDir, "bash.bashrc");
@@ -1137,6 +1145,7 @@ describe("Hermes sandbox provisioning", () => {
       stateDirGuardPath,
       managedGatewayControlPath,
       path.join(localLib, "sandbox-rlimits.sh"),
+      compiledRuntimePreload,
     ];
     const command = dockerRunCommandBetween(
       dockerfile,
@@ -1150,9 +1159,13 @@ describe("Hermes sandbox provisioning", () => {
     try {
       fs.mkdirSync(localBin, { recursive: true });
       fs.mkdirSync(localLib, { recursive: true });
+      fs.mkdirSync(preloadsDir, { recursive: true });
       fs.mkdirSync(etcDir, { recursive: true });
       fs.writeFileSync(bashrcPath, "# fixture\n", { mode: 0o600 });
-      for (const file of files) fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
+      for (const file of files) {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
+      }
       const { result, calls } = runLoggedDockerShell(command, tmp, [
         'chown() { printf "chown %s\\n" "$*" >> "$call_log"; }',
       ]);
@@ -1169,6 +1182,11 @@ describe("Hermes sandbox provisioning", () => {
       expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(stateDirGuardPath).mode & 0o777).toString(8)).toBe("500");
       expect((fs.statSync(managedGatewayControlPath).mode & 0o777).toString(8)).toBe("500");
+      expect(
+        (fs.statSync(path.join(preloadsDir, "whatsapp-hermes-session.js")).mode & 0o777).toString(
+          8,
+        ),
+      ).toBe("444");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
