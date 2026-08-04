@@ -40,6 +40,7 @@ export interface SetupNimRemoteProviderConfigEntry {
   providerName: string;
   endpointUrl: string;
   credentialEnv: string;
+  defaultModel?: string;
 }
 
 export interface SetupNimRemoteSelectionArgs {
