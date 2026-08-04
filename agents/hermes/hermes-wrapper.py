@@ -50,26 +50,12 @@
 #     redacts credential-shaped fields natively or `buildHermesConfig` stops
 #     emitting an inline `api_key` value.
 #
-# Source-of-truth note for the `_translate_resumed_oneshot` parser
-# differential risk (NVIDIA/NemoClaw#5254):
-#   - Invalid state: upstream Hermes currently accepts top-level resumed or
-#     continued one-shot flags but persists the turn in a new session instead
-#     of appending to the selected session; the wrapper therefore parses a
-#     small allowlist of Hermes argv forms so it can route only those affected
-#     invocations through Hermes' native `chat --query` append path.
-#   - Risk accepted: upstream Hermes flag parsing may diverge from this
-#     wrapper's allowlist. The wrapper fails closed to unchanged passthrough on
-#     ambiguity, so the safe fallback is preserving Hermes' native behavior,
-#     but that may lose the resume/continue append workaround until the
-#     allowlist is updated.
-#   - Mitigations: the Dockerfile performs build-time AST validation of the
-#     wrapper flag constants, probes the pinned `hermes --help` surfaces, and
-#     the wrapper suite covers routed forms plus fail-closed cases with 20+
-#     unit tests.
-#   - Tracking: keep monitoring upstream Hermes flag stability while this
-#     localized compatibility layer exists.
-#   - Removal condition: delete this translation when Hermes natively appends
-#     top-level resumed or continued one-shot turns to the selected session.
+# `hermes-cli-adapter-v1.json` owns the exact translated command forms, their
+# upstream version, rationale, and removal conditions. The image build validates
+# that contract against Hermes' machine-readable top-level and chat parser
+# metadata. The wrapper reads session-name command boundaries from Hermes'
+# installed coalescer source, parses a managed invocation once from the contract,
+# and passes all unrelated commands through without a copied subcommand inventory.
 #
 # Scope of the masker: structured key-labelled secret fields (api_key,
 # api_secret, access_token, auth_token, client_secret, secret_key, secret,
@@ -93,18 +79,25 @@
 # Only a small set of top-level commands are intercepted; all other hermes
 # subcommands (dashboard, --version, ...) pass straight through unchanged.
 
+import ast
+import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 
 _INSTALLED_REAL = "/usr/local/bin/hermes.real"
 _INSTALLED_GUARD = "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
+_INSTALLED_CLI_ADAPTER = "/usr/local/share/nemoclaw/hermes-cli-adapter-v1.json"
+_INSTALLED_HERMES_MAIN = "/opt/hermes/hermes_cli/main.py"
 # The Dockerfile installs the validator under the hermes-prefixed name even
 # though the repository source stays at `validate-env-secret-boundary.py`.
 # Mirror the same dev-fallback `start.sh` uses so an ad-hoc bash invocation
 # over a checkout still finds the guard.
 _GUARD_DEV_FILENAME = "validate-env-secret-boundary.py"
+_CLI_ADAPTER_DEV_FILENAME = "hermes-cli-adapter-v1.json"
+_HERMES_MAIN_DEV_FILENAME = "hermes-main.py"
 # Trusted absolute paths for the python3 interpreter, ordered most-preferred
 # first. The resolver returns the first executable match (first-wins); the
 # same priority is mirrored by `agents/hermes/start.sh:resolve_trusted_python3`
@@ -133,6 +126,18 @@ def _resolve_guard() -> str:
     if os.path.isfile(_INSTALLED_GUARD):
         return _INSTALLED_GUARD
     return os.path.join(_self_dir(), _GUARD_DEV_FILENAME)
+
+
+def _resolve_cli_adapter() -> str:
+    if os.path.isfile(_INSTALLED_CLI_ADAPTER):
+        return _INSTALLED_CLI_ADAPTER
+    return os.path.join(_self_dir(), _CLI_ADAPTER_DEV_FILENAME)
+
+
+def _resolve_hermes_main() -> str:
+    if os.path.isfile(_INSTALLED_HERMES_MAIN):
+        return _INSTALLED_HERMES_MAIN
+    return os.path.join(_self_dir(), _HERMES_MAIN_DEV_FILENAME)
 
 
 def _resolve_trusted_python3() -> str | None:
@@ -277,534 +282,408 @@ def _run_gateway_guard(guard_path: str) -> int:
     return subprocess.call([python3, "-I", guard_path, "runtime-env"])
 
 
-_VALUE_FLAGS = {
-    "-m": "--model",
-    "--model": "--model",
-    "--provider": "--provider",
-    "-t": "--toolsets",
-    "--toolsets": "--toolsets",
-    "-s": "--skills",
-    "--skills": "--skills",
-    "-r": "--resume",
-    "--resume": "--resume",
-}
-# Hermes 0.19 consumes this global option only on its native one-shot path;
-# `chat --query` accepts the global syntax but does not write the requested
-# report. Recognize it while composing a resumed one-shot command so the
-# wrapper can refuse that semantically incompatible combination instead of
-# forwarding it to `chat` and silently losing the report.
-_TOP_LEVEL_VALUE_FLAGS = ("--usage-file",)
-# Keep this allowlist aligned with the top-level flags accepted by the pinned
-# Hermes Agent CLI in agents/hermes/Dockerfile.base (HERMES_VERSION=v2026.7.20,
-# HERMES_SEMVER=0.19.0) and agents/hermes/manifest.yaml (expected_version
-# "0.19.0"). Unknown flags deliberately fail closed by passing the original argv
-# through to upstream Hermes.
-_BOOLEAN_FLAGS = {
-    "--worktree",
-    "-w",
-    "--accept-hooks",
-    "--yolo",
-    "--pass-session-id",
-    "--ignore-user-config",
-    "--ignore-rules",
-    "--no-restore-cwd",
-    "--safe-mode",
-}
-_PROVIDER_MODEL_COMMAND_SCAN_SESSION_FLAGS = ("-c", "--continue", "-r", "--resume")
-_PROVIDER_MODEL_COMMAND_SCAN_REQUIRED_VALUE_FLAGS = (
-    "-m",
-    "--model",
-    "--provider",
-    "-t",
-    "--toolsets",
-    "-s",
-    "--skills",
-    "-z",
-    "--oneshot",
-    "-p",
-    "--profile",
-    "--usage-file",
+_SUPPORTED_CLI_ADAPTER_VERSION = 1
+_CLI_VERSION_PROBE_ENV = "NEMOCLAW_HERMES_ADAPTER_VERSION_PROBE"
+_CLI_VERSION_PATTERN = re.compile(
+    r"^(?:Hermes Agent )?v?([0-9]+[.][0-9]+[.][0-9]+)(?:\b|$)",
+    re.MULTILINE,
 )
-# Full top-level command inventory used only to decide whether provider/model
-# flags belong to Hermes chat or to another command.
-_HERMES_SUBCOMMANDS = (
-    "acp",
-    "auth",
-    "backup",
-    "bundles",
-    "chat",
-    "checkpoints",
-    "claw",
-    "completion",
-    "computer-use",
-    "config",
-    "console",
-    "cron",
-    "curator",
-    "dashboard",
-    "debug",
-    "desktop",
-    "doctor",
-    "dump",
-    "fallback",
-    "gateway",
-    "gui",
-    "hooks",
-    "import",
-    "insights",
-    "journey",
-    "kanban",
-    "learning",
-    "login",
-    "logout",
-    "logs",
-    "lsp",
-    "mcp",
-    "memory",
-    "memory-graph",
-    "migrate",
-    "moa",
-    "model",
-    "pairing",
-    "pets",
-    "plugins",
-    "portal",
-    "postinstall",
-    "profile",
-    "project",
-    "prompt-size",
-    "proxy",
-    "secrets",
-    "security",
-    "send",
-    "serve",
-    "sessions",
-    "setup",
-    "skills",
-    "slack",
-    "status",
-    "tools",
-    "uninstall",
-    "update",
-    "version",
-    "webhook",
-    "whatsapp",
-    "whatsapp-cloud",
-)
-
-# Mirror the pinned Hermes v0.19 `_coalesce_session_name_args` set exactly.
-# It intentionally differs from full help (for example, `console` is not a
-# boundary and can remain part of an unquoted session name).
-_HERMES_SESSION_NAME_BOUNDARIES = frozenset(
-    {
-        "acp",
-        "auth",
-        "backup",
-        "chat",
-        "claw",
-        "completion",
-        "config",
-        "cron",
-        "dashboard",
-        "debug",
-        "desktop",
-        "doctor",
-        "dump",
-        "gateway",
-        "gui",
-        "honcho",
-        "import",
-        "insights",
-        "login",
-        "logout",
-        "logs",
-        "mcp",
-        "memory",
-        "model",
-        "pairing",
-        "plugins",
-        "profile",
-        "security",
-        "serve",
-        "sessions",
-        "setup",
-        "skills",
-        "status",
-        "tools",
-        "uninstall",
-        "update",
-        "version",
-        "webhook",
-        "whatsapp",
-        "whatsapp-cloud",
-    }
-)
-_PROFILE_VALUE_FLAGS = {
-    "-p": "--profile",
-    "--profile": "--profile",
+_CLI_ADAPTER_ARITIES = {"boolean", "optional_session", "required", "session"}
+_SESSION_NAME_COALESCER = {
+    "module": "hermes_cli.main",
+    "function": "_coalesce_session_name_args",
+    "boundary_set": "_SUBCOMMANDS",
 }
 
 
-def _split_flag_value(arg: str) -> tuple[str, str] | None:
-    if not arg.startswith("--") or "=" not in arg:
-        return None
-    name, value = arg.split("=", 1)
-    return name, value
+class _CliAdapterError(Exception):
+    """Signal an invalid adapter contract or incompatible upstream CLI."""
 
 
-def _consume_session_name(argv: list[str], start: int) -> tuple[str | None, int]:
-    """Mirror Hermes' unquoted multi-word session-name coalescing."""
-    parts: list[str] = []
-    i = start
-    while (
-        i < len(argv)
-        and not argv[i].startswith("-")
-        and argv[i] not in _HERMES_SESSION_NAME_BOUNDARIES
+class _CliBinaryExecutionError(_CliAdapterError):
+    """Signal that the fixed Hermes binary could not be executed."""
+
+
+def _load_cli_adapter(path: str) -> dict:
+    try:
+        with open(path, encoding="utf-8") as adapter_file:
+            adapter = json.load(adapter_file)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise _CliAdapterError(
+            f"could not read Hermes CLI adapter ({exc.__class__.__name__})"
+        ) from None
+
+    if (
+        not isinstance(adapter, dict)
+        or adapter.get("adapter_version") != _SUPPORTED_CLI_ADAPTER_VERSION
     ):
-        parts.append(argv[i])
-        i += 1
-    return (" ".join(parts) if parts else None), i
+        version = adapter.get("adapter_version") if isinstance(adapter, dict) else None
+        raise _CliAdapterError(f"unsupported Hermes CLI adapter version: {version!r}")
+    if not isinstance(adapter.get("upstream_cli_version"), str):
+        raise _CliAdapterError("Hermes CLI adapter has no upstream version")
+    if adapter.get("managed_commands") != ["chat"]:
+        raise _CliAdapterError("Hermes CLI adapter has unsupported managed commands")
+    if adapter.get("session_name_coalescer") != _SESSION_NAME_COALESCER:
+        raise _CliAdapterError("Hermes CLI adapter has an unsupported session-name coalescer")
+
+    options = adapter.get("options")
+    if not isinstance(options, list) or not options:
+        raise _CliAdapterError("Hermes CLI adapter has no managed options")
+    ids: set[str] = set()
+    names: set[str] = set()
+    for option in options:
+        if not isinstance(option, dict):
+            raise _CliAdapterError("Hermes CLI adapter option is not an object")
+        option_id = option.get("id")
+        option_names = option.get("names")
+        arity = option.get("arity")
+        if not isinstance(option_id, str) or not option_id or option_id in ids:
+            raise _CliAdapterError("Hermes CLI adapter has an invalid option id")
+        if (
+            not isinstance(option_names, list)
+            or not option_names
+            or not all(isinstance(name, str) and name.startswith("-") for name in option_names)
+        ):
+            raise _CliAdapterError(f"Hermes CLI adapter option {option_id} has invalid names")
+        if arity not in _CLI_ADAPTER_ARITIES:
+            raise _CliAdapterError(f"Hermes CLI adapter option {option_id} has invalid arity")
+        if any(name in names for name in option_names):
+            raise _CliAdapterError("Hermes CLI adapter has duplicate option names")
+        if arity != "boolean" and not isinstance(option.get("canonical"), str):
+            raise _CliAdapterError(f"Hermes CLI adapter option {option_id} has no canonical name")
+        ids.add(option_id)
+        names.update(option_names)
+
+    required = {"continue", "model", "oneshot", "profile", "provider", "resume", "usage_file"}
+    if not required <= ids:
+        raise _CliAdapterError("Hermes CLI adapter is missing a managed translation option")
+    translations = adapter.get("translations")
+    if not isinstance(translations, dict) or set(translations) != {
+        "provider_model_composition",
+        "resumed_oneshot",
+    }:
+        raise _CliAdapterError("Hermes CLI adapter has invalid translation metadata")
+    return adapter
+
+
+def _session_name_boundaries(adapter: dict) -> frozenset[str]:
+    coalescer = adapter["session_name_coalescer"]
+    source_path = _resolve_hermes_main()
+    try:
+        with open(source_path, encoding="utf-8") as source_file:
+            tree = ast.parse(source_file.read(), filename=source_path)
+    except (OSError, UnicodeError, SyntaxError) as exc:
+        raise _CliAdapterError(
+            f"could not read the Hermes session-name coalescer ({exc.__class__.__name__})"
+        ) from None
+
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == coalescer["function"]
+    ]
+    if len(functions) != 1:
+        raise _CliAdapterError("Hermes session-name coalescer function is incompatible")
+    assignments = [
+        node
+        for node in functions[0].body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == coalescer["boundary_set"]
+    ]
+    if len(assignments) != 1:
+        raise _CliAdapterError("Hermes session-name coalescer boundary set is incompatible")
+    try:
+        boundaries = ast.literal_eval(assignments[0].value)
+    except (ValueError, TypeError, SyntaxError):
+        raise _CliAdapterError("Hermes session-name coalescer boundary set is not literal") from None
+    if (
+        not isinstance(boundaries, set)
+        or not boundaries
+        or not all(isinstance(boundary, str) and boundary for boundary in boundaries)
+    ):
+        raise _CliAdapterError("Hermes session-name coalescer boundary set is invalid")
+    return frozenset(boundaries)
+
+
+def _option_index(adapter: dict) -> tuple[dict[str, dict], dict[str, dict]]:
+    by_name: dict[str, dict] = {}
+    by_id: dict[str, dict] = {}
+    for option in adapter["options"]:
+        by_id[option["id"]] = option
+        for name in option["names"]:
+            by_name[name] = option
+    return by_name, by_id
+
+
+def _has_option(argv: list[str], option: dict) -> bool:
+    for arg in argv:
+        if arg == "--":
+            break
+        if arg in option["names"]:
+            return True
+        if arg.startswith("--") and "=" in arg and arg.split("=", 1)[0] in option["names"]:
+            return True
+    return False
+
+
+def _parse_managed_invocation(argv: list[str], adapter: dict) -> dict | None:
+    """Parse one managed top-level or chat invocation from the adapter schema."""
+    by_name, by_id = _option_index(adapter)
+    coalesce_session = _has_option(argv, by_id["oneshot"])
+    occurrences: list[dict] = []
+    occurrence_ids: dict[str, int] = {}
+    command: str | None = None
+    session_boundaries: frozenset[str] | None = None
+    unknown_option = False
+    terminated = False
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--":
+            terminated = True
+            break
+
+        option = None
+        value: str | None = None
+        equals_form = False
+        if arg.startswith("--") and "=" in arg:
+            name, value = arg.split("=", 1)
+            option = by_name.get(name)
+            equals_form = option is not None
+        else:
+            name = arg
+            option = by_name.get(name)
+
+        if option is not None:
+            option_id = option["id"]
+            if occurrence_ids.get(option_id, 0) and not option.get("repeatable", False):
+                return None
+            arity = option["arity"]
+            end = i + 1
+            if equals_form:
+                if arity == "boolean" or not value:
+                    return None
+            elif arity == "boolean":
+                value = None
+            elif arity in {"session", "optional_session"}:
+                parts: list[str] = []
+                cursor = i + 1
+                if cursor < len(argv) and not argv[cursor]:
+                    return None
+                if cursor < len(argv) and not argv[cursor].startswith("-"):
+                    session_boundaries = session_boundaries or _session_name_boundaries(adapter)
+                    if argv[cursor] not in session_boundaries:
+                        parts.append(argv[cursor])
+                        cursor += 1
+                    if parts and coalesce_session and command is None:
+                        while (
+                            cursor < len(argv)
+                            and not argv[cursor].startswith("-")
+                            and argv[cursor] not in session_boundaries
+                        ):
+                            parts.append(argv[cursor])
+                            cursor += 1
+                if not parts and arity == "session":
+                    return None
+                value = " ".join(parts) if parts else None
+                end = cursor
+            else:
+                if i + 1 >= len(argv) or argv[i + 1].startswith("-") or not argv[i + 1]:
+                    return None
+                value = argv[i + 1]
+                end = i + 2
+
+            occurrences.append(
+                {
+                    "canonical": option.get("canonical", name),
+                    "end": end,
+                    "equals": equals_form,
+                    "id": option_id,
+                    "name": name,
+                    "start": i,
+                    "value": value,
+                }
+            )
+            occurrence_ids[option_id] = occurrence_ids.get(option_id, 0) + 1
+            i = end
+            continue
+
+        if command is not None:
+            i += 1
+            continue
+        if arg.startswith("-"):
+            # Skip only atomic unknown options; a following positional can be their value.
+            if "=" in arg or i + 1 >= len(argv) or argv[i + 1].startswith("-"):
+                unknown_option = True
+                i += 1
+                continue
+            return None
+        if arg in adapter["managed_commands"]:
+            command = arg
+            i += 1
+            continue
+        if session_boundaries is not None and arg in session_boundaries:
+            return None
+        if (
+            occurrence_ids.get("continue", 0) + occurrence_ids.get("resume", 0) == 1
+            and _has_option(argv, by_id["provider"])
+            and _has_option(argv, by_id["model"])
+        ):
+            raise _AmbiguousProviderModelSession
+        return None
+
+    return {
+        "argv": argv,
+        "command": command,
+        "occurrences": occurrences,
+        "terminated": terminated,
+        "unknown_option": unknown_option,
+    }
+
+
+def _occurrences(parsed: dict, option_id: str) -> list[dict]:
+    return [occurrence for occurrence in parsed["occurrences"] if occurrence["id"] == option_id]
+
+
+def _merged_model(provider: str, model: str) -> str:
+    prefix = f"{provider}/"
+    return model if model.casefold().startswith(prefix.casefold()) else f"{provider}/{model}"
+
+
+def _provider_model_composition(parsed: dict) -> tuple[dict, dict, str] | None:
+    providers = _occurrences(parsed, "provider")
+    models = _occurrences(parsed, "model")
+    if len(providers) != 1 or len(models) != 1:
+        return None
+    provider = providers[0]
+    model = models[0]
+    if not provider["value"] or not model["value"]:
+        return None
+    return provider, model, _merged_model(provider["value"], model["value"])
+
+
+def _translate_resumed_oneshot(
+    parsed: dict,
+    composition: tuple[dict, dict, str] | None,
+) -> list[str] | None:
+    oneshots = _occurrences(parsed, "oneshot")
+    resumes = _occurrences(parsed, "resume")
+    continues = _occurrences(parsed, "continue")
+    if (
+        len(oneshots) != 1
+        or len(resumes) + len(continues) != 1
+        or parsed["command"] is not None
+        or parsed["terminated"]
+        or parsed["unknown_option"]
+    ):
+        return None
+    if _occurrences(parsed, "usage_file"):
+        raise _UnsupportedResumedOneshotUsageFile
+
+    translated: list[str] = []
+    profiles = _occurrences(parsed, "profile")
+    if profiles:
+        translated.extend([profiles[0]["canonical"], profiles[0]["value"]])
+    translated.extend(["chat", "--query", oneshots[0]["value"], "--quiet"])
+
+    session = resumes[0] if resumes else continues[0]
+    translated.append(session["canonical"])
+    if session["value"] is not None:
+        translated.append(session["value"])
+
+    provider_occurrence = composition[0] if composition else None
+    model_occurrence = composition[1] if composition else None
+    merged_model = composition[2] if composition else None
+    excluded = {"continue", "oneshot", "profile", "resume", "usage_file"}
+    for occurrence in parsed["occurrences"]:
+        if occurrence["id"] in excluded or occurrence is provider_occurrence:
+            continue
+        if occurrence is model_occurrence:
+            translated.extend([occurrence["canonical"], merged_model])
+        elif occurrence["value"] is None:
+            translated.append(occurrence["name"])
+        else:
+            translated.extend([occurrence["canonical"], occurrence["value"]])
+    return translated
 
 
 class _UnsupportedResumedOneshotUsageFile(Exception):
     """Signal a valid resumed one-shot form whose usage report would be lost."""
 
 
-def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
-    """Route resumed oneshot invocations through Hermes' native chat resume path.
-
-    Upstream Hermes handles top-level `-z/--oneshot` before the normal
-    `--resume`/`--continue` chat shortcut. In affected versions the resumed
-    session is available as context, but the one-shot turn is persisted under a
-    newly generated session id. The `chat --query --quiet --resume ...` and
-    bare `chat --query --quiet --continue` paths are the native non-interactive
-    routes that append to the selected or most recent session, so translate
-    only the composed top-level form and leave plain one-shot invocations
-    untouched.
-
-    NemoClaw owns this installed wrapper, not the prebuilt Hermes Agent binary
-    inside the sandbox base image, so the wrapper is the smallest compatibility
-    boundary available here. NemoClaw #5254 is the local removal tracker; avoid
-    adding unofficial upstream repository links here per the repo's no external
-    project links rule. Delete this translation once the pinned Hermes runtime
-    natively appends top-level `--resume/-c` plus `-z/--oneshot` turns to the
-    selected session without creating a fresh session id. Until then, wrapper
-    argv tests cover the routed form and the fail-closed cases; live sandbox
-    validation verifies the persisted `sessions list/export` behavior.
-
-    Preserve approval-related user intent instead of inferring it here:
-    `--yolo` and `--accept-hooks` are forwarded only when the original argv
-    included those flags. The underlying Hermes one-shot policy can change
-    across releases, so this compatibility layer avoids broadening approvals.
-    """
-    oneshot_prompt: str | None = None
-    global_prefix: list[str] = []
-    resume_args: list[str] = []
-    passthrough: list[str] = []
-    saw_resume = False
-    saw_continue = False
-    saw_oneshot = False
-    saw_profile = False
-    usage_file_requested = False
-
-    i = 0
-    while i < len(argv):
-        arg = argv[i]
-
-        if arg == "--":
-            return None
-
-        split = _split_flag_value(arg)
-        if split is not None:
-            name, value = split
-            if name == "--oneshot":
-                if saw_oneshot:
-                    return None
-                saw_oneshot = True
-                oneshot_prompt = value
-            elif name == "--continue":
-                if not value:
-                    return None
-                if saw_resume or saw_continue:
-                    return None
-                saw_continue = True
-                resume_args.extend(["--continue", value])
-            elif name in _VALUE_FLAGS:
-                canonical = _VALUE_FLAGS[name]
-                if canonical == "--resume":
-                    if not value:
-                        return None
-                    if saw_resume or saw_continue:
-                        return None
-                    saw_resume = True
-                    resume_args.extend([canonical, value])
-                else:
-                    passthrough.extend([canonical, value])
-            elif name in _TOP_LEVEL_VALUE_FLAGS:
-                if not value:
-                    return None
-                usage_file_requested = True
-            elif name == "--profile":
-                if not value or saw_profile:
-                    return None
-                saw_profile = True
-                global_prefix.extend(["--profile", value])
-            else:
-                return None
-            i += 1
-            continue
-
-        if arg in ("-z", "--oneshot"):
-            if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
-                return None
-            if saw_oneshot:
-                return None
-            saw_oneshot = True
-            oneshot_prompt = argv[i + 1]
-            i += 2
-            continue
-
-        if arg in _VALUE_FLAGS:
-            canonical = _VALUE_FLAGS[arg]
-            if canonical == "--resume":
-                value, next_index = _consume_session_name(argv, i + 1)
-                if not value:
-                    return None
-                if saw_resume or saw_continue:
-                    return None
-                saw_resume = True
-                resume_args.extend([canonical, value])
-                i = next_index
-            else:
-                if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
-                    return None
-                value = argv[i + 1]
-                if not value:
-                    return None
-                passthrough.extend([canonical, value])
-                i += 2
-            continue
-
-        if arg in _TOP_LEVEL_VALUE_FLAGS:
-            if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
-                return None
-            value = argv[i + 1]
-            if not value:
-                return None
-            usage_file_requested = True
-            i += 2
-            continue
-
-        if arg in _PROFILE_VALUE_FLAGS:
-            if i + 1 >= len(argv) or argv[i + 1].startswith("-") or saw_profile:
-                return None
-            value = argv[i + 1]
-            if not value:
-                return None
-            saw_profile = True
-            global_prefix.extend([_PROFILE_VALUE_FLAGS[arg], value])
-            i += 2
-            continue
-
-        if arg in ("-c", "--continue"):
-            if saw_resume or saw_continue:
-                return None
-            value, next_index = _consume_session_name(argv, i + 1)
-            if value is None:
-                saw_continue = True
-                resume_args.append("--continue")
-                i += 1
-                continue
-            if not value:
-                return None
-            saw_continue = True
-            resume_args.append("--continue")
-            resume_args.append(value)
-            i = next_index
-            continue
-
-        if arg in _BOOLEAN_FLAGS:
-            passthrough.append(arg)
-            i += 1
-            continue
-
-        # A positional command means this is not the top-level one-shot form.
-        return None
-
-    if not oneshot_prompt or not (saw_resume or saw_continue):
-        return None
-
-    if usage_file_requested:
-        raise _UnsupportedResumedOneshotUsageFile
-
-    translated = [*global_prefix, "chat", "--query", oneshot_prompt, "--quiet"]
-    translated.extend(resume_args)
-    translated.extend(passthrough)
-    return translated
+class _AmbiguousProviderModelSession(Exception):
+    """Signal provider/model flags after an unquoted multi-word session name."""
 
 
-# Source-of-truth note for the `_merge_provider_into_model` rewrite
-# (NVIDIA/NemoClaw#7361):
-#   - Invalid state: separate --provider and -m/--model flags bypass the
-#     OpenShell proxy rewrite path; the raw .env placeholder is sent as the
-#     bearer token, causing a 401.
-#   - Fix: merge into the combined provider/model form at the wrapper boundary
-#     so the invocation routes through the proxy credential resolution path.
-#   - Upstream constraint: NemoClaw installs a pinned Hermes CLI rather than
-#     vendoring its credential-resolution implementation, so the source fix
-#     cannot be made safely in this repository.
-#   - Regression evidence: the checked-in `hermes-inference-switch` live target
-#     invokes that pinned CLI with separate provider/model flags backed by an
-#     OpenShell placeholder and requires a successful inference response.
-#   - Removal condition: delete this translation when Hermes natively resolves
-#     openshell: placeholders for separate --provider flag invocations.
-#   - Tracking: NVIDIA/NemoClaw#7361
-
-
-def _supports_provider_model_merge(argv: list[str]) -> bool:
-    """Return whether argv is a top-level or chat invocation.
-
-    Hermes accepts provider/model selection at the top level and on `chat`.
-    Other positional commands own their remaining flags, so leave those
-    invocations untouched. Unknown options with separate values fail closed:
-    their first positional token is treated as a command.
-    """
-    i = 0
-    while i < len(argv):
-        arg = argv[i]
-
-        if arg == "--":
-            return True
-
-        if _split_flag_value(arg) is not None:
-            i += 1
-            continue
-
-        if arg in _PROVIDER_MODEL_COMMAND_SCAN_REQUIRED_VALUE_FLAGS:
-            i += 2
-            continue
-
-        if arg in _PROVIDER_MODEL_COMMAND_SCAN_SESSION_FLAGS:
-            i += 1
-            if i < len(argv) and not argv[i].startswith("-"):
-                i += 1
-            while (
-                i < len(argv)
-                and not argv[i].startswith("-")
-                and argv[i] not in _HERMES_SUBCOMMANDS
-            ):
-                i += 1
-            continue
-
-        if arg.startswith("-"):
-            i += 1
-            continue
-
-        return arg == "chat"
-
-    return True
-
-
-def _merge_provider_into_model(argv: list[str]) -> list[str]:
-    """Merge separate --provider and -m/--model flags into the combined form.
-
-    When both --provider <name> and -m/--model <model> are present as separate
-    flags and the model value is not already prefixed by that provider,
-    rewrite to the combined 'provider/model' form so the invocation routes
-    through the OpenShell proxy rewrite path that resolves credential
-    placeholders. Model ids may contain their own namespace separator, such
-    as 'nvidia/nemotron', without already being provider-prefixed.
-
-    A model already prefixed by the selected provider keeps its value while the
-    redundant provider flag is removed. Returns argv unchanged for other
-    positional commands or on ambiguity (missing flag, empty values,
-    duplicates). Pure function, no side effects.
-    """
-    if not _supports_provider_model_merge(argv):
-        return argv
-
-    provider: str | None = None
-    provider_idx: int = -1
-    provider_val_idx: int = -1
-    model: str | None = None
-    model_idx: int = -1
-    model_val_idx: int = -1
-
-    i = 0
-    while i < len(argv):
-        arg = argv[i]
-
-        if arg == "--":
-            break
-
-        split = _split_flag_value(arg)
-        if split is not None:
-            name, value = split
-            if name == "--provider":
-                if provider is not None:
-                    return argv
-                provider = value
-                provider_idx = i
-                provider_val_idx = -1
-            elif name in ("--model", "-m"):
-                if model is not None:
-                    return argv
-                model = value
-                model_idx = i
-                model_val_idx = -1
-            i += 1
-            continue
-
-        if arg == "--provider":
-            if provider is not None:
-                return argv
-            if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
-                return argv
-            provider = argv[i + 1]
-            provider_idx = i
-            provider_val_idx = i + 1
-            i += 2
-            continue
-
-        if arg in ("-m", "--model"):
-            if model is not None:
-                return argv
-            if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
-                return argv
-            model = argv[i + 1]
-            model_idx = i
-            model_val_idx = i + 1
-            i += 2
-            continue
-
-        i += 1
-
-    if provider is None or model is None:
-        return argv
-    if not provider or not model:
-        return argv
-    provider_prefix = f"{provider}/"
-    merged_model = (
-        model if model.casefold().startswith(provider_prefix.casefold()) else f"{provider}/{model}"
-    )
-
-    # Build new argv: remove provider flag+value, replace model value with merged
-    skip = {provider_idx}
-    if provider_val_idx >= 0:
-        skip.add(provider_val_idx)
-
+def _apply_provider_model_composition(
+    parsed: dict, composition: tuple[dict, dict, str]
+) -> list[str]:
+    provider, model, merged_model = composition
+    skip = set(range(provider["start"], provider["end"]))
     result: list[str] = []
-    for idx, val in enumerate(argv):
-        if idx in skip:
+    for index, arg in enumerate(parsed["argv"]):
+        if index in skip:
             continue
-        if idx == model_idx and model_val_idx < 0:
-            # Equals form: replace the whole --model=value token
-            result.append(f"--model={merged_model}")
-        elif idx == model_val_idx:
+        if index == model["start"] and model["equals"]:
+            result.append(f"{model['name']}={merged_model}")
+        elif index == model["start"] + 1 and not model["equals"]:
             result.append(merged_model)
         else:
-            result.append(val)
+            result.append(arg)
     return result
+
+
+def _adapt_cli_argv(argv: list[str], adapter: dict) -> tuple[str, list[str]]:
+    parsed = _parse_managed_invocation(argv, adapter)
+    if parsed is None:
+        return "passthrough", argv
+    composition = _provider_model_composition(parsed)
+    translated = _translate_resumed_oneshot(parsed, composition)
+    if translated is not None:
+        return "translated", translated
+    if composition is not None:
+        return "translated", _apply_provider_model_composition(parsed, composition)
+    return "passthrough", argv
+
+
+def _require_upstream_cli_version(real_hermes: str, expected: str) -> None:
+    env = dict(os.environ)
+    env[_CLI_VERSION_PROBE_ENV] = "1"
+    try:
+        result = subprocess.run(
+            [real_hermes, "--version"],
+            capture_output=True,
+            check=False,
+            env=env,
+            text=True,
+            timeout=10,
+        )
+    except OSError as exc:
+        raise _CliBinaryExecutionError(
+            f"failed to exec Hermes binary at {real_hermes}: {exc}"
+        ) from None
+    except subprocess.TimeoutExpired as exc:
+        raise _CliAdapterError(
+            f"could not verify the Hermes CLI version ({exc.__class__.__name__})"
+        ) from None
+    output = f"{result.stdout}\n{result.stderr}"
+    match = _CLI_VERSION_PATTERN.search(output)
+    actual = match.group(1) if match else None
+    if result.returncode != 0 or actual != expected:
+        raise _CliAdapterError(
+            f"adapter targets Hermes {expected}, installed CLI reports "
+            f"{actual or 'an unknown version'}"
+        )
+
+
+def _report_cli_adapter_error(exc: _CliAdapterError) -> int:
+    if isinstance(exc, _CliBinaryExecutionError):
+        print(f"[SECURITY] Refusing to run hermes: {exc}", file=sys.stderr)
+        return 126
+    print(f"[COMPATIBILITY] Refusing to run hermes: {exc}", file=sys.stderr)
+    return 2
 
 
 def main(argv: list[str]) -> int:
@@ -817,8 +696,15 @@ def main(argv: list[str]) -> int:
         if rc != 0:
             return rc
     try:
-        translated = _translate_resumed_oneshot(argv)
+        adapter = _load_cli_adapter(_resolve_cli_adapter())
+        adapter_result, exec_argv = _adapt_cli_argv(argv, adapter)
+        if adapter_result == "translated":
+            _require_upstream_cli_version(real_hermes, adapter["upstream_cli_version"])
     except _UnsupportedResumedOneshotUsageFile:
+        try:
+            _require_upstream_cli_version(real_hermes, adapter["upstream_cli_version"])
+        except _CliAdapterError as exc:
+            return _report_cli_adapter_error(exc)
         print(
             "[COMPATIBILITY] Refusing resumed one-shot with --usage-file: "
             "Hermes 0.19 writes usage reports only on its native one-shot path, "
@@ -828,11 +714,20 @@ def main(argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 2
-    if translated is not None:
-        exec_argv = translated
-    else:
-        exec_argv = argv
-    exec_argv = _merge_provider_into_model(exec_argv)
+    except _AmbiguousProviderModelSession:
+        try:
+            _require_upstream_cli_version(real_hermes, adapter["upstream_cli_version"])
+        except _CliAdapterError as exc:
+            return _report_cli_adapter_error(exc)
+        print(
+            "[COMPATIBILITY] Refusing provider/model translation after an "
+            "ambiguous session name. Pass a multi-word --resume or --continue "
+            "session name as one quoted argument.",
+            file=sys.stderr,
+        )
+        return 2
+    except _CliAdapterError as exc:
+        return _report_cli_adapter_error(exc)
     try:
         os.execv(real_hermes, [real_hermes, *exec_argv])
     except OSError as exc:

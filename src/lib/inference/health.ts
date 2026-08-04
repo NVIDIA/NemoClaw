@@ -16,6 +16,7 @@ import { normalizeCredentialValue, resolveProviderCredential } from "../credenti
 import { getProviderSelectionConfig } from "./config";
 import type { LocalProviderHealthProbeOptions } from "./local";
 import { probeLocalProviderHealth } from "./local";
+import { MIN_PROBE_REPLY_TOKENS } from "./max-tokens-field";
 import { getChatCompletionsProbeCurlArgs } from "./onboard-probes";
 import { BUILD_ENDPOINT_URL } from "./provider-models";
 
@@ -70,7 +71,7 @@ const GEMINI_CHAT_COMPLETIONS_ENDPOINT =
   "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
 const ANTHROPIC_MESSAGES_ENDPOINT = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION_HEADER = "anthropic-version: 2023-06-01";
-const HEALTH_PROBE_MAX_TOKENS = 8;
+const HEALTH_PROBE_MAX_TOKENS = MIN_PROBE_REPLY_TOKENS;
 const CURL_TIMEOUT_STATUS = 28;
 const NODE_SPAWN_TIMEOUT_STATUS = -110;
 
