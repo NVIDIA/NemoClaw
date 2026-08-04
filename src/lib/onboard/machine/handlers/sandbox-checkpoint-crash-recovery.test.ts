@@ -755,7 +755,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
   it.each([
     "interactive",
     "non-interactive",
-  ] as const)("replays %s messaging provider registration without duplicating the external effect after receipt loss (#7022)", async (mode) => {
+  ] as const)("recovers the %s messaging provider receipt without duplicating the external effect after receipt loss (#7022)", async (mode) => {
     const { stageSandboxCredentialProviders, providerMatchesGatewayCredential, runOpenshell } =
       realStageSandboxCredentialProviders(
         [
@@ -806,7 +806,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
       sandboxName: "my-assistant",
     });
 
-    expect(stageSandboxCredentialProviders).toHaveBeenCalledTimes(2);
+    expect(stageSandboxCredentialProviders).toHaveBeenCalledTimes(1);
     expect(
       runOpenshell.mock.calls.filter(([args]) => args[0] === "provider" && args[1] === "create"),
     ).toHaveLength(1);

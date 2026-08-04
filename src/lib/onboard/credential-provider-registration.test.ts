@@ -237,14 +237,14 @@ describe("credential provider registration", () => {
     } as unknown as Session;
     const missing = { status: 1, stdout: "", stderr: "not found" };
     const success = { status: 0, stdout: "", stderr: "" };
-    const runOpenshell = vi.fn((args: string[]) => {
-      const command = args.join(" ");
-      if (command === "provider get -g test-gateway alpha-slack-bridge") {
-        return providerMetadata("alpha-slack-bridge", "slack", "SLACK_BOT_TOKEN");
-      }
-      if (command === "provider get -g test-gateway alpha-slack-app") return missing;
-      return success;
-    });
+    const responses = new Map([
+      [
+        "provider get -g test-gateway alpha-slack-bridge",
+        providerMetadata("alpha-slack-bridge", "slack", "SLACK_BOT_TOKEN"),
+      ],
+      ["provider get -g test-gateway alpha-slack-app", missing],
+    ]);
+    const runOpenshell = vi.fn((args: string[]) => responses.get(args.join(" ")) ?? success);
     const deps = registrationDeps(runOpenshell, session);
     const registration = createCredentialProviderRegistration(deps);
     const tokenDefs: MessagingTokenDef[] = [

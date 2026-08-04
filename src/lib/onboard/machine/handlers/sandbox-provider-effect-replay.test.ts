@@ -445,6 +445,27 @@ describe("handleSandboxState provider effect replay", () => {
     const liveBindings = new Map([[oldBinding.name, oldBinding]]);
     const persistence = createImmutableSessionPersistence(session);
     let messagingAttempts = 0;
+    const stageWebSearchBinding = async () => {
+      liveBindings.delete(oldBinding.name);
+      liveBindings.set(currentBinding.name, currentBinding);
+      return [currentBinding];
+    };
+    const messagingStages = [
+      async () => Promise.reject(new Error("messaging registration failed")),
+      async () => {
+        liveBindings.set(messagingBinding.name, messagingBinding);
+        return [messagingBinding];
+      },
+    ];
+    const stageMessagingBinding = async () => {
+      const stage = messagingStages[Math.min(messagingAttempts, messagingStages.length - 1)]!;
+      messagingAttempts += 1;
+      return stage();
+    };
+    const stagesByBindingName = new Map([
+      [currentBinding.name, stageWebSearchBinding],
+      [messagingBinding.name, stageMessagingBinding],
+    ]);
     const stageSandboxCredentialProviders = vi.fn(
       async (input: {
         requiredBindings: readonly {
@@ -453,15 +474,12 @@ describe("handleSandboxState provider effect replay", () => {
           credentialEnv: string;
         }[];
       }) => {
-        if (input.requiredBindings.some((binding) => binding.name === currentBinding.name)) {
-          liveBindings.delete(oldBinding.name);
-          liveBindings.set(currentBinding.name, currentBinding);
-          return [currentBinding];
-        }
-        messagingAttempts += 1;
-        if (messagingAttempts === 1) throw new Error("messaging registration failed");
-        liveBindings.set(messagingBinding.name, messagingBinding);
-        return [messagingBinding];
+        const stageName = input.requiredBindings.some(
+          (binding) => binding.name === currentBinding.name,
+        )
+          ? currentBinding.name
+          : messagingBinding.name;
+        return (await stagesByBindingName.get(stageName)?.()) ?? [];
       },
     );
     const { deps, calls } = createDeps(

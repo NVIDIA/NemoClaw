@@ -1803,6 +1803,14 @@ class SandboxStateFlow<
     });
   }
 
+  private assertExistingMessagingPlanTargetsSandbox(
+    state: SandboxStepState<WebSearchConfig>,
+  ): void {
+    const sandboxName = state.sandboxName;
+    if (!sandboxName || state.session?.sandboxName !== sandboxName) return;
+    this.assertMessagingPlanTargetsSandbox(sandboxName, state.session);
+  }
+
   private validateProviderBindingsForRegistration(
     checkpoint: OnboardCheckpoint | null,
     webSearchBindings: readonly CheckpointProviderBinding[],
@@ -1846,6 +1854,7 @@ class SandboxStateFlow<
       this.deps.error(mcpBlockReason);
       return this.deps.exitProcess(1);
     }
+    this.assertExistingMessagingPlanTargetsSandbox(state);
     let nextState = state.sandboxName
       ? this.checkpointSandboxName(state, state.sandboxName)
       : state;

@@ -142,7 +142,7 @@ describe("recordCheckpointProviderEffectGroup", () => {
   it("adopts a same-name unowned binding and removes its replaced credential key", () => {
     const session = sessionWithProviderReceipts();
     const checkpoint = session.checkpoint;
-    if (!checkpoint) throw new Error("expected a provider checkpoint");
+    expect(checkpoint).toBeDefined();
     const orphan = {
       name: "current-web",
       type: "tavily",
@@ -154,10 +154,10 @@ describe("recordCheckpointProviderEffectGroup", () => {
       credentialEnv: "CURRENT_WEB_KEY",
     };
     session.checkpoint = {
-      ...checkpoint,
+      ...checkpoint!,
       bindings: {
-        credentialEnvs: [...checkpoint.bindings.credentialEnvs, orphan.credentialEnv],
-        registeredProviders: [...checkpoint.bindings.registeredProviders, orphan],
+        credentialEnvs: [...checkpoint!.bindings.credentialEnvs, orphan.credentialEnv],
+        registeredProviders: [...checkpoint!.bindings.registeredProviders, orphan],
       },
     };
 
@@ -190,14 +190,13 @@ describe("recordCheckpointProviderEffectGroup", () => {
     const session = sessionWithProviderReceipts();
     const checkpoint = session.checkpoint;
     const previousReceipt = checkpoint?.effectGroups.web_search_provider;
-    if (!checkpoint || !previousReceipt) {
-      throw new Error("expected a web-search provider receipt");
-    }
+    expect(checkpoint).toBeDefined();
+    expect(previousReceipt).toBeDefined();
     session.checkpoint = {
-      ...checkpoint,
+      ...checkpoint!,
       effectGroups: {
-        ...checkpoint.effectGroups,
-        web_search_provider: { ...previousReceipt, fingerprint: ",old-web" },
+        ...checkpoint!.effectGroups,
+        web_search_provider: { ...previousReceipt!, fingerprint: ",old-web" },
       },
     };
     const previousCheckpoint = session.checkpoint;
