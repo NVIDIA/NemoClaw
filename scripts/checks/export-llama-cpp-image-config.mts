@@ -12,7 +12,7 @@ type ServerImageManifest = {
   kind?: unknown;
   metadata?: { id?: unknown };
   spec?: {
-    build?: { cmake?: unknown; packages?: unknown; target?: unknown };
+    build?: { cmake?: unknown; compiler?: unknown; packages?: unknown; target?: unknown };
     cuda?: { developmentBase?: unknown; runtimeBase?: unknown };
     platforms?: Array<{
       cudaArchitectures?: unknown;
@@ -98,8 +98,15 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
     "ca-certificates": "20260601~24.04.1",
     cmake: "3.28.3-1build7",
     curl: "8.5.0-2ubuntu10.11",
+    "g++-14": "14.2.0-4ubuntu2~24.04.1",
+    "gcc-14": "14.2.0-4ubuntu2~24.04.1",
     "libcurl4-openssl-dev": "8.5.0-2ubuntu10.11",
     "libssl-dev": "3.0.13-0ubuntu3.12",
+  };
+  const expectedCompiler = {
+    c: "gcc-14",
+    cudaHostCxx: "g++-14",
+    cxx: "g++-14",
   };
   const expectedRuntimePackages = {
     "ca-certificates": "20260601~24.04.1",
@@ -111,6 +118,7 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
     spec?.source?.repository !== "https://github.com/ggml-org/llama.cpp" ||
     spec?.build?.target !== "llama-server" ||
     !matchesExactRecord(cmake, expectedCmake) ||
+    !matchesExactRecord(spec?.build?.compiler, expectedCompiler) ||
     !matchesExactRecord(spec?.build?.packages, expectedBuildPackages) ||
     !matchesExactRecord(spec?.runtime?.packages, expectedRuntimePackages) ||
     spec?.runtime?.entrypoint !== "/usr/local/bin/llama-server" ||
@@ -147,6 +155,9 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
   }
 
   return {
+    compiler_c: expectedCompiler.c,
+    compiler_cuda_host_cxx: expectedCompiler.cudaHostCxx,
+    compiler_cxx: expectedCompiler.cxx,
     cuda_dev_image: requiredString(
       spec?.cuda?.developmentBase,
       "CUDA development base",

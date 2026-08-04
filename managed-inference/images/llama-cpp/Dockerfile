@@ -9,12 +9,18 @@ FROM ${CUDA_DEV_IMAGE} AS build
 ARG LLAMA_CPP_REVISION
 ARG LLAMA_CPP_ARCHIVE_SHA256
 ARG CUDA_ARCHITECTURES
+ARG C_COMPILER
+ARG CXX_COMPILER
+ARG CUDA_HOST_CXX_COMPILER
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN test -n "${LLAMA_CPP_REVISION}" \
     && test -n "${LLAMA_CPP_ARCHIVE_SHA256}" \
-    && test -n "${CUDA_ARCHITECTURES}"
+    && test -n "${CUDA_ARCHITECTURES}" \
+    && test -n "${C_COMPILER}" \
+    && test -n "${CXX_COMPILER}" \
+    && test -n "${CUDA_HOST_CXX_COMPILER}"
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -22,9 +28,15 @@ RUN apt-get update \
       ca-certificates=20260601~24.04.1 \
       cmake=3.28.3-1build7 \
       curl=8.5.0-2ubuntu10.11 \
+      g++-14=14.2.0-4ubuntu2~24.04.1 \
+      gcc-14=14.2.0-4ubuntu2~24.04.1 \
       libcurl4-openssl-dev=8.5.0-2ubuntu10.11 \
       libssl-dev=3.0.13-0ubuntu3.12 \
     && rm -rf /var/lib/apt/lists/*
+
+ENV CC=${C_COMPILER} \
+    CXX=${CXX_COMPILER} \
+    CUDAHOSTCXX=${CUDA_HOST_CXX_COMPILER}
 
 WORKDIR /src/llama.cpp
 

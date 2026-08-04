@@ -21,6 +21,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
+      compiler_c: ${{ steps.manifest.outputs.compiler_c }}
+      compiler_cuda_host_cxx: ${{ steps.manifest.outputs.compiler_cuda_host_cxx }}
+      compiler_cxx: ${{ steps.manifest.outputs.compiler_cxx }}
       cuda_dev_image: ${{ steps.manifest.outputs.cuda_dev_image }}
       cuda_runtime_image: ${{ steps.manifest.outputs.cuda_runtime_image }}
       image: ${{ steps.manifest.outputs.image }}
@@ -74,6 +77,9 @@ jobs:
           push: false
           tags: nemoclaw-llama-cpp-pr:${{ matrix.arch }}-${{ github.sha }}
           build-args: |
+            C_COMPILER=${{ needs.config.outputs.compiler_c }}
+            CUDA_HOST_CXX_COMPILER=${{ needs.config.outputs.compiler_cuda_host_cxx }}
+            CXX_COMPILER=${{ needs.config.outputs.compiler_cxx }}
             CUDA_ARCHITECTURES=${{ matrix.cuda_architectures }}
             CUDA_DEV_IMAGE=${{ needs.config.outputs.cuda_dev_image }}
             CUDA_RUNTIME_IMAGE=${{ needs.config.outputs.cuda_runtime_image }}

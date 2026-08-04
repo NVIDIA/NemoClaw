@@ -29,6 +29,7 @@ type ImageManifest = {
   spec?: {
     build?: {
       cmake?: Record<string, boolean>;
+      compiler?: { c?: string; cudaHostCxx?: string; cxx?: string };
       packages?: Record<string, string>;
       target?: string;
     };
@@ -128,6 +129,9 @@ describe("declarative llama.cpp server image", () => {
     expect(result.status, result.stderr).toBe(0);
     const output = parseOutput(result.stdout);
     expect(output).toMatchObject({
+      compiler_c: manifest.spec?.build?.compiler?.c,
+      compiler_cuda_host_cxx: manifest.spec?.build?.compiler?.cudaHostCxx,
+      compiler_cxx: manifest.spec?.build?.compiler?.cxx,
       cuda_dev_image: manifest.spec?.cuda?.developmentBase,
       cuda_runtime_image: manifest.spec?.cuda?.runtimeBase,
       image: manifest.spec?.repository,
@@ -211,6 +215,9 @@ describe("declarative llama.cpp server image", () => {
     expect(dockerfile).toContain("USER ${RUNTIME_UID}:${RUNTIME_GID}");
     expect(dockerfile).toContain('SHELL ["/bin/bash", "-o", "pipefail", "-c"]');
     expect(dockerfile).toContain('ENTRYPOINT ["/usr/local/bin/llama-server"]');
+    expect(dockerfile).toContain("ENV CC=${C_COMPILER}");
+    expect(dockerfile).toContain("CXX=${CXX_COMPILER}");
+    expect(dockerfile).toContain("CUDAHOSTCXX=${CUDA_HOST_CXX_COMPILER}");
     expect(dockerfile).toContain("sha256sum --check --strict");
     expect(dockerfile).toContain("cp LICENSE AUTHORS");
     expect(dockerfile).not.toContain("# syntax=");

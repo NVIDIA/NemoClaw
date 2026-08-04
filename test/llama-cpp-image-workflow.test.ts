@@ -77,6 +77,9 @@ describe("llama.cpp image PR workflow", () => {
 
   it("passes declarative source, base image, runtime ID, and platform values to each image build (#8231)", () => {
     expect(config.outputs).toEqual({
+      compiler_c: "${{ steps.manifest.outputs.compiler_c }}",
+      compiler_cuda_host_cxx: "${{ steps.manifest.outputs.compiler_cuda_host_cxx }}",
+      compiler_cxx: "${{ steps.manifest.outputs.compiler_cxx }}",
       cuda_dev_image: "${{ steps.manifest.outputs.cuda_dev_image }}",
       cuda_runtime_image: "${{ steps.manifest.outputs.cuda_runtime_image }}",
       image: "${{ steps.manifest.outputs.image }}",
@@ -95,6 +98,9 @@ describe("llama.cpp image PR workflow", () => {
 
     const args = String(buildStep.with?.["build-args"] ?? "");
     for (const output of [
+      "compiler_c",
+      "compiler_cuda_host_cxx",
+      "compiler_cxx",
       "cuda_dev_image",
       "cuda_runtime_image",
       "runtime_gid",
