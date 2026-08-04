@@ -181,6 +181,16 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
+  it("rejects omitting the Hermes base-image resolver before the secret-boundary probe", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];
+    consumer.steps = consumer.steps!.filter((step) => step.name !== "Resolve Hermes base image");
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "Hermes image tests must resolve the Hermes base image exactly once with the canonical action before the secret-boundary probe",
+    );
+  });
+
   it("rejects Docker Hub authentication in the Hermes image consumer", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const producer = imageWorkflow.jobs["build-hermes-sandbox-image"];

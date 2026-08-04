@@ -31,6 +31,7 @@ const HERMES_DOWNLOAD_ARTIFACT_ACTION =
   "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
 const HERMES_UPLOAD_ARTIFACT_ACTION =
   "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
+const HERMES_BASE_IMAGE_RESOLVER_ACTION = "./.github/actions/resolve-hermes-base-image";
 const HERMES_CACHE_FROM = "type=gha,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}";
 const HERMES_CACHE_TO =
   "type=gha,mode=max,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}";
@@ -903,6 +904,20 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
     testJob,
     "Run Hermes sandbox secret boundary test",
   );
+  const baseImageResolvers = steps(testJob).filter(
+    (step) => step.name === "Resolve Hermes base image",
+  );
+  const baseImageResolver = baseImageResolvers[0] ?? {};
+  if (
+    baseImageResolvers.length !== 1 ||
+    baseImageResolver.uses !== HERMES_BASE_IMAGE_RESOLVER_ACTION ||
+    stepIndex(testJob, baseImageResolver.name ?? "") >=
+      stepIndex(testJob, secretBoundary.name ?? "")
+  ) {
+    errors.push(
+      "Hermes image tests must resolve the Hermes base image exactly once with the canonical action before the secret-boundary probe",
+    );
+  }
   const rootEntrypoint = requireStep(
     errors,
     testJobName,
