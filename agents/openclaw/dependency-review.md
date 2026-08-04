@@ -25,7 +25,7 @@ Both image paths install the committed graph with `npm ci --ignore-scripts --omi
 The reviewed audit wrapper reports lower-severity production findings and
 blocks unaccepted high or critical advisories.
 The `ci/npm-audit-exceptions.json` registry is empty by default outside an
-explicitly bounded transition.
+explicitly bounded audit transition.
 Any exception must match one advisory, graph, package, installed version, and
 severity; identify an owner and NemoClaw tracking issue; state a decision,
 rationale, and expiry no more than 30 days away; and include compensating

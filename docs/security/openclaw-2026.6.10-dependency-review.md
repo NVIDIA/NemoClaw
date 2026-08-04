@@ -71,7 +71,7 @@ The current remediation does not silently extend its authority to those graphs.
 This review is an advisory snapshot for the direct OpenClaw runtime package, the locked `mcporter@0.7.3` graph, Codex ACP runtime helper, optional plugins, messaging plugins, and their npm dependency graphs at review time. Default PR and main CI now rematerialize those exact direct packages from SRI-verified reviewed local archives under Node `22.23.1`, install with lifecycle scripts disabled, run `npm audit --omit=dev --json` through `scripts/lib/reviewed-npm-audit.mts`, and upload both the raw reports and normalized policy results from `coverage/reviewed-npm-audit`. The configured threshold in `ci/reviewed-npm-audit.json` is `high`. Lower-severity findings remain visible without blocking. The same job independently installs and audits the committed mcporter production lock. This gate complements, but does not replace, the committed npm integrity pins, registry signature verification, and install-time archive checks.
 
 The exception registry at `ci/npm-audit-exceptions.json` is empty by default
-outside an explicitly bounded transition.
+outside an explicitly bounded audit transition.
 It is not a global npm-audit bypass: each entry must exactly match one
 advisory, audited graph, package, installed version, and reported severity.
 It must also record an expiring `not-affected` or
