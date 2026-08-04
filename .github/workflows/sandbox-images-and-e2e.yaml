@@ -218,6 +218,30 @@ jobs:
           cache-from: type=gha,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}
           cache-to: type=gha,mode=max,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}
 
+      # The production build intentionally omits NEMOCLAW_CORPORATE_CA_B64. A
+      # successful final stage therefore proves its registry remediations and
+      # Hermes agent-install phase complete with the base image's default trust.
+      - name: Verify Hermes default-trust final image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --network none \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --pids-limit 64 \
+            --memory 256m \
+            --entrypoint /bin/sh \
+            nemoclaw-hermes-production -eu -c '
+              test "$NODE_EXTRA_CA_CERTS" = /usr/local/share/nemoclaw/corporate-ca.pem
+              test ! -e /usr/local/share/nemoclaw/corporate-ca.pem
+              test ! -L /usr/local/share/nemoclaw/corporate-ca.pem
+              test -x /usr/local/bin/hermes
+              node -e "const tls = require(\"node:tls\"); if (tls.rootCertificates.length === 0) process.exit(1); tls.createSecureContext()"
+              /opt/hermes/.venv/bin/python -I -c "import ssl; assert ssl.create_default_context().get_ca_certs()"
+            '
+
       - name: Scan completed Hermes image for node-tar
         id: node-tar-scan
         shell: bash

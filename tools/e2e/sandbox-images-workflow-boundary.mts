@@ -27,6 +27,7 @@ const HERMES_SETUP_BUILDX_ACTION =
   "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c";
 const HERMES_BUILD_PUSH_ACTION =
   "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a";
+const HERMES_DEFAULT_TRUST_STEP_NAME = "Verify Hermes default-trust final image";
 const HERMES_DOWNLOAD_ARTIFACT_ACTION =
   "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
 const HERMES_UPLOAD_ARTIFACT_ACTION =
@@ -468,6 +469,30 @@ function validateGuardedProductionBuild(
     ) {
       errors.push(
         "Hermes producer must build the production image exactly once with the canonical local-load Buildx action and OS/architecture-scoped GHA cache",
+      );
+    }
+    const defaultTrust = requireStep(errors, contract.jobName, job, HERMES_DEFAULT_TRUST_STEP_NAME);
+    const defaultTrustRun = normalizedShell(defaultTrust.run);
+    const requiredDefaultTrustFragments = [
+      "set -euo pipefail",
+      "docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges --pids-limit 64 --memory 256m --entrypoint /bin/sh nemoclaw-hermes-production -eu -c",
+      'test "$NODE_EXTRA_CA_CERTS" = /usr/local/share/nemoclaw/corporate-ca.pem',
+      "test ! -e /usr/local/share/nemoclaw/corporate-ca.pem",
+      "test ! -L /usr/local/share/nemoclaw/corporate-ca.pem",
+      "test -x /usr/local/bin/hermes",
+      'node -e "const tls = require(\\"node:tls\\"); if (tls.rootCertificates.length === 0) process.exit(1); tls.createSecureContext()"',
+      '/opt/hermes/.venv/bin/python -I -c "import ssl; assert ssl.create_default_context().get_ca_certs()"',
+    ];
+    if (
+      steps(job).filter((step) => step.name === HERMES_DEFAULT_TRUST_STEP_NAME).length !== 1 ||
+      defaultTrust.shell !== "bash" ||
+      requiredDefaultTrustFragments.some((fragment) => !defaultTrustRun.includes(fragment)) ||
+      stepIndex(job, action.name ?? "") >= stepIndex(job, HERMES_DEFAULT_TRUST_STEP_NAME) ||
+      stepIndex(job, HERMES_DEFAULT_TRUST_STEP_NAME) >=
+        stepIndex(job, "Scan completed Hermes image for node-tar")
+    ) {
+      errors.push(
+        "Hermes producer must prove the no-CA final image uses default trust before completed-image scans",
       );
     }
     return;

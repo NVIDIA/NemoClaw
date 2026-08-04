@@ -153,6 +153,27 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
+  it("requires the canonical no-CA Hermes build and its default-trust image proof", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const producer = imageWorkflow.jobs["build-hermes-sandbox-image"];
+    const build = producer.steps!.find((step) => step.name === "Build Hermes production image")!;
+    build.with!["build-args"] = `${build.with!["build-args"]}\nNEMOCLAW_CORPORATE_CA_B64=test`;
+    const proof = producer.steps!.find(
+      (step) => step.name === "Verify Hermes default-trust final image",
+    )!;
+    proof.run = proof.run!.replace(
+      "test ! -e /usr/local/share/nemoclaw/corporate-ca.pem",
+      "test -e /usr/local/share/nemoclaw/corporate-ca.pem",
+    );
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "Hermes producer must build the production image exactly once with the canonical local-load Buildx action and OS/architecture-scoped GHA cache",
+        "Hermes producer must prove the no-CA final image uses default trust before completed-image scans",
+      ]),
+    );
+  });
+
   it("rejects non-canonical Hermes Buildx action pins", () => {
     for (const stepName of ["Set up Docker Buildx", "Build Hermes production image"]) {
       const { imageWorkflow, mainWorkflow } = readWorkflows();
