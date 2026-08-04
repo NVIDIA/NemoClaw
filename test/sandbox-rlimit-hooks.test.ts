@@ -577,7 +577,10 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const stateLockPlan = path.join(tmp, "state-lock-plan.json");
     const managedGatewayControl = path.join(localLib, "managed-gateway-control.py");
     const startBin = path.join(tmp, "nemoclaw-start");
+    const managedStartupHold = path.join(tmp, "nemoclaw-managed-startup-hold");
+    const managedBootstrap = path.join(tmp, "nemoclaw-managed-bootstrap");
     const gatewayControl = path.join(tmp, "nemoclaw-gateway-control");
+    const entrypointEnvWrapper = path.join(localLib, "entrypoint-env-wrapper.sh");
     const bashrc = path.join(tmp, "bash.bashrc");
     const expectedRlimitShim = rlimitShim(rlimitLib);
 
@@ -608,7 +611,10 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(stateLockPlan, "{}\n");
       fs.writeFileSync(managedGatewayControl, "# managed gateway control fixture\n");
       fs.writeFileSync(startBin, "#!/usr/bin/env bash\n");
+      fs.writeFileSync(managedStartupHold, "#!/usr/bin/env bash\n");
+      fs.writeFileSync(managedBootstrap, "#!/usr/bin/env bash\n");
       fs.writeFileSync(gatewayControl, "#!/usr/bin/env sh\n");
+      fs.writeFileSync(entrypointEnvWrapper, "# entrypoint env wrapper fixture\n");
       fs.writeFileSync(bashrc, "# stale hermes bashrc\n");
       const fixtureOwner = fs.statSync(startBin);
       const replay = dockerRunCommandBetween(
@@ -617,7 +623,10 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         "# Wrap the hermes CLI",
       )
         .replaceAll("/usr/local/bin/nemoclaw-start", startBin)
+        .replaceAll("/usr/local/bin/nemoclaw-managed-startup-hold", managedStartupHold)
+        .replaceAll("/usr/local/bin/nemoclaw-managed-bootstrap", managedBootstrap)
         .replaceAll("/usr/local/bin/nemoclaw-gateway-control", gatewayControl)
+        .replaceAll("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", entrypointEnvWrapper)
         .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", initLib)
         .replaceAll("/usr/local/lib/nemoclaw/gateway-supervisor.sh", gatewaySupervisor)
         .replaceAll("/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py", validator)

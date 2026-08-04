@@ -36,11 +36,18 @@ afterEach(async () => {
 });
 
 describe("managed image registry transport", () => {
-  it("routes the default registry fetch through the bounded host proxy", async () => {
-    const tunnels: string[] = [];
-    const proxy = createServer();
-    proxy.on("connect", (request, socket) => {
-      tunnels.push(request.url ?? "");
+  it("forwards a plain HTTP registry fetch through the configured host proxy", async () => {
+    const requests: Array<{ host: string | undefined; method: string | undefined; url: string }> =
+      [];
+    const proxy = createServer((request, response) => {
+      requests.push({
+        host: request.headers.host,
+        method: request.method,
+        url: request.url ?? "",
+      });
+      response.end("proxied");
+    });
+    proxy.on("connect", (_request, socket) => {
       socket.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
     });
     const proxyPort = await listen(proxy);
@@ -52,9 +59,49 @@ describe("managed image registry transport", () => {
     });
 
     try {
-      await expect(session.fetchImpl("http://registry.invalid/v2/")).rejects.toThrow();
-      expect(tunnels).toEqual(["registry.invalid:80"]);
+      const response = await session.fetchImpl("http://registry.invalid/v2/");
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("proxied");
+      expect(requests).toEqual([
+        {
+          host: "registry.invalid",
+          method: "GET",
+          url: "http://registry.invalid/v2/",
+        },
+      ]);
     } finally {
+      await session.close();
+    }
+  });
+
+  it("cancels an HTTPS registry fetch after the proxy tunnel is established", async () => {
+    const tunnels: string[] = [];
+    const abortController = new AbortController();
+    let destroyTunnel: (() => void) | undefined;
+
+    const proxy = createServer();
+    proxy.on("connect", (request, socket) => {
+      tunnels.push(request.url ?? "");
+      destroyTunnel = () => socket.destroy();
+      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n", () => {
+        abortController.abort();
+      });
+    });
+    const proxyPort = await listen(proxy);
+    const session = createManagedImageRegistryFetchSession({
+      environment: {
+        HTTP_PROXY: `http://127.0.0.1:${proxyPort}`,
+        NEMOCLAW_CORPORATE_CA_IMPORT: "0",
+      },
+    });
+
+    try {
+      await expect(
+        session.fetchImpl("https://registry.invalid/v2/", { signal: abortController.signal }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(tunnels).toEqual(["registry.invalid:443"]);
+    } finally {
+      destroyTunnel?.();
       await session.close();
     }
   });

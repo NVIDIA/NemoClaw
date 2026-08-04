@@ -62,9 +62,10 @@ function defaultInput(env = process.env): RunAnalysisInput {
   };
 }
 
-function writeBootstrapUnavailableResult(
+function writeBootstrapResult(
   input: RunAnalysisInput,
   reason: string,
+  failed: boolean,
   options: Required<Pick<RunAnalysisOptions, "mkdir" | "writeFile" | "runGit">>,
 ): void {
   options.mkdir(input.outDir);
@@ -83,7 +84,9 @@ function writeBootstrapUnavailableResult(
     summary: {
       recommendation: "info_only",
       confidence: "low",
-      oneLine: `PR review advisor skipped: ${reason}`,
+      oneLine: failed
+        ? `PR review advisor failed: ${reason}`
+        : `PR review advisor skipped: ${reason}`,
     },
     findings: [],
     terminologyReview: {
@@ -96,7 +99,9 @@ function writeBootstrapUnavailableResult(
       {
         category: "Holistic Security Posture",
         verdict: "warning",
-        justification: "Advisor bootstrap skip; human review required.",
+        justification: failed
+          ? "Advisor bootstrap failed; human review required."
+          : "Advisor bootstrap skipped; human review required.",
       },
     ],
     sourceOfTruthReview: [],
@@ -124,7 +129,7 @@ function writeBootstrapUnavailableResult(
   };
   options.writeFile(
     path.join(input.outDir, "pr-review-advisor-result.json"),
-    `${JSON.stringify({ skipped: true, reason }, null, 2)}\n`,
+    `${JSON.stringify(failed ? { failed: true, reason } : { skipped: true, reason }, null, 2)}\n`,
   );
   options.writeFile(
     path.join(input.outDir, "pr-review-advisor-final-result.json"),
@@ -132,7 +137,7 @@ function writeBootstrapUnavailableResult(
   );
   options.writeFile(
     path.join(input.outDir, "pr-review-advisor-summary.md"),
-    `# ${input.title}\n\nAdvisor analysis skipped.\n\nReason: ${reason}\n`,
+    `# ${input.title}\n\nAdvisor analysis ${failed ? "failed" : "skipped"}.\n\nReason: ${reason}\n`,
   );
 }
 
@@ -203,9 +208,10 @@ export function runPrReviewAdvisorAnalysis(
 
   if (!fileExists(analyzePath)) {
     console.log("Skipping PR review advisor: trusted base checkout does not contain analyze.mts");
-    writeBootstrapUnavailableResult(
+    writeBootstrapResult(
       input,
       "Trusted base checkout does not contain tools/pr-review-advisor/analyze.mts; advisor will run after the implementation lands on the base branch.",
+      false,
       {
         mkdir,
         writeFile,
@@ -271,7 +277,26 @@ export function runPrReviewAdvisorAnalysis(
 
   appendEnv("PR_REVIEW_ADVISOR_SUPPORTED", "1");
   const code = runNode(analyzePath, analysisArgs, inheritedEnv, input.advisorWorkdir);
-  if (code !== 0) throw new RunAnalysisError(`analyze.mts exited with status ${code}`);
+  if (code !== 0) {
+    const reason = `analyze.mts exited with status ${code}`;
+    if (!fileExists(path.join(input.outDir, "pr-review-advisor-final-result.json"))) {
+      try {
+        const writeMissingFile = (file: string, text: string): void => {
+          if (!fileExists(file)) writeFile(file, text);
+        };
+        writeBootstrapResult(input, reason, true, {
+          mkdir,
+          writeFile: writeMissingFile,
+          runGit,
+        });
+      } catch (error) {
+        console.error(
+          `Could not complete missing PR review advisor failure artifacts: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    throw new RunAnalysisError(reason);
+  }
 }
 
 function main(): void {

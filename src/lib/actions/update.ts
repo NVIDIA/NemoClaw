@@ -201,13 +201,15 @@ function printStatus(input: {
   input.log(`  Maintained update path:   ${input.branding.maintainedUpdateCommand}`);
 }
 
-function updateInstallerEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+function updateInstallerEnv(env: NodeJS.ProcessEnv, forceCliReinstall: boolean): NodeJS.ProcessEnv {
   const next = { ...env };
   delete next.BASH_ENV;
   delete next.ENV;
   delete next.NEMOCLAW_FRESH;
   delete next.NEMOCLAW_INSTALL_REF;
   delete next.NEMOCLAW_INSTALL_TAG;
+  delete next.NEMOCLAW_REINSTALL_CLI;
+  if (forceCliReinstall) next.NEMOCLAW_REINSTALL_CLI = "1";
   return next;
 }
 
@@ -334,7 +336,7 @@ export async function runUpdateAction(
     "bash",
     ["-o", "pipefail", "-lc", NEMOCLAW_UPDATE_COMMAND],
     {
-      env: updateInstallerEnv(env),
+      env: updateInstallerEnv(env, options.fresh === true),
       stdio: "inherit",
     },
   );
