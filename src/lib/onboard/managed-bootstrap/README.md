@@ -85,9 +85,12 @@ and sandbox ID and then enter the destructive cutover. Post-cutover rollback
 publishes `rollback-authorized` before exact replacement deletion; pre-cutover
 staged cleanup removes only the exact prepared replacement without that journal
 transition. Commit publishes `shared-state-committed` before exact backup
-deletion. Cleanup is bound to full runtime IDs. Its private state root retains
-versioned, identity-addressed transaction records containing the provider and
-sandbox identities, plan and profile
+deletion. Cleanup is bound to full runtime IDs. Commit or rollback is claimed
+synchronously before asynchronous finalization begins. Repeated calls for the
+claimed outcome share its one pending result, while the opposite outcome remains
+invalid even if acknowledgement of the first finalization is lost. Its private
+state root retains versioned, identity-addressed transaction records containing
+the provider and sandbox identities, plan and profile
 fingerprints, exact original and replacement IDs, rollback target, and phase.
 Exact commit and cleanup receipts are durable terminal records, so adapter
 recreation does not depend on process-local transaction sets or tombstone maps.
@@ -102,6 +105,13 @@ commit atomically moves its pending manifest and backups into a durable receipt
 namespace, compacts that state to an exact commit receipt, and rejects rollback
 after a restart. The provider may retire that receipt only after it proves the
 external rollback backup is gone, leaving the next bootstrap attempt unblocked.
+The parser accepts the exact canonical schema-v1 manifest written before
+`bootstrapIdentity` was added only for the legacy null-identity path. It rejects
+additional fields, missing historical fields, and legacy state presented as
+identity-bound authority. Before rollback, the Docker adapter stops the
+replacement and copies its writable-layer commit receipt to a protected host
+path for verification. The immutable helper cannot obtain that receipt through
+`--volumes-from`, which exposes volumes but not the replacement writable layer.
 Direct identity lookup reconstructs one known transaction record, while managed
 create-lifecycle startup uses unfinished-record enumeration to ask the selected
 provider to reconcile every identity-addressed record before a new sandbox
