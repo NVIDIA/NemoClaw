@@ -107,7 +107,7 @@ async function expectStopStartRecovery(
   posture: "DOWN" | "UP",
   artifactPrefix: string,
 ): Promise<void> {
-  const stop = await host.command("nemoclaw", [SANDBOX_NAME, "stop"], {
+  const stop = await host.nemoclaw([SANDBOX_NAME, "stop"], {
     artifactName: `${artifactPrefix}-stop`,
     env: commandEnv(),
     redactionValues: [COMPATIBLE_API_KEY],
@@ -115,7 +115,7 @@ async function expectStopStartRecovery(
   });
   assertExitZero(stop, `stop Hermes with shields ${posture.toLowerCase()}`);
 
-  const start = await host.command("nemoclaw", [SANDBOX_NAME, "start"], {
+  const start = await host.nemoclaw([SANDBOX_NAME, "start"], {
     artifactName: `${artifactPrefix}-start`,
     env: commandEnv(),
     redactionValues: [COMPATIBLE_API_KEY],
@@ -123,7 +123,7 @@ async function expectStopStartRecovery(
   });
   assertExitZero(start, `start Hermes with shields ${posture.toLowerCase()}`);
 
-  const status = await host.command("nemoclaw", [SANDBOX_NAME, "status"], {
+  const status = await host.nemoclaw([SANDBOX_NAME, "status"], {
     artifactName: `${artifactPrefix}-status`,
     env: commandEnv(),
     redactionValues: [COMPATIBLE_API_KEY],

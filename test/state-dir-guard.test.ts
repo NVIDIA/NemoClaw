@@ -948,7 +948,6 @@ describe("state-dir-guard", () => {
     expect(restored.status, JSON.stringify(restored.lines)).toBe(0);
     expect(mode(credentialsDir)).toBe(0o710);
 
-    fs.chmodSync(credentialsDir, 0o700);
     fs.writeFileSync(path.join(credentialsDir, "token.json"), "secret\n", { mode: 0o600 });
 
     const nonemptyStartup = runGuard("startup", configDir);
