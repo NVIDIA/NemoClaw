@@ -15,7 +15,7 @@ import {
   readLlamaCppQualificationArtifact,
 } from "./llama-cpp-dgx-spark-qualification-helpers.ts";
 
-test("binds the exact owned llama.cpp candidate to protected NVIDIA DGX Spark evidence (#8260)", {
+test("binds the exact NemoClaw-built llama.cpp image candidate to protected NVIDIA DGX Spark evidence (#8260)", {
   meta: {
     e2ePhases: [
       "validate trusted activation and dispatch identity",

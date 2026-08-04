@@ -483,7 +483,7 @@ export const RISK_RULES: readonly RiskRule[] = [
   {
     id: LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID,
     summary:
-      "Protected DGX Spark qualification must build and prove the exact owned llama.cpp ARM64 candidate from declarative serving YAML.",
+      "Protected DGX Spark qualification must build and prove the exact NemoClaw-built llama.cpp ARM64 image candidate from declarative serving YAML.",
     tier: 3,
     requiredJobs: [LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID],
     invariants: [

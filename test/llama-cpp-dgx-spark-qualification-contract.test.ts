@@ -278,7 +278,7 @@ describe("llama.cpp DGX Spark qualification contract", () => {
       parseLlamaCppDgxSparkQualificationActivation(
         `contractVersion: 1\njobId: ${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID}\u0000\nplatform: linux/arm64\nprofile: dgx-spark-gb10-single\n`,
       ),
-    ).toThrow("activation YAML is unsafe");
+    ).toThrow("activation YAML is empty, exceeds 4096 bytes, or contains control characters");
   });
 
   it("accepts dormant and completely bound enabled plans compiled from YAML (#8260)", () => {
@@ -473,7 +473,7 @@ describe("llama.cpp DGX Spark qualification contract", () => {
     ).toThrow("surfaces are not disabled");
   });
 
-  it("accepts one sanitized receipt bound to exact workflow, image, model, and Spark evidence (#8260)", () => {
+  it("accepts one bounded receipt with only allowlisted workflow, image, model, and Spark evidence (#8260)", () => {
     expect(parseLlamaCppDgxSparkQualificationReceipt(receipt(), evidenceIdentity())).toEqual(
       receipt(),
     );

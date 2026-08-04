@@ -636,7 +636,9 @@ async function waitForRegistry(): Promise<void> {
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  throw new Error("isolated registry did not become ready");
+  throw new Error(
+    "isolated registry did not return a successful /v2/ response before the retry limit",
+  );
 }
 
 function dockerContainerOwner(name: string): string | null {

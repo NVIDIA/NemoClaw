@@ -285,7 +285,9 @@ function parseActivationYaml(source: string): unknown {
     source.length > 4096 ||
     /[\0-\x08\x0b\x0c\x0e-\x1f\x7f]/u.test(source)
   ) {
-    throw new Error("llama.cpp DGX Spark activation YAML is unsafe");
+    throw new Error(
+      "llama.cpp DGX Spark activation YAML is empty, exceeds 4096 bytes, or contains control characters",
+    );
   }
   const document = YAML.parseDocument(source, { strict: true, uniqueKeys: true });
   if (document.errors.length > 0 || document.warnings.length > 0) {
