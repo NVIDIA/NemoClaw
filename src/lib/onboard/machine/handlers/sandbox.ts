@@ -1000,14 +1000,10 @@ class SandboxStateFlow<
           `  [resume] Reusing ${webSearchLabelFor(provider)} configuration already baked into the sandbox.`,
         );
       }
-      const messagingAuthority = resolveMessagingPlanAuthority({
-        sandboxName: state.sandboxName ?? "",
-        registry: state.sandboxName
-          ? this.deps.getRegistrySandboxMessagingAuthority(state.sandboxName)
-          : { authoritative: false, plan: null },
-        stagedPlan: this.deps.readMessagingPlanFromEnv(),
-        sessionPlan: state.session?.messagingPlan ?? null,
-      });
+      const messagingAuthority = this.resolveSandboxMessagingAuthority(
+        state.sandboxName,
+        state.session,
+      );
       const messaging = reconcileReusedSandboxMessaging(
         messagingAuthority.plan,
         this.options.agent,
@@ -1808,13 +1804,23 @@ class SandboxStateFlow<
       : withDashboardAndGatewayLocks();
   }
 
-  private assertMessagingPlanTargetsSandbox(sandboxName: string, session: Session | null): void {
-    resolveMessagingPlanAuthority({
-      sandboxName,
-      registry: this.deps.getRegistrySandboxMessagingAuthority(sandboxName),
-      stagedPlan: this.deps.readMessagingPlanFromEnv(),
+  private resolveSandboxMessagingAuthority(
+    sandboxName: string | null,
+    session: Session | null,
+  ): ReturnType<typeof resolveMessagingPlanAuthority> {
+    const registry = sandboxName
+      ? this.deps.getRegistrySandboxMessagingAuthority(sandboxName)
+      : { authoritative: false as const, plan: null };
+    return resolveMessagingPlanAuthority({
+      sandboxName: sandboxName ?? "",
+      registry,
+      stagedPlan: registry.authoritative ? null : this.deps.readMessagingPlanFromEnv(),
       sessionPlan: session?.messagingPlan ?? null,
     });
+  }
+
+  private assertMessagingPlanTargetsSandbox(sandboxName: string, session: Session | null): void {
+    this.resolveSandboxMessagingAuthority(sandboxName, session);
   }
 
   private assertExistingMessagingPlanTargetsSandbox(

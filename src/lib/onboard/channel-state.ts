@@ -24,13 +24,18 @@ export function resolveDisabledChannels(
   sandboxName: string,
   deps?: DisabledChannelsDeps,
 ): string[] {
-  const session = (deps?.loadSession ?? onboardSession.loadSession)();
+  const registry = (deps?.getRegistryMessagingAuthority ?? getRegistrySandboxMessagingAuthority)(
+    sandboxName,
+  );
+  const session = registry.authoritative
+    ? null
+    : (deps?.loadSession ?? onboardSession.loadSession)();
   const result = resolveMessagingPlanAuthority({
     sandboxName,
-    registry: (deps?.getRegistryMessagingAuthority ?? getRegistrySandboxMessagingAuthority)(
-      sandboxName,
-    ),
-    stagedPlan: (deps?.readMessagingPlanFromEnv ?? readMessagingPlanFromEnv)(),
+    registry,
+    stagedPlan: registry.authoritative
+      ? null
+      : (deps?.readMessagingPlanFromEnv ?? readMessagingPlanFromEnv)(),
     sessionPlan: session?.sandboxName === sandboxName ? session.messagingPlan : null,
   });
   return getDisabledChannelsFromPlan(result.plan);

@@ -304,6 +304,31 @@ describe("reconcileSandboxMessaging plan authority", () => {
     expect(result).toEqual({ plan: registryPlan, selectedChannels: ["telegram"] });
   });
 
+  it("uses the registry plan without reading an invalid environment plan", async () => {
+    const registryPlan = telegramPlan(hashCredential("123456:registry-token") ?? "");
+    const deps = reconcileDeps([]);
+    deps.readMessagingPlanFromEnv.mockImplementation(() => {
+      throw new Error("invalid environment plan");
+    });
+    deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
+      authoritative: true,
+      plan: registryPlan,
+    });
+
+    const result = await reconcileSandboxMessaging({
+      resume: false,
+      session: null,
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.readMessagingPlanFromEnv).not.toHaveBeenCalled();
+    expect(deps.getRecordedMessagingChannelsForResume).not.toHaveBeenCalled();
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(result).toEqual({ plan: registryPlan, selectedChannels: ["telegram"] });
+  });
+
   it("uses the staged plan before a matching session plan during resume for a pending target", async () => {
     const sessionPlan = telegramPlan(hashCredential("123456:session-token") ?? "");
     const stagedPlan = slackPlan(hashCredential("staged-slack-token") ?? "");

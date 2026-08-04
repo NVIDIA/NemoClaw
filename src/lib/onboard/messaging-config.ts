@@ -29,19 +29,30 @@ export function getStoredMessagingChannelConfig(
   session: Session | null,
   deps: StoredMessagingChannelConfigDeps = defaultDeps,
 ): MessagingChannelConfig | null {
-  const stagedPlan = deps.readMessagingPlanFromEnv();
-  const resolvedSandboxName =
-    sandboxName ??
-    stagedPlan?.sandboxName ??
-    session?.sandboxName ??
-    session?.messagingPlan?.sandboxName ??
-    null;
+  const sessionSandboxName = session?.sandboxName ?? session?.messagingPlan?.sandboxName ?? null;
+  const initialSandboxName = sandboxName ?? sessionSandboxName;
+  let resolvedSandboxName = initialSandboxName;
+  let registryAuthority: RegistryMessagingAuthority = initialSandboxName
+    ? deps.getRegistryMessagingAuthority(initialSandboxName)
+    : { authoritative: false, plan: null };
+  let stagedPlan: SandboxMessagingPlan | null = null;
+  if (sandboxName === null || !registryAuthority.authoritative) {
+    try {
+      stagedPlan = deps.readMessagingPlanFromEnv();
+    } catch (error) {
+      if (!registryAuthority.authoritative) throw error;
+    }
+    resolvedSandboxName = sandboxName ?? stagedPlan?.sandboxName ?? sessionSandboxName;
+    if (resolvedSandboxName && resolvedSandboxName !== initialSandboxName) {
+      registryAuthority = deps.getRegistryMessagingAuthority(resolvedSandboxName);
+    }
+  }
   const sessionMatchesSandbox =
     !session?.sandboxName || !resolvedSandboxName || session.sandboxName === resolvedSandboxName;
   const authority = resolvedSandboxName
     ? resolveMessagingPlanAuthority({
         sandboxName: resolvedSandboxName,
-        registry: deps.getRegistryMessagingAuthority(resolvedSandboxName),
+        registry: registryAuthority,
         stagedPlan,
         sessionPlan: sessionMatchesSandbox ? (session?.messagingPlan ?? null) : null,
       })

@@ -548,7 +548,7 @@ describe("handleSandboxState", () => {
     );
   });
 
-  it("reuses a Ready sandbox with the registry messaging plan during resume", async () => {
+  it("reuses a Ready sandbox from the registry without reading an invalid environment plan", async () => {
     const registryPlan = makeMinimalPlan("saved", "openclaw", ["telegram"]);
     const session = createSession({
       sandboxName: "saved",
@@ -557,6 +557,9 @@ describe("handleSandboxState", () => {
     session.steps.sandbox.status = "complete";
     const skippedSession = createSession({ sandboxName: "saved-after-skip" });
     const recordStateSkipped = vi.fn(async () => skippedSession);
+    const readMessagingPlanFromEnv = vi.fn(() => {
+      throw new Error("invalid environment plan");
+    });
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
       getSandboxRegistryEntry: () => ({
@@ -571,6 +574,7 @@ describe("handleSandboxState", () => {
         hermesAuthMethod: null,
       }),
       getRegistrySandboxMessagingAuthority: () => ({ authoritative: true, plan: registryPlan }),
+      readMessagingPlanFromEnv,
       recordStateSkipped,
     });
 
@@ -580,6 +584,7 @@ describe("handleSandboxState", () => {
       sandboxName: "saved",
     });
 
+    expect(readMessagingPlanFromEnv).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(calls.updateSandbox).toHaveBeenCalledWith("saved", {
       pendingRouteReservation: undefined,
@@ -1205,16 +1210,18 @@ describe("handleSandboxState", () => {
     expect(writePlanToEnv).toHaveBeenCalledWith(registryPlan);
   });
 
-  it("uses the registry plan instead of a staged plan for an existing sandbox", async () => {
+  it("uses the registry plan without reading an invalid environment plan during sandbox creation", async () => {
     const registryPlan = makeMinimalPlan("my-assistant");
-    const rebuiltPlan = makeMinimalPlan("my-assistant", "openclaw", ["telegram"], ["telegram"]);
     const session = createSession({ sandboxName: "my-assistant", messagingPlan: registryPlan });
     const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
     const writePlanToEnv = vi.fn();
-    const { deps, getSession } = createDeps({
+    const readMessagingPlanFromEnv = vi.fn(() => {
+      throw new Error("invalid environment plan");
+    });
+    const { deps, calls, getSession } = createDeps({
       getRecordedMessagingChannelsForResume,
       writePlanToEnv,
-      readMessagingPlanFromEnv: () => rebuiltPlan,
+      readMessagingPlanFromEnv,
       getRegistrySandboxMessagingAuthority: () => ({ authoritative: true, plan: registryPlan }),
     });
 
@@ -1224,6 +1231,8 @@ describe("handleSandboxState", () => {
       sandboxName: "my-assistant",
     });
 
+    expect(readMessagingPlanFromEnv).not.toHaveBeenCalled();
+    expect(calls.createSandbox).toHaveBeenCalledOnce();
     expect(writePlanToEnv).toHaveBeenCalledWith(registryPlan);
     expect(getSession().messagingPlan).toEqual(registryPlan);
   });

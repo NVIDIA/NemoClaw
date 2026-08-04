@@ -60,6 +60,26 @@ describe("onboard channel state helpers", () => {
     ).toEqual(["discord"]);
   });
 
+  it("uses registry disabled channels without loading the saved session or environment plan", () => {
+    const registryPlan = sessionWithPlan("alpha", ["discord"]).messagingPlan;
+    const loadSession = vi.fn(() => {
+      throw new Error("invalid saved session");
+    });
+    const readMessagingPlanFromEnv = vi.fn(() => {
+      throw new Error("invalid environment plan");
+    });
+
+    expect(
+      resolveDisabledChannels("alpha", {
+        loadSession,
+        readMessagingPlanFromEnv,
+        getRegistryMessagingAuthority: () => ({ authoritative: true, plan: registryPlan }),
+      }),
+    ).toEqual(["discord"]);
+    expect(loadSession).not.toHaveBeenCalled();
+    expect(readMessagingPlanFromEnv).not.toHaveBeenCalled();
+  });
+
   it("uses the staged plan for a new sandbox", () => {
     expect(
       resolveDisabledChannels("alpha", {

@@ -74,6 +74,43 @@ describe("getStoredMessagingChannelConfig", () => {
     });
   });
 
+  it("ignores an invalid environment plan when the registry owns the sandbox", () => {
+    process.env.NEMOCLAW_MESSAGING_PLAN_B64 = "caller-plan";
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "demo" });
+    vi.spyOn(registry, "getHydratedMessagingPlanFromEntry").mockReturnValue(makePlan("demo", "0"));
+
+    expect(getStoredMessagingChannelConfig("demo", null)).toEqual({
+      TELEGRAM_REQUIRE_MENTION: "0",
+    });
+  });
+
+  it("uses registry config when implicit lookup encounters an invalid environment plan", () => {
+    process.env.NEMOCLAW_MESSAGING_PLAN_B64 = "caller-plan";
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "demo" });
+    vi.spyOn(registry, "getHydratedMessagingPlanFromEntry").mockReturnValue(makePlan("demo", "0"));
+
+    expect(getStoredMessagingChannelConfig(null, { sandboxName: "demo" } as Session)).toEqual({
+      TELEGRAM_REQUIRE_MENTION: "0",
+    });
+  });
+
+  it("uses a valid staged target during implicit lookup", () => {
+    const savedPlan = makePlan("saved", "0");
+    const stagedPlan = makePlan("pending", "1");
+
+    expect(
+      getStoredMessagingChannelConfig(null, { sandboxName: "saved" } as Session, {
+        readMessagingPlanFromEnv: () => stagedPlan,
+        getRegistryMessagingAuthority: (name) =>
+          name === "saved"
+            ? { authoritative: true, plan: savedPlan }
+            : { authoritative: false, plan: null },
+      }),
+    ).toEqual({
+      TELEGRAM_REQUIRE_MENTION: "1",
+    });
+  });
+
   it("uses staged config instead of conflicting session config for a pending sandbox", () => {
     const stagedPlan = makePlan("demo", "0");
     const sessionPlan = makePlan("demo", "1");

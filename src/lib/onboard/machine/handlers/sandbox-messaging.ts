@@ -417,15 +417,11 @@ async function selectionFromCompletedMessagingAuthority<Agent>(
 export async function reconcileSandboxMessaging<Agent>(
   options: ReconcileSandboxMessagingOptions<Agent>,
 ): Promise<SandboxMessagingSelection> {
-  const recordedChannels = options.deps.getRecordedMessagingChannelsForResume(
-    options.resume,
-    options.session,
-    options.sandboxName,
-  );
-  const envPlan = options.deps.readMessagingPlanFromEnv();
+  const registry = options.deps.getRegistrySandboxMessagingAuthority(options.sandboxName);
+  const envPlan = registry.authoritative ? null : options.deps.readMessagingPlanFromEnv();
   const authority = resolveMessagingPlanAuthority({
     sandboxName: options.sandboxName,
-    registry: options.deps.getRegistrySandboxMessagingAuthority(options.sandboxName),
+    registry,
     stagedPlan: envPlan,
     sessionPlan: options.session?.messagingPlan ?? null,
   });
@@ -446,6 +442,11 @@ export async function reconcileSandboxMessaging<Agent>(
     options,
   );
   if (completedSelection) return completedSelection;
+  const recordedChannels = options.deps.getRecordedMessagingChannelsForResume(
+    options.resume,
+    options.session,
+    options.sandboxName,
+  );
   if (recordedChannels) {
     return selectionFromRecordedChannels(
       recordedChannels,
