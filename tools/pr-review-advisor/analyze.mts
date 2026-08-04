@@ -300,6 +300,45 @@ export type DeterministicReviewContext = {
   github: GitHubReviewContext | null;
 };
 
+function preSessionFailureMetadata({
+  baseRef,
+  headRef,
+  headSha,
+  changedFiles,
+  reason,
+}: {
+  baseRef: string;
+  headRef: string;
+  headSha: string;
+  changedFiles: string[];
+  reason: string;
+}): ReviewMetadata {
+  return {
+    baseRef,
+    headRef,
+    headSha,
+    changedFiles,
+    deterministic: {
+      diffStat: "<diff stat unavailable>",
+      commits: [],
+      riskyAreas: [],
+      riskPlan: buildRiskPlan({ headSha, changedFiles }),
+      testDepth: { verdict: "unknown", rationale: reason, suggestedTests: [] },
+      staticTestInventory: {
+        changedTestFiles: [],
+        nearbyTestNames: [],
+        candidateExistingCoverage: [],
+      },
+      simplificationSignals: [],
+      workflowSignals: [],
+      localizedPatchSignals: [],
+      driftEvidence: [],
+      previousAdvisorReview: null,
+      github: null,
+    },
+  };
+}
+
 export type StaticTestInventory = {
   changedTestFiles: string[];
   nearbyTestNames: string[];
@@ -357,17 +396,46 @@ async function main(): Promise<void> {
   logProgress(
     `Starting PR review advisor analysis: base=${baseRef} head=${headRef} outDir=${outDir}`,
   );
-  const schema = readJson<Record<string, unknown>>(schemaPath);
-  const changedFiles = getChangedFiles(baseRef, headRef);
-  const headSha = getHeadSha(headRef);
-  const diff = getDiff(baseRef, headRef, 160000);
-  const deterministic = await collectDeterministicContext({
-    baseRef,
-    headRef,
-    headSha,
-    changedFiles,
-    diff,
-  });
+  let schema: Record<string, unknown>;
+  let changedFiles: string[] = [];
+  let headSha = "";
+  let diff: string;
+  let deterministic: DeterministicReviewContext;
+  try {
+    schema = readJson<Record<string, unknown>>(schemaPath);
+    changedFiles = getChangedFiles(baseRef, headRef);
+    headSha = getHeadSha(headRef);
+    diff = getDiff(baseRef, headRef);
+    deterministic = await collectDeterministicContext({
+      baseRef,
+      headRef,
+      headSha,
+      changedFiles,
+      diff,
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (!headSha) {
+      try {
+        headSha = getHeadSha(headRef);
+      } catch {
+        headSha = "unavailable";
+      }
+    }
+    try {
+      writeUnavailableArtifacts(
+        artifacts,
+        preSessionFailureMetadata({ baseRef, headRef, headSha, changedFiles, reason }),
+        reason,
+        true,
+      );
+    } catch (artifactError) {
+      console.error(
+        `Could not write PR review advisor pre-session failure artifacts: ${artifactError instanceof Error ? artifactError.message : String(artifactError)}`,
+      );
+    }
+    throw error;
+  }
   // GitHub context is fully materialized before the model session starts. Keep
   // repository credentials out of the environment inherited by read-only tools.
   delete process.env.GH_TOKEN;
@@ -1808,7 +1876,7 @@ export function buildPromptTurns({
           "pr_review_git_diff",
           diff || "<no diff available>",
           "diff",
-          "truncated git diff",
+          "complete git diff",
         ),
       ],
       prompt: `${stageAnalysisProtocol(

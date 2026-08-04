@@ -98,5 +98,6 @@ review and refresh both values after any new commit changes the PR head.
 
 - Run `npm run docs` for documentation or Fern changes.
 - Use normal repository hooks as the primary local verification.
-- If hooks were skipped or unavailable, run `npm run check:diff`.
+- If hooks were skipped or unavailable, use the fallback validation command in the current root
+  [`AGENTS.md`](../../../AGENTS.md#pr-requirements).
 - Run any additional focused checks required by the changed documentation surface.
