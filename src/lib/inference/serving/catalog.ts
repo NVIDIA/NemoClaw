@@ -10,6 +10,7 @@ import { parseDocument } from "yaml";
 import type {
   CompiledServingCatalog,
   CompiledServingCatalogPayload,
+  LlamaCppServingRecipe,
   ServingCatalogRegistries,
   ServingCatalogSchemas,
   ServingCatalogSource,
@@ -144,8 +145,6 @@ function definitionIdentity(
   return { kind, id };
 }
 
-type LlamaCppServingRecipe = Extract<ServingRecipe, { spec: { providerId: "llama-cpp-local" } }>;
-
 function isLlamaCppServingRecipe(recipe: ServingRecipe): recipe is LlamaCppServingRecipe {
   return recipe.spec.providerId === "llama-cpp-local";
 }
@@ -246,6 +245,11 @@ function validateRecipeSemantics(
     if (serve.limits.maxPromptTokens + serve.limits.maxCompletionTokens > serve.contextSize) {
       throw new ServingCatalogValidationError(
         `Recipe ${recipe.metadata.id} request token limits exceed serve.contextSize.`,
+      );
+    }
+    if (serve.microBatchSize > serve.batchSize) {
+      throw new ServingCatalogValidationError(
+        `Recipe ${recipe.metadata.id} serve.microBatchSize cannot exceed serve.batchSize.`,
       );
     }
     const agents = new Set<string>();
@@ -369,6 +373,23 @@ function canonicalReadinessComparison(comparison: ServingReadinessComparison): s
   });
 }
 
+function llamaCppReadinessComparisonMatches(
+  recipe: LlamaCppServingRecipe,
+  role: ServingReadinessObservationRole,
+  actual: ServingReadinessComparison,
+  expected: ServingReadinessComparison,
+): boolean {
+  if (role !== "architecture" || actual.operator !== "equals") {
+    return canonicalReadinessComparison(actual) === canonicalReadinessComparison(expected);
+  }
+  return (
+    typeof actual.value === "string" &&
+    recipe.spec.runtime.platforms.includes(
+      `linux/${actual.value}` as LlamaCppServingRecipe["spec"]["runtime"]["platforms"][number],
+    )
+  );
+}
+
 function validateLlamaCppPreset(
   recipe: LlamaCppServingRecipe,
   preset: ServingPreset,
@@ -412,7 +433,7 @@ function validateLlamaCppPreset(
     seenRoles.add(registered.role);
     if (
       !("comparison" in readiness) ||
-      canonicalReadinessComparison(readiness.comparison) !== canonicalReadinessComparison(expected)
+      !llamaCppReadinessComparisonMatches(recipe, registered.role, readiness.comparison, expected)
     ) {
       throw new ServingCatalogValidationError(
         `Preset ${preset.metadata.id} must require ${registered.role} matching llama.cpp recipe ${recipe.metadata.id}.`,
