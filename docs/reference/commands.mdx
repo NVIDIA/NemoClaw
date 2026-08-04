@@ -1028,9 +1028,10 @@ $$nemoclaw dcode-sandbox agent -n "Summarize this repository"
 $$nemoclaw dcode-sandbox agent -n "Summarize this repository" --json
 ```
 
-When post-command permission cleanup succeeds, the wrapper inherits the remote command's exit code so host-side pipelines can branch on it.
-If cleanup fails closed, the wrapper prints the command and cleanup statuses to `stderr` and returns the cleanup failure.
-For normal turns, streaming forwards whatever the in-sandbox agent command emits on `stdout`; the wrapper adds no buffering.
+For non-JSON OpenClaw turns, the wrapper captures `stdout` and `stderr` and replays them only after the in-sandbox command exits.
+The combined capture limit is `64 MiB`; exceeding it reports an OpenShell invocation error and exits with status `1`.
+If the captured output contains an embedded-fallback marker, the wrapper suppresses both streams, prints `recover`, `rebuild --yes`, and `onboard --resume` guidance to `stderr`, and exits with status `1`.
+Otherwise, it writes the captured output to the corresponding host streams and returns the OpenShell command's exit status.
 The in-sandbox NemoClaw plugin writes its registration banner to `stderr`, so the banner does not prefix the agent reply on `stdout` in non-JSON mode.
 When the top-level OpenClaw `--json` output flag is present, the wrapper uses a captured no-TTY path with a `64 MiB` buffer so `stdout` stays parseable JSON.
 Raw `stderr` is forwarded, and failed-tool or untrusted-child provenance found in the stdout JSON is appended to `stderr`.

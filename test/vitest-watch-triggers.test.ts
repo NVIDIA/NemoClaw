@@ -60,6 +60,9 @@ const OPAQUE_INPUTS = [
   "agents/hermes/mcp-config-transaction.py",
   "test/e2e/lib/ci-compatible-inference.sh",
   "scripts/setup-jetson.sh",
+  ".github/workflows/base-image.yaml",
+  "scripts/export-managed-base-image-contract.sh",
+  "scripts/checks/validate-managed-base-index.sh",
   "scripts/e2e/sanitize-trace-timing.py",
   "test/e2e/manifests/openclaw-nvidia.yaml",
   "test/e2e/docs/parity-inventory.generated.json",
@@ -123,6 +126,19 @@ describe("Vitest opaque-input watch triggers", () => {
       "test/e2e/support/hosted-inference.test.ts",
     ]);
     expect(triggeredBy("scripts/setup-jetson.sh")).toEqual(["test/setup-jetson.test.ts"]);
+    expect(triggeredBy(".github/workflows/base-image.yaml")).toEqual([
+      "test/managed-base-image-contract.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+      "test/dcode-base-image-workflow.test.ts",
+    ]);
+    expect(triggeredBy("scripts/export-managed-base-image-contract.sh")).toEqual([
+      "test/managed-base-image-contract.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+      "test/dcode-base-image-workflow.test.ts",
+    ]);
+    expect(triggeredBy("scripts/checks/validate-managed-base-index.sh")).toEqual([
+      "test/validate-managed-base-index.test.ts",
+    ]);
     expect(triggeredBy("scripts/e2e/sanitize-trace-timing.py")).toEqual([
       "test/e2e/support/e2e-scorecard.test.ts",
       "test/e2e/support/sanitize-trace-timing.test.ts",

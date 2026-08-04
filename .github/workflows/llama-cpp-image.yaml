@@ -1,0 +1,794 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Images / llama.cpp Server
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/llama-cpp-image.yaml"
+      - ".github/workflows/llama-cpp-image-attest.yaml"
+      - "managed-inference/images/llama-cpp/**"
+      - "managed-inference/recipes/llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml"
+      - "scripts/checks/export-llama-cpp-image-config.mts"
+      - "scripts/checks/verify-llama-cpp-image-publication-evidence.sh"
+      - "test/llama-cpp-image.test.ts"
+      - "test/llama-cpp-image-publication-evidence.test.ts"
+      - "test/llama-cpp-image-workflow.test.ts"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the declaratively enabled run-unique candidate from main
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  config:
+    name: Compile declarative image configuration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      backend_directory: ${{ steps.manifest.outputs.backend_directory }}
+      compiler_c: ${{ steps.manifest.outputs.compiler_c }}
+      compiler_cuda_host_cxx: ${{ steps.manifest.outputs.compiler_cuda_host_cxx }}
+      compiler_cxx: ${{ steps.manifest.outputs.compiler_cxx }}
+      cuda_dev_image: ${{ steps.manifest.outputs.cuda_dev_image }}
+      cuda_runtime_image: ${{ steps.manifest.outputs.cuda_runtime_image }}
+      image: ${{ steps.manifest.outputs.image }}
+      matrix: ${{ steps.manifest.outputs.matrix }}
+      publication_allowed_ref: ${{ steps.manifest.outputs.publication_allowed_ref }}
+      publication_anonymous_exact_digest_pull: ${{ steps.manifest.outputs.publication_anonymous_exact_digest_pull }}
+      publication_candidate_tag_template: ${{ steps.manifest.outputs.publication_candidate_tag_template }}
+      publication_enabled: ${{ steps.manifest.outputs.publication_enabled }}
+      publication_platforms: ${{ steps.manifest.outputs.publication_platforms }}
+      publication_provenance_predicate_type: ${{ steps.manifest.outputs.publication_provenance_predicate_type }}
+      publication_qualification: ${{ steps.manifest.outputs.publication_qualification }}
+      publication_receipt_retention_days: ${{ steps.manifest.outputs.publication_receipt_retention_days }}
+      publication_receipt_schema_version: ${{ steps.manifest.outputs.publication_receipt_schema_version }}
+      publication_repository: ${{ steps.manifest.outputs.publication_repository }}
+      publication_sbom_format: ${{ steps.manifest.outputs.publication_sbom_format }}
+      publication_signature_identity: ${{ steps.manifest.outputs.publication_signature_identity }}
+      publication_signature_issuer: ${{ steps.manifest.outputs.publication_signature_issuer }}
+      publication_signature_mode: ${{ steps.manifest.outputs.publication_signature_mode }}
+      publication_signature_transparency_log: ${{ steps.manifest.outputs.publication_signature_transparency_log }}
+      publication_trigger: ${{ steps.manifest.outputs.publication_trigger }}
+      publication_vulnerability_only_fixed: ${{ steps.manifest.outputs.publication_vulnerability_only_fixed }}
+      publication_vulnerability_scanner: ${{ steps.manifest.outputs.publication_vulnerability_scanner }}
+      publication_vulnerability_severity_cutoff: ${{ steps.manifest.outputs.publication_vulnerability_severity_cutoff }}
+      runtime_forbidden_paths: ${{ steps.manifest.outputs.runtime_forbidden_paths }}
+      runtime_gid: ${{ steps.manifest.outputs.runtime_gid }}
+      runtime_required_paths: ${{ steps.manifest.outputs.runtime_required_paths }}
+      runtime_uid: ${{ steps.manifest.outputs.runtime_uid }}
+      source_archive_sha256: ${{ steps.manifest.outputs.source_archive_sha256 }}
+      source_revision: ${{ steps.manifest.outputs.source_revision }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Install manifest compiler dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Compile image manifest
+        id: manifest
+        run: node --experimental-strip-types --no-warnings scripts/checks/export-llama-cpp-image-config.mts
+
+  pr-build:
+    name: Build native llama.cpp server (${{ matrix.arch }})
+    needs: config
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.config.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Validate native PR image build args
+        env:
+          C_COMPILER: ${{ needs.config.outputs.compiler_c }}
+          CUDA_ARCHITECTURES: ${{ matrix.cuda_architectures }}
+          CUDA_DEV_IMAGE: ${{ needs.config.outputs.cuda_dev_image }}
+          CUDA_HOST_CXX_COMPILER: ${{ needs.config.outputs.compiler_cuda_host_cxx }}
+          CUDA_RUNTIME_IMAGE: ${{ needs.config.outputs.cuda_runtime_image }}
+          CXX_COMPILER: ${{ needs.config.outputs.compiler_cxx }}
+          GGML_BACKEND_DIR: ${{ needs.config.outputs.backend_directory }}
+          LLAMA_CPP_ARCHIVE_SHA256: ${{ needs.config.outputs.source_archive_sha256 }}
+          LLAMA_CPP_REVISION: ${{ needs.config.outputs.source_revision }}
+          NEMOCLAW_REVISION: ${{ github.sha }}
+          RUNTIME_GID: ${{ needs.config.outputs.runtime_gid }}
+          RUNTIME_UID: ${{ needs.config.outputs.runtime_uid }}
+          TARGETPLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          scripts/check-production-build-args.sh \
+            --build-arg "C_COMPILER=${C_COMPILER}" \
+            --build-arg "CUDA_HOST_CXX_COMPILER=${CUDA_HOST_CXX_COMPILER}" \
+            --build-arg "CXX_COMPILER=${CXX_COMPILER}" \
+            --build-arg "CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES}" \
+            --build-arg "CUDA_DEV_IMAGE=${CUDA_DEV_IMAGE}" \
+            --build-arg "CUDA_RUNTIME_IMAGE=${CUDA_RUNTIME_IMAGE}" \
+            --build-arg "GGML_BACKEND_DIR=${GGML_BACKEND_DIR}" \
+            --build-arg "LLAMA_CPP_ARCHIVE_SHA256=${LLAMA_CPP_ARCHIVE_SHA256}" \
+            --build-arg "LLAMA_CPP_REVISION=${LLAMA_CPP_REVISION}" \
+            --build-arg "NEMOCLAW_REVISION=${NEMOCLAW_REVISION}" \
+            --build-arg "RUNTIME_GID=${RUNTIME_GID}" \
+            --build-arg "RUNTIME_UID=${RUNTIME_UID}" \
+            --build-arg "TARGETPLATFORM=${TARGETPLATFORM}"
+
+      - name: Build native PR image without publishing
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: managed-inference/images/llama-cpp
+          file: managed-inference/images/llama-cpp/Dockerfile
+          platforms: ${{ matrix.platform }}
+          load: true
+          push: false
+          tags: nemoclaw-llama-cpp-pr:${{ matrix.arch }}-${{ github.sha }}
+          build-args: |
+            C_COMPILER=${{ needs.config.outputs.compiler_c }}
+            CUDA_HOST_CXX_COMPILER=${{ needs.config.outputs.compiler_cuda_host_cxx }}
+            CXX_COMPILER=${{ needs.config.outputs.compiler_cxx }}
+            CUDA_ARCHITECTURES=${{ matrix.cuda_architectures }}
+            CUDA_DEV_IMAGE=${{ needs.config.outputs.cuda_dev_image }}
+            CUDA_RUNTIME_IMAGE=${{ needs.config.outputs.cuda_runtime_image }}
+            GGML_BACKEND_DIR=${{ needs.config.outputs.backend_directory }}
+            LLAMA_CPP_ARCHIVE_SHA256=${{ needs.config.outputs.source_archive_sha256 }}
+            LLAMA_CPP_REVISION=${{ needs.config.outputs.source_revision }}
+            NEMOCLAW_REVISION=${{ github.sha }}
+            RUNTIME_GID=${{ needs.config.outputs.runtime_gid }}
+            RUNTIME_UID=${{ needs.config.outputs.runtime_uid }}
+            TARGETPLATFORM=${{ matrix.platform }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=llama-cpp-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=llama-cpp-${{ matrix.arch }}
+
+      - name: Validate native PR image contract
+        shell: bash
+        env:
+          CUDA_ARCHITECTURES: ${{ matrix.cuda_architectures }}
+          CUDA_DEV_IMAGE: ${{ needs.config.outputs.cuda_dev_image }}
+          CUDA_RUNTIME_IMAGE: ${{ needs.config.outputs.cuda_runtime_image }}
+          IMAGE: nemoclaw-llama-cpp-pr:${{ matrix.arch }}-${{ github.sha }}
+          PLATFORM: ${{ matrix.platform }}
+          RUNTIME_FORBIDDEN_PATHS: ${{ needs.config.outputs.runtime_forbidden_paths }}
+          RUNTIME_GID: ${{ needs.config.outputs.runtime_gid }}
+          RUNTIME_REQUIRED_PATHS: ${{ needs.config.outputs.runtime_required_paths }}
+          RUNTIME_UID: ${{ needs.config.outputs.runtime_uid }}
+          SOURCE_ARCHIVE_SHA256: ${{ needs.config.outputs.source_archive_sha256 }}
+          SOURCE_REVISION: ${{ needs.config.outputs.source_revision }}
+        run: |
+          set -euo pipefail
+          image_json="$(docker image inspect "$IMAGE")"
+          if ! jq -e \
+            --arg archive "$SOURCE_ARCHIVE_SHA256" \
+            --arg architectures "$CUDA_ARCHITECTURES" \
+            --arg dev "$CUDA_DEV_IMAGE" \
+            --arg gid "$RUNTIME_GID" \
+            --arg platform "$PLATFORM" \
+            --arg revision "$GITHUB_SHA" \
+            --arg runtime "$CUDA_RUNTIME_IMAGE" \
+            --arg uid "$RUNTIME_UID" \
+            --arg upstream "$SOURCE_REVISION" '
+              length == 1
+              and .[0].Config.User == ($uid + ":" + $gid)
+              and .[0].Config.Entrypoint == ["/usr/local/bin/llama-server"]
+              and .[0].Config.Labels["org.opencontainers.image.revision"] == $revision
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.contract"] == "1"
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.component"] == "llama.cpp"
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.platform"] == $platform
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.upstream.revision"] == $upstream
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.upstream.archive-sha256"] == $archive
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.cuda.development-base"] == $dev
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.cuda.runtime-base"] == $runtime
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.cuda.architectures"] == $architectures
+            ' <<< "$image_json" >/dev/null; then
+            echo "ERROR: llama.cpp PR image identity does not match the declarative manifest." >&2
+            exit 1
+          fi
+
+          docker run --rm \
+            --network none \
+            --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
+            "$IMAGE" --version 2>&1 | tee "$RUNNER_TEMP/llama-server-version.txt"
+          grep -F "$SOURCE_REVISION" "$RUNNER_TEMP/llama-server-version.txt"
+
+          container_id="$(docker create "$IMAGE" --version)"
+          trap 'docker rm --force "$container_id" >/dev/null 2>&1 || true' EXIT
+          filesystem_paths="$(docker export "$container_id" | tar --list --file - | sed 's#^\./##')"
+          while IFS= read -r required_path; do
+            if ! grep --fixed-strings --line-regexp "${required_path#/}" <<< "$filesystem_paths" >/dev/null; then
+              echo "ERROR: required image path is missing: $required_path" >&2
+              exit 1
+            fi
+          done < <(jq --raw-output '.[]' <<< "$RUNTIME_REQUIRED_PATHS")
+          while IFS= read -r forbidden_path; do
+            if awk -v path="${forbidden_path#/}" \
+              '$0 == path || index($0, path "/") == 1 { found = 1 } END { exit !found }' \
+              <<< "$filesystem_paths"; then
+              echo "ERROR: forbidden image path is present: $forbidden_path" >&2
+              exit 1
+            fi
+          done < <(jq --raw-output '.[]' <<< "$RUNTIME_FORBIDDEN_PATHS")
+          docker rm "$container_id" >/dev/null
+          trap - EXIT
+
+  publication-gate:
+    name: Validate trusted publication request
+    needs: config
+    if: github.event_name == 'workflow_dispatch' && inputs.publish == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      candidate_tag: ${{ steps.gate.outputs.candidate_tag }}
+    steps:
+      - name: Enforce declarative publication boundary
+        id: gate
+        shell: bash
+        env:
+          ALLOWED_REF: ${{ needs.config.outputs.publication_allowed_ref }}
+          ANONYMOUS_EXACT_DIGEST_PULL: ${{ needs.config.outputs.publication_anonymous_exact_digest_pull }}
+          CANDIDATE_TAG_TEMPLATE: ${{ needs.config.outputs.publication_candidate_tag_template }}
+          IMAGE: ${{ needs.config.outputs.image }}
+          PLATFORMS: ${{ needs.config.outputs.publication_platforms }}
+          PUBLICATION_ENABLED: ${{ needs.config.outputs.publication_enabled }}
+          PUBLICATION_REPOSITORY: ${{ needs.config.outputs.publication_repository }}
+          PUBLICATION_TRIGGER: ${{ needs.config.outputs.publication_trigger }}
+          QUALIFICATION: ${{ needs.config.outputs.publication_qualification }}
+          RECEIPT_SCHEMA_VERSION: ${{ needs.config.outputs.publication_receipt_schema_version }}
+          SBOM_FORMAT: ${{ needs.config.outputs.publication_sbom_format }}
+          SIGNATURE_MODE: ${{ needs.config.outputs.publication_signature_mode }}
+          SIGNATURE_TRANSPARENCY_LOG: ${{ needs.config.outputs.publication_signature_transparency_log }}
+          SLSA_PREDICATE_TYPE: ${{ needs.config.outputs.publication_provenance_predicate_type }}
+          VULNERABILITY_ONLY_FIXED: ${{ needs.config.outputs.publication_vulnerability_only_fixed }}
+          VULNERABILITY_SCANNER: ${{ needs.config.outputs.publication_vulnerability_scanner }}
+          VULNERABILITY_SEVERITY_CUTOFF: ${{ needs.config.outputs.publication_vulnerability_severity_cutoff }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REPOSITORY" != "NVIDIA/NemoClaw" ] \
+            || [ "$GITHUB_REF" != "$ALLOWED_REF" ] \
+            || [ "$PUBLICATION_TRIGGER" != "workflow_dispatch" ] \
+            || [ "$PUBLICATION_ENABLED" != "true" ] \
+            || [ "$PUBLICATION_REPOSITORY" != "$IMAGE" ] \
+            || [ "$PLATFORMS" != '["linux/amd64","linux/arm64"]' ] \
+            || [ "$SBOM_FORMAT" != "spdx-json" ] \
+            || [ "$SLSA_PREDICATE_TYPE" != "https://slsa.dev/provenance/v1" ] \
+            || [ "$SIGNATURE_MODE" != "sigstore-keyless" ] \
+            || [ "$SIGNATURE_TRANSPARENCY_LOG" != "required" ] \
+            || [ "$VULNERABILITY_SCANNER" != "grype" ] \
+            || [ "$VULNERABILITY_SEVERITY_CUTOFF" != "high" ] \
+            || [ "$VULNERABILITY_ONLY_FIXED" != "true" ] \
+            || [ "$ANONYMOUS_EXACT_DIGEST_PULL" != "true" ] \
+            || [ "$RECEIPT_SCHEMA_VERSION" != "1" ]; then
+            echo "ERROR: repository, ref, trigger, enablement, image, or publication policy does not match the trusted contract." >&2
+            exit 1
+          fi
+          if ! jq -e '
+            (keys | sort) == ["environment", "gpu", "model", "platform", "probes", "profile", "required", "runner"]
+            and .required == true
+            and .profile == "dgx-spark-gb10-single"
+            and .platform == "linux/arm64"
+            and (.runner | type) == "string" and (.runner | length) > 0
+            and (.environment | type) == "string" and (.environment | length) > 0
+            and (.model.hostPath | type) == "string" and (.model.hostPath | startswith("/"))
+            and .gpu == {vendor:"nvidia", fullOffload:true, cpuFallback:"reject"}
+            and .probes == ["health", "completion"]
+          ' <<< "$QUALIFICATION" >/dev/null; then
+            echo "ERROR: protected DGX Spark qualification infrastructure is incomplete." >&2
+            exit 1
+          fi
+          candidate_tag="${CANDIDATE_TAG_TEMPLATE/\{runId\}/$GITHUB_RUN_ID}"
+          candidate_tag="${candidate_tag/\{runAttempt\}/$GITHUB_RUN_ATTEMPT}"
+          if [[ ! "$candidate_tag" =~ ^llama-cpp-candidate-[1-9][0-9]*-[1-9][0-9]*$ ]]; then
+            echo "ERROR: generated candidate tag is invalid." >&2
+            exit 1
+          fi
+          printf 'candidate_tag=%s\n' "$candidate_tag" >> "$GITHUB_OUTPUT"
+
+  publication-preflight:
+    name: Require public GHCR package
+    needs: [config, publication-gate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      packages: read
+    steps:
+      - name: Verify public package visibility before registry writes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ needs.config.outputs.publication_repository }}
+        run: |
+          set -euo pipefail
+          package_name="${IMAGE#ghcr.io/nvidia/}"
+          encoded_package_name="${package_name//\//%2F}"
+          package_api="/orgs/NVIDIA/packages/container/${encoded_package_name}"
+          if ! visibility="$(gh api "$package_api" --jq .visibility)"; then
+            echo "::error::GHCR package ${IMAGE} must exist with public visibility before publication. Bootstrap the package, set public visibility, then rerun this workflow."
+            exit 1
+          fi
+          if [ "$visibility" != "public" ]; then
+            echo "::error::GHCR package ${IMAGE} has ${visibility} visibility. Set public visibility, then rerun this workflow."
+            exit 1
+          fi
+
+  publish-platform:
+    name: Publish native llama.cpp digest (${{ matrix.arch }})
+    needs: [config, publication-gate, publication-preflight]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.config.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Validate trusted image build args
+        env:
+          C_COMPILER: ${{ needs.config.outputs.compiler_c }}
+          CUDA_ARCHITECTURES: ${{ matrix.cuda_architectures }}
+          CUDA_DEV_IMAGE: ${{ needs.config.outputs.cuda_dev_image }}
+          CUDA_HOST_CXX_COMPILER: ${{ needs.config.outputs.compiler_cuda_host_cxx }}
+          CUDA_RUNTIME_IMAGE: ${{ needs.config.outputs.cuda_runtime_image }}
+          CXX_COMPILER: ${{ needs.config.outputs.compiler_cxx }}
+          GGML_BACKEND_DIR: ${{ needs.config.outputs.backend_directory }}
+          LLAMA_CPP_ARCHIVE_SHA256: ${{ needs.config.outputs.source_archive_sha256 }}
+          LLAMA_CPP_REVISION: ${{ needs.config.outputs.source_revision }}
+          NEMOCLAW_REVISION: ${{ github.sha }}
+          RUNTIME_GID: ${{ needs.config.outputs.runtime_gid }}
+          RUNTIME_UID: ${{ needs.config.outputs.runtime_uid }}
+          TARGETPLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          scripts/check-production-build-args.sh \
+            --build-arg "C_COMPILER=${C_COMPILER}" \
+            --build-arg "CUDA_HOST_CXX_COMPILER=${CUDA_HOST_CXX_COMPILER}" \
+            --build-arg "CXX_COMPILER=${CXX_COMPILER}" \
+            --build-arg "CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES}" \
+            --build-arg "CUDA_DEV_IMAGE=${CUDA_DEV_IMAGE}" \
+            --build-arg "CUDA_RUNTIME_IMAGE=${CUDA_RUNTIME_IMAGE}" \
+            --build-arg "GGML_BACKEND_DIR=${GGML_BACKEND_DIR}" \
+            --build-arg "LLAMA_CPP_ARCHIVE_SHA256=${LLAMA_CPP_ARCHIVE_SHA256}" \
+            --build-arg "LLAMA_CPP_REVISION=${LLAMA_CPP_REVISION}" \
+            --build-arg "NEMOCLAW_REVISION=${NEMOCLAW_REVISION}" \
+            --build-arg "RUNTIME_GID=${RUNTIME_GID}" \
+            --build-arg "RUNTIME_UID=${RUNTIME_UID}" \
+            --build-arg "TARGETPLATFORM=${TARGETPLATFORM}"
+
+      - name: Publish exact platform digest
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: managed-inference/images/llama-cpp
+          file: managed-inference/images/llama-cpp/Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ needs.config.outputs.publication_repository }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            C_COMPILER=${{ needs.config.outputs.compiler_c }}
+            CUDA_HOST_CXX_COMPILER=${{ needs.config.outputs.compiler_cuda_host_cxx }}
+            CXX_COMPILER=${{ needs.config.outputs.compiler_cxx }}
+            CUDA_ARCHITECTURES=${{ matrix.cuda_architectures }}
+            CUDA_DEV_IMAGE=${{ needs.config.outputs.cuda_dev_image }}
+            CUDA_RUNTIME_IMAGE=${{ needs.config.outputs.cuda_runtime_image }}
+            GGML_BACKEND_DIR=${{ needs.config.outputs.backend_directory }}
+            LLAMA_CPP_ARCHIVE_SHA256=${{ needs.config.outputs.source_archive_sha256 }}
+            LLAMA_CPP_REVISION=${{ needs.config.outputs.source_revision }}
+            NEMOCLAW_REVISION=${{ github.sha }}
+            RUNTIME_GID=${{ needs.config.outputs.runtime_gid }}
+            RUNTIME_UID=${{ needs.config.outputs.runtime_uid }}
+            TARGETPLATFORM=${{ matrix.platform }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=llama-cpp-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=llama-cpp-${{ matrix.arch }}
+
+      - name: Export validated platform digest
+        env:
+          ARCH: ${{ matrix.arch }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ needs.config.outputs.publication_repository }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$ARCH" =~ ^(amd64|arm64)$ ]] \
+            || [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: native build did not return an exact platform digest." >&2
+            exit 1
+          fi
+          actual_platform="$(
+            docker buildx imagetools inspect "$IMAGE@$DIGEST" \
+              --format '{{.Image.OS}}/{{.Image.Architecture}}'
+          )"
+          if [ "$actual_platform" != "$PLATFORM" ]; then
+            echo "ERROR: published digest resolves to $actual_platform instead of $PLATFORM." >&2
+            exit 1
+          fi
+          install -d -m 0700 "$RUNNER_TEMP/llama-cpp-digests"
+          touch "$RUNNER_TEMP/llama-cpp-digests/${ARCH}-${DIGEST#sha256:}"
+
+      - name: Upload platform digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: llama-cpp-platform-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/llama-cpp-digests/*
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.config.outputs.publication_receipt_retention_days) }}
+
+  assemble-candidate:
+    name: Assemble exact llama.cpp candidate index
+    needs: [config, publication-gate, publish-platform]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      candidate_tag: ${{ steps.assemble.outputs.candidate_tag }}
+      digest: ${{ steps.assemble.outputs.digest }}
+      platform_digests: ${{ steps.assemble.outputs.platform_digests }}
+      reference: ${{ steps.assemble.outputs.reference }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Download platform digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: llama-cpp-platform-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}/llama-cpp-digests
+          merge-multiple: true
+
+      - name: Assemble candidate index and capture exact digest
+        id: assemble
+        shell: bash
+        env:
+          CANDIDATE_TAG: ${{ needs.publication-gate.outputs.candidate_tag }}
+          IMAGE: ${{ needs.config.outputs.publication_repository }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          digest_files=("$RUNNER_TEMP"/llama-cpp-digests/*)
+          if [ "${#digest_files[@]}" -ne 2 ]; then
+            echo "ERROR: expected exactly two native digest artifacts." >&2
+            exit 1
+          fi
+          declare -A platform_digests=()
+          sources=()
+          for digest_file in "${digest_files[@]}"; do
+            digest_artifact="$(basename "$digest_file")"
+            if [[ ! "$digest_artifact" =~ ^(amd64|arm64)-([0-9a-f]{64})$ ]]; then
+              echo "ERROR: malformed platform digest artifact: $digest_artifact" >&2
+              exit 1
+            fi
+            arch="${BASH_REMATCH[1]}"
+            digest="sha256:${BASH_REMATCH[2]}"
+            platform="linux/$arch"
+            if [ -n "${platform_digests[$platform]:-}" ]; then
+              echo "ERROR: duplicate platform digest for $platform." >&2
+              exit 1
+            fi
+            source="$IMAGE@$digest"
+            actual_platform="$(
+              docker buildx imagetools inspect "$source" \
+                --format '{{.Image.OS}}/{{.Image.Architecture}}'
+            )"
+            if [ "$actual_platform" != "$platform" ]; then
+              echo "ERROR: $source resolves to $actual_platform instead of $platform." >&2
+              exit 1
+            fi
+            platform_digests["$platform"]="$digest"
+            sources+=("$source")
+          done
+          if [ -z "${platform_digests[linux/amd64]:-}" ] \
+            || [ -z "${platform_digests[linux/arm64]:-}" ]; then
+            echo "ERROR: candidate requires one amd64 and one arm64 digest." >&2
+            exit 1
+          fi
+          docker buildx imagetools create --tag "$IMAGE:$CANDIDATE_TAG" "${sources[@]}"
+          digest="$(
+            docker buildx imagetools inspect "$IMAGE:$CANDIDATE_TAG" \
+              --format '{{.Manifest.Digest}}'
+          )"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: candidate index digest is invalid." >&2
+            exit 1
+          fi
+          reference="$IMAGE@$digest"
+          scripts/checks/validate-managed-base-index.sh \
+            "$reference" \
+            "${platform_digests[linux/amd64]}" \
+            "${platform_digests[linux/arm64]}"
+          install -d -m 0700 "$RUNNER_TEMP/llama-cpp-candidate"
+          docker buildx imagetools inspect "$reference" --raw \
+            > "$RUNNER_TEMP/llama-cpp-candidate/candidate-index.json"
+          actual_digest="sha256:$(sha256sum "$RUNNER_TEMP/llama-cpp-candidate/candidate-index.json" | awk '{print $1}')"
+          if [ "$actual_digest" != "$digest" ]; then
+            echo "ERROR: candidate index bytes do not match its registry digest." >&2
+            exit 1
+          fi
+          platform_json="$(
+            jq -cnS \
+              --arg amd64 "${platform_digests[linux/amd64]}" \
+              --arg arm64 "${platform_digests[linux/arm64]}" \
+              '{"linux/amd64":$amd64,"linux/arm64":$arm64}'
+          )"
+          printf '%s\n' "$platform_json" \
+            > "$RUNNER_TEMP/llama-cpp-candidate/platform-digests.json"
+          {
+            printf 'candidate_tag=%s\n' "$CANDIDATE_TAG"
+            printf 'digest=%s\n' "$digest"
+            printf 'platform_digests=%s\n' "$platform_json"
+            printf 'reference=%s\n' "$reference"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload candidate descriptors
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: llama-cpp-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/llama-cpp-candidate
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.config.outputs.publication_receipt_retention_days) }}
+
+  scan-candidate:
+    name: Scan llama.cpp digest (${{ matrix.arch }})
+    needs: [config, publication-gate, assemble-candidate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: arm64
+            platform: linux/arm64
+    steps:
+      - name: Authenticate to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Scan exact platform digest
+        id: scan
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        env:
+          GRYPE_PLATFORM: ${{ matrix.platform }}
+        with:
+          image: ${{ needs.config.outputs.publication_repository }}@${{ fromJSON(needs.assemble-candidate.outputs.platform_digests)[matrix.platform] }}
+          severity-cutoff: ${{ needs.config.outputs.publication_vulnerability_severity_cutoff }}
+          only-fixed: ${{ needs.config.outputs.publication_vulnerability_only_fixed }}
+          fail-build: true
+          output-format: json
+          output-file: scan-${{ matrix.arch }}.json
+        continue-on-error: true
+
+      - name: Upload vulnerability report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: llama-cpp-scan-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
+          path: scan-${{ matrix.arch }}.json
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.config.outputs.publication_receipt_retention_days) }}
+
+      - name: Enforce vulnerability policy
+        if: steps.scan.outcome != 'success'
+        env:
+          IMAGE: ${{ needs.config.outputs.publication_repository }}@${{ fromJSON(needs.assemble-candidate.outputs.platform_digests)[matrix.platform] }}
+        run: |
+          echo "ERROR: exact llama.cpp platform digest failed the declarative vulnerability policy: $IMAGE" >&2
+          exit 1
+
+  attest-candidate:
+    name: Attest and sign exact llama.cpp candidate
+    needs: [config, publication-gate, assemble-candidate, scan-candidate]
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    uses: ./.github/workflows/llama-cpp-image-attest.yaml
+    with:
+      candidate_tag: ${{ needs.assemble-candidate.outputs.candidate_tag }}
+      digest: ${{ needs.assemble-candidate.outputs.digest }}
+      image: ${{ needs.config.outputs.publication_repository }}
+      retention_days: ${{ fromJSON(needs.config.outputs.publication_receipt_retention_days) }}
+      sbom_format: ${{ needs.config.outputs.publication_sbom_format }}
+
+  verify-candidate:
+    name: Verify evidence and emit publication receipt
+    needs:
+      [
+        config,
+        publication-gate,
+        assemble-candidate,
+        scan-candidate,
+        attest-candidate,
+      ]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      attestations: read
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Authenticate to GHCR for cryptographic verification
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.2
+
+      - name: Download candidate descriptors
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: llama-cpp-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/llama-cpp-evidence
+
+      - name: Download vulnerability reports
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: llama-cpp-scan-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}/llama-cpp-evidence
+          merge-multiple: true
+
+      - name: Download SPDX SBOMs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: llama-cpp-sbom-*-${{ needs.assemble-candidate.outputs.candidate_tag }}
+          path: ${{ runner.temp }}/llama-cpp-evidence
+          merge-multiple: true
+
+      - name: Verify cryptographic evidence
+        shell: bash
+        env:
+          CERTIFICATE_IDENTITY: ${{ needs.config.outputs.publication_signature_identity }}
+          CERTIFICATE_OIDC_ISSUER: ${{ needs.config.outputs.publication_signature_issuer }}
+          EXPECTED_REF: ${{ needs.config.outputs.publication_allowed_ref }}
+          EXPECTED_REVISION: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+          PROVENANCE_PREDICATE_TYPE: ${{ needs.config.outputs.publication_provenance_predicate_type }}
+          REFERENCE: ${{ needs.assemble-candidate.outputs.reference }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/llama-cpp-evidence"
+          cosign verify \
+            --certificate-identity "$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer "$CERTIFICATE_OIDC_ISSUER" \
+            --output json \
+            "$REFERENCE" > "$evidence/signature-verification.raw.json"
+          jq -s '
+            if length == 1 and (.[0] | type) == "array" then .[0] else . end
+          ' "$evidence/signature-verification.raw.json" \
+            > "$evidence/signature-verification.json"
+          cosign verify-attestation \
+            --certificate-identity "$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer "$CERTIFICATE_OIDC_ISSUER" \
+            --type spdxjson \
+            --output json \
+            "$REFERENCE" > "$evidence/sbom-verification.raw.json"
+          jq -s '
+            if length == 1 and (.[0] | type) == "array" then .[0] else . end
+          ' "$evidence/sbom-verification.raw.json" \
+            > "$evidence/sbom-verification.json"
+          gh attestation verify "oci://$REFERENCE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/llama-cpp-image-attest.yaml" \
+            --source-ref "$EXPECTED_REF" \
+            --source-digest "$EXPECTED_REVISION" \
+            --predicate-type "$PROVENANCE_PREDICATE_TYPE" \
+            --format json > "$evidence/provenance-verification.json"
+
+      - name: Verify publication evidence and create receipt
+        shell: bash
+        env:
+          CERTIFICATE_IDENTITY: ${{ needs.config.outputs.publication_signature_identity }}
+          CERTIFICATE_OIDC_ISSUER: ${{ needs.config.outputs.publication_signature_issuer }}
+          CUDA_DEVELOPMENT_BASE: ${{ needs.config.outputs.cuda_dev_image }}
+          CUDA_RUNTIME_BASE: ${{ needs.config.outputs.cuda_runtime_image }}
+          REFERENCE: ${{ needs.assemble-candidate.outputs.reference }}
+          SOURCE_ARCHIVE_SHA256: ${{ needs.config.outputs.source_archive_sha256 }}
+          SOURCE_REVISION: ${{ needs.config.outputs.source_revision }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/llama-cpp-evidence"
+          scripts/checks/verify-llama-cpp-image-publication-evidence.sh \
+            --reference "$REFERENCE" \
+            --candidate-index "$evidence/candidate-index.json" \
+            --platform-digests "$evidence/platform-digests.json" \
+            --sbom-amd64 "$evidence/llama-cpp-sbom-amd64.spdx.json" \
+            --sbom-arm64 "$evidence/llama-cpp-sbom-arm64.spdx.json" \
+            --sbom-verification "$evidence/sbom-verification.json" \
+            --provenance-verification "$evidence/provenance-verification.json" \
+            --signature-verification "$evidence/signature-verification.json" \
+            --scan-amd64 "$evidence/scan-amd64.json" \
+            --scan-arm64 "$evidence/scan-arm64.json" \
+            --repository "$GITHUB_REPOSITORY" \
+            --revision "$GITHUB_SHA" \
+            --source-revision "$SOURCE_REVISION" \
+            --source-archive-sha256 "$SOURCE_ARCHIVE_SHA256" \
+            --cuda-development-base "$CUDA_DEVELOPMENT_BASE" \
+            --cuda-runtime-base "$CUDA_RUNTIME_BASE" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --certificate-identity "$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer "$CERTIFICATE_OIDC_ISSUER" \
+            --output "$evidence/publication-receipt.json"
+
+      - name: Upload canonical publication receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: llama-cpp-publication-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/llama-cpp-evidence/publication-receipt.json
+          if-no-files-found: error
+          retention-days: ${{ fromJSON(needs.config.outputs.publication_receipt_retention_days) }}
