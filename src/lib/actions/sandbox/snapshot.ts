@@ -102,7 +102,7 @@ const R = useColor ? "\x1b[0m" : "";
 
 export type SnapshotRequest =
   | { kind: "help" }
-  | { kind: "create"; name?: string }
+  | { kind: "create"; name?: string; keepFailed?: boolean }
   | { kind: "list" }
   | {
       kind: "restore";
@@ -659,6 +659,39 @@ function isSnapshotCreationAllowedByDcodeActivity(sandboxName: string): boolean 
   return false;
 }
 
+const KEEP_FAILED_SNAPSHOT_ENV = "NEMOCLAW_KEEP_FAILED_SNAPSHOT";
+
+function keepFailedSnapshotRequested(
+  request: Extract<SnapshotRequest, { kind: "create" }>,
+): boolean {
+  return request.keepFailed === true || process.env[KEEP_FAILED_SNAPSHOT_ENV] === "1";
+}
+
+function reportIncompleteSnapshot(
+  sandboxName: string,
+  backupPath: string,
+  keepFailed: boolean,
+): void {
+  if (keepFailed) {
+    console.error(`  Kept the incomplete snapshot at ${backupPath}.`);
+    console.error(
+      `  It is listed by \`${CLI_NAME} ${sandboxName} snapshot list\` and can be restored even though its capture did not complete.`,
+    );
+    return;
+  }
+  const removal = sandboxState.removeIncompleteSnapshot(backupPath);
+  if (removal.removed) {
+    console.error("  Removed the incomplete snapshot.");
+    return;
+  }
+  console.error(
+    `  The incomplete snapshot at '${backupPath}' could not be removed: ${removal.error}`,
+  );
+  console.error(
+    `  It is listed by \`${CLI_NAME} ${sandboxName} snapshot list\`. Remove it before the next restore.`,
+  );
+}
+
 function runSnapshotCreate(
   sandboxName: string,
   request: Extract<SnapshotRequest, { kind: "create" }>,
@@ -721,6 +754,10 @@ function runSnapshotCreate(
       if (result.failedFiles.length > 0) {
         console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
       }
+    }
+    const incompletePath = result.manifest?.backupPath;
+    if (incompletePath) {
+      reportIncompleteSnapshot(sandboxName, incompletePath, keepFailedSnapshotRequested(request));
     }
     snapshotExit(1);
   });

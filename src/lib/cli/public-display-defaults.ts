@@ -493,7 +493,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Sandbox Management",
       order: 7,
-      flags: "[--name <name>]",
+      flags: "[--name <name>] [--keep-failed]",
     },
   ],
   "sandbox:snapshot:list": [

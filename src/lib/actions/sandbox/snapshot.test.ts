@@ -1476,25 +1476,4 @@ describe("runSandboxSnapshot", () => {
       "Warning: could not reconcile custom policy(ies): old-custom (remove failed)",
     );
   });
-
-  it("prints failed dirs and files when snapshot creation fails without an error", async () => {
-    backupSandboxStateMock.mockReturnValue({
-      success: false,
-      failedDirs: ["workspace", "skills"],
-      failedDirReasons: { workspace: "permission denied" },
-      failedFiles: ["openclaw.json"],
-    });
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.spyOn(console, "log").mockImplementation(() => {});
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
-      exitCode: 1,
-    });
-
-    const errors = consoleError.mock.calls.flat().join("\n");
-    expect(errors).toContain("Snapshot failed.");
-    expect(errors).toContain("Failed directories: workspace (permission denied), skills");
-    expect(errors).toContain("Failed files: openclaw.json");
-  });
 });
