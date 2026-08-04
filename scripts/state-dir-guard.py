@@ -386,8 +386,8 @@ def parse_agent_state_lock_plan(payload: str) -> AgentStateLockPlan:
     )
 
     writable_subpaths = tuple(
-        _validate_writable_subpath(value, f"writableSubpaths[{index}]")
-        for index, value in enumerate(writable_values)
+        _validate_writable_subpath(entry, f"writableSubpaths[{index}]")
+        for index, entry in enumerate(writable_values)
     )
     for index, components in enumerate(writable_subpaths):
         if components[0] not in read_only_roots:
