@@ -14,8 +14,8 @@ const dockerfiles = [
 ] as const;
 
 describe("MCP tool discovery image contract", () => {
-  // source-shape-contract: security -- Exact manifest, lock, review, and installer bytes bind the shipped runtime to its reviewed dependency graph
-  it("pins the reviewed dependency graph and fail-closed audit boundary (#8177)", () => {
+  // source-shape-contract: security -- Exact package pins and the production audit command protect the shipped runtime graph
+  it("pins reviewed packages and retains the production audit command (#8177)", () => {
     const packageRoot = path.join(repoRoot, "tools", "mcp-tool-discovery-runtime");
     const manifest = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"));
     const lock = JSON.parse(fs.readFileSync(path.join(packageRoot, "package-lock.json"), "utf8"));

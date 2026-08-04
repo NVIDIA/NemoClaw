@@ -36,9 +36,9 @@ Each target commit descends from its outgoing commit. The target npm package int
 
 Concern ledger:
 
-- `MCP-AUDIT-1` — `fast-uri@3.1.4` accepts malformed or whitespace-smuggled authority introducers that can produce host confusion. Surface: executable AJV format validation in the bundled client. Resolution: pin `fast-uri@3.1.5`, which rejects the ambiguous forms and adds security regressions. Validation: exact lock metadata, `npm test`, bundle verification, and the production audit.
-- `MCP-AUDIT-2` — `hono@4.12.30` uses a regular expression that can cause excessive work for a large CORS request-header value. Surface: installed SDK server dependency; excluded from the client bundle. Resolution: pin `hono@4.12.34`, which replaces the split expression and adds a large-header regression. Validation: exact lock metadata, bundle-input exclusion, and the production audit.
-- `MCP-AUDIT-3` — `ip-address@10.2.0` accepts address forms whose classification can differ across parsers. Surface: installed SDK server dependency; excluded from the client bundle. Resolution: pin `ip-address@10.3.1`, which rejects leading-zero IPv4 octets and stacked subnet suffixes and adds IPv4/IPv6 regressions. Validation: exact lock metadata, bundle-input exclusion, and the production audit.
+- `MCP-AUDIT-1` — `fast-uri@3.1.4` accepts malformed or whitespace-smuggled authority introducers that can produce host confusion. Surface: executable AJV format validation in the bundled client. Resolution: pin `fast-uri@3.1.5`, which rejects the ambiguous forms and adds regression tests for them. Validation: exact lock metadata, `npm test`, bundle verification, and the production audit.
+- `MCP-AUDIT-2` — `hono@4.12.30` uses a regular expression that can cause excessive work for a large CORS request-header value. Surface: installed SDK server dependency; excluded from the client bundle. Resolution: pin `hono@4.12.34`, which replaces the split expression and adds a regression test for a large request header. Validation: exact lock metadata, bundle-input exclusion, and the production audit.
+- `MCP-AUDIT-3` — `ip-address@10.2.0` accepts address forms whose classification can differ across parsers. Surface: installed SDK server dependency; excluded from the client bundle. Resolution: pin `ip-address@10.3.1`, which rejects leading-zero IPv4 octets and stacked subnet suffixes and adds regression tests for IPv4 and IPv6 parsing. Validation: exact lock metadata, bundle-input exclusion, and the production audit.
 - `MCP-AUDIT-4` — A dependency-only remediation could weaken the image build's fail-closed audit boundary. Surface: `install-reviewed-runtime.sh`. Resolution: retain `npm audit --omit=dev --audit-level=low` and bind it with the reviewed manifest and lock in the image contract test. Validation: `test/mcp-tool-discovery-image-contract.test.ts`.
 
 ## 1.29.0 to 1.30.0 migration review
@@ -56,11 +56,11 @@ Concern ledger:
 
 ## `@hono/node-server` 2.0.12 review
 
-A current image build rejected the `2.0.11` registry attestation, while a later build accepted the same pinned archive. The installer correctly stopped on the rejection. Version `2.0.12` is the next patch release and remains within the SDK's declared `^1.19.9 || ^2.0.5` range. It keeps the MIT license, Node.js `>=20` engine, `hono@^4` peer dependency, package exports, and lack of install scripts.
+Version `2.0.12` is the next patch release and remains within the SDK's declared `^1.19.9 || ^2.0.5` range. It keeps the MIT license, Node.js `>=20` engine, `hono@^4` peer dependency, package exports, and lack of install scripts.
 
-The `v2.0.11..v2.0.12` source range contains three commits: a test transport replacement, a response-header fix for foreign `Response` objects, and the release commit. The server adapter remains outside NemoClaw's executable client bundle. The annotated tag and release commit are unsigned. The exact npm package has a verified registry signature and SLSA provenance tied to release commit `a813b6cdaa15baac3ead84e9e6ed5b72b2353c96`. Upstream Node.js 20, 22, and 24 checks, Windows checks, build checks, and the npm publication check passed.
+The `v2.0.11..v2.0.12` source range contains three commits: a test transport replacement, a response-header fix for foreign `Response` objects, and the release commit. The server adapter remains outside NemoClaw's executable client bundle. The annotated tag and release commit are unsigned. During the 2026-08-03 security refresh, `npm audit signatures` verified the exact package's registry signature and Supply-chain Levels for Software Artifacts (SLSA) provenance against release commit `a813b6cdaa15baac3ead84e9e6ed5b72b2353c96`. Upstream Node.js 20, 22, and 24 checks, Windows checks, build checks, and the npm publication check passed.
 
-The reviewed archive is `https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.12.tgz` with integrity `sha512-eWpQYr67tqJLeaSUl0Q+TquuYfUdTibpOJlUMV2FfUP7+KqCC5TufnwnlXL6mobZBJbGAYRd7ZvEBDCbLInjhg==`. Its current registry signature and provenance verify. This patch keeps the fail-closed signature check and adds no exception.
+The reviewed archive is `https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.12.tgz` with integrity `sha512-eWpQYr67tqJLeaSUl0Q+TquuYfUdTibpOJlUMV2FfUP7+KqCC5TufnwnlXL6mobZBJbGAYRd7ZvEBDCbLInjhg==`. This patch keeps the fail-closed signature check and adds no exception.
 
 ## Build and audit contract
 

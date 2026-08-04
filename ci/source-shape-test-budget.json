@@ -333,7 +333,7 @@
     },
     {
       "file": "test/mcp-tool-discovery-image-contract.test.ts",
-      "test": "pins the reviewed dependency graph and fail-closed audit boundary (#8177)",
+      "test": "pins reviewed packages and retains the production audit command (#8177)",
       "category": "security"
     },
     {
