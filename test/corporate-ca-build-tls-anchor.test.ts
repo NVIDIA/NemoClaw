@@ -125,6 +125,10 @@ describe("DCode corporate proxy CA cold-build trust (#8119)", () => {
       'RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then',
       finalArgIndex,
     );
+    const trustDirectoryIndex = finalDockerfile.indexOf(
+      "install -d -o root -g root -m 0755 /usr/local/share/nemoclaw",
+      finalDecodeIndex,
+    );
     const runtimeProbeIndex = finalDockerfile.indexOf(
       "mcp-tool-discovery-runtime",
       finalDecodeIndex,
@@ -134,12 +138,14 @@ describe("DCode corporate proxy CA cold-build trust (#8119)", () => {
       finalFromIndex,
       finalArgIndex,
       finalDecodeIndex,
+      trustDirectoryIndex,
       runtimeProbeIndex,
     })) {
       expect(index, name).toBeGreaterThan(-1);
     }
     expect(finalFromIndex).toBeLessThan(finalArgIndex);
     expect(finalArgIndex).toBeLessThan(finalDecodeIndex);
-    expect(finalDecodeIndex).toBeLessThan(runtimeProbeIndex);
+    expect(finalDecodeIndex).toBeLessThan(trustDirectoryIndex);
+    expect(trustDirectoryIndex).toBeLessThan(runtimeProbeIndex);
   });
 });
