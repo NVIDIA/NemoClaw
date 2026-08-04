@@ -186,15 +186,51 @@ does not select a driver-specific bootstrap implementation.
 
 The native entrypoint source is intentionally not compiled into production
 artifacts, and neither image-owned source is installed or selected in a runtime
-image yet. Production onboarding imports only the provider-neutral create
-contract; no activation path or registered provider imports or selects the
-driver-specific Docker candidate. The current image definitions do not package
-`nemoclaw-managed-startup-hold`,
-`managed-startup-image-runtime.cjs`, or the shared-state bootstrap modes consumed
-by the adapter. Later persistence and qualification slices must compile and
-verify the freestanding entrypoint for amd64 and arm64 in every agent image, add
-the image-runtime prerequisites, and provide the canonical durable authority
-store. The remaining integration and qualification work is tracked in
+image yet. The dormant managed-bootstrap image runtime composes the neutral
+managed-startup APIs with modes that consume the protected bootstrap envelope,
+bind shared-state authority to the exact attempt, publish an identity-bound
+completion, and authenticate that completion together with the ordinary startup
+handoff. The runtime retains the protected envelope through application and
+completion publication so the same attempt can retry after interruption;
+it atomically moves the authenticated inode into a root-private, same-filesystem
+claim before application. The canonical request is the producer-visible fixed
+bootstrap request path. If that path was replaced between authentication and
+rename, the runtime exclusively hard-links the displaced request back to the
+canonical path without overwriting a later request, then removes the private
+candidate. Restart recovery restores a protected, parseable displaced request
+when a crash leaves it private immediately after rename, and reconciles a crash
+between the later link and unlink steps only when the canonical and private
+paths are protected two-link aliases of the same inode. A second replacement makes restoration fail closed while
+preserving both the latest canonical request and the displaced private file.
+The private claim remains the sole retry authority after an application or
+completion-write failure; restart recovery resumes it without moving, deleting,
+or overwriting a newer canonical request. Success removes only the authenticated
+private claim. This protocol assumes the OCI writable layer supports same-device
+atomic rename and hard links, the producer writes only the canonical request
+path, one bootstrap consumer owns that path at a time, and container uid 0 is
+trusted. An unsupported cross-device rename or hard link fails closed before
+application and leaves request data intact; the protocol does not claim
+protection from a hostile root process that can mutate the private mode-0700
+namespace. The trampoline only sequences the authoritative Node
+recovery, apply, and verification modes; claim ownership and state transitions
+remain in that runtime. Bootstrap completion verification adds the
+bootstrap-identity receipt and then delegates the shared startup completion and
+environment checks. The dependency direction is one-way: this
+managed-bootstrap composition imports managed-startup, while managed-startup
+does not import managed-bootstrap.
+Production onboarding imports only the provider-neutral create contract; no
+activation path or registered provider imports or selects the driver-specific
+Docker candidate. The current image definitions still do not package
+`nemoclaw-managed-startup-hold`, `nemoclaw-managed-bootstrap`, or
+`managed-startup-image-runtime.cjs`; no production provider can invoke these
+modes yet. Later persistence and qualification slices must compile and verify
+the freestanding entrypoint for amd64 and arm64 in every agent image, add those
+artifacts and the image-runtime prerequisites, and provide the canonical durable
+authority store. Future image packaging must compile the composed
+`managed-bootstrap/image-runtime.ts` entrypoint as
+`managed-startup-image-runtime.cjs`; packaging the standalone managed-startup
+entrypoint does not provide the bootstrap modes. The remaining integration and
+qualification work is tracked in
 [epic #7744](https://github.com/NVIDIA/NemoClaw/issues/7744). Until that complete
 boundary passes protected E2E, every production runtime provider keeps
 bootstrap unsupported.
