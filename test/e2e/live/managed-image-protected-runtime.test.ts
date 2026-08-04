@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { PROTECTED_MANAGED_IMAGE_AGENTS } from "../../../scripts/checks/managed-image-protected-runtime-contract.ts";
 import { test } from "../fixtures/e2e-test.ts";
 import { qualifyProtectedManagedImageRuntime } from "./managed-image-protected-runtime-helpers.ts";
 
@@ -21,7 +22,7 @@ test("exact all-agent managed images retain GPU, Ollama, NIM, vLLM, rollback, an
     id: "managed-image-protected-runtime",
     boundary:
       "exact PR image digests for every managed agent through Docker/OpenShell GPU, host-local Ollama, NVIDIA NIM, vLLM, transactional rollback, and owned cleanup",
-    agents: ["openclaw", "hermes", "langchain-deepagents-code"],
+    agents: [...PROTECTED_MANAGED_IMAGE_AGENTS],
     providers: ["ollama", "nim", "vllm"],
     credentialBoundary:
       "The NVIDIA key is staged only to the host-side NGC login and NIM container; managed sandboxes receive only generated local route tokens.",

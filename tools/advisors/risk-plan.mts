@@ -66,6 +66,7 @@ const HERMES_MANAGED_POLICY_FILES = new Set([
 ]);
 const MANAGED_IMAGE_PROTECTED_RUNTIME_ACTIVATION =
   "ci/protected-managed-image-runtime-activation-v1.json";
+const MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID = "managed-image-protected-runtime" as const;
 const MANAGED_IMAGE_MULTIARCH_INPUTS = new Set([
   PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH,
   ".dockerignore",
@@ -105,7 +106,7 @@ export type RiskFamilyId =
   | "credentials-security"
   | "e2e-control-plane"
   | "managed-image-multiarch"
-  | "managed-image-protected-runtime"
+  | typeof MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID
   | "sandbox-boundary"
   | "focused-e2e";
 
@@ -449,11 +450,11 @@ export const RISK_RULES: readonly RiskRule[] = [
       MANAGED_IMAGE_MULTIARCH_INPUT_PREFIXES.some((prefix) => file.startsWith(prefix)),
   },
   {
-    id: "managed-image-protected-runtime",
+    id: MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID,
     summary:
       "Protected managed-image runtime qualification must retain real GPU access, host-local Ollama, NVIDIA NIM, vLLM, transactional rollback, and exact cleanup for every shipped agent.",
     tier: 3,
-    requiredJobs: ["managed-image-protected-runtime"],
+    requiredJobs: [MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID],
     invariants: [
       "OpenClaw, Hermes, and Deep Agents Code run from exact PR image digests through the production managed-bootstrap path",
       "real NVIDIA GPU access and host-local Ollama, NVIDIA NIM, and vLLM inference.local completions are all required",

@@ -6,6 +6,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveAgent } from "../../src/lib/agent/onboard.ts";
 import {
   type InitialSandboxPolicy,
@@ -152,7 +153,12 @@ export function parseManagedImageOpenShellE2eInputs(argv: readonly string[]): In
 }
 
 export function managedImageOpenShellBasePolicyPath(agent: ManagedStartupAgent): string {
-  return path.resolve(__dirname, "..", "..", ...MANAGED_AGENT_BASE_POLICIES[agent]);
+  return path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    ...MANAGED_AGENT_BASE_POLICIES[agent],
+  );
 }
 
 function commandResult(argv: readonly string[], env: NodeJS.ProcessEnv, timeout = 20_000) {
@@ -647,6 +653,7 @@ async function run(input: Inputs): Promise<void> {
   let ownedContainerId: string | null = null;
   let initialSandboxPolicy: InitialSandboxPolicy | null = null;
   let failureInjectionQualified = false;
+  let primaryError: unknown = null;
   try {
     await assertGatewayPortAvailable();
     const image = parseImmutableManifestReference(input.image);
@@ -712,9 +719,6 @@ async function run(input: Inputs): Promise<void> {
     });
     const prebuild = { createArgs: [...createArgs], imageRef: null, imageId: null };
     if (
-      prebuild.imageId !== null ||
-      prebuild.imageRef !== null ||
-      prebuild.createArgs.join("\0") !== createArgs.join("\0") ||
       launch.createArgv.filter((value) => value === "--from").length !== 1 ||
       launch.createArgv[launch.createArgv.indexOf("--from") + 1] !== input.image ||
       launch.createArgv.filter((value) => value === "--policy").length !== 1 ||
@@ -845,6 +849,9 @@ async function run(input: Inputs): Promise<void> {
     process.stdout.write(
       `OpenShell launched exact ${input.agent} PR image ${input.image} through the production managed-bootstrap sequence${gpuEnabled ? ` with real NVIDIA GPU access and ${input.localProvider} inference.local completion` : ""}.\n`,
     );
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
     const cleanupErrors: string[] = [];
     if (onboard) {
@@ -940,7 +947,13 @@ async function run(input: Inputs): Promise<void> {
     }
     fs.rmSync(stateDir, { recursive: true, force: true });
     if (cleanupErrors.length > 0) {
-      throw new Error(`managed-image OpenShell cleanup failed: ${cleanupErrors.join("; ")}`);
+      const cleanupDetail = `managed-image OpenShell cleanup failed: ${cleanupErrors.join("; ")}`;
+      if (primaryError) {
+        const primaryDetail =
+          primaryError instanceof Error ? primaryError.message : String(primaryError);
+        throw new Error(`${primaryDetail}; ${cleanupDetail}`, { cause: primaryError });
+      }
+      throw new Error(cleanupDetail);
     }
     if (failureInjectionQualified) {
       process.stdout.write(
@@ -950,7 +963,7 @@ async function run(input: Inputs): Promise<void> {
   }
 }
 
-if (require.main === module) {
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
   run(parseManagedImageOpenShellE2eInputs(process.argv.slice(2))).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

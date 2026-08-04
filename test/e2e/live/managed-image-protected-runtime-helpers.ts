@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -45,6 +46,8 @@ const VLLM_IMAGE =
 const VLLM_CONTAINER = "nemoclaw-managed-image-vllm-e2e";
 const NIM_CATALOG_MODEL = "nvidia/nemotron-3-nano-30b-a3b";
 const NIM_CONTAINER = "nemoclaw-managed-image-nim-e2e";
+const AGENT_QUALIFICATION_TIMEOUT_MS = 10 * 60_000;
+const ROLLBACK_QUALIFICATION_TIMEOUT_MS = 10 * 60_000;
 
 type RuntimeFixtures = Pick<E2ETargetFixtures, "artifacts" | "cleanup" | "host" | "progress">;
 
@@ -101,7 +104,7 @@ async function runExactImageQualification(
         NEMOCLAW_NON_INTERACTIVE: "1",
         ...extraEnv,
       },
-      timeoutMs: 20 * 60_000,
+      timeoutMs: AGENT_QUALIFICATION_TIMEOUT_MS,
     },
   );
   expect(result.exitCode, resultText(result)).toBe(0);
@@ -220,7 +223,7 @@ for _ in $(seq 1 300); do
   docker container inspect "${VLLM_CONTAINER}" --format '{{.State.Running}}' | grep -Fx true >/dev/null
   sleep 2
 done
-docker logs "${VLLM_CONTAINER}" >&2
+docker logs --tail 200 "${VLLM_CONTAINER}" >&2
 exit 1`,
     ],
     {
@@ -293,7 +296,7 @@ async function qualifyRollback(
       artifactName: `managed-image-${contract.agent}-bootstrap-rollback`,
       cwd: REPO_ROOT,
       env: { ...buildAvailabilityProbeEnv(), NEMOCLAW_NON_INTERACTIVE: "1" },
-      timeoutMs: 20 * 60_000,
+      timeoutMs: ROLLBACK_QUALIFICATION_TIMEOUT_MS,
     },
   );
   expect(result.exitCode, resultText(result)).toBe(0);
@@ -355,54 +358,66 @@ export async function qualifyProtectedManagedImageRuntime(
     await cleanupOllama(host, "cleanup-managed-image-ollama");
   });
 
-  const docker = await host.command("docker", ["info"], {
-    artifactName: "docker-info",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
-  });
-  expect(docker.exitCode, resultText(docker)).toBe(0);
-  const nvidia = await host.command("nvidia-smi", [], {
-    artifactName: "nvidia-smi",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 30_000,
-  });
-  assertNvidiaAvailable(nvidia, (message) => {
-    throw new Error(message ?? "protected GPU runner is unavailable");
-  });
+  let activePhase = "validate protected host runtime";
+  try {
+    const docker = await host.command("docker", ["info"], {
+      artifactName: "docker-info",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    });
+    expect(docker.exitCode, resultText(docker)).toBe(0);
+    const nvidia = await host.command("nvidia-smi", [], {
+      artifactName: "nvidia-smi",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    });
+    assertNvidiaAvailable(nvidia, (message) => {
+      throw new Error(message ?? "protected GPU runner is unavailable");
+    });
 
-  progress.phase("qualify all managed agents with GPU-backed Ollama");
-  const proxyToken = await startProtectedOllama(host);
-  await qualifyEveryAgent(host, contracts, "ollama", OLLAMA_MODEL, {
-    NEMOCLAW_OLLAMA_PROXY_TOKEN: proxyToken,
-  });
-  await proveOllamaGpuPlacement(host);
-  killStaleProxy();
-  await cleanupOllama(host, "stop-ollama-before-vllm");
+    activePhase = "qualify all managed agents with GPU-backed Ollama";
+    progress.phase("qualify all managed agents with GPU-backed Ollama");
+    const proxyToken = await startProtectedOllama(host);
+    await qualifyEveryAgent(host, contracts, "ollama", OLLAMA_MODEL, {
+      NEMOCLAW_OLLAMA_PROXY_TOKEN: proxyToken,
+    });
+    await proveOllamaGpuPlacement(host);
+    killStaleProxy();
+    await cleanupOllama(host, "stop-ollama-before-vllm");
 
-  progress.phase("qualify all managed agents with GPU-backed vLLM");
-  await startProtectedVllm(host);
-  await qualifyEveryAgent(host, contracts, "vllm", VLLM_MODEL, {
-    NEMOCLAW_VLLM_LOCAL_TOKEN: "protected-local-vllm",
-  });
-  await host.command("docker", ["rm", "-f", VLLM_CONTAINER], {
-    artifactName: "stop-vllm-before-nim",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 60_000,
-  });
+    activePhase = "qualify all managed agents with GPU-backed vLLM";
+    progress.phase("qualify all managed agents with GPU-backed vLLM");
+    await startProtectedVllm(host);
+    await qualifyEveryAgent(host, contracts, "vllm", VLLM_MODEL, {
+      NEMOCLAW_VLLM_LOCAL_TOKEN: randomBytes(24).toString("hex"),
+    });
+    await host.command("docker", ["rm", "-f", VLLM_CONTAINER], {
+      artifactName: "stop-vllm-before-nim",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    });
 
-  progress.phase("qualify all managed agents with GPU-backed NVIDIA NIM");
-  const nimModel = await startProtectedNim(host, ngcApiKey);
-  await qualifyEveryAgent(host, contracts, "nim", nimModel, {
-    NEMOCLAW_VLLM_LOCAL_TOKEN: "protected-local-nim",
-  });
-  stopNimContainerByName(NIM_CONTAINER, { silent: true });
+    activePhase = "qualify all managed agents with GPU-backed NVIDIA NIM";
+    progress.phase("qualify all managed agents with GPU-backed NVIDIA NIM");
+    const nimModel = await startProtectedNim(host, ngcApiKey);
+    await qualifyEveryAgent(host, contracts, "nim", nimModel, {
+      NEMOCLAW_VLLM_LOCAL_TOKEN: randomBytes(24).toString("hex"),
+    });
+    stopNimContainerByName(NIM_CONTAINER, { silent: true });
 
-  progress.phase("prove all-agent managed bootstrap rollback and exact cleanup");
-  await qualifyEveryRollback(host, contracts);
-  await proveOwnedRuntimeInventoryClean(host);
-  await artifacts.writeJson("managed-image-protected-runtime-summary.json", {
-    agents: PROTECTED_MANAGED_IMAGE_AGENTS,
-    providers: ["ollama", "vllm", "nim"],
-    rollbackAgents: PROTECTED_MANAGED_IMAGE_AGENTS,
-  });
+    activePhase = "prove all-agent managed bootstrap rollback and exact cleanup";
+    progress.phase("prove all-agent managed bootstrap rollback and exact cleanup");
+    await qualifyEveryRollback(host, contracts);
+    await proveOwnedRuntimeInventoryClean(host);
+    await artifacts.writeJson("managed-image-protected-runtime-summary.json", {
+      agents: PROTECTED_MANAGED_IMAGE_AGENTS,
+      providers: ["ollama", "vllm", "nim"],
+      rollbackAgents: PROTECTED_MANAGED_IMAGE_AGENTS,
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`protected managed-image runtime phase '${activePhase}' failed: ${detail}`, {
+      cause: error,
+    });
+  }
 }

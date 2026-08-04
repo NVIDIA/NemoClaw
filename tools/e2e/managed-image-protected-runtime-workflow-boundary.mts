@@ -148,10 +148,33 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   ]);
 
   const checkouts = workflowSteps.filter((step) => text(step.uses).startsWith("actions/checkout@"));
-  if (checkouts.length !== 1) errors.push(`${JOB_ID} must define exactly one candidate checkout`);
-  requireValues(errors, `${JOB_ID} candidate checkout`, record(checkouts[0]?.with), {
+  if (checkouts.length !== 2) {
+    errors.push(`${JOB_ID} must define one trusted checkout and one isolated candidate checkout`);
+  }
+  const trustedCheckout = requireStep(
+    errors,
+    workflowSteps,
+    "Checkout trusted protected runtime qualification",
+  );
+  const candidateCheckout = requireStep(
+    errors,
+    workflowSteps,
+    "Checkout exact protected runtime candidate source",
+  );
+  const checkoutAction = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
+  if (trustedCheckout?.uses !== checkoutAction || candidateCheckout?.uses !== checkoutAction) {
+    errors.push(`${JOB_ID} must pin both trusted and candidate checkouts`);
+  }
+  requireValues(errors, `${JOB_ID} trusted checkout`, record(trustedCheckout?.with), {
+    repository: "${{ github.repository }}",
+    ref: "${{ inputs.workflow_sha }}",
+    "fetch-depth": 0,
+    "persist-credentials": false,
+  });
+  requireValues(errors, `${JOB_ID} candidate checkout`, record(candidateCheckout?.with), {
     repository: "${{ inputs.checkout_repository || github.repository }}",
     ref: "${{ inputs.checkout_sha || github.sha }}",
+    path: ".candidate-runtime",
     "fetch-depth": 0,
     "persist-credentials": false,
   });
@@ -165,14 +188,26 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "buildkitd-config-inline": '[registry."localhost:5000"]\n  http = true\n',
   });
 
+  const prepare = requireStep(errors, workflowSteps, "Prepare E2E workspace");
+  if (
+    prepare?.uses !==
+    "NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75"
+  ) {
+    errors.push(`${JOB_ID} must pin the trusted E2E preparation action`);
+  }
+  if (prepare?.with !== undefined) {
+    errors.push(`${JOB_ID} must use the default CLI build`);
+  }
+
   const activation = requireStep(
     errors,
     workflowSteps,
     "Validate protected runtime activation contract",
   );
   requireFragments(errors, activation, [
-    `activation="${ACTIVATION_PATH}"`,
-    '[[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]]',
+    'candidate_root=".candidate-runtime"',
+    `activation="$candidate_root/${ACTIVATION_PATH}"`,
+    '[[ "$(git -C "$candidate_root" rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]]',
     '[[ -f "$activation" && ! -L "$activation" ]]',
     '(keys | sort) == ["agents", "contractVersion", "jobId", "platform", "providers"]',
     '.agents == ["openclaw", "hermes", "langchain-deepagents-code"]',
@@ -210,6 +245,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     '--revision "$CHECKOUT_SHA"',
     '--cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT"',
     "--platform linux/amd64",
+    '--source-root "$GITHUB_WORKSPACE/.candidate-runtime"',
     '--openclaw-base "$BASE_OPENCLAW"',
     '--hermes-base "$BASE_HERMES"',
     '--dcode-base "$BASE_DCODE"',
@@ -231,11 +267,21 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   requireValues(errors, `${JOB_ID} qualification env`, record(qualification?.env), {
     NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
   });
+  const secretBearingSteps = workflowSteps.filter(
+    (step) => record(step.env).NVIDIA_API_KEY !== undefined,
+  );
+  if (secretBearingSteps.length !== 1 || secretBearingSteps[0] !== qualification) {
+    errors.push(`${JOB_ID} must expose NVIDIA_API_KEY only to trusted qualification code`);
+  }
   requireFragments(errors, qualification, [
+    '[[ "$(git rev-parse --verify HEAD)" == "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA" ]]',
     'export OPENSHELL_BIN="$(command -v openshell)"',
     "tools/e2e/live-vitest-invocation.mts run",
     `--test-path ${LIVE_TEST_PATH}`,
   ]);
+  if (text(qualification?.run).includes(".candidate-runtime")) {
+    errors.push(`${JOB_ID} trusted qualification must not execute candidate checkout paths`);
+  }
 
   const cleanup = requireStep(errors, workflowSteps, "Remove isolated protected runtime registry");
   if (cleanup?.if !== "always()") errors.push(`${JOB_ID} registry cleanup must always run`);
@@ -259,6 +305,9 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   requireStep(errors, workflowSteps, "Clean up Docker auth");
   requireOrderedSteps(errors, workflowSteps, [
     "Validate protected runtime exact-head dispatch",
+    "Checkout trusted protected runtime qualification",
+    "Checkout exact protected runtime candidate source",
+    "Prepare E2E workspace",
     "Validate protected runtime activation contract",
     "Resolve exact amd64 runtime base images",
     "Start isolated protected runtime registry",

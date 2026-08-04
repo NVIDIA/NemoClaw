@@ -2099,10 +2099,20 @@ jobs:
             exit 1
           }
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout trusted protected runtime qualification
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout exact protected runtime candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ inputs.checkout_repository || github.repository }}
           ref: ${{ inputs.checkout_sha || github.sha }}
+          path: .candidate-runtime
           fetch-depth: 0
           persist-credentials: false
 
@@ -2118,8 +2128,6 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
-        with:
-          build-cli: "false"
 
       - name: Validate protected runtime activation contract
         env:
@@ -2127,8 +2135,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          activation="ci/protected-managed-image-runtime-activation-v1.json"
-          [[ "$(git rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || {
+          candidate_root=".candidate-runtime"
+          activation="$candidate_root/ci/protected-managed-image-runtime-activation-v1.json"
+          [[ "$(git -C "$candidate_root" rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || {
             echo "::error::Protected managed-image runtime checkout does not match the exact PR SHA" >&2
             exit 1
           }
@@ -2242,11 +2251,13 @@ jobs:
             --revision "$CHECKOUT_SHA" \
             --cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" \
             --platform linux/amd64 \
+            --source-root "$GITHUB_WORKSPACE/.candidate-runtime" \
             --openclaw-base "$BASE_OPENCLAW" \
             --hermes-base "$BASE_HERMES" \
             --dcode-base "$BASE_DCODE"
 
       - name: Install OpenShell CLI
+        shell: bash
         run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run all-agent GPU, local inference, rollback, and cleanup qualification
@@ -2255,6 +2266,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$(git rev-parse --verify HEAD)" == "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA" ]] || {
+            echo "::error::Protected NIM qualification must execute trusted workflow code" >&2
+            exit 1
+          }
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           export OPENSHELL_BIN="$(command -v openshell)"
           "$OPENSHELL_BIN" --version

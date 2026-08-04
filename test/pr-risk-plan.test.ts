@@ -344,6 +344,41 @@ describe("deterministic PR risk plan", () => {
     ).toBe(false);
   });
 
+  it.each([
+    ".github/workflows/managed-images.yaml",
+    ".dockerignore",
+    "Dockerfile",
+    "agents/hermes/Dockerfile",
+    "ci/npm-audit-exceptions.json",
+    "nemoclaw/src/index.ts",
+    "nemoclaw-blueprint/blueprint.yaml",
+    "scripts/checks/build-protected-managed-images.sh",
+    "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.99.json",
+    "src/lib/core/json-types.ts",
+    "src/lib/core/ports.ts",
+    "src/lib/messaging/runtime.ts",
+    "src/lib/onboard/managed-bootstrap/envelope.ts",
+    "src/lib/onboard/managed-startup/image-runtime.ts",
+    "src/lib/security/credential-hash.ts",
+    "src/lib/state/paths.ts",
+    "src/lib/state/state-root.ts",
+    "src/lib/tool-disclosure.ts",
+    "tools/mcp-tool-discovery-runtime/index.ts",
+    "tsconfig.runtime-preloads.json",
+  ])("selects protected multiarch qualification for managed-image input %s (#7744)", (file) => {
+    expect(riskPlanRequiredJobIds(plan(file))).toContain("managed-image-multiarch-startup");
+  });
+
+  it("does not select protected multiarch qualification for adjacent changes (#7744)", () => {
+    expect(
+      plan(
+        ".github/workflows/e2e.yaml",
+        "docs/get-started/quickstart.mdx",
+        "src/lib/onboard/provider-selection.ts",
+      ).families.some((family) => family.id === "managed-image-multiarch"),
+    ).toBe(false);
+  });
+
   it("keeps protected GPU and local-inference qualification activation-only until trusted (#7744)", () => {
     const activation = "ci/protected-managed-image-runtime-activation-v1.json";
     const result = plan(activation);

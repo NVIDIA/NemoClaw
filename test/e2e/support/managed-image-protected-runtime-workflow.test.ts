@@ -13,7 +13,10 @@ type WorkflowRecord = Record<string, unknown>;
 
 function workflow(): WorkflowRecord {
   return YAML.parse(
-    fs.readFileSync(path.resolve(__dirname, "../../../.github/workflows/e2e.yaml"), "utf8"),
+    fs.readFileSync(
+      path.resolve(import.meta.dirname, "../../../.github/workflows/e2e.yaml"),
+      "utf8",
+    ),
   ) as WorkflowRecord;
 }
 
@@ -22,9 +25,11 @@ function runtimeJob(value: WorkflowRecord): Record<string, unknown> {
 }
 
 function namedStep(value: WorkflowRecord, name: string): Record<string, unknown> {
-  return (runtimeJob(value).steps as Array<Record<string, unknown>>).find(
+  const step = (runtimeJob(value).steps as Array<Record<string, unknown>>).find(
     (step) => step.name === name,
-  )!;
+  );
+  expect(step, `workflow step '${name}' is missing`).toBeDefined();
+  return step as Record<string, unknown>;
 }
 
 describe("protected managed-image runtime workflow boundary", () => {
@@ -41,6 +46,40 @@ describe("protected managed-image runtime workflow boundary", () => {
 
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
       "managed-image-protected-runtime must not expose NVIDIA_API_KEY at job scope",
+    );
+  });
+
+  it("rejects checking candidate source out over trusted qualification code", () => {
+    const value = workflow();
+    const candidateCheckout = namedStep(value, "Checkout exact protected runtime candidate source");
+    (candidateCheckout.with as Record<string, unknown>).path = ".";
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime candidate checkout must bind path to .candidate-runtime",
+    );
+  });
+
+  it("rejects exposing the NGC credential to candidate-controlled steps", () => {
+    const value = workflow();
+    namedStep(value, "Validate protected runtime activation contract").env = {
+      NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
+    };
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime must expose NVIDIA_API_KEY only to trusted qualification code",
+    );
+  });
+
+  it("rejects executing candidate checkout paths in the secret-bearing qualification step", () => {
+    const value = workflow();
+    const qualification = namedStep(
+      value,
+      "Run all-agent GPU, local inference, rollback, and cleanup qualification",
+    );
+    qualification.run = `${String(qualification.run)}\nnpx tsx .candidate-runtime/leak.ts`;
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime trusted qualification must not execute candidate checkout paths",
     );
   });
 
