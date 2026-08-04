@@ -213,7 +213,10 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
     expect(captured?.classification.hints ?? []).toEqual([]);
   });
 
-  it("adds missing-startup guidance only for the exact captured env error (#7996)", () => {
+  it.each([
+    ["GNU", "/usr/bin/env: \u2018nemoclaw-start\u2019: No such file or directory\n"],
+    ["BusyBox", "env: can't execute 'nemoclaw-start': No such file or directory\n"],
+  ])("adds missing-startup guidance for the %s env error (#7996)", (_env, dockerLog) => {
     const dockerResponses = new Map([
       [
         "inspect --format {{json .State}} new-container-id",
@@ -233,9 +236,7 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
 
     const captured = captureDockerGpuPreRollbackDiagnostics("alpha", patchResult(), {
       dockerCapture,
-      dockerLogs: vi.fn(
-        () => "/usr/bin/env: \u2018nemoclaw-start\u2019: No such file or directory\n",
-      ),
+      dockerLogs: vi.fn(() => dockerLog),
       homedir: () => "relative-home",
       runCaptureOpenshell,
     });

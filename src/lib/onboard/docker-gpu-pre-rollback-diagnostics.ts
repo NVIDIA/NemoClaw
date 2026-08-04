@@ -28,7 +28,7 @@ import type {
 const PRE_ROLLBACK_DIAGNOSTICS_TOTAL_BUDGET_MS = 10_000;
 const PRE_ROLLBACK_DIAGNOSTICS_CALL_TIMEOUT_MS = 2_000;
 const MISSING_MANAGED_STARTUP_COMMAND_LOG =
-  /(?:^|\n)(?:\/usr\/bin\/)?env: [\u0027\u2018]?nemoclaw-start[\u0027\u2019]?: No such file or directory(?:\r?\n|$)/u;
+  /(?:^|\n)(?:\/usr\/bin\/)?env: (?:[\u0027\u2018]?nemoclaw-start[\u0027\u2019]?|can't execute 'nemoclaw-start'): No such file or directory(?:\r?\n|$)/u;
 
 type PreRollbackDiagnosticsDeps = Pick<
   DockerGpuPatchDeps,
