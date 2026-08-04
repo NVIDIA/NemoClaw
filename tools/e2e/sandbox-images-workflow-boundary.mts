@@ -904,14 +904,17 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
     testJob,
     "Run Hermes sandbox secret boundary test",
   );
-  const baseImageResolvers = steps(testJob).filter(
-    (step) => step.name === "Resolve Hermes base image",
+  const resolverSteps = steps(testJob).filter(
+    (step) =>
+      step.name === "Resolve Hermes base image" || step.uses === HERMES_BASE_IMAGE_RESOLVER_ACTION,
   );
-  const baseImageResolver = baseImageResolvers[0] ?? {};
+  const baseImageResolver = resolverSteps.find(
+    (step) => step.uses === HERMES_BASE_IMAGE_RESOLVER_ACTION,
+  );
   if (
-    baseImageResolvers.length !== 1 ||
-    baseImageResolver.uses !== HERMES_BASE_IMAGE_RESOLVER_ACTION ||
-    stepIndex(testJob, baseImageResolver.name ?? "") >=
+    resolverSteps.length !== 1 ||
+    baseImageResolver?.name !== "Resolve Hermes base image" ||
+    stepIndex(testJob, baseImageResolver?.name ?? "") >=
       stepIndex(testJob, secretBoundary.name ?? "")
   ) {
     errors.push(
