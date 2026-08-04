@@ -230,6 +230,7 @@ test("shields-config: live shields up/down locks config and detects drift", {
       "establish the mutable unified OpenClaw config",
       "lock config and workspace and inspect redaction",
       "detect host-root config drift and refuse resealing",
+      "re-seal a perms-only .config-hash drift instead of failing closed",
       "unlock shields and inspect the audit trail",
       "recover shields after a dead restore timer",
       "reject duplicate shields transitions",
@@ -246,6 +247,7 @@ test("shields-config: live shields up/down locks config and detects drift", {
       "documented nemoclaw exec doctor path preserves 2770/660 and gateway writes",
       "shields up locks config/workspace and config get redacts secrets",
       "host-root chmod-write-chmod tamper is detected as content drift",
+      "a perms-only .config-hash drift is re-sealed by shields up, not failed closed",
       "shields down restores mutable modes and records audit JSONL",
       "dead auto-restore timer inline recovery re-locks config and .config-hash",
       "double shields-up/down operations are rejected",
@@ -578,6 +580,55 @@ test("shields-config: live shields up/down locks config and detects drift", {
   expect(statusRestored.exitCode, resultText(statusRestored)).toBe(0);
   expect(statusRestored.stdout).toContain("Shields: UP (lockdown active)");
 
+  progress.phase("re-seal a perms-only .config-hash drift instead of failing closed");
+  // #7985/#4663: an in-sandbox privileged reconciler (OpenClaw gateway / doctor
+  // perm-normalization) can re-permission .config-hash back to group-writable
+  // AFTER the lock without touching its bytes. That perms-only drift must be
+  // re-sealed by the drift-repair `shields up`, not fail closed with
+  // "restart seal requires the exact shields-locked file posture" (which
+  // stranded host state UNLOCKED while the tree stayed root-locked). The bytes
+  // are untouched here, so it is a launderable perms drift, not content drift.
+  const permsDrift = await host.command(
+    "bash",
+    [
+      "-lc",
+      `docker exec -u 0 ${containerId} sh -c 'chattr -i ${CONFIG_HASH_PATH} 2>/dev/null || true; chmod 660 ${CONFIG_HASH_PATH} && chown sandbox:sandbox ${CONFIG_HASH_PATH}'`,
+    ],
+    {
+      artifactName: "phase-5c-config-hash-perms-only-drift",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(permsDrift.exitCode, resultText(permsDrift)).toBe(0);
+
+  const hashDrifted = await statPath(sandbox, CONFIG_HASH_PATH, "phase-5c-hash-perms-after-drift");
+  expect(hashDrifted).toMatchObject({ mode: "660", owner: "sandbox:sandbox" });
+
+  // The drift-repair relock reaches the OpenClaw config guard's already-locked
+  // branch. The fix re-seals the perms-only drift; before it, the guard
+  // rejected with config-not-locked and the relock could never re-apply.
+  const reseal = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
+    artifactName: "phase-5c-shields-up-reseals-perms-drift",
+  });
+  expect(reseal.exitCode, resultText(reseal)).toBe(0);
+  // The guard surfaces the self-heal so a relock/rebuild does not fix a
+  // perms-only drift invisibly (#4663 / #7985 observability).
+  expect(resultText(reseal)).toContain("Re-sealed a perms-only config-lock drift");
+
+  const hashResealed = await statPath(
+    sandbox,
+    CONFIG_HASH_PATH,
+    "phase-5c-hash-perms-after-reseal",
+  );
+  expect(hashResealed).toMatchObject({ mode: "444", owner: "root:root" });
+
+  const statusResealed = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
+    artifactName: "phase-5c-shields-status-after-reseal",
+  });
+  expect(statusResealed.exitCode, resultText(statusResealed)).toBe(0);
+  expect(statusResealed.stdout).toContain("Shields: UP (lockdown active)");
+
   progress.phase("unlock shields and inspect the audit trail");
   const shieldsDown = await runNemoclaw(
     host,
@@ -730,6 +781,7 @@ test("shields-config: live shields up/down locks config and detects drift", {
       shieldsUpLock: true,
       configGetRedaction: true,
       contentDriftDetection: true,
+      permsOnlyDriftReseal: true,
       shieldsDownMutableRestore: true,
       auditTrail: true,
       deadTimerInlineAutoRestore: true,

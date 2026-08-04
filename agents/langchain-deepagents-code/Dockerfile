@@ -15,13 +15,43 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_UPDATE_NOTIFIER=false
 WORKDIR /opt/mcp-tool-discovery-runtime
 COPY tools/mcp-tool-discovery-runtime/package.json tools/mcp-tool-discovery-runtime/package-lock.json tools/mcp-tool-discovery-runtime/tsconfig.json tools/mcp-tool-discovery-runtime/install-reviewed-runtime.sh tools/mcp-tool-discovery-runtime/*.ts ./
-RUN ./install-reviewed-runtime.sh \
+# hadolint ignore=DL4006
+RUN set -eu; \
+    if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
+      { printf '%s' "${NEMOCLAW_CORPORATE_CA_B64}" | base64 --decode > /tmp/nemoclaw-corporate-ca.pem 2>/dev/null \
+        || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 is not valid base64; expected a single-line base64-encoded PEM (#6210)" >&2; exit 1; }; }; \
+      node -e 'const fs = require("node:fs"); const { X509Certificate } = require("node:crypto"); const pem = fs.readFileSync(process.argv[1], "utf8"); const certificates = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g); if (!certificates?.length) process.exit(1); for (const certificate of certificates) if (!new X509Certificate(certificate).ca) process.exit(1);' /tmp/nemoclaw-corporate-ca.pem \
+        || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 did not decode to a bundle of valid X.509 certificates with basicConstraints CA:TRUE (#6210)" >&2; exit 1; }; \
+      export NODE_EXTRA_CA_CERTS=/tmp/nemoclaw-corporate-ca.pem; \
+    fi; \
+    ./install-reviewed-runtime.sh \
+    && rm -f /tmp/nemoclaw-corporate-ca.pem \
     && rm -f ./install-reviewed-runtime.sh
 RUN chown -R root:root /opt/mcp-tool-discovery-runtime \
     && chmod -R a=rX /opt/mcp-tool-discovery-runtime
 
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
+
+ARG NEMOCLAW_CORPORATE_CA_B64
+
+# Decode the host corporate-proxy CA (#6210) for runtime trust when onboarding
+# includes one in the final DCode image. Published or cached bases may not carry
+# the host-specific CA, so decode the argument again when it is present.
+# hadolint ignore=DL3059,DL4006
+RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
+      command -v base64 >/dev/null 2>&1 || { echo "[nemoclaw] base64 is required to decode NEMOCLAW_CORPORATE_CA_B64 but is not installed in the build image" >&2; exit 1; }; \
+      install -d -o root -g root -m 0755 /usr/local/share/nemoclaw \
+      && { printf '%s' "${NEMOCLAW_CORPORATE_CA_B64}" | base64 --decode > /tmp/nemoclaw-corporate-ca.decoded 2>/dev/null \
+           || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 is not valid base64; expected a single-line base64-encoded PEM (#6210)" >&2; exit 1; }; } \
+      && awk '/-----BEGIN CERTIFICATE-----/{f=1} f{print} /-----END CERTIFICATE-----/{f=0}' /tmp/nemoclaw-corporate-ca.decoded > /usr/local/share/nemoclaw/corporate-ca.pem \
+      && rm -f /tmp/nemoclaw-corporate-ca.decoded \
+      && { node -e 'const fs = require("node:fs"); const { X509Certificate } = require("node:crypto"); const pem = fs.readFileSync(process.argv[1], "utf8"); const certificates = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g); if (!certificates?.length) process.exit(1); for (const certificate of certificates) if (!new X509Certificate(certificate).ca) process.exit(1);' /usr/local/share/nemoclaw/corporate-ca.pem \
+           || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 did not decode to a bundle of valid X.509 certificates with basicConstraints CA:TRUE (#6210)" >&2; exit 1; }; } \
+      && chown root:root /usr/local/share/nemoclaw/corporate-ca.pem \
+      && chmod 0444 /usr/local/share/nemoclaw/corporate-ca.pem \
+      && echo "[nemoclaw] baked host corporate-proxy CA into DCode image trust (#6210)"; \
+    fi
 
 COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/
 RUN discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \

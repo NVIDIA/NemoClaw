@@ -2941,6 +2941,32 @@ def _verify_locked_files(
             )
 
 
+def _is_resealable_config_hash_permissions_drift(
+    snapshots: tuple[FileSnapshot, FileSnapshot], identity: Identity
+) -> bool:
+    config, hash_record = snapshots
+    blocking_flags = FS_IMMUTABLE_FL | FS_APPEND_FL
+    config_stays_locked = (
+        config.uid == identity.root_uid
+        and config.gid == identity.root_gid
+        and config.mode == 0o444
+        and not (
+            config.inode_flags is not None
+            and config.inode_flags & blocking_flags
+        )
+    )
+    hash_has_known_reconciler_posture = (
+        hash_record.uid == identity.sandbox_uid
+        and hash_record.gid == identity.sandbox_gid
+        and hash_record.mode == 0o660
+        and not (
+            hash_record.inode_flags is not None
+            and hash_record.inode_flags & blocking_flags
+        )
+    )
+    return config_stays_locked and hash_has_known_reconciler_posture
+
+
 def _verify_locked_posture(
     opened: OpenConfig,
     snapshots: tuple[FileSnapshot, FileSnapshot],
@@ -3266,6 +3292,12 @@ def _preflight_restart(opened: OpenConfig, identity: Identity) -> None:
 
 _hash_synthesized = False
 
+# Set True when a lock transition re-seals a perms-only drift on an already-locked
+# config (an in-sandbox reconciler re-permissioned a canonical file after the
+# lock: #4663 / #7985). Surfaced in the result JSON so the host can report the
+# self-heal instead of leaving it invisible.
+_resealed_drift = False
+
 
 def _write_hash_record(opened: OpenConfig, config_data: bytes, identity: Identity) -> None:
     digest = hashlib.sha256(config_data).hexdigest()
@@ -3426,6 +3458,7 @@ def _transition(
     *,
     quarantine_untrusted: bool = False,
 ) -> None:
+    global _resealed_drift
     if action == "lock":
         if _has_clamped_locked_dir_posture(opened, identity):
             pair = _snapshot_pair(opened)
@@ -3435,8 +3468,30 @@ def _transition(
             # A restart journal may still need rootfs-authenticated cleanup.
             _settle_pending_transaction_for_lock(opened, identity)
             pair = _snapshot_pair(opened)
-            _verify_locked_files(opened, pair, identity)
-            return
+            try:
+                _verify_locked_files(opened, pair, identity)
+                return
+            except GuardError as verify_error:
+                if verify_error.code != "config-not-locked" or not (
+                    _is_resealable_config_hash_permissions_drift(pair, identity)
+                ):
+                    raise
+                # The config remains root-owned and read-only, while the
+                # in-sandbox reconciler re-permissioned only .config-hash after
+                # the lock (#4663 / #7985). Re-seal below instead of failing
+                # closed: the root-owned directory prevents replacement, the
+                # config cannot be written, and _snapshot_pair verified that the
+                # sidecar still authenticates those config bytes.
+                # Source: the writer is the upstream OpenClaw in-sandbox gateway/
+                # doctor perm-normalizer, which NemoClaw does not own, so the
+                # correct fix is this host-authenticated relock re-seal, not a
+                # change to that writer, which this repo cannot make. Removal
+                # condition: delete this path once the lock is durably immutable on
+                # every platform (chattr +i, unavailable on overlayfs today) or the
+                # upstream reconciler stops re-permissioning an already-locked
+                # config; either fully closes the #4663 relock settle-window race
+                # that this branch only narrows.
+                _resealed_drift = True
         freeze_started = False
         try:
             freeze_started = True
@@ -4273,6 +4328,7 @@ def main(argv: list[str] | None = None) -> int:
                     "chattrApplied": False,
                     **({"configSha256": new_digest} if new_digest is not None else {}),
                     **({"hashSynthesized": True} if _hash_synthesized else {}),
+                    **({"resealedDrift": True} if _resealed_drift else {}),
                     **({"recovery": recovery} if recovery is not None else {}),
                     **(
                         {"originalLocked": original_locked}

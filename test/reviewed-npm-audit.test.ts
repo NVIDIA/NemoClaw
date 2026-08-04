@@ -28,9 +28,10 @@ const CONFIG = JSON.parse(
 ) as {
   severityThreshold: "info" | "low" | "moderate" | "high" | "critical";
 };
-const EMPTY_POLICY = parseAuditExceptionRegistry(
+const CHECKED_IN_POLICY = parseAuditExceptionRegistry(
   fs.readFileSync(path.join(REPO_ROOT, "ci", "npm-audit-exceptions.json"), "utf-8"),
 );
+const EMPTY_POLICY: AuditExceptionRegistry = { schemaVersion: 1, exceptions: [] };
 const NOW = new Date("2026-07-21T12:00:00Z");
 
 function withInstalledGraph(
@@ -119,7 +120,7 @@ function exceptionPolicy(
 
 describe("reviewed npm audit gate", () => {
   it("uses an empty exception registry by default", () => {
-    expect(EMPTY_POLICY).toEqual({ schemaVersion: 1, exceptions: [] });
+    expect(CHECKED_IN_POLICY).toEqual(EMPTY_POLICY);
   });
 
   it("fails at high or critical findings while retaining lower severities", () => {
