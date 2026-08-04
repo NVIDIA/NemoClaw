@@ -22,7 +22,13 @@ import path from "node:path";
 
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { canRun, runWrapper, WRAPPER } from "./helpers/hermes-wrapper-harness.ts";
+import {
+  ADAPTER,
+  canRun,
+  runWrapper,
+  WRAPPER,
+  writeSessionCoalescerFixture,
+} from "./helpers/hermes-wrapper-harness.ts";
 
 describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py one-shot routing", () => {
   // Surface a hard error in CI when the prerequisites are missing instead of
@@ -130,6 +136,48 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py one-shot routing", () 
       "--continue",
       "daily console",
     ]);
+  });
+
+  it("passes an upstream session boundary through without translating across it (#8011)", () => {
+    const argv = ["--continue", "daily", "gateway", "run", "-z", "Repeat the latest turn"];
+    const run = runWrapper(argv, {});
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual(argv);
+  });
+
+  it("passes a new upstream session boundary through without an adapter update (#8011)", () => {
+    const argv = ["--continue", "daily", "future-command", "-z", "Repeat the latest turn"];
+    const run = runWrapper(argv, {}, { sessionBoundaries: ["chat", "future-command"] });
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual(argv);
+  });
+
+  it("rejects an invalid upstream session boundary source before invoking Hermes (#8011)", () => {
+    const run = runWrapper(
+      ["--continue", "daily", "-z", "Repeat the latest turn"],
+      {},
+      {
+        sessionBoundaries: [],
+      },
+    );
+
+    expect(run.status).toBe(2);
+    expect(run.realInvoked).toBe(false);
+    expect(run.stderr).toContain("session-name coalescer boundary set is invalid");
+  });
+
+  it.each([
+    "--continue",
+    "--resume",
+  ])("passes an explicit managed command after %s through without translating across its boundary (#8011)", (flag) => {
+    const argv = [flag, "daily", "chat", "--oneshot", "Repeat the latest turn"];
+
+    const run = runWrapper(argv, {});
+
+    expect(run.status).toBe(0);
+    expect(run.realArgv).toEqual(argv);
   });
 
   it.each([
@@ -244,12 +292,15 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py one-shot routing", () 
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-session-"));
     try {
       fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
+      fs.copyFileSync(ADAPTER, path.join(dir, "hermes-cli-adapter-v1.json"));
+      writeSessionCoalescerFixture(dir);
       fs.chmodSync(path.join(dir, "hermes"), 0o755);
       const statePath = path.join(dir, "sessions.json");
       fs.writeFileSync(
         path.join(dir, "hermes.real"),
         [
           "#!/usr/bin/env bash",
+          'if [ "${NEMOCLAW_HERMES_ADAPTER_VERSION_PROBE:-}" = "1" ]; then printf "Hermes Agent v0.19.0\\n"; exit 0; fi',
           'if [ "$1" = "-z" ]; then printf "seed:%s\\n" "$2" > "$NEMOCLAW_FAKE_SESSIONS"; exit 0; fi',
           'if [ "$1" = "chat" ] && [ "$2" = "--query" ] && [ "$4" = "--quiet" ] && { [ "$5" = "--resume" ] || [ "$5" = "--continue" ]; } && [ "$6" = "seed" ]; then printf "seed:%s\\n" "$3" >> "$NEMOCLAW_FAKE_SESSIONS"; exit 0; fi',
           "exit 3",
