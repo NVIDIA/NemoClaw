@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
 import {
   type DetectInferenceProviderHostStateDeps,
   detectInferenceProviderHostState,
@@ -195,6 +196,27 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.winOllamaInstalledPath).toMatch(/ollama\.exe$/);
     expect(logs.join("\n")).toContain("Ollama is running on both WSL and the Windows host");
     expect(deps.getWindowsHostOllamaDockerRequirement).toHaveBeenCalledWith("docker-desktop");
+  });
+
+  it("keeps the WSL-local install entry when the container runtime cannot reach the Windows host (#8199)", () => {
+    const deps = buildDeps({
+      isWsl: vi.fn(() => true),
+      getContainerRuntime: vi.fn<DetectInferenceProviderHostStateDeps["getContainerRuntime"]>(
+        () => "docker",
+      ),
+      getWindowsHostOllamaDockerRequirement: vi.fn(getWindowsHostOllamaDockerRequirement),
+      detectWindowsHostOllama: vi.fn(() => ({
+        installed: true,
+        installedPath: "C:\\Users\\me\\AppData\\Local\\Programs\\Ollama\\ollama.exe",
+        loopbackOnly: false,
+      })),
+    });
+
+    const state = detectWithDeps(deps);
+
+    expect(state.hasWindowsOllama).toBe(true);
+    expect(state.ollamaInstallMenu.entry?.key).toBe("install-ollama");
+    expect(state.ollamaInstallMenu.entry?.label).toBe("Install Ollama (WSL Linux)");
   });
 
   it("passes injected platform and env through WSL detection", () => {

@@ -220,6 +220,7 @@ export function detectInferenceProviderHostState(
     hasOllama,
     ollamaRunning,
     hasWindowsOllama,
+    windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
     ollamaHost,
     platform,
     isWsl,
