@@ -192,8 +192,9 @@ bind shared-state authority to the exact attempt, publish an identity-bound
 completion, and authenticate that completion together with the ordinary startup
 handoff. The runtime retains the protected envelope through application and
 completion publication so the same exact attempt can retry after interruption;
-it removes the request only after publishing completion. The managed-startup
-runtime itself does not import the bootstrap layer.
+it revalidates the same root-owned file identity before completion and again
+immediately before removing the request. The managed-startup runtime itself does
+not import the bootstrap layer.
 Production onboarding imports only the provider-neutral create contract; no
 activation path or registered provider imports or selects the driver-specific
 Docker candidate. The current image definitions still do not package

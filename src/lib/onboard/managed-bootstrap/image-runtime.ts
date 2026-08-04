@@ -36,6 +36,11 @@ export interface ManagedBootstrapImageRuntimeExpected {
   readonly bootstrapIdentity: string;
 }
 
+interface ManagedBootstrapEnvelopeSnapshot {
+  readonly request: ManagedStartupRootApplyRequest;
+  readonly stat: fs.BigIntStats;
+}
+
 function fail(message: string): never {
   throw new ManagedStartupImageRuntimeError(message);
 }
@@ -77,10 +82,10 @@ function readExpected(argv: readonly string[]): ManagedBootstrapImageRuntimeExpe
   };
 }
 
-export function readManagedBootstrapEnvelope(
+function readManagedBootstrapEnvelopeSnapshot(
   expected: ManagedBootstrapImageRuntimeExpected,
   requestFile: string = MANAGED_BOOTSTRAP_REQUEST_FILE,
-): ManagedStartupRootApplyRequest {
+): ManagedBootstrapEnvelopeSnapshot {
   requireRoot();
   const { bytes, stat } = readStableRegularFileSnapshot(
     requestFile,
@@ -102,7 +107,40 @@ export function readManagedBootstrapEnvelope(
   ) {
     fail("managed bootstrap envelope identity does not match the replacement");
   }
-  return envelope.rootApplyRequest;
+  return { request: envelope.rootApplyRequest, stat };
+}
+
+export function readManagedBootstrapEnvelope(
+  expected: ManagedBootstrapImageRuntimeExpected,
+  requestFile: string = MANAGED_BOOTSTRAP_REQUEST_FILE,
+): ManagedStartupRootApplyRequest {
+  return readManagedBootstrapEnvelopeSnapshot(expected, requestFile).request;
+}
+
+function requireManagedBootstrapEnvelopeIdentity(
+  requestFile: string,
+  expected: fs.BigIntStats,
+): void {
+  let current: fs.BigIntStats;
+  try {
+    current = fs.lstatSync(requestFile, { bigint: true });
+  } catch {
+    fail("managed bootstrap envelope changed before cleanup");
+  }
+  if (
+    !current.isFile() ||
+    current.dev !== expected.dev ||
+    current.ino !== expected.ino ||
+    current.mode !== expected.mode ||
+    current.nlink !== 1n ||
+    current.uid !== 0n ||
+    current.gid !== 0n ||
+    current.size !== expected.size ||
+    current.mtimeNs !== expected.mtimeNs ||
+    current.ctimeNs !== expected.ctimeNs
+  ) {
+    fail("managed bootstrap envelope changed before cleanup");
+  }
 }
 
 export async function applyManagedBootstrapEnvelope(
@@ -111,10 +149,11 @@ export async function applyManagedBootstrapEnvelope(
   requestFile: string = MANAGED_BOOTSTRAP_REQUEST_FILE,
   completionFile: string = MANAGED_BOOTSTRAP_COMPLETION_FILE,
 ): Promise<ManagedStartupRootApplyResult> {
-  const request = readManagedBootstrapEnvelope(expected, requestFile);
-  const result = await applyManagedStartupRootRequest(request, env, {
+  const envelope = readManagedBootstrapEnvelopeSnapshot(expected, requestFile);
+  const result = await applyManagedStartupRootRequest(envelope.request, env, {
     bootstrapIdentity: expected.bootstrapIdentity,
   });
+  requireManagedBootstrapEnvelopeIdentity(requestFile, envelope.stat);
   atomicWriteRootFile(
     completionFile,
     serializeManagedBootstrapImageCompletion({
@@ -125,6 +164,7 @@ export async function applyManagedBootstrapEnvelope(
     }),
     0o444,
   );
+  requireManagedBootstrapEnvelopeIdentity(requestFile, envelope.stat);
   fs.unlinkSync(requestFile);
   return result;
 }
