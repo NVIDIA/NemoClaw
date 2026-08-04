@@ -10,10 +10,13 @@ export interface DockerfileInstruction {
   readonly text: string;
 }
 
-export interface DockerfileRunCommand {
+export interface ReviewedDockerfileRunCommand {
   readonly commandStart: number;
   readonly instruction: DockerfileInstruction;
 }
+
+const CORPORATE_CA_PATH = "/usr/local/share/nemoclaw/corporate-ca.pem";
+const CORPORATE_CA_GUARD = `if [ -f ${CORPORATE_CA_PATH} ]; then export CURL_CA_BUNDLE=${CORPORATE_CA_PATH}; fi;`;
 
 function lineEnd(source: string, start: number): number {
   const newline = source.indexOf("\n", start);
@@ -68,24 +71,7 @@ export function dockerfileInstructions(source: string): DockerfileInstruction[] 
   return instructions;
 }
 
-function withoutDockerfileContinuations(source: string): string {
-  return source.replace(/\\\r?\n/gu, (continuation) => " ".repeat(continuation.length));
-}
-
-function isCommandStart(source: string, start: number): boolean {
-  let previous = start - 1;
-  while (previous >= 0 && /\s/u.test(source[previous])) {
-    previous -= 1;
-  }
-  if (previous < 0 || ";&|({\n".includes(source[previous])) {
-    return true;
-  }
-
-  const prefix = source.slice(0, start).trimEnd();
-  return /(?:^|[;&|({])\s*(?:then|do|else)$/u.test(prefix);
-}
-
-function shellCommandIndexes(source: string, command: string): number[] {
+function unquotedTextIndexes(source: string, text: string): number[] {
   const indexes: number[] = [];
   let quote: "'" | '"' | "`" | null = null;
   let comment = false;
@@ -116,35 +102,55 @@ function shellCommandIndexes(source: string, command: string): number[] {
       comment = true;
       continue;
     }
-    if (!source.startsWith(command, index) || !isCommandStart(source, index)) continue;
-
-    const next = source[index + command.length];
-    if (next !== undefined && !/[\s;&|(){}]/u.test(next)) continue;
+    if (!source.startsWith(text, index)) continue;
     indexes.push(index);
-    index += command.length - 1;
+    index += text.length - 1;
   }
 
   return indexes;
 }
 
-export function findDockerfileRunCommands(source: string, command: string): DockerfileRunCommand[] {
-  return dockerfileInstructions(source).flatMap((instruction) => {
-    if (instruction.keyword !== "RUN") return [];
-    const shellSource = withoutDockerfileContinuations(instruction.body);
-    return shellCommandIndexes(shellSource, command).map((commandIndex) => ({
-      commandStart: instruction.bodyStart + commandIndex,
-      instruction,
-    }));
-  });
+function normalizedInstructionBody(source: string): string {
+  return source
+    .replace(/\\\r?\n/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
-export function requireSingleDockerfileRunCommand(
+export function requireSingleReviewedDockerfileRunCommand(
   source: string,
   command: string,
-): DockerfileRunCommand {
-  const matches = findDockerfileRunCommands(source, command);
+  requiredArguments: readonly string[],
+): ReviewedDockerfileRunCommand {
+  const invocation = [command, ...requiredArguments].join(" ");
+  const reviewedBodies = new Set([invocation, `${CORPORATE_CA_GUARD} ${invocation}`]);
+  const matches: ReviewedDockerfileRunCommand[] = [];
+  let unreviewedInstructions = 0;
+
+  for (const instruction of dockerfileInstructions(source)) {
+    if (instruction.keyword !== "RUN") continue;
+    const commandIndexes = unquotedTextIndexes(instruction.body, command);
+    if (commandIndexes.length === 0) continue;
+    if (
+      commandIndexes.length !== 1 ||
+      !reviewedBodies.has(normalizedInstructionBody(instruction.body))
+    ) {
+      unreviewedInstructions += 1;
+      continue;
+    }
+    matches.push({
+      commandStart: instruction.bodyStart + commandIndexes[0],
+      instruction,
+    });
+  }
+
+  if (unreviewedInstructions > 0) {
+    throw new Error(
+      `Expected '${invocation}' only as a direct RUN or the reviewed corporate CA guarded RUN; found ${unreviewedInstructions} unreviewed RUN instruction(s)`,
+    );
+  }
   if (matches.length !== 1) {
-    throw new Error(`Expected one executing RUN command '${command}', found ${matches.length}`);
+    throw new Error(`Expected one reviewed RUN command '${invocation}', found ${matches.length}`);
   }
   return matches[0];
 }

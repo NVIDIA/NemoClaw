@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { dockerfileInstructions } from "./helpers/dockerfile-run-commands";
 
 const DOCKERFILE = join(import.meta.dirname, "../Dockerfile");
 
@@ -205,6 +206,24 @@ describe("Hermes corporate proxy CA final-stage trust", () => {
       "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
       "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
     ];
+    const agentInstallCommand =
+      "node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install";
+    const packageInstallRun = dockerfileInstructions(finalStage).find(
+      (instruction) =>
+        instruction.keyword === "RUN" && instruction.body.includes(agentInstallCommand),
+    );
+    const expectedPackageInstallRun = [
+      "RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \\",
+      "      export SSL_CERT_FILE=/usr/local/share/nemoclaw/corporate-ca.pem; \\",
+      "      export REQUESTS_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \\",
+      "    fi; \\",
+      `    ${agentInstallCommand} \\`,
+      '    && if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \\',
+      "        node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts \\",
+      "            --agent hermes --phase managed-image-capability-union; \\",
+      "    fi",
+      "",
+    ].join("\n");
     const npmCommandIndexes = [...finalStage.matchAll(/^\s*npm\s+(?:ci|run)\b/gmu)].map(
       (match) => match.index,
     );
@@ -234,5 +253,8 @@ describe("Hermes corporate proxy CA final-stage trust", () => {
     for (const npmCommandIndex of npmCommandIndexes) {
       expect(nodeAnchorIndex).toBeLessThan(npmCommandIndex);
     }
+    expect(packageInstallRun?.text).toBe(expectedPackageInstallRun);
+    expect(packageInstallRun?.text).not.toContain("else");
+    expect(finalStage.match(/^ENV (?:SSL_CERT_FILE|REQUESTS_CA_BUNDLE)=/gmu) ?? []).toEqual([]);
   });
 });

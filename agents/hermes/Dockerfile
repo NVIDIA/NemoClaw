@@ -700,8 +700,14 @@ RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-b
 # Apply messaging agent-install hooks as root so Hermes Python packages can update
 # /opt/hermes/.venv before the runtime drops to the sandbox user.
 WORKDIR /opt/hermes
+# uv reads SSL_CERT_FILE for registry TLS. Python build helpers can use
+# REQUESTS_CA_BUNDLE. Set both only for package installation when the CA exists.
 # hadolint ignore=DL3059
-RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install \
+RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
+      export SSL_CERT_FILE=/usr/local/share/nemoclaw/corporate-ca.pem; \
+      export REQUESTS_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
+    fi; \
+    node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install \
     && if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
         node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts \
             --agent hermes --phase managed-image-capability-union; \

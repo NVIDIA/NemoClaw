@@ -12,7 +12,7 @@ import {
   REVIEWED_NPM_VERSION,
 } from "../scripts/lib/patch-bundled-npm-ip-address.mts";
 import { REVIEWED_NPM_VERSION as UPGRADED_NPM_VERSION } from "../scripts/upgrade-bundled-npm.mts";
-import { requireSingleDockerfileRunCommand } from "./helpers/dockerfile-run-commands";
+import { requireSingleReviewedDockerfileRunCommand } from "./helpers/dockerfile-run-commands";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const baseDockerfiles = [
@@ -29,6 +29,7 @@ const copyInstruction =
   "COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts";
 const patchCommand =
   "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts";
+const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
 
 describe("bundled npm ip-address image remediation contract", () => {
   it("binds the replacement to the reviewed npm and registry artifact", () => {
@@ -46,37 +47,40 @@ describe("bundled npm ip-address image remediation contract", () => {
   it.each(baseDockerfiles)("patches the reviewed npm tree after upgrading it in %s", (file) => {
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const copy = source.indexOf(copyInstruction);
-    const upgrade = requireSingleDockerfileRunCommand(
+    const upgrade = requireSingleReviewedDockerfileRunCommand(
       source,
       "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+      npmRootArguments,
     ).commandStart;
-    const patch = requireSingleDockerfileRunCommand(source, patchCommand);
+    const patch = requireSingleReviewedDockerfileRunCommand(source, patchCommand, npmRootArguments);
 
     expect(copy, file).toBeGreaterThanOrEqual(0);
     expect(upgrade, file).toBeGreaterThan(copy);
     expect(patch.commandStart, file).toBeGreaterThan(upgrade);
-    expect(patch.instruction.text, file).toContain("--npm-root /usr/local/lib/node_modules/npm");
   });
 
   it.each(finalDockerfiles)("reasserts the private package fix in the completed %s", (file) => {
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const copy = source.indexOf(copyInstruction);
-    const tarPatch = requireSingleDockerfileRunCommand(
+    const tarPatch = requireSingleReviewedDockerfileRunCommand(
       source,
       "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+      npmRootArguments,
     ).commandStart;
-    const bracePatch = requireSingleDockerfileRunCommand(
+    const bracePatch = requireSingleReviewedDockerfileRunCommand(
       source,
       "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
+      npmRootArguments,
     ).commandStart;
-    const ipAddressPatch = requireSingleDockerfileRunCommand(source, patchCommand);
+    const ipAddressPatch = requireSingleReviewedDockerfileRunCommand(
+      source,
+      patchCommand,
+      npmRootArguments,
+    );
 
     expect(copy, file).toBeGreaterThanOrEqual(0);
     expect(tarPatch, file).toBeGreaterThan(copy);
     expect(bracePatch, file).toBeGreaterThan(tarPatch);
     expect(ipAddressPatch.commandStart, file).toBeGreaterThan(bracePatch);
-    expect(ipAddressPatch.instruction.text, file).toContain(
-      "--npm-root /usr/local/lib/node_modules/npm",
-    );
   });
 });

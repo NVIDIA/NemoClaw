@@ -12,7 +12,7 @@ import {
   REVIEWED_NPM_VERSION,
 } from "../scripts/patch-bundled-npm-brace-expansion.mts";
 import { REVIEWED_NPM_VERSION as UPGRADED_NPM_VERSION } from "../scripts/upgrade-bundled-npm.mts";
-import { requireSingleDockerfileRunCommand } from "./helpers/dockerfile-run-commands";
+import { requireSingleReviewedDockerfileRunCommand } from "./helpers/dockerfile-run-commands";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const baseDockerfiles = [
@@ -29,6 +29,7 @@ const copyInstruction =
   "COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts";
 const patchInstruction =
   "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts";
+const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
 
 describe("bundled npm brace-expansion image remediation contract", () => {
   it("binds the replacement to the reviewed npm and registry artifact", () => {
@@ -44,16 +45,20 @@ describe("bundled npm brace-expansion image remediation contract", () => {
   it.each(baseDockerfiles)("patches the reviewed npm tree after upgrading it in %s", (file) => {
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const copy = source.indexOf(copyInstruction);
-    const upgrade = requireSingleDockerfileRunCommand(
+    const upgrade = requireSingleReviewedDockerfileRunCommand(
       source,
       "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+      npmRootArguments,
     ).commandStart;
-    const patch = requireSingleDockerfileRunCommand(source, patchInstruction);
+    const patch = requireSingleReviewedDockerfileRunCommand(
+      source,
+      patchInstruction,
+      npmRootArguments,
+    );
 
     expect(copy, file).toBeGreaterThanOrEqual(0);
     expect(upgrade, file).toBeGreaterThan(copy);
     expect(patch.commandStart, file).toBeGreaterThan(upgrade);
-    expect(patch.instruction.text, file).toContain("--npm-root /usr/local/lib/node_modules/npm");
   });
 
   it.each(
@@ -61,17 +66,19 @@ describe("bundled npm brace-expansion image remediation contract", () => {
   )("reasserts the private package fix in the completed %s filesystem", (file) => {
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const copy = source.indexOf(copyInstruction);
-    const tarPatch = requireSingleDockerfileRunCommand(
+    const tarPatch = requireSingleReviewedDockerfileRunCommand(
       source,
       "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+      npmRootArguments,
     ).commandStart;
-    const bracePatch = requireSingleDockerfileRunCommand(source, patchInstruction);
+    const bracePatch = requireSingleReviewedDockerfileRunCommand(
+      source,
+      patchInstruction,
+      npmRootArguments,
+    );
 
     expect(copy, file).toBeGreaterThanOrEqual(0);
     expect(tarPatch, file).toBeGreaterThan(copy);
     expect(bracePatch.commandStart, file).toBeGreaterThan(tarPatch);
-    expect(bracePatch.instruction.text, file).toContain(
-      "--npm-root /usr/local/lib/node_modules/npm",
-    );
   });
 });
