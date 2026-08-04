@@ -428,17 +428,75 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def open_private_output_directory(output: Path) -> int:
+    """Open an owner-controlled output directory without following its leaf."""
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        directory = os.open(output.parent, flags)
+    except OSError as error:
+        raise SupplementError(
+            f"could not open output directory without following symlinks: {error}"
+        ) from error
+    try:
+        metadata = os.fstat(directory)
+        if metadata.st_uid != os.geteuid() or metadata.st_mode & 0o022:
+            raise SupplementError(
+                "output directory must be owned by the current user and not "
+                "writable by group or other users"
+            )
+        return directory
+    except BaseException:
+        os.close(directory)
+        raise
+
+
+def write_private_output(output: Path, payload: str) -> None:
+    """Create a private report without re-resolving its directory or leaf."""
+
+    directory = open_private_output_directory(output)
+    descriptor: int | None = None
+    created = False
+    complete = False
+    try:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
+        try:
+            descriptor = os.open(output.name, flags, 0o600, dir_fd=directory)
+        except FileExistsError as error:
+            raise SupplementError(
+                f"refusing to overwrite output path: {output}"
+            ) from error
+        created = True
+        os.fchmod(descriptor, 0o600)
+        output_file = os.fdopen(descriptor, "w", encoding="utf-8")
+        descriptor = None
+        with output_file:
+            output_file.write(payload)
+            output_file.flush()
+            os.fsync(output_file.fileno())
+        os.fsync(directory)
+        complete = True
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if created and not complete:
+            try:
+                os.unlink(output.name, dir_fd=directory)
+            except FileNotFoundError:
+                pass
+        os.close(directory)
+
+
 def main() -> int:
     """Run the collector and write deterministic JSON."""
 
     try:
         args = parse_args()
         supplement = collect(args)
-        output = Path(args.output).expanduser().resolve()
+        output = Path(args.output).expanduser()
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(
-            json.dumps(supplement, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
+        write_private_output(
+            output, json.dumps(supplement, indent=2, sort_keys=True) + "\n"
         )
     except (OSError, SupplementError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
