@@ -4,7 +4,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { getManagedInferenceRecipeRegistrationError } from "./adapter-registry.js";
+import {
+  getManagedInferenceRecipeRegistrationError,
+  MANAGED_CLUSTER_VLLM_LIFECYCLE_REF,
+  MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
+} from "./adapter-registry.js";
 import { parseCompiledServingCatalogJson } from "./catalog.js";
 import { immutableManagedInferenceCopy } from "./catalog-integrity.js";
 import type {
@@ -34,7 +38,8 @@ function loadSchemas(rootDir: string): ServingCatalogSchemas {
   };
 }
 
-let loadedCatalog: CompiledManagedInferenceCatalog | undefined;
+let loadedServingCatalog: CompiledServingCatalog | undefined;
+let loadedManagedCatalog: CompiledManagedInferenceCatalog | undefined;
 
 function assertManagedRecipe(
   recipe: ServingRecipe,
@@ -89,14 +94,51 @@ export function parseCompiledManagedInferenceCatalogJson(
   return catalog;
 }
 
-export function loadManagedInferenceCatalog(): CompiledManagedInferenceCatalog {
-  if (loadedCatalog) return loadedCatalog;
+function isManagedClusterRecipeCandidate(recipe: ServingRecipe): boolean {
+  return (
+    recipe.spec.execution.materializerRef === MANAGED_CLUSTER_VLLM_MATERIALIZER_REF ||
+    recipe.spec.execution.lifecycleRef === MANAGED_CLUSTER_VLLM_LIFECYCLE_REF
+  );
+}
+
+/** Project the backend-polymorphic serving catalog onto the managed-cluster runtime. */
+export function managedInferenceCatalogFromServingCatalog(
+  catalog: CompiledServingCatalog,
+): CompiledManagedInferenceCatalog {
+  const recipes = catalog.recipes.filter(isManagedClusterRecipeCandidate);
+  const recipeIds = new Set(recipes.map(({ metadata }) => metadata.id));
+  const presets = catalog.presets.filter(
+    (preset) => recipeIds.has(preset.spec.plan.recipeRef) || preset.spec.plan.backend === "vllm",
+  );
+  const managedCatalog = { ...catalog, recipes, presets };
+  assertManagedInferenceCatalog(managedCatalog);
+  return managedCatalog;
+}
+
+export function loadServingCatalog(): CompiledServingCatalog {
+  if (loadedServingCatalog) return loadedServingCatalog;
   const rootDir = repositoryRoot();
   const source = readFileSync(join(rootDir, "dist", "managed-inference", "catalog.json"), "utf8");
-  loadedCatalog = immutableManagedInferenceCopy(
-    parseCompiledManagedInferenceCatalogJson(source, loadSchemas(rootDir)),
+  loadedServingCatalog = immutableManagedInferenceCopy(
+    parseCompiledServingCatalogJson(source, loadSchemas(rootDir)),
   );
-  return loadedCatalog;
+  return loadedServingCatalog;
+}
+
+export function loadManagedInferenceCatalog(): CompiledManagedInferenceCatalog {
+  if (loadedManagedCatalog) return loadedManagedCatalog;
+  loadedManagedCatalog = immutableManagedInferenceCopy(
+    managedInferenceCatalogFromServingCatalog(loadServingCatalog()),
+  );
+  return loadedManagedCatalog;
+}
+
+export function getCompiledServingPreset(id: string): ServingPreset | undefined {
+  return loadServingCatalog().presets.find(({ metadata }) => metadata.id === id);
+}
+
+export function getCompiledServingRecipe(id: string): ServingRecipe | undefined {
+  return loadServingCatalog().recipes.find(({ metadata }) => metadata.id === id);
 }
 
 export function getManagedInferenceCompiledPreset(
