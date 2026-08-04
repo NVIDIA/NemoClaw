@@ -62,6 +62,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 from dataclasses import replace
 
 spec = importlib.util.spec_from_file_location("managed_control", sys.argv[1])
@@ -718,16 +719,33 @@ with tempfile.TemporaryDirectory() as root:
             listener_inode="77777",
         )
 
-    active_lease = control._publish_expected_exit_lease(
-        expected_gateway,
-        controller_identity,
+    active_lease = control._publish_expected_exit_lease(expected_gateway, controller_identity)
+    release_thread = threading.Timer(
+        0.02,
+        control._clear_expected_exit_lease,
+        args=(active_lease,),
     )
+    release_thread.start()
+    waited_lease = control._publish_expected_exit_lease(expected_gateway, controller_identity)
+    release_thread.join()
+    active_controller_lock = "waited"
+    control._clear_expected_exit_lease(waited_lease)
+
+    previous_timeout = control.RECOVERY_TIMEOUT_SECONDS
+    previous_poll = control.POLL_SECONDS
+    control.RECOVERY_TIMEOUT_SECONDS = 0.01
+    control.POLL_SECONDS = 0.001
+    timeout_lease = control._publish_expected_exit_lease(expected_gateway, controller_identity)
     try:
-        control._publish_expected_exit_lease(expected_gateway, controller_identity)
-        active_controller_lock = "replaced"
-    except control.ControlError as error:
-        active_controller_lock = error.code
-    control._clear_expected_exit_lease(active_lease)
+        try:
+            control._publish_expected_exit_lease(expected_gateway, controller_identity)
+            lock_timeout = "replaced"
+        except control.ControlError as error:
+            lock_timeout = error.code
+    finally:
+        control._clear_expected_exit_lease(timeout_lease)
+        control.RECOVERY_TIMEOUT_SECONDS = previous_timeout
+        control.POLL_SECONDS = previous_poll
 
     orphaned_lease = control._publish_expected_exit_lease(
         expected_gateway,
@@ -1228,6 +1246,7 @@ with tempfile.TemporaryDirectory() as root:
         "openclaw_restart": openclaw_restart,
         "lease_races": [
             active_controller_lock,
+            lock_timeout,
             marker_flock_cannot_pin,
             inode_safe_cleanup,
             restrictive_umask_modes,
@@ -1353,7 +1372,7 @@ describe("managed gateway root control", () => {
       recovered: ["already-running", 43, 43],
       probed: ["already-running", 43, 43],
       openclaw_restart: ["ok", 43, 43],
-      lease_races: ["SUPERVISOR_BUSY", true, true, [0o444, 0o600]],
+      lease_races: ["waited", "SUPERVISOR_BUSY", true, true, [0o444, 0o600]],
       expected_exit_leases: [
         [
           {

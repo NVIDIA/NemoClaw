@@ -21,6 +21,7 @@ Built-in OpenClaw and Hermes images support two direct-container lifecycle topol
 
 The managed controller authenticates the host lifecycle action and prevents PID reuse from redirecting its signal.
 It cannot prove process provenance against a malicious process running under the same sandbox UID, and it does not create gateway and agent UID isolation.
+The managed controller waits for an active expected-exit lock for the existing recovery timeout before it returns `SUPERVISOR_BUSY` for a concurrent lifecycle request.
 
 Mutable managed config retains the trust and time-of-check/time-of-use limits of managed cold start.
 <AgentOnly variant="hermes">

@@ -418,7 +418,14 @@ def _validate_runtime_regular(
 
 
 def _open_expected_exit_lock(directory_fd: int) -> int:
-    """Acquire the root-only lock that serializes authorization publication."""
+    """Acquire the root-only lock that serializes authorization publication.
+
+    A second host lifecycle request can arrive while the first controller is
+    still waiting for the gateway replacement. Poll the non-blocking flock for
+    the same bounded recovery window instead of turning that expected overlap
+    into an immediate ``SUPERVISOR_BUSY`` failure. The waiting process has not
+    published a marker and cannot authorize a gateway exit.
+    """
 
     base_flags = (
         os.O_RDWR
@@ -466,10 +473,15 @@ def _open_expected_exit_lock(directory_fd: int) -> int:
             metadata.st_ino,
         ):
             raise ControlError("SUPERVISOR_UNAVAILABLE")
-        try:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise ControlError("SUPERVISOR_BUSY") from exc
+        lock_deadline = time.monotonic() + RECOVERY_TIMEOUT_SECONDS
+        while True:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError as exc:
+                if time.monotonic() >= lock_deadline:
+                    raise ControlError("SUPERVISOR_BUSY") from exc
+                time.sleep(POLL_SECONDS)
         locked = os.fstat(lock_fd)
         _validate_runtime_regular(locked, 0o600)
         if (
