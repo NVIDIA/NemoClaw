@@ -105,6 +105,8 @@ describe("pull request docs-only merge base", () => {
         env: { ...process.env, GITHUB_BASE_REF: "missing", GITHUB_ENV: githubEnv },
       });
 
+      expect(result.error).toBeUndefined();
+      expect(result.status).not.toBeNull();
       expect(result.status).not.toBe(0);
       expect(existsSync(githubEnv)).toBe(false);
     } finally {
