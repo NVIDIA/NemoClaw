@@ -134,6 +134,7 @@ RUN discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtim
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
+COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 
 # The final managed image owns the shipped dependency boundary independently
@@ -145,6 +146,15 @@ RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
     --npm-root /usr/local/lib/node_modules/npm
+
+# Reassert the npm-private ip-address fix for the exact final filesystem. When
+# onboarding supplied a corporate CA, use it for the registry-backed download.
+# hadolint ignore=DL3059
+RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
+      export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
+    fi; \
+    node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
+      --npm-root /usr/local/lib/node_modules/npm
 
 RUN set -eu; \
     dcode_path="$(command -v dcode 2>/dev/null || true)"; \

@@ -52,7 +52,7 @@ const CONTAINER_HELPER = "/usr/local/lib/nemoclaw/state-dir-guard.py";
 const HOST_HELPER = path.resolve(__dirname, "../../../scripts/state-dir-guard.py");
 const CONTAINER_TIMEOUT = ["timeout", "--signal=TERM", "--kill-after=5s", "12m"];
 
-type GuardAction = "preflight" | "lock" | "unlock";
+type GuardAction = "preflight" | "lock" | "unlock" | "startup";
 
 type GuardIssue = {
   type: "issue";
@@ -108,7 +108,10 @@ function parseGuardOutput(action: GuardAction, result: PrivilegedExecResult): st
     }
     if (
       record.type === "result" &&
-      (record.action === "preflight" || record.action === "lock" || record.action === "unlock") &&
+      (record.action === "preflight" ||
+        record.action === "lock" ||
+        record.action === "unlock" ||
+        record.action === "startup") &&
       (record.status === "ok" || record.status === "failed") &&
       typeof record.issueCount === "number" &&
       Number.isInteger(record.issueCount)
@@ -200,6 +203,22 @@ function runStateDirGuard(
   return parseGuardOutput(action, privileged.run(command, input));
 }
 
+function runHostStateDirGuard(
+  privileged: PrivilegedExec,
+  action: GuardAction,
+  configDir: string,
+): string[] {
+  let input: string;
+  try {
+    input = readHostHelper();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return [`host state-dir helper cannot be read: ${message}`];
+  }
+  const command = [...CONTAINER_TIMEOUT, "python3", "-I", "-", action, "--config-dir", configDir];
+  return parseGuardOutput(action, privileged.run(command, input));
+}
+
 // Read-only recursive validation. Call this before top-level config mutation so
 // a hostile nested link, hardlink, special entry, or cross-device mount fails
 // without partially changing the protected tree.
@@ -236,4 +255,14 @@ export function restoreStateDirLockPosture(
   const preflightIssues = preflightStateDirLock(privileged, configDir);
   if (preflightIssues.length > 0) return preflightIssues;
   return applyStateDirLockMode(privileged, configDir, "root:sandbox", true);
+}
+
+// Existing sandboxes may contain an older in-image guard, so startup always
+// injects the trusted helper shipped with the current host CLI. The startup
+// action changes only an empty, already sealed credentials root.
+export function restoreStateDirStartupAccess(
+  privileged: PrivilegedExec,
+  configDir: string,
+): string[] {
+  return runHostStateDirGuard(privileged, "startup", configDir);
 }
