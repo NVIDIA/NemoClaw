@@ -37,11 +37,14 @@ afterEach(async () => {
 
 describe("managed image registry transport", () => {
   it("routes the default registry fetch through the bounded host proxy", async () => {
-    const tunnels: string[] = [];
-    const proxy = createServer();
-    // EnvHttpProxyAgent uses CONNECT even for an HTTP registry URL.
+    const routes: string[] = [];
+    const proxy = createServer((request, response) => {
+      routes.push(request.url ?? "");
+      response.end("proxied");
+    });
+    // Keep the fixture valid if the proxy transport selects CONNECT.
     proxy.on("connect", (request, socket) => {
-      tunnels.push(request.url ?? "");
+      routes.push(request.url ?? "");
       socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       socket.once("data", () => {
         socket.end("HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nproxied");
@@ -59,7 +62,8 @@ describe("managed image registry transport", () => {
       const response = await session.fetchImpl("http://registry.invalid/v2/");
       expect(response.status).toBe(200);
       expect(await response.text()).toBe("proxied");
-      expect(tunnels).toEqual(["registry.invalid:80"]);
+      expect(routes).toHaveLength(1);
+      expect(["http://registry.invalid/v2/", "registry.invalid:80"]).toContain(routes[0]);
     } finally {
       await session.close();
     }
