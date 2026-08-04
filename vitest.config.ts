@@ -24,6 +24,9 @@ const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
 );
 const canonicalSandboxName = path.resolve("nemoclaw/src/shared/sandbox-name.cts");
+const canonicalSnapshotSanitizerBoundary = path.resolve(
+  "nemoclaw/src/shared/snapshot-sanitizer-boundary.cts",
+);
 // Map the generated shared .cjs specifiers back to their .cts source so
 // source-mode test projects exercise the single source of truth rather than a
 // possibly-stale build artifact.
@@ -35,6 +38,10 @@ const canonicalSourceAliases = [
   {
     find: /^.*sandbox-name\.cjs$/,
     replacement: canonicalSandboxName,
+  },
+  {
+    find: /^.*snapshot-sanitizer-boundary\.cjs$/,
+    replacement: canonicalSnapshotSanitizerBoundary,
   },
 ];
 const e2ePhaseCollectionAlias =
@@ -142,6 +149,7 @@ export default defineConfig({
             "test/install-station-vllm-continuation.test.ts",
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",
+            "test/install-managed-cli-reuse.test.ts",
             "test/install-preflight.test.ts",
             "test/install-preflight-docker-bootstrap.test.ts",
             "test/install-station-controller-binding.test.ts",
@@ -171,6 +179,7 @@ export default defineConfig({
             "test/install-station-vllm-continuation.test.ts",
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",
+            "test/install-managed-cli-reuse.test.ts",
             "test/install-preflight.test.ts",
             "test/install-preflight-docker-bootstrap.test.ts",
             "test/install-station-controller-binding.test.ts",

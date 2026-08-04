@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Resolves the OpenAI-compatible Chat Completions reply-budget field name for a
- * given model.
+ * Resolves how an inference probe states its reply budget: the OpenAI-compatible
+ * Chat Completions field name for a given model, and the smallest reply budget
+ * every probe may request.
  *
  * OpenAI's GPT-5 family and the reasoning-model series (o1/o3/o4) reject the
  * legacy `max_tokens` parameter on `/chat/completions` and require
@@ -13,6 +14,20 @@
  * probe and the in-sandbox smoke check must agree on the field name, so they
  * share this single resolver rather than each carrying their own model list.
  */
+
+/**
+ * Smallest reply budget an inference probe may request.
+ *
+ * Probes only need to read back a short acknowledgement, but the budget is a
+ * value the endpoint validates, not just a ceiling NemoClaw applies. Some
+ * supported hosted endpoints reject a budget below 16 with HTTP 400 even when
+ * discovery succeeds and normal inference works, so a smaller value turns a
+ * valid endpoint, model, and credential combination into a failed onboarding,
+ * health, or rebuild preflight check (#7939). The Anthropic Messages probe
+ * already requests 16; every other probe shares that floor here rather than
+ * carrying its own literal.
+ */
+export const MIN_PROBE_REPLY_TOKENS = 16;
 
 // Matched by prefix rather than exact id: Azure OpenAI deployments append
 // version/suffix segments (e.g. "gpt-5.4", "gpt-5.4-turbo") and callers may or

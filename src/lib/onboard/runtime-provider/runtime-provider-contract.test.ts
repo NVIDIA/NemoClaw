@@ -20,6 +20,7 @@ import { stopSandbox } from "../../actions/sandbox/stop";
 import { loadAgent } from "../../agent/defs";
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
+import { createDockerManagedBootstrapSurface } from "../managed-bootstrap/docker-runtime";
 import { MANAGED_IMAGE_REPOSITORIES } from "../managed-image/contract";
 import {
   encodeManagedStartupProfile,
@@ -31,7 +32,11 @@ import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createDockerRuntimeProviderBundle } from "./docker";
 import {
   createRuntimeProviderBundleRegistry,
+  normalizeRuntimeProviderManagedProfileRestoreAuthority,
   normalizeRuntimeProviderRuntimeReceipt,
+  normalizeRuntimeProviderSnapshotPreflightReceipt,
+  normalizeRuntimeProviderSnapshotRestoreReceipt,
+  normalizeRuntimeProviderSnapshotRestoreSource,
   RuntimeProviderRegistrationError,
   resolveRuntimeProviderBundle,
 } from "./registry";
@@ -125,9 +130,42 @@ describe("RuntimeProviderBundle registry contract", () => {
         expect(bundle[surface].providerId, `${providerId}.${surface}`).toBe(providerId);
       }
       expect(bundle.bootstrap).toMatchObject({ supported: false });
-      expect(bundle.snapshot).toMatchObject({ supported: false });
+      expect(bundle.snapshot).toMatchObject(
+        providerId === "docker"
+          ? {
+              supported: true,
+              capabilities: {
+                backup: true,
+                restore: true,
+                managedProfileRestore: true,
+              },
+            }
+          : { supported: false },
+      );
       expect(bundle.recovery).toMatchObject({ supported: false });
     }
+  });
+
+  it("validates the dormant Docker bootstrap candidate through the same bundle registry", () => {
+    const docker = createDockerRuntimeProviderBundle();
+    const providers = createRuntimeProviderBundleRegistry([
+      [
+        "docker",
+        {
+          ...docker,
+          bootstrap: createDockerManagedBootstrapSurface(),
+        },
+      ],
+    ]);
+
+    expect(providers.docker?.bootstrap).toMatchObject({
+      providerId: "docker",
+      supported: true,
+    });
+    expect(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker?.bootstrap).toMatchObject({
+      providerId: "docker",
+      supported: false,
+    });
   });
 
   it("deeply clones and freezes every registered nested value", () => {
@@ -153,6 +191,60 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(() => {
       (registered.capabilities as { directLifecycle: boolean }).directLifecycle = false;
     }).toThrow(TypeError);
+  });
+
+  it("registers an MXC-style managed-bootstrap provider through the bundle surface", () => {
+    const bundle = mxcBundle();
+    const createLifecycle = vi.fn(() => ({
+      launchArgv: ["mxc", "create"],
+      patch: {
+        maybeApplyDuringCreate: vi.fn(),
+        createFailureMessage: vi.fn(() => null),
+        exitOnPatchError: vi.fn(),
+        rollbackManagedStartupAfterCreateFailure: vi.fn(),
+        ensureApplied: vi.fn(),
+        waitForSupervisorReconnectIfNeeded: vi.fn(),
+        commitAfterReady: vi.fn(),
+        selectedMode: vi.fn(() => null),
+        printReadinessFailureIfEnabled: vi.fn(),
+        verifyGpuOrExit: vi.fn(async (verify) => verify("alpha")),
+      },
+      recoverUnfinished: vi.fn(async () => ({ receipts: [], failures: [] })),
+      prepareNetwork: vi.fn(async () => undefined),
+      runCreate: vi.fn(),
+    }));
+    const createOnboardRouting = vi.fn(() => ({
+      nativeFallbackHasCleanBaseline: false,
+      inspectNativeRuntime: vi.fn(() => null),
+      isNativeCreateRoutingFailure: vi.fn(() => false),
+      isTrustedNativeRuntimeError: vi.fn(() => false),
+      isNativeReadinessRoutingFailure: vi.fn(() => false),
+      prepareCompatibilityLaunch: vi.fn(() => ({ createArgv: [], registryImageRef: null })),
+    }));
+    const providers = createRuntimeProviderBundleRegistry([
+      [
+        "mxc",
+        replaceSurface(bundle, "bootstrap", {
+          providerId: "mxc",
+          supported: true,
+          createLifecycle,
+          createOnboardRouting,
+        }),
+      ],
+    ]);
+    const registered = providers.mxc!;
+    expectSupportedSurface(registered.bootstrap);
+
+    const routing = registered.bootstrap.createOnboardRouting({
+      sandboxName: "alpha",
+      openshellArgv: (args) => args,
+      nativeFallbackEnabled: false,
+    });
+
+    expect(registered.identity.id).toBe("mxc");
+    expect(routing.nativeFallbackHasCleanBaseline).toBe(false);
+    expect(createOnboardRouting).toHaveBeenCalledOnce();
+    expect(createLifecycle).not.toHaveBeenCalled();
   });
 
   it("rejects an omitted managed platform without changing legacy receipt acceptance", () => {
@@ -410,6 +502,40 @@ describe("RuntimeProviderBundle registry contract", () => {
     ).toThrow(/duplicate operation identities/u);
   });
 
+  it("versions supported snapshot facets and enforces managed-profile capability dependencies", () => {
+    const docker = CURRENT_RUNTIME_PROVIDER_BUNDLES.docker!;
+    const snapshot = docker.snapshot;
+    expectSupportedSurface(snapshot);
+    expect(snapshot.contractVersion).toBe(1);
+
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "docker",
+          replaceSurface(docker, "snapshot", {
+            ...snapshot,
+            contractVersion: 2,
+          }),
+        ],
+      ]),
+    ).toThrow(/unsupported contract version/u);
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "docker",
+          replaceSurface(docker, "snapshot", {
+            ...snapshot,
+            capabilities: {
+              ...snapshot.capabilities,
+              restore: false,
+              managedProfileRestore: true,
+            },
+          }),
+        ],
+      ]),
+    ).toThrow(/cannot restore managed profiles/u);
+  });
+
   it("normalizes bounded opaque runtime receipts and rejects duplicate GPU devices", () => {
     const receipt = {
       schemaVersion: 1,
@@ -428,6 +554,77 @@ describe("RuntimeProviderBundle registry contract", () => {
       normalizeRuntimeProviderRuntimeReceipt({
         ...receipt,
         runtime: { ...receipt.runtime, handle: "x".repeat(4097) },
+      }),
+    ).toBeNull();
+    expect(
+      normalizeRuntimeProviderRuntimeReceipt({
+        ...receipt,
+        runtime: { ...receipt.runtime, handle: "opaque\ninjection" },
+      }),
+    ).toBeNull();
+  });
+
+  it("normalizes snapshot preflight and managed restore proof as one bounded contract", () => {
+    const managedProfile = {
+      agent: "openclaw",
+      profileFingerprint: "f".repeat(64),
+    };
+    const preflight = {
+      schemaVersion: 1,
+      providerId: "docker",
+      operation: "restore",
+      sandboxName: "alpha",
+      providerHandle: "opaque-preflight",
+      lifecycleState: "running",
+      lifecycleGeneration: "generation-1",
+    };
+    const runtime = {
+      schemaVersion: 1,
+      providerId: "docker",
+      runtime: { kind: "docker-container", handle: "c".repeat(64) },
+      acceleration: { kind: "none" },
+    };
+    const source = {
+      schemaVersion: 1,
+      providerId: "docker",
+      providerHandle: "opaque-source",
+      lifecycleState: "running",
+      lifecycleGeneration: "source-generation-1",
+      runtime,
+    };
+    const restore = {
+      schemaVersion: 1,
+      providerId: "docker",
+      sandboxName: "alpha",
+      providerHandle: "opaque-restore-proof",
+      lifecycleState: "running",
+      lifecycleGeneration: "generation-1",
+      runtime,
+      managedProfile,
+    };
+
+    expect(normalizeRuntimeProviderManagedProfileRestoreAuthority(managedProfile)).toEqual(
+      managedProfile,
+    );
+    expect(normalizeRuntimeProviderSnapshotPreflightReceipt(preflight)).toEqual(preflight);
+    expect(normalizeRuntimeProviderSnapshotRestoreSource(source)).toEqual(source);
+    expect(normalizeRuntimeProviderSnapshotRestoreReceipt(restore)).toEqual(restore);
+    expect(
+      normalizeRuntimeProviderSnapshotPreflightReceipt({
+        ...preflight,
+        lifecycleGeneration: "generation\ninjection",
+      }),
+    ).toBeNull();
+    expect(
+      normalizeRuntimeProviderSnapshotPreflightReceipt({
+        ...preflight,
+        operation: { toString: () => "restore" },
+      }),
+    ).toBeNull();
+    expect(
+      normalizeRuntimeProviderSnapshotRestoreReceipt({
+        ...restore,
+        runtime: { ...runtime, providerId: "other" },
       }),
     ).toBeNull();
   });

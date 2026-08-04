@@ -81,7 +81,8 @@ Endpoint hostnames must use lowercase RFC-style DNS labels without empty, leadin
 <AgentOnly variant="deepagents">
 Deep Agents Code supports at most 64 managed MCP servers in one sandbox.
 </AgentOnly>
-Endpoint paths must be literal and canonical, so NemoClaw rejects percent escapes, backslashes, semicolons, OpenShell glob metacharacters, and explicit port zero.
+Endpoint paths cannot contain percent escapes, backslashes, semicolons, or OpenShell glob metacharacters.
+Endpoint URLs cannot use port `0`.
 
 NemoClaw resolves public hostnames before registration, rejects private, local, and special-use targets, and pins the resolved addresses in the generated policy.
 OpenShell re-resolves the hostname for each new connection, requires every current answer to match the pinned `allowed_ips`, and connects to the validated socket addresses.

@@ -34,7 +34,15 @@ const isTerminalAgentMock = vi.hoisted(() =>
   vi.fn((agent: { runtime?: { kind?: string } }) => agent.runtime?.kind === "terminal"),
 );
 
-vi.mock("../exec", () => ({ execSandbox: execMock }));
+vi.mock("../exec", () => ({
+  execSandbox: execMock,
+  buildOpenshellExecArgs: vi.fn((_sb: string, cmd: readonly string[]) => cmd),
+  wrapExecCommandWithRuntimeEnv: vi.fn((cmd: readonly string[]) => cmd),
+  computeExitCode: vi.fn((result: { status: number | null }) => ({
+    code: result.status ?? 1,
+    errorMessage: null,
+  })),
+}));
 vi.mock("../gateway-state", () => ({ ensureLiveSandboxOrExit: ensureLiveMock }));
 vi.mock("../../../state/registry", () => ({ getSandbox: getSandboxMock }));
 vi.mock("../../../agent/defs", () => ({
@@ -54,7 +62,12 @@ vi.mock("../../../../../nemoclaw/src/onboard/config.js", () => ({
 }));
 
 import registerPlugin, { type OpenClawPluginApi } from "../../../../../nemoclaw/src/index";
-import { type AgentPassthroughDeps, runAgentPassthrough } from "./passthrough";
+import {
+  type AgentNonJsonPassthroughDeps,
+  type AgentPassthroughDeps,
+  runAgentNonJsonPassthrough,
+  runAgentPassthrough,
+} from "./passthrough";
 
 function createPluginApi(): OpenClawPluginApi {
   return {
@@ -111,49 +124,74 @@ describe("runAgentPassthrough", () => {
   });
 
   it("forwards extraArgs verbatim to `openclaw agent` for OpenClaw sandboxes with --no-tty enforced", async () => {
+    const execNonJson = vi.fn(((): never => {
+      throw new Error("__exit:0");
+    }) as NonNullable<AgentPassthroughDeps["execNonJson"]>);
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
-    await runAgentPassthrough("alpha", {
-      extraArgs: ["--agent", "work", "--session-id", "s-1", "-m", "ping"],
-    });
+    await expect(
+      runAgentPassthrough(
+        "alpha",
+        { extraArgs: ["--agent", "work", "--session-id", "s-1", "-m", "ping"] },
+        { execNonJson },
+      ),
+    ).rejects.toThrow("__exit:0");
     expect(ensureLiveMock).toHaveBeenCalledWith("alpha", { allowNonReadyPhase: true });
-    expect(execMock).toHaveBeenCalledWith(
+    expect(execMock).not.toHaveBeenCalled();
+    expect(execNonJson).toHaveBeenCalledWith(
       "alpha",
       ["openclaw", "agent", "--agent", "work", "--session-id", "s-1", "-m", "ping"],
-      { tty: false },
+      expect.anything(),
     );
   });
 
   it("keeps a non-JSON agent reply isolated from the plugin banner (#5654)", async () => {
-    const stdout: string[] = [];
-    const stderr: string[] = [];
-    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(((chunk) => {
-      stdout.push(String(chunk));
-      return true;
-    }) as typeof process.stdout.write);
-    const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(((chunk) => {
-      stderr.push(String(chunk));
-      return true;
-    }) as typeof process.stderr.write);
-    const exec = vi.fn(async () => {
-      registerPlugin(createPluginApi());
-      process.stdout.write("ack\n");
+    const stdoutWrites: string[] = [];
+    const stderrWrites: string[] = [];
+    const exit = vi.fn((code: number) => {
+      throw new Error(`__exit:${code}`);
     });
+    const proc = {
+      exit: exit as unknown as (code: number) => never,
+      stdout: {
+        write: (s: string) => {
+          stdoutWrites.push(s);
+          return true;
+        },
+      },
+      stderr: {
+        write: (s: string) => {
+          stderrWrites.push(s);
+          return true;
+        },
+      },
+    };
+    const execNonJson = vi.fn(
+      (
+        _sb: string,
+        _cmd: readonly string[],
+        procArg: NonNullable<AgentPassthroughDeps["process"]>,
+      ): never => {
+        // Simulate NemoClaw replaying captured OpenClaw output: banner goes to proc.stderr,
+        // agent reply goes to proc.stdout. This is what the captured transport path does
+        // (#5654: banner must not pollute stdout).
+        procArg.stdout!.write("ack\n");
+        procArg.stderr.write("[gateway]   NemoClaw registered\n");
+        throw new Error("__exit:0");
+      },
+    ) as NonNullable<AgentPassthroughDeps["execNonJson"]>;
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
 
-    try {
-      await runAgentPassthrough(
+    await expect(
+      runAgentPassthrough(
         "alpha",
         { extraArgs: ["--agent", "main", "-m", "ping"] },
-        { exec, getRecentShieldsAutoRestore: () => ({ kind: "none" }) },
-      );
-    } finally {
-      stdoutWrite.mockRestore();
-      stderrWrite.mockRestore();
-    }
+        { execNonJson, process: proc, getRecentShieldsAutoRestore: () => ({ kind: "none" }) },
+      ),
+    ).rejects.toThrow("__exit:0");
 
-    expect(stdout.join("")).toBe("ack\n");
-    expect(stdout.join("")).not.toContain("NemoClaw registered");
-    expect(stderr.join("")).toContain("NemoClaw registered");
+    expect(stdoutWrites.join("")).toBe("ack\n");
+    expect(stdoutWrites.join("")).not.toContain("NemoClaw registered");
+    expect(stderrWrites.join("")).toContain("NemoClaw registered");
   });
 
   it("uses the captured JSON path for `openclaw agent --json` so provenance can be emitted on stderr", async () => {
@@ -186,19 +224,25 @@ describe("runAgentPassthrough", () => {
     const execJson = vi.fn(((): never => {
       throw new Error("__unexpected-json");
     }) as NonNullable<AgentPassthroughDeps["execJson"]>);
+    const execNonJson = vi.fn(((): never => {
+      throw new Error("__exit:0");
+    }) as NonNullable<AgentPassthroughDeps["execNonJson"]>);
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
 
-    await runAgentPassthrough(
-      "alpha",
-      { extraArgs: ["--agent", "work", "-m", "--json"] },
-      { execJson },
-    );
+    await expect(
+      runAgentPassthrough(
+        "alpha",
+        { extraArgs: ["--agent", "work", "-m", "--json"] },
+        { execJson, execNonJson },
+      ),
+    ).rejects.toThrow("__exit:0");
 
     expect(execJson).not.toHaveBeenCalled();
-    expect(execMock).toHaveBeenCalledWith(
+    expect(execMock).not.toHaveBeenCalled();
+    expect(execNonJson).toHaveBeenCalledWith(
       "alpha",
       ["openclaw", "agent", "--agent", "work", "-m", "--json"],
-      { tty: false },
+      expect.anything(),
     );
   });
 
@@ -206,19 +250,25 @@ describe("runAgentPassthrough", () => {
     const execJson = vi.fn(((): never => {
       throw new Error("__unexpected-json");
     }) as NonNullable<AgentPassthroughDeps["execJson"]>);
+    const execNonJson = vi.fn(((): never => {
+      throw new Error("__exit:0");
+    }) as NonNullable<AgentPassthroughDeps["execNonJson"]>);
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
 
-    await runAgentPassthrough(
-      "alpha",
-      { extraArgs: ["--agent", "work", "--", "--json"] },
-      { execJson },
-    );
+    await expect(
+      runAgentPassthrough(
+        "alpha",
+        { extraArgs: ["--agent", "work", "--", "--json"] },
+        { execJson, execNonJson },
+      ),
+    ).rejects.toThrow("__exit:0");
 
     expect(execJson).not.toHaveBeenCalled();
-    expect(execMock).toHaveBeenCalledWith(
+    expect(execMock).not.toHaveBeenCalled();
+    expect(execNonJson).toHaveBeenCalledWith(
       "alpha",
       ["openclaw", "agent", "--agent", "work", "--", "--json"],
-      { tty: false },
+      expect.anything(),
     );
   });
 
@@ -226,20 +276,26 @@ describe("runAgentPassthrough", () => {
     const execJson = vi.fn(((): never => {
       throw new Error("__unexpected-json");
     }) as NonNullable<AgentPassthroughDeps["execJson"]>);
+    const execNonJson = vi.fn(((): never => {
+      throw new Error("__exit:0");
+    }) as NonNullable<AgentPassthroughDeps["execNonJson"]>);
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
 
     // The first unknown flag selects conservative passthrough before the later --json token.
-    await runAgentPassthrough(
-      "alpha",
-      { extraArgs: ["--agent", "work", "--json-something", "--json"] },
-      { execJson },
-    );
+    await expect(
+      runAgentPassthrough(
+        "alpha",
+        { extraArgs: ["--agent", "work", "--json-something", "--json"] },
+        { execJson, execNonJson },
+      ),
+    ).rejects.toThrow("__exit:0");
 
     expect(execJson).not.toHaveBeenCalled();
-    expect(execMock).toHaveBeenCalledWith(
+    expect(execMock).not.toHaveBeenCalled();
+    expect(execNonJson).toHaveBeenCalledWith(
       "alpha",
       ["openclaw", "agent", "--agent", "work", "--json-something", "--json"],
-      { tty: false },
+      expect.anything(),
     );
   });
 
@@ -306,19 +362,25 @@ describe("runAgentPassthrough", () => {
     const execJson = vi.fn(((): never => {
       throw new Error("__unexpected-json");
     }) as NonNullable<AgentPassthroughDeps["execJson"]>);
+    const execNonJson = vi.fn(((): never => {
+      throw new Error("__exit:0");
+    }) as NonNullable<AgentPassthroughDeps["execNonJson"]>);
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
 
-    await runAgentPassthrough(
-      "alpha",
-      { extraArgs: ["--session-id", "s-1", flag, value] },
-      { execJson },
-    );
+    await expect(
+      runAgentPassthrough(
+        "alpha",
+        { extraArgs: ["--session-id", "s-1", flag, value] },
+        { execJson, execNonJson },
+      ),
+    ).rejects.toThrow("__exit:0");
 
     expect(execJson).not.toHaveBeenCalled();
-    expect(execMock).toHaveBeenCalledWith(
+    expect(execMock).not.toHaveBeenCalled();
+    expect(execNonJson).toHaveBeenCalledWith(
       "alpha",
       ["openclaw", "agent", "--session-id", "s-1", flag, value],
-      { tty: false },
+      expect.anything(),
     );
   });
 
@@ -358,12 +420,18 @@ describe("runAgentPassthrough", () => {
   });
 
   it("treats a clean registry miss as OpenClaw (preserves bootstrap and recovery paths)", async () => {
+    const execNonJson = vi.fn(((): never => {
+      throw new Error("__exit:0");
+    }) as NonNullable<AgentPassthroughDeps["execNonJson"]>);
     getSandboxMock.mockReturnValueOnce(null);
-    await runAgentPassthrough("ghost", { extraArgs: ["--agent", "main", "-m", "hi"] });
-    expect(execMock).toHaveBeenCalledWith(
+    await expect(
+      runAgentPassthrough("ghost", { extraArgs: ["--agent", "main", "-m", "hi"] }, { execNonJson }),
+    ).rejects.toThrow("__exit:0");
+    expect(execMock).not.toHaveBeenCalled();
+    expect(execNonJson).toHaveBeenCalledWith(
       "ghost",
       ["openclaw", "agent", "--agent", "main", "-m", "hi"],
-      { tty: false },
+      expect.anything(),
     );
   });
 
@@ -512,14 +580,22 @@ describe("runAgentPassthrough", () => {
   });
 
   it("accepts selector in --flag=value form and forwards verbatim", async () => {
+    const execNonJson = vi.fn(((): never => {
+      throw new Error("__exit:0");
+    }) as NonNullable<AgentPassthroughDeps["execNonJson"]>);
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
-    await runAgentPassthrough("alpha", {
-      extraArgs: ["--session-key=abc-123", "-m", "ping"],
-    });
-    expect(execMock).toHaveBeenCalledWith(
+    await expect(
+      runAgentPassthrough(
+        "alpha",
+        { extraArgs: ["--session-key=abc-123", "-m", "ping"] },
+        { execNonJson },
+      ),
+    ).rejects.toThrow("__exit:0");
+    expect(execMock).not.toHaveBeenCalled();
+    expect(execNonJson).toHaveBeenCalledWith(
       "alpha",
       ["openclaw", "agent", "--session-key=abc-123", "-m", "ping"],
-      { tty: false },
+      expect.anything(),
     );
   });
 
@@ -561,5 +637,140 @@ describe("runAgentPassthrough", () => {
     const all = writes.join("");
     expect(all).toMatch(/Could not parse a 'Phase:' line/);
     expect(all).toMatch(/Refusing to dispatch/);
+  });
+
+  it("routes non-JSON OpenClaw commands through execNonJson for embedded-fallback interception", async () => {
+    const execNonJson = vi.fn(((): never => {
+      throw new Error("__exit:0");
+    }) as NonNullable<AgentPassthroughDeps["execNonJson"]>);
+    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
+    await expect(
+      runAgentPassthrough(
+        "alpha",
+        { extraArgs: ["--agent", "main", "-m", "ping"] },
+        { execNonJson },
+      ),
+    ).rejects.toThrow("__exit:0");
+    expect(execMock).not.toHaveBeenCalled();
+    expect(execNonJson).toHaveBeenCalledWith(
+      "alpha",
+      ["openclaw", "agent", "--agent", "main", "-m", "ping"],
+      expect.anything(),
+    );
+  });
+});
+
+describe("runAgentNonJsonPassthrough", () => {
+  function makeNonJsonProcMock() {
+    const stdoutWrites: string[] = [];
+    const stderrWrites: string[] = [];
+    const exit = vi.fn((code: number) => {
+      throw new Error(`__exit:${code}`);
+    });
+    return {
+      stdoutWrites,
+      stderrWrites,
+      exit,
+      proc: {
+        exit: exit as unknown as (code: number) => never,
+        stdout: {
+          write: (s: string) => {
+            stdoutWrites.push(s);
+            return true;
+          },
+        },
+        stderr: {
+          write: (s: string) => {
+            stderrWrites.push(s);
+            return true;
+          },
+        },
+      } as NonNullable<AgentPassthroughDeps["process"]>,
+    };
+  }
+
+  function makeSpawnMock(
+    stdout: string,
+    stderr: string,
+    status: number | null = 0,
+  ): NonNullable<AgentNonJsonPassthroughDeps["spawnSync"]> {
+    return vi.fn(() => ({
+      stdout,
+      stderr,
+      status,
+      pid: 1,
+      signal: null,
+      output: [],
+      error: undefined,
+    }));
+  }
+
+  const stubBinary = () => "/usr/local/bin/openshell";
+
+  it("emits a clean embedded-fallback error and exits 1 when EMBEDDED FALLBACK appears in stdout", () => {
+    const { stderrWrites, stdoutWrites, exit, proc } = makeNonJsonProcMock();
+    const spawnSyncMock = makeSpawnMock("EMBEDDED FALLBACK: using local model\nPONG\n", "", 0);
+    expect(() =>
+      runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "--agent", "main"], proc, {
+        getOpenshellBinary: stubBinary,
+        spawnSync: spawnSyncMock,
+      }),
+    ).toThrow("__exit:1");
+    expect(exit).toHaveBeenCalledWith(1);
+    const errText = stderrWrites.join("");
+    expect(errText).toMatch(/embedded-fallback mode in sandbox 'my-sb'/);
+    expect(errText).toMatch(/my-sb recover/);
+    expect(errText).toMatch(/my-sb rebuild --yes/);
+    expect(errText).toMatch(/onboard --resume/);
+    expect(stdoutWrites.join("")).toBe("");
+  });
+
+  it("emits a clean embedded-fallback error and exits 1 when [agent/embedded] appears in stderr", () => {
+    const { stderrWrites, exit, proc } = makeNonJsonProcMock();
+    const spawnSyncMock = makeSpawnMock(
+      "",
+      "[agent/embedded] transport active\nsome response\n",
+      0,
+    );
+    expect(() =>
+      runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "--agent", "main"], proc, {
+        getOpenshellBinary: stubBinary,
+        spawnSync: spawnSyncMock,
+      }),
+    ).toThrow("__exit:1");
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(stderrWrites.join("")).toMatch(/embedded-fallback mode/);
+  });
+
+  it("passes through clean stdout and exits with the real exit code when no embedded-fallback pattern is found", () => {
+    const { stdoutWrites, stderrWrites, exit, proc } = makeNonJsonProcMock();
+    const spawnSyncMock = makeSpawnMock("PONG\n", "", 0);
+    expect(() =>
+      runAgentNonJsonPassthrough(
+        "my-sb",
+        ["openclaw", "agent", "--agent", "main", "-m", "ping"],
+        proc,
+        {
+          getOpenshellBinary: stubBinary,
+          spawnSync: spawnSyncMock,
+        },
+      ),
+    ).toThrow("__exit:0");
+    expect(exit).toHaveBeenCalledWith(0);
+    expect(stdoutWrites.join("")).toBe("PONG\n");
+    expect(stderrWrites.join("")).toBe("");
+  });
+
+  it("passes through non-zero exit code on clean failure without embedded-fallback", () => {
+    const { stderrWrites, exit, proc } = makeNonJsonProcMock();
+    const spawnSyncMock = makeSpawnMock("", "Error: agent session not found\n", 1);
+    expect(() =>
+      runAgentNonJsonPassthrough("my-sb", ["openclaw", "agent", "--agent", "main"], proc, {
+        getOpenshellBinary: stubBinary,
+        spawnSync: spawnSyncMock,
+      }),
+    ).toThrow("__exit:1");
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(stderrWrites.join("")).toContain("Error: agent session not found");
   });
 });

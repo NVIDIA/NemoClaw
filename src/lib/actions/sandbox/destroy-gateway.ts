@@ -12,12 +12,18 @@ import {
   resolveGatewayPortFromName,
   resolveGatewayStateDirName,
 } from "../../onboard/gateway-binding";
-import { isExternallySupervised } from "../../onboard/gateway-ownership";
+import { type GatewayOwner, isExternallySupervised } from "../../onboard/gateway-ownership";
 import {
+  GatewayAuthorityError,
   type GatewayTeardownAuthorityResolver,
+  gatewayAuthorityFailureLines,
   resolveGatewayTeardownAuthority,
 } from "../../onboard/gateway-teardown-authority";
-import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
+import {
+  clearHostGatewayRuntimeFiles,
+  isHostPortFree,
+  stopHostGatewayProcesses,
+} from "../../onboard/host-gateway-process";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 
 export type DestroyRunOpenshell = (
@@ -28,6 +34,8 @@ export type DestroyRunOpenshell = (
 const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 
 export interface CleanupGatewayDeps {
+  clearGatewayRuntimeFiles?: typeof clearHostGatewayRuntimeFiles;
+  isGatewayPortFree?: typeof isHostPortFree;
   resolveGatewayTeardownAuthority?: GatewayTeardownAuthorityResolver;
   stopOpenShellGatewayUserService?: typeof stopOpenShellGatewayUserService;
 }
@@ -88,10 +96,26 @@ export function cleanupGatewayAfterLastSandbox(
   if (!perGatewayState) {
     throw new Error(`Refusing cleanup for noncanonical NemoClaw gateway '${gatewayName}'.`);
   }
-  const owner = (deps.resolveGatewayTeardownAuthority ?? resolveGatewayTeardownAuthority)(
-    { gatewayName, gatewayPort: perGatewayState.port },
-    { env: process.env },
-  );
+  // The sandbox and its registry entry are already gone when this runs; shared
+  // gateway cleanup is the last, optional step. Rethrowing an authority refusal
+  // here crashed `destroy` outright, and because rebuild and
+  // `onboard --recreate-sandbox` refuse for the same reason the operator was
+  // left with no way to remove the sandbox at all (#8103). Report and keep the
+  // gateway instead, matching the declined-cleanup path.
+  let owner: GatewayOwner;
+  try {
+    owner = (deps.resolveGatewayTeardownAuthority ?? resolveGatewayTeardownAuthority)(
+      { gatewayName, gatewayPort: perGatewayState.port },
+      { env: process.env },
+    );
+  } catch (error) {
+    if (!(error instanceof GatewayAuthorityError)) throw error;
+    for (const line of gatewayAuthorityFailureLines(error, "shared gateway cleanup")) {
+      console.error(line);
+    }
+    console.log("  The shared NemoClaw gateway was left running.");
+    return;
+  }
   const externallySupervised = isExternallySupervised(owner);
   const openshell =
     runOpenshell ??
@@ -107,14 +131,19 @@ export function cleanupGatewayAfterLastSandbox(
   // ports the live openshell tracks; this catches orphans whose openshell
   // record was lost across upgrades or failed onboards.
   stopStaleDashboardListeners();
+  let packagedServiceFallbackReason: string | null = null;
   if (!externallySupervised && owner.source === "packaged-service") {
     const stopService = deps.stopOpenShellGatewayUserService ?? stopOpenShellGatewayUserService;
     const serviceStop = stopService();
     if (serviceStop.attempted && !serviceStop.stopped) {
-      throw new Error(
-        `Failed to stop the packaged OpenShell gateway service '${serviceStop.serviceName}' that owns gateway '${gatewayName}': ${serviceStop.reason}. ` +
-          `Check: ${serviceStop.statusCommand}. Stop the service, then rerun destroy.`,
-      );
+      if (serviceStop.standaloneFallbackAllowed) {
+        packagedServiceFallbackReason = serviceStop.reason ?? "user service manager unavailable";
+      } else {
+        throw new Error(
+          `Failed to stop the packaged OpenShell gateway service '${serviceStop.serviceName}' that owns gateway '${gatewayName}': ${serviceStop.reason}. ` +
+            `Check: ${serviceStop.statusCommand}. Stop the service, then rerun destroy.`,
+        );
+      }
     }
   }
   if (!externallySupervised && (process.platform === "linux" || process.platform === "darwin")) {
@@ -132,6 +161,7 @@ export function cleanupGatewayAfterLastSandbox(
       openShellGatewayPort?: number;
       preserveRuntimeFilesOnNonMatching: true;
       usePgrepFallback: false;
+      clearRuntimeFiles?: boolean;
       stateDir?: string;
       pidFile?: string;
     } = {
@@ -142,6 +172,16 @@ export function cleanupGatewayAfterLastSandbox(
     stopOptions.pidFile = path.join(perGatewayState.stateDir, "openshell-gateway.pid");
     stopOptions.openShellGatewayName = gatewayName;
     stopOptions.openShellGatewayPort = perGatewayState.port;
+    if (packagedServiceFallbackReason !== null) {
+      // A package can be installed even when its user manager is unavailable.
+      // Destroy cannot repair the missing systemd user session. Remove this
+      // branch when supported onboarding no longer starts a standalone gateway
+      // after this service-manager failure.
+      // In that exact start fallback, the standalone launcher wrote this
+      // per-gateway PID evidence. Preserve it until every later cleanup step
+      // succeeds so a retry can prove the same ownership again.
+      stopOptions.clearRuntimeFiles = false;
+    }
     const stopResult = stopHostGatewayProcesses({}, stopOptions);
     const unverifiablePids = [...new Set(stopResult.skippedNonMatchingPids)];
     if (unverifiablePids.length > 0) {
@@ -158,6 +198,23 @@ export function cleanupGatewayAfterLastSandbox(
       throw new Error(
         `Failed to stop the owned host gateway process(es) for '${gatewayName}': ${failedPids.join(", ")}.${remediation}`,
       );
+    }
+    if (packagedServiceFallbackReason !== null) {
+      const ownedStandalonePidProven =
+        stopResult.stopped.length > 0 || stopResult.skippedDeadPids.length > 0;
+      if (!ownedStandalonePidProven) {
+        throw new Error(
+          `Failed to stop the packaged OpenShell gateway service for '${gatewayName}' because ${packagedServiceFallbackReason}, and no recorded standalone gateway process proved ownership. ` +
+            "Restore the user service manager or stop the verified gateway listener, then rerun destroy.",
+        );
+      }
+      const portFree = deps.isGatewayPortFree ?? isHostPortFree;
+      if (!portFree(perGatewayState.port)) {
+        throw new Error(
+          `Refusing cleanup because gateway port ${String(perGatewayState.port)} remains occupied after the recorded standalone gateway process for '${gatewayName}' exited or was stopped. ` +
+            "Inspect the remaining listener, stop only the matching gateway process, then rerun destroy.",
+        );
+      }
     }
   }
   /**
@@ -206,4 +263,11 @@ export function cleanupGatewayAfterLastSandbox(
   dockerRemoveVolumesByPrefix(`openshell-cluster-${gatewayName}`, {
     ignoreError: true,
   });
+  if (packagedServiceFallbackReason !== null) {
+    const clearRuntimeFiles = deps.clearGatewayRuntimeFiles ?? clearHostGatewayRuntimeFiles;
+    clearRuntimeFiles(
+      perGatewayState.stateDir,
+      path.join(perGatewayState.stateDir, "openshell-gateway.pid"),
+    );
+  }
 }

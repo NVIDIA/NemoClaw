@@ -42,6 +42,11 @@
       "category": "security"
     },
     {
+      "file": "test/ci-cli-coverage-pi-tools-workflow.test.ts",
+      "test": "installs pinned fd and ripgrep before CLI coverage can invoke Pi",
+      "category": "security"
+    },
+    {
       "file": "test/cloudflared-update-check-workflow.test.ts",
       "test": "keeps automatic and on-demand update checks reachable and credential-free",
       "category": "security"
@@ -69,6 +74,21 @@
     {
       "file": "test/corporate-ca-build-tls-anchor.test.ts",
       "test": "decodes the CA and exports NODE_EXTRA_CA_CERTS before the reinstall audit-signatures step",
+      "category": "security"
+    },
+    {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "accepts the corporate CA build arg in the DCode base image before HTTPS fetches",
+      "category": "security"
+    },
+    {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "decodes the corporate CA again in the DCode final image",
+      "category": "security"
+    },
+    {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "trusts the corporate CA before the DCode discovery runtime npm install",
       "category": "security"
     },
     {
@@ -267,6 +287,11 @@
       "category": "security"
     },
     {
+      "file": "test/hermes-final-image-layout.test.ts",
+      "test": "verifies CLI adapter integrity before executing its validator",
+      "category": "security"
+    },
+    {
       "file": "test/openclaw-final-image-layout.test.ts",
       "test": "uses grouped legacy-compatible payload layers at their cache boundaries (#7611)",
       "category": "compatibility"
@@ -297,6 +322,11 @@
       "category": "security"
     },
     {
+      "file": "test/maintainer-pr-workflow-approval.test.ts",
+      "test": "keeps workflow approval inside the trusted metadata boundary",
+      "category": "security"
+    },
+    {
       "file": "test/macos-e2e-workflow-boundary.test.ts",
       "test": "keeps secret-bearing live E2E on trusted main-branch code",
       "category": "security"
@@ -314,6 +344,11 @@
     {
       "file": "test/messaging-image-env-contract.test.ts",
       "test": "%s keeps the full plan in build processes but not final runtime environments (#5896)",
+      "category": "security"
+    },
+    {
+      "file": "test/mcp-tool-discovery-image-contract.test.ts",
+      "test": "pins reviewed packages and retains the production audit command (#8177)",
       "category": "security"
     },
     {
@@ -510,6 +545,31 @@
       "file": "test/runtime-provider-source-shape.test.ts",
       "test": "keeps migrated provider identities and implementations behind the one bundle composition",
       "category": "compatibility"
+    },
+    {
+      "file": "test/source-architecture.test.ts",
+      "test": "keeps removed step mutation APIs out of production source (#7703)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps the dormant managed-bootstrap protocol driver-neutral",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps production activation paths disconnected from driver bootstrap adapters",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps registered providers bootstrap-unsupported",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "packages the dormant managed-bootstrap native boundary for every agent image",
+      "category": "security"
     },
     {
       "file": "test/pr-limit-policy.test.ts",

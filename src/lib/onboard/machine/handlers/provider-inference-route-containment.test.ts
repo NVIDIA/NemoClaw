@@ -13,6 +13,7 @@ import {
   type ProviderInferenceStateOptions,
   type ProviderSelectionResult,
 } from "./provider-inference";
+import { guardProviderInferenceRouteSelection } from "./provider-inference-route-containment";
 
 type Options = ProviderInferenceStateOptions<null, null, { cpus?: number }>;
 
@@ -193,6 +194,32 @@ function reportDifferentRoute(
 }
 
 describe("provider route containment", () => {
+  it("defers exact endpoint comparison until llama.cpp route discovery is complete (#8161)", () => {
+    const { calls } = createDeps();
+    const containmentDeps = {
+      checkGatewayRouteCompatibility: calls.checkGatewayRouteCompatibility,
+      preflightGatewayRouteDiscovery: calls.preflightGatewayRouteDiscovery,
+      error: calls.error,
+      exitProcess: calls.exit,
+    };
+
+    expect(
+      guardProviderInferenceRouteSelection(containmentDeps, "nemoclaw-9090", "target-sandbox", {
+        provider: "llama-cpp-local",
+        model: "team/model-alias",
+        endpointUrl: null,
+        credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+        preferredInferenceApi: null,
+      }),
+    ).toEqual({
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    });
+    expect(calls.preflightGatewayRouteDiscovery).toHaveBeenCalledOnce();
+    expect(calls.checkGatewayRouteCompatibility).not.toHaveBeenCalled();
+  });
+
   it("allows fresh selection to continue so setup can issue the mutation warning (#6315)", async () => {
     const { calls, deps } = createDeps();
     reportDifferentRoute(calls, "nvidia-prod", "nvidia/test");

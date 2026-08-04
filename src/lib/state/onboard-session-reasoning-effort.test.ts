@@ -6,13 +6,9 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { markStepCompleteLegacy } from "../../../test/helpers/onboard-legacy-step-mutation";
-
 type OnboardSessionModule = typeof import("./onboard-session");
-type OnboardStepMutationModule = typeof import("./onboard-step-mutation");
 type LoadedSession = NonNullable<ReturnType<OnboardSessionModule["loadSession"]>>;
 let session: OnboardSessionModule;
-let stepMutation: OnboardStepMutationModule;
 let tmpDir: string;
 
 function requireLoadedSession(
@@ -27,7 +23,6 @@ beforeEach(async () => {
   vi.stubEnv("HOME", tmpDir);
   vi.resetModules();
   session = await import("./onboard-session");
-  stepMutation = await import("./onboard-step-mutation");
   session.clearSession();
   session.releaseOnboardLock();
 });
@@ -43,19 +38,19 @@ afterEach(() => {
 describe("onboard session reasoning effort", () => {
   it("round-trips only valid compatible-endpoint reasoning effort updates", () => {
     session.saveSession(session.createSession());
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       compatibleEndpointReasoningEffort: "high",
     });
     let loaded = requireLoadedSession(session.loadSession());
     expect(loaded.compatibleEndpointReasoningEffort).toBe("high");
 
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       compatibleEndpointReasoningEffort: "extreme",
     } as never);
     loaded = requireLoadedSession(session.loadSession());
     expect(loaded.compatibleEndpointReasoningEffort).toBe("high");
 
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       compatibleEndpointReasoningEffort: null,
     });
     expect(

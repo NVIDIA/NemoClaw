@@ -104,6 +104,9 @@ describe("sandbox build context staging", () => {
     fs.chmodSync(path.join(sourceRoot, "nemoclaw-blueprint", "model-specific-setup"), 0o700);
     fs.chmodSync(blueprintManifestDir, 0o700);
     writeFixture(path.join("scripts", "nemoclaw-start.sh"));
+    writeFixture(path.join("scripts", "managed-startup-hold.sh"));
+    writeFixture(path.join("scripts", "managed-bootstrap-entrypoint.c"));
+    writeFixture(path.join("scripts", "managed-bootstrap-trampoline.sh"));
     writeFixture(path.join("scripts", "gateway-control.sh"));
     writeFixture(path.join("scripts", "managed-gateway-control.py"));
     writeFixture(path.join("scripts", "state-dir-guard.py"));
@@ -116,6 +119,7 @@ describe("sandbox build context staging", () => {
     );
     writeFixture(path.join("scripts", "checks", "node-tar-image-scan.mts"));
     writeFixture(path.join("scripts", "lib", "sandbox-init.sh"));
+    writeFixture(path.join("scripts", "lib", "entrypoint-env-wrapper.sh"));
     writeFixture(path.join("scripts", "lib", "gateway-supervisor.sh"));
     writeFixture(path.join("scripts", "lib", "sandbox-rlimits.sh"));
     writeFixture(path.join("scripts", "lib", "openclaw_device_approval_policy.py"));
@@ -128,9 +132,22 @@ describe("sandbox build context staging", () => {
       path.join("src", "lib", "messaging", "channels", "fixture", "hooks", "example.ts"),
     );
     writeFixture(path.join("src", "lib", "tool-disclosure.ts"));
+    for (const relativePath of [
+      path.join("core", "json-types.ts"),
+      path.join("core", "ports.ts"),
+      path.join("onboard", "managed-bootstrap", "envelope.ts"),
+      path.join("onboard", "managed-bootstrap", "image-runtime.ts"),
+      path.join("onboard", "managed-startup", "image-runtime.ts"),
+      path.join("security", "credential-hash.ts"),
+      path.join("state", "paths.ts"),
+      path.join("state", "state-root.ts"),
+    ]) {
+      writeFixture(path.join("src", "lib", relativePath));
+    }
     writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-chat-send.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-mcp-npx.mts"));
+    writeFixture(path.join("scripts", "patch-openclaw-mcp-reliability.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-issue-4434-diagnostics.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-device-self-approval.mts"));
     writeFixture(path.join("scripts", "extract-semver.sh"));
@@ -167,7 +184,7 @@ describe("sandbox build context staging", () => {
     expect(copiedScripts).not.toHaveLength(0);
 
     for (const relativePath of copiedScripts) {
-      expect(fs.existsSync(path.join(buildCtx, "scripts", relativePath))).toBe(true);
+      expect(fs.existsSync(path.join(buildCtx, "scripts", relativePath)), relativePath).toBe(true);
     }
   }
 
@@ -253,6 +270,25 @@ describe("sandbox build context staging", () => {
 
   function expectStagedToolDisclosureContract(buildCtx: string) {
     expect(fs.existsSync(path.join(buildCtx, "src", "lib", "tool-disclosure.ts"))).toBe(true);
+  }
+
+  function expectStagedManagedStartupRuntimeSources(buildCtx: string, sourceRoot: string) {
+    for (const relativePath of [
+      path.join("src", "lib", "core", "json-types.ts"),
+      path.join("src", "lib", "core", "ports.ts"),
+      path.join("src", "lib", "onboard", "managed-bootstrap", "envelope.ts"),
+      path.join("src", "lib", "onboard", "managed-bootstrap", "image-runtime.ts"),
+      path.join("src", "lib", "onboard", "managed-startup", "image-runtime.ts"),
+      path.join("src", "lib", "security", "credential-hash.ts"),
+      path.join("src", "lib", "state", "paths.ts"),
+      path.join("src", "lib", "state", "state-root.ts"),
+    ]) {
+      const stagedPath = path.join(buildCtx, relativePath);
+      expect(fs.readFileSync(stagedPath, "utf8"), relativePath).toBe(
+        fs.readFileSync(path.join(sourceRoot, relativePath), "utf8"),
+      );
+      expect((fs.statSync(stagedPath).mode & 0o777).toString(8), relativePath).toBe("644");
+    }
   }
 
   function expectStagedScriptModes(buildCtx: string) {
@@ -387,6 +423,22 @@ describe("sandbox build context staging", () => {
     }
   });
 
+  it("legacy staging supplies the managed-startup runtime Dockerfile sources", () => {
+    const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-source-"));
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-build-context-legacy-managed-startup-"),
+    );
+
+    try {
+      writeBuildContextFixture(sourceRoot);
+      const { buildCtx } = stageLegacySandboxBuildContext(sourceRoot, tmpDir);
+      expectStagedManagedStartupRuntimeSources(buildCtx, sourceRoot);
+    } finally {
+      fs.rmSync(sourceRoot, { recursive: true, force: true });
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("optimized staging makes copied scripts readable under a restrictive umask (#7071)", () => {
     const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-source-"));
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-script-mode-"));
@@ -466,6 +518,18 @@ describe("sandbox build context staging", () => {
     try {
       const { buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
       expectDockerfileScriptCopiesExist(buildCtx, stagedDockerfile);
+      for (const relativePath of [
+        path.join("src", "lib", "core", "json-types.ts"),
+        path.join("src", "lib", "core", "ports.ts"),
+        path.join("src", "lib", "onboard", "managed-bootstrap", "envelope.ts"),
+        path.join("src", "lib", "onboard", "managed-bootstrap", "image-runtime.ts"),
+        path.join("src", "lib", "onboard", "managed-startup", "image-runtime.ts"),
+        path.join("src", "lib", "security", "credential-hash.ts"),
+        path.join("src", "lib", "state", "paths.ts"),
+        path.join("src", "lib", "state", "state-root.ts"),
+      ]) {
+        expect(fs.existsSync(path.join(buildCtx, relativePath)), relativePath).toBe(true);
+      }
       expect(fs.existsSync(path.join(buildCtx, "tsconfig.runtime-preloads.json"))).toBe(true);
       expect(fs.readFileSync(path.join(buildCtx, "ci", "npm-audit-exceptions.json"), "utf8")).toBe(
         fs.readFileSync(path.join(repoRoot, "ci", "npm-audit-exceptions.json"), "utf8"),
@@ -505,6 +569,12 @@ describe("sandbox build context staging", () => {
         ),
       ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "nemoclaw-start.sh"))).toBe(true);
+      expect(fs.existsSync(path.join(buildCtx, "scripts", "managed-bootstrap-entrypoint.c"))).toBe(
+        true,
+      );
+      expect(fs.existsSync(path.join(buildCtx, "scripts", "managed-bootstrap-trampoline.sh"))).toBe(
+        true,
+      );
       expect(fs.existsSync(path.join(buildCtx, "scripts", "gateway-control.sh"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "managed-gateway-control.py"))).toBe(
         true,
@@ -557,6 +627,9 @@ describe("sandbox build context staging", () => {
       expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-mcp-npx.mts"))).toBe(
         true,
       );
+      expect(
+        fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-mcp-reliability.mts")),
+      ).toBe(true);
       expect(
         fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-issue-4434-diagnostics.mts")),
       ).toBe(true);

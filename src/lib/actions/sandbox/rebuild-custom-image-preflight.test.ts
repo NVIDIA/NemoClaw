@@ -6,13 +6,17 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
+import { fingerprintBuildContext } from "../../adapters/fs/build-context-fingerprint";
 import { ROOT } from "../../runner";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import {
+  finalizePreparedRebuildImageMessagingPlan,
+  type PreparedRebuildImage,
   preflightRebuildImage,
   type RebuildImagePreflightResult,
 } from "./rebuild-custom-image-preflight";
 import {
+  createBuildContextVerifier,
   disposePreparedBuildContext,
   verifyPreparedBuildContext,
 } from "./rebuild-prepared-image-context";
@@ -46,6 +50,35 @@ function input(fromDockerfile: string | null) {
     },
     gatewayPort: 8080,
     chatUiUrl: "http://127.0.0.1:18789",
+  };
+}
+
+function hermesMessagingPlan() {
+  return {
+    schemaVersion: 1 as const,
+    sandboxName: "alpha",
+    agent: "hermes" as const,
+    workflow: "rebuild" as const,
+    channels: [
+      {
+        channelId: "slack",
+        displayName: "Slack",
+        authMode: "token-paste" as const,
+        active: true,
+        selected: true,
+        configured: true,
+        disabled: false,
+        inputs: [],
+        hooks: [],
+      },
+    ],
+    disabledChannels: [],
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
   };
 }
 
@@ -339,10 +372,8 @@ describe("preflightRebuildImage", () => {
       .mockReturnValueOnce({ status: 1 } as never)
       .mockReturnValueOnce({ status: 0 } as never);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const processOnce = vi.spyOn(process, "once").mockImplementation((event, listener) => {
-      expect(event).toBe("exit");
-      listener(0);
-      return process;
+    const registerExitHandler = vi.fn((listener: () => void) => {
+      listener();
     });
     try {
       const result = successful(
@@ -354,20 +385,168 @@ describe("preflightRebuildImage", () => {
           })),
           buildImage: vi.fn(() => ({ status: 0 }) as never),
           removeImage,
+          registerExitHandler,
         }),
       );
 
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining("failed to remove temporary rebuild preflight image"),
       );
-      expect(processOnce).toHaveBeenCalledWith("exit", expect.any(Function));
+      expect(registerExitHandler).toHaveBeenCalledWith(expect.any(Function));
       expect(removeImage).toHaveBeenCalledTimes(2);
       expect(result.prepared.dashboardRemoteBindPrepared).toBe(true);
       expect(disposePreparedBuildContext(result.prepared)).toBe(true);
     } finally {
-      processOnce.mockRestore();
       warn.mockRestore();
       fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("finalizePreparedRebuildImageMessagingPlan", () => {
+  it("rebuilds and re-fingerprints the retained context with backup-captured home channels (#7803)", () => {
+    const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-finalize-"));
+    const stagedDockerfile = path.join(buildCtx, "Dockerfile");
+    fs.writeFileSync(stagedDockerfile, "FROM scratch\nARG NEMOCLAW_MESSAGING_PLAN_B64=old\n");
+    const cleanupBuildCtx = vi.fn(() => {
+      fs.rmSync(buildCtx, { recursive: true, force: true });
+      return true;
+    });
+    const originalFingerprint = fingerprintBuildContext(buildCtx);
+    const prepared: PreparedRebuildImage = {
+      buildCtx,
+      stagedDockerfile,
+      cleanupBuildCtx,
+      buildId: "finalize",
+      origin: "generated",
+      contextFingerprint: originalFingerprint,
+      verifyBuildCtx: createBuildContextVerifier(buildCtx, originalFingerprint),
+      rebuildTarget: { agentName: "hermes", fromDockerfile: null },
+    };
+    const builtDockerfiles: string[] = [];
+    const removeImage = vi.fn(() => ({ status: 0 }) as never);
+    try {
+      const result = successful(
+        finalizePreparedRebuildImageMessagingPlan(
+          prepared,
+          hermesMessagingPlan(),
+          [
+            {
+              path: ".env",
+              assignments: ["SLACK_HOME_CHANNEL=C0123", "SLACK_HOME_CHANNEL_THREAD_ID=123.456"],
+            },
+          ],
+          {
+            buildImage: vi.fn((dockerfile) => {
+              builtDockerfiles.push(fs.readFileSync(dockerfile, "utf8"));
+              return { status: 0 } as never;
+            }),
+            removeImage,
+          },
+        ),
+      );
+
+      const encodedPlan = builtDockerfiles[0]
+        ?.split("\n")
+        .find((line) => line.startsWith("ARG NEMOCLAW_MESSAGING_PLAN_B64="))
+        ?.split("=")[1];
+      const imagePlan = JSON.parse(Buffer.from(encodedPlan ?? "", "base64").toString("utf8")) as {
+        agentRender: Array<{ renderId?: string; lines?: string[] }>;
+      };
+      expect(imagePlan.agentRender[0]).toMatchObject({
+        renderId: "hermes-preserved-home-channels",
+        lines: ["SLACK_HOME_CHANNEL=C0123", "SLACK_HOME_CHANNEL_THREAD_ID=123.456"],
+      });
+      expect(result.prepared.contextFingerprint).not.toBe(originalFingerprint);
+      expect(verifyPreparedBuildContext(result.prepared)).toBe(true);
+      expect(removeImage).toHaveBeenCalledOnce();
+      expect(disposePreparedBuildContext(result.prepared)).toBe(true);
+    } finally {
+      fs.rmSync(buildCtx, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to bless a retained context that changed before backup finalization", () => {
+    const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-finalize-drift-"));
+    const stagedDockerfile = path.join(buildCtx, "Dockerfile");
+    fs.writeFileSync(stagedDockerfile, "FROM scratch\nARG NEMOCLAW_MESSAGING_PLAN_B64=old\n");
+    const contextFingerprint = fingerprintBuildContext(buildCtx);
+    const prepared: PreparedRebuildImage = {
+      buildCtx,
+      stagedDockerfile,
+      cleanupBuildCtx: () => true,
+      buildId: "drift",
+      origin: "generated",
+      contextFingerprint,
+      verifyBuildCtx: createBuildContextVerifier(buildCtx, contextFingerprint),
+      rebuildTarget: { agentName: "hermes", fromDockerfile: null },
+    };
+    const buildImage = vi.fn();
+    try {
+      fs.writeFileSync(path.join(buildCtx, "changed"), "changed");
+
+      expect(
+        finalizePreparedRebuildImageMessagingPlan(
+          prepared,
+          hermesMessagingPlan(),
+          [{ path: ".env", assignments: ["SLACK_HOME_CHANNEL=C0123"] }],
+          { buildImage },
+        ),
+      ).toEqual({
+        ok: false,
+        detail: "replacement build context changed before backup finalization",
+      });
+      expect(buildImage).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(buildCtx, { recursive: true, force: true });
+    }
+  });
+
+  it("retries finalization image cleanup at process exit", () => {
+    const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-finalize-cleanup-"));
+    const stagedDockerfile = path.join(buildCtx, "Dockerfile");
+    fs.writeFileSync(stagedDockerfile, "FROM scratch\nARG NEMOCLAW_MESSAGING_PLAN_B64=old\n");
+    const contextFingerprint = fingerprintBuildContext(buildCtx);
+    const prepared: PreparedRebuildImage = {
+      buildCtx,
+      stagedDockerfile,
+      cleanupBuildCtx: () => true,
+      buildId: "finalize-cleanup",
+      origin: "generated",
+      contextFingerprint,
+      verifyBuildCtx: createBuildContextVerifier(buildCtx, contextFingerprint),
+      rebuildTarget: { agentName: "hermes", fromDockerfile: null },
+    };
+    const removeImage = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1 } as never)
+      .mockReturnValueOnce({ status: 0 } as never);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const registerExitHandler = vi.fn((listener: () => void) => {
+      listener();
+    });
+    try {
+      expect(
+        finalizePreparedRebuildImageMessagingPlan(
+          prepared,
+          hermesMessagingPlan(),
+          [{ path: ".env", assignments: ["SLACK_HOME_CHANNEL=C0123"] }],
+          {
+            buildImage: vi.fn(() => ({ status: 0 }) as never),
+            removeImage,
+            registerExitHandler,
+          },
+        ).ok,
+      ).toBe(true);
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("failed to remove temporary rebuild finalization image"),
+      );
+      expect(registerExitHandler).toHaveBeenCalledWith(expect.any(Function));
+      expect(removeImage).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+      fs.rmSync(buildCtx, { recursive: true, force: true });
     }
   });
 });

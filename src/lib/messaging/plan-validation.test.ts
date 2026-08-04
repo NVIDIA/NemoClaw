@@ -273,6 +273,20 @@ describe("parseSandboxMessagingPlan", () => {
   });
 
   it.each([
+    ["a disabled flag missing from disabledChannels", true, []],
+    ["disabledChannels membership with an enabled flag", false, ["telegram"]],
+  ] as const)("rejects %s", (_label, disabled, disabledChannels) => {
+    expect(
+      parseSandboxMessagingPlan(
+        makePlan({
+          channels: [{ ...makePlan().channels[0], disabled }],
+          disabledChannels: [...disabledChannels],
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it.each([
     ["disabledChannels", { disabledChannels: [" Telegram "] }],
     ["credentialBindings", { credentialBindings: [{ channelId: "Telegram" }] }],
     [
