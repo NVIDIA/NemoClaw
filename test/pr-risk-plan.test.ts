@@ -20,6 +20,7 @@ const HERMES_SANDBOX_BOUNDARY_JOBS = [
   "full-e2e",
   "hermes-e2e",
   "hermes-inference-switch",
+  "managed-image-multiarch-startup",
   "security-posture",
 ];
 const HERMES_CLI_ADAPTER_JOBS = ["channels-stop-start", "mcp-bridge"];
@@ -219,6 +220,7 @@ describe("deterministic PR risk plan", () => {
       "full-e2e",
       "hermes-e2e",
       "hermes-inference-switch",
+      "managed-image-multiarch-startup",
       "security-posture",
     ]);
   });
@@ -313,20 +315,33 @@ describe("deterministic PR risk plan", () => {
     ]);
   });
 
-  it("keeps the protected managed-image lane dormant until its trusted activation marker (#7744)", () => {
+  it("activates protected multiarch qualification for every managed-image build input (#7744)", () => {
     const activation = "ci/protected-managed-image-multiarch-activation-v1.json";
-    const result = plan(activation);
-    const preActivationRuntime = plan("scripts/checks/run-managed-image-direct-e2e.ts");
+    const managedImageInputs = [
+      activation,
+      ".github/workflows/managed-images.yaml",
+      "Dockerfile",
+      "agents/hermes/Dockerfile",
+      "agents/langchain-deepagents-code/Dockerfile",
+      "scripts/checks/run-managed-image-direct-e2e.ts",
+      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.99.json",
+      "src/lib/onboard/managed-startup/image-runtime.ts",
+    ];
+    const result = plan(...managedImageInputs);
+    const adjacentOnboardChange = plan("src/lib/onboard/provider-selection.ts");
 
     expect(result.families).toContainEqual(
       expect.objectContaining({
         id: "managed-image-multiarch",
-        matchedFiles: [activation],
+        matchedFiles: [...managedImageInputs].sort((left, right) => left.localeCompare(right)),
         requiredJobs: ["managed-image-multiarch-startup"],
       }),
     );
-    expect(riskPlanRequiredJobIds(result)).toEqual(["managed-image-multiarch-startup"]);
-    expect(preActivationRuntime.families).toEqual([]);
+    expect(riskPlanRequiredJobIds(result)).toContain("managed-image-multiarch-startup");
+    expect(riskPlanRequiredJobIds(plan(activation))).toEqual(["managed-image-multiarch-startup"]);
+    expect(
+      adjacentOnboardChange.families.some((family) => family.id === "managed-image-multiarch"),
+    ).toBe(false);
   });
 
   it("runs snapshot commands for restored-gateway pairing runtime changes (#7431)", () => {
@@ -437,7 +452,8 @@ describe("deterministic PR risk plan", () => {
         matchedFiles: ["agents/langchain-deepagents-code/patch-managed-deepagents-code.py"],
       }),
     ]);
-    expect(result.tier).toBe(2);
+    expect(result.tier).toBe(3);
+    expect(riskPlanRequiredJobIds(result)).toContain("managed-image-multiarch-startup");
     expect(riskPlanRequiredTargetIds(docsAndTestsOnly)).toEqual([]);
   });
 
@@ -544,8 +560,13 @@ describe("deterministic PR risk plan", () => {
     expect(rootImage.families.map((family) => family.id)).toEqual([
       "platform-install",
       "openclaw-image",
+      "managed-image-multiarch",
     ]);
-    expect(riskPlanRequiredJobIds(rootImage)).toEqual(["cloud-onboard", "full-e2e"]);
+    expect(riskPlanRequiredJobIds(rootImage)).toEqual([
+      "cloud-onboard",
+      "full-e2e",
+      "managed-image-multiarch-startup",
+    ]);
     expect(adjacentImage.families.map((family) => family.id)).toEqual(["platform-install"]);
     expect(riskPlanRequiredJobIds(adjacentImage)).toEqual(["cloud-onboard"]);
   });
@@ -656,6 +677,7 @@ describe("deterministic PR risk plan", () => {
     expect(riskPlanRequiredJobIds(result)).toEqual([
       "cloud-inference",
       "cloud-onboard",
+      "managed-image-multiarch-startup",
       "security-posture",
       "channels-add-remove",
       "channels-stop-start",
