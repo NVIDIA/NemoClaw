@@ -859,9 +859,17 @@ function pullOllamaModelViaHttp(model: string): Promise<boolean> {
   });
 }
 
-// Dispatch to HTTP pull when Ollama was resolved on the Windows host.
+function hasLocalOllamaCli(): boolean {
+  return !!runCapture(["sh", "-c", "command -v ollama"], { ignoreError: true }).trim();
+}
+
+// Dispatch to HTTP pull whenever there is no local `ollama` binary to invoke.
+// Keying on the resolved host alone missed the WSL mirrored networking case,
+// where the Windows-host daemon answers on 127.0.0.1 and no Linux binary
+// exists — the CLI branch then failed with "ollama: command not found" against
+// a daemon that answered `/api/tags` (#7472).
 async function pullOllamaModel(model: string): Promise<boolean> {
-  if (getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL) {
+  if (getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL || !hasLocalOllamaCli()) {
     return pullOllamaModelViaHttp(model);
   }
   return pullOllamaModelViaCli(model);
