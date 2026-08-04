@@ -7,151 +7,40 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { runInstallerSourced } from "./helpers/installer-express-prompt-harness";
+import { runExpressPromptWithTty } from "./helpers/installer-express-prompt-pty-harness";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 describe("installer express install prompt (sourced)", () => {
-  function runExpressPromptWithTty(
-    answer: string,
-    stdinMode: "pipe" | "tty",
-    platform = "DGX Spark",
-    extraEnv: Record<string, string> = {},
-    entrypoint: "prompt" | "accepted-station-main" = "prompt",
-    entrypointArgs: string[] = [],
-  ) {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-prompt-"));
-    const python =
-      spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], {
-        encoding: "utf-8",
-      }).stdout.trim() || "python3";
-    const ptyRunner = `
-import os
-import pty
-import select
-import signal
-import sys
-import time
+  it("drains PTY output after the child exits", () => {
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pty-tail-"));
+    try {
+      const result = runExpressPromptWithTty("", "tty", "DGX Spark", {}, "prompt", [], {
+        mode: "post-exit-tail",
+        pidFile: path.join(fixtureDir, "child.pid"),
+      });
+      const output = `${result.stdout}${result.stderr}`;
 
-installer = sys.argv[1]
-answer = sys.argv[2].encode()
-stdin_mode = sys.argv[3]
-platform = sys.argv[4]
-entrypoint = sys.argv[5]
-entrypoint_args = sys.argv[6:]
-if entrypoint == "accepted-station-main":
-    script = r'''
-source "$INSTALLER_UNDER_TEST" >/dev/null
-detect_express_platform() { printf "$EXPRESS_PLATFORM"; }
-print_banner() { :; }
-ensure_docker() { :; }
-ensure_openshell_build_deps() { :; }
-# Stop immediately after the real Station express prompt configures its recipe,
-# before setup-jetson.sh or any installation side effect can run.
-classify_dgx_station_release() { printf "%s" "\${EXPRESS_RELEASE_STATE:-generic-ubuntu}"; }
-station_installer_revision() { printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; }
-station_express_resume_generation() { printf '0123456789abcdef0123456789abcdef'; }
-bash() {
-  printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s STATION_EXPRESS=%s\\n" \
-    "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \
-    "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}" \
-    "\${NEMOCLAW_STATION_EXPRESS:-}"
-  exit 0
-}
-main "$@"
-'''
-else:
-    script = r'''
-source "$INSTALLER_UNDER_TEST" >/dev/null
-detect_express_platform() { printf "$EXPRESS_PLATFORM"; }
-classify_dgx_station_release() { printf "%s" "\${EXPRESS_RELEASE_STATE:-generic-ubuntu}"; }
-NON_INTERACTIVE="\${NON_INTERACTIVE:-}"
-NEMOCLAW_PROVIDER="\${NEMOCLAW_PROVIDER:-}"
-NEMOCLAW_NO_EXPRESS="\${NEMOCLAW_NO_EXPRESS:-}"
-if [ "\${FORCE_EXPRESS_PROMPT_READ_FAILURE:-}" = "1" ]; then
-  read() { return 1; }
-fi
-maybe_offer_express_install
-printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s VLLM_MODEL=%s POLICY=%s YES=%s SANDBOX=%s STATION_EXPRESS=%s\\n" \\
-  "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
-  "\${NEMOCLAW_VLLM_MODEL:-}" "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}" \\
-  "\${NEMOCLAW_STATION_EXPRESS:-}"
-'''
-env = dict(os.environ)
-env["INSTALLER_UNDER_TEST"] = installer
-env["EXPRESS_PLATFORM"] = platform
-pid, fd = pty.fork()
-if pid == 0:
-    if stdin_mode == "pipe":
-        devnull = os.open(os.devnull, os.O_RDONLY)
-        os.dup2(devnull, 0)
-        os.close(devnull)
-    os.execvpe("bash", ["bash", "-c", script, "nemoclaw-express-prompt", *entrypoint_args], env)
+      expect(result.error, output).toBeUndefined();
+      expect(result.status, output).toBe(0);
+      expect(output).toContain("PTY_POST_EXIT_TAIL");
+      expect(fs.existsSync(result.temporaryDirectory)).toBe(false);
+    } finally {
+      fs.rmSync(fixtureDir, { recursive: true, force: true });
+    }
+  });
 
-output = bytearray()
-os.set_blocking(fd, False)
-sent = False
-exit_code = 124
-deadline = time.time() + 10
-while True:
-    ready, _, _ = select.select([fd], [], [], 0.1)
-    if ready:
-        try:
-            chunk = os.read(fd, 4096)
-        except BlockingIOError:
-            chunk = b""
-        except OSError:
-            chunk = b""
-        if chunk:
-            output.extend(chunk)
-        if (not sent) and b"[Y/n]" in output:
-            os.write(fd, answer)
-            sent = True
-    waited = os.waitpid(pid, os.WNOHANG)
-    if waited[0] == pid:
-        exit_code = os.waitstatus_to_exitcode(waited[1])
-        break
-    if time.time() > deadline:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        try:
-            os.waitpid(pid, 0)
-        except ChildProcessError:
-            pass
-        break
+  it("reaps the PTY child after the harness timeout", () => {
+    const result = runExpressPromptWithTty("", "tty", "DGX Spark", {}, "prompt", [], {
+      mode: "timeout",
+      timeoutSeconds: 1,
+    });
+    const output = `${result.stdout}${result.stderr}`;
 
-try:
-    os.close(fd)
-except OSError:
-    pass
-sys.stdout.buffer.write(output)
-sys.exit(exit_code)
-`;
-    return spawnSync(
-      python,
-      [
-        "-c",
-        ptyRunner,
-        INSTALLER_PAYLOAD,
-        answer,
-        stdinMode,
-        platform,
-        entrypoint,
-        ...entrypointArgs,
-      ],
-      {
-        cwd: tmp,
-        encoding: "utf-8",
-        timeout: 15_000,
-        killSignal: "SIGKILL",
-        env: {
-          HOME: tmp,
-          PATH: TEST_SYSTEM_PATH,
-          ...extraEnv,
-        },
-      },
-    );
-  }
+    expect(result.error, output).toBeUndefined();
+    expect(result.status, output).toBe(124);
+    expect(output).toContain("PTY_TIMEOUT_STARTED");
+    expect(output).toContain("PTY_CHILD_REAPED");
+  });
 
   function detectExpressPlatform(
     productName: string,
