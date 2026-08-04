@@ -592,13 +592,25 @@ jobs:
             .map((entry) => path.join(projectsRoot, entry.name));
           for (const [id, [name, version]] of Object.entries(packages)) {
             const matches = projectRoots.flatMap((projectRoot) => {
-              const packageRoot = path.join(projectRoot, "node_modules", ...name.split("/"));
+              const nodeModulesRoot = path.join(projectRoot, "node_modules");
+              const packageRoot = path.join(nodeModulesRoot, ...name.split("/"));
               const manifestPath = path.join(packageRoot, "package.json");
               if (
+                !fs.existsSync(nodeModulesRoot) ||
                 !fs.existsSync(packageRoot) ||
                 !fs.lstatSync(packageRoot).isDirectory() ||
                 !fs.existsSync(manifestPath) ||
                 !fs.lstatSync(manifestPath).isFile()
+              ) return [];
+              const packageRelative = path.relative(
+                fs.realpathSync(nodeModulesRoot),
+                fs.realpathSync(packageRoot),
+              );
+              if (
+                packageRelative === "" ||
+                packageRelative === ".." ||
+                packageRelative.startsWith(`..${path.sep}`) ||
+                path.isAbsolute(packageRelative)
               ) return [];
               const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
               return manifest.name === name && manifest.version === version ? [manifestPath] : [];

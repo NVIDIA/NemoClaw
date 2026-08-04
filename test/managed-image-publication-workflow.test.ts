@@ -122,6 +122,16 @@ function step(job: Job, name: string): Step {
   );
 }
 
+function isStrictChildPath(root: string, candidate: string): boolean {
+  const relative = path.relative(fs.realpathSync(root), fs.realpathSync(candidate));
+  return (
+    relative !== "" &&
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
+}
+
 function managedPublisher(workflow: Workflow): Job {
   return required(
     workflow.jobs?.["build-and-validate"],
@@ -183,9 +193,14 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
     "@openclaw/msteams",
     "@openclaw/googlechat",
     "/sandbox/.openclaw/npm/projects",
-    '"node_modules", ...name.split("/")',
+    'const nodeModulesRoot = path.join(projectRoot, "node_modules")',
+    'path.join(nodeModulesRoot, ...name.split("/"))',
     "lstatSync(packageRoot).isDirectory()",
     "lstatSync(manifestPath).isFile()",
+    "realpathSync(nodeModulesRoot)",
+    "realpathSync(packageRoot)",
+    "packageRelative.startsWith(`..${path.sep}`)",
+    "path.isAbsolute(packageRelative)",
     "matches.length !== 1",
     "microsoft-teams-apps",
     "config.plugins?.entries?.[id]?.enabled !== false",
@@ -248,6 +263,24 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
 }
 
 describe("complete managed-image publication workflow", () => {
+  it("rejects managed package paths redirected outside node_modules", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-plugin-"));
+    try {
+      const nodeModulesRoot = path.join(fixtureRoot, "project", "node_modules");
+      const outsideScope = path.join(fixtureRoot, "outside-scope");
+      const installedPackageRoot = path.join(nodeModulesRoot, "direct-package");
+      const escapedPackageRoot = path.join(nodeModulesRoot, "@scope", "plugin");
+      fs.mkdirSync(installedPackageRoot, { recursive: true });
+      fs.mkdirSync(path.join(outsideScope, "plugin"), { recursive: true });
+      fs.symlinkSync(outsideScope, path.join(nodeModulesRoot, "@scope"));
+
+      expect(isStrictChildPath(nodeModulesRoot, installedPackageRoot)).toBe(true);
+      expect(isStrictChildPath(nodeModulesRoot, escapedPackageRoot)).toBe(false);
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
   it("starts after exact base contracts with complete main triggers and does not cancel release-tag runs (#7744)", () => {
     const baseWorkflow = readWorkflow("base-image.yaml");
     const managedWorkflow = readWorkflow("managed-images.yaml");
@@ -284,11 +317,11 @@ describe("complete managed-image publication workflow", () => {
       "Validate exact managed image before promotion",
     );
     projectRootWeakenedValidation.run = projectRootWeakenedValidation.run?.replace(
-      ', "node_modules", ...name.split("/")',
+      'path.join(nodeModulesRoot, ...name.split("/"))',
       "",
     );
     expect(publicationBoundaryErrors(baseWorkflow, projectRootWeakenedWorkflow)).toContain(
-      'exact managed image validation is missing "node_modules", ...name.split("/")',
+      'exact managed image validation is missing path.join(nodeModulesRoot, ...name.split("/"))',
     );
     expect(publisher).toMatchObject({
       needs: ["build-and-push-hermes", "build-and-push-dcode", "build-and-push-openclaw"],
