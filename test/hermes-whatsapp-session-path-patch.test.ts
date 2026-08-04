@@ -61,9 +61,12 @@ describe("Hermes WhatsApp session location", () => {
     expect(result).toContain(CANONICAL_SESSION_PATH);
     expect(result).not.toContain('get_hermes_dir("platforms/whatsapp/session"');
     expect(result).not.toContain('get_hermes_home() / "whatsapp" / "session"');
-    if (kind === "adapter") {
-      expect(result).toContain('config.extra.get(\n            "session_path"');
-    }
+  });
+
+  it("preserves the explicit adapter session path override (#8184)", () => {
+    expect(patchAdapterSource(ADAPTER_FIXTURE)).toContain(
+      'config.extra.get(\n            "session_path"',
+    );
   });
 
   it.each([
