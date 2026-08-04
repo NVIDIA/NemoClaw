@@ -192,9 +192,16 @@ bind shared-state authority to the exact attempt, publish an identity-bound
 completion, and authenticate that completion together with the ordinary startup
 handoff. The runtime retains the protected envelope through application and
 completion publication so the same exact attempt can retry after interruption;
-it revalidates the same root-owned file identity before completion and again
-immediately before removing the request. The managed-startup runtime itself does
-not import the bootstrap layer.
+it atomically moves the authenticated inode into a root-private, same-filesystem
+claim before application. That private claim remains the sole retry authority
+after an application or completion-write failure; restart recovery resumes it
+without moving, deleting, or overwriting a newer canonical request. Success
+removes only the authenticated private claim. This protocol assumes the OCI
+writable layer supports same-device atomic rename, the producer writes only the
+canonical request path, one bootstrap consumer owns that path at a time, and
+container uid 0 is trusted; it does not claim protection from a hostile root
+process that can mutate the private mode-0700 namespace. The managed-startup
+runtime itself does not import the bootstrap layer.
 Production onboarding imports only the provider-neutral create contract; no
 activation path or registered provider imports or selects the driver-specific
 Docker candidate. The current image definitions still do not package
