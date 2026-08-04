@@ -9,7 +9,7 @@ const EXPECTED_REPLY = "PONG";
 const PROMPT =
   "Reply with the one uppercase word formed by the letters P, O, N, G in that order. Do not use tools.";
 
-const LAUNCH_TURN_SCRIPT = String.raw`set -euo pipefail
+export const LAUNCH_TURN_SCRIPT = String.raw`set -euo pipefail
 command -v script >/dev/null 2>&1
 command -v timeout >/dev/null 2>&1
 
@@ -65,9 +65,13 @@ for _ in {1..180}; do
   sleep 1
 done
 
+# The TUI may close the FIFO after the first interrupt. Ignore SIGPIPE while
+# sending interrupts so the driver can record a reply it already observed.
+trap '' PIPE
 printf '\003' >&3 2>/dev/null || true
 sleep 1
 printf '\003' >&3 2>/dev/null || true
+trap - PIPE
 exec 3>&-
 
 if [[ "$reply_seen" != 1 ]]; then

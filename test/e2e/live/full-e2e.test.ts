@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { GATEWAY_STOP_SCRIPT } from "../../../src/lib/tunnel/gateway-stop-script.ts";
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -113,7 +114,7 @@ async function runOpenClawLaunchTurnAfterRecovery(input: {
 }): Promise<void> {
   const stopGateway = await input.sandbox.execShell(
     SANDBOX_NAME,
-    trustedSandboxShellScript("pkill -f 'openclaw.*gateway' 2>/dev/null || true"),
+    trustedSandboxShellScript(GATEWAY_STOP_SCRIPT),
     {
       artifactName: "phase-4-stop-openclaw-gateway-before-launch",
       env: env(),
