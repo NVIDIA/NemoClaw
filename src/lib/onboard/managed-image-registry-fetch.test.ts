@@ -38,10 +38,13 @@ afterEach(async () => {
 describe("managed image registry transport", () => {
   it("routes the default registry fetch through the bounded host proxy", async () => {
     const tunnels: string[] = [];
+    const abortController = new AbortController();
+
     const proxy = createServer();
     proxy.on("connect", (request, socket) => {
       tunnels.push(request.url ?? "");
-      socket.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
+      abortController.abort();
+      socket.destroy();
     });
     const proxyPort = await listen(proxy);
     const session = createManagedImageRegistryFetchSession({
@@ -52,7 +55,9 @@ describe("managed image registry transport", () => {
     });
 
     try {
-      await expect(session.fetchImpl("http://registry.invalid/v2/")).rejects.toThrow();
+      await expect(
+        session.fetchImpl("http://registry.invalid/v2/", { signal: abortController.signal }),
+      ).rejects.toThrow();
       expect(tunnels).toEqual(["registry.invalid:80"]);
     } finally {
       await session.close();
