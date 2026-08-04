@@ -102,7 +102,7 @@ $$nemoclaw <sandbox> logs --tail 100
 ```text
 [nemoclaw] managed_transport_failure
 [nemoclaw] consumer=mcp
-[nemoclaw] route=trusted_env_proxy
+[nemoclaw] route=proxy_configured
 [nemoclaw] proxy=127.0.0.1:3128
 [nemoclaw] target=mcp.example.com:443
 [nemoclaw] phase=response_headers
@@ -125,7 +125,10 @@ Read `phase` first. It states which step failed:
 | `request` | The request failed before any response arrived |
 | `response_headers` | A response arrived and its status or headers report the failure |
 
-`route` states whether the managed proxy was used.
+`route=proxy_configured` states that OpenClaw received a supported proxy environment variable.
+`route=unknown` states that the diagnostic did not observe one.
+These values report configuration evidence and do not prove whether the failed request used a proxy.
+When present, `proxy` contains the configured proxy endpoint without credentials.
 `server`, `via`, `x_request_id`, and the `x_envoy_*` fields are the proxy's own account of the failure and appear only when the proxy sends them.
 A proxy-generated response does not by itself prove whether the proxy or its upstream produced the failure; keep both the status and the cause chain when reporting one.
 

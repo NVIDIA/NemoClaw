@@ -197,6 +197,9 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("The sibling SSE transport boundary is deliberately left unwrapped.");
     expect(review).toContain("Failure-only.");
     expect(review).toContain("never retries, never alters the request");
+    expect(review).toContain("`route=proxy_configured` means that `HTTPS_PROXY`");
+    expect(review).toContain("report configuration evidence");
+    expect(review).toContain("do not prove whether the failed request used a proxy");
     expect(review).toContain(
       "returns the original response without waiting for asynchronous sampling",
     );
@@ -214,6 +217,11 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("The `mcp-session-id` value is never emitted.");
     expect(review).toContain("inert unless `OPENSHELL_SANDBOX=1`");
     expect(review).toContain("test/openclaw-managed-transport-diagnostics-patch.test.ts");
+    expect(review).toContain("executes that exact helper");
+    expect(review).toContain(
+      "A reusable source schema is deferred until a production consumer requires one.",
+    );
+    expect(review).not.toContain("src/lib/observability/managed-transport.test.ts");
     expect(review).toContain("NVIDIA/OpenShell#2508");
   });
 

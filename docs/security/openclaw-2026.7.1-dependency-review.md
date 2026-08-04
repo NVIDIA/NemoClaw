@@ -452,6 +452,9 @@ Reviewed behavior:
   A 2xx response returns untouched and emits nothing, so normal traffic produces no per-request logging.
 - The wrapper never retries, never alters the request, never changes proxy selection, and never weakens TLS verification.
   It rethrows a transport error unchanged.
+- `route=proxy_configured` means that `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, or `http_proxy` was configured.
+  `route=unknown` means that the diagnostic did not observe one of those variables.
+  These values report configuration evidence and do not prove whether the failed request used a proxy.
 - For a non-2xx response, the wrapper returns the original response without waiting for asynchronous sampling of `response.clone()`.
   The diagnostic task waits at most 250 ms and retains at most 2,048 response bytes for an allowed content type.
   It limits the redacted `error_body` value to 2,048 UTF-8 bytes before JSON encoding.
@@ -483,9 +486,11 @@ This patch does not correlate its `trace_id` with an OpenShell audit event.
 `NVIDIA/OpenShell#2508` tracks span emission from the sandbox supervisor, and the OCSF `http_request` object in the pinned OpenShell `0.0.85` has no slot for a request-scoped correlation identifier, so a shared identifier is not representable today.
 The local identifier distinguishes application-side diagnostics, but operators still correlate each diagnostic with OpenShell audit events by endpoint and time.
 
-Coverage: `test/openclaw-managed-transport-diagnostics-patch.test.ts` pins the compiled preimage, patch idempotence, fail-closed rejection of an unrecognized shape, and the untouched SSE boundary.
-It also covers failure-only emission, no-retry and unchanged-response contracts, asynchronous body sampling, byte and time bounds, redaction, the header allowlist, local trace identifiers, session-presence reporting, phase classification, and sandbox gating.
-`src/lib/observability/managed-transport.test.ts` covers the shared event schema, field validation, redaction, and classification contract.
+The injected helper in `scripts/patch-openclaw-managed-transport-diagnostics.mts` is the shipped runtime source of truth.
+`test/openclaw-managed-transport-diagnostics-patch.test.ts` executes that exact helper.
+It pins the compiled preimage, patch idempotence, fail-closed rejection of an unrecognized shape, and the untouched SSE boundary.
+It also covers failure-only emission, no-retry and unchanged-response contracts, asynchronous body sampling, byte and time bounds, redaction, the header allowlist, local trace identifiers, session-presence reporting, phase classification, route evidence, and sandbox gating.
+A reusable source schema is deferred until a production consumer requires one.
 
 Removal criterion: drop this patch when the reviewed OpenClaw release emits phase-classified, redacted transport diagnostics for remote MCP fetch failures.
 

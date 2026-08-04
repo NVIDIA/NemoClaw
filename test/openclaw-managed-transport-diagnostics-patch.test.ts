@@ -11,10 +11,6 @@ import {
   MARKER,
   patchManagedTransportDiagnosticsText,
 } from "../scripts/patch-openclaw-managed-transport-diagnostics.mts";
-import {
-  buildManagedTransportFailure,
-  formatManagedTransportFailure,
-} from "../src/lib/observability/managed-transport.js";
 
 /**
  * Mirrors the reviewed `openclaw@2026.7.1`
@@ -195,7 +191,28 @@ describe("injected managed transport wrapper", () => {
     expect(stderr.join("")).not.toContain("session=leaky");
   });
 
-  it("matches the shared schema and classification contract (#7957)", async () => {
+  it.each([
+    ["policy", "CONNECT tunnel failed, response 403", "ECONNRESET"],
+    ["connect", "CONNECT tunnel failed, response 502", "ECONNRESET"],
+    ["tls", "certificate failed", "CERT_HAS_EXPIRED"],
+    ["app_connect", "fetch failed", "ECONNREFUSED"],
+    ["response_headers", "headers timed out", "UND_ERR_HEADERS_TIMEOUT"],
+    ["request", "request aborted", "UND_ERR_ABORTED"],
+  ])("classifies an injected %s failure (#7957)", async (phase, message, code) => {
+    const { wrap, stderr } = loadHelper();
+    const error = Object.assign(new Error(message), { code });
+    const inner = async () => {
+      throw error;
+    };
+
+    await expect(
+      wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")("https://mcp.test/rpc"),
+    ).rejects.toBe(error);
+
+    expect(emittedEvent(stderr).phase).toBe(phase);
+  });
+
+  it("emits the canonical injected failure fields (#7957)", async () => {
     const { wrap, stderr } = loadHelper({
       OPENSHELL_SANDBOX: "1",
       HTTPS_PROXY: "http://127.0.0.1:3128",
@@ -212,29 +229,22 @@ describe("injected managed transport wrapper", () => {
     ).rejects.toBe(error);
 
     const event = emittedEvent(stderr);
-    const expected = emittedEvent([
-      formatManagedTransportFailure(
-        buildManagedTransportFailure({
-          consumer: "mcp",
-          route: "trusted_env_proxy",
-          proxy: "127.0.0.1:3128",
-          target: "mcp.test:443",
-          error,
-          traceId: "0".repeat(32),
-        }),
-      ),
-    ]);
-
     expect(event).toMatchObject({
-      consumer: expected.consumer,
-      route: expected.route,
-      proxy: expected.proxy,
-      target: expected.target,
-      phase: expected.phase,
-      cause_code: expected.cause_code,
-      cause_chain: expected.cause_chain,
-      session_present: expected.session_present,
+      consumer: "mcp",
+      route: "proxy_configured",
+      proxy: "127.0.0.1:3128",
+      target: "mcp.test:443",
+      phase: "policy",
+      cause_code: "ECONNRESET",
+      session_present: "false",
     });
+    expect(JSON.parse(event.cause_chain)).toEqual([
+      {
+        name: "Error",
+        code: "ECONNRESET",
+        message: "CONNECT tunnel failed, response 403",
+      },
+    ]);
     expect(event.trace_id).toMatch(/^[0-9a-f]{32}$/);
   });
 
@@ -349,10 +359,11 @@ describe("injected managed transport wrapper", () => {
     expect(emittedEvent(stderr).phase).toBe("policy");
   });
 
-  it("records the proxy route from the sandbox environment (#7957)", async () => {
+  it("reports proxy configuration without claiming the fetch used it (#7957)", async () => {
     const { wrap, stderr } = loadHelper({
       OPENSHELL_SANDBOX: "1",
       HTTPS_PROXY: "http://127.0.0.1:3128",
+      NO_PROXY: "mcp.test",
     });
     const inner = async () => new Response("", { status: 502 });
 
@@ -360,8 +371,18 @@ describe("injected managed transport wrapper", () => {
     await waitForDiagnostic(stderr);
     const event = emittedEvent(stderr);
 
-    expect(event.route).toBe("trusted_env_proxy");
+    expect(event.route).toBe("proxy_configured");
     expect(event.proxy).toBe("127.0.0.1:3128");
+  });
+
+  it("reports an unknown route when no proxy configuration is visible (#7957)", async () => {
+    const { wrap, stderr } = loadHelper({ OPENSHELL_SANDBOX: "1" });
+    const inner = async () => new Response("", { status: 502 });
+
+    await wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")("https://mcp.test/rpc");
+    await waitForDiagnostic(stderr);
+
+    expect(emittedEvent(stderr).route).toBe("unknown");
   });
 
   it("mints a distinct trace identifier for each failed response (#7957)", async () => {
