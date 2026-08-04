@@ -338,6 +338,27 @@ describe("recoverDockerDriverSandbox — backup-only (rename + start)", () => {
     );
   });
 
+  it("hands a renamed backup to lifecycle verification while Docker health is starting (#8112)", () => {
+    const sleep = vi.fn();
+    const result = recoverDockerDriverSandbox("e2e-x", {
+      dockerCapture: fakeCapture(
+        "openshell-e2e-x-nemoclaw-gpu-backup-1717280000000\tExited (0) 5 minutes ago\n",
+        ["running\tstarting"],
+      ),
+      dockerRename: fakeRename(0),
+      dockerStart: fakeStart(0),
+      readiness: "runtime-running",
+      sleep,
+    });
+
+    expect(result).toEqual({
+      recovered: true,
+      via: "renamed-and-started-backup",
+      containerName: "openshell-e2e-x",
+    });
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("picks the most recent backup when several siblings exist", () => {
     const rename = vi.fn(fakeRename(0));
     const start = vi.fn(fakeStart(0));
