@@ -31,7 +31,14 @@ on:
       - "nemoclaw-blueprint/**"
       - "scripts/**"
       - "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json"
+      - "src/lib/core/json-types.ts"
+      - "src/lib/core/ports.ts"
       - "src/lib/messaging/**"
+      - "src/lib/onboard/managed-bootstrap/envelope.ts"
+      - "src/lib/onboard/managed-startup/**"
+      - "src/lib/security/credential-hash.ts"
+      - "src/lib/state/paths.ts"
+      - "src/lib/state/state-root.ts"
       - "src/lib/tool-disclosure.ts"
       - "tools/mcp-tool-discovery-runtime/**"
       - "tsconfig.runtime-preloads.json"
@@ -113,7 +120,7 @@ jobs:
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Log in to GHCR
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -194,7 +201,7 @@ jobs:
       - name: Upload platform digest
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: openclaw-base-digest-${{ matrix.arch }}
+          name: openclaw-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -233,7 +240,7 @@ jobs:
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Log in to GHCR
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -310,7 +317,7 @@ jobs:
       - name: Upload platform digest
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ matrix.agent }}-base-digest-${{ matrix.arch }}
+          name: ${{ matrix.agent }}-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -423,7 +430,7 @@ jobs:
       - name: Upload platform digest
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ matrix.agent }}-base-digest-${{ matrix.arch }}
+          name: ${{ matrix.agent }}-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
@@ -438,7 +445,7 @@ jobs:
       - name: Download platform digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: hermes-base-digest-*
+          pattern: hermes-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-*
           path: ${{ runner.temp }}/digests
           merge-multiple: true
 
@@ -605,7 +612,7 @@ jobs:
       - name: Upload managed base image contract
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-base-hermes
+          name: managed-base-${{ github.run_id }}-${{ github.run_attempt }}-hermes
           path: ${{ runner.temp }}/managed-base-contract/contract.json
           if-no-files-found: error
           retention-days: 1
@@ -620,7 +627,7 @@ jobs:
       - name: Download platform digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: langchain-deepagents-code-base-digest-*
+          pattern: langchain-deepagents-code-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-*
           path: ${{ runner.temp }}/digests
           merge-multiple: true
 
@@ -787,7 +794,7 @@ jobs:
       - name: Upload managed base image contract
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-base-langchain-deepagents-code
+          name: managed-base-${{ github.run_id }}-${{ github.run_attempt }}-langchain-deepagents-code
           path: ${{ runner.temp }}/managed-base-contract/contract.json
           if-no-files-found: error
           retention-days: 1
@@ -804,7 +811,7 @@ jobs:
       - name: Download platform digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: openclaw-base-digest-*
+          pattern: openclaw-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-*
           path: ${{ runner.temp }}/digests
           merge-multiple: true
 
@@ -812,7 +819,7 @@ jobs:
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Log in to GHCR
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -971,7 +978,7 @@ jobs:
       - name: Upload managed base image contract
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-base-openclaw
+          name: managed-base-${{ github.run_id }}-${{ github.run_attempt }}-openclaw
           path: ${{ runner.temp }}/managed-base-contract/contract.json
           if-no-files-found: error
           retention-days: 1

@@ -21,6 +21,14 @@ export function makeStartScriptFixture(tempDir: string): {
   const envFile = path.join(tempDir, "proxy-env.sh");
   const scriptPath = path.join(tempDir, "start.sh");
   const rlimitLib = path.join(tempDir, "sandbox-rlimits.sh");
+  const entrypointEnvWrapper = path.join(
+    import.meta.dirname,
+    "..",
+    "..",
+    "scripts",
+    "lib",
+    "entrypoint-env-wrapper.sh",
+  );
   const hostFile = path.join(tempDir, "trusted-proxy-host");
   const portFile = path.join(tempDir, "trusted-proxy-port");
   const caFile = path.join(tempDir, "trusted-ca-bundle.pem");
@@ -28,7 +36,9 @@ export function makeStartScriptFixture(tempDir: string): {
   assert.ok(original.includes("local target=/tmp/nemoclaw-proxy-env.sh"));
   assert.ok(original.includes('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"'));
   const fixture = original
+    .replace("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", entrypointEnvWrapper)
     .replace("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
+    .replaceAll("/run/nemoclaw/managed-startup-ca-bundle.pem", caFile)
     .replace(
       'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
       `readonly MANAGED_PROXY_HOST_FILE="${hostFile}"`,
