@@ -1129,6 +1129,8 @@ ONBOARD_RAN=false
 # invoke the CLI directly so a stale PATH cache does not silently skip
 # auto-onboarding (#3276).
 _CLI_PATH=""
+_NEMOCLAW_CLI_INSTALL_PREPARED=false
+_NEMOCLAW_CLI_INSTALL_MODE=""
 _PREEXISTING_SANDBOX_COUNT=0
 _PREEXISTING_SANDBOX_RECOVERY_RAN=false
 # #6520: set when the automatic recovery pass exited 0 but skipped recorded
@@ -1935,6 +1937,95 @@ is_source_checkout() {
   return 1
 }
 
+installer_payload_revision() {
+  local revision=""
+  revision="$(git -C "${SCRIPT_DIR}/.." rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" || return 1
+  [[ "$revision" =~ ^[0-9a-f]{40,64}$ ]] || return 1
+  printf '%s' "$revision"
+}
+
+path_resolves_within() {
+  local parent="$1" candidate="$2"
+  node -e '
+    const fs = require("fs");
+    const path = require("path");
+    try {
+      const parent = fs.realpathSync(process.argv[1]);
+      const candidate = fs.realpathSync(process.argv[2]);
+      const relative = path.relative(parent, candidate);
+      process.exit(
+        relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative)) ? 0 : 1,
+      );
+    } catch {
+      process.exit(1);
+    }
+  ' "$parent" "$candidate"
+}
+
+resolve_cli_runner_within_source() {
+  local source_root="$1" candidate="" npm_bin=""
+  if command_exists "$_CLI_BIN"; then
+    candidate="$(command -v "$_CLI_BIN")"
+    if is_real_nemoclaw_cli "$candidate" "$_CLI_BIN" \
+      && path_resolves_within "$source_root" "$candidate"; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  fi
+
+  npm_bin="$(resolve_npm_bin)" || true
+  candidate="${npm_bin:+${npm_bin}/${_CLI_BIN}}"
+  if [[ -n "$candidate" && -x "$candidate" ]] \
+    && is_real_nemoclaw_cli "$candidate" "$_CLI_BIN" \
+    && path_resolves_within "$source_root" "$candidate"; then
+    printf '%s' "$candidate"
+    return 0
+  fi
+  return 1
+}
+
+is_reusable_managed_nemoclaw_install() {
+  local source_root="$1" expected_revision current_revision identity_file identity_revision
+  local identity_version cli_runner version_output
+
+  [[ "${NEMOCLAW_BOOTSTRAP_PAYLOAD:-}" == "1" ]] || return 1
+  ! truthy_env "${NEMOCLAW_REINSTALL_CLI:-}" || return 1
+  [[ -d "$source_root" && ! -L "$source_root" && -O "$source_root" ]] || return 1
+  [[ -d "${source_root}/.git" && ! -L "${source_root}/.git" ]] || return 1
+  grep -q '"name"[[:space:]]*:[[:space:]]*"nemoclaw"' "${source_root}/package.json" 2>/dev/null || return 1
+
+  expected_revision="$(installer_payload_revision)" || return 1
+  current_revision="$(git -C "$source_root" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" || return 1
+  [[ "$current_revision" == "$expected_revision" ]] || return 1
+  git -C "$source_root" diff --quiet --ignore-submodules -- || return 1
+  git -C "$source_root" diff --cached --quiet --ignore-submodules -- || return 1
+  [[ -d "${source_root}/node_modules" && -d "${source_root}/nemoclaw/node_modules" ]] || return 1
+
+  identity_file="${source_root}/dist/build-identity.json"
+  [[ -f "$identity_file" && -s "${source_root}/dist/lib/onboard/preflight.js" ]] || return 1
+  [[ -s "${source_root}/nemoclaw/dist/index.js" ]] || return 1
+  identity_revision="$(json_string_field "$identity_file" sourceRevision)"
+  identity_version="$(json_string_field "$identity_file" nemoclawVersion)"
+  [[ "$identity_revision" == "$expected_revision" ]] || return 1
+  [[ "$identity_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?$ ]] || return 1
+
+  cli_runner="$(resolve_cli_runner_within_source "$source_root")" || return 1
+  version_output="$("$cli_runner" --version 2>/dev/null)" || return 1
+  [[ "$version_output" == "${_CLI_BIN} v${identity_version}" ]]
+}
+
+finish_nemoclaw_install() {
+  # A backup-preparation pass defers OpenShell but still prepares the CLI. The
+  # later install pass completes only the OpenShell policy for that source mode.
+  case "${_NEMOCLAW_CLI_INSTALL_MODE:-}" in
+    source) maybe_install_openshell_during_install if-missing ;;
+    managed) maybe_install_openshell_during_install force ;;
+    *) error "The prepared ${_CLI_DISPLAY} CLI has no installation mode." ;;
+  esac
+  refresh_path
+  ensure_nemoclaw_shim || true
+}
+
 install_nemoclaw() {
   command_exists git || error "git was not found on PATH."
   local repo_root package_json
@@ -1942,6 +2033,13 @@ install_nemoclaw() {
   package_json="${repo_root}/package.json"
   # Tell prepare not to run npm link — the installer handles linking explicitly.
   export NEMOCLAW_INSTALLING=1
+
+  if [[ "${_NEMOCLAW_CLI_INSTALL_PREPARED:-false}" == true ]]; then
+    info "${_CLI_DISPLAY} CLI was already prepared during this installer run — reusing it."
+    unset NEMOCLAW_REINSTALL_CLI
+    finish_nemoclaw_install
+    return 0
+  fi
 
   if is_source_checkout "$repo_root"; then
     info "${_CLI_DISPLAY} package.json found in the selected source checkout — installing from source…"
@@ -1955,15 +2053,7 @@ install_nemoclaw() {
     spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\"/nemoclaw && npm ci --ignore-scripts && npm run build"
     spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm link"
 
-    # Bootstrap OpenShell when the source checkout is being used as a fresh
-    # install entrypoint (e.g. `git clone … && bash install.sh`) and the host
-    # has no openshell on PATH. Skipping here previously left the user at a
-    # circular preflight error ("Run the NemoClaw installer or
-    # scripts/install-openshell.sh") even though they were running the
-    # installer. A developer who already has a managed openshell on PATH
-    # keeps their existing binary — install-openshell.sh is only invoked
-    # when openshell is genuinely missing. See #3989.
-    maybe_install_openshell_during_install if-missing
+    _NEMOCLAW_CLI_INSTALL_MODE=source
   else
     if [[ -f "$package_json" ]]; then
       info "Installer payload is not a persistent source checkout — installing from GitHub…"
@@ -1977,46 +2067,42 @@ install_nemoclaw() {
     # npm install -g git+https://... does this internally but we can't hook
     # into its extraction pipeline, so we do it ourselves.
     local nemoclaw_src="${HOME}/.nemoclaw/source"
-    rm -rf "$nemoclaw_src"
-    mkdir -p "$(dirname "$nemoclaw_src")"
     NEMOCLAW_SOURCE_ROOT="$nemoclaw_src"
-    spin "Cloning ${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"
-    # Fetch version tags into the shallow clone so `git describe --tags
-    # --match "v*"` works at runtime (the shallow clone only has the
-    # single ref we asked for).
-    git -C "$nemoclaw_src" fetch --depth=1 origin 'refs/tags/v*:refs/tags/v*' 2>/dev/null || true
-    # Stamp .version from the requested ref so the recorded version matches the
-    # installed tag, even when a shallow clone cannot name it via describe.
-    local stamped_version
-    stamped_version="$(resolve_stamped_version "$release_ref")"
-    if [[ -n "$stamped_version" ]]; then
-      printf '%s' "$stamped_version" >"$nemoclaw_src/.version"
+    if is_reusable_managed_nemoclaw_install "$nemoclaw_src"; then
+      info "Reusing the installed ${_CLI_DISPLAY} CLI at the selected revision."
     else
-      git -C "$nemoclaw_src" describe --tags --match 'v*' 2>/dev/null \
-        | sed 's/^v//' >"$nemoclaw_src/.version" || true
+      rm -rf "$nemoclaw_src"
+      mkdir -p "$(dirname "$nemoclaw_src")"
+      spin "Cloning ${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"
+      # Fetch version tags into the shallow clone so `git describe --tags
+      # --match "v*"` works at runtime (the shallow clone only has the
+      # single ref we asked for).
+      git -C "$nemoclaw_src" fetch --depth=1 origin 'refs/tags/v*:refs/tags/v*' 2>/dev/null || true
+      # Stamp .version from the requested ref so the recorded version matches the
+      # installed tag, even when a shallow clone cannot name it via describe.
+      local stamped_version
+      stamped_version="$(resolve_stamped_version "$release_ref")"
+      if [[ -n "$stamped_version" ]]; then
+        printf '%s' "$stamped_version" >"$nemoclaw_src/.version"
+      else
+        git -C "$nemoclaw_src" describe --tags --match 'v*' 2>/dev/null \
+          | sed 's/^v//' >"$nemoclaw_src/.version" || true
+      fi
+      if [[ -z "${NEMOCLAW_AGENT:-}" || "${NEMOCLAW_AGENT}" == "openclaw" ]]; then
+        spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$nemoclaw_src" \
+          || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
+      fi
+      spin "Installing ${_CLI_DISPLAY} dependencies" bash -c "cd \"$nemoclaw_src\" && npm install --ignore-scripts"
+      spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
+      spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm ci --ignore-scripts && npm run build"
+      spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$nemoclaw_src\" && npm link"
     fi
-    if [[ -z "${NEMOCLAW_AGENT:-}" || "${NEMOCLAW_AGENT}" == "openclaw" ]]; then
-      spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$nemoclaw_src" \
-        || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
-    fi
-    spin "Installing ${_CLI_DISPLAY} dependencies" bash -c "cd \"$nemoclaw_src\" && npm install --ignore-scripts"
-    spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
-    spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm ci --ignore-scripts && npm run build"
-    spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$nemoclaw_src\" && npm link"
-
-    # Install/upgrade the OpenShell CLI on the GitHub-clone path (curl|bash).
-    # Without this, install.sh defers the openshell version gate entirely to
-    # onboard, so any later skip of onboard (preflight blocking,
-    # interrupted session) leaves openshell stale below blueprint's
-    # min_openshell_version even though the new NemoClaw declared a higher
-    # floor. The source-checkout branch invokes the same helper in
-    # `if-missing` mode so developers keep autonomy when openshell is already
-    # on PATH. The script is idempotent on the happy path. See #2272, #3989.
-    maybe_install_openshell_during_install force
+    _NEMOCLAW_CLI_INSTALL_MODE=managed
   fi
 
-  refresh_path
-  ensure_nemoclaw_shim || true
+  _NEMOCLAW_CLI_INSTALL_PREPARED=true
+  unset NEMOCLAW_REINSTALL_CLI
+  finish_nemoclaw_install
 }
 
 # ---------------------------------------------------------------------------
