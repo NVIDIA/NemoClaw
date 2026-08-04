@@ -314,7 +314,7 @@ Restore the baseline entry before applying a preset that intentionally owns the 
 To recover from baseline drift, first check whether the release changed the entry's content or removed it entirely (`$$nemoclaw <sandbox-name> policy explain` or `doctor` reports which).
 
 If the entry still exists with different content, `policy restore <key> --force` restores the current baseline entry and clears the stale exclusion record.
-This allows the entry's listed egress again before you can exclude it again.
+This allows the entry's listed egress before you can exclude it again.
 Preview the restore and exclusion scopes before applying either change:
 
 ```bash
@@ -324,7 +324,7 @@ $$nemoclaw <sandbox-name> policy exclude <key> --dry-run
 $$nemoclaw <sandbox-name> policy exclude <key> --force
 ```
 
-If the release removed the entry entirely, `policy exclude <key>` fails with "Unknown baseline entry" because there is nothing left to exclude.
+If the release removed the entry entirely, `policy exclude <key>` fails with `Unknown baseline entry '<key>'.` because there is nothing left to exclude.
 Preview the stale-record cleanup, then clear the record without changing live egress:
 
 ```bash
@@ -345,6 +345,8 @@ $$nemoclaw <sandbox-name> policy restore <key> --dry-run
 $$nemoclaw <sandbox-name> policy restore <key> --force
 ```
 
-Both paths require explicit acknowledgement unless you use `--dry-run`; use `--force` or `--yes` for non-interactive acknowledgement.
+Both restore paths require acknowledgement unless you use `--dry-run`.
+Interactive runs prompt for confirmation when no acknowledgement flag is present.
+Non-interactive runs require `--force`, `--yes`, or `-y`.
 
 Excluding a baseline entry leaves agent features that depend on it unsupported for that sandbox.
