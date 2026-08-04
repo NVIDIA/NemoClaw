@@ -10,6 +10,7 @@ import {
   createPoliciesPhase,
   createPostVerifyPhase,
 } from "./flow-phases/agent-policy-finalization";
+import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 import { runFinalOnboardFlowSequence } from "./flow-slices";
 import { type AgentSetupStateOptions, handleAgentSetupState } from "./handlers/agent-setup";
 import {
@@ -18,7 +19,6 @@ import {
   handlePostVerifyState,
 } from "./handlers/finalization";
 import { handlePoliciesState, type PoliciesStateOptions } from "./handlers/policies";
-import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 import { createPhaseProgressReporter } from "./phase-progress";
 import type { OnboardStateResult } from "./result";
 import type { OnboardMachineRunnerRuntime, OnboardStateHandlerResult } from "./runner";
@@ -39,11 +39,10 @@ export interface FinalOnboardFlowPhaseOptions<
     migratedLegacyKeys: ReadonlySet<string>;
     webSearchEnabled(webSearchConfig: WebSearchConfig | null): boolean;
   };
-  finalizationDeps: FinalizationStateOptions<
-    Context["agent"],
-    VerifyChain,
-    VerificationResult
-  >["deps"];
+  finalizationDeps: Omit<
+    FinalizationStateOptions<Context["agent"], VerifyChain, VerificationResult>["deps"],
+    "persistDashboardPort"
+  >;
 }
 
 export function createFinalOnboardFlowPhases<
@@ -58,6 +57,10 @@ export function createFinalOnboardFlowPhases<
   OnboardSequencePhase<Context>,
   OnboardSequencePhase<Context>,
 ] {
+  const finalizationDeps = {
+    ...options.finalizationDeps,
+    persistDashboardPort: options.agentSetupDeps.persistDashboardPort,
+  };
   const createBranchPhase =
     options.branchState === "agent_setup" ? createAgentSetupPhase : createOpenclawSetupPhase;
   const branchSetupPhase = createBranchPhase<Context>(async (context) => {
@@ -119,7 +122,7 @@ export function createFinalOnboardFlowPhases<
       stagedLegacyKeys: options.finalization.stagedLegacyKeys,
       migratedLegacyKeys: options.finalization.migratedLegacyKeys,
       webSearchEnabled: options.finalization.webSearchEnabled(context.webSearchConfig),
-      deps: options.finalizationDeps,
+      deps: finalizationDeps,
     });
     return { result: finalizationResult.stateResult };
   });
@@ -137,7 +140,7 @@ export function createFinalOnboardFlowPhases<
       stagedLegacyKeys: options.finalization.stagedLegacyKeys,
       migratedLegacyKeys: options.finalization.migratedLegacyKeys,
       webSearchEnabled: options.finalization.webSearchEnabled(context.webSearchConfig),
-      deps: options.finalizationDeps,
+      deps: finalizationDeps,
     });
     return { result: postVerifyResult.stateResult };
   });
