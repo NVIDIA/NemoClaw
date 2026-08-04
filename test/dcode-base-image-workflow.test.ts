@@ -421,7 +421,9 @@ describe("base-image publication behavior", () => {
       expect(digestExport?.env?.ARCH).toBe("${{ matrix.arch }}");
       expect(digestExport?.run).toContain("^sha256:[0-9a-f]{64}$");
       expect(digestExport?.run).toContain('touch "$RUNNER_TEMP/digests/${ARCH}-${DIGEST#sha256:}"');
-      expect(digestUpload?.with?.name).toBe("openclaw-base-digest-${{ matrix.arch }}");
+      expect(digestUpload?.with?.name).toBe(
+        "openclaw-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}",
+      );
       for (const step of steps.filter((step) => step.uses)) {
         expect(step.uses, `${matrix.arch}: ${step.name}`).toMatch(FULL_SHA_ACTION);
       }
@@ -439,7 +441,7 @@ describe("base-image publication behavior", () => {
       (step) => step.name === "Create and verify multi-platform manifest",
     );
     expect(download?.with).toMatchObject({
-      pattern: "openclaw-base-digest-*",
+      pattern: "openclaw-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-*",
       "merge-multiple": true,
     });
     expect(metadata?.with?.images).toBe("${{ env.REGISTRY }}/nvidia/nemoclaw/sandbox-base");
@@ -473,14 +475,15 @@ describe("base-image publication behavior", () => {
         platformJobName: "build-hermes-platforms",
         manifestJobName: "build-and-push-hermes",
         manifestName: "Build and push Hermes base image",
-        artifactPattern: "hermes-base-digest-*",
+        artifactPattern: "hermes-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-*",
         image: "${{ env.REGISTRY }}/nvidia/nemoclaw/hermes-sandbox-base",
       },
       {
         platformJobName: "build-dcode-platforms",
         manifestJobName: "build-and-push-dcode",
         manifestName: "Build and push Deep Agents Code base image",
-        artifactPattern: "langchain-deepagents-code-base-digest-*",
+        artifactPattern:
+          "langchain-deepagents-code-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-*",
         image: "${{ env.REGISTRY }}/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
       },
     ];
@@ -535,9 +538,13 @@ describe("base-image publication behavior", () => {
       expect(build.with?.outputs).toBe(PLATFORM_DIGEST_OUTPUT);
       expect(digestExport?.env?.ARCH).toBe("${{ matrix.arch }}");
       expect(digestExport?.run).toContain('touch "$RUNNER_TEMP/digests/${ARCH}-${DIGEST#sha256:}"');
-      expect(digestUpload?.with?.name).toBe("${{ matrix.agent }}-base-digest-${{ matrix.arch }}");
+      expect(digestUpload?.with?.name).toBe(
+        "${{ matrix.agent }}-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}",
+      );
       expect(renderMatrixValue(digestUpload?.with?.name, matrix)).toBe(
-        `${matrix.agent}-base-digest-${matrix.arch}`,
+        `${matrix.agent}-base-digest-` +
+          "${{ github.run_id }}-${{ github.run_attempt }}-" +
+          matrix.arch,
       );
     }
 

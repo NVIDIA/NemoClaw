@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { openClawBootstrapSnippet } from "./support/entrypoint-script-fixture";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "scripts", "lib");
@@ -352,13 +353,10 @@ describe("nemoclaw-start non-root fallback", () => {
   });
 
   it("unwraps the sandbox-create env self-wrapper and applies dashboard port defaults", () => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
-    const start = src.indexOf("# Normalize the sandbox-create bootstrap wrapper");
-    const end = src.indexOf("# ── Config integrity check", start);
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error("Expected sandbox-create wrapper normalization and port block");
-    }
-    const snippet = src.slice(start, end);
+    const snippet = openClawBootstrapSnippet(
+      START_SCRIPT,
+      path.join(import.meta.dirname, "..", "scripts", "lib", "entrypoint-env-wrapper.sh"),
+    );
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-wrapper-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "run.sh");

@@ -53,6 +53,73 @@ COPY tools/mcp-tool-discovery-runtime/package.json tools/mcp-tool-discovery-runt
 RUN ./install-reviewed-runtime.sh \
     && rm -f ./install-reviewed-runtime.sh
 
+# Bundle the driver-neutral startup-profile applicator into one CommonJS file.
+# The final image needs no TypeScript loader or repository dependency tree.
+FROM mcp-tool-discovery-runtime AS managed-startup-runtime-builder
+WORKDIR /opt/nemoclaw-managed-startup-build
+COPY src/lib/core/json-types.ts src/lib/core/ports.ts ./src/lib/core/
+COPY src/lib/messaging/ ./src/lib/messaging/
+COPY src/lib/onboard/managed-bootstrap/ ./src/lib/onboard/managed-bootstrap/
+COPY src/lib/onboard/managed-startup/ ./src/lib/onboard/managed-startup/
+COPY src/lib/security/credential-hash.ts ./src/lib/security/
+COPY src/lib/state/paths.ts src/lib/state/state-root.ts ./src/lib/state/
+RUN /opt/mcp-tool-discovery-runtime/node_modules/.bin/esbuild \
+        src/lib/onboard/managed-bootstrap/image-runtime.ts \
+        --bundle --platform=node --format=cjs --target=node22 \
+        --outfile=/out/managed-startup-image-runtime.cjs \
+    && chmod 0444 /out/managed-startup-image-runtime.cjs
+
+# Compile the bootstrap boundary on the target platform. The output is a
+# freestanding static ELF; only its reviewed, non-executable Bash body remains
+# interpreted at runtime after the native boundary has scrubbed process control.
+FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS managed-bootstrap-entrypoint-builder
+ARG TARGETARCH
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils gcc \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /opt/nemoclaw-managed-bootstrap-build
+COPY scripts/managed-bootstrap-entrypoint.c ./
+COPY scripts/managed-bootstrap-trampoline.sh ./
+# hadolint ignore=DL4006
+RUN set -eu; \
+    target_arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
+    case "$target_arch" in \
+        amd64) expected_machine='Advanced Micro Devices X86-64' ;; \
+        arm64) expected_machine='AArch64' ;; \
+        *) echo "ERROR: unsupported managed bootstrap target architecture: $target_arch" >&2; exit 1 ;; \
+    esac; \
+    install -d -o root -g root -m 0755 /out/usr/local/bin /out/usr/local/lib/nemoclaw; \
+    gcc \
+        -std=c11 -O2 -Wall -Wextra -Werror \
+        -DNEMOCLAW_MANAGED_BOOTSTRAP_FREESTANDING=1 \
+        -ffreestanding -fno-asynchronous-unwind-tables -fno-builtin -fno-ident \
+        -fno-pie -fno-stack-protector -fno-unwind-tables \
+        -no-pie -nostdlib -static \
+        -Wl,--build-id=none -Wl,-z,noexecstack \
+        managed-bootstrap-entrypoint.c -o /tmp/nemoclaw-managed-bootstrap; \
+    install -o root -g root -m 0755 \
+        /tmp/nemoclaw-managed-bootstrap /out/usr/local/bin/nemoclaw-managed-bootstrap; \
+    install -o root -g root -m 0444 \
+        managed-bootstrap-trampoline.sh \
+        /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh; \
+    binary=/out/usr/local/bin/nemoclaw-managed-bootstrap; \
+    body=/out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh; \
+    test -f "$binary" && test ! -L "$binary"; \
+    test -f "$body" && test ! -L "$body"; \
+    test "$(stat -c '%u:%g:%a' "$binary")" = '0:0:755'; \
+    test "$(stat -c '%u:%g:%a' "$body")" = '0:0:444'; \
+    /bin/bash -n "$body"; \
+    test "$(readelf -hW "$binary" | sed -n 's/^[[:space:]]*Class:[[:space:]]*//p')" = 'ELF64'; \
+    test "$(readelf -hW "$binary" | sed -n 's/^[[:space:]]*Type:[[:space:]]*//p')" = 'EXEC (Executable file)'; \
+    test "$(readelf -hW "$binary" | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')" = "$expected_machine"; \
+    program_headers="$(readelf -lW "$binary")"; \
+    case "$program_headers" in *INTERP*) echo 'ERROR: managed bootstrap ELF has an interpreter' >&2; exit 1 ;; esac; \
+    readelf -dW "$binary" | grep -Fq 'There is no dynamic section'; \
+    test -z "$(nm --undefined-only "$binary")"; \
+    strings "$binary" | grep -Fq '/usr/local/bin/nemoclaw-managed-bootstrap'; \
+    strings "$binary" | grep -Fq '/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh'
+
 # Group repository-owned files outside the final image so both Docker builders
 # can collapse related payloads without invalidating earlier final-image work.
 FROM scratch AS openclaw-dependency-payload
@@ -91,6 +158,7 @@ COPY scripts/verify-wechat-runtime-lock.mts /usr/local/lib/nemoclaw/verify-wecha
 FROM scratch AS openclaw-runtime-payload
 
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
+COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh
 COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh
 COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py
@@ -100,12 +168,16 @@ COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
 COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py
 COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
+COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
+COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap
+COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh
 COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts
 COPY scripts/validate-openclaw-tool-search.mts /scripts/validate-openclaw-tool-search.mts
+COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
 COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
 COPY src/lib/messaging/ /src/lib/messaging/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
@@ -977,18 +1049,30 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # runtime-preload-builder stage before being flattened by filename for --require.
 COPY --from=openclaw-runtime-payload / /
 
+# Keep the root-owned managed-startup handoff in this image-only layer. The
+# following permissions block is replayed on the host by regression tests.
 RUN discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/mcp-tool-discovery.mjs)" \
     && node -e "const result = JSON.parse(process.argv[1]); if (result.protocol !== 1 || result.ok !== false || result.detail !== \"tool discovery received invalid runtime arguments\") process.exit(1);" "$discovery_contract" \
     && discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
-    && test -z "$discovery_unsafe"
+    && test -z "$discovery_unsafe" \
+    && test -f /usr/local/bin/nemoclaw-managed-bootstrap \
+    && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \
+    && test "$(stat -c '%u:%g:%a' /usr/local/bin/nemoclaw-managed-bootstrap)" = '0:0:755' \
+    && test -f /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
+    && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
+    && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh)" = '0:0:444' \
+    && install -d -o root -g root -m 0755 /run/nemoclaw
 
-# Copy startup script and shared sandbox initialisation library
+# Copy startup script and shared sandbox initialisation library.
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
+        /usr/local/bin/nemoclaw-managed-bootstrap \
+        /usr/local/bin/nemoclaw-managed-startup-hold \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /scripts/generate-openclaw-config.mts \
         /scripts/validate-openclaw-tool-search.mts \
         /src/lib/messaging/applier/build/messaging-build-applier.mts \
     && chmod 444 /src/lib/tool-disclosure.ts \
+        /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
     && chmod -R a+rX /src/lib/messaging \
     && chown root:root /usr/local/bin/nemoclaw-gateway-control \
         /usr/local/lib/nemoclaw/gateway-supervisor.sh \
@@ -1000,6 +1084,7 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/openclaw-config-guard.py \
         /usr/local/lib/nemoclaw/managed-gateway-control.py \
     && chmod 444 /usr/local/lib/nemoclaw/gateway-supervisor.sh \
+        /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh \
         /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
         /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py \
@@ -1060,6 +1145,13 @@ ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
 # rendering. The plan contains placeholders only; secrets are resolved at
 # runtime via OpenShell providers.
 ARG NEMOCLAW_MESSAGING_PLAN_B64=
+# Release-image mode preinstalls the complete reviewed optional dependency
+# union. It is inert by default and must never be enabled for a deployment-
+# specific Dockerfile build carrying an active messaging plan.
+ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
+# OpenClaw already uses a root supervisor; the explicit value keeps the managed
+# image entry-user contract uniform with Hermes and DCode publication.
+ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
 # Base64-encoded JSON array of secondary OpenClaw agent config entries
 # (e.g. [{"id":"research","workspace":"/sandbox/.openclaw/workspace-research",
 # "agentDir":"/sandbox/.openclaw/agents/research", ...}]).
@@ -1125,6 +1217,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_AGENT_HEARTBEAT_EVERY=${NEMOCLAW_AGENT_HEARTBEAT_EVERY} \
     NEMOCLAW_INFERENCE_COMPAT_B64=${NEMOCLAW_INFERENCE_COMPAT_B64} \
     NEMOCLAW_EXTRA_AGENTS_JSON_B64=${NEMOCLAW_EXTRA_AGENTS_JSON_B64} \
+    NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION} \
     NEMOCLAW_OPENCLAW_WECHAT_PLUGIN_PREINSTALLED=1 \
     NEMOCLAW_DASHBOARD_BIND=${NEMOCLAW_DASHBOARD_BIND} \
     NEMOCLAW_WSL_DASHBOARD_EXPOSURE=${NEMOCLAW_WSL_DASHBOARD_EXPOSURE} \
@@ -1138,6 +1231,20 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=${NEMOCLAW_OPENCLAW_OTEL_ENDPOINT} \
     NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=${NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME} \
     NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE=${NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE}
+
+RUN case "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" in \
+        0) ;; \
+        1) \
+            test -z "$NEMOCLAW_MESSAGING_PLAN_B64" \
+                || { echo "ERROR: managed-image capability union requires an empty messaging plan" >&2; exit 1; }; \
+            test "$NEMOCLAW_WEB_SEARCH_ENABLED" = "0" \
+                || { echo "ERROR: managed-image capability union requires web search disabled in the neutral image" >&2; exit 1; }; \
+            test "$NEMOCLAW_OPENCLAW_OTEL" = "0" \
+                || { echo "ERROR: managed-image capability union requires OTEL disabled in the neutral image" >&2; exit 1; } \
+            ;; \
+        *) echo "ERROR: NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION must be 0 or 1" >&2; exit 1 ;; \
+    esac \
+    && test "$NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER" = "root"
 
 # Bake reduced messaging runtime metadata for the entrypoint. The full
 # NEMOCLAW_MESSAGING_PLAN_B64 is a build input; OpenShell sandbox create only
@@ -1168,7 +1275,9 @@ USER sandbox
 # for child npm processes. During image build the OpenShell gateway is not
 # available at the runtime sandbox proxy address yet, so defer the final proxy
 # block until after build-time OpenClaw doctor/plugin commands complete.
-RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /scripts/generate-openclaw-config.mts
+RUN NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0 \
+    NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 \
+    node --experimental-strip-types /scripts/generate-openclaw-config.mts
 
 # Validate the patched OpenClaw tool-search contract against real generated
 # configs for both supported disclosure modes. This runs at image build time so
@@ -1184,6 +1293,7 @@ RUN set -eu; \
             NEMOCLAW_MODEL=test-model \
             NEMOCLAW_PRIMARY_MODEL_REF=inference/test-model \
             NEMOCLAW_TOOL_DISCLOSURE="$mode" \
+            NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0 \
             NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 \
             node --experimental-strip-types /scripts/generate-openclaw-config.mts; \
         node --experimental-strip-types /scripts/validate-openclaw-tool-search.mts \
@@ -1204,6 +1314,7 @@ RUN set -eu; \
 # openKeyedStore on OpenClaw >= 2026.6.10.
 # hadolint ignore=DL3059,DL4006
 RUN set -eu; \
+    managed_image_union="${NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION:-0}"; \
     verify_openclaw_plugin_integrity() { \
         plugin_spec="$1"; \
         expected_integrity=""; \
@@ -1236,13 +1347,16 @@ RUN set -eu; \
             openclaw plugins install "npm-pack:${plugin_install_archive}"; \
         rm -rf "$plugin_root"; \
     }; \
-    if [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ] || [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
+    if [ "$managed_image_union" = "1" ] || [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ] || [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
         test -n "$OPENCLAW_VERSION"; \
     fi; \
-    if [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ]; then \
+    if [ "$managed_image_union" = "1" ]; then \
+        install_reviewed_openclaw_plugin "@openclaw/diagnostics-otel"; \
+        install_reviewed_openclaw_plugin "@openclaw/brave-plugin"; \
+    elif [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ]; then \
         install_reviewed_openclaw_plugin "@openclaw/diagnostics-otel"; \
     fi; \
-    if [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
+    if [ "$managed_image_union" != "1" ] && [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
         case "${NEMOCLAW_WEB_SEARCH_PROVIDER:-brave}" in \
             brave) \
                 install_reviewed_openclaw_plugin "@openclaw/brave-plugin"; \
@@ -1278,6 +1392,12 @@ RUN set -eu; \
     NEMOCLAW_WECHAT_NPM_INSTALL_CACHE="$install_cache" \
         OPENCLAW_VERSION="${OPENCLAW_VERSION}" \
         node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase agent-install; \
+    if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
+        NEMOCLAW_WECHAT_NPM_INSTALL_CACHE="$install_cache" \
+            OPENCLAW_VERSION="${OPENCLAW_VERSION}" \
+            node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts \
+                --agent openclaw --phase managed-image-capability-union; \
+    fi; \
     rm -rf "$install_cache"; \
     trap - EXIT; \
     test ! -e "$install_cache"; \
@@ -1320,6 +1440,18 @@ RUN NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
 # Apply messaging render and post-agent-install build-file hooks after agent/plugin installation.
 # hadolint ignore=DL3059,DL4006
 RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent openclaw --phase post-agent-install
+
+# A managed image is a neutral capability carrier, not an all-channels-enabled
+# deployment. Regenerate after every optional plugin is installed so OpenClaw's
+# install registry survives while every optional plugin/channel remains inert.
+# Validate the exact generated file through the pinned OpenClaw CLI.
+# hadolint ignore=DL3059,DL4006,SC2016
+RUN if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
+        node --experimental-strip-types /scripts/generate-openclaw-config.mts; \
+        validation="$(openclaw config validate --json)"; \
+        node -e 'const result=JSON.parse(process.argv[1]); if (result.valid !== true) process.exit(1)' "$validation"; \
+        node -e 'const fs=require("node:fs"), path=require("node:path"); const config=JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8")); const root="/usr/local/lib/node_modules/openclaw/dist/extensions"; const bundled=fs.readdirSync(root, {withFileTypes:true}).filter((entry)=>entry.isDirectory()).map((entry)=>entry.name).flatMap((id)=>{ const packagePath=path.join(root, id, "package.json"); if (!fs.existsSync(packagePath)) return []; const packageManifest=JSON.parse(fs.readFileSync(packagePath, "utf8")); if (!packageManifest.openclaw?.channel?.id) return []; const pluginManifest=JSON.parse(fs.readFileSync(path.join(root, id, "openclaw.plugin.json"), "utf8")); return [{channelId:packageManifest.openclaw.channel.id, pluginId:pluginManifest.id}]; }); if (!bundled.some(({channelId})=>channelId === "imessage") || !bundled.some(({channelId})=>channelId === "telegram")) throw new Error(`unexpected bundled OpenClaw channel inventory: ${bundled.map(({channelId})=>channelId).join(",")}`); for (const {channelId, pluginId} of bundled) { if (config.plugins?.entries?.[pluginId]?.enabled !== false || config.channels?.[channelId]?.enabled !== false) throw new Error(`bundled OpenClaw channel is not neutral: ${channelId}`); }'; \
+    fi
 
 # Release the offline lock so the runtime sandbox can install MCP servers,
 # skills, and ad-hoc packages via the OpenShell L7 proxy.
@@ -1665,6 +1797,10 @@ RUN check_metadata() { \
     && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root:755' \
     && check_metadata /opt/nemoclaw/openclaw.plugin.json 'root:root:644' \
     && check_metadata /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts 'root:root:755' \
+    && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \
+    && check_metadata /usr/local/bin/nemoclaw-managed-bootstrap 'root:root:755' \
+    && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
+    && check_metadata /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh 'root:root:444' \
     && check_metadata /usr/local/bin/nemoclaw-gateway-control 'root:root:700' \
     && check_metadata /usr/local/lib/nemoclaw/state-dir-guard.py 'root:root:500' \
     && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644' \
