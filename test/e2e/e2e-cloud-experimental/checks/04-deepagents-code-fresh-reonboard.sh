@@ -288,9 +288,27 @@ if (JSON.parse(process.env.CONFIG_MODEL_JSON) !== "openai:" + process.env.MODEL_
 ' || fail "keyed config get did not return model B after re-onboard"
 pass "keyed config get reports model B after re-onboard"
 
-# OpenShell can report the recreated sandbox as Ready before its in-sandbox
-# inference route accepts health probes. Keep this bounded so persistent route
-# failures still stop the target before the remaining runtime checks.
+# Invalid state: OpenShell publishes the recreated sandbox as Ready before its
+#   in-sandbox inference route accepts health probes, so the first status call
+#   after a fresh re-onboard can report failureLabel=unreachable for a sandbox
+#   that becomes healthy moments later.
+# Source boundary: readiness is published by OpenShell's sandbox lifecycle and
+#   only consumed here (the Ready assertion above reads it from `list`). The
+#   probe is NemoClaw's own probeSandboxInferenceGatewayHealth in
+#   src/lib/actions/sandbox/inference-route-health.ts, which reports the route
+#   state at the instant it runs and documents that it must not wait.
+# Source-fix constraint: NemoClaw cannot make OpenShell delay Ready until the
+#   route serves, and making `status` retry internally would turn a
+#   point-in-time report into a wait, hiding real outages from every other
+#   caller. The retry therefore belongs to this check, the only consumer that
+#   knows a re-onboard just happened.
+# Regression: test/e2e/support/platform-parity-cloud-experimental.test.ts covers
+#   eventual status success and retry exhaustion.
+# Removal condition: delete this retry once OpenShell publishes Ready only after
+#   the in-sandbox inference route serves, or once NemoClaw exposes an explicit
+#   readiness-wait command this check can call instead.
+# Keep this bounded so persistent route failures still stop the target before
+# the remaining runtime checks.
 status_json="$(wait_for_status_after_reonboard)" || fail "nemoclaw status failed after bounded post-re-onboard readiness checks: ${status_json:-<no stdout>}"
 STATUS_JSON="$status_json" SANDBOX_NAME="$SANDBOX_NAME" MODEL_B="$model_b" node -e '
 const status = JSON.parse(process.env.STATUS_JSON);
