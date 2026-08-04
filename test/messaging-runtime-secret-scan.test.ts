@@ -22,34 +22,37 @@ function runSecretScan(prepareConfig: (configPath: string) => void) {
   const configPath = path.join(tmpDir, "openclaw.json");
   const planPath = path.join(tmpDir, "runtime-plan.json");
   const scriptPath = path.join(tmpDir, "run.sh");
-  prepareConfig(configPath);
-  fs.writeFileSync(
-    planPath,
-    JSON.stringify({
-      secretScans: [
-        {
-          path: configPath,
-          pattern: "(?:xoxb|xapp)-(?!OPENSHELL-RESOLVE-ENV-)",
-          message: "[SECURITY] Slack token leaked into {path} - refusing to serve",
-          exitCode: 78,
-        },
-      ],
-    }),
-  );
-  fs.writeFileSync(
-    scriptPath,
-    [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      `_MESSAGING_RUNTIME_SETUP_PLAN=${JSON.stringify(planPath)}`,
-      extractShellFunction(SANDBOX_INIT, "verify_messaging_runtime_secret_scans"),
-      "verify_messaging_runtime_secret_scans",
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-  const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
-  fs.rmSync(tmpDir, { recursive: true, force: true });
-  return { configPath, result };
+  try {
+    prepareConfig(configPath);
+    fs.writeFileSync(
+      planPath,
+      JSON.stringify({
+        secretScans: [
+          {
+            path: configPath,
+            pattern: "(?:xoxb|xapp)-(?!OPENSHELL-RESOLVE-ENV-)",
+            message: "[SECURITY] Slack token leaked into {path} - refusing to serve",
+            exitCode: 78,
+          },
+        ],
+      }),
+    );
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `_MESSAGING_RUNTIME_SETUP_PLAN=${JSON.stringify(planPath)}`,
+        extractShellFunction(SANDBOX_INIT, "verify_messaging_runtime_secret_scans"),
+        "verify_messaging_runtime_secret_scans",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+    return { configPath, result };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 }
 
 describe("messaging runtime secret scans", () => {
