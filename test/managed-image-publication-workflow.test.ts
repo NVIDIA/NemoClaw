@@ -183,6 +183,8 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
     "@openclaw/msteams",
     "@openclaw/googlechat",
     "/sandbox/.openclaw/npm/projects",
+    '"node_modules", ...name.split("/")',
+    "lstatSync(packageRoot).isDirectory()",
     "lstatSync(manifestPath).isFile()",
     "matches.length !== 1",
     "microsoft-teams-apps",
@@ -259,6 +261,7 @@ describe("complete managed-image publication workflow", () => {
     const validationRun =
       step(managedPublisher(managedWorkflow), "Validate exact managed image before promotion")
         .run ?? "";
+    expect(validationRun).not.toContain('path.join(projectsRoot, entry.name, "package.json")');
     const channelGuardEnd = validationRun.indexOf("managed OpenClaw channel");
     const channelGuardStart = validationRun.lastIndexOf("for (const id of [", channelGuardEnd);
     expect(channelGuardStart).toBeGreaterThan(-1);
@@ -269,11 +272,23 @@ describe("complete managed-image publication workflow", () => {
       "Validate exact managed image before promotion",
     );
     weakenedValidation.run = weakenedValidation.run?.replace(
-      " || !fs.lstatSync(manifestPath).isFile()",
-      "",
+      "!fs.lstatSync(manifestPath).isFile()",
+      "false",
     );
     expect(publicationBoundaryErrors(baseWorkflow, weakenedWorkflow)).toContain(
       "exact managed image validation is missing lstatSync(manifestPath).isFile()",
+    );
+    const projectRootWeakenedWorkflow = structuredClone(managedWorkflow);
+    const projectRootWeakenedValidation = step(
+      managedPublisher(projectRootWeakenedWorkflow),
+      "Validate exact managed image before promotion",
+    );
+    projectRootWeakenedValidation.run = projectRootWeakenedValidation.run?.replace(
+      ', "node_modules", ...name.split("/")',
+      "",
+    );
+    expect(publicationBoundaryErrors(baseWorkflow, projectRootWeakenedWorkflow)).toContain(
+      'exact managed image validation is missing "node_modules", ...name.split("/")',
     );
     expect(publisher).toMatchObject({
       needs: ["build-and-push-hermes", "build-and-push-dcode", "build-and-push-openclaw"],
