@@ -173,3 +173,66 @@ describe("DCode corporate proxy CA cold-build trust (#8119)", () => {
     expect(curlAnchorIndex).toBeLessThan(ipAddressPatchIndex);
   });
 });
+
+describe("Hermes corporate proxy CA final-stage trust", () => {
+  const dockerfile = readFileSync(
+    join(import.meta.dirname, "../agents/hermes/Dockerfile"),
+    "utf-8",
+  );
+
+  // source-shape-contract: security -- Hermes final-stage registry clients must trust the decoded corporate CA before making HTTPS requests
+  it("uses the corporate CA conditionally for all Hermes registry remediations", () => {
+    const finalFromIndex = dockerfile.indexOf("FROM ${BASE_IMAGE}");
+    const finalStage = dockerfile.slice(finalFromIndex);
+    const argIndex = finalStage.indexOf("ARG NEMOCLAW_CORPORATE_CA_B64");
+    const decodeIndex = finalStage.indexOf(
+      'RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then',
+      argIndex,
+    );
+    const nodeAnchorIndex = finalStage.indexOf(
+      "ENV NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem",
+      decodeIndex,
+    );
+    const payloadCopyIndex = finalStage.indexOf(
+      "COPY --from=hermes-npm-patch-payload / /",
+      nodeAnchorIndex,
+    );
+    const conditionalCurlTrust = `RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \\
+      export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \\
+    fi; \\`;
+    const remediationCommands = [
+      "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+      "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
+      "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
+    ];
+    const npmCommandIndexes = [...finalStage.matchAll(/^\s*npm\s+(?:ci|run)\b/gmu)].map(
+      (match) => match.index,
+    );
+
+    for (const [name, index] of Object.entries({
+      finalFromIndex,
+      argIndex,
+      decodeIndex,
+      nodeAnchorIndex,
+      payloadCopyIndex,
+    })) {
+      expect(index, name).toBeGreaterThan(-1);
+    }
+    expect(argIndex).toBeLessThan(decodeIndex);
+    expect(decodeIndex).toBeLessThan(nodeAnchorIndex);
+    expect(nodeAnchorIndex).toBeLessThan(payloadCopyIndex);
+    for (const remediationCommand of remediationCommands) {
+      const remediationIndex = finalStage.indexOf(remediationCommand, payloadCopyIndex);
+      expect(remediationIndex, remediationCommand).toBeGreaterThan(payloadCopyIndex);
+      const runIndex = finalStage.lastIndexOf("\nRUN ", remediationIndex) + 1;
+      expect(runIndex, remediationCommand).toBeGreaterThan(payloadCopyIndex);
+      expect(finalStage.slice(runIndex, remediationIndex).trim(), remediationCommand).toBe(
+        conditionalCurlTrust,
+      );
+    }
+    expect(npmCommandIndexes.length).toBeGreaterThan(0);
+    for (const npmCommandIndex of npmCommandIndexes) {
+      expect(nodeAnchorIndex).toBeLessThan(npmCommandIndex);
+    }
+  });
+});
