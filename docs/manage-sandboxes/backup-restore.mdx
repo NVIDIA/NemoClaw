@@ -118,9 +118,15 @@ $$nemoclaw my-assistant snapshot restore 2026-04-14T
 
 <Warning>
 Post-restore policy reconciliation is best-effort.
-If NemoClaw cannot add or remove a recorded policy preset, it warns and continues the remaining restore steps.
+NemoClaw warns and continues the remaining restore steps in these cases:
+
+- NemoClaw cannot verify whether a custom policy owns the live `observability-otlp-local` policy entry.
+- The built-in `observability-otlp-local` policy preset has drifted or cannot be inspected.
+- NemoClaw cannot add or remove a recorded policy preset.
+
 The live network policy can then retain unwanted egress or omit expected egress until you repair the named preset.
-After the warning, run `$$nemoclaw <name> policy list` and confirm that the named preset has no registry-to-gateway mismatch.
+After a warning, run `$$nemoclaw <name> policy list`.
+Confirm that the named preset is recorded in the sandbox registry and active on the gateway, or absent from both.
 </Warning>
 
 <AgentOnly variant="hermes">

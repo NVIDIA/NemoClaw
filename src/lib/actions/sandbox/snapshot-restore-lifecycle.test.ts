@@ -732,8 +732,12 @@ describe("runSandboxSnapshot restore: lifecycle and destination safety", () => {
 });
 
 describe("runSandboxSnapshot restore: gateway pairing on a freshly created destination", () => {
-  it("provokes and approves device pairing after a cross-sandbox restore", async () => {
+  it("continues to gateway pairing after a nonfatal policy failure", async () => {
+    const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-snapshot-pairing-"));
+    tempHomes.push(tempHome);
+    vi.stubEnv("HOME", tempHome);
     vi.spyOn(console, "log").mockImplementation(() => {});
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
     f.getSandboxMock.mockImplementation((name) =>
       name === "alpha"
         ? {
@@ -753,7 +757,11 @@ describe("runSandboxSnapshot restore: gateway pairing on a freshly created desti
         "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
       }),
     );
-    f.getLatestBackupMock.mockReturnValue({ ...f.latestBackupFixture });
+    f.getLatestBackupMock.mockReturnValue({
+      ...f.latestBackupFixture,
+      policyPresets: ["github"],
+    });
+    f.applyPresetMock.mockReturnValue(false);
     f.restoreSandboxStateMock.mockReturnValue({
       success: true,
       restoredDirs: ["workspace"],
@@ -763,9 +771,13 @@ describe("runSandboxSnapshot restore: gateway pairing on a freshly created desti
     });
     const { runSandboxSnapshot } = await import("./snapshot");
 
-    await runSandboxSnapshot("alpha", { kind: "restore", to: "beta", yes: true });
+    await expect(
+      runSandboxSnapshot("alpha", { kind: "restore", to: "beta", yes: true }),
+    ).resolves.toBeUndefined();
 
     expect(f.restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
+    expect(f.applyPresetMock).toHaveBeenCalledWith("beta", "github", { nonFatal: true });
+    expect(consoleWarn.mock.calls.flat().join("\n")).toContain("github (apply failed)");
     expect(f.establishRestoredSandboxGatewayPairingMock).toHaveBeenCalledWith("beta");
   });
 
