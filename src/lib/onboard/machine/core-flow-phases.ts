@@ -233,6 +233,7 @@ export function createSandboxOnboardFlowPhase<
       model: context.model,
       provider: context.provider,
       endpointUrl: context.endpointUrl,
+      compatibleEndpointReasoning: context.compatibleEndpointReasoning,
       credentialEnv: context.credentialEnv,
       nimContainer: context.nimContainer,
       webSearchConfig: context.webSearchConfig,
