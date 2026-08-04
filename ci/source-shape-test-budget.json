@@ -272,6 +272,11 @@
       "category": "security"
     },
     {
+      "file": "test/hermes-final-image-layout.test.ts",
+      "test": "verifies CLI adapter integrity before executing its validator",
+      "category": "security"
+    },
+    {
       "file": "test/openclaw-final-image-layout.test.ts",
       "test": "uses grouped legacy-compatible payload layers at their cache boundaries (#7611)",
       "category": "compatibility"
