@@ -85,9 +85,12 @@ and sandbox ID and then enter the destructive cutover. Post-cutover rollback
 publishes `rollback-authorized` before exact replacement deletion; pre-cutover
 staged cleanup removes only the exact prepared replacement without that journal
 transition. Commit publishes `shared-state-committed` before exact backup
-deletion. Cleanup is bound to full runtime IDs. Its private state root retains
-versioned, identity-addressed transaction records containing the provider and
-sandbox identities, plan and profile
+deletion. Cleanup is bound to full runtime IDs. Commit or rollback is claimed
+synchronously before asynchronous finalization begins. Repeated calls for the
+claimed outcome share its one pending result, while the opposite outcome remains
+invalid even if acknowledgement of the first finalization is lost. Its private
+state root retains versioned, identity-addressed transaction records containing
+the provider and sandbox identities, plan and profile
 fingerprints, exact original and replacement IDs, rollback target, and phase.
 Exact commit and cleanup receipts are durable terminal records, so adapter
 recreation does not depend on process-local transaction sets or tombstone maps.
