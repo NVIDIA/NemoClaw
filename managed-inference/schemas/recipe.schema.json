@@ -3,41 +3,85 @@
   "$id": "https://github.com/NVIDIA/NemoClaw/managed-inference/schemas/recipe.schema.json",
   "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
   "type": "object",
-  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
   "properties": {
-    "apiVersion": { "const": "nemoclaw.nvidia.com/managed-inference/v1" },
-    "kind": { "const": "ServingRecipe" },
-    "metadata": { "$ref": "#/$defs/metadata" },
+    "apiVersion": {
+      "const": "nemoclaw.nvidia.com/managed-inference/v1"
+    },
+    "kind": {
+      "const": "ServingRecipe"
+    },
+    "metadata": {
+      "$ref": "#/$defs/metadata"
+    },
     "spec": {
       "type": "object",
-      "required": ["backend", "model", "execution"],
+      "required": [
+        "backend",
+        "model",
+        "execution"
+      ],
       "properties": {
-        "backend": { "$ref": "#/$defs/token" },
+        "backend": {
+          "$ref": "#/$defs/token"
+        },
         "bindings": {
           "type": "object",
           "minProperties": 1,
           "maxProperties": 16,
-          "propertyNames": { "$ref": "#/$defs/bindingName" },
-          "additionalProperties": { "$ref": "#/$defs/topologyBinding" }
+          "propertyNames": {
+            "$ref": "#/$defs/bindingName"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/topologyBinding"
+          }
         },
         "model": {
           "type": "object",
-          "required": ["id", "revision"],
+          "required": [
+            "id",
+            "revision"
+          ],
           "properties": {
-            "id": { "type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", "maxLength": 256 },
-            "revision": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64}|sha256:[0-9a-f]{64})$" },
-            "servedName": { "$ref": "#/$defs/stableId" },
-            "downloadSizeBytes": { "$ref": "#/$defs/positiveSafeInteger" },
-            "gated": { "type": "boolean" },
-            "installFastSafetensors": { "type": "boolean" },
-            "preparation": { "$ref": "#/$defs/modelPreparation" },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$",
+              "maxLength": 256
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64}|sha256:[0-9a-f]{64})$"
+            },
+            "servedName": {
+              "$ref": "#/$defs/stableId"
+            },
+            "downloadSizeBytes": {
+              "$ref": "#/$defs/positiveSafeInteger"
+            },
+            "gated": {
+              "type": "boolean"
+            },
+            "installFastSafetensors": {
+              "type": "boolean"
+            },
+            "preparation": {
+              "$ref": "#/$defs/modelPreparation"
+            },
             "files": {
               "type": "array",
               "minItems": 1,
               "maxItems": 32,
               "items": {
                 "type": "object",
-                "required": ["path", "digest"],
+                "required": [
+                  "path",
+                  "digest"
+                ],
                 "properties": {
                   "path": {
                     "type": "string",
@@ -45,7 +89,10 @@
                     "maxLength": 512,
                     "pattern": "^(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
                   },
-                  "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+                  "digest": {
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  }
                 },
                 "additionalProperties": false
               }
@@ -56,96 +103,199 @@
         "runtime": {
           "type": "object",
           "properties": {
-            "image": { "type": "string", "pattern": "^[a-z0-9.-]+(?::[0-9]+)?(?:/[a-z0-9._-]+)+@sha256:[0-9a-f]{64}$", "maxLength": 1024 },
-            "imageDownloadSizeBytes": { "$ref": "#/$defs/positiveSafeInteger" },
-            "pullTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
-            "architecture": { "$ref": "#/$defs/token" },
-            "networkMode": { "$ref": "#/$defs/token" },
-            "ipcMode": { "$ref": "#/$defs/token" },
-            "sharedMemoryBytes": { "$ref": "#/$defs/positiveSafeInteger" },
-            "gpuRequest": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._,:=-]{0,255}$" },
+            "image": {
+              "type": "string",
+              "pattern": "^[a-z0-9.-]+(?::[0-9]+)?(?:/[a-z0-9._-]+)+@sha256:[0-9a-f]{64}$",
+              "maxLength": 1024
+            },
+            "imageDownloadSizeBytes": {
+              "$ref": "#/$defs/positiveSafeInteger"
+            },
+            "pullTimeoutSeconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 86400
+            },
+            "architecture": {
+              "$ref": "#/$defs/token"
+            },
+            "networkMode": {
+              "$ref": "#/$defs/token"
+            },
+            "ipcMode": {
+              "$ref": "#/$defs/token"
+            },
+            "sharedMemoryBytes": {
+              "$ref": "#/$defs/positiveSafeInteger"
+            },
+            "gpuRequest": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._,:=-]{0,255}$"
+            },
             "devices": {
               "type": "array",
               "maxItems": 32,
               "uniqueItems": true,
-              "items": { "$ref": "#/$defs/absolutePath" }
+              "items": {
+                "$ref": "#/$defs/absolutePath"
+              }
             },
             "ulimits": {
               "type": "object",
-              "required": ["memlock", "stackBytes"],
+              "required": [
+                "memlock",
+                "stackBytes"
+              ],
               "properties": {
                 "memlock": {
                   "oneOf": [
-                    { "type": "integer", "minimum": -1, "maximum": 9007199254740991 },
-                    { "type": "string", "enum": ["unlimited"] }
+                    {
+                      "type": "integer",
+                      "minimum": -1,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "unlimited"
+                      ]
+                    }
                   ]
                 },
-                "stackBytes": { "$ref": "#/$defs/positiveSafeInteger" }
+                "stackBytes": {
+                  "$ref": "#/$defs/positiveSafeInteger"
+                }
               },
               "additionalProperties": false
             },
             "modelCache": {
               "type": "object",
-              "required": ["source", "target"],
+              "required": [
+                "source",
+                "target"
+              ],
               "properties": {
-                "source": { "$ref": "#/$defs/stableId" },
-                "target": { "$ref": "#/$defs/absolutePath" }
+                "source": {
+                  "$ref": "#/$defs/stableId"
+                },
+                "target": {
+                  "$ref": "#/$defs/absolutePath"
+                }
               },
               "additionalProperties": false
             },
             "temporaryFilesystems": {
               "type": "array",
               "maxItems": 16,
-              "items": { "$ref": "#/$defs/temporaryFilesystem" }
+              "items": {
+                "$ref": "#/$defs/temporaryFilesystem"
+              }
             },
             "environment": {
               "type": "object",
               "maxProperties": 128,
-              "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]{0,127}$" },
-              "additionalProperties": { "type": "string", "maxLength": 4096 }
+              "propertyNames": {
+                "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 4096
+              }
             },
             "components": {
               "type": "object",
               "maxProperties": 32,
-              "propertyNames": { "$ref": "#/$defs/stableId" },
-              "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 128 }
+              "propertyNames": {
+                "$ref": "#/$defs/stableId"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
             }
           },
           "additionalProperties": false
         },
         "execution": {
           "type": "object",
-          "required": ["materializerRef", "lifecycleRef"],
+          "required": [
+            "materializerRef",
+            "lifecycleRef"
+          ],
           "properties": {
-            "materializerRef": { "$ref": "#/$defs/stableId" },
-            "lifecycleRef": { "$ref": "#/$defs/stableId" },
-            "topologyBinding": { "$ref": "#/$defs/bindingName" },
-            "nodeCount": { "type": "integer", "minimum": 1, "maximum": 1024 },
-            "tensorParallelSize": { "type": "integer", "minimum": 1, "maximum": 1024 },
-            "pipelineParallelSize": { "type": "integer", "minimum": 1, "maximum": 1024 },
-            "distributedExecutorBackend": { "$ref": "#/$defs/token" },
-            "rendezvousPort": { "type": "integer", "minimum": 1, "maximum": 65535 }
+            "materializerRef": {
+              "$ref": "#/$defs/stableId"
+            },
+            "lifecycleRef": {
+              "$ref": "#/$defs/stableId"
+            },
+            "topologyBinding": {
+              "$ref": "#/$defs/bindingName"
+            },
+            "nodeCount": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1024
+            },
+            "tensorParallelSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1024
+            },
+            "pipelineParallelSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1024
+            },
+            "distributedExecutorBackend": {
+              "$ref": "#/$defs/token"
+            },
+            "rendezvousPort": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
           },
           "additionalProperties": false
         },
         "serve": {
           "type": "object",
           "properties": {
-            "authentication": { "$ref": "#/$defs/token" },
-            "executable": { "$ref": "#/$defs/absolutePath" },
+            "authentication": {
+              "$ref": "#/$defs/token"
+            },
+            "executable": {
+              "$ref": "#/$defs/absolutePath"
+            },
             "arguments": {
               "type": "array",
               "maxItems": 128,
               "items": {
                 "type": "object",
-                "required": ["name"],
+                "required": [
+                  "name"
+                ],
                 "properties": {
-                  "name": { "type": "string", "pattern": "^--[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 128 },
+                  "name": {
+                    "type": "string",
+                    "pattern": "^--[a-z0-9]+(?:-[a-z0-9]+)*$",
+                    "maxLength": 128
+                  },
                   "value": {
                     "oneOf": [
-                      { "type": "string", "maxLength": 16384 },
-                      { "type": "number", "minimum": -9007199254740991, "maximum": 9007199254740991 },
-                      { "type": "boolean" }
+                      {
+                        "type": "string",
+                        "maxLength": 16384
+                      },
+                      {
+                        "type": "number",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "boolean"
+                      }
                     ]
                   }
                 },
@@ -157,10 +307,19 @@
         },
         "readiness": {
           "type": "object",
-          "required": ["timeoutSeconds", "expectedModel"],
+          "required": [
+            "timeoutSeconds",
+            "expectedModel"
+          ],
           "properties": {
-            "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
-            "expectedModel": { "$ref": "#/$defs/stableId" }
+            "timeoutSeconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 86400
+            },
+            "expectedModel": {
+              "$ref": "#/$defs/stableId"
+            }
           },
           "additionalProperties": false
         }
@@ -172,10 +331,18 @@
   "$defs": {
     "metadata": {
       "type": "object",
-      "required": ["id"],
+      "required": [
+        "id"
+      ],
       "properties": {
-        "id": { "$ref": "#/$defs/stableId" },
-        "displayName": { "type": "string", "minLength": 1, "maxLength": 128 }
+        "id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
       },
       "additionalProperties": false
     },
@@ -208,12 +375,26 @@
     },
     "topologyBinding": {
       "type": "object",
-      "required": ["type", "qualificationId", "schemaVersion", "outputSchema"],
+      "required": [
+        "type",
+        "qualificationId",
+        "schemaVersion",
+        "outputSchema"
+      ],
       "properties": {
-        "type": { "const": "topologyQualificationOutput" },
-        "qualificationId": { "$ref": "#/$defs/stableId" },
-        "schemaVersion": { "type": "integer", "minimum": 1 },
-        "outputSchema": { "$ref": "#/$defs/stableId" }
+        "type": {
+          "const": "topologyQualificationOutput"
+        },
+        "qualificationId": {
+          "$ref": "#/$defs/stableId"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "outputSchema": {
+          "$ref": "#/$defs/stableId"
+        }
       },
       "additionalProperties": false
     },
@@ -221,33 +402,64 @@
       "oneOf": [
         {
           "type": "object",
-          "required": ["ref"],
+          "required": [
+            "ref"
+          ],
           "properties": {
-            "ref": { "const": "none/v1" }
+            "ref": {
+              "const": "none/v1"
+            }
           },
           "additionalProperties": false
         },
         {
           "type": "object",
-          "required": ["ref", "snapshotCopy", "exactTextReplacement"],
+          "required": [
+            "ref",
+            "snapshotCopy",
+            "exactTextReplacement"
+          ],
           "properties": {
-            "ref": { "const": "snapshot-copy-and-exact-text-replacement/v1" },
+            "ref": {
+              "const": "snapshot-copy-and-exact-text-replacement/v1"
+            },
             "snapshotCopy": {
               "type": "object",
-              "required": ["sourcePath", "targetPath"],
+              "required": [
+                "sourcePath",
+                "targetPath"
+              ],
               "properties": {
-                "sourcePath": { "$ref": "#/$defs/relativePath" },
-                "targetPath": { "$ref": "#/$defs/absolutePath" }
+                "sourcePath": {
+                  "$ref": "#/$defs/relativePath"
+                },
+                "targetPath": {
+                  "$ref": "#/$defs/absolutePath"
+                }
               },
               "additionalProperties": false
             },
             "exactTextReplacement": {
               "type": "object",
-              "required": ["targetPath", "expectedText", "replacementText"],
+              "required": [
+                "targetPath",
+                "expectedText",
+                "replacementText"
+              ],
               "properties": {
-                "targetPath": { "$ref": "#/$defs/absolutePath" },
-                "expectedText": { "type": "string", "minLength": 1, "maxLength": 16384 },
-                "replacementText": { "type": "string", "minLength": 1, "maxLength": 16384 }
+                "targetPath": {
+                  "$ref": "#/$defs/absolutePath"
+                },
+                "expectedText": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 16384
+                },
+                "replacementText": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 16384
+                }
               },
               "additionalProperties": false
             }
@@ -258,19 +470,43 @@
     },
     "temporaryFilesystem": {
       "type": "object",
-      "required": ["target", "sizeBytes", "mode", "options"],
+      "required": [
+        "target",
+        "sizeBytes",
+        "mode",
+        "options"
+      ],
       "properties": {
-        "target": { "$ref": "#/$defs/absolutePath" },
-        "sizeBytes": { "$ref": "#/$defs/positiveSafeInteger" },
-        "mode": { "type": "string", "pattern": "^[0-7]{4}$" },
+        "target": {
+          "$ref": "#/$defs/absolutePath"
+        },
+        "sizeBytes": {
+          "$ref": "#/$defs/positiveSafeInteger"
+        },
+        "mode": {
+          "type": "string",
+          "pattern": "^[0-7]{4}$"
+        },
         "options": {
           "type": "array",
           "maxItems": 8,
           "uniqueItems": true,
-          "items": { "enum": ["rw", "ro", "nosuid", "nodev", "noexec", "exec", "noatime", "relatime"] }
+          "items": {
+            "enum": [
+              "rw",
+              "ro",
+              "nosuid",
+              "nodev",
+              "noexec",
+              "exec",
+              "noatime",
+              "relatime"
+            ]
+          }
         }
       },
       "additionalProperties": false
     }
-  }
+  },
+  "title": "NemoClaw managed inference serving recipe"
 }

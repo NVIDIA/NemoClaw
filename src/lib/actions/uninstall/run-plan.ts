@@ -1338,7 +1338,13 @@ function removeManagedDistributedVllmRuntime(
     env: runtime.env,
     stdio: "inherit",
   });
-  if (result.status === 0) return true;
+  if (result.status === 0) {
+    removePath(
+      path.join(path.dirname(paths.managedSwapMarkerPath), DUAL_STATION_VLLM_API_KEY_FILE),
+      runtime,
+    );
+    return true;
+  }
   runtime.error(
     "Managed distributed vLLM cleanup did not complete. NemoClaw did not start the remaining uninstall steps. Resolve the reported cleanup error and retry uninstall.",
   );
