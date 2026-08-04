@@ -25,6 +25,12 @@ const EMPTY_CATALOG: CompiledServingCatalog = {
   sources: [],
   catalogDigest: `sha256:${"b".repeat(64)}`,
 };
+const EXPECTED_MANAGED_RECIPE_IDS = ["vllm.deepseek-v4-flash-0731.spark-dual.v1"];
+const EXPECTED_MANAGED_PRESET_IDS = ["vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731"];
+const EXPECTED_MANAGED_SOURCE_IDS = [
+  "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731",
+  "vllm.deepseek-v4-flash-0731.spark-dual.v1",
+];
 
 const INCOMPLETE_MANAGED_RECIPE: ServingRecipe = {
   apiVersion: "nemoclaw.nvidia.com/managed-inference/v1",
@@ -89,10 +95,9 @@ function expectOnlyManagedVllmDefinitions(catalog: CompiledServingCatalog): void
   const { catalogDigest, ...catalogContents } = catalog;
 
   expect(catalogDigest).toBe(servingCatalogDigest(catalogContents));
-  expect(catalog.recipes.length).toBeGreaterThan(0);
-  expect(catalog.recipes.every(({ spec }) => spec.backend === "vllm")).toBe(true);
-  expect(catalog.presets.length).toBeGreaterThan(0);
-  expect(catalog.presets.every(({ spec }) => spec.plan.backend === "vllm")).toBe(true);
+  expect(catalog.recipes.map(({ metadata }) => metadata.id)).toEqual(EXPECTED_MANAGED_RECIPE_IDS);
+  expect(catalog.presets.map(({ metadata }) => metadata.id)).toEqual(EXPECTED_MANAGED_PRESET_IDS);
+  expect(catalog.sources.map(({ id }) => id)).toEqual(EXPECTED_MANAGED_SOURCE_IDS);
 }
 
 describe("managed inference catalog loader", () => {
@@ -137,6 +142,10 @@ describe("managed inference catalog loader", () => {
   });
 
   it("excludes host-local definitions through the public managed loader (#8173)", () => {
-    expectOnlyManagedVllmDefinitions(loadManagedInferenceCatalog());
+    const projectedCatalog = managedInferenceCatalogFromServingCatalog(loadServingCatalog());
+    const loadedCatalog = loadManagedInferenceCatalog();
+
+    expect(loadedCatalog).toEqual(projectedCatalog);
+    expectOnlyManagedVllmDefinitions(loadedCatalog);
   });
 });
