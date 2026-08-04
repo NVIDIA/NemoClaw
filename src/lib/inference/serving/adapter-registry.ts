@@ -8,6 +8,7 @@ import {
 } from "./managed-cluster-topology.js";
 import type {
   HostLocalInferenceServingRecipe,
+  ManagedInferenceRuntimeServingRecipe,
   ManagedInferenceServingRecipe,
   ManagedInferenceTopologyQualification,
   ServingCatalogRegistries,
@@ -52,7 +53,7 @@ export interface ManagedInferenceMaterializerDescriptor {
     readonly schemaVersion: number;
     readonly outputSchema: string;
   };
-  validateRecipe(recipe: ManagedInferenceServingRecipe): string | undefined;
+  validateRecipe(recipe: ManagedInferenceRuntimeServingRecipe): string | undefined;
 }
 
 export interface ManagedInferenceLifecycleDescriptor {
@@ -61,14 +62,14 @@ export interface ManagedInferenceLifecycleDescriptor {
   readonly acceptedMaterializerRefs: readonly string[];
   readonly acceptedPlanSchemas: readonly string[];
   readonly secretHandlePermissions: readonly string[];
-  validateRecipe(recipe: ManagedInferenceServingRecipe): string | undefined;
+  validateRecipe(recipe: ManagedInferenceRuntimeServingRecipe): string | undefined;
 }
 
 export interface ManagedInferencePreparationDescriptor {
   readonly ref: string;
   readonly backend: string;
   readonly phase: "container-before-exec";
-  validateRecipe(recipe: ManagedInferenceServingRecipe): string | undefined;
+  validateRecipe(recipe: ManagedInferenceRuntimeServingRecipe): string | undefined;
 }
 
 const MANAGED_CLUSTER_TOPOLOGY_OUTPUT_SCHEMA =
@@ -95,6 +96,18 @@ export function isManagedClusterMaterializerOwnedEnvironment(name: string): bool
   return MANAGED_CLUSTER_MATERIALIZER_OWNED_ENVIRONMENT.has(name);
 }
 
+export function isManagedClusterInferenceServingRecipe(
+  recipe: ManagedInferenceRuntimeServingRecipe,
+): recipe is ManagedInferenceServingRecipe {
+  return recipe.spec.execution.materializerRef === MANAGED_CLUSTER_VLLM_MATERIALIZER_REF;
+}
+
+export function isHostLocalInferenceServingRecipe(
+  recipe: ManagedInferenceRuntimeServingRecipe,
+): recipe is HostLocalInferenceServingRecipe {
+  return recipe.spec.execution.materializerRef === HOST_LOCAL_VLLM_MATERIALIZER_REF;
+}
+
 function managedClusterTopologyBinding(
   recipe: ManagedInferenceServingRecipe,
 ): ManagedInferenceServingRecipe["spec"]["bindings"][string] | undefined {
@@ -102,7 +115,7 @@ function managedClusterTopologyBinding(
 }
 
 function positiveIntegerArgument(
-  recipe: ManagedInferenceServingRecipe,
+  recipe: ManagedInferenceRuntimeServingRecipe,
   name: string,
   maximum = Number.MAX_SAFE_INTEGER,
 ): number | undefined {
@@ -119,10 +132,10 @@ function positiveIntegerArgument(
 }
 
 function validateManagedClusterMaterializerRecipe(
-  recipe: ManagedInferenceServingRecipe,
+  recipe: ManagedInferenceRuntimeServingRecipe,
 ): string | undefined {
   if (recipe.spec.backend !== "vllm") return "managed cluster materializer requires backend vllm";
-  if (recipe.spec.execution.materializerRef !== MANAGED_CLUSTER_VLLM_MATERIALIZER_REF) {
+  if (!isManagedClusterInferenceServingRecipe(recipe)) {
     return "recipe does not select the managed cluster materializer";
   }
   const { execution } = recipe.spec;
@@ -244,8 +257,11 @@ function validateManagedClusterMaterializerRecipe(
 }
 
 function validateManagedClusterLifecycleRecipe(
-  recipe: ManagedInferenceServingRecipe,
+  recipe: ManagedInferenceRuntimeServingRecipe,
 ): string | undefined {
+  if (!isManagedClusterInferenceServingRecipe(recipe)) {
+    return "recipe does not select the managed cluster lifecycle";
+  }
   const materializerError = validateManagedClusterMaterializerRecipe(recipe);
   if (materializerError) return materializerError;
   return recipe.spec.execution.lifecycleRef === MANAGED_CLUSTER_VLLM_LIFECYCLE_REF
@@ -298,12 +314,6 @@ function validateHostLocalVllmLifecycleRecipe(
     : "recipe does not select the host-local vLLM lifecycle";
 }
 
-export function isHostLocalInferenceServingRecipe(
-  recipe: ManagedInferenceServingRecipe,
-): recipe is HostLocalInferenceServingRecipe {
-  return recipe.spec.execution.materializerRef === HOST_LOCAL_VLLM_MATERIALIZER_REF;
-}
-
 interface SnapshotPreparationInput {
   readonly ref: typeof SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF;
   readonly snapshotCopy: {
@@ -325,7 +335,7 @@ interface NoPreparationInput {
 type ManagedInferencePreparationInput = SnapshotPreparationInput | NoPreparationInput;
 
 function recipePreparation(
-  recipe: ManagedInferenceServingRecipe,
+  recipe: ManagedInferenceRuntimeServingRecipe,
 ): ManagedInferencePreparationInput | undefined {
   const preparation = (recipe.spec.model as unknown as { readonly preparation?: unknown })
     .preparation;
@@ -368,7 +378,7 @@ function safeAbsoluteContainerPath(value: unknown): value is string {
 }
 
 function validateSnapshotPreparationRecipe(
-  recipe: ManagedInferenceServingRecipe,
+  recipe: ManagedInferenceRuntimeServingRecipe,
 ): string | undefined {
   if (recipe.spec.backend !== "vllm") return "snapshot preparation requires backend vllm";
   const preparation = recipePreparation(recipe);
@@ -407,7 +417,9 @@ function validateSnapshotPreparationRecipe(
   return undefined;
 }
 
-function validateNoPreparationRecipe(recipe: ManagedInferenceServingRecipe): string | undefined {
+function validateNoPreparationRecipe(
+  recipe: ManagedInferenceRuntimeServingRecipe,
+): string | undefined {
   if (recipe.spec.backend !== "vllm") return "empty preparation requires backend vllm";
   const preparation = recipePreparation(recipe);
   return preparation?.ref === NO_PREPARATION_REF && hasExactKeys(preparation, ["ref"])
@@ -551,7 +563,7 @@ export function getManagedInferencePreparationDescriptor(
 }
 
 export function getManagedInferenceRecipeRegistrationError(
-  recipe: ManagedInferenceServingRecipe,
+  recipe: ManagedInferenceRuntimeServingRecipe,
 ): string | undefined {
   const materializer = getManagedInferenceMaterializerDescriptor(
     recipe.spec.execution.materializerRef,
@@ -626,7 +638,9 @@ export function getManagedInferenceServingCatalogRegistries(): ServingCatalogReg
       ) {
         return undefined;
       }
-      return getManagedInferenceRecipeRegistrationError(recipe as ManagedInferenceServingRecipe);
+      return getManagedInferenceRecipeRegistrationError(
+        recipe as ManagedInferenceRuntimeServingRecipe,
+      );
     },
   };
 }

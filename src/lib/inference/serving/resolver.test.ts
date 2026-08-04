@@ -7,6 +7,7 @@ import type { VllmProfile } from "../vllm.js";
 import {
   HOST_LOCAL_VLLM_LIFECYCLE_REF,
   HOST_LOCAL_VLLM_MATERIALIZER_REF,
+  isManagedClusterInferenceServingRecipe,
 } from "./adapter-registry.js";
 import { managedInferenceDigest } from "./catalog-integrity.js";
 import { loadManagedInferenceCatalog } from "./catalog-loader.js";
@@ -22,6 +23,7 @@ import {
 import { resolveManagedInferenceServing } from "./resolver.js";
 import type {
   CompiledManagedInferenceCatalog,
+  HostLocalInferenceServingRecipe,
   ManagedInferencePresetRequirement,
   ManagedInferenceReadinessSource,
   ManagedInferenceResolverInput,
@@ -61,7 +63,11 @@ function shippedCompiledRecipe(
 }
 
 function shippedRecipe(catalog = shippedCatalog()): ManagedInferenceServingRecipe {
-  return shippedCompiledRecipe(catalog);
+  const recipe = shippedCompiledRecipe(catalog);
+  if (!isManagedClusterInferenceServingRecipe(recipe)) {
+    throw new Error("managed-cluster fixture recipe is missing");
+  }
+  return recipe;
 }
 
 function shippedFixtureCatalog(): CompiledManagedInferenceCatalog {
@@ -83,13 +89,14 @@ function hostLocalFixtureCatalog(): CompiledManagedInferenceCatalog {
     metadata: { id: "test.vllm-host-local-recipe" },
     spec: {
       ...hostLocalSpec,
+      backend: "vllm",
       model: { ...sourceRecipe.spec.model, preparation: { ref: "none/v1" } },
       execution: {
         materializerRef: HOST_LOCAL_VLLM_MATERIALIZER_REF,
         lifecycleRef: HOST_LOCAL_VLLM_LIFECYCLE_REF,
       },
     },
-  } as unknown as ManagedInferenceServingRecipe;
+  } satisfies HostLocalInferenceServingRecipe;
   const preset = {
     ...sourcePreset,
     metadata: { id: "test.vllm-host-local-preset" },

@@ -123,19 +123,23 @@ export interface HostLocalInferenceServingRecipe
     "backend" | "bindings" | "execution"
   > & {
     readonly backend: "vllm";
-    readonly bindings: never;
+    readonly bindings?: never;
     readonly execution: {
       readonly materializerRef: "vllm.host-local/v1";
       readonly lifecycleRef: "vllm.host-local.lifecycle/v1";
-      readonly topologyBinding: never;
-      readonly nodeCount: never;
-      readonly tensorParallelSize: never;
-      readonly pipelineParallelSize: never;
-      readonly distributedExecutorBackend: never;
-      readonly rendezvousPort: never;
+      readonly topologyBinding?: never;
+      readonly nodeCount?: never;
+      readonly tensorParallelSize?: never;
+      readonly pipelineParallelSize?: never;
+      readonly distributedExecutorBackend?: never;
+      readonly rendezvousPort?: never;
     };
   };
 }
+
+export type ManagedInferenceRuntimeServingRecipe =
+  | ManagedInferenceServingRecipe
+  | HostLocalInferenceServingRecipe;
 
 interface ServingRecipeEnvelope {
   readonly apiVersion: "nemoclaw.nvidia.com/managed-inference/v1";
@@ -465,7 +469,7 @@ export type ManagedInferencePresetTopologyBinding = ServingPresetTopologyBinding
 export interface CompiledManagedInferenceCatalog
   extends Omit<CompiledServingCatalog, "presets" | "recipes"> {
   readonly presets: readonly ManagedInferenceServingPreset[];
-  readonly recipes: readonly ManagedInferenceServingRecipe[];
+  readonly recipes: readonly ManagedInferenceRuntimeServingRecipe[];
 }
 
 const MATERIALIZER_OWNED_SERVE_ARGUMENTS = new Set([

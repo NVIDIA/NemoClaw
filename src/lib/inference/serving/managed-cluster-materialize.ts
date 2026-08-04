@@ -9,6 +9,7 @@ import {
   getManagedInferenceMaterializerDescriptor,
   getManagedInferenceRecipeRegistrationError,
   getManagedInferenceTopologyQualificationDescriptor,
+  isManagedClusterInferenceServingRecipe,
   isManagedClusterMaterializerOwnedEnvironment,
   MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
 } from "./adapter-registry.js";
@@ -242,6 +243,9 @@ function assertCatalogSelection(
     selection.recipeDigest,
     "recipe",
   );
+  if (!isManagedClusterInferenceServingRecipe(recipe)) {
+    fail(`recipe selects unsupported materializer ${recipe.spec.execution.materializerRef}`);
+  }
   const bindingName = recipe.spec.execution.topologyBinding;
   const recipeBinding = recipe.spec.bindings[bindingName];
   const presetBinding = preset.spec.plan.bindings?.[bindingName]?.valueFromTopologyQualification;

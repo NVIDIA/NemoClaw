@@ -135,6 +135,7 @@ describe("managed inference catalog loader", () => {
   it("retains registered host-local vLLM definitions (#8246)", () => {
     const servingCatalog = loadServingCatalog();
     const sourceRecipe = servingCatalog.recipes.find(({ spec }) => spec.backend === "vllm")!;
+    if (sourceRecipe.spec.backend !== "vllm") throw new Error("vLLM recipe is missing");
     const sourcePreset = servingCatalog.presets.find(
       ({ spec }) => spec.plan.recipeRef === sourceRecipe.metadata.id,
     )!;
@@ -148,10 +149,11 @@ describe("managed inference catalog loader", () => {
       metadata: { id: "test.vllm-host-local-recipe" },
       spec: {
         ...hostLocalSpec,
+        backend: "vllm",
         model: { ...sourceRecipe.spec.model, preparation: { ref: "none/v1" } },
         execution,
       },
-    } as unknown as ServingRecipe;
+    } satisfies ServingRecipe;
     const preset = {
       ...sourcePreset,
       metadata: { id: "test.vllm-host-local-preset" },

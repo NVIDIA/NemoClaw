@@ -145,12 +145,13 @@ describe("managed-cluster vLLM installer selection", () => {
       ...managed.recipe,
       spec: {
         ...spec,
+        backend: "vllm",
         execution: {
           materializerRef: HOST_LOCAL_VLLM_MATERIALIZER_REF,
           lifecycleRef: HOST_LOCAL_VLLM_LIFECYCLE_REF,
         },
       },
-    } as unknown as HostLocalInferenceServingRecipe;
+    } satisfies HostLocalInferenceServingRecipe;
     const hostLocalSelection: ResolvedHostLocalInferenceSelection = {
       ...selection,
       selection: "explicit",

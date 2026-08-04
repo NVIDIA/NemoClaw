@@ -16,8 +16,8 @@ import { immutableManagedInferenceCopy } from "./catalog-integrity.js";
 import type {
   CompiledManagedInferenceCatalog,
   CompiledServingCatalog,
+  ManagedInferenceRuntimeServingRecipe,
   ManagedInferenceServingPreset,
-  ManagedInferenceServingRecipe,
   ServingCatalogSchemas,
   ServingPreset,
   ServingRecipe,
@@ -45,11 +45,11 @@ let loadedManagedCatalog: CompiledManagedInferenceCatalog | undefined;
 
 function assertManagedRecipe(
   recipe: ServingRecipe,
-): asserts recipe is ManagedInferenceServingRecipe {
+): asserts recipe is ManagedInferenceRuntimeServingRecipe {
   let registrationError: string | undefined;
   try {
     registrationError = getManagedInferenceRecipeRegistrationError(
-      recipe as ManagedInferenceServingRecipe,
+      recipe as ManagedInferenceRuntimeServingRecipe,
     );
   } catch {
     registrationError = "does not satisfy its registered adapter contract";
@@ -94,7 +94,9 @@ export function parseCompiledManagedInferenceCatalogJson(
   return catalog;
 }
 
-function isManagedInferenceRecipeCandidate(recipe: ServingRecipe): boolean {
+function isManagedInferenceRecipeCandidate(
+  recipe: ServingRecipe,
+): recipe is ManagedInferenceRuntimeServingRecipe {
   return (
     recipe.spec.execution.materializerRef === MANAGED_CLUSTER_VLLM_MATERIALIZER_REF ||
     recipe.spec.execution.lifecycleRef === MANAGED_CLUSTER_VLLM_LIFECYCLE_REF ||
@@ -153,6 +155,6 @@ export function getManagedInferenceCompiledPreset(
 
 export function getManagedInferenceCompiledRecipe(
   id: string,
-): ManagedInferenceServingRecipe | undefined {
+): ManagedInferenceRuntimeServingRecipe | undefined {
   return loadManagedInferenceCatalog().recipes.find(({ metadata }) => metadata.id === id);
 }

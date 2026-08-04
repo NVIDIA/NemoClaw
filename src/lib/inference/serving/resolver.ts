@@ -8,6 +8,7 @@ import {
   getManagedInferenceRecipeRegistrationError,
   getManagedInferenceTopologyQualificationDescriptor,
   isHostLocalInferenceServingRecipe,
+  isManagedClusterInferenceServingRecipe,
 } from "./adapter-registry.js";
 import { immutableManagedInferenceCopy, managedInferenceDigest } from "./catalog-integrity.js";
 import { loadManagedInferenceCatalog } from "./catalog-loader.js";
@@ -18,6 +19,7 @@ import type {
   ManagedInferenceReadinessRequirement,
   ManagedInferenceReadinessSource,
   ManagedInferenceResolution,
+  ManagedInferenceRuntimeServingRecipe,
   ManagedInferenceResolverInput,
   ManagedInferenceSelectionIntent,
   ManagedInferenceServingPreset,
@@ -47,7 +49,7 @@ type RequirementEvaluation<TOutput> =
 interface MatchingCandidate<TOutput> {
   readonly preset: ManagedInferenceServingPreset;
   readonly presetDigest: string;
-  readonly recipe: ManagedInferenceServingRecipe;
+  readonly recipe: ManagedInferenceRuntimeServingRecipe;
   readonly recipeDigest: string;
   readonly priority: number;
   readonly topologyQualification?: ManagedInferenceTopologyQualification<TOutput>;
@@ -289,7 +291,7 @@ function evaluateRequirements<TOutput>(
 function intentCompatibilityError(
   intent: ManagedInferenceSelectionIntent,
   preset: ManagedInferenceServingPreset,
-  recipe: ManagedInferenceServingRecipe,
+  recipe: ManagedInferenceRuntimeServingRecipe,
 ): string | undefined {
   if (hasText(intent.provider) && intent.provider !== recipe.spec.backend) {
     return `provider ${intent.provider} conflicts with preset ${preset.metadata.id}`;
@@ -412,7 +414,9 @@ function selectedResolution<TOutput>(
     preset: candidate.preset,
     recipe: candidate.recipe,
   } as const;
-  if (topologyQualification) return { ...common, topologyQualification };
+  if (topologyQualification && isManagedClusterInferenceServingRecipe(common.recipe)) {
+    return { ...common, recipe: common.recipe, topologyQualification };
+  }
   if (isHostLocalInferenceServingRecipe(common.recipe)) {
     return { ...common, recipe: common.recipe };
   }
