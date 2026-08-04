@@ -1,0 +1,13 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.102
+
+NemoClaw v0.0.102 reduces the managed single-node DGX Spark Qwen profile's default memory demand during long-context agent workflows.
+
+- The `nvidia/Qwen3.6-35B-A3B-NVFP4` profile no longer enables multi-token prediction (MTP) speculative decoding by default.
+  It retains async scheduling and all other registered serve arguments.
+  Operators can apply lower context, concurrency, and batch limits for bounded long-context investigation, but the override does not guarantee protection against a host freeze.
+  For more information, refer to [Set Up vLLM](/user-guide/openclaw/inference/local-inference/set-up-vllm).
