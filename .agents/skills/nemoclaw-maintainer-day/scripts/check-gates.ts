@@ -1589,7 +1589,7 @@ function currentCheckRollup(
       run.event !== "pull_request" ||
       run.path !== ".github/workflows/pr.yaml" ||
       run.status !== "COMPLETED" ||
-      run.conclusion !== "SUCCESS"
+      (run.conclusion !== "SUCCESS" && run.conclusion !== "CANCELLED")
     ) {
       return "not_metadata_edit";
     }

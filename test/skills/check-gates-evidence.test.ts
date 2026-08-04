@@ -1037,7 +1037,7 @@ describe("maintainer merge-gate contributor compliance", () => {
       failingChecks: INCOMPLETE_E2E,
     });
   });
-  it("keeps substantive PR CI ahead of a later metadata-only edit run", () => {
+  it("keeps substantive PR CI ahead of a later canceled metadata-only edit run", () => {
     const checkRun = (
       name: string,
       runId: number,
@@ -1074,7 +1074,7 @@ describe("maintainer merge-gate contributor compliance", () => {
           true,
         ),
         "801": prWorkflowRun(
-          "success",
+          "cancelled",
           prWorkflowJobs("skipped", {
             checks: { conclusion: "success" },
             changes: { conclusion: "skipped" },
