@@ -84,9 +84,14 @@ describe("managed inference YAML profile contract", () => {
 
   it("does not enable arbitrary remote model code in shipped managed recipes (#8129)", () => {
     const unsafeRecipes = compile(catalogSources())
-      .recipes.filter((recipe) =>
-        recipe.spec.serve?.arguments?.some(({ name }) => name === "--trust-remote-code"),
-      )
+      .recipes.filter((recipe) => {
+        const { serve } = recipe.spec;
+        return (
+          serve !== undefined &&
+          "arguments" in serve &&
+          serve.arguments?.some(({ name }) => name === "--trust-remote-code")
+        );
+      })
       .map(({ metadata }) => metadata.id);
 
     expect(unsafeRecipes).toEqual([]);
