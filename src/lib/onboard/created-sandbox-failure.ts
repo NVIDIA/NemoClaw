@@ -44,6 +44,7 @@ export function reportSandboxCreateFailure(
   deps: SandboxCreateFailureReportDeps,
 ): void {
   const redactedCreateOutput = redact(options.createOutput);
+  const fullyRedactedCreateOutput = redactSandboxCreateFailureOutput(options.createOutput);
   const failure = deps.classifyCreateFailure(redactedCreateOutput);
   if (failure.kind === "sandbox_create_incomplete") {
     // The sandbox was created in the gateway but the create stream exited
@@ -60,11 +61,11 @@ export function reportSandboxCreateFailure(
   deps.error(`  Sandbox creation failed (exit ${options.createStatus}).`);
   if (options.createOutput) {
     deps.error("");
-    deps.error(redactedCreateOutput);
+    deps.error(fullyRedactedCreateOutput);
   }
   deps.printCreateFailureDiagnostics(options.sandboxName, {
     backupPath: options.restoreBackupPath,
-    createOutput: redactSandboxCreateFailureOutput(options.createOutput),
+    createOutput: fullyRedactedCreateOutput,
   });
   deps.error("  Try:  openshell sandbox list        # check gateway state");
   deps.printRecoveryHints(redactedCreateOutput, { createArgs: options.createArgs });

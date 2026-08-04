@@ -8,7 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
-const CLI_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "nemoclaw.js"));
+const CLI_PATH = JSON.stringify(path.join(REPO_ROOT, "bin", "nemoclaw.js"));
 const PUBLIC_DISPATCH_PATH = JSON.stringify(
   path.join(REPO_ROOT, "dist", "lib", "cli", "public-dispatch.js"),
 );
@@ -27,14 +27,18 @@ require.cache[dispatchPath] = {
     dispatchCli: () => Promise.reject(new Error("Sandbox base image override was rejected.")),
   },
 };
-require(${CLI_PATH}).mainPromise;
+require(${CLI_PATH});
 `;
     fs.writeFileSync(scriptPath, script);
 
     const result = spawnSync(process.execPath, [scriptPath], {
       cwd: REPO_ROOT,
       encoding: "utf-8",
-      env: { ...process.env, HOME: tmpDir },
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_DISABLE_AUTO_DISPATCH: "0",
+      },
     });
 
     expect(result.status).toBe(1);

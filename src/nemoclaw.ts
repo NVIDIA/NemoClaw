@@ -6,26 +6,11 @@
 // Keep this file intentionally small: the public grammar adapter lives in
 // src/lib/cli/public-dispatch.ts, while oclif owns command discovery, parsing,
 // help rendering, and command execution under src/commands/**.
-import { log } from "./lib/cli/logger";
 import { dispatchCli } from "./lib/cli/public-dispatch";
-
-function reportTopLevelCliError(error: unknown): void {
-  let message = "Command failed without an error message.";
-  try {
-    const candidate = error instanceof Error ? error.message : String(error);
-    if (candidate.trim()) message = candidate.trim();
-  } catch {
-    // Keep the fallback message when an unusual thrown value cannot be stringified.
-  }
-  log.error(`Error: ${message}`);
-  process.exitCode = 1;
-}
 
 exports.main = dispatchCli;
 module.exports.dispatchCli = dispatchCli;
 // Compatibility for tests that require the CLI module and await completion.
 // Prefer calling dispatchCli(argv) directly in new in-process harnesses.
 exports.mainPromise =
-  process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH === "1"
-    ? Promise.resolve()
-    : dispatchCli().catch(reportTopLevelCliError);
+  process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH === "1" ? Promise.resolve() : dispatchCli();

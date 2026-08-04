@@ -93,7 +93,7 @@ describe("reportSandboxCreateFailure", () => {
     expect(withOutput.classifyCreateFailure).toHaveBeenCalledWith(
       "failed with Authorization: Bearer secr********",
     );
-    expect(withOutput.error).toHaveBeenCalledWith("failed with Authorization: Bearer secr********");
+    expect(withOutput.error).toHaveBeenCalledWith("failed with Authorization: Bearer <REDACTED>");
     expect(withOutput.error).not.toHaveBeenCalledWith(
       "failed with Authorization: Bearer secret-token",
     );
@@ -120,6 +120,7 @@ describe("reportSandboxCreateFailure", () => {
       "github ghp_abcdefghijklmnopqrstuvwxyz1234567890",
       "openai sk-abcdefghijklmnopqrstuvwxyz1234567890",
       "aws AKIAABCDEFGHIJKLMNOP", // gitleaks:allow
+      "telegram path /bot-full-redaction-only/",
     ].join("\n");
 
     expect(() => reportSandboxCreateFailure(createFailureOptions({ createOutput }), deps)).toThrow(
@@ -133,6 +134,8 @@ describe("reportSandboxCreateFailure", () => {
     expect(echoed).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz1234567890");
     expect(echoed).not.toContain("sk-abcdefghijklmnopqrstuvwxyz1234567890");
     expect(echoed).not.toContain("AKIAABCDEFGHIJKLMNOP"); // gitleaks:allow
+    expect(echoed).not.toContain("bot-full-redaction-only");
+    expect(echoed).toContain("/bot<REDACTED>/");
     const hinted = (deps.printRecoveryHints as ReturnType<typeof vi.fn>).mock.calls
       .map((call) => String(call[0]))
       .join("\n");
@@ -149,6 +152,7 @@ describe("reportSandboxCreateFailure", () => {
     expect(diagnosticOutput).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz1234567890");
     expect(diagnosticOutput).not.toContain("sk-abcdefghijklmnopqrstuvwxyz1234567890");
     expect(diagnosticOutput).not.toContain("AKIAABCDEFGHIJKLMNOP"); // gitleaks:allow
+    expect(diagnosticOutput).not.toContain("bot-full-redaction-only");
   });
 
   it("falls back to exit code 1 when the create status is zero", () => {
