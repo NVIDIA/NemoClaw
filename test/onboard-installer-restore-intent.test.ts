@@ -344,7 +344,8 @@ const { createSandbox } = require(${onboardPath});
     const payloadLine = result.stdout
       .trim()
       .split("\n")
-      .findLast((line) => line.startsWith("{") && line.endsWith("}"));
+      .reverse()
+      .find((line) => line.startsWith("{") && line.endsWith("}"));
     assert.ok(payloadLine, "expected the registry-race fixture to report its result");
     const payload = JSON.parse(payloadLine) as { error: string | null; mutations: string[] };
     assert.match(payload.error ?? "", error);
