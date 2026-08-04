@@ -21,6 +21,7 @@ import {
   finalizeManagedBootstrapSequence,
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   prepareManagedBootstrapSequence,
+  recoverManagedBootstrapTransactions,
 } from "./adapter";
 import { createDockerManagedBootstrapAdapter } from "./docker";
 import type {
@@ -137,6 +138,9 @@ function createDockerLifecycle(
   return {
     launchArgv: input.launchArgv,
     patch,
+    async recoverUnfinished() {
+      return recoverManagedBootstrapTransactions(adapter);
+    },
     async prepareNetwork() {
       if (input.route !== "compatibility") return;
       const { enforceDockerGpuPatchPreserveNetwork } = await import(

@@ -31,6 +31,7 @@ const authConfigModule = require("../adapters/http/auth-config");
 const openrouter = require("./openrouter");
 const trace = require("../trace");
 const {
+  createContainerCurlProbeSpawn,
   getHostDockerInternalProbeFailure,
   isHijackedDockerInternalUrl,
 } = require("./onboard-host-docker-internal");
@@ -278,6 +279,7 @@ function calibrateOpenAiLikeValidationTiming(baseUrl, options = {}) {
       timeoutMs: getProbeProcessTimeoutMs(args),
       pinnedAddresses: options.pinnedAddresses,
       trustedPrivateCapability: options.trustedPrivateCapability,
+      spawnSyncImpl: options.spawnSyncImpl,
     });
     const durationMs = Date.now() - startedAtMs;
     const calibration =
@@ -468,6 +470,7 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
       trustedConfigFiles: authConfig.trustedConfigFiles,
       pinnedAddresses: options.pinnedAddresses,
       trustedPrivateCapability: options.trustedPrivateCapability,
+      spawnSyncImpl: options.spawnSyncImpl,
     });
 
     if (!result.ok) {
@@ -571,6 +574,7 @@ function runChatCompletionsProbe({
   pinnedAddresses,
   trustedPrivateCapability,
   validationTiming,
+  spawnSyncImpl,
 }) {
   const args = getChatCompletionsProbeCurlArgs({
     credentialArgs,
@@ -584,6 +588,7 @@ function runChatCompletionsProbe({
     timeoutMs: getProbeProcessTimeoutMs(args),
     pinnedAddresses,
     trustedPrivateCapability,
+    spawnSyncImpl,
   };
   if (trustedConfigFiles && trustedConfigFiles.length > 0) {
     probeOpts.trustedConfigFiles = trustedConfigFiles;
@@ -628,6 +633,7 @@ function runDoubledTimeoutChatCompletionsRetry({
           timingArgs: doubledArgs,
           pinnedAddresses: options.pinnedAddresses,
           trustedPrivateCapability: options.trustedPrivateCapability,
+          spawnSyncImpl: options.spawnSyncImpl,
         })
       : (() => {
           const retryArgs = buildRetryArgs();
@@ -636,6 +642,7 @@ function runDoubledTimeoutChatCompletionsRetry({
             trustedConfigFiles: authConfig.trustedConfigFiles,
             pinnedAddresses: options.pinnedAddresses,
             trustedPrivateCapability: options.trustedPrivateCapability,
+            spawnSyncImpl: options.spawnSyncImpl,
           });
         })();
   return runChatCompletionsRetryLoop(runRetryProbe);
@@ -668,6 +675,52 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
           body: "",
         },
       ],
+    };
+  }
+
+  if (options.probeFromDocker) {
+    let isWindowsHostOllama = false;
+    try {
+      const parsed = new URL(String(endpointUrl));
+      const expectedPort = Number(options.probeFromDocker.expectedPort);
+      isWindowsHostOllama =
+        parsed.protocol === "http:" &&
+        parsed.hostname === "host.docker.internal" &&
+        Number.isInteger(expectedPort) &&
+        expectedPort > 0 &&
+        parsed.port === String(expectedPort) &&
+        parsed.pathname.replace(/\/+$/, "") === "/v1" &&
+        parsed.username === "" &&
+        parsed.password === "" &&
+        parsed.search === "" &&
+        parsed.hash === "";
+    } catch {
+      /* Invalid URLs fail the restricted Docker-context boundary below. */
+    }
+    if (
+      options.allowHostDockerInternal !== true ||
+      options.skipResponsesProbe !== true ||
+      !isWindowsHostOllama ||
+      String(apiKey || "") !== "" ||
+      (Array.isArray(options.extraHeaders) && options.extraHeaders.length > 0)
+    ) {
+      return {
+        ok: false,
+        message: "Docker-context validation is restricted to credential-free Windows-host Ollama.",
+        failures: [
+          {
+            name: "Docker-context validation boundary",
+            httpStatus: 0,
+            curlStatus: 0,
+            message: "probe request is outside the approved Windows-host Ollama route",
+            body: "",
+          },
+        ],
+      };
+    }
+    options = {
+      ...options,
+      spawnSyncImpl: createContainerCurlProbeSpawn(options.probeFromDocker.spawnSyncImpl),
     };
   }
 
@@ -807,6 +860,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               pinnedAddresses,
               trustedPrivateCapability: options.trustedPrivateCapability,
               validationTiming,
+              spawnSyncImpl: options.spawnSyncImpl,
             })
           : runChatCompletionsProbe({
               credentialArgs: authConfig.args,
@@ -817,6 +871,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               pinnedAddresses,
               trustedPrivateCapability: options.trustedPrivateCapability,
               validationTiming,
+              spawnSyncImpl: options.spawnSyncImpl,
             }),
     };
 
@@ -1001,6 +1056,9 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
 }
 
 async function probeOpenAiLikeEndpointOptimized(endpointUrl, model, apiKey, options = {}) {
+  if (options.probeFromDocker) {
+    return probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options);
+  }
   const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
   const validationTiming = resolveOpenAiLikeValidationTiming(baseUrl, options);
