@@ -66,10 +66,10 @@ describe("bundled npm ip-address image remediation contract", () => {
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const copy = source.indexOf(copyInstruction);
     const tarPatch = source.indexOf(
-      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+      "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
     );
     const bracePatch = source.indexOf(
-      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
+      "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
     );
     const ipAddressPatch = source.indexOf(patchCommand);
 

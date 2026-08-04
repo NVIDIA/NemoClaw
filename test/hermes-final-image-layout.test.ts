@@ -319,7 +319,7 @@ describe("Hermes final image layout", () => {
     const scan = indexOfRequired(finalStage, scanCopy);
     const tarPatch = indexOfRequired(
       finalStage,
-      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+      "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
     );
     const certifiInstall = indexOfRequired(finalStage, "RUN _hermes_certifi=");
     const agentChmod = indexOfRequired(

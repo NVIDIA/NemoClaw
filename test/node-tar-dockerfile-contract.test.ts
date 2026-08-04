@@ -29,6 +29,7 @@ const dockerfiles = [
     installsWithNpm: false,
   },
 ] as const;
+const patchCommand = "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts";
 
 function completedStage(source: string): string {
   const finalStageStart = [...source.matchAll(/^FROM\b/gmu)].at(-1)?.index;
@@ -61,9 +62,7 @@ describe("node-tar image remediation contract", () => {
   ])("installs curl before patching the bundled npm tar in $file", (file) => {
     const source = completedStage(fs.readFileSync(path.join(repoRoot, file), "utf8"));
     const curlInstall = source.indexOf("curl=");
-    const patchRun = source.indexOf(
-      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
-    );
+    const patchRun = source.indexOf(patchCommand);
 
     expect(curlInstall, file).toBeGreaterThanOrEqual(0);
     expect(patchRun, file).toBeGreaterThan(curlInstall);
@@ -90,9 +89,7 @@ describe("node-tar image remediation contract", () => {
     const patchCopy = patchInputStage.indexOf(
       "COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts",
     );
-    const patchRun = source.indexOf(
-      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
-    );
+    const patchRun = source.indexOf(patchCommand);
     const scanCopy = scanInputStage.indexOf(
       "COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts",
     );
@@ -151,9 +148,7 @@ describe("reviewed npm image remediation contract", () => {
     { file: "agents/langchain-deepagents-code/Dockerfile.base", installsWithNpm: false },
   ])("upgrades npm before use in $file", ({ file, installsWithNpm }) => {
     const source = completedStage(fs.readFileSync(path.join(repoRoot, file), "utf8"));
-    const patchRun = source.indexOf(
-      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
-    );
+    const patchRun = source.indexOf(patchCommand);
     const upgradeCopy = source.indexOf(
       "COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts",
     );
