@@ -75,8 +75,8 @@ Audit each workaround against target source and its removal condition:
 
 | Contract | NemoClaw surface |
 |---|---|
-| Resumed one-shot session append | `agents/hermes/hermes-wrapper.py` and `test/hermes-wrapper-oneshot-routing.test.ts`. |
-| Provider plus model proxy routing | `agents/hermes/hermes-wrapper.py` and `test/hermes-wrapper-provider-merge.test.ts`. |
+| Resumed one-shot session append | `agents/hermes/hermes-cli-adapter-v1.json`, `agents/hermes/hermes-wrapper.py`, and `test/hermes-wrapper-oneshot-routing.test.ts`. |
+| Provider plus model proxy routing | `agents/hermes/hermes-cli-adapter-v1.json`, `agents/hermes/hermes-wrapper.py`, and `test/hermes-wrapper-provider-merge.test.ts`. |
 | Latest session-list preview | `agents/hermes/patch-session-list-preview.py` and the Dockerfile smoke test. |
 | Config-less profile policy defaults | `agents/hermes/patch-profile-policy-defaults.py`, `test/hermes-profile-policy-defaults.test.ts`, and the final-image named-profile probe. |
 | Writable managed gateway runtime metadata | `agents/hermes/patch-gateway-runtime-metadata.py`, `test/hermes-gateway-runtime-metadata-patch.test.ts`, and the final-image source-shape, integrity, and path probes. Preserve Hermes' process-scoped home selector while relocating central default-gateway PID, lock, and status helpers. Search the full pinned tree for explicit metadata paths before claiming broader support; patch and runtime-test each supported direct consumer or document inherited `--replace`, marker, profile/multiplexer, service/boot, and packaging residuals. |
@@ -85,19 +85,27 @@ Audit each workaround against target source and its removal condition:
 | Managed light-terminal skin | `src/lib/domain/sandbox/connect-env.ts` and `test/hermes-light-skin-boundary.test.ts`. |
 | Config output masking and gateway secret boundary | `agents/hermes/hermes-wrapper.py`, validator scripts, and live secret-boundary tests. |
 
-Compare top-level and `chat` help in target source.
-Update wrapper value flags, boolean flags, subcommands, scan boundaries, tests, and the wrapper SHA-256 together.
-Do not infer arity from help text alone: inspect the target parser and any argv preprocessing or
-coalescing that runs before it.
-Hermes 0.19 defines `-c/--continue` with an optional value, where the bare flag means the most
-recent session, and coalesces unquoted multi-word names after all four continue/resume spellings.
-The coalescer's boundary set can differ from the full command inventory, so bind each consumer to
-the correct target-source set rather than deriving both from help.
-Have the final image AST-compare the wrapper boundary constant with the pinned upstream
-`_coalesce_session_name_args` local subcommand set; public help cannot prove this private parser
-contract.
-Test bare, quoted, and unquoted forms plus global profile selectors anywhere wrapper ordering or
-one-shot routing is involved.
+Review the top-level and `chat` parser metadata in the target source.
+Update `hermes-cli-adapter-v1.json` only for a managed translation form.
+Do not add an upstream subcommand to the adapter.
+`validate-cli-adapter.py` compares the contract with Hermes' machine-readable parser metadata.
+The wrapper reads session-name command boundaries from the installed upstream coalescer source.
+Do not copy that boundary set into the adapter or wrapper.
+The top-level and `chat` help probes are runtime evidence and are not the compatibility authority.
+
+Hermes 0.19 defines `-c/--continue` with an optional session value.
+The bare flag selects the most recent session.
+The adapter owns the resumed one-shot forms that require translation, including unquoted multi-word
+session names before the one-shot option.
+Test bare, quoted, and unquoted forms plus global profile selectors.
+Provider and model composition accepts a session name as one argument.
+The `provider_model_composition` key names this managed translation, not the
+`NEMOCLAW_PROVIDER_MODEL` environment value.
+The adapter rejects an unquoted multi-word session plus provider and model flags before Hermes
+runs because a later positional can be an upstream command. Quote the session name to make it one
+argument.
+Test that a new unrelated command passes through without an adapter change.
+The wrapper must verify the upstream CLI version before it invokes a translated command.
 The final Dockerfile intentionally rejects a new semver while version-bound workarounds remain unreviewed.
 
 Retarget a patch comment only after confirming that its exact upstream source shape remains applicable.
