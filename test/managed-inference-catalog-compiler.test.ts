@@ -88,7 +88,7 @@ describe("managed inference YAML profile contract", () => {
     expect(catalog.presets.some(({ metadata }) => metadata.id === syntheticPresetId)).toBe(true);
   });
 
-  it("compiles the explicit single-Spark llama.cpp proof from YAML (#8173)", () => {
+  it("compiles the explicit DGX Spark llama.cpp profile from YAML (#8173)", () => {
     const catalog = compile(catalogSources());
     const preset = catalog.presets.find(({ metadata }) => metadata.id === LLAMA_CPP_PROFILE_ID);
     const recipe = catalog.recipes.find(({ metadata }) => metadata.id === LLAMA_CPP_RECIPE_ID);

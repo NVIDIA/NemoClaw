@@ -101,7 +101,7 @@ function isManagedClusterRecipeCandidate(recipe: ServingRecipe): boolean {
   );
 }
 
-/** Project the backend-polymorphic serving catalog onto the managed-cluster runtime. */
+/** The managed-cluster runtime accepts only recipes backed by its vLLM materializer and lifecycle. */
 export function managedInferenceCatalogFromServingCatalog(
   catalog: CompiledServingCatalog,
 ): CompiledManagedInferenceCatalog {

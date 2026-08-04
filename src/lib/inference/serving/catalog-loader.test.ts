@@ -96,7 +96,7 @@ describe("managed inference catalog loader", () => {
     expect(managedCatalogValidationError(catalog)).toMatch(/Managed inference (preset|recipe)/u);
   });
 
-  it("projects host-local definitions out of the managed-cluster runtime catalog (#8173)", () => {
+  it("excludes host-local definitions from the managed-cluster runtime catalog (#8173)", () => {
     const servingCatalog: CompiledServingCatalog = {
       ...EMPTY_CATALOG,
       recipes: [HOST_LOCAL_RECIPE],
