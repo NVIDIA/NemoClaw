@@ -1332,7 +1332,7 @@ function excludeBaselineEntryOnGateway(
   }
   if (live.state === "present" && live.digest !== digest) {
     console.error(
-      `  Baseline entry '${key}' changed after preview. Re-run the command to review its current scope; no policy changes were made.`,
+      `  Baseline entry '${key}' changed after preview. Rerun the command to review its current scope; no policy changes were made.`,
     );
     return false;
   }
@@ -1414,7 +1414,15 @@ function restoreBaselineEntryOnGateway(
   // Bind the mutation to the target disclosed before acknowledgement. This
   // check precedes transaction recovery because reconciliation can change the
   // durable journal.
-  const entry = getSandboxBaselineEntry(sandboxName, key);
+  let entry: PolicyObject | null;
+  try {
+    entry = getSandboxBaselineEntry(sandboxName, key);
+  } catch {
+    console.error(
+      `  The current release baseline for '${key}' is unreadable. No policy changes were made.`,
+    );
+    return false;
+  }
   const target = entry ? { entry, digest: digestBaselineEntry(entry) } : null;
   const targetDigest = target?.digest ?? null;
   if (
@@ -1422,7 +1430,7 @@ function restoreBaselineEntryOnGateway(
     targetDigest !== options.expectedTargetDigest
   ) {
     console.error(
-      `  Baseline entry '${key}' changed after preview. Re-run the command to review its current scope; no policy changes were made.`,
+      `  Baseline entry '${key}' changed after preview. Rerun the command to review its current scope; no policy changes were made.`,
     );
     return false;
   }

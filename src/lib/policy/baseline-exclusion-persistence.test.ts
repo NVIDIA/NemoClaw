@@ -568,8 +568,12 @@ describe("restoreBaselineEntry persistence boundary (#7178)", () => {
 
     expect(restoreBaselineEntry("alpha", "nous_research", { nonFatal: true })).toBe(false);
 
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.beginBaselineExclusionTransition).not.toHaveBeenCalled();
     expect(mocks.commitBaselineExclusionTransition).not.toHaveBeenCalled();
     expect(mocks.clearBaselineExclusionTransition).not.toHaveBeenCalled();
+    expect(mocks.removeBaselineExclusion).not.toHaveBeenCalled();
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("current release baseline for 'nous_research' is unreadable"),
     );
