@@ -2409,6 +2409,21 @@ needs_gateway_token_for_current_command() {
 
 prepare_gateway_token_for_current_command() {
   if [ ${#NEMOCLAW_CMD[@]} -eq 0 ]; then
+    # OpenShell launches the persisted workload as the sandbox user. When
+    # Shields are up, the root-owned config seal deliberately prevents that
+    # identity from replacing openclaw.json. Preserve the sealed startup token
+    # rather than weakening the lock; mutable and root-owned startup paths keep
+    # rotating it. A sealed config without a token cannot be repaired safely by
+    # this identity, so fail before attempting a write.
+    if [ "$(id -u)" -ne 0 ] \
+      && [ "$(openclaw_config_dir_owner /sandbox/.openclaw)" = "root" ]; then
+      if [ -n "$(_read_gateway_token)" ]; then
+        printf '[token] Shields are up; preserving the sealed gateway token for startup\n' >&2
+        return 0
+      fi
+      printf '[SECURITY] Shields are up but the sealed OpenClaw config has no gateway token; lower Shields before restarting\n' >&2
+      return 1
+    fi
     ensure_gateway_token
     return $?
   fi
@@ -2436,6 +2451,17 @@ write_auth_profile() {
   # fallback in v0.0.90.
   # See: https://github.com/NVIDIA/NemoClaw/issues/1332
   local provider_key="${NEMOCLAW_INFERENCE_PROVIDER_ID:-${NEMOCLAW_PROVIDER_KEY:-inference}}"
+  local auth_profile_path="${HOME}/.openclaw/agents/main/agent/auth-profiles.json"
+
+  if [ "$(id -u)" -ne 0 ] \
+    && [ "$(openclaw_config_dir_owner "${HOME}/.openclaw")" = "root" ]; then
+    if [ -L "$auth_profile_path" ] || [ ! -f "$auth_profile_path" ]; then
+      printf '[SECURITY] Shields are up but the sealed OpenClaw auth profile is unavailable; lower Shields before restarting\n' >&2
+      return 1
+    fi
+    printf '[auth] Shields are up; preserving the sealed OpenClaw auth profile\n' >&2
+    return 0
+  fi
 
   python3 - "$provider_key" <<'PYAUTH'
 import json
@@ -4625,6 +4651,7 @@ seed_default_workspace_templates_as_sandbox() {
 setup_auth_profile_as_sandbox() {
   run_step_down_as_sandbox \
     "export HOME=/sandbox; write_auth_profile; harden_auth_profiles" \
+    openclaw_config_dir_owner \
     write_auth_profile \
     harden_auth_profiles
 }
