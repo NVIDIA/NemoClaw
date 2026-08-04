@@ -488,12 +488,12 @@ describe("PR E2E controller", () => {
             () =>
               githubResponse({
                 status: "ahead",
-                ahead_by: 1,
+                ahead_by: 2,
                 behind_by: 0,
-                total_commits: 1,
+                total_commits: 2,
                 base_commit: { sha: WORKFLOW_SHA },
                 merge_base_commit: { sha: WORKFLOW_SHA },
-                commits: [{ sha: ADVANCED_WORKFLOW_SHA }],
+                commits: [{ sha: "f".repeat(40) }, { sha: ADVANCED_WORKFLOW_SHA }],
                 files: [{ filename: "docs/quickstart.mdx" }],
               }),
           ),
