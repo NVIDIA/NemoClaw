@@ -586,19 +586,35 @@ jobs:
             googlechat: ["@openclaw/googlechat", "2026.7.1"],
           };
           const projectsRoot = "/sandbox/.openclaw/npm/projects";
-          const installedPackages = fs
+          const projectRoots = fs
             .readdirSync(projectsRoot, { withFileTypes: true })
             .filter((entry) => entry.isDirectory())
-            .flatMap((entry) => {
-              const manifestPath = path.join(projectsRoot, entry.name, "package.json");
-              if (!fs.existsSync(manifestPath) || !fs.lstatSync(manifestPath).isFile()) return [];
-              const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-              return [{ name: manifest.name, version: manifest.version }];
-            });
+            .map((entry) => path.join(projectsRoot, entry.name));
           for (const [id, [name, version]] of Object.entries(packages)) {
-            const matches = installedPackages.filter(
-              (installed) => installed.name === name && installed.version === version,
-            );
+            const matches = projectRoots.flatMap((projectRoot) => {
+              const nodeModulesRoot = path.join(projectRoot, "node_modules");
+              const packageRoot = path.join(nodeModulesRoot, ...name.split("/"));
+              const manifestPath = path.join(packageRoot, "package.json");
+              if (
+                !fs.existsSync(nodeModulesRoot) ||
+                !fs.existsSync(packageRoot) ||
+                !fs.lstatSync(packageRoot).isDirectory() ||
+                !fs.existsSync(manifestPath) ||
+                !fs.lstatSync(manifestPath).isFile()
+              ) return [];
+              const packageRelative = path.relative(
+                fs.realpathSync(nodeModulesRoot),
+                fs.realpathSync(packageRoot),
+              );
+              if (
+                packageRelative === "" ||
+                packageRelative === ".." ||
+                packageRelative.startsWith(`..${path.sep}`) ||
+                path.isAbsolute(packageRelative)
+              ) return [];
+              const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+              return manifest.name === name && manifest.version === version ? [manifestPath] : [];
+            });
             if (matches.length !== 1 || config.plugins?.entries?.[id]?.enabled !== false) {
               throw new Error(`managed OpenClaw plugin ${id} is missing, duplicated, or active`);
             }

@@ -112,9 +112,10 @@ describe("Docker managed-bootstrap shared-state helper environment", () => {
 
     expect(outcome).toEqual({ supervisorReady: false, failure: null });
     const helpers = nodeHelperCalls(fake.deps);
-    expect(helpers).toHaveLength(1);
-    expect(helpers[0]).toContain("--rollback-shared-state-transaction");
-    expectCleanRunNodeHelper(helpers[0]!);
+    expect(helpers).toHaveLength(2);
+    expect(helpers.some((args) => args.includes("--shared-state-transaction-status"))).toBe(true);
+    expect(helpers.some((args) => args.includes("--rollback-shared-state-transaction"))).toBe(true);
+    helpers.forEach(expectCleanRunNodeHelper);
   });
 
   it("clears arbitrary container environment before the durable receipt-clear helper", () => {

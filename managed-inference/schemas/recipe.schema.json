@@ -256,6 +256,9 @@
             "containerRuntime": {
               "const": "docker"
             },
+            "networkExposure": {
+              "const": "loopback"
+            },
             "hosts": {
               "const": 1
             },
@@ -428,6 +431,44 @@
               "type": "integer",
               "minimum": -1,
               "maximum": 86400
+            },
+            "batchSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            },
+            "microBatchSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            },
+            "flashAttention": {
+              "const": "enabled"
+            },
+            "kvCache": {
+              "type": "object",
+              "required": [
+                "key",
+                "value"
+              ],
+              "properties": {
+                "key": {
+                  "enum": [
+                    "f16",
+                    "q8_0"
+                  ]
+                },
+                "value": {
+                  "enum": [
+                    "f16",
+                    "q8_0"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            "speculativeDecoding": {
+              "const": "disabled"
             },
             "limits": {
               "type": "object",
@@ -1038,14 +1079,26 @@
                   }
                 }
               }
+            },
+            "propertyNames": {
+              "not": {
+                "enum": [
+                  "downloadSizeBytes",
+                  "gated",
+                  "installFastSafetensors",
+                  "preparation"
+                ]
+              }
             }
           },
           "runtime": {
             "type": "object",
             "required": [
               "image",
+              "imageDownloadSizeBytes",
               "platforms",
               "containerRuntime",
+              "networkExposure",
               "hosts",
               "cuda",
               "gpu",
@@ -1053,34 +1106,32 @@
             ],
             "properties": {
               "image": {},
+              "imageDownloadSizeBytes": {},
               "platforms": {},
               "containerRuntime": {},
+              "networkExposure": {},
               "hosts": {},
               "cuda": {},
               "gpu": {},
               "resources": {}
             },
-            "not": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "architecture": {}
-                  },
-                  "required": [
-                    "architecture"
-                  ]
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "components": {}
-                  },
-                  "required": [
-                    "components"
-                  ]
-                }
-              ]
+            "propertyNames": {
+              "not": {
+                "enum": [
+                  "pullTimeoutSeconds",
+                  "architecture",
+                  "networkMode",
+                  "ipcMode",
+                  "sharedMemoryBytes",
+                  "gpuRequest",
+                  "devices",
+                  "ulimits",
+                  "modelCache",
+                  "temporaryFilesystems",
+                  "environment",
+                  "components"
+                ]
+              }
             }
           },
           "execution": {
@@ -1094,21 +1145,42 @@
               "receiptRef": {},
               "materializerRef": {},
               "lifecycleRef": {}
+            },
+            "propertyNames": {
+              "not": {
+                "enum": [
+                  "topologyBinding",
+                  "nodeCount",
+                  "tensorParallelSize",
+                  "pipelineParallelSize",
+                  "distributedExecutorBackend",
+                  "rendezvousPort"
+                ]
+              }
             }
           },
           "serve": {
             "type": "object",
             "required": [
               "protocol",
+              "authentication",
               "port",
               "chatTemplate",
               "contextSize",
               "slots",
               "idleSleepSeconds",
+              "batchSize",
+              "microBatchSize",
+              "flashAttention",
+              "kvCache",
+              "speculativeDecoding",
               "limits"
             ],
             "properties": {
               "protocol": {},
+              "authentication": {
+                "const": "bearer"
+              },
               "port": {
                 "const": 8081
               },
@@ -1120,16 +1192,20 @@
               "idleSleepSeconds": {
                 "const": -1
               },
+              "batchSize": {},
+              "microBatchSize": {},
+              "flashAttention": {},
+              "kvCache": {},
+              "speculativeDecoding": {},
               "limits": {}
             },
-            "not": {
-              "type": "object",
-              "properties": {
-                "arguments": {}
-              },
-              "required": [
-                "arguments"
-              ]
+            "propertyNames": {
+              "not": {
+                "enum": [
+                  "executable",
+                  "arguments"
+                ]
+              }
             }
           },
           "readiness": {
@@ -1155,6 +1231,11 @@
           },
           "capabilities": {
             "type": "object"
+          }
+        },
+        "propertyNames": {
+          "not": {
+            "const": "bindings"
           }
         }
       },

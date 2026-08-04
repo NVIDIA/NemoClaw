@@ -147,6 +147,7 @@ export function createDockerGpuSandboxCreatePatch(
   let cutoverFinalized = false;
   let cutoverFinalization: Promise<void> | null = null;
   let cutoverFinalizationOutcome: "commit" | "rollback" | null = null;
+  let cutoverFinalizationFailure: Error | null = null;
 
   const findContainerIds =
     options.overrides?.findContainerIds ?? findOpenShellDockerSandboxContainerIds;
@@ -374,24 +375,23 @@ export function createDockerGpuSandboxCreatePatch(
     },
 
     async commitAfterReady() {
+      if (cutoverFinalizationFailure) throw cutoverFinalizationFailure;
       if (cutoverFinalized || (!managedBootstrapCutover && !result)) return;
       if (needsSupervisorWait) {
         const error = new Error(
           "Managed startup cannot commit before the recreated OpenShell supervisor reconnects.",
         );
         const rollbackError = await rollbackAfterFailure();
-        onPatchFailureExit(
-          options.sandboxName,
-          rollbackError
-            ? new Error(`${error.message} Rollback failed: ${rollbackError.message}`)
-            : error,
-          {
-            runCaptureOpenshell: options.deps.runCaptureOpenshell,
-            dockerCapture: options.deps.dockerCapture,
-            additionalSummaryLines: routeAdapter.additionalSummaryLines,
-          },
-        );
-        return;
+        const failure = rollbackError
+          ? new Error(`${error.message} Rollback failed: ${rollbackError.message}`)
+          : error;
+        cutoverFinalizationFailure = failure;
+        onPatchFailureExit(options.sandboxName, failure, {
+          runCaptureOpenshell: options.deps.runCaptureOpenshell,
+          dockerCapture: options.deps.dockerCapture,
+          additionalSummaryLines: routeAdapter.additionalSummaryLines,
+        });
+        throw failure;
       }
       if (cutoverFinalization) {
         if (cutoverFinalizationOutcome !== "commit") {
@@ -420,6 +420,7 @@ export function createDockerGpuSandboxCreatePatch(
                 failure as Error & { managedBootstrapRollbackError?: unknown }
               ).managedBootstrapRollbackError = rollbackError;
             }
+            cutoverFinalizationFailure = failure;
             onPatchFailureExit(options.sandboxName, failure, {
               runCaptureOpenshell: options.deps.runCaptureOpenshell,
               dockerCapture: options.deps.dockerCapture,
@@ -429,7 +430,7 @@ export function createDockerGpuSandboxCreatePatch(
                 rolledBack: rollbackError === null,
               },
             });
-            return;
+            throw failure;
           }
         }
         const finalizeOutcome = result
@@ -437,16 +438,17 @@ export function createDockerGpuSandboxCreatePatch(
           : null;
         cutoverFinalized = true;
         if (!finalizeOutcome || finalizeOutcome.backupRemoved) return;
-        onPatchFailureExit(
-          options.sandboxName,
-          new Error("Managed startup passed Ready, but its rollback backup could not be removed."),
-          {
-            runCaptureOpenshell: options.deps.runCaptureOpenshell,
-            dockerCapture: options.deps.dockerCapture,
-            additionalSummaryLines: routeAdapter.additionalSummaryLines,
-            context: failureContext(),
-          },
+        const failure = new Error(
+          "Managed startup passed Ready, but its rollback backup could not be removed.",
         );
+        cutoverFinalizationFailure = failure;
+        onPatchFailureExit(options.sandboxName, failure, {
+          runCaptureOpenshell: options.deps.runCaptureOpenshell,
+          dockerCapture: options.deps.dockerCapture,
+          additionalSummaryLines: routeAdapter.additionalSummaryLines,
+          context: failureContext(),
+        });
+        throw failure;
       })();
       cutoverFinalization = finalization;
       cutoverFinalizationOutcome = "commit";
