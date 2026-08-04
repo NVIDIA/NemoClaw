@@ -532,6 +532,11 @@
       "category": "compatibility"
     },
     {
+      "file": "test/source-architecture.test.ts",
+      "test": "keeps removed step mutation APIs out of production source (#7703)",
+      "category": "compatibility"
+    },
+    {
       "file": "test/runtime-provider-source-shape.test.ts",
       "test": "keeps the dormant managed-bootstrap protocol driver-neutral",
       "category": "security"

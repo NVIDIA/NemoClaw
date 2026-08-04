@@ -103,11 +103,19 @@ export function createRuntimeHarness(initialSession: Session) {
     markStepStarted: () => cloneSession(session),
     markStepComplete: (_stepName, updates: SessionUpdates = {}) =>
       updateSession((current) => Object.assign(current, filterSafeUpdates(updates))),
-    markStepCompleteRecordOnly: (_stepName, updates: SessionUpdates = {}) =>
-      updateSession((current) => Object.assign(current, filterSafeUpdates(updates))),
-    markStepSkipped: () => cloneSession(session),
+    markStepSkipped: (stepName) =>
+      updateSession((current) => {
+        const step = current.steps[stepName];
+        if (!step) return current;
+        if (step.status === "complete" || step.status === "failed" || step.status === "skipped")
+          return current;
+        step.status = "skipped";
+        step.startedAt = null;
+        step.completedAt = null;
+        step.error = null;
+        return current;
+      }),
     markStepFailed: () => cloneSession(session),
-    markStepFailedRecordOnly: () => cloneSession(session),
     completeSession: (updates: SessionUpdates = {}) =>
       updateSession((current) => {
         Object.assign(current, filterSafeUpdates(updates));
