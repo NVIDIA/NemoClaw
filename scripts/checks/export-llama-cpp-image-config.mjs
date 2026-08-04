@@ -1,0 +1,164 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import YAML from "yaml";
+
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(scriptDir, "../..");
+const manifestPath = path.join(repoRoot, "managed-inference", "images", "llama-cpp", "image.yaml");
+
+const digestReference = /^(?:docker\.io|ghcr\.io)\/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$/u;
+const fullRevision = /^[0-9a-f]{40}$/u;
+const sha256 = /^sha256:[0-9a-f]{64}$/u;
+
+function requiredString(value, name, pattern) {
+  if (typeof value !== "string" || !pattern.test(value)) {
+    throw new Error(`invalid ${name}`);
+  }
+  return value;
+}
+
+function requiredRuntimeId(value, name) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 65535) {
+    throw new Error(`invalid ${name}`);
+  }
+  return String(value);
+}
+
+function matchesExactRecord(value, expected) {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Object.keys(value).length === Object.keys(expected).length &&
+    Object.entries(expected).every(([key, expectedValue]) => value[key] === expectedValue)
+  );
+}
+
+export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "utf8")) {
+  const manifest = YAML.parse(source);
+  if (
+    manifest?.apiVersion !== "nemoclaw.nvidia.com/managed-inference/v1" ||
+    manifest?.kind !== "ServerImageBuild" ||
+    manifest?.metadata?.id !== "llama-cpp-server.v1"
+  ) {
+    throw new Error("invalid llama.cpp server image manifest identity");
+  }
+
+  const spec = manifest.spec;
+  const expectedCmake = {
+    ggmlBackendDl: true,
+    ggmlCpuAllVariants: true,
+    ggmlCuda: true,
+    ggmlCurl: true,
+    ggmlNative: false,
+    ggmlRpc: false,
+    llamaBuildApp: false,
+    llamaBuildExamples: false,
+    llamaBuildServer: true,
+    llamaBuildTests: false,
+    llamaBuildTools: true,
+    llamaBuildUi: false,
+    llamaOpenSsl: true,
+    llamaSubprocess: false,
+    llamaUsePrebuiltUi: false,
+  };
+  const expectedBuildPackages = {
+    "build-essential": "12.10ubuntu1",
+    "ca-certificates": "20260601~24.04.1",
+    cmake: "3.28.3-1build7",
+    curl: "8.5.0-2ubuntu10.11",
+    "libcurl4-openssl-dev": "8.5.0-2ubuntu10.11",
+    "libssl-dev": "3.0.13-0ubuntu3.12",
+  };
+  const expectedRuntimePackages = {
+    "ca-certificates": "20260601~24.04.1",
+    libcurl4t64: "8.5.0-2ubuntu10.11",
+    libgomp1: "14.2.0-4ubuntu2~24.04.1",
+  };
+  const cmake = spec?.build?.cmake;
+  if (
+    spec?.source?.repository !== "https://github.com/ggml-org/llama.cpp" ||
+    spec?.build?.target !== "llama-server" ||
+    !matchesExactRecord(cmake, expectedCmake) ||
+    !matchesExactRecord(spec?.build?.packages, expectedBuildPackages) ||
+    !matchesExactRecord(spec?.runtime?.packages, expectedRuntimePackages) ||
+    spec?.runtime?.entrypoint !== "/usr/local/bin/llama-server" ||
+    spec?.runtime?.port !== 8081 ||
+    JSON.stringify(spec?.runtime?.writablePaths) !== JSON.stringify(["/tmp"])
+  ) {
+    throw new Error("invalid llama.cpp server image build or runtime contract");
+  }
+  const platforms = Array.isArray(spec?.platforms) ? spec.platforms : [];
+  if (platforms.length !== 2) {
+    throw new Error("llama.cpp server image manifest must declare exactly two platforms");
+  }
+
+  const include = platforms.map((entry) => {
+    const platform = requiredString(entry?.platform, "platform", /^linux\/(?:amd64|arm64)$/u);
+    const expectedRunner = platform === "linux/amd64" ? "ubuntu-24.04" : "ubuntu-24.04-arm";
+    if (entry?.runner !== expectedRunner) {
+      throw new Error(`invalid native runner for ${platform}`);
+    }
+    const cudaArchitectures = requiredString(
+      entry?.cudaArchitectures,
+      `CUDA architectures for ${platform}`,
+      /^[0-9]+[a-z]?(?:-real)?(?:;[0-9]+[a-z]?(?:-real)?)*$/u,
+    );
+    return {
+      arch: platform.slice("linux/".length),
+      cuda_architectures: cudaArchitectures,
+      platform,
+      runner: expectedRunner,
+    };
+  });
+  if (new Set(include.map(({ platform }) => platform)).size !== 2) {
+    throw new Error("llama.cpp server image platforms must be unique");
+  }
+
+  return {
+    cuda_dev_image: requiredString(
+      spec?.cuda?.developmentBase,
+      "CUDA development base",
+      digestReference,
+    ),
+    cuda_runtime_image: requiredString(
+      spec?.cuda?.runtimeBase,
+      "CUDA runtime base",
+      digestReference,
+    ),
+    image: requiredString(
+      spec?.repository,
+      "image repository",
+      /^ghcr\.io\/nvidia\/nemoclaw\/llama-cpp-server$/u,
+    ),
+    matrix: JSON.stringify({ include }),
+    runtime_gid: requiredRuntimeId(spec?.runtime?.gid, "runtime gid"),
+    runtime_uid: requiredRuntimeId(spec?.runtime?.uid, "runtime uid"),
+    source_archive_sha256: requiredString(
+      spec?.source?.archiveSha256,
+      "source archive SHA-256",
+      sha256,
+    ),
+    source_revision: requiredString(spec?.source?.revision, "source revision", fullRevision),
+  };
+}
+
+export function githubOutput(config) {
+  return `${Object.entries(config)
+    .map(([name, value]) => `${name}=${value}`)
+    .join("\n")}\n`;
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const output = githubOutput(loadLlamaCppImageConfig());
+  const githubOutputPath = process.env.GITHUB_OUTPUT;
+  if (githubOutputPath) {
+    fs.appendFileSync(githubOutputPath, output, { encoding: "utf8", mode: 0o600 });
+  } else {
+    process.stdout.write(output);
+  }
+}

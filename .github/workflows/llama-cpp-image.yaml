@@ -1,0 +1,150 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Images / llama.cpp Server
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/llama-cpp-image.yaml"
+      - "managed-inference/images/llama-cpp/**"
+      - "scripts/checks/export-llama-cpp-image-config.mjs"
+      - "test/llama-cpp-image.test.ts"
+      - "test/llama-cpp-image-workflow.test.ts"
+
+permissions:
+  contents: read
+
+jobs:
+  config:
+    name: Compile declarative image configuration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      cuda_dev_image: ${{ steps.manifest.outputs.cuda_dev_image }}
+      cuda_runtime_image: ${{ steps.manifest.outputs.cuda_runtime_image }}
+      image: ${{ steps.manifest.outputs.image }}
+      matrix: ${{ steps.manifest.outputs.matrix }}
+      runtime_gid: ${{ steps.manifest.outputs.runtime_gid }}
+      runtime_uid: ${{ steps.manifest.outputs.runtime_uid }}
+      source_archive_sha256: ${{ steps.manifest.outputs.source_archive_sha256 }}
+      source_revision: ${{ steps.manifest.outputs.source_revision }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Install manifest compiler dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Compile image manifest
+        id: manifest
+        run: node scripts/checks/export-llama-cpp-image-config.mjs
+
+  pr-build:
+    name: Build native llama.cpp server (${{ matrix.arch }})
+    needs: config
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.config.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build native PR image without publishing
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: managed-inference/images/llama-cpp
+          file: managed-inference/images/llama-cpp/Dockerfile
+          platforms: ${{ matrix.platform }}
+          load: true
+          push: false
+          tags: nemoclaw-llama-cpp-pr:${{ matrix.arch }}-${{ github.sha }}
+          build-args: |
+            CUDA_ARCHITECTURES=${{ matrix.cuda_architectures }}
+            CUDA_DEV_IMAGE=${{ needs.config.outputs.cuda_dev_image }}
+            CUDA_RUNTIME_IMAGE=${{ needs.config.outputs.cuda_runtime_image }}
+            LLAMA_CPP_ARCHIVE_SHA256=${{ needs.config.outputs.source_archive_sha256 }}
+            LLAMA_CPP_REVISION=${{ needs.config.outputs.source_revision }}
+            NEMOCLAW_REVISION=${{ github.sha }}
+            RUNTIME_GID=${{ needs.config.outputs.runtime_gid }}
+            RUNTIME_UID=${{ needs.config.outputs.runtime_uid }}
+            TARGETPLATFORM=${{ matrix.platform }}
+          provenance: false
+          sbom: false
+
+      - name: Validate native PR image contract
+        shell: bash
+        env:
+          CUDA_ARCHITECTURES: ${{ matrix.cuda_architectures }}
+          CUDA_DEV_IMAGE: ${{ needs.config.outputs.cuda_dev_image }}
+          CUDA_RUNTIME_IMAGE: ${{ needs.config.outputs.cuda_runtime_image }}
+          IMAGE: nemoclaw-llama-cpp-pr:${{ matrix.arch }}-${{ github.sha }}
+          PLATFORM: ${{ matrix.platform }}
+          RUNTIME_GID: ${{ needs.config.outputs.runtime_gid }}
+          RUNTIME_UID: ${{ needs.config.outputs.runtime_uid }}
+          SOURCE_ARCHIVE_SHA256: ${{ needs.config.outputs.source_archive_sha256 }}
+          SOURCE_REVISION: ${{ needs.config.outputs.source_revision }}
+        run: |
+          set -euo pipefail
+          image_json="$(docker image inspect "$IMAGE")"
+          if ! jq -e \
+            --arg archive "$SOURCE_ARCHIVE_SHA256" \
+            --arg architectures "$CUDA_ARCHITECTURES" \
+            --arg dev "$CUDA_DEV_IMAGE" \
+            --arg gid "$RUNTIME_GID" \
+            --arg platform "$PLATFORM" \
+            --arg revision "$GITHUB_SHA" \
+            --arg runtime "$CUDA_RUNTIME_IMAGE" \
+            --arg uid "$RUNTIME_UID" \
+            --arg upstream "$SOURCE_REVISION" '
+              length == 1
+              and .[0].Config.User == ($uid + ":" + $gid)
+              and .[0].Config.Entrypoint == ["/usr/local/bin/llama-server"]
+              and .[0].Config.Labels["org.opencontainers.image.revision"] == $revision
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.contract"] == "1"
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.component"] == "llama.cpp"
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.platform"] == $platform
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.upstream.revision"] == $upstream
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.upstream.archive-sha256"] == $archive
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.cuda.development-base"] == $dev
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.cuda.runtime-base"] == $runtime
+              and .[0].Config.Labels["io.nvidia.nemoclaw.inference-server.cuda.architectures"] == $architectures
+            ' <<< "$image_json" >/dev/null; then
+            echo "ERROR: llama.cpp PR image identity does not match the declarative manifest." >&2
+            exit 1
+          fi
+
+          docker run --rm \
+            --network none \
+            --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
+            "$IMAGE" --version 2>&1 | tee "$RUNNER_TEMP/llama-server-version.txt"
+          grep -F "$SOURCE_REVISION" "$RUNNER_TEMP/llama-server-version.txt"
+
+          docker run --rm \
+            --network none \
+            --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
+            --entrypoint /bin/sh \
+            "$IMAGE" -eu -c '
+              test -x /usr/local/bin/llama-server
+              test -r /usr/local/share/licenses/llama.cpp/LICENSE
+              test -r /usr/local/share/licenses/llama.cpp/AUTHORS
+              test ! -e /opt/llama.cpp/ui
+              test "$(id -u)" = "$1"
+              test "$(id -g)" = "$2"
+            ' -- "$RUNTIME_UID" "$RUNTIME_GID"

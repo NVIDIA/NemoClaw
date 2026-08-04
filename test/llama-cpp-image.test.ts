@@ -1,0 +1,184 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+
+import { describe, expect, it } from "vitest";
+import YAML from "yaml";
+
+const repoRoot = path.resolve(import.meta.dirname, "..");
+const imageRoot = path.join(repoRoot, "managed-inference", "images", "llama-cpp");
+const manifestPath = path.join(imageRoot, "image.yaml");
+const dockerfilePath = path.join(imageRoot, "Dockerfile");
+const recipePath = path.join(
+  repoRoot,
+  "managed-inference",
+  "recipes",
+  "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml",
+);
+const exporterPath = path.join(repoRoot, "scripts", "checks", "export-llama-cpp-image-config.mjs");
+
+type ImageManifest = {
+  apiVersion?: string;
+  kind?: string;
+  metadata?: { id?: string };
+  spec?: {
+    build?: {
+      cmake?: Record<string, boolean>;
+      packages?: Record<string, string>;
+      target?: string;
+    };
+    cuda?: { developmentBase?: string; runtimeBase?: string };
+    platforms?: Array<{
+      cudaArchitectures?: string;
+      platform?: string;
+      runner?: string;
+    }>;
+    repository?: string;
+    runtime?: {
+      entrypoint?: string;
+      gid?: number;
+      packages?: Record<string, string>;
+      port?: number;
+      uid?: number;
+      writablePaths?: string[];
+    };
+    source?: { archiveSha256?: string; repository?: string; revision?: string };
+  };
+};
+
+type ServingRecipe = {
+  spec?: {
+    runtime?: { cuda?: { baseImage?: string } };
+    server?: { source?: { repository?: string; revision?: string } };
+    serve?: { port?: number };
+  };
+};
+
+function parseOutput(value: string): Record<string, string> {
+  return Object.fromEntries(
+    value
+      .trim()
+      .split("\n")
+      .map((line) => line.split("=", 2) as [string, string]),
+  );
+}
+
+describe("declarative llama.cpp server image", () => {
+  const manifest = YAML.parse(fs.readFileSync(manifestPath, "utf8")) as ImageManifest;
+  const recipe = YAML.parse(fs.readFileSync(recipePath, "utf8")) as ServingRecipe;
+  const dockerfile = fs.readFileSync(dockerfilePath, "utf8");
+
+  it("binds the llama.cpp image build to the DGX Spark serving recipe (#8231)", () => {
+    expect(manifest).toMatchObject({
+      apiVersion: "nemoclaw.nvidia.com/managed-inference/v1",
+      kind: "ServerImageBuild",
+      metadata: { id: "llama-cpp-server.v1" },
+      spec: {
+        repository: "ghcr.io/nvidia/nemoclaw/llama-cpp-server",
+        runtime: {
+          entrypoint: "/usr/local/bin/llama-server",
+          port: 8081,
+          writablePaths: ["/tmp"],
+        },
+        source: { repository: "https://github.com/ggml-org/llama.cpp" },
+      },
+    });
+    expect(manifest.spec?.source?.revision).toBe(recipe.spec?.server?.source?.revision);
+    expect(manifest.spec?.cuda?.runtimeBase).toBe(recipe.spec?.runtime?.cuda?.baseImage);
+    expect(manifest.spec?.runtime?.port).toBe(recipe.spec?.serve?.port);
+    expect(manifest.spec?.source?.archiveSha256).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    expect(manifest.spec?.cuda?.developmentBase).toMatch(
+      /^docker\.io\/nvidia\/cuda@sha256:[0-9a-f]{64}$/u,
+    );
+    expect(manifest.spec?.runtime?.uid).toBeGreaterThan(0);
+    expect(manifest.spec?.runtime?.gid).toBeGreaterThan(0);
+  });
+
+  it("declares native amd64 and DGX Spark arm64 compilation explicitly (#8231)", () => {
+    expect(manifest.spec?.platforms).toEqual([
+      {
+        cudaArchitectures: "89-real;100-real;120-real",
+        platform: "linux/amd64",
+        runner: "ubuntu-24.04",
+      },
+      {
+        cudaArchitectures: "121a-real",
+        platform: "linux/arm64",
+        runner: "ubuntu-24.04-arm",
+      },
+    ]);
+  });
+
+  it("compiles the fail-closed workflow inputs from YAML (#8231)", () => {
+    const result = spawnSync(process.execPath, [exporterPath], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: { ...process.env, GITHUB_OUTPUT: "" },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const output = parseOutput(result.stdout);
+    expect(output).toMatchObject({
+      cuda_dev_image: manifest.spec?.cuda?.developmentBase,
+      cuda_runtime_image: manifest.spec?.cuda?.runtimeBase,
+      image: manifest.spec?.repository,
+      runtime_gid: String(manifest.spec?.runtime?.gid),
+      runtime_uid: String(manifest.spec?.runtime?.uid),
+      source_archive_sha256: manifest.spec?.source?.archiveSha256,
+      source_revision: manifest.spec?.source?.revision,
+    });
+    expect(JSON.parse(output.matrix ?? "null")).toEqual({
+      include: manifest.spec?.platforms?.map(({ cudaArchitectures, platform, runner }) => ({
+        arch: platform?.slice("linux/".length),
+        cuda_architectures: cudaArchitectures,
+        platform,
+        runner,
+      })),
+    });
+  });
+
+  it("builds only the pinned non-root llama-server runtime surfaces (#8231)", () => {
+    const cmakeMarkers: Record<string, string> = {
+      ggmlBackendDl: "-DGGML_BACKEND_DL=ON",
+      ggmlCpuAllVariants: "-DGGML_CPU_ALL_VARIANTS=ON",
+      ggmlCuda: "-DGGML_CUDA=ON",
+      ggmlCurl: "-DGGML_CURL=ON",
+      ggmlNative: "-DGGML_NATIVE=OFF",
+      ggmlRpc: "-DGGML_RPC=OFF",
+      llamaBuildApp: "-DLLAMA_BUILD_APP=OFF",
+      llamaBuildExamples: "-DLLAMA_BUILD_EXAMPLES=OFF",
+      llamaBuildServer: "-DLLAMA_BUILD_SERVER=ON",
+      llamaBuildTests: "-DLLAMA_BUILD_TESTS=OFF",
+      llamaBuildTools: "-DLLAMA_BUILD_TOOLS=ON",
+      llamaBuildUi: "-DLLAMA_BUILD_UI=OFF",
+      llamaOpenSsl: "-DLLAMA_OPENSSL=ON",
+      llamaSubprocess: "-DLLAMA_SUBPROCESS=OFF",
+      llamaUsePrebuiltUi: "-DLLAMA_USE_PREBUILT_UI=OFF",
+    };
+    for (const [field, marker] of Object.entries(cmakeMarkers)) {
+      expect(manifest.spec?.build?.cmake?.[field]).toBe(marker.endsWith("=ON"));
+      expect(dockerfile).toContain(marker);
+    }
+
+    expect(manifest.spec?.build?.target).toBe("llama-server");
+    expect(dockerfile).toContain("--target llama-server");
+    for (const [packageName, version] of Object.entries({
+      ...manifest.spec?.build?.packages,
+      ...manifest.spec?.runtime?.packages,
+    })) {
+      expect(dockerfile).toContain(`${packageName}=${version}`);
+    }
+    expect(dockerfile).toContain("USER ${RUNTIME_UID}:${RUNTIME_GID}");
+    expect(dockerfile).toContain('SHELL ["/bin/bash", "-o", "pipefail", "-c"]');
+    expect(dockerfile).toContain('ENTRYPOINT ["/usr/local/bin/llama-server"]');
+    expect(dockerfile).toContain("sha256sum --check --strict");
+    expect(dockerfile).toContain("cp LICENSE AUTHORS");
+    expect(dockerfile).not.toContain("# syntax=");
+    expect(dockerfile).not.toContain("git clone");
+    expect(dockerfile).not.toContain(" huggingface");
+    expect(dockerfile).not.toMatch(/[0-9a-f]{40}/u);
+    expect(dockerfile).not.toMatch(/sha256:[0-9a-f]{64}/u);
+  });
+});
