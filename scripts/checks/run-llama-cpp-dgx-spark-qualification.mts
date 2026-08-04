@@ -30,7 +30,11 @@ const expectedWorkflowRef = "NVIDIA/NemoClaw/.github/workflows/e2e.yaml@refs/hea
 const containerModelPath = "/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf";
 const containerApiKeyPath = "/run/secrets/llama-cpp-api-key";
 const maximumPlanBytes = 1024 * 1024;
+const maximumDockerfileBytes = 1024 * 1024;
 const maximumModelBytes = 128 * 1024 * 1024 * 1024;
+const relativeImageRoot = "managed-inference/images/llama-cpp";
+const trustedRepoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const trustedImageRoot = path.join(trustedRepoRoot, relativeImageRoot);
 
 type JsonRecord = Record<string, unknown>;
 
@@ -208,10 +212,7 @@ export function parseQualificationInvocation(
     "registry name",
     /^nemoclaw-llama-cpp-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$/u,
   );
-  if (
-    registryOwner !== expectedRegistryOwner(runId, runAttempt) ||
-    registryName !== expectedRegistryName(runId, runAttempt)
-  ) {
+  if (registryName !== expectedRegistryName(runId, runAttempt)) {
     throw new Error("registry ownership does not match this workflow run");
   }
   requireTrustedEnvironment(environment, runId, runAttempt);
@@ -261,11 +262,7 @@ export function buildCandidateImageArgv(
   invocation: QualificationInvocation,
   metadataFile: string,
 ): string[] {
-  const dockerfile = path.join(
-    invocation.candidateRoot,
-    "managed-inference/images/llama-cpp/Dockerfile",
-  );
-  const context = path.dirname(dockerfile);
+  const dockerfile = path.join(trustedImageRoot, "Dockerfile");
   const buildArguments = [
     `C_COMPILER=${plan.imageBuild.compiler.c}`,
     `CUDA_HOST_CXX_COMPILER=${plan.imageBuild.compiler.cudaHostCxx}`,
@@ -296,7 +293,7 @@ export function buildCandidateImageArgv(
     "--tag",
     `${localImageRepository}:${invocation.candidateHead}`,
     ...buildArguments.flatMap((argument) => ["--build-arg", argument]),
-    context,
+    trustedImageRoot,
   ];
 }
 
@@ -498,7 +495,7 @@ function commandSucceeds(command: string, args: string[]): boolean {
   return spawnSync(command, args, { stdio: "ignore" }).status === 0;
 }
 
-function readBoundedRegularFile(file: string, maximumBytes: number): string {
+function readBoundedRegularFileBytes(file: string, maximumBytes: number): Buffer {
   if (fs.realpathSync(file) !== file) {
     throw new Error("trusted input path must not use symlinks");
   }
@@ -508,9 +505,23 @@ function readBoundedRegularFile(file: string, maximumBytes: number): string {
     if (!status.isFile() || status.size < 1 || status.size > maximumBytes) {
       throw new Error("trusted input must be a bounded regular file");
     }
-    return fs.readFileSync(descriptor, "utf8");
+    return fs.readFileSync(descriptor);
   } finally {
     fs.closeSync(descriptor);
+  }
+}
+
+function readBoundedRegularFile(file: string, maximumBytes: number): string {
+  return readBoundedRegularFileBytes(file, maximumBytes).toString("utf8");
+}
+
+export function validateCandidateDockerfile(candidateRoot: string): void {
+  const candidateDockerfile = path.join(candidateRoot, relativeImageRoot, "Dockerfile");
+  const trustedDockerfile = path.join(trustedImageRoot, "Dockerfile");
+  const candidateSource = readBoundedRegularFileBytes(candidateDockerfile, maximumDockerfileBytes);
+  const trustedSource = readBoundedRegularFileBytes(trustedDockerfile, maximumDockerfileBytes);
+  if (!candidateSource.equals(trustedSource)) {
+    throw new Error("candidate Dockerfile must byte-match the trusted main Dockerfile");
   }
 }
 
@@ -533,7 +544,6 @@ function validateCandidateCheckout(invocation: QualificationInvocation): string 
     invocation.candidateBase,
     invocation.candidateHead,
   ]);
-  const relativeImageRoot = "managed-inference/images/llama-cpp";
   const status = runCommand("git", [
     "-C",
     root,
@@ -546,15 +556,7 @@ function validateCandidateCheckout(invocation: QualificationInvocation): string 
     .toString("utf8")
     .trim();
   if (status) throw new Error("candidate image source must match the exact committed head");
-  const dockerfile = path.join(root, relativeImageRoot, "Dockerfile");
-  const dockerfileStatus = fs.lstatSync(dockerfile);
-  if (
-    !dockerfileStatus.isFile() ||
-    dockerfileStatus.isSymbolicLink() ||
-    dockerfileStatus.size < 1
-  ) {
-    throw new Error("candidate Dockerfile must be a non-empty regular file");
-  }
+  validateCandidateDockerfile(root);
   return root;
 }
 
@@ -685,6 +687,7 @@ async function cleanupOwnedRuntime(
   names: RuntimeNames,
   loopbackPort?: number,
 ): Promise<CleanupEvidence> {
+  const registryWasOwned = dockerContainerOwner(names.registryName) === names.registryOwner;
   for (const name of [names.containerName, names.registryName]) {
     const owner = dockerContainerOwner(name);
     if (owner !== null && owner !== names.registryOwner) {
@@ -705,7 +708,7 @@ async function cleanupOwnedRuntime(
     keyFileRemoved: !fs.existsSync(keyFile),
     loopbackListenerClosed: loopbackPort === undefined || !(await tcpOpen(loopbackPort)),
     networkRemoved: dockerNetworkOwner(names.networkName) === null,
-    registryListenerClosed: !(await tcpOpen(5000)),
+    registryListenerClosed: !registryWasOwned || !(await tcpOpen(5000)),
     registryRemoved: dockerContainerOwner(names.registryName) === null,
     tempFilesRemoved: !fs.existsSync(names.tempRoot),
   };

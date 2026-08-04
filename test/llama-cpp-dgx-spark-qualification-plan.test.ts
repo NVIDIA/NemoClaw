@@ -67,7 +67,7 @@ afterEach(() => {
   }
 });
 
-describe("llama.cpp DGX Spark qualification plan export", () => {
+describe("llama.cpp DGX Spark qualification plan export (#8260)", () => {
   it("exports only an activated, enabled declarative qualification", () => {
     const output = exportLlamaCppDgxSparkQualificationPlan(
       candidateRoot({ activation, enabled: true }),

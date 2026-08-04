@@ -32,7 +32,7 @@ function namedStep(value: WorkflowRecord, jobId: string, name: string): Record<s
   return step as Record<string, unknown>;
 }
 
-describe("llama.cpp DGX Spark qualification workflow boundary", () => {
+describe("llama.cpp DGX Spark qualification workflow boundary (#8260)", () => {
   it("accepts the exact dormant trusted qualification lane", () => {
     expect(validateLlamaCppDgxSparkQualificationWorkflow(workflow())).toEqual([]);
   });
@@ -57,6 +57,56 @@ describe("llama.cpp DGX Spark qualification workflow boundary", () => {
 
     expect(validateLlamaCppDgxSparkQualificationWorkflow(value)).toContain(
       "llama.cpp qualification candidate checkout must bind path to .candidate-llama-cpp",
+    );
+  });
+
+  it.each([
+    [
+      "llama-cpp-dgx-spark-plan",
+      "Checkout exact llama.cpp candidate configuration",
+      "llama-cpp-dgx-spark-plan must pin checkout",
+    ],
+    [
+      "llama-cpp-dgx-spark-qualification",
+      "Checkout trusted llama.cpp qualification",
+      "llama-cpp-dgx-spark-qualification must pin trusted checkout",
+    ],
+    [
+      "llama-cpp-dgx-spark-qualification",
+      "Checkout exact llama.cpp qualification candidate",
+      "llama-cpp-dgx-spark-qualification must pin candidate checkout",
+    ],
+  ])("rejects an unpinned %s checkout", (jobId, name, error) => {
+    const value = workflow();
+    namedStep(value, jobId, name).uses = "actions/checkout@main";
+
+    expect(validateLlamaCppDgxSparkQualificationWorkflow(value)).toContain(error);
+  });
+
+  it("rejects host networking or extra Buildx configuration", () => {
+    const value = workflow();
+    const buildx = namedStep(
+      value,
+      "llama-cpp-dgx-spark-qualification",
+      "Set up protected llama.cpp Buildx",
+    );
+    buildx.with = { driver: "docker-container", "driver-opts": "network=host" };
+
+    expect(validateLlamaCppDgxSparkQualificationWorkflow(value)).toContain(
+      "llama-cpp-dgx-spark-qualification must use the host-network-free Docker driver",
+    );
+  });
+
+  it("rejects a plan path that depends on unavailable job-level runner context", () => {
+    const value = workflow();
+    const protectedJob = job(value, "llama-cpp-dgx-spark-qualification");
+    protectedJob.env = {
+      ...(protectedJob.env as Record<string, unknown>),
+      NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN: "${{ runner.temp }}/llama-cpp-dgx-spark-plan.json",
+    };
+
+    expect(validateLlamaCppDgxSparkQualificationWorkflow(value)).toContain(
+      "llama-cpp-dgx-spark-qualification env must bind NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN to ${{ github.workspace }}/.llama-cpp-qualification/plan.json",
     );
   });
 

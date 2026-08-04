@@ -1,13 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import Ajv2020 from "ajv/dist/2020.js";
 import YAML from "yaml";
+
+import {
+  llamaCppDgxSparkExecutionPlanSha256,
+  parseLlamaCppDgxSparkExecutionPlan,
+} from "./llama-cpp-dgx-spark-qualification-contract.mts";
 
 type ServerImageManifest = {
   apiVersion?: unknown;
@@ -220,8 +224,9 @@ function parseQualificationRecipe(
   schemaSource: string,
 ): LlamaCppQualificationRecipe {
   const document = YAML.parseDocument(source, { strict: true, uniqueKeys: true });
-  if (document.errors.length > 0) {
-    throw new Error(`invalid llama.cpp qualification recipe YAML: ${document.errors.join("; ")}`);
+  const issues = [...document.errors, ...document.warnings];
+  if (issues.length > 0) {
+    throw new Error(`invalid llama.cpp qualification recipe YAML: ${issues.join("; ")}`);
   }
   const value = document.toJS({ maxAliasCount: 0 }) as unknown;
   const schema = JSON.parse(schemaSource) as object;
@@ -237,8 +242,9 @@ function parseQualificationRecipe(
 
 function parseImageManifest(source: string): ServerImageManifest {
   const document = YAML.parseDocument(source, { strict: true, uniqueKeys: true });
-  if (document.errors.length > 0) {
-    throw new Error(`invalid llama.cpp image manifest YAML: ${document.errors.join("; ")}`);
+  const issues = [...document.errors, ...document.warnings];
+  if (issues.length > 0) {
+    throw new Error(`invalid llama.cpp image manifest YAML: ${issues.join("; ")}`);
   }
   return document.toJS({ maxAliasCount: 0 }) as ServerImageManifest;
 }
@@ -685,10 +691,9 @@ export function loadLlamaCppImageConfig(
       surfaces: recipe.spec.surfaces,
     },
   };
-  const qualificationPlanJson = JSON.stringify(qualificationPlan);
-  const qualificationPlanSha256 = `sha256:${createHash("sha256")
-    .update(qualificationPlanJson)
-    .digest("hex")}`;
+  const canonicalQualificationPlan = parseLlamaCppDgxSparkExecutionPlan(qualificationPlan);
+  const qualificationPlanJson = JSON.stringify(canonicalQualificationPlan);
+  const qualificationPlanSha256 = llamaCppDgxSparkExecutionPlanSha256(canonicalQualificationPlan);
 
   return {
     backend_directory: "/opt/llama.cpp/lib",

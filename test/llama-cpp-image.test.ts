@@ -370,6 +370,40 @@ describe("declarative llama.cpp server image", () => {
     ).toBe(1024);
   });
 
+  it("canonicalizes the protected plan independently of YAML key order (#8260)", () => {
+    const recipeSource = fs.readFileSync(recipePath, "utf8");
+    const reorderedRecipe = YAML.parse(recipeSource) as {
+      spec: { serve: Record<string, unknown> };
+    };
+    reorderedRecipe.spec.serve = Object.fromEntries(
+      Object.entries(reorderedRecipe.spec.serve).reverse(),
+    );
+    const baseline = loadLlamaCppImageConfig(manifestSource, recipeSource);
+    const reordered = loadLlamaCppImageConfig(manifestSource, YAML.stringify(reorderedRecipe));
+
+    expect(reordered.publication_qualification_plan).toBe(baseline.publication_qualification_plan);
+    expect(reordered.publication_qualification_plan_sha256).toBe(
+      baseline.publication_qualification_plan_sha256,
+    );
+  });
+
+  it("rejects YAML parser warnings in image and recipe inputs (#8260)", () => {
+    const recipeSource = fs.readFileSync(recipePath, "utf8");
+
+    expect(() =>
+      loadLlamaCppImageConfig(
+        manifestSource.replace("kind: ServerImageBuild", "kind: !unknown ServerImageBuild"),
+        recipeSource,
+      ),
+    ).toThrow(/Unresolved tag/u);
+    expect(() =>
+      loadLlamaCppImageConfig(
+        manifestSource,
+        recipeSource.replace("kind: ServingRecipe", "kind: !unknown ServingRecipe"),
+      ),
+    ).toThrow(/Unresolved tag/u);
+  });
+
   it.each([
     [
       "an unexpected publication field",

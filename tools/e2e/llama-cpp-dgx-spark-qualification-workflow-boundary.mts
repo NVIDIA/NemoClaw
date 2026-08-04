@@ -21,6 +21,7 @@ const PLAN_JOB_ID = "llama-cpp-dgx-spark-plan";
 const SELECTOR = `\${{ contains(format(',{0},', inputs.jobs), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},') || contains(format(',{0},', inputs.targets), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},') }}`;
 const QUALIFICATION_SELECTOR = `\${{ (contains(format(',{0},', inputs.jobs), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},') || contains(format(',{0},', inputs.targets), ',${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID},')) && needs.${PLAN_JOB_ID}.outputs.execution == 'enabled' }}`;
 const CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
+const BUILDX = "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c";
 const PREPARE =
   "NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75";
 
@@ -158,6 +159,7 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
     planSteps,
     "Checkout exact llama.cpp candidate configuration",
   );
+  if (candidatePlanCheckout?.uses !== CHECKOUT) errors.push(`${PLAN_JOB_ID} must pin checkout`);
   requireValues(errors, `${PLAN_JOB_ID} candidate checkout`, record(candidatePlanCheckout?.with), {
     repository: "${{ inputs.checkout_repository || github.repository }}",
     ref: "${{ inputs.checkout_sha || github.sha }}",
@@ -218,6 +220,8 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
     RELEASE_E2E_ACTIVATION_PATH: LLAMA_CPP_DGX_SPARK_QUALIFICATION_ACTIVATION_PATH,
     NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
     NEMOCLAW_LLAMA_CPP_QUALIFICATION_BASE_SHA: "${{ inputs.base_sha }}",
+    NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN:
+      "${{ github.workspace }}/.llama-cpp-qualification/plan.json",
     NEMOCLAW_LLAMA_CPP_QUALIFICATION_WORKFLOW_SHA: "${{ inputs.workflow_sha }}",
     NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN_SHA256: `\${{ needs.${PLAN_JOB_ID}.outputs.plan_sha256 }}`,
   });
@@ -255,6 +259,9 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
     qualificationSteps,
     "Checkout trusted llama.cpp qualification",
   );
+  if (trustedCheckout?.uses !== CHECKOUT) {
+    errors.push(`${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID} must pin trusted checkout`);
+  }
   requireValues(errors, "trusted llama.cpp qualification checkout", record(trustedCheckout?.with), {
     repository: "${{ github.repository }}",
     ref: "${{ inputs.workflow_sha }}",
@@ -267,6 +274,9 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
     qualificationSteps,
     "Checkout exact llama.cpp qualification candidate",
   );
+  if (candidateCheckout?.uses !== CHECKOUT) {
+    errors.push(`${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID} must pin candidate checkout`);
+  }
   requireValues(
     errors,
     "llama.cpp qualification candidate checkout",
@@ -279,6 +289,20 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
       "persist-credentials": false,
     },
   );
+  const buildx = requireStep(
+    errors,
+    LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID,
+    qualificationSteps,
+    "Set up protected llama.cpp Buildx",
+  );
+  if (buildx?.uses !== BUILDX) {
+    errors.push(`${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID} must pin Buildx setup`);
+  }
+  if (!isDeepStrictEqual(buildx?.with, { driver: "docker" })) {
+    errors.push(
+      `${LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID} must use the host-network-free Docker driver`,
+    );
+  }
   const prepare = requireStep(
     errors,
     LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID,
@@ -298,6 +322,7 @@ export function validateLlamaCppDgxSparkQualificationWorkflow(workflow: RecordVa
   );
   requireFragments(errors, LLAMA_CPP_DGX_SPARK_QUALIFICATION_JOB_ID, materialize, [
     'git -C "$CANDIDATE_ROOT" rev-parse --verify HEAD',
+    'install -d -m 0700 "$(dirname "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN")"',
     "printf '%s' \"$PLAN\"",
     'sha256sum "$NEMOCLAW_LLAMA_CPP_QUALIFICATION_PLAN"',
     '"$PLAN_SHA256"',
