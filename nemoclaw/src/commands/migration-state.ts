@@ -20,12 +20,22 @@ import path from "node:path";
 import JSON5 from "json5";
 import { create as createTar } from "tar";
 import type { PluginLogger } from "../index.js";
-import { isSensitiveFile } from "../security/credential-filter.js";
+import {
+  CREDENTIAL_SENSITIVE_BASENAMES,
+  isSensitiveFile,
+  stripCredentials,
+} from "../security/credential-filter.js";
 import {
   sanitizeMigrationDirectory,
   sanitizeOpenClawConfigFile,
 } from "../security/snapshot-sanitizer.js";
 import { isObjectRecord, type UnknownRecord } from "../shared/object-record.js";
+import {
+  decodeDescriptorSnapshotContent,
+  inspectDescriptorSnapshotRoot,
+  installDescriptorSnapshotFile,
+  scanDescriptorSnapshot,
+} from "../shared/snapshot-sanitizer-boundary.cjs";
 
 const SANDBOX_MIGRATION_DIR = "/sandbox/.nemoclaw/migration";
 const SNAPSHOT_VERSION = 3;
@@ -181,11 +191,7 @@ function resolveConfigPath(stateDir: string, env: NodeJS.ProcessEnv = process.en
   return path.join(stateDir, "openclaw.json");
 }
 
-function loadConfigDocument(configPath: string): OpenClawConfigDocument | null {
-  if (!existsSync(configPath)) {
-    return null;
-  }
-  const raw = readFileSync(configPath, "utf-8");
+function parseConfigDocumentText(raw: string, configPath: string): OpenClawConfigDocument {
   // Empty / whitespace-only openclaw.json — the upstream openshell-inference-set
   // truncate-then-write window can leave the file at 0 bytes (#3118). JSON5.parse
   // would throw "JSON5: invalid end of input at 1:1"; surface a recovery hint
@@ -199,6 +205,13 @@ function loadConfigDocument(configPath: string): OpenClawConfigDocument | null {
     );
   }
   return parseConfigDocument(JSON5.parse(raw), `Config at ${configPath}`);
+}
+
+function loadConfigDocument(configPath: string): OpenClawConfigDocument | null {
+  if (!existsSync(configPath)) {
+    return null;
+  }
+  return parseConfigDocumentText(readFileSync(configPath, "utf-8"), configPath);
 }
 
 function collectSymlinkPaths(rootPath: string): string[] {
@@ -520,12 +533,18 @@ function computeFileDigest(filePath: string): string {
 function copyDirectory(
   sourcePath: string,
   destinationPath: string,
-  options?: { stripCredentials?: boolean },
+  options?: { excludeSourcePaths?: ReadonlySet<string>; stripCredentials?: boolean },
 ): void {
+  const excludedSourcePaths = new Set(
+    [...(options?.excludeSourcePaths ?? [])].map((source) => normalizeHostPath(source)),
+  );
+  const shouldFilter = options?.stripCredentials === true || excludedSourcePaths.size > 0;
   cpSync(sourcePath, destinationPath, {
     recursive: true,
-    filter: options?.stripCredentials
-      ? (source: string) => !isSensitiveFile(path.basename(source))
+    filter: shouldFilter
+      ? (source: string) =>
+          !excludedSourcePaths.has(normalizeHostPath(source)) &&
+          (!options?.stripCredentials || !isSensitiveFile(path.basename(source)))
       : undefined,
   });
 }
@@ -586,6 +605,27 @@ function resolveConfigSourcePath(manifest: SnapshotManifest, snapshotDir: string
     return path.join(snapshotDir, "config", "openclaw.json");
   }
   return path.join(snapshotDir, "openclaw", "openclaw.json");
+}
+
+function loadCopiedConfigDocument(configPath: string): OpenClawConfigDocument {
+  const root = inspectDescriptorSnapshotRoot(path.dirname(configPath));
+  if (root === null) {
+    throw new Error(`Failed to inspect copied OpenClaw config parent: ${configPath}`);
+  }
+  const scan = scanDescriptorSnapshot(
+    root,
+    CREDENTIAL_SENSITIVE_BASENAMES,
+    path.basename(configPath),
+  );
+  const scanned = scan?.files[0];
+  if (scan === null || scan.files.length !== 1 || scanned?.path !== path.basename(configPath)) {
+    throw new Error(`Failed descriptor-bound scan of copied OpenClaw config: ${configPath}`);
+  }
+  const raw = decodeDescriptorSnapshotContent(scanned.content);
+  if (raw === null) {
+    throw new Error(`Failed canonical decoding of copied OpenClaw config: ${configPath}`);
+  }
+  return parseConfigDocumentText(raw, configPath);
 }
 
 const UNSAFE_PROPERTY_NAMES = new Set(["__proto__", "constructor", "prototype"]);
@@ -664,10 +704,14 @@ function prepareSandboxState(snapshotDir: string, manifest: SnapshotManifest): s
   const preparedStateDir = path.join(snapshotDir, "sandbox-bundle", "openclaw");
   rmSync(preparedStateDir, { recursive: true, force: true });
   mkdirSync(path.dirname(preparedStateDir), { recursive: true });
-  copyDirectory(path.join(snapshotDir, "openclaw"), preparedStateDir, { stripCredentials: true });
+  const snapshotStateDir = path.join(snapshotDir, "openclaw");
+  copyDirectory(snapshotStateDir, preparedStateDir, {
+    excludeSourcePaths: new Set([path.join(snapshotStateDir, "openclaw.json")]),
+    stripCredentials: true,
+  });
 
   const configSourcePath = resolveConfigSourcePath(manifest, snapshotDir);
-  const config = existsSync(configSourcePath) ? (loadConfigDocument(configSourcePath) ?? {}) : {};
+  const config = manifest.configPath === null ? {} : loadCopiedConfigDocument(configSourcePath);
 
   for (const root of manifest.externalRoots) {
     for (const binding of root.bindings) {
@@ -679,8 +723,23 @@ function prepareSandboxState(snapshotDir: string, manifest: SnapshotManifest): s
   delete config["gateway"];
 
   const configPath = path.join(preparedStateDir, "openclaw.json");
-  writeFileSync(configPath, JSON.stringify(config, null, 2));
-  chmodSync(configPath, 0o600);
+  const sanitizedConfig = stripCredentials(config);
+  if (!isObjectRecord(sanitizedConfig)) {
+    throw new Error(`Failed to sanitize prepared OpenClaw config in memory: ${configPath}`);
+  }
+  const preparedRoot = inspectDescriptorSnapshotRoot(preparedStateDir);
+  if (
+    preparedRoot === null ||
+    !installDescriptorSnapshotFile(
+      preparedRoot,
+      path.basename(configPath),
+      JSON.stringify(sanitizedConfig, null, 2),
+    )
+  ) {
+    throw new Error(
+      `Failed descriptor-bound installation of prepared OpenClaw config: ${configPath}`,
+    );
+  }
 
   // SECURITY: Strip all credentials from the bundle before it enters the sandbox.
   // Credentials must be injected at runtime via OpenShell's provider credential

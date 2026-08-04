@@ -17,7 +17,9 @@ const config = fs.readFileSync(
   "utf8",
 );
 const manifest = fs.readFileSync(path.join(root, "agents", "hermes", "manifest.yaml"), "utf8");
-const wrapper = fs.readFileSync(path.join(root, "agents", "hermes", "hermes-wrapper.py"), "utf8");
+const cliAdapter = JSON.parse(
+  fs.readFileSync(path.join(root, "agents", "hermes", "hermes-cli-adapter-v1.json"), "utf8"),
+);
 const review = fs.readFileSync(
   path.join(root, "docs", "security", "hermes-0.19.0-dependency-review.md"),
   "utf8",
@@ -96,10 +98,30 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(review).toContain("Unresolved upgrade-created high-impact concerns: `0`");
   });
 
-  it("keeps wrapper parsing aligned with the target CLI", () => {
-    for (const expected of ['"--usage-file"', '"--no-restore-cwd"', '"--safe-mode"', '"console"']) {
-      expect(wrapper).toContain(expected);
-    }
+  it("binds the CLI adapter version and source-fix constraints to target Hermes", () => {
+    expect(cliAdapter.adapter_version).toBe(1);
+    expect(cliAdapter.upstream_cli_version).toBe("0.19.0");
+    expect(cliAdapter.managed_commands).toEqual(["chat"]);
+    expect(cliAdapter.session_name_coalescer).toEqual({
+      module: "hermes_cli.main",
+      function: "_coalesce_session_name_args",
+      boundary_set: "_SUBCOMMANDS",
+    });
+    expect(Object.keys(cliAdapter.translations).sort()).toEqual([
+      "provider_model_composition",
+      "resumed_oneshot",
+    ]);
+    expect(
+      (
+        Object.values(cliAdapter.translations) as Array<{
+          source_fix_constraint?: unknown;
+        }>
+      ).every(
+        (translation) =>
+          typeof translation.source_fix_constraint === "string" &&
+          translation.source_fix_constraint.length > 0,
+      ),
+    ).toBe(true);
   });
 
   it("accepts uv build metadata and rejects a different semantic version", () => {

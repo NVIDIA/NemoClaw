@@ -68,7 +68,11 @@ export type CurrentGatewayRouteDiscoveryPreflight = (
   },
 ) => GatewayRouteDiscoveryResult;
 
-const CUSTOM_ROUTE_PROVIDERS = new Set(["compatible-endpoint", "compatible-anthropic-endpoint"]);
+const CUSTOM_ROUTE_PROVIDERS = new Set([
+  "compatible-endpoint",
+  "compatible-anthropic-endpoint",
+  "llama-cpp-local",
+]);
 
 const SUPPORTED_INFERENCE_APIS = new Set([
   "openai-completions",
