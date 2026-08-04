@@ -699,7 +699,7 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix \
     && node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts \
     && if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
-        /opt/hermes/.venv/bin/python -I -c 'import importlib.metadata as m, pathlib, yaml; config=yaml.safe_load(pathlib.Path("/sandbox/.hermes/config.yaml").read_text()); neutral={name: value for name, value in config["platforms"].items() if name != "api_server"}; assert len(neutral) == 30; assert all(value == {"enabled": False} for value in neutral.values()); assert m.version("microsoft-teams-apps") == "2.0.13.4"; assert m.version("aiohttp") == "3.14.1"'; \
+        /opt/hermes/.venv/bin/python -I -c 'import importlib.metadata as m, pathlib, yaml; config=yaml.safe_load(pathlib.Path("/sandbox/.hermes/config.yaml").read_text()); neutral={name: value for name, value in config["platforms"].items() if name != "api_server"}; assert len(neutral) == 30; assert all(value == {"enabled": False} for value in neutral.values()); assert m.version("microsoft-teams-apps") == "2.0.13.4"; assert m.version("aiohttp") == "3.14.3"'; \
         GOOGLE_CHAT_PROJECT_ID=nemoclaw-hostile \
         GOOGLE_CHAT_SUBSCRIPTION_NAME=projects/nemoclaw-hostile/subscriptions/nemoclaw-hostile \
         GOOGLE_CHAT_SERVICE_ACCOUNT_JSON='{"type":"service_account","project_id":"nemoclaw-hostile"}' \
