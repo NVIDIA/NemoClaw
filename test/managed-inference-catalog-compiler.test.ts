@@ -15,6 +15,12 @@ import type { ServingCatalogSource } from "../src/lib/inference/serving/types.js
 const REPOSITORY_ROOT = path.join(import.meta.dirname, "..");
 const PROFILE_ID = "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731";
 const RECIPE_ID = "vllm.deepseek-v4-flash-0731.spark-dual.v1";
+const LLAMA_CPP_PROFILE_ID = "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b";
+const LLAMA_CPP_RECIPE_ID = "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1";
+const LLAMA_CPP_IMAGE =
+  "ghcr.io/ggml-org/llama.cpp@sha256:866ad568474de9e835e487ae841ad6ace1a494b5eab4f292cbd45adb6180f711";
+const LLAMA_CPP_MODEL_DIGEST =
+  "sha256:627f5b04aedc97f967332f331bd75b7a4ed2f33ca83e6ee74b44235cc1887890";
 
 function catalogSources(): ServingCatalogSource[] {
   return (["presets", "recipes"] as const).flatMap((kind) => {
@@ -59,8 +65,8 @@ describe("managed inference YAML profile contract", () => {
 
   it("accepts another compatible profile as YAML-only catalog additions (#8129)", () => {
     const sources = catalogSources();
-    const recipeSource = sources.find(({ path: sourcePath }) => sourcePath.includes("/recipes/"))!;
-    const presetSource = sources.find(({ path: sourcePath }) => sourcePath.includes("/presets/"))!;
+    const recipeSource = sources.find(({ contents }) => contents.includes(`id: ${RECIPE_ID}`))!;
+    const presetSource = sources.find(({ contents }) => contents.includes(`id: ${PROFILE_ID}`))!;
     const syntheticRecipeId = "vllm.synthetic.managed-cluster.v1";
     const syntheticPresetId = "vllm.synthetic.managed-cluster";
     const catalog = compile([
@@ -80,6 +86,58 @@ describe("managed inference YAML profile contract", () => {
 
     expect(catalog.recipes.some(({ metadata }) => metadata.id === syntheticRecipeId)).toBe(true);
     expect(catalog.presets.some(({ metadata }) => metadata.id === syntheticPresetId)).toBe(true);
+  });
+
+  it("compiles the explicit DGX Spark llama.cpp profile from YAML (#8173)", () => {
+    const catalog = compile(catalogSources());
+    const preset = catalog.presets.find(({ metadata }) => metadata.id === LLAMA_CPP_PROFILE_ID);
+    const recipe = catalog.recipes.find(({ metadata }) => metadata.id === LLAMA_CPP_RECIPE_ID);
+
+    expect(preset?.spec).toMatchObject({
+      selection: "explicit-only",
+      plan: { backend: "install-llama-cpp", recipeRef: LLAMA_CPP_RECIPE_ID },
+    });
+    expect(preset?.spec.requirements?.all).toContainEqual({
+      readiness: {
+        scope: "everyNode",
+        kind: "observation",
+        id: "host.os.architecture",
+        comparison: { operator: "equals", value: "arm64" },
+      },
+    });
+    expect(recipe?.spec).toMatchObject({
+      backend: "install-llama-cpp",
+      providerId: "llama-cpp-local",
+      model: {
+        servedName: "nvidia-nemotron-3-nano-30b-a3b",
+        files: [{ digest: LLAMA_CPP_MODEL_DIGEST, sizeBytes: 22833947424 }],
+      },
+      runtime: {
+        image: LLAMA_CPP_IMAGE,
+        imageDownloadSizeBytes: 2181958990,
+        networkExposure: "loopback",
+      },
+      serve: {
+        authentication: "bearer",
+        contextSize: 262144,
+        batchSize: 2048,
+        microBatchSize: 512,
+        flashAttention: "enabled",
+        kvCache: { key: "f16", value: "f16" },
+        speculativeDecoding: "disabled",
+      },
+    });
+  });
+
+  it("keeps vLLM automatic while llama.cpp remains explicit-only (#8173)", () => {
+    const catalog = compile(catalogSources());
+    const vllmPreset = catalog.presets.find(({ metadata }) => metadata.id === PROFILE_ID);
+    const llamaCppPreset = catalog.presets.find(
+      ({ metadata }) => metadata.id === LLAMA_CPP_PROFILE_ID,
+    );
+
+    expect(vllmPreset?.spec.selection).toBe("automatic");
+    expect(llamaCppPreset?.spec.selection).toBe("explicit-only");
   });
 
   it("does not enable arbitrary remote model code in shipped managed recipes (#8129)", () => {
@@ -106,5 +164,7 @@ describe("managed inference YAML profile contract", () => {
 
     expect(productionSources).not.toContain(PROFILE_ID);
     expect(productionSources).not.toContain(RECIPE_ID);
+    expect(productionSources).not.toContain(LLAMA_CPP_PROFILE_ID);
+    expect(productionSources).not.toContain(LLAMA_CPP_RECIPE_ID);
   });
 });
