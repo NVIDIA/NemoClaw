@@ -984,9 +984,15 @@ with tempfile.TemporaryDirectory() as root:
     os.environ["NEMOCLAW_MANAGED_CONTROL_SYSTEM_ROOT"] = system_root
     os.makedirs(os.path.join(system_root, "tmp"), exist_ok=True)
     start_log_path = os.path.join(system_root, "tmp/nemoclaw-start.log")
+    layout_repair_events = [
+        "[gateway] Hermes pre-launch layout repair failed at gateway state directory",
+        "[gateway] Hermes pre-launch layout repair failed at runtime state directory",
+        "[gateway] Hermes pre-launch layout repair failed at history file",
+    ]
     start_log_events = [
         "[gateway] Hermes runtime preparation refused automatic respawn; retrying in 5s",
         "[gateway] Hermes gateway launch failed; retrying under the same supervisor",
+        *layout_repair_events,
         "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
         "[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
         "[gateway] Hermes replacement gateway lost its listener or health endpoint during auxiliary validation; stopping the exact child",
@@ -1134,7 +1140,11 @@ with tempfile.TemporaryDirectory() as root:
     real_control = control._control
     real_start_log_reader = control._read_start_log_diagnostic_excerpt
     diagnostic_output_events = tuple(
-        start_log_events[index] for index in (2, 3, 6)
+        [
+            *layout_repair_events,
+            "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
+            "[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
+        ]
     )
     control._read_start_log_diagnostic_excerpt = (
         lambda _reader, _supervisor: diagnostic_output_events
@@ -1387,6 +1397,9 @@ describe("managed gateway root control", () => {
         accepted_events: [
           "[gateway] Hermes runtime preparation refused automatic respawn; retrying in 5s",
           "[gateway] Hermes gateway launch failed; retrying under the same supervisor",
+          "[gateway] Hermes pre-launch layout repair failed at gateway state directory",
+          "[gateway] Hermes pre-launch layout repair failed at runtime state directory",
+          "[gateway] Hermes pre-launch layout repair failed at history file",
           "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
           "[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
           "[gateway] Hermes replacement gateway lost its listener or health endpoint during auxiliary validation; stopping the exact child",
@@ -1418,9 +1431,11 @@ describe("managed gateway root control", () => {
           "NEMOCLAW_CONTROL_STAGE=await-replacement",
           "NEMOCLAW_SUPERVISOR_PID=40",
           "NEMOCLAW_GATEWAY_PID=44",
+          "NEMOCLAW_START_LOG=[gateway] Hermes pre-launch layout repair failed at gateway state directory",
+          "NEMOCLAW_START_LOG=[gateway] Hermes pre-launch layout repair failed at runtime state directory",
+          "NEMOCLAW_START_LOG=[gateway] Hermes pre-launch layout repair failed at history file",
           "NEMOCLAW_START_LOG=[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
-          "NEMOCLAW_START_LOG=[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
-          "NEMOCLAW_START_LOG=[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway.log",
+          "NEMOCLAW_START_LOG=[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
         ],
       ],
       health_diagnostic: [
@@ -1430,9 +1445,11 @@ describe("managed gateway root control", () => {
           "NEMOCLAW_CONTROL_STAGE=await-replacement",
           "NEMOCLAW_SUPERVISOR_PID=40",
           "NEMOCLAW_GATEWAY_PID=44",
+          "NEMOCLAW_START_LOG=[gateway] Hermes pre-launch layout repair failed at gateway state directory",
+          "NEMOCLAW_START_LOG=[gateway] Hermes pre-launch layout repair failed at runtime state directory",
+          "NEMOCLAW_START_LOG=[gateway] Hermes pre-launch layout repair failed at history file",
           "NEMOCLAW_START_LOG=[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy",
-          "NEMOCLAW_START_LOG=[gateway] Hermes replacement gateway failed listener or health validation; stopping the exact child",
-          "NEMOCLAW_START_LOG=[gateway] CRITICAL: 5 exits in 60s window — Hermes relaunch is quarantined until sandbox recreation; check /tmp/gateway.log",
+          "NEMOCLAW_START_LOG=[gateway] CRITICAL: Hermes gateway lost its listener or health endpoint; stopping the exact child for recovery",
         ],
       ],
       exact_failure_diagnostics: [

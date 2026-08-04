@@ -19,6 +19,7 @@ import { HOST_ADVISORY_CHECKS } from "../advisories/checks/host";
 import { runAdvisories } from "../advisories/runner";
 import { failLine } from "../cli/terminal-style";
 import { DASHBOARD_PORT } from "../core/ports";
+import { isSupportedGatewayDockerHost } from "../domain/docker-host";
 import {
   MIN_RECOMMENDED_DOCKER_CPUS,
   MIN_RECOMMENDED_DOCKER_MEM_GIB,
@@ -118,6 +119,7 @@ export interface HostAssessment {
   systemctlAvailable?: boolean;
   dockerServiceActive?: boolean | null;
   dockerServiceEnabled?: boolean | null;
+  dockerHostInvalid?: boolean;
   dockerInstalled: boolean;
   dockerRunning: boolean;
   dockerReachable: boolean;
@@ -732,6 +734,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     systemctlAvailable,
     dockerServiceActive,
     dockerServiceEnabled,
+    dockerHostInvalid: !isSupportedGatewayDockerHost(env.DOCKER_HOST),
     dockerInstalled,
     dockerRunning,
     dockerReachable,

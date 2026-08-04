@@ -22,6 +22,12 @@ const ACTIVE_DEPENDENCY_REVIEW = path.join(
   "security",
   "openclaw-2026.7.1-dependency-review.md",
 );
+const MCP_TROUBLESHOOTING = path.join(
+  REPO_ROOT,
+  "docs",
+  "reference",
+  "troubleshoot-mcp-servers.mdx",
+);
 const CODEX_ACP_TARBALL =
   "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz";
 const OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz";
@@ -49,6 +55,7 @@ const SHARED_STATE_PERMISSIONS_PATCH = path.join(
   "scripts",
   "patch-openclaw-shared-state-permissions.mts",
 );
+const MCP_RELIABILITY_PATCH = path.join(REPO_ROOT, "scripts", "patch-openclaw-mcp-reliability.mts");
 const REBUILD_RESUME_SESSION = path.join(
   REPO_ROOT,
   "src",
@@ -155,6 +162,33 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("NEMOCLAW_REAL_OPENCLAW_JAEGER_HARNESS=1");
   });
 
+  it("records the version-scoped transient remote MCP startup recovery patch (#7958)", () => {
+    const review = readFileSync(ACTIVE_DEPENDENCY_REVIEW, "utf-8");
+    const troubleshooting = readFileSync(MCP_TROUBLESHOOTING, "utf-8");
+
+    expect(review).toContain("## Transient Remote MCP Startup Recovery");
+    expect(review).toContain("scripts/patch-openclaw-mcp-reliability.mts");
+    expect(review).toContain(
+      'identifies its target by the `"openclaw-bundle-mcp"` client identity',
+    );
+    expect(review).toContain("One retry, and only one, for a server *startup* failure");
+    expect(review).toContain("are never retried");
+    expect(review).toContain("dropped at the next agent run boundary");
+    expect(review).toContain("test/openclaw-mcp-reliability-patch.test.ts");
+    expect(review).toContain("test/helpers/openclaw-real-mcp-start-retry-proof.ts");
+    expect(review).toContain("NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1");
+    expect(review).toContain(
+      "Removal criterion: drop this patch when the reviewed OpenClaw release",
+    );
+    expect(review).toContain("only when the *surviving* failure is itself transient");
+    expect(review).toContain("credentials and configuration were not rejected");
+    expect(review).not.toContain("explicitly clears credentials and configuration");
+    expect(review).not.toContain("a refused destination is deterministic");
+    expect(troubleshooting).toMatch(
+      /<AgentOnly variant="openclaw">\n\n## Remote MCP Tools Are Missing for One Agent Turn[\s\S]*?<\/AgentOnly>/,
+    );
+  });
+
   it("records the active mcporter advisory remediations", () => {
     const review = readFileSync(ACTIVE_DEPENDENCY_REVIEW, "utf-8");
 
@@ -162,8 +196,15 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("@hono/node-server@^1.19.9");
     expect(review).toContain("`2.0.11`");
     expect(review).toContain("GHSA-v2hh-gcrm-f6hx");
+    expect(review).toContain("GHSA-7p8r-x3mc-p8w7");
     expect(review).toContain("fast-uri@^3.0.1");
-    expect(review).toContain("`3.1.4`");
+    expect(review).toContain("`3.1.5`");
+    expect(review).toContain("GHSA-8xcm-r25x-g524");
+    expect(review).toContain("GHSA-4cwx-7wf7-3272");
+    expect(review).toContain("undici@8.10.0");
+    expect(review).toContain("GHSA-mwp4-54f8-5fhr");
+    expect(review).toContain("ip-address@^10.2.0");
+    expect(review).toContain("ip-address@10.3.1");
   });
 
   it("keeps advisor disposition evidence in the dependency review note", () => {
@@ -612,6 +653,13 @@ check_not_contains "$optional_plugin_block" 'pack_reviewed_npm_tarball' "optiona
 	grep -Fq 'nemoclaw: ignore legacy OpenClaw update-check state' "$shared_state_permissions_patch"
 	grep -Fq 'COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts' Dockerfile
 	grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \\' Dockerfile
+	mcp_reliability_patch=${JSON.stringify(MCP_RELIABILITY_PATCH)}
+	grep -Fq 'nemoclaw mcp transient startup recovery (#7958)' "$mcp_reliability_patch"
+	grep -Fq 'nemoClawIsTransientMcpStartFailure' "$mcp_reliability_patch"
+	grep -Fq 'nemoClawCatalogHasStartDiagnostics' "$mcp_reliability_patch"
+	grep -Fq 'COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts' Dockerfile
+	grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \\' Dockerfile
+	! grep -Fq 'patch-openclaw-mcp-reliability.js' Dockerfile
 
 	phase_count="$(grep -Ec -- '--phase (runtime-setup|agent-install|post-agent-install)' Dockerfile)"
 test "$phase_count" -eq 3

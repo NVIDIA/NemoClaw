@@ -554,6 +554,11 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const initLib = path.join(localLib, "sandbox-init.sh");
     const validator = path.join(localLib, "validate-hermes-env-secret-boundary.py");
     const sessionListPreviewPatcher = path.join(localLib, "patch-hermes-session-list-preview.py");
+    const discordRecoveryPatcher = path.join(
+      localLib,
+      "patch-hermes-discord-recovery-permissions.py",
+    );
+    const profilePolicyPatcher = path.join(localLib, "patch-hermes-profile-policy-defaults.py");
     const langfuseCredentialPatcher = path.join(localLib, "patch-hermes-langfuse-credentials.mts");
     const dashboardSeeder = path.join(localLib, "seed-hermes-dashboard-config.py");
     const runtimeGuard = path.join(localLib, "hermes-runtime-config-guard.py");
@@ -571,7 +576,10 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const stateDirGuard = path.join(localLib, "state-dir-guard.py");
     const managedGatewayControl = path.join(localLib, "managed-gateway-control.py");
     const startBin = path.join(tmp, "nemoclaw-start");
+    const managedStartupHold = path.join(tmp, "nemoclaw-managed-startup-hold");
+    const managedBootstrap = path.join(tmp, "nemoclaw-managed-bootstrap");
     const gatewayControl = path.join(tmp, "nemoclaw-gateway-control");
+    const entrypointEnvWrapper = path.join(localLib, "entrypoint-env-wrapper.sh");
     const bashrc = path.join(tmp, "bash.bashrc");
     const expectedRlimitShim = rlimitShim(rlimitLib);
 
@@ -582,6 +590,8 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(initLib, "# init fixture\n");
       fs.writeFileSync(validator, "# validator fixture\n");
       fs.writeFileSync(sessionListPreviewPatcher, "# session list preview patcher fixture\n");
+      fs.writeFileSync(discordRecoveryPatcher, "# Discord recovery patcher fixture\n");
+      fs.writeFileSync(profilePolicyPatcher, "# profile policy patcher fixture\n");
       fs.writeFileSync(langfuseCredentialPatcher, "# Langfuse credential patcher fixture\n");
       fs.writeFileSync(dashboardSeeder, "# dashboard seeder fixture\n");
       fs.writeFileSync(runtimeGuard, "# runtime guard fixture\n");
@@ -599,7 +609,10 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(stateDirGuard, "# state-dir guard fixture\n");
       fs.writeFileSync(managedGatewayControl, "# managed gateway control fixture\n");
       fs.writeFileSync(startBin, "#!/usr/bin/env bash\n");
+      fs.writeFileSync(managedStartupHold, "#!/usr/bin/env bash\n");
+      fs.writeFileSync(managedBootstrap, "#!/usr/bin/env bash\n");
       fs.writeFileSync(gatewayControl, "#!/usr/bin/env sh\n");
+      fs.writeFileSync(entrypointEnvWrapper, "# entrypoint env wrapper fixture\n");
       fs.writeFileSync(bashrc, "# stale hermes bashrc\n");
       const fixtureOwner = fs.statSync(startBin);
       const replay = dockerRunCommandBetween(
@@ -608,13 +621,24 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         "# Wrap the hermes CLI",
       )
         .replaceAll("/usr/local/bin/nemoclaw-start", startBin)
+        .replaceAll("/usr/local/bin/nemoclaw-managed-startup-hold", managedStartupHold)
+        .replaceAll("/usr/local/bin/nemoclaw-managed-bootstrap", managedBootstrap)
         .replaceAll("/usr/local/bin/nemoclaw-gateway-control", gatewayControl)
+        .replaceAll("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", entrypointEnvWrapper)
         .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", initLib)
         .replaceAll("/usr/local/lib/nemoclaw/gateway-supervisor.sh", gatewaySupervisor)
         .replaceAll("/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py", validator)
         .replaceAll(
           "/usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py",
           sessionListPreviewPatcher,
+        )
+        .replaceAll(
+          "/usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py",
+          discordRecoveryPatcher,
+        )
+        .replaceAll(
+          "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
+          profilePolicyPatcher,
         )
         .replaceAll(
           "/usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts",
@@ -655,6 +679,8 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expect(hardenedDir.mode & 0o777).toBe(0o755);
       expect(hardenedSafetyNet.mode & 0o777).toBe(0o444);
       expect(hardenedCiaoGuard.mode & 0o777).toBe(0o444);
+      expect(fs.statSync(discordRecoveryPatcher).mode & 0o777).toBe(0o755);
+      expect(fs.statSync(profilePolicyPatcher).mode & 0o777).toBe(0o755);
       expect(fs.statSync(langfuseCredentialPatcher).mode & 0o777).toBe(0o444);
       expect(fs.statSync(mcpCredentialBoundary).mode & 0o777).toBe(0o444);
       expect(fs.statSync(buildMcpDigest).mode & 0o777).toBe(0o444);

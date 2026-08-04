@@ -367,4 +367,33 @@ describe("OpenClaw top-config guard host wiring", () => {
     expect(parsed.hashSynthesized).toBe(true);
     expect(parseOpenClawConfigGuardOutput("lock", plain).hashSynthesized).toBeUndefined();
   });
+
+  it("propagates the guard's re-sealed-drift marker on a successful lock", () => {
+    const resealed: PrivilegedExecResult = {
+      status: 0,
+      signal: null,
+      stdout: `${JSON.stringify({
+        type: "result",
+        action: "lock",
+        status: "ok",
+        configDir: OPENCLAW_CONFIG_DIR,
+        files: ["openclaw.json", ".config-hash"],
+        chattrApplied: false,
+        resealedDrift: true,
+      })}\n`,
+      stderr: "",
+    };
+    const plain: PrivilegedExecResult = {
+      status: 0,
+      signal: null,
+      stdout: `${success("lock")}\n`,
+      stderr: "",
+    };
+
+    const parsed = parseOpenClawConfigGuardOutput("lock", resealed);
+
+    expect(parsed.issues).toEqual([]);
+    expect(parsed.resealedDrift).toBe(true);
+    expect(parseOpenClawConfigGuardOutput("lock", plain).resealedDrift).toBeUndefined();
+  });
 });

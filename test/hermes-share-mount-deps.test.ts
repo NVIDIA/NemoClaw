@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -38,6 +39,17 @@ function extractHermesInstallCommand(dockerfile: string): string {
   return match![0].replace(/^RUN\s+/, "").replace(/\\\n/g, " ");
 }
 
+function extractHermesArchiveCommand(dockerfile: string): string {
+  const archiveStart = dockerfile.indexOf("RUN mkdir -p /opt/hermes");
+  const archiveEnd = dockerfile.indexOf("\n\n# Cross-check the pinned release", archiveStart);
+  expect(archiveStart).toBeGreaterThanOrEqual(0);
+  expect(archiveEnd).toBeGreaterThan(archiveStart);
+  return dockerfile
+    .slice(archiveStart, archiveEnd)
+    .replace(/^RUN\s+/, "")
+    .replace(/\\\n/g, " ");
+}
+
 function extractHermesIntegrityCommand(dockerfile: string): string {
   const integrityStart = dockerfile.indexOf("# Cross-check the pinned release");
   const installStart = dockerfile.indexOf("WORKDIR /opt/hermes", integrityStart);
@@ -66,7 +78,9 @@ function runLoggedShell(command: string, tmp: string, functionDefs: string[] = [
     "#!/usr/bin/env bash",
     "set -euo pipefail",
     `call_log=${JSON.stringify(logPath)}`,
-    'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+    "perl_base_installed=0",
+    "perl_installed=0",
+    'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; [[ "$*" != *"/perl-base.deb"* ]] || perl_base_installed=1; [[ "$*" != *"/perl.deb"* ]] || perl_installed=1; }',
     ...functionDefs,
     command,
   ].join("\n");
@@ -152,7 +166,14 @@ function runHermesInstallLayer(
     "set -euo pipefail",
     `cd ${JSON.stringify(fixture)}`,
     `call_log=${JSON.stringify(logPath)}`,
-    'uv() { printf "uv %s\\n" "$*" >> "$call_log"; }',
+    "uv() {",
+    '  printf "uv %s\\n" "$*" >> "$call_log"',
+    '  if [ "${1:-}" = "sync" ]; then',
+    "    mkdir -p .venv/bin",
+    "    printf '#!/usr/bin/env sh\\nexit 0\\n' > .venv/bin/python",
+    "    chmod 755 .venv/bin/python",
+    "  fi",
+    "}",
     "npm() {",
     '  if [ "${1:-}" = "view" ]; then',
     '    printf "%s\\n" "${HERMES_NPM_INTEGRITY}"',
@@ -176,6 +197,10 @@ function runHermesInstallLayer(
     '    mkdir -p "${prefix}/node_modules"',
     "  fi",
     "}",
+    "node() {",
+    '  printf "node %s\\n" "$*" >> "$call_log"',
+    '  [ "$*" = "--experimental-test-module-mocks --test scripts/whatsapp-bridge/proxy-agent.test.mjs" ]',
+    "}",
     'rm() { printf "rm %s\\n" "$*" >> "$call_log"; command rm "$@"; }',
     'ln() { printf "ln %s\\n" "$*" >> "$call_log"; }',
     'export HERMES_SEMVER="0.16.0"',
@@ -194,6 +219,87 @@ function runHermesInstallLayer(
 }
 
 describe("Hermes share mount package parity (#2947)", () => {
+  it("removes upstream tests in the Hermes archive extraction layer", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-archive-"));
+    const sourceRoot = path.join(tmp, "source");
+    const archiveRoot = path.join(sourceRoot, "hermes-agent-test");
+    const sourceTarball = path.join(tmp, "source.tar.gz");
+    const targetRoot = path.join(tmp, "target", "hermes");
+    const downloadedTarball = path.join(tmp, "download", "hermes.tar.gz");
+    const checksumFile = `${downloadedTarball}.sha256`;
+    const securityPatch = path.join(tmp, "hermes-security-dependencies.patch");
+    const whatsappProxyPatch = path.join(tmp, "hermes-whatsapp-proxy.patch");
+    const scriptPath = path.join(tmp, "run-hermes-archive-layer.sh");
+
+    try {
+      fs.mkdirSync(path.join(archiveRoot, "tests"), { recursive: true });
+      fs.mkdirSync(path.dirname(downloadedTarball), { recursive: true });
+      fs.writeFileSync(securityPatch, "test patch fixture\n");
+      fs.writeFileSync(whatsappProxyPatch, "test patch fixture\n");
+      fs.writeFileSync(path.join(archiveRoot, "pyproject.toml"), 'version = "test"\n');
+      fs.writeFileSync(
+        path.join(archiveRoot, "tests", "security-fixture.txt"),
+        "intentionally hostile test-only URL\n",
+      );
+      const packed = spawnSync(
+        "tar",
+        ["-czf", sourceTarball, "-C", sourceRoot, "hermes-agent-test"],
+        { encoding: "utf-8" },
+      );
+      expect(packed.status, packed.stderr).toBe(0);
+      const checksum = createHash("sha256").update(fs.readFileSync(sourceTarball)).digest("hex");
+      const command = extractHermesArchiveCommand(dockerfile)
+        .replaceAll("/tmp/hermes-security-dependencies.patch", securityPatch)
+        .replaceAll("/tmp/hermes-whatsapp-proxy.patch", whatsappProxyPatch)
+        .replaceAll("/tmp/hermes.tar.gz.sha256", checksumFile)
+        .replaceAll("/tmp/hermes.tar.gz", downloadedTarball)
+        .replaceAll("/opt/hermes", targetRoot);
+      fs.writeFileSync(
+        scriptPath,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `source_tarball=${JSON.stringify(sourceTarball)}`,
+          "curl() {",
+          "  output=",
+          '  while [ "$#" -gt 0 ]; do',
+          '    if [ "$1" = "-o" ]; then shift; output="$1"; fi',
+          "    shift",
+          "  done",
+          '  cp "$source_tarball" "$output"',
+          "}",
+          `target_root=${JSON.stringify(targetRoot)}`,
+          `security_patch=${JSON.stringify(securityPatch)}`,
+          `whatsapp_proxy_patch=${JSON.stringify(whatsappProxyPatch)}`,
+          "git() {",
+          '  [ "$1" = "-C" ]',
+          '  [ "$2" = "$target_root" ]',
+          '  [ "$3" = "apply" ]',
+          '  if [ "$4" = "--check" ]; then',
+          '    [ "$5" = "$security_patch" ] || [ "$5" = "$whatsapp_proxy_patch" ]',
+          "  else",
+          '    [ "$4" = "$security_patch" ] || [ "$4" = "$whatsapp_proxy_patch" ]',
+          "  fi",
+          "}",
+          'export HERMES_VERSION="vtest"',
+          `export HERMES_TARBALL_SHA256=${JSON.stringify(checksum)}`,
+          command,
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(path.join(targetRoot, "pyproject.toml"), "utf-8")).toContain(
+        'version = "test"',
+      );
+      expect(() => fs.lstatSync(path.join(targetRoot, "tests"))).toThrow();
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("requests gnupg, procps, e2fsprogs, and openssh-sftp-server from the Hermes base apt layer", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-share-apt-"));
@@ -424,7 +530,7 @@ describe("Hermes share mount package parity (#2947)", () => {
     }
   });
 
-  it("pre-installs the WhatsApp bridge node_modules with npm ci when a lockfile ships (#4764)", () => {
+  it("pre-installs the WhatsApp bridge and runs its proxy regression test (#4764, #8087)", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wa-bridge-"));
     const bridgeNodeModules = path.join(
@@ -447,6 +553,9 @@ describe("Hermes share mount package parity (#2947)", () => {
       // never needs to mkdir node_modules under read-only /opt/hermes.
       expect(calls).toContain(
         "npm ci --prefix scripts/whatsapp-bridge --prefer-offline --no-audit --no-fund",
+      );
+      expect(calls).toContain(
+        "node --experimental-test-module-mocks --test scripts/whatsapp-bridge/proxy-agent.test.mjs",
       );
       expect(fs.existsSync(bridgeNodeModules)).toBe(true);
       expect(fs.existsSync(webNodeModules)).toBe(false);

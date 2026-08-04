@@ -3,14 +3,52 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 7 as const;
+export const RISK_PLAN_VERSION = 12 as const;
 
-export const PR_E2E_TYPED_TARGET_IDS = ["ubuntu-repo-cloud-langchain-deepagents-code"] as const;
+export const PR_E2E_TYPED_TARGET_IDS = [
+  "ubuntu-repo-cloud-langchain-deepagents-code",
+  "ubuntu-repo-docker-post-reboot-recovery",
+] as const;
 
 const PR_E2E_TYPED_TARGET_ID_SET = new Set<string>(PR_E2E_TYPED_TARGET_IDS);
 const DEEPAGENTS_HEADLESS_INFERENCE_CHECK =
   "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh";
 const DEEPAGENTS_CODE_RUNTIME_ROOT = "agents/langchain-deepagents-code/";
+const POST_REBOOT_DELIVERY_RUNTIME_FILES = new Set([
+  "src/lib/actions/sandbox/status-snapshot.ts",
+  "src/lib/onboard/docker-driver-sandbox-recovery.ts",
+  "src/lib/onboard/docker-startup-command-agent.ts",
+  "src/lib/onboard/sandbox-create-step.ts",
+]);
+const MANAGED_STARTUP_E2E_JOB_IDS = [
+  "device-auth-health",
+  "issue-4462-scope-upgrade-approval",
+  "openclaw-inference-switch",
+] as const;
+const HERMES_CLI_ADAPTER_E2E_JOB_IDS = ["channels-stop-start", "mcp-bridge"] as const;
+const HERMES_CLI_ADAPTER_RUNTIME_FILES = new Set([
+  "agents/hermes/hermes-cli-adapter-v1.json",
+  "agents/hermes/hermes-wrapper.py",
+  "agents/hermes/validate-cli-adapter.py",
+]);
+const HERMES_MANAGED_POLICY_E2E_JOB_IDS = [
+  "bedrock-runtime-compatible-anthropic",
+  "channels-stop-start",
+  "dashboard-remote-bind",
+  "hermes-e2e",
+  "hermes-inference-switch",
+  "hermes-shields-config",
+  "security-posture",
+] as const;
+const HERMES_MANAGED_POLICY_FILES = new Set([
+  "agents/hermes/hermes-wrapper.py",
+  "agents/hermes/image-build-probes.py",
+  "agents/hermes/managed_policy.py",
+  "agents/hermes/patch-profile-policy-defaults.py",
+  "agents/hermes/seed-dashboard-config.py",
+  "agents/hermes/start.sh",
+  "src/lib/hermes-managed-route.ts",
+]);
 
 export type RiskTier = 0 | 1 | 2 | 3;
 export type RiskFamilyId =
@@ -89,11 +127,6 @@ const E2E_CONTROL_PLANE_FILES = new Set([
   "tools/advisors/risk-plan.mts",
   "vitest.config.ts",
 ]);
-const TRUSTED_CONTROL_PLANE_ONLY_FILES = new Set([
-  ".github/workflows/pr-e2e-gate.yaml",
-  "tools/e2e/pr-e2e-gate.mts",
-  "tools/e2e/pr-e2e-required.mts",
-]);
 // These checked-in paths and directories are the source boundary for private-network,
 // policy, and shields enforcement but are not all covered by the token heuristics above.
 // Keep the explicit floor until a machine-readable security-owner catalog replaces it.
@@ -108,6 +141,7 @@ const RISK_RELEVANT_TEST_FILES = new Set([
   "test/e2e/live/cloud-onboard.test.ts",
   "test/e2e/risk-signal-reporter.ts",
 ]);
+const E2E_SUPPORT_FILE = /^test\/e2e\/support\//;
 const FOCUSED_E2E_SUMMARY =
   "Changed runtime surfaces and workflow-wired E2E tests must execute through their trusted canonical jobs or typed targets.";
 const FOCUSED_E2E_INVARIANTS = [
@@ -122,21 +156,71 @@ export function isPrE2eTypedTargetId(value: string): boolean {
 export function focusedPrE2eTargetsForChangedFiles(
   changedFiles: readonly string[],
 ): TrustedFocusedE2eTarget[] {
-  const matchedFiles = stableUnique(
+  const deepAgentsMatchedFiles = stableUnique(
     changedFiles.filter(
       (file) =>
         file === DEEPAGENTS_HEADLESS_INFERENCE_CHECK ||
         (file.startsWith(DEEPAGENTS_CODE_RUNTIME_ROOT) && isRuntimeRelevant(file)),
     ),
   );
-  return matchedFiles.length > 0
-    ? [
-        {
-          id: PR_E2E_TYPED_TARGET_IDS[0],
-          matchedFiles,
-        },
-      ]
-    : [];
+  const postRebootMatchedFiles = stableUnique(
+    changedFiles.filter((file) => POST_REBOOT_DELIVERY_RUNTIME_FILES.has(file)),
+  );
+  return [
+    ...(deepAgentsMatchedFiles.length > 0
+      ? [
+          {
+            id: PR_E2E_TYPED_TARGET_IDS[0],
+            matchedFiles: deepAgentsMatchedFiles,
+          },
+        ]
+      : []),
+    ...(postRebootMatchedFiles.length > 0
+      ? [
+          {
+            id: PR_E2E_TYPED_TARGET_IDS[1],
+            matchedFiles: postRebootMatchedFiles,
+          },
+        ]
+      : []),
+  ];
+}
+
+export function focusedPrE2eJobsForChangedFiles(
+  changedFiles: readonly string[],
+): TrustedFocusedE2eJob[] {
+  const managedStartupFiles = stableUnique(
+    changedFiles.filter(
+      (file) =>
+        (file.startsWith("src/lib/onboard/managed-startup/") ||
+          file === "src/lib/onboard/sandbox-create-launch.ts" ||
+          file === "scripts/lib/entrypoint-env-wrapper.sh") &&
+        isRuntimeRelevant(file),
+    ),
+  );
+  const hermesCliAdapterFiles = stableUnique(
+    changedFiles.filter(
+      (file) => HERMES_CLI_ADAPTER_RUNTIME_FILES.has(file) && isRuntimeRelevant(file),
+    ),
+  );
+  const hermesManagedPolicyFiles = stableUnique(
+    changedFiles.filter(
+      (file) =>
+        (file.startsWith("agents/hermes/config/") || HERMES_MANAGED_POLICY_FILES.has(file)) &&
+        isRuntimeRelevant(file),
+    ),
+  );
+  return [
+    ...MANAGED_STARTUP_E2E_JOB_IDS.map((id) => ({ id, matchedFiles: managedStartupFiles })),
+    ...HERMES_CLI_ADAPTER_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: hermesCliAdapterFiles,
+    })),
+    ...HERMES_MANAGED_POLICY_E2E_JOB_IDS.map((id) => ({
+      id,
+      matchedFiles: hermesManagedPolicyFiles,
+    })),
+  ].filter((selection) => selection.matchedFiles.length > 0);
 }
 
 export const RISK_RULES: readonly RiskRule[] = [
@@ -162,7 +246,7 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "Upgrade, rebuild, snapshot, and restore operations must preserve user state while replacing stale runtime state.",
     tier: 2,
-    requiredJobs: ["upgrade-stale-sandbox", "state-backup-restore"],
+    requiredJobs: ["rebuild-openclaw", "state-backup-restore"],
     invariants: [
       "host and in-sandbox runtime versions agree after mutation",
       "credentials, policy, messaging, and workspace state survive intended preservation paths",
@@ -303,9 +387,10 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "Sandbox blueprint and agent-runtime changes must preserve equivalent isolation and readiness across supported agents.",
     tier: 3,
-    requiredJobs: ["full-e2e", "hermes-e2e", "security-posture"],
+    requiredJobs: ["full-e2e", "hermes-e2e", "hermes-inference-switch", "security-posture"],
     invariants: [
       "OpenClaw and Hermes both reach readiness through the changed sandbox boundary",
+      "the Hermes runtime and managed inference route agree on the selected provider and model after each route change",
       "the sandbox retains its required security posture and isolation controls",
       "blueprint state agrees with the runtime observed by both supported agents",
     ],
@@ -351,6 +436,7 @@ function normalizeFocusedE2eJobs(
 
 function isRuntimeRelevant(file: string): boolean {
   if (RISK_RELEVANT_TEST_FILES.has(file)) return true;
+  if (E2E_SUPPORT_FILE.test(file)) return false;
   if (file.startsWith("tools/e2e/") || file.startsWith("test/e2e/")) {
     return !/\.(?:md|mdx)$/u.test(file);
   }
@@ -374,8 +460,16 @@ export function buildRiskPlan(options: {
 }): RiskPlan {
   const changedFiles = stableUnique(options.changedFiles);
   const runtimeFiles = changedFiles.filter(isRuntimeRelevant);
+  const focusedE2eJobs = normalizeFocusedE2eJobs(
+    [...focusedPrE2eJobsForChangedFiles(changedFiles), ...(options.focusedE2eJobs ?? [])],
+    changedFiles,
+  );
+  const focusedLiveFiles = new Set(focusedE2eJobs.flatMap((selection) => selection.matchedFiles));
   const staticFamilies: RiskPlanFamily[] = RISK_RULES.flatMap((rule) => {
-    const matchedFiles = runtimeFiles.filter(rule.matches);
+    const matchedFiles = runtimeFiles.filter(
+      (file) =>
+        rule.matches(file) && !(rule.id === "e2e-control-plane" && focusedLiveFiles.has(file)),
+    );
     if (matchedFiles.length === 0) return [];
     return [
       {
@@ -389,7 +483,6 @@ export function buildRiskPlan(options: {
       },
     ];
   });
-  const focusedE2eJobs = normalizeFocusedE2eJobs(options.focusedE2eJobs ?? [], changedFiles);
   const focusedE2eTargets = normalizeFocusedE2eJobs(
     focusedPrE2eTargetsForChangedFiles(changedFiles),
     changedFiles,
@@ -486,11 +579,4 @@ export function riskPlanRequiredJobIds(plan: RiskPlan): string[] {
 
 export function riskPlanRequiredTargetIds(plan: RiskPlan): string[] {
   return plan.requiredTargets.map((target) => target.id);
-}
-
-export function requiresCredentialedE2eAuthorization(plan: RiskPlan): boolean {
-  const controlPlane = plan.families.find((family) => family.id === "e2e-control-plane");
-  return (
-    controlPlane?.matchedFiles.some((file) => !TRUSTED_CONTROL_PLANE_ONLY_FILES.has(file)) ?? false
-  );
 }

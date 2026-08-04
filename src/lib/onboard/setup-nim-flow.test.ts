@@ -122,6 +122,7 @@ function makeDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupNimFlowDeps {
     error: vi.fn(),
     exitProcess: (code) => unexpected(`exitProcess(${code})`),
     abortNonInteractive: (message) => unexpected(`abortNonInteractive(${message})`),
+    handleLlamaCppSelection: async () => unexpected("llama.cpp selection"),
     handleRemoteProviderSelection: async () => unexpected("remote provider selection"),
     handleNimLocalSelection: async () => unexpected("local NIM selection"),
     handleRunningOllamaSelection: async () => unexpected("running Ollama selection"),
@@ -482,6 +483,52 @@ describe("createSetupNim", () => {
     expect(handleRunningOllamaSelection).toHaveBeenCalledTimes(1);
   });
 
+  it("reuses the running daemon when mirrored networking exposes the Windows host on WSL loopback (#7472)", async () => {
+    const model = "qwen3.6:35b";
+    const handleRunningOllamaSelection = vi.fn<SetupNimFlowDeps["handleRunningOllamaSelection"]>(
+      async (_gpu, requestedModel, _recoveredModel, ollamaRunning, state) => {
+        expect(requestedModel).toBe(model);
+        expect(ollamaRunning).toBe(true);
+        state.model = model;
+        state.provider = "ollama-local";
+        state.endpointUrl = "http://127.0.0.1:11434/v1";
+        state.credentialEnv = null;
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const handleWindowsHostOllamaSelection = vi.fn<
+      SetupNimFlowDeps["handleWindowsHostOllamaSelection"]
+    >(async () => unexpected("Windows-host Ollama selection"));
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "install-windows-ollama",
+        getNonInteractiveModel: () => model,
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            // Mirrored networking puts the Windows daemon on the distro's own
+            // loopback, so the first probe candidate answers and the host reads
+            // as local even though the daemon is the Windows one.
+            ollamaHost: "127.0.0.1",
+            ollamaRunning: true,
+            isWindowsHostOllama: false,
+            isWsl: true,
+            hasWindowsOllama: false,
+            windowsHostOllamaDockerRequirement:
+              getWindowsHostOllamaDockerRequirement("docker-desktop"),
+          }),
+        handleRunningOllamaSelection,
+        handleWindowsHostOllamaSelection,
+      }),
+    );
+
+    await setupNim(null, null);
+
+    expect(handleRunningOllamaSelection).toHaveBeenCalledTimes(1);
+    expect(handleWindowsHostOllamaSelection).not.toHaveBeenCalled();
+  });
+
   it("applies same-gateway discovery constraints before a provider probe (#6315)", async () => {
     const providerProbe = vi.fn();
     const routeGuard = vi.fn(
@@ -623,6 +670,58 @@ describe("createSetupNim", () => {
       endpointUrl: "https://api.openai.com/v1",
       credentialEnv: "OPENAI_API_KEY",
       preferredInferenceApi: "openai-responses",
+    });
+  });
+
+  it("ignores recorded provider state when fresh setup disables recovery (#6237)", async () => {
+    const prompt = vi.fn(async () => unexpected("interactive provider prompt"));
+    const note = vi.fn();
+    const readRecordedProvider = vi.fn(() => "ollama-local");
+    const readRecordedNimContainer = vi.fn(() => null);
+    const readRecordedModel = vi.fn(() => "llama3.1");
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (args, state) => {
+        expect(args).toMatchObject({
+          selected: { key: "build", label: "NVIDIA Endpoints" },
+          requestedModel: null,
+          recoveredFromSandbox: false,
+          recoveredModel: null,
+          sandboxName: "dcode-station",
+        });
+        state.model = "nvidia/test-model";
+        state.provider = "nvidia-prod";
+        state.endpointUrl = "https://integrate.api.nvidia.com/v1";
+        state.credentialEnv = "NVIDIA_INFERENCE_API_KEY";
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        prompt,
+        note,
+        readRecordedProvider,
+        readRecordedNimContainer,
+        readRecordedModel,
+        handleRemoteProviderSelection,
+      }),
+    );
+
+    const result = await setupNim(null, "dcode-station", null, false);
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(readRecordedProvider).not.toHaveBeenCalled();
+    expect(readRecordedNimContainer).not.toHaveBeenCalled();
+    expect(readRecordedModel).not.toHaveBeenCalled();
+    expect(note).toHaveBeenCalledTimes(1);
+    expect(note).toHaveBeenCalledWith("  [non-interactive] Provider: build");
+    expect(result).toMatchObject({
+      model: "nvidia/test-model",
+      provider: "nvidia-prod",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-completions",
     });
   });
 
@@ -1077,6 +1176,37 @@ describe("createSetupNim", () => {
     expect(abortNonInteractive).toHaveBeenCalledOnce();
     expect(installVllm).not.toHaveBeenCalled();
     expect(handleVllmSelection).not.toHaveBeenCalled();
+  });
+
+  it("dispatches llama.cpp existing-server selection without a managed install path (#8161)", async () => {
+    const handleLlamaCppSelection = vi.fn<SetupNimFlowDeps["handleLlamaCppSelection"]>(
+      async (selection, requestedModel) => {
+        expect(requestedModel).toBe("team/model-alias");
+        selection.provider = "llama-cpp-local";
+        selection.model = "team/model-alias";
+        selection.endpointUrl = "http://127.0.0.1:8081/v1";
+        selection.credentialEnv = "NEMOCLAW_LLAMACPP_LOCAL_TOKEN";
+        selection.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "llama-cpp",
+        getNonInteractiveModel: () => "team/model-alias",
+        handleLlamaCppSelection,
+      }),
+    );
+
+    await expect(setupNim(null)).resolves.toMatchObject({
+      provider: "llama-cpp-local",
+      model: "team/model-alias",
+      endpointUrl: "http://127.0.0.1:8081/v1",
+      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      preferredInferenceApi: "openai-completions",
+    });
+    expect(handleLlamaCppSelection).toHaveBeenCalledOnce();
   });
 
   it("returns interactive occupied-port selection to the provider menu", async () => {

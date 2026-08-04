@@ -47,11 +47,33 @@ function baseDeps(overrides: ManagedSupervisorRelaunchDeps = {}) {
         }) as never,
     ),
     resolveDashboardPort: vi.fn(() => 18789),
-    resolveContainer: vi.fn(() => "old-container-id"),
+    resolveContainer: vi
+      .fn()
+      .mockReturnValueOnce("old-container-id")
+      .mockReturnValue("new-container-id"),
     inspectContainer: vi.fn(() => ({
       Config: { Env: ["OPENSHELL_SANDBOX_COMMAND=sleep infinity"] },
     })),
     confirmMissingSupervisor: vi.fn(() => true),
+    restartRestoredManagedGateway: vi.fn(() => true),
+    backupState: vi.fn(() => ({
+      success: true,
+      manifest: {
+        backupPath: "/tmp/rebuild-backups/alpha/recovery",
+      },
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+    })) as never,
+    restoreState: vi.fn(() => ({
+      success: true,
+      restoredDirs: ["workspace"],
+      failedDirs: [],
+      restoredFiles: [],
+      failedFiles: [],
+    })),
+    removeBackup: vi.fn(() => true),
     recreate: vi.fn(() => patchResult()),
     finalize: vi.fn(({ supervisorReady }) =>
       supervisorReady
@@ -123,7 +145,14 @@ describe("relaunchManagedSupervisorSession", () => {
     expect(serialized).not.toContain("CUSTOM_PROVIDER_CREDENTIAL");
     expect(serialized).not.toContain("proxypass");
 
-    expect(relaunch?.finalize(true)).toEqual({ backupRemoved: true, rolledBack: false });
+    expect(relaunch?.finalize(true)).toEqual({
+      backupRemoved: true,
+      rolledBack: false,
+      stateRestored: true,
+      stateBackupRemoved: true,
+    });
+    expect(deps.restoreState).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
+    expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
     expect(deps.finalize).toHaveBeenCalledWith({
       result: expect.objectContaining({ newContainerId: "new-container-id" }),
       supervisorReady: true,
@@ -134,10 +163,189 @@ describe("relaunchManagedSupervisorSession", () => {
     const deps = baseDeps();
     const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
 
-    expect(relaunch?.finalize(false)).toEqual({ backupRemoved: false, rolledBack: true });
+    expect(relaunch?.finalize(false)).toEqual({
+      backupRemoved: false,
+      rolledBack: true,
+      stateRestored: false,
+      stateBackupRemoved: true,
+    });
+    expect(deps.restoreState).not.toHaveBeenCalled();
+    expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
     expect(deps.finalize).toHaveBeenCalledWith({
       result: expect.objectContaining({ backupContainerName: expect.any(String) }),
       supervisorReady: false,
+    });
+  });
+
+  it("removes a partial state backup before it refuses recreation (#7404)", () => {
+    const deps = baseDeps({
+      backupState: vi.fn(() => ({
+        success: false,
+        manifest: {
+          backupPath: "/tmp/rebuild-backups/alpha/partial-recovery",
+        } as never,
+        backedUpDirs: [],
+        failedDirs: ["workspace"],
+        backedUpFiles: [],
+        failedFiles: [],
+      })),
+    });
+
+    expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).toBeNull();
+    expect(deps.removeBackup).toHaveBeenCalledWith(
+      "alpha",
+      "/tmp/rebuild-backups/alpha/partial-recovery",
+    );
+    expect(deps.recreate).not.toHaveBeenCalled();
+  });
+
+  it("rolls back the container transaction when state restore fails", () => {
+    const deps = baseDeps({
+      restoreState: vi.fn(() => ({
+        success: false,
+        restoredDirs: [],
+        failedDirs: ["workspace"],
+        restoredFiles: [],
+        failedFiles: [],
+      })),
+    });
+    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
+
+    expect(relaunch?.finalize(true)).toEqual({
+      backupRemoved: false,
+      rolledBack: true,
+      stateRestored: false,
+      stateBackupRemoved: true,
+    });
+    expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
+    expect(deps.finalize).toHaveBeenCalledWith({
+      result: expect.objectContaining({ backupContainerName: expect.any(String) }),
+      supervisorReady: false,
+    });
+  });
+
+  it("re-proves managed health after state restore and before commit", () => {
+    const order: string[] = [];
+    const deps = baseDeps({
+      restoreState: vi.fn(() => {
+        order.push("restore-state");
+        return {
+          success: true,
+          restoredDirs: ["workspace"],
+          failedDirs: [],
+          restoredFiles: [],
+          failedFiles: [],
+        };
+      }),
+      restartRestoredManagedGateway: vi.fn(() => {
+        order.push("restart-restored-gateway");
+        return true;
+      }),
+      finalize: vi.fn(() => {
+        order.push("commit-container");
+        return { backupRemoved: true, rolledBack: false };
+      }),
+    });
+    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
+
+    expect(relaunch?.finalize(true)).toMatchObject({
+      backupRemoved: true,
+      rolledBack: false,
+      stateRestored: true,
+    });
+    expect(order).toEqual(["restore-state", "restart-restored-gateway", "commit-container"]);
+    expect(deps.restartRestoredManagedGateway).toHaveBeenCalledWith("new-container-id");
+    expect(deps.finalize).toHaveBeenCalledWith({
+      result: expect.objectContaining({ newContainerId: "new-container-id" }),
+      supervisorReady: true,
+    });
+  });
+
+  it("rolls back when managed health fails after state restore", () => {
+    const order: string[] = [];
+    const deps = baseDeps({
+      restoreState: vi.fn(() => {
+        order.push("restore-state");
+        return {
+          success: true,
+          restoredDirs: ["workspace"],
+          failedDirs: [],
+          restoredFiles: [],
+          failedFiles: [],
+        };
+      }),
+      restartRestoredManagedGateway: vi.fn(() => {
+        order.push("restart-restored-gateway");
+        return false;
+      }),
+      finalize: vi.fn(({ supervisorReady }) => {
+        order.push(supervisorReady ? "commit-container" : "rollback-container");
+        return supervisorReady
+          ? { backupRemoved: true, rolledBack: false }
+          : { backupRemoved: false, rolledBack: true };
+      }),
+    });
+    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
+
+    expect(relaunch?.finalize(true)).toEqual({
+      backupRemoved: false,
+      rolledBack: true,
+      stateRestored: false,
+      stateBackupRemoved: true,
+    });
+    expect(order).toEqual(["restore-state", "restart-restored-gateway", "rollback-container"]);
+    expect(deps.finalize).toHaveBeenCalledWith({
+      result: expect.objectContaining({ newContainerId: "new-container-id" }),
+      supervisorReady: false,
+    });
+  });
+
+  it("rolls back before restore when the replacement container identity changes", () => {
+    const deps = baseDeps({
+      resolveContainer: vi
+        .fn()
+        .mockReturnValueOnce("old-container-id")
+        .mockReturnValue("different-container-id"),
+    });
+    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
+
+    expect(relaunch?.finalize(true)).toEqual({
+      backupRemoved: false,
+      rolledBack: true,
+      stateRestored: false,
+      stateBackupRemoved: true,
+    });
+    expect(deps.restoreState).not.toHaveBeenCalled();
+    expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
+    expect(deps.finalize).toHaveBeenCalledWith({
+      result: expect.objectContaining({ backupContainerName: expect.any(String) }),
+      supervisorReady: false,
+    });
+  });
+
+  it("retains the state backup when rollback fails", () => {
+    const deps = baseDeps({
+      finalize: vi.fn(() => ({ backupRemoved: false, rolledBack: false })),
+    });
+    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
+
+    expect(relaunch?.finalize(false)).toEqual({
+      backupRemoved: false,
+      rolledBack: false,
+      stateRestored: false,
+    });
+    expect(deps.removeBackup).not.toHaveBeenCalled();
+  });
+
+  it("reports best-effort state-backup cleanup failure after a successful restore", () => {
+    const deps = baseDeps({ removeBackup: vi.fn(() => false) });
+    const relaunch = relaunchManagedSupervisorSession("alpha", { quiet: true, deps });
+
+    expect(relaunch?.finalize(true)).toEqual({
+      backupRemoved: true,
+      rolledBack: false,
+      stateRestored: true,
+      stateBackupRemoved: false,
     });
   });
 
@@ -149,6 +357,25 @@ describe("relaunchManagedSupervisorSession", () => {
     });
 
     expect(relaunchManagedSupervisorSession("alpha", { quiet: true, deps })).toBeNull();
+    expect(deps.removeBackup).toHaveBeenCalledWith("alpha", "/tmp/rebuild-backups/alpha/recovery");
+  });
+
+  it("preserves the recreation diagnostic when state-backup cleanup throws", () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const deps = baseDeps({
+      removeBackup: vi.fn(() => {
+        throw new Error("backup cleanup failed");
+      }),
+      recreate: vi.fn(() => {
+        throw new Error("container identity changed");
+      }),
+    });
+
+    expect(relaunchManagedSupervisorSession("alpha", { quiet: false, deps })).toBeNull();
+    const output = errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("container identity changed");
+    expect(output).not.toContain("backup cleanup failed");
   });
 
   it("redacts diagnostics when trusted recreation fails", () => {

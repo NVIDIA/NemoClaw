@@ -43,6 +43,7 @@ import {
   expectedRebuildEntryAfterVersionCheck,
   getRebuildSandboxEntryOrBail,
   isSingleAgentRebuildSupported,
+  type RebuildRoutePreflightReceipt,
   runRebuildGatewayIntentPreflight,
 } from "./rebuild-preflight-guards";
 import { prepareRebuildTargetPreflights } from "./rebuild-preflight-target-phase";
@@ -53,6 +54,8 @@ import {
 } from "./rebuild-prepared-recovery";
 import { checkRebuildGatewayCredentialReuseOrBail } from "./rebuild-provider-preflight";
 import type { RebuildTargetConfig } from "./rebuild-target-preflight";
+
+export { finalizePreparedRebuildImageMessagingPlan } from "./rebuild-custom-image-preflight";
 
 export interface RebuildPreflightPhaseResult {
   sandboxEntry: RebuildSandboxEntry;
@@ -66,6 +69,7 @@ export interface RebuildPreflightPhaseResult {
   recoveryManifest: RebuildManifest | null;
   dcodePreflight: DcodeRebuildOrchestrator;
   preparedImage: PreparedRebuildImage | null;
+  routePreflightReceipt: RebuildRoutePreflightReceipt;
   releaseOnboardLock: () => void;
   log: RebuildLog;
   bail: RebuildBail;

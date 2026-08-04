@@ -95,6 +95,24 @@ function localBuildAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.NODE_ENV !== "test" && env.VITEST !== "true";
 }
 
+function hasCurrentLocalBuildProvenance(
+  imageRef: string,
+  options: ResolveBaseImageOptions,
+): boolean {
+  const inspected = inspectLocalImageMetadata(imageRef);
+  const labels =
+    inspected?.Config?.Labels && typeof inspected.Config.Labels === "object"
+      ? (inspected.Config.Labels as Record<string, unknown>)
+      : {};
+  const provenance = labels[SANDBOX_BASE_BUILD_PROVENANCE_LABEL];
+  const expectedProvenance = createSandboxBaseImageBuildProvenanceKey(options);
+  return (
+    typeof provenance === "string" &&
+    provenance.startsWith(`${expectedProvenance}.`) &&
+    /^[0-9a-f]{64}\.[0-9a-f]{64}$/.test(provenance)
+  );
+}
+
 function getRepoDigest(
   imageName: string,
   imageRef: string,
@@ -353,7 +371,7 @@ function resolveLocalCandidate(
   const imageRef = options.localTag;
   if (!forceBuild) {
     const inspectResult = dockerImageInspect(imageRef, { ignoreError: true, suppressOutput: true });
-    if (inspectResult.status === 0) {
+    if (inspectResult.status === 0 && hasCurrentLocalBuildProvenance(imageRef, options)) {
       const check = options.requireOpenshellSandboxAbi
         ? imageMeetsMinimumGlibc(imageRef, options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC)
         : { ok: true, version: null };
@@ -378,6 +396,8 @@ function resolveLocalCandidate(
   // useful diagnostic.
   const buildResult = withLocalBuildHeartbeat(() =>
     dockerBuild(options.dockerfilePath, imageRef, options.rootDir || ROOT, {
+      buildArgs: options.buildArgs,
+
       labels: {
         [SANDBOX_BASE_BUILD_PROVENANCE_LABEL]: createSandboxBaseImageBuildProvenance(options),
       },
@@ -515,6 +535,12 @@ export function resolveSandboxBaseImage(
     const versionTagResolution = resolveVersionTags(versionTags);
     if (versionTagResolution) return versionTagResolution;
 
+    for (const tag of getSourceShortShaTags(options.rootDir || ROOT, env)) {
+      const imageRef = `${options.imageName}:${tag}`;
+      const resolved = resolvePulledCandidate(options.imageName, imageRef, "source-sha", options);
+      if (resolved) return finish(resolved);
+    }
+
     if (baseImageInputsChangedSinceMain(rootDir, env, inputPaths)) return resolveChangedInputs();
 
     if (!preferPinnedRemoteRef && options.pinnedRemoteRef) {
@@ -533,12 +559,6 @@ export function resolveSandboxBaseImage(
     );
     const nearestVersionTagResolution = resolveVersionTags(nearestVersionTags);
     if (nearestVersionTagResolution) return nearestVersionTagResolution;
-
-    for (const tag of getSourceShortShaTags(options.rootDir || ROOT, env)) {
-      const imageRef = `${options.imageName}:${tag}`;
-      const resolved = resolvePulledCandidate(options.imageName, imageRef, "source-sha", options);
-      if (resolved) return finish(resolved);
-    }
 
     const latestRef = `${options.imageName}:${SANDBOX_BASE_TAG}`;
     const resolved = resolvePulledCandidate(options.imageName, latestRef, "latest", options);

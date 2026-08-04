@@ -30,7 +30,7 @@ describe("Hermes doctor and config hash boundary", () => {
     const command = dockerRunCommandBetween(
       dockerfile,
       'RUN hermes_version_output="$(/usr/local/bin/hermes --version)"',
-      "# This runs before `/usr/local/bin/hermes`",
+      "# Validate the versioned adapter",
     )
       .replaceAll("/usr/local/bin/hermes", hermesBin)
       .replaceAll("/usr/local/lib/nemoclaw/hermes-wrapper.py", wrapper)
@@ -38,7 +38,7 @@ describe("Hermes doctor and config hash boundary", () => {
     try {
       fs.mkdirSync(path.dirname(hermesBin), { recursive: true });
       fs.mkdirSync(path.dirname(wrapper), { recursive: true });
-      fs.writeFileSync(hermesBin, "#!/usr/bin/env bash\nprintf 'hermes v0.19.0\\n'\n", {
+      fs.writeFileSync(hermesBin, "#!/usr/bin/env bash\nprintf 'hermes v0.20.0\\n'\n", {
         mode: 0o755,
       });
       fs.writeFileSync(wrapper, "# wrapper fixture without resumed oneshot marker\n");
@@ -52,7 +52,7 @@ describe("Hermes doctor and config hash boundary", () => {
 
       expect(result.status).toBe(1);
       expect(result.stderr).toContain(
-        "Hermes v0.18.0 compatibility workarounds are still installed",
+        "installed Hermes 0.20.0 but Hermes v0.19.0 compatibility workarounds are still installed",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -71,6 +71,11 @@ describe("Hermes doctor and config hash boundary", () => {
       libDir,
       "patch-hermes-langfuse-credentials.mts",
     );
+    const discordRecoveryPatcherPath = path.join(
+      libDir,
+      "patch-hermes-discord-recovery-permissions.py",
+    );
+    const profilePolicyPatcherPath = path.join(libDir, "patch-hermes-profile-policy-defaults.py");
     const mcpCredentialBoundaryPath = path.join(
       libDir,
       "openshell-child-visible-credentials.v0.0.85.json",
@@ -87,11 +92,16 @@ describe("Hermes doctor and config hash boundary", () => {
       fs.mkdirSync(profileDir, { recursive: true });
       for (const relativePath of [
         path.join(binDir, "nemoclaw-start"),
+        path.join(binDir, "nemoclaw-managed-startup-hold"),
+        path.join(binDir, "nemoclaw-managed-bootstrap"),
         path.join(binDir, "nemoclaw-gateway-control"),
+        path.join(libDir, "entrypoint-env-wrapper.sh"),
         path.join(libDir, "sandbox-init.sh"),
         path.join(libDir, "gateway-supervisor.sh"),
         path.join(libDir, "validate-hermes-env-secret-boundary.py"),
         path.join(libDir, "patch-hermes-session-list-preview.py"),
+        discordRecoveryPatcherPath,
+        profilePolicyPatcherPath,
         langfuseCredentialPatcherPath,
         path.join(libDir, "seed-hermes-dashboard-config.py"),
         path.join(libDir, "hermes-runtime-config-guard.py"),
@@ -126,7 +136,10 @@ describe("Hermes doctor and config hash boundary", () => {
         'chown() { printf "%s\\n" "$*" >> "$chown_log"; }',
         lockCommand,
       ].join("\n");
-      const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+      const result = spawnSync("bash", ["-c", script], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
 
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
@@ -140,6 +153,8 @@ describe("Hermes doctor and config hash boundary", () => {
       expect(mode(path.join(binDir, "nemoclaw-gateway-control"))).toBe("700");
       expect(mode(path.join(libDir, "finalize-tirith-marker.py"))).toBe("755");
       expect(mode(mcpConfigTransactionPath)).toBe("755");
+      expect(mode(discordRecoveryPatcherPath)).toBe("755");
+      expect(mode(profilePolicyPatcherPath)).toBe("755");
       expect(mode(langfuseCredentialPatcherPath)).toBe("444");
       expect(mode(mcpCredentialBoundaryPath)).toBe("444");
       expect(mode(buildMcpDigestPath)).toBe("444");

@@ -108,6 +108,26 @@ export function getValidationProbeCurlArgs(opts?: ValidationProbeOptions): strin
   );
 }
 
+// The calibrated provider-selection phase has 5 seconds of headroom above its
+// p95. Limit the streaming-specific wait to that headroom. The complete probe
+// remains subject to the 8-second provider-selection phase budget. See #7792.
+export const STREAMING_EVENT_PROBE_MAX_SECONDS = 5;
+
+// Cap the streaming probe's --max-time only (min, never lengthen); connect-timeout
+// stays and --max-time bounds the whole call. See #7792.
+export function getStreamingEventProbeCurlArgs(opts?: ValidationProbeOptions): string[] {
+  const args = getValidationProbeCurlArgs(opts);
+  const maxTimeIndex = args.indexOf("--max-time");
+  if (maxTimeIndex === -1) return args;
+  const current = Number(args[maxTimeIndex + 1]);
+  const capped = Number.isFinite(current)
+    ? Math.min(current, STREAMING_EVENT_PROBE_MAX_SECONDS)
+    : STREAMING_EVENT_PROBE_MAX_SECONDS;
+  const next = [...args];
+  next[maxTimeIndex + 1] = String(capped);
+  return next;
+}
+
 export function getDeepSeekV4ProValidationProbeCurlArgs(opts?: ValidationProbeOptions): string[] {
   const args = isWsl(opts)
     ? ["--connect-timeout", "30", "--max-time", "150"]

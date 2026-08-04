@@ -7,14 +7,30 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { dockerRunCommandBetween, runDockerShell } from "./helpers/hermes-dockerfile-run";
+import { expectManagedBootstrapNativeImageContract } from "./support/managed-bootstrap-image-contract";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 const HERMES_INTEGRITY_FILES = [
   {
+    arg: "NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256",
+    source: "agents/hermes/image-build-probes.py",
+    target: "/opt/nemoclaw-hermes-config/image-build-probes.py",
+  },
+  {
     arg: "NEMOCLAW_HERMES_WRAPPER_SHA256",
     source: "agents/hermes/hermes-wrapper.py",
     target: "/usr/local/lib/nemoclaw/hermes-wrapper.py",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_CLI_ADAPTER_SHA256",
+    source: "agents/hermes/hermes-cli-adapter-v1.json",
+    target: "/usr/local/share/nemoclaw/hermes-cli-adapter-v1.json",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256",
+    source: "agents/hermes/validate-cli-adapter.py",
+    target: "/usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py",
   },
   {
     arg: "NEMOCLAW_HERMES_VALIDATOR_SHA256",
@@ -30,6 +46,36 @@ const HERMES_INTEGRITY_FILES = [
     arg: "NEMOCLAW_HERMES_LANGFUSE_PATCHER_SHA256",
     source: "agents/hermes/patch-langfuse-credentials.mts",
     target: "/usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_DISCORD_RECOVERY_PATCHER_SHA256",
+    source: "agents/hermes/patch-discord-recovery-permissions.py",
+    target: "/usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256",
+    source: "agents/hermes/patch-profile-policy-defaults.py",
+    target: "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_GATEWAY_RUNTIME_METADATA_PATCHER_SHA256",
+    source: "agents/hermes/patch-gateway-runtime-metadata.py",
+    target: "/opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_GATEWAY_PROCESS_IDENTITY_PATCHER_SHA256",
+    source: "agents/hermes/patch-gateway-process-identity.py",
+    target: "/opt/nemoclaw-hermes-config/patch-gateway-process-identity.py",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256",
+    source: "agents/hermes/patch-cron-execution-runtime.py",
+    target: "/opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
+  },
+  {
+    arg: "NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256",
+    source: "agents/hermes/patch-neutral-platform-env-activation.py",
+    target: "/opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py",
   },
 ] as const;
 
@@ -133,7 +179,13 @@ function runFinalLayout({
   fs.writeFileSync(path.join(hermesDir, "config.yaml"), "model: test\n");
   fs.writeFileSync(path.join(hermesDir, ".env"), "TOKEN=test\n");
 
-  const fixturePaths = { hermesDir, legacyDataDir, legacyTarget, openclawDir, openclawTarget };
+  const fixturePaths = {
+    hermesDir,
+    legacyDataDir,
+    legacyTarget,
+    openclawDir,
+    openclawTarget,
+  };
   legacyDataSetups[legacyData](fixturePaths);
   openclawSetups[openclaw](fixturePaths);
 
@@ -181,6 +233,11 @@ describe("Hermes final image layout", () => {
           "COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/",
           "COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts",
           "COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/",
+          "COPY agents/hermes/image-build-probes.py /opt/nemoclaw-hermes-config/image-build-probes.py",
+          "COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config/patch-gateway-runtime-metadata.py",
+          "COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py",
+          "COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
+          "COPY agents/hermes/patch-neutral-platform-env-activation.py /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py",
           "COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json",
           "COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts",
           "COPY src/lib/messaging/ /src/lib/messaging/",
@@ -193,13 +250,20 @@ describe("Hermes final image layout", () => {
           "COPY --from=mcp-tool-discovery-runtime /opt/mcp-tool-discovery-runtime/dist/ /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime/",
           "COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/",
           "COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh",
+          "COPY scripts/lib/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh",
           "COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh",
           "COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh",
           "COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start",
+          "COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold",
+          "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap",
+          "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh",
+          "COPY --from=managed-startup-runtime-builder /out/managed-startup-image-runtime.cjs /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs",
           "COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control",
           "COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py",
           "COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
           "COPY agents/hermes/patch-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py",
+          "COPY agents/hermes/patch-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py",
+          "COPY agents/hermes/patch-profile-policy-defaults.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
           "COPY agents/hermes/patch-langfuse-credentials.mts /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts",
           "COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py",
           "COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
@@ -213,7 +277,11 @@ describe("Hermes final image layout", () => {
       },
       {
         stage: "hermes-wrapper-payload",
-        copies: ["COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py"],
+        copies: [
+          "COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py",
+          "COPY agents/hermes/validate-cli-adapter.py /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py",
+          "COPY agents/hermes/hermes-cli-adapter-v1.json /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json",
+        ],
       },
       {
         stage: "hermes-scan-payload",
@@ -230,6 +298,7 @@ describe("Hermes final image layout", () => {
 
     expect(finalStageIndex).toBe(stages.length - 1);
     expect(hasBuildKitRunMount(dockerfile)).toBe(false);
+    expectManagedBootstrapNativeImageContract(dockerfile);
     for (const payload of payloads) {
       const stage = stages.find((entry) => entry.startsWith(`FROM scratch AS ${payload.stage}`));
       expect(stage?.match(/^COPY\b.*$/gmu)).toEqual(payload.copies);
@@ -256,10 +325,31 @@ describe("Hermes final image layout", () => {
       finalStage,
       "RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/",
     );
+    const managedMessagingUnionInstall = indexOfRequired(
+      finalStage,
+      "--agent hermes --phase managed-image-capability-union",
+    );
+    const profilePolicyPatch = indexOfRequired(
+      finalStage,
+      "RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py",
+    );
+    const neutralPlatformPatch = indexOfRequired(
+      finalStage,
+      "ARG NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256=",
+    );
+    const neutralMessagingConfig = indexOfRequired(finalStage, "neutral-platform-inertness");
     const configFind = indexOfRequired(finalStage, "RUN find /opt/nemoclaw-hermes-config");
     const blueprintChmod = indexOfRequired(
       finalStage,
       "RUN chmod -R a+rX /opt/nemoclaw-blueprint/",
+    );
+    const managedRuntimeDirectory = indexOfRequired(
+      finalStage,
+      "&& install -d -o root -g root -m 0755 /run/nemoclaw",
+    );
+    const runtimeModeReplay = indexOfRequired(
+      finalStage,
+      "RUN chmod 755 /usr/local/bin/nemoclaw-start",
     );
     const tirithFinalizerHash = indexOfRequired(
       finalStage,
@@ -271,10 +361,7 @@ describe("Hermes final image layout", () => {
       'RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]',
     );
     const metadataCheck = indexOfRequired(finalStage, "RUN check_metadata()");
-    const modeNormalize = indexOfRequired(
-      finalStage,
-      "RUN chmod 755 /usr/local/lib/nemoclaw/hermes-wrapper.py /scripts/checks/node-tar-image-scan.mts",
-    );
+    const modeNormalize = indexOfRequired(finalStage, "RUN chmod 755 \\");
     const imageScan = indexOfRequired(
       finalStage,
       "node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts",
@@ -283,8 +370,18 @@ describe("Hermes final image layout", () => {
     expect(npmPatch).toBeLessThan(tarPatch);
     expect(agent).toBeGreaterThan(certifiInstall);
     expect(agent).toBeLessThan(agentChmod);
+    expect(profilePolicyPatch).toBeLessThan(neutralPlatformPatch);
+    expect(managedMessagingUnionInstall).toBeLessThan(neutralMessagingConfig);
     expect(runtime).toBeGreaterThan(configFind);
+    expect(runtime).toBeLessThan(managedRuntimeDirectory);
+    expect(managedRuntimeDirectory).toBeLessThan(blueprintChmod);
     expect(runtime).toBeLessThan(blueprintChmod);
+    expect(managedRuntimeDirectory).toBeLessThan(runtimeModeReplay);
+    expect(finalStage).toContain("/usr/local/bin/nemoclaw-managed-bootstrap");
+    expect(dockerfile).toContain(
+      "COPY src/lib/onboard/managed-bootstrap/ ./src/lib/onboard/managed-bootstrap/",
+    );
+    expect(dockerfile).toContain("src/lib/onboard/managed-bootstrap/image-runtime.ts");
     expect(wrapper).toBeGreaterThan(tirithFinalizerHash);
     expect(wrapper).toBeLessThan(pythonCheck);
     expect(scan).toBeGreaterThan(darwinCompatibility);
@@ -296,9 +393,16 @@ describe("Hermes final image layout", () => {
       "/scripts/patch-bundled-npm-tar.mts 'root:root 444'",
       "/opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444'",
       "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755'",
+      "/usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py 'root:root 755'",
+      "/usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py 'root:root 755'",
+      "/usr/local/bin/nemoclaw-managed-bootstrap 'root:root 755'",
+      "/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh 'root:root 444'",
       "/usr/local/bin/nemoclaw-gateway-control 'root:root 700'",
+      "/sandbox/.nemoclaw 'root:root 1755'",
       "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444'",
       "/usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755'",
+      "/usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py 'root:root 755'",
+      "/usr/local/share/nemoclaw/hermes-cli-adapter-v1.json 'root:root 444'",
       "/scripts/checks/node-tar-image-scan.mts 'root:root 755'",
     ]) {
       expect(finalStage).toContain(`check_metadata ${metadataContract}`);
@@ -308,8 +412,31 @@ describe("Hermes final image layout", () => {
     expect(doctorLayer).toContain(
       "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix",
     );
-    expect(doctorLayer).toMatch(/generate-config[.]ts\s+&& rm -rf \/sandbox\/[.]cache$/u);
+    expect(doctorLayer).toContain('if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then');
+    expect(doctorLayer).toContain('assert m.version("microsoft-teams-apps") == "2.0.13.4"');
+    expect(doctorLayer).toContain('assert m.version("aiohttp") == "3.14.3"');
+    expect(doctorLayer).toContain("assert len(neutral) == 30");
+    expect(doctorLayer).toContain("neutral-platform-inertness");
+    expect(doctorLayer).toContain("GOOGLE_CHAT_SERVICE_ACCOUNT_JSON");
+    expect(doctorLayer).toContain("WHATSAPP_CLOUD_ACCESS_TOKEN");
+    expect(finalStage).toContain(
+      "ARG NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256=" +
+        "2084c652a07614761d85703787f8697fc29560fe447f23362aa0bda5179dffa7",
+    );
+    expect(finalStage).toContain(
+      "ARG NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256=" +
+        "5a1375664d1451b2fe9c3f2325f673149a90b9035588dfd4eb6618f785ecd6a2",
+    );
+    expect(doctorLayer).toMatch(/generate-config[.]ts\s+&& if /u);
+    expect(doctorLayer).toMatch(/fi\s+&& rm -rf \/sandbox\/[.]cache$/u);
+    expect(finalStage).toContain("check_absent /opt/hermes/tests \\");
+    expect(finalStage).toContain(
+      "&& check_absent /opt/nemoclaw-hermes-config/image-build-probes.py \\",
+    );
     expect(finalStage).toContain("&& check_absent /sandbox/.cache \\");
+    expect(finalStage).toContain("RUN chown root:root /sandbox/.nemoclaw \\");
+    expect(finalStage).toContain("&& chmod 1755 /sandbox/.nemoclaw \\");
+    expect(finalStage).toContain("&& chown sandbox:sandbox /sandbox/.nemoclaw/config.json");
   });
 
   // source-shape-contract: security -- Exact source-to-image digests keep the reviewed Hermes runtime entrypoints bound to the files copied into the sandbox image
@@ -327,6 +454,20 @@ describe("Hermes final image layout", () => {
       expect(dockerfile).toContain(`COPY ${entry.source} ${entry.target}`);
       expect(declaredDigest, `${entry.arg} must match ${entry.source}`).toBe(digest);
     }
+  });
+
+  // source-shape-contract: security -- Adapter bytes must pass their committed integrity gate before the image build executes validator code
+  it("verifies CLI adapter integrity before executing its validator", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+    const adapterIntegrityGate = dockerfile.match(
+      /RUN printf '%s  %s\\n' \\\n\s+"\$NEMOCLAW_HERMES_WRAPPER_SHA256"[^]*?\| sha256sum -c - \\\n\s+\|\| \{ echo "ERROR: Hermes CLI adapter integrity mismatch" >&2; exit 1; \}/u,
+    );
+    const adapterValidation = dockerfile.indexOf(
+      "RUN /opt/hermes/.venv/bin/python -I \\\n        /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py \\",
+    );
+
+    expect(adapterIntegrityGate).not.toBeNull();
+    expect(adapterValidation).toBeGreaterThan(adapterIntegrityGate?.index ?? -1);
   });
 
   it("rejects retired OpenClaw state represented as a directory", () => {
@@ -355,7 +496,9 @@ describe("Hermes final image layout", () => {
     try {
       expect(run.result.status).toBe(0);
       expect(
-        fs.lstatSync(path.join(run.sandboxRoot, ".hermes-data"), { throwIfNoEntry: false }),
+        fs.lstatSync(path.join(run.sandboxRoot, ".hermes-data"), {
+          throwIfNoEntry: false,
+        }),
       ).toBeUndefined();
       expect(fs.lstatSync(path.join(run.hermesDir, "sessions")).isDirectory()).toBe(true);
       expect(readText(path.join(run.hermesDir, "sessions", "legacy.json"))).toBe("{}\n");

@@ -17,7 +17,8 @@ Draft the post-tag NemoClaw Announcement from GitHub tag and compare data. The h
 - external-only contributor thanks,
 - visible `#NNNN` GitHub links.
 
-Follow the [NemoClaw Writing Guide](../../../WRITING.md) for new or modified Announcement text.
+Follow the shared [Documentation Writing and Review](../_shared/documentation-writing-review.md)
+contract for new or modified Announcement text.
 State the changed behavior, affected users, and required action when one exists.
 Do not rewrite unrelated historical release text.
 
@@ -86,6 +87,7 @@ Be careful with sensitive internal cleanup:
 - Do not count testing reverts or guardrail reversions as release value unless the user explicitly asks for a full raw changelog.
 - If a revert-like commit must be mentioned, use neutral language and do not frame it as someone else's mistake.
 - Avoid public wording that could embarrass a teammate.
+- Keep the candidate SHA, E2E failure classifications, rerun ledger, and waiver rationale out of the public Announcement. Preserve that information in the release evidence ledger.
 
 ## Step 4: Categorize the Changes
 
@@ -177,6 +179,7 @@ Also return the suggested discussion title: `NemoClaw <current-version> is out`.
 - Never draft from memory alone; use live `gh api compare` and PR metadata.
 - Never mention contributor affiliation unless the user explicitly asks.
 - Never thank internal contributors by default; keep thanks external-only.
+- Never include the candidate SHA, internal E2E failure classifications, rerun details, or waiver rationale in the public Announcement.
 - Never include testing reverts as release-value bullets unless explicitly asked for a raw changelog.
 - Never create duplicate release Discussions.
 - Never create or silently repair `docs/changelog/` from this post-tag Announcement workflow. If the canonical entry is missing, report the release-process defect and route recovery through `nemoclaw-contributor-update-docs`.

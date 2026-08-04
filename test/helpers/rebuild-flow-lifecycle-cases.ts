@@ -113,7 +113,7 @@ export function registerRebuildFlowLifecycleTests(): void {
       expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
       expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
       expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-        "Preserving MCP-bearing registry entry across sandbox recreation",
+        "Preserving journaled source registry entry across sandbox recreation",
       );
       expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
       expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "bad");
@@ -133,6 +133,25 @@ export function registerRebuildFlowLifecycleTests(): void {
       expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
         "rebuilt successfully",
       );
+    });
+
+    it("keeps the original sandbox when the shared route drifts at the delete edge (#7798)", async () => {
+      const harness = createRebuildFlowHarness({
+        revalidateRebuildRouteBeforeDelete: () => ({
+          ok: false,
+          message: "Shared inference route changed before sandbox deletion.",
+        }),
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Shared inference route changed before sandbox deletion.");
+
+      expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+      expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledOnce();
+      expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledOnce();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expectNoSandboxDelete(harness.runOpenshellSpy);
     });
 
     it("keeps baseline exclusions durable through successful replacement onboarding (#7194)", async () => {
@@ -159,7 +178,7 @@ export function registerRebuildFlowLifecycleTests(): void {
       expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
       expect(harness.onboardSpy).toHaveBeenCalledOnce();
       expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-        "Preserving baseline-exclusion registry entry across sandbox recreation",
+        "Preserving journaled source registry entry across sandbox recreation",
       );
       expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
       expect(harness.restoreSandboxEntryIfMissingSpy).not.toHaveBeenCalled();
@@ -238,7 +257,7 @@ network_policies:
       expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
       expect(harness.restoreSandboxEntryIfMissingSpy).not.toHaveBeenCalled();
       expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
-        "Preserving baseline-exclusion registry entry across sandbox recreation",
+        "Preserving journaled source registry entry across sandbox recreation",
       );
     });
 
@@ -248,7 +267,7 @@ network_policies:
       const probeSequence = [
         {
           event: "stale-live",
-          result: { status: 0, output: "Sandbox: alpha\nPhase: Ready" },
+          result: { status: 0, output: "Sandbox: alpha\nId: sbx-0d6f4c2a91\nPhase: Ready" },
         },
         {
           event: "absent",
@@ -271,12 +290,14 @@ network_policies:
         harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
       ).resolves.toBeUndefined();
 
-      expect(events).toEqual(["stale-live", "absent", "onboard"]);
+      // Open the journal against the live source, wait for absence, then prove
+      // absence once more before the journal records the deleted phase (#7734).
+      expect(events).toEqual(["stale-live", "absent", "absent", "onboard"]);
       expect(
         harness.captureOpenshellSpy.mock.calls.filter(
           ([args]) => Array.isArray(args) && args.join(" ") === "sandbox get -g nemoclaw alpha",
         ),
-      ).toHaveLength(2);
+      ).toHaveLength(3);
     });
 
     it("accepts the agent version cached by the confirmation probe before lock acquisition", async () => {
@@ -383,18 +404,18 @@ network_policies:
       }
     });
 
-    it("relocks as absent when registry cleanup throws after confirmed delete", async () => {
+    it("relocks as absent and keeps the journaled row when replacement creation fails (#7734)", async () => {
       const harness = createRebuildFlowHarness({
-        removeSandboxRegistryEntryWithReceipt: () => {
-          throw new Error("registry cleanup after delete failed");
+        onboard: () => {
+          throw new Error("recreate failed");
         },
       });
 
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-      ).rejects.toThrow("registry cleanup after delete failed");
+      ).rejects.toThrow("Recreate failed");
 
-      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
       expect(harness.relockSpy).toHaveBeenLastCalledWith(
         "alpha",
         expect.any(Object),
@@ -501,9 +522,14 @@ network_policies:
     });
 
     it("pins compatible-endpoint reasoning for an MCP-bearing rebuild", async () => {
-      const restoreEnv = snapshotEnv(["COMPATIBLE_API_KEY", "NEMOCLAW_REASONING"]);
+      const restoreEnv = snapshotEnv([
+        "COMPATIBLE_API_KEY",
+        "NEMOCLAW_REASONING",
+        "NEMOCLAW_REASONING_EFFORT",
+      ]);
       process.env.COMPATIBLE_API_KEY = "compat-key";
       process.env.NEMOCLAW_REASONING = "false";
+      process.env.NEMOCLAW_REASONING_EFFORT = "low";
       const mcpEntry = {
         server: "github",
         agent: "openclaw",
@@ -515,6 +541,7 @@ network_policies:
         addedAt: "2026-06-01T00:00:00.000Z",
       };
       let reasoningSeenInsideOnboard: string | undefined;
+      let effortSeenInsideOnboard: string | undefined;
       try {
         const harness = createRebuildFlowHarness({
           applyPreset: () => true,
@@ -523,6 +550,7 @@ network_policies:
             model: "reasoning-model",
             endpointUrl: "https://compatible.example.test/v1",
             compatibleEndpointReasoning: "true",
+            compatibleEndpointReasoningEffort: "high",
             mcp: { bridges: { github: mcpEntry } },
           },
           sessionSandboxName: "other",
@@ -531,8 +559,12 @@ network_policies:
             detachedProviderEntries: [mcpEntry],
           },
           onboard: (session) => {
+            // The recreate reapplies the recorded configuration, never the
+            // ambient one an unrelated onboard left behind (#5735, #7940).
             reasoningSeenInsideOnboard = process.env.NEMOCLAW_REASONING;
+            effortSeenInsideOnboard = process.env.NEMOCLAW_REASONING_EFFORT;
             expect(session.compatibleEndpointReasoning).toBe("true");
+            expect(session.compatibleEndpointReasoningEffort).toBe("high");
           },
         });
         harness.session.compatibleEndpointReasoning = "false";
@@ -541,9 +573,12 @@ network_policies:
           harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
         ).resolves.toBeUndefined();
 
-        expect(reasoningSeenInsideOnboard).toBeUndefined();
+        expect(reasoningSeenInsideOnboard).toBe("true");
+        expect(effortSeenInsideOnboard).toBe("high");
         expect(harness.session.compatibleEndpointReasoning).toBe("true");
+        expect(harness.session.compatibleEndpointReasoningEffort).toBe("high");
         expect(process.env.NEMOCLAW_REASONING).toBe("false");
+        expect(process.env.NEMOCLAW_REASONING_EFFORT).toBe("low");
         expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
       } finally {
         restoreEnv();

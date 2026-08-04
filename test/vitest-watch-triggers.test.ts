@@ -48,6 +48,10 @@ const E2E_WORKFLOW_CONTRACTS = [
 ] as const;
 
 const OPAQUE_INPUTS = [
+  "managed-inference/recipes/vllm.example.managed-cluster.v1.yaml",
+  "Dockerfile",
+  "agents/hermes/Dockerfile",
+  "agents/langchain-deepagents-code/Dockerfile",
   "agents/hermes/policy-additions.yaml",
   "src/lib/messaging/channels/telegram/policy/openclaw.yaml",
   "nemoclaw-blueprint/policies/presets/local-inference.yaml",
@@ -61,6 +65,7 @@ const OPAQUE_INPUTS = [
   "test/e2e/docs/parity-inventory.generated.json",
   ".github/workflows/e2e.yaml",
   ".github/workflows/code-scanning.yaml",
+  ".github/workflows/approve-maintainer-pr-workflow-runs.yaml",
   ".github/workflows/pr-e2e-gate.yaml",
   ".github/workflows/pr-review-advisor.yaml",
   "tools/pr-review-advisor/openshell-policy.yaml",
@@ -83,6 +88,18 @@ describe("Vitest opaque-input watch triggers", () => {
   });
 
   it("maps current opaque inputs to their direct contract tests (#6692)", () => {
+    expect(triggeredBy("managed-inference/recipes/vllm.example.managed-cluster.v1.yaml")).toEqual([
+      "src/lib/inference/serving/catalog.test.ts",
+      "src/lib/inference/serving/resolver.test.ts",
+      "test/managed-inference-catalog-compiler.test.ts",
+    ]);
+    expect(triggeredBy("Dockerfile")).toEqual(["src/lib/onboard/managed-startup-profile.test.ts"]);
+    expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
+      "src/lib/onboard/managed-startup-profile.test.ts",
+    ]);
+    expect(triggeredBy("agents/langchain-deepagents-code/Dockerfile")).toEqual([
+      "src/lib/onboard/managed-startup-profile.test.ts",
+    ]);
     expect(triggeredBy("agents/hermes/policy-additions.yaml")).toEqual([
       "src/lib/onboard/initial-policy-real-policy.test.ts",
       "src/lib/onboard/initial-policy.test.ts",
@@ -121,9 +138,11 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
       "test/code-scanning-workflow.test.ts",
     ]);
+    expect(triggeredBy(".github/workflows/approve-maintainer-pr-workflow-runs.yaml")).toEqual([
+      "test/maintainer-pr-workflow-approval.test.ts",
+    ]);
     expect(triggeredBy(".github/workflows/pr-e2e-gate.yaml")).toEqual([
       "test/pr-e2e-gate-workflow.test.ts",
-      "test/pr-e2e-required.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
       "test/pr-review-advisor-workflow-boundary.test.ts",

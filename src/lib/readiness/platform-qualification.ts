@@ -187,6 +187,9 @@ function parseStationRelease(contents: string): StationProfile {
   if (identity === "NVIDIA DGX GB300WS|7.5.0|2026-06-16-11-48-10") {
     return "supported-ai-developer-tools";
   }
+  if (identity === "NVIDIA DGX GB300WS|7.5.0|2026-05-13-18-42-38") {
+    return "supported-ai-developer-tools";
+  }
   return "unsupported-dgx-os";
 }
 
@@ -261,7 +264,12 @@ export function collectPlatformIdentity(
       closeFileDescriptor(fileDescriptor);
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") stationProfile = "unknown";
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ELOOP" || code === "EMLINK") {
+      stationProfile = "unsupported-dgx-os";
+    } else if (code !== "ENOENT") {
+      stationProfile = "unknown";
+    }
   }
   return {
     nvidiaPlatform,

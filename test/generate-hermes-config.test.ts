@@ -12,7 +12,10 @@ import {
   readHermesBuildSettings,
 } from "../agents/hermes/config/build-env.ts";
 import { generateHermesConfig } from "../agents/hermes/config/generate.ts";
-import { buildHermesConfig } from "../agents/hermes/config/hermes-config.ts";
+import {
+  buildHermesConfig,
+  MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS,
+} from "../agents/hermes/config/hermes-config.ts";
 import { discoverModelSpecificSetups } from "../agents/hermes/config/model-specific-setup.ts";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../src/lib/hermes-proxy-api-key";
 import {
@@ -387,13 +390,32 @@ describe("agents/hermes/generate-config.ts", () => {
 
   it("generates API server config without messaging platform token blocks", () => {
     const { config, envFile } = runConfigScript();
+    const configYaml = fs.readFileSync(path.join(tmpDir, ".hermes", "config.yaml"), "utf-8");
 
-    expect(config._config_version).toBe(32);
+    expect(config._config_version).toBe(33);
     expect(config.agent?.verify_on_stop).toBe(false);
+    expect(config.agent?.reasoning_effort).toBeUndefined();
+    expect(configYaml).not.toContain("reasoning_effort:");
+    expect(config.approvals).toEqual({ mode: "manual" });
+    expect(config.session_reset).toEqual({
+      mode: "both",
+      at_hour: 4,
+      idle_minutes: 1440,
+      notify: true,
+      notify_exclude_platforms: ["api_server", "webhook"],
+      bg_process_max_age_hours: 24,
+    });
+    expect(config.browser).toEqual({ restrict_evaluate: true });
     expect(config.display).toMatchObject({
       compact: false,
       tool_progress: "all",
       interim_assistant_messages: true,
+      show_reasoning: false,
+      show_commentary: false,
+    });
+    expect(config.updates).toEqual({
+      pre_update_backup: false,
+      refresh_cua_driver: false,
     });
     expect(config.tools?.tool_search).toEqual(HERMES_STRUCTURED_TOOL_SEARCH);
     expect(config.curator).toMatchObject({
@@ -752,7 +774,11 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.web).toEqual({ backend: "firecrawl", use_gateway: true });
     expect(config.tts).toEqual({ provider: "openai", use_gateway: true });
     expect(config.stt).toEqual({ provider: "openai", use_gateway: true });
-    expect(config.browser).toEqual({ cloud_provider: "browser-use", use_gateway: true });
+    expect(config.browser).toEqual({
+      restrict_evaluate: true,
+      cloud_provider: "browser-use",
+      use_gateway: true,
+    });
     expect(config.image_gen).toEqual({ use_gateway: true });
     expect(config.terminal).toMatchObject({ backend: "modal", modal_mode: "managed" });
     expectRemotePlatformToolsets(config.platform_toolsets.api_server, ["tts"]);
@@ -975,6 +1001,27 @@ describe("agents/hermes/generate-config.ts", () => {
 
     expect(config.platforms.slack).toBeUndefined();
     expect(Object.keys(config.platforms)).toEqual(["api_server"]);
+  });
+
+  it("keeps every managed-image messaging platform explicitly disabled before first start (#7744)", () => {
+    const { config, envFile } = generateBaseConfig({
+      NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+    });
+
+    for (const platform of MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS) {
+      expect(config.platforms[platform], platform).toEqual({ enabled: false });
+      expect(config.platform_toolsets[platform], platform).toBeUndefined();
+    }
+    for (const credential of [
+      "TELEGRAM_BOT_TOKEN",
+      "DISCORD_BOT_TOKEN",
+      "WEIXIN_TOKEN",
+      "SLACK_BOT_TOKEN",
+      "WHATSAPP_ENABLED",
+      "TEAMS_CLIENT_SECRET",
+    ]) {
+      expect(envFile, credential).not.toContain(`${credential}=`);
+    }
   });
 
   it("enables Slack under platforms even when the slack token allowlist is empty", async () => {

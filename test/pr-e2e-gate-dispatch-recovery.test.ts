@@ -64,7 +64,7 @@ function pullRequestListItem(): Omit<PullRequest, "changed_files"> {
 function reservedCheck(id = 17, overrides: Record<string, unknown> = {}) {
   return {
     id,
-    name: "E2E / PR Gate Coordination",
+    name: "E2E / PR Gate",
     head_sha: HEAD_SHA,
     external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
     status: "in_progress",
@@ -727,14 +727,17 @@ describe("PR E2E dispatch-not-observed recovery", () => {
     }
   });
 
-  it("dispatches controller-only changes through the normal evidence path", async () => {
+  it("dispatches internal control-plane changes through the normal evidence path", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-controller-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
-    const controllerFiles = [".github/workflows/pr-e2e-gate.yaml", "tools/e2e/pr-e2e-gate.mts"];
+    const controllerFiles = [
+      ".github/workflows/pr-e2e-gate.yaml",
+      "test/e2e/risk-signal-reporter.ts",
+    ];
     const controllerPull = { ...pullRequest(), changed_files: controllerFiles.length };
     const { changed_files: _changedFiles, ...controllerPullListItem } = controllerPull;
     const requests: RecordedGitHubRequest[] = [];
@@ -808,7 +811,7 @@ describe("PR E2E dispatch-not-observed recovery", () => {
       });
       const outputs = fs.readFileSync(outputPath, "utf8");
       expect(outputs).toContain("dispatched=true");
-      expect(outputs).not.toContain("approval_mode=");
+      expect(outputs).not.toContain("approval_");
       expect(outputs).not.toContain("finalized=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });

@@ -20,34 +20,86 @@ $$nemoclaw uninstall
 | Flag | Effect |
 |---|---|
 | `--yes` | Skip the confirmation prompt. |
-| `--keep-openshell` | Leave OpenShell binaries and NemoClaw-managed gateway service files in place, and do not stop the host gateway process. |
+| `--keep-openshell` | Leave OpenShell binaries, NemoClaw-managed gateway service files, and local gateway state in place, and do not stop the host gateway process. |
 | `--delete-models` | Also remove NemoClaw-pulled Ollama models. |
 | `--destroy-user-data` | Also remove preserved user data in `rebuild-backups/`, `backups/`, and `sandboxes.json`. |
+| `--all-gateway-ports` | Uninstall every gateway port on the host instead of only the selected one. |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT`. |
 
 `NEMOCLAW_GATEWAY_PORT` selects the gateway instance to uninstall (`nemoclaw` for port `8080`, or `nemoclaw-<port>` for a non-default port).
 For example, `NEMOCLAW_GATEWAY_PORT=9123 $$nemoclaw uninstall` selects `nemoclaw-9123` and its port-scoped state.
 Do not use `--gateway` to select another instance; when supplied for compatibility, its value must match the derived name or uninstall stops before cleanup.
+
+## Uninstall Every Gateway Port
+
+One uninstall removes one gateway port.
+A host that onboarded under more than one `NEMOCLAW_GATEWAY_PORT` keeps the other ports bound after that uninstall, because each port is a separate environment with its own sandboxes, registry, and gateway.
+When other ports remain, uninstall names them, prints the command that removes one of them, and prints the command that removes every port.
+An environment whose port cannot be read is reported as unidentified, and the per-port command appears only when at least one port is known.
+The report includes lines like these:
+
+```text
+  · gateway 'nemoclaw-9000' on port 9000
+  Remove one of them: NEMOCLAW_GATEWAY_PORT=9000 $$nemoclaw uninstall
+  Remove every gateway port: $$nemoclaw uninstall --all-gateway-ports
+```
+
+<Warning>
+The sweep applies the uninstall plan to every discovered gateway port.
+When it finds more than one port, review the port list before you confirm because `--yes` skips this confirmation.
+When it finds only the selected port, it uses the standard uninstall confirmation without a port list.
+If you also pass `--destroy-user-data`, the sweep can remove the preserved registry and backups for any port that reaches that cleanup step.
+</Warning>
+
+Pass `--all-gateway-ports`, or set `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS=1`, to uninstall all of them in one run:
+
+```bash
+$$nemoclaw uninstall --all-gateway-ports
+```
+
+When the sweep finds more than one port, it lists the ports, confirms once, then uninstalls each port in turn and the currently selected port last.
+When it finds only the selected port, it uses the standard uninstall confirmation and runs that port once.
+Running the selected port last lets that final pass remove the shared CLI, services, images, providers, configuration, models, and swap once no other environment needs them.
+`--delete-models`, `--destroy-user-data`, and `--keep-openshell` apply to every port in the sweep.
+If the sweep cannot enumerate the gateway state roots safely, it exits before uninstalling any port.
+The sweep cannot select an unidentified environment until its gateway port can be determined.
+If one port fails to uninstall, the sweep reports that port, continues with the remaining ports, and exits nonzero.
+The failed port still counts as a live environment, so the final pass keeps the shared host resources instead of removing state that the surviving environment needs.
+The sweep does not roll back cleanup that completed before a failure.
+Resolve the reported error, inspect the remaining gateways with `openshell gateway list`, and rerun the sweep or the reported per-port command.
 Default-port uninstall removes NemoClaw-managed entries in `openshell/gateway.env`.
 For a NemoClaw-managed authority, it also removes only NemoClaw's marked Linux gateway unit.
 It preserves upstream Linux package units, the macOS Homebrew service, and unrelated environment entries.
-For an externally supervised authority, uninstall preserves the gateway process, supervisor resources, marked Linux unit, Docker resources, OpenShell binaries, and the declared external state directory.
+For an externally supervised authority, uninstall preserves the local gateway state used by the running process in both full and gateway-scoped cleanup.
+It also preserves the gateway process, supervisor resources, marked Linux unit, Docker resources, OpenShell binaries, and the declared external state directory.
 A custom-port uninstall does not stop or remove the default gateway service or its environment file.
 
 <Note>
+In this section, `<selected-state-root>` is `~/.nemoclaw/` for the default gateway or `~/.nemoclaw/gateways/<port>/` for a non-default gateway.
 For the default gateway, the uninstall command preserves `~/.nemoclaw/rebuild-backups/`, `~/.nemoclaw/backups/`, and `~/.nemoclaw/sandboxes.json` by default.
 A non-default gateway uses the corresponding entries under `~/.nemoclaw/gateways/<port>/`.
 When uninstall confirms that no sibling gateways remain, it also removes the shared CLI, services, images, providers, configuration, models, and swap.
-During full uninstall, a managed dual-Station cleanup receipt makes NemoClaw first revalidate the recorded peer, cluster, and GPU identities and remove both exact managed vLLM containers.
-Only after that pair cleanup succeeds does NemoClaw start the remaining full-uninstall steps.
-If validation or pair cleanup fails, uninstall exits nonzero and keeps the receipt so you can resolve the reported SSH, Docker, or peer-host error and retry.
-Pair cleanup can partially complete before an error, so inspect both Stations before retrying.
+During full uninstall, a managed distributed-vLLM receipt makes NemoClaw first revalidate the recorded plan and every cluster node, GPU, container, and SSH peer identity.
+It then removes only the exact receipt-owned containers.
+The managed-cluster receipt is host-global under `~/.nemoclaw/`.
+Current dual-DGX Station receipts and copied SSH bindings are also host-global under `~/.nemoclaw/`.
+Earlier releases can leave Station receipts and bindings under `~/.nemoclaw/gateways/<port>/`; NemoClaw discovers and validates those legacy locations in place.
+NemoClaw starts the remaining full-uninstall steps only after distributed runtime cleanup succeeds.
+For a host-global managed-cluster receipt, successful cleanup also retires every recorded temporary discovery claim.
+An interrupted transaction can leave `~/.nemoclaw/managed-cluster-managed-serving.json.<node-id>.ssh-binding/` without a durable runtime receipt.
+In that state, full uninstall fails closed before mutation and preserves every claim for explicit recovery or removal.
+These temporary claims are host-global regardless of the selected gateway.
+If validation, runtime cleanup, or temporary-claim retirement fails, uninstall exits nonzero and keeps the receipt.
+Resolve the reported SSH, Docker, peer-host, or claim error before you retry.
+Runtime cleanup can partially complete before an error, so inspect every cluster node before retrying.
 When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state and preserves those shared host resources.
-This gateway-scoped path leaves the managed pair running and preserves its cleanup receipt and copied SSH binding, including when you pass `--destroy-user-data`.
+This gateway-scoped path leaves a managed distributed runtime running.
+It preserves the cleanup receipt, copied SSH bindings, temporary discovery claims, and host-global API key.
+This preservation also applies when you pass `--destroy-user-data`.
 If the OpenShell command is unavailable or its gateway list cannot be read, uninstall cannot confirm that the selected gateway is the last one, so it uses the same scoped path and preserves the shared resources.
 When the command itself is unavailable, uninstall exits nonzero before OpenShell cleanup so you can restore the command and retry.
 The preserved `rebuild-backups/`, `backups/`, and `sandboxes.json` entries stay unless you pass `--destroy-user-data`.
-That flag does not override gateway-scoped preservation of the managed pair receipt or its copied SSH binding.
+That flag does not override gateway-scoped preservation of the managed runtime receipt, copied SSH bindings, or temporary discovery claims.
 
 Interactive runs prompt before they remove the preserved entries, and the default answer keeps them.
 For non-interactive runs using `--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell, pass `--destroy-user-data` or set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries.

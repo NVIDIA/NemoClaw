@@ -17,6 +17,16 @@
       "category": "security"
     },
     {
+      "file": "src/lib/onboard/managed-startup-profile.test.ts",
+      "test": "classifies every stock Docker ARG as startup-affordance or deliberate exclusion",
+      "category": "compatibility"
+    },
+    {
+      "file": "src/lib/onboard/managed-startup-profile.test.ts",
+      "test": "classifies every centralized runtime input as profile intent or an explicit deferral",
+      "category": "compatibility"
+    },
+    {
       "file": "src/lib/readiness/host.test.ts",
       "test": "bounds and redacts successful probe text before schema validation",
       "category": "compatibility"
@@ -27,48 +37,13 @@
       "category": "compatibility"
     },
     {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "does not expose stale published-launchable controls",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "fails closed on unsupported reusable test-suite values before checkout",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "grants the reusable workflow permission ceiling so GitHub can start the run",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "keeps instance deletion inside the workflow ownership boundary",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "keeps manual dispatch inputs out of the Brev credential boundary",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "keeps write permissions out of the secret-bearing target-branch job",
-      "category": "security"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "passes only declared inputs and secrets to branch validation",
-      "category": "compatibility"
-    },
-    {
-      "file": "test/brev-nightly-workflow.test.ts",
-      "test": "verifies the pinned Brev CLI digest before extracting it",
-      "category": "security"
-    },
-    {
       "file": "test/candidate-compat.test.ts",
       "test": "keeps the manual controller read-only and runs digest-bound deterministic and live lanes (#6691)",
+      "category": "security"
+    },
+    {
+      "file": "test/ci-cli-coverage-pi-tools-workflow.test.ts",
+      "test": "installs pinned fd and ripgrep before CLI coverage can invoke Pi",
       "category": "security"
     },
     {
@@ -99,6 +74,21 @@
     {
       "file": "test/corporate-ca-build-tls-anchor.test.ts",
       "test": "decodes the CA and exports NODE_EXTRA_CA_CERTS before the reinstall audit-signatures step",
+      "category": "security"
+    },
+    {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "accepts the corporate CA build arg in the DCode base image before HTTPS fetches",
+      "category": "security"
+    },
+    {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "decodes the corporate CA again in the DCode final image",
+      "category": "security"
+    },
+    {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "trusts the corporate CA before the DCode discovery runtime npm install",
       "category": "security"
     },
     {
@@ -297,6 +287,11 @@
       "category": "security"
     },
     {
+      "file": "test/hermes-final-image-layout.test.ts",
+      "test": "verifies CLI adapter integrity before executing its validator",
+      "category": "security"
+    },
+    {
       "file": "test/openclaw-final-image-layout.test.ts",
       "test": "uses grouped legacy-compatible payload layers at their cache boundaries (#7611)",
       "category": "compatibility"
@@ -304,6 +299,11 @@
     {
       "file": "test/hermes-runtime-config-guard-topology.test.ts",
       "test": "restores exact locked posture after root-separated repair and later failure (#7033)",
+      "category": "security"
+    },
+    {
+      "file": "test/hermes-runtime-config-guard-topology.test.ts",
+      "test": "allows the sandbox identity to create runtime state but refuses sealed configuration writes, unlinks, and renames (#7865)",
       "category": "security"
     },
     {
@@ -319,6 +319,11 @@
     {
       "file": "test/label-merged-pr-release-target-workflow.test.ts",
       "test": "keeps fork-safe labeling inside the trusted metadata boundary",
+      "category": "security"
+    },
+    {
+      "file": "test/maintainer-pr-workflow-approval.test.ts",
+      "test": "keeps workflow approval inside the trusted metadata boundary",
       "category": "security"
     },
     {
@@ -339,6 +344,11 @@
     {
       "file": "test/messaging-image-env-contract.test.ts",
       "test": "%s keeps the full plan in build processes but not final runtime environments (#5896)",
+      "category": "security"
+    },
+    {
+      "file": "test/mcp-tool-discovery-image-contract.test.ts",
+      "test": "pins reviewed packages and retains the production audit command (#8177)",
       "category": "security"
     },
     {
@@ -447,11 +457,6 @@
       "category": "security"
     },
     {
-      "file": "test/perl-critical-cve-remediation.test.ts",
-      "test": "builds the fixed upstream release from a checksum-pinned source archive (#7338)",
-      "category": "security"
-    },
-    {
       "file": "test/platform-vitest-main-workflow.test.ts",
       "test": "pins and verifies the Node.js archive in the trusted WSL helper",
       "category": "security"
@@ -537,6 +542,41 @@
       "category": "security"
     },
     {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps migrated provider identities and implementations behind the one bundle composition",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/source-architecture.test.ts",
+      "test": "keeps removed step mutation APIs out of production source (#7703)",
+      "category": "compatibility"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps the dormant managed-bootstrap protocol driver-neutral",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps production activation paths disconnected from driver bootstrap adapters",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "keeps registered providers bootstrap-unsupported",
+      "category": "security"
+    },
+    {
+      "file": "test/runtime-provider-source-shape.test.ts",
+      "test": "packages the dormant managed-bootstrap native boundary for every agent image",
+      "category": "security"
+    },
+    {
+      "file": "test/pr-limit-policy.test.ts",
+      "test": "keeps contributor guidance aligned with the enforced maintainer exemption",
+      "category": "compatibility"
+    },
+    {
       "file": "test/pr-workflow-contract.test.ts",
       "test": "does not persist checkout credentials in PR or main jobs",
       "category": "security"
@@ -598,7 +638,7 @@
     },
     {
       "file": "test/pr-workflow-contract.test.ts",
-      "test": "runs repository checks for every operational dependency-pin authority and consumer",
+      "test": "preserves repository validation file routing, command scopes, and compatibility aliases",
       "category": "compatibility"
     },
     {
