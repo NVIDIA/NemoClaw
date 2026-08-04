@@ -3,12 +3,23 @@
 
 preset:
   name: local-inference
-  description: "Local inference access (Ollama, vLLM) via host gateway"
+  description: "Local inference access (Ollama, vLLM, llama.cpp) through the OpenShell gateway"
 
 network_policies:
   local_inference:
     name: local_inference
     endpoints:
+      - host: host.openshell.internal
+        port: 8081
+        protocol: rest
+        enforcement: enforce
+        allowed_ips:
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
       - host: host.openshell.internal
         port: 11434
         protocol: rest
