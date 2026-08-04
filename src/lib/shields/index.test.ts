@@ -103,6 +103,19 @@ function withDefaultNodeExecFileSync(
   return defaultNodeExecFileSync(file, argv) || fallback();
 }
 
+function throwProcessNotRunning(): never {
+  throw Object.assign(new Error("not running"), { code: "ESRCH" });
+}
+
+function reportProcessRunning(): true {
+  return true;
+}
+
+function routeProcessKill(pid: number, signal?: string | number): true {
+  const processActions = new Map<string, () => true>([["2147483647:0", throwProcessNotRunning]]);
+  return (processActions.get(`${pid}:${signal}`) ?? reportProcessRunning)();
+}
+
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-test-"));
   vi.stubEnv("HOME", tmpDir);
@@ -523,6 +536,40 @@ describe("shields — unit logic", () => {
       );
       expect(errorSpy).toHaveBeenCalledWith(
         `  Recovery warning: run \`nemoclaw ${sandboxName} shields up\` manually.`,
+      );
+      expect(fs.existsSync(path.join(stateDir(), `shields-timer-${sandboxName}.json`))).toBe(true);
+    });
+
+    it("bounds current-generation inline recovery when the snapshot is missing (#7952)", async () => {
+      const sandboxName = "openclaw";
+      const processToken = "c".repeat(32);
+      const missingSnapshotPath = path.join(stateDir(), "missing-current-snapshot.yaml");
+      writeState(sandboxName, {
+        shieldsDown: true,
+        shieldsDownAt: new Date(Date.now() - 60_000).toISOString(),
+        shieldsDownTimeout: 300,
+        shieldsDownReason: "testing",
+        shieldsDownPolicy: "permissive",
+        shieldsPolicySnapshotPath: missingSnapshotPath,
+        updatedAt: new Date().toISOString(),
+      });
+      writeMarker(sandboxName, {
+        pid: 2_147_483_647,
+        sandboxName,
+        snapshotPath: missingSnapshotPath,
+        restoreAt: new Date(Date.now() - 30_000).toISOString(),
+        processToken,
+      });
+      vi.spyOn(process, "kill").mockImplementation(routeProcessKill);
+      vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const { shieldsStatus } = await loadShieldsModule();
+
+      expect(() => shieldsStatus(sandboxName)).toThrow("Inline auto-restore exhausted 7 attempts");
+      const { getMcpLifecycleLockPath } = await import("../state/mcp-lifecycle-lock");
+      expect(fs.existsSync(`${getMcpLifecycleLockPath(sandboxName, stateDir())}.containment`)).toBe(
+        true,
       );
       expect(fs.existsSync(path.join(stateDir(), `shields-timer-${sandboxName}.json`))).toBe(true);
     });
@@ -958,7 +1005,7 @@ describe("NC-2227-05: shields timer marker behavior", () => {
     expect(readTimerMarker("openclaw")).toBeNull();
   });
 
-  it("killTimer terminates verified live timer process and clears marker", async () => {
+  it("killTimer cooperatively revokes a verified live timer without signaling it", async () => {
     const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "timer-control.ts");
     const { killTimer } = await import(sourceModulePath);
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
@@ -1004,11 +1051,11 @@ describe("NC-2227-05: shields timer marker behavior", () => {
       markerFound: true,
       markerPid: 7331,
       wasAlive: true,
-      terminated: true,
+      terminated: false,
       warnings: [],
     });
     expect(processKillSpy).toHaveBeenCalledWith(7331, 0);
-    expect(processKillSpy).toHaveBeenCalledWith(7331, "SIGTERM");
+    expect(processKillSpy).toHaveBeenCalledTimes(1);
     expect(fs.existsSync(path.join(stateDir, "shields-timer-openclaw.json"))).toBe(false);
   });
 
