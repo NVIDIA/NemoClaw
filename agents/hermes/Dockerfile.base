@@ -481,7 +481,7 @@ RUN set -eu; \
     uv sync --frozen --no-dev "$@" --no-cache \
     && uv pip check --python /opt/hermes/.venv/bin/python \
     && /opt/hermes/.venv/bin/python -I -c \
-        "from importlib.metadata import version; expected = {'cryptography': '48.0.1', 'mcp': '1.28.1', 'pillow': '12.3.0', 'starlette': '1.3.1', 'tornado': '6.5.7'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
+        "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0', 'mcp': '1.28.1', 'pillow': '12.3.0', 'starlette': '1.3.1', 'tornado': '6.5.7'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
     && npm ci --prefer-offline --no-audit --no-fund \
     && for ui_dir in ui-tui web; do \
         if [ -f "${ui_dir}/package-lock.json" ]; then \

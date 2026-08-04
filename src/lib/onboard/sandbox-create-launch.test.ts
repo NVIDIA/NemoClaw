@@ -134,7 +134,7 @@ describe("prepareSandboxCreateLaunch", () => {
     expect(result.intendedSandboxStartupCommand).toEqual([
       "env",
       ...result.envArgs,
-      "nemoclaw-start",
+      "/usr/local/bin/nemoclaw-start",
     ]);
     expect(result.managedBootstrapIdentity).toMatch(/^[a-f0-9]{64}$/u);
     expect(result.sandboxStartupCommand).toEqual([
@@ -146,6 +146,7 @@ describe("prepareSandboxCreateLaunch", () => {
       request.profileFingerprint,
       "--bootstrap-identity",
       result.managedBootstrapIdentity,
+      "--",
     ]);
     expect(result.createArgv.join("\n")).not.toContain(request.encodedProfile);
   });
@@ -190,7 +191,11 @@ describe("prepareSandboxCreateLaunch", () => {
       "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS=TELEGRAM_BOT_TOKEN_AGENT_A",
     ]);
     expect(result.sandboxEnv).toEqual({ HOME: "/home/user" });
-    expect(result.sandboxStartupCommand).toEqual(["env", ...result.envArgs, "nemoclaw-start"]);
+    expect(result.sandboxStartupCommand).toEqual([
+      "env",
+      ...result.envArgs,
+      "/usr/local/bin/nemoclaw-start",
+    ]);
     expect(openshellShellCommand).toHaveBeenCalledWith([
       "sandbox",
       "create",
@@ -296,7 +301,7 @@ describe("prepareSandboxCreateLaunch", () => {
     expect(result.sandboxStartupCommand).toEqual([
       "env",
       "NEMOCLAW_OBSERVABILITY=0",
-      "nemoclaw-start",
+      "/usr/local/bin/nemoclaw-start",
     ]);
   });
 
@@ -398,7 +403,7 @@ describe("prepareSandboxCreateLaunch", () => {
         "--",
         "env",
         ...result.envArgs,
-        "nemoclaw-start",
+        "/usr/local/bin/nemoclaw-start",
       ]);
       expect(fs.existsSync(injectedFromPath)).toBe(false);
       expect(fs.existsSync(injectedUrlPath)).toBe(false);

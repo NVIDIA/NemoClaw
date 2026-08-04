@@ -1782,7 +1782,11 @@ If sandbox deletion is refused after destroy has restored lockdown, NemoClaw ope
 If a shields auto-restore timer is active, `destroy` holds the same per-sandbox transition through state wipe and deletion.
 It restores and verifies lockdown and revokes the active timer before deletion.
 It clears the remaining local shields state only after deletion succeeds.
-If hardening fails, the command refuses deletion and leaves the timer authority available to retry lockdown.
+If the pre-delete re-lock fails, the command warns and attempts to destroy the sandbox.
+If the destroy operation succeeds, it destroys the sandbox and deletes its unguarded configuration.
+If the destroy operation fails, NemoClaw keeps the local shields state and the auto-restore timer.
+The timer keeps retrying lockdown and can restore it after the sandbox is reachable again.
+NemoClaw records Shields down until a retry verifies lockdown, or until you destroy or rebuild the sandbox.
 If deletion fails after hardening, the command keeps the surviving sandbox's locked shields state instead of cleaning it up as though deletion succeeded.
 By default, unattended final-sandbox destroys (`--yes`, `--force`, or `NEMOCLAW_NON_INTERACTIVE=1`) remove the shared NemoClaw gateway on macOS so the host listener is released, while Linux preserves it for reuse.
 Pass `--cleanup-gateway` to force removal, or `--no-cleanup-gateway` to force preservation.
@@ -1804,6 +1808,7 @@ If the OpenShell gateway is unreachable and the sandbox has no managed MCP owner
 Gateway-side deletion remains unconfirmed, shared host-service and gateway teardown are skipped, and the sandbox and retained volume may still exist if the gateway returns.
 Start the gateway with `$$nemoclaw <name> status` and retry destroy when you need a confirmed deletion.
 Managed MCP ownership disables the local-only fallback because exact provider cleanup requires the retained ownership state, and other delete failures remain fatal.
+A failed pre-delete re-lock also disables the local-only fallback, because the auto-restore timer is then the only authority that can lock the configuration again after the gateway returns.
 
 ```bash
 $$nemoclaw my-assistant destroy [--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]

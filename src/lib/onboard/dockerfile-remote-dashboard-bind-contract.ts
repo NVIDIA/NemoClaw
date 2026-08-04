@@ -13,7 +13,7 @@ const REMOTE_BIND_ARG_RE = /^ARG\s+NEMOCLAW_DASHBOARD_BIND=/;
 const REMOTE_BIND_PATCHED_ARG_RE = /^ARG\s+NEMOCLAW_DASHBOARD_BIND=0\.0\.0\.0$/;
 const REMOTE_BIND_PROMOTION_RE = /NEMOCLAW_DASHBOARD_BIND=\$\{NEMOCLAW_DASHBOARD_BIND\}/;
 const OPENCLAW_CONFIG_GENERATOR_RE =
-  /^RUN\s+(?:NEMOCLAW_OPENCLAW_MANAGED_PROXY=0\s+)?node\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts$/;
+  /^RUN\s+(?:NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0\s+)?(?:NEMOCLAW_OPENCLAW_MANAGED_PROXY=0\s+)?node\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts$/;
 const SAFE_VALIDATION_GENERATOR_RE =
   /^RUN\s+validation_home="\$validation_root\/progressive";\s+HOME=(?:"\$validation_home"|\$validation_home)\s+node\s+--experimental-strip-types\s+\/scripts\/generate-openclaw-config\.mts$/;
 const PASSIVE_FINAL_STAGE_INSTRUCTION_RE = /^(?:ARG|ENV|WORKDIR|USER|HEALTHCHECK|ENTRYPOINT|CMD)\b/;
@@ -35,11 +35,17 @@ const EXACT_CUSTOM_POST_GENERATOR_RUN_RE = [
 // Dockerfile append `&& <rewrite openclaw.json>` to an otherwise safe command.
 // A lifecycle test verifies these digests against the checked-in Dockerfile.
 const CANONICAL_POST_GENERATOR_RUN_SHA256 = new Set([
+  "9300de0b56a7d8a1498fd36cb9c05313b6691d6756b455f91628ed989221afc2",
+  "6f457f365f5c0d128e5e3b549a630b5bd9ebd223919f2c2c8e6a31235d763781",
+  "dca7d3dbc030e4efa77c850b9d21a826358c69c7d2062f3eee2f5a57eeb07aa2",
+  "b01b5f5d2cba5778cd8eb87139f2c6a8174082a7f6775e443a1dbdc0629ce7e5",
+  "4a54da2c1c33c681ae0dad181a5a7456c926051d91420aa60cf7edef6330ba65",
   "e7256f12c618bb424f53fec801378d92446d880c5935965ebb3b548694866b63",
   "4e548aafe9484a887a0ab0cf92ec82f77843fd346de7a2dff50b93ebd632b044",
   "737edaaa69f80cf10d42fd349e0be068c1ef6e7375d5dcb4055b012420b58736",
   "5b814e92449a6778385f588877fe72ebed80e601f8eb0c90c2842b17a489f3da",
   "0e1a9a7bab2fab0a974577c3af8785157b4b9be2b4db32d5f4f9e5aa3c8c8171",
+  "ede14966118316b58139830b4a1ffaceca86a6d0857cd0c1705d69db109907b0",
   "a68297161e2c6463440b822f4e4be0518e745fb5fba8c61ab53b876724f7b666",
   "a54e2ac58ef00d7080ad697cb1892bf91b7bffe011f698df17b936c9906cd4af",
   "ca493ae7905fae5c587a8e5c31fcb3d423235940589c2decee99d7b338e87d88",
@@ -55,6 +61,7 @@ const CANONICAL_POST_GENERATOR_RUN_SHA256 = new Set([
   "5cc53ef9c588470f325c5df8189a2eb1525140d947332ae2c0a80fccb2f36ccb",
   "83567d1fa0e73bef6a3333383c13ace05e26704964ae6a7a76ee24a2f2be3d7e",
   "ca1f7b1cb9dd5d467f806792c4072a84ef1e6402c3e8650b6325b95cc186ccdf",
+  "4165899eb1f0f948f8883eddf4136136caac21cee1df39b12afea7672b23a378",
   "7e6a6879382f833f17be02ca7d287685b6afa1c423b1e087b3b05dd677d6e325",
   "4a54da2c1c33c681ae0dad181a5a7456c926051d91420aa60cf7edef6330ba65",
 ]);
