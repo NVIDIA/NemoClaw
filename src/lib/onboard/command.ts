@@ -13,6 +13,7 @@ import {
 import { applyAgentsManifestEnv } from "./agents-manifest";
 import type { OnboardFlags } from "./command-support";
 import { GatewayManagementDeclarationError } from "./gateway-management";
+import { GatewayAuthorityError, gatewayAuthorityFailureLines } from "./gateway-teardown-authority";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
@@ -190,6 +191,39 @@ function promptCancellationCode(error: unknown): "EOF" | "SIGINT" | null {
   return code === "EOF" || code === "SIGINT" ? code : null;
 }
 
+function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps): void {
+  const cancellationCode = promptCancellationCode(error);
+  if (cancellationCode === "SIGINT") {
+    // The prompt has already restored terminal state and re-raised SIGINT.
+    // Let the onboard signal handler print resumable-step guidance and
+    // preserve status 130 without leaking this rejected prompt error through
+    // oclif as a raw stack trace (#7439).
+    return;
+  }
+  // A rejected NEMOCLAW_GATEWAY_MANAGEMENT contract is operator input error,
+  // not a crash: print the validation reason as a clean single-line CLI error
+  // and exit nonzero instead of re-throwing it into a Node.js stack trace
+  // (#7627). `fail` sets exit code 1.
+  if (error instanceof GatewayManagementDeclarationError) {
+    fail(deps, `  ${error.message}`);
+  }
+  // Gateway-authority refusals are reported, never rethrown. Recreation is not
+  // selected in one place: `--recreate-sandbox` sets the flag, but `runOnboard`
+  // independently honours NEMOCLAW_RECREATE_SANDBOX and reaches the same
+  // journal when it detects sandbox drift. Keying this branch on the flag left
+  // both of those paths emitting a raw stack trace (#8103). Within onboarding
+  // the recreate journal's authority revalidation is the only source of this
+  // typed error, so the operation label holds however recreation was selected.
+  if (error instanceof GatewayAuthorityError) {
+    fail(deps, gatewayAuthorityFailureLines(error, "sandbox recreate").join("\n"));
+  }
+  // Stdin EOF at any onboarding prompt is a cancellation, not a failure:
+  // print a clear message and exit non-zero instead of either crashing with
+  // a stack trace or — as in the original bug — exiting 0 silently (#5976).
+  if (cancellationCode !== "EOF") throw error;
+  fail(deps, "  Installation cancelled");
+}
+
 export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<void> {
   const options = resolveOnboardOptions(deps.flags, deps);
   if (options.noOllamaAutostart) process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
@@ -201,25 +235,6 @@ export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<vo
   try {
     await deps.runOnboard(options);
   } catch (error) {
-    const cancellationCode = promptCancellationCode(error);
-    if (cancellationCode === "SIGINT") {
-      // The prompt has already restored terminal state and re-raised SIGINT.
-      // Let the onboard signal handler print resumable-step guidance and
-      // preserve status 130 without leaking this rejected prompt error through
-      // oclif as a raw stack trace (#7439).
-      return;
-    }
-    // A rejected NEMOCLAW_GATEWAY_MANAGEMENT contract is operator input error,
-    // not a crash: print the validation reason as a clean single-line CLI error
-    // and exit nonzero instead of re-throwing it into a Node.js stack trace
-    // (#7627). `fail` sets exit code 1.
-    if (error instanceof GatewayManagementDeclarationError) {
-      fail(deps, `  ${error.message}`);
-    }
-    // Stdin EOF at any onboarding prompt is a cancellation, not a failure:
-    // print a clear message and exit non-zero instead of either crashing with
-    // a stack trace or — as in the original bug — exiting 0 silently (#5976).
-    if (cancellationCode !== "EOF") throw error;
-    fail(deps, "  Installation cancelled");
+    handleOnboardCommandError(error, deps);
   }
 }

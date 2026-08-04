@@ -10,7 +10,6 @@ import {
   normalizeSession,
   type Session,
   type SessionUpdates,
-  sanitizeFailure,
 } from "../../state/onboard-session";
 import {
   advanceTo,
@@ -58,19 +57,13 @@ function createRuntime(initialSession: Session = createSession()) {
         Object.assign(current, filterSafeUpdates(updates));
         return current;
       }),
-    markStepCompleteRecordOnly: (_stepName, updates: SessionUpdates = {}) =>
-      updateSession((current) => {
-        Object.assign(current, filterSafeUpdates(updates));
-        return current;
-      }),
     markStepSkipped: () => cloneSession(session),
-    markStepFailed: (_stepName, message) =>
+    markStepFailed: (stepName, message) =>
       updateSession((current) => {
-        current.status = "failed";
-        current.failure = sanitizeFailure({ step: _stepName, message, recordedAt: "now" });
+        current.steps[stepName].status = "failed";
+        current.steps[stepName].error = message ?? null;
         return current;
       }),
-    markStepFailedRecordOnly: () => cloneSession(session),
     completeSession: (updates: SessionUpdates = {}) =>
       updateSession((current) => {
         Object.assign(current, filterSafeUpdates(updates));

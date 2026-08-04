@@ -34,9 +34,9 @@ cannot trigger cleanup against the planned sandbox name; after receipt
 validation, both the cleanup request and its result are bound to the exact
 sandbox ID.
 
-`scripts/managed-bootstrap-entrypoint.c` defines the image-owned native boundary
-that the later all-agent packaging slice will compile as a freestanding Linux
-amd64 or arm64 artifact and install as
+`scripts/managed-bootstrap-entrypoint.c` defines the image-owned native boundary.
+The OpenClaw, Hermes, and LangChain Deep Agents Code image definitions compile
+it as a freestanding Linux amd64 or arm64 artifact and install it as
 `/usr/local/bin/nemoclaw-managed-bootstrap`. The artifact must have no dynamic
 ELF interpreter, dynamic section, undefined symbol, or C library startup. Its
 entry point uses direct Linux system calls. It copies the bounded supervisor
@@ -184,17 +184,52 @@ provider bundle contract without changing the production registry.
 provider, and image-packaging surfaces and proves that production activation
 does not select a driver-specific bootstrap implementation.
 
-The native entrypoint source is intentionally not compiled into production
-artifacts, and neither image-owned source is installed or selected in a runtime
-image yet. Production onboarding imports only the provider-neutral create
-contract; no activation path or registered provider imports or selects the
-driver-specific Docker candidate. The current image definitions do not package
-`nemoclaw-managed-startup-hold`,
-`managed-startup-image-runtime.cjs`, or the shared-state bootstrap modes consumed
-by the adapter. Later persistence and qualification slices must compile and
-verify the freestanding entrypoint for amd64 and arm64 in every agent image, add
-the image-runtime prerequisites, and provide the canonical durable authority
-store. The remaining integration and qualification work is tracked in
+The native entrypoint and composed managed-bootstrap image runtime are now
+compiled and packaged in every managed agent image, but remain unselected by
+production onboarding. The dormant image runtime composes the neutral
+managed-startup APIs with modes that consume the protected bootstrap envelope,
+bind shared-state authority to the exact attempt, publish an identity-bound
+completion, and authenticate that completion together with the ordinary startup
+handoff. The runtime retains the protected envelope through application and
+completion publication so the same attempt can retry after interruption;
+it atomically moves the authenticated inode into a root-private, same-filesystem
+claim before application. The canonical request is the producer-visible fixed
+bootstrap request path. If that path was replaced between authentication and
+rename, the runtime exclusively hard-links the displaced request back to the
+canonical path without overwriting a later request, then removes the private
+candidate. Restart recovery restores a protected, parseable displaced request
+when a crash leaves it private immediately after rename, and reconciles a crash
+between the later link and unlink steps only when the canonical and private
+paths are protected two-link aliases of the same inode. A second replacement makes restoration fail closed while
+preserving both the latest canonical request and the displaced private file.
+The private claim remains the sole retry authority after an application or
+completion-write failure; restart recovery resumes it without moving, deleting,
+or overwriting a newer canonical request. Success removes only the authenticated
+private claim. This protocol assumes the OCI writable layer supports same-device
+atomic rename and hard links, the producer writes only the canonical request
+path, one bootstrap consumer owns that path at a time, and container uid 0 is
+trusted. An unsupported cross-device rename or hard link fails closed before
+application and leaves request data intact; the protocol does not claim
+protection from a hostile root process that can mutate the private mode-0700
+namespace. The trampoline only sequences the authoritative Node
+recovery, apply, and verification modes; claim ownership and state transitions
+remain in that runtime. Bootstrap completion verification adds the
+bootstrap-identity receipt and then delegates the shared startup completion and
+environment checks. The dependency direction is one-way: this
+managed-bootstrap composition imports managed-startup, while managed-startup
+does not import managed-bootstrap.
+Production onboarding imports only the provider-neutral create contract; no
+activation path or registered provider imports or selects the driver-specific
+Docker candidate. OpenClaw, Hermes, and LangChain Deep Agents Code images
+compile and package the freestanding amd64 or arm64 native entrypoint, its
+non-executable shell body, the root-owned hold helper, the composed
+`managed-bootstrap/image-runtime.ts` bundle, and the complete inert capability
+union. Pull-request and publication workflows build the exact images and
+exercise the protected envelope, native bootstrap, production held-command
+renderer, and all-agent hold contracts without advertising buildless support.
+No production provider can invoke these packaged modes yet. The remaining
+provider activation, canonical durable authority, and protected qualification
+work is tracked in
 [epic #7744](https://github.com/NVIDIA/NemoClaw/issues/7744). Until that complete
 boundary passes protected E2E, every production runtime provider keeps
 bootstrap unsupported.
