@@ -344,7 +344,7 @@ export async function runRuntimeIdentityOboE2EScenario({
   const applyText = resultText(apply);
   expect(apply.exitCode, applyText).toBe(0);
   expect(applyText).toContain(`Sandbox '${sandboxName}' is ready.`);
-  expect(applyText).not.toContain("already exists, reusing");
+  expect(applyText).not.toContain(`Sandbox '${sandboxName}' already exists, reusing.`);
   for (const secret of redactionValues) expect(applyText).not.toContain(secret);
   expect(oauth.tokenExchangeRequests()).toEqual([
     {
