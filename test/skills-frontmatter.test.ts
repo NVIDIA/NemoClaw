@@ -91,7 +91,6 @@ describe("repo skill markdown files", () => {
   it("keeps contributor implementation skills concise and discovery-based", () => {
     const names = [
       "nemoclaw-contributor-update-dependencies",
-      "nemoclaw-contributor-update-hermes",
       "nemoclaw-contributor-onboard-messaging-channel",
       "nemoclaw-contributor-update-docs",
     ];
