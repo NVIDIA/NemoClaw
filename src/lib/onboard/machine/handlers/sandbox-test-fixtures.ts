@@ -300,6 +300,7 @@ export function baseOptions(
     model: "model",
     provider: "provider",
     endpointUrl: null,
+    compatibleEndpointReasoning: null,
     credentialEnv: null,
     nimContainer: null,
     webSearchConfig: null,

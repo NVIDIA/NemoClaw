@@ -187,6 +187,9 @@ function parseStationRelease(contents: string): StationProfile {
   if (identity === "NVIDIA DGX GB300WS|7.5.0|2026-06-16-11-48-10") {
     return "supported-ai-developer-tools";
   }
+  if (identity === "NVIDIA DGX GB300WS|7.5.0|2026-05-13-18-42-38") {
+    return "supported-ai-developer-tools";
+  }
   return "unsupported-dgx-os";
 }
 

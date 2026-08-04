@@ -108,6 +108,7 @@ import {
 import {
   applySandboxResumeDecision,
   decideSandboxResume,
+  hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   mcpRegistryRemovalBlockReason,
   resolveToolDisclosureResumeSignals,
@@ -153,6 +154,7 @@ export interface SandboxStateOptions<
   model: string;
   provider: string;
   endpointUrl: string | null;
+  compatibleEndpointReasoning: string | null;
   credentialEnv: string | null;
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
@@ -397,6 +399,12 @@ function endpointSourceForCreateIntent(
   return fresh ? "onboard" : (endpointSource ?? null);
 }
 
+function compatibleEndpointReasoningForCreateIntent(
+  value: string | null,
+): Pick<SandboxCreateIntent, "compatibleEndpointReasoning"> {
+  return value === "true" || value === "false" ? { compatibleEndpointReasoning: value } : {};
+}
+
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
 type CompleteSandboxCreateIntent = SandboxCreateIntent & {
   readonly resolved: ResolvedSandboxCreateIntent;
@@ -583,6 +591,11 @@ class SandboxStateFlow<
         preferredInferenceApi: this.options.preferredInferenceApi,
         registryEntry,
       }),
+      compatibleEndpointReasoningChanged: hasCompatibleEndpointReasoningDrift({
+        provider: this.options.provider,
+        compatibleEndpointReasoning: this.options.compatibleEndpointReasoning,
+        registryEntry,
+      }),
       webSearchConfigChanged: state.webSearchSupportDropped || state.webSearchConfigChanged,
       sandboxGpuConfigChanged: state.sandboxName
         ? this.deps.hasSandboxGpuDrift(state.sandboxName, this.options.sandboxGpuConfig)
@@ -670,6 +683,9 @@ class SandboxStateFlow<
       this.options.provider,
       this.options.model,
       this.options.preferredInferenceApi ?? "default",
+      ...Object.values(
+        compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
+      ),
       this.options.fromDockerfile ?? "",
       JSON.stringify(this.options.sandboxGpuConfig ?? null),
       [...this.options.hermesToolGateways].sort().join(","),
@@ -1210,6 +1226,7 @@ class SandboxStateFlow<
       observabilityEnabled: state.session?.observabilityEnabled === true,
       ...(reuseRegisteredCredentials ? { reuseRegisteredCredentials: true as const } : {}),
       ...(this.options.endpointUrl ? { endpointUrl: this.options.endpointUrl } : {}),
+      ...compatibleEndpointReasoningForCreateIntent(this.options.compatibleEndpointReasoning),
       endpointSource: endpointSourceForCreateIntent(
         this.options.fresh,
         this.options.endpointSource,

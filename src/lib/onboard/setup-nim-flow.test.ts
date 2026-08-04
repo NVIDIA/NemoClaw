@@ -122,6 +122,7 @@ function makeDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupNimFlowDeps {
     error: vi.fn(),
     exitProcess: (code) => unexpected(`exitProcess(${code})`),
     abortNonInteractive: (message) => unexpected(`abortNonInteractive(${message})`),
+    handleLlamaCppSelection: async () => unexpected("llama.cpp selection"),
     handleRemoteProviderSelection: async () => unexpected("remote provider selection"),
     handleNimLocalSelection: async () => unexpected("local NIM selection"),
     handleRunningOllamaSelection: async () => unexpected("running Ollama selection"),
@@ -1129,6 +1130,37 @@ describe("createSetupNim", () => {
     expect(abortNonInteractive).toHaveBeenCalledOnce();
     expect(installVllm).not.toHaveBeenCalled();
     expect(handleVllmSelection).not.toHaveBeenCalled();
+  });
+
+  it("dispatches llama.cpp existing-server selection without a managed install path (#8161)", async () => {
+    const handleLlamaCppSelection = vi.fn<SetupNimFlowDeps["handleLlamaCppSelection"]>(
+      async (selection, requestedModel) => {
+        expect(requestedModel).toBe("team/model-alias");
+        selection.provider = "llama-cpp-local";
+        selection.model = "team/model-alias";
+        selection.endpointUrl = "http://127.0.0.1:8081/v1";
+        selection.credentialEnv = "NEMOCLAW_LLAMACPP_LOCAL_TOKEN";
+        selection.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "llama-cpp",
+        getNonInteractiveModel: () => "team/model-alias",
+        handleLlamaCppSelection,
+      }),
+    );
+
+    await expect(setupNim(null)).resolves.toMatchObject({
+      provider: "llama-cpp-local",
+      model: "team/model-alias",
+      endpointUrl: "http://127.0.0.1:8081/v1",
+      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      preferredInferenceApi: "openai-completions",
+    });
+    expect(handleLlamaCppSelection).toHaveBeenCalledOnce();
   });
 
   it("returns interactive occupied-port selection to the provider menu", async () => {

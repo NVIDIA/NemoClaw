@@ -1189,6 +1189,17 @@ detect_express_platform
     expect(result.stdout).toBe("DGX Station");
   });
 
+  it("classifies the exact GB300WS 7.5.0 build 2026-05-13-18-42-38 as Station Express (#7979)", () => {
+    const release = noOtaFactoryRelease("ai-developer-tools").replace(
+      "2026-06-16-11-48-10",
+      "2026-05-13-18-42-38",
+    );
+    const result = detectExpressPlatformForStockDgxRelease("DGX Station GB300", release);
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("DGX Station");
+  });
+
   it("requires explicit intent before treating unrecognized metadata as Station Express", () => {
     const releasePath = path.join(
       fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dgx-release-force-")),

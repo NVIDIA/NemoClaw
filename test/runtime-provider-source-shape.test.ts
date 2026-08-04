@@ -141,6 +141,7 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/managed-bootstrap/docker-test-fixture.ts",
       "src/lib/onboard/managed-bootstrap/docker.ts",
       "src/lib/onboard/managed-bootstrap/envelope.ts",
+      "src/lib/onboard/managed-bootstrap/image-runtime.ts",
       "src/lib/onboard/managed-bootstrap/index.ts",
       "src/lib/onboard/managed-bootstrap/runtime-create.ts",
     ]);
