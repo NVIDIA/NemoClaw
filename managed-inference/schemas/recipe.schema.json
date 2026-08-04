@@ -21,7 +21,7 @@
             "id": { "type": "string", "minLength": 1, "maxLength": 256 },
             "revision": {
               "type": "string",
-              "pattern": "^(?:[0-9a-f]{40,64}|sha256:[0-9a-f]{64})$"
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64}|sha256:[0-9a-f]{64})$"
             },
             "servedName": { "$ref": "#/$defs/stableId" },
             "files": {
@@ -36,7 +36,7 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 512,
-                    "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\u0000]+$"
+                    "pattern": "^(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
                   },
                   "digest": { "$ref": "#/$defs/sha256" }
                 },
