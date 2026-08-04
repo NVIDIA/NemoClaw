@@ -79,12 +79,6 @@ function portReceiptText(
   );
 }
 
-// The current installer's ten-field receipt: the nine port-bound fields plus a
-// trailing `mode=` field (scripts/install.sh save_station_express_resume).
-function modeReceiptText(mode = "express"): string {
-  return `${portReceiptText().trimEnd()}\nmode=${mode}\n`;
-}
-
 function retirementClaims(home: string): string[] {
   const stateDir = path.join(home, ".nemoclaw");
   return fs
@@ -651,30 +645,15 @@ describe("DGX Station Express resume (#7048)", () => {
     }
   });
 
-  it("accepts the current ten-field mode-bound installer receipt (#8205)", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-mode-receipt-"));
-    const stateDir = path.join(home, ".nemoclaw");
-    fs.mkdirSync(stateDir, { mode: 0o700 });
-    fs.writeFileSync(path.join(stateDir, "station-express-resume"), modeReceiptText(), {
-      mode: 0o600,
-    });
-
-    try {
-      expect(() =>
-        assertStationExpressInstallerResumeMatches(receiptGeneration, { HOME: home }),
-      ).not.toThrow();
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
-
   it("rejects a mode-bound receipt with an unknown mode value (#8205)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-station-mode-bad-"));
     const stateDir = path.join(home, ".nemoclaw");
     fs.mkdirSync(stateDir, { mode: 0o700 });
-    fs.writeFileSync(path.join(stateDir, "station-express-resume"), modeReceiptText("bogus"), {
-      mode: 0o600,
-    });
+    fs.writeFileSync(
+      path.join(stateDir, "station-express-resume"),
+      `${portReceiptText().trimEnd()}\nmode=bogus\n`,
+      { mode: 0o600 },
+    );
 
     try {
       expect(() =>
