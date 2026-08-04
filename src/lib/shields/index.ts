@@ -1112,6 +1112,15 @@ function transitionOpenClawTopConfig(
       `Config not ${action === "unlock" ? "unlocked" : "locked"}: ${result.issues.join(", ")}`,
     );
   }
+  if (result.resealedDrift) {
+    // The guard found an already-locked config whose canonical file had drifted
+    // perms-only (a reconciler re-permissioned it after the lock) and re-sealed
+    // it in place instead of failing closed (#4663 / #7985). Surface the
+    // self-heal so a rebuild/relock does not fix drift invisibly.
+    console.log(
+      "  Re-sealed a perms-only config-lock drift (config dir stays root-owned; contents intact).",
+    );
+  }
   return result.chattrApplied;
 }
 
