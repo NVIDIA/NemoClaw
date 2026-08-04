@@ -786,146 +786,66 @@ import io as _nemoclaw_io
 import json as _nemoclaw_json
 import logging as _nemoclaw_logging
 import os as _nemoclaw_os
-import re as _nemoclaw_re
 import sqlite3 as _nemoclaw_sqlite3
 import sys as _nemoclaw_sys
 import threading as _nemoclaw_threading
 import time as _nemoclaw_time
 
 # NemoClaw-managed Deep Agents Code hardening v2.
-# Checkpoint-text classifiers (#8121). Every entry maps a persisted `__error__`
-# row to a fixed (error_class, category, retryable) triple; no substring of the
-# matched row is ever emitted, so a credential inside the persisted text cannot
-# reach the log line or the console.
+# Pinned LangGraph serializes a checkpoint `BaseException` as one MessagePack
+# string containing `repr(exception)`. The `__error__` channel and `msgpack`
+# type identify the record. Only the root exception class is error metadata.
+# The remaining text can contain model or tool payloads.
 #
-# Only structural evidence classifies: an exception or gRPC/HTTP status *name*
-# in serialized position, or a named status *field* carrying a code. A persisted
-# row embeds model output and tool results, so neither prose nor a bare name is
-# enough on its own — `APIError('tool output: timeout')` and
-# `APIError('tool output: ResourceExhausted')` must both stay unclassified,
-# because the quoted payload is the model's words rather than the failure.
-#
-# `_NEMOCLAW_SERIALIZED_NAME_PREFIX` supplies the position rule: a name counts
-# only where a serializer would have written it — at the start of the row, or
-# directly after an opening delimiter, quote, or module dot, with no separating
-# whitespace. `_NEMOCLAW_SERIALIZED_NAME_SUFFIX` then requires the name to
-# introduce its own message (`Name:`) or argument list (`Name(`). Together they
-# accept `ResourceExhausted: ...`, `APIError('ResourceExhausted: ...')`, and
-# `openai.RateLimitError: ...` while rejecting the same names quoted inside
-# payload prose. A row with no structural indicator stays unclassified and falls
-# through to the exception-type fallback, then to `unknown`.
-# Order is most-specific first; the first match wins.
-#
-# Names are matched case-sensitively because they are class and status names.
-_NEMOCLAW_SERIALIZED_NAME_PREFIX = r"""(?<![^'"(\[{.])"""
-_NEMOCLAW_SERIALIZED_NAME_SUFFIX = r"(?=[:(])"
-
-
-def _nemoclaw_serialized_name_pattern(names):
-    """Match an allow-listed name only where a serializer would have put it."""
-    return _nemoclaw_re.compile(
-        _NEMOCLAW_SERIALIZED_NAME_PREFIX
-        + "(?:"
-        + "|".join(names)
-        + ")"
-        + _NEMOCLAW_SERIALIZED_NAME_SUFFIX
-    )
-
-
-_NEMOCLAW_PERSISTED_ERROR_CLASSIFIERS = (
-    (
-        # `ResourceExhausted` is the provider's own status name, so the name
-        # alone is specific enough in serialized position; #7415's longer
-        # "Worker local total request limit reached (n/m)" wording is one
-        # message under that status and must not be required, or a reworded
-        # capacity error falls back to unknown.
-        _nemoclaw_serialized_name_pattern(("ResourceExhausted",)),
-        ("ResourceExhausted", "upstream_provider_capacity", "true"),
+# Do not classify a nested name, status field, status code, HTTP phrase, map,
+# array, malformed value, or another serialization type. Those shapes have no
+# trustworthy error-type path and must use the active exception or `unknown`.
+_NEMOCLAW_EXCEPTION_CLASSIFIERS = {
+    "ResourceExhausted": (
+        "ResourceExhausted",
+        "upstream_provider_capacity",
+        "true",
     ),
-    (
-        _nemoclaw_serialized_name_pattern(("RateLimitError", "TooManyRequests")),
-        ("RateLimited", "rate_limited", "true"),
+    "RateLimitError": ("RateLimited", "rate_limited", "true"),
+    "TooManyRequests": ("RateLimited", "rate_limited", "true"),
+    "AuthenticationError": ("Unauthorized", "authorization_rejected", "false"),
+    "PermissionDeniedError": (
+        "Unauthorized",
+        "authorization_rejected",
+        "false",
     ),
-    (
-        _nemoclaw_serialized_name_pattern(
-            (
-                "AuthenticationError",
-                "PermissionDeniedError",
-                "PermissionDenied",
-                "Unauthenticated",
-            )
-        ),
-        ("Unauthorized", "authorization_rejected", "false"),
+    "PermissionDenied": ("Unauthorized", "authorization_rejected", "false"),
+    "Unauthenticated": ("Unauthorized", "authorization_rejected", "false"),
+    "NotFoundError": ("NotFound", "model_or_route_not_found", "false"),
+    "ModelNotFoundError": ("NotFound", "model_or_route_not_found", "false"),
+    "model_not_found": ("NotFound", "model_or_route_not_found", "false"),
+    "APITimeoutError": ("Timeout", "request_timeout", "true"),
+    "DeadlineExceeded": ("Timeout", "request_timeout", "true"),
+    "ReadTimeout": ("Timeout", "request_timeout", "true"),
+    "ConnectTimeout": ("Timeout", "request_timeout", "true"),
+    "TimeoutError": ("Timeout", "request_timeout", "true"),
+    "APIConnectionError": ("Unavailable", "route_unreachable", "true"),
+    "ClientConnectorError": ("Unavailable", "route_unreachable", "true"),
+    "ConnectionError": ("Unavailable", "route_unreachable", "true"),
+    "ConnectionRefusedError": ("Unavailable", "route_unreachable", "true"),
+    "ConnectionResetError": ("Unavailable", "route_unreachable", "true"),
+    "ProxyError": ("Unavailable", "route_unreachable", "true"),
+    "SSLCertVerificationError": ("Unavailable", "route_unreachable", "true"),
+    "SSLError": ("Unavailable", "route_unreachable", "true"),
+    "InternalServerError": (
+        "InternalServerError",
+        "remote_server_error",
+        "true",
     ),
-    (
-        _nemoclaw_serialized_name_pattern(
-            ("NotFoundError", "ModelNotFoundError", "model_not_found")
-        ),
-        ("NotFound", "model_or_route_not_found", "false"),
-    ),
-    (
-        _nemoclaw_serialized_name_pattern(
-            (
-                "APITimeoutError",
-                "DeadlineExceeded",
-                "ReadTimeout",
-                "ConnectTimeout",
-                "TimeoutError",
-            )
-        ),
-        ("Timeout", "request_timeout", "true"),
-    ),
-    (
-        _nemoclaw_serialized_name_pattern(
-            (
-                "APIConnectionError",
-                "ClientConnectorError",
-                "ProxyError",
-                "SSLCertVerificationError",
-                "SSLError",
-                "ConnectionRefusedError",
-                "ConnectionResetError",
-            )
-        ),
-        ("Unavailable", "route_unreachable", "true"),
-    ),
-    (
-        _nemoclaw_serialized_name_pattern(
-            ("InternalServerError", "ServiceUnavailable", "BadGateway")
-        ),
-        ("InternalServerError", "remote_server_error", "true"),
-    ),
-)
-
-# Status codes only count when they appear in a named status field, never as a
-# bare number that model or tool text could contain. The field name carries the
-# same serialized-position rule as the class names above, so a quoted payload
-# such as `APIError('tool said status_code=429')` does not classify. The field
-# name itself is matched case-insensitively because serializers disagree on
-# case.
-_NEMOCLAW_STATUS_CODE_FIELD = _nemoclaw_re.compile(
-    r"""(?<![^'"(\[{.,])
-        (?:
-            (?:http_status|http_status_code|status_code|statusCode|status)["']?
-                \s*[:=]\s*["']?(\d{3})\b
-            |HTTP(?:/\d(?:\.\d)?)?\s+(\d{3})\b
-        )""",
-    _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
-)
-
-_NEMOCLAW_STATUS_CODE_CLASSIFIERS = {
-    "401": ("Unauthorized", "authorization_rejected", "false"),
-    "403": ("Unauthorized", "authorization_rejected", "false"),
-    "404": ("NotFound", "model_or_route_not_found", "false"),
-    "408": ("Timeout", "request_timeout", "true"),
-    "429": ("RateLimited", "rate_limited", "true"),
-    "500": ("InternalServerError", "remote_server_error", "true"),
-    "502": ("Unavailable", "route_unreachable", "true"),
-    "503": ("Unavailable", "route_unreachable", "true"),
-    "504": ("Timeout", "request_timeout", "true"),
+    "ServiceUnavailable": ("InternalServerError", "remote_server_error", "true"),
+    "BadGateway": ("InternalServerError", "remote_server_error", "true"),
+    "ModelConfigError": ("ModelConfigError", "model_configuration", "false"),
+    "RemoteException": ("RemoteException", "agent_remote_failure", "false"),
+    "APIError": ("APIError", "agent_remote_failure", "false"),
+    "APIStatusError": ("APIError", "agent_remote_failure", "false"),
 }
 
-# Exception-type fallback (#8121).
+# Active-exception fallback (#8121).
 # - Invalid state: a managed non-interactive run fails with no `__error__` row
 #   to classify, so every cause reads as `error_class=unknown`. Two sources
 #   create that state. The failure can happen before the graph writes any
@@ -942,9 +862,9 @@ _NEMOCLAW_STATUS_CODE_CLASSIFIERS = {
 #   delay the exit path of every failing run for a write that may never come.
 #   The exception is already in hand at this call site, so its type is the only
 #   evidence available without changing upstream.
-# - Scope: type names only, matched against an allow-list. The message is never
-#   read, because upstream serializes request, model, and tool payloads into it.
-#   An unlisted type name yields `unknown` rather than being echoed.
+# - Scope: an allow-listed root checkpoint exception class or active exception
+#   type. The message is never read. An unlisted type yields `unknown` and is not
+#   emitted.
 # - Current consumer: `_nemoclaw_report_non_interactive_error`, the single call
 #   site, which is the managed replacement for upstream's generic handler.
 # - Regression: test/non-interactive-error-classification.test.ts covers the
@@ -953,35 +873,10 @@ _NEMOCLAW_STATUS_CODE_CLASSIFIERS = {
 #   structured cause for every failure — either because the LangGraph server
 #   persists a row before the client observes the exception, or because upstream
 #   exposes a classified error object on the non-interactive path.
-_NEMOCLAW_EXCEPTION_CLASSIFIERS = {
-    "ResourceExhausted": ("ResourceExhausted", "upstream_provider_capacity", "true"),
-    "RateLimitError": ("RateLimited", "rate_limited", "true"),
-    "AuthenticationError": ("Unauthorized", "authorization_rejected", "false"),
-    "PermissionDeniedError": ("Unauthorized", "authorization_rejected", "false"),
-    "NotFoundError": ("NotFound", "model_or_route_not_found", "false"),
-    "APITimeoutError": ("Timeout", "request_timeout", "true"),
-    "TimeoutError": ("Timeout", "request_timeout", "true"),
-    "APIConnectionError": ("Unavailable", "route_unreachable", "true"),
-    "ConnectionError": ("Unavailable", "route_unreachable", "true"),
-    "ConnectionRefusedError": ("Unavailable", "route_unreachable", "true"),
-    "ConnectionResetError": ("Unavailable", "route_unreachable", "true"),
-    "ProxyError": ("Unavailable", "route_unreachable", "true"),
-    "SSLError": ("Unavailable", "route_unreachable", "true"),
-    "InternalServerError": ("InternalServerError", "remote_server_error", "true"),
-    "ModelConfigError": ("ModelConfigError", "model_configuration", "false"),
-    "RemoteException": ("RemoteException", "agent_remote_failure", "false"),
-    "APIError": ("APIError", "agent_remote_failure", "false"),
-    "APIStatusError": ("APIError", "agent_remote_failure", "false"),
-}
 
 # Bound the __cause__/__context__ walk so a self-referential or deeply chained
 # exception cannot turn diagnostics into an unbounded loop.
 _NEMOCLAW_EXCEPTION_CHAIN_LIMIT = 8
-
-# Checkpoint rows are written asynchronously by the LangGraph server, so the
-# `__error__` write can land after the client-side exception. Scan a bounded
-# recent window rather than only the newest rows.
-_NEMOCLAW_PERSISTED_ERROR_ROW_LIMIT = 20
 
 _NEMOCLAW_MANAGED_STATE_DB = "/sandbox/.deepagents/.state/sessions.db"
 _NEMOCLAW_JSON_SCHEMA_VERSION = 1
@@ -1272,20 +1167,42 @@ async def _nemoclaw_run_json_non_interactive(timeout_seconds, *args, **kwargs):
     return _nemoclaw_write_json_envelope(run, status, exit_code)
 
 
-def _nemoclaw_classify_error_text(text):
-    """Classify one persisted row from structural evidence only (#8121)."""
-    for pattern, classification in _NEMOCLAW_PERSISTED_ERROR_CLASSIFIERS:
-        if pattern.search(text):
-            return classification
-    match = _NEMOCLAW_STATUS_CODE_FIELD.search(text)
-    if match:
-        code = match.group(1) or match.group(2)
-        return _NEMOCLAW_STATUS_CODE_CLASSIFIERS.get(code)
-    return None
+def _nemoclaw_checkpoint_error_class_name(serialization_type, value):
+    """Read the root exception class from a pinned LangGraph scalar (#8121)."""
+    if serialization_type != "msgpack" or not isinstance(value, bytes) or not value:
+        return None
+
+    marker = value[0]
+    if 0xA0 <= marker <= 0xBF:
+        prefix_bytes = 1
+        payload_bytes = marker & 0x1F
+    elif marker == 0xD9 and len(value) >= 2:
+        prefix_bytes = 2
+        payload_bytes = value[1]
+    elif marker == 0xDA and len(value) >= 3:
+        prefix_bytes = 3
+        payload_bytes = int.from_bytes(value[1:3], "big")
+    elif marker == 0xDB and len(value) >= 5:
+        prefix_bytes = 5
+        payload_bytes = int.from_bytes(value[1:5], "big")
+    else:
+        return None
+
+    if len(value) != prefix_bytes + payload_bytes:
+        return None
+    try:
+        error_repr = value[prefix_bytes:].decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return None
+
+    class_name, separator, _ = error_repr.partition("(")
+    if not separator or not error_repr.endswith(")") or not class_name.isidentifier():
+        return None
+    return class_name
 
 
 def _nemoclaw_classify_persisted_error(thread_id):
-    """Classify the observed upstream error persisted for one managed thread."""
+    """Classify the newest typed error persisted for one managed thread."""
     if (
         not isinstance(thread_id, str)
         or not thread_id
@@ -1297,22 +1214,18 @@ def _nemoclaw_classify_persisted_error(thread_id):
         conn.execute("PRAGMA query_only = ON")
         try:
             cursor = conn.execute(
-                "SELECT substr(value, 1, 4096) FROM writes "
+                "SELECT type, substr(value, 1, 4096) FROM writes "
                 "WHERE thread_id = ? AND channel = '__error__' "
-                "ORDER BY rowid DESC LIMIT ?",
-                (thread_id, _NEMOCLAW_PERSISTED_ERROR_ROW_LIMIT),
+                "ORDER BY rowid DESC LIMIT 1",
+                (thread_id,),
             )
-            for (value,) in cursor:
-                if not isinstance(value, (str, bytes)):
-                    continue
-                text = (
-                    value
-                    if isinstance(value, str)
-                    else value.decode("utf-8", errors="replace")
+            row = cursor.fetchone()
+            if row is not None:
+                class_name = _nemoclaw_checkpoint_error_class_name(
+                    row[0],
+                    row[1],
                 )
-                classification = _nemoclaw_classify_error_text(text)
-                if classification:
-                    return classification
+                return _NEMOCLAW_EXCEPTION_CLASSIFIERS.get(class_name)
         finally:
             conn.close()
     except Exception:

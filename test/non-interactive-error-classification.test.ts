@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Buffer } from "node:buffer";
 import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -53,14 +54,50 @@ target._run_non_interactive_impl = fail
 const PLANTED_SECRETS =
   /runtime-secret|checkpoint-secret|private-request|private-model-message|private-tool-argument|private-tool-result/;
 
-function persistedErrorDriver(rows: Record<string, string>, threadId: string): string {
+type PersistedErrorRow = {
+  serializationType: string;
+  valueHex: string;
+};
+
+// `JsonPlusSerializer` 4.1.1 applies `repr` to `BaseException` and encodes the
+// result as one MessagePack string.
+function messagePackStringHex(value: string): string {
+  const payload = Buffer.from(value, "utf8");
+  let prefix: Buffer;
+  if (payload.length <= 31) {
+    prefix = Buffer.from([0xa0 | payload.length]);
+  } else if (payload.length <= 0xff) {
+    prefix = Buffer.from([0xd9, payload.length]);
+  } else if (payload.length <= 0xffff) {
+    prefix = Buffer.alloc(3);
+    prefix[0] = 0xda;
+    prefix.writeUInt16BE(payload.length, 1);
+  } else {
+    prefix = Buffer.alloc(5);
+    prefix[0] = 0xdb;
+    prefix.writeUInt32BE(payload.length, 1);
+  }
+  return Buffer.concat([prefix, payload]).toString("hex");
+}
+
+function rawPersistedRow(serializationType: string, valueHex: string): PersistedErrorRow {
+  return { serializationType, valueHex };
+}
+
+function persistedErrorDriver(
+  rows: Record<string, string | PersistedErrorRow>,
+  threadId: string,
+): string {
   const inserts = Object.entries(rows)
-    .map(
-      ([thread, value]) =>
-        `connection.execute("INSERT INTO writes (thread_id, channel, value) VALUES (?, '__error__', ?)", (${JSON.stringify(
-          thread,
-        )}, ${JSON.stringify(value)}))`,
-    )
+    .map(([thread, value]) => {
+      const row =
+        typeof value === "string" ? rawPersistedRow("msgpack", messagePackStringHex(value)) : value;
+      return `connection.execute("INSERT INTO writes (thread_id, channel, type, value) VALUES (?, '__error__', ?, ?)", (${JSON.stringify(
+        thread,
+      )}, ${JSON.stringify(row.serializationType)}, sqlite3.Binary(bytes.fromhex(${JSON.stringify(
+        row.valueHex,
+      )}))))`;
+    })
     .join("\n");
   return `
 ${runtimePreamble}
@@ -70,7 +107,7 @@ target._NEMOCLAW_MANAGED_STATE_DB = db_path
 target.generate_thread_id = lambda: ${JSON.stringify(threadId)}
 
 connection = sqlite3.connect(db_path)
-connection.execute("CREATE TABLE writes (thread_id TEXT, channel TEXT, value BLOB)")
+connection.execute("CREATE TABLE writes (thread_id TEXT, channel TEXT, type TEXT, value BLOB)")
 ${inserts}
 connection.commit()
 connection.close()
@@ -82,46 +119,74 @@ os.unlink(db_path)
 }
 
 describe("managed non-interactive error reporting", () => {
-  it("reports the provider-capacity error persisted for the failing thread (#7415)", () => {
-    const result = runPatchedNonInteractive(`
-${runtimePreamble}
-handle, db_path = tempfile.mkstemp()
-os.close(handle)
-target._NEMOCLAW_MANAGED_STATE_DB = db_path
-target.generate_thread_id = lambda: "thread-current"
+  it("classifies root exception classes from pinned checkpoint serialization (#8121)", () => {
+    const cases = [
+      [
+        "d930415049436f6e6e656374696f6e4572726f722827636f6e6e65637420746f20696e666572656e63652e6c6f63616c2729",
+        "Unavailable",
+        "route_unreachable",
+        "true",
+      ],
+      [
+        "d9265265736f75726365457868617573746564282763617061636974792065786365656465642729",
+        "ResourceExhausted",
+        "upstream_provider_capacity",
+        "true",
+      ],
+      [
+        "bf41757468656e7469636174696f6e4572726f72282772656a65637465642729",
+        "Unauthorized",
+        "authorization_rejected",
+        "false",
+      ],
+      [
+        "d925496e7465726e616c5365727665724572726f72282772656d6f7465206661696c7572652729",
+        "InternalServerError",
+        "remote_server_error",
+        "true",
+      ],
+      [
+        messagePackStringHex(`APIError('${"x".repeat(300)}')`),
+        "APIError",
+        "agent_remote_failure",
+        "false",
+      ],
+    ] as const;
 
-connection = sqlite3.connect(db_path)
-connection.execute("CREATE TABLE writes (thread_id TEXT, channel TEXT, value BLOB)")
-connection.execute(
-    "INSERT INTO writes (thread_id, channel, value) VALUES (?, ?, ?)",
-    (
-        "thread-current",
-        "__error__",
-        sqlite3.Binary(
-            b"APIError('ResourceExhausted: Worker local total request limit reached "
-            b"(32/32) token=checkpoint-secret request_body=private-request "
-            b"model_message=private-model-message "
-            b"tool_argument=private-tool-argument "
-            b"tool_result=private-tool-result')"
+    for (const [valueHex, errorClass, category, retryable] of cases) {
+      const result = runPatchedNonInteractive(
+        persistedErrorDriver(
+          { "thread-current": rawPersistedRow("msgpack", valueHex) },
+          "thread-current",
         ),
-    ),
-)
-connection.commit()
-connection.close()
+      );
 
-exit_code = asyncio.run(target.run_non_interactive("task"))
-assert exit_code == 1
-os.unlink(db_path)
-`);
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(
+        `error_class=${errorClass} category=${category} retryable=${retryable} ` +
+          "correlation_id=thread-current",
+      );
+    }
+  });
+
+  it("does not infer provider capacity from a nested checkpoint name (#7415)", () => {
+    const result = runPatchedNonInteractive(
+      persistedErrorDriver(
+        {
+          "thread-current":
+            "APIError('ResourceExhausted: tool_result=private-tool-result " +
+            "token=checkpoint-secret')",
+        },
+        "thread-current",
+      ),
+    );
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain(
-      "error_class=ResourceExhausted category=upstream_provider_capacity retryable=true correlation_id=thread-current",
+      "error_class=APIError category=agent_remote_failure retryable=false " +
+        "correlation_id=thread-current",
     );
-    expect(result.stdout).toContain(
-      "Model request failed: ResourceExhausted (category=upstream_provider_capacity " +
-        "retryable=true correlation_id=thread-current)",
-    );
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("upstream_provider_capacity");
     expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
   });
 
@@ -138,16 +203,17 @@ os.unlink(db_path)
     );
 
     expect(result.status).toBe(0);
-    // The other thread's capacity row must never be borrowed; the unmatched row
-    // for this thread falls through to the exception-type classifier.
+    // The other thread's capacity row must never be borrowed. The current
+    // thread's root APIError class determines the result.
     expect(result.stderr).toContain(
-      "error_class=RemoteException category=agent_remote_failure retryable=false correlation_id=thread-current",
+      "error_class=APIError category=agent_remote_failure retryable=false " +
+        "correlation_id=thread-current",
     );
     expect(`${result.stdout}\n${result.stderr}`).not.toContain("upstream_provider_capacity");
     expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
   });
 
-  it("classifies transport and remote failures without claiming provider capacity (#8121)", () => {
+  it("classifies root transport and remote exception classes (#8121)", () => {
     const cases = [
       [
         "APIConnectionError('connect to inference.local')",
@@ -162,8 +228,6 @@ os.unlink(db_path)
         "authorization_rejected",
         "false",
       ],
-      ["{'error': 'upstream', 'status_code': 429}", "RateLimited", "rate_limited", "true"],
-      ["HTTP 503 from the managed route", "Unavailable", "route_unreachable", "true"],
       [
         "InternalServerError('an internal error occurred')",
         "InternalServerError",
@@ -198,10 +262,9 @@ os.unlink(db_path)
     expect(result.stderr).toContain("correlation_id=thread-policy");
   });
 
-  it("does not classify a supported name quoted inside payload content (#8121)", () => {
-    // Every name the classifiers support, placed where a model or tool payload
-    // would put it rather than where a serializer would. None may classify: the
-    // quoted text is the model's words, not the failure. (PRA-1 blocker)
+  it("does not classify a supported name inside scalar payload content (#8121)", () => {
+    // Only the root APIError class can classify. Each inner name belongs to
+    // payload text, including forms that start with `Name:` or `Name(`.
     const supportedNames = [
       "ResourceExhausted",
       "RateLimitError",
@@ -229,8 +292,12 @@ os.unlink(db_path)
       "ServiceUnavailable",
       "BadGateway",
     ];
-    const quoted = supportedNames.map((name) => `APIError('tool output: ${name}')`);
-    quoted.push("APIError('tool said status_code=429')");
+    const quoted = supportedNames.map((name) => `APIError('${name}: tool output')`);
+    quoted.push(
+      "APIError('ResourceExhausted(tool output)')",
+      "APIError({'payload': 'ResourceExhausted: tool output'})",
+      "APIError({'payloads': ['ResourceExhausted(tool output)']})",
+    );
 
     for (const persisted of quoted) {
       const result = runPatchedNonInteractive(
@@ -239,41 +306,70 @@ os.unlink(db_path)
 
       expect(result.status).toBe(0);
       expect(result.stderr).toContain(
-        "error_class=RemoteException category=agent_remote_failure retryable=false " +
+        "error_class=APIError category=agent_remote_failure retryable=false " +
           "correlation_id=thread-quoted",
       );
       expect(`${result.stdout}\n${result.stderr}`).not.toContain(persisted);
     }
   });
 
-  it("classifies a supported name in serialized position (#8121)", () => {
-    // The counterpart to the quoted-payload case: the same names classify when
-    // a serializer wrote them, including nested inside an outer exception repr.
+  it("rejects nested status and HTTP payloads in scalar exception text (#8121)", () => {
     const cases = [
-      [
-        "APIError('ResourceExhausted: Worker local total request limit reached (32/32)')",
-        "ResourceExhausted",
-        "upstream_provider_capacity",
-      ],
-      ["ResourceExhausted: capacity exceeded", "ResourceExhausted", "upstream_provider_capacity"],
-      ["openai.RateLimitError: rate limit exceeded", "RateLimited", "rate_limited"],
-    ] as const;
+      "APIError({'payload': {'status_code': 429}})",
+      "APIError({'payloads': [{'http_status': 503}]})",
+      "APIError({'payload': ['HTTP 503', 'ResourceExhausted: tool output']})",
+      "APIError('HTTP 503 from tool output')",
+      "APIError('status_code=429')",
+    ];
 
-    for (const [persisted, errorClass, category] of cases) {
+    for (const persisted of cases) {
       const result = runPatchedNonInteractive(
-        persistedErrorDriver({ "thread-serialized": persisted }, "thread-serialized"),
+        persistedErrorDriver({ "thread-nested": persisted }, "thread-nested"),
       );
 
       expect(result.status).toBe(0);
-      expect(result.stderr).toContain(`error_class=${errorClass} category=${category} `);
+      expect(result.stderr).toContain(
+        "error_class=APIError category=agent_remote_failure retryable=false " +
+          "correlation_id=thread-nested",
+      );
       expect(`${result.stdout}\n${result.stderr}`).not.toContain(persisted);
     }
   });
 
+  it("rejects checkpoint data without a root exception class (#8121)", () => {
+    const cases = [
+      // MessagePack map: {"payload": {"status_code": 429}}
+      rawPersistedRow("msgpack", "81a77061796c6f616481ab7374617475735f636f6465cd01ad"),
+      // MessagePack array: [429, 503]
+      rawPersistedRow("msgpack", "92cd01adcd01f7"),
+      rawPersistedRow(
+        "json",
+        Buffer.from('{"status_code":429,"message":"HTTP 503"}', "utf8").toString("hex"),
+      ),
+      rawPersistedRow("msgpack", messagePackStringHex("ResourceExhausted: tool output")),
+      rawPersistedRow("msgpack", messagePackStringHex("HTTP 503 from tool output")),
+      rawPersistedRow("msgpack", messagePackStringHex("openai.RateLimitError: tool output")),
+      rawPersistedRow("msgpack", "d9054142"),
+      rawPersistedRow("msgpack", "db00010000"),
+      rawPersistedRow("msgpack", "a1ff"),
+      rawPersistedRow("msgpack", ""),
+    ];
+
+    for (const persisted of cases) {
+      const result = runPatchedNonInteractive(
+        persistedErrorDriver({ "thread-shape": persisted }, "thread-shape"),
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(
+        "error_class=RemoteException category=agent_remote_failure retryable=false " +
+          "correlation_id=thread-shape",
+      );
+    }
+  });
+
   it("does not classify prose quoted from model or tool output (#8121)", () => {
-    // Each row carries a classifier word only inside quoted content, with no
-    // exception name and no named status field, so the checkpoint text must
-    // stay unclassified and the exception-type fallback must decide instead.
+    // Each classifier word belongs to the APIError payload, not its root class.
     const prose = [
       "APIError('tool output: timeout')",
       "APIError('the model replied: connection refused')",
@@ -288,10 +384,9 @@ os.unlink(db_path)
       );
 
       expect(result.status).toBe(0);
-      // The RemoteException fallback classification is the only verdict here:
-      // no transport, timeout, authorization, or rate-limit claim is made.
+      // The root APIError class is the only checkpoint classification here.
       expect(result.stderr).toContain(
-        "error_class=RemoteException category=agent_remote_failure retryable=false " +
+        "error_class=APIError category=agent_remote_failure retryable=false " +
           "correlation_id=thread-prose",
       );
       expect(`${result.stdout}\n${result.stderr}`).not.toContain(persisted);
@@ -337,7 +432,7 @@ target._NEMOCLAW_MANAGED_STATE_DB = db_path
 target.generate_thread_id = lambda: "thread-late-row"
 
 connection = sqlite3.connect(db_path)
-connection.execute("CREATE TABLE writes (thread_id TEXT, channel TEXT, value BLOB)")
+connection.execute("CREATE TABLE writes (thread_id TEXT, channel TEXT, type TEXT, value BLOB)")
 connection.commit()
 connection.close()
 
@@ -346,8 +441,16 @@ async def fail_then_persist(*args, **kwargs):
     del args, kwargs
     late = sqlite3.connect(db_path)
     late.execute(
-        "INSERT INTO writes (thread_id, channel, value) VALUES (?, '__error__', ?)",
-        ("thread-late-row", "APIConnectionError('connect to inference.local')"),
+        "INSERT INTO writes (thread_id, channel, type, value) "
+        "VALUES (?, '__error__', ?, ?)",
+        (
+            "thread-late-row",
+            "msgpack",
+            sqlite3.Binary(bytes.fromhex(
+                "d930415049436f6e6e656374696f6e4572726f722827636f6e6e65637420746f"
+                "20696e666572656e63652e6c6f63616c2729"
+            )),
+        ),
     )
     late.commit()
     late.close()
@@ -366,32 +469,46 @@ os.unlink(db_path)
       "error_class=Unavailable category=route_unreachable retryable=true " +
         "correlation_id=thread-late-row",
     );
-    // The exception-type fallback must not pre-empt a row that did arrive.
+    // The active exception must not pre-empt a typed row that did arrive.
     expect(`${result.stdout}\n${result.stderr}`).not.toContain("agent_remote_failure");
     expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
   });
 
-  it("scans only the newest rows within the persisted-row limit (#8121)", () => {
-    // 21 rows for the thread: the oldest carries the only classifiable cause,
-    // so it sits one row outside the 20-row window and must not be reached.
+  it("does not scan past the newest checkpoint error row (#8121)", () => {
+    // The newest row is a MessagePack map with no error-type path. An older
+    // scalar must not supply a diagnosis for it.
     const result = runPatchedNonInteractive(`
 ${runtimePreamble}
 handle, db_path = tempfile.mkstemp()
 os.close(handle)
 target._NEMOCLAW_MANAGED_STATE_DB = db_path
-target.generate_thread_id = lambda: "thread-row-limit"
+target.generate_thread_id = lambda: "thread-newest"
 
 connection = sqlite3.connect(db_path)
-connection.execute("CREATE TABLE writes (thread_id TEXT, channel TEXT, value BLOB)")
+connection.execute("CREATE TABLE writes (thread_id TEXT, channel TEXT, type TEXT, value BLOB)")
 connection.execute(
-    "INSERT INTO writes (thread_id, channel, value) VALUES (?, '__error__', ?)",
-    ("thread-row-limit", "APIConnectionError('connect to inference.local')"),
+    "INSERT INTO writes (thread_id, channel, type, value) "
+    "VALUES (?, '__error__', ?, ?)",
+    (
+        "thread-newest",
+        "msgpack",
+        sqlite3.Binary(bytes.fromhex(
+            "d930415049436f6e6e656374696f6e4572726f722827636f6e6e65637420746f"
+            "20696e666572656e63652e6c6f63616c2729"
+        )),
+    ),
 )
-for index in range(target._NEMOCLAW_PERSISTED_ERROR_ROW_LIMIT):
-    connection.execute(
-        "INSERT INTO writes (thread_id, channel, value) VALUES (?, '__error__', ?)",
-        ("thread-row-limit", f"APIError('unrecognized backend condition {index}')"),
-    )
+connection.execute(
+    "INSERT INTO writes (thread_id, channel, type, value) "
+    "VALUES (?, '__error__', ?, ?)",
+    (
+        "thread-newest",
+        "msgpack",
+        sqlite3.Binary(bytes.fromhex(
+            "81a77061796c6f616481ab7374617475735f636f6465cd01ad"
+        )),
+    ),
+)
 connection.commit()
 connection.close()
 
@@ -403,7 +520,7 @@ os.unlink(db_path)
     expect(result.status).toBe(0);
     expect(result.stderr).toContain(
       "error_class=RemoteException category=agent_remote_failure retryable=false " +
-        "correlation_id=thread-row-limit",
+        "correlation_id=thread-newest",
     );
     expect(`${result.stdout}\n${result.stderr}`).not.toContain("route_unreachable");
   });
