@@ -329,6 +329,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "patch-openclaw-issue-4434-diagnostics.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-managed-transport-diagnostics.mts"),
+    path.join(stagedScriptsDir, "patch-openclaw-managed-transport-diagnostics.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-device-self-approval.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-device-self-approval.mts"),
   );
