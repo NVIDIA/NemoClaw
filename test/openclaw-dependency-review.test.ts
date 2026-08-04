@@ -189,6 +189,21 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     );
   });
 
+  it("records the version-scoped managed outbound transport diagnostics patch (#7957)", () => {
+    const review = readFileSync(ACTIVE_DEPENDENCY_REVIEW, "utf-8");
+
+    expect(review).toContain("## Managed Outbound Transport Diagnostics");
+    expect(review).toContain("scripts/patch-openclaw-managed-transport-diagnostics.mts");
+    expect(review).toContain("The sibling SSE transport boundary is deliberately left unwrapped.");
+    expect(review).toContain("Failure-only.");
+    expect(review).toContain("never retries, never alters the request");
+    expect(review).toContain("The peer address is not recorded.");
+    expect(review).toContain("The `mcp-session-id` value is never emitted.");
+    expect(review).toContain("inert unless `OPENSHELL_SANDBOX=1`");
+    expect(review).toContain("test/openclaw-managed-transport-diagnostics-patch.test.ts");
+    expect(review).toContain("NVIDIA/OpenShell#2508");
+  });
+
   it("records the active mcporter advisory remediations", () => {
     const review = readFileSync(ACTIVE_DEPENDENCY_REVIEW, "utf-8");
 

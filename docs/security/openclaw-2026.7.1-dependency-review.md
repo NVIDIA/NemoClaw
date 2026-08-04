@@ -433,6 +433,37 @@ The proof asserts that the rejected-credential scenario is contacted once per ru
 
 Removal criterion: drop this patch when the reviewed OpenClaw release provides equivalent bounded startup retry, negative-catalog invalidation, and temporary-transport failure attribution.
 
+## Managed Outbound Transport Diagnostics
+
+`scripts/patch-openclaw-managed-transport-diagnostics.mts` is a version-scoped, fail-closed compatibility patch for issue #7957.
+In `2026.7.1`, a failed remote Streamable HTTP MCP request surfaces only the transport error text, such as `fetch failed` or a request timeout.
+That text does not say whether policy evaluation, proxy CONNECT, TLS setup, the upstream connection, the request, the response headers, or the response stream failed, so an operator has to correlate agent output with OpenShell audit logs by hand.
+
+The patch wraps the `fetch` passed to `StreamableHTTPClientTransport` and identifies its target by the `"openclaw-bundle-mcp"` client identity, requiring the rewritten anchor to appear exactly once.
+The sibling SSE transport boundary is deliberately left unwrapped.
+An unrecognized compiled shape fails the image build instead of silently skipping.
+`--audit` re-verifies the applied state.
+
+Reviewed behavior:
+
+- Failure-only. A 2xx response returns untouched and emits nothing, so normal traffic produces no per-request logging.
+- The wrapper never retries, never alters the request, never changes proxy selection, and never weakens TLS verification. A thrown transport error is rethrown unchanged.
+- An error body is read only for a non-2xx response, only for an allowed content type, bounded to 2048 bytes, and taken from `response.clone()` so the caller still owns the original body and streaming stays behaviorally unchanged.
+- Response metadata is an allowlist: `content-type`, `retry-after`, `server`, `via`, `x-request-id`, and the `x-envoy-*` diagnostic fields. Authorization, cookie, and every other header are never read.
+- The cause chain is bounded to 8 entries and keeps only error name, code, errno, syscall, address family, and port. The peer address is not recorded. Messages pass a redaction pass for bearer tokens, credential assignments, and session identifiers.
+- Session state is reported as a boolean. The `mcp-session-id` value is never emitted.
+- Phase classification reuses the existing CONNECT, policy, and timeout vocabulary rather than a second taxonomy, and resolves a policy denial ahead of the transport code that accompanies it.
+- The wrapper is inert unless `OPENSHELL_SANDBOX=1`, so it does not change host-side behavior.
+
+This patch does not correlate its `trace_id` with an OpenShell audit event.
+`NVIDIA/OpenShell#2508` tracks span emission from the sandbox supervisor, and the OCSF `http_request` object in the pinned OpenShell `0.0.85` has no slot for a request-scoped correlation identifier, so a shared identifier is not representable today.
+The generated identifier is emitted anyway to keep the event schema stable once that upstream capability lands.
+
+Coverage: `test/openclaw-managed-transport-diagnostics-patch.test.ts` pins the compiled preimage, patch idempotence, fail-closed rejection of an unrecognized shape, the untouched SSE boundary, and the injected runtime's failure-only emission, no-retry contract, header allowlist, session-presence reporting, phase classification, and sandbox gating.
+`src/lib/observability/managed-transport.test.ts` covers the shared schema, redaction, and classification the event shape follows.
+
+Removal criterion: drop this patch when the reviewed OpenClaw release emits phase-classified, redacted transport diagnostics for remote MCP fetch failures.
+
 ## Gateway Startup Migration Compatibility
 
 OpenClaw `2026.7.1` requires its migration checkpoint to complete without

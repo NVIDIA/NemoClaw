@@ -12,7 +12,7 @@ const SAFE_IPV6_ENDPOINT_RE = /^\[[0-9A-Fa-f:.]{2,45}\]:\d{1,5}$/;
 const MAX_DNS_HOST_LENGTH = 253;
 const MAX_NETWORK_PORT = 65_535;
 
-function isSafeEndpoint(candidate: string): boolean {
+export function isSafeEndpoint(candidate: string): boolean {
   const separator = candidate.lastIndexOf(":");
   if (separator === -1) return false;
   const port = Number(candidate.slice(separator + 1));
