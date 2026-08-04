@@ -13,63 +13,16 @@ The shared image runtime uses the official `@modelcontextprotocol/sdk` client so
 - License: MIT
 - Locked production graph: `package-lock.json` (lockfile version 3)
 - Build-only tools: `typescript@6.0.3`, `@types/node@25.5.2`, and `esbuild@0.27.4` (not copied into the final image)
-- Security overrides: `@hono/node-server@2.0.11`, `fast-uri@3.1.5`,
-  `hono@4.12.34`, and `ip-address@10.3.1`
+- Security overrides: `@hono/node-server@2.0.11` and `fast-uri@3.1.4`
 
 OpenClaw's `mcporter` dependency graph also resolves the official SDK but remains separately locked. This runtime keeps a direct lock because Hermes and LangChain Deep Agents Code must not depend on OpenClaw's adapter package.
-The client bundle includes the SDK's AJV validation path, including `ajv-formats` and `fast-uri`, plus `content-type` for standards-compliant response media-type parsing; the `fast-uri` override and `content-type` license are therefore runtime-relevant. It does not include the SDK's Hono server adapter, `hono`, or `ip-address`. The build enforces the exact reviewed bundle-package allowlist and emits `BUNDLED_PACKAGES.json` alongside the generated third-party license notice. The exact overrides keep the install and runtime graphs clear of the reviewed advisories without changing the SDK client pin.
-
-## August 3, 2026 Security Override Refresh
-
-The refresh retains `@hono/node-server@2.0.11` and replaces three affected
-transitive versions in the committed production graph.
-The retained Hono server override keeps the graph clear of
-`GHSA-frvp-7c67-39w9`.
-The SDK declares `hono@^4.11.4`, its `express-rate-limit@8.5.2` graph declares
-`ip-address@^10.2.0`, and its AJV graph declares `fast-uri@^3.0.1`.
-`fast-uri@3.1.4` is affected by `GHSA-7p8r-x3mc-p8w7`.
-The `3.1.5` replacement is outside that affected range and remains outside the
-affected range for `GHSA-v2hh-gcrm-f6hx`.
-`hono@4.12.30` is affected by `GHSA-8j4g-w8fx-2239`.
-The `4.12.34` replacement is outside the affected range.
-`ip-address@10.2.0` is affected by `GHSA-mwp4-54f8-5fhr`, and its replacement
-also contains the corrections for `GHSA-4xrf-jv44-h6hh` and
-`GHSA-22jq-vg5j-6vgg`.
-
-The reviewed override identities are:
-
-- `@hono/node-server@2.0.11`
-  - Registry tarball: `https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz`
-  - Integrity: `sha512-bjD221KPLoJTWUwso1J6fGKiTXEUFedG/s0visavY4zakFPkeGURMRNly+FhBHs7T8Dz4qHaZIMX9ZoJHSJtKA==`
-  - License: MIT
-  - Node.js engine: `>=20`
-- `fast-uri@3.1.5`
-  - Registry tarball: `https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz`
-  - Integrity: `sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==`
-  - License: BSD-3-Clause
-  - Node.js engine: no package `engines` declaration
-- `hono@4.12.34`
-  - Registry tarball: `https://registry.npmjs.org/hono/-/hono-4.12.34.tgz`
-  - Integrity: `sha512-GqXJqY/xJkJmuloTrnV1ZEXG3fqte+VjkUqoRNZXcrUidiUOP4fMSIHHY4tsqZBK++kVyWmt/AAfSUuy57/eSA==`
-  - License: MIT
-  - Node.js engine: `>=16.9.0`
-- `ip-address@10.3.1`
-  - Registry tarball: `https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz`
-  - Integrity: `sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==`
-  - License: MIT
-  - Node.js engine: `>= 12`
-
-The `fast-uri` replacement remains in the executable bundle.
-The `hono` and `ip-address` replacements remain install-graph inputs only, and
-the exact bundle allowlist excludes them from the executable bundle.
-The `@hono/node-server@2.0.11` override remains separate from the
-`hono@4.12.34` override and preserves the reviewed SDK server-range boundary.
+The client bundle includes the SDK's AJV validation path, including `ajv-formats` and `fast-uri`, plus `content-type` for standards-compliant response media-type parsing; the `fast-uri` override and `content-type` license are therefore runtime-relevant. It does not include the SDK's Hono server adapter. The build enforces the exact reviewed bundle-package allowlist and emits `BUNDLED_PACKAGES.json` alongside the generated third-party license notice. The exact overrides keep the install and runtime graphs clear of `GHSA-frvp-7c67-39w9` and `GHSA-v2hh-gcrm-f6hx` without changing the SDK client pin.
 
 ## 1.29.0 to 1.30.0 migration review
 
 The audited adjacent range contains 10 upstream commits. The published `1.30.0` tag resolves to commit `2d889f2b329e46680ec9bdd565de4616c497825a`, descends from the published `v1.29.0` tag at `e12cbd7078db388152f6e839abdbe09ba01f3f32`, and contains the required client media-type fix at `69749aa5081ddfe675d36da8d96c7e27d83742b8`. The npm publication's `gitHead` matches the target tag, and its registry signature and build provenance verify.
 
-The required client change replaces case-sensitive substring checks with parsed, normalized media types when selecting JSON or SSE response handling. This fixes standards-valid case variants such as `Text/Event-Stream; Charset=UTF-8`. The remaining commits affect SDK server error formatting, server SSE keepalive lifecycle, stdio buffering, upstream tests and workflows, Zod type compatibility, the server-only Hono version range, and the release version. NemoClaw's bundled client does not include the server or stdio implementations, and the committed `@hono/node-server` override remains `2.0.11`.
+The required client change replaces case-sensitive substring checks with parsed, normalized media types when selecting JSON or SSE response handling. This fixes standards-valid case variants such as `Text/Event-Stream; Charset=UTF-8`. The remaining commits affect SDK server error formatting, server SSE keepalive lifecycle, stdio buffering, upstream tests and workflows, Zod type compatibility, the server-only Hono version range, and the release version. NemoClaw's bundled client does not include the server or stdio implementations, and the committed Hono override remains `2.0.11`.
 
 Concern ledger:
 
@@ -104,14 +57,6 @@ SDK 1.30.0 migration evidence on 2026-07-28:
 - Exact bundle: 11 packages matching the reviewed allowlist in `BUNDLED_PACKAGES.json`, including `content-type@1.0.5`
 - `npm run typecheck` and `npm run bundle`: passed
 
-Transitive security refresh evidence on August 3, 2026, under Node.js `22.23.1`
-and npm `10.9.4`:
-
-- `npm audit signatures`: 98 packages with verified registry signatures and 12 packages with verified attestations
-- `npm test`, `npm run typecheck`, and `npm run bundle`: passed
-- Exact bundle: 11 packages matching the reviewed allowlist in `BUNDLED_PACKAGES.json`
-- `npm audit --omit=dev --audit-level=low`: 0 vulnerabilities
-
 ## Updating
 
 Regenerate and review the graph explicitly:
@@ -127,8 +72,3 @@ $ npm --prefix tools/mcp-tool-discovery-runtime audit --omit=dev --audit-level=l
 ```
 
 Update this review, the exact package pin, and the committed lock together. Do not replace the lock with a floating install or reuse an agent-specific dependency tree.
-Keep each exact security override until a reviewed `@modelcontextprotocol/sdk`
-release resolves a version outside the corresponding affected range.
-Remove an override only after regenerating the committed lock and passing the
-registry-signature, package test, typecheck, exact bundle, and low-threshold
-production audit checks.

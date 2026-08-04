@@ -332,11 +332,6 @@
       "category": "security"
     },
     {
-      "file": "test/mcp-tool-discovery-image-contract.test.ts",
-      "test": "pins the audited MCP discovery transitive graph (#8156)",
-      "category": "security"
-    },
-    {
       "file": "test/mcp-openshell-workflow.test.ts",
       "test": "keeps the setup docs aligned with the stable default",
       "category": "compatibility"
