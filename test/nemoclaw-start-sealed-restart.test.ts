@@ -9,36 +9,12 @@ import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 
-function extractShellFunction(src: string, name: string): string {
-  const header = `${name}() {`;
-  const start = src.indexOf(header);
-  if (start === -1) throw new Error(`Expected ${name} in scripts/nemoclaw-start.sh`);
-  const bodyStart = start + header.length;
-  const lines = src.slice(bodyStart).split(/(?<=\n)/);
-  let offset = 0;
-  let heredocEnd: string | undefined;
-  for (const line of lines) {
-    const bareLine = line.replace(/\r?\n$/, "");
-    if (heredocEnd) {
-      offset += line.length;
-      if (bareLine === heredocEnd) heredocEnd = undefined;
-      continue;
-    }
-    const heredoc = line.match(/<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/);
-    if (heredoc) heredocEnd = heredoc[1];
-    if (bareLine === "}") return `${name}() {${src.slice(bodyStart, bodyStart + offset)}\n}`;
-    offset += line.length;
-  }
-  throw new Error(`Expected closing brace for ${name} in scripts/nemoclaw-start.sh`);
-}
-
 describe("nemoclaw-start sealed restart", () => {
   it("preserves the sealed gateway token during non-root startup with Shields up (#8112)", () => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
     const script = [
       "set -euo pipefail",
-      extractShellFunction(src, "needs_gateway_token_for_current_command"),
-      extractShellFunction(src, "prepare_gateway_token_for_current_command"),
+      `eval "$(sed -n '/^needs_gateway_token_for_current_command() {$/,/^}$/p' "$1")"`,
+      `eval "$(sed -n '/^prepare_gateway_token_for_current_command() {$/,/^}$/p' "$1")"`,
       "id() { echo 998; }",
       "openclaw_config_dir_owner() { echo root; }",
       "_read_gateway_token() { echo sealed-token; }",
@@ -48,7 +24,11 @@ describe("nemoclaw-start sealed restart", () => {
       "prepare_gateway_token_for_current_command",
     ].join("\n");
 
-    const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+    const result = spawnSync("bash", ["-s", "--", START_SCRIPT], {
+      input: script,
+      encoding: "utf-8",
+      timeout: 5000,
+    });
 
     expect(result.status).toBe(0);
     expect(result.stdout).not.toContain("SHOULD_NOT");
@@ -59,11 +39,10 @@ describe("nemoclaw-start sealed restart", () => {
   });
 
   it("refuses non-root startup when the sealed config has no gateway token (#8112)", () => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
     const script = [
       "set -euo pipefail",
-      extractShellFunction(src, "needs_gateway_token_for_current_command"),
-      extractShellFunction(src, "prepare_gateway_token_for_current_command"),
+      `eval "$(sed -n '/^needs_gateway_token_for_current_command() {$/,/^}$/p' "$1")"`,
+      `eval "$(sed -n '/^prepare_gateway_token_for_current_command() {$/,/^}$/p' "$1")"`,
       "id() { echo 998; }",
       "openclaw_config_dir_owner() { echo root; }",
       "_read_gateway_token() { :; }",
@@ -73,7 +52,11 @@ describe("nemoclaw-start sealed restart", () => {
       "prepare_gateway_token_for_current_command",
     ].join("\n");
 
-    const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+    const result = spawnSync("bash", ["-s", "--", START_SCRIPT], {
+      input: script,
+      encoding: "utf-8",
+      timeout: 5000,
+    });
 
     expect(result.status).toBe(1);
     expect(result.stdout).not.toContain("SHOULD_NOT");
