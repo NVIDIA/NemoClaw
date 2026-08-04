@@ -34,9 +34,9 @@ cannot trigger cleanup against the planned sandbox name; after receipt
 validation, both the cleanup request and its result are bound to the exact
 sandbox ID.
 
-`scripts/managed-bootstrap-entrypoint.c` defines the image-owned native boundary
-that the later all-agent packaging slice will compile as a freestanding Linux
-amd64 or arm64 artifact and install as
+`scripts/managed-bootstrap-entrypoint.c` defines the image-owned native boundary.
+The OpenClaw, Hermes, and LangChain Deep Agents Code image definitions compile
+it as a freestanding Linux amd64 or arm64 artifact and install it as
 `/usr/local/bin/nemoclaw-managed-bootstrap`. The artifact must have no dynamic
 ELF interpreter, dynamic section, undefined symbol, or C library startup. Its
 entry point uses direct Linux system calls. It copies the bounded supervisor
