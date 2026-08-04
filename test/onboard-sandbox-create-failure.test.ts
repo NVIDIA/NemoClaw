@@ -116,4 +116,52 @@ describe("sandbox create failure diagnostics", () => {
       "gateway_tail=",
     );
   });
+
+  it("preserves the redacted final create failure and discovers Homebrew gateway logs (#8202)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-macos-"));
+    const homeDir = path.join(tmp, "home");
+    const homebrewPrefix = path.join(tmp, "homebrew");
+    const logDir = path.join(homebrewPrefix, "var", "log", "openshell");
+    const gatewayLogPath = path.join(logDir, "openshell-gateway.err.log");
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.writeFileSync(
+      gatewayLogPath,
+      [
+        "create_sandbox received sandbox_name=my-assistant",
+        "ERROR builder failed to solve: gateway-side build failed",
+      ].join("\n"),
+    );
+    const secret = ["create", "output", "secret", "canary"].join("-");
+    const createOutput = [
+      "initial Dockerfile output",
+      "x".repeat(34_000),
+      "ERROR: process /bin/sh -c install-agent failed",
+      `Authorization: Bearer ${secret}`,
+    ].join("\n");
+
+    const diagnostics = collectSandboxCreateFailureDiagnostics("my-assistant", {
+      homeDir,
+      homebrewPrefix,
+      createOutput,
+      now: new Date("2026-05-12T20:35:00.000Z"),
+    });
+
+    expect(diagnostics?.gatewayLogPath).toBe(gatewayLogPath);
+    expect(diagnostics?.createOutputPath).toBe(
+      path.join(diagnostics!.dir, "sandbox-create-output.log"),
+    );
+    const savedCreateOutput = fs.readFileSync(diagnostics!.createOutputPath!, "utf-8");
+    expect(savedCreateOutput).toContain("[diagnostic truncated; showing final output]");
+    expect(savedCreateOutput).toContain("ERROR: process /bin/sh -c install-agent failed");
+    expect(savedCreateOutput).not.toContain("initial Dockerfile output");
+    expect(savedCreateOutput).not.toContain(secret);
+    const relevant = fs.readFileSync(
+      path.join(diagnostics!.dir, "openshell-gateway-relevant.log"),
+      "utf-8",
+    );
+    expect(relevant).toContain("gateway-side build failed");
+    const summary = fs.readFileSync(path.join(diagnostics!.dir, "summary.txt"), "utf-8");
+    expect(summary).toContain(`create_output=${diagnostics!.createOutputPath}`);
+    expect(summary).toContain("ERROR: process /bin/sh -c install-agent failed");
+  });
 });

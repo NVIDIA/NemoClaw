@@ -88,11 +88,15 @@ describe("sandbox base-image build diagnostics", () => {
     expect(output).toContain("****");
   });
 
-  it("bounds captured build diagnostics before returning them", () => {
-    const output = formatBuildFailureDiagnostics({ stderr: "x".repeat(10_000) });
+  it("bounds captured build diagnostics while preserving the final failure", () => {
+    const output = formatBuildFailureDiagnostics({
+      stderr: `initial Dockerfile output\n${"x".repeat(10_000)}\nERROR: final build step failed`,
+    });
 
     expect(output.length).toBeLessThan(8_100);
-    expect(output.endsWith("[diagnostic truncated]")).toBe(true);
+    expect(output.startsWith("[diagnostic truncated; showing final output]")).toBe(true);
+    expect(output).toContain("ERROR: final build step failed");
+    expect(output).not.toContain("initial Dockerfile output");
   });
 
   it("surfaces a redacted spawn failure cause", () => {

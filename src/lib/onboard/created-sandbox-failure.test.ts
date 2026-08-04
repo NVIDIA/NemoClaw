@@ -72,6 +72,7 @@ describe("reportSandboxCreateFailure", () => {
     ).toThrow(ExitSignal);
     expect(deps.printCreateFailureDiagnostics).toHaveBeenCalledWith("alpha", {
       backupPath: "/tmp/backup",
+      createOutput: "boom",
     });
     expect(deps.printRecoveryHints).toHaveBeenCalledWith("boom", {
       createArgs: ["sandbox", "create", "alpha"],
@@ -139,6 +140,15 @@ describe("reportSandboxCreateFailure", () => {
     expect(hinted).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz1234567890");
     expect(hinted).not.toContain("sk-abcdefghijklmnopqrstuvwxyz1234567890");
     expect(hinted).not.toContain("AKIAABCDEFGHIJKLMNOP"); // gitleaks:allow
+    const diagnosticOutput = String(
+      (deps.printCreateFailureDiagnostics as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]
+        ?.createOutput,
+    );
+    expect(diagnosticOutput).toContain("<REDACTED>");
+    expect(diagnosticOutput).not.toContain("secret-token");
+    expect(diagnosticOutput).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz1234567890");
+    expect(diagnosticOutput).not.toContain("sk-abcdefghijklmnopqrstuvwxyz1234567890");
+    expect(diagnosticOutput).not.toContain("AKIAABCDEFGHIJKLMNOP"); // gitleaks:allow
   });
 
   it("falls back to exit code 1 when the create status is zero", () => {

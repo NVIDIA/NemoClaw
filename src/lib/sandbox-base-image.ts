@@ -48,7 +48,7 @@ export * from "./sandbox-base-image/source-identity";
 export * from "./sandbox-base-image/types";
 
 const BUILD_FAILURE_DIAGNOSTIC_LIMIT = 8_000;
-const BUILD_FAILURE_TRUNCATED_SUFFIX = "\n[diagnostic truncated]";
+const BUILD_FAILURE_TRUNCATED_PREFIX = "[diagnostic truncated; showing final output]\n";
 
 /**
  * Combine stderr + stdout from a captured `dockerBuild` failure and pass them
@@ -82,7 +82,7 @@ export function formatBuildFailureDiagnostics(buildResult: {
     diagnostics = diagnostics.replaceAll(prefix, replacement);
   }
   return diagnostics.length > BUILD_FAILURE_DIAGNOSTIC_LIMIT
-    ? `${diagnostics.slice(0, BUILD_FAILURE_DIAGNOSTIC_LIMIT)}${BUILD_FAILURE_TRUNCATED_SUFFIX}`
+    ? `${BUILD_FAILURE_TRUNCATED_PREFIX}${diagnostics.slice(-BUILD_FAILURE_DIAGNOSTIC_LIMIT)}`
     : diagnostics;
 }
 

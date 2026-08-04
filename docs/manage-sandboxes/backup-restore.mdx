@@ -43,7 +43,12 @@ It preserves OpenShell credential placeholders so rebuild can reattach the host-
 If NemoClaw cannot sanitize a copied configuration or environment file, it omits that file from the snapshot.
 If it cannot remove the unsafe file, snapshot creation returns an error.
 It deletes the incomplete backup when cleanup succeeds and reports when the backup remains.
-This sanitization uses an isolated `python3` helper on POSIX hosts to keep reads, replacements, and removals anchored to opened directory descriptors.
+Snapshot sanitization on POSIX hosts requires Python 3 from a trusted absolute path.
+NemoClaw checks fixed installation paths and the directory that contains the Node.js executable.
+It does not resolve the helper through `PATH`, which can contain user-controlled entries.
+If no trusted interpreter is available, snapshot creation removes the incomplete backup when possible and tells you to install Python 3 before rerunning the command.
+Install Python 3 through your operating-system package manager or Homebrew, then rerun `$$nemoclaw <name> snapshot create`.
+NemoClaw runs the helper in isolated mode to keep reads, replacements, and removals anchored to opened directory descriptors.
 If a copied file or parent directory changes identity during the operation, snapshot creation fails closed instead of following the changed path.
 
 <AgentOnly variant="hermes">

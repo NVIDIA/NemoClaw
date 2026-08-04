@@ -528,6 +528,20 @@ Upgrade NemoClaw to a version that supports your OpenShell release, or install a
 For fresh installs, NemoClaw passes the blueprint range to `install-openshell.sh` and resolves a compatible published OpenShell release before downloading.
 If GitHub release metadata is unavailable, the script uses its bundled fallback pin and the post-install gate still enforces the configured range.
 
+### Review Sandbox Creation Diagnostics
+
+When onboarding fails during `openshell sandbox create`, NemoClaw prints the redacted failure and exits with a nonzero status.
+Expected CLI failures show the actionable message without internal Node.js stack frames.
+The `Diagnostics saved:` line identifies the exact bundle path under the active NemoClaw state root.
+The default path is `~/.nemoclaw/onboard-failures/`; a custom gateway port uses `~/.nemoclaw/gateways/<port>/onboard-failures/`.
+
+Open `summary.txt` in the printed directory first.
+It records the retained output path under `create_output` and shows the final error lines under `failure_excerpt`.
+The `sandbox-create-output.log` file retains a bounded tail of the sandbox creation output.
+The bundle also retains any available OpenShell gateway or virtual machine console logs.
+This keeps the failing gateway or image-build step available on Linux and macOS, even when the gateway log or console output path is unavailable.
+Correct the failure reported in the bundle before you rerun `$$nemoclaw onboard --resume`.
+
 <AgentOnly variant="openclaw">
 
 ### Sandbox build fails during OpenClaw plugin install

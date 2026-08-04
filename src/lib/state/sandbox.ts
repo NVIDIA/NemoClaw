@@ -47,7 +47,10 @@ import {
 } from "../domain/backup-failure.js";
 import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
-import { sanitizeSnapshotDirectory } from "../security/snapshot-sanitizer.js";
+import {
+  SnapshotSanitizerPrerequisiteError,
+  sanitizeSnapshotDirectory,
+} from "../security/snapshot-sanitizer.js";
 import {
   buildRestoreCleanupCommand,
   buildRestoreTarArgs,
@@ -713,21 +716,34 @@ export function sanitizeBackupDirectory(
   try {
     operations.sanitizeDirectory(dirPath);
   } catch (error) {
+    const prerequisiteMessage =
+      error instanceof SnapshotSanitizerPrerequisiteError ? `${error.message} ` : "";
     try {
       operations.removeBackup(dirPath);
     } catch (cleanupError) {
-      throw new Error("Credential sanitization failed and backup cleanup failed", {
-        cause: cleanupError,
-      });
+      throw new Error(
+        prerequisiteMessage
+          ? `${prerequisiteMessage}NemoClaw could not remove the incomplete snapshot backup.`
+          : "Credential sanitization failed and backup cleanup failed",
+        {
+          cause: cleanupError,
+        },
+      );
     }
     if (operations.backupExists(dirPath)) {
-      throw new Error("Credential sanitization failed and the incomplete backup remains", {
-        cause: error,
-      });
+      throw new Error(
+        prerequisiteMessage
+          ? `${prerequisiteMessage}The incomplete snapshot backup remains.`
+          : "Credential sanitization failed and the incomplete backup remains",
+        { cause: error },
+      );
     }
-    throw new Error("Credential sanitization failed; removed the incomplete backup", {
-      cause: error,
-    });
+    throw new Error(
+      prerequisiteMessage
+        ? `${prerequisiteMessage}NemoClaw removed the incomplete snapshot backup.`
+        : "Credential sanitization failed; removed the incomplete backup",
+      { cause: error },
+    );
   }
 }
 

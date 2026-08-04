@@ -67,7 +67,7 @@ export function setSnapshotSanitizerPythonPathForTest(
   snapshotSanitizerPythonPathForTest = pythonPath;
 }
 
-function snapshotSanitizerPythonPath(): string | null {
+export function resolveSnapshotSanitizerPythonPath(): string | null {
   if (process.env.VITEST === "true" && snapshotSanitizerPythonPathForTest !== undefined) {
     return snapshotSanitizerPythonPathForTest;
   }
@@ -719,7 +719,7 @@ export function scanDescriptorSnapshot(
   targetName?: string,
 ): DescriptorSnapshotScan | null {
   const mode = targetName === undefined ? "scan-tree" : "scan-file";
-  const pythonPath = snapshotSanitizerPythonPath();
+  const pythonPath = resolveSnapshotSanitizerPythonPath();
   if (pythonPath === null) return null;
   const result = spawnSync(
     pythonPath,
@@ -751,7 +751,7 @@ export function applyDescriptorSnapshotActions(
   actions: readonly SnapshotSanitizationAction[],
 ): boolean {
   if (actions.length === 0) return true;
-  const pythonPath = snapshotSanitizerPythonPath();
+  const pythonPath = resolveSnapshotSanitizerPythonPath();
   if (pythonPath === null) return false;
   const result = spawnSync(
     pythonPath,
@@ -774,7 +774,7 @@ export function installDescriptorSnapshotFile(
   content: string,
 ): boolean {
   if (!isSafeRelativePath(targetName) || targetName.includes("/")) return false;
-  const pythonPath = snapshotSanitizerPythonPath();
+  const pythonPath = resolveSnapshotSanitizerPythonPath();
   if (pythonPath === null) return false;
   const result = spawnSync(
     pythonPath,

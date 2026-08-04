@@ -8,11 +8,16 @@ import path from "node:path";
 import { GATEWAY_PORT } from "../core/ports";
 import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
+import { redactSandboxCreateFailureOutput } from "./created-sandbox-failure";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const MAX_RELEVANT_LOG_LINES = 120;
 const MAX_GATEWAY_TAIL_LINES = 240;
+const MAX_CREATE_OUTPUT_LINES = 240;
+const MAX_CREATE_OUTPUT_CHARS = 32_000;
+const MAX_FAILURE_EXCERPT_LINES = 8;
+const TRUNCATED_OUTPUT_MARKER = "[diagnostic truncated; showing final output]";
 
 export type SandboxCreateFailureDiagnostics = {
   dir: string;
@@ -22,6 +27,7 @@ export type SandboxCreateFailureDiagnostics = {
   consoleOutput: string | null;
   copiedConsoleOutput: string | null;
   gatewayTailPath: string | null;
+  createOutputPath: string | null;
   backupPath: string | null;
   summaryLines: string[];
 };
@@ -29,6 +35,8 @@ export type SandboxCreateFailureDiagnostics = {
 export type SandboxCreateFailureDiagnosticOptions = {
   homeDir?: string;
   gatewayLogPath?: string | null;
+  homebrewPrefix?: string | null;
+  createOutput?: string | null;
   backupPath?: string | null;
   now?: Date;
 };
@@ -45,8 +53,8 @@ function timestampForPath(now: Date): string {
   return now.toISOString().replace(/[:.]/g, "-");
 }
 
-function gatewayLogCandidates(homeDir: string): string[] {
-  return [
+function gatewayLogCandidates(homeDir: string, homebrewPrefix?: string | null): string[] {
+  const candidates = [
     path.join(
       homeDir,
       ".local",
@@ -57,15 +65,57 @@ function gatewayLogCandidates(homeDir: string): string[] {
     ),
     path.join(homeDir, ".local", "state", "openshell", "openshell-gateway.log"),
   ];
+  const homebrewPrefixes = [
+    homebrewPrefix,
+    process.env.HOMEBREW_PREFIX,
+    "/opt/homebrew",
+    "/usr/local",
+  ].filter((prefix): prefix is string => Boolean(prefix) && path.isAbsolute(prefix as string));
+  for (const prefix of new Set(homebrewPrefixes)) {
+    candidates.push(
+      path.join(prefix, "var", "log", "openshell", "openshell-gateway.err.log"),
+      path.join(prefix, "var", "log", "openshell", "openshell-gateway.out.log"),
+    );
+  }
+  return candidates;
+}
+
+function latestGatewayLogPath(candidates: string[]): string | null {
+  let latest: { path: string; modified: number } | null = null;
+  for (const candidate of candidates) {
+    try {
+      const stat = fs.statSync(candidate);
+      if (!stat.isFile()) continue;
+      if (latest === null || stat.mtimeMs > latest.modified) {
+        latest = { path: candidate, modified: stat.mtimeMs };
+      }
+    } catch {
+      // Continue to the next known log location.
+    }
+  }
+  return latest?.path ?? null;
 }
 
 function readLogLines(filePath: string): string[] | null {
   try {
     if (!fs.existsSync(filePath)) return null;
-    return stripAnsi(fs.readFileSync(filePath, "utf-8")).split(/\r?\n/);
+    return redactSandboxCreateFailureOutput(stripAnsi(fs.readFileSync(filePath, "utf-8"))).split(
+      /\r?\n/,
+    );
   } catch {
     return null;
   }
+}
+
+function createOutputTail(value: string | null | undefined): string[] {
+  const redacted = redactSandboxCreateFailureOutput(stripAnsi(value ?? "")).trim();
+  if (!redacted) return [];
+  const wasTruncated = redacted.length > MAX_CREATE_OUTPUT_CHARS;
+  const lines = (wasTruncated ? redacted.slice(-MAX_CREATE_OUTPUT_CHARS) : redacted)
+    .split(/\r?\n/)
+    .filter((line) => line.trim());
+  if (!wasTruncated) return lines.slice(-MAX_CREATE_OUTPUT_LINES);
+  return [TRUNCATED_OUTPUT_MARKER, ...lines.slice(-(MAX_CREATE_OUTPUT_LINES - 1))];
 }
 
 function extractField(line: string, field: string): string | null {
@@ -113,7 +163,9 @@ function filterRelevantLines(
     if (!line.trim()) return false;
     if (line.includes(`sandbox_name=${sandboxName}`)) return true;
     if (sandboxId && line.includes(`sandbox_id=${sandboxId}`)) return true;
-    return /ERROR krun|VmCreate|ProcessExited|console_output=|state_dir=/.test(line);
+    return /\bERROR\b|failed to (?:build|solve)|VmCreate|ProcessExited|console_output=|state_dir=/i.test(
+      line,
+    );
   });
   return relevant.slice(-MAX_RELEVANT_LOG_LINES);
 }
@@ -172,8 +224,7 @@ export function collectSandboxCreateFailureDiagnostics(
 
   const gatewayLogPath =
     options.gatewayLogPath ??
-    gatewayLogCandidates(homeDir).find((candidate) => fs.existsSync(candidate)) ??
-    null;
+    latestGatewayLogPath(gatewayLogCandidates(homeDir, options.homebrewPrefix));
   const rawLines = gatewayLogPath ? readLogLines(gatewayLogPath) : null;
   const block = rawLines ? findLatestSandboxBlock(rawLines, sandboxName) : [];
   const sandboxId = getLatestSandboxId(block, sandboxName);
@@ -192,6 +243,13 @@ export function collectSandboxCreateFailureDiagnostics(
   );
   const stateEntries = listStateDir(stateDir);
   const backupPath = options.backupPath ?? null;
+  const createOutputLines = createOutputTail(options.createOutput);
+  const createOutputPath =
+    createOutputLines.length > 0 ? path.join(dir, "sandbox-create-output.log") : null;
+
+  if (createOutputPath) {
+    fs.writeFileSync(createOutputPath, `${createOutputLines.join("\n")}\n`, { mode: 0o600 });
+  }
 
   if (relevantLines.length > 0) {
     fs.writeFileSync(
@@ -213,11 +271,23 @@ export function collectSandboxCreateFailureDiagnostics(
     `sandbox_id=${sandboxId ?? "unknown"}`,
     `gateway_log=${gatewayLogPath ?? "not-found"}`,
     `gateway_tail=${gatewayTailPath ?? "not-written"}`,
+    `create_output=${createOutputPath ?? "not-written"}`,
     `state_dir=${stateDir ?? "unknown"}`,
     `console_output=${consoleOutput ?? "unknown"}`,
     `copied_console_output=${copiedConsoleOutput ?? "not-copied"}`,
     `backup_path=${backupPath ?? "none"}`,
   ];
+  const failureExcerpt = (
+    createOutputLines.length > 0
+      ? createOutputLines
+      : relevantLines.length > 0
+        ? relevantLines
+        : gatewayTailLines
+  ).slice(-MAX_FAILURE_EXCERPT_LINES);
+  if (failureExcerpt.length > 0) {
+    summaryLines.push("failure_excerpt:");
+    summaryLines.push(...failureExcerpt.map((line) => `  ${line}`));
+  }
   if (stateEntries.length > 0) {
     summaryLines.push("state_dir_entries:");
     summaryLines.push(...stateEntries.map((entry) => `  ${entry}`));
@@ -234,8 +304,9 @@ export function collectSandboxCreateFailureDiagnostics(
     consoleOutput,
     copiedConsoleOutput,
     gatewayTailPath,
+    createOutputPath,
     backupPath,
-    summaryLines: relevantLines.length > 0 ? relevantLines.slice(-8) : gatewayTailLines.slice(-8),
+    summaryLines: failureExcerpt,
   };
 }
 
@@ -248,7 +319,7 @@ export function printSandboxCreateFailureDiagnostics(
 
   console.error(`  Diagnostics saved: ${diagnostics.dir}`);
   if (diagnostics.summaryLines.length > 0) {
-    console.error("  Recent OpenShell gateway failure:");
+    console.error("  Recent sandbox creation failure:");
     for (const line of diagnostics.summaryLines) {
       console.error(`    ${line}`);
     }

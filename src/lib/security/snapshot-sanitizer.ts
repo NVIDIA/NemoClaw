@@ -7,6 +7,7 @@ import {
   applyDescriptorSnapshotActions,
   decodeDescriptorSnapshotContent,
   inspectDescriptorSnapshotRoot,
+  resolveSnapshotSanitizerPythonPath,
   type SnapshotSanitizationAction,
   type SnapshotScannedFile,
   scanDescriptorSnapshot,
@@ -20,6 +21,13 @@ import {
 } from "./credential-filter";
 
 const MAX_SANITIZATION_PASSES = 3;
+
+export class SnapshotSanitizerPrerequisiteError extends Error {
+  constructor() {
+    super("Python 3 is required for snapshot sanitization. Install Python 3 and retry.");
+    this.name = "SnapshotSanitizerPrerequisiteError";
+  }
+}
 
 function actionForScannedFile(file: SnapshotScannedFile): SnapshotSanitizationAction | null {
   const name = path.posix.basename(file.path).toLowerCase();
@@ -59,6 +67,9 @@ function actionForScannedFile(file: SnapshotScannedFile): SnapshotSanitizationAc
  * instead of redirecting the sanitizer outside the snapshot root.
  */
 export function sanitizeSnapshotDirectory(rootPath: string): void {
+  if (resolveSnapshotSanitizerPythonPath() === null) {
+    throw new SnapshotSanitizerPrerequisiteError();
+  }
   for (let pass = 0; pass < MAX_SANITIZATION_PASSES; pass += 1) {
     const root = inspectDescriptorSnapshotRoot(rootPath);
     if (root === null) {

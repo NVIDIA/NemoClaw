@@ -73,6 +73,10 @@ describe("managed-image failure diagnostic export", () => {
       "managed startup exited before the supervisor reconnected\n",
     );
     fs.writeFileSync(
+      path.join(diagnosticBundle, "sandbox-create-output.log"),
+      `sandbox build failed for ${opaqueCanary}\n`,
+    );
+    fs.writeFileSync(
       path.join(diagnosticBundle, "unrelated.raw"),
       "this raw file must never enter the artifact\n",
     );
@@ -86,7 +90,7 @@ describe("managed-image failure diagnostic export", () => {
       sourceRoot,
     });
 
-    expect(result).toMatchObject({ bundles: 1, files: 3 });
+    expect(result).toMatchObject({ bundles: 1, files: 4 });
     const exported = outputText(outputRoot);
     expect(exported).toContain("<REDACTED>");
     expect(exported).toContain("managed startup exited before the supervisor reconnected");
@@ -153,6 +157,7 @@ describe("managed-image failure diagnostic export", () => {
       for (const name of [
         "openshell-gateway-relevant.log",
         "openshell-gateway-tail.log",
+        "sandbox-create-output.log",
         "summary.txt",
       ]) {
         fs.writeFileSync(path.join(diagnosticBundle, name), largeButReadable);

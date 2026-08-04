@@ -12,6 +12,7 @@ const EXPORTED_DIAGNOSTIC_FILES = new Set([
   "openshell-gateway-relevant.log",
   "openshell-gateway-tail.log",
   "rootfs-console.log",
+  "sandbox-create-output.log",
   "summary.txt",
 ]);
 

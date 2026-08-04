@@ -1,8 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { redact } from "../security/redact";
+import { redact, redactFull } from "../security/redact";
 import type { CreatedSandboxReadinessResult } from "./sandbox-readiness-tracing";
+
+/** Remove credential material before sandbox create failures reach a diagnostic sink. */
+export function redactSandboxCreateFailureOutput(output: string): string {
+  return redact(redactFull(output));
+}
 
 export type SandboxCreateFailureReportOptions = {
   sandboxName: string;
@@ -18,7 +23,10 @@ export type SandboxCreateFailureReportOptions = {
 
 export type SandboxCreateFailureReportDeps = {
   classifyCreateFailure(output: string): { kind: string };
-  printCreateFailureDiagnostics(sandboxName: string, options: { backupPath: string | null }): void;
+  printCreateFailureDiagnostics(
+    sandboxName: string,
+    options: { backupPath: string | null; createOutput: string },
+  ): void;
   printRecoveryHints(output: string, options: { createArgs: readonly string[] }): void;
   warn(message: string): void;
   error(message: string): void;
@@ -56,6 +64,7 @@ export function reportSandboxCreateFailure(
   }
   deps.printCreateFailureDiagnostics(options.sandboxName, {
     backupPath: options.restoreBackupPath,
+    createOutput: redactSandboxCreateFailureOutput(options.createOutput),
   });
   deps.error("  Try:  openshell sandbox list        # check gateway state");
   deps.printRecoveryHints(redactedCreateOutput, { createArgs: options.createArgs });

@@ -378,6 +378,7 @@ export function createSandboxGpuCreateAttemptRunner(
       await runtimePatch.rollbackManagedStartupAfterCreateFailure();
       printSandboxCreateFailureDiagnostics(input.sandboxName, {
         backupPath: input.restoreBackupPath,
+        createOutput: createResult.output,
       });
       if (compatibility) runtimePatch.printReadinessFailureIfEnabled();
       else {

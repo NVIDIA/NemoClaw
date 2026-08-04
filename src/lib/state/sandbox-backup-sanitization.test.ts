@@ -98,6 +98,16 @@ describe("rebuild backup credential sanitization", () => {
     expect(existsSync(backupPath)).toBe(false);
   });
 
+  it("names the Python prerequisite and removes the incomplete snapshot backup (#8202)", () => {
+    const backupPath = createBackup();
+    setSnapshotSanitizerPythonPathForTest(null);
+
+    expect(() => sanitizeBackupDirectory(backupPath)).toThrow(
+      "Python 3 is required for snapshot sanitization. Install Python 3 and retry. NemoClaw removed the incomplete snapshot backup.",
+    );
+    expect(existsSync(backupPath)).toBe(false);
+  });
+
   it("reports when cleanup leaves an incomplete backup behind", () => {
     const backupPath = createBackup();
     const yamlPath = join(backupPath, "state", "config.yaml");
