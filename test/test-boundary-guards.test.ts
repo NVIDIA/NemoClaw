@@ -451,6 +451,7 @@ describe("compiled-test import boundary", () => {
     expect(isScannedTestPath("test/package-contract/example.test.ts")).toBe(false);
     expect(isScannedTestPath("test/e2e/example.test.ts")).toBe(false);
     expect(isScannedTestPath("test/dist-sourcemaps.test.ts")).toBe(false);
+    expect(isScannedTestPath("test/install-managed-cli-reuse.test.ts")).toBe(false);
   });
 });
 
@@ -750,6 +751,7 @@ describe("Vitest project membership boundary", () => {
       ["test/install-build-dependency-preflight.test.ts", "installer-integration"],
       ["test/install-clone-ref.test.ts", "installer-integration"],
       ["test/install-express-prompt.test.ts", "installer-integration"],
+      ["test/install-managed-cli-reuse.test.ts", "installer-integration"],
       ["test/install-openshell-version-pin.test.ts", "installer-integration"],
       ["test/install-openshell-version-check.test.ts", "installer-integration"],
       ["test/install-preflight-docker-bootstrap.test.ts", "installer-integration"],

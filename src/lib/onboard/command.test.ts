@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import { resolveOnboardOptions, runOnboardCommand } from "./command";
 import type { OnboardFlags } from "./command-support";
 import { invalidGatewayManagementDeclarationError } from "./gateway-management";
+import { GatewayAuthorityError } from "./gateway-teardown-authority";
 
 function exitWithCode(code: number): never {
   throw new Error(`exit:${code}`);
@@ -26,6 +27,16 @@ function resolve(
     ...overrides,
   });
 }
+
+// Recreation is selected three ways and only the first sets the flag that
+// `resolveOnboardOptions` records: the explicit flag, NEMOCLAW_RECREATE_SANDBOX
+// read inside `runOnboard`, and drift detected mid-run. All three reach the same
+// recreate journal, so all three must report an authority refusal (#8103).
+const RECREATE_SELECTIONS: [string, OnboardFlags, Record<string, string>][] = [
+  ["the explicit --recreate-sandbox flag", { "recreate-sandbox": true }, {}],
+  ["NEMOCLAW_RECREATE_SANDBOX without the flag", {}, { NEMOCLAW_RECREATE_SANDBOX: "1" }],
+  ["drift detected with neither the flag nor the environment request", {}, {}],
+];
 
 describe("onboard command options", () => {
   it("maps typed oclif flags to onboarding options", () => {
@@ -281,6 +292,34 @@ describe("onboard command options", () => {
     expect(output).toContain("Invalid gateway management declaration");
     expect(output).toContain("unsupported gateway-management contract version");
     // No stack frames leaked into the user-facing output.
+    expect(output).not.toContain(".js:");
+    expect(output).not.toContain("    at ");
+  });
+
+  it.each(
+    RECREATE_SELECTIONS,
+  )("reports a gateway authority refusal when recreation is selected by %s (#8103)", async (_selection, flags, env) => {
+    const errors: string[] = [];
+    await expect(
+      runOnboardCommand({
+        flags,
+        env,
+        runOnboard: async () => {
+          throw new GatewayAuthorityError(
+            "Gateway lifecycle authority changed since onboarding (packaged-service -> standalone).",
+          );
+        },
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    const output = errors.join("\n");
+    expect(output).toContain(
+      "Refusing sandbox recreate because the gateway lifecycle authority could not be revalidated.",
+    );
+    expect(output).toContain("packaged-service -> standalone");
+    expect(output).toContain("Re-run onboarding to bind the current gateway authority");
     expect(output).not.toContain(".js:");
     expect(output).not.toContain("    at ");
   });
