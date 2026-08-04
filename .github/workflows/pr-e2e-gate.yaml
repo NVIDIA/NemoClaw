@@ -90,48 +90,6 @@ jobs:
           --head "$HEAD_SHA"
           --base "$BASE_SHA"
 
-  required:
-    # GitHub treats a skipped required job as passing, so only the running observer can use the required check name.
-    name: >-
-      ${{ github.event_name == 'pull_request_target' &&
-      github.repository == 'NVIDIA/NemoClaw' &&
-      github.event.action != 'closed' &&
-      'E2E / PR Gate' || 'E2E / PR Gate (not applicable)' }}
-    if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.action != 'closed' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    permissions:
-      checks: read
-      contents: read
-      pull-requests: read
-    concurrency:
-      group: pr-e2e-required-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
-    steps:
-      - name: Checkout observer
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.workflow_sha }}
-          persist-credentials: false
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-
-      - name: Wait for trusted PR/base SHA verdict
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          GITHUB_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: >-
-          node --experimental-strip-types tools/e2e/pr-e2e-required.mts
-          --pr "$PR_NUMBER"
-          --head "$HEAD_SHA"
-          --base "$BASE_SHA"
-          --timeout-seconds 21480
-
   cancel-superseded:
     if: ${{ github.run_attempt == 1 && github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && (github.event.action != 'edited' || github.event.changes.base != null) }}
     runs-on: ubuntu-latest

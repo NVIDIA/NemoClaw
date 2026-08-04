@@ -8,18 +8,31 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 import {
+  isShieldsTimerDeadlineExpired,
+  readShieldsTimerTakeoverToken,
+} from "./mcp-lifecycle-lock/shields-timer-authority";
+import {
   classifyMcpLifecycleLock,
   createMcpLifecycleLockOwner,
   type LockObservation,
   type McpLifecycleLockDisposition,
+  type McpLifecycleLockOwner,
+  readMcpLockHostIdentity,
+  readMcpLockPidNamespaceIdentity,
+  readMcpLockProcessIdentity,
 } from "./mcp-lifecycle-lock-identity";
 import {
   getMcpLifecycleLockPath,
   mcpLifecycleLockPathExists,
+  mcpLifecycleLockPathExistsSync,
   readMcpLifecycleLockObservation,
+  readMcpLifecycleLockObservationSync,
   reclaimStaleMcpLifecycleLockGeneration,
+  reclaimStaleMcpLifecycleLockGenerationSync,
   safelyReleaseMcpLifecycleLock,
+  safelyReleaseMcpLifecycleLockSync,
   writeMcpLifecycleLockCandidateAndLink,
+  writeMcpLifecycleLockCandidateAndLinkSync,
 } from "./mcp-lifecycle-lock-storage";
 import { resolveNemoclawStateDir } from "./paths";
 
@@ -35,6 +48,29 @@ interface CorruptGenerationTracker {
 interface AcquiredMcpLifecycleLock {
   lockPath: string;
   token: string;
+  shieldsTakeoverToken?: string;
+}
+
+export interface McpLifecycleDeadlineFenceOptions extends McpLifecycleLockOptions {
+  /** Audit an owner that keeps the deadline gate closed while it exits naturally. */
+  onContainment?: (details: McpLifecycleDeadlineContainment) => Promise<void> | void;
+  /** Account for a recoverable deadline acquisition or main-publication failure. */
+  onSetupFailure?: (error: unknown) => Promise<void> | void;
+  /** Return operator guidance instead of waiting when durable containment already exists. */
+  throwOnCommittedContainment?: boolean;
+}
+
+export interface McpLifecycleDeadlineFenceSyncOptions extends McpLifecycleLockOptions {
+  /** Audit an owner that keeps the deadline gate closed while it exits naturally. */
+  onContainment?: (details: McpLifecycleDeadlineContainment) => void;
+  /** Return operator guidance instead of waiting when durable containment already exists. */
+  throwOnCommittedContainment?: boolean;
+}
+
+export interface McpLifecycleDeadlineContainment {
+  kind: "verified-live-wait" | "failure";
+  ownerPid: number | null;
+  reason: string;
 }
 
 export interface McpLifecycleLockOptions {
@@ -47,6 +83,7 @@ export interface McpLifecycleLockOptions {
 
 interface HeldLockLease {
   active: boolean;
+  retainForDurableContainment: boolean;
 }
 
 type HeldLockContext = ReadonlyMap<string, HeldLockLease>;
@@ -59,6 +96,116 @@ function positiveInteger(value: number | undefined, fallback: number): number {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+
+function sleepSync(ms: number): void {
+  Atomics.wait(sleepBuffer, 0, 0, ms);
+}
+
+function committedContainmentPath(lockPath: string): string {
+  return `${lockPath}.containment`;
+}
+
+function fsyncLockDirectorySync(lockPath: string): void {
+  const directoryFd = fs.openSync(path.dirname(lockPath), fs.constants.O_RDONLY);
+  try {
+    fs.fsyncSync(directoryFd);
+  } finally {
+    fs.closeSync(directoryFd);
+  }
+}
+
+function beginCommittedContainmentAtPathSync(
+  lockPath: string,
+  sandboxName: string,
+  takeoverToken: string | undefined,
+  reason: string,
+  assertAuthority?: () => void,
+): void {
+  const containmentPath = committedContainmentPath(lockPath);
+  const token = crypto.randomUUID();
+  const owner = {
+    ...createMcpLifecycleLockOwner(sandboxName, token, takeoverToken),
+    containmentReason: reason,
+  };
+  assertAuthority?.();
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
+  if (!writeMcpLifecycleLockCandidateAndLinkSync(containmentPath, owner)) {
+    throw new Error(
+      `A committed process-tree containment already exists for sandbox '${sandboxName}'`,
+    );
+  }
+  try {
+    fsyncLockDirectorySync(containmentPath);
+    assertAuthority?.();
+  } catch (error) {
+    let rolledBack = false;
+    try {
+      const published = readMcpLifecycleLockObservationSync(containmentPath);
+      if (published?.owner?.token === token) {
+        rolledBack = reclaimStaleMcpLifecycleLockGenerationSync(containmentPath, published);
+        if (rolledBack) fsyncLockDirectorySync(containmentPath);
+      }
+    } catch {
+      rolledBack = false;
+    }
+    if (!rolledBack) {
+      throw durableMcpLifecycleContainmentFailure(
+        new Error(
+          `Containment publication for sandbox '${sandboxName}' lost authority or durability, and its exact generation could not be rolled back`,
+        ),
+        lockPath,
+        { retainOwnedLifecycleGates: true },
+      );
+    }
+    throw error;
+  }
+}
+
+function ensureDurableContainmentForStaleGenerationSync(
+  lockPath: string,
+  sandboxName: string,
+  stateDir: string,
+  observation: LockObservation,
+  reason: string,
+): void {
+  const containmentPath = committedContainmentPath(lockPath);
+  if (mcpLifecycleLockPathExistsSync(containmentPath)) return;
+  const generation = `${String(observation.dev)}:${String(observation.ino)}:${
+    observation.owner?.token ?? "invalid"
+  }`;
+  try {
+    beginCommittedContainmentAtPathSync(
+      lockPath,
+      sandboxName,
+      readShieldsTimerTakeoverToken(sandboxName, stateDir),
+      `${reason}; contained generation ${generation}`,
+    );
+  } catch (error) {
+    if (mcpLifecycleLockPathExistsSync(containmentPath)) return;
+    throw error;
+  }
+}
+
+export function beginCommittedMcpLifecycleContainmentSync(
+  sandboxName: string,
+  takeoverToken: string,
+  reason: string,
+  stateDir = resolveNemoclawStateDir(),
+  assertAuthority?: () => void,
+): void {
+  if (!/^[0-9a-f]{32}$/.test(takeoverToken)) {
+    throw new Error("Auto-restore takeover token must be 32 lowercase hexadecimal characters");
+  }
+  beginCommittedContainmentAtPathSync(
+    getMcpLifecycleLockPath(sandboxName, stateDir),
+    sandboxName,
+    takeoverToken,
+    reason,
+    assertAuthority,
+  );
 }
 
 function resetCorruptGenerationTracker(tracker: CorruptGenerationTracker): void {
@@ -93,30 +240,142 @@ function classifyObservedMcpLifecycleLock(
   );
 }
 
-async function tryReapStaleLock(
+function isValidMainOwnerForSandbox(observation: LockObservation, sandboxName: string): boolean {
+  return observation.owner?.sandboxName === sandboxName;
+}
+
+function committedContainmentActiveError(
+  sandboxName: string,
+  lockPath: string,
+  containment: LockObservation,
+): Error {
+  const containmentPath = committedContainmentPath(lockPath);
+  return new Error(
+    `Sandbox mutation containment is active for '${sandboxName}' at '${containmentPath}' (generation token '${containment.owner?.token ?? "invalid"}'). A previous owner or stale-lock reaper exited without proof that every descendant stopped. Stop all NemoClaw processes for this sandbox; inspect '${lockPath}', '${lockPath}.reaper', and '${lockPath}.deadline'; record each target's file kind, device/inode, and owner token when present; verify those identities and this containment token are unchanged; remove only those exact stale owner generations first and this exact containment generation last before retrying.`,
+  );
+}
+
+async function tryReapStaleMainLock(
   lockPath: string,
   sandboxName: string,
+  stateDir: string,
   corruptLockGraceMs: number,
   corruptTracker: CorruptGenerationTracker,
 ): Promise<boolean> {
+  const containmentPath = committedContainmentPath(lockPath);
+  const deadlinePath = `${lockPath}.deadline`;
+  if (
+    (await mcpLifecycleLockPathExists(containmentPath)) ||
+    (await mcpLifecycleLockPathExists(deadlinePath))
+  ) {
+    return false;
+  }
+
+  const takeoverToken = readShieldsTimerTakeoverToken(sandboxName, stateDir);
   const reaperPath = `${lockPath}.reaper`;
   const reaperToken = crypto.randomUUID();
-  const reaperOwner = createMcpLifecycleLockOwner(sandboxName, reaperToken);
+  const reaperOwner = createMcpLifecycleLockOwner(sandboxName, reaperToken, takeoverToken);
   if (!(await writeMcpLifecycleLockCandidateAndLink(reaperPath, reaperOwner))) return false;
 
   try {
-    const latest = await readMcpLifecycleLockObservation(lockPath);
-    if (!latest) return true;
     if (
-      classifyObservedMcpLifecycleLock(latest, sandboxName, corruptLockGraceMs, corruptTracker) !==
-      "stale"
+      (await mcpLifecycleLockPathExists(containmentPath)) ||
+      (await mcpLifecycleLockPathExists(deadlinePath)) ||
+      readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken
     ) {
       return false;
     }
-
+    const latest = await readMcpLifecycleLockObservation(lockPath);
+    if (!latest) return true;
+    if (
+      !isValidMainOwnerForSandbox(latest, sandboxName) ||
+      classifyObservedMcpLifecycleLock(latest, sandboxName, corruptLockGraceMs, corruptTracker) !==
+        "stale"
+    ) {
+      return false;
+    }
+    const currentTakeoverToken = readShieldsTimerTakeoverToken(sandboxName, stateDir);
+    if (currentTakeoverToken !== takeoverToken) {
+      // Shields-down acquires the main generation before publishing its timer
+      // marker. Never reclaim across that authority transition; a subsequent
+      // reaper will inspect the generation under the now-current token.
+      return false;
+    }
+    if (latest.owner?.shieldsTakeoverToken || currentTakeoverToken) {
+      ensureDurableContainmentForStaleGenerationSync(
+        lockPath,
+        sandboxName,
+        stateDir,
+        latest,
+        "A timer-bound sandbox mutation owner exited before durable containment was committed",
+      );
+      return false;
+    }
     return reclaimStaleMcpLifecycleLockGeneration(lockPath, latest);
   } finally {
     await safelyReleaseMcpLifecycleLock(reaperPath, reaperToken);
+  }
+}
+
+function tryReapStaleMainLockSync(
+  lockPath: string,
+  sandboxName: string,
+  stateDir: string,
+  corruptLockGraceMs: number,
+  corruptTracker: CorruptGenerationTracker,
+): boolean {
+  const containmentPath = committedContainmentPath(lockPath);
+  const deadlinePath = `${lockPath}.deadline`;
+  if (
+    mcpLifecycleLockPathExistsSync(containmentPath) ||
+    mcpLifecycleLockPathExistsSync(deadlinePath)
+  ) {
+    return false;
+  }
+
+  const takeoverToken = readShieldsTimerTakeoverToken(sandboxName, stateDir);
+  const reaperPath = `${lockPath}.reaper`;
+  const reaperToken = crypto.randomUUID();
+  const reaperOwner = createMcpLifecycleLockOwner(sandboxName, reaperToken, takeoverToken);
+  if (!writeMcpLifecycleLockCandidateAndLinkSync(reaperPath, reaperOwner)) return false;
+
+  try {
+    if (
+      mcpLifecycleLockPathExistsSync(containmentPath) ||
+      mcpLifecycleLockPathExistsSync(deadlinePath) ||
+      readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken
+    ) {
+      return false;
+    }
+    const latest = readMcpLifecycleLockObservationSync(lockPath);
+    if (!latest) return true;
+    if (
+      !isValidMainOwnerForSandbox(latest, sandboxName) ||
+      classifyObservedMcpLifecycleLock(latest, sandboxName, corruptLockGraceMs, corruptTracker) !==
+        "stale"
+    ) {
+      return false;
+    }
+    const currentTakeoverToken = readShieldsTimerTakeoverToken(sandboxName, stateDir);
+    if (currentTakeoverToken !== takeoverToken) {
+      // Shields-down acquires the main generation before publishing its timer
+      // marker. Never reclaim across that authority transition; a subsequent
+      // reaper will inspect the generation under the now-current token.
+      return false;
+    }
+    if (latest.owner?.shieldsTakeoverToken || currentTakeoverToken) {
+      ensureDurableContainmentForStaleGenerationSync(
+        lockPath,
+        sandboxName,
+        stateDir,
+        latest,
+        "A timer-bound sandbox mutation owner exited before durable containment was committed",
+      );
+      return false;
+    }
+    return reclaimStaleMcpLifecycleLockGenerationSync(lockPath, latest);
+  } finally {
+    safelyReleaseMcpLifecycleLockSync(reaperPath, reaperToken);
   }
 }
 
@@ -130,7 +389,8 @@ async function acquireMcpLifecycleLock(
     options.corruptLockGraceMs,
     DEFAULT_CORRUPT_LOCK_GRACE_MS,
   );
-  const lockPath = getMcpLifecycleLockPath(sandboxName, options.stateDir);
+  const stateDir = options.stateDir ?? resolveNemoclawStateDir();
+  const lockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
   await fs.promises.mkdir(path.dirname(lockPath), {
     recursive: true,
     mode: 0o700,
@@ -139,14 +399,44 @@ async function acquireMcpLifecycleLock(
   const startedAt = performance.now();
   const corruptMainTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
   const corruptReaperTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
+  const corruptDeadlineTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
   let lastOwnerPid: number | null = null;
   for (;;) {
+    const containmentPath = committedContainmentPath(lockPath);
+    const containment = await readMcpLifecycleLockObservation(containmentPath);
+    if (containment) {
+      throw committedContainmentActiveError(sandboxName, lockPath, containment);
+    }
     if (performance.now() - startedAt >= timeoutMs) {
       const ownerSuffix = lastOwnerPid ? ` (owner pid ${lastOwnerPid})` : "";
       throw new Error(
         `Timed out waiting for the sandbox mutation lock for '${sandboxName}'${ownerSuffix}. Another lifecycle, policy, channel, shields, or snapshot operation is still running.`,
       );
     }
+
+    const deadlinePath = `${lockPath}.deadline`;
+    const deadlineObservation = await readMcpLifecycleLockObservation(deadlinePath);
+    if (deadlineObservation) {
+      const deadlineDisposition = classifyObservedMcpLifecycleLock(
+        deadlineObservation,
+        sandboxName,
+        corruptLockGraceMs,
+        corruptDeadlineTracker,
+      );
+      if (deadlineDisposition === "stale") {
+        ensureDurableContainmentForStaleGenerationSync(
+          lockPath,
+          sandboxName,
+          stateDir,
+          deadlineObservation,
+          "An auto-restore deadline owner exited before its recovery operation completed",
+        );
+        continue;
+      }
+      await sleep(pollIntervalMs);
+      continue;
+    }
+    resetCorruptGenerationTracker(corruptDeadlineTracker);
 
     const reaperPath = `${lockPath}.reaper`;
     const reaperObservation = await readMcpLifecycleLockObservation(reaperPath);
@@ -158,10 +448,13 @@ async function acquireMcpLifecycleLock(
         corruptReaperTracker,
       );
       if (reaperDisposition === "stale") {
-        // The reaper has the same atomic, PID-identified owner format as the
-        // main lock. A SIGKILL at any point in stale-lock cleanup is therefore
-        // recoverable without age-expiring a legitimate long operation.
-        await reclaimStaleMcpLifecycleLockGeneration(reaperPath, reaperObservation);
+        ensureDurableContainmentForStaleGenerationSync(
+          lockPath,
+          sandboxName,
+          stateDir,
+          reaperObservation,
+          "A stale-lock reaper exited before cleanup completed",
+        );
         continue;
       }
       await sleep(pollIntervalMs);
@@ -169,14 +462,41 @@ async function acquireMcpLifecycleLock(
     }
     resetCorruptGenerationTracker(corruptReaperTracker);
 
-    if (!(await mcpLifecycleLockPathExists(reaperPath))) {
+    // The detached timer publishes its deadline fence only after restoreAt.
+    // Close the ordinary-acquisition gate directly from the durable marker so
+    // no new top-level mutation can enter in that publication window, or if
+    // the timer exits before it publishes the fence. Timer/interactive
+    // recovery uses the dedicated deadline-fence API and does not pass here.
+    if (isShieldsTimerDeadlineExpired(sandboxName, stateDir)) {
+      await sleep(pollIntervalMs);
+      continue;
+    }
+
+    if (
+      !(await mcpLifecycleLockPathExists(deadlinePath)) &&
+      !(await mcpLifecycleLockPathExists(reaperPath)) &&
+      !isShieldsTimerDeadlineExpired(sandboxName, stateDir)
+    ) {
       const token = crypto.randomUUID();
-      const owner = createMcpLifecycleLockOwner(sandboxName, token);
+      const shieldsTakeoverToken = readShieldsTimerTakeoverToken(sandboxName, stateDir);
+      const owner = createMcpLifecycleLockOwner(sandboxName, token, shieldsTakeoverToken);
       if (await writeMcpLifecycleLockCandidateAndLink(lockPath, owner)) {
         // A stale-lock reaper may have appeared between our pre-check and the
         // atomic link. Do not enter the critical section until that generation
         // gate has gone away.
-        if (!(await mcpLifecycleLockPathExists(reaperPath))) return { lockPath, token };
+        if (
+          !(await mcpLifecycleLockPathExists(containmentPath)) &&
+          !(await mcpLifecycleLockPathExists(deadlinePath)) &&
+          !(await mcpLifecycleLockPathExists(reaperPath)) &&
+          !isShieldsTimerDeadlineExpired(sandboxName, stateDir) &&
+          readShieldsTimerTakeoverToken(sandboxName, stateDir) === shieldsTakeoverToken
+        ) {
+          return {
+            lockPath,
+            token,
+            ...(shieldsTakeoverToken ? { shieldsTakeoverToken } : {}),
+          };
+        }
         await safelyReleaseMcpLifecycleLock(lockPath, token);
       }
     }
@@ -192,14 +512,1092 @@ async function acquireMcpLifecycleLock(
           corruptMainTracker,
         ) === "stale"
       ) {
-        if (await tryReapStaleLock(lockPath, sandboxName, corruptLockGraceMs, corruptMainTracker)) {
+        if (isValidMainOwnerForSandbox(observation, sandboxName)) {
+          await tryReapStaleMainLock(
+            lockPath,
+            sandboxName,
+            stateDir,
+            corruptLockGraceMs,
+            corruptMainTracker,
+          );
           continue;
         }
+        ensureDurableContainmentForStaleGenerationSync(
+          lockPath,
+          sandboxName,
+          stateDir,
+          observation,
+          "A sandbox mutation owner exited before its descendants could be proven contained",
+        );
+        continue;
       }
     } else {
       resetCorruptGenerationTracker(corruptMainTracker);
     }
     await sleep(pollIntervalMs);
+  }
+}
+
+function acquireMcpLifecycleLockSync(
+  sandboxName: string,
+  options: McpLifecycleLockOptions & { stateDir: string },
+): AcquiredMcpLifecycleLock {
+  const pollIntervalMs = positiveInteger(options.pollIntervalMs, DEFAULT_POLL_INTERVAL_MS);
+  const timeoutMs = positiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS);
+  const corruptLockGraceMs = positiveInteger(
+    options.corruptLockGraceMs,
+    DEFAULT_CORRUPT_LOCK_GRACE_MS,
+  );
+  const lockPath = getMcpLifecycleLockPath(sandboxName, options.stateDir);
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
+
+  const startedAt = performance.now();
+  const corruptMainTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
+  const corruptReaperTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
+  const corruptDeadlineTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
+  let lastOwnerPid: number | null = null;
+  for (;;) {
+    const containmentPath = committedContainmentPath(lockPath);
+    const containment = readMcpLifecycleLockObservationSync(containmentPath);
+    if (containment) {
+      throw committedContainmentActiveError(sandboxName, lockPath, containment);
+    }
+    if (performance.now() - startedAt >= timeoutMs) {
+      throw new Error(
+        `Timed out waiting for sandbox mutation lock for '${sandboxName}'${
+          lastOwnerPid ? ` (owner PID ${lastOwnerPid})` : ""
+        }`,
+      );
+    }
+
+    const deadlinePath = `${lockPath}.deadline`;
+    const deadlineObservation = readMcpLifecycleLockObservationSync(deadlinePath);
+    if (deadlineObservation) {
+      const deadlineDisposition = classifyObservedMcpLifecycleLock(
+        deadlineObservation,
+        sandboxName,
+        corruptLockGraceMs,
+        corruptDeadlineTracker,
+      );
+      if (deadlineDisposition === "stale") {
+        ensureDurableContainmentForStaleGenerationSync(
+          lockPath,
+          sandboxName,
+          options.stateDir,
+          deadlineObservation,
+          "An auto-restore deadline owner exited before its recovery operation completed",
+        );
+        continue;
+      }
+      sleepSync(pollIntervalMs);
+      continue;
+    }
+    resetCorruptGenerationTracker(corruptDeadlineTracker);
+
+    const reaperPath = `${lockPath}.reaper`;
+    const reaperObservation = readMcpLifecycleLockObservationSync(reaperPath);
+    if (reaperObservation) {
+      const reaperDisposition = classifyObservedMcpLifecycleLock(
+        reaperObservation,
+        sandboxName,
+        corruptLockGraceMs,
+        corruptReaperTracker,
+      );
+      if (reaperDisposition === "stale") {
+        ensureDurableContainmentForStaleGenerationSync(
+          lockPath,
+          sandboxName,
+          options.stateDir,
+          reaperObservation,
+          "A stale-lock reaper exited before cleanup completed",
+        );
+        continue;
+      }
+      sleepSync(pollIntervalMs);
+      continue;
+    }
+    resetCorruptGenerationTracker(corruptReaperTracker);
+
+    if (isShieldsTimerDeadlineExpired(sandboxName, options.stateDir)) {
+      sleepSync(pollIntervalMs);
+      continue;
+    }
+
+    if (
+      !mcpLifecycleLockPathExistsSync(deadlinePath) &&
+      !mcpLifecycleLockPathExistsSync(reaperPath) &&
+      !isShieldsTimerDeadlineExpired(sandboxName, options.stateDir)
+    ) {
+      const token = crypto.randomUUID();
+      const shieldsTakeoverToken = readShieldsTimerTakeoverToken(sandboxName, options.stateDir);
+      const owner = createMcpLifecycleLockOwner(sandboxName, token, shieldsTakeoverToken);
+      if (writeMcpLifecycleLockCandidateAndLinkSync(lockPath, owner)) {
+        if (
+          !mcpLifecycleLockPathExistsSync(containmentPath) &&
+          !mcpLifecycleLockPathExistsSync(deadlinePath) &&
+          !mcpLifecycleLockPathExistsSync(reaperPath) &&
+          !isShieldsTimerDeadlineExpired(sandboxName, options.stateDir) &&
+          readShieldsTimerTakeoverToken(sandboxName, options.stateDir) === shieldsTakeoverToken
+        ) {
+          return {
+            lockPath,
+            token,
+            ...(shieldsTakeoverToken ? { shieldsTakeoverToken } : {}),
+          };
+        }
+        safelyReleaseMcpLifecycleLockSync(lockPath, token);
+      }
+    }
+
+    const observation = readMcpLifecycleLockObservationSync(lockPath);
+    if (observation) {
+      lastOwnerPid = observation.owner?.pid ?? null;
+      if (
+        classifyObservedMcpLifecycleLock(
+          observation,
+          sandboxName,
+          corruptLockGraceMs,
+          corruptMainTracker,
+        ) === "stale"
+      ) {
+        if (isValidMainOwnerForSandbox(observation, sandboxName)) {
+          tryReapStaleMainLockSync(
+            lockPath,
+            sandboxName,
+            options.stateDir,
+            corruptLockGraceMs,
+            corruptMainTracker,
+          );
+          continue;
+        }
+        ensureDurableContainmentForStaleGenerationSync(
+          lockPath,
+          sandboxName,
+          options.stateDir,
+          observation,
+          "A sandbox mutation owner exited before its descendants could be proven contained",
+        );
+        continue;
+      }
+    } else {
+      lastOwnerPid = null;
+      resetCorruptGenerationTracker(corruptMainTracker);
+    }
+    sleepSync(pollIntervalMs);
+  }
+}
+
+function sameLockGeneration(left: LockObservation, right: LockObservation | null): boolean {
+  if (!right || left.dev !== right.dev || left.ino !== right.ino) return false;
+  const leftToken = left.owner?.token;
+  const rightToken = right.owner?.token;
+  return leftToken === rightToken;
+}
+
+function selfOwnedDeadlineMainToken(
+  observation: LockObservation | null,
+  sandboxName: string,
+  takeoverToken: string,
+  expectedToken: string,
+): string | null {
+  const owner = observation?.owner;
+  const processIdentity = readMcpLockProcessIdentity(process.pid);
+  return owner?.sandboxName === sandboxName &&
+    owner.pid === process.pid &&
+    Boolean(processIdentity) &&
+    owner.processIdentity === processIdentity &&
+    owner.hostIdentity === readMcpLockHostIdentity() &&
+    owner.pidNamespaceIdentity === readMcpLockPidNamespaceIdentity() &&
+    owner.shieldsTakeoverToken === takeoverToken &&
+    owner.token === expectedToken
+    ? owner.token
+    : null;
+}
+
+function isDurableContainmentError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as Error & { code?: string }).code === "NEMOCLAW_DURABLE_CONTAINMENT"
+  );
+}
+
+function durableContainmentMustRetainOwnedLifecycleGates(error: unknown): boolean {
+  return (
+    isDurableContainmentError(error) &&
+    (error as Error & { retainOwnedLifecycleGates?: boolean }).retainOwnedLifecycleGates === true
+  );
+}
+
+export function durableMcpLifecycleContainmentFailure(
+  error: unknown,
+  lockPath: string,
+  options: { retainOwnedLifecycleGates?: boolean } = {},
+): Error & { code: string; retainOwnedLifecycleGates?: boolean } {
+  const lease = heldLocks.getStore()?.get(lockPath);
+  if (lease?.active) lease.retainForDurableContainment = true;
+  if (isDurableContainmentError(error)) {
+    const failure = error as Error & { code: string; retainOwnedLifecycleGates?: boolean };
+    if (options.retainOwnedLifecycleGates) failure.retainOwnedLifecycleGates = true;
+    return failure;
+  }
+  const failure = new Error(
+    `Durable sandbox mutation containment requires operator resolution: ${
+      error instanceof Error ? error.message : String(error)
+    }`,
+  ) as Error & { code: string; retainOwnedLifecycleGates?: boolean };
+  failure.code = "NEMOCLAW_DURABLE_CONTAINMENT";
+  if (options.retainOwnedLifecycleGates) failure.retainOwnedLifecycleGates = true;
+  return failure;
+}
+
+async function ownedLifecycleGateMustRemainClosed(lockPath: string): Promise<boolean> {
+  try {
+    return !(await mcpLifecycleLockPathExists(committedContainmentPath(lockPath)));
+  } catch {
+    // If committed containment cannot be inspected, retaining the exact owned
+    // generation is the only fail-closed outcome.
+    return true;
+  }
+}
+
+function ownedLifecycleGateMustRemainClosedSync(lockPath: string): boolean {
+  try {
+    return !mcpLifecycleLockPathExistsSync(committedContainmentPath(lockPath));
+  } catch {
+    // If committed containment cannot be inspected, retaining the exact
+    // owned generation is the only fail-closed outcome.
+    return true;
+  }
+}
+
+async function retainOwnedLifecycleGateAfterFailure(
+  error: unknown,
+  lockPath: string,
+): Promise<boolean> {
+  if (!isDurableContainmentError(error)) return false;
+  if (durableContainmentMustRetainOwnedLifecycleGates(error)) return true;
+  return await ownedLifecycleGateMustRemainClosed(lockPath);
+}
+
+function retainOwnedLifecycleGateAfterFailureSync(error: unknown, lockPath: string): boolean {
+  if (!isDurableContainmentError(error)) return false;
+  if (durableContainmentMustRetainOwnedLifecycleGates(error)) return true;
+  return ownedLifecycleGateMustRemainClosedSync(lockPath);
+}
+
+async function deadlineMainStillPresent(lockPath: string): Promise<boolean> {
+  try {
+    return (await readMcpLifecycleLockObservation(lockPath)) !== null;
+  } catch {
+    return true;
+  }
+}
+
+function deadlineMainStillPresentSync(lockPath: string): boolean {
+  try {
+    return readMcpLifecycleLockObservationSync(lockPath) !== null;
+  } catch {
+    return true;
+  }
+}
+
+async function reportDeadlineContainment(
+  options: McpLifecycleDeadlineFenceOptions,
+  details: McpLifecycleDeadlineContainment,
+): Promise<void> {
+  try {
+    await options.onContainment?.(details);
+  } catch {
+    // Reporting must not release the security gate it is describing.
+  }
+}
+
+function reportDeadlineContainmentSync(
+  options: McpLifecycleDeadlineFenceSyncOptions,
+  details: McpLifecycleDeadlineContainment,
+): void {
+  try {
+    options.onContainment?.(details);
+  } catch {
+    // Reporting must not release the security gate it is describing.
+  }
+}
+
+async function acquireDeadlineFence(
+  sandboxName: string,
+  takeoverToken: string,
+  options: McpLifecycleDeadlineFenceOptions,
+): Promise<AcquiredMcpLifecycleLock> {
+  const pollIntervalMs = positiveInteger(options.pollIntervalMs, DEFAULT_POLL_INTERVAL_MS);
+  const timeoutMs = positiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS);
+  const corruptLockGraceMs = positiveInteger(
+    options.corruptLockGraceMs,
+    DEFAULT_CORRUPT_LOCK_GRACE_MS,
+  );
+  const lockPath = getMcpLifecycleLockPath(sandboxName, options.stateDir);
+  const deadlinePath = `${lockPath}.deadline`;
+  await fs.promises.mkdir(path.dirname(lockPath), { recursive: true, mode: 0o700 });
+
+  let blockedAt = performance.now();
+  let notifiedGeneration: string | null = null;
+  const corruptTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
+  for (;;) {
+    if (readShieldsTimerTakeoverToken(sandboxName, options.stateDir) !== takeoverToken) {
+      throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
+    }
+    if (await mcpLifecycleLockPathExists(committedContainmentPath(lockPath))) {
+      if (options.throwOnCommittedContainment) {
+        const containmentPath = committedContainmentPath(lockPath);
+        const reason = `A committed process-tree containment requires operator resolution before auto-restore can continue. Stop all NemoClaw processes for this sandbox; inspect '${lockPath}', '${lockPath}.reaper', '${deadlinePath}', and '${containmentPath}'; record each target's file kind, device/inode, and owner token when present; verify every recorded identity is unchanged; remove only the exact stale owner generations first and the exact containment generation last before retrying.`;
+        throw durableMcpLifecycleContainmentFailure(new Error(reason), lockPath);
+      }
+      if (
+        notifiedGeneration !== "committed-containment" &&
+        performance.now() - blockedAt >= timeoutMs
+      ) {
+        await reportDeadlineContainment(options, {
+          kind: "failure",
+          ownerPid: null,
+          reason:
+            "A committed process-tree containment requires operator resolution before auto-restore can continue.",
+        });
+        notifiedGeneration = "committed-containment";
+      }
+      await sleep(pollIntervalMs);
+      continue;
+    }
+
+    const token = crypto.randomUUID();
+    const owner = createMcpLifecycleLockOwner(sandboxName, token, takeoverToken);
+    if (await writeMcpLifecycleLockCandidateAndLink(deadlinePath, owner)) {
+      if (readShieldsTimerTakeoverToken(sandboxName, options.stateDir) === takeoverToken) {
+        return { lockPath: deadlinePath, token };
+      }
+      await safelyReleaseMcpLifecycleLock(deadlinePath, token);
+      throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
+    }
+
+    const observation = await readMcpLifecycleLockObservation(deadlinePath);
+    if (
+      observation &&
+      classifyObservedMcpLifecycleLock(
+        observation,
+        sandboxName,
+        corruptLockGraceMs,
+        corruptTracker,
+      ) === "stale"
+    ) {
+      ensureDurableContainmentForStaleGenerationSync(
+        lockPath,
+        sandboxName,
+        options.stateDir ?? resolveNemoclawStateDir(),
+        observation,
+        "An auto-restore deadline owner exited before its recovery operation completed",
+      );
+      continue;
+    }
+    if (observation) {
+      const generation = `${String(observation.dev)}:${String(observation.ino)}:${
+        observation.owner?.token ?? "invalid"
+      }`;
+      if (performance.now() - blockedAt >= timeoutMs) {
+        const reason =
+          "Another auto-restore deadline owner is active or cannot be verified; the deadline gate remains closed pending operator or distributed-lease resolution.";
+        if (options.onSetupFailure) {
+          blockedAt = performance.now();
+          await options.onSetupFailure(new Error(reason));
+        }
+        if (generation !== notifiedGeneration) {
+          await reportDeadlineContainment(options, {
+            kind: "failure",
+            ownerPid: observation.owner?.pid ?? null,
+            reason,
+          });
+          notifiedGeneration = generation;
+        }
+        if (options.onSetupFailure) {
+          continue;
+        }
+      }
+    } else {
+      blockedAt = performance.now();
+      notifiedGeneration = null;
+      if (options.onSetupFailure) {
+        await options.onSetupFailure(
+          new Error("Auto-restore could not publish or inspect its lifecycle deadline gate"),
+        );
+        continue;
+      }
+    }
+    await sleep(pollIntervalMs);
+  }
+}
+
+function acquireDeadlineFenceSync(
+  sandboxName: string,
+  takeoverToken: string,
+  options: McpLifecycleDeadlineFenceSyncOptions & { stateDir: string },
+): AcquiredMcpLifecycleLock {
+  const pollIntervalMs = positiveInteger(options.pollIntervalMs, DEFAULT_POLL_INTERVAL_MS);
+  const timeoutMs = positiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS);
+  const corruptLockGraceMs = positiveInteger(
+    options.corruptLockGraceMs,
+    DEFAULT_CORRUPT_LOCK_GRACE_MS,
+  );
+  const lockPath = getMcpLifecycleLockPath(sandboxName, options.stateDir);
+  const deadlinePath = `${lockPath}.deadline`;
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
+
+  let blockedAt = performance.now();
+  let notifiedGeneration: string | null = null;
+  const corruptTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
+  for (;;) {
+    if (readShieldsTimerTakeoverToken(sandboxName, options.stateDir) !== takeoverToken) {
+      throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
+    }
+    const containmentPath = committedContainmentPath(lockPath);
+    if (mcpLifecycleLockPathExistsSync(containmentPath)) {
+      if (options.throwOnCommittedContainment) {
+        const reason = `A committed process-tree containment requires operator resolution before auto-restore can continue. Stop all NemoClaw processes for this sandbox; inspect '${lockPath}', '${lockPath}.reaper', '${deadlinePath}', and '${containmentPath}'; record each target's file kind, device/inode, and owner token when present; verify every recorded identity is unchanged; remove only the exact stale owner generations first and the exact containment generation last before retrying.`;
+        reportDeadlineContainmentSync(options, {
+          kind: "failure",
+          ownerPid: null,
+          reason,
+        });
+        throw durableMcpLifecycleContainmentFailure(new Error(reason), lockPath);
+      }
+      if (
+        notifiedGeneration !== "committed-containment" &&
+        performance.now() - blockedAt >= timeoutMs
+      ) {
+        reportDeadlineContainmentSync(options, {
+          kind: "failure",
+          ownerPid: null,
+          reason:
+            "A committed process-tree containment requires operator resolution before auto-restore can continue.",
+        });
+        notifiedGeneration = "committed-containment";
+      }
+      sleepSync(pollIntervalMs);
+      continue;
+    }
+
+    const token = crypto.randomUUID();
+    const owner = createMcpLifecycleLockOwner(sandboxName, token, takeoverToken);
+    if (writeMcpLifecycleLockCandidateAndLinkSync(deadlinePath, owner)) {
+      if (readShieldsTimerTakeoverToken(sandboxName, options.stateDir) === takeoverToken) {
+        return { lockPath: deadlinePath, token };
+      }
+      safelyReleaseMcpLifecycleLockSync(deadlinePath, token);
+      throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
+    }
+
+    const observation = readMcpLifecycleLockObservationSync(deadlinePath);
+    if (
+      observation &&
+      classifyObservedMcpLifecycleLock(
+        observation,
+        sandboxName,
+        corruptLockGraceMs,
+        corruptTracker,
+      ) === "stale"
+    ) {
+      ensureDurableContainmentForStaleGenerationSync(
+        lockPath,
+        sandboxName,
+        options.stateDir,
+        observation,
+        "An auto-restore deadline owner exited before its recovery operation completed",
+      );
+      continue;
+    }
+    if (observation) {
+      const generation = `${String(observation.dev)}:${String(observation.ino)}:${
+        observation.owner?.token ?? "invalid"
+      }`;
+      if (generation !== notifiedGeneration && performance.now() - blockedAt >= timeoutMs) {
+        reportDeadlineContainmentSync(options, {
+          kind: "failure",
+          ownerPid: observation.owner?.pid ?? null,
+          reason:
+            "Another auto-restore deadline owner is active or cannot be verified; the deadline gate remains closed pending operator or distributed-lease resolution.",
+        });
+        notifiedGeneration = generation;
+      }
+    } else {
+      blockedAt = performance.now();
+      notifiedGeneration = null;
+    }
+    sleepSync(pollIntervalMs);
+  }
+}
+
+async function clearDeadlineProtectedPath(
+  targetPath: string,
+  targetLabel: string,
+  sandboxName: string,
+  takeoverToken: string,
+  stateDir: string,
+  options: McpLifecycleDeadlineFenceOptions,
+): Promise<void> {
+  const pollIntervalMs = positiveInteger(options.pollIntervalMs, DEFAULT_POLL_INTERVAL_MS);
+  const containmentTimeoutMs = positiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS);
+  const corruptTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
+  let blockedAt = performance.now();
+  let notifiedGeneration: string | null = null;
+
+  for (;;) {
+    if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
+      throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
+    }
+    const observed = await readMcpLifecycleLockObservation(targetPath);
+    if (!observed) return;
+
+    const disposition = classifyObservedMcpLifecycleLock(observed, sandboxName, 0, corruptTracker);
+    const owner = observed.owner;
+    const exactLocalOwner =
+      owner?.sandboxName === sandboxName &&
+      Boolean(owner.processIdentity) &&
+      owner.hostIdentity === readMcpLockHostIdentity() &&
+      owner.pidNamespaceIdentity === readMcpLockPidNamespaceIdentity();
+    const exactCurrentOrdinaryOwner =
+      !targetPath.endsWith(".reaper") &&
+      disposition === "active" &&
+      exactLocalOwner &&
+      readMcpLockProcessIdentity(owner.pid, true) === owner.processIdentity;
+    if (disposition === "stale" && exactLocalOwner) {
+      const confirmed = await readMcpLifecycleLockObservation(targetPath);
+      if (!sameLockGeneration(observed, confirmed)) continue;
+      if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
+        throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
+      }
+      const lifecyclePath = targetPath.endsWith(".reaper")
+        ? targetPath.slice(0, -".reaper".length)
+        : targetPath;
+      ensureDurableContainmentForStaleGenerationSync(
+        lifecyclePath,
+        sandboxName,
+        stateDir,
+        observed,
+        `The ${targetLabel} owner PID ${String(owner?.pid)} was already gone before takeover`,
+      );
+      throw durableMcpLifecycleContainmentFailure(
+        new Error(
+          `The exact ${targetLabel} owner was already gone, so surviving descendants cannot be ruled out`,
+        ),
+        lifecyclePath,
+      );
+    }
+
+    const generation = `${String(observed.dev)}:${String(observed.ino)}:${
+      owner?.token ?? "invalid"
+    }`;
+    if (performance.now() - blockedAt >= containmentTimeoutMs) {
+      if (exactCurrentOrdinaryOwner) {
+        const reason = `The verified live ${targetLabel} owner PID ${String(owner.pid)} is still completing its lifecycle transaction. Shields remain DOWN and the deadline gate is blocking new mutations until that owner releases the lock.`;
+        if (generation !== notifiedGeneration) {
+          await reportDeadlineContainment(options, {
+            kind: "verified-live-wait",
+            ownerPid: owner.pid,
+            reason,
+          });
+          notifiedGeneration = generation;
+        }
+        await sleep(pollIntervalMs);
+        continue;
+      }
+      const reason = `The active or unverifiable ${targetLabel} owner was preserved because portable process inspection cannot prove that forcibly terminating it would contain every descendant. Shields remain DOWN and the deadline gate is blocking new mutations. Wait for the owner to finish, or stop all NemoClaw processes for this sandbox before resolving the recorded lock generation.`;
+      if (options.onSetupFailure) {
+        blockedAt = performance.now();
+        await options.onSetupFailure(new Error(reason));
+      }
+      if (generation !== notifiedGeneration) {
+        await reportDeadlineContainment(options, {
+          kind: "failure",
+          ownerPid: owner?.pid ?? null,
+          reason,
+        });
+        notifiedGeneration = generation;
+      }
+      if (options.onSetupFailure) {
+        continue;
+      }
+    }
+    await sleep(pollIntervalMs);
+  }
+}
+
+function clearDeadlineProtectedPathSync(
+  targetPath: string,
+  targetLabel: string,
+  sandboxName: string,
+  takeoverToken: string,
+  stateDir: string,
+  options: McpLifecycleDeadlineFenceSyncOptions,
+): void {
+  const pollIntervalMs = positiveInteger(options.pollIntervalMs, DEFAULT_POLL_INTERVAL_MS);
+  const containmentTimeoutMs = positiveInteger(options.timeoutMs, DEFAULT_TIMEOUT_MS);
+  const corruptTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
+  let blockedAt = performance.now();
+  let notifiedGeneration: string | null = null;
+
+  for (;;) {
+    if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
+      throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
+    }
+    const observed = readMcpLifecycleLockObservationSync(targetPath);
+    if (!observed) return;
+
+    const disposition = classifyObservedMcpLifecycleLock(observed, sandboxName, 0, corruptTracker);
+    const owner = observed.owner;
+    const exactLocalOwner =
+      owner?.sandboxName === sandboxName &&
+      Boolean(owner.processIdentity) &&
+      owner.hostIdentity === readMcpLockHostIdentity() &&
+      owner.pidNamespaceIdentity === readMcpLockPidNamespaceIdentity();
+    const currentProcessIdentity =
+      exactLocalOwner && owner?.pid === process.pid
+        ? readMcpLockProcessIdentity(process.pid, true)
+        : null;
+    if (
+      exactLocalOwner &&
+      owner?.pid === process.pid &&
+      currentProcessIdentity !== null &&
+      owner.processIdentity === currentProcessIdentity
+    ) {
+      const error = new Error(
+        "Synchronous auto-restore cannot wait behind a sibling lifecycle operation in this process",
+      ) as Error & { code: string };
+      error.code = "NEMOCLAW_SYNC_REENTRANT_OWNER";
+      throw error;
+    }
+    if (disposition === "stale" && exactLocalOwner) {
+      const confirmed = readMcpLifecycleLockObservationSync(targetPath);
+      if (!sameLockGeneration(observed, confirmed)) continue;
+      if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
+        throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
+      }
+      const lifecyclePath = targetPath.endsWith(".reaper")
+        ? targetPath.slice(0, -".reaper".length)
+        : targetPath;
+      ensureDurableContainmentForStaleGenerationSync(
+        lifecyclePath,
+        sandboxName,
+        stateDir,
+        observed,
+        `The ${targetLabel} owner PID ${String(owner?.pid)} was already gone before takeover`,
+      );
+      throw durableMcpLifecycleContainmentFailure(
+        new Error(
+          `The exact ${targetLabel} owner was already gone, so surviving descendants cannot be ruled out`,
+        ),
+        lifecyclePath,
+      );
+    }
+    if (exactLocalOwner && owner?.pid === process.pid && currentProcessIdentity === null) {
+      const error = new Error(
+        "Synchronous auto-restore cannot verify the process identity of a same-PID lifecycle owner",
+      ) as Error & { code: string };
+      error.code = "NEMOCLAW_SYNC_REENTRANT_OWNER";
+      throw error;
+    }
+
+    const generation = `${String(observed.dev)}:${String(observed.ino)}:${
+      owner?.token ?? "invalid"
+    }`;
+    if (
+      generation !== notifiedGeneration &&
+      performance.now() - blockedAt >= containmentTimeoutMs
+    ) {
+      reportDeadlineContainmentSync(options, {
+        kind: "failure",
+        ownerPid: owner?.pid ?? null,
+        reason: `The active ${targetLabel} owner was preserved because portable process inspection cannot prove that forcibly terminating it would contain every descendant. Shields remain DOWN and the deadline gate is blocking new mutations. Wait for the owner to finish, or stop all NemoClaw processes for this sandbox before resolving the recorded lock generation.`,
+      });
+      notifiedGeneration = generation;
+    }
+    sleepSync(pollIntervalMs);
+  }
+}
+
+async function publishDeadlineMainOwner(
+  lockPath: string,
+  sandboxName: string,
+  takeoverToken: string,
+  stateDir: string,
+  options: McpLifecycleDeadlineFenceOptions,
+): Promise<string> {
+  const pollIntervalMs = positiveInteger(options.pollIntervalMs, DEFAULT_POLL_INTERVAL_MS);
+  let notifiedError: string | null = null;
+  let pendingCandidateToken: string | null = null;
+  for (;;) {
+    try {
+      if (pendingCandidateToken) {
+        const existingSelfToken = selfOwnedDeadlineMainToken(
+          await readMcpLifecycleLockObservation(lockPath),
+          sandboxName,
+          takeoverToken,
+          pendingCandidateToken,
+        );
+        if (existingSelfToken) return existingSelfToken;
+        pendingCandidateToken = null;
+      }
+      await clearDeadlineProtectedPath(
+        `${lockPath}.reaper`,
+        "stale-lock reaper",
+        sandboxName,
+        takeoverToken,
+        stateDir,
+        options,
+      );
+      await clearDeadlineProtectedPath(
+        lockPath,
+        "sandbox mutation",
+        sandboxName,
+        takeoverToken,
+        stateDir,
+        options,
+      );
+      if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
+        throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
+      }
+      const candidateToken = crypto.randomUUID();
+      pendingCandidateToken = candidateToken;
+      const timerOwner = createMcpLifecycleLockOwner(sandboxName, candidateToken, takeoverToken);
+      if (await writeMcpLifecycleLockCandidateAndLink(lockPath, timerOwner)) {
+        return candidateToken;
+      }
+      pendingCandidateToken = null;
+      notifiedError = null;
+      if (options.onSetupFailure) {
+        await options.onSetupFailure(
+          new Error("Auto-restore could not publish its deadline-owned mutation generation"),
+        );
+        continue;
+      }
+    } catch (error) {
+      if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
+        throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      if (isDurableContainmentError(error)) {
+        const resolutionReason = `${message} The deadline gate remains closed. Stop all NemoClaw processes for this sandbox; inspect '${lockPath}', '${lockPath}.reaper', '${lockPath}.deadline', and '${committedContainmentPath(lockPath)}'; record each target's file kind, device/inode, and owner token when present; verify every recorded identity is unchanged; remove only the exact stale owner generations first and the exact containment generation last before retrying.`;
+        if (options.throwOnCommittedContainment) {
+          const failure = durableMcpLifecycleContainmentFailure(error, lockPath);
+          failure.message = resolutionReason;
+          throw failure;
+        }
+        if (message !== notifiedError) {
+          await reportDeadlineContainment(options, {
+            kind: "failure",
+            ownerPid: null,
+            reason: resolutionReason,
+          });
+          notifiedError = message;
+        }
+        while (
+          readShieldsTimerTakeoverToken(sandboxName, stateDir) === takeoverToken &&
+          ((await mcpLifecycleLockPathExists(committedContainmentPath(lockPath))) ||
+            (await deadlineMainStillPresent(lockPath)))
+        ) {
+          await sleep(pollIntervalMs);
+        }
+        if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
+          throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
+        }
+        continue;
+      }
+      if (options.onSetupFailure) await options.onSetupFailure(error);
+      if (message !== notifiedError) {
+        await reportDeadlineContainment(options, {
+          kind: "failure",
+          ownerPid: null,
+          reason: `Auto-restore deadline setup is retrying while the gate remains closed: ${message}`,
+        });
+        notifiedError = message;
+      }
+      if (options.onSetupFailure) {
+        continue;
+      }
+    }
+    await sleep(pollIntervalMs);
+  }
+}
+
+function publishDeadlineMainOwnerSync(
+  lockPath: string,
+  sandboxName: string,
+  takeoverToken: string,
+  stateDir: string,
+  options: McpLifecycleDeadlineFenceSyncOptions,
+): string {
+  const pollIntervalMs = positiveInteger(options.pollIntervalMs, DEFAULT_POLL_INTERVAL_MS);
+  let notifiedError: string | null = null;
+  let pendingCandidateToken: string | null = null;
+  for (;;) {
+    try {
+      if (pendingCandidateToken) {
+        const existingSelfToken = selfOwnedDeadlineMainToken(
+          readMcpLifecycleLockObservationSync(lockPath),
+          sandboxName,
+          takeoverToken,
+          pendingCandidateToken,
+        );
+        if (existingSelfToken) return existingSelfToken;
+        pendingCandidateToken = null;
+      }
+      clearDeadlineProtectedPathSync(
+        `${lockPath}.reaper`,
+        "stale-lock reaper",
+        sandboxName,
+        takeoverToken,
+        stateDir,
+        options,
+      );
+      clearDeadlineProtectedPathSync(
+        lockPath,
+        "sandbox mutation",
+        sandboxName,
+        takeoverToken,
+        stateDir,
+        options,
+      );
+      if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
+        throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
+      }
+      const candidateToken = crypto.randomUUID();
+      pendingCandidateToken = candidateToken;
+      const timerOwner = createMcpLifecycleLockOwner(sandboxName, candidateToken, takeoverToken);
+      if (writeMcpLifecycleLockCandidateAndLinkSync(lockPath, timerOwner)) {
+        return candidateToken;
+      }
+      pendingCandidateToken = null;
+      notifiedError = null;
+    } catch (error) {
+      if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
+        throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
+      }
+      if (
+        error instanceof Error &&
+        (error as Error & { code?: string }).code === "NEMOCLAW_SYNC_REENTRANT_OWNER"
+      ) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      if (isDurableContainmentError(error)) {
+        const resolutionReason = `${message} The deadline gate remains closed. Stop all NemoClaw processes for this sandbox; inspect '${lockPath}', '${lockPath}.reaper', '${lockPath}.deadline', and '${committedContainmentPath(lockPath)}'; record each target's file kind, device/inode, and owner token when present; verify every recorded identity is unchanged; remove only the exact stale owner generations first and the exact containment generation last before retrying.`;
+        if (message !== notifiedError) {
+          reportDeadlineContainmentSync(options, {
+            kind: "failure",
+            ownerPid: null,
+            reason: resolutionReason,
+          });
+          notifiedError = message;
+        }
+        if (options.throwOnCommittedContainment) {
+          const failure = durableMcpLifecycleContainmentFailure(error, lockPath);
+          failure.message = resolutionReason;
+          throw failure;
+        }
+        while (
+          readShieldsTimerTakeoverToken(sandboxName, stateDir) === takeoverToken &&
+          (mcpLifecycleLockPathExistsSync(committedContainmentPath(lockPath)) ||
+            deadlineMainStillPresentSync(lockPath))
+        ) {
+          sleepSync(pollIntervalMs);
+        }
+        if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
+          throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
+        }
+        continue;
+      }
+      if (message !== notifiedError) {
+        reportDeadlineContainmentSync(options, {
+          kind: "failure",
+          ownerPid: null,
+          reason: `Auto-restore deadline setup is retrying while the gate remains closed: ${message}`,
+        });
+        notifiedError = message;
+      }
+    }
+    sleepSync(pollIntervalMs);
+  }
+}
+
+/**
+ * Establish the auto-restore deadline as a generation-pinned exclusion fence.
+ *
+ * Ordinary acquisitions refuse to enter while `<lock>.deadline` exists.
+ * The timer keeps that gate through policy restoration and configuration re-locking,
+ * and waits for an active owner to release naturally. Portable PID inspection
+ * cannot prove that force-killing a process also contained every descendant.
+ */
+export async function withMcpLifecycleDeadlineFence<T>(
+  sandboxName: string,
+  takeoverToken: string,
+  operation: () => Promise<T> | T,
+  options: McpLifecycleDeadlineFenceOptions,
+): Promise<T> {
+  if (!/^[0-9a-f]{32}$/.test(takeoverToken)) {
+    throw new Error("Auto-restore takeover token must be 32 lowercase hexadecimal characters");
+  }
+  const stateDir = options.stateDir ?? resolveNemoclawStateDir();
+  const lockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
+  const inherited = heldLocks.getStore();
+  if (inherited?.get(lockPath)?.active) return await operation();
+
+  const fence = await acquireDeadlineFence(sandboxName, takeoverToken, {
+    ...options,
+    stateDir,
+  });
+  let mainToken: string | null = null;
+  let retainOwnedGate = false;
+  let lease: HeldLockLease | null = null;
+  try {
+    // An ordinary acquirer can pass its pre-publication deadline check before
+    // this fence exists, then link the main path after an earlier clear. Keep
+    // the fence and repeat takeover until this timer owns the main generation.
+    mainToken = await publishDeadlineMainOwner(
+      lockPath,
+      sandboxName,
+      takeoverToken,
+      stateDir,
+      options,
+    );
+
+    const activeLease: HeldLockLease = {
+      active: true,
+      retainForDurableContainment: false,
+    };
+    lease = activeLease;
+    const context = new Map(inherited ?? []);
+    context.set(lockPath, activeLease);
+    return await heldLocks.run(context, async () => {
+      try {
+        if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
+          throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
+        }
+        return await operation();
+      } finally {
+        activeLease.active = false;
+      }
+    });
+  } catch (error) {
+    retainOwnedGate = await retainOwnedLifecycleGateAfterFailure(error, lockPath);
+    throw error;
+  } finally {
+    if (!retainOwnedGate && lease?.retainForDurableContainment) {
+      retainOwnedGate = await ownedLifecycleGateMustRemainClosed(lockPath);
+    }
+    if (!retainOwnedGate) {
+      if (mainToken) await safelyReleaseMcpLifecycleLock(lockPath, mainToken);
+      await safelyReleaseMcpLifecycleLock(fence.lockPath, fence.token);
+    }
+  }
+}
+
+/**
+ * Synchronous deadline fence for inline recovery from synchronous status and
+ * permission-inspection paths.
+ */
+export function withMcpLifecycleDeadlineFenceSync<T>(
+  sandboxName: string,
+  takeoverToken: string,
+  operation: () => T,
+  options: McpLifecycleDeadlineFenceSyncOptions,
+): T {
+  if (!/^[0-9a-f]{32}$/.test(takeoverToken)) {
+    throw new Error("Auto-restore takeover token must be 32 lowercase hexadecimal characters");
+  }
+  const stateDir = options.stateDir ?? resolveNemoclawStateDir();
+  const lockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
+  const inherited = heldLocks.getStore();
+  if (inherited?.get(lockPath)?.active) return operation();
+  const fence = acquireDeadlineFenceSync(sandboxName, takeoverToken, {
+    ...options,
+    stateDir,
+  });
+  let mainToken: string | null = null;
+  let retainOwnedGate = false;
+  let lease: HeldLockLease | null = null;
+  try {
+    mainToken = publishDeadlineMainOwnerSync(
+      lockPath,
+      sandboxName,
+      takeoverToken,
+      stateDir,
+      options,
+    );
+
+    const activeLease: HeldLockLease = {
+      active: true,
+      retainForDurableContainment: false,
+    };
+    lease = activeLease;
+    const context = new Map(inherited ?? []);
+    context.set(lockPath, activeLease);
+    try {
+      if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
+        throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
+      }
+      return heldLocks.run(context, operation);
+    } finally {
+      activeLease.active = false;
+    }
+  } catch (error) {
+    retainOwnedGate = retainOwnedLifecycleGateAfterFailureSync(error, lockPath);
+    throw error;
+  } finally {
+    if (!retainOwnedGate && lease?.retainForDurableContainment) {
+      retainOwnedGate = ownedLifecycleGateMustRemainClosedSync(lockPath);
+    }
+    if (!retainOwnedGate) {
+      if (mainToken) safelyReleaseMcpLifecycleLockSync(lockPath, mainToken);
+      safelyReleaseMcpLifecycleLockSync(fence.lockPath, fence.token);
+    }
+  }
+}
+
+export function isMcpLifecycleLockHeld(
+  sandboxName: string,
+  stateDir = resolveNemoclawStateDir(),
+): boolean {
+  return heldLocks.getStore()?.get(getMcpLifecycleLockPath(sandboxName, stateDir))?.active === true;
+}
+
+export function withMcpLifecycleLockSync<T>(
+  sandboxName: string,
+  operation: () => T,
+  options: McpLifecycleLockOptions = {},
+): T {
+  const stateDir = options.stateDir ?? resolveNemoclawStateDir();
+  const lockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
+  const inherited = heldLocks.getStore();
+  if (inherited?.get(lockPath)?.active) return operation();
+
+  const acquired = acquireMcpLifecycleLockSync(sandboxName, { ...options, stateDir });
+  const lease: HeldLockLease = {
+    active: true,
+    retainForDurableContainment: false,
+  };
+  const context = new Map(inherited ?? []);
+  context.set(lockPath, lease);
+  let retainOwnedGate = false;
+  try {
+    return heldLocks.run(context, operation);
+  } catch (error) {
+    retainOwnedGate =
+      Boolean(acquired.shieldsTakeoverToken) &&
+      retainOwnedLifecycleGateAfterFailureSync(error, lockPath);
+    throw error;
+  } finally {
+    lease.active = false;
+    if (!retainOwnedGate && acquired.shieldsTakeoverToken && lease.retainForDurableContainment) {
+      retainOwnedGate = ownedLifecycleGateMustRemainClosedSync(lockPath);
+    }
+    if (!retainOwnedGate) {
+      safelyReleaseMcpLifecycleLockSync(acquired.lockPath, acquired.token);
+    }
   }
 }
 
@@ -230,18 +1628,32 @@ export async function withMcpLifecycleLock<T>(
     ...options,
     stateDir,
   });
-  const lease: HeldLockLease = { active: true };
+  const lease: HeldLockLease = {
+    active: true,
+    retainForDurableContainment: false,
+  };
   const context = new Map(inherited ?? []);
   context.set(lockKey, lease);
   return heldLocks.run(context, async () => {
+    let retainOwnedGate = false;
     try {
       return await operation();
+    } catch (error) {
+      retainOwnedGate =
+        Boolean(acquired.shieldsTakeoverToken) &&
+        (await retainOwnedLifecycleGateAfterFailure(error, lockKey));
+      throw error;
     } finally {
       // Async resources created by the callback retain their ALS store. Mark
       // the lease inactive before releasing so a detached/later promise cannot
       // mistake an ended parent operation for a still-held reentrant lock.
       lease.active = false;
-      await safelyReleaseMcpLifecycleLock(acquired.lockPath, acquired.token);
+      if (!retainOwnedGate && acquired.shieldsTakeoverToken && lease.retainForDurableContainment) {
+        retainOwnedGate = await ownedLifecycleGateMustRemainClosed(lockKey);
+      }
+      if (!retainOwnedGate) {
+        await safelyReleaseMcpLifecycleLock(acquired.lockPath, acquired.token);
+      }
     }
   });
 }

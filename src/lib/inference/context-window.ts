@@ -13,7 +13,7 @@
 import { DEFAULT_CONTEXT_WINDOW } from "./config";
 import {
   getLocalProviderHealthEndpoint,
-  getManagedDualStationVllmProviderBinding,
+  getManagedVllmProviderBinding,
   getOllamaWarmupCommand,
   probeVllmModels,
   type RunCaptureFn,
@@ -46,9 +46,9 @@ const defaultContextWindowDeps: ContextWindowDeps = {
   probeVllmContextWindow: (model: string): number | null => {
     // Same source onboard uses: GET /v1/models on the host vLLM server and read
     // max_model_len (handles both NemoClaw-launched and bring-your-own vLLM).
-    let managedBinding: ReturnType<typeof getManagedDualStationVllmProviderBinding>;
+    let managedBinding: ReturnType<typeof getManagedVllmProviderBinding>;
     try {
-      managedBinding = getManagedDualStationVllmProviderBinding();
+      managedBinding = getManagedVllmProviderBinding();
     } catch {
       return null;
     }
