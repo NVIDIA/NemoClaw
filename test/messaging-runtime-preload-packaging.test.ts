@@ -52,6 +52,11 @@ describe("messaging runtime preload packaging", () => {
     expect(hermesDockerfile).toContain(
       "COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/",
     );
+    expect(hermesDockerfile).toContain('runtime_preload_found="$(find');
+    expect(hermesDockerfile).toContain("duplicate messaging runtime preload basename");
     expect(hermesDockerfile).toContain("-path '*/runtime/*.js'");
+    expect(hermesDockerfile).toContain(
+      "check_metadata /usr/local/lib/nemoclaw/preloads/whatsapp-hermes-session.js 'root:root 444'",
+    );
   });
 });

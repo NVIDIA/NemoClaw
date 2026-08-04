@@ -111,4 +111,48 @@ describe("messaging runtime env aliases", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("returns success when a matching alias has no message", () => {
+    const src = `${fs.readFileSync(SANDBOX_INIT, "utf-8")}\n${fs.readFileSync(START_SCRIPT, "utf-8")}`;
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-alias-empty-message-"));
+    const planPath = path.join(tmpDir, "runtime-plan.json");
+    const scriptPath = path.join(tmpDir, "run.sh");
+    const runtimeValue = {
+      envAliases: [
+        {
+          envKey: "TEST_ALIAS",
+          match: "^original$",
+          value: "normalized",
+        },
+      ],
+    };
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
+        'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
+        `export NEMOCLAW_MESSAGING_PLAN_B64=${JSON.stringify(encodeRuntimeSetupPlan("test", runtimeValue))}`,
+        messagingRuntimeSetupSection(src, planPath),
+        "write_messaging_runtime_setup_plan",
+        "apply_messaging_runtime_env_aliases",
+        'printf "TEST_ALIAS=%s\\n" "$TEST_ALIAS"',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        env: { ...process.env, TEST_ALIAS: "original" },
+        timeout: 5000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("TEST_ALIAS=normalized");
+      expect(result.stderr).toBe("");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

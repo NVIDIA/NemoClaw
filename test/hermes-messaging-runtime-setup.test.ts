@@ -3,20 +3,14 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { extractShellFunction } from "./support/hermes-shell-harness";
 
 const ROOT = path.join(import.meta.dirname, "..");
 const HERMES_START = fs.readFileSync(path.join(ROOT, "agents", "hermes", "start.sh"), "utf-8");
-
-function shellFunction(source: string, name: string): string {
-  const start = source.indexOf(`${name}() {`);
-  expect(start, `expected ${name}`).toBeGreaterThanOrEqual(0);
-  const remainder = source.slice(start);
-  const end = remainder.indexOf("\n}");
-  expect(end, `expected ${name} closing brace`).toBeGreaterThan(0);
-  return remainder.slice(0, end + 2);
-}
+const SANDBOX_INIT = fs.readFileSync(path.join(ROOT, "scripts", "lib", "sandbox-init.sh"), "utf-8");
 
 function runtimeShellEnvFunction(source: string): string {
   const start = source.indexOf("write_runtime_shell_env() {");
@@ -40,7 +34,7 @@ describe("Hermes messaging runtime setup", () => {
           'install_messaging_runtime_preloads() { printf "install\\n"; }',
           'verify_messaging_runtime_secret_scans() { printf "scan\\n"; }',
           'write_runtime_shell_env() { printf "env\\n"; }',
-          shellFunction(HERMES_START, "prepare_hermes_messaging_runtime"),
+          extractShellFunction(HERMES_START, "prepare_hermes_messaging_runtime"),
           "prepare_hermes_messaging_runtime",
         ].join("\n"),
       ],
@@ -52,29 +46,43 @@ describe("Hermes messaging runtime setup", () => {
   });
 
   it("publishes manifest connect preloads through the trusted runtime environment (#8184)", () => {
-    const result = spawnSync(
-      "bash",
-      [
-        "--noprofile",
-        "--norc",
-        "-c",
-        [
-          "set -euo pipefail",
-          "emit_sandbox_sourced_file() { cat; }",
-          'emit_messaging_connect_runtime_preload_exports() { printf "export NODE_OPTIONS=manifest-connect\\n"; }',
-          '_PROXY_ENV_FILE="/tmp/test-runtime-env"',
-          '_PROXY_URL="http://10.200.0.1:3128"',
-          '_NO_PROXY_VAL="localhost,127.0.0.1"',
-          'HERMES_DIR="/sandbox/.hermes"',
-          runtimeShellEnvFunction(HERMES_START),
-          "write_runtime_shell_env",
-        ].join("\n"),
-      ],
-      { encoding: "utf-8", timeout: 5000 },
-    );
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-connect-preload-"));
+    const preloadPath = path.join(tmpDir, "manifest-connect.js");
+    const preloadListPath = path.join(tmpDir, "connect-preloads");
+    const runtimeEnvPath = path.join(tmpDir, "runtime-env.sh");
+    fs.writeFileSync(preloadPath, "module.exports = {};\n");
+    fs.writeFileSync(preloadListPath, `${preloadPath}\n`);
 
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("export NODE_OPTIONS=manifest-connect");
+    try {
+      const result = spawnSync(
+        "bash",
+        [
+          "--noprofile",
+          "--norc",
+          "-c",
+          [
+            "set -euo pipefail",
+            'emit_sandbox_sourced_file() { local target="$1"; cat >"$target"; chmod 444 "$target"; }',
+            extractShellFunction(SANDBOX_INIT, "emit_messaging_connect_runtime_preload_exports"),
+            `_MESSAGING_CONNECT_PRELOADS_FILE=${JSON.stringify(preloadListPath)}`,
+            `_PROXY_ENV_FILE=${JSON.stringify(runtimeEnvPath)}`,
+            '_PROXY_URL="http://10.200.0.1:3128"',
+            '_NO_PROXY_VAL="localhost,127.0.0.1"',
+            'HERMES_DIR="/sandbox/.hermes"',
+            runtimeShellEnvFunction(HERMES_START),
+            "write_runtime_shell_env",
+            `source ${JSON.stringify(runtimeEnvPath)}`,
+            'printf "NODE_OPTIONS=%s\\n" "$NODE_OPTIONS"',
+          ].join("\n"),
+        ],
+        { encoding: "utf-8", timeout: 5000, env: { ...process.env, NODE_OPTIONS: "" } },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain(`NODE_OPTIONS=--require ${preloadPath}`);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it.each([
@@ -128,8 +136,8 @@ describe("Hermes messaging runtime setup", () => {
           'write_messaging_runtime_setup_plan() { printf "plan\\n"; }',
           'install_messaging_runtime_preloads() { printf "install\\n"; }',
           'verify_messaging_runtime_secret_scans() { printf "scan\\n"; }',
-          shellFunction(HERMES_START, "prepare_hermes_messaging_runtime"),
-          shellFunction(HERMES_START, name),
+          extractShellFunction(HERMES_START, "prepare_hermes_messaging_runtime"),
+          extractShellFunction(HERMES_START, name),
           name,
         ].join("\n"),
       ],

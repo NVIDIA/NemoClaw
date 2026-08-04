@@ -14,7 +14,7 @@ describe("Hermes WhatsApp session runtime preload", () => {
   it.each([
     "/sandbox/.hermes/scripts/whatsapp-bridge/bridge.js",
     "/sandbox/.hermes/dashboard-home/scripts/whatsapp-bridge/bridge.js",
-  ])("normalizes %s to the durable session path (#8184)", (bridgePath) => {
+  ])("forces %s to the manifest-owned durable session path (#8184)", (bridgePath) => {
     const argv = ["/usr/local/bin/node", bridgePath, "--session", "/split/session"];
 
     expect(normalizeHermesWhatsappSessionArgv(argv)).toBe(true);

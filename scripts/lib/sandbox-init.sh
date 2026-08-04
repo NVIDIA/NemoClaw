@@ -1059,8 +1059,11 @@ PYMESSAGINGALIASES
   local _env_key _value _message
   while IFS=$'\t' read -r _env_key _value _message; do
     export "$_env_key=$_value"
-    [ -n "$_message" ] && printf '%s\n' "$_message" >&2
+    if [ -n "$_message" ]; then
+      printf '%s\n' "$_message" >&2
+    fi
   done <<<"$_rows"
+  return 0
 }
 
 node_options_has_require() {

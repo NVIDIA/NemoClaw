@@ -26,6 +26,8 @@ export function normalizeHermesWhatsappSessionArgv(argv: string[]): boolean {
     );
   }
 
+  // Both Hermes homes always supply --session. Force the manifest-owned durable
+  // location so dashboard pairing and gateway delivery cannot split state.
   argv[sessionIndexes[0] + 1] = HERMES_WHATSAPP_SESSION_PATH;
   return true;
 }

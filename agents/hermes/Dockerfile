@@ -325,10 +325,11 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-star
     && chmod 444 /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py \
     && chmod 444 /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
     && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json \
-    && if [ -d /usr/local/lib/nemoclaw/preloads-compiled-channels ]; then \
-        find /usr/local/lib/nemoclaw/preloads-compiled-channels -path '*/runtime/*.js' -type f \
-            -exec sh -c 'for file do cp "$file" "/usr/local/lib/nemoclaw/preloads/$(basename "$file")"; done' sh {} +; \
-    fi \
+    && test -d /usr/local/lib/nemoclaw/preloads-compiled-channels \
+    && runtime_preload_found="$(find /usr/local/lib/nemoclaw/preloads-compiled-channels -path '*/runtime/*.js' -type f -print -quit)" \
+    && test -n "$runtime_preload_found" \
+    && find /usr/local/lib/nemoclaw/preloads-compiled-channels -path '*/runtime/*.js' -type f \
+        -exec sh -c 'for file do target="/usr/local/lib/nemoclaw/preloads/$(basename "$file")"; [ ! -e "$target" ] || { echo "ERROR: duplicate messaging runtime preload basename: $target" >&2; exit 1; }; cp "$file" "$target"; done' sh {} + \
     && rm -rf /usr/local/lib/nemoclaw/preloads-compiled-channels \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then \
         chown -R 0:0 /usr/local/lib/nemoclaw/preloads \
@@ -1095,6 +1096,7 @@ RUN check_metadata() { \
     && check_metadata /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh 'root:root 444' \
     && check_metadata /usr/local/bin/nemoclaw-gateway-control 'root:root 700' \
     && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444' \
+    && check_metadata /usr/local/lib/nemoclaw/preloads/whatsapp-hermes-session.js 'root:root 444' \
     && check_metadata /usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755' \
     && check_metadata /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py 'root:root 755' \
     && check_metadata /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json 'root:root 444' \

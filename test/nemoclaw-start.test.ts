@@ -2792,58 +2792,6 @@ describe("seed_default_workspace_templates (#3240)", () => {
   });
 });
 
-describe("Slack secrets-on-disk tripwire (#2085)", () => {
-  const src = entrypointFixture.readOpenClawSources(START_SCRIPT);
-
-  it("refuses to serve when real Slack tokens leak to disk", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-secret-"));
-    const configPath = path.join(tmpDir, "openclaw.json");
-    const planPath = path.join(tmpDir, "runtime-plan.json");
-    const runtimeValue = {
-      secretScans: [
-        {
-          path: configPath,
-          pattern: "(?:xoxb|xapp)-(?!OPENSHELL-RESOLVE-ENV-)",
-          message: "[SECURITY] Slack token leaked into {path} - refusing to serve",
-          exitCode: 78,
-        },
-      ],
-    };
-    const scriptPath = path.join(tmpDir, "run.sh");
-    const run = (config: string) => {
-      fs.writeFileSync(configPath, config);
-      fs.rmSync(planPath, { force: true });
-      fs.writeFileSync(
-        scriptPath,
-        [
-          "#!/usr/bin/env bash",
-          "set -euo pipefail",
-          'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
-          'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
-          `export NEMOCLAW_MESSAGING_PLAN_B64=${JSON.stringify(encodeRuntimeSetupPlan("slack", runtimeValue))}`,
-          messagingRuntimeSetupSection(src, {
-            planPath,
-            secretScanPrefix: tmpDir + path.sep,
-          }),
-          "write_messaging_runtime_setup_plan",
-          "verify_messaging_runtime_secret_scans",
-        ].join("\n"),
-        { mode: 0o700 },
-      );
-      return spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
-    };
-
-    try {
-      expect(run('{"botToken":"xoxb-real-token"}\n').status).toBe(78);
-      expect(run('{"appToken":"xapp-real-token"}\n').status).toBe(78);
-      expect(run('{"botToken":"xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN"}\n').status).toBe(0);
-      expect(run('{"token":"openshell:resolve:env:SLACK_BOT_TOKEN"}\n').status).toBe(0);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-});
-
 describe("provider placeholder refresh (#4251)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 

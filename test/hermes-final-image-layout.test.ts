@@ -403,6 +403,7 @@ describe("Hermes final image layout", () => {
       "/usr/local/bin/nemoclaw-gateway-control 'root:root 700'",
       "/sandbox/.nemoclaw 'root:root 1755'",
       "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444'",
+      "/usr/local/lib/nemoclaw/preloads/whatsapp-hermes-session.js 'root:root 444'",
       "/usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755'",
       "/usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py 'root:root 755'",
       "/usr/local/share/nemoclaw/hermes-cli-adapter-v1.json 'root:root 444'",
