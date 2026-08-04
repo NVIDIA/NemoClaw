@@ -381,13 +381,11 @@ describe("restoreBaselineEntry persistence boundary (#7178)", () => {
   });
 
   it.each([
-    ["changes", "nous_research", "stale-preview-digest"],
-    ["appears", "nous_research", null],
-    ["disappears", "legacy_entry", LIVE_DIGEST],
-  ] as const)("does not mutate when the baseline entry %s after the operator preview", (_change, key, expectedTargetDigest) => {
-    if (key === "legacy_entry") {
-      mocks.getBaselineExclusions.mockReturnValue([{ ...RECORDED, key }]);
-    }
+    ["changes", "nous_research", "stale-preview-digest", [RECORDED]],
+    ["appears", "nous_research", null, [RECORDED]],
+    ["disappears", "legacy_entry", LIVE_DIGEST, [{ ...RECORDED, key: "legacy_entry" }]],
+  ] as const)("does not mutate when the baseline entry %s after the operator preview", (_change, key, expectedTargetDigest, exclusions) => {
+    mocks.getBaselineExclusions.mockReturnValue([...exclusions]);
 
     expect(restoreBaselineEntry("alpha", key, { nonFatal: true, expectedTargetDigest })).toBe(
       false,
