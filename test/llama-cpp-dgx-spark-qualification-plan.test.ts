@@ -1,0 +1,114 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import { exportLlamaCppDgxSparkQualificationPlan } from "../scripts/checks/export-llama-cpp-dgx-spark-qualification-plan.mts";
+import {
+  parseLlamaCppDgxSparkExecutionPlan,
+  parseLlamaCppDgxSparkQualificationPlan,
+} from "../scripts/checks/llama-cpp-dgx-spark-qualification-contract.mts";
+
+const repoRoot = path.resolve(import.meta.dirname, "..");
+const temporaryRoots: string[] = [];
+
+function candidateRoot(options: { activation?: string; enabled?: boolean } = {}): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-llama-cpp-plan-"));
+  temporaryRoots.push(root);
+  const imageDirectory = path.join(root, "managed-inference", "images", "llama-cpp");
+  const recipeDirectory = path.join(root, "managed-inference", "recipes");
+  fs.mkdirSync(imageDirectory, { recursive: true });
+  fs.mkdirSync(recipeDirectory, { recursive: true });
+
+  let image = fs.readFileSync(
+    path.join(repoRoot, "managed-inference", "images", "llama-cpp", "image.yaml"),
+    "utf8",
+  );
+  if (options.enabled) {
+    image = image
+      .replace("      execution: disabled", "      execution: enabled")
+      .replace("      runner: null", "      runner: linux-arm64-gpu-dgx-spark-gb10-protected-1")
+      .replace(
+        "      environment: null",
+        "      environment: approve-dgx-spark-image-qualification",
+      )
+      .replace(
+        "        hostPath: null",
+        "        hostPath: /var/lib/nemoclaw/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",
+      );
+  }
+  fs.writeFileSync(path.join(imageDirectory, "image.yaml"), image);
+  fs.copyFileSync(
+    path.join(
+      repoRoot,
+      "managed-inference",
+      "recipes",
+      "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml",
+    ),
+    path.join(recipeDirectory, "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml"),
+  );
+  if (options.activation !== undefined) {
+    const activationPath = path.join(root, "ci", "llama-cpp-dgx-spark-qualification-v1.yaml");
+    fs.mkdirSync(path.dirname(activationPath), { recursive: true });
+    fs.writeFileSync(activationPath, options.activation);
+  }
+  return root;
+}
+
+const activation = `contractVersion: 1
+jobId: llama-cpp-dgx-spark-qualification
+platform: linux/arm64
+profile: dgx-spark-gb10-single
+`;
+
+afterEach(() => {
+  for (const root of temporaryRoots.splice(0)) {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+describe("llama.cpp DGX Spark qualification plan export", () => {
+  it("exports only an activated, enabled declarative qualification", () => {
+    const output = exportLlamaCppDgxSparkQualificationPlan(
+      candidateRoot({ activation, enabled: true }),
+    );
+
+    expect(output.execution).toBe("enabled");
+    expect(output.runner).toBe("linux-arm64-gpu-dgx-spark-gb10-protected-1");
+    expect(parseLlamaCppDgxSparkQualificationPlan(JSON.parse(output.qualification))).toMatchObject({
+      execution: "enabled",
+      platform: "linux/arm64",
+      profile: "dgx-spark-gb10-single",
+    });
+    expect(
+      parseLlamaCppDgxSparkExecutionPlan(JSON.parse(output.plan), output.plan_sha256),
+    ).toMatchObject({ contractVersion: 1 });
+  });
+
+  it("rejects a dormant image even when an activation file exists", () => {
+    expect(() => exportLlamaCppDgxSparkQualificationPlan(candidateRoot({ activation }))).toThrow(
+      "protected llama.cpp DGX Spark qualification is not enabled",
+    );
+  });
+
+  it("rejects enabled infrastructure without the explicit activation file", () => {
+    expect(() =>
+      exportLlamaCppDgxSparkQualificationPlan(candidateRoot({ enabled: true })),
+    ).toThrow();
+  });
+
+  it("rejects duplicate activation keys", () => {
+    expect(() =>
+      exportLlamaCppDgxSparkQualificationPlan(
+        candidateRoot({
+          activation: `${activation}profile: dgx-spark-gb10-single\n`,
+          enabled: true,
+        }),
+      ),
+    ).toThrow();
+  });
+});
