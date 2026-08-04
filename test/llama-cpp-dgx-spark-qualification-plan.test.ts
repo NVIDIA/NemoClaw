@@ -24,23 +24,19 @@ function candidateRoot(options: { activation?: string; enabled?: boolean } = {})
   fs.mkdirSync(imageDirectory, { recursive: true });
   fs.mkdirSync(recipeDirectory, { recursive: true });
 
-  let image = fs.readFileSync(
+  const sourceImage = fs.readFileSync(
     path.join(repoRoot, "managed-inference", "images", "llama-cpp", "image.yaml"),
     "utf8",
   );
-  if (options.enabled) {
-    image = image
-      .replace("      execution: disabled", "      execution: enabled")
-      .replace("      runner: null", "      runner: linux-arm64-gpu-dgx-spark-gb10-protected-1")
-      .replace(
-        "      environment: null",
-        "      environment: approve-dgx-spark-image-qualification",
-      )
-      .replace(
-        "        hostPath: null",
-        "        hostPath: /var/lib/nemoclaw/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",
-      );
-  }
+  const enabledImage = sourceImage
+    .replace("      execution: disabled", "      execution: enabled")
+    .replace("      runner: null", "      runner: linux-arm64-gpu-dgx-spark-gb10-protected-1")
+    .replace("      environment: null", "      environment: approve-dgx-spark-image-qualification")
+    .replace(
+      "        hostPath: null",
+      "        hostPath: /var/lib/nemoclaw/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",
+    );
+  const image = options.enabled ? enabledImage : sourceImage;
   fs.writeFileSync(path.join(imageDirectory, "image.yaml"), image);
   fs.copyFileSync(
     path.join(
@@ -51,10 +47,10 @@ function candidateRoot(options: { activation?: string; enabled?: boolean } = {})
     ),
     path.join(recipeDirectory, "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml"),
   );
-  if (options.activation !== undefined) {
+  for (const activation of options.activation === undefined ? [] : [options.activation]) {
     const activationPath = path.join(root, "ci", "llama-cpp-dgx-spark-qualification-v1.yaml");
     fs.mkdirSync(path.dirname(activationPath), { recursive: true });
-    fs.writeFileSync(activationPath, options.activation);
+    fs.writeFileSync(activationPath, activation);
   }
   return root;
 }

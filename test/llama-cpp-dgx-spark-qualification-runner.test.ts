@@ -77,8 +77,8 @@ function invocationArguments() {
 
 function parsedInvocation(): QualificationInvocation {
   const invocation = parseQualificationInvocation(invocationArguments(), trustedEnvironment());
-  if (invocation.cleanupOnly) throw new Error("expected a qualification invocation");
-  return invocation;
+  expect(invocation).toMatchObject({ cleanupOnly: false });
+  return invocation as QualificationInvocation;
 }
 
 function mutatedPlan(mutate: (value: Record<string, any>) => void): [string, string] {
