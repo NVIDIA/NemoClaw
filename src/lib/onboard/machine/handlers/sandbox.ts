@@ -102,7 +102,6 @@ import { branchTo, type OnboardStateTransitionResult } from "../result";
 import * as dcodeResume from "./sandbox-dcode-resume";
 import { reconcileReusedSandboxMessaging, reconcileSandboxMessaging } from "./sandbox-messaging";
 import {
-  applySandboxResumeDecision,
   decideSandboxResume,
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
@@ -414,7 +413,6 @@ type SandboxRecreatePreparation = {
   readonly sourceEntry: ReplacedSandboxSourceEntry | null;
   readonly effectiveCreateIntent: CompleteSandboxCreateIntent;
   readonly repairMetadata: SandboxRecreateRepairMetadata | null;
-  readonly removalReceipt: SandboxRemovalReceipt | null;
 };
 
 function observabilityRequestValidationError(
@@ -1328,12 +1326,12 @@ class SandboxStateFlow<
           `Cannot replace same-name sandbox '${requestedSandboxName}': no recreate transaction proves ownership of the source sandbox and its registry row.`,
         );
       }
+      if (decision.kind === "recreate") this.deps.note(decision.note);
       return {
         transaction,
         sourceEntry: null,
         effectiveCreateIntent: createIntent,
         repairMetadata,
-        removalReceipt: await applySandboxResumeDecision(decision, state.sandboxName, this.deps),
       };
     }
     const effectiveCreateIntent: CompleteSandboxCreateIntent = {
@@ -1361,7 +1359,6 @@ class SandboxStateFlow<
       sourceEntry: sandboxRecreateSourceWorkloadEntry(transaction) ?? sourceEntry,
       effectiveCreateIntent,
       repairMetadata,
-      removalReceipt: null,
     };
   }
 
@@ -1502,15 +1499,8 @@ class SandboxStateFlow<
         requestedSandboxName,
         createIntent.resolved.policy.options.baselineExclusions,
       );
-      const { transaction, sourceEntry, effectiveCreateIntent, repairMetadata, removalReceipt } =
+      const { transaction, sourceEntry, effectiveCreateIntent, repairMetadata } =
         await this.prepareSandboxRecreate(state, requestedSandboxName, createIntent, decision);
-      let rollbackArmed = removalReceipt !== null;
-      const restoreRemovedRegistryEntry = () => {
-        if (!rollbackArmed || !removalReceipt) return;
-        rollbackArmed = false;
-        this.deps.restoreSandboxRegistryEntryIfMissing(removalReceipt);
-      };
-      if (rollbackArmed) process.once("exit", restoreRemovedRegistryEntry);
 
       let sandboxName: string;
       try {
@@ -1544,13 +1534,7 @@ class SandboxStateFlow<
               effectiveCreateIntent,
             ),
         );
-        // createSandbox returns only after the replacement row is registered.
-        // From this point the receipt must not overwrite that newer entry.
-        rollbackArmed = false;
-        process.removeListener("exit", restoreRemovedRegistryEntry);
       } catch (error) {
-        restoreRemovedRegistryEntry();
-        process.removeListener("exit", restoreRemovedRegistryEntry);
         await this.recordSandboxRecreateRepairFailure(transaction, repairMetadata, error);
         throw error;
       }

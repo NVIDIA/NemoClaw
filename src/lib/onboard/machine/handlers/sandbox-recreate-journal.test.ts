@@ -13,46 +13,7 @@ import {
   recordSandboxRecreateTargetCreated,
 } from "../../sandbox-recreate-transaction";
 import { handleSandboxState } from "./sandbox";
-import { baseOptions, createDeps } from "./sandbox-test-fixtures";
-
-function bindJournaledResume(session: Session, sandboxName = "saved") {
-  session.steps.sandbox.status = "complete";
-  session.machine.state = "agent_setup";
-  session.checkpoint = {
-    ...deriveCheckpointFromSession(session),
-    sandboxIdentity: decisionSelected({ name: sandboxName, agent: "openclaw" }),
-    gatewayAuthority: decisionSelected({
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      mode: "nemoclaw-managed",
-      source: "standalone",
-      endpoint: null,
-      stateDir: null,
-      supervisor: null,
-      requiredCapabilities: [],
-    }),
-  };
-  let observation = {
-    state: "ready" as const,
-    liveIdentityFingerprint: fingerprintSandboxRecreateValue("openshell-source-id"),
-  };
-  return {
-    observe: () => observation,
-    completeCreate: vi.fn(async () => {
-      const transaction = session.checkpoint?.sandboxRecreate;
-      if (!transaction) throw new Error("missing recreate transaction");
-      for (const phase of ["deleting", "deleted", "creating"] as const) {
-        advanceSandboxRecreateTransaction(session, transaction.id, phase);
-      }
-      observation = {
-        state: "ready",
-        liveIdentityFingerprint: fingerprintSandboxRecreateValue("openshell-target-id"),
-      };
-      recordSandboxRecreateTargetCreated(session, transaction.id, observation);
-      return sandboxName;
-    }),
-  };
-}
+import { baseOptions, bindJournaledRecreate, createDeps } from "./sandbox-test-fixtures";
 
 it("journals not-ready repair on the selected non-default gateway (#6492)", async () => {
   const session = createSession({ sandboxName: "saved", agent: "openclaw" });
@@ -562,7 +523,7 @@ it("lets a non-replacing resume proceed without a recreate transaction (#7736)",
 
 it("preserves registry state until journaled messaging recreation commits (#7736)", async () => {
   const session = createSession();
-  const journal = bindJournaledResume(session);
+  const journal = bindJournaledRecreate(session);
   const { deps, calls } = createDeps(
     {
       getSandboxReuseState: () => "ready",
@@ -589,7 +550,7 @@ it("preserves registry state until journaled messaging recreation commits (#7736
 
 it("journals not-ready resumed sandboxes before recreation (#7736)", async () => {
   const session = createSession({ sandboxName: "saved" });
-  const journal = bindJournaledResume(session);
+  const journal = bindJournaledRecreate(session);
   const { deps, calls } = createDeps(
     {
       getSandboxReuseState: () => "not_ready",
@@ -614,7 +575,7 @@ it("journals not-ready resumed sandboxes before recreation (#7736)", async () =>
 
 it("records failed repair events when journaled replacement creation fails (#7736)", async () => {
   const session = createSession({ sandboxName: "saved" });
-  const journal = bindJournaledResume(session);
+  const journal = bindJournaledRecreate(session);
   const { deps, calls } = createDeps(
     {
       getSandboxReuseState: () => "not_ready",

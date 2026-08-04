@@ -9,19 +9,13 @@ import {
   decisionSelected,
   decisionUnset,
 } from "../../../state/onboard-checkpoint-decision";
-import { deriveCheckpointFromSession } from "../../../state/onboard-checkpoint-migrate";
 import { CHECKPOINT_SCHEMA_VERSION } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session } from "../../../state/onboard-session";
 import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
-import {
-  advanceSandboxRecreateTransaction,
-  fingerprintSandboxRecreateValue,
-  recordSandboxRecreateTargetCreated,
-  type SandboxRecreateObservation,
-} from "../../sandbox-recreate-transaction";
 import { handleSandboxState } from "./sandbox";
 import {
   baseOptions,
+  bindJournaledRecreate,
   createDeps,
   makeMinimalPlan,
   withEnv,
@@ -46,44 +40,6 @@ function dcodeRegistryEntry(name: string, observabilityEnabled?: boolean) {
     gatewayName: "nemoclaw",
     toolDisclosure: "progressive" as const,
     ...(typeof observabilityEnabled === "boolean" ? { observabilityEnabled } : {}),
-  };
-}
-
-function bindJournaledRecreate(session: Session, sandboxName = "saved") {
-  session.machine.state = "agent_setup";
-  session.checkpoint = {
-    ...deriveCheckpointFromSession(session),
-    sandboxIdentity: decisionSelected({ name: sandboxName, agent: "openclaw" }),
-    gatewayAuthority: decisionSelected({
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      mode: "nemoclaw-managed",
-      source: "standalone",
-      endpoint: null,
-      stateDir: null,
-      supervisor: null,
-      requiredCapabilities: [],
-    }),
-  };
-  let observation: SandboxRecreateObservation = {
-    state: "ready",
-    liveIdentityFingerprint: fingerprintSandboxRecreateValue("openshell-source-id"),
-  };
-  return {
-    observe: () => observation,
-    completeCreate: vi.fn(async () => {
-      const transaction = session.checkpoint?.sandboxRecreate;
-      if (!transaction) throw new Error("missing recreate transaction");
-      for (const phase of ["deleting", "deleted", "creating"] as const) {
-        advanceSandboxRecreateTransaction(session, transaction.id, phase);
-      }
-      observation = {
-        state: "ready",
-        liveIdentityFingerprint: fingerprintSandboxRecreateValue("openshell-target-id"),
-      };
-      recordSandboxRecreateTargetCreated(session, transaction.id, observation);
-      return sandboxName;
-    }),
   };
 }
 
