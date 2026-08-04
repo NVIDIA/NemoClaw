@@ -38,7 +38,6 @@ Review the [Prerequisites](prerequisites) before you begin.
     Run the hosted installer in a terminal.
 
     ```bash
-    export NEMOCLAW_SANDBOX_NAME=my-gpt-claw
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
     ```
 
@@ -49,7 +48,7 @@ Review the [Prerequisites](prerequisites) before you begin.
     The wizard creates the sandbox.
     If the installer displays `Run express install with these settings? [Y/n]:`, press Enter to use the recommended preset settings and managed local inference for that platform.
     Enter `n` if you want to choose an inference provider and model, then provide its credential when prompted.
-    The install command uses `my-gpt-claw` as the sandbox name.
+    If you continue interactively, press Enter to accept the suggested `my-assistant` sandbox name.
     For a first run, skip optional web search and messaging setup, then accept the suggested network policy tier.
   </Step>
 
@@ -57,7 +56,7 @@ Review the [Prerequisites](prerequisites) before you begin.
     Wait for the ready summary, then check the sandbox state.
 
     ```bash
-    nemoclaw my-gpt-claw status
+    nemoclaw my-assistant status
     ```
   </Step>
 
@@ -65,13 +64,13 @@ Review the [Prerequisites](prerequisites) before you begin.
     Use either the dashboard or the terminal.
 
     ```bash
-    nemoclaw my-gpt-claw dashboard-url --quiet
+    nemoclaw my-assistant dashboard-url --quiet
     ```
 
     Open the printed URL in your browser, or connect from the terminal and start the OpenClaw TUI.
 
     ```bash
-    nemoclaw my-gpt-claw connect
+    nemoclaw my-assistant connect
     openclaw tui
     ```
   </Step>
