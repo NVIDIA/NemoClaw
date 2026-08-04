@@ -27,7 +27,7 @@ function openssl(args: readonly string[], cwd: string): void {
     killSignal: "SIGKILL",
     timeout: 10_000,
   });
-  if (result.status !== 0) throw new Error(`OpenSSL fixture command failed: ${args[0]}`);
+  expect(result.status, `OpenSSL fixture command failed: ${args[0]}`).toBe(0);
 }
 
 function createEndpointCertificate(directory: string): { leaf: string; root: string } {
@@ -131,21 +131,21 @@ describe("CI endpoint CA root selection", () => {
       fs.writeFileSync(output, "", { mode: 0o600 });
       const fixture = createEndpointCertificate(directory);
       const realReadFile = fs.readFileSync.bind(fs);
-      vi.spyOn(fs, "readFileSync").mockImplementation(((file, ...args) => {
-        if (file === CI_CA_SYSTEM_BUNDLE) return fixture.root;
-        return realReadFile(file, ...args);
-      }) as typeof fs.readFileSync);
+      vi.spyOn(fs, "readFileSync").mockImplementation(((file, ...args) =>
+        file === CI_CA_SYSTEM_BUNDLE
+          ? fixture.root
+          : realReadFile(file, ...args)) as typeof fs.readFileSync);
 
       const connections: string[][] = [];
-      const runner: OpenSslRunner = (args) => {
-        if (args[0] === "s_client") {
-          connections.push([...args]);
-          return {
-            status: 0,
-            stderr: "",
-            stdout: `${fixture.leaf}\nVerify return code: 0 (ok)\n`,
-          };
-        }
+      const runConnection: OpenSslRunner = (args) => {
+        connections.push([...args]);
+        return {
+          status: 0,
+          stderr: "",
+          stdout: `${fixture.leaf}\nVerify return code: 0 (ok)\n`,
+        };
+      };
+      const runActualOpenSsl: OpenSslRunner = (args) => {
         const result = spawnSync("openssl", [...args], {
           encoding: "utf8",
           killSignal: "SIGKILL",
@@ -158,6 +158,8 @@ describe("CI endpoint CA root selection", () => {
           stdout: result.stdout ?? "",
         };
       };
+      const runner: OpenSslRunner = (args) =>
+        args[0] === "s_client" ? runConnection(args) : runActualOpenSsl(args);
 
       expect(selectCiEndpointCaRoots(output, runner)).toEqual({
         certificates: 1,
@@ -201,12 +203,10 @@ describe("CI endpoint CA root selection", () => {
       }
 
       fs.writeFileSync(output, "unchanged", { mode: 0o600 });
-      const rejectCompactVerification: OpenSslRunner = (args) => {
-        if (args[0] === "s_client" && !args.includes("-showcerts")) {
-          return { status: 1, stderr: "verification failed", stdout: "" };
-        }
-        return runner(args);
-      };
+      const rejectCompactVerification: OpenSslRunner = (args) =>
+        args[0] === "s_client" && !args.includes("-showcerts")
+          ? { status: 1, stderr: "verification failed", stdout: "" }
+          : runner(args);
       expect(() => selectCiEndpointCaRoots(output, rejectCompactVerification)).toThrow(
         /compact CA verification for registry\.npmjs\.org failed/u,
       );
