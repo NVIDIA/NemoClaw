@@ -64,6 +64,7 @@ export async function runRuntimeIdentityOboE2EScenario({
 
   const model = "nemoclaw-e2e-runtime-identity-obo";
   const inferenceKey = "sk-runtime-identity-obo-TEST-NOT-A-REAL-VALUE";
+  const inferencePort = 8000;
   const prerequisiteSandboxName = inferenceSandboxName("e2e-tc-inf-14-prerequisite");
   const sandboxName = inferenceSandboxName("e2e-tc-inf-14");
   const providerType = "okta-obo-v1";
@@ -96,13 +97,24 @@ export async function runRuntimeIdentityOboE2EScenario({
     chatContent: "PONG",
     host: "0.0.0.0",
     model,
-    port: 8000,
+    port: inferencePort,
     progress,
     publicHost: "localhost",
     requireAuth: true,
     requireAuthModels: true,
   });
   cleanup.add("close OBO runtime identity inference prerequisite", () => inference.close());
+  const cloudflaredBin = await resolveVerifiedCloudflaredBinary(cleanup, host);
+  const inferenceTunnel = await startPublicMcpHttpsTunnel({
+    cloudflaredBin,
+    cleanup,
+    label: "runtime identity OBO inference prerequisite",
+    progress,
+    readinessPath: "/v1/models",
+    readinessStatus: 401,
+    server: { port: inferencePort, close: () => inference.close() },
+  });
+  const inferenceEndpoint = `${inferenceTunnel.origin}/v1`;
 
   progress.phase("establish the reusable inference route");
   const onboard = await onboardSandbox(
@@ -110,7 +122,7 @@ export async function runRuntimeIdentityOboE2EScenario({
     prerequisiteSandboxName,
     {
       COMPATIBLE_API_KEY: inferenceKey,
-      NEMOCLAW_ENDPOINT_URL: inference.baseUrl,
+      NEMOCLAW_ENDPOINT_URL: inferenceEndpoint,
       NEMOCLAW_MODEL: model,
       NEMOCLAW_PREFERRED_API: "openai-completions",
       NEMOCLAW_PROVIDER: "custom",
@@ -194,7 +206,6 @@ export async function runRuntimeIdentityOboE2EScenario({
       await oauth.close();
     }
   });
-  const cloudflaredBin = await resolveVerifiedCloudflaredBinary(cleanup, host);
   const tunnel = await startPublicMcpHttpsTunnel({
     cloudflaredBin,
     cleanup,
