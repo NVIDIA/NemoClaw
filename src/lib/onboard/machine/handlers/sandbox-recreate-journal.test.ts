@@ -15,6 +15,45 @@ import {
 import { handleSandboxState } from "./sandbox";
 import { baseOptions, createDeps } from "./sandbox-test-fixtures";
 
+function bindJournaledResume(session: Session, sandboxName = "saved") {
+  session.steps.sandbox.status = "complete";
+  session.machine.state = "agent_setup";
+  session.checkpoint = {
+    ...deriveCheckpointFromSession(session),
+    sandboxIdentity: decisionSelected({ name: sandboxName, agent: "openclaw" }),
+    gatewayAuthority: decisionSelected({
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  };
+  let observation = {
+    state: "ready" as const,
+    liveIdentityFingerprint: fingerprintSandboxRecreateValue("openshell-source-id"),
+  };
+  return {
+    observe: () => observation,
+    completeCreate: vi.fn(async () => {
+      const transaction = session.checkpoint?.sandboxRecreate;
+      if (!transaction) throw new Error("missing recreate transaction");
+      for (const phase of ["deleting", "deleted", "creating"] as const) {
+        advanceSandboxRecreateTransaction(session, transaction.id, phase);
+      }
+      observation = {
+        state: "ready",
+        liveIdentityFingerprint: fingerprintSandboxRecreateValue("openshell-target-id"),
+      };
+      recordSandboxRecreateTargetCreated(session, transaction.id, observation);
+      return sandboxName;
+    }),
+  };
+}
+
 it("journals not-ready repair on the selected non-default gateway (#6492)", async () => {
   const session = createSession({ sandboxName: "saved", agent: "openclaw" });
   session.steps.sandbox.status = "complete";
@@ -519,4 +558,87 @@ it("lets a non-replacing resume proceed without a recreate transaction (#7736)",
   expect(calls.removeSandbox).not.toHaveBeenCalled();
   expect(calls.repairSandbox).not.toHaveBeenCalled();
   expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
+});
+
+it("preserves registry state until journaled messaging recreation commits (#7736)", async () => {
+  const session = createSession();
+  const journal = bindJournaledResume(session);
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => "ready",
+      getSandboxRecreateObservation: journal.observe,
+      getStoredMessagingChannelConfig: () => ({ TELEGRAM_REQUIRE_MENTION: "1" }),
+      hydrateMessagingChannelConfig: () => ({ TELEGRAM_REQUIRE_MENTION: "0" }),
+      messagingChannelConfigsEqual: () => false,
+      createSandbox: journal.completeCreate,
+    },
+    session,
+  );
+
+  await handleSandboxState({
+    ...baseOptions(deps, session),
+    resume: true,
+    sandboxName: "saved",
+  });
+
+  expect(calls.note).toHaveBeenCalledWith(
+    "  [resume] Messaging channel configuration changed; recreating sandbox.",
+  );
+  expect(calls.removeSandbox).not.toHaveBeenCalled();
+});
+
+it("journals not-ready resumed sandboxes before recreation (#7736)", async () => {
+  const session = createSession({ sandboxName: "saved" });
+  const journal = bindJournaledResume(session);
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => "not_ready",
+      getSandboxRecreateObservation: journal.observe,
+      createSandbox: journal.completeCreate,
+    },
+    session,
+  );
+
+  await handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "saved" });
+
+  expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.started", {
+    state: "sandbox",
+    metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
+  });
+  expect(calls.repairSandbox).not.toHaveBeenCalled();
+  expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.completed", {
+    state: "sandbox",
+    metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
+  });
+});
+
+it("records failed repair events when journaled replacement creation fails (#7736)", async () => {
+  const session = createSession({ sandboxName: "saved" });
+  const journal = bindJournaledResume(session);
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => "not_ready",
+      getSandboxRecreateObservation: journal.observe,
+      createSandbox: vi.fn(async () => {
+        throw new Error("cleanup failed");
+      }),
+    },
+    session,
+  );
+
+  await expect(
+    handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "saved" }),
+  ).rejects.toThrow("cleanup failed");
+
+  expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.started", {
+    state: "sandbox",
+    metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
+  });
+  expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.failed", {
+    state: "sandbox",
+    error: "cleanup failed",
+    metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
+  });
+  expect(calls.repairEvent).not.toHaveBeenCalledWith("state.repair.completed", expect.anything());
+  expect(calls.repairSandbox).not.toHaveBeenCalled();
 });

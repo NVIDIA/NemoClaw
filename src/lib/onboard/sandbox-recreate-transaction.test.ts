@@ -753,8 +753,8 @@ describe("OpenShell live identity", () => {
   });
 });
 
-describe("abandoning an unused recreate journal (#7736)", () => {
-  it("clears a journal that recorded no lifecycle effect", () => {
+describe("abandoning an unused recreate journal", () => {
+  it("clears a journal that recorded no lifecycle effect (#7736)", () => {
     const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
     beginSandboxRecreateTransaction(
       session,
@@ -767,7 +767,7 @@ describe("abandoning an unused recreate journal (#7736)", () => {
     expect(session.checkpoint?.sandboxRecreate).toBeNull();
   });
 
-  it("refuses to abandon a journal that already advanced a phase", () => {
+  it("refuses to abandon a journal that already advanced a phase (#7736)", () => {
     const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
     beginSandboxRecreateTransaction(
       session,
@@ -781,7 +781,7 @@ describe("abandoning an unused recreate journal (#7736)", () => {
     expect(session.checkpoint?.sandboxRecreate).toMatchObject({ phase: "deleting" });
   });
 
-  it("refuses to abandon a journal owned by another transaction", () => {
+  it("refuses to abandon a journal owned by another transaction (#7736)", () => {
     const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
     beginSandboxRecreateTransaction(
       session,
@@ -794,7 +794,7 @@ describe("abandoning an unused recreate journal (#7736)", () => {
   });
 });
 
-describe("journal-bound source proof (#7736)", () => {
+describe("journal-bound source proof", () => {
   function proofFor(observation: SandboxRecreateObservation) {
     const session = createSession({ sandboxName: "alpha", agent: "openclaw" });
     return sandboxRecreateSourceProof(
@@ -802,7 +802,7 @@ describe("journal-bound source proof (#7736)", () => {
     );
   }
 
-  it("accepts an observation that matches the recorded source", () => {
+  it("accepts an observation that matches the recorded source (#7736)", () => {
     const observation: SandboxRecreateObservation = {
       state: "ready",
       liveIdentityFingerprint: SOURCE_ID,
@@ -818,7 +818,7 @@ describe("journal-bound source proof (#7736)", () => {
     ).toMatchObject({ sandboxName: "alpha", targetGeneration: TARGET_GENERATION });
   });
 
-  it("rejects a foreign live identity before any backup or delete", () => {
+  it("rejects a foreign live identity before any backup or delete (#7736)", () => {
     const proof = proofFor({ state: "ready", liveIdentityFingerprint: SOURCE_ID });
 
     expect(() =>
@@ -835,7 +835,7 @@ describe("journal-bound source proof (#7736)", () => {
   it.each([
     "ready",
     "not_ready",
-  ] as const)("rejects a %s same-name sandbox that reports no OpenShell Id, even when the journal recorded none", (state) => {
+  ] as const)("rejects a %s same-name sandbox that reports no OpenShell Id, even when the journal recorded none (#7736)", (state) => {
     const proof = proofFor({ state: "missing", liveIdentityFingerprint: null });
 
     expect(proof.sourceLiveIdentityFingerprint).toBeNull();
