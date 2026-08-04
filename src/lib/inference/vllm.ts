@@ -32,12 +32,16 @@ import { runCapture } from "../runner";
 import { redactFull } from "../security/redact";
 import { isSafeModelId } from "../validation";
 import { getGpuIndicesByName } from "./nim";
-import { ensureDualStationVllmApiKey, loadDualStationVllmApiKey } from "./vllm-api-key";
 import {
   buildLocalDualStationDockerEnv,
   buildRemoteVllmDockerEnv,
   buildVllmDockerEnv,
-} from "./vllm-docker-env";
+  ensureDualStationVllmApiKey,
+  loadDualStationVllmApiKey,
+  recoverInstalledManagedClusterVllmEndpoint,
+  resolveVllmInstallModel,
+  tryInstallManagedClusterManagedVllm,
+} from "./serving/vllm-managed-support";
 import {
   buildVllmServeCommand,
   NEMOTRON_ULTRA_DUAL_STATION_IMAGE,
@@ -48,7 +52,6 @@ import {
   type VllmModelDef,
   type VllmPlatform,
 } from "./vllm-models";
-import { resolveVllmInstallModel } from "./vllm-prompt";
 import {
   type DualStationVllmPlan,
   NEMOCLAW_DGX_STATION_PEER_ENV,
@@ -199,8 +202,16 @@ function hfCacheMount(): string {
   return `${hostHfCacheDir()}:${HF_CACHE_CONTAINER_DIR}`;
 }
 
-function hfDownloadCacheMount(): string {
-  return `${hostHfCacheDir()}:${HF_DOWNLOAD_CACHE_CONTAINER_DIR}`;
+function hfDownloadCacheMount(hostCacheDir = hostHfCacheDir()): string {
+  const normalized = path.posix.normalize(hostCacheDir);
+  if (
+    !path.posix.isAbsolute(hostCacheDir) ||
+    normalized !== hostCacheDir ||
+    hostCacheDir.includes(":")
+  ) {
+    throw new Error("vLLM model cache must be a normalized absolute path without ':'");
+  }
+  return `${normalized}:${HF_DOWNLOAD_CACHE_CONTAINER_DIR}`;
 }
 
 function hfModelCacheKey(model: VllmModelDef): string | null {
@@ -209,7 +220,7 @@ function hfModelCacheKey(model: VllmModelDef): string | null {
   return `models--${modelParts.join("--")}`;
 }
 
-function hfModelSnapshotDir(model: VllmModelDef): string | null {
+export function hfModelSnapshotDir(model: VllmModelDef): string | null {
   const revision = model.revision;
   const modelCacheKey = hfModelCacheKey(model);
   if (!revision || !modelCacheKey || !HF_CACHE_COMPONENT_PATTERN.test(revision)) {
@@ -231,8 +242,10 @@ function hostUserIdentity(): string | null {
   return `${String(process.getuid())}:${String(process.getgid())}`;
 }
 
-function hostUserDockerArgs(): string[] {
-  const identity = hostUserIdentity();
+function hostUserDockerArgs(identity = hostUserIdentity()): string[] {
+  if (identity !== null && !/^[1-9][0-9]*:(?:0|[1-9][0-9]*)$/.test(identity)) {
+    throw new Error("vLLM model download user must be one non-root numeric uid and numeric gid");
+  }
   return identity ? ["--user", identity] : [];
 }
 
@@ -514,10 +527,11 @@ export async function pullImage(
 }
 
 // Run `hf download <model>` inside a one-shot container of the same image.
-function downloadModel(
+export function downloadModel(
   profile: VllmProfile,
   model: VllmModelDef,
   dockerEnv: Record<string, string> = buildVllmDockerEnv(),
+  target: { hostCacheDir?: string; userIdentity?: string } = {},
 ): Promise<{ ok: boolean; reason?: string }> {
   emit(`Pre-downloading model with hf: ${model.id}`);
   return new Promise((resolve) => {
@@ -528,11 +542,11 @@ function downloadModel(
         "-t",
         "--rm",
         "--pull=never",
-        ...hostUserDockerArgs(),
+        ...hostUserDockerArgs(target.userIdentity),
         "--entrypoint",
         "hf",
         "-v",
-        hfDownloadCacheMount(),
+        hfDownloadCacheMount(target.hostCacheDir),
         "-e",
         `HF_HOME=${HF_DOWNLOAD_CACHE_CONTAINER_DIR}`,
         ...buildHfTokenDockerArgs(),
@@ -883,19 +897,30 @@ function vllmContainerReplacementTarget(
 }
 
 export function isNemoClawManagedVllmRunning(): boolean {
+  try {
+    if (recoverInstalledManagedClusterVllmEndpoint()) return true;
+  } catch {
+    return false;
+  }
   const ownership = inspectVllmContainerOwnership(NEMOCLAW_VLLM_CONTAINER_NAME);
   return (ownership.kind === "managed" || ownership.kind === "dual-managed") && ownership.running;
 }
 
-export type PersistConfiguredDualStationVllmRuntimeResult =
+export type PersistConfiguredManagedVllmRuntimeResult =
   | { ok: true; persisted: boolean }
   | { ok: false; reason: string };
 
 /**
- * Adopt an already-running installer-qualified pair into durable uninstall
- * ownership after onboarding has authenticated and validated its endpoint.
+ * Confirm an installer-owned receipt or adopt an already-running Station pair
+ * after onboarding has authenticated and validated its endpoint.
  */
-export async function persistConfiguredDualStationVllmRuntimeReceipt(): Promise<PersistConfiguredDualStationVllmRuntimeResult> {
+export async function persistConfiguredManagedVllmRuntimeReceipt(): Promise<PersistConfiguredManagedVllmRuntimeResult> {
+  try {
+    if (recoverInstalledManagedClusterVllmEndpoint()) return { ok: true, persisted: true };
+  } catch (error) {
+    return { ok: false, reason: `managed vLLM recovery failed: ${(error as Error).message}` };
+  }
+
   const configuredPeer = String(process.env[NEMOCLAW_DGX_STATION_PEER_ENV] ?? "").trim();
   let configuredPlan: DualStationVllmPlan | null = null;
   if (configuredPeer) {
@@ -1519,7 +1544,7 @@ interface InstallVllmOptions {
   beforeInstall?: (modelId: string) => void;
 }
 
-function imageIsCached(
+export function imageIsCached(
   profile: VllmProfile,
   dockerEnv: Record<string, string> = buildVllmDockerEnv(),
 ): boolean {
@@ -1574,6 +1599,22 @@ async function runVllmInstall(
   profile: VllmProfile,
   opts: InstallVllmOptions,
 ): Promise<{ ok: boolean }> {
+  const managedCluster = await tryInstallManagedClusterManagedVllm(
+    {
+      platform: profile.platform,
+      nonInteractive: opts.nonInteractive,
+      promptFn: opts.promptFn,
+      beforeInstall: opts.beforeInstall,
+    },
+    {
+      prerequisites: dockerPrereqsOk,
+      pullImage,
+      downloadModel,
+      printDownloadAuthentication: printHfDownloadAuthentication,
+    },
+  );
+  if (managedCluster.kind === "handled") return managedCluster.result;
+
   let dualStationPlan: DualStationVllmPlan | null = null;
   let peerModelSnapshot: "ready" | "staging-required" | null = null;
   const explicitModel = String(process.env.NEMOCLAW_VLLM_MODEL ?? "").trim();
