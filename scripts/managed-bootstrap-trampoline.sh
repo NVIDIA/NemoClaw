@@ -90,17 +90,26 @@ fi
   || fail "request file path is not the fixed bootstrap path"
 
 _nemoclaw_runtime="/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs"
+_nemoclaw_request_directory="${_nemoclaw_request%/*}"
+_nemoclaw_request_basename="${_nemoclaw_request##*/}"
+_nemoclaw_claim="${_nemoclaw_request_directory}/.${_nemoclaw_request_basename}.nemoclaw-claim/request"
 if [ ! -f "$_nemoclaw_runtime" ] || [ -L "$_nemoclaw_runtime" ]; then
   fail "managed startup runtime is missing"
 fi
-if [ -L "$_nemoclaw_request" ]; then
-  fail "bootstrap request path is a symbolic link"
-fi
-if [ -e "$_nemoclaw_request" ]; then
-  if [ ! -f "$_nemoclaw_request" ] \
-    || [ "$(/usr/bin/stat -c '%u:%g:%a:%h' "$_nemoclaw_request" 9<&-)" != "0:0:400:1" ]; then
-    fail "bootstrap request failed root ownership validation"
-  fi
+/usr/bin/env -i \
+  HOME="/root" \
+  LANG="C.UTF-8" \
+  LC_ALL="C.UTF-8" \
+  NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION="1" \
+  PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+  /usr/local/bin/node "$_nemoclaw_runtime" \
+  --recover-bootstrap-claim \
+  --agent "$_nemoclaw_agent" \
+  --profile-fingerprint "$_nemoclaw_fingerprint" \
+  --bootstrap-identity "$_nemoclaw_bootstrap_identity" \
+  9<&-
+if [ -e "$_nemoclaw_request" ] || [ -L "$_nemoclaw_request" ] \
+  || [ -e "$_nemoclaw_claim" ] || [ -L "$_nemoclaw_claim" ]; then
   /usr/bin/env -i \
     HOME="/root" \
     LANG="C.UTF-8" \
@@ -113,10 +122,6 @@ if [ -e "$_nemoclaw_request" ]; then
     --profile-fingerprint "$_nemoclaw_fingerprint" \
     --bootstrap-identity "$_nemoclaw_bootstrap_identity" \
     9<&-
-  /usr/bin/rm -f -- "$_nemoclaw_request" 9<&-
-  if [ -e "$_nemoclaw_request" ] || [ -L "$_nemoclaw_request" ]; then
-    fail "bootstrap runtime did not consume its request"
-  fi
 fi
 /usr/bin/env -i \
   HOME="/root" \

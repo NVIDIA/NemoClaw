@@ -11,8 +11,13 @@ ARG PERL_VERSION=5.44.0
 ARG PERL_SHA256=505cf43912e9480495c344c70260452e32aa2a73c546a026b3f100053b23ce91
 ARG PERL_PACKAGE_REVISION=1nemoclaw1
 
+ARG NEMOCLAW_CORPORATE_CA_B64=
+
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS native-security-builder
 
+ARG NEMOCLAW_CORPORATE_CA_B64
+
+# hadolint ignore=DL4006
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential=12.12 \
         ca-certificates=20250419 \
@@ -22,6 +27,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openssh-server=1:10.0p1-7+deb13u4 \
         xz-utils=5.8.1-1+deb13u1 \
         zlib1g-dev=1:1.3.dfsg+really1.3.1-1+b1 \
+    && if [ -n "${NEMOCLAW_CORPORATE_CA_B64:-}" ]; then \
+        install -d -o root -g root -m 0755 /usr/local/share/nemoclaw /usr/local/share/ca-certificates; \
+        { printf '%s' "${NEMOCLAW_CORPORATE_CA_B64}" | base64 --decode > /usr/local/share/nemoclaw/corporate-ca.pem 2>/dev/null \
+          || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 is not valid base64; expected a single-line base64-encoded PEM (#6210)" >&2; exit 1; }; }; \
+        node -e 'const fs = require("node:fs"); const { X509Certificate } = require("node:crypto"); const pemPath = process.argv[1]; const anchorDir = process.argv[2]; const pem = fs.readFileSync(pemPath, "utf8"); const blocks = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g); if (!blocks?.length) process.exit(1); fs.writeFileSync(pemPath, blocks.map((block) => block.trim()).join("\n") + "\n"); blocks.forEach((block, index) => { if (!new X509Certificate(block).ca) process.exit(1); const name = anchorDir + "/nemoclaw-corporate-ca-" + String(index + 1).padStart(2, "0") + ".crt"; fs.writeFileSync(name, block.trim() + "\n"); });' /usr/local/share/nemoclaw/corporate-ca.pem /usr/local/share/ca-certificates \
+          || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 did not decode to a bundle of valid X.509 certificates with basicConstraints CA:TRUE (#6210)" >&2; exit 1; }; \
+        chown root:root /usr/local/share/nemoclaw/corporate-ca.pem /usr/local/share/ca-certificates/nemoclaw-corporate-ca-*.crt; \
+        chmod 0444 /usr/local/share/nemoclaw/corporate-ca.pem /usr/local/share/ca-certificates/nemoclaw-corporate-ca-*.crt; \
+        update-ca-certificates; \
+        echo "[nemoclaw] trusted host corporate-proxy CA for native security builders (#6210)"; \
+    fi \
     && rm -rf /var/lib/apt/lists/*
 
 COPY scripts/security/build-native-security-packages.sh /scripts/security/build-native-security-packages.sh
@@ -46,6 +62,8 @@ RUN bash /scripts/security/build-perl-security-packages.sh \
     /out "${PERL_VERSION}" "${PERL_SHA256}" "${PERL_PACKAGE_REVISION}"
 
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba
+
+ARG NEMOCLAW_CORPORATE_CA_B64
 
 COPY --from=perl-builder /out /tmp/nemoclaw-native-security
 
@@ -76,6 +94,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         e2fsprogs=1.47.2-3+b11 \
         openssh-sftp-server=1:10.0p1-7+deb13u4 \
         ripgrep=14.1.1-1+b4 \
+    && if [ -n "${NEMOCLAW_CORPORATE_CA_B64:-}" ]; then \
+        command -v base64 >/dev/null 2>&1 || { echo "[nemoclaw] base64 is required to decode NEMOCLAW_CORPORATE_CA_B64 but is not installed in the base build image" >&2; exit 1; }; \
+        install -d -o root -g root -m 0755 /usr/local/share/nemoclaw /usr/local/share/ca-certificates; \
+        { printf '%s' "${NEMOCLAW_CORPORATE_CA_B64}" | base64 --decode > /usr/local/share/nemoclaw/corporate-ca.pem 2>/dev/null \
+          || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 is not valid base64; expected a single-line base64-encoded PEM (#6210)" >&2; exit 1; }; }; \
+        node -e 'const fs = require("node:fs"); const { X509Certificate } = require("node:crypto"); const pemPath = process.argv[1]; const anchorDir = process.argv[2]; const pem = fs.readFileSync(pemPath, "utf8"); const blocks = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g); if (!blocks?.length) process.exit(1); fs.writeFileSync(pemPath, blocks.map((block) => block.trim()).join("\n") + "\n"); blocks.forEach((block, index) => { if (!new X509Certificate(block).ca) process.exit(1); const name = anchorDir + "/nemoclaw-corporate-ca-" + String(index + 1).padStart(2, "0") + ".crt"; fs.writeFileSync(name, block.trim() + "\n"); });' /usr/local/share/nemoclaw/corporate-ca.pem /usr/local/share/ca-certificates \
+          || { echo "[nemoclaw] NEMOCLAW_CORPORATE_CA_B64 did not decode to a bundle of valid X.509 certificates with basicConstraints CA:TRUE (#6210)" >&2; exit 1; }; \
+        chown root:root /usr/local/share/nemoclaw/corporate-ca.pem /usr/local/share/ca-certificates/nemoclaw-corporate-ca-*.crt; \
+        chmod 0444 /usr/local/share/nemoclaw/corporate-ca.pem /usr/local/share/ca-certificates/nemoclaw-corporate-ca-*.crt; \
+        update-ca-certificates; \
+        echo "[nemoclaw] baked host corporate-proxy CA into base image trust (#6210)"; \
+    fi \
     && arch="$(dpkg --print-architecture)" \
     && case "$arch" in \
         amd64) \
