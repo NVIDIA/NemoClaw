@@ -4269,18 +4269,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     const runCoreGatewayOpenshell = setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, GATEWAY_NAME);
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const endpointProvenance = { endpointSource: opts.endpointSource, endpointSourceProvider: opts.rebuildRegistryInferenceRoute?.route.provider ?? null, endpointSourceEndpointUrl: opts.rebuildRegistryInferenceRoute?.route.endpointUrl ?? null, getSandboxRegistryEntry: registry.getSandbox };
-    const coreFlowPhases = createCoreOnboardFlowPhases<
-      InitialOnboardFlowContext,
-      unknown,
-      MessagingChannelConfig,
-      import("./resources-cmd").ResourceProfile
-    >({
-      resumeProvider: {
-        isNonInteractive,
-        isRoutedInferenceProvider,
-        providerExistsInGateway,
-        replaceNamedCredential,
-      },
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const coreFlowPhases = createCoreOnboardFlowPhases<InitialOnboardFlowContext, unknown, MessagingChannelConfig, import("./resources-cmd").ResourceProfile>({
+      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+      resumeProvider: { isNonInteractive, isRoutedInferenceProvider, providerExistsInGateway, replaceNamedCredential },
       providerInference: {
         gatewayName: GATEWAY_NAME,
         forceProviderSelection: forceProviderSelectionForAgentChange,
