@@ -5,7 +5,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 --output <json> --revision <sha> --cohort <id> --platform <linux/amd64|linux/arm64> --openclaw-base <exact-ref> --hermes-base <exact-ref> --dcode-base <exact-ref>" >&2
+  echo "usage: $0 --output <json> --revision <sha> --cohort <id> --platform <linux/amd64|linux/arm64> --openclaw-base <exact-ref> --hermes-base <exact-ref> --dcode-base <exact-ref> [--source-root <absolute-dir>]" >&2
   exit 2
 }
 
@@ -16,6 +16,7 @@ platform=""
 openclaw_base=""
 hermes_base=""
 dcode_base=""
+source_root="$PWD"
 while (($# > 0)); do
   case "$1" in
     --output)
@@ -53,6 +54,11 @@ while (($# > 0)); do
       dcode_base="$2"
       shift 2
       ;;
+    --source-root)
+      (($# >= 2)) || usage
+      source_root="$2"
+      shift 2
+      ;;
     *)
       usage
       ;;
@@ -66,6 +72,8 @@ done
 [[ "$openclaw_base" =~ ^ghcr[.]io/nvidia/nemoclaw/sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
 [[ "$hermes_base" =~ ^ghcr[.]io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
 [[ "$dcode_base" =~ ^ghcr[.]io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:[a-f0-9]{64}$ ]] || usage
+[[ "$source_root" == /* && "$source_root" != *$'\n'* && -d "$source_root" && ! -L "$source_root" ]] || usage
+source_root="$(cd -- "$source_root" && pwd -P)"
 
 for command in docker jq sha256sum; do
   command -v "$command" >/dev/null 2>&1 || {
@@ -83,6 +91,7 @@ build_agent() {
   local agent="$1"
   local dockerfile="$2"
   local base_reference="$3"
+  local dockerfile_path="$source_root/$dockerfile"
   local image_repository="localhost:5000/nemoclaw-managed-protected/${agent}"
   local exact_base_raw="$work_dir/${agent}-base-exact.raw"
   local metadata="$work_dir/${agent}-build-metadata.json"
@@ -98,13 +107,13 @@ build_agent() {
   }
 
   scripts/check-production-build-args.sh \
-    -f "$dockerfile" \
+    -f "$dockerfile_path" \
     --build-arg "BASE_IMAGE=${base_reference}" \
     --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
     --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
 
   docker buildx build \
-    --file "$dockerfile" \
+    --file "$dockerfile_path" \
     --platform "$platform" \
     --push \
     --provenance=false \
@@ -122,7 +131,7 @@ build_agent() {
     --build-arg "BASE_IMAGE=${base_reference}" \
     --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
     --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root" \
-    .
+    "$source_root"
 
   local digest
   digest="$(jq -er '."containerimage.digest"' "$metadata")"
