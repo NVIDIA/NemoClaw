@@ -78,6 +78,66 @@
             },
             {
               "type": "object",
+              "required": ["scope", "kind", "id", "comparison"],
+              "properties": {
+                "scope": { "enum": ["controller", "everyNode"] },
+                "kind": { "const": "observation" },
+                "id": { "$ref": "#/$defs/stableId" },
+                "comparison": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "required": ["operator", "value"],
+                      "properties": {
+                        "operator": { "const": "equals" },
+                        "value": { "$ref": "#/$defs/comparisonScalar" }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": ["operator", "values"],
+                      "properties": {
+                        "operator": { "const": "one-of" },
+                        "values": {
+                          "type": "array",
+                          "minItems": 1,
+                          "maxItems": 16,
+                          "uniqueItems": true,
+                          "items": { "$ref": "#/$defs/comparisonScalar" }
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": ["operator", "value"],
+                      "properties": {
+                        "operator": { "const": "at-least" },
+                        "value": {
+                          "type": "number",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "required": ["operator", "value"],
+                      "properties": {
+                        "operator": { "const": "version-at-least" },
+                        "value": { "$ref": "#/$defs/version" }
+                      },
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
               "required": ["scope", "kind", "id", "status"],
               "properties": {
                 "scope": { "enum": ["controller", "everyNode"] },
@@ -91,6 +151,23 @@
         }
       },
       "additionalProperties": false
+    },
+    "comparisonScalar": {
+      "oneOf": [
+        { "$ref": "#/$defs/comparisonString" },
+        { "type": "number", "minimum": 0, "maximum": 9007199254740991 },
+        { "type": "boolean" }
+      ]
+    },
+    "comparisonString": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+:-]{0,127}$",
+      "maxLength": 128
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+(?:\\.[0-9]+){1,3}(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$",
+      "maxLength": 64
     }
   }
 }
