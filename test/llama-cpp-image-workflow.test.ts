@@ -19,7 +19,7 @@ type Step = {
 type Job = {
   needs?: string;
   outputs?: Record<string, string>;
-  permissions?: Record<string, string>;
+  permissions?: string | Record<string, string>;
   "runs-on"?: string;
   steps?: Step[];
   strategy?: { matrix?: unknown };
@@ -29,7 +29,7 @@ type Workflow = {
   concurrency?: { "cancel-in-progress"?: boolean; group?: string };
   jobs?: Record<string, Job>;
   on?: Record<string, { paths?: string[] }>;
-  permissions?: Record<string, string>;
+  permissions?: string | Record<string, string>;
 };
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
@@ -54,9 +54,20 @@ function namedStep(job: Job, name: string): Step {
   );
 }
 
+function permissionValues(value: string | Record<string, string> | undefined): string[] {
+  return typeof value === "string" ? [value] : Object.values(value ?? {});
+}
+
+function jobPermissionValues(workflowValue: Workflow): string[] {
+  return Object.values(workflowValue.jobs ?? {}).flatMap((job) =>
+    permissionValues(job.permissions),
+  );
+}
+
 describe("llama.cpp image PR workflow", () => {
   const config = required(workflow.jobs?.config, "config job is missing");
   const build = required(workflow.jobs?.["pr-build"], "native PR build job is missing");
+  const buildArgGuard = namedStep(build, "Validate native PR image build args");
   const buildStep = namedStep(build, "Build native PR image without publishing");
   const validate = namedStep(build, "Validate native PR image contract");
 
@@ -71,11 +82,14 @@ describe("llama.cpp image PR workflow", () => {
     );
     expect(Object.keys(workflow.on ?? {})).toEqual(["pull_request"]);
     expect(workflow.permissions).toEqual({ contents: "read" });
-    const permissionValues = [
-      ...Object.values(workflow.permissions ?? {}),
-      ...Object.values(workflow.jobs ?? {}).flatMap((job) => Object.values(job.permissions ?? {})),
+    const declaredPermissions = [
+      ...permissionValues(workflow.permissions),
+      ...jobPermissionValues(workflow),
     ];
-    expect(permissionValues).not.toContain("write");
+    expect(declaredPermissions).not.toContain("write");
+    expect(declaredPermissions).not.toContain("write-all");
+    const unsafeFixture = YAML.parse("jobs:\n  unsafe:\n    permissions: write-all\n") as Workflow;
+    expect(jobPermissionValues(unsafeFixture)).toContain("write-all");
     expect(JSON.stringify(workflow)).not.toContain("docker/login-action");
     expect(buildStep.with?.push).toBe(false);
     expect(buildStep.with?.load).toBe(true);
@@ -128,6 +142,16 @@ describe("llama.cpp image PR workflow", () => {
     expect(args).toContain("TARGETPLATFORM=${{ matrix.platform }}");
     expect(args).not.toMatch(/sha256:[0-9a-f]{64}/u);
     expect(args).not.toMatch(/[0-9a-f]{40}/u);
+
+    const buildArgNames = [...args.matchAll(/^([A-Z0-9_]+)=/gmu)].map((match) => match[1]);
+    const guardedArgNames = [
+      ...(buildArgGuard.run ?? "").matchAll(/--build-arg "([A-Z0-9_]+)=/gu),
+    ].map((match) => match[1]);
+    expect(guardedArgNames).toEqual(buildArgNames);
+    expect(buildArgGuard.run).toContain("scripts/check-production-build-args.sh");
+    expect(build.steps?.indexOf(buildArgGuard)).toBeLessThan(
+      build.steps?.indexOf(buildStep) ?? Number.POSITIVE_INFINITY,
+    );
   });
 
   it("pins actions and validates the native non-root read-only image (#8231)", () => {

@@ -184,7 +184,9 @@ describe("declarative llama.cpp server image", () => {
     ],
     [
       "a duplicate platform",
-      manifestSource.replace("platform: linux/arm64", "platform: linux/amd64"),
+      manifestSource
+        .replace("platform: linux/arm64", "platform: linux/amd64")
+        .replace("runner: ubuntu-24.04-arm", "runner: ubuntu-24.04"),
     ],
     [
       "an unexpected fixed CMake field",

@@ -75,6 +75,38 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
+      - name: Validate native PR image build args
+        env:
+          C_COMPILER: ${{ needs.config.outputs.compiler_c }}
+          CUDA_ARCHITECTURES: ${{ matrix.cuda_architectures }}
+          CUDA_DEV_IMAGE: ${{ needs.config.outputs.cuda_dev_image }}
+          CUDA_HOST_CXX_COMPILER: ${{ needs.config.outputs.compiler_cuda_host_cxx }}
+          CUDA_RUNTIME_IMAGE: ${{ needs.config.outputs.cuda_runtime_image }}
+          CXX_COMPILER: ${{ needs.config.outputs.compiler_cxx }}
+          GGML_BACKEND_DIR: ${{ needs.config.outputs.backend_directory }}
+          LLAMA_CPP_ARCHIVE_SHA256: ${{ needs.config.outputs.source_archive_sha256 }}
+          LLAMA_CPP_REVISION: ${{ needs.config.outputs.source_revision }}
+          NEMOCLAW_REVISION: ${{ github.sha }}
+          RUNTIME_GID: ${{ needs.config.outputs.runtime_gid }}
+          RUNTIME_UID: ${{ needs.config.outputs.runtime_uid }}
+          TARGETPLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          scripts/check-production-build-args.sh \
+            --build-arg "C_COMPILER=${C_COMPILER}" \
+            --build-arg "CUDA_HOST_CXX_COMPILER=${CUDA_HOST_CXX_COMPILER}" \
+            --build-arg "CXX_COMPILER=${CXX_COMPILER}" \
+            --build-arg "CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES}" \
+            --build-arg "CUDA_DEV_IMAGE=${CUDA_DEV_IMAGE}" \
+            --build-arg "CUDA_RUNTIME_IMAGE=${CUDA_RUNTIME_IMAGE}" \
+            --build-arg "GGML_BACKEND_DIR=${GGML_BACKEND_DIR}" \
+            --build-arg "LLAMA_CPP_ARCHIVE_SHA256=${LLAMA_CPP_ARCHIVE_SHA256}" \
+            --build-arg "LLAMA_CPP_REVISION=${LLAMA_CPP_REVISION}" \
+            --build-arg "NEMOCLAW_REVISION=${NEMOCLAW_REVISION}" \
+            --build-arg "RUNTIME_GID=${RUNTIME_GID}" \
+            --build-arg "RUNTIME_UID=${RUNTIME_UID}" \
+            --build-arg "TARGETPLATFORM=${TARGETPLATFORM}"
+
       - name: Build native PR image without publishing
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
