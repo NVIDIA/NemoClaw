@@ -452,24 +452,27 @@ Reviewed behavior:
   A 2xx response returns untouched and emits nothing, so normal traffic produces no per-request logging.
 - The wrapper never retries, never alters the request, never changes proxy selection, and never weakens TLS verification.
   It rethrows a transport error unchanged.
-- For a non-2xx response, the wrapper returns the original response before it samples `response.clone()`.
-  The diagnostic task waits at most 250 ms and reads at most 2,048 response bytes for an allowed content type.
-  It limits the emitted redacted body to 2,048 UTF-8 bytes.
+- For a non-2xx response, the wrapper returns the original response without waiting for asynchronous sampling of `response.clone()`.
+  The diagnostic task waits at most 250 ms and retains at most 2,048 response bytes for an allowed content type.
+  It limits the redacted `error_body` value to 2,048 UTF-8 bytes before JSON encoding.
+- Non-2xx response diagnostics are best-effort.
+  If detached collection fails, the wrapper still returns the original response and the diagnostic can be absent.
+  The diagnostic can also be absent if the process exits before collection completes.
 - The wrapper does not inspect a 2xx response body.
   This fetch boundary cannot classify a failure that occurs while the caller later reads that body.
-- Response metadata is an allowlist: `content-type`, `retry-after`, `server`, `via`, `x-request-id`, and the `x-envoy-*` headers.
+- Response metadata is an allowlist: `content-type`, `retry-after`, `server`, `via`, `x-request-id`, `x-envoy-attempt-count`, `x-envoy-decorator-operation`, `x-envoy-response-flags`, and `x-envoy-upstream-service-time`.
   Emitted header keys use underscores.
-  Authorization, cookie, and every other header are never read.
+  The wrapper does not access any other response header for diagnostics.
 - Allowed header values, error bodies, and cause messages pass the same bounded redaction.
   It removes session identifiers, bearer tokens, known token prefixes, and structured credentials such as `access_token`, `refresh_token`, and `client_secret`.
-- The cause chain is bounded to 8 entries and keeps only error name, code, errno, syscall, address family, and port.
+- The cause chain is bounded to 8 entries and keeps only error name, code, errno, syscall, address family, port, and a redacted message.
   The peer address is not recorded.
 - Session state is reported as a boolean.
   The `mcp-session-id` value is never emitted.
 - A thrown failure is classified as `policy`, `connect`, `tls`, `app_connect`, or `request`.
   A non-2xx response is classified as `response_headers`, and a policy denial takes precedence over its accompanying transport code.
 - The fetch boundary does not expose the JSON-RPC operation, so the diagnostic records the endpoint without an `operation` field.
-- Each failure receives a local 32-character hexadecimal `trace_id`.
+- Each emitted diagnostic receives a local 32-character hexadecimal `trace_id`.
 - The wrapper is inert unless `OPENSHELL_SANDBOX=1`, so it does not change host-side behavior.
 
 This patch does not correlate its `trace_id` with an OpenShell audit event.

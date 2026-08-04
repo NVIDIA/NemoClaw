@@ -197,9 +197,13 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("The sibling SSE transport boundary is deliberately left unwrapped.");
     expect(review).toContain("Failure-only.");
     expect(review).toContain("never retries, never alters the request");
-    expect(review).toContain("returns the original response before it samples `response.clone()`");
+    expect(review).toContain(
+      "returns the original response without waiting for asynchronous sampling",
+    );
     expect(review).toContain("waits at most 250 ms");
-    expect(review).toContain("reads at most 2,048 response bytes");
+    expect(review).toContain("retains at most 2,048 response bytes");
+    expect(review).toContain("Non-2xx response diagnostics are best-effort.");
+    expect(review).toContain("port, and a redacted message");
     expect(review).toContain("does not inspect a 2xx response body");
     expect(review).toContain("without an `operation` field");
     expect(review).toContain("structured credentials such as `access_token`");
