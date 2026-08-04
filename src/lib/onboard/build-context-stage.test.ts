@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAgentSandbox as createManagedAgentSandbox } from "../agent/base-image";
+import { SandboxBaseImageResolutionError } from "../sandbox-base-image";
 import { stageCreateSandboxBuildContext } from "./build-context-stage";
 import { CUSTOM_BUILD_CONTEXT_WARN_BYTES } from "./custom-build-context";
 
@@ -344,6 +345,75 @@ describe("stageCreateSandboxBuildContext", () => {
       "  Move your Dockerfile to a dedicated directory and retry.",
     ]);
     expect(fs.existsSync(stagedBuildCtx)).toBe(false);
+  });
+
+  it("converts a SandboxBaseImageResolutionError from createAgentSandbox to a clean exit (#8102)", () => {
+    const errors: string[] = [];
+    const resolutionError = new SandboxBaseImageResolutionError(
+      "Hermes Agent sandbox base image override 'ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:deadbeef' could not be resolved to an immutable trusted digest or failed required compatibility checks.",
+    );
+
+    expect(() =>
+      stageCreateSandboxBuildContext({
+        root: "/repo",
+        fromDockerfile: null,
+        agent: { name: "hermes", displayName: "Hermes Agent" } as any,
+        createAgentSandbox: () => {
+          throw resolutionError;
+        },
+        error: (msg) => errors.push(msg),
+        exit: throwingExit,
+      }),
+    ).toThrow("exit 1");
+
+    expect(errors).toEqual([`  ${resolutionError.message}`]);
+  });
+
+  it("converts a SandboxBaseImageResolutionError from the --from=<agent Dockerfile> path to a clean exit (#8102)", () => {
+    const agentDockerfilePath = path.join(os.tmpdir(), "agent.Dockerfile");
+    fs.writeFileSync(agentDockerfilePath, "FROM scratch\n");
+    const errors: string[] = [];
+    const resolutionError = new SandboxBaseImageResolutionError(
+      "Hermes Agent sandbox base image override 'ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:deadbeef' is outside the trusted repository 'ghcr.io/nvidia/nemoclaw/hermes-sandbox-base'.",
+    );
+
+    expect(() =>
+      stageCreateSandboxBuildContext({
+        root: "/repo",
+        fromDockerfile: agentDockerfilePath,
+        agent: {
+          name: "hermes",
+          displayName: "Hermes Agent",
+          dockerfilePath: agentDockerfilePath,
+        } as any,
+        createAgentSandbox: () => {
+          throw resolutionError;
+        },
+        log: vi.fn(),
+        error: (msg) => errors.push(msg),
+        exit: throwingExit,
+      }),
+    ).toThrow("exit 1");
+
+    expect(errors).toEqual([`  ${resolutionError.message}`]);
+    fs.rmSync(agentDockerfilePath, { force: true });
+  });
+
+  it("re-throws non-SandboxBaseImageResolutionError from createAgentSandbox (#8102)", () => {
+    const unexpected = new Error("unexpected internal failure");
+
+    expect(() =>
+      stageCreateSandboxBuildContext({
+        root: "/repo",
+        fromDockerfile: null,
+        agent: { name: "hermes", displayName: "Hermes Agent" } as any,
+        createAgentSandbox: () => {
+          throw unexpected;
+        },
+        error: vi.fn(),
+        exit: throwingExit,
+      }),
+    ).toThrow("unexpected internal failure");
   });
 
   it("delegates to agent or default build-context staging when no custom Dockerfile is supplied", () => {
