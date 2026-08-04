@@ -1,0 +1,88 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServerImageBuild
+
+metadata:
+  id: llama-cpp-server.v1
+
+spec:
+  repository: ghcr.io/nvidia/nemoclaw/llama-cpp-server
+
+  source:
+    repository: https://github.com/ggml-org/llama.cpp
+    revision: 22dc605c4ead20e36f447cc67b55ef87e523bd55
+    archiveSha256: sha256:975f70723e053785e894f4e1d9cf770f2f1a7bc762fd3af174ff5635014108b6
+
+  cuda:
+    developmentBase: docker.io/nvidia/cuda@sha256:ef2203909e80b8b976cfc672f7e2ae2b00bc0e25c404ee86d89e10a3802f1c52
+    runtimeBase: docker.io/nvidia/cuda@sha256:789e629e49401647e22b7054ae9c6c4f6427dba68010ba428deb4cc6b063676e
+
+  platforms:
+    - platform: linux/amd64
+      runner: ubuntu-24.04
+      cudaArchitectures: 89-real;100-real;120-real
+    - platform: linux/arm64
+      runner: ubuntu-24.04-arm
+      cudaArchitectures: 121a-real
+
+  build:
+    target: llama-server
+    backendDirectory: /opt/llama.cpp/lib
+    compiler:
+      c: gcc-14
+      cxx: g++-14
+      cudaHostCxx: g++-14
+    packages:
+      build-essential: 12.10ubuntu1
+      ca-certificates: 20260601~24.04.1
+      cmake: 3.28.3-1build7
+      curl: 8.5.0-2ubuntu10.11
+      g++-14: 14.2.0-4ubuntu2~24.04.1
+      gcc-14: 14.2.0-4ubuntu2~24.04.1
+      libcurl4-openssl-dev: 8.5.0-2ubuntu10.11
+      libssl-dev: 3.0.13-0ubuntu3.12
+    cmake:
+      ggmlBackendDl: true
+      ggmlCpuAllVariants: true
+      ggmlCuda: true
+      ggmlCurl: true
+      ggmlNative: false
+      ggmlRpc: false
+      llamaBuildApp: false
+      llamaBuildExamples: false
+      llamaBuildServer: true
+      llamaBuildTests: false
+      llamaBuildTools: true
+      llamaBuildUi: false
+      llamaOpenSsl: true
+      llamaSubprocess: false
+      llamaUsePrebuiltUi: false
+
+  runtime:
+    uid: 10001
+    gid: 10001
+    port: 8081
+    entrypoint: /usr/local/bin/llama-server
+    requiredPaths:
+      - /opt/llama.cpp/lib/libggml-cuda.so
+      - /usr/local/bin/llama-server
+      - /usr/local/share/licenses/llama.cpp/AUTHORS
+      - /usr/local/share/licenses/llama.cpp/LICENSE
+    forbiddenPaths:
+      - /bin/bash
+      - /bin/dash
+      - /bin/rbash
+      - /bin/sh
+      - /opt/llama.cpp/ui
+      - /usr/bin/bash
+      - /usr/bin/dash
+      - /usr/bin/rbash
+      - /usr/bin/sh
+    packages:
+      ca-certificates: 20260601~24.04.1
+      libcurl4t64: 8.5.0-2ubuntu10.11
+      libgomp1: 14.2.0-4ubuntu2~24.04.1
+    writablePaths:
+      - /tmp
