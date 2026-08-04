@@ -78,9 +78,9 @@ describe("nemoclaw-start sealed restart", () => {
     });
     fs.mkdirSync(path.dirname(authPath), { recursive: true });
     fs.writeFileSync(authPath, before, { mode: 0o600 });
-    const authInode = fs.statSync(authPath).ino;
     const authFd = fs.openSync(authPath, "r");
-    fs.chmodSync(authPath, 0o000);
+    const authInode = fs.fstatSync(authFd).ino;
+    fs.fchmodSync(authFd, 0o000);
     const script = [
       "set -euo pipefail",
       `eval "$(sed -n '/^write_auth_profile() {$/,/^}$/p' "$1")"`,
@@ -102,8 +102,8 @@ describe("nemoclaw-start sealed restart", () => {
       });
       expect(result.status, result.stderr).toBe(0);
       expect(result.stderr).toContain("preserving the sealed OpenClaw auth profile");
-      expect(fs.statSync(authPath).mode & 0o777).toBe(0o000);
-      expect(fs.statSync(authPath).ino).toBe(authInode);
+      expect(fs.fstatSync(authFd).mode & 0o777).toBe(0o000);
+      expect(fs.lstatSync(authPath).ino).toBe(authInode);
       expect(fs.readFileSync(authFd, "utf-8")).toBe(before);
     } finally {
       fs.closeSync(authFd);
