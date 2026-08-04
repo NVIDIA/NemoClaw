@@ -170,7 +170,7 @@ You can also use Ollama for Windows.
 During onboarding, NemoClaw can use an already-running Windows-host daemon, start or restart an installed daemon, or install Ollama on the Windows host.
 If the installer offers express install on WSL, accepting it selects a local Ollama path automatically based on the container runtime: the Windows-host Ollama path only when it detects Docker Desktop WSL integration, and WSL-local Ollama otherwise.
 The Windows-host Ollama path requires Docker Desktop WSL integration; the express prompt appears on WSL regardless of the container runtime.
-When the Docker target depends on a readable Docker configuration file and Node.js is unavailable, the installer defers the selection until it installs Node.js.
+When the installer must read the Docker configuration file to determine the effective Docker context and Node.js is unavailable, it defers provider selection until after it installs Node.js.
 It then reads the configuration and applies the same runtime check.
 With native Docker Engine inside WSL, or when the Docker runtime is unavailable or cannot be probed, express install configures WSL-local Ollama instead of aborting.
 An installed Windows-host Ollama that the container runtime cannot reach leaves the WSL-local install available, in both the onboarding menu and a requested `install-ollama` provider.
