@@ -1,13 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  collectDockerGpuPatchDiagnostics,
   type DockerContainerInspect,
   getDockerGpuPatchFailureContext,
   recreateOpenShellDockerSandboxWithGpu,
 } from "./docker-gpu-patch";
+import { finalizeDockerGpuPatchBackup } from "./docker-gpu-patch-finalize";
 
 // The recreate path probes sandbox DNS through a real `docker run` when these
 // stay unstubbed, which makes the rollback assertions depend on a live Docker
@@ -113,6 +119,203 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
     expect(
       dockerRm.mock.calls.some((call) => String(call[0]).includes("nemoclaw-gpu-backup")),
     ).toBe(false);
+  });
+
+  it("retries from the restored sandbox after exact-ID replacement cleanup (#7996)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gpu-rollback-retry-"));
+    const restoredId = "b".repeat(64);
+    const replacementId = "a".repeat(64);
+    const retryId = "d".repeat(64);
+    const unrelatedId = "e".repeat(64);
+    const unrelatedName = "openshell-beta";
+    const originalName = "openshell-alpha";
+    const initialBackupName = "backup-container";
+    let restoredName = initialBackupName;
+    let restoredPresent = true;
+    let restoredRunning = false;
+    let replacementPresent = true;
+    let replacementRemovalAttempts = 0;
+    let retryPresent = false;
+    let unrelatedPresent = true;
+    const stopTargets: string[] = [];
+    const removeTargets: string[] = [];
+    const renameTargets: string[] = [];
+    const startTargets: string[] = [];
+
+    const alphaContainerIds = () =>
+      [
+        restoredPresent ? restoredId : null,
+        replacementPresent ? replacementId : null,
+        retryPresent ? retryId : null,
+      ].filter((value): value is string => value !== null);
+    const inspectFor = (target: string): DockerContainerInspect[] => {
+      if (target === restoredId && restoredPresent) {
+        return [{ ...inspectFixture(), Id: restoredId, Name: `/${restoredName}` }];
+      }
+      if (target === replacementId && replacementPresent) {
+        return [
+          {
+            Id: replacementId,
+            Name: "/failed-replacement",
+            Config: { Image: "openshell/sandbox:abc", Env: [], Labels: {} },
+            State: { Running: false },
+            HostConfig: {},
+            NetworkSettings: { Networks: {} },
+          },
+        ];
+      }
+      if (target === retryId && retryPresent) {
+        return [{ ...inspectFixture(), Id: retryId, Name: `/${originalName}` }];
+      }
+      return [];
+    };
+    const dockerCapture = vi.fn((args: readonly string[]) => {
+      if (args[0] === "ps") return `${alphaContainerIds().join("\n")}\n`;
+      if (args[0] === "info") return "";
+      if (args[0] === "inspect") {
+        const target = String(args.at(-1));
+        return JSON.stringify(inspectFor(target));
+      }
+      return "";
+    });
+    const dockerRun = vi.fn((args: readonly string[]) => {
+      if (args[0] === "ps") {
+        return {
+          status: 0,
+          stdout: replacementPresent ? `${replacementId}\n` : "",
+        };
+      }
+      return { status: 0, stdout: "probe-id\n" };
+    });
+    const dockerStop = vi.fn((target: string) => {
+      stopTargets.push(target);
+      if (target === restoredId) restoredRunning = false;
+      return { status: 0 };
+    });
+    const dockerRm = vi.fn((target: string) => {
+      removeTargets.push(target);
+      if (target === replacementId) {
+        replacementRemovalAttempts += 1;
+        if (replacementRemovalAttempts === 1) {
+          return { status: 1, stderr: "daemon timeout" };
+        }
+        replacementPresent = false;
+        return { status: 0 };
+      }
+      if (target === restoredName) restoredPresent = false;
+      if (target === unrelatedId || target === unrelatedName) unrelatedPresent = false;
+      return { status: 0 };
+    });
+    const dockerRename = vi.fn((from: string, to: string) => {
+      renameTargets.push(from, to);
+      if (from === initialBackupName || from === restoredId) restoredName = to;
+      return { status: 0 };
+    });
+    const dockerStart = vi.fn((target: string) => {
+      startTargets.push(target);
+      if (target === originalName) restoredRunning = true;
+      return { status: 0 };
+    });
+    const dockerRunDetached = vi.fn(() => {
+      retryPresent = true;
+      return { status: 0, stdout: `${retryId}\n` };
+    });
+    const deps = {
+      dockerCapture,
+      dockerRun,
+      dockerRunDetached,
+      dockerStop,
+      dockerRm,
+      dockerRename,
+      dockerStart,
+      dockerLogs: vi.fn(() => ""),
+      runOpenshell: vi.fn(() => ({ status: 0 })),
+      runCaptureOpenshell: vi.fn(() => "alpha Ready\n"),
+      sleep: vi.fn(),
+      homedir: () => tmpDir,
+      now: () => new Date("2026-07-03T00:00:00Z"),
+      readDir: vi.fn(() => null),
+      readFile: vi.fn(() => null),
+      ...offlineDnsDeps,
+    };
+    const failedResult = {
+      applied: true as const,
+      oldContainerId: restoredId,
+      newContainerId: replacementId,
+      originalName,
+      backupContainerName: initialBackupName,
+      mode: {
+        kind: "gpus" as const,
+        label: "--gpus all",
+        device: "all",
+        args: ["--gpus", "all"],
+      },
+      backupRemoved: false,
+    };
+
+    try {
+      const rollback = finalizeDockerGpuPatchBackup(
+        { result: failedResult, supervisorReady: false },
+        deps,
+      );
+
+      expect(rollback).toEqual({
+        backupRemoved: false,
+        rolledBack: true,
+        replacementStopConfirmed: true,
+        replacementRemovalConfirmed: false,
+        replacementPresence: "present",
+      });
+      expect(restoredName).toBe(originalName);
+      expect(restoredRunning).toBe(true);
+      expect(replacementPresent).toBe(true);
+
+      const diagnostics = collectDockerGpuPatchDiagnostics(
+        "alpha",
+        {
+          context: {
+            sandboxName: "alpha",
+            oldContainerId: restoredId,
+            newContainerId: replacementId,
+            backupContainerName: initialBackupName,
+            selectedMode: failedResult.mode,
+            ...rollback,
+          },
+        },
+        deps,
+      );
+      expect(diagnostics?.cleanupCommands).toEqual([
+        `docker rm -f ${JSON.stringify(replacementId)}`,
+      ]);
+
+      // Model the operator applying the sole exact-ID cleanup command before
+      // rerunning onboarding. The restored sandbox and unrelated beta sandbox
+      // remain outside that cleanup boundary.
+      const cleanupCommand = diagnostics?.cleanupCommands[0];
+      if (!cleanupCommand) throw new Error("expected one replacement cleanup command");
+      const cleanupTarget = JSON.parse(cleanupCommand.slice("docker rm -f ".length));
+      expect(cleanupTarget).toBe(replacementId);
+      expect(dockerRm(cleanupTarget).status).toBe(0);
+      expect(alphaContainerIds()).toEqual([restoredId]);
+      expect(unrelatedPresent).toBe(true);
+
+      const retried = recreateOpenShellDockerSandboxWithGpu(
+        { sandboxName: "alpha", timeoutSecs: 1 },
+        deps,
+      );
+
+      expect(retried.oldContainerId).toBe(restoredId);
+      expect(retried.oldContainerId).not.toBe(replacementId);
+      expect(retried.newContainerId).toBe(retryId);
+      expect(retried.backupRemoved).toBe(true);
+      expect(alphaContainerIds()).toEqual([retryId]);
+      expect(unrelatedPresent).toBe(true);
+      const touchedTargets = [...stopTargets, ...removeTargets, ...renameTargets, ...startTargets];
+      expect(touchedTargets).not.toContain(unrelatedId);
+      expect(touchedTargets).not.toContain(unrelatedName);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it.each([
