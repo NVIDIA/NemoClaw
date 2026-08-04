@@ -28,9 +28,9 @@ export {
 } from "./envelope";
 export {
   applyManagedBootstrapEnvelope,
-  consumeManagedBootstrapEnvelope,
   type ManagedBootstrapImageRuntimeExpected,
   main as mainManagedBootstrapImageRuntime,
+  readManagedBootstrapEnvelope,
   verifyManagedBootstrapImageCompletion,
 } from "./image-runtime";
 export type {
