@@ -418,6 +418,7 @@ COPY scripts/lib/reviewed-npm-archive.mts \
     scripts/lib/openclaw-npm-remediation.mts \
     /scripts/lib/
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
+COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
 
@@ -437,6 +438,12 @@ RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
 # package from the reviewed 5.0.9 archive after the complete npm upgrade.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+
+# npm 11.18.0 contains ip-address 10.2.0. Replace only that private package
+# with the reviewed 10.3.1 archive after the complete npm upgrade.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 # Keep OpenClaw's jiti-generated source cache out of /tmp so provider marker

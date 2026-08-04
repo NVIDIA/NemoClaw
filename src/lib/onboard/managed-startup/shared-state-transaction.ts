@@ -538,6 +538,20 @@ function canonicalManifest(manifest: TransactionManifest): string {
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
+function canonicalLegacyManifest(manifest: TransactionManifest): string {
+  return `${JSON.stringify(
+    {
+      schemaVersion: manifest.schemaVersion,
+      agent: manifest.agent,
+      profileFingerprint: manifest.profileFingerprint,
+      files: manifest.files,
+      directories: manifest.directories,
+    },
+    null,
+    2,
+  )}\n`;
+}
+
 function canonicalCommitReceipt(receipt: CommitReceipt): string {
   return `${JSON.stringify(receipt, null, 2)}\n`;
 }
@@ -597,23 +611,29 @@ function parseManifest(text: string): TransactionManifest {
     fail("transaction manifest must be an object");
   }
   const record = parsed as Record<string, unknown>;
-  requireExactKeys(record, [
-    "agent",
-    "bootstrapIdentity",
-    "directories",
-    "files",
-    "profileFingerprint",
-    "schemaVersion",
-  ]);
+  const hasBootstrapIdentity = Object.hasOwn(record, "bootstrapIdentity");
+  requireExactKeys(
+    record,
+    hasBootstrapIdentity
+      ? [
+          "agent",
+          "bootstrapIdentity",
+          "directories",
+          "files",
+          "profileFingerprint",
+          "schemaVersion",
+        ]
+      : ["agent", "directories", "files", "profileFingerprint", "schemaVersion"],
+  );
+  const bootstrapIdentity = hasBootstrapIdentity ? record.bootstrapIdentity : null;
   if (
     record.schemaVersion !== TRANSACTION_SCHEMA_VERSION ||
     !["openclaw", "hermes", "langchain-deepagents-code"].includes(String(record.agent)) ||
     typeof record.profileFingerprint !== "string" ||
     !/^[a-f0-9]{64}$/u.test(record.profileFingerprint) ||
     !(
-      record.bootstrapIdentity === null ||
-      (typeof record.bootstrapIdentity === "string" &&
-        /^[a-f0-9]{64}$/u.test(record.bootstrapIdentity))
+      bootstrapIdentity === null ||
+      (typeof bootstrapIdentity === "string" && /^[a-f0-9]{64}$/u.test(bootstrapIdentity))
     ) ||
     !Array.isArray(record.files) ||
     !Array.isArray(record.directories) ||
@@ -709,11 +729,14 @@ function parseManifest(text: string): TransactionManifest {
     schemaVersion: TRANSACTION_SCHEMA_VERSION,
     agent: record.agent as ManagedStartupAgent,
     profileFingerprint: record.profileFingerprint,
-    bootstrapIdentity: record.bootstrapIdentity as string | null,
+    bootstrapIdentity,
     files,
     directories,
   };
-  if (canonicalManifest(manifest) !== text) {
+  const canonical = hasBootstrapIdentity
+    ? canonicalManifest(manifest)
+    : canonicalLegacyManifest(manifest);
+  if (canonical !== text) {
     fail("transaction manifest is not canonical");
   }
   return manifest;

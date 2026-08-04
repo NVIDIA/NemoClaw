@@ -425,26 +425,18 @@ describe("maintainer merge-gate contributor compliance", () => {
     });
   });
 
-  it("accepts the legacy E2E coordination check name", () => {
-    const legacyCheck = coordinationCheck({ id: 8001, name: "E2E / PR Gate" });
+  it("accepts the former exact-diff E2E coordination check name during rollout", () => {
+    const formerCheck = coordinationCheck({
+      id: 8001,
+      name: "E2E / PR Gate Coordination",
+    });
     const output = JSON.parse(
       runGate({
         body: "Signed-off-by: Example User <user@example.com>",
         verified: true,
-        statusChecks: [
-          ...successfulRequiredChecksWithoutE2e(),
-          {
-            __typename: "CheckRun",
-            name: "E2E / PR Gate",
-            workflowName: "Automation / Request NVSkills CI",
-            detailsUrl: "https://github.com/NVIDIA/NemoClaw/runs/8001",
-            startedAt: "2026-01-01T00:00:00Z",
-            status: "COMPLETED",
-            conclusion: "SUCCESS",
-          },
-        ],
+        statusChecks: [...successfulRequiredChecksWithoutE2e(), e2eGateCheck([94, 1, "SUCCESS"])],
         coordinationCheckPages: [{ total_count: 0, check_runs: [] }],
-        legacyCoordinationCheckPages: [{ total_count: 1, check_runs: [legacyCheck] }],
+        formerCoordinationCheckPages: [{ total_count: 1, check_runs: [formerCheck] }],
       }).stdout,
     );
 
@@ -456,6 +448,11 @@ describe("maintainer merge-gate contributor compliance", () => {
       runGate({
         body: "Signed-off-by: Example User <user@example.com>",
         verified: true,
+        statusChecks: successfulRequiredChecks().map((check) =>
+          check.name === "E2E / PR Gate"
+            ? { ...check, detailsUrl: "https://github.com/NVIDIA/NemoClaw/runs/8002" }
+            : check,
+        ),
         coordinationCheckPages: [
           {
             total_count: 2,
