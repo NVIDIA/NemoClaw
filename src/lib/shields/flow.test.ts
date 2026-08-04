@@ -754,24 +754,22 @@ describe("shields command flow", () => {
       const nativeAtomicsWait = Atomics.wait;
       const atomicsWaitSpy = vi
         .spyOn(Atomics, "wait")
-        .mockImplementationOnce(
-          (_typedArray: Int32Array, _index: number, _value: number, _timeout?: number) => {
-            const ownerState = timerControl.readProcessState(owner.pid);
-            expect(ownerState).not.toBeNull();
-            expect(ownerState?.startsWith("Z")).toBe(false);
-            expect(fs.existsSync(lockPath)).toBe(true);
-            expect(processKillSpy).not.toHaveBeenCalledWith(owner.pid, "SIGSTOP");
-            expect(processKillSpy).not.toHaveBeenCalledWith(owner.pid, "SIGKILL");
-            fs.writeFileSync(releasePath, "release");
-            const releaseDeadline = Date.now() + 5_000;
-            const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
-            while (fs.existsSync(lockPath) && Date.now() < releaseDeadline) {
-              nativeAtomicsWait(waitBuffer, 0, 0, 10);
-            }
-            expect(fs.existsSync(lockPath)).toBe(false);
-            return "timed-out";
-          },
-        )
+        .mockImplementationOnce(() => {
+          const ownerState = timerControl.readProcessState(owner.pid);
+          expect(ownerState).not.toBeNull();
+          expect(ownerState?.startsWith("Z")).toBe(false);
+          expect(fs.existsSync(lockPath)).toBe(true);
+          expect(processKillSpy).not.toHaveBeenCalledWith(owner.pid, "SIGSTOP");
+          expect(processKillSpy).not.toHaveBeenCalledWith(owner.pid, "SIGKILL");
+          fs.writeFileSync(releasePath, "release");
+          const releaseDeadline = Date.now() + 5_000;
+          const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
+          while (fs.existsSync(lockPath) && Date.now() < releaseDeadline) {
+            nativeAtomicsWait(waitBuffer, 0, 0, 10);
+          }
+          expect(fs.existsSync(lockPath)).toBe(false);
+          return "timed-out";
+        })
         .mockReturnValue("timed-out");
       const harness = createHarness({
         dockerExecFileSync: (argv: unknown) => {
