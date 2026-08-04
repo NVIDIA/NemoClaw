@@ -359,19 +359,19 @@ package_is_exact() { return 0; }
 assert_package_transaction_ready() { printf 'PACKAGE_TRANSACTION_READY %s\n' "$1"; }
 check_dpkg_database_health() { printf 'DPKG_AUDIT_CLEAN\n'; }
 create_apt_transaction_guard() {
-  APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
-  APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
-  APT_TRANSACTION_DRIVER_POLICY="$APT_TRANSACTION_GUARD_DIR/driver-policy"
+  APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST; APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"; APT_TRANSACTION_DRIVER_POLICY="$APT_TRANSACTION_GUARD_DIR/driver-policy"
 }
 cleanup_apt_transaction_guard() { APT_TRANSACTION_GUARD_DIR=""; APT_TRANSACTION_HOOK=""; APT_TRANSACTION_DRIVER_POLICY=""; }
 sudo() { printf 'SUDO %s\n' "$*"; }
-install_packages
+install_packages; printf 'POLICY_AFTER=%s\n' "\${APT_TRANSACTION_DRIVER_POLICY:-unset}"
 `,
     );
 
     expect(result.status, output).toBe(0);
     expect(output).toContain("apt-get update");
-    expect(output.split(APT_DRIVER_POLICY_OPTION)).toHaveLength(3);
+    expect(output.match(/^SUDO .*apt-get install .*$/gm)).toHaveLength(2);
+    expect(output.match(/^SUDO .*apt-get install .*driver-policy.*$/gm)).toHaveLength(2);
+    expect(output).toContain("POLICY_AFTER=");
     expect(output).toContain("RECHECK_RESTART_QUIESCENCE");
     for (const spec of [
       "libnvidia-container-tools=1.19.1-1",
