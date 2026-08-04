@@ -4,9 +4,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path, { resolve } from "node:path";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   createManagedBootstrapIdentity,
@@ -173,29 +171,32 @@ function stageManagedBootstrapEnvelope(
   bootstrapIdentity: string,
   request: ManagedStartupRootApplyRequest,
 ): void {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-bootstrap-e2e-"));
-  const source = path.join(directory, "request.json");
-  try {
-    fs.writeFileSync(
-      source,
-      serializeManagedBootstrapEnvelope({ bootstrapIdentity, rootApplyRequest: request }),
-      { encoding: "utf8", flag: "wx", mode: 0o400 },
-    );
-    fs.chmodSync(source, 0o400);
-    docker(["cp", source, `${containerId}:${MANAGED_BOOTSTRAP_REQUEST_FILE}`]);
-    docker([
+  const envelope = serializeManagedBootstrapEnvelope({
+    bootstrapIdentity,
+    rootApplyRequest: request,
+  });
+  docker(
+    [
       "exec",
+      "--interactive",
       "--user",
       "0:0",
       containerId,
       "/bin/sh",
       "-eu",
       "-c",
-      `test ! -L ${MANAGED_BOOTSTRAP_REQUEST_FILE} && test "$(stat -c '%u:%g:%a:%h' ${MANAGED_BOOTSTRAP_REQUEST_FILE})" = '0:0:400:1'`,
-    ]);
-  } finally {
-    fs.rmSync(directory, { force: true, recursive: true });
-  }
+      [
+        `test ! -e ${MANAGED_BOOTSTRAP_REQUEST_FILE}`,
+        `test ! -L ${MANAGED_BOOTSTRAP_REQUEST_FILE}`,
+        "umask 077",
+        `cat > ${MANAGED_BOOTSTRAP_REQUEST_FILE}`,
+        `chown 0:0 ${MANAGED_BOOTSTRAP_REQUEST_FILE}`,
+        `chmod 0400 ${MANAGED_BOOTSTRAP_REQUEST_FILE}`,
+        `test "$(stat -c '%u:%g:%a:%h' ${MANAGED_BOOTSTRAP_REQUEST_FILE})" = '0:0:400:1'`,
+      ].join("\n"),
+    ],
+    { input: envelope },
+  );
 }
 
 function managedConfig(agent: ManagedStartupAgent): string {

@@ -258,6 +258,10 @@ describe("runtime provider central source boundary", () => {
     expect(hold).toContain("/usr/local/bin/nemoclaw-start");
     expect(directE2e).toContain("renderManagedBootstrapHeldCommand(request, bootstrapIdentity");
     expect(directE2e).toContain("...heldWorkloadArgv.slice(1)");
+    expect(directE2e).toContain(`"--interactive"`);
+    expect(directE2e).toContain("cat > ${MANAGED_BOOTSTRAP_REQUEST_FILE}");
+    expect(directE2e).toContain("chown 0:0 ${MANAGED_BOOTSTRAP_REQUEST_FILE}");
+    expect(directE2e).not.toContain(`docker(["cp"`);
     expect(directE2e).not.toMatch(/const HOLD\s*=/u);
     for (const dockerfilePath of [
       "Dockerfile",
