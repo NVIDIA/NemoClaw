@@ -388,7 +388,7 @@ describe("platform readiness qualification (#7410)", () => {
     });
   });
 
-  it("accepts the qualified GB300WS 7.5.0 factory image build 2026-05-13 (#7979)", () => {
+  it("classifies the exact GB300WS 7.5.0 build 2026-05-13-18-42-38 as supported-ai-developer-tools (#7979)", () => {
     expect(
       collectStationIdentity(
         noOtaStationRelease({ version: "7.5.0", buildDate: "2026-05-13-18-42-38" }),
