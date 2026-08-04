@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { LEAF_PEM } from "../src/lib/onboard/__test-helpers__/corporate-ca-fixtures";
 import {
   hasGnuBase64Decode,
   hasOpenssl,
@@ -48,6 +49,12 @@ J0N7VBg2CdK6jRjKLQOSOPq3ySCicHhVRI8hxIWotif7mK3jj6D8NRalwmlHgNM=
 const DOCKERFILES = [
   ["OpenClaw", join(import.meta.dirname, "../Dockerfile")],
   ["Hermes", join(import.meta.dirname, "../agents/hermes/Dockerfile")],
+  ["Deep Agents Code", join(import.meta.dirname, "../agents/langchain-deepagents-code/Dockerfile")],
+] as const;
+
+const DEEP_AGENTS_DOCKERFILES = [
+  join(import.meta.dirname, "../agents/langchain-deepagents-code/Dockerfile"),
+  join(import.meta.dirname, "../agents/langchain-deepagents-code/Dockerfile.base"),
 ] as const;
 
 const tmpRoots: string[] = [];
@@ -62,6 +69,30 @@ afterEach(() => {
   for (const dir of tmpRoots.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+describe("Deep Agents Code Dockerfile corporate CA validation", () => {
+  it("requires CA:TRUE at every X.509 certificate parser (#8119)", () => {
+    for (const dockerfile of DEEP_AGENTS_DOCKERFILES) {
+      const source = readFileSync(dockerfile, "utf8");
+      const parsedCertificates = source.match(/new X509Certificate\(/g) ?? [];
+      const caChecks = source.match(/new X509Certificate\([^)]*\)\.ca/g) ?? [];
+      expect(parsedCertificates.length).toBeGreaterThan(0);
+      expect(caChecks).toHaveLength(parsedCertificates.length);
+    }
+  });
+});
+
+describe.skipIf(!canRunDecodeBlock)("Deep Agents Code corporate CA constraint", () => {
+  it("rejects a valid certificate without CA:TRUE (#8119)", () => {
+    const res = runDockerfileCorporateCaDecode(
+      DEEP_AGENTS_DOCKERFILES[0],
+      Buffer.from(LEAF_PEM).toString("base64"),
+      tmpDir(),
+    );
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain("basicConstraints CA:TRUE");
+  });
 });
 
 for (const [label, dockerfile] of DOCKERFILES) {
