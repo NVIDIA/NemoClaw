@@ -36,8 +36,7 @@ function imageFor(agent: (typeof publicationAgents)[number]): string {
   return `ghcr.io/nvidia/nemoclaw/${agent}-sandbox`;
 }
 
-function digestFor(agentIndex: number, platformIndex: number, base: boolean): string {
-  const offset = base ? 20 : 1;
+function digestFor(agentIndex: number, platformIndex: number, offset: number): string {
   return `sha256:${(offset + agentIndex * 2 + platformIndex).toString(16).padStart(64, "0")}`;
 }
 
@@ -45,22 +44,101 @@ function candidates(): Candidate[] {
   return publicationAgents.flatMap((agent, agentIndex) =>
     publicationPlatforms.map((platform, platformIndex) => {
       const image = imageFor(agent);
-      const digest = digestFor(agentIndex, platformIndex, false);
-      const baseDigest = digestFor(agentIndex, platformIndex, true);
+      const digest = digestFor(agentIndex, platformIndex, 1);
+      const baseDigest = digestFor(agentIndex, platformIndex, 20);
+      const baseReference = `ghcr.io/nvidia/nemoclaw/${agent}-sandbox-base@${baseDigest}`;
+      const workloadDigest = digestFor(agentIndex, platformIndex, 40);
+      const attestationDigest = digestFor(agentIndex, platformIndex, 60);
+      const slsaDigest = digestFor(agentIndex, platformIndex, 80);
+      const spdxDigest = digestFor(agentIndex, platformIndex, 100);
       return {
         agent,
         platform,
-        artifact: `managed-image-candidate-${agent}-${platform.replace("/", "-")}`,
+        artifact: `managed-image-candidate-${runId}-${runAttempt}-${agent}-${platform.replaceAll("/", "-")}`,
         contract: {
-          contractVersion: 1,
+          contractVersion: 2,
           phase: "candidate",
           agent,
           image,
           digest,
           reference: `${image}@${digest}`,
-          baseReference: `ghcr.io/nvidia/nemoclaw/${agent}-sandbox-base@${baseDigest}`,
+          baseReference,
           platform,
-          attestations: { provenance: "mode=max", sbom: true },
+          publicationEvidence: {
+            candidateDescriptor: {
+              mediaType: "application/vnd.oci.image.index.v1+json",
+              digest,
+              size: 1200 + agentIndex * 10 + platformIndex,
+            },
+            workloadDescriptor: {
+              mediaType: "application/vnd.oci.image.manifest.v1+json",
+              digest: workloadDigest,
+              size: 900 + agentIndex * 10 + platformIndex,
+              platform: {
+                os: "linux",
+                architecture: platform.replaceAll("linux/", ""),
+              },
+            },
+            attestations: {
+              manifestDescriptor: {
+                mediaType: "application/vnd.oci.image.manifest.v1+json",
+                digest: attestationDigest,
+                size: 700 + agentIndex * 10 + platformIndex,
+                annotations: {
+                  "vnd.docker.reference.digest": workloadDigest,
+                  "vnd.docker.reference.type": "attestation-manifest",
+                },
+                platform: { os: "unknown", architecture: "unknown" },
+              },
+              slsa: {
+                descriptor: {
+                  mediaType: "application/vnd.in-toto+json",
+                  digest: slsaDigest,
+                  size: 500 + agentIndex * 10 + platformIndex,
+                  annotations: {
+                    "in-toto.io/predicate-type": "https://slsa.dev/provenance/v1",
+                  },
+                },
+                statement: {
+                  type: "https://in-toto.io/Statement/v1",
+                  predicateType: "https://slsa.dev/provenance/v1",
+                  subject: {
+                    name: `pkg:docker/${image}@latest?platform=${platform.replaceAll("/", "%2F")}`,
+                    digest: workloadDigest,
+                  },
+                  buildType:
+                    "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md",
+                  builderId: `https://github.com/${repository}/actions/runs/${runId}/attempts/${runAttempt}`,
+                  bindings: {
+                    agent,
+                    baseReference,
+                    cohort,
+                    platform,
+                    revision,
+                    source: `https://github.com/${repository}`,
+                  },
+                },
+              },
+              spdx: {
+                descriptor: {
+                  mediaType: "application/vnd.in-toto+json",
+                  digest: spdxDigest,
+                  size: 600 + agentIndex * 10 + platformIndex,
+                  annotations: {
+                    "in-toto.io/predicate-type": "https://spdx.dev/Document",
+                  },
+                },
+                statement: {
+                  type: "https://in-toto.io/Statement/v1",
+                  predicateType: "https://spdx.dev/Document",
+                  subject: {
+                    name: `pkg:docker/${image}@latest?platform=${platform.replaceAll("/", "%2F")}`,
+                    digest: workloadDigest,
+                  },
+                },
+              },
+            },
+          },
           source: {
             repository,
             revision,
@@ -137,41 +215,70 @@ export function runPublicationBarrier(
   }
 }
 
-export function runManagedImagePromotion(script: string, failCohortAgent = ""): PromotionResult {
+export function runManagedImagePromotion(
+  script: string,
+  failCohortAgent = "",
+  pointerScript = "",
+): PromotionResult {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-promotion-"));
   const bin = path.join(root, "bin");
   const calls = path.join(root, "docker-calls");
   const candidateSet = path.join(root, "candidate-set.json");
   const contracts = path.join(root, "managed-image-contracts");
-  const digest = `sha256:${"f".repeat(64)}`;
-  const raw = JSON.stringify({
-    mediaType: "application/vnd.oci.image.index.v1+json",
-    manifests: [
-      {
-        digest: `sha256:${"1".repeat(64)}`,
-        platform: { os: "linux", architecture: "amd64" },
-      },
-      {
-        digest: `sha256:${"2".repeat(64)}`,
-        platform: { os: "linux", architecture: "arm64" },
-      },
-    ],
-  });
   fs.mkdirSync(bin);
   fs.writeFileSync(
     path.join(bin, "docker"),
     `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$DOCKER_CALLS"
-if [ -n "\${FAIL_COHORT_AGENT:-}" ] &&
-   [[ "$*" == *"imagetools create"* ]] &&
-   [[ "$*" == *"/\${FAIL_COHORT_AGENT}-sandbox:cohort-"* ]]; then
-  exit 91
-fi
-if [[ "$*" == *"imagetools inspect"* ]] && [[ "$*" == *"--raw"* ]]; then
-  printf '%s' '${raw}'
-elif [[ "$*" == *"imagetools inspect"* ]]; then
-  printf 'Name: fake\\nMediaType: application/vnd.oci.image.index.v1+json\\nDigest: ${digest}\\n'
+agent_for_reference() {
+  case "$1" in
+    *'/openclaw-sandbox:'* | *'/openclaw-sandbox@'*) printf 'openclaw\\n' ;;
+    *'/hermes-sandbox:'* | *'/hermes-sandbox@'*) printf 'hermes\\n' ;;
+    *'/langchain-deepagents-code-sandbox:'* | *'/langchain-deepagents-code-sandbox@'*)
+      printf 'langchain-deepagents-code\\n'
+      ;;
+    *) return 1 ;;
+  esac
+}
+if [ "\${1:-} \${2:-} \${3:-}" = "buildx imagetools create" ]; then
+  shift 3
+  tag=""
+  metadata=""
+  files=()
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --tag) tag="$2"; shift 2 ;;
+      --metadata-file) metadata="$2"; shift 2 ;;
+      --file) files+=("$2"); shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [[ "$tag" == *':cohort-'* ]]; then
+    agent="$(agent_for_reference "$tag")"
+    if [ -n "\${FAIL_COHORT_AGENT:-}" ] && [ "$agent" = "$FAIL_COHORT_AGENT" ]; then
+      exit 91
+    fi
+    raw="$STATE_ROOT/$agent.raw"
+    jq -cs '{
+      schemaVersion: 2,
+      mediaType: "application/vnd.oci.image.index.v1+json",
+      manifests: .
+    }' "\${files[@]}" > "$raw"
+    digest="sha256:$(sha256sum "$raw" | awk '{print $1}')"
+    size="$(wc -c < "$raw" | tr -d '[:space:]')"
+    jq -n --arg digest "$digest" --argjson size "$size" '{
+      "containerimage.descriptor": {
+        mediaType: "application/vnd.oci.image.index.v1+json",
+        digest: $digest,
+        size: $size
+      }
+    }' > "$metadata"
+  fi
+elif [ "\${1:-} \${2:-} \${3:-}" = "buildx imagetools inspect" ] &&
+     [ "\${5:-}" = "--raw" ]; then
+  agent="$(agent_for_reference "$4")"
+  cat "$STATE_ROOT/$agent.raw"
 fi
 `,
   );
@@ -182,7 +289,7 @@ fi
   );
 
   try {
-    const result = spawnSync("bash", ["-c", script], {
+    const result = spawnSync("bash", ["-c", `${script}\n${pointerScript}`], {
       cwd: root,
       encoding: "utf8",
       env: {
@@ -196,12 +303,13 @@ fi
         GITHUB_SHA: revision,
         PATH: `${bin}:${process.env.PATH ?? ""}`,
         RUNNER_TEMP: root,
+        STATE_ROOT: root,
       },
     });
     const platformContracts: Record<string, Record<string, unknown>> = {};
     for (const agent of publicationAgents) {
       for (const platform of publicationPlatforms) {
-        const artifactPlatform = platform.replace("/", "-");
+        const artifactPlatform = platform.replaceAll("/", "-");
         const contract = path.join(contracts, agent, artifactPlatform, "contract.json");
         if (fs.existsSync(contract)) {
           platformContracts[`${agent}|${platform}`] = JSON.parse(
