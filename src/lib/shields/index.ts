@@ -65,6 +65,7 @@ const { verifyShieldsLockState }: typeof import("./verify-lock") = require("./ve
 const { relockAndReconfirm }: typeof import("./relock-reconfirm") = require("./relock-reconfirm");
 const {
   inspectShieldsTransitionLockOwner,
+  isShieldsTransitionLockUnavailable,
   takeoverShieldsTransitionLock,
   withShieldsTransitionLock,
 }: typeof import("./transition-lock") = require("./transition-lock");
@@ -83,6 +84,7 @@ const {
   applyStateDirLockMode,
   preflightStateDirLock,
   restoreStateDirLockPosture,
+  restoreStateDirStartupAccess,
 }: typeof import("./state-dir-lock") = require("./state-dir-lock");
 const {
   OPENCLAW_CONFIG_DIR,
@@ -844,6 +846,11 @@ function failShieldsCommand(message: string, _shouldThrow?: boolean): never {
 }
 
 function completeDeferredShieldsExit(error: unknown, shouldThrow = false): never {
+  if (isShieldsTransitionLockUnavailable(error)) {
+    console.error(`  ${error.summary}`);
+    if (error.recovery) console.error(`  Recovery: ${error.recovery}`);
+    return failShieldsCommand(error.summary, shouldThrow);
+  }
   if (error instanceof DeferredShieldsExit && !shouldThrow) {
     process.exit(error.exitCode);
   }
@@ -2104,6 +2111,20 @@ function repairMutableConfigPerms(sandboxName: string): MutableConfigRepairResul
       getShieldsPostureWithoutHostLock(sandboxName, true).mode,
       () => normalizeMutableOpenClawConfig(sandboxName, target.configDir),
     );
+  });
+}
+
+function restoreLockedStateDirStartupAccess(sandboxName: string): void {
+  validateName(sandboxName, "sandbox name");
+  prepareExpiredAutoRestoreHostLockTakeover(sandboxName);
+  withTimerBoundShieldsMutationLock(sandboxName, "restore locked startup access", () => {
+    const posture = getShieldsPostureWithoutHostLock(sandboxName, true);
+    if (!posture.locked) return;
+    const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
+    const issues = restoreStateDirStartupAccess(stateDirLockExec(sandboxName), target.configDir);
+    if (issues.length > 0) {
+      throw new Error(`Locked startup access could not be restored: ${issues.join(", ")}`);
+    }
   });
 }
 
@@ -3646,6 +3667,7 @@ export {
   parseDuration,
   prepareAutoRestoreTransitionTakeover,
   repairMutableConfigPerms,
+  restoreLockedStateDirStartupAccess,
   resolvePersistedAutoRestoreTarget,
   shieldsDown,
   shieldsStatus,

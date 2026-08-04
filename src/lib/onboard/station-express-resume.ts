@@ -112,6 +112,8 @@ const STATION_EXPRESS_RETIREMENT_CLAIM_SUFFIX_PATTERN = /^[A-Za-z0-9]+$/;
 const STATION_EXPRESS_RECEIPT_PORT_PATTERN = /^\d+$/;
 const STATION_EXPRESS_RECEIPT_AGENTS = new Set(["openclaw", "hermes", "langchain-deepagents-code"]);
 const STATION_EXPRESS_RECEIPT_POLICY_TIERS = new Set(["restricted", "balanced", "open"]);
+// Mirrors validate_station_install_mode() in scripts/install.sh.
+const STATION_EXPRESS_RECEIPT_MODES = new Set(["express", "provider"]);
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -341,7 +343,30 @@ function readStationExpressInstallerResumeGeneration(stateFile: string): string 
       lines[7].slice("dashboard_port=".length),
       lines[8].slice("vllm_port=".length),
     );
-  if (!legacyFormat && !currentFormat && !portFormat) {
+  // The current installer appends a tenth `mode=` field after the nine
+  // port-bound fields (scripts/install.sh save_station_express_resume). Accept
+  // that exact shape so completeSession() can validate and retire the receipt
+  // the same installer wrote, while still rejecting an unknown/expanded mode.
+  const modeFormat =
+    lines.length === 11 &&
+    lines[10] === "" &&
+    lines[3]?.startsWith("agent=") &&
+    STATION_EXPRESS_RECEIPT_AGENTS.has(lines[3].slice("agent=".length)) &&
+    lines[4]?.startsWith("sandbox=") &&
+    validSandboxName(lines[4].slice("sandbox=".length)) &&
+    lines[5]?.startsWith("policy_tier=") &&
+    STATION_EXPRESS_RECEIPT_POLICY_TIERS.has(lines[5].slice("policy_tier=".length)) &&
+    lines[6]?.startsWith("gateway_port=") &&
+    lines[7]?.startsWith("dashboard_port=") &&
+    lines[8]?.startsWith("vllm_port=") &&
+    validReceiptPorts(
+      lines[6].slice("gateway_port=".length),
+      lines[7].slice("dashboard_port=".length),
+      lines[8].slice("vllm_port=".length),
+    ) &&
+    lines[9]?.startsWith("mode=") &&
+    STATION_EXPRESS_RECEIPT_MODES.has(lines[9].slice("mode=".length));
+  if (!legacyFormat && !currentFormat && !portFormat && !modeFormat) {
     throw new Error("DGX Station Express installer resume state is malformed.");
   }
   const revision = lines[0]?.startsWith("revision=") ? lines[0].slice("revision=".length) : "";

@@ -353,7 +353,10 @@ describe("nemoclaw-start non-root fallback", () => {
   });
 
   it("unwraps the sandbox-create env self-wrapper and applies dashboard port defaults", () => {
-    const snippet = openClawBootstrapSnippet(START_SCRIPT);
+    const snippet = openClawBootstrapSnippet(
+      START_SCRIPT,
+      path.join(import.meta.dirname, "..", "scripts", "lib", "entrypoint-env-wrapper.sh"),
+    );
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-env-wrapper-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "run.sh");
@@ -4479,7 +4482,6 @@ describe("setup_auth_profile_as_sandbox", () => {
     extractShellFunctionFromSource(src, "run_step_down_as_sandbox"),
   ].join("\n");
   const setup = extractShellFunctionFromSource(src, "setup_auth_profile_as_sandbox");
-
   it("runs the auth-profile setup under HOME=/sandbox even when the parent env has HOME=/root", () => {
     // setpriv preserves the parent shell's environment, so the root
     // entrypoint's HOME=/root would otherwise leak into the step-down
@@ -4497,6 +4499,7 @@ describe("setup_auth_profile_as_sandbox", () => {
         "set -euo pipefail",
         "export HOME=/root",
         "STEP_DOWN_PREFIX_SANDBOX=(env)",
+        "openclaw_config_dir_owner() { echo sandbox; }",
         `write_auth_profile() { printf '%s\\n' "$HOME" >${JSON.stringify(observedHome)}; }`,
         "harden_auth_profiles() { :; }",
         helper,

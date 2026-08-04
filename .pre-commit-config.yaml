@@ -167,6 +167,14 @@ repos:
         files: ^(nemoclaw-blueprint/.*\.yaml$|nemoclaw/openclaw\.plugin\.json$|schemas/.*\.json$)
         priority: 10
 
+      - id: validate-managed-inference-catalog
+        name: Validate managed inference catalog
+        entry: npm run catalog:check
+        language: system
+        pass_filenames: false
+        files: ^(managed-inference/(?:presets|recipes)/.*\.yaml$|managed-inference/schemas/.*\.json$|src/lib/inference/serving/(?:adapter-registry|catalog|generate-catalog|types)\.ts$)
+        priority: 10
+
       - id: repository-checks
         name: Repository checks
         entry: npm run checks:repository
