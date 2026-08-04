@@ -28,6 +28,16 @@ function resolve(
   });
 }
 
+// Recreation is selected three ways and only the first sets the flag that
+// `resolveOnboardOptions` records: the explicit flag, NEMOCLAW_RECREATE_SANDBOX
+// read inside `runOnboard`, and drift detected mid-run. All three reach the same
+// recreate journal, so all three must report an authority refusal (#8103).
+const RECREATE_SELECTIONS: [string, OnboardFlags, Record<string, string>][] = [
+  ["the explicit --recreate-sandbox flag", { "recreate-sandbox": true }, {}],
+  ["NEMOCLAW_RECREATE_SANDBOX without the flag", {}, { NEMOCLAW_RECREATE_SANDBOX: "1" }],
+  ["drift detected with neither the flag nor the environment request", {}, {}],
+];
+
 describe("onboard command options", () => {
   it("maps typed oclif flags to onboarding options", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-options-"));
@@ -286,12 +296,14 @@ describe("onboard command options", () => {
     expect(output).not.toContain("    at ");
   });
 
-  it("reports a gateway authority refusal at the sandbox recreate boundary (#8103)", async () => {
+  it.each(
+    RECREATE_SELECTIONS,
+  )("reports a gateway authority refusal when recreation is selected by %s (#8103)", async (_selection, flags, env) => {
     const errors: string[] = [];
     await expect(
       runOnboardCommand({
-        flags: { "recreate-sandbox": true },
-        env: {},
+        flags,
+        env,
         runOnboard: async () => {
           throw new GatewayAuthorityError(
             "Gateway lifecycle authority changed since onboarding (packaged-service -> standalone).",

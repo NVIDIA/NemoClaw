@@ -191,11 +191,7 @@ function promptCancellationCode(error: unknown): "EOF" | "SIGINT" | null {
   return code === "EOF" || code === "SIGINT" ? code : null;
 }
 
-function handleOnboardCommandError(
-  error: unknown,
-  options: OnboardCommandOptions,
-  deps: RunOnboardCommandDeps,
-): void {
+function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps): void {
   const cancellationCode = promptCancellationCode(error);
   if (cancellationCode === "SIGINT") {
     // The prompt has already restored terminal state and re-raised SIGINT.
@@ -211,7 +207,14 @@ function handleOnboardCommandError(
   if (error instanceof GatewayManagementDeclarationError) {
     fail(deps, `  ${error.message}`);
   }
-  if (options.recreateSandbox && error instanceof GatewayAuthorityError) {
+  // Gateway-authority refusals are reported, never rethrown. Recreation is not
+  // selected in one place: `--recreate-sandbox` sets the flag, but `runOnboard`
+  // independently honours NEMOCLAW_RECREATE_SANDBOX and reaches the same
+  // journal when it detects sandbox drift. Keying this branch on the flag left
+  // both of those paths emitting a raw stack trace (#8103). Within onboarding
+  // the recreate journal's authority revalidation is the only source of this
+  // typed error, so the operation label holds however recreation was selected.
+  if (error instanceof GatewayAuthorityError) {
     fail(deps, gatewayAuthorityFailureLines(error, "sandbox recreate").join("\n"));
   }
   // Stdin EOF at any onboarding prompt is a cancellation, not a failure:
@@ -232,6 +235,6 @@ export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<vo
   try {
     await deps.runOnboard(options);
   } catch (error) {
-    handleOnboardCommandError(error, options, deps);
+    handleOnboardCommandError(error, deps);
   }
 }
