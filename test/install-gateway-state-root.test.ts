@@ -192,6 +192,7 @@ nemoclaw_state_dir`,
 
   it.each([
     "08000",
+    "08081",
     "11434",
     "18790",
   ])("rejects conflicting gateway port %s before writing selected state", (gatewayPort) => {
