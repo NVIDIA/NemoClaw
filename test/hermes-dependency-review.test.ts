@@ -151,7 +151,9 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(arg("NODE_VERSION")).toBe("24.18.1");
     expect(arg("UV_VERSION")).toBe("0.11.33");
     for (const selection of [
-      '"cryptography==48.0.1"',
+      '"aiohttp==3.14.3"',
+      '"cryptography==50.0.0"',
+      '"alibabacloud-dingtalk==2.2.54"',
       '"mcp==1.28.1"',
       '"Pillow==12.3.0"',
       '"starlette==1.3.1"',
@@ -160,7 +162,8 @@ describe("Hermes 0.19.0 dependency review", () => {
       expect(securityDependenciesPatch).toContain(selection);
     }
     for (const installedVersion of [
-      "'cryptography': '48.0.1'",
+      "'aiohttp': '3.14.3'",
+      "'cryptography': '50.0.0'",
       "'mcp': '1.28.1'",
       "'pillow': '12.3.0'",
       "'starlette': '1.3.1'",
@@ -178,7 +181,12 @@ describe("Hermes 0.19.0 dependency review", () => {
     for (const advisory of ["GHSA-5rvq-cxj2-64vf", "GHSA-6jv3-5f52-599m", "GHSA-v9pg-7xvm-68hf"]) {
       expect(review).toContain(advisory);
     }
-    expect(review).toContain("`cryptography==48.0.1`");
+    for (const advisory of ["GHSA-cq5v-8q36-5273", "GHSA-g6cj-pr64-35w5"]) {
+      expect(review).toContain(advisory);
+    }
+    expect(review).toContain("`aiohttp==3.14.3`");
+    expect(review).toContain("`cryptography==50.0.0`");
+    expect(review).toContain("`alibabacloud-dingtalk==2.2.54`");
     expect(review).toContain("`mcp==1.28.1`");
     expect(review).toContain("`Pillow==12.3.0`");
     expect(review).toContain("`starlette==1.3.1`");

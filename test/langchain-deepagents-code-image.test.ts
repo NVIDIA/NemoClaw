@@ -1028,19 +1028,23 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip",
     );
     expect(review).toContain(
-      "Targeted audit result: `uv 0.11.33, MCP 1.28.1, Pillow 12.3.0, and pyasn1 0.6.4 have no known vulnerabilities`",
+      "Targeted audit result: `aiohttp 3.14.3, cryptography 50.0.0, uv 0.11.33, MCP 1.28.1, Pillow 12.3.0, and pyasn1 0.6.4 have no known vulnerabilities`",
     );
     expect(review).toContain(
       "Complete-lock audit result: `2 duplicate records in 1 unrelated package`",
     );
+    expect(review).toContain("`GHSA-cq5v-8q36-5273`");
+    expect(review).toContain("`GHSA-g6cj-pr64-35w5`");
     expect(review).toContain("Deep Agents Code `0.1.45` and later");
     expect(review).toContain("semantic migration to `>=0.1.45`");
     expect(requirementsLock).toContain("uv==0.11.33");
+    expect(requirementsLock).toContain("aiohttp==3.14.3");
+    expect(requirementsLock).toContain("cryptography==50.0.0");
     expect(requirementsLock).toContain("mcp==1.28.1");
     expect(requirementsLock).toContain("pillow==12.3.0");
     expect(requirementsLock).toContain("pyasn1==0.6.4");
     expect(readAgentFile("Dockerfile.base")).toContain(
-      "'mcp': '1.28.1', 'pillow': '12.3.0', 'pyasn1': '0.6.4', 'uv': '0.11.33'",
+      "'aiohttp': '3.14.3', 'cryptography': '50.0.0', 'deepagents-code': '0.1.34'",
     );
     expect(review).toContain(`Adapter module SHA-256: \`${sha256(adapterModule)}\``);
     expect(review).toContain(`Adapter project metadata SHA-256: \`${sha256(adapterMetadata)}\``);
