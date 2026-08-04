@@ -11,10 +11,10 @@
  * exhaustive discovery and classification of their production call sites.
  * whyNotSourceFix: TypeScript cannot distinguish a command array after it
  * crosses the process runner, so this defense-in-depth check intentionally uses
- * deterministic source patterns plus repository-wide read-site discovery.
+ * deterministic AST classifications plus repository-wide read-site discovery.
  * regressionTest: test/policy-mutation-read-discovery.test.ts injects
  * unaccounted reads and requires this audit to fail.
- * removalCondition: replace the source-pattern table when mutation and
+ * removalCondition: replace the AST classification table when mutation and
  * diagnostic commands carry enforced tagged types through the runner boundary.
  */
 
@@ -26,65 +26,101 @@ import ts from "typescript";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
-interface AuditedMutationRead {
-  readonly relativePath: string;
-  readonly expectedReadCalls: number;
-  readonly baseCommand: string;
-  readonly unsafeBaseCommand?: string;
-  readonly fullCommand: string;
-  readonly diagnosticFullRead?: string;
+export type PolicyReadView = "base" | "full";
+export type PolicyReadFailureHandling = "error-preserving" | "ignore-error" | "unclassified";
+
+export interface DiscoveredPolicyRead {
+  readonly site: string;
+  readonly view: PolicyReadView;
+  readonly failureHandling: PolicyReadFailureHandling;
 }
 
-export const MUTATION_READS: readonly AuditedMutationRead[] = [
+interface AuditedPolicyReadFile {
+  readonly relativePath: string;
+  readonly expectedReads: readonly DiscoveredPolicyRead[];
+}
+
+function preservingBase(site: string): DiscoveredPolicyRead {
+  return { site, view: "base", failureHandling: "error-preserving" };
+}
+
+function ignoredBase(site: string): DiscoveredPolicyRead {
+  return { site, view: "base", failureHandling: "ignore-error" };
+}
+
+function unclassifiedBase(site: string): DiscoveredPolicyRead {
+  return { site, view: "base", failureHandling: "unclassified" };
+}
+
+function ignoredFull(site: string): DiscoveredPolicyRead {
+  return { site, view: "full", failureHandling: "ignore-error" };
+}
+
+export const MUTATION_READS: readonly AuditedPolicyReadFile[] = [
   {
     relativePath: "src/lib/actions/sandbox/policy-get.ts",
-    expectedReadCalls: 1,
-    baseCommand: "runCapture(buildPolicyGetCommand(sandboxName))",
-    fullCommand: "runCapture(buildPolicyGetFullCommand(sandboxName))",
+    expectedReads: [preservingBase("getSandboxPolicy")],
   },
   {
     relativePath: "src/lib/policy/index.ts",
-    expectedReadCalls: 7,
-    baseCommand: "runCapture(buildPolicyGetCommand(sandboxName))",
-    unsafeBaseCommand: "runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true })",
-    fullCommand: "runCapture(buildPolicyGetFullCommand(sandboxName), { ignoreError: true })",
-    diagnosticFullRead: "runCapture(buildPolicyGetFullCommand(sandboxName), { ignoreError: true })",
+    expectedReads: [
+      ignoredBase("removePreset"),
+      ignoredBase("readCurrentSandboxPolicy"),
+      ignoredBase("applyPresetContent"),
+      ignoredBase("applyPresets"),
+      preservingBase("customPresetOwnsNetworkPolicyKey"),
+      ignoredFull("getGatewayPresets/readPolicy"),
+      preservingBase("getPresetContentGatewayState/readPolicy"),
+    ],
   },
   {
     relativePath: "nemoclaw/src/blueprint/runner.ts",
-    expectedReadCalls: 1,
-    baseCommand: '["openshell", "policy", "get", "--base", sandboxName]',
-    fullCommand: '["openshell", "policy", "get", "--full", sandboxName]',
+    expectedReads: [unclassifiedBase("actionApply")],
   },
   {
     relativePath: "src/lib/shields/index.ts",
-    expectedReadCalls: 1,
-    baseCommand: "runCapture(buildPolicyGetCommand(sandboxName))",
-    unsafeBaseCommand: "runCapture(buildPolicyGetCommand(sandboxName), {",
-    fullCommand: "runCapture(buildPolicyGetFullCommand(sandboxName))",
+    expectedReads: [ignoredBase("shieldsDownWithoutHostLock")],
   },
 ];
 
-const NON_MUTATION_POLICY_READS = [
+const NON_MUTATION_POLICY_READS: readonly AuditedPolicyReadFile[] = [
   {
     relativePath: "src/lib/actions/sandbox/gateway-state.ts",
-    expectedReadCalls: 2,
+    expectedReads: [
+      ignoredFull("getSandboxGatewayState"),
+      ignoredFull("getSandboxGatewayStateForStatus"),
+    ],
   },
   {
     relativePath: "src/lib/policy/commands.ts",
-    expectedReadCalls: 2,
+    expectedReads: [
+      {
+        site: "buildPolicyGetCommand",
+        view: "base",
+        failureHandling: "unclassified",
+      },
+      {
+        site: "buildPolicyGetFullCommand",
+        view: "full",
+        failureHandling: "unclassified",
+      },
+    ],
   },
 ] as const;
 
 export interface DiscoveredPolicyReadSite {
   readonly relativePath: string;
   readonly readCalls: number;
+  readonly reads: readonly DiscoveredPolicyRead[];
 }
 
-const POLICY_GET_BUILDERS = new Set(["buildPolicyGetCommand", "buildPolicyGetFullCommand"]);
+const POLICY_GET_BUILDERS = new Map<string, PolicyReadView>([
+  ["buildPolicyGetCommand", "base"],
+  ["buildPolicyGetFullCommand", "full"],
+]);
 
 interface PolicyBuilderBindings {
-  readonly identifiers: ReadonlySet<ts.Symbol>;
+  readonly identifiers: ReadonlyMap<ts.Symbol, PolicyReadView>;
   readonly namespaces: ReadonlySet<ts.Symbol>;
 }
 
@@ -144,7 +180,7 @@ function collectRequiredPolicyBindings(
   fileName: string,
   repoRoot: string,
   checker: ts.TypeChecker,
-  identifiers: Set<ts.Symbol>,
+  identifiers: Map<ts.Symbol, PolicyReadView>,
   namespaces: Set<ts.Symbol>,
 ): void {
   const moduleSpecifier = requireModuleSpecifier(declaration.initializer, checker);
@@ -155,16 +191,26 @@ function collectRequiredPolicyBindings(
     return;
   }
   if (!ts.isObjectBindingPattern(declaration.name)) return;
-  for (const element of declaration.name.elements) {
-    if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue;
-    const importedName = element.propertyName ?? element.name;
-    if (
-      (ts.isIdentifier(importedName) || ts.isStringLiteralLike(importedName)) &&
-      POLICY_GET_BUILDERS.has(importedName.text)
-    ) {
+  collectPolicyBuilderObjectBindings(declaration.name, checker, identifiers, namespaces);
+}
+
+function collectPolicyBuilderObjectBindings(
+  pattern: ts.ObjectBindingPattern,
+  checker: ts.TypeChecker,
+  identifiers: Map<ts.Symbol, PolicyReadView>,
+  namespaces: Set<ts.Symbol>,
+): void {
+  for (const element of pattern.elements) {
+    if (!ts.isIdentifier(element.name)) continue;
+    if (element.dotDotDotToken) {
       const symbol = checker.getSymbolAtLocation(element.name);
-      if (symbol) identifiers.add(symbol);
+      if (symbol) namespaces.add(symbol);
+      continue;
     }
+    const importedName = element.propertyName ?? element.name;
+    const view = POLICY_GET_BUILDERS.get(propertyNameText(importedName) ?? "");
+    const symbol = checker.getSymbolAtLocation(element.name);
+    if (symbol && view) identifiers.set(symbol, view);
   }
 }
 
@@ -174,7 +220,7 @@ function collectPolicyBuilderBindings(
   repoRoot: string,
   checker: ts.TypeChecker,
 ): PolicyBuilderBindings {
-  const identifiers = new Set<ts.Symbol>();
+  const identifiers = new Map<ts.Symbol, PolicyReadView>();
   const namespaces = new Set<ts.Symbol>();
   for (const statement of sourceFile.statements) {
     if (
@@ -192,9 +238,10 @@ function collectPolicyBuilderBindings(
         for (const element of namedBindings.elements) {
           if (element.isTypeOnly) continue;
           const importedName = element.propertyName?.text ?? element.name.text;
-          if (!POLICY_GET_BUILDERS.has(importedName)) continue;
+          const view = POLICY_GET_BUILDERS.get(importedName);
+          if (!view) continue;
           const symbol = checker.getSymbolAtLocation(element.name);
-          if (symbol) identifiers.add(symbol);
+          if (symbol) identifiers.set(symbol, view);
         }
       }
     } else if (ts.isVariableStatement(statement)) {
@@ -210,27 +257,84 @@ function collectPolicyBuilderBindings(
       }
     }
   }
+
+  const aliasDeclarations: ts.VariableDeclaration[] = [];
+  function collectAliasDeclarations(node: ts.Node): void {
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      aliasDeclarations.push(node);
+    }
+    ts.forEachChild(node, collectAliasDeclarations);
+  }
+  collectAliasDeclarations(sourceFile);
+
+  for (let pass = 0; pass < aliasDeclarations.length; pass += 1) {
+    const previousSize = identifiers.size + namespaces.size;
+    for (const declaration of aliasDeclarations) {
+      const { initializer } = declaration;
+      if (!initializer) continue;
+      const bindings = { identifiers, namespaces };
+      if (ts.isIdentifier(declaration.name)) {
+        const symbol = checker.getSymbolAtLocation(declaration.name);
+        if (!symbol) continue;
+        if (isPolicyNamespaceReference(initializer, bindings, fileName, repoRoot, checker)) {
+          namespaces.add(symbol);
+          continue;
+        }
+        const view = policyBuilderReferenceView(initializer, bindings, checker);
+        if (view) identifiers.set(symbol, view);
+        continue;
+      }
+      if (
+        ts.isObjectBindingPattern(declaration.name) &&
+        isPolicyNamespaceReference(initializer, bindings, fileName, repoRoot, checker)
+      ) {
+        collectPolicyBuilderObjectBindings(declaration.name, checker, identifiers, namespaces);
+      }
+    }
+    if (identifiers.size + namespaces.size === previousSize) break;
+  }
   return { identifiers, namespaces };
 }
 
-function isPolicyBuilderCall(
-  expression: ts.LeftHandSideExpression,
+function isPolicyNamespaceReference(
+  expression: ts.Expression,
   bindings: PolicyBuilderBindings,
+  fileName: string,
+  repoRoot: string,
   checker: ts.TypeChecker,
 ): boolean {
+  if (ts.isParenthesizedExpression(expression)) {
+    return isPolicyNamespaceReference(expression.expression, bindings, fileName, repoRoot, checker);
+  }
+  const moduleSpecifier = requireModuleSpecifier(expression, checker);
+  if (moduleSpecifier) return isPolicyBuilderModule(fileName, moduleSpecifier, repoRoot);
+  if (!ts.isIdentifier(expression)) return false;
+  const symbol = checker.getSymbolAtLocation(expression);
+  return !!symbol && bindings.namespaces.has(symbol);
+}
+
+function policyBuilderReferenceView(
+  expression: ts.Expression,
+  bindings: PolicyBuilderBindings,
+  checker: ts.TypeChecker,
+): PolicyReadView | null {
+  if (ts.isParenthesizedExpression(expression)) {
+    return policyBuilderReferenceView(expression.expression, bindings, checker);
+  }
   if (ts.isIdentifier(expression)) {
     const symbol = checker.getSymbolAtLocation(expression);
-    return !!symbol && bindings.identifiers.has(symbol);
+    return symbol ? (bindings.identifiers.get(symbol) ?? null) : null;
+  }
+  if (!ts.isPropertyAccessExpression(expression) && !ts.isElementAccessExpression(expression)) {
+    return null;
   }
   const memberName = calledName(expression);
-  if (!memberName || !POLICY_GET_BUILDERS.has(memberName)) return false;
-  const target =
-    ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)
-      ? expression.expression
-      : null;
-  if (!target || !ts.isIdentifier(target)) return false;
+  const view = memberName ? POLICY_GET_BUILDERS.get(memberName) : undefined;
+  if (!view) return null;
+  const target = expression.expression;
+  if (!ts.isIdentifier(target)) return null;
   const symbol = checker.getSymbolAtLocation(target);
-  return !!symbol && bindings.namespaces.has(symbol);
+  return symbol && bindings.namespaces.has(symbol) ? view : null;
 }
 
 function createBoundSourceFile(
@@ -289,14 +393,14 @@ function isCanonicalOpenshellResolverCall(
   );
 }
 
-function isDirectPolicyRead(
+function directPolicyReadView(
   expression: ts.ArrayLiteralExpression,
   fileName: string,
   repoRoot: string,
   checker: ts.TypeChecker,
-): boolean {
+): PolicyReadView | null {
   const first = expression.elements[0];
-  if (!first || !ts.isExpression(first)) return false;
+  if (!first || !ts.isExpression(first)) return null;
   const firstText = literalText(first);
   const offset =
     firstText === "policy"
@@ -305,15 +409,208 @@ function isDirectPolicyRead(
           isCanonicalOpenshellResolverCall(first, fileName, repoRoot, checker)
         ? 1
         : -1;
-  if (offset < 0) return false;
+  if (offset < 0) return null;
   const values = expression.elements.map((element) =>
     ts.isExpression(element) ? literalText(element) : null,
   );
+  if (values[offset] !== "policy" || values[offset + 1] !== "get") return null;
+  if (values[offset + 2] === "--base") return "base";
+  if (values[offset + 2] === "--full") return "full";
+  return null;
+}
+
+function declarationNameText(name: ts.DeclarationName | undefined): string | null {
+  if (!name) return null;
+  if (ts.isIdentifier(name) || ts.isPrivateIdentifier(name) || ts.isStringLiteralLike(name)) {
+    return name.text;
+  }
+  return name.getText();
+}
+
+function functionScopeName(node: ts.FunctionLikeDeclaration): string {
+  const ownName = "name" in node ? declarationNameText(node.name) : null;
+  if (ownName) return ownName;
+  const { parent } = node;
+  if (ts.isVariableDeclaration(parent)) return declarationNameText(parent.name) ?? "<anonymous>";
+  if (ts.isPropertyAssignment(parent)) return declarationNameText(parent.name) ?? "<anonymous>";
+  return "<anonymous>";
+}
+
+function isFunctionScope(node: ts.Node): node is ts.FunctionLikeDeclaration {
   return (
-    values[offset] === "policy" &&
-    values[offset + 1] === "get" &&
-    (values[offset + 2] === "--base" || values[offset + 2] === "--full")
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isConstructorDeclaration(node)
   );
+}
+
+function policyReadSite(node: ts.Node): string {
+  const scopes: string[] = [];
+  for (let current = node.parent; current; current = current.parent) {
+    if (isFunctionScope(current)) scopes.unshift(functionScopeName(current));
+  }
+  return scopes.join("/") || "<module>";
+}
+
+type IgnoreErrorOption = "absent" | "present" | "unclassified";
+
+function propertyNameText(name: ts.PropertyName): string | null {
+  if (ts.isIdentifier(name) || ts.isPrivateIdentifier(name) || ts.isStringLiteralLike(name)) {
+    return name.text;
+  }
+  if (ts.isComputedPropertyName(name) && ts.isStringLiteralLike(name.expression)) {
+    return name.expression.text;
+  }
+  return null;
+}
+
+function mergeIgnoreErrorOptions(
+  left: IgnoreErrorOption,
+  right: IgnoreErrorOption,
+): IgnoreErrorOption {
+  if (left === "unclassified" || right === "unclassified") return "unclassified";
+  return left === "present" || right === "present" ? "present" : "absent";
+}
+
+function classifyIgnoreErrorOption(expression: ts.Expression): IgnoreErrorOption {
+  if (ts.isParenthesizedExpression(expression)) {
+    return classifyIgnoreErrorOption(expression.expression);
+  }
+  if (ts.isConditionalExpression(expression)) {
+    return mergeIgnoreErrorOptions(
+      classifyIgnoreErrorOption(expression.whenTrue),
+      classifyIgnoreErrorOption(expression.whenFalse),
+    );
+  }
+  if (!ts.isObjectLiteralExpression(expression)) return "unclassified";
+
+  let result: IgnoreErrorOption = "absent";
+  for (const property of expression.properties) {
+    if (ts.isSpreadAssignment(property)) {
+      result = mergeIgnoreErrorOptions(result, classifyIgnoreErrorOption(property.expression));
+      continue;
+    }
+    if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) {
+      const name = "name" in property ? propertyNameText(property.name) : null;
+      if (name === "ignoreError") result = "unclassified";
+      continue;
+    }
+    const name = propertyNameText(property.name);
+    if (name !== "ignoreError") continue;
+    if (ts.isShorthandPropertyAssignment(property)) {
+      result = "unclassified";
+      continue;
+    }
+    if (property.initializer.kind === ts.SyntaxKind.TrueKeyword) {
+      result = mergeIgnoreErrorOptions(result, "present");
+      continue;
+    }
+    if (property.initializer.kind !== ts.SyntaxKind.FalseKeyword) result = "unclassified";
+  }
+  return result;
+}
+
+const POLICY_READ_RUNNERS = new Set([
+  "captureOpenshell",
+  "captureOpenshellForStatus",
+  "runCapture",
+  "runCmd",
+]);
+
+function isWithin(node: ts.Node, ancestor: ts.Node): boolean {
+  return node.pos >= ancestor.pos && node.end <= ancestor.end;
+}
+
+function containsThrowOutsideNestedFunctions(node: ts.Node): boolean {
+  let containsThrow = false;
+  function visit(current: ts.Node): void {
+    if (ts.isThrowStatement(current)) {
+      containsThrow = true;
+      return;
+    }
+    if (current !== node && isFunctionScope(current)) return;
+    ts.forEachChild(current, visit);
+  }
+  visit(node);
+  return containsThrow;
+}
+
+function catchGuaranteesDirectThrow(block: ts.Block): boolean {
+  const finalStatement = block.statements[block.statements.length - 1];
+  if (!finalStatement || !ts.isThrowStatement(finalStatement)) return false;
+  return block.statements
+    .slice(0, -1)
+    .every((statement) => ts.isVariableStatement(statement) || ts.isEmptyStatement(statement));
+}
+
+function policyReadFailureHandling(node: ts.Node): PolicyReadFailureHandling {
+  let runnerHandling: PolicyReadFailureHandling = "unclassified";
+  for (let current = node.parent; current && !isFunctionScope(current); current = current.parent) {
+    if (!ts.isCallExpression(current) || !ts.isIdentifier(current.expression)) continue;
+    if (!POLICY_READ_RUNNERS.has(current.expression.text)) continue;
+    const command = current.arguments[0];
+    if (!command || !isWithin(node, command)) return "unclassified";
+    if (current.arguments.length === 1) {
+      runnerHandling = "error-preserving";
+      break;
+    }
+    if (current.arguments.length !== 2) return "unclassified";
+    const option = classifyIgnoreErrorOption(current.arguments[1]);
+    runnerHandling =
+      option === "present"
+        ? "ignore-error"
+        : option === "absent"
+          ? "error-preserving"
+          : "unclassified";
+    break;
+  }
+  if (runnerHandling !== "error-preserving") return runnerHandling;
+
+  for (let current = node.parent; current && !isFunctionScope(current); current = current.parent) {
+    if (!ts.isTryStatement(current) || !current.catchClause || !isWithin(node, current.tryBlock)) {
+      continue;
+    }
+    if (catchGuaranteesDirectThrow(current.catchClause.block)) continue;
+    if (containsThrowOutsideNestedFunctions(current.catchClause.block)) return "unclassified";
+    return "ignore-error";
+  }
+  return runnerHandling;
+}
+
+export function classifyPolicyReadCalls(
+  source: string,
+  fileName: string,
+  repoRoot = REPO_ROOT,
+): DiscoveredPolicyRead[] {
+  const { sourceFile, checker } = createBoundSourceFile(source, fileName);
+  const builderBindings = collectPolicyBuilderBindings(sourceFile, fileName, repoRoot, checker);
+  const reads: DiscoveredPolicyRead[] = [];
+
+  function record(node: ts.Node, view: PolicyReadView): void {
+    reads.push({
+      site: policyReadSite(node),
+      view,
+      failureHandling: policyReadFailureHandling(node),
+    });
+  }
+
+  function visit(node: ts.Node): void {
+    if (ts.isCallExpression(node)) {
+      const view = policyBuilderReferenceView(node.expression, builderBindings, checker);
+      if (view) record(node, view);
+    } else if (ts.isArrayLiteralExpression(node)) {
+      const view = directPolicyReadView(node, fileName, repoRoot, checker);
+      if (view) record(node, view);
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return reads;
 }
 
 export function countPolicyReadCalls(
@@ -321,27 +618,7 @@ export function countPolicyReadCalls(
   fileName: string,
   repoRoot = REPO_ROOT,
 ): number {
-  const { sourceFile, checker } = createBoundSourceFile(source, fileName);
-  const builderBindings = collectPolicyBuilderBindings(sourceFile, fileName, repoRoot, checker);
-  let readCalls = 0;
-
-  function visit(node: ts.Node): void {
-    if (
-      ts.isCallExpression(node) &&
-      isPolicyBuilderCall(node.expression, builderBindings, checker)
-    ) {
-      readCalls += 1;
-    } else if (
-      ts.isArrayLiteralExpression(node) &&
-      isDirectPolicyRead(node, fileName, repoRoot, checker)
-    ) {
-      readCalls += 1;
-    }
-    ts.forEachChild(node, visit);
-  }
-
-  visit(sourceFile);
-  return readCalls;
+  return classifyPolicyReadCalls(source, fileName, repoRoot).length;
 }
 
 function productionTypeScriptFiles(directory: string): string[] {
@@ -365,12 +642,13 @@ export function discoverPolicyReadSites(repoRoot: string): DiscoveredPolicyReadS
     .flatMap((sourceRoot) => productionTypeScriptFiles(path.join(repoRoot, sourceRoot)))
     .flatMap((sourcePath) => {
       const source = readFileSync(sourcePath, "utf8");
-      const readCalls = countPolicyReadCalls(source, sourcePath, repoRoot);
-      return readCalls > 0
+      const reads = classifyPolicyReadCalls(source, sourcePath, repoRoot);
+      return reads.length > 0
         ? [
             {
               relativePath: path.relative(repoRoot, sourcePath).split(path.sep).join("/"),
-              readCalls,
+              readCalls: reads.length,
+              reads,
             },
           ]
         : [];
@@ -378,59 +656,39 @@ export function discoverPolicyReadSites(repoRoot: string): DiscoveredPolicyReadS
     .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 }
 
+function policyReadDescription(read: DiscoveredPolicyRead): string {
+  return `${read.site} (${read.view}, ${read.failureHandling})`;
+}
+
+function policyReadDescriptions(reads: readonly DiscoveredPolicyRead[]): string[] {
+  return reads.map(policyReadDescription).sort();
+}
+
 export function auditOpenShellPolicyMutationReads(repoRoot = REPO_ROOT): string[] {
   const violations: string[] = [];
-  for (const {
-    relativePath,
-    baseCommand,
-    unsafeBaseCommand,
-    fullCommand,
-    diagnosticFullRead,
-  } of MUTATION_READS) {
+  const discoveredReads = new Map(
+    discoverPolicyReadSites(repoRoot).map((site) => [site.relativePath, site.reads]),
+  );
+  const auditedReads = [...MUTATION_READS, ...NON_MUTATION_POLICY_READS];
+  for (const { relativePath, expectedReads } of auditedReads) {
     const sourcePath = path.join(repoRoot, relativePath);
     if (!existsSync(sourcePath)) {
       violations.push(`${relativePath}: audited policy read source is missing`);
+      discoveredReads.delete(relativePath);
       continue;
     }
-    const source = readFileSync(sourcePath, "utf8");
-    if (!source.includes(baseCommand)) {
-      violations.push(`${relativePath}: expected the audited policy mutation read to use --base`);
-    }
-    if (unsafeBaseCommand && source.includes(unsafeBaseCommand)) {
-      violations.push(`${relativePath}: policy mutation reads must preserve command failures`);
-    }
-    if (!diagnosticFullRead && source.includes(fullCommand)) {
-      violations.push(`${relativePath}: audited policy mutation read must never use --full output`);
-    }
-    if (diagnosticFullRead) {
-      const diagnosticReads = source.split(diagnosticFullRead).length - 1;
-      if (!source.includes(fullCommand) || diagnosticReads === 0) {
-        violations.push(`${relativePath}: expected the audited diagnostic read to use --full`);
-      }
-      if (diagnosticReads !== 1) {
-        violations.push(
-          `${relativePath}: --full policy reads must remain isolated to the diagnostic path`,
-        );
-      }
-    }
-  }
-
-  const discoveredReads = new Map(
-    discoverPolicyReadSites(repoRoot).map((site) => [site.relativePath, site.readCalls]),
-  );
-  const auditedReads = [...MUTATION_READS, ...NON_MUTATION_POLICY_READS];
-  for (const { relativePath, expectedReadCalls } of auditedReads) {
-    const discoveredCount = discoveredReads.get(relativePath) ?? 0;
-    if (discoveredCount !== expectedReadCalls) {
+    const expected = policyReadDescriptions(expectedReads);
+    const discovered = policyReadDescriptions(discoveredReads.get(relativePath) ?? []);
+    if (expected.join("\n") !== discovered.join("\n")) {
       violations.push(
-        `${relativePath}: expected ${expectedReadCalls} audited policy read call(s), found ${discoveredCount}`,
+        `${relativePath}: expected audited policy reads [${expected.join("; ")}], found [${discovered.join("; ")}]`,
       );
     }
     discoveredReads.delete(relativePath);
   }
-  for (const [relativePath, readCalls] of discoveredReads) {
+  for (const [relativePath, reads] of discoveredReads) {
     violations.push(
-      `${relativePath}: found ${readCalls} unaccounted policy read call(s); classify every read before merge`,
+      `${relativePath}: found ${reads.length} unaccounted policy read call(s); classify every read before merge`,
     );
   }
 
