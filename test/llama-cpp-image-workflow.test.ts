@@ -38,8 +38,12 @@ const workflow = YAML.parse(
 const fullShaAction = /^[^@]+@[0-9a-f]{40}$/u;
 
 function required<T>(value: T | undefined, message: string): T {
-  if (value === undefined) throw new Error(message);
-  return value;
+  return (
+    value ??
+    (() => {
+      throw new Error(message);
+    })()
+  );
 }
 
 function namedStep(job: Job, name: string): Step {
@@ -107,10 +111,12 @@ describe("llama.cpp image PR workflow", () => {
   });
 
   it("pins actions and validates the native non-root read-only image (#8231)", () => {
-    for (const job of Object.values(workflow.jobs ?? {})) {
-      for (const step of job.steps ?? []) {
-        if (step.uses) expect(step.uses).toMatch(fullShaAction);
-      }
+    const actions = Object.values(workflow.jobs ?? {})
+      .flatMap((job) => job.steps ?? [])
+      .map((step) => step.uses)
+      .filter((uses): uses is string => uses !== undefined);
+    for (const action of actions) {
+      expect(action).toMatch(fullShaAction);
     }
 
     expect(buildStep.with?.platforms).toBe("${{ matrix.platform }}");
