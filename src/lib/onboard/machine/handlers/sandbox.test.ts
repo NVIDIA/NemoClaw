@@ -1410,10 +1410,7 @@ describe("handleSandboxState", () => {
       messagingPlan: makeMinimalPlan("my-assistant", "openclaw", ["slack"]),
     });
     const writePlanToEnv = vi.fn();
-    const readMessagingPlanFromEnv = vi
-      .fn()
-      .mockReturnValueOnce(null)
-      .mockReturnValue(refreshedPlan);
+    const readMessagingPlanFromEnv = vi.fn(() => refreshedPlan);
     const { deps, calls, getSession } = createDeps({
       getRecordedMessagingChannelsForResume: vi.fn(() => null),
       writePlanToEnv,
