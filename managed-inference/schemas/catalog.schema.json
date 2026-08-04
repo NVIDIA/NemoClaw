@@ -16,7 +16,7 @@
   ],
   "properties": {
     "schemaVersion": { "const": "1.0.0" },
-    "compilerVersion": { "const": "1.0.0" },
+    "compilerVersion": { "const": "1.1.0" },
     "sourceRevision": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
     "readinessSchemaRef": {
       "const": "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json"

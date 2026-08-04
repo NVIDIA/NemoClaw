@@ -107,9 +107,13 @@ describe("docker-driver-gateway-service", () => {
       args[0] === "info" ? officialFormulaInfo() : spawnResult(),
     );
 
-    expect(hasOpenShellGatewayUserService({ existsSync: linuxExists, platform: "linux" })).toBe(
-      true,
-    );
+    expect(
+      hasOpenShellGatewayUserService({
+        existsSync: linuxExists,
+        platform: "linux",
+        spawnSyncImpl: systemdSpawn([]),
+      }),
+    ).toBe(true);
     expect(
       hasOpenShellGatewayUserService({
         commandExists: (command) => command === "brew",
@@ -440,7 +444,6 @@ describe("docker-driver-gateway-service", () => {
 
   it.each([
     ["the manager is unavailable", "daemon-reload", "Failed to connect to bus", false],
-    ["the executable is foreign", "show", "", true],
     ["the service is inactive", "is-active", "inactive", false],
   ])("reports the selected systemd log command when %s (#8104)", (_case, failedCommand, detail, standaloneFallbackBlocked) => {
     const result = startOpenShellGatewayUserService({
@@ -469,6 +472,30 @@ describe("docker-driver-gateway-service", () => {
     expect(result).toMatchObject({
       logCommand: "journalctl --user --unit openshell-gateway --no-pager --lines=200",
       standaloneFallbackBlocked,
+      started: false,
+    });
+  });
+
+  it("declines an upstream systemd service with a foreign executable", () => {
+    const result = startOpenShellGatewayUserService({
+      commandExists: () => true,
+      env: {},
+      existsSync: (candidate) => candidate === "/lib/systemd/user/openshell-gateway.service",
+      platform: "linux",
+      spawnSyncImpl: () =>
+        spawnResult(
+          0,
+          "",
+          trustedShowOutput(
+            "/lib/systemd/user/openshell-gateway.service",
+            "/tmp/openshell-gateway",
+          ),
+        ),
+    });
+
+    expect(result).toMatchObject({
+      attempted: false,
+      reason: "service not installed",
       started: false,
     });
   });
