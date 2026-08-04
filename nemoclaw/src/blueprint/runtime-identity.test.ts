@@ -459,7 +459,7 @@ describe("runtime identity contract", () => {
     writeFileSync(join(root, oboConfig.profile_path), oboProfileDocument);
     environment.OKTA_SUBJECT_TOKEN = "user-subject-token";
     deps.validateEndpointUrl = async (url) =>
-      url.includes("api.example.com")
+      new URL(url).hostname === "api.example.com"
         ? Promise.reject(new Error("private destination rejected"))
         : Promise.resolve({ dnsResolved: false });
 
