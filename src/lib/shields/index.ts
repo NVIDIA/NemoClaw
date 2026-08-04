@@ -69,6 +69,7 @@ const { verifyShieldsLockState }: typeof import("./verify-lock") = require("./ve
 const { relockAndReconfirm }: typeof import("./relock-reconfirm") = require("./relock-reconfirm");
 const {
   inspectAnyShieldsTransitionLockOwner,
+  isShieldsTransitionLockUnavailable,
   withShieldsTransitionLock,
 }: typeof import("./transition-lock") = require("./transition-lock");
 const {
@@ -841,6 +842,11 @@ function failShieldsCommand(message: string, _shouldThrow?: boolean): never {
 }
 
 function completeDeferredShieldsExit(error: unknown, shouldThrow = false): never {
+  if (isShieldsTransitionLockUnavailable(error)) {
+    console.error(`  ${error.summary}`);
+    if (error.recovery) console.error(`  Recovery: ${error.recovery}`);
+    return failShieldsCommand(error.summary, shouldThrow);
+  }
   if (error instanceof DeferredShieldsExit && !shouldThrow) {
     process.exit(error.exitCode);
   }
