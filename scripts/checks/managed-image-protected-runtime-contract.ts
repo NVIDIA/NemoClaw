@@ -5,7 +5,6 @@ import type {
   ManagedStartupAgent,
   ManagedStartupProfile,
 } from "../../src/lib/onboard/managed-startup/profile.ts";
-import { PROTECTED_MANAGED_IMAGE_AGENTS } from "./protected-managed-image-contract.ts";
 
 export {
   PROTECTED_MANAGED_IMAGE_AGENTS,
