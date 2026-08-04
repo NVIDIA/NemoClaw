@@ -43,6 +43,7 @@ function context(overrides: Partial<Context> = {}): Context {
     hermesToolGateways: [],
     preferredInferenceApi: null,
     compatibleEndpointReasoning: null,
+
     compatibleEndpointReasoningEffort: null,
     nimContainer: null,
     webSearchConfig: null,
@@ -593,7 +594,7 @@ describe("initial onboard flow phases", () => {
         resume: true,
         recordRepairEvent: repairRecorder(),
       }),
-    ).rejects.toThrow("Unexpected onboarding live flow state before slice entry");
+    ).rejects.toThrow("Unexpected onboarding flow state before slice entry");
     expect(phase.run).not.toHaveBeenCalled();
   });
 

@@ -27,7 +27,11 @@ import {
 } from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
 import { isOllamaAuthProxyCommandLine } from "../../inference/ollama/process";
-import { DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE } from "../../inference/vllm-station-runtime-receipt-path";
+import {
+  DUAL_STATION_VLLM_API_KEY_FILE,
+  DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
+  discoverDualStationVllmRuntimeReceiptStateDirs,
+} from "../../inference/vllm-station-runtime-receipt-path";
 import { buildDockerGatewayDebEnvFile } from "../../onboard/docker-driver-gateway-env";
 import {
   getNemoclawOpenShellGatewayUserServicePath,
@@ -251,6 +255,9 @@ const SHARED_HOST_STATE_ENTRIES = new Set([
   "source",
   GATEWAYS_SUBDIR,
   "managed_swap",
+  DUAL_STATION_VLLM_API_KEY_FILE,
+  DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
+  `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
   ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
 ]);
 
@@ -1209,14 +1216,32 @@ function removeManagedDualStationRuntime(
   paths: UninstallPaths,
   runtime: UninstallRuntime,
 ): boolean {
-  const receiptPath = path.join(paths.nemoclawStateDir, DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE);
+  const sharedStateDir = path.dirname(paths.managedSwapMarkerPath);
+  let receiptPaths: string[];
   try {
-    fs.lstatSync(receiptPath);
+    receiptPaths = discoverDualStationVllmRuntimeReceiptStateDirs(
+      sharedStateDir,
+      GATEWAYS_SUBDIR,
+    ).map((stateDir) => path.join(stateDir, DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
     runtime.error(`Could not inspect managed dual-Station rollback state: ${formatError(error)}`);
     return false;
   }
+  let receiptFound = false;
+  for (const receiptPath of receiptPaths) {
+    try {
+      fs.lstatSync(receiptPath);
+      receiptFound = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        runtime.error(
+          `Could not inspect managed dual-Station rollback state: ${formatError(error)}`,
+        );
+        return false;
+      }
+    }
+  }
+  if (!receiptFound) return true;
   const result = runtime.runDualStationRuntimeCleanup({
     env: runtime.env,
     stdio: "inherit",
@@ -1753,6 +1778,7 @@ function executePlan(
             ...(scopedToSelectedGateway
               ? [
                   ...HTTPS_PIN_RUNTIME_ADAPTER_STATE_ENTRIES,
+                  DUAL_STATION_VLLM_API_KEY_FILE,
                   DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE,
                   `${DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE}.ssh-binding`,
                 ]
