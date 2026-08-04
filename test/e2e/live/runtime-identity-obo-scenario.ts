@@ -246,6 +246,7 @@ export async function runRuntimeIdentityOboE2EScenario({
       "  sandbox:",
       "    image: openclaw",
       `    name: ${sandboxName}`,
+      "    forward_ports: []",
       "  inference:",
       "    profiles:",
       "      default:",
