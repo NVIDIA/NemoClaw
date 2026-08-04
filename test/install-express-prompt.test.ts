@@ -319,7 +319,7 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
       /Express install will configure managed local vLLM with model custom-qwen3\.6/,
     );
     expect(output).toMatch(/The explicit model remains authoritative/);
-    expect(output).toMatch(/keeps the existing single-Spark profile/);
+    expect(output).toMatch(/keeps the existing single-host DGX Spark profile/);
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL=custom-qwen3\.6 POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );
