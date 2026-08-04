@@ -93,6 +93,6 @@
   },
   {
     "name": "NEMOCLAW_MANAGED_HERMES_HASH_B64",
-    "reason": "Internal one-process transport from the root image applicator to its sandbox-owned Hermes compatibility-hash writer. The value is a bounded base64-encoded hash receipt that only the private internal writer consumes; users must not set it."
+    "reason": "Internal one-shot transport from the privileged managed-startup runtime or root image applicator to the sandbox-owned Hermes compatibility-hash writer. The value is a bounded base64-encoded hash receipt that only the private internal writer consumes; NemoClaw synthesizes it and users must not set it."
   }
 ]

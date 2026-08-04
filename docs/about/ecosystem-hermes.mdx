@@ -52,7 +52,7 @@ The following table shows the scope of each component in the stack.
 |---------|--------|
 | [Hermes](https://hermes-agent.nousresearch.com/docs/) | The agent: runtime, tools, messaging adapters, and an OpenAI-compatible API inside the container. It does not define the sandbox or the host gateway. |
 | [OpenShell](https://github.com/NVIDIA/OpenShell) | The execution environment: sandbox lifecycle, network, filesystem, and process policy, inference routing, and the operator-facing `openshell` CLI for those primitives. |
-| NemoClaw | The NVIDIA reference stack on the host: `nemohermes` / `nemoclaw` CLI, versioned blueprint, channel messaging configured for OpenShell-managed delivery, and state migration helpers so Hermes runs inside OpenShell in a documented, repeatable way. |
+| NemoClaw | The NVIDIA reference stack on the host: `nemohermes` and `nemoclaw` CLI paths, versioned blueprint, managed inference and Model Context Protocol (MCP) servers, messaging-channel setup, host readiness reporting, and lifecycle operations. |
 
 ## NemoClaw Path versus OpenShell Path
 
@@ -78,11 +78,13 @@ The following table compares custom OpenShell integration with `nemohermes onboa
 | Credential handling | You create OpenShell providers manually with `openshell provider create` and configure placeholder resolution at egress. | NemoClaw creates OpenShell providers during onboarding and filters sensitive host environment variables from the sandbox creation command to reduce accidental leakage through build args. |
 | Image hardening | Depends on your base image and install steps. | NemoClaw removes build toolchains (`gcc`, `g++`, `make`) and network probes (`netcat`) from the runtime image to reduce attack surface. |
 | Filesystem policy | You define read-only and read-write paths in policy YAML. | NemoClaw defines a targeted layout: system paths (`/usr`, `/lib`, `/etc`) are read-only; `/sandbox` and `/sandbox/.hermes` are writable for agent state and configuration. |
-| Inference setup | You configure OpenShell inference routing and Hermes `config.yaml` manually. | NemoClaw validates credentials from the host, configures the OpenShell route, and bakes model settings into `/sandbox/.hermes/config.yaml`. Hermes Provider onboarding is available through `nemohermes`. |
-| Channel messaging | OpenShell delivers channel tokens through its provider system and L7 proxy; you configure Hermes platform adapters manually. | NemoClaw automates supported channel setup during onboarding and bakes Hermes env/config with placeholder tokens that OpenShell resolves at egress. |
-| Blueprint versioning | No NemoClaw blueprint; your image tag is whatever you built locally. | NemoClaw downloads the blueprint artifact, checks version compatibility, and verifies its digest before applying. Running `nemohermes onboard` on different machines produces the same sandbox. |
-| State migration | Not included unless you build it. | NemoClaw migrates agent state across machines with credential stripping and integrity verification. |
-| Process count limits | You set process count limits manually with `--ulimit` or orchestrator config. | NemoClaw applies `ulimit -u 512` in the container entrypoint on top of OpenShell's seccomp and privilege dropping. |
+| Inference setup | You configure OpenShell inference routing and Hermes `config.yaml` manually. | NemoClaw validates the selected provider and model from the host, configures the OpenShell route, and writes the managed model settings into `/sandbox/.hermes/config.yaml`. Hermes Provider onboarding is available through `nemohermes`. |
+| Managed MCP | You register providers, network policy, and Hermes MCP configuration yourself. | NemoClaw manages authenticated HTTPS Streamable HTTP MCP server lifecycle, ownership records, policy, and credential placeholders through host-side commands. |
+| Channel messaging | OpenShell delivers channel credentials through its provider system and L7 proxy. You configure Hermes platform adapters manually. | NemoClaw configures supported channels during onboarding or through lifecycle commands and writes the managed Hermes channel settings. |
+| Blueprint versioning | No NemoClaw blueprint; your image tag is whatever you built locally. | NemoClaw downloads the blueprint artifact, checks version compatibility, and verifies its digest before applying. Repeated onboarding uses the selected blueprint and recorded configuration; host and platform differences can still affect the result. |
+| Lifecycle state | Not included unless you build it. | NemoClaw records lifecycle progress, preserves manifest-declared Hermes state across rebuilds, and supports snapshot and restore without copying `auth.json`. |
+| Host readiness and operations | You inspect host prerequisites and operate OpenShell resources directly. | NemoClaw provides read-only host readiness reporting, sandbox status and logs, recovery guidance, rebuild, snapshot, restore, and uninstall workflows. |
+| Process count limits | You set process count limits manually with `--ulimit` or orchestrator configuration. | NemoClaw applies a best-effort `ulimit -u 512` in the container entrypoint. Refer to the platform and hardening guidance for hosts that cannot enforce the complete control set. |
 
 ## When to Use Which
 
@@ -100,5 +102,7 @@ Use the following table to choose NemoHermes or OpenShell.
 - [Overview](overview) defines NemoClaw's capabilities, benefits, and use cases.
 - [How It Works](how-it-works) describes how NemoClaw runs, the blueprint, sandbox creation, routing, and protection layers for Hermes.
 - [Architecture](../reference/architecture) shows the repository structure and technical diagrams.
+- [Platform Support](../reference/platform-support) lists current support status and limitations.
+- [About Managed MCP Servers](../manage-sandboxes/mcp-servers/about-managed-mcp-servers) explains the managed MCP security and lifecycle boundary.
 - [Quickstart with Hermes](../get-started/quickstart) installs NemoClaw and launches your first Hermes sandbox.
 - [Community Solutions](../resources/community-contributions) explains how to contribute community-driven examples, showcases, and complete blueprint patterns.

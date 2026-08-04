@@ -1691,9 +1691,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   );
 }
 
-if (typeof require !== "undefined" && typeof module !== "undefined" && require.main === module) {
-  main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-  });
-}
+// This module is the startup-profile implementation library. The composed
+// managed-bootstrap image runtime owns the one process entrypoint and delegates
+// non-bootstrap actions to main(). Keeping a second require.main guard here
+// makes an esbuild bundle execute every CLI action twice.
