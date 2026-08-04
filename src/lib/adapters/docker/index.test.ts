@@ -84,6 +84,30 @@ describe("docker helpers", () => {
     );
   });
 
+  it("adds sorted build args to dockerBuild argv and drops them from options", () => {
+    dockerBuild("Dockerfile.base", "sandbox-base:latest", "/repo/root", {
+      buildArgs: { Z_ARG: "last", A_ARG: "first" },
+      ignoreError: true,
+    });
+
+    expect(runMock).toHaveBeenCalledWith(
+      [
+        "docker",
+        "build",
+        "--build-arg",
+        "A_ARG=first",
+        "--build-arg",
+        "Z_ARG=last",
+        "-f",
+        "Dockerfile.base",
+        "-t",
+        "sandbox-base:latest",
+        "/repo/root",
+      ],
+      { ignoreError: true, env: { DOCKER_BUILDKIT: "1" } },
+    );
+  });
+
   it("adds sorted image labels to dockerBuild argv and drops them from options", () => {
     dockerBuild("Dockerfile.base", "sandbox-base:latest", "/repo/root", {
       labels: { "com.example.z": "last", "com.example.a": "first" },

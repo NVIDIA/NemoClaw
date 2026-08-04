@@ -15,6 +15,8 @@ import {
   dockerTag,
 } from "../adapters/docker";
 import { createCustomBuildContextFilter } from "../onboard/custom-build-context";
+
+import { encodeCorporateCaArg, resolveCorporateCa } from "../onboard/corporate-ca";
 import { ROOT } from "../runner";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
 import {
@@ -42,6 +44,15 @@ import {
 import { createDeepAgentsCodeBaseImageResolutionOptions } from "./deep-agents-code-base-image";
 import type { AgentDefinition } from "./defs";
 import { getNemoCuaBaseImageBuildArgs } from "./nemocua-base-image";
+
+function corporateCaBuildArgs(
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> | undefined {
+  const corporateCa = resolveCorporateCa(env);
+  return corporateCa
+    ? { NEMOCLAW_CORPORATE_CA_B64: encodeCorporateCaArg(corporateCa.pem) }
+    : undefined;
+}
 
 const HERMES_MCP_RUNTIME_PROBE_OK = "nemoclaw-hermes-mcp-runtime-ok";
 // Matches the official Hermes base repository for both Dockerfile manifest-list
@@ -264,6 +275,7 @@ function createAgentBaseImageResolutionOptions(
   return {
     imageName,
     dockerfilePath,
+    buildArgs: agent.name === "langchain-deepagents-code" ? corporateCaBuildArgs() : undefined,
     localTag: buildLocalBaseTag(`nemoclaw-${agent.name}-sandbox-base-local`, ROOT),
     envVar: getAgentSandboxBaseImageEnvVar(agent.name),
     label: `${agent.displayName} sandbox base image`,
@@ -502,7 +514,10 @@ export function ensureAgentBaseImage(
     const buildProvenance = localBaseImageBuildProvenance(resolutionOptions);
     console.log(`  Rebuilding ${agent.displayName} base image...`);
     const buildResult = dockerBuild(baseDockerfile, forceBuildTag, ROOT, {
-      buildArgs: getNemoCuaBaseImageBuildArgs(agent),
+      buildArgs: {
+        ...resolutionOptions.buildArgs,
+        ...getNemoCuaBaseImageBuildArgs(agent),
+      },
       ignoreError: true,
       labels: buildProvenance.labels,
       stdio: ["ignore", "inherit", "inherit"],
@@ -612,7 +627,10 @@ export function ensureAgentBaseImage(
     console.log(`  Building ${agent.displayName} base image (first time only)...`);
     const buildProvenance = localBaseImageBuildProvenance(resolutionOptions);
     const buildResult = dockerBuild(baseDockerfile, baseImageTag, ROOT, {
-      buildArgs: getNemoCuaBaseImageBuildArgs(agent),
+      buildArgs: {
+        ...resolutionOptions.buildArgs,
+        ...getNemoCuaBaseImageBuildArgs(agent),
+      },
       ignoreError: true,
       labels: buildProvenance.labels,
       stdio: ["ignore", "inherit", "inherit"],
