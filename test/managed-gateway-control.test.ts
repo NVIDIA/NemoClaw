@@ -720,11 +720,7 @@ with tempfile.TemporaryDirectory() as root:
         )
 
     active_lease = control._publish_expected_exit_lease(expected_gateway, controller_identity)
-    release_thread = threading.Timer(
-        0.02,
-        control._clear_expected_exit_lease,
-        args=(active_lease,),
-    )
+    release_thread = threading.Timer(0.02, control._clear_expected_exit_lease, args=(active_lease,))
     release_thread.start()
     waited_lease = control._publish_expected_exit_lease(expected_gateway, controller_identity)
     release_thread.join()
@@ -732,9 +728,11 @@ with tempfile.TemporaryDirectory() as root:
     control._clear_expected_exit_lease(waited_lease)
 
     previous_timeout = control.RECOVERY_TIMEOUT_SECONDS
-    previous_poll = control.POLL_SECONDS
     control.RECOVERY_TIMEOUT_SECONDS = 0.01
-    control.POLL_SECONDS = 0.001
+    timeout_clock = [0.0]
+    original_time = control.time.monotonic, control.time.sleep
+    control.time.monotonic = lambda: timeout_clock[0]
+    control.time.sleep = lambda duration: timeout_clock.__setitem__(0, timeout_clock[0] + duration)
     timeout_lease = control._publish_expected_exit_lease(expected_gateway, controller_identity)
     try:
         try:
@@ -745,12 +743,10 @@ with tempfile.TemporaryDirectory() as root:
     finally:
         control._clear_expected_exit_lease(timeout_lease)
         control.RECOVERY_TIMEOUT_SECONDS = previous_timeout
-        control.POLL_SECONDS = previous_poll
+        control.time.monotonic, control.time.sleep = original_time
+    lock_timeout_wait = timeout_clock[0]
 
-    orphaned_lease = control._publish_expected_exit_lease(
-        expected_gateway,
-        controller_identity,
-    )
+    orphaned_lease = control._publish_expected_exit_lease(expected_gateway, controller_identity)
     orphaned_inode = os.stat(lease_path, follow_symlinks=False).st_ino
     os.close(orphaned_lease.marker_fd)
     os.close(orphaned_lease.lock_fd)
@@ -1247,6 +1243,7 @@ with tempfile.TemporaryDirectory() as root:
         "lease_races": [
             active_controller_lock,
             lock_timeout,
+            lock_timeout_wait,
             marker_flock_cannot_pin,
             inode_safe_cleanup,
             restrictive_umask_modes,
@@ -1372,7 +1369,7 @@ describe("managed gateway root control", () => {
       recovered: ["already-running", 43, 43],
       probed: ["already-running", 43, 43],
       openclaw_restart: ["ok", 43, 43],
-      lease_races: ["waited", "SUPERVISOR_BUSY", true, true, [0o444, 0o600]],
+      lease_races: ["waited", "SUPERVISOR_BUSY", 0.01, true, true, [0o444, 0o600]],
       expected_exit_leases: [
         [
           {

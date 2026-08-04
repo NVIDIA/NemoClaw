@@ -475,13 +475,16 @@ def _open_expected_exit_lock(directory_fd: int) -> int:
             raise ControlError("SUPERVISOR_UNAVAILABLE")
         lock_deadline = time.monotonic() + RECOVERY_TIMEOUT_SECONDS
         while True:
+            if time.monotonic() >= lock_deadline:
+                raise ControlError("SUPERVISOR_BUSY")
             try:
                 fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
             except BlockingIOError as exc:
-                if time.monotonic() >= lock_deadline:
+                remaining = lock_deadline - time.monotonic()
+                if remaining <= 0:
                     raise ControlError("SUPERVISOR_BUSY") from exc
-                time.sleep(POLL_SECONDS)
+                time.sleep(min(POLL_SECONDS, remaining))
         locked = os.fstat(lock_fd)
         _validate_runtime_regular(locked, 0o600)
         if (
