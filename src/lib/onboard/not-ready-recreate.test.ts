@@ -204,6 +204,35 @@ describe("selectPreUpgradeBackupForCreate", () => {
     expect(getLatestBackupSpy).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      change: "changes",
+      currentEntry: { ...SOURCE_ENTRY, imageTag: "nemoclaw/my-assistant:2" },
+      error: /source registry row changed after the transaction recorded it/,
+    },
+    {
+      change: "is removed",
+      currentEntry: null,
+      error: /source registry row is absent/,
+    },
+  ] as const)("rejects a source registry row that $change after journal proof capture (#7736)", ({
+    currentEntry,
+    error,
+  }) => {
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+    const onProofRequested = vi.fn();
+    const readRegistryEntry = vi.fn(() => currentEntry);
+
+    expect(() => select({ onProofRequested, readRegistryEntry })).toThrow(error);
+    expect(onProofRequested).toHaveBeenCalledTimes(1);
+    expect(readRegistryEntry).toHaveBeenCalledTimes(1);
+    expect(onProofRequested.mock.invocationCallOrder[0]).toBeLessThan(
+      readRegistryEntry.mock.invocationCallOrder[0],
+    );
+    expect(getLatestBackupSpy).not.toHaveBeenCalled();
+    expect(note).not.toHaveBeenCalled();
+  });
+
   it("throws before backup access when the transaction records another sandbox (#7736)", () => {
     process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
 

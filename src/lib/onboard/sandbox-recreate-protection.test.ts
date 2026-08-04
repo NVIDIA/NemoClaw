@@ -65,6 +65,7 @@ describe("createSandboxRecreateProtection", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       registryEntry: sandboxEntry,
+      readRegistryEntry: undefined,
       observation: expect.any(Function),
       existingSandboxEntry: sandboxEntry,
       requireOpenClawImagePluginProvenance: true,
@@ -134,6 +135,7 @@ describe("createSandboxRecreateProtection", () => {
         openJournal,
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
+        readRegistryEntry: () => ({ name: "my-assistant" }),
         observe: () => ({ state: "missing" as const, liveIdentityFingerprint: null }),
       };
     }
@@ -153,6 +155,7 @@ describe("createSandboxRecreateProtection", () => {
       const openJournal = vi.fn(() => journaled);
       const protection = protectionWith((input) => {
         expect(input.sourceProof()).toBe(JOURNALED_PROOF);
+        expect(input.readRegistryEntry?.()).toEqual({ name: "my-assistant" });
         return "/tmp/backup";
       });
 

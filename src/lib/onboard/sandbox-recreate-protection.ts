@@ -16,6 +16,7 @@ export interface PreUpgradeBackupBinding {
   sourceProof: () => SandboxRecreateSourceProof | null;
   gatewayName: string;
   gatewayPort: number;
+  readRegistryEntry?: () => SandboxEntry | null;
   observation: () => SandboxRecreateObservation;
 }
 
@@ -28,6 +29,7 @@ export interface JournalBoundPreUpgradeBackupInput<Runtime> {
   openJournal: (() => Runtime) | null;
   gatewayName: string;
   gatewayPort: number;
+  readRegistryEntry: () => SandboxEntry | null;
   observe: () => SandboxRecreateObservation;
 }
 
@@ -68,6 +70,7 @@ export function createSandboxRecreateProtection(
       gatewayName: binding.gatewayName,
       gatewayPort: binding.gatewayPort,
       registryEntry: sandboxEntry,
+      readRegistryEntry: binding.readRegistryEntry,
       observation: binding.observation,
       existingSandboxEntry: sandboxEntry,
       requireOpenClawImagePluginProvenance: customOpenClawImage,
@@ -91,6 +94,7 @@ export function createSandboxRecreateProtection(
           },
           gatewayName: binding.gatewayName,
           gatewayPort: binding.gatewayPort,
+          readRegistryEntry: binding.readRegistryEntry,
           observation: binding.observe,
         });
         return { runtime, backupPath };
