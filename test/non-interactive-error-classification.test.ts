@@ -49,6 +49,38 @@ async def fail(*args, **kwargs):
 target._run_non_interactive_impl = fail
 `;
 
+/** Every secret-shaped token the fixtures plant in exception or checkpoint text. */
+const PLANTED_SECRETS =
+  /runtime-secret|checkpoint-secret|private-request|private-model-message|private-tool-argument|private-tool-result/;
+
+function persistedErrorDriver(rows: Record<string, string>, threadId: string): string {
+  const inserts = Object.entries(rows)
+    .map(
+      ([thread, value]) =>
+        `connection.execute("INSERT INTO writes (thread_id, channel, value) VALUES (?, '__error__', ?)", (${JSON.stringify(
+          thread,
+        )}, ${JSON.stringify(value)}))`,
+    )
+    .join("\n");
+  return `
+${runtimePreamble}
+handle, db_path = tempfile.mkstemp()
+os.close(handle)
+target._NEMOCLAW_MANAGED_STATE_DB = db_path
+target.generate_thread_id = lambda: ${JSON.stringify(threadId)}
+
+connection = sqlite3.connect(db_path)
+connection.execute("CREATE TABLE writes (thread_id TEXT, channel TEXT, value BLOB)")
+${inserts}
+connection.commit()
+connection.close()
+
+exit_code = asyncio.run(target.run_non_interactive("task"))
+assert exit_code == 1
+os.unlink(db_path)
+`;
+}
+
 describe("managed non-interactive error reporting", () => {
   it("reports the provider-capacity error persisted for the failing thread (#7415)", () => {
     const result = runPatchedNonInteractive(`
@@ -87,87 +119,75 @@ os.unlink(db_path)
       "error_class=ResourceExhausted category=upstream_provider_capacity retryable=true correlation_id=thread-current",
     );
     expect(result.stdout).toContain(
-      "Model request failed: ResourceExhausted (correlation_id=thread-current)",
+      "Model request failed: ResourceExhausted (category=upstream_provider_capacity " +
+        "retryable=true correlation_id=thread-current)",
     );
-    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(
-      /runtime-secret|checkpoint-secret|private-request|private-model-message|private-tool-argument|private-tool-result/,
-    );
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
   });
 
   it("does not use a provider error from another thread (#7415)", () => {
-    const result = runPatchedNonInteractive(`
-${runtimePreamble}
-handle, db_path = tempfile.mkstemp()
-os.close(handle)
-target._NEMOCLAW_MANAGED_STATE_DB = db_path
-target.generate_thread_id = lambda: "thread-current"
-
-connection = sqlite3.connect(db_path)
-connection.execute("CREATE TABLE writes (thread_id TEXT, channel TEXT, value BLOB)")
-connection.execute(
-    "INSERT INTO writes (thread_id, channel, value) VALUES (?, ?, ?)",
-    (
-        "thread-other",
-        "__error__",
-        "APIError('ResourceExhausted: Worker local total request limit reached (32/32)')",
-    ),
-)
-connection.execute(
-    "INSERT INTO writes (thread_id, channel, value) VALUES (?, ?, ?)",
-    ("thread-current", "__error__", "APIError('MCP connection refused')"),
-)
-connection.commit()
-connection.close()
-
-exit_code = asyncio.run(target.run_non_interactive("task"))
-assert exit_code == 1
-os.unlink(db_path)
-`);
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain(
-      "error_class=unknown category=unknown retryable=false correlation_id=thread-current",
+    const result = runPatchedNonInteractive(
+      persistedErrorDriver(
+        {
+          "thread-other":
+            "APIError('ResourceExhausted: Worker local total request limit reached (32/32)')",
+          "thread-current": "APIError('unrecognized backend condition')",
+        },
+        "thread-current",
+      ),
     );
-    expect(result.stdout).toContain("Unexpected error (correlation_id=thread-current)");
-    expect(`${result.stdout}\n${result.stderr}`).not.toContain("upstream_provider_capacity");
-  });
-
-  it("keeps MCP, gateway, and policy errors unknown (#7415)", () => {
-    const result = runPatchedNonInteractive(`
-${runtimePreamble}
-handle, db_path = tempfile.mkstemp()
-os.close(handle)
-target._NEMOCLAW_MANAGED_STATE_DB = db_path
-
-connection = sqlite3.connect(db_path)
-connection.execute("CREATE TABLE writes (thread_id TEXT, channel TEXT, value BLOB)")
-errors = {
-    "thread-mcp": "APIError('MCP connection refused')",
-    "thread-gateway": "APIError('gateway timeout')",
-    "thread-policy": "APIError('policy returned 429')",
-}
-connection.executemany(
-    "INSERT INTO writes (thread_id, channel, value) VALUES (?, '__error__', ?)",
-    errors.items(),
-)
-connection.commit()
-connection.close()
-
-for thread_id in errors:
-    target.generate_thread_id = lambda current=thread_id: current
-    exit_code = asyncio.run(target.run_non_interactive("task"))
-    assert exit_code == 1
-
-os.unlink(db_path)
-`);
 
     expect(result.status).toBe(0);
-    expect(result.stderr.match(/error_class=unknown/g)).toHaveLength(3);
-    expect(result.stdout.match(/Unexpected error/g)).toHaveLength(3);
+    // The other thread's capacity row must never be borrowed; the unmatched row
+    // for this thread falls through to the exception-type classifier.
+    expect(result.stderr).toContain(
+      "error_class=RemoteException category=agent_remote_failure retryable=false correlation_id=thread-current",
+    );
     expect(`${result.stdout}\n${result.stderr}`).not.toContain("upstream_provider_capacity");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
   });
 
-  it("sanitizes unknown failures when checkpoint diagnostics are unavailable (#7415)", () => {
+  it("classifies transport and remote failures without claiming provider capacity (#8121)", () => {
+    const cases = [
+      ["APIError('MCP connection refused')", "Unavailable", "route_unreachable", "true"],
+      ["APIError('gateway timeout')", "Timeout", "request_timeout", "true"],
+      ["APIError('401 Unauthorized')", "Unauthorized", "authorization_rejected", "false"],
+      ["APIError('429 too many requests')", "RateLimited", "rate_limited", "true"],
+      [
+        "{'error': 'APIError', 'message': 'An internal error occurred'}",
+        "InternalServerError",
+        "remote_server_error",
+        "true",
+      ],
+    ] as const;
+
+    for (const [persisted, errorClass, category, retryable] of cases) {
+      const result = runPatchedNonInteractive(
+        persistedErrorDriver({ "thread-current": persisted }, "thread-current"),
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(
+        `error_class=${errorClass} category=${category} retryable=${retryable} ` +
+          "correlation_id=thread-current",
+      );
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain("upstream_provider_capacity");
+      // The classification is a fixed vocabulary: no persisted text is echoed.
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain(persisted);
+    }
+  });
+
+  it("keeps an unrecognized persisted cause out of the provider-capacity class (#7415)", () => {
+    const result = runPatchedNonInteractive(
+      persistedErrorDriver({ "thread-policy": "APIError('policy returned 429')" }, "thread-policy"),
+    );
+
+    expect(result.status).toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain("upstream_provider_capacity");
+    expect(result.stderr).toContain("correlation_id=thread-policy");
+  });
+
+  it("classifies the raised exception type when no checkpoint row explains it (#8121)", () => {
     const result = runPatchedNonInteractive(`
 ${runtimePreamble}
 handle, db_path = tempfile.mkstemp()
@@ -182,9 +202,82 @@ os.unlink(db_path)
 
     expect(result.status).toBe(0);
     expect(result.stderr).toContain(
-      "error_class=unknown category=unknown retryable=false correlation_id=thread-no-diagnostics",
+      "error_class=RemoteException category=agent_remote_failure retryable=false " +
+        "correlation_id=thread-no-diagnostics",
     );
-    expect(result.stdout).toContain("Unexpected error (correlation_id=thread-no-diagnostics)");
-    expect(`${result.stdout}\n${result.stderr}`).not.toContain("runtime-secret");
+    expect(result.stdout).toContain(
+      "Model request failed: RemoteException (category=agent_remote_failure " +
+        "retryable=false correlation_id=thread-no-diagnostics)",
+    );
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
+  });
+
+  it("classifies a chained transport cause behind an opaque wrapper (#8121)", () => {
+    const result = runPatchedNonInteractive(`
+${runtimePreamble}
+handle, db_path = tempfile.mkstemp()
+os.close(handle)
+target._NEMOCLAW_MANAGED_STATE_DB = db_path
+target.generate_thread_id = lambda: "thread-chained"
+
+
+class OpaqueWrapper(Exception):
+    pass
+
+
+async def fail_chained(*args, **kwargs):
+    del args, kwargs
+    try:
+        raise ConnectionRefusedError("connect to inference.local token=runtime-secret")
+    except ConnectionRefusedError as cause:
+        raise OpaqueWrapper("wrapped token=runtime-secret") from cause
+
+
+target._run_non_interactive_impl = fail_chained
+
+exit_code = asyncio.run(target.run_non_interactive("task"))
+assert exit_code == 1
+os.unlink(db_path)
+`);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(
+      "error_class=Unavailable category=route_unreachable retryable=true " +
+        "correlation_id=thread-chained",
+    );
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
+  });
+
+  it("leaves an unlisted exception type unknown instead of echoing its name (#8121)", () => {
+    const result = runPatchedNonInteractive(`
+${runtimePreamble}
+handle, db_path = tempfile.mkstemp()
+os.close(handle)
+target._NEMOCLAW_MANAGED_STATE_DB = db_path
+target.generate_thread_id = lambda: "thread-unlisted"
+
+
+class SomeVendorSpecificFailure_runtime_secret(Exception):
+    pass
+
+
+async def fail_unlisted(*args, **kwargs):
+    del args, kwargs
+    raise SomeVendorSpecificFailure_runtime_secret("token=runtime-secret")
+
+
+target._run_non_interactive_impl = fail_unlisted
+
+exit_code = asyncio.run(target.run_non_interactive("task"))
+assert exit_code == 1
+os.unlink(db_path)
+`);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(
+      "error_class=unknown category=unknown retryable=false correlation_id=thread-unlisted",
+    );
+    expect(result.stdout).toContain("Unexpected error (correlation_id=thread-unlisted)");
+    expect(`${result.stdout}\n${result.stderr}`).not.toMatch(PLANTED_SECRETS);
   });
 });

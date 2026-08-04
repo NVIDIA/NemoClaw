@@ -793,12 +793,117 @@ import threading as _nemoclaw_threading
 import time as _nemoclaw_time
 
 # NemoClaw-managed Deep Agents Code hardening v2.
-_NEMOCLAW_PROVIDER_CAPACITY_ERROR = _nemoclaw_re.compile(
-    r"""\bAPIError\(["']ResourceExhausted:\s*
-        Worker\s+local\s+total\s+request\s+limit\s+reached\s*
-        \(\d+/\d+\)""",
-    _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
+# Checkpoint-text classifiers (#8121). Every entry maps a persisted `__error__`
+# row to a fixed (error_class, category, retryable) triple; no substring of the
+# matched row is ever emitted, so a credential inside the persisted text cannot
+# reach the log line or the console. Patterns stay structural (status code plus
+# an adjacent status word, or an exception/status token) so an ordinary model
+# response quoted inside an error cannot be misattributed to a transport or
+# authorization failure. Order is most-specific first; the first match wins.
+_NEMOCLAW_PERSISTED_ERROR_CLASSIFIERS = (
+    (
+        _nemoclaw_re.compile(
+            r"""\bResourceExhausted\b
+                (?:.{0,200}?\b(?:limit\s+reached|quota|capacity|\(\d+/\d+\)))?""",
+            _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE | _nemoclaw_re.DOTALL,
+        ),
+        ("ResourceExhausted", "upstream_provider_capacity", "true"),
+    ),
+    (
+        _nemoclaw_re.compile(
+            r"""\b(?:RateLimitError|TooManyRequests)\b
+                |\b429\b\s*(?:too\s+many|rate)
+                |\brate[_\s-]?limit(?:ed|_exceeded)?\b""",
+            _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
+        ),
+        ("RateLimited", "rate_limited", "true"),
+    ),
+    (
+        _nemoclaw_re.compile(
+            r"""\b(?:AuthenticationError|PermissionDeniedError|Unauthenticated
+                |PermissionDenied)\b
+                |\b40[13]\b\s*(?:unauthorized|forbidden)
+                |\b(?:unauthorized|forbidden|invalid\s+api\s+key)\b""",
+            _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
+        ),
+        ("Unauthorized", "authorization_rejected", "false"),
+    ),
+    (
+        _nemoclaw_re.compile(
+            r"""\b(?:NotFoundError|model_not_found)\b
+                |\b404\b\s*not\s+found
+                |\bmodel\b[^\n]{0,80}?\bdoes\s+not\s+exist\b""",
+            _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
+        ),
+        ("NotFound", "model_or_route_not_found", "false"),
+    ),
+    (
+        _nemoclaw_re.compile(
+            r"""\b(?:APITimeoutError|DeadlineExceeded|ReadTimeout|ConnectTimeout
+                |TimeoutError)\b
+                |\b(?:timed\s+out|timeout)\b""",
+            _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
+        ),
+        ("Timeout", "request_timeout", "true"),
+    ),
+    (
+        _nemoclaw_re.compile(
+            r"""\b(?:APIConnectionError|ClientConnectorError|ProxyError|SSLError
+                |ConnectionRefusedError|ConnectionResetError)\b
+                |\bconnection\s+(?:refused|reset|error|aborted)\b
+                |\b(?:getaddrinfo|name\s+or\s+service\s+not\s+known
+                    |temporary\s+failure\s+in\s+name\s+resolution)\b
+                |\b(?:certificate\s+verify\s+failed|tls\s+handshake)\b""",
+            _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
+        ),
+        ("Unavailable", "route_unreachable", "true"),
+    ),
+    (
+        _nemoclaw_re.compile(
+            r"""\b(?:InternalServerError|ServiceUnavailable|BadGateway)\b
+                |\b5(?:00|02|03|04)\b\s*(?:internal|bad\s+gateway
+                    |service\s+unavailable|gateway\s+timeout)
+                |\ban\s+internal\s+error\s+occurred\b""",
+            _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
+        ),
+        ("InternalServerError", "remote_server_error", "true"),
+    ),
 )
+
+# Exception-type fallback (#8121). When no checkpoint row explains the failure,
+# classify from the raised exception's type name only — never from its message,
+# which upstream serializes with request, model, and tool payloads. Unlisted
+# type names stay `unknown` so an arbitrary third-party class name is never
+# echoed into the managed log line.
+_NEMOCLAW_EXCEPTION_CLASSIFIERS = {
+    "ResourceExhausted": ("ResourceExhausted", "upstream_provider_capacity", "true"),
+    "RateLimitError": ("RateLimited", "rate_limited", "true"),
+    "AuthenticationError": ("Unauthorized", "authorization_rejected", "false"),
+    "PermissionDeniedError": ("Unauthorized", "authorization_rejected", "false"),
+    "NotFoundError": ("NotFound", "model_or_route_not_found", "false"),
+    "APITimeoutError": ("Timeout", "request_timeout", "true"),
+    "TimeoutError": ("Timeout", "request_timeout", "true"),
+    "APIConnectionError": ("Unavailable", "route_unreachable", "true"),
+    "ConnectionError": ("Unavailable", "route_unreachable", "true"),
+    "ConnectionRefusedError": ("Unavailable", "route_unreachable", "true"),
+    "ConnectionResetError": ("Unavailable", "route_unreachable", "true"),
+    "ProxyError": ("Unavailable", "route_unreachable", "true"),
+    "SSLError": ("Unavailable", "route_unreachable", "true"),
+    "InternalServerError": ("InternalServerError", "remote_server_error", "true"),
+    "ModelConfigError": ("ModelConfigError", "model_configuration", "false"),
+    "RemoteException": ("RemoteException", "agent_remote_failure", "false"),
+    "APIError": ("APIError", "agent_remote_failure", "false"),
+    "APIStatusError": ("APIError", "agent_remote_failure", "false"),
+}
+
+# Bound the __cause__/__context__ walk so a self-referential or deeply chained
+# exception cannot turn diagnostics into an unbounded loop.
+_NEMOCLAW_EXCEPTION_CHAIN_LIMIT = 8
+
+# Checkpoint rows are written asynchronously by the LangGraph server, so the
+# `__error__` write can land after the client-side exception. Scan a bounded
+# recent window rather than only the newest rows.
+_NEMOCLAW_PERSISTED_ERROR_ROW_LIMIT = 20
 
 _NEMOCLAW_MANAGED_STATE_DB = "/sandbox/.deepagents/.state/sessions.db"
 _NEMOCLAW_JSON_SCHEMA_VERSION = 1
@@ -1090,7 +1195,7 @@ async def _nemoclaw_run_json_non_interactive(timeout_seconds, *args, **kwargs):
 
 
 def _nemoclaw_classify_persisted_error(thread_id):
-    """Classify the observed provider-capacity error for one managed thread."""
+    """Classify the observed upstream error persisted for one managed thread."""
     if (
         not isinstance(thread_id, str)
         or not thread_id
@@ -1104,8 +1209,8 @@ def _nemoclaw_classify_persisted_error(thread_id):
             cursor = conn.execute(
                 "SELECT substr(value, 1, 4096) FROM writes "
                 "WHERE thread_id = ? AND channel = '__error__' "
-                "ORDER BY rowid DESC LIMIT 5",
-                (thread_id,),
+                "ORDER BY rowid DESC LIMIT ?",
+                (thread_id, _NEMOCLAW_PERSISTED_ERROR_ROW_LIMIT),
             )
             for (value,) in cursor:
                 if not isinstance(value, (str, bytes)):
@@ -1115,8 +1220,9 @@ def _nemoclaw_classify_persisted_error(thread_id):
                     if isinstance(value, str)
                     else value.decode("utf-8", errors="replace")
                 )
-                if _NEMOCLAW_PROVIDER_CAPACITY_ERROR.search(text):
-                    return ("ResourceExhausted", "upstream_provider_capacity", "true")
+                for pattern, classification in _NEMOCLAW_PERSISTED_ERROR_CLASSIFIERS:
+                    if pattern.search(text):
+                        return classification
         finally:
             conn.close()
     except Exception:
@@ -1125,9 +1231,30 @@ def _nemoclaw_classify_persisted_error(thread_id):
     return None
 
 
+def _nemoclaw_classify_active_exception():
+    """Classify the in-flight exception by allow-listed type name only (#8121)."""
+    error = _nemoclaw_sys.exc_info()[1]
+    seen = set()
+    depth = 0
+    while error is not None and depth < _NEMOCLAW_EXCEPTION_CHAIN_LIMIT:
+        if id(error) in seen:
+            return None
+        seen.add(id(error))
+        for base in type(error).__mro__:
+            classification = _NEMOCLAW_EXCEPTION_CLASSIFIERS.get(base.__name__)
+            if classification:
+                return classification
+        error = error.__cause__ or error.__context__
+        depth += 1
+    return None
+
+
 def _nemoclaw_report_non_interactive_error(thread_id, console):
     """Emit bounded diagnostics without logging the exception or checkpoint row."""
-    classified = _nemoclaw_classify_persisted_error(thread_id)
+    classified = (
+        _nemoclaw_classify_persisted_error(thread_id)
+        or _nemoclaw_classify_active_exception()
+    )
     logger = _nemoclaw_logging.getLogger("nemoclaw.managed.non_interactive")
     if classified:
         error_class, category, retryable = classified
@@ -1139,9 +1266,13 @@ def _nemoclaw_report_non_interactive_error(thread_id, console):
             retryable,
             thread_id,
         )
+        # Both values come from the fixed classification tables above, so the
+        # console line stays a closed vocabulary even though the checkpoint row
+        # and exception message that produced it are never shown.
         console.print(
             f"\n[red]Model request failed: {error_class} "
-            f"(correlation_id={thread_id})[/red]"
+            f"(category={category} retryable={retryable} "
+            f"correlation_id={thread_id})[/red]"
         )
         return
     logger.warning(
