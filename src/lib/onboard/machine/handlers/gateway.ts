@@ -61,6 +61,7 @@ export interface GatewayStateOptions<Gpu> {
       hostGpuPlatform: NvidiaPlatform | null;
       recreateSandbox: boolean;
       confirmedDockerDriverGateway: boolean;
+      supportsLifecycleCommands: boolean;
       stopDashboardForwards: () => void;
       retireLegacyGatewayForDockerDriverUpgrade: () => void;
       destroyGatewayRuntimeForGpuReuse: () => boolean;
@@ -211,6 +212,7 @@ async function handleGatewayStatePhase<Gpu>({
       deps.isLinuxDockerDriverGatewayEnabled() &&
       gatewayReuseState === "healthy" &&
       !supportsLifecycleCommands,
+    supportsLifecycleCommands,
     stopDashboardForwards: deps.stopAllDashboardForwards,
     retireLegacyGatewayForDockerDriverUpgrade: deps.retireLegacyGatewayForDockerDriverUpgrade,
     destroyGatewayRuntimeForGpuReuse: deps.destroyGatewayRuntimeForGpuReuse,

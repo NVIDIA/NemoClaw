@@ -7,6 +7,7 @@ import type { GatewayReuseState } from "../state/gateway";
 import * as registry from "../state/registry";
 import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
 import { destroyGatewayForReuse } from "./gateway-cleanup";
+import { gatewayRemovalHintLines } from "./gateway-removal-hint";
 import { reportGpuPassthroughRecovery } from "./gpu-recovery";
 
 export type LegacyGatewayGpuInspection = "gpu-enabled" | "cpu-only" | "not-found" | "unknown";
@@ -30,6 +31,7 @@ export type GatewayGpuReuseReconcileOptions = {
   stopDashboardForwards: () => void;
   retireLegacyGatewayForDockerDriverUpgrade: () => void;
   destroyGatewayRuntimeForGpuReuse: () => boolean;
+  supportsLifecycleCommands?: boolean;
 };
 
 // Docker-driver/package-managed gateways do not expose reusable GPU state
@@ -109,6 +111,7 @@ function reportUnreadableSandboxRegistryForGpuGatewayReuse(
   error: (line: string) => void,
   exit: (code: number) => never,
   gatewayName: string,
+  supportsLifecycleCommands: boolean,
 ): never {
   error("  Existing gateway was started without GPU passthrough.");
   error(
@@ -117,9 +120,9 @@ function reportUnreadableSandboxRegistryForGpuGatewayReuse(
   error(
     "  Fix the registry read error and rerun, or manually verify no sandboxes depend on the gateway before running:",
   );
-  error(`    openshell gateway remove ${gatewayName}`);
-  error("    # For OpenShell releases that still expose lifecycle commands:");
-  error(`    openshell gateway destroy -g ${gatewayName}`);
+  for (const line of gatewayRemovalHintLines(gatewayName, supportsLifecycleCommands)) {
+    error(line);
+  }
   error("    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains");
   error("    nemoclaw onboard --gpu");
   exit(1);
@@ -144,6 +147,7 @@ export function reconcileGatewayGpuReuseForGpuIntent({
   stopDashboardForwards,
   retireLegacyGatewayForDockerDriverUpgrade,
   destroyGatewayRuntimeForGpuReuse,
+  supportsLifecycleCommands = false,
 }: GatewayGpuReuseReconcileOptions): GatewayReuseState {
   if (
     !shouldInspectLegacyGatewayGpuPassthrough(
@@ -174,7 +178,12 @@ export function reconcileGatewayGpuReuseForGpuIntent({
   const registeredSandboxNames =
     legacyGatewayGpuInspection === "cpu-only" ? readRegisteredSandboxNamesForGatewayGpuReuse() : [];
   if (registeredSandboxNames === null) {
-    reportUnreadableSandboxRegistryForGpuGatewayReuse(console.error, process.exit, gatewayName);
+    reportUnreadableSandboxRegistryForGpuGatewayReuse(
+      console.error,
+      process.exit,
+      gatewayName,
+      supportsLifecycleCommands,
+    );
   }
 
   const gatewayGpuReuseDecision = decideGatewayGpuReuseForGpuIntent({
@@ -206,11 +215,15 @@ export function reconcileGatewayGpuReuseForGpuIntent({
       );
     }
     if (gatewayReuseState !== "missing") {
-      reportGpuPassthroughRecovery(console.error, () => registeredSandboxNames);
+      reportGpuPassthroughRecovery(console.error, () => registeredSandboxNames, {
+        supportsLifecycleCommands,
+      });
       process.exit(1);
     }
   } else if (gatewayGpuReuseDecision === "abort-with-recovery") {
-    reportGpuPassthroughRecovery(console.error, () => registeredSandboxNames);
+    reportGpuPassthroughRecovery(console.error, () => registeredSandboxNames, {
+      supportsLifecycleCommands,
+    });
     process.exit(1);
   }
   return gatewayReuseState;

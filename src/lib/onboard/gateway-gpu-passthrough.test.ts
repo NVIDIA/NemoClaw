@@ -7,8 +7,13 @@ vi.mock("../adapters/docker", () => ({
   dockerInspect: vi.fn(),
 }));
 
+vi.mock("../state/registry", () => ({
+  listSandboxes: vi.fn(() => ({ sandboxes: [], defaultSandbox: null })),
+}));
+
 import * as docker from "../adapters/docker";
 import type { GatewayReuseState } from "../state/gateway";
+import * as registry from "../state/registry";
 import {
   canRestartCpuOnlyGatewayForGpuIntent,
   decideGatewayGpuReuseForGpuIntent,
@@ -161,5 +166,60 @@ describe("gateway GPU passthrough inspection", () => {
     expect(stopDashboardForwards).not.toHaveBeenCalled();
     expect(retireLegacyGatewayForDockerDriverUpgrade).not.toHaveBeenCalled();
     expect(destroyGatewayRuntimeForGpuReuse).not.toHaveBeenCalled();
+  });
+
+  it("omits the legacy gateway destroy verb from the unreadable-registry hint (#8139)", () => {
+    const runReconcile = (supportsLifecycleCommands: boolean): string[] => {
+      const errors: string[] = [];
+      vi.mocked(docker.dockerInspect).mockReturnValue({
+        pid: 0,
+        output: [null, "[]", ""],
+        stdout: "[]",
+        stderr: "",
+        status: 0,
+        signal: null,
+      });
+      vi.mocked(registry.listSandboxes).mockImplementation(() => {
+        throw new Error("registry unreadable");
+      });
+      const errorSpy = vi.spyOn(console, "error").mockImplementation((message?: unknown) => {
+        errors.push(String(message));
+      });
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+        throw new Error(`exit ${code}`);
+      }) as never);
+
+      try {
+        expect(() =>
+          reconcileGatewayGpuReuseForGpuIntent({
+            gatewayReuseState: healthy,
+            gpuPassthrough: true,
+            gatewayName: "nemoclaw",
+            currentSandboxName: null,
+            recreateSandbox: false,
+            confirmedDockerDriverGateway: false,
+            stopDashboardForwards: vi.fn(),
+            retireLegacyGatewayForDockerDriverUpgrade: vi.fn(),
+            destroyGatewayRuntimeForGpuReuse: vi.fn(),
+            supportsLifecycleCommands,
+          }),
+        ).toThrow(/exit 1/);
+      } finally {
+        errorSpy.mockRestore();
+        exitSpy.mockRestore();
+        // Explicitly restore the shared module mocks for later tests in this file.
+        vi.mocked(registry.listSandboxes).mockReturnValue({ sandboxes: [], defaultSandbox: null });
+        vi.mocked(docker.dockerInspect).mockReset();
+      }
+      return errors;
+    };
+
+    const modern = runReconcile(false).join("\n");
+    expect(modern).toContain("openshell gateway remove nemoclaw");
+    expect(modern).not.toContain("gateway destroy");
+
+    const legacy = runReconcile(true).join("\n");
+    expect(legacy).toContain("openshell gateway remove nemoclaw");
+    expect(legacy).toContain("openshell gateway destroy -g nemoclaw");
   });
 });
