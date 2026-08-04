@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -76,6 +76,37 @@ describe("pull request docs-only merge base", () => {
         "src/runtime.ts",
       ]);
       expect(git("diff", "--name-only", `${resolvedBase}...HEAD`)).toBe("docs/guide.mdx");
+    } finally {
+      rmSync(temp, { force: true, recursive: true });
+    }
+  });
+
+  it("fails closed when the base branch cannot be resolved (#8160)", () => {
+    const job = workflow.jobs["docs-only-checks"];
+    const resolveBase = requiredStep(job, "Resolve checked-out merge base for docs-only checks");
+    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-docs-only-missing-base-"));
+    const githubEnv = join(temp, "github-env");
+    const git = (...args: string[]): void => {
+      const result = spawnSync("git", args, { cwd: temp, encoding: "utf8" });
+      expect(result.status, `git ${args.join(" ")} failed: ${result.stderr}`).toBe(0);
+    };
+
+    try {
+      git("init", "--initial-branch=docs-change");
+      git("config", "user.name", "NemoClaw CI");
+      git("config", "user.email", "nemoclaw-ci@example.invalid");
+      writeFileSync(join(temp, "README.md"), "docs change\n");
+      git("add", "README.md");
+      git("commit", "-m", "docs: create pull request revision");
+
+      const result = spawnSync("bash", ["-c", resolveBase.run ?? ""], {
+        cwd: temp,
+        encoding: "utf8",
+        env: { ...process.env, GITHUB_BASE_REF: "missing", GITHUB_ENV: githubEnv },
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(existsSync(githubEnv)).toBe(false);
     } finally {
       rmSync(temp, { force: true, recursive: true });
     }
