@@ -224,7 +224,7 @@ describe("CI endpoint CA root selection", () => {
     expect(fs.statSync(output).mode & 0o777).toBe(0o600);
   });
 
-  it.skipIf(process.platform === "win32")("rejects a FIFO CA output before opening it", () => {
+  it.skipIf(process.platform === "win32")("rejects a FIFO CA output without truncating it", () => {
     const output = path.join(tmpDir(), "compact.pem");
     const created = spawnSync("mkfifo", [output], { encoding: "utf8", timeout: 5_000 });
     expect(created.status, created.stderr).toBe(0);
@@ -240,25 +240,45 @@ describe("CI endpoint CA root selection", () => {
     expect(fs.lstatSync(output).isFIFO()).toBe(true);
   });
 
-  it.skipIf(process.platform === "win32")("rejects a symlinked CA output before opening it", () => {
-    const directory = tmpDir();
-    const target = path.join(directory, "target.pem");
-    const output = path.join(directory, "compact.pem");
-    fs.writeFileSync(target, "target", { mode: 0o640 });
-    fs.symlinkSync(target, output);
-    const openSync = vi.spyOn(fs, "openSync");
-    const ftruncateSync = vi.spyOn(fs, "ftruncateSync");
+  it.skipIf(process.platform === "win32")(
+    "rejects a symlinked CA output without opening its target",
+    () => {
+      const directory = tmpDir();
+      const target = path.join(directory, "target.pem");
+      const output = path.join(directory, "compact.pem");
+      fs.writeFileSync(target, "target", { mode: 0o640 });
+      fs.symlinkSync(target, output);
+      const openSync = vi.spyOn(fs, "openSync");
+      const ftruncateSync = vi.spyOn(fs, "ftruncateSync");
 
-    expect(() => writeCiEndpointCaRootsOutput(output, "replacement")).toThrow(
-      "output must be an existing regular file that is not a symlink",
-    );
+      expect(() => writeCiEndpointCaRootsOutput(output, "replacement")).toThrow(
+        "output must be an existing regular file that is not a symlink",
+      );
 
-    expect(openSync).toHaveBeenCalledOnce();
-    expect(ftruncateSync).not.toHaveBeenCalled();
-    expect(fs.lstatSync(output).isSymbolicLink()).toBe(true);
-    expect(fs.readFileSync(target, "utf8")).toBe("target");
-    expect(fs.statSync(target).mode & 0o777).toBe(0o640);
-  });
+      expect(openSync).toHaveBeenCalledOnce();
+      expect(ftruncateSync).not.toHaveBeenCalled();
+      expect(fs.lstatSync(output).isSymbolicLink()).toBe(true);
+      expect(fs.readFileSync(target, "utf8")).toBe("target");
+      expect(fs.statSync(target).mode & 0o777).toBe(0o640);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a device CA output without truncating it",
+    () => {
+      const ftruncateSync = vi.spyOn(fs, "ftruncateSync");
+      const writeFileSync = vi.spyOn(fs, "writeFileSync");
+      const fchmodSync = vi.spyOn(fs, "fchmodSync");
+
+      expect(() => writeCiEndpointCaRootsOutput("/dev/null", "replacement")).toThrow(
+        "output must remain the same regular file with exactly one link",
+      );
+
+      expect(ftruncateSync).not.toHaveBeenCalled();
+      expect(writeFileSync).not.toHaveBeenCalled();
+      expect(fchmodSync).not.toHaveBeenCalled();
+    },
+  );
 
   it.skipIf(process.platform === "win32")(
     "rejects a hard-linked CA output without changing either path",
