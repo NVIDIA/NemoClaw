@@ -141,6 +141,7 @@ def _open_profile_parent(config_fd: int, path: str) -> int | None:
     try:
         os.mkdir("profiles", 0o700, dir_fd=config_fd)
     except FileExistsError:
+        # The no-follow open below validates the existing path before use.
         pass
     except OSError as exc:
         print(f"[dashboard] failed to create profile directory {path} ({exc})", file=sys.stderr)
@@ -181,7 +182,6 @@ def _prepare_dashboard_destination(dst: str) -> tuple[bool, int | None]:
         return False, None
 
     profiles_fd = -1
-    dashboard_fd = -1
     try:
         try:
             legacy_stat = os.stat("dashboard-home", dir_fd=config_fd, follow_symlinks=False)
@@ -271,6 +271,15 @@ def _prepare_dashboard_destination(dst: str) -> tuple[bool, int | None]:
         except OSError as exc:
             print(
                 f"[SECURITY] Refusing to open dashboard profile {dashboard_home} ({exc})",
+                file=sys.stderr,
+            )
+            return False, None
+        try:
+            os.fchmod(dashboard_fd, 0o700)
+        except OSError as exc:
+            os.close(dashboard_fd)
+            print(
+                f"[SECURITY] Refusing to secure dashboard profile {dashboard_home} ({exc})",
                 file=sys.stderr,
             )
             return False, None

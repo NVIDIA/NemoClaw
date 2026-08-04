@@ -156,6 +156,7 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     const legacyHome = path.join(hermesHome, "dashboard-home");
     const dashboardHome = path.join(hermesHome, "profiles", "dashboard-home");
     fs.mkdirSync(legacyHome, { recursive: true });
+    fs.chmodSync(legacyHome, 0o770);
     fs.writeFileSync(path.join(legacyHome, "MEMORY.md"), "keep me\n");
 
     const res = runSeed(src, path.join(dashboardHome, "config.yaml"));
@@ -164,6 +165,7 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     expect(res.stderr).toContain("migrated legacy dashboard profile");
     expect(fs.existsSync(legacyHome)).toBe(false);
     expect(fs.statSync(path.dirname(dashboardHome)).isDirectory()).toBe(true);
+    expect(fs.statSync(dashboardHome).mode & 0o777).toBe(0o700);
     expect(fs.readFileSync(path.join(dashboardHome, "MEMORY.md"), "utf-8")).toBe("keep me\n");
     expect(readYaml(path.join(dashboardHome, "config.yaml")).model).toEqual(GATEWAY_CONFIG.model);
   });
@@ -248,7 +250,6 @@ finally:
   });
 
   it("fails closed if the empty destination changes before removal (#7200)", () => {
-    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
     const hermesHome = path.join(tmpDir, ".hermes");
     const legacyHome = path.join(hermesHome, "dashboard-home");
     const dashboardHome = path.join(hermesHome, "profiles", "dashboard-home");

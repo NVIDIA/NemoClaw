@@ -414,7 +414,7 @@ rm -f /sandbox/.hermes/gateway.pid
 printf "stale pid\n" >/sandbox/.hermes/runtime/gateway.pid
 printf "stale lock\n" >/sandbox/.hermes/runtime/gateway.lock
 ln -s runtime/gateway.pid /sandbox/.hermes/gateway.pid
-install -d -m 700 -o sandbox -g sandbox /sandbox/.hermes/dashboard-home
+install -d -m 770 -o sandbox -g sandbox /sandbox/.hermes/dashboard-home
 printf "legacy dashboard memory\n" >/sandbox/.hermes/dashboard-home/MEMORY.md
 chown sandbox:sandbox /sandbox/.hermes/dashboard-home/MEMORY.md
 chmod 600 /sandbox/.hermes/dashboard-home/MEMORY.md
