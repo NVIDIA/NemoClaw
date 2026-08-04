@@ -2993,6 +2993,13 @@ It preserves directories that exist only in the target manifest or whose backup 
 The state replacement, mutable-config permission repair, and policy reconciliation run under the same per-sandbox transition.
 An expired auto-restore timer can interrupt that work and restore lockdown.
 
+<Warning>
+Post-restore policy reconciliation is best-effort.
+If NemoClaw cannot add or remove a recorded policy preset, it warns and continues the remaining restore steps.
+The live network policy can then retain unwanted egress or omit expected egress until you repair the named preset.
+After the warning, run `$$nemoclaw <name> policy list` and confirm that the named preset has no registry-to-gateway mismatch.
+</Warning>
+
 The selector accepts any of:
 
 - A version (`v1`, `v2`, ..., `vN`) from `snapshot list`.

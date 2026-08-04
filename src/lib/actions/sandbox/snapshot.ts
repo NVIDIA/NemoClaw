@@ -878,7 +878,7 @@ function reconcileSnapshotPolicyPresets(
         targetSandbox,
         builtinObservabilityContent,
         policies,
-        { knownBefore: builtinObservabilityState },
+        { knownBefore: builtinObservabilityState, removeOptions: { nonFatal: true } },
       );
       builtinObservabilityState = removal.after;
       if (removal.verifiedAbsent) {

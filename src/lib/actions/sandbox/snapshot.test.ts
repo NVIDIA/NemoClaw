@@ -1011,7 +1011,9 @@ describe("runSandboxSnapshot", () => {
     getAppliedPresetsMock.mockReturnValue(["npm"]);
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", { nonFatal: true });
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
+      nonFatal: true,
+    });
     expect(removePresetMock).not.toHaveBeenCalled();
   });
 
@@ -1023,8 +1025,7 @@ describe("runSandboxSnapshot", () => {
       policyTier: "balanced",
     } as never);
     getLatestBackupMock.mockReturnValue({
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
+      ...latestBackupFixture,
       policyPresets: ["npm", "observability-otlp-local"],
     });
     getAppliedPresetsMock.mockReturnValue(["npm", "observability-otlp-local"]);
@@ -1033,7 +1034,9 @@ describe("runSandboxSnapshot", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
+      nonFatal: true,
+    });
     expect(applyPresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
   });
 
@@ -1056,7 +1059,9 @@ describe("runSandboxSnapshot", () => {
       "alpha",
       builtinObservabilityPolicy,
     );
-    expect(removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
+      nonFatal: true,
+    });
     expect(updateSandboxMock).not.toHaveBeenCalled();
   });
 
@@ -1084,11 +1089,7 @@ describe("runSandboxSnapshot", () => {
       policyTier: "balanced",
       policies: [],
     } as never);
-    getLatestBackupMock.mockReturnValue({
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
-      policyPresets: [],
-    });
+    getLatestBackupMock.mockReturnValue({ ...latestBackupFixture, policyPresets: [] });
     getAppliedPresetsMock.mockReturnValue([]);
     getPresetContentGatewayStateMock.mockReturnValue("match");
     configureRemoval();
@@ -1097,7 +1098,9 @@ describe("runSandboxSnapshot", () => {
 
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
-    expect(getPresetContentGatewayStateMock).toHaveBeenCalledTimes(2);
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
+      nonFatal: true,
+    });
     expect(updateSandboxMock).toHaveBeenCalledWith("alpha", {
       policies: ["observability-otlp-local"],
     });
@@ -1118,11 +1121,7 @@ describe("runSandboxSnapshot", () => {
     updateSandboxMock.mockImplementation((_sandboxName, update) => {
       registryEntry = { ...registryEntry, ...(update as Partial<typeof registryEntry>) };
     });
-    getLatestBackupMock.mockReturnValue({
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
-      policyPresets: [],
-    });
+    getLatestBackupMock.mockReturnValue({ ...latestBackupFixture, policyPresets: [] });
     getAppliedPresetsMock.mockReturnValue(["github", "observability-otlp-local"]);
     getPresetContentGatewayStateMock.mockReturnValue("match");
     removePresetMock
@@ -1179,8 +1178,7 @@ describe("runSandboxSnapshot", () => {
       policies: recordedPolicies,
     } as never);
     getLatestBackupMock.mockReturnValue({
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
+      ...latestBackupFixture,
       policyPresets: ["npm"],
     });
     getAppliedPresetsMock.mockReturnValue(recordedPolicies);
@@ -1207,8 +1205,7 @@ describe("runSandboxSnapshot", () => {
       policyTier: "balanced",
     } as never);
     getLatestBackupMock.mockReturnValue({
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
+      ...latestBackupFixture,
       policyPresets: [customPolicy.name],
       customPolicies: [customPolicy],
     });
@@ -1226,7 +1223,9 @@ describe("runSandboxSnapshot", () => {
       { custom: { sourcePath: customPolicy.sourcePath }, nonFatal: true },
     );
     expect(removePresetMock).toHaveBeenCalledTimes(1);
-    expect(removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
+      nonFatal: true,
+    });
     expect(applyPresetMock).not.toHaveBeenCalledWith("alpha", customPolicy.name);
     expect(updateSandboxMock).not.toHaveBeenCalled();
   });
@@ -1246,8 +1245,7 @@ describe("runSandboxSnapshot", () => {
       policies: ["npm", "observability-otlp-local"],
     } as never);
     getLatestBackupMock.mockReturnValue({
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
+      ...latestBackupFixture,
       policyPresets: ["npm", "observability-otlp-local"],
       customPolicies: [customPolicy],
     });
@@ -1303,7 +1301,9 @@ describe("runSandboxSnapshot", () => {
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
     expect(consoleWarn.mock.calls.flat().join("\n")).toContain("corp-otel (apply failed)");
-    expect(removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", {
+      nonFatal: true,
+    });
     expect(getPresetContentGatewayStateMock).toHaveBeenCalledTimes(2);
     expect(getPresetContentGatewayStateMock).toHaveBeenCalledWith(
       "alpha",
@@ -1336,7 +1336,9 @@ describe("runSandboxSnapshot", () => {
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(removePresetMock).toHaveBeenCalledWith("alpha", currentCustomPolicy.name, { nonFatal: true });
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", currentCustomPolicy.name, {
+      nonFatal: true,
+    });
     expect(applyPresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
     expect(consoleWarn.mock.calls.flat().join("\n")).toContain(
       "leaving live policy presets unchanged",
@@ -1353,8 +1355,7 @@ describe("runSandboxSnapshot", () => {
       policyTier: "balanced",
     } as never);
     getLatestBackupMock.mockReturnValue({
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
+      ...latestBackupFixture,
       policyPresets: ["observability-otlp-local"],
     });
     getAppliedPresetsMock.mockReturnValue(["observability-otlp-local"]);
@@ -1377,11 +1378,7 @@ describe("runSandboxSnapshot", () => {
       observabilityEnabled: true,
       policyTier: " Restricted ",
     } as never);
-    getLatestBackupMock.mockReturnValue({
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
-      policyPresets: [],
-    });
+    getLatestBackupMock.mockReturnValue({ ...latestBackupFixture, policyPresets: [] });
     const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "restore" });

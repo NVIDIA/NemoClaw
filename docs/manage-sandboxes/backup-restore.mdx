@@ -116,6 +116,13 @@ $$nemoclaw my-assistant snapshot restore before-upgrade
 $$nemoclaw my-assistant snapshot restore 2026-04-14T
 ```
 
+<Warning>
+Post-restore policy reconciliation is best-effort.
+If NemoClaw cannot add or remove a recorded policy preset, it warns and continues the remaining restore steps.
+The live network policy can then retain unwanted egress or omit expected egress until you repair the named preset.
+After the warning, run `$$nemoclaw <name> policy list` and confirm that the named preset has no registry-to-gateway mismatch.
+</Warning>
+
 <AgentOnly variant="hermes">
 A running Hermes gateway keeps serving its pre-restore state databases until it reopens them.
 After a restore that includes Hermes state databases, the CLI prints a reminder to restart the gateway.
