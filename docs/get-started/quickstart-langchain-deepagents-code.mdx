@@ -51,8 +51,11 @@ Review the [Prerequisites](prerequisites) before you begin.
 
     <Note>
       On supported platforms, the installer can display `Run express install with these settings? [Y/n]:` before the agent-selection prompt.
-      This express install mode uses preselected settings for that platform and runs onboarding non-interactively.
-      Enter `n` to continue with this interactive LangChain Deep Agents Code flow.
+      Press Enter to use the recommended express install mode for that platform.
+      This mode applies preset settings and runs the remaining onboarding non-interactively.
+      With the bare install command, it creates the default OpenClaw sandbox.
+      After it finishes, skip the remaining steps on this page and [continue with the `my-assistant` sandbox](/user-guide/openclaw/get-started/quickstart#continue-after-express-install).
+      Enter `n` if you want to select LangChain Deep Agents Code, a sandbox name, an inference provider, and a model interactively.
       Refer to [Use Docker and supported platforms](#use-docker-and-supported-platforms) for more information.
     </Note>
 
@@ -93,8 +96,9 @@ Use these details when you need more control during setup or after the first san
     Before you install from Windows, follow [Prepare a Windows Machine to Install NemoClaw](additional-setup/windows-preparation).
     Before you install on DGX Station, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation).
 
-    DGX Spark, qualifying DGX Station hosts, and Windows WSL can offer an express install mode after the third-party software notice.
-    After you accept the express install prompt, the installer switches the remaining onboarding to non-interactive mode and selects the managed local inference path for that platform.
+    DGX Spark, qualifying DGX Station hosts, and Windows WSL can offer the recommended express install mode after the third-party software notice.
+    Press Enter at the express install prompt to apply preset settings, switch the remaining onboarding to non-interactive mode, and select the managed local inference path for that platform.
+    Enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
 
     Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles and headless setup.
     Refer to [Set Up vLLM on Two DGX Stations](../inference/local-inference/set-up-vllm-on-two-dgx-stations) for the Deferred paired workflow.
