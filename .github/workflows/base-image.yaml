@@ -65,6 +65,7 @@ on:
       - "scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch"
       - "scripts/checks/node-tar-image-scan.mts"
       - "scripts/patch-bundled-npm-brace-expansion.mts"
+      - "scripts/lib/patch-bundled-npm-ip-address.mts"
       - "scripts/patch-bundled-npm-tar.mts"
       - "scripts/upgrade-bundled-npm.mts"
       - "scripts/lib/sandbox-rlimits.sh"

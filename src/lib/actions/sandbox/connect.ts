@@ -891,6 +891,10 @@ function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
   }
 }
 
+export function restoreSandboxStartupState(sandboxName: string): void {
+  checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+}
+
 function restoreInteractiveTerminal(): void {
   if (!process.stdin.isTTY) return;
 

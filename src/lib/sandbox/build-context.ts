@@ -358,6 +358,10 @@ function stageOptimizedSandboxBuildContext(
   );
   fs.mkdirSync(path.join(stagedScriptsDir, "lib"), { recursive: true });
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "patch-bundled-npm-ip-address.mts"),
+    path.join(stagedScriptsDir, "lib", "patch-bundled-npm-ip-address.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-archive.mts"),
     path.join(stagedScriptsDir, "lib", "reviewed-npm-archive.mts"),
   );
