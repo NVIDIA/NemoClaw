@@ -184,6 +184,10 @@ An accepted replacement is not deleted again.
 The command reports `Sandbox '<name>' already holds the replacement from the interrupted rebuild.` and preserves the state backup path when one exists.
 Pass `--verbose` to include the replacement identifier, OpenShell gateway, and journal phase in rebuild diagnostics.
 
+After the sandbox registry proves the journaled replacement identity and generation, NemoClaw removes an obsolete source image that it owns.
+It retains the image when the source is shared or the registered replacement reuses it.
+If image removal fails, NemoClaw keeps the accepted replacement and tells you to run `$$nemoclaw gc` for cleanup.
+
 NemoClaw fails closed when the selected gateway, replacement settings, durable source registry fields, or live source or target identity no longer matches the journal.
 The error names the sandbox and the mismatch that stopped recovery.
 Do not delete a same-name sandbox to bypass this check.

@@ -428,7 +428,7 @@ describe("inference setup navigation", () => {
     expect(getSandboxRuntimeInferenceEndpoint("nvidia-nim")).toBeNull();
     expect(getSandboxRuntimeInferenceEndpoint("compatible-endpoint")).toBeNull();
     expect(section).toContain(
-      "For local Ollama and vLLM on Docker GPU sandboxes using the compatibility route",
+      "For local Ollama, local vLLM, and local NVIDIA NIM on Docker GPU sandboxes using the compatibility route",
     );
     expect(section).toContain("NVIDIA NIM and other compatible endpoints");
   });

@@ -1,0 +1,298 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { detectTegraDeviceGroupGids } from "../docker-gpu-jetson-groups";
+import { buildDockerGpuMode, selectDockerGpuPatchMode } from "../docker-gpu-patch-mode";
+import type { DockerGpuPatchMode } from "../docker-gpu-patch-types";
+import { renderCompatibilityFallbackCreateArgs } from "../docker-gpu-route";
+import {
+  createDockerGpuSandboxCreatePatch,
+  isDockerDesktopWslRuntime,
+} from "../docker-gpu-sandbox-create";
+import {
+  isImmutableDockerImageId,
+  queryOpenShellDockerSandboxContainers,
+  queryOpenShellDockerSandboxRuntimeSnapshot,
+} from "../openshell-docker-sandbox-containers";
+import type { RuntimeProviderBootstrapSurface } from "../runtime-provider/contract";
+import * as sandboxGpuCreateAttempt from "../sandbox-gpu-create-attempt";
+import {
+  activateManagedBootstrapSequence,
+  finalizeManagedBootstrapSequence,
+  MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+  prepareManagedBootstrapSequence,
+  recoverManagedBootstrapTransactions,
+} from "./adapter";
+import { createDockerManagedBootstrapAdapter } from "./docker";
+import type {
+  ManagedBootstrapRuntimeCompatibilityLaunchInput,
+  ManagedBootstrapRuntimeCreateLaunchResult,
+  ManagedBootstrapRuntimeCreateLifecycle,
+  ManagedBootstrapRuntimeCreateLifecycleInput,
+  ManagedBootstrapRuntimeOnboardRoutingInput,
+} from "./runtime-create";
+
+type SupportedBootstrapSurface = Extract<
+  RuntimeProviderBootstrapSurface,
+  { readonly supported: true }
+>;
+
+function dockerReplacementOptions(
+  mode: DockerGpuPatchMode,
+  input: ManagedBootstrapRuntimeCreateLifecycleInput,
+) {
+  const backend = input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic";
+  return {
+    values: {
+      gpuModeArgs: [...mode.args],
+      gpuModeDevice: mode.device,
+      gpuModeKind: mode.kind,
+      gpuModeLabel: mode.label,
+      requiredUlimits: input.requiredLimits.map(
+        (limit) => `${limit.name}=${limit.soft}:${limit.hard}`,
+      ),
+      extraGroupGids:
+        backend === "jetson" && input.route === "compatibility" ? detectTegraDeviceGroupGids() : [],
+    },
+  };
+}
+
+function selectedDockerMode(
+  input: ManagedBootstrapRuntimeCreateLifecycleInput,
+  dockerDesktopWsl: boolean | undefined,
+): DockerGpuPatchMode {
+  const backend = input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic";
+  if (input.route !== "compatibility" || !input.sandboxGpuConfig.sandboxGpuEnabled) {
+    return buildDockerGpuMode("startup-command");
+  }
+  const selection = selectDockerGpuPatchMode(
+    {
+      image: `${input.image.repository}@${input.image.manifestDigest}`,
+      device: input.sandboxGpuConfig.sandboxGpuDevice,
+      backend,
+      dockerDesktopWsl,
+    },
+    input.dependencies,
+  );
+  if (selection.mode) return selection.mode;
+  throw new Error(
+    backend === "jetson"
+      ? "Docker did not accept the Jetson NVIDIA runtime GPU mode for managed bootstrap."
+      : "Docker did not accept a compatibility GPU mode for managed bootstrap.",
+  );
+}
+
+function createDockerLifecycle(
+  providerId: string,
+  input: ManagedBootstrapRuntimeCreateLifecycleInput,
+): ManagedBootstrapRuntimeCreateLifecycle {
+  if (input.providerId !== providerId) {
+    throw new Error(
+      `Managed bootstrap provider '${providerId}' cannot run authority for '${input.providerId}'.`,
+    );
+  }
+  const dockerDesktopWsl =
+    input.route === "compatibility" ? isDockerDesktopWslRuntime() : undefined;
+  const mode = selectedDockerMode(input, dockerDesktopWsl);
+  const backend = input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic";
+  const persistStartupCommand =
+    input.persistStartupCommand && (input.route !== "native" || input.requiredLimits.length > 0);
+  const patch = createDockerGpuSandboxCreatePatch({
+    route: input.route,
+    persistStartupCommand,
+    externalRecreation: true,
+    sandboxName: input.sandboxName,
+    gpuDevice: input.sandboxGpuConfig.sandboxGpuDevice,
+    openshellSandboxCommand: input.heldWorkloadArgv,
+    requiredUlimits: input.requiredLimits,
+    timeoutSecs: input.timeoutSecs,
+    backend,
+    dockerDesktopWsl,
+    deps: input.dependencies,
+    ...(input.onPatchFailure
+      ? {
+          overrides: {
+            onPatchFailureExit: (_sandboxName: string, error: unknown) =>
+              input.onPatchFailure?.(error),
+          },
+        }
+      : {}),
+  });
+  const adapter = input.adapterOverride ?? createDockerManagedBootstrapAdapter(input.dependencies);
+  const createPlan = {
+    schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+    sandboxName: input.sandboxName,
+    driverId: providerId,
+    image: input.image,
+    profile: {
+      agent: input.request.agent,
+      fingerprint: input.request.profileFingerprint,
+    },
+    agentIdentity: input.agentIdentity,
+    intendedWorkloadArgv: input.intendedWorkloadArgv,
+    expectedSupervisorArgv: input.expectedSupervisorArgv,
+    metadata: {},
+  } as const;
+  const replacementOptions = dockerReplacementOptions(mode, input);
+
+  return {
+    launchArgv: input.launchArgv,
+    patch,
+    async recoverUnfinished() {
+      return recoverManagedBootstrapTransactions(adapter);
+    },
+    async prepareNetwork() {
+      if (input.route !== "compatibility") return;
+      const { enforceDockerGpuPatchPreserveNetwork } = await import(
+        "../docker-gpu-local-inference"
+      );
+      await enforceDockerGpuPatchPreserveNetwork(
+        input.network.inferenceProvider,
+        input.sandboxGpuConfig,
+        {
+          dockerDriverGateway: input.network.gatewayUsesContainerBridge,
+          selectedRoute: input.route,
+          gatewayPort: input.network.gatewayPort,
+          log: console.log,
+        },
+      );
+    },
+    async runCreate<T>(
+      launch: (input: {
+        readonly heldWorkloadArgv: readonly string[];
+        readonly bootstrapIdentity: string;
+      }) => Promise<ManagedBootstrapRuntimeCreateLaunchResult<T>>,
+    ): Promise<T> {
+      const launchState: { value?: ManagedBootstrapRuntimeCreateLaunchResult<T> } = {};
+      const prepared = await prepareManagedBootstrapSequence(adapter, {
+        create: {
+          bootstrapIdentity: input.bootstrapIdentity,
+          plan: createPlan,
+          request: input.request,
+          launch: async (launchInput) => {
+            const launched = await launch(launchInput);
+            launchState.value = launched;
+            return launched.receipt;
+          },
+        },
+        request: input.request,
+        replacementOptions,
+      });
+      const activated = await activateManagedBootstrapSequence(adapter, {
+        transaction: prepared,
+        authorityStore: input.authorityStore,
+        timeoutSecs: input.timeoutSecs,
+      });
+      const launched = launchState.value;
+      if (!launched) {
+        await finalizeManagedBootstrapSequence(adapter, {
+          outcome: "rollback",
+          transaction: activated,
+        });
+        throw new Error("Managed bootstrap did not return its OpenShell create receipt.");
+      }
+      let finalized = false;
+      patch.attachManagedBootstrapCutover({
+        selectedMode: mode,
+        failureContext: {
+          sandboxName: input.sandboxName,
+          oldContainerId: activated.snapshot.runtimeId,
+          newContainerId: activated.replacement.replacementRuntimeId,
+          backupContainerName: null,
+          selectedMode: mode,
+        },
+        async rollback() {
+          if (finalized) return;
+          await finalizeManagedBootstrapSequence(adapter, {
+            outcome: "rollback",
+            transaction: activated,
+          });
+          finalized = true;
+        },
+        async commit() {
+          if (finalized) return;
+          await finalizeManagedBootstrapSequence(adapter, {
+            outcome: "commit",
+            transaction: activated,
+          });
+          finalized = true;
+        },
+      });
+      return launched.value;
+    },
+  };
+}
+
+function createDockerOnboardRouting(input: ManagedBootstrapRuntimeOnboardRoutingInput) {
+  const baseline = input.nativeFallbackEnabled
+    ? queryOpenShellDockerSandboxContainers(input.sandboxName)
+    : null;
+  const inspectNativeRuntime = () => {
+    const snapshot = queryOpenShellDockerSandboxRuntimeSnapshot(input.sandboxName);
+    return snapshot.ok
+      ? {
+          imageId: snapshot.imageId,
+          bookkeepingImageRef: snapshot.bookkeepingImageRef,
+          stateError: snapshot.stateError,
+          nativeGpuAttachmentState: snapshot.nativeGpuAttachmentState,
+        }
+      : null;
+  };
+  return {
+    nativeFallbackHasCleanBaseline: baseline?.ok === true && baseline.ids.length === 0,
+    inspectNativeRuntime,
+    isNativeCreateRoutingFailure: (output: string, sawProgress: boolean): boolean =>
+      sandboxGpuCreateAttempt.isNativeGpuCreateRoutingFailure(output, { sawProgress }),
+    isTrustedNativeRuntimeError: (error: string): boolean =>
+      sandboxGpuCreateAttempt.isTrustedNativeGpuRuntimeError(error),
+    isNativeReadinessRoutingFailure: (failure: {
+      readonly failurePhase: string | null;
+      readonly runtimeError: string;
+    }): boolean => sandboxGpuCreateAttempt.isNativeGpuReadinessRoutingFailure(failure),
+    prepareCompatibilityLaunch: (
+      compatibility: ManagedBootstrapRuntimeCompatibilityLaunchInput,
+    ) => {
+      const runtime = compatibility.runtimeSnapshot;
+      const imageId =
+        runtime?.imageId ??
+        (compatibility.prebuildImageId && isImmutableDockerImageId(compatibility.prebuildImageId)
+          ? compatibility.prebuildImageId.toLowerCase()
+          : null);
+      let registryImageRef = compatibility.currentRegistryImageRef;
+      if (
+        !registryImageRef &&
+        runtime?.bookkeepingImageRef &&
+        !isImmutableDockerImageId(runtime.bookkeepingImageRef)
+      ) {
+        registryImageRef = runtime.bookkeepingImageRef;
+      }
+      const createArgs = renderCompatibilityFallbackCreateArgs(compatibility.createArgs, {
+        imageRef: imageId,
+        allowUnbuiltSource: compatibility.allowUnbuiltSource,
+        compatibilityPolicyPath: compatibility.compatibilityPolicyPath,
+      });
+      return {
+        createArgv: input.openshellArgv([
+          "sandbox",
+          "create",
+          ...createArgs,
+          "--",
+          ...compatibility.startupCommand,
+        ]),
+        registryImageRef,
+      };
+    },
+  };
+}
+
+/** Candidate Docker surface. Production activation remains a later qualification slice. */
+export function createDockerManagedBootstrapSurface(
+  providerId = "docker",
+): SupportedBootstrapSurface {
+  return {
+    providerId,
+    supported: true,
+    createLifecycle: (input) => createDockerLifecycle(providerId, input),
+    createOnboardRouting: createDockerOnboardRouting,
+  };
+}
