@@ -14,6 +14,28 @@ name: Images / Managed Images
 
 on:
   workflow_call:
+  pull_request:
+    paths:
+      - ".github/workflows/managed-images.yaml"
+      - ".dockerignore"
+      - "Dockerfile"
+      - "agents/**"
+      - "ci/npm-audit-exceptions.json"
+      - "nemoclaw/**"
+      - "nemoclaw-blueprint/**"
+      - "scripts/**"
+      - "src/lib/actions/sandbox/openshell-child-visible-credentials.v*.json"
+      - "src/lib/core/json-types.ts"
+      - "src/lib/core/ports.ts"
+      - "src/lib/messaging/**"
+      - "src/lib/onboard/managed-bootstrap/envelope.ts"
+      - "src/lib/onboard/managed-startup/**"
+      - "src/lib/security/credential-hash.ts"
+      - "src/lib/state/paths.ts"
+      - "src/lib/state/state-root.ts"
+      - "src/lib/tool-disclosure.ts"
+      - "tools/mcp-tool-discovery-runtime/**"
+      - "tsconfig.runtime-preloads.json"
 
 permissions:
   contents: read
@@ -23,8 +45,216 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
+  pr-build-and-entrypoint:
+    name: PR build and direct managed startup (${{ matrix.display_name }})
+    # External contributor PRs remain eligible after GitHub's maintainer
+    # workflow approval. This hosted-runner lane has no secret or package-token
+    # permission, never pushes, and resolves each public base to an exact digest.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - agent: openclaw
+            display_name: OpenClaw
+            dockerfile: Dockerfile
+            base_alias: ghcr.io/nvidia/nemoclaw/sandbox-base:latest
+            base_repository: ghcr.io/nvidia/nemoclaw/sandbox-base
+            image: nemoclaw-managed-pr/openclaw
+          - agent: hermes
+            display_name: Hermes
+            dockerfile: agents/hermes/Dockerfile
+            base_alias: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest
+            base_repository: ghcr.io/nvidia/nemoclaw/hermes-sandbox-base
+            image: nemoclaw-managed-pr/hermes
+          - agent: langchain-deepagents-code
+            display_name: Deep Agents Code
+            dockerfile: agents/langchain-deepagents-code/Dockerfile
+            base_alias: ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest
+            base_repository: ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
+            image: nemoclaw-managed-pr/langchain-deepagents-code
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Resolve exact linux/amd64 PR base
+        id: base
+        shell: bash
+        env:
+          BASE_ALIAS: ${{ matrix.base_alias }}
+          BASE_REPOSITORY: ${{ matrix.base_repository }}
+          DISPLAY_NAME: ${{ matrix.display_name }}
+        run: |
+          set -euo pipefail
+          alias_raw="$RUNNER_TEMP/pr-base-alias.raw"
+          exact_raw="$RUNNER_TEMP/pr-base-exact.raw"
+          docker buildx imagetools inspect "$BASE_ALIAS" --raw > "$alias_raw"
+          if ! digest="$(
+            jq -er '
+              if (
+                .mediaType == "application/vnd.oci.image.index.v1+json" or
+                .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"
+              ) then
+                [
+                  .manifests[]
+                  | select(
+                      .platform.os == "linux" and
+                      .platform.architecture == "amd64"
+                    )
+                ]
+                | if length == 1 then .[0].digest else error("not one linux/amd64 image") end
+              else
+                error("base alias is not a platform index")
+              end
+            ' "$alias_raw"
+          )"; then
+            echo "ERROR: PR base alias does not contain exactly one linux/amd64 image." >&2
+            exit 1
+          fi
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: PR base alias returned an invalid linux/amd64 digest." >&2
+            exit 1
+          fi
+          reference="${BASE_REPOSITORY}@${digest}"
+          docker buildx imagetools inspect "$reference" --raw > "$exact_raw"
+          actual="sha256:$(sha256sum "$exact_raw" | awk '{print $1}')"
+          if [ "$actual" != "$digest" ]; then
+            echo "ERROR: exact PR base bytes do not match the selected descriptor digest." >&2
+            exit 1
+          fi
+          printf 'ref=%s\n' "$reference" >> "$GITHUB_OUTPUT"
+          printf '### %s PR base\n\n`%s`\n' "$DISPLAY_NAME" "$reference" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate PR managed-image build args
+        shell: bash
+        env:
+          BASE_REFERENCE: ${{ steps.base.outputs.ref }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+        run: |
+          set -euo pipefail
+          scripts/check-production-build-args.sh \
+            -f "$DOCKERFILE" \
+            --build-arg "BASE_IMAGE=${BASE_REFERENCE}" \
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1" \
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+
+      - name: Build PR managed image locally
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ${{ matrix.image }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            io.nvidia.nemoclaw.agent=${{ matrix.agent }}
+            io.nvidia.nemoclaw.managed-image.contract=1
+            io.nvidia.nemoclaw.managed-image.platform=linux/amd64
+            io.nvidia.nemoclaw.managed-image.startup-profile=1
+            io.nvidia.nemoclaw.managed-image.capabilities=1
+            io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          build-args: |
+            BASE_IMAGE=${{ steps.base.outputs.ref }}
+            NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+          cache-from: type=registry,ref=ghcr.io/nvidia/nemoclaw/${{ matrix.agent }}-sandbox:buildcache-linux-amd64
+          provenance: false
+          sbom: false
+
+      - name: Validate exact PR managed image contract
+        id: contract
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
+          IMAGE_REFERENCE: ${{ matrix.image }}:${{ github.sha }}
+          PLATFORM: linux/amd64
+          PUBLICATION_COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          image_json="$(docker image inspect "$IMAGE_REFERENCE")"
+          image_id="$(
+            jq -er '
+              if length == 1 and (.[0].Id | type) == "string"
+              then .[0].Id
+              else error("expected one local image identity")
+              end
+            ' <<< "$image_json"
+          )"
+          if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: PR managed image did not resolve to an immutable local image ID: $image_id" >&2
+            exit 1
+          fi
+          if [ "$(docker image inspect --format '{{.Id}}' "$image_id")" != "$image_id" ]; then
+            echo "ERROR: PR managed image ID did not resolve to itself." >&2
+            exit 1
+          fi
+
+          if [[ ! "$PUBLICATION_COHORT" =~ ^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]] ||
+             ! jq -e \
+               --arg agent "$AGENT" \
+               --arg cohort "$PUBLICATION_COHORT" \
+               --arg image_id "$image_id" \
+               --arg platform "$PLATFORM" \
+               --arg revision "$GITHUB_SHA" '
+                 length == 1 and
+                 .[0].Id == $image_id and
+                 ((.[0].Config.User // "") as $user |
+                   $user == "" or $user == "root" or $user == "0") and
+                 .[0].Config.Labels["io.nvidia.nemoclaw.agent"] == $agent and
+                 .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.contract"] == "1" and
+                 .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.platform"] == $platform and
+                 .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.startup-profile"] == "1" and
+                 .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.capabilities"] == "1" and
+                 .[0].Config.Labels["io.nvidia.nemoclaw.managed-image.cohort"] == $cohort and
+                 .[0].Config.Labels["org.opencontainers.image.revision"] == $revision
+               ' <<< "$image_json" >/dev/null; then
+            echo "ERROR: PR managed image contract does not match the exact build identity." >&2
+            exit 1
+          fi
+
+          printf 'reference=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
+          printf '### %s exact PR managed image\n\n`%s`\n' "$AGENT" "$image_id" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install managed-image direct harness dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm run build:policy-boundary
+
+      - name: Exercise managed startup root stdin and hold
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
+          IMAGE_REFERENCE: ${{ steps.contract.outputs.reference }}
+        run: |
+          set -euo pipefail
+          npx --no-install tsx \
+            scripts/checks/run-managed-image-direct-e2e.ts \
+            --agent "$AGENT" \
+            --image "$IMAGE_REFERENCE" \
+            --platform linux/amd64
+
   build-and-validate:
     name: Build and validate ${{ matrix.display_name }} managed image (${{ matrix.arch }})
+    if: github.event_name != 'pull_request'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     strategy:
@@ -103,7 +333,7 @@ jobs:
       - name: Download exact base image contract
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: managed-base-${{ matrix.agent }}
+          name: managed-base-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}
           path: ${{ runner.temp }}/managed-base-contract
 
       - name: Validate exact base image contract
@@ -177,7 +407,12 @@ jobs:
           DOCKERFILE: ${{ matrix.dockerfile }}
         run: |
           set -euo pipefail
-          build_args=(-f "$DOCKERFILE" --build-arg "BASE_IMAGE=${BASE_IMAGE}")
+          build_args=(
+            -f "$DOCKERFILE"
+            --build-arg "BASE_IMAGE=${BASE_IMAGE}"
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1"
+            --build-arg "NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root"
+          )
           scripts/check-production-build-args.sh "${build_args[@]}"
 
       # Push only the canonical digest. Consumer aliases do not exist until the
@@ -196,14 +431,24 @@ jobs:
             io.nvidia.nemoclaw.agent=${{ matrix.agent }}
             io.nvidia.nemoclaw.managed-image.contract=1
             io.nvidia.nemoclaw.managed-image.platform=${{ matrix.platform }}
+            io.nvidia.nemoclaw.managed-image.startup-profile=1
+            io.nvidia.nemoclaw.managed-image.capabilities=1
             io.nvidia.nemoclaw.managed-image.cohort=ghrun-${{ github.run_id }}-${{ github.run_attempt }}
-          build-args: BASE_IMAGE=${{ steps.base.outputs.ref }}
+          build-args: |
+            BASE_IMAGE=${{ steps.base.outputs.ref }}
+            NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=1
+            NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.artifact_platform }}
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ matrix.image }}:buildcache-${{ matrix.artifact_platform }},mode=max
           provenance: mode=max
           sbom: true
 
-      - name: Validate exact managed image
+      - name: Install managed-image publication harness dependencies
+        run: |
+          npm ci --ignore-scripts
+          npm run build:policy-boundary
+
+      - name: Validate exact managed image before promotion
         id: validate
         shell: bash
         env:
@@ -229,14 +474,15 @@ jobs:
             exit 1
           fi
 
-          entrypoint="$(docker image inspect --format '{{json .Config.Entrypoint}}' "$reference")"
-          command="$(docker image inspect --format '{{json .Config.Cmd}}' "$reference")"
-          if [ "$entrypoint" != '["/usr/local/bin/nemoclaw-start"]' ]; then
-            echo "ERROR: managed image has unexpected entrypoint: $entrypoint" >&2
+          image_id="$(docker image inspect --format '{{.Id}}' "$reference")"
+          if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+             [ "$(docker image inspect --format '{{.Id}}' "$image_id")" != "$image_id" ]; then
+            echo "ERROR: exact managed image did not resolve to one immutable local image ID." >&2
             exit 1
           fi
-          if [ "$command" != '["/bin/bash"]' ]; then
-            echo "ERROR: managed image has unexpected command: $command" >&2
+          image_user="$(docker image inspect --format '{{.Config.User}}' "$reference")"
+          if [ -n "$image_user" ] && [ "$image_user" != "root" ] && [ "$image_user" != "0" ]; then
+            echo "ERROR: managed image OCI user must be uid 0 for OpenShell supervisor initialization: $image_user" >&2
             exit 1
           fi
 
@@ -248,6 +494,16 @@ jobs:
           contract_label="$(
             docker image inspect \
               --format '{{index .Config.Labels "io.nvidia.nemoclaw.managed-image.contract"}}' \
+              "$reference"
+          )"
+          startup_profile_label="$(
+            docker image inspect \
+              --format '{{index .Config.Labels "io.nvidia.nemoclaw.managed-image.startup-profile"}}' \
+              "$reference"
+          )"
+          capabilities_label="$(
+            docker image inspect \
+              --format '{{index .Config.Labels "io.nvidia.nemoclaw.managed-image.capabilities"}}' \
               "$reference"
           )"
           platform_label="$(
@@ -265,8 +521,11 @@ jobs:
               --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
               "$reference"
           )"
-          if [ "$agent_label" != "$AGENT" ] ||
+          if [[ ! "$PUBLICATION_COHORT" =~ ^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$ ]] ||
+             [ "$agent_label" != "$AGENT" ] ||
              [ "$contract_label" != "1" ] ||
+             [ "$startup_profile_label" != "1" ] ||
+             [ "$capabilities_label" != "1" ] ||
              [ "$platform_label" != "$PLATFORM" ] ||
              [ "$cohort_label" != "$PUBLICATION_COHORT" ] ||
              [ "$revision_label" != "$GITHUB_SHA" ]; then
@@ -275,11 +534,16 @@ jobs:
           fi
 
           DOCKER_CONFIG="$anonymous_config" docker run --rm -i \
+            --platform "$PLATFORM" \
             --network none \
+            --env "AGENT=$AGENT" \
             --env "REQUIRED_BINARY=$REQUIRED_BINARY" \
             --entrypoint /bin/sh \
             "$reference" -eu -s <<'VALIDATE_FILESYSTEM'
           test -x /usr/local/bin/nemoclaw-start
+          test -f /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
+          test ! -L /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs
+          test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs)" = "0:0:444"
           test -x "$REQUIRED_BINARY"
           test -r /opt/nemoclaw-blueprint/blueprint.yaml
           test -r /usr/local/share/nemoclaw/node-tar-inventory.json
@@ -301,10 +565,87 @@ jobs:
             throw new Error("completed node-tar scan is missing or unsafe");
           }
           VALIDATE_NODE_TAR
+
+          test "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1"
+          case "$AGENT" in
+            openclaw)
+              node <<'VALIDATE_OPENCLAW_UNION'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const config = JSON.parse(
+            fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8"),
+          );
+          const packages = {
+            "diagnostics-otel": ["@openclaw/diagnostics-otel", "2026.7.1"],
+            brave: ["@openclaw/brave-plugin", "2026.7.1"],
+            discord: ["@openclaw/discord", "2026.7.1"],
+            "openclaw-weixin": ["@tencent-weixin/openclaw-weixin", "2.4.3"],
+            slack: ["@openclaw/slack", "2026.7.1"],
+            whatsapp: ["@openclaw/whatsapp", "2026.7.1"],
+            msteams: ["@openclaw/msteams", "2026.7.1"],
+          };
+          for (const [id, [name, version]] of Object.entries(packages)) {
+            const install = config.plugins?.installs?.[id];
+            if (
+              !install ||
+              typeof install.installPath !== "string" ||
+              config.plugins?.entries?.[id]?.enabled !== false
+            ) {
+              throw new Error(`managed OpenClaw plugin ${id} is missing or active`);
+            }
+            const manifest = JSON.parse(
+              fs.readFileSync(path.join(install.installPath, "package.json"), "utf8"),
+            );
+            if (manifest.name !== name || manifest.version !== version) {
+              throw new Error(`managed OpenClaw plugin ${id} has an unexpected package identity`);
+            }
+          }
+          for (const id of ["telegram", "tavily"]) {
+            if (config.plugins?.entries?.[id]?.enabled !== false) {
+              throw new Error(`bundled OpenClaw plugin ${id} is not explicitly disabled`);
+            }
+          }
+          for (const id of [
+            "telegram",
+            "discord",
+            "openclaw-weixin",
+            "slack",
+            "whatsapp",
+            "msteams",
+          ]) {
+            if (config.channels?.[id]?.enabled !== false) {
+              throw new Error(`managed OpenClaw channel ${id} is not explicitly disabled`);
+            }
+          }
+          if (config.tools?.web?.search?.enabled !== false) {
+            throw new Error("managed OpenClaw web search is not explicitly disabled");
+          }
+          VALIDATE_OPENCLAW_UNION
+              ;;
+            hermes)
+              /opt/hermes/.venv/bin/python -I <<'VALIDATE_HERMES_UNION'
+          import importlib.metadata as metadata
+          from pathlib import Path
+          import yaml
+
+          config = yaml.safe_load(Path("/sandbox/.hermes/config.yaml").read_text())
+          optional = ("telegram", "discord", "weixin", "slack", "whatsapp", "teams")
+          if any(config["platforms"].get(name) != {"enabled": False} for name in optional):
+              raise SystemExit("managed Hermes optional platform is not explicitly disabled")
+          if metadata.version("microsoft-teams-apps") != "2.0.13.4":
+              raise SystemExit("managed Hermes microsoft-teams-apps version is wrong")
+          if metadata.version("aiohttp") != "3.14.1":
+              raise SystemExit("managed Hermes aiohttp version is wrong")
+          VALIDATE_HERMES_UNION
+              ;;
+            langchain-deepagents-code) ;;
+            *) echo "ERROR: unsupported managed agent $AGENT" >&2; exit 1 ;;
+          esac
           VALIDATE_FILESYSTEM
 
           version_output="$(
             DOCKER_CONFIG="$anonymous_config" docker run --rm \
+              --platform "$PLATFORM" \
               --network none \
               --entrypoint "$REQUIRED_BINARY" \
               "$reference" --version 2>&1
@@ -313,13 +654,50 @@ jobs:
             echo "ERROR: required agent binary returned an empty version." >&2
             exit 1
           fi
+
+          DOCKER_CONFIG="$anonymous_config" \
+            npx --no-install tsx \
+              scripts/checks/run-managed-image-direct-e2e.ts \
+              --agent "$AGENT" \
+              --image "$reference" \
+              --platform "$PLATFORM"
+          printf 'local_id=%s\n' "$image_id" >> "$GITHUB_OUTPUT"
           printf 'reference=%s\n' "$reference" >> "$GITHUB_OUTPUT"
+
+      - name: Capture exact managed image publication evidence
+        id: evidence
+        shell: bash
+        env:
+          AGENT: ${{ matrix.agent }}
+          BASE_REFERENCE: ${{ steps.base.outputs.ref }}
+          COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          PLATFORM: ${{ matrix.platform }}
+          REFERENCE: ${{ steps.validate.outputs.reference }}
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/managed-image-publication-evidence"
+          evidence="$evidence_dir/evidence.json"
+          scripts/checks/verify-managed-image-publication-evidence.sh \
+            --reference "$REFERENCE" \
+            --digest "$DIGEST" \
+            --platform "$PLATFORM" \
+            --agent "$AGENT" \
+            --base-reference "$BASE_REFERENCE" \
+            --repository "$GITHUB_REPOSITORY" \
+            --revision "$GITHUB_SHA" \
+            --cohort "$COHORT" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output "$evidence"
+          printf 'path=%s\n' "$evidence" >> "$GITHUB_OUTPUT"
 
       - name: Export validated managed image candidate
         env:
           AGENT: ${{ matrix.agent }}
           BASE_REFERENCE: ${{ steps.base.outputs.ref }}
           DIGEST: ${{ steps.build.outputs.digest }}
+          EVIDENCE: ${{ steps.evidence.outputs.path }}
           IMAGE: ${{ env.REGISTRY }}/${{ matrix.image }}
           PLATFORM: ${{ matrix.platform }}
           PUBLICATION_COHORT: ghrun-${{ github.run_id }}-${{ github.run_attempt }}
@@ -345,6 +723,10 @@ jobs:
 
           contract_dir="$RUNNER_TEMP/managed-image-candidate"
           mkdir -p "$contract_dir"
+          if [ ! -f "$EVIDENCE" ] || [ -L "$EVIDENCE" ]; then
+            echo "ERROR: exact registry publication evidence is missing or unsafe." >&2
+            exit 1
+          fi
           jq -n \
             --arg agent "$AGENT" \
             --arg baseReference "$BASE_REFERENCE" \
@@ -359,8 +741,9 @@ jobs:
             --arg revision "$GITHUB_SHA" \
             --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             --argjson runId "$GITHUB_RUN_ID" \
+            --slurpfile publicationEvidence "$EVIDENCE" \
             '{
-              contractVersion: 1,
+              contractVersion: 2,
               phase: "candidate",
               agent: $agent,
               image: $image,
@@ -368,10 +751,7 @@ jobs:
               reference: $reference,
               baseReference: $baseReference,
               platform: $platform,
-              attestations: {
-                provenance: "mode=max",
-                sbom: true
-              },
+              publicationEvidence: $publicationEvidence[0],
               source: {
                 repository: $repository,
                 revision: $revision,
@@ -395,21 +775,21 @@ jobs:
             --arg revision "$GITHUB_SHA" \
             --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             --argjson runId "$GITHUB_RUN_ID" \
-            '(keys | sort) == [
+             '(keys | sort) == [
                "agent",
-               "attestations",
                "baseReference",
                "contractVersion",
                "digest",
                "image",
                "phase",
                "platform",
+               "publicationEvidence",
                "reference",
                "release",
                "run",
                "source"
              ]
-             and .contractVersion == 1
+             and .contractVersion == 2
              and .phase == "candidate"
              and .agent == $agent
              and .image == $image
@@ -417,7 +797,36 @@ jobs:
              and (.digest | test("^sha256:[0-9a-f]{64}$"))
              and .reference == (.image + "@" + .digest)
              and (.baseReference | test("@sha256:[0-9a-f]{64}$"))
-             and .attestations == {provenance: "mode=max", sbom: true}
+             and .publicationEvidence.candidateDescriptor.digest == .digest
+             and .publicationEvidence.workloadDescriptor.platform == (
+               $platform
+               | split("/")
+               | {os: .[0], architecture: .[1]}
+             )
+             and .publicationEvidence.attestations.manifestDescriptor.annotations[
+               "vnd.docker.reference.digest"
+             ] == .publicationEvidence.workloadDescriptor.digest
+             and .publicationEvidence.attestations.slsa.descriptor.annotations[
+               "in-toto.io/predicate-type"
+             ] == "https://slsa.dev/provenance/v1"
+             and .publicationEvidence.attestations.slsa.statement.subject.digest ==
+               .publicationEvidence.workloadDescriptor.digest
+             and .publicationEvidence.attestations.slsa.statement.bindings == {
+               agent: $agent,
+               baseReference: .baseReference,
+               cohort: $cohort,
+               platform: $platform,
+               revision: $revision,
+               source: ("https://github.com/" + $repository)
+             }
+             and .publicationEvidence.attestations.slsa.statement.builderId ==
+               ("https://github.com/" + $repository + "/actions/runs/" +
+                ($runId | tostring) + "/attempts/" + ($runAttempt | tostring))
+             and .publicationEvidence.attestations.spdx.descriptor.annotations[
+               "in-toto.io/predicate-type"
+             ] == "https://spdx.dev/Document"
+             and .publicationEvidence.attestations.spdx.statement.subject.digest ==
+               .publicationEvidence.workloadDescriptor.digest
              and .source == {
                repository: $repository,
                revision: $revision,
@@ -432,7 +841,7 @@ jobs:
       - name: Upload validated managed image candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-image-candidate-${{ matrix.agent }}-${{ matrix.artifact_platform }}
+          name: managed-image-candidate-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.agent }}-${{ matrix.artifact_platform }}
           path: ${{ runner.temp }}/managed-image-candidate/contract.json
           if-no-files-found: error
           retention-days: 1
@@ -449,7 +858,7 @@ jobs:
       - name: Download all validated managed image candidates
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: managed-image-candidate-*
+          pattern: managed-image-candidate-${{ github.run_id }}-${{ github.run_attempt }}-*
           path: ${{ runner.temp }}/managed-image-candidates
           merge-multiple: false
 
@@ -483,13 +892,14 @@ jobs:
             exit 1
           fi
 
+          artifact_prefix="managed-image-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           expected_artifacts=(
-            managed-image-candidate-openclaw-linux-amd64
-            managed-image-candidate-openclaw-linux-arm64
-            managed-image-candidate-hermes-linux-amd64
-            managed-image-candidate-hermes-linux-arm64
-            managed-image-candidate-langchain-deepagents-code-linux-amd64
-            managed-image-candidate-langchain-deepagents-code-linux-arm64
+            "${artifact_prefix}-openclaw-linux-amd64"
+            "${artifact_prefix}-openclaw-linux-arm64"
+            "${artifact_prefix}-hermes-linux-amd64"
+            "${artifact_prefix}-hermes-linux-arm64"
+            "${artifact_prefix}-langchain-deepagents-code-linux-amd64"
+            "${artifact_prefix}-langchain-deepagents-code-linux-arm64"
           )
           expected_agents=(
             openclaw
@@ -559,6 +969,35 @@ jobs:
             --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             --argjson runId "$GITHUB_RUN_ID" \
             '
+              def sha256: type == "string" and test("^sha256:[0-9a-f]{64}$");
+              def positive_size:
+                type == "number" and . > 0 and floor == .;
+              def workload_descriptor($platform):
+                (keys | sort) == ["digest", "mediaType", "platform", "size"]
+                and .mediaType == "application/vnd.oci.image.manifest.v1+json"
+                and (.digest | sha256)
+                and (.size | positive_size)
+                and .platform == (
+                  $platform | split("/") | {os: .[0], architecture: .[1]}
+                );
+              def attestation_manifest_descriptor($workloadDigest):
+                (keys | sort) == ["annotations", "digest", "mediaType", "platform", "size"]
+                and .mediaType == "application/vnd.oci.image.manifest.v1+json"
+                and (.digest | sha256)
+                and (.size | positive_size)
+                and .platform == {os: "unknown", architecture: "unknown"}
+                and (.annotations | keys | sort) == [
+                  "vnd.docker.reference.digest",
+                  "vnd.docker.reference.type"
+                ]
+                and .annotations["vnd.docker.reference.digest"] == $workloadDigest
+                and .annotations["vnd.docker.reference.type"] == "attestation-manifest";
+              def statement_descriptor($predicateType):
+                (keys | sort) == ["annotations", "digest", "mediaType", "size"]
+                and .mediaType == "application/vnd.in-toto+json"
+                and (.digest | sha256)
+                and (.size | positive_size)
+                and .annotations == {"in-toto.io/predicate-type": $predicateType};
               length == 6
               and ([.[].agent] | group_by(.) | map({key: .[0], value: length}) | from_entries) == {
                 "hermes": 2,
@@ -571,24 +1010,123 @@ jobs:
               and all(.[];
                 (keys | sort) == [
                   "agent",
-                  "attestations",
                   "baseReference",
                   "contractVersion",
                   "digest",
                   "image",
                   "phase",
                   "platform",
+                  "publicationEvidence",
                   "reference",
                   "release",
                   "run",
                   "source"
                 ]
-                and .contractVersion == 1
+                and .contractVersion == 2
                 and .phase == "candidate"
                 and (.digest | test("^sha256:[0-9a-f]{64}$"))
                 and .reference == (.image + "@" + .digest)
                 and (.baseReference | test("@sha256:[0-9a-f]{64}$"))
-                and .attestations == {provenance: "mode=max", sbom: true}
+                and (.publicationEvidence | keys | sort) == [
+                  "attestations",
+                  "candidateDescriptor",
+                  "workloadDescriptor"
+                ]
+                and (.publicationEvidence.candidateDescriptor | keys | sort) == [
+                  "digest",
+                  "mediaType",
+                  "size"
+                ]
+                and .publicationEvidence.candidateDescriptor.mediaType ==
+                  "application/vnd.oci.image.index.v1+json"
+                and .publicationEvidence.candidateDescriptor.digest == .digest
+                and (.publicationEvidence.candidateDescriptor.size | positive_size)
+                and (
+                  .platform as $candidatePlatform
+                  | .publicationEvidence.workloadDescriptor
+                  | workload_descriptor($candidatePlatform)
+                )
+                and (.publicationEvidence.attestations | keys | sort) == [
+                  "manifestDescriptor",
+                  "slsa",
+                  "spdx"
+                ]
+                and (
+                  .publicationEvidence.workloadDescriptor.digest as $workloadDigest
+                  |
+                  .publicationEvidence.attestations.manifestDescriptor
+                  | attestation_manifest_descriptor($workloadDigest)
+                )
+                and (.publicationEvidence.attestations.slsa | keys | sort) == [
+                  "descriptor",
+                  "statement"
+                ]
+                and (
+                  .publicationEvidence.attestations.slsa.descriptor
+                  | statement_descriptor("https://slsa.dev/provenance/v1")
+                )
+                and (
+                  .agent as $candidateAgent
+                  | .baseReference as $candidateBaseReference
+                  | .platform as $candidatePlatform
+                  |
+                  .publicationEvidence.workloadDescriptor.digest as $workloadDigest
+                  | .publicationEvidence.attestations.slsa.statement
+                  | (keys | sort) == [
+                      "bindings",
+                      "buildType",
+                      "builderId",
+                      "predicateType",
+                      "subject",
+                      "type"
+                    ]
+                  and .type == "https://in-toto.io/Statement/v1"
+                  and .predicateType == "https://slsa.dev/provenance/v1"
+                  and .buildType ==
+                    "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md"
+                  and (.subject | keys | sort) == ["digest", "name"]
+                  and (.subject.name | type) == "string"
+                  and (.subject.name | length) > 0
+                  and .subject.digest == $workloadDigest
+                  and (.bindings | keys | sort) == [
+                    "agent",
+                    "baseReference",
+                    "cohort",
+                    "platform",
+                    "revision",
+                    "source"
+                  ]
+                  and .bindings.agent == $candidateAgent
+                  and .bindings.baseReference == $candidateBaseReference
+                  and .bindings.cohort == $cohort
+                  and .bindings.platform == $candidatePlatform
+                  and .bindings.revision == $revision
+                  and .bindings.source == ("https://github.com/" + $repository)
+                  and .builderId ==
+                    ("https://github.com/" + $repository + "/actions/runs/" +
+                     ($runId | tostring) + "/attempts/" + ($runAttempt | tostring))
+                )
+                and (.publicationEvidence.attestations.spdx | keys | sort) == [
+                  "descriptor",
+                  "statement"
+                ]
+                and (
+                  .publicationEvidence.attestations.spdx.descriptor
+                  | statement_descriptor("https://spdx.dev/Document")
+                )
+                and (
+                  .publicationEvidence.workloadDescriptor.digest as $workloadDigest
+                  | .publicationEvidence.attestations.spdx.statement
+                  | (keys | sort) == ["predicateType", "subject", "type"]
+                  and .type == "https://in-toto.io/Statement/v1"
+                  and .predicateType == "https://spdx.dev/Document"
+                  and (.subject | keys | sort) == ["digest", "name"]
+                  and (.subject.name | type) == "string"
+                  and (.subject.name | length) > 0
+                  and .subject.digest == $workloadDigest
+                )
+                and .publicationEvidence.attestations.slsa.descriptor.digest !=
+                  .publicationEvidence.attestations.spdx.descriptor.digest
                 and .source == {
                   repository: $repository,
                   revision: $revision,
@@ -601,6 +1139,13 @@ jobs:
               )
               and ([.[].reference] | unique | length) == 6
               and ([.[].baseReference] | unique | length) == 6
+              and ([.[].publicationEvidence.workloadDescriptor.digest] | unique | length) == 6
+              and ([.[].publicationEvidence.attestations.manifestDescriptor.digest]
+                | unique | length) == 6
+              and ([.[].publicationEvidence.attestations.slsa.descriptor.digest]
+                | unique | length) == 6
+              and ([.[].publicationEvidence.attestations.spdx.descriptor.digest]
+                | unique | length) == 6
               and (
                 map({key: (.agent + "|" + .platform), value: .image}) | from_entries
               ) == {
@@ -664,6 +1209,11 @@ jobs:
               throw new Error(`Release tag ${releaseTag} is not a verified direct commit tag`);
             }
 
+      - name: Checkout publication verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Set up Docker Buildx for promotion
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
@@ -674,7 +1224,53 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Promote validated multi-platform managed image cohort
+      - name: Revalidate exact managed image publication evidence
+        shell: bash
+        env:
+          CANDIDATE_SET: ${{ steps.candidates.outputs.candidate_set }}
+        run: |
+          set -euo pipefail
+          revalidated_root="$RUNNER_TEMP/revalidated-managed-image-evidence"
+          install -d -m 0700 "$revalidated_root"
+          index=0
+          while IFS= read -r candidate; do
+            index=$((index + 1))
+            reference="$(jq -er '.reference' <<<"$candidate")"
+            digest="$(jq -er '.digest' <<<"$candidate")"
+            platform="$(jq -er '.platform' <<<"$candidate")"
+            agent="$(jq -er '.agent' <<<"$candidate")"
+            base_reference="$(jq -er '.baseReference' <<<"$candidate")"
+            repository="$(jq -er '.source.repository' <<<"$candidate")"
+            revision="$(jq -er '.source.revision' <<<"$candidate")"
+            cohort="$(jq -er '.source.cohort' <<<"$candidate")"
+            run_id="$(jq -er '.run.id | tostring' <<<"$candidate")"
+            run_attempt="$(jq -er '.run.attempt | tostring' <<<"$candidate")"
+            actual="$revalidated_root/$index.json"
+            expected="$revalidated_root/$index.expected.json"
+            scripts/checks/verify-managed-image-publication-evidence.sh \
+              --reference "$reference" \
+              --digest "$digest" \
+              --platform "$platform" \
+              --agent "$agent" \
+              --base-reference "$base_reference" \
+              --repository "$repository" \
+              --revision "$revision" \
+              --cohort "$cohort" \
+              --run-id "$run_id" \
+              --run-attempt "$run_attempt" \
+              --output "$actual"
+            jq -S '.publicationEvidence' <<<"$candidate" > "$expected"
+            if ! cmp -s "$expected" <(jq -S . "$actual"); then
+              echo "ERROR: registry publication evidence changed after candidate validation: $reference" >&2
+              exit 1
+            fi
+          done < <(jq -c '.[]' "$CANDIDATE_SET")
+          if [ "$index" -ne 6 ]; then
+            echo "ERROR: registry evidence revalidation did not cover all six candidates." >&2
+            exit 1
+          fi
+
+      - name: Stage validated multi-platform managed image cohort and contracts
         shell: bash
         env:
           CANDIDATE_SET: ${{ steps.candidates.outputs.candidate_set }}
@@ -688,12 +1284,6 @@ jobs:
             exit 1
           fi
 
-          # Resolve all six immutable candidates before the first alias write.
-          while IFS= read -r candidate; do
-            reference="$(jq -r '.reference' <<<"$candidate")"
-            docker buildx imagetools inspect "$reference" >/dev/null
-          done < <(jq -c '.[]' "$CANDIDATE_SET")
-
           manifests="$RUNNER_TEMP/managed-image-cohort-manifests.jsonl"
           : > "$manifests"
           for agent in openclaw hermes langchain-deepagents-code; do
@@ -702,49 +1292,88 @@ jobs:
               '[.[] | select(.agent == $agent)] | sort_by(.platform)' \
               "$CANDIDATE_SET" > "$agent_candidates"
             image="$(jq -er '.[0].image' "$agent_candidates")"
-            mapfile -t sources < <(jq -r '.[].reference' "$agent_candidates")
-            if [ "${#sources[@]}" -ne 2 ]; then
+            descriptor_root="$RUNNER_TEMP/managed-image-${agent}-descriptors"
+            install -d -m 0700 "$descriptor_root"
+            descriptor_args=()
+            candidate_index=0
+            while IFS= read -r candidate; do
+              candidate_index=$((candidate_index + 1))
+              workload_descriptor="$descriptor_root/$candidate_index-workload.json"
+              attestation_descriptor="$descriptor_root/$candidate_index-attestation.json"
+              jq -S '.publicationEvidence.workloadDescriptor' \
+                <<<"$candidate" > "$workload_descriptor"
+              jq -S '.publicationEvidence.attestations.manifestDescriptor' \
+                <<<"$candidate" > "$attestation_descriptor"
+              descriptor_args+=(
+                --file "$workload_descriptor"
+                --file "$attestation_descriptor"
+              )
+            done < <(jq -c '.[]' "$agent_candidates")
+            if [ "$candidate_index" -ne 2 ] || [ "${#descriptor_args[@]}" -ne 8 ]; then
               echo "ERROR: expected exactly two platform candidates for $agent." >&2
               exit 1
             fi
             cohort_alias="${image}:cohort-${cohort}"
-            docker buildx imagetools create --tag "$cohort_alias" "${sources[@]}"
+            cohort_metadata="$RUNNER_TEMP/managed-image-${agent}-cohort-metadata.json"
+            docker buildx imagetools create \
+              --tag "$cohort_alias" \
+              --metadata-file "$cohort_metadata" \
+              "${descriptor_args[@]}"
 
             cohort_raw="$RUNNER_TEMP/managed-image-${agent}-cohort.raw"
             docker buildx imagetools inspect "$cohort_alias" --raw > "$cohort_raw"
+            expected_descriptors="$descriptor_root/expected.json"
+            actual_descriptors="$descriptor_root/actual.json"
+            jq -S '[
+              .[]
+              | (
+                  .publicationEvidence.workloadDescriptor,
+                  .publicationEvidence.attestations.manifestDescriptor
+                )
+            ] | sort_by(.digest)' "$agent_candidates" > "$expected_descriptors"
+            jq -S '.manifests | sort_by(.digest)' "$cohort_raw" > "$actual_descriptors"
             if ! jq -e '
-              (
-                .mediaType == "application/vnd.oci.image.index.v1+json" or
-                .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"
-              )
-              and (
-                [
+                (keys | sort) == ["manifests", "mediaType", "schemaVersion"]
+                and .schemaVersion == 2
+                and .mediaType == "application/vnd.oci.image.index.v1+json"
+                and (.manifests | length) == 4
+                and ([
+                  .manifests[]
+                  | select(.platform.os == "linux")
+                  | "linux/" + .platform.architecture
+                ] | sort) == ["linux/amd64", "linux/arm64"]
+                and ([
                   .manifests[]
                   | select(
-                      .platform.os == "linux" and
-                      (
-                        .platform.architecture == "amd64" or
-                        .platform.architecture == "arm64"
-                      )
+                      .platform == {os: "unknown", architecture: "unknown"}
+                      and .annotations["vnd.docker.reference.type"] ==
+                        "attestation-manifest"
                     )
-                  | "linux/" + .platform.architecture
-                ]
-                | sort
-              ) == ["linux/amd64", "linux/arm64"]
-            ' "$cohort_raw" >/dev/null; then
-              echo "ERROR: staged cohort alias is not exactly linux/amd64 plus linux/arm64: $cohort_alias" >&2
+                ] | length) == 2
+              ' "$cohort_raw" >/dev/null ||
+               ! cmp -s "$expected_descriptors" "$actual_descriptors"; then
+              echo "ERROR: staged cohort descriptors differ from validated candidates: $cohort_alias" >&2
               exit 1
             fi
-            cohort_inspect="$(docker buildx imagetools inspect "$cohort_alias")"
-            mapfile -t cohort_digests < <(
-              printf '%s\n' "$cohort_inspect" |
-                sed -nE 's/^Digest:[[:space:]]*(sha256:[0-9a-f]{64})$/\1/p'
-            )
-            if [ "${#cohort_digests[@]}" -ne 1 ]; then
-              echo "ERROR: staged cohort alias did not resolve to one exact digest: $cohort_alias" >&2
+
+            cohort_descriptor="$RUNNER_TEMP/managed-image-${agent}-cohort-descriptor.json"
+            jq -ce '.["containerimage.descriptor"]' \
+              "$cohort_metadata" > "$cohort_descriptor"
+            cohort_digest="$(jq -er '.digest' "$cohort_descriptor")"
+            cohort_size="$(wc -c < "$cohort_raw" | tr -d '[:space:]')"
+            actual_cohort_digest="sha256:$(sha256sum "$cohort_raw" | awk '{print $1}')"
+            if ! jq -e \
+              --arg digest "$actual_cohort_digest" \
+              --argjson size "$cohort_size" \
+              '
+                (keys | sort) == ["digest", "mediaType", "size"]
+                and .mediaType == "application/vnd.oci.image.index.v1+json"
+                and .digest == $digest
+                and .size == $size
+              ' "$cohort_descriptor" >/dev/null; then
+              echo "ERROR: staged cohort descriptor does not match its registry bytes: $cohort_alias" >&2
               exit 1
             fi
-            cohort_digest="${cohort_digests[0]}"
             cohort_reference="${image}@${cohort_digest}"
             exact_raw="$RUNNER_TEMP/managed-image-${agent}-cohort-exact.raw"
             docker buildx imagetools inspect "$cohort_reference" --raw > "$exact_raw"
@@ -758,12 +1387,14 @@ jobs:
               --arg digest "$cohort_digest" \
               --arg image "$image" \
               --arg reference "$cohort_reference" \
+              --slurpfile descriptor "$cohort_descriptor" \
               --slurpfile platforms "$agent_candidates" \
               '{
                 agent: $agent,
                 image: $image,
                 digest: $digest,
                 reference: $reference,
+                descriptor: $descriptor[0],
                 alias: $alias,
                 platforms: ($platforms[0] | map({
                   key: .platform,
@@ -771,7 +1402,7 @@ jobs:
                     digest,
                     reference,
                     baseReference,
-                    attestations
+                    publicationEvidence
                   }
                 }) | from_entries)
               }' >> "$manifests"
@@ -789,11 +1420,25 @@ jobs:
             and all(.[];
               (.digest | test("^sha256:[0-9a-f]{64}$"))
               and .reference == (.image + "@" + .digest)
+              and .descriptor == {
+                mediaType: "application/vnd.oci.image.index.v1+json",
+                digest: .digest,
+                size: .descriptor.size
+              }
+              and (.descriptor.size | type) == "number"
+              and .descriptor.size > 0
               and (.platforms | keys | sort) == ["linux/amd64", "linux/arm64"]
               and all(.platforms[];
                 (.digest | test("^sha256:[0-9a-f]{64}$"))
                 and (.baseReference | test("@sha256:[0-9a-f]{64}$"))
-                and .attestations == {provenance: "mode=max", sbom: true}
+                and .publicationEvidence.candidateDescriptor.digest == .digest
+                and .publicationEvidence.attestations.manifestDescriptor.annotations[
+                  "vnd.docker.reference.digest"
+                ] == .publicationEvidence.workloadDescriptor.digest
+                and .publicationEvidence.attestations.slsa.statement.subject.digest ==
+                  .publicationEvidence.workloadDescriptor.digest
+                and .publicationEvidence.attestations.spdx.statement.subject.digest ==
+                  .publicationEvidence.workloadDescriptor.digest
               )
             )
           ' "$cohort_manifests" >/dev/null; then
@@ -815,32 +1460,14 @@ jobs:
             done
           done < <(jq -c '.[]' "$cohort_manifests")
 
-          # The OpenClaw revision/release alias is the sole consumer-visible
-          # root pointer. Hermes and DCode are discovered through the already
-          # validated cohort aliases, making the all-agent handoff atomic.
+          # Record the intended OpenClaw root pointers in every exact contract.
+          # They are not moved until all v2 evidence artifacts are durable.
           openclaw_manifest="$(jq -ce '.[] | select(.agent == "openclaw")' "$cohort_manifests")"
-          openclaw_alias="$(jq -r '.alias' <<<"$openclaw_manifest")"
           consumer_aliases=("$(jq -r '.image' <<<"$openclaw_manifest"):${GITHUB_SHA}")
           release_tag="$(jq -r '.[0].release // empty' "$CANDIDATE_SET")"
           if [ -n "$release_tag" ]; then
             consumer_aliases+=("$(jq -r '.image' <<<"$openclaw_manifest"):${release_tag}")
           fi
-          consumer_tag_args=()
-          for alias in "${consumer_aliases[@]}"; do
-            consumer_tag_args+=(--tag "$alias")
-          done
-          docker buildx imagetools create "${consumer_tag_args[@]}" "$openclaw_alias"
-
-          openclaw_raw="$RUNNER_TEMP/managed-image-openclaw-cohort.raw"
-          docker buildx imagetools inspect "$openclaw_alias" --raw > "$openclaw_raw"
-          for alias in "${consumer_aliases[@]}"; do
-            alias_raw="$RUNNER_TEMP/managed-image-openclaw-pointer-${alias##*:}.raw"
-            docker buildx imagetools inspect "$alias" --raw > "$alias_raw"
-            if ! cmp -s "$openclaw_raw" "$alias_raw"; then
-              echo "ERROR: OpenClaw cohort pointer is not exact: $alias" >&2
-              exit 1
-            fi
-          done
 
           while IFS= read -r candidate; do
             agent="$(jq -r '.agent' <<<"$candidate")"
@@ -848,6 +1475,9 @@ jobs:
             artifact_platform="${platform//\//-}"
             cohort_manifest="$(jq -ce --arg agent "$agent" '.[] | select(.agent == $agent)' "$cohort_manifests")"
             cohort_alias="$(jq -r '.alias' <<<"$cohort_manifest")"
+            staged_cohort="$(
+              jq -c '{alias, descriptor, reference}' <<<"$cohort_manifest"
+            )"
             aliases=("$cohort_alias")
             if [ "$agent" = "openclaw" ]; then
               aliases+=("${consumer_aliases[@]}")
@@ -857,6 +1487,7 @@ jobs:
             mkdir -p "$contract_dir"
             jq \
               --argjson aliases "$aliases_json" \
+              --argjson stagedCohort "$staged_cohort" \
               '{
                 contractVersion,
                 agent,
@@ -865,7 +1496,8 @@ jobs:
                 reference,
                 baseReference,
                 platform,
-                attestations,
+                publicationEvidence,
+                stagedCohort: $stagedCohort,
                 source: {
                   repository: .source.repository,
                   revision: .source.revision,
@@ -883,23 +1515,37 @@ jobs:
               '(keys | sort) == [
                  "agent",
                  "aliases",
-                 "attestations",
                  "baseReference",
                  "contractVersion",
                  "digest",
                  "image",
                  "platform",
+                 "publicationEvidence",
                  "reference",
                  "run",
-                 "source"
+                 "source",
+                 "stagedCohort"
                ]
-               and .contractVersion == 1
+               and .contractVersion == 2
                and .agent == $agent
                and .platform == $platform
                and (.digest | test("^sha256:[0-9a-f]{64}$"))
                and .reference == (.image + "@" + .digest)
                and (.baseReference | test("@sha256:[0-9a-f]{64}$"))
-               and .attestations == {provenance: "mode=max", sbom: true}
+               and .publicationEvidence.candidateDescriptor.digest == .digest
+               and .publicationEvidence.workloadDescriptor.platform == (
+                 $platform | split("/") | {os: .[0], architecture: .[1]}
+               )
+               and .publicationEvidence.attestations.manifestDescriptor.annotations[
+                 "vnd.docker.reference.digest"
+               ] == .publicationEvidence.workloadDescriptor.digest
+               and .stagedCohort.alias == (.image + ":cohort-" + $cohort)
+               and .stagedCohort.reference == (.image + "@" + .stagedCohort.descriptor.digest)
+               and .stagedCohort.descriptor.mediaType ==
+                 "application/vnd.oci.image.index.v1+json"
+               and (.stagedCohort.descriptor.digest | test("^sha256:[0-9a-f]{64}$"))
+               and (.stagedCohort.descriptor.size | type) == "number"
+               and .stagedCohort.descriptor.size > 0
                and .source.revision == $ENV.GITHUB_SHA
                and .source.cohort == $cohort
                and .run == {
@@ -926,7 +1572,7 @@ jobs:
             --argjson runId "$GITHUB_RUN_ID" \
             --slurpfile agents "$cohort_manifests" \
             '{
-              contractVersion: 1,
+              contractVersion: 2,
               cohort: $cohort,
               source: {
                 repository: $repository,
@@ -942,7 +1588,15 @@ jobs:
             --arg revision "$GITHUB_SHA" \
             --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             --argjson runId "$GITHUB_RUN_ID" \
-            '.contractVersion == 1
+            '(keys | sort) == [
+               "agents",
+               "cohort",
+               "contractVersion",
+               "platforms",
+               "run",
+               "source"
+             ]
+             and .contractVersion == 2
              and .cohort == $cohort
              and .source.revision == $revision
              and .run == {id: $runId, attempt: $runAttempt}
@@ -955,13 +1609,27 @@ jobs:
              and all(.agents[];
                (.digest | test("^sha256:[0-9a-f]{64}$"))
                and .reference == (.image + "@" + .digest)
+               and .descriptor == {
+                 mediaType: "application/vnd.oci.image.index.v1+json",
+                 digest: .digest,
+                 size: .descriptor.size
+               }
+               and (.descriptor.size | type) == "number"
+               and .descriptor.size > 0
+               and .alias == (.image + ":cohort-" + $cohort)
                and (.platforms | keys | sort) == ["linux/amd64", "linux/arm64"]
+               and all(.platforms[];
+                 .publicationEvidence.candidateDescriptor.digest == .digest
+                 and .publicationEvidence.attestations.manifestDescriptor.annotations[
+                   "vnd.docker.reference.digest"
+                 ] == .publicationEvidence.workloadDescriptor.digest
+               )
              )' "$cohort_contract" >/dev/null
 
       - name: Upload complete managed image cohort contract
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-image-cohort
+          name: managed-image-cohort-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/managed-image-contracts/cohort.json
           if-no-files-found: error
           retention-days: 90
@@ -969,7 +1637,7 @@ jobs:
       - name: Upload OpenClaw amd64 managed image contract
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-image-openclaw-linux-amd64
+          name: managed-image-${{ github.run_id }}-${{ github.run_attempt }}-openclaw-linux-amd64
           path: ${{ runner.temp }}/managed-image-contracts/openclaw/linux-amd64/contract.json
           if-no-files-found: error
           retention-days: 90
@@ -977,7 +1645,7 @@ jobs:
       - name: Upload OpenClaw arm64 managed image contract
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-image-openclaw-linux-arm64
+          name: managed-image-${{ github.run_id }}-${{ github.run_attempt }}-openclaw-linux-arm64
           path: ${{ runner.temp }}/managed-image-contracts/openclaw/linux-arm64/contract.json
           if-no-files-found: error
           retention-days: 90
@@ -985,7 +1653,7 @@ jobs:
       - name: Upload Hermes amd64 managed image contract
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-image-hermes-linux-amd64
+          name: managed-image-${{ github.run_id }}-${{ github.run_attempt }}-hermes-linux-amd64
           path: ${{ runner.temp }}/managed-image-contracts/hermes/linux-amd64/contract.json
           if-no-files-found: error
           retention-days: 90
@@ -993,7 +1661,7 @@ jobs:
       - name: Upload Hermes arm64 managed image contract
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-image-hermes-linux-arm64
+          name: managed-image-${{ github.run_id }}-${{ github.run_attempt }}-hermes-linux-arm64
           path: ${{ runner.temp }}/managed-image-contracts/hermes/linux-arm64/contract.json
           if-no-files-found: error
           retention-days: 90
@@ -1001,7 +1669,7 @@ jobs:
       - name: Upload Deep Agents Code amd64 managed image contract
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-image-langchain-deepagents-code-linux-amd64
+          name: managed-image-${{ github.run_id }}-${{ github.run_attempt }}-langchain-deepagents-code-linux-amd64
           path: ${{ runner.temp }}/managed-image-contracts/langchain-deepagents-code/linux-amd64/contract.json
           if-no-files-found: error
           retention-days: 90
@@ -1009,7 +1677,91 @@ jobs:
       - name: Upload Deep Agents Code arm64 managed image contract
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: managed-image-langchain-deepagents-code-linux-arm64
+          name: managed-image-${{ github.run_id }}-${{ github.run_attempt }}-langchain-deepagents-code-linux-arm64
           path: ${{ runner.temp }}/managed-image-contracts/langchain-deepagents-code/linux-arm64/contract.json
           if-no-files-found: error
           retention-days: 90
+
+      # Keep this final: an evidence-artifact upload failure must never leave a
+      # consumer root pointing at a cohort without its durable v2 contracts.
+      - name: Promote durable managed image cohort pointers
+        shell: bash
+        run: |
+          set -euo pipefail
+          cohort_contract="$RUNNER_TEMP/managed-image-contracts/cohort.json"
+          if [ ! -f "$cohort_contract" ] || [ -L "$cohort_contract" ]; then
+            echo "ERROR: durable managed image cohort contract is missing or unsafe." >&2
+            exit 1
+          fi
+          cohort="ghrun-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if ! jq -e \
+            --arg cohort "$cohort" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg revision "$GITHUB_SHA" \
+            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson runId "$GITHUB_RUN_ID" \
+            '
+              .contractVersion == 2
+              and .cohort == $cohort
+              and .source.repository == $repository
+              and .source.revision == $revision
+              and .run == {id: $runId, attempt: $runAttempt}
+              and .agents.openclaw.reference ==
+                (.agents.openclaw.image + "@" + .agents.openclaw.digest)
+              and .agents.openclaw.descriptor == {
+                mediaType: "application/vnd.oci.image.index.v1+json",
+                digest: .agents.openclaw.digest,
+                size: .agents.openclaw.descriptor.size
+              }
+              and (.agents.openclaw.descriptor.size | type) == "number"
+              and .agents.openclaw.descriptor.size > 0
+            ' "$cohort_contract" >/dev/null; then
+            echo "ERROR: durable managed image cohort contract cannot authorize promotion." >&2
+            exit 1
+          fi
+
+          image="$(jq -er '.agents.openclaw.image' "$cohort_contract")"
+          exact_reference="$(jq -er '.agents.openclaw.reference' "$cohort_contract")"
+          expected_digest="$(jq -er '.agents.openclaw.digest' "$cohort_contract")"
+          expected_size="$(jq -er '.agents.openclaw.descriptor.size | tostring' "$cohort_contract")"
+          release_tag="$(jq -r '.source.release // empty' "$cohort_contract")"
+          if [[ ! "$image" =~ ^ghcr\.io/nvidia/nemoclaw/openclaw-sandbox$ ]] ||
+             [[ ! "$exact_reference" =~ ^ghcr\.io/nvidia/nemoclaw/openclaw-sandbox@sha256:[0-9a-f]{64}$ ]] ||
+             [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "ERROR: durable managed image pointer identity is invalid." >&2
+            exit 1
+          fi
+
+          consumer_aliases=("${image}:${GITHUB_SHA}")
+          if [ -n "$release_tag" ]; then
+            if [[ ! "$release_tag" =~ ^v[0-9]+([.][0-9]+){1,3}([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+              echo "ERROR: durable managed image release identity is invalid." >&2
+              exit 1
+            fi
+            consumer_aliases+=("${image}:${release_tag}")
+          fi
+
+          exact_raw="$RUNNER_TEMP/managed-image-openclaw-cohort-exact.raw"
+          docker buildx imagetools inspect "$exact_reference" --raw > "$exact_raw"
+          actual_digest="sha256:$(sha256sum "$exact_raw" | awk '{print $1}')"
+          actual_size="$(wc -c < "$exact_raw" | tr -d '[:space:]')"
+          if [ "$actual_digest" != "$expected_digest" ] ||
+             [ "$actual_size" != "$expected_size" ]; then
+            echo "ERROR: exact OpenClaw cohort bytes differ from the durable contract." >&2
+            exit 1
+          fi
+
+          consumer_tag_args=()
+          for alias in "${consumer_aliases[@]}"; do
+            consumer_tag_args+=(--tag "$alias")
+          done
+          docker buildx imagetools create "${consumer_tag_args[@]}" "$exact_reference"
+
+          for alias in "${consumer_aliases[@]}"; do
+            alias_raw="$RUNNER_TEMP/managed-image-openclaw-pointer-${alias##*:}.raw"
+            docker buildx imagetools inspect "$alias" --raw > "$alias_raw"
+            if ! cmp -s "$exact_raw" "$alias_raw"; then
+              echo "ERROR: OpenClaw cohort pointer is not exact: $alias" >&2
+              exit 1
+            fi
+          done

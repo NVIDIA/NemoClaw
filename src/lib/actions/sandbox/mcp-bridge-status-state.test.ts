@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
+
 const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
 const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
   .filter(Boolean)
@@ -25,7 +27,11 @@ afterEach(() => {
   tempHomes.clear();
 });
 
-describe("cross-agent MCP status state", () => {
+// Each case spawns a Node child that loads the registry and MCP bridge module
+// graph, which the recorded timing hints put at ~5.5s — over the 5s default.
+// Use the same budget as the sibling `mcp-bridge-status-removal` suite so a
+// loaded shard cannot fail these on timing alone.
+describe("cross-agent MCP status state", testTimeoutOptions(15_000), () => {
   it("rejects duplicate static credential keys across bridges in one sandbox", () => {
     const home = createTempHome("nemoclaw-mcp-env-key-");
     const script = `
@@ -219,7 +225,7 @@ registry.registerSandbox({ name: "openclaw-sandbox", agent: "openclaw" });
       }>;
     };
     expect(payload.invalid.exitCode).toBe(2);
-    expect(payload.invalid.message).toContain("Invalid MCP server name '__proto__'");
+    expect(payload.invalid.message).toContain('Invalid MCP server name "__proto__"');
     expect(payload.inherited).toHaveLength(1);
     expect(payload.inherited[0]).toMatchObject({
       server: "constructor",

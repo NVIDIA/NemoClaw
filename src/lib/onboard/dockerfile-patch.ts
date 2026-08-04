@@ -103,6 +103,7 @@ export interface PatchStagedDockerfileOptions {
   dcodeAutoApprovalMode?: DcodeAutoApprovalMode;
   dcodeValidationProfileB64?: string;
   upstreamEndpointUrl?: string | null;
+  compatibleEndpointReasoning?: "true" | "false";
   wslDashboardExposure?: boolean;
   rebuildPreservedEnv?: readonly PreservedEnvFile[];
 }
@@ -393,7 +394,7 @@ export function patchStagedDockerfile(
       `ARG NEMOCLAW_MAX_TOKENS=${sanitizeDockerArg(maxTokens)}`,
     );
   }
-  const reasoning = process.env.NEMOCLAW_REASONING;
+  const reasoning = options.compatibleEndpointReasoning ?? process.env.NEMOCLAW_REASONING;
   if (reasoning === "true" || reasoning === "false") {
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_REASONING=.*$/m,

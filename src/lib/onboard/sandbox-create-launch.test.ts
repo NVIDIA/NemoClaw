@@ -8,8 +8,11 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { loadAgent } from "../agent/defs";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
+import { encodeManagedStartupProfile } from "./managed-startup/profile";
+import { createManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { createOpenshellCliHelpers } from "./openshell-cli";
 import {
   buildSandboxRuntimeEnvArgs,
@@ -104,6 +107,50 @@ describe("buildSandboxRuntimeEnvArgs", () => {
 });
 
 describe("prepareSandboxCreateLaunch", () => {
+  it.each([
+    "openclaw",
+    "hermes",
+    "langchain-deepagents-code",
+  ] as const)("renders one identity-bound held launch for %s without exposing the startup profile", (agentName) => {
+    const request = createManagedStartupRootApplyRequest({
+      agent: agentName,
+      encodedProfile: encodeManagedStartupProfile(managedStartupE2eProfile(agentName)),
+    });
+    const result = prepareSandboxCreateLaunch({
+      agent: loadAgent(agentName),
+      chatUiUrl: "",
+      createArgs: ["--name", `${agentName}-sandbox`],
+      env: {},
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      openshellArgv: (args) => ["openshell", ...args],
+      buildEnv: () => ({}),
+      managedStartupRootApplyRequest: request,
+    });
+
+    expect(result.intendedSandboxStartupCommand).toEqual([
+      "env",
+      ...result.envArgs,
+      "/usr/local/bin/nemoclaw-start",
+    ]);
+    expect(result.managedBootstrapIdentity).toMatch(/^[a-f0-9]{64}$/u);
+    expect(result.sandboxStartupCommand).toEqual([
+      ...result.intendedSandboxStartupCommand.slice(0, -1),
+      "/usr/local/bin/nemoclaw-managed-startup-hold",
+      "--agent",
+      agentName,
+      "--profile-fingerprint",
+      request.profileFingerprint,
+      "--bootstrap-identity",
+      result.managedBootstrapIdentity,
+      "--",
+    ]);
+    expect(result.createArgv.join("\n")).not.toContain(request.encodedProfile);
+  });
+
   it("builds the sandbox create command and runtime env envelope", () => {
     const openshellShellCommand = vi.fn((args: string[]) => `openshell ${args.join(" ")}`);
     const result = prepareSandboxCreateLaunch({
@@ -144,7 +191,11 @@ describe("prepareSandboxCreateLaunch", () => {
       "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS=TELEGRAM_BOT_TOKEN_AGENT_A",
     ]);
     expect(result.sandboxEnv).toEqual({ HOME: "/home/user" });
-    expect(result.sandboxStartupCommand).toEqual(["env", ...result.envArgs, "nemoclaw-start"]);
+    expect(result.sandboxStartupCommand).toEqual([
+      "env",
+      ...result.envArgs,
+      "/usr/local/bin/nemoclaw-start",
+    ]);
     expect(openshellShellCommand).toHaveBeenCalledWith([
       "sandbox",
       "create",
@@ -250,7 +301,7 @@ describe("prepareSandboxCreateLaunch", () => {
     expect(result.sandboxStartupCommand).toEqual([
       "env",
       "NEMOCLAW_OBSERVABILITY=0",
-      "nemoclaw-start",
+      "/usr/local/bin/nemoclaw-start",
     ]);
   });
 
@@ -352,7 +403,7 @@ describe("prepareSandboxCreateLaunch", () => {
         "--",
         "env",
         ...result.envArgs,
-        "nemoclaw-start",
+        "/usr/local/bin/nemoclaw-start",
       ]);
       expect(fs.existsSync(injectedFromPath)).toBe(false);
       expect(fs.existsSync(injectedUrlPath)).toBe(false);
