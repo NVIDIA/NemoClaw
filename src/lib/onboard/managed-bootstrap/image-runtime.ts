@@ -105,12 +105,7 @@ function readManagedBootstrapEnvelopeSnapshot(
     requestFile,
     MANAGED_BOOTSTRAP_ENVELOPE_MAX_BYTES,
   );
-  if (
-    stat.nlink !== 1n ||
-    stat.uid !== 0n ||
-    stat.gid !== 0n ||
-    Number(stat.mode & 0o777n) !== 0o400
-  ) {
+  if (!isProtectedManagedBootstrapFile(stat)) {
     fail("managed bootstrap envelope must be root:root mode 0400 with one link");
   }
   const envelope = parseManagedBootstrapEnvelope(bytes.toString("utf8"));
@@ -152,17 +147,7 @@ function lstatManagedBootstrapPath(target: string): fs.BigIntStats | null {
 }
 
 function sameStableManagedBootstrapFile(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
-  return (
-    left.dev === right.dev &&
-    left.ino === right.ino &&
-    left.mode === right.mode &&
-    left.nlink === right.nlink &&
-    left.uid === right.uid &&
-    left.gid === right.gid &&
-    left.size === right.size &&
-    left.mtimeNs === right.mtimeNs &&
-    left.ctimeNs === right.ctimeNs
-  );
+  return sameClaimedManagedBootstrapFile(left, right) && left.ctimeNs === right.ctimeNs;
 }
 
 function sameClaimedManagedBootstrapFile(left: fs.BigIntStats, right: fs.BigIntStats): boolean {
@@ -342,7 +327,11 @@ function claimManagedBootstrapEnvelope(
       fail("could not atomically claim managed bootstrap envelope");
     }
     const descriptorAfterRename = fs.fstatSync(opened.descriptor, { bigint: true });
-    claimed = readManagedBootstrapEnvelopeSnapshot(expected, paths.file);
+    try {
+      claimed = readManagedBootstrapEnvelopeSnapshot(expected, paths.file);
+    } catch {
+      fail("managed bootstrap envelope changed before its atomic claim");
+    }
     if (
       !sameClaimedManagedBootstrapFile(opened.stat, descriptorAfterRename) ||
       !sameStableManagedBootstrapFile(descriptorAfterRename, claimed.stat) ||

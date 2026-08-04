@@ -759,6 +759,7 @@ printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capab
 
       execFileSync(entrypoint, argv, { env: environment });
       let lines = fs.readFileSync(trace, "utf8").trim().split("\n");
+      expect(lines.filter((line) => line.includes("--recover-bootstrap-claim"))).toHaveLength(2);
       expect(lines.filter((line) => line.includes("--apply-bootstrap-file"))).toHaveLength(1);
       expect(lines.filter((line) => line.startsWith("supervisor:"))).toHaveLength(2);
       expect(lines.filter((line) => line === "startup after validation")).toHaveLength(2);
@@ -771,6 +772,7 @@ printf 'supervisor:%s|%s|%s:identity=%s:request=%s:home=%s:path=%s:lang=%s:capab
       expect(fs.existsSync(claim)).toBe(false);
       expect(fs.existsSync(claimDirectory)).toBe(false);
       lines = fs.readFileSync(trace, "utf8").trim().split("\n");
+      expect(lines.filter((line) => line.includes("--recover-bootstrap-claim"))).toHaveLength(3);
       expect(lines.filter((line) => line.includes("--apply-bootstrap-file"))).toHaveLength(2);
       expect(lines.filter((line) => line.startsWith("supervisor:"))).toHaveLength(3);
       expect(lines.filter((line) => line === "startup after validation")).toHaveLength(3);
