@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { VerifyDeploymentResult } from "../verify-deployment";
+import type { VerifyDeploymentResult } from "../../verify-deployment";
 import { finalizationHandlerDeps, finalizationHandlerRuntime } from "./finalization-deps";
 
 describe("finalizationHandlerDeps.waitForSandboxControlPlaneReady", () => {
