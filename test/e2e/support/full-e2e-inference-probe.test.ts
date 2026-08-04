@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildFullE2eInferenceRequest,
+  FULL_E2E_INFERENCE_EVIDENCE_LIMIT_BYTES,
   type FullE2eInferenceAttemptInput,
   fullE2eInferenceProbeEvidence,
   type InferenceCommandResult,
@@ -106,12 +107,94 @@ describe("full E2E sandbox inference probe", () => {
       "phase-4-sandbox-inference-local-attempt-02",
     ]);
     expect(JSON.parse(requests[1]!.requestBody)).toMatchObject({ max_tokens: 1024 });
-    expect(fullE2eInferenceProbeEvidence(probe)).toMatchObject({
+    expect(fullE2eInferenceProbeEvidence(probe)).toEqual({
+      schemaVersion: "nemoclaw.full_e2e_inference.v1",
       outcome: "passed",
       attempts: [
-        { answerMatched: false, response: { content: "The", finish_reason: "stop" } },
-        { answerMatched: true, response: { content: "42", finish_reason: "stop" } },
+        {
+          answerMatched: false,
+          attempt: 1,
+          exitCode: 0,
+          maxTokens: 512,
+          response: {
+            content: "The",
+            finish_reason: "stop",
+            model: "nvidia/nvidia/nemotron-3-ultra",
+            reasoning_content: "",
+            usage: { completion_tokens: 1, prompt_tokens: 20, total_tokens: 21 },
+          },
+        },
+        {
+          answerMatched: true,
+          attempt: 2,
+          exitCode: 0,
+          maxTokens: 1024,
+          response: {
+            content: "42",
+            finish_reason: "stop",
+            model: "nvidia/nvidia/nemotron-3-ultra",
+            reasoning_content: "",
+            usage: { completion_tokens: 1, prompt_tokens: 20, total_tokens: 21 },
+          },
+        },
       ],
+    });
+  });
+
+  it("retains parse failures through the public evidence serializer", async () => {
+    const probe = await runFullE2eInferenceProbe("nvidia/nvidia/nemotron-3-ultra", async () =>
+      commandResult("not json"),
+    );
+    const parseError = probe.attempts[0]?.parseError;
+
+    expect(parseError).toContain("invalid JSON");
+    expect(fullE2eInferenceProbeEvidence(probe)).toEqual({
+      schemaVersion: "nemoclaw.full_e2e_inference.v1",
+      outcome: "response-failure",
+      attempts: [
+        {
+          answerMatched: false,
+          attempt: 1,
+          exitCode: 0,
+          maxTokens: 512,
+          parseError,
+        },
+      ],
+    });
+  });
+
+  it("bounds projected response evidence and drops unreviewed usage fields", async () => {
+    const oversized = `42${"x".repeat(100_000)}`;
+    const probe = await runFullE2eInferenceProbe("nvidia/nvidia/nemotron-3-ultra", async () =>
+      commandResult(
+        JSON.stringify({
+          choices: [
+            {
+              finish_reason: "stop",
+              message: { content: oversized, reasoning_content: oversized },
+            },
+          ],
+          model: "nvidia/nvidia/nemotron-3-ultra",
+          usage: {
+            completion_tokens: 1,
+            completion_tokens_details: { reasoning_tokens: 1, unreviewed: oversized },
+            unreviewed: oversized,
+          },
+        }),
+      ),
+    );
+    const evidence = fullE2eInferenceProbeEvidence(probe);
+    const attempt = (evidence.attempts as Array<Record<string, unknown>>)[0]!;
+    const response = attempt.response as Record<string, unknown>;
+
+    expect(Buffer.byteLength(JSON.stringify(evidence), "utf8")).toBeLessThanOrEqual(
+      FULL_E2E_INFERENCE_EVIDENCE_LIMIT_BYTES,
+    );
+    expect(response.content).toMatch(/\.\.\.\[truncated\]$/);
+    expect(response.reasoning_content).toMatch(/\.\.\.\[truncated\]$/);
+    expect(response.usage).toEqual({
+      completion_tokens: 1,
+      completion_tokens_details: { reasoning_tokens: 1 },
     });
   });
 

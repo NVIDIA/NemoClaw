@@ -7,6 +7,23 @@ import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts"
 const ARITHMETIC_PROMPT = "What is 6 multiplied by 7? Reply with only the integer, no extra words.";
 
 export const FULL_E2E_INFERENCE_REPLY_BUDGETS = [512, 1024] as const;
+export const FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES = 256 * 1024;
+export const FULL_E2E_INFERENCE_EVIDENCE_LIMIT_BYTES = 32 * 1024;
+
+const EVIDENCE_TEXT_LIMIT_BYTES = 4 * 1024;
+const EVIDENCE_PARSE_ERROR_LIMIT_BYTES = 2 * 1024;
+const EVIDENCE_MODEL_LIMIT_BYTES = 512;
+const EVIDENCE_FINISH_REASON_LIMIT_BYTES = 128;
+const TRUNCATION_SUFFIX = "...[truncated]";
+const USAGE_TOTAL_FIELDS = ["prompt_tokens", "completion_tokens", "total_tokens"] as const;
+const USAGE_DETAIL_FIELDS = [
+  "audio_tokens",
+  "cached_tokens",
+  "reasoning_tokens",
+  "accepted_prediction_tokens",
+  "rejected_prediction_tokens",
+] as const;
+const USAGE_DETAIL_GROUPS = ["prompt_tokens_details", "completion_tokens_details"] as const;
 
 export interface InferenceCommandResult {
   exitCode: number | null;
@@ -56,6 +73,49 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function optionalString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function limitUtf8(value: string, limitBytes: number): string {
+  if (Buffer.byteLength(value, "utf8") <= limitBytes) return value;
+  const contentLimit = limitBytes - Buffer.byteLength(TRUNCATION_SUFFIX, "utf8");
+  let content = "";
+  let contentBytes = 0;
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, "utf8");
+    if (contentBytes + characterBytes > contentLimit) break;
+    content += character;
+    contentBytes += characterBytes;
+  }
+  return `${content}${TRUNCATION_SUFFIX}`;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function projectUsageDetails(value: unknown): Record<string, number> | undefined {
+  if (!isRecord(value)) return undefined;
+  const details = Object.fromEntries(
+    USAGE_DETAIL_FIELDS.flatMap((field) => {
+      const projected = finiteNumber(value[field]);
+      return projected === undefined ? [] : [[field, projected]];
+    }),
+  );
+  return Object.keys(details).length > 0 ? details : undefined;
+}
+
+function projectUsage(value: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!value) return null;
+  const projected: Record<string, unknown> = {};
+  for (const field of USAGE_TOTAL_FIELDS) {
+    const total = finiteNumber(value[field]);
+    if (total !== undefined) projected[field] = total;
+  }
+  for (const field of USAGE_DETAIL_GROUPS) {
+    const details = projectUsageDetails(value[field]);
+    if (details) projected[field] = details;
+  }
+  return projected;
 }
 
 export function buildFullE2eInferenceRequest(model: string, maxTokens: number): string {
@@ -162,7 +222,7 @@ export async function runFullE2eInferenceProbe<Result extends InferenceCommandRe
 export function fullE2eInferenceProbeEvidence<Result extends InferenceCommandResult>(
   probe: FullE2eInferenceProbeResult<Result>,
 ): Record<string, unknown> {
-  return {
+  const evidence = {
     schemaVersion: "nemoclaw.full_e2e_inference.v1",
     outcome: probe.outcome,
     attempts: probe.attempts.map((attempt) => ({
@@ -170,16 +230,36 @@ export function fullE2eInferenceProbeEvidence<Result extends InferenceCommandRes
       attempt: attempt.attempt,
       exitCode: attempt.result.exitCode,
       maxTokens: attempt.maxTokens,
-      parseError: attempt.parseError,
-      response: attempt.response
+      ...(attempt.parseError
+        ? { parseError: limitUtf8(attempt.parseError, EVIDENCE_PARSE_ERROR_LIMIT_BYTES) }
+        : {}),
+      ...(attempt.response
         ? {
-            content: attempt.response.content,
-            finish_reason: attempt.response.finishReason,
-            model: attempt.response.model,
-            reasoning_content: attempt.response.reasoningContent,
-            usage: attempt.response.usage,
+            response: {
+              content: limitUtf8(attempt.response.content, EVIDENCE_TEXT_LIMIT_BYTES),
+              finish_reason:
+                attempt.response.finishReason === null
+                  ? null
+                  : limitUtf8(attempt.response.finishReason, EVIDENCE_FINISH_REASON_LIMIT_BYTES),
+              model:
+                attempt.response.model === null
+                  ? null
+                  : limitUtf8(attempt.response.model, EVIDENCE_MODEL_LIMIT_BYTES),
+              reasoning_content: limitUtf8(
+                attempt.response.reasoningContent,
+                EVIDENCE_TEXT_LIMIT_BYTES,
+              ),
+              usage: projectUsage(attempt.response.usage),
+            },
           }
-        : undefined,
+        : {}),
     })),
   };
+  const evidenceBytes = Buffer.byteLength(JSON.stringify(evidence), "utf8");
+  if (evidenceBytes > FULL_E2E_INFERENCE_EVIDENCE_LIMIT_BYTES) {
+    throw new Error(
+      `full E2E inference evidence exceeded ${FULL_E2E_INFERENCE_EVIDENCE_LIMIT_BYTES} bytes after projection`,
+    );
+  }
+  return evidence;
 }

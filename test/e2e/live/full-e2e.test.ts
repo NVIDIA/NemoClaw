@@ -36,6 +36,7 @@ import {
   extractOpenClawAgentPayloadText,
 } from "./agent-turn-latency-helpers.ts";
 import {
+  FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
   fullE2eInferenceProbeEvidence,
   runFullE2eInferenceProbe,
 } from "./full-e2e-inference-probe.ts";
@@ -488,6 +489,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
       ],
       {
         artifactName: attempt.artifactName,
+        captureLimitBytes: FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
         env: env(),
         redactionValues,
         timeoutMs: 120_000,
