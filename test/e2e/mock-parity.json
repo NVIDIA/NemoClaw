@@ -14,6 +14,16 @@
       ]
     },
     {
+      "live": "test/e2e/live/managed-image-protected-runtime.test.ts",
+      "fast": [
+        "src/lib/inference/nim.test.ts",
+        "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
+        "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+        "test/managed-image-protected-runtime-contract.test.ts",
+        "test/pr-risk-plan.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/hermes-gpu-startup.test.ts",
       "fast": [
         "test/e2e/support/hermes-gpu-startup-fallback.test.ts",
