@@ -11,6 +11,7 @@ import {
   shouldUseDockerGpuPatchHostNetwork,
   verifyDockerGpuSandboxLocalInference,
   verifyGpuSandboxAfterReady,
+  verifyGpuSandboxLocalInferenceAndCommitAfterReady,
 } from "./docker-gpu-local-inference";
 
 const HOST_NETWORK_ENV = {
@@ -311,10 +312,10 @@ describe("verifyGpuSandboxAfterReady", () => {
     };
   }
 
-  it("runs the GPU proof and the runtime inference gate when the patch is active", () => {
+  it("runs the GPU proof and the runtime inference gate when the patch is active", async () => {
     const log = vi.fn();
     const verifyDirectSandboxGpu = vi.fn();
-    verifyGpuSandboxAfterReady(
+    await verifyGpuSandboxAfterReady(
       GPU_CONFIG,
       "vllm-local",
       baseOptions({
@@ -327,12 +328,12 @@ describe("verifyGpuSandboxAfterReady", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("reached local inference"));
   });
 
-  it("captures the CUDA-usability proof onto the config for status persistence (#4231)", () => {
+  it("captures the CUDA-usability proof onto the config for status persistence (#4231)", async () => {
     const proof = { status: "verified" as const, cudaVerified: true, at: "t" };
     const config: { sandboxGpuEnabled: boolean; sandboxGpuProof?: typeof proof | null } = {
       sandboxGpuEnabled: true,
     };
-    verifyGpuSandboxAfterReady(
+    await verifyGpuSandboxAfterReady(
       config,
       "vllm-local",
       baseOptions({
@@ -343,45 +344,86 @@ describe("verifyGpuSandboxAfterReady", () => {
     expect(config.sandboxGpuProof).toEqual(proof);
   });
 
-  it("does not duplicate proof diagnostics when Docker GPU patch verifier handles them", () => {
+  it("does not duplicate proof diagnostics when Docker GPU patch verifier handles them", async () => {
     const proofError = new Error("process.exit");
     const verifyGpuOrExit = vi.fn(() => {
       throw proofError;
     });
     const logError = vi.fn();
-    expect(() =>
+    await expect(
       verifyGpuSandboxAfterReady(
         GPU_CONFIG,
         "ollama-local",
         baseOptions({ verifyGpuOrExit, logError }),
       ),
-    ).toThrow(proofError);
+    ).rejects.toBe(proofError);
     expect(logError).not.toHaveBeenCalled();
   });
 
-  it("routes failure diagnostics through the provided error sink and exits", () => {
+  it("routes failure diagnostics through the provided error sink and throws for rollback", async () => {
     const logError = vi.fn();
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("process.exit");
-    }) as never);
-    try {
-      expect(() =>
-        verifyGpuSandboxAfterReady(
-          GPU_CONFIG,
-          "ollama-local",
-          baseOptions({
-            logError,
-            deps: { execInSandbox: execEmitting("HTTP_000"), sleep: vi.fn() },
-          }),
-        ),
-      ).toThrow("process.exit");
-      expect(exitSpy).toHaveBeenCalledWith(1);
-      expect(logError).toHaveBeenCalledWith(
-        expect.stringContaining("Local inference reachability check failed"),
-      );
-    } finally {
-      exitSpy.mockRestore();
-    }
+    await expect(
+      verifyGpuSandboxAfterReady(
+        GPU_CONFIG,
+        "ollama-local",
+        baseOptions({
+          logError,
+          deps: { execInSandbox: execEmitting("HTTP_000"), sleep: vi.fn() },
+        }),
+      ),
+    ).rejects.toThrow("GPU sandbox local inference reachability failed");
+    expect(logError).toHaveBeenCalledWith(
+      expect.stringContaining("Local inference reachability check failed"),
+    );
+  });
+});
+
+describe("verifyGpuSandboxLocalInferenceAndCommitAfterReady", () => {
+  function options() {
+    return {
+      ...gpuPatchOptions(),
+      verifyDirectSandboxGpu: vi.fn(),
+      runCaptureOpenshell: vi.fn(() => ""),
+      log: vi.fn(),
+    };
+  }
+
+  it("commits only after local-inference reachability returns HTTP 2xx", async () => {
+    const runtimePatch = {
+      commitAfterReady: vi.fn(),
+      rollbackManagedStartupAfterCreateFailure: vi.fn(),
+    };
+    await verifyGpuSandboxLocalInferenceAndCommitAfterReady(
+      GPU_CONFIG,
+      "ollama-local",
+      {
+        ...options(),
+        deps: { execInSandbox: execEmitting("HTTP_200"), sleep: vi.fn() },
+      },
+      runtimePatch,
+    );
+    expect(runtimePatch.commitAfterReady).toHaveBeenCalledOnce();
+    expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).not.toHaveBeenCalled();
+  });
+
+  it("rolls back before propagating an inference verification failure", async () => {
+    const runtimePatch = {
+      commitAfterReady: vi.fn(),
+      rollbackManagedStartupAfterCreateFailure: vi.fn(),
+    };
+    await expect(
+      verifyGpuSandboxLocalInferenceAndCommitAfterReady(
+        GPU_CONFIG,
+        "ollama-local",
+        {
+          ...options(),
+          deps: { execInSandbox: execEmitting("HTTP_000"), sleep: vi.fn() },
+        },
+        runtimePatch,
+      ),
+    ).rejects.toThrow("GPU sandbox local inference reachability failed");
+    expect(runtimePatch.rollbackManagedStartupAfterCreateFailure).toHaveBeenCalledOnce();
+    expect(runtimePatch.commitAfterReady).not.toHaveBeenCalled();
   });
 });
 
