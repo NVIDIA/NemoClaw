@@ -591,7 +591,7 @@ jobs:
             .filter((entry) => entry.isDirectory())
             .flatMap((entry) => {
               const manifestPath = path.join(projectsRoot, entry.name, "package.json");
-              if (!fs.existsSync(manifestPath)) return [];
+              if (!fs.existsSync(manifestPath) || !fs.lstatSync(manifestPath).isFile()) return [];
               const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
               return [{ name: manifest.name, version: manifest.version }];
             });

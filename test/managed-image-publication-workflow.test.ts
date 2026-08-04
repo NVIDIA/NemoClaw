@@ -183,6 +183,7 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
     "@openclaw/msteams",
     "@openclaw/googlechat",
     "/sandbox/.openclaw/npm/projects",
+    "lstatSync(manifestPath).isFile()",
     "matches.length !== 1",
     "microsoft-teams-apps",
     "config.plugins?.entries?.[id]?.enabled !== false",
@@ -262,6 +263,18 @@ describe("complete managed-image publication workflow", () => {
     const channelGuardStart = validationRun.lastIndexOf("for (const id of [", channelGuardEnd);
     expect(channelGuardStart).toBeGreaterThan(-1);
     expect(validationRun.slice(channelGuardStart, channelGuardEnd)).toContain('"googlechat",');
+    const weakenedWorkflow = structuredClone(managedWorkflow);
+    const weakenedValidation = step(
+      managedPublisher(weakenedWorkflow),
+      "Validate exact managed image before promotion",
+    );
+    weakenedValidation.run = weakenedValidation.run?.replace(
+      " || !fs.lstatSync(manifestPath).isFile()",
+      "",
+    );
+    expect(publicationBoundaryErrors(baseWorkflow, weakenedWorkflow)).toContain(
+      "exact managed image validation is missing lstatSync(manifestPath).isFile()",
+    );
     expect(publisher).toMatchObject({
       needs: ["build-and-push-hermes", "build-and-push-dcode", "build-and-push-openclaw"],
       permissions: {
