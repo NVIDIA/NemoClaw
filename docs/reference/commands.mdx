@@ -1177,14 +1177,17 @@ When a timed shields-down window reaches its deadline, auto-restore closes the p
 The gate blocks new mutations and waits for the recorded live owner to release its exact lock generation before auto-restore restores lockdown.
 NemoClaw does not signal that process because portable process inspection cannot prove that all descendants stopped.
 An interactive command can take over an expired timer.
-The interactive takeover and the detached auto-restore timer each make up to 7 restoration attempts, with 5 seconds between attempts and up to 30 seconds of retry delay.
+The interactive takeover makes up to 7 restoration attempts.
+The detached auto-restore timer makes up to 7 total recovery attempts across deadline setup and restoration.
+Both paths wait 5 seconds between failed attempts, for up to 30 seconds of retry delay.
 The deadline gate remains closed during those attempts.
 If restoration cannot commit, NemoClaw attempts to record durable containment.
-If that containment commit also fails, NemoClaw retains the exact lifecycle and deadline gates instead.
+If that containment commit also fails, NemoClaw retains any exact lifecycle and deadline gates it already owns.
+A state-directory failure that prevented gate publication also prevents normal mutation-lock acquisition.
 Correct the reported state-directory write failure, then retry a NemoClaw command for the sandbox to obtain exact-generation recovery guidance.
 The interactive command returns an error, or the detached timer exits with a failure status.
 NemoClaw also records durable containment when an owner exits before it can prove that the owner's descendants stopped, or when ownership becomes ambiguous.
-Durable containment, or the retained exact gates after a failed containment commit, blocks new mutations until you complete exact-generation operator recovery.
+Durable containment, retained exact gates, or the fail-closed state-directory error blocks new mutations until you complete exact-generation operator recovery.
 Stop all NemoClaw processes for the sandbox, then follow the paths, identities, tokens, and removal order in the reported error.
 Verify each recorded generation is unchanged, remove only the exact stale generations first, and remove the exact containment generation last.
 
@@ -2967,7 +2970,10 @@ Snapshots are stored in `~/.nemoclaw/rebuild-backups/<name>/`.
 The command requires shields to be down and keeps the shields check and backup under one per-sandbox transition.
 If the timer expires during a long-running backup, the deadline gate blocks new mutations and waits for the exact backup owner to finish.
 Auto-restore does not signal the backup process.
-If ownership becomes ambiguous, NemoClaw records durable containment and reports exact-generation recovery guidance.
+If ownership becomes ambiguous, NemoClaw attempts to record durable containment and reports exact-generation recovery guidance.
+If the containment commit fails, NemoClaw retains any exact lifecycle and deadline gates it already owns.
+A state-directory failure that prevented gate publication also prevents normal mutation-lock acquisition.
+Correct the reported state-directory write failure, then retry a NemoClaw command for the sandbox to obtain exact-generation recovery guidance.
 When the sandbox has active baseline exclusions, successful output lists their keys and repeats that excluded egress leaves dependent agent features unsupported for that sandbox.
 
 ```bash
@@ -3003,7 +3009,10 @@ It preserves directories that exist only in the target manifest or whose backup 
 The state replacement, mutable-config permission repair, and policy reconciliation run under the same per-sandbox transition.
 If the timer expires during that work, the deadline gate blocks new mutations and waits for the exact restore owner to finish.
 Auto-restore does not signal the restore process.
-If ownership becomes ambiguous, NemoClaw records durable containment and reports exact-generation recovery guidance.
+If ownership becomes ambiguous, NemoClaw attempts to record durable containment and reports exact-generation recovery guidance.
+If the containment commit fails, NemoClaw retains any exact lifecycle and deadline gates it already owns.
+A state-directory failure that prevented gate publication also prevents normal mutation-lock acquisition.
+Correct the reported state-directory write failure, then retry a NemoClaw command for the sandbox to obtain exact-generation recovery guidance.
 
 The selector accepts any of:
 

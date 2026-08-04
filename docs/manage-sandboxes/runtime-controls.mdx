@@ -123,14 +123,17 @@ An MCP server removed during the shields-down window stays removed.
 A surviving server keeps its recorded endpoint and address pins while its policy ownership remains exact.
 
 An interactive command can take over an expired timer.
-The interactive takeover and the detached auto-restore timer each make up to 7 restoration attempts, with 5 seconds between attempts and up to 30 seconds of retry delay.
+The interactive takeover makes up to 7 restoration attempts.
+The detached auto-restore timer makes up to 7 total recovery attempts across deadline setup and restoration.
+Both paths wait 5 seconds between failed attempts, for up to 30 seconds of retry delay.
 The deadline gate remains closed during those attempts.
 If restoration cannot commit, NemoClaw attempts to record durable containment.
-If that containment commit also fails, NemoClaw retains the exact lifecycle and deadline gates instead.
+If that containment commit also fails, NemoClaw retains any exact lifecycle and deadline gates it already owns.
+A state-directory failure that prevented gate publication also prevents normal mutation-lock acquisition.
 Correct the reported state-directory write failure, then retry a NemoClaw command for the sandbox to obtain exact-generation recovery guidance.
 The interactive command returns an error, or the detached timer exits with a failure status.
 NemoClaw also records durable containment when an owner exits before it can prove that the owner's descendants stopped, or when ownership becomes ambiguous.
-Durable containment, or the retained exact gates after a failed containment commit, keeps new mutations blocked until you complete exact-generation operator recovery.
+Durable containment, retained exact gates, or the fail-closed state-directory error keeps new mutations blocked until you complete exact-generation operator recovery.
 Stop all NemoClaw processes for the sandbox, then follow the paths, identities, tokens, and removal order in the reported error.
 Verify each recorded generation is unchanged, remove only the exact stale generations first, and remove the exact containment generation last.
 

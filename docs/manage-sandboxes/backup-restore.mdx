@@ -94,7 +94,10 @@ Snapshot creation and restore share the per-sandbox transition lock with the shi
 If a timed shields-down window expires during snapshot work, auto-restore closes the per-sandbox lifecycle deadline gate.
 The gate blocks new mutations and waits for the recorded live owner to release its exact lock generation.
 NemoClaw does not signal the snapshot process.
-If ownership becomes ambiguous, NemoClaw records durable containment and reports exact-generation recovery guidance.
+If ownership becomes ambiguous, NemoClaw attempts to record durable containment and reports exact-generation recovery guidance.
+If the containment commit fails, NemoClaw retains any exact lifecycle and deadline gates it already owns.
+A state-directory failure that prevented gate publication also prevents normal mutation-lock acquisition.
+Correct the reported state-directory write failure, then retry a NemoClaw command for the sandbox to obtain exact-generation recovery guidance.
 Stop all NemoClaw processes for the sandbox, then follow that guidance before you retry the snapshot.
 
 Tag a snapshot with a human-readable label:

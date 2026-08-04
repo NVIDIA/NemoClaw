@@ -60,6 +60,10 @@ interface TimerRuntimeOptions {
   maxRestoreAttempts?: number;
 }
 
+interface RecoveryAttemptBudget {
+  attemptsUsed: number;
+}
+
 type LockAgentConfig = typeof shields.lockAgentConfig;
 type RestoreAttemptOutcome = "complete" | "retry" | "revoked";
 
@@ -248,9 +252,10 @@ function rebuildLeaseOwnerIsCurrent(args: TimerArgs): boolean {
   );
 }
 
-async function runRestoreTimer(
+async function runRestoreTimerWithBudget(
   args: TimerArgs,
-  runtimeOptions: TimerRuntimeOptions = {},
+  runtimeOptions: TimerRuntimeOptions,
+  recoveryBudget: RecoveryAttemptBudget,
 ): Promise<void> {
   const retryDelayMs =
     Number.isFinite(runtimeOptions.retryDelayMs) && (runtimeOptions.retryDelayMs ?? 0) >= 0
@@ -269,10 +274,48 @@ async function runRestoreTimer(
     if (!markerMatchesCurrentTimer(args)) return false;
     retryScheduled = true;
     setTimeout(() => {
-      void runRestoreTimer(args, runtimeOptions);
+      void runRestoreTimerWithBudget(args, runtimeOptions, recoveryBudget);
     }, retryDelayMs);
     return true;
   };
+  const assertTakeoverAuthority = (): void => {
+    if (!markerMatchesCurrentTimer(args)) {
+      throw new Error("Auto-restore authority changed before Shields transition takeover");
+    }
+  };
+  const terminalRecoveryFailure = (attempt: number): Error => {
+    const lockPath = getMcpLifecycleLockPath(args.sandboxName, STATE_DIR);
+    const reason = `Auto-restore recovery failed after ${String(attempt)} ${attempt === 1 ? "attempt" : "attempts"} while the exact timer generation still owned recovery authority`;
+    try {
+      beginCommittedMcpLifecycleContainmentSync(
+        args.sandboxName,
+        args.processToken!,
+        reason,
+        STATE_DIR,
+        assertTakeoverAuthority,
+      );
+    } catch (error) {
+      if (isDurableContainmentFailure(error)) return error as Error;
+      if (!markerMatchesCurrentTimer(args)) {
+        return error instanceof Error ? error : new Error(String(error));
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      return durableMcpLifecycleContainmentFailure(
+        new Error(
+          `${reason}; durable containment could not be committed: ${message}. Correct the state-directory write failure, then retry a NemoClaw command for this sandbox to obtain exact-generation recovery guidance`,
+        ),
+        lockPath,
+        { retainOwnedLifecycleGates: true },
+      );
+    }
+    return durableMcpLifecycleContainmentFailure(
+      new Error(
+        `${reason}. Durable containment now blocks sandbox mutations. Stop all NemoClaw processes for this sandbox, then follow the exact-generation recovery guidance from the next NemoClaw command.`,
+      ),
+      lockPath,
+    );
+  };
+  const attemptsAtEntry = recoveryBudget.attemptsUsed;
 
   try {
     // Timer markers are the source of authority. If the marker was removed or
@@ -295,11 +338,6 @@ async function runRestoreTimer(
     if (!args.processToken || !/^[0-9a-f]{32}$/.test(args.processToken)) {
       throw new Error("Auto-restore timer has no valid transition takeover token");
     }
-    const assertTakeoverAuthority = (): void => {
-      if (!markerMatchesCurrentTimer(args)) {
-        throw new Error("Auto-restore authority changed before Shields transition takeover");
-      }
-    };
     const restoreUnderDeadlineFence = (): RestoreAttemptOutcome =>
       withShieldsTransitionLock(
         args.sandboxName,
@@ -485,7 +523,8 @@ async function runRestoreTimer(
         },
       );
     const restoreWhileDeadlineOwned = async (): Promise<void> => {
-      for (let attempt = 1; ; attempt += 1) {
+      for (;;) {
+        const attempt = (recoveryBudget.attemptsUsed += 1);
         let outcome: RestoreAttemptOutcome;
         try {
           shields.prepareAutoRestoreTransitionTakeover(
@@ -515,38 +554,8 @@ async function runRestoreTimer(
         if (outcome !== "retry") return;
         if (!markerMatchesCurrentTimer(args)) return;
         if (attempt >= maxRestoreAttempts) {
-          const lockPath = getMcpLifecycleLockPath(args.sandboxName, STATE_DIR);
-          const reason = `Auto-restore failed after ${String(attempt)} attempts while the exact timer generation retained the lifecycle deadline`;
-          try {
-            beginCommittedMcpLifecycleContainmentSync(
-              args.sandboxName,
-              args.processToken!,
-              reason,
-              STATE_DIR,
-              assertTakeoverAuthority,
-            );
-          } catch (error) {
-            if (isDurableContainmentFailure(error)) {
-              terminalContainment = true;
-              throw error;
-            }
-            if (!markerMatchesCurrentTimer(args)) throw error;
-            terminalContainment = true;
-            const message = error instanceof Error ? error.message : String(error);
-            throw durableMcpLifecycleContainmentFailure(
-              new Error(
-                `${reason}; durable containment could not be committed: ${message}. Correct the state-directory write failure, then retry a NemoClaw command for this sandbox to obtain exact-generation recovery guidance`,
-              ),
-              lockPath,
-            );
-          }
           terminalContainment = true;
-          throw durableMcpLifecycleContainmentFailure(
-            new Error(
-              `${reason}. Durable containment now blocks sandbox mutations. Stop all NemoClaw processes for this sandbox, then follow the exact-generation recovery guidance from the next NemoClaw command.`,
-            ),
-            lockPath,
-          );
+          throw terminalRecoveryFailure(attempt);
         }
         await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
         if (!markerMatchesCurrentTimer(args)) return;
@@ -560,6 +569,13 @@ async function runRestoreTimer(
         stateDir: STATE_DIR,
         pollIntervalMs: 50,
         timeoutMs: 5_000,
+        throwOnCommittedContainment: true,
+        onSetupFailure: async () => {
+          const attempt = (recoveryBudget.attemptsUsed += 1);
+          if (attempt >= maxRestoreAttempts) throw terminalRecoveryFailure(attempt);
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+          assertTakeoverAuthority();
+        },
         onContainment: ({ ownerPid, reason }) => {
           appendAudit({
             action: "shields_up_failed",
@@ -573,19 +589,37 @@ async function runRestoreTimer(
       },
     );
   } catch (error: unknown) {
-    if (isDurableContainmentFailure(error)) terminalContainment = true;
+    let reportedError = error;
+    if (isDurableContainmentFailure(reportedError)) {
+      terminalContainment = true;
+    } else if (markerMatchesCurrentTimer(args)) {
+      if (recoveryBudget.attemptsUsed === attemptsAtEntry) {
+        recoveryBudget.attemptsUsed += 1;
+      }
+      if (recoveryBudget.attemptsUsed >= maxRestoreAttempts) {
+        reportedError = terminalRecoveryFailure(recoveryBudget.attemptsUsed);
+        terminalContainment = isDurableContainmentFailure(reportedError);
+      }
+    }
     appendAudit({
       action: "shields_up_failed",
       sandbox: args.sandboxName,
       timestamp: new Date().toISOString(),
       restored_by: "auto_timer",
-      error: error instanceof Error ? error.message : String(error),
+      error: reportedError instanceof Error ? reportedError.message : String(reportedError),
     });
     exitCode = 1;
-    if (!terminalContainment) scheduleRetry();
+    if (!terminalContainment && recoveryBudget.attemptsUsed < maxRestoreAttempts) scheduleRetry();
   } finally {
     if (!retryScheduled) process.exit(exitCode);
   }
+}
+
+async function runRestoreTimer(
+  args: TimerArgs,
+  runtimeOptions: TimerRuntimeOptions = {},
+): Promise<void> {
+  return await runRestoreTimerWithBudget(args, runtimeOptions, { attemptsUsed: 0 });
 }
 
 function main(): void {

@@ -54,6 +54,10 @@ interface AcquiredMcpLifecycleLock {
 export interface McpLifecycleDeadlineFenceOptions extends McpLifecycleLockOptions {
   /** Audit an owner that keeps the deadline gate closed while it exits naturally. */
   onContainment?: (details: McpLifecycleDeadlineContainment) => Promise<void> | void;
+  /** Account for a recoverable deadline acquisition or main-publication failure. */
+  onSetupFailure?: (error: unknown) => Promise<void> | void;
+  /** Return operator guidance instead of waiting when durable containment already exists. */
+  throwOnCommittedContainment?: boolean;
 }
 
 export interface McpLifecycleDeadlineFenceSyncOptions extends McpLifecycleLockOptions {
@@ -841,6 +845,11 @@ async function acquireDeadlineFence(
       throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
     }
     if (await mcpLifecycleLockPathExists(committedContainmentPath(lockPath))) {
+      if (options.throwOnCommittedContainment) {
+        const containmentPath = committedContainmentPath(lockPath);
+        const reason = `A committed process-tree containment requires operator resolution before auto-restore can continue. Stop all NemoClaw processes for this sandbox; inspect '${lockPath}', '${lockPath}.reaper', '${deadlinePath}', and '${containmentPath}'; record each target's file kind, device/inode, and owner token when present; verify every recorded identity is unchanged; remove only the exact stale owner generations first and the exact containment generation last before retrying.`;
+        throw durableMcpLifecycleContainmentFailure(new Error(reason), lockPath);
+      }
       if (
         notifiedGeneration !== "committed-containment" &&
         performance.now() - blockedAt >= timeoutMs
@@ -889,17 +898,33 @@ async function acquireDeadlineFence(
       const generation = `${String(observation.dev)}:${String(observation.ino)}:${
         observation.owner?.token ?? "invalid"
       }`;
-      if (generation !== notifiedGeneration && performance.now() - blockedAt >= timeoutMs) {
-        await reportDeadlineContainment(options, {
-          ownerPid: observation.owner?.pid ?? null,
-          reason:
-            "Another auto-restore deadline owner is active or cannot be verified; the deadline gate remains closed pending operator or distributed-lease resolution.",
-        });
-        notifiedGeneration = generation;
+      if (performance.now() - blockedAt >= timeoutMs) {
+        const reason =
+          "Another auto-restore deadline owner is active or cannot be verified; the deadline gate remains closed pending operator or distributed-lease resolution.";
+        if (options.onSetupFailure) {
+          blockedAt = performance.now();
+          await options.onSetupFailure(new Error(reason));
+        }
+        if (generation !== notifiedGeneration) {
+          await reportDeadlineContainment(options, {
+            ownerPid: observation.owner?.pid ?? null,
+            reason,
+          });
+          notifiedGeneration = generation;
+        }
+        if (options.onSetupFailure) {
+          continue;
+        }
       }
     } else {
       blockedAt = performance.now();
       notifiedGeneration = null;
+      if (options.onSetupFailure) {
+        await options.onSetupFailure(
+          new Error("Auto-restore could not publish or inspect its lifecycle deadline gate"),
+        );
+        continue;
+      }
     }
     await sleep(pollIntervalMs);
   }
@@ -1056,15 +1081,22 @@ async function clearDeadlineProtectedPath(
     const generation = `${String(observed.dev)}:${String(observed.ino)}:${
       owner?.token ?? "invalid"
     }`;
-    if (
-      generation !== notifiedGeneration &&
-      performance.now() - blockedAt >= containmentTimeoutMs
-    ) {
-      await reportDeadlineContainment(options, {
-        ownerPid: owner?.pid ?? null,
-        reason: `The active ${targetLabel} owner was preserved because portable process inspection cannot prove that forcibly terminating it would contain every descendant. Shields remain DOWN and the deadline gate is blocking new mutations. Wait for the owner to finish, or stop all NemoClaw processes for this sandbox before resolving the recorded lock generation.`,
-      });
-      notifiedGeneration = generation;
+    if (performance.now() - blockedAt >= containmentTimeoutMs) {
+      const reason = `The active ${targetLabel} owner was preserved because portable process inspection cannot prove that forcibly terminating it would contain every descendant. Shields remain DOWN and the deadline gate is blocking new mutations. Wait for the owner to finish, or stop all NemoClaw processes for this sandbox before resolving the recorded lock generation.`;
+      if (options.onSetupFailure) {
+        blockedAt = performance.now();
+        await options.onSetupFailure(new Error(reason));
+      }
+      if (generation !== notifiedGeneration) {
+        await reportDeadlineContainment(options, {
+          ownerPid: owner?.pid ?? null,
+          reason,
+        });
+        notifiedGeneration = generation;
+      }
+      if (options.onSetupFailure) {
+        continue;
+      }
     }
     await sleep(pollIntervalMs);
   }
@@ -1211,16 +1243,28 @@ async function publishDeadlineMainOwner(
       }
       pendingCandidateToken = null;
       notifiedError = null;
+      if (options.onSetupFailure) {
+        await options.onSetupFailure(
+          new Error("Auto-restore could not publish its deadline-owned mutation generation"),
+        );
+        continue;
+      }
     } catch (error) {
       if (readShieldsTimerTakeoverToken(sandboxName, stateDir) !== takeoverToken) {
         throw new Error(`Auto-restore authority changed for sandbox '${sandboxName}'`);
       }
       const message = error instanceof Error ? error.message : String(error);
       if (isDurableContainmentError(error)) {
+        const resolutionReason = `${message} The deadline gate remains closed. Stop all NemoClaw processes for this sandbox; inspect '${lockPath}', '${lockPath}.reaper', '${lockPath}.deadline', and '${committedContainmentPath(lockPath)}'; record each target's file kind, device/inode, and owner token when present; verify every recorded identity is unchanged; remove only the exact stale owner generations first and the exact containment generation last before retrying.`;
+        if (options.throwOnCommittedContainment) {
+          const failure = durableMcpLifecycleContainmentFailure(error, lockPath);
+          failure.message = resolutionReason;
+          throw failure;
+        }
         if (message !== notifiedError) {
           await reportDeadlineContainment(options, {
             ownerPid: null,
-            reason: `${message} The deadline gate remains closed. Stop all NemoClaw processes for this sandbox; inspect '${lockPath}', '${lockPath}.reaper', '${lockPath}.deadline', and '${committedContainmentPath(lockPath)}'; record each target's file kind, device/inode, and owner token when present; verify every recorded identity is unchanged; remove only the exact stale owner generations first and the exact containment generation last before retrying.`,
+            reason: resolutionReason,
           });
           notifiedError = message;
         }
@@ -1236,12 +1280,16 @@ async function publishDeadlineMainOwner(
         }
         continue;
       }
+      if (options.onSetupFailure) await options.onSetupFailure(error);
       if (message !== notifiedError) {
         await reportDeadlineContainment(options, {
           ownerPid: null,
           reason: `Auto-restore deadline setup is retrying while the gate remains closed: ${message}`,
         });
         notifiedError = message;
+      }
+      if (options.onSetupFailure) {
+        continue;
       }
     }
     await sleep(pollIntervalMs);
