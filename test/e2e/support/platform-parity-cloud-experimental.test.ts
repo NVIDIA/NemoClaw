@@ -559,13 +559,14 @@ describe("P0-E cloud-experimental parity guardrails", () => {
       expect(
         result.stderr.match(/Retrying NemoClaw status after a non-success health probe/gu) ?? [],
       ).toHaveLength(expectedRetryMessages);
-      if (expectedStatus !== 0) {
-        expect(result.stderr).toContain(
-          "nemoclaw status failed while checking 'disabled' after 3 attempts",
-        );
-        expect(result.stderr).toContain('"dcodeAutoApprovalMode":"disabled"');
-        expect(result.stderr).toContain('"attempt":3');
-      }
+      const expectFailureDiagnostics = expectedStatus !== 0;
+      expect(
+        result.stderr.includes("nemoclaw status failed while checking 'disabled' after 3 attempts"),
+      ).toBe(expectFailureDiagnostics);
+      expect(result.stderr.includes('"dcodeAutoApprovalMode":"disabled"')).toBe(
+        expectFailureDiagnostics,
+      );
+      expect(result.stderr.includes('"attempt":3')).toBe(expectFailureDiagnostics);
     } finally {
       fs.rmSync(tempDir, { force: true, recursive: true });
     }
