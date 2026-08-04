@@ -6,9 +6,12 @@
 from __future__ import annotations
 
 import argparse
+import grp
 import json
 import os
+import pwd
 import secrets
+import stat
 import sys
 import time
 from pathlib import Path
@@ -16,6 +19,8 @@ from typing import Any
 
 _OWNER_PREFIX = "nemoclaw-state-restore:"
 _POLL_INTERVAL_SECONDS = 0.1
+_OWNERSHIP_FILE = ".nemoclaw-restore-drain"
+_GATEWAY_USER = "gateway"
 
 
 def _configure_home(raw_home: str) -> Path:
@@ -54,31 +59,64 @@ def _release_owned_marker(drain_control: Any, home: Path, token: str) -> None:
         raise RuntimeError("Hermes restore guard could not clear its drain marker")
 
 
+def _ownership_path(home: Path) -> Path:
+    return home / _OWNERSHIP_FILE
+
+
+def _claim_ownership(home: Path, token: str) -> bool:
+    try:
+        descriptor = os.open(
+            _ownership_path(home), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+        )
+    except FileExistsError:
+        return False
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(token)
+    return True
+
+
+def _release_ownership(home: Path, token: str) -> None:
+    path = _ownership_path(home)
+    try:
+        recorded = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return
+    if recorded == token:
+        path.unlink(missing_ok=True)
+
+
 def begin_drain(home: Path, timeout_seconds: float) -> str:
     drain_control, status = _gateway_modules()
-    pid = status.get_running_pid()
-    if pid is None:
-        return "inactive"
+    token = f"{_OWNER_PREFIX}{secrets.token_hex(16)}"
+    if not _claim_ownership(home, token):
+        raise RuntimeError("Another NemoClaw restore already owns the Hermes drain")
 
-    token = ""
-    if not drain_control.drain_requested(home=home):
-        token = f"{_OWNER_PREFIX}{secrets.token_hex(16)}"
-        drain_control.write_drain_request(principal=token, home=home)
-
-    deadline = time.monotonic() + timeout_seconds
+    owned = False
     try:
+        if drain_control.drain_requested(home=home):
+            result = "preserved"
+        else:
+            drain_control.write_drain_request(principal=token, home=home)
+            owned = True
+            result = token
+
+        deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             live_pid = status.get_running_pid()
             if live_pid is None or _runtime_is_safely_drained(status, live_pid):
-                return token or "preserved"
+                if not owned:
+                    _release_ownership(home, token)
+                return result
             time.sleep(_POLL_INTERVAL_SECONDS)
     except BaseException:
-        if token:
+        if owned:
             _release_owned_marker(drain_control, home, token)
+        _release_ownership(home, token)
         raise
 
-    if token:
+    if owned:
         _release_owned_marker(drain_control, home, token)
+    _release_ownership(home, token)
     raise TimeoutError(
         f"Hermes gateway did not drain active messaging, API, and cron work within {timeout_seconds:g}s"
     )
@@ -93,6 +131,33 @@ def assert_safely_drained(home: Path) -> None:
         status, pid
     ):
         raise RuntimeError("Hermes gateway is not safely drained for scheduled-work restore")
+
+
+def _gateway_identity() -> tuple[int, set[int]] | None:
+    try:
+        entry = pwd.getpwnam(_GATEWAY_USER)
+    except KeyError:
+        return None
+    memberships = {
+        group.gr_gid for group in grp.getgrall() if _GATEWAY_USER in group.gr_mem
+    }
+    memberships.add(entry.pw_gid)
+    return entry.pw_uid, memberships
+
+
+def _readable_by_gateway(script_path: Path) -> bool:
+    identity = _gateway_identity()
+    if identity is None:
+        return os.access(script_path, os.R_OK)
+    uid, gids = identity
+    if uid == os.geteuid():
+        return os.access(script_path, os.R_OK)
+    info = script_path.stat()
+    if info.st_uid == uid:
+        return bool(info.st_mode & stat.S_IRUSR)
+    if info.st_gid in gids:
+        return bool(info.st_mode & stat.S_IRGRP)
+    return bool(info.st_mode & stat.S_IROTH)
 
 
 def _load_jobs(jobs_file: Path) -> list[Any]:
@@ -133,7 +198,7 @@ def validate_enabled_scripts(home: Path) -> None:
             raise ValueError(
                 f"Enabled Hermes cron job at index {index} resolves outside the scripts directory"
             ) from error
-        if not script_path.is_file() or not os.access(script_path, os.R_OK):
+        if not script_path.is_file() or not _readable_by_gateway(script_path):
             raise ValueError(
                 f"Enabled Hermes cron job at index {index} references a missing or unreadable script"
             )
@@ -149,6 +214,7 @@ def release_drain(home: Path, token: str) -> None:
         raise ValueError("Invalid Hermes restore drain ownership token")
     drain_control, _status = _gateway_modules()
     _release_owned_marker(drain_control, home, token)
+    _release_ownership(home, token)
 
 
 def _parser() -> argparse.ArgumentParser:

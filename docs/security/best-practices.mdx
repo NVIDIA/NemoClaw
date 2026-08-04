@@ -344,7 +344,8 @@ Direct edits to these files can be overwritten when NemoClaw regenerates the ima
 
 Hermes also stores runtime state such as `state.db`, logs, and platform sessions under the `.hermes` tree.
 Messaging sessions such as WhatsApp pairing can remain mutable by design so they survive rebuilds.
-Hermes rebuild restore blocks new gateway dispatch and waits for active messaging, API, and cron work to drain before replacing cron scripts or job definitions. It keeps that drain in place until enabled script references validate or the prior state is rolled back.
+Hermes rebuild restore blocks new gateway dispatch and waits for active messaging, API, and cron work to drain before replacing cron scripts or job definitions.
+It keeps that drain in place until enabled script references validate or the prior state is rolled back.
 
 | Aspect | Detail |
 |---|---|

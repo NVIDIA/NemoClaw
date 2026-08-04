@@ -28,7 +28,10 @@ spec.loader.exec_module(module)
 
 describe("Hermes restore cron guard", () => {
   it("waits for the gateway drain acknowledgement that includes all active work", () => {
-    const result = runGuardModule(`${LOAD_GUARD}
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cron-guard-"));
+    try {
+      const result = runGuardModule(
+        `${LOAD_GUARD}
 class Drain:
     marker = None
     def drain_requested(self, *, home): return self.marker is not None
@@ -47,20 +50,107 @@ status = Status()
 module._gateway_modules = lambda: (drain, status)
 module.secrets.token_hex = lambda _size: "a" * 32
 module.time.sleep = lambda _seconds: None
-token = module.begin_drain(pathlib.Path("/sandbox/.hermes"), 1)
+token = module.begin_drain(pathlib.Path(sys.argv[2]), 1)
 print(token)
 print(drain.marker["principal"])
-`);
+`,
+        [home],
+      );
 
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim().split("\n")).toEqual([
-      "nemoclaw-state-restore:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "nemoclaw-state-restore:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    ]);
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim().split("\n")).toEqual([
+        "nemoclaw-state-restore:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "nemoclaw-state-restore:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      ]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("holds a drain marker while the gateway is not running", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cron-guard-"));
+    try {
+      const result = runGuardModule(
+        `${LOAD_GUARD}
+class Drain:
+    marker = None
+    def drain_requested(self, *, home): return self.marker is not None
+    def write_drain_request(self, *, principal, home): self.marker = {"principal": principal}
+    def read_drain_request(self, *, home): return self.marker
+    def clear_drain_request(self, *, home): self.marker = None; return True
+class Status:
+    def get_running_pid(self): return None
+    def read_runtime_status(self): return None
+    def parse_active_agents(self, value): return 0
+drain = Drain()
+status = Status()
+module._gateway_modules = lambda: (drain, status)
+module.secrets.token_hex = lambda _size: "c" * 32
+home = pathlib.Path(sys.argv[2])
+token = module.begin_drain(home, 1)
+print(token)
+print(drain.marker["principal"])
+module.release_drain(home, token)
+print(drain.marker, module._ownership_path(home).exists())
+`,
+        [home],
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim().split("\n")).toEqual([
+        "nemoclaw-state-restore:cccccccccccccccccccccccccccccccc",
+        "nemoclaw-state-restore:cccccccccccccccccccccccccccccccc",
+        "None False",
+      ]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a second restore while another restore owns the drain", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cron-guard-"));
+    try {
+      const result = runGuardModule(
+        `${LOAD_GUARD}
+class Drain:
+    marker = None
+    def drain_requested(self, *, home): return self.marker is not None
+    def write_drain_request(self, *, principal, home): self.marker = {"principal": principal}
+    def read_drain_request(self, *, home): return self.marker
+    def clear_drain_request(self, *, home): self.marker = None; return True
+class Status:
+    def get_running_pid(self): return None
+    def read_runtime_status(self): return None
+    def parse_active_agents(self, value): return 0
+drain = Drain()
+status = Status()
+module._gateway_modules = lambda: (drain, status)
+home = pathlib.Path(sys.argv[2])
+first = module.begin_drain(home, 1)
+try:
+    module.begin_drain(home, 1)
+except RuntimeError as error:
+    print(error)
+print(drain.marker["principal"] == first)
+`,
+        [home],
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim().split("\n")).toEqual([
+        "Another NemoClaw restore already owns the Hermes drain",
+        "True",
+      ]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("preserves an operator-owned drain and releases only its own marker", () => {
-    const result = runGuardModule(`${LOAD_GUARD}
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cron-guard-"));
+    try {
+      const result = runGuardModule(
+        `${LOAD_GUARD}
 class Drain:
     marker = {"principal": "operator"}
     cleared = 0
@@ -75,16 +165,28 @@ class Status:
 drain = Drain()
 status = Status()
 module._gateway_modules = lambda: (drain, status)
-print(module.begin_drain(pathlib.Path("/sandbox/.hermes"), 1))
-module.release_drain(pathlib.Path("/sandbox/.hermes"), "nemoclaw-state-restore:" + "b" * 32)
+home = pathlib.Path(sys.argv[2])
+print(module.begin_drain(home, 1))
+print(module._ownership_path(home).exists())
+module.release_drain(home, "nemoclaw-state-restore:" + "b" * 32)
 print(drain.marker["principal"], drain.cleared)
 drain.marker = {"principal": "nemoclaw-state-restore:" + "b" * 32}
-module.release_drain(pathlib.Path("/sandbox/.hermes"), "nemoclaw-state-restore:" + "b" * 32)
+module.release_drain(home, "nemoclaw-state-restore:" + "b" * 32)
 print(drain.marker, drain.cleared)
-`);
+`,
+        [home],
+      );
 
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim().split("\n")).toEqual(["preserved", "operator 0", "None 1"]);
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim().split("\n")).toEqual([
+        "preserved",
+        "False",
+        "operator 0",
+        "None 1",
+      ]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("accepts only enabled jobs whose referenced scripts resolve to readable files", () => {
@@ -135,6 +237,32 @@ print(drain.marker, drain.cleared)
       );
       expect(result.status).not.toBe(0);
       expect(result.stderr).toMatch(/missing or unreadable|outside the scripts directory/u);
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an enabled job whose script the gateway account cannot read", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cron-guard-"));
+    try {
+      fs.mkdirSync(path.join(fixture, "scripts"));
+      fs.mkdirSync(path.join(fixture, "cron"));
+      fs.writeFileSync(path.join(fixture, "scripts", "digest.sh"), "echo ok\n", { mode: 0o600 });
+      fs.writeFileSync(
+        path.join(fixture, "cron", "jobs.json"),
+        JSON.stringify({ jobs: [{ enabled: true, script: "digest.sh" }] }),
+      );
+
+      const result = runGuardModule(
+        `${LOAD_GUARD}
+import os
+module._gateway_identity = lambda: (os.geteuid() + 1, set())
+module.validate_enabled_scripts(pathlib.Path(sys.argv[2]))
+`,
+        [fixture],
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("missing or unreadable");
     } finally {
       fs.rmSync(fixture, { recursive: true, force: true });
     }
