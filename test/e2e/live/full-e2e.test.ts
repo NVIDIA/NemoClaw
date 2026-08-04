@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -36,6 +37,7 @@ import {
   buildOpenClawFirstTurnLatencyEvidence,
   extractOpenClawAgentPayloadText,
 } from "./agent-turn-latency-helpers.ts";
+import { runLaunchAgentTurn } from "./launch-agent-turn.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
 const SETUP_MODE = process.env.NEMOCLAW_E2E_SETUP_MODE ?? "source-install";
@@ -318,7 +320,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
       "check full E2E prerequisites",
       "install and onboard OpenClaw sandbox",
       "validate CLI sandbox and policy state",
-      "exercise hosted and sandbox inference",
+      "exercise hosted, sandbox, and post-recovery launch inference",
       "inspect runtime logs and security posture",
       "remove full-E2E sandbox",
     ],
@@ -340,6 +342,9 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
       "nemoclaw and openshell are installed and usable",
       "sandbox appears in list/status and has policy/inference configuration",
       "direct hosted inference and sandbox inference.local both respond",
+      ...(process.platform === "linux"
+        ? ["a recovered OpenClaw sandbox completes a launch turn through inference.local"]
+        : []),
       "nemoclaw logs produces output and cleanup removes registry state",
       ...(securityPostureEnabled()
         ? ["non-root host, locked rc/proxy files, configure guard, and clean startup log"]
@@ -465,7 +470,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   expect(policy.exitCode, resultText(policy)).toBe(0);
   expect(resultText(policy)).toMatch(/network_policies|egress/i);
 
-  progress.phase("exercise hosted and sandbox inference");
+  progress.phase("exercise hosted, sandbox, and post-recovery launch inference");
   const direct = await host.command(
     "curl",
     [
@@ -502,6 +507,40 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   );
   expect(sandboxInference.exitCode, resultText(sandboxInference)).toBe(0);
   expect(containsInteger42Answer(sandboxInference.stdout), resultText(sandboxInference)).toBe(true);
+
+  if (process.platform === "linux") {
+    const stopGateway = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript("pkill -f 'openclaw.*gateway' 2>/dev/null || true"),
+      {
+        artifactName: "phase-4-stop-openclaw-gateway-before-launch",
+        env: env(),
+        redactionValues,
+        timeoutMs: 30_000,
+      },
+    );
+    expect(stopGateway.exitCode, resultText(stopGateway)).toBe(0);
+    await sleep(3_000);
+
+    const recovery = await repoNemoclaw(
+      host,
+      [SANDBOX_NAME, "status"],
+      "phase-4-status-recover-before-launch",
+      {},
+      120_000,
+    );
+    expect(recovery.exitCode, resultText(recovery)).toBe(0);
+
+    await runLaunchAgentTurn({
+      artifactName: "phase-4-openclaw-launch-turn",
+      cliCommand: USE_PREINSTALLED_LAUNCHABLE ? "nemoclaw" : process.execPath,
+      ...(!USE_PREINSTALLED_LAUNCHABLE ? { cliEntrypoint: CLI_ENTRYPOINT } : {}),
+      env: env(),
+      host,
+      redactionValues,
+      sandboxName: SANDBOX_NAME,
+    });
+  }
 
   progress.phase("inspect runtime logs and security posture");
   const logs = await repoNemoclaw(
