@@ -3380,11 +3380,13 @@ export function createDockerManagedBootstrapAdapter(
           null,
           durablePreparation,
         );
-        throw new ManagedBootstrapCommitStateIndeterminateError({
-          bootstrapIdentity: existingJournal.bootstrapIdentity,
-          runtimeId: existingJournal.replacementRuntimeId,
-          detail: `activation requires rollback or commit from durable phase ${existingJournal.phase}`,
-        });
+        if (existingJournal.phase !== "staged") {
+          throw new ManagedBootstrapCommitStateIndeterminateError({
+            bootstrapIdentity: existingJournal.bootstrapIdentity,
+            runtimeId: existingJournal.replacementRuntimeId,
+            detail: `activation requires rollback or commit from durable phase ${existingJournal.phase}`,
+          });
+        }
       }
       const options = {
         ignoreError: true,
@@ -3409,7 +3411,8 @@ export function createDockerManagedBootstrapAdapter(
           );
         }
 
-        let journal = createDockerBootstrapJournalDurably(durableAuthority, deps);
+        let journal =
+          existingJournal ?? createDockerBootstrapJournalDurably(durableAuthority, deps);
         const originalAtFence = inspectExact(snapshot.runtimeId, deps);
         const replacementAtFence = inspectExact(prepared.preparedRuntimeId, deps);
         assertTransactionOriginal(journal, originalAtFence);

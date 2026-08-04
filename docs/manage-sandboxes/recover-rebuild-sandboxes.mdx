@@ -119,15 +119,11 @@ Other workflows, including onboarding, rebuild, and `doctor --fix`, can explicit
 
 ## Rebuild While Preserving State
 
-<AgentOnly variant="openclaw">
-If you changed the underlying Dockerfile, upgraded OpenClaw, or want to pick up a new base image without losing your sandbox's workspace files, use `rebuild` instead of destroying and recreating.
-</AgentOnly>
-<AgentOnly variant="hermes">
-If you changed the underlying Dockerfile, upgraded Hermes, or want to pick up a new base image without losing your sandbox's state files, use `rebuild` instead of destroying and recreating.
-</AgentOnly>
-<AgentOnly variant="deepagents">
-If you changed the underlying Dockerfile, upgraded Deep Agents Code, enabled Tavily Search, or want to pick up a new base image without losing manifest-defined Deep Agents state, use `rebuild` instead of destroying and recreating.
-</AgentOnly>
+Use `rebuild` to move a managed sandbox to the exact managed image for the installed NemoClaw release while preserving the state declared by the agent manifest.
+Before mutation, NemoClaw verifies the sandbox's recorded runtime provider and platform, resolves one complete all-agent managed-image catalog, and binds the replacement to the selected agent's exact image digest.
+The replacement preserves the provider-bound managed workload and applies a freshly rendered startup profile before NemoClaw restores the declared state.
+If the provider authority, catalog, image contract, or startup profile fails validation, rebuild stops before deleting the original sandbox.
+A sandbox created with `--from` remains on the legacy Dockerfile rebuild path and uses its recorded custom Dockerfile inputs.
 
 <AgentOnly variant="openclaw,hermes">
 <Warning title="Legacy Upgrade Recovery Scope">

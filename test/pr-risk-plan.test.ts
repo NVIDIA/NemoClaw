@@ -80,7 +80,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(14);
+    expect(first.version).toBe(15);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -383,11 +383,13 @@ describe("deterministic PR risk plan", () => {
     ).toBe(false);
   });
 
-  it("keeps protected GPU and local-inference qualification activation-only until trusted (#7744)", () => {
+  it("selects protected GPU, local-inference, and multiarch qualification for activated runtime inputs (#7744)", () => {
     const activation = "ci/protected-managed-image-runtime-activation-v1.json";
     const result = plan(activation);
-    const dormantImplementation = plan(
+    const activatedImplementation = plan(
       "scripts/checks/run-managed-image-openshell-e2e.ts",
+      "src/lib/onboard/managed-bootstrap/docker.ts",
+      "src/lib/onboard/managed-workload/onboard-orchestration.ts",
       "test/e2e/live/managed-image-protected-runtime.test.ts",
     );
 
@@ -395,15 +397,24 @@ describe("deterministic PR risk plan", () => {
       expect.objectContaining({
         id: "managed-image-protected-runtime",
         matchedFiles: [activation],
-        requiredJobs: ["managed-image-protected-runtime"],
+        requiredJobs: ["managed-image-protected-runtime", "managed-image-multiarch-startup"],
       }),
     );
-    expect(riskPlanRequiredJobIds(result)).toEqual(["managed-image-protected-runtime"]);
+    expect(riskPlanRequiredJobIds(result)).toEqual([
+      "managed-image-multiarch-startup",
+      "managed-image-protected-runtime",
+    ]);
     expect(
-      dormantImplementation.families.some(
+      activatedImplementation.families.some(
         (family) => family.id === "managed-image-protected-runtime",
       ),
-    ).toBe(false);
+    ).toBe(true);
+    expect(riskPlanRequiredJobIds(activatedImplementation)).toEqual(
+      expect.arrayContaining([
+        "managed-image-multiarch-startup",
+        "managed-image-protected-runtime",
+      ]),
+    );
   });
 
   it("loads protected multiarch identifiers through the workflow node loader (#7744)", () => {
@@ -765,6 +776,7 @@ describe("deterministic PR risk plan", () => {
       "cloud-inference",
       "cloud-onboard",
       "managed-image-multiarch-startup",
+      "managed-image-protected-runtime",
       "security-posture",
       "channels-add-remove",
       "channels-stop-start",

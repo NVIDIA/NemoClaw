@@ -270,6 +270,9 @@ describe("runSandboxGpuCreateFlow provider-owned managed create", () => {
           bootstrap: {
             providerId: "mxc",
             supported: true,
+            createAuthorityStore: vi.fn(() => ({
+              recordPreparedAuthority: vi.fn(),
+            })),
             createLifecycle,
             createOnboardRouting: vi.fn(() => ({
               nativeFallbackHasCleanBaseline: false,

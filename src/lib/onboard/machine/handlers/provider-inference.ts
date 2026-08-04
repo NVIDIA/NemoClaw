@@ -961,10 +961,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     try {
       if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
       const confirmedSandboxName = sandboxName;
-      const buildEstimateNote =
-        env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1"
-          ? null
-          : deps.formatSandboxBuildEstimateNote(deps.assessHost());
       deps.log(
         deps.formatOnboardConfigSummary({
           provider,
@@ -975,7 +971,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           hermesToolGateways,
           enabledChannels: selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
           sandboxName: confirmedSandboxName,
-          notes: buildEstimateNote ? [buildEstimateNote] : [],
+          notes: [],
         }),
       );
       deps.log("  Web search and messaging channels will be prompted next.");
