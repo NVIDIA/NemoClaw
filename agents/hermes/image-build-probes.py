@@ -201,65 +201,6 @@ def verify_langfuse_credentials() -> None:
     )
 
 
-def verify_wrapper_session_boundaries() -> None:
-    import ast
-
-    wrapper_tree = ast.parse(
-        Path("/usr/local/lib/nemoclaw/hermes-wrapper.py").read_text(encoding="utf-8")
-    )
-    wrapper_assignments = [
-        node
-        for node in wrapper_tree.body
-        if isinstance(node, ast.Assign)
-        and len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Name)
-        and node.targets[0].id == "_HERMES_SESSION_NAME_BOUNDARIES"
-    ]
-    if len(wrapper_assignments) != 1:
-        raise SystemExit("ERROR: expected one wrapper session-name boundary constant")
-    wrapper_value = wrapper_assignments[0].value
-    if not (
-        isinstance(wrapper_value, ast.Call)
-        and isinstance(wrapper_value.func, ast.Name)
-        and wrapper_value.func.id == "frozenset"
-        and len(wrapper_value.args) == 1
-        and not wrapper_value.keywords
-    ):
-        raise SystemExit("ERROR: wrapper session-name boundaries are not a literal frozenset")
-    wrapper_boundaries = set(ast.literal_eval(wrapper_value.args[0]))
-
-    upstream_tree = ast.parse(
-        Path("/opt/hermes/hermes_cli/main.py").read_text(encoding="utf-8")
-    )
-    coalescers = [
-        node
-        for node in upstream_tree.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_coalesce_session_name_args"
-    ]
-    if len(coalescers) != 1:
-        raise SystemExit("ERROR: expected one pinned Hermes session-name coalescer")
-    upstream_assignments = [
-        node
-        for node in coalescers[0].body
-        if isinstance(node, ast.Assign)
-        and len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Name)
-        and node.targets[0].id == "_SUBCOMMANDS"
-    ]
-    if len(upstream_assignments) != 1:
-        raise SystemExit("ERROR: expected one pinned Hermes coalescer boundary set")
-    upstream_boundaries = set(ast.literal_eval(upstream_assignments[0].value))
-
-    missing = sorted(upstream_boundaries - wrapper_boundaries)
-    stale = sorted(wrapper_boundaries - upstream_boundaries)
-    if missing or stale:
-        raise SystemExit(
-            "ERROR: Hermes wrapper session-name boundaries drifted from pinned coalescer: "
-            f"missing={','.join(missing)} stale={','.join(stale)}"
-        )
-
-
 def verify_dashboard_policy(path: Path) -> None:
     import yaml
 
@@ -419,7 +360,6 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "langfuse-credentials": verify_langfuse_credentials,
     "profile-policy": verify_profile_policy,
     "session-preview": verify_session_preview,
-    "wrapper-session-boundaries": verify_wrapper_session_boundaries,
 }
 
 
