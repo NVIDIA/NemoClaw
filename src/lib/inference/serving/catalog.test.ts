@@ -701,10 +701,17 @@ describe("managed inference serving catalog compiler", () => {
     );
     expect(() => compile([duplicateModelFile])).toThrow("repeats model file model.gguf");
 
-    for (const path of ["./model.gguf", "models//model.gguf", "models/./model.gguf", "models/", "models\\model.gguf", "C:\\model.gguf"]) {
-      expect(() => compile([replaceSource(recipeSource(), "path: model.gguf", `path: ${path}`)])).toThrow(
-        "does not satisfy the ServingRecipe schema",
-      );
+    for (const path of [
+      "./model.gguf",
+      "models//model.gguf",
+      "models/./model.gguf",
+      "models/",
+      "models\\model.gguf",
+      "C:\\model.gguf",
+    ]) {
+      expect(() =>
+        compile([replaceSource(recipeSource(), "path: model.gguf", `path: ${path}`)]),
+      ).toThrow("does not satisfy the ServingRecipe schema");
     }
   });
 
@@ -733,7 +740,9 @@ describe("managed inference serving catalog compiler", () => {
           contents: mismatchedKind.contents.replace("kind: capability", "kind: observation"),
         },
       ]),
-    ).toThrow("uses test.runtime.present as observation, but the readiness registry declares capability");
+    ).toThrow(
+      "uses test.runtime.present as observation, but the readiness registry declares capability",
+    );
   });
 
   it("rejects duplicate automatic selectors at one priority (#8144)", () => {
