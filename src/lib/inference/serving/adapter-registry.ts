@@ -507,8 +507,10 @@ const SERVING_READINESS_REGISTRY: ServingCatalogRegistries["readiness"] = new Ma
 
 export function getManagedInferenceServingCatalogRegistries(): ServingCatalogRegistries {
   return {
+    receipts: new Set(),
     materializers: new Set(MATERIALIZER_DESCRIPTORS.map(({ ref }) => ref)),
     lifecycles: new Set(LIFECYCLE_DESCRIPTORS.map(({ ref }) => ref)),
+    readinessContracts: new Set(),
     readiness: SERVING_READINESS_REGISTRY,
     facts: new Set(["cluster.nodeCount"]),
     topologyQualifications: new Map(
@@ -520,7 +522,14 @@ export function getManagedInferenceServingCatalogRegistries(): ServingCatalogReg
         },
       ]),
     ),
-    validateRecipe: (recipe: ServingRecipe) =>
-      getManagedInferenceRecipeRegistrationError(recipe as ManagedInferenceServingRecipe),
+    validateRecipe: (recipe: ServingRecipe) => {
+      if (
+        recipe.spec.execution.materializerRef !== MANAGED_CLUSTER_VLLM_MATERIALIZER_REF &&
+        recipe.spec.execution.lifecycleRef !== MANAGED_CLUSTER_VLLM_LIFECYCLE_REF
+      ) {
+        return undefined;
+      }
+      return getManagedInferenceRecipeRegistrationError(recipe as ManagedInferenceServingRecipe);
+    },
   };
 }

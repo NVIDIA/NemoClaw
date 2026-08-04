@@ -165,6 +165,7 @@ function readinessRequirementMatches(
       const matches = report.qualifications.filter(({ id }) => id === requirement.id);
       return matches.length === 1 && matches[0]!.status === requirement.status;
     }
+    if ("comparison" in requirement) return false;
     const collection =
       requirement.kind === "observation" ? report.observations : report.capabilities;
     const matches = collection.filter(({ id }) => id === requirement.id);

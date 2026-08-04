@@ -76,7 +76,7 @@ function catalogReadinessEntities(): Pick<
   );
   return {
     observations: readinessRequirements.flatMap((readiness) =>
-      readiness.kind === "observation"
+      readiness.kind === "observation" && "state" in readiness
         ? [
             {
               id: readiness.id,

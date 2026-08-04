@@ -6,6 +6,13 @@ import type { SystemReadinessReport } from "../../readiness/types.js";
 export type ServingDefinitionKind = "ServingRecipe" | "ServingPreset";
 export type ServingSelectionPolicy = "automatic" | "explicit-only" | "disabled";
 export type ReadinessEntityKind = "observation" | "capability" | "qualification";
+export type ReadinessValueType = "boolean" | "number" | "string" | "version";
+export type ServingReadinessObservationRole =
+  | "operating-system"
+  | "architecture"
+  | "container-runtime"
+  | "gpu-count"
+  | "driver-version";
 
 export interface ServingMetadata {
   readonly id: string;
@@ -107,12 +114,17 @@ export interface ManagedInferenceServingRecipe {
   };
 }
 
-export interface ServingRecipe {
+interface ServingRecipeEnvelope {
   readonly apiVersion: "nemoclaw.nvidia.com/managed-inference/v1";
   readonly kind: "ServingRecipe";
   readonly metadata: ServingMetadata;
+}
+
+interface GenericServingRecipe extends ServingRecipeEnvelope {
   readonly spec: {
     readonly backend: string;
+    readonly providerId?: never;
+    readonly server?: never;
     readonly bindings?: Readonly<Record<string, ServingTopologyBinding>>;
     readonly model: {
       readonly id: string;
@@ -128,6 +140,7 @@ export interface ServingRecipe {
       readonly components?: Readonly<Record<string, string>>;
     };
     readonly execution: {
+      readonly receiptRef?: string;
       readonly materializerRef: string;
       readonly lifecycleRef: string;
       readonly topologyBinding?: string;
@@ -143,11 +156,120 @@ export interface ServingRecipe {
       readonly arguments?: readonly ServingArgument[];
     };
     readonly readiness?: {
+      readonly contractRef?: string;
       readonly timeoutSeconds?: number;
       readonly expectedModel?: string;
     };
   };
 }
+
+interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
+  readonly spec: {
+    readonly backend: "install-llama-cpp";
+    readonly providerId: "llama-cpp-local";
+    readonly bindings?: never;
+    readonly server: {
+      readonly technology: "llama.cpp";
+      readonly source: { readonly repository: string; readonly revision: string };
+    };
+    readonly model: {
+      readonly id: string;
+      readonly revision: string;
+      readonly servedName: string;
+      readonly files: readonly {
+        readonly path: string;
+        readonly digest: string;
+        readonly sizeBytes: number;
+        readonly format: "gguf";
+        readonly quantization: string;
+        readonly license: string;
+      }[];
+    };
+    readonly runtime: {
+      readonly image: string;
+      readonly platforms: readonly ("linux/amd64" | "linux/arm64")[];
+      readonly containerRuntime: "docker";
+      readonly hosts: 1;
+      readonly cuda: { readonly baseImage: string; readonly minimumDriverVersion: string };
+      readonly gpu: {
+        readonly vendor: "nvidia";
+        readonly count: 1;
+        readonly offload: "full";
+        readonly cpuFallback: "reject";
+      };
+      readonly resources: {
+        readonly memoryBytes: number;
+        readonly writableStorageBytes: number;
+        readonly pidsLimit: number;
+      };
+    };
+    readonly execution: {
+      readonly receiptRef: string;
+      readonly materializerRef: string;
+      readonly lifecycleRef: string;
+      readonly nodeCount?: never;
+    };
+    readonly serve: {
+      readonly protocol: "openai-completions";
+      readonly port: 8081;
+      readonly chatTemplate: string;
+      readonly contextSize: number;
+      readonly slots: 1;
+      readonly idleSleepSeconds: -1;
+      readonly limits: {
+        readonly maxRequestBodyBytes: number;
+        readonly maxPromptTokens: number;
+        readonly maxCompletionTokens: number;
+        readonly requestTimeoutSeconds: number;
+      };
+    };
+    readonly readiness: {
+      readonly contractRef: string;
+      readonly timeoutSeconds: number;
+      readonly expectedModel: string;
+      readonly probes: {
+        readonly models: true;
+        readonly health: true;
+        readonly properties: true;
+        readonly metrics: true;
+      };
+    };
+    readonly policy: {
+      readonly egress: "disabled";
+      readonly modelSource: "verified-local";
+      readonly modelDownloads: "disabled";
+    };
+    readonly surfaces: {
+      readonly ui: "disabled";
+      readonly slotInspection: "disabled";
+      readonly router: "disabled";
+      readonly mcpProxy: "disabled";
+      readonly serverTools: "disabled";
+      readonly agentMode: "disabled";
+      readonly multimodalProjection: "disabled";
+    };
+    readonly capabilities: {
+      readonly agents: readonly { readonly id: string; readonly qualificationRef: string }[];
+      readonly protocols: readonly ["openai-completions"];
+      readonly streaming: boolean;
+      readonly toolCalls: boolean;
+      readonly structuredOutputs: boolean;
+      readonly parallelToolCalls: false;
+      readonly responsesApi: false;
+      readonly embeddings: false;
+      readonly reranking: false;
+      readonly multimodal: false;
+    };
+  };
+}
+
+export type ServingRecipe = GenericServingRecipe | LlamaCppServingRecipe;
+
+export type ServingReadinessComparison =
+  | { readonly operator: "equals"; readonly value: string | number | boolean }
+  | { readonly operator: "one-of"; readonly values: readonly (string | number | boolean)[] }
+  | { readonly operator: "at-least"; readonly value: number }
+  | { readonly operator: "version-at-least"; readonly value: string };
 
 export type ServingReadinessRequirement =
   | {
@@ -164,6 +286,14 @@ export type ServingReadinessRequirement =
         readonly kind: "observation" | "capability";
         readonly id: string;
         readonly state: string;
+      };
+    }
+  | {
+      readonly readiness: {
+        readonly scope: "controller" | "everyNode" | "anyNode";
+        readonly kind: "observation";
+        readonly id: string;
+        readonly comparison: ServingReadinessComparison;
       };
     };
 
@@ -238,7 +368,7 @@ export interface ServingCatalogSourceProvenance {
 
 export interface CompiledServingCatalogPayload {
   readonly schemaVersion: "1.0.0";
-  readonly compilerVersion: "1.0.0";
+  readonly compilerVersion: "1.1.0";
   readonly sourceRevision: string;
   readonly readinessSchemaRef: "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json";
   readonly recipes: readonly ServingRecipe[];
@@ -266,10 +396,23 @@ export interface ServingTopologyRegistryEntry {
   readonly outputSchema: string;
 }
 
+export interface ServingReadinessRegistryEntry {
+  readonly kind: ReadinessEntityKind;
+  readonly valueType?: ReadinessValueType;
+  readonly role?: ServingReadinessObservationRole;
+}
+
+export type ServingReadinessRegistryValue =
+  | ReadinessEntityKind
+  | ReadonlySet<ReadinessEntityKind>
+  | ServingReadinessRegistryEntry;
+
 export interface ServingCatalogRegistries {
+  readonly receipts: ReadonlySet<string>;
   readonly materializers: ReadonlySet<string>;
   readonly lifecycles: ReadonlySet<string>;
-  readonly readiness: ReadonlyMap<string, ReadinessEntityKind | ReadonlySet<ReadinessEntityKind>>;
+  readonly readinessContracts: ReadonlySet<string>;
+  readonly readiness: ReadonlyMap<string, ServingReadinessRegistryValue>;
   readonly facts?: ReadonlySet<string>;
   readonly topologyQualifications?: ReadonlyMap<string, ServingTopologyRegistryEntry>;
   readonly validateRecipe?: (recipe: ServingRecipe) => string | undefined;
