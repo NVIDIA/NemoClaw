@@ -7,6 +7,7 @@
  */
 
 import { isSafeModelId, shouldSkipResponsesProbe } from "../validation";
+import { isSafeLlamaCppServedModelAlias, LLAMA_CPP_CREDENTIAL_ENV } from "./llama-cpp/contract";
 import { DEFAULT_OLLAMA_MODEL } from "./local";
 import { OPENROUTER_CREDENTIAL_ENV, OPENROUTER_PROVIDER_NAME } from "./openrouter";
 
@@ -65,6 +66,7 @@ export const DEFAULT_ROUTE_CREDENTIAL_ENV = "OPENAI_API_KEY";
 // never read the user's host OpenAI key for local providers. See GH #2519.
 export const OLLAMA_LOCAL_CREDENTIAL_ENV = "NEMOCLAW_OLLAMA_PROXY_TOKEN";
 export const VLLM_LOCAL_CREDENTIAL_ENV = "NEMOCLAW_VLLM_LOCAL_TOKEN";
+export const LLAMA_CPP_LOCAL_CREDENTIAL_ENV = LLAMA_CPP_CREDENTIAL_ENV;
 export const MANAGED_PROVIDER_ID = "inference";
 export { DEFAULT_OLLAMA_MODEL };
 
@@ -215,6 +217,14 @@ export function getProviderSelectionConfig(
         credentialEnv: OLLAMA_LOCAL_CREDENTIAL_ENV,
         providerLabel: "Local Ollama",
       };
+    case "llama-cpp-local":
+      if (!model || !isSafeLlamaCppServedModelAlias(model)) return null;
+      return {
+        ...base,
+        model,
+        credentialEnv: LLAMA_CPP_LOCAL_CREDENTIAL_ENV,
+        providerLabel: "Local llama.cpp",
+      };
     default:
       return null;
   }
@@ -276,6 +286,7 @@ export function getSandboxInferenceConfig(
       };
       break;
     case "compatible-endpoint":
+    case "llama-cpp-local":
       providerKey = MANAGED_PROVIDER_ID;
       primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
       inferenceCompat = {
