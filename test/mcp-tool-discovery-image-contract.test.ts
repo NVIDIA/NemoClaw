@@ -24,6 +24,13 @@ describe("MCP tool discovery image contract", () => {
       path.join(packageRoot, "install-reviewed-runtime.sh"),
       "utf8",
     );
+    const reviewedSdk = {
+      name: "@modelcontextprotocol/sdk",
+      version: "1.30.0",
+      resolved: "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz",
+      integrity:
+        "sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA==",
+    } as const;
     const reviewedPackages = {
       "@hono/node-server": {
         version: "2.0.12",
@@ -51,6 +58,14 @@ describe("MCP tool discovery image contract", () => {
       },
     } as const;
 
+    expect(manifest.dependencies[reviewedSdk.name]).toBe(reviewedSdk.version);
+    expect(lock.packages[`node_modules/${reviewedSdk.name}`]).toMatchObject({
+      version: reviewedSdk.version,
+      resolved: reviewedSdk.resolved,
+      integrity: reviewedSdk.integrity,
+    });
+    expect(review).toContain(`\`${reviewedSdk.name}@${reviewedSdk.version}\``);
+    expect(review).toContain(`\`${reviewedSdk.integrity}\``);
     expect(manifest.overrides).toEqual(
       Object.fromEntries(
         Object.entries(reviewedPackages).map(([packageName, metadata]) => [
@@ -64,7 +79,12 @@ describe("MCP tool discovery image contract", () => {
       expect(review).toContain(`\`${packageName}@${metadata.version}\``);
       expect(review).toContain(`\`${metadata.integrity}\``);
     }
-    expect(installer).toContain("npm audit --omit=dev --audit-level=low");
+    expect(
+      installer
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith("npm audit")),
+    ).toEqual(["npm audit signatures", "npm audit --omit=dev --audit-level=low"]);
   });
 
   it.each(
