@@ -503,6 +503,8 @@ rebuild_named_sandbox disabled
           MOCK_REBUILD_COUNTER_FILE: counterFile,
           MOCK_REBUILD_MODE: mode,
         },
+        killSignal: "SIGKILL",
+        timeout: 30_000,
       });
 
       expect(result.status, result.stdout + "\n" + result.stderr).toBe(expectedStatus);
@@ -561,6 +563,8 @@ assert_status_mode disabled
           MOCK_STATUS_COUNTER_FILE: counterFile,
           MOCK_STATUS_MODE: mode,
         },
+        killSignal: "SIGKILL",
+        timeout: 30_000,
       });
 
       expect(result.status, result.stdout + "\n" + result.stderr).toBe(expectedStatus);
