@@ -28,6 +28,7 @@ const NO_BUILD_JOBS = new Set([
   "generate-matrix",
   "bootstrap-install-smoke",
   "managed-image-multiarch-startup",
+  "managed-image-protected-runtime",
   "ollama-auth-proxy",
   "security-posture",
   "shields-config",

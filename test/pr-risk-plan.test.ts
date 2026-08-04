@@ -76,7 +76,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(13);
+    expect(first.version).toBe(14);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -341,6 +341,29 @@ describe("deterministic PR risk plan", () => {
     expect(riskPlanRequiredJobIds(plan(activation))).toEqual(["managed-image-multiarch-startup"]);
     expect(
       adjacentOnboardChange.families.some((family) => family.id === "managed-image-multiarch"),
+    ).toBe(false);
+  });
+
+  it("keeps protected GPU and local-inference qualification activation-only until trusted (#7744)", () => {
+    const activation = "ci/protected-managed-image-runtime-activation-v1.json";
+    const result = plan(activation);
+    const dormantImplementation = plan(
+      "scripts/checks/run-managed-image-openshell-e2e.ts",
+      "test/e2e/live/managed-image-protected-runtime.test.ts",
+    );
+
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "managed-image-protected-runtime",
+        matchedFiles: [activation],
+        requiredJobs: ["managed-image-protected-runtime"],
+      }),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(["managed-image-protected-runtime"]);
+    expect(
+      dormantImplementation.families.some(
+        (family) => family.id === "managed-image-protected-runtime",
+      ),
     ).toBe(false);
   });
 

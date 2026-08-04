@@ -3,7 +3,7 @@
 
 import { createHash } from "node:crypto";
 
-export const RISK_PLAN_VERSION = 13 as const;
+export const RISK_PLAN_VERSION = 14 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
   "ubuntu-repo-cloud-langchain-deepagents-code",
@@ -51,6 +51,8 @@ const HERMES_MANAGED_POLICY_FILES = new Set([
 ]);
 const MANAGED_IMAGE_MULTIARCH_ACTIVATION =
   "ci/protected-managed-image-multiarch-activation-v1.json";
+const MANAGED_IMAGE_PROTECTED_RUNTIME_ACTIVATION =
+  "ci/protected-managed-image-runtime-activation-v1.json";
 const MANAGED_IMAGE_MULTIARCH_INPUTS = new Set([
   MANAGED_IMAGE_MULTIARCH_ACTIVATION,
   ".dockerignore",
@@ -90,6 +92,7 @@ export type RiskFamilyId =
   | "credentials-security"
   | "e2e-control-plane"
   | "managed-image-multiarch"
+  | "managed-image-protected-runtime"
   | "sandbox-boundary"
   | "focused-e2e";
 
@@ -431,6 +434,23 @@ export const RISK_RULES: readonly RiskRule[] = [
       MANAGED_IMAGE_MULTIARCH_INPUTS.has(file) ||
       MANAGED_IMAGE_MULTIARCH_CHILD_CREDENTIALS.test(file) ||
       MANAGED_IMAGE_MULTIARCH_INPUT_PREFIXES.some((prefix) => file.startsWith(prefix)),
+  },
+  {
+    id: "managed-image-protected-runtime",
+    summary:
+      "Protected managed-image runtime qualification must retain real GPU access, host-local Ollama, NVIDIA NIM, vLLM, transactional rollback, and exact cleanup for every shipped agent.",
+    tier: 3,
+    requiredJobs: ["managed-image-protected-runtime"],
+    invariants: [
+      "OpenClaw, Hermes, and Deep Agents Code run from exact PR image digests through the production managed-bootstrap path",
+      "real NVIDIA GPU access and host-local Ollama, NVIDIA NIM, and vLLM inference.local completions are all required",
+      "bootstrap completion failure removes the exact failed sandbox, container, network, and transaction state for every agent",
+      "NGC credentials remain host-scoped and never enter a managed sandbox or persisted artifact",
+    ],
+    // The trusted workflow and validator land before activation. The follow-on
+    // activation slice broadens this boundary to runtime inputs after the
+    // protected job exists on main and can safely qualify candidate code.
+    matches: (file) => file === MANAGED_IMAGE_PROTECTED_RUNTIME_ACTIVATION,
   },
   {
     id: "sandbox-boundary",
