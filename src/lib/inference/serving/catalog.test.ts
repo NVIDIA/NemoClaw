@@ -275,14 +275,9 @@ function replaceSource(
   expected: string | RegExp,
   replacement: string,
 ): ServingCatalogSource {
-  const found =
-    typeof expected === "string"
-      ? source.contents.includes(expected)
-      : expected.test(source.contents);
-  if (!found) {
-    throw new Error(`Synthetic serving source does not contain ${String(expected)}.`);
-  }
-  return { ...source, contents: source.contents.replace(expected, replacement) };
+  const contents = source.contents.replace(expected, replacement);
+  expect(contents).not.toBe(source.contents);
+  return { ...source, contents };
 }
 
 function compile(sources: readonly ServingCatalogSource[], registries = REGISTRIES) {
