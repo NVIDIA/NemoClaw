@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { resolveRequestedProviderSelection } from "../src/lib/onboard/provider-selection.js";
 import {
   INSTALLER_PAYLOAD,
   TEST_SYSTEM_PATH,
@@ -303,10 +304,11 @@ sys.exit(exit_code)
     expect(output).toContain("PROVIDER=install-ollama");
   });
 
-  it("defers Windows WSL selection until Node.js can read the Docker configuration (#8199)", () => {
+  it("accepts deferred Windows-host selection in onboarding provider resolution (#8199)", () => {
     const { result, output } = runInstallerSourced(
       `mkdir -p "$HOME/.docker"\n` +
         `printf '%s' '{}' > "$HOME/.docker/config.json"\n` +
+        `printf 'NODE_BEFORE=%s\\n' "$(command -v node || true)"\n` +
         `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
         `activate_express_install "Windows WSL"\n` +
         `printf 'DEFERRED=%s PROVIDER=%s\\n' "\${_EXPRESS_WSL_PROVIDER_PENDING:-}" "\${NEMOCLAW_PROVIDER:-}"\n` +
@@ -316,8 +318,35 @@ sys.exit(exit_code)
       { NODE_BIN_DIR: path.dirname(process.execPath) },
     );
     expect(result.status, output).toBe(0);
+    expect(output).toContain("NODE_BEFORE=\n");
     expect(output).toContain("DEFERRED=1 PROVIDER=");
     expect(output).toContain("PROVIDER=install-windows-ollama");
+
+    const requestedProvider = output.match(/^PROVIDER=(.+)$/m)?.[1];
+    expect(requestedProvider).toBe("install-windows-ollama");
+
+    const resolution = resolveRequestedProviderSelection({
+      options: [
+        {
+          key: "start-windows-ollama",
+          label: "Start Ollama on Windows host (suggested)",
+        },
+      ],
+      requestedProvider: requestedProvider ?? null,
+      sandboxName: null,
+      remoteProviderConfig: {},
+      isWsl: true,
+      isWindowsHostOllama: false,
+      windowsHostOllamaSupported: true,
+      hermesProviderAvailable: false,
+      readRecordedProvider: () => null,
+      readRecordedNimContainer: () => null,
+      readRecordedModel: () => null,
+    });
+    expect(resolution).toMatchObject({
+      kind: "selected",
+      selected: { key: "start-windows-ollama" },
+    });
   });
 
   it("describes a deferred Windows WSL selection before Node.js is installed (#8199)", () => {

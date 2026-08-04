@@ -3,7 +3,6 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
 import {
   type DetectInferenceProviderHostStateDeps,
   detectInferenceProviderHostState,
@@ -198,13 +197,12 @@ describe("detectInferenceProviderHostState", () => {
     expect(deps.getWindowsHostOllamaDockerRequirement).toHaveBeenCalledWith("docker-desktop");
   });
 
-  it("keeps the WSL-local install entry when the container runtime cannot reach the Windows host (#8199)", () => {
+  it("keeps WSL-local install available when Docker Desktop cannot reach Windows-host Ollama (#8199)", () => {
     const deps = buildDeps({
       isWsl: vi.fn(() => true),
       getContainerRuntime: vi.fn<DetectInferenceProviderHostStateDeps["getContainerRuntime"]>(
-        () => "docker",
+        () => "docker-desktop",
       ),
-      getWindowsHostOllamaDockerRequirement: vi.fn(getWindowsHostOllamaDockerRequirement),
       detectWindowsHostOllama: vi.fn(() => ({
         installed: true,
         installedPath: "C:\\Users\\me\\AppData\\Local\\Programs\\Ollama\\ollama.exe",
@@ -215,6 +213,8 @@ describe("detectInferenceProviderHostState", () => {
     const state = detectWithDeps(deps);
 
     expect(state.hasWindowsOllama).toBe(true);
+    expect(state.windowsHostOllamaDockerRequirement.supported).toBe(true);
+    expect(state.windowsOllamaReachable).toBe(false);
     expect(state.ollamaInstallMenu.entry?.key).toBe("install-ollama");
     expect(state.ollamaInstallMenu.entry?.label).toBe("Install Ollama (WSL Linux)");
   });
