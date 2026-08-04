@@ -2092,6 +2092,23 @@ function listCustomPresets(sandboxName: string): PresetInfo[] {
   }));
 }
 
+/**
+ * Return every network-policy key that registered custom content declares for
+ * the sandbox. Registry-only: no live policy read, and unparseable content is
+ * skipped rather than throwing, because callers use this to decide what to
+ * preserve during a transition and must not fail the transition on one bad
+ * registry row.
+ */
+function registeredNetworkPolicyKeys(sandboxName: string): string[] {
+  const keys = new Set<string>();
+  for (const entry of registry.getCustomPolicies(sandboxName)) {
+    for (const key of parsePresetPolicyKeysForOwnership(entry.content) ?? []) {
+      keys.add(key);
+    }
+  }
+  return [...keys];
+}
+
 /** Return whether registered custom content owns an exact live network-policy key. */
 function customPresetOwnsNetworkPolicyKey(sandboxName: string, policyKey: string): boolean {
   let candidates: ReturnType<typeof registry.getCustomPolicies>;
@@ -2340,6 +2357,7 @@ export {
   parseCurrentPolicyOrEmpty as parseCurrentPolicy,
   parsePresetPolicyKeys,
   presetContentMatchesGateway,
+  registeredNetworkPolicyKeys,
   removeBuiltinPresetAttribution,
   removePreset,
   removePresetFromPolicy,

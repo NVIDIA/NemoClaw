@@ -39,9 +39,18 @@ const TEMP_FILE_PREFIX = "nemoclaw-permissive-runtime";
  * - Live `read_only` is merged into base `read_only` only when the same
  *   path is not already granted `read_write` (either by base or by live).
  *
- * `network_policies` merges by key: a live-only route is copied in, and a
- * route the base already declares keeps the base's definition. Provider-
- * composed `_provider_*` entries are never copied.
+ * `network_policies` merges by key, and only for keys the registry records
+ * for this sandbox — an unregistered live route is not NemoClaw's to
+ * preserve. Of those, a live-only route is copied in, a route the base
+ * already declares keeps the base's definition, and provider-composed
+ * `_provider_*` entries are never copied.
+ *
+ * When owned routes exist but the merge cannot be produced — the baseline
+ * is unreadable or unparseable, or the temp file cannot be written — the
+ * static policy is applied and those routes are lost. That degrade is
+ * deliberate: aborting shields-down on an I/O error would strand the
+ * sandbox in a locked posture. It is reported through `onDegraded` so the
+ * loss is visible rather than silent.
  *
  * Returns the path to a freshly created temp YAML file when the live
  * policy carries filesystem lists or network routes that need merging.
@@ -64,6 +73,13 @@ export interface PermissiveRuntimeDeps {
   // secureTempFile when omitted. Exposed so tests can drive the
   // write-failure fallback path without monkey-patching node:fs.
   writeTempPolicy?: (yaml: string) => string;
+  // Network-policy keys the registry records for this sandbox. Only these
+  // are carried across; an unregistered live route is not NemoClaw's to
+  // preserve. Empty means carry nothing, which is the pre-#7952 behavior.
+  ownedNetworkPolicyKeys: readonly string[];
+  // Called when owned routes exist but the merge degraded to the static
+  // policy, so the caller can say so instead of dropping them silently.
+  onDegraded?: (detail: string) => void;
 }
 
 export function buildRuntimePermissivePolicy(
@@ -73,8 +89,14 @@ export function buildRuntimePermissivePolicy(
   const live = deps.livePolicyYaml ? safeYamlObject(deps.livePolicyYaml) : null;
   const liveRw = readStringList(live, "read_write");
   const liveRo = readStringList(live, "read_only");
-  const liveNetwork = readNetworkPolicies(live);
+  const liveNetwork = readNetworkPolicies(live, deps.ownedNetworkPolicyKeys);
   const liveNetworkNames = Object.keys(liveNetwork);
+
+  // Report a degrade only when there was something owned to lose.
+  const degrade = (detail: string): string => {
+    if (liveNetworkNames.length > 0) deps.onDegraded?.(detail);
+    return basePermissivePath;
+  };
 
   // Nothing live to merge — keep the static path so the caller's apply
   // path is unchanged.
@@ -86,11 +108,11 @@ export function buildRuntimePermissivePolicy(
   try {
     baseYaml = deps.readBasePolicy();
   } catch {
-    return basePermissivePath;
+    return degrade("the permissive baseline could not be read");
   }
   const base = safeYamlObject(baseYaml);
   if (!base) {
-    return basePermissivePath;
+    return degrade("the permissive baseline could not be parsed");
   }
   const fsPolicy =
     base.filesystem_policy && typeof base.filesystem_policy === "object"
@@ -145,7 +167,7 @@ export function buildRuntimePermissivePolicy(
     try {
       return deps.writeTempPolicy(yaml);
     } catch {
-      return basePermissivePath;
+      return degrade("the merged policy could not be written");
     }
   }
   let tmpPath: string | null = null;
@@ -158,7 +180,7 @@ export function buildRuntimePermissivePolicy(
     // writeFileSync failed. Clean it up so we do not leak a 0700 dir
     // on /tmp every time the write path errors.
     if (tmpPath) cleanupTempDir(tmpPath, TEMP_FILE_PREFIX);
-    return basePermissivePath;
+    return degrade("the merged policy could not be written");
   }
 }
 
@@ -183,12 +205,16 @@ function safeYamlObject(text: string): Record<string, unknown> | null {
 // helper must stay dependency-free.
 const PROVIDER_COMPOSED_PREFIX = "_provider_";
 
-function readNetworkPolicies(root: Record<string, unknown> | null): Record<string, unknown> {
+function readNetworkPolicies(
+  root: Record<string, unknown> | null,
+  ownedKeys: readonly string[],
+): Record<string, unknown> {
   const value = root?.network_policies;
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const owned = new Set(ownedKeys);
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>).filter(
-      ([name]) => !name.startsWith(PROVIDER_COMPOSED_PREFIX),
+      ([name]) => owned.has(name) && !name.startsWith(PROVIDER_COMPOSED_PREFIX),
     ),
   );
 }

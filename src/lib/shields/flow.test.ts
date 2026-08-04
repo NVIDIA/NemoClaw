@@ -45,6 +45,7 @@ let tmpDir: string;
 
 type HarnessOptions = {
   basePermissiveYaml?: string;
+  ownedNetworkPolicyKeys?: readonly string[];
   directSandboxUnavailable?: boolean;
   dockerExecFileSync?: (argv: unknown) => string;
   livePolicyYaml?: string;
@@ -112,6 +113,9 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   });
   options.fork && vi.spyOn(childProcess, "fork").mockImplementation(options.fork);
   vi.spyOn(policy, "buildPolicyGetCommand").mockReturnValue(["openshell", "policy", "get"]);
+  vi.spyOn(policy, "registeredNetworkPolicyKeys").mockImplementation(
+    () => options.ownedNetworkPolicyKeys ?? [],
+  );
   const appliedPolicies: string[] = [];
   vi.spyOn(policy, "buildPolicySetCommand").mockImplementation((policyFile: unknown) => {
     appliedPolicies.push(readIfPresent(String(policyFile)));
@@ -325,6 +329,8 @@ describe("shields command flow", () => {
         "",
       ].join("\n"),
       basePermissiveYaml: "version: 1\nnetwork_policies:\n  nvidia: {}\n",
+      // The registry records this route, so shields down must carry it.
+      ownedNetworkPolicyKeys: ["mcp_bridge_fake"],
     });
 
     harness.shieldsDown("openclaw", { skipTimer: true, throwOnError: true });

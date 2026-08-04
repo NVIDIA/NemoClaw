@@ -82,6 +82,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     });
 
     const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      ownedNetworkPolicyKeys: [],
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE,
     });
@@ -102,6 +103,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     });
 
     const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      ownedNetworkPolicyKeys: [],
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE,
     });
@@ -122,6 +124,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     });
 
     const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      ownedNetworkPolicyKeys: [],
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE,
     });
@@ -143,6 +146,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     });
 
     const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      ownedNetworkPolicyKeys: [],
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE,
     });
@@ -163,6 +167,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
   it("returns the static base path when live policy is empty", () => {
     const basePath = "/path/to/static.yaml";
     const out = buildRuntimePermissivePolicy(basePath, {
+      ownedNetworkPolicyKeys: [],
       livePolicyYaml: "",
       readBasePolicy: () => BASE_PERMISSIVE,
     });
@@ -173,6 +178,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     const basePath = "/path/to/static.yaml";
     const liveYaml = YAML.stringify({ landlock: { compatibility: "best_effort" } });
     const out = buildRuntimePermissivePolicy(basePath, {
+      ownedNetworkPolicyKeys: [],
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE,
     });
@@ -185,6 +191,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       filesystem_policy: { read_write: ["/proc"] },
     });
     const out = buildRuntimePermissivePolicy(basePath, {
+      ownedNetworkPolicyKeys: [],
       livePolicyYaml: liveYaml,
       readBasePolicy: () => {
         throw new Error("ENOENT");
@@ -199,6 +206,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
       filesystem_policy: { read_write: ["/proc"] },
     });
     const out = buildRuntimePermissivePolicy(basePath, {
+      ownedNetworkPolicyKeys: [],
       livePolicyYaml: liveYaml,
       readBasePolicy: () => "::: not yaml :::",
     });
@@ -212,6 +220,7 @@ describe("buildRuntimePermissivePolicy (#3942)", () => {
     });
     let writeAttempts = 0;
     const out = buildRuntimePermissivePolicy(basePath, {
+      ownedNetworkPolicyKeys: [],
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE,
       writeTempPolicy: () => {
@@ -234,6 +243,7 @@ describe("buildRuntimePermissivePolicy network routes (#7952)", () => {
     const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE_WITH_NETWORK,
+      ownedNetworkPolicyKeys: [MCP_KEY],
     });
     trackTempForCleanup(out, "/unused-base.yaml");
     expect(out).not.toBe("/unused-base.yaml");
@@ -250,6 +260,7 @@ describe("buildRuntimePermissivePolicy network routes (#7952)", () => {
     const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE_WITH_NETWORK,
+      ownedNetworkPolicyKeys: [MCP_KEY],
     });
     trackTempForCleanup(out, "/unused-base.yaml");
     expect(out).not.toBe("/unused-base.yaml");
@@ -273,6 +284,7 @@ describe("buildRuntimePermissivePolicy network routes (#7952)", () => {
     const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE_WITH_NETWORK,
+      ownedNetworkPolicyKeys: ["nvidia"],
     });
     trackTempForCleanup(out, "/unused-base.yaml");
 
@@ -292,6 +304,9 @@ describe("buildRuntimePermissivePolicy network routes (#7952)", () => {
     const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE_WITH_NETWORK,
+      // Even if a provider-composed key were recorded as owned, it must
+      // never reach `policy set`.
+      ownedNetworkPolicyKeys: [MCP_KEY, "_provider_openai"],
     });
     trackTempForCleanup(out, "/unused-base.yaml");
 
@@ -306,6 +321,7 @@ describe("buildRuntimePermissivePolicy network routes (#7952)", () => {
     const out = buildRuntimePermissivePolicy(basePath, {
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE_WITH_NETWORK,
+      ownedNetworkPolicyKeys: [MCP_KEY],
     });
     expect(out).toBe(basePath);
   });
@@ -316,6 +332,7 @@ describe("buildRuntimePermissivePolicy network routes (#7952)", () => {
     const out = buildRuntimePermissivePolicy(basePath, {
       livePolicyYaml: liveYaml,
       readBasePolicy: () => BASE_PERMISSIVE_WITH_NETWORK,
+      ownedNetworkPolicyKeys: [MCP_KEY],
     });
     expect(out).toBe(basePath);
   });
@@ -337,6 +354,9 @@ describe("buildRuntimePermissivePolicy network routes (#7952)", () => {
       // A base with no routes of its own, so the applied document holds
       // exactly what the merge chose to carry across.
       readBasePolicy: () => YAML.stringify({ filesystem_policy: { include_workdir: true } }),
+      // Every live key is registered here, so the only thing that can
+      // remove one is the provider-composed filter itself.
+      ownedNetworkPolicyKeys: Object.keys(live),
     });
     trackTempForCleanup(out, "/unused-base.yaml");
 
@@ -345,11 +365,106 @@ describe("buildRuntimePermissivePolicy network routes (#7952)", () => {
     expect(expected).toContain(MCP_KEY);
   });
 
+  it("leaves an unregistered live route behind (#7952)", () => {
+    const liveYaml = YAML.stringify({
+      network_policies: {
+        ...GENERATED_MCP,
+        // Present on the live sandbox but absent from the registry, so it
+        // is not NemoClaw's to carry into the permissive policy.
+        stray_route: { name: "stray_route", endpoints: [{ host: "stray.example.com" }] },
+      },
+    });
+
+    const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => BASE_PERMISSIVE_WITH_NETWORK,
+      ownedNetworkPolicyKeys: [MCP_KEY],
+    });
+    trackTempForCleanup(out, "/unused-base.yaml");
+
+    const result = YAML.parse(fs.readFileSync(out, "utf-8"));
+    expect(result.network_policies[MCP_KEY]).toEqual(GENERATED_MCP[MCP_KEY]);
+    expect(result.network_policies.stray_route).toBeUndefined();
+  });
+
+  it("carries nothing when the registry records no routes (#7952)", () => {
+    const basePath = "/path/to/static.yaml";
+    const liveYaml = YAML.stringify({ network_policies: { ...GENERATED_MCP } });
+
+    const out = buildRuntimePermissivePolicy(basePath, {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => BASE_PERMISSIVE_WITH_NETWORK,
+      ownedNetworkPolicyKeys: [],
+    });
+
+    expect(out).toBe(basePath);
+  });
+
+  it("reports the loss when an owned route cannot be merged (#7952)", () => {
+    const basePath = "/path/to/static.yaml";
+    const liveYaml = YAML.stringify({ network_policies: { ...GENERATED_MCP } });
+    const degraded: string[] = [];
+
+    const out = buildRuntimePermissivePolicy(basePath, {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => {
+        throw new Error("ENOENT");
+      },
+      ownedNetworkPolicyKeys: [MCP_KEY],
+      onDegraded: (detail) => degraded.push(detail),
+    });
+
+    // Degrading to the static policy is deliberate; going silent is not.
+    expect(out).toBe(basePath);
+    expect(degraded).toEqual(["the permissive baseline could not be read"]);
+  });
+
+  it("reports the loss when the merged policy cannot be written (#7952)", () => {
+    const basePath = "/path/to/static.yaml";
+    const liveYaml = YAML.stringify({ network_policies: { ...GENERATED_MCP } });
+    const degraded: string[] = [];
+
+    const out = buildRuntimePermissivePolicy(basePath, {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => BASE_PERMISSIVE_WITH_NETWORK,
+      ownedNetworkPolicyKeys: [MCP_KEY],
+      writeTempPolicy: () => {
+        throw new Error("ENOSPC");
+      },
+      onDegraded: (detail) => degraded.push(detail),
+    });
+
+    expect(out).toBe(basePath);
+    expect(degraded).toEqual(["the merged policy could not be written"]);
+  });
+
+  it("stays quiet when a degrade loses no owned route (#7952)", () => {
+    const basePath = "/path/to/static.yaml";
+    const liveYaml = YAML.stringify({
+      filesystem_policy: { read_write: ["/proc"] },
+      network_policies: { ...GENERATED_MCP },
+    });
+    const degraded: string[] = [];
+
+    const out = buildRuntimePermissivePolicy(basePath, {
+      livePolicyYaml: liveYaml,
+      readBasePolicy: () => {
+        throw new Error("ENOENT");
+      },
+      ownedNetworkPolicyKeys: [],
+      onDegraded: (detail) => degraded.push(detail),
+    });
+
+    expect(out).toBe(basePath);
+    expect(degraded).toEqual([]);
+  });
+
   it("replaces a non-mapping base network_policies rather than indexing into it", () => {
     const liveYaml = YAML.stringify({ network_policies: { ...GENERATED_MCP } });
     const out = buildRuntimePermissivePolicy("/unused-base.yaml", {
       livePolicyYaml: liveYaml,
       readBasePolicy: () => YAML.stringify({ network_policies: ["unexpected"] }),
+      ownedNetworkPolicyKeys: [MCP_KEY],
     });
     trackTempForCleanup(out, "/unused-base.yaml");
 

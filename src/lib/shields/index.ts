@@ -38,6 +38,7 @@ const {
   buildPolicyGetCommand,
   buildPolicySetCommand,
   parseCurrentPolicy,
+  registeredNetworkPolicyKeys,
   resolvePermissivePolicyPath,
 } = require("../policy");
 const { parseDuration, MAX_SECONDS, DEFAULT_SECONDS } = require("../domain/duration");
@@ -2878,16 +2879,23 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   if (policyName === "permissive") {
     const basePath = resolvePermissivePolicyPath(sandboxName);
     // Union the live sandbox's filesystem_policy.read_only/read_write and
-    // network_policies into the static permissive baseline. OpenShell
-    // rejects removal of those paths on a live sandbox, and runtime
-    // entries — /proc on GPU, /opt/hermes on Hermes, /home/linuxbrew on
-    // post-#3913 OpenClaw, a generated MCP bridge route — are not present
-    // in the static YAML. See #3942, #3957, #3168, #7952.
+    // its registry-owned network_policies into the static permissive
+    // baseline. OpenShell rejects removal of those paths on a live
+    // sandbox, and runtime entries — /proc on GPU, /opt/hermes on Hermes,
+    // /home/linuxbrew on post-#3913 OpenClaw, a generated MCP bridge route
+    // — are not present in the static YAML. See #3942, #3957, #3168, #7952.
     // policyYaml is the pre-parsed body we already captured for the
     // snapshot above — reuse it instead of re-fetching.
     policyFile = buildRuntimePermissivePolicy(basePath, {
       livePolicyYaml: policyYaml,
       readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
+      ownedNetworkPolicyKeys: registeredNetworkPolicyKeys(sandboxName),
+      onDegraded: (detail) => {
+        console.warn(
+          `  Warning: ${detail}, so registered network routes were not carried into the permissive policy.`,
+        );
+        console.warn(`  Re-apply them with \`${CLI_NAME} ${sandboxName} mcp restart\`.`);
+      },
     });
     policyFileIsTemp = policyFile !== basePath;
   } else if (fs.existsSync(policyName)) {
