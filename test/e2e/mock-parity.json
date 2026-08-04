@@ -3,6 +3,27 @@
   "version": 1,
   "entries": [
     {
+      "live": "test/e2e/live/managed-image-multiarch-startup.test.ts",
+      "fast": [
+        "test/e2e/support/base-image-publication.test.ts",
+        "test/e2e/support/e2e-workflow.test.ts",
+        "test/e2e/support/managed-image-multiarch-startup-helpers.test.ts",
+        "test/managed-image-publication-workflow.test.ts",
+        "test/pr-risk-plan.test.ts",
+        "test/protected-managed-image-contract.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/managed-image-protected-runtime.test.ts",
+      "fast": [
+        "src/lib/inference/nim.test.ts",
+        "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
+        "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+        "test/managed-image-protected-runtime-contract.test.ts",
+        "test/pr-risk-plan.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/hermes-gpu-startup.test.ts",
       "fast": [
         "test/e2e/support/hermes-gpu-startup-fallback.test.ts",

@@ -54,13 +54,14 @@ Before asking for the release confirmation phrase, build and show an evidence le
 - Preflight the candidate workflow, conditional runner readiness, and existing candidate evidence before dispatching new work.
 - Dispatch independent default-suite and unconditional explicit-only work concurrently. Dispatch a conditional hardware lane only after its authoritative runner inventory confirms that it is online; otherwise record its required itemized exception without queueing it.
 - Derive the denominator and dispatch selectors from the candidate workflow. Do not copy them into a second release test list.
+- An explicit-only job that declares `RELEASE_E2E_ACTIVATION_PATH` enters the release denominator only when that exact relative path exists at the candidate SHA. Until then, treat it as a declared dormant lane: do not dispatch it and do not count it as missing evidence.
 - For every accepted run, require the workflow-produced trusted dispatch receipt to bind the candidate SHA, run ID, attempt, and actual selector inputs. Derive default-suite or selective coverage only from that receipt, never from a release manifest claim.
 - Run `nemoclaw-maintainer-e2e` in full mode if no applicable exact Brev Launchable evidence exists for the candidate SHA.
 - For full-mode exact Brev evidence, require one workflow run for the candidate SHA that includes the default-enabled suite and a successful `Exact staging Brev Launchable` job.
 - For that evidence, require the trusted dispatch receipt to bind the run and attempt to empty selectors and `include_staging_brev_launchable=true`.
 - Require its Launchable E2E receipt to identify the candidate SHA in the repository and provision records.
 - Require its cleanup receipt to identify the qualified workspace and report `ABSENT`.
-- Every E2E test execution declared by the workflow must have at least one completed, successful execution for the candidate SHA. This includes tests that require explicit selection and every expanded matrix execution.
+- Every release-eligible E2E test execution declared by the workflow must have at least one completed, successful execution for the candidate SHA. This includes tests that require explicit selection, including activation-gated jobs whose path exists at that SHA, and every expanded matrix execution.
 - Treat each expanded matrix execution as a separate ledger entry. Use its matrix `id`, or all distinguishing matrix dimensions when no single ID exists, in the test identifier so results for distinct expansions are never collapsed under the parent job.
 - Green evidence may accumulate across multiple workflow runs, selective runs, reruns, and attempts. A later failure does not erase an earlier successful execution for the same test and SHA.
 - Skipped, unexecuted, queued, in-progress, cancelled, and failing results are not green evidence.
