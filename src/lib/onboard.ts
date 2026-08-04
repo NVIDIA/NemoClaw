@@ -1326,11 +1326,8 @@ function destroyGateway(
 
 const handleFinalGatewayStartFailure = createFinalGatewayStartFailureHandler({
   getGatewayName: () => GATEWAY_NAME,
-  collectDiagnostics: () =>
-    runCaptureOpenshell(["doctor", "logs", "--name", GATEWAY_NAME], {
-      ignoreError: true,
-      timeout: 10_000,
-    }),
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  collectDiagnostics: () => runCaptureOpenshell(["doctor", "logs", "--name", GATEWAY_NAME], { ignoreError: true, timeout: 10_000 }),
   cleanupGateway: destroyGateway,
   supportsLifecycleCommands: () => gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
 });
