@@ -192,32 +192,39 @@ describe("gateway GPU passthrough inspection", () => {
       throw new Error("registry read failed");
     });
     const errors: string[] = [];
-    vi.spyOn(console, "error").mockImplementation((line?: unknown) => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation((line?: unknown) => {
       errors.push(String(line));
     });
-    vi.spyOn(process, "exit").mockImplementation((code?: string | number | null) => {
-      throw new Error(`exit ${code}`);
-    });
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation((code?: string | number | null) => {
+        throw new Error(`exit ${code}`);
+      });
 
-    expect(() =>
-      reconcileGatewayGpuReuseForGpuIntent({
-        gatewayReuseState: healthy,
-        gpuPassthrough: true,
-        gatewayName: "nemoclaw",
-        currentSandboxName: null,
-        recreateSandbox: false,
-        confirmedDockerDriverGateway: false,
-        stopDashboardForwards: vi.fn(),
-        retireLegacyGatewayForDockerDriverUpgrade: vi.fn(),
-        destroyGatewayRuntimeForGpuReuse: vi.fn(),
-      }),
-    ).toThrow("exit 1");
+    try {
+      expect(() =>
+        reconcileGatewayGpuReuseForGpuIntent({
+          gatewayReuseState: healthy,
+          gpuPassthrough: true,
+          gatewayName: "nemoclaw",
+          currentSandboxName: null,
+          recreateSandbox: false,
+          confirmedDockerDriverGateway: false,
+          stopDashboardForwards: vi.fn(),
+          retireLegacyGatewayForDockerDriverUpgrade: vi.fn(),
+          destroyGatewayRuntimeForGpuReuse: vi.fn(),
+        }),
+      ).toThrow("exit 1");
 
-    expect(errors).toContain("    openshell gateway remove nemoclaw");
-    expect(errors).toContain(
-      "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
-    );
-    expect(errors).toContain("    nemoclaw onboard --gpu");
-    expect(errors.join("\n")).not.toContain("gateway destroy");
+      expect(errors).toContain("    openshell gateway remove nemoclaw");
+      expect(errors).toContain(
+        "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
+      );
+      expect(errors).toContain("    nemoclaw onboard --gpu");
+      expect(errors.join("\n")).not.toContain("gateway destroy");
+    } finally {
+      exitSpy.mockRestore();
+      consoleErrorSpy.mockRestore();
+    }
   });
 });
