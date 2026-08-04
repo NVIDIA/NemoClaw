@@ -97,8 +97,8 @@ function emittedEvent(stderr: string[]): Record<string, string> {
   );
 }
 
-function settleDiagnostics(delayMs = 20): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, delayMs));
+async function waitForDiagnostic(stderr: string[]): Promise<void> {
+  await expect.poll(() => stderr.length, { interval: 5, timeout: 1000 }).toBeGreaterThan(0);
 }
 
 describe("patchManagedTransportDiagnosticsText", () => {
@@ -180,7 +180,7 @@ describe("injected managed transport wrapper", () => {
       inner as unknown as typeof fetch,
       "https://mcp.test:8443/rpc",
     )("https://mcp.test:8443/rpc");
-    await settleDiagnostics();
+    await waitForDiagnostic(stderr);
     const event = emittedEvent(stderr);
 
     expect(event.phase).toBe("response_headers");
@@ -264,7 +264,7 @@ describe("injected managed transport wrapper", () => {
       });
 
     await wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")("https://mcp.test/rpc");
-    await settleDiagnostics();
+    await waitForDiagnostic(stderr);
     const captured = JSON.parse(emittedEvent(stderr).error_body) as string;
 
     expect(captured).not.toContain("access-secret-value");
@@ -288,7 +288,7 @@ describe("injected managed transport wrapper", () => {
     ]);
 
     expect(returned).toBe(response);
-    await settleDiagnostics(300);
+    await waitForDiagnostic(stderr);
     expect(emittedEvent(stderr).phase).toBe("response_headers");
   });
 
@@ -357,7 +357,7 @@ describe("injected managed transport wrapper", () => {
     const inner = async () => new Response("", { status: 502 });
 
     await wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")("https://mcp.test/rpc");
-    await settleDiagnostics();
+    await waitForDiagnostic(stderr);
     const event = emittedEvent(stderr);
 
     expect(event.route).toBe("trusted_env_proxy");
@@ -377,7 +377,7 @@ describe("injected managed transport wrapper", () => {
       inner as unknown as typeof fetch,
       "https://mcp.test/rpc",
     )("https://mcp.test/rpc");
-    await settleDiagnostics();
+    await Promise.all([waitForDiagnostic(first.stderr), waitForDiagnostic(second.stderr)]);
 
     const firstTraceId = emittedEvent(first.stderr).trace_id;
     const secondTraceId = emittedEvent(second.stderr).trace_id;
@@ -393,7 +393,7 @@ describe("injected managed transport wrapper", () => {
     await wrap(inner as unknown as typeof fetch, "https://mcp.test/rpc")("https://mcp.test/rpc", {
       headers: { "mcp-session-id": "7f3c9a02-secret-session" },
     });
-    await settleDiagnostics();
+    await waitForDiagnostic(stderr);
 
     expect(emittedEvent(stderr).session_present).toBe("true");
     expect(stderr.join("")).not.toContain("7f3c9a02-secret-session");

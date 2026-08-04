@@ -469,8 +469,12 @@ Reviewed behavior:
   The peer address is not recorded.
 - Session state is reported as a boolean.
   The `mcp-session-id` value is never emitted.
-- A thrown failure is classified as `policy`, `connect`, `tls`, `app_connect`, or `request`.
-  A non-2xx response is classified as `response_headers`, and a policy denial takes precedence over its accompanying transport code.
+- A thrown failure is classified as `policy`, `connect`, `tls`, `app_connect`, `response_headers`, or `request`.
+  A policy denial takes precedence over its accompanying transport code.
+  Without a higher-priority phase signal, a thrown `UND_ERR_HEADERS_TIMEOUT` failure is classified as `response_headers`.
+  That diagnostic has no response headers or `http_status` because `fetch` did not return a response.
+- A returned non-2xx response is also classified as `response_headers`.
+  It carries `http_status` and any allowlisted response headers that are present.
 - The fetch boundary does not expose the JSON-RPC operation, so the diagnostic records the endpoint without an `operation` field.
 - Each emitted diagnostic receives a local 32-character hexadecimal `trace_id`.
 - The wrapper is inert unless `OPENSHELL_SANDBOX=1`, so it does not change host-side behavior.
