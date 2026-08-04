@@ -88,6 +88,7 @@ describe("startSandbox", () => {
     const restoreProcesses = vi.fn();
 
     restoreStoppedSandboxStartupState("my-sandbox", {
+      agent: "openclaw",
       restoreLockedStartupAccess: restoreAccess,
       restoreProcessState: restoreProcesses,
     });
@@ -97,6 +98,20 @@ describe("startSandbox", () => {
     expect(restoreAccess.mock.invocationCallOrder[0]).toBeLessThan(
       restoreProcesses.mock.invocationCallOrder[0],
     );
+  });
+
+  it("keeps Hermes sealed state untouched while recovering sandbox processes (#8112)", () => {
+    const restoreAccess = vi.fn();
+    const restoreProcesses = vi.fn();
+
+    restoreStoppedSandboxStartupState("my-sandbox", {
+      agent: "hermes",
+      restoreLockedStartupAccess: restoreAccess,
+      restoreProcessState: restoreProcesses,
+    });
+
+    expect(restoreAccess).not.toHaveBeenCalled();
+    expect(restoreProcesses).toHaveBeenCalledWith("my-sandbox");
   });
 
   it("restores startup state before probing readiness after a stopped container starts (#8112)", async () => {

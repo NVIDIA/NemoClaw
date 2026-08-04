@@ -29,6 +29,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { stripAnsi } from "./json-envelope.ts";
 
 const CONFIG_PATH = "/sandbox/.openclaw/openclaw.json";
 const CONFIG_DIR = path.dirname(CONFIG_PATH);
@@ -165,7 +166,7 @@ async function expectStopStartRecovery(
     timeoutMs: 5 * 60_000,
   });
   expect(status.exitCode, resultText(status)).toBe(0);
-  expect(resultText(status)).toMatch(/Phase:\s*Ready/i);
+  expect(stripAnsi(resultText(status))).toMatch(/Phase:\s*Ready/i);
 
   const shields = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
     artifactName: `${artifactPrefix}-shields-status`,

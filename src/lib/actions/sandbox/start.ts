@@ -5,6 +5,7 @@ import {
   CURRENT_RUNTIME_PROVIDER_BUNDLES,
   type RuntimeProviderBundleRegistry,
 } from "../../onboard/runtime-provider/access";
+import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
   resolveSandboxLifecycleProvider,
@@ -30,6 +31,7 @@ function restoreLockedStartupAccess(sandboxName: string): void {
 }
 
 export interface SandboxStartupStateDeps {
+  agent?: SandboxEntry["agent"];
   restoreLockedStartupAccess?: (sandboxName: string) => void;
   restoreProcessState?: (sandboxName: string) => void;
 }
@@ -38,7 +40,9 @@ export function restoreStoppedSandboxStartupState(
   sandboxName: string,
   deps: SandboxStartupStateDeps = {},
 ): void {
-  (deps.restoreLockedStartupAccess ?? restoreLockedStartupAccess)(sandboxName);
+  if ((deps.agent ?? "openclaw") === "openclaw") {
+    (deps.restoreLockedStartupAccess ?? restoreLockedStartupAccess)(sandboxName);
+  }
   (deps.restoreProcessState ?? restoreProcessState)(sandboxName);
 }
 
@@ -83,7 +87,13 @@ export async function startSandbox(
 
   await resolved.lifecycle.verifyStarted(input, async (name) => {
     log("  Restoring sandbox startup state…");
-    (deps.restoreStartupState ?? restoreStoppedSandboxStartupState)(name);
+    const restoreStartupState =
+      deps.restoreStartupState ??
+      ((sandboxNameToRestore: string) =>
+        restoreStoppedSandboxStartupState(sandboxNameToRestore, {
+          agent: resolved.sandbox.agent,
+        }));
+    restoreStartupState(name);
     log("  Checking gateway health and host forwards…");
     await (deps.verifyGateway ?? verifyGateway)(name);
   });
