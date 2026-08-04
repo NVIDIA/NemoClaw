@@ -13,12 +13,16 @@ const SANDBOX_INIT = fs.readFileSync(
   "utf-8",
 );
 
-function runSecretScan(config?: string) {
+function writeConfig(content: string): (configPath: string) => void {
+  return (configPath) => fs.writeFileSync(configPath, content);
+}
+
+function runSecretScan(prepareConfig: (configPath: string) => void) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-secret-scan-"));
   const configPath = path.join(tmpDir, "openclaw.json");
   const planPath = path.join(tmpDir, "runtime-plan.json");
   const scriptPath = path.join(tmpDir, "run.sh");
-  if (config !== undefined) fs.writeFileSync(configPath, config);
+  prepareConfig(configPath);
   fs.writeFileSync(
     planPath,
     JSON.stringify({
@@ -53,7 +57,7 @@ describe("messaging runtime secret scans", () => {
     "xoxb-real-token",
     "xapp-real-token",
   ])("rejects %s without exposing the secret (#2085)", (secret) => {
-    const { configPath, result } = runSecretScan(JSON.stringify({ token: secret }));
+    const { configPath, result } = runSecretScan(writeConfig(JSON.stringify({ token: secret })));
 
     expect(result.status).toBe(78);
     expect(result.stderr).toContain(configPath);
@@ -61,10 +65,13 @@ describe("messaging runtime secret scans", () => {
   });
 
   it.each([
-    ["approved placeholder", '{"botToken":"xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN"}\n'],
-    ["OpenShell reference", '{"token":"openshell:resolve:env:SLACK_BOT_TOKEN"}\n'],
-    ["missing file", undefined],
-  ])("skips the %s without failure (#2085)", (_case, config) => {
-    expect(runSecretScan(config).result.status).toBe(0);
+    [
+      "approved placeholder",
+      writeConfig('{"botToken":"xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN"}\n'),
+    ],
+    ["OpenShell reference", writeConfig('{"token":"openshell:resolve:env:SLACK_BOT_TOKEN"}\n')],
+    ["missing file", () => undefined],
+  ])("skips the %s without failure (#2085)", (_case, prepareConfig) => {
+    expect(runSecretScan(prepareConfig).result.status).toBe(0);
   });
 });
