@@ -1956,7 +1956,7 @@ If the preset is unknown or not currently applied, the command exits non-zero wi
 
 Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox.
 
-### `$$nemoclaw <name> policy exclude`
+### `$$nemoclaw <name> policy exclude <key>`
 
 Persistently exclude one exact entry from the agent baseline policy after previewing the egress and support impact that the change removes.
 The preview names the supported features that may stop working.
@@ -1975,7 +1975,7 @@ $$nemoclaw my-assistant policy exclude nous_research --force
 When a release changes an excluded entry, first run `$$nemoclaw <name> policy restore <key> --force` to clear the stale record, preview the current scope with `$$nemoclaw <name> policy exclude <key> --dry-run`, and then explicitly exclude it again if you still accept the support impact.
 When a release removes the entry, run `$$nemoclaw <name> policy restore <key> --force` only to clear the stale exclusion record; there is no replacement scope to review or re-approve.
 
-### `$$nemoclaw <name> policy restore`
+### `$$nemoclaw <name> policy restore <key>`
 
 Restore a previously excluded entry from the current agent baseline and clear its durable exclusion record.
 When the current baseline still defines the entry, the command prints the egress it re-allows.
