@@ -144,6 +144,54 @@ describe("Docker GPU patch failure reporting (#7996)", () => {
     expect(stderr).toContain("entered Error phase");
   });
 
+  it.each([
+    "sandbox_error_phase",
+    "supervisor_unreachable",
+    "proof_failure",
+  ] as const)("ignores a saved %s verdict after rollback", (kind) => {
+    const stderr = printAndCapture({
+      runCaptureOpenshell: vi.fn(() => "alpha   Error   1m ago\n"),
+      dockerCapture: vi.fn(() => ""),
+      context: {
+        sandboxName: "alpha",
+        newContainerId: "new-container-id",
+        selectedMode: buildDockerGpuMode("gpus"),
+        rolledBack: true,
+        replacementPresence: "absent",
+      },
+      preRollbackClassification: {
+        ...PRE_ROLLBACK,
+        kind,
+        headline: `Stale ${kind} verdict.`,
+      },
+    });
+
+    expect(stderr).toContain("OpenShell sandbox entered Error phase");
+    expect(stderr).not.toContain(`Stale ${kind} verdict`);
+    expect(stderr).not.toContain("patched_container_exit_code=127");
+  });
+
+  it("does not suggest deletion when replacement cleanup remains unknown after rollback", () => {
+    const stderr = printAndCapture({
+      runCaptureOpenshell: vi.fn(() => "alpha   Error   1m ago\n"),
+      dockerCapture: vi.fn(() => ""),
+      context: {
+        sandboxName: "alpha",
+        newContainerId: "new-container-id",
+        selectedMode: buildDockerGpuMode("gpus"),
+        rolledBack: true,
+        replacementPresence: "unknown",
+      },
+      preRollbackClassification: PRE_ROLLBACK,
+    });
+
+    expect(stderr).toContain("Replacement container cleanup could not be confirmed");
+    expect(stderr).toContain("before removing any container");
+    expect(stderr).not.toContain("Manual cleanup");
+    expect(stderr).not.toContain("openshell sandbox delete");
+    expect(stderr).not.toContain("docker rm -f");
+  });
+
   it("does not suggest deleting the sandbox when rollback fails (#7996)", () => {
     const stderr = printAndCapture({
       runCaptureOpenshell: vi.fn(() => ""),
