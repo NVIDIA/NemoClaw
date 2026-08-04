@@ -18,6 +18,7 @@ import {
   type ManagedBootstrapObservedSnapshot,
   type ManagedBootstrapPreparedReplacementHandle,
   type ManagedBootstrapReplacementHandle,
+  sameManagedBootstrapCompletionReceipt,
 } from "./adapter";
 import type { DockerManagedBootstrapDeps } from "./docker";
 import {
@@ -26,7 +27,6 @@ import {
   DockerManagedBootstrapJournalAcknowledgementLostError,
   type DockerManagedBootstrapJournalPhase,
   type DockerManagedBootstrapJournalStore,
-  sameDockerManagedBootstrapReceipt,
   serializeDockerManagedBootstrapFinalizationRecord,
 } from "./docker-journal";
 import { normalizeDockerManagedBootstrapLaunchSpec } from "./docker-spec";
@@ -277,7 +277,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
       }
       if (
         journal.commitReceipt !== null &&
-        !sameDockerManagedBootstrapReceipt("completion", journal.commitReceipt, receipt)
+        !sameManagedBootstrapCompletionReceipt(journal.commitReceipt, receipt)
       ) {
         throw new Error("completion changed");
       }

@@ -512,7 +512,6 @@ export async function verifyGpuSandboxLocalInferenceAndCommitAfterReady(
 ): Promise<void> {
   try {
     verifyGpuSandboxLocalInferenceAfterReady(config, provider, options);
-    await runtimePatch.commitAfterReady();
   } catch (error) {
     const failure = error instanceof Error ? error : new Error(String(error));
     try {
@@ -524,4 +523,5 @@ export async function verifyGpuSandboxLocalInferenceAndCommitAfterReady(
     }
     throw failure;
   }
+  await runtimePatch.commitAfterReady();
 }

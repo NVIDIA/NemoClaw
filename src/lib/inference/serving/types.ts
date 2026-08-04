@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SystemReadinessReport } from "../../readiness/types.js";
+
 export type ServingDefinitionKind = "ServingRecipe" | "ServingPreset";
 export type ServingSelectionPolicy = "automatic" | "explicit-only" | "disabled";
 export type ReadinessEntityKind = "observation" | "capability" | "qualification";
@@ -13,128 +15,262 @@ export type ServingReadinessObservationRole =
   | "driver-version";
 
 export interface ServingMetadata {
-  id: string;
-  displayName?: string;
+  readonly id: string;
+  readonly displayName?: string;
 }
 
-interface ServingRecipeEnvelope {
-  apiVersion: "nemoclaw.nvidia.com/managed-inference/v1";
-  kind: "ServingRecipe";
-  metadata: ServingMetadata;
+export interface ServingArgument {
+  readonly name: string;
+  readonly value?: string | number | boolean;
 }
 
-interface GenericServingRecipe extends ServingRecipeEnvelope {
-  spec: {
-    backend: string;
-    providerId?: never;
-    server?: never;
-    model: {
-      id: string;
-      revision: string;
-      servedName?: string;
-      files?: Array<{ path: string; digest: string }>;
+export interface ServingTopologyBinding {
+  readonly type: "topologyQualificationOutput";
+  readonly qualificationId: string;
+  readonly schemaVersion: number;
+  readonly outputSchema: string;
+}
+
+export type ServingModelPreparation =
+  | { readonly ref: "none/v1" }
+  | {
+      readonly ref: "snapshot-copy-and-exact-text-replacement/v1";
+      readonly snapshotCopy: {
+        readonly sourcePath: string;
+        readonly digest: string;
+        readonly targetPath: string;
+      };
+      readonly exactTextReplacement: {
+        readonly targetPath: string;
+        readonly expectedText: string;
+        readonly replacementText: string;
+      };
     };
-    runtime?: {
-      image?: string;
-      architecture?: "amd64" | "arm64";
-      components?: Record<string, string>;
+
+export interface ServingTemporaryFilesystem {
+  readonly target: string;
+  readonly sizeBytes: number;
+  readonly mode: string;
+  readonly options: readonly string[];
+}
+
+export interface ManagedInferenceServingRecipe {
+  readonly apiVersion: "nemoclaw.nvidia.com/managed-inference/v1";
+  readonly kind: "ServingRecipe";
+  readonly metadata: ServingMetadata;
+  readonly spec: {
+    readonly backend: string;
+    readonly bindings: Readonly<Record<string, ServingTopologyBinding>>;
+    readonly model: {
+      readonly id: string;
+      readonly revision: string;
+      readonly servedName: string;
+      readonly files?: readonly { readonly path: string; readonly digest: string }[];
+      readonly downloadSizeBytes: number;
+      readonly gated: boolean;
+      readonly installFastSafetensors: boolean;
+      readonly preparation: ServingModelPreparation;
     };
-    execution: {
-      receiptRef?: string;
-      materializerRef: string;
-      lifecycleRef: string;
+    readonly runtime: {
+      readonly image: string;
+      readonly imageDownloadSizeBytes: number;
+      readonly pullTimeoutSeconds: number;
+      readonly architecture: string;
+      readonly networkMode: string;
+      readonly ipcMode: string;
+      readonly sharedMemoryBytes: number;
+      readonly gpuRequest: string;
+      readonly devices: readonly string[];
+      readonly ulimits: {
+        readonly memlock: number | string;
+        readonly stackBytes: number;
+      };
+      readonly modelCache: {
+        readonly source: string;
+        readonly target: string;
+      };
+      readonly temporaryFilesystems: readonly ServingTemporaryFilesystem[];
+      readonly environment: Readonly<Record<string, string>>;
+      readonly components?: Readonly<Record<string, string>>;
     };
-    serve?: {
-      arguments?: Array<{ name: string; value?: string | number | boolean }>;
+    readonly execution: {
+      readonly materializerRef: string;
+      readonly lifecycleRef: string;
+      readonly topologyBinding: string;
+      readonly nodeCount: number;
+      readonly tensorParallelSize: number;
+      readonly pipelineParallelSize: number;
+      readonly distributedExecutorBackend: string;
+      readonly rendezvousPort: number;
     };
-    readiness?: {
-      contractRef?: string;
-      timeoutSeconds?: number;
-      expectedModel?: string;
+    readonly serve: {
+      readonly authentication: string;
+      readonly executable: string;
+      readonly arguments: readonly ServingArgument[];
+    };
+    readonly readiness: {
+      readonly timeoutSeconds: number;
+      readonly expectedModel: string;
     };
   };
 }
 
-interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
-  spec: {
-    backend: "install-llama-cpp";
-    providerId: "llama-cpp-local";
-    server: {
-      technology: "llama.cpp";
-      source: { repository: string; revision: string };
+interface ServingRecipeEnvelope {
+  readonly apiVersion: "nemoclaw.nvidia.com/managed-inference/v1";
+  readonly kind: "ServingRecipe";
+  readonly metadata: ServingMetadata;
+}
+
+interface GenericServingRecipe extends ServingRecipeEnvelope {
+  readonly spec: {
+    readonly backend: string;
+    readonly providerId?: never;
+    readonly server?: never;
+    readonly bindings?: Readonly<Record<string, ServingTopologyBinding>>;
+    readonly model: {
+      readonly id: string;
+      readonly revision: string;
+      readonly servedName?: string;
+      readonly files?: readonly { readonly path: string; readonly digest: string }[];
+      readonly downloadSizeBytes?: number;
+      readonly gated?: boolean;
+      readonly installFastSafetensors?: boolean;
+      readonly preparation?: ServingModelPreparation;
     };
-    model: {
-      id: string;
-      revision: string;
-      servedName: string;
-      files: Array<{
-        path: string;
-        digest: string;
-        sizeBytes: number;
-        format: "gguf";
-        quantization: string;
-        license: string;
-      }>;
+    readonly runtime?: Partial<ManagedInferenceServingRecipe["spec"]["runtime"]> & {
+      readonly components?: Readonly<Record<string, string>>;
     };
-    runtime: {
-      image: string;
-      platforms: Array<"linux/amd64" | "linux/arm64">;
-      containerRuntime: "docker";
-      hosts: 1;
-      cuda: { baseImage: string; minimumDriverVersion: string };
-      gpu: { vendor: "nvidia"; count: 1; offload: "full"; cpuFallback: "reject" };
-      resources: { memoryBytes: number; writableStorageBytes: number; pidsLimit: number };
+    readonly execution: {
+      readonly receiptRef?: string;
+      readonly materializerRef: string;
+      readonly lifecycleRef: string;
+      readonly topologyBinding?: string;
+      readonly nodeCount?: number;
+      readonly tensorParallelSize?: number;
+      readonly pipelineParallelSize?: number;
+      readonly distributedExecutorBackend?: string;
+      readonly rendezvousPort?: number;
     };
-    execution: {
-      receiptRef: string;
-      materializerRef: string;
-      lifecycleRef: string;
+    readonly serve?: {
+      readonly authentication?: string;
+      readonly executable?: string;
+      readonly arguments?: readonly ServingArgument[];
     };
-    serve: {
-      protocol: "openai-completions";
-      port: 8081;
-      chatTemplate: string;
-      contextSize: number;
-      slots: 1;
-      idleSleepSeconds: -1;
-      limits: {
-        maxRequestBodyBytes: number;
-        maxPromptTokens: number;
-        maxCompletionTokens: number;
-        requestTimeoutSeconds: number;
+    readonly readiness?: {
+      readonly contractRef?: string;
+      readonly timeoutSeconds?: number;
+      readonly expectedModel?: string;
+    };
+  };
+}
+
+export interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
+  readonly spec: {
+    readonly backend: "install-llama-cpp";
+    readonly providerId: "llama-cpp-local";
+    readonly bindings?: never;
+    readonly server: {
+      readonly technology: "llama.cpp";
+      readonly source: { readonly repository: string; readonly revision: string };
+    };
+    readonly model: {
+      readonly id: string;
+      readonly revision: string;
+      readonly servedName: string;
+      readonly files: readonly {
+        readonly path: string;
+        readonly digest: string;
+        readonly sizeBytes: number;
+        readonly format: "gguf";
+        readonly quantization: string;
+        readonly license: string;
+      }[];
+    };
+    readonly runtime: {
+      readonly image: string;
+      readonly imageDownloadSizeBytes: number;
+      readonly platforms: readonly ("linux/amd64" | "linux/arm64")[];
+      readonly containerRuntime: "docker";
+      readonly networkExposure: "loopback";
+      readonly hosts: 1;
+      readonly cuda: { readonly baseImage: string; readonly minimumDriverVersion: string };
+      readonly gpu: {
+        readonly vendor: "nvidia";
+        readonly count: 1;
+        readonly offload: "full";
+        readonly cpuFallback: "reject";
+      };
+      readonly resources: {
+        readonly memoryBytes: number;
+        readonly writableStorageBytes: number;
+        readonly pidsLimit: number;
       };
     };
-    readiness: {
-      contractRef: string;
-      timeoutSeconds: number;
-      expectedModel: string;
-      probes: { models: true; health: true; properties: true; metrics: true };
+    readonly execution: {
+      readonly receiptRef: string;
+      readonly materializerRef: string;
+      readonly lifecycleRef: string;
+      readonly nodeCount?: never;
     };
-    policy: {
-      egress: "disabled";
-      modelSource: "verified-local";
-      modelDownloads: "disabled";
+    readonly serve: {
+      readonly protocol: "openai-completions";
+      readonly authentication: "bearer";
+      readonly port: 8081;
+      readonly chatTemplate: string;
+      readonly contextSize: number;
+      readonly slots: 1;
+      readonly idleSleepSeconds: -1;
+      readonly batchSize: number;
+      readonly microBatchSize: number;
+      readonly flashAttention: "enabled";
+      readonly kvCache: {
+        readonly key: "f16" | "q8_0";
+        readonly value: "f16" | "q8_0";
+      };
+      readonly speculativeDecoding: "disabled";
+      readonly limits: {
+        readonly maxRequestBodyBytes: number;
+        readonly maxPromptTokens: number;
+        readonly maxCompletionTokens: number;
+        readonly requestTimeoutSeconds: number;
+      };
     };
-    surfaces: {
-      ui: "disabled";
-      slotInspection: "disabled";
-      router: "disabled";
-      mcpProxy: "disabled";
-      serverTools: "disabled";
-      agentMode: "disabled";
-      multimodalProjection: "disabled";
+    readonly readiness: {
+      readonly contractRef: string;
+      readonly timeoutSeconds: number;
+      readonly expectedModel: string;
+      readonly probes: {
+        readonly models: true;
+        readonly health: true;
+        readonly properties: true;
+        readonly metrics: true;
+      };
     };
-    capabilities: {
-      agents: Array<{ id: string; qualificationRef: string }>;
-      protocols: ["openai-completions"];
-      streaming: boolean;
-      toolCalls: boolean;
-      structuredOutputs: boolean;
-      parallelToolCalls: false;
-      responsesApi: false;
-      embeddings: false;
-      reranking: false;
-      multimodal: false;
+    readonly policy: {
+      readonly egress: "disabled";
+      readonly modelSource: "verified-local";
+      readonly modelDownloads: "disabled";
+    };
+    readonly surfaces: {
+      readonly ui: "disabled";
+      readonly slotInspection: "disabled";
+      readonly router: "disabled";
+      readonly mcpProxy: "disabled";
+      readonly serverTools: "disabled";
+      readonly agentMode: "disabled";
+      readonly multimodalProjection: "disabled";
+    };
+    readonly capabilities: {
+      readonly agents: readonly { readonly id: string; readonly qualificationRef: string }[];
+      readonly protocols: readonly ["openai-completions"];
+      readonly streaming: boolean;
+      readonly toolCalls: boolean;
+      readonly structuredOutputs: boolean;
+      readonly parallelToolCalls: false;
+      readonly responsesApi: false;
+      readonly embeddings: false;
+      readonly reranking: false;
+      readonly multimodal: false;
     };
   };
 }
@@ -142,92 +278,249 @@ interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
 export type ServingRecipe = GenericServingRecipe | LlamaCppServingRecipe;
 
 export type ServingReadinessComparison =
-  | { operator: "equals"; value: string | number | boolean }
-  | { operator: "one-of"; values: Array<string | number | boolean> }
-  | { operator: "at-least"; value: number }
-  | { operator: "version-at-least"; value: string };
+  | { readonly operator: "equals"; readonly value: string | number | boolean }
+  | { readonly operator: "one-of"; readonly values: readonly (string | number | boolean)[] }
+  | { readonly operator: "at-least"; readonly value: number }
+  | { readonly operator: "version-at-least"; readonly value: string };
 
-export interface ServingReadinessRequirement {
-  readiness:
-    | {
-        scope: "controller" | "everyNode";
-        kind: "observation" | "capability";
-        id: string;
-        state: "present" | "absent";
-      }
-    | {
-        scope: "controller" | "everyNode";
-        kind: "observation";
-        id: string;
-        comparison: ServingReadinessComparison;
-      }
-    | {
-        scope: "controller" | "everyNode";
-        kind: "qualification";
-        id: string;
-        status: "qualified" | "unqualified";
+export type ServingReadinessRequirement =
+  | {
+      readonly readiness: {
+        readonly scope: "controller" | "everyNode" | "anyNode";
+        readonly kind: "qualification";
+        readonly id: string;
+        readonly status: string;
       };
+    }
+  | {
+      readonly readiness: {
+        readonly scope: "controller" | "everyNode" | "anyNode";
+        readonly kind: "observation" | "capability";
+        readonly id: string;
+        readonly state: string;
+      };
+    }
+  | {
+      readonly readiness: {
+        readonly scope: "controller" | "everyNode" | "anyNode";
+        readonly kind: "observation";
+        readonly id: string;
+        readonly comparison: ServingReadinessComparison;
+      };
+    };
+
+export type ServingFactValue = string | number | boolean | readonly (string | number | boolean)[];
+
+export interface ServingFactRequirement {
+  readonly fact: string;
+  readonly state: "present" | "absent";
+  readonly operator: "equals" | "oneOf" | "atLeast" | "atMost" | "between";
+  readonly value: ServingFactValue;
+}
+
+export interface ServingTopologyRequirement {
+  readonly topologyQualification: {
+    readonly id: string;
+    readonly schemaVersion: number;
+    readonly status: string;
+  };
+}
+
+export type ServingPresetRequirement =
+  | ServingReadinessRequirement
+  | ServingFactRequirement
+  | ServingTopologyRequirement;
+
+export interface ServingPresetTopologyBinding {
+  readonly valueFromTopologyQualification: {
+    readonly id: string;
+    readonly schemaVersion: number;
+    readonly output: string;
+  };
+}
+
+export interface ManagedInferenceServingPreset {
+  readonly apiVersion: "nemoclaw.nvidia.com/managed-inference/v1";
+  readonly kind: "ServingPreset";
+  readonly metadata: ServingMetadata;
+  readonly spec: {
+    readonly selection: ServingSelectionPolicy;
+    readonly priority: number;
+    readonly requirements: { readonly all: readonly ServingPresetRequirement[] };
+    readonly plan: {
+      readonly backend: string;
+      readonly recipeRef: string;
+      readonly bindings: Readonly<Record<string, ServingPresetTopologyBinding>>;
+    };
+  };
 }
 
 export interface ServingPreset {
-  apiVersion: "nemoclaw.nvidia.com/managed-inference/v1";
-  kind: "ServingPreset";
-  metadata: ServingMetadata;
-  spec: {
-    selection: ServingSelectionPolicy;
-    priority: number;
-    requirements?: { all: ServingReadinessRequirement[] };
-    plan: {
-      backend: string;
-      recipeRef: string;
+  readonly apiVersion: "nemoclaw.nvidia.com/managed-inference/v1";
+  readonly kind: "ServingPreset";
+  readonly metadata: ServingMetadata;
+  readonly spec: {
+    readonly selection: ServingSelectionPolicy;
+    readonly priority: number;
+    readonly requirements?: { readonly all: readonly ServingPresetRequirement[] };
+    readonly plan: {
+      readonly backend: string;
+      readonly recipeRef: string;
+      readonly bindings?: Readonly<Record<string, ServingPresetTopologyBinding>>;
     };
   };
 }
 
 export interface ServingCatalogSourceProvenance {
-  path: string;
-  kind: ServingDefinitionKind;
-  id: string;
-  digest: string;
+  readonly path: string;
+  readonly kind: ServingDefinitionKind;
+  readonly id: string;
+  readonly digest: string;
 }
 
 export interface CompiledServingCatalogPayload {
-  schemaVersion: "1.0.0";
-  compilerVersion: "1.1.0";
-  sourceRevision: string;
-  readinessSchemaRef: "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json";
-  recipes: ServingRecipe[];
-  presets: ServingPreset[];
-  sources: ServingCatalogSourceProvenance[];
+  readonly schemaVersion: "1.0.0";
+  readonly compilerVersion: "1.1.0";
+  readonly sourceRevision: string;
+  readonly readinessSchemaRef: "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json";
+  readonly recipes: readonly ServingRecipe[];
+  readonly presets: readonly ServingPreset[];
+  readonly sources: readonly ServingCatalogSourceProvenance[];
 }
 
 export interface CompiledServingCatalog extends CompiledServingCatalogPayload {
-  catalogDigest: string;
+  readonly catalogDigest: string;
 }
 
 export interface ServingCatalogSource {
-  path: string;
-  contents: string;
+  readonly path: string;
+  readonly contents: string;
 }
 
 export interface ServingCatalogSchemas {
-  catalog: object;
-  preset: object;
-  recipe: object;
+  readonly catalog: object;
+  readonly preset: object;
+  readonly recipe: object;
 }
 
-export interface ServingCatalogRegistries {
-  receipts: ReadonlySet<string>;
-  materializers: ReadonlySet<string>;
-  lifecycles: ReadonlySet<string>;
-  readinessContracts: ReadonlySet<string>;
-  readiness: ReadonlyMap<
-    string,
-    | {
-        kind: "observation";
-        valueType?: ReadinessValueType;
-        role?: ServingReadinessObservationRole;
-      }
-    | { kind: "capability" | "qualification" }
-  >;
+export interface ServingTopologyRegistryEntry {
+  readonly bindingOutput: string;
+  readonly outputSchema: string;
 }
+
+export interface ServingReadinessRegistryEntry {
+  readonly kind: ReadinessEntityKind;
+  readonly valueType?: ReadinessValueType;
+  readonly role?: ServingReadinessObservationRole;
+}
+
+export type ServingReadinessRegistryValue =
+  | ReadinessEntityKind
+  | ReadonlySet<ReadinessEntityKind>
+  | ServingReadinessRegistryEntry;
+
+export interface ServingCatalogRegistries {
+  readonly receipts: ReadonlySet<string>;
+  readonly materializers: ReadonlySet<string>;
+  readonly lifecycles: ReadonlySet<string>;
+  readonly readinessContracts: ReadonlySet<string>;
+  readonly readiness: ReadonlyMap<string, ServingReadinessRegistryValue>;
+  readonly facts?: ReadonlySet<string>;
+  readonly topologyQualifications?: ReadonlyMap<string, ServingTopologyRegistryEntry>;
+  readonly validateRecipe?: (recipe: ServingRecipe) => string | undefined;
+}
+
+export type ManagedInferenceServingArgument = ServingArgument;
+export type ManagedInferenceTopologyBinding = ServingTopologyBinding;
+export type ManagedInferenceModelPreparation = ServingModelPreparation;
+export type ManagedInferenceTemporaryFilesystem = ServingTemporaryFilesystem;
+export type ManagedInferenceReadinessRequirement = ServingReadinessRequirement;
+export type ManagedInferenceFactValue = ServingFactValue;
+export type ManagedInferenceFactRequirement = ServingFactRequirement;
+export type ManagedInferenceTopologyRequirement = ServingTopologyRequirement;
+export type ManagedInferencePresetRequirement = ServingPresetRequirement;
+export type ManagedInferencePresetTopologyBinding = ServingPresetTopologyBinding;
+export interface CompiledManagedInferenceCatalog
+  extends Omit<CompiledServingCatalog, "presets" | "recipes"> {
+  readonly presets: readonly ManagedInferenceServingPreset[];
+  readonly recipes: readonly ManagedInferenceServingRecipe[];
+}
+
+const MATERIALIZER_OWNED_SERVE_ARGUMENTS = new Set([
+  "--api-key",
+  "--distributed-executor-backend",
+  "--headless",
+  "--host",
+  "--master-addr",
+  "--master-port",
+  "--nnodes",
+  "--node-rank",
+  "--pipeline-parallel-size",
+  "--revision",
+  "--served-model-name",
+  "--tensor-parallel-size",
+]);
+
+export function isManagedInferenceMaterializerOwnedArgument(name: string): boolean {
+  return MATERIALIZER_OWNED_SERVE_ARGUMENTS.has(name);
+}
+
+export interface ManagedInferenceTopologyQualification<TOutput = unknown> {
+  readonly id: string;
+  readonly schemaVersion: number;
+  readonly status: "qualified" | "unqualified" | "unknown";
+  readonly subjectNodeIds: readonly string[];
+  readonly subjectDigest: string;
+  readonly outputDigest: string;
+  readonly output: TOutput;
+}
+
+export interface ManagedInferenceReadinessSource {
+  readonly nodeId: string;
+  readonly report: SystemReadinessReport;
+}
+
+export interface ManagedInferenceSelectionIntent {
+  readonly provider?: string;
+  readonly vllmModel?: string;
+  readonly vllmExtraArguments?: readonly string[];
+  readonly preset?: string;
+}
+
+export interface ManagedInferenceResolverInput<TTopologyOutput = unknown> {
+  readonly readinessReports: readonly ManagedInferenceReadinessSource[];
+  readonly topologyQualifications: readonly ManagedInferenceTopologyQualification<TTopologyOutput>[];
+  readonly intent?: ManagedInferenceSelectionIntent;
+  readonly now?: Date;
+  readonly maxReadinessAgeMs?: number;
+}
+
+export interface ResolvedManagedInferenceSelection<TTopologyOutput = unknown> {
+  readonly outcome: "selected";
+  readonly selection: "automatic" | "explicit";
+  readonly catalogDigest: string;
+  readonly presetDigest: string;
+  readonly recipeDigest: string;
+  readonly preset: ManagedInferenceServingPreset;
+  readonly recipe: ManagedInferenceServingRecipe;
+  readonly topologyQualification: ManagedInferenceTopologyQualification<TTopologyOutput>;
+}
+
+export type ManagedInferenceResolution<TTopologyOutput = unknown> =
+  | ResolvedManagedInferenceSelection<TTopologyOutput>
+  | {
+      readonly outcome: "no-match";
+      readonly code: "explicit-intent" | "requirements-not-met";
+      readonly message: string;
+    }
+  | {
+      readonly outcome: "rejected";
+      readonly code:
+        | "unknown-preset"
+        | "incompatible-intent"
+        | "invalid-readiness"
+        | "invalid-topology"
+        | "ambiguous-selection"
+        | "requirements-not-met";
+      readonly message: string;
+    };

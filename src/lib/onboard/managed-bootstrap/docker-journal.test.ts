@@ -8,6 +8,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  sameManagedBootstrapCompletionReceipt,
+  sameManagedBootstrapDurablePreparationReceipt,
+} from "./adapter";
+import {
   createFileDockerManagedBootstrapJournalStore,
   DOCKER_MANAGED_BOOTSTRAP_FINALIZATION_SCHEMA_VERSION,
   DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY,
@@ -20,10 +24,10 @@ import {
   normalizeDockerManagedBootstrapJournal,
   parseDockerManagedBootstrapFinalizationRecord,
   parseDockerManagedBootstrapJournal,
-  sameDockerManagedBootstrapReceipt,
   serializeDockerManagedBootstrapFinalizationRecord,
   serializeDockerManagedBootstrapJournal,
 } from "./docker-journal";
+import { reverseKeys } from "./managed-bootstrap-test-fixture";
 
 const roots: string[] = [];
 const IDENTITY = "1".repeat(64);
@@ -366,9 +370,9 @@ describe("Docker managed bootstrap journal", () => {
       },
       schemaVersion: preparation.schemaVersion,
     } satisfies typeof preparation;
-    expect(
-      sameDockerManagedBootstrapReceipt("preparation", preparation, reorderedPreparation),
-    ).toBe(true);
+    expect(sameManagedBootstrapDurablePreparationReceipt(preparation, reorderedPreparation)).toBe(
+      true,
+    );
 
     const completion = finalization.commitReceipt;
     const reorderedCompletion = {
@@ -391,9 +395,7 @@ describe("Docker managed bootstrap journal", () => {
       },
       schemaVersion: completion.schemaVersion,
     } satisfies typeof completion;
-    expect(sameDockerManagedBootstrapReceipt("completion", completion, reorderedCompletion)).toBe(
-      true,
-    );
+    expect(sameManagedBootstrapCompletionReceipt(completion, reorderedCompletion)).toBe(true);
   });
 
   it("reloads exact terminal receipts from a new journal store", () => {
@@ -440,15 +442,11 @@ describe("Docker managed bootstrap journal", () => {
     const store = createFileDockerManagedBootstrapJournalStore(root);
     store.create(journal);
     const directory = path.join(root, DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY);
-    fs.writeFileSync(
-      path.join(directory, `.${IDENTITY}.json${suffix}.1234.deadbeef.tmp`),
-      "partial",
-      {
-        mode: 0o600,
-      },
-    );
+    const target = path.join(directory, `.${IDENTITY}.json${suffix}.1234.deadbeef.tmp`);
+    fs.writeFileSync(target, "partial", { mode: 0o600 });
 
     expect(loadUnfinished(store)).toEqual([journal]);
+    expect(fs.existsSync(target)).toBe(true);
   });
 
   it("rejects an unsupported journal-directory entry during enumeration", () => {
@@ -466,6 +464,24 @@ describe("Docker managed bootstrap journal", () => {
     );
   });
 
+  it.each([
+    `.${IDENTITY}.json.commit.123.a0.tmp`,
+    `.${IDENTITY}.json.decision.pid.a0.tmp`,
+    `.${IDENTITY}.json.finalized.123.A0.tmp`,
+    `${IDENTITY}.json.decision.123.a0.tmp`,
+    `.${IDENTITY}.json.decision.123.a0.tmp.extra`,
+  ])("rejects and retains near-miss atomic entry %s", (name) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
+    roots.push(root);
+    const store = createFileDockerManagedBootstrapJournalStore(root);
+    expect(loadUnfinished(store)).toEqual([]);
+    const target = path.join(root, DOCKER_MANAGED_BOOTSTRAP_JOURNAL_DIRECTORY, name);
+    fs.writeFileSync(target, "near miss\n", { mode: 0o600 });
+
+    expect(() => store.listUnfinishedIdentities()).toThrow("unsupported entry");
+    expect(fs.existsSync(target)).toBe(true);
+  });
+
   it("reloads the exact completion receipt from a new journal store", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-journal-"));
     roots.push(root);
@@ -476,7 +492,12 @@ describe("Docker managed bootstrap journal", () => {
     expect(completed.commitReceipt).toEqual(finalization.commitReceipt);
 
     const restarted = createFileDockerManagedBootstrapJournalStore(root);
-    expect(restarted.recordCompletion(IDENTITY, finalization.commitReceipt)).toEqual(completed);
+    const reorderedReceipt = reverseKeys({
+      ...finalization.commitReceipt,
+      image: reverseKeys({ ...finalization.commitReceipt.image }),
+      sandbox: reverseKeys({ ...finalization.commitReceipt.sandbox }),
+    });
+    expect(restarted.recordCompletion(IDENTITY, reorderedReceipt)).toEqual(completed);
     expect(loadUnfinished(restarted)).toEqual([completed]);
     expect(() =>
       restarted.recordCompletion(IDENTITY, {

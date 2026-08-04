@@ -1072,11 +1072,18 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
-      const runtimeReceipt = path.join(stateDir, "dual-station-vllm-runtime.json");
-      const runtimeBinding = `${runtimeReceipt}.ssh-binding`;
+      const runtimeReceipt = path.join(stateDir, "managed-cluster-vllm-runtime.json");
+      const runtimeBinding = `${runtimeReceipt}.rank-1.ssh-binding`;
+      const discoveryBinding = path.join(
+        stateDir,
+        "managed-cluster-managed-serving.json.spark-worker.ssh-binding",
+      );
+      const managedApiKey = path.join(stateDir, "dual-station-vllm-api-key");
       fs.writeFileSync(runtimeReceipt, "{}\n", { mode: 0o600 });
       fs.mkdirSync(runtimeBinding, { mode: 0o700 });
+      fs.mkdirSync(discoveryBinding, { mode: 0o700 });
       fs.writeFileSync(path.join(runtimeBinding, "known_hosts"), "host-key\n", { mode: 0o600 });
+      fs.writeFileSync(managedApiKey, `${"a".repeat(64)}\n`, { mode: 0o600 });
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
       const result = runUninstallPlan(
@@ -1102,6 +1109,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(logs.join("\n")).toContain("Sibling gateways remain");
       expect(fs.existsSync(runtimeReceipt)).toBe(true);
       expect(fs.existsSync(runtimeBinding)).toBe(true);
+      expect(fs.existsSync(discoveryBinding)).toBe(true);
+      expect(fs.existsSync(managedApiKey)).toBe(true);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
