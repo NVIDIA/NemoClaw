@@ -44,8 +44,10 @@ describe("managed image registry transport", () => {
     const proxy = createServer();
     proxy.on("connect", (request, socket) => {
       tunnels.push(request.url ?? "");
-      abortController.abort();
       destroyTunnel = () => socket.destroy();
+      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n", () => {
+        abortController.abort();
+      });
     });
     const proxyPort = await listen(proxy);
     const session = createManagedImageRegistryFetchSession({
