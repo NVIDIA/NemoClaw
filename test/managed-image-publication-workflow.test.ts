@@ -331,8 +331,10 @@ describe("complete managed-image publication workflow", () => {
     expect(prBuilder["timeout-minutes"]).toBe(90);
     expect(prBuilder.permissions).toEqual({
       contents: "read",
-      packages: "read",
     });
+    expect(step(prBuilder, "Checkout").with?.["persist-credentials"]).toBe(false);
+    expect(JSON.stringify(prBuilder)).not.toContain("secrets.");
+    expect(JSON.stringify(prBuilder)).not.toContain("github.token");
     expect(matrix.map(({ agent }) => agent)).toEqual([
       "openclaw",
       "hermes",

@@ -47,12 +47,14 @@ env:
 jobs:
   pr-build-and-entrypoint:
     name: PR build and direct managed startup (${{ matrix.display_name }})
+    # External contributor PRs remain eligible after GitHub's maintainer
+    # workflow approval. This hosted-runner lane has no secret or package-token
+    # permission, never pushes, and resolves each public base to an exact digest.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
       contents: read
-      packages: read
     strategy:
       fail-fast: false
       matrix:
