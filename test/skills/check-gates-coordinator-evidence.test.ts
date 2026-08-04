@@ -281,15 +281,17 @@ function runGateWithCoordinator({
   const jobs = seedRun.jobs ?? seedJobs();
   const statusChecks = [
     ...successfulRequiredChecks().filter((check) => check.name !== "initialize"),
-    ...(includeInitialSeedEvidence ? seedStatusChecks(407, jobs, seedRun.createdAt) : []),
+    ...(includeInitialSeedEvidence
+      ? seedStatusChecks(407, jobs, seedRun.createdAt ?? undefined)
+      : []),
     ...additionalStatusChecks,
   ];
   const finalStatusChecks =
     Object.keys(finalCheckOverrides).length > 0
-      ? statusChecks.map((check) => ({
-          ...check,
-          ...finalCheckOverrides[check.name],
-        }))
+      ? statusChecks.map((check) => {
+          const overrides = check.name === undefined ? undefined : finalCheckOverrides[check.name];
+          return { ...check, ...overrides };
+        })
       : undefined;
   const coordinatorJobs = configuredJobs ?? coordinator.jobs ?? defaultCoordinator.jobs;
   return runGate({
