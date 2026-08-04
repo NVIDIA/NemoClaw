@@ -638,10 +638,20 @@ Changes to `src/lib/actions/sandbox/status-snapshot.ts` select the exact
 delivery-recovery changes bound to the reboot simulation that independently
 probes the restored gateway and host forwarding.
 Every internal revision with selected jobs or targets automatically dispatches
-its deterministic plan after eligible PR CI passes. This behavior includes all
-internal E2E control-plane changes. Internal dispatch does not use
-`approve-e2e` or a maintainer role check. If no job or target is selected, the
-required check passes without an E2E run.
+its deterministic plan after eligible PR CI passes. Automatic PR E2E planning
+and PR Review Advisor E2E recommendations temporarily omit only
+`jetson-nvmap-gpu`. This behavior includes all internal E2E control-plane
+changes. Internal dispatch does not use
+`approve-e2e` or a maintainer role check. If no job or target remains after the
+Jetson omission, the required check passes without an E2E run.
+
+The `jetson-nvmap-gpu` job remains available through an explicit manual `E2E
+main` dispatch with `jobs=jetson-nvmap-gpu`. Before setting
+`allow_jetson_runner_queue=true`, a repository administrator must confirm that
+the Jetson runner is online in the authoritative repository runner inventory.
+Restore Jetson automatic planning and PR Review Advisor recommendations only
+after the Colossus-backed Jetson runner path is available and its online state
+can be confirmed before queueing.
 When selected E2E fails, a later internal PR commit starts a new dispatch after
 eligible PR CI passes for that commit. The dispatch runs the complete
 deterministic plan for the later commit, not only the selection that failed.
