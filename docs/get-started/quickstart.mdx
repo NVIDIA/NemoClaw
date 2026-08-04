@@ -55,7 +55,7 @@ Review the [Prerequisites](prerequisites) before you begin.
       The installer can display `Run express install with these settings? [Y/n]:` before the agent-selection prompt only on supported DGX or Windows WSL hosts.
       Press Enter to use the recommended preset settings and managed local inference for that platform.
       Express install mode completes the remaining onboarding non-interactively.
-      If you accept, skip the rest of this procedure and [continue after express install](#continue-after-express-install).
+      If you accept, wait for the installer to finish, then continue with **Confirm the Sandbox Is Ready**.
       Enter `n` to continue with the interactive onboarding flow described in this step.
     </Note>
   </Step>
@@ -83,28 +83,6 @@ Review the [Prerequisites](prerequisites) before you begin.
     ```
   </Step>
 </Steps>
-
-## Continue After Express Install
-
-If you accepted express install mode after running the bare hosted installer, the installer created an OpenClaw sandbox named `my-assistant`.
-Skip installation and onboarding, then check the sandbox state.
-
-```bash
-nemoclaw my-assistant status
-```
-
-Print the dashboard URL.
-
-```bash
-nemoclaw my-assistant dashboard-url --quiet
-```
-
-Open the printed URL in your browser, or connect from the terminal and start the OpenClaw TUI.
-
-```bash
-nemoclaw my-assistant connect
-openclaw tui
-```
 
 ## Installation and Runtime Details
 

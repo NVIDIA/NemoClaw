@@ -34,8 +34,8 @@ The prompt tells your agent to use NemoClaw docs and skills, ask one question at
 
 Review [Prerequisites](https://docs.nvidia.com/nemoclaw/latest/get-started/prerequisites.html) before installing.
 On a supported DGX or Windows WSL host, press Enter at the `Run express install with these settings? [Y/n]:` prompt to use the recommended preset settings for that platform.
-With the bare install command, express install mode creates the default OpenClaw sandbox.
-After it finishes, [continue with the `my-assistant` sandbox](https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart.html#continue-after-express-install).
+Express install mode installs OpenClaw by default.
+If you accept, refer to [NemoClaw Quickstart with OpenClaw](https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart.html).
 Enter `n` if you want to choose Hermes or LangChain Deep Agents Code, a sandbox name, an inference provider, and a model interactively.
 When connecting to a Hermes sandbox from a light terminal, NemoClaw may install a managed `nemoclaw-light` Hermes skin for readable assistant text; it removes that managed skin state again when the terminal no longer needs it and preserves any user-selected Hermes skin.
 
