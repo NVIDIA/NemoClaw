@@ -73,7 +73,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
       "switch Hermes inference provider",
       "validate switched route and locked config",
       "exercise inference.local and Hermes API",
-      "run Hermes CLI against switched provider",
+      "run Hermes CLI adapter forms against switched provider",
       "prove split provider/model credential resolution",
     ],
   },
@@ -81,7 +81,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   await artifacts.target.declare({
     id: "hermes-inference-switch",
     boundary:
-      "install.sh + Hermes sandbox + inference set + in-sandbox health/chat + hermes -z probes",
+      "install.sh + Hermes sandbox + inference set + in-sandbox health/chat + managed Hermes CLI probes",
     sandboxName: SANDBOX_NAME,
     switchProvider: SWITCH_PROVIDER,
     switchModel: SWITCH_MODEL,
@@ -382,7 +382,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
   expect(chatContent(chat.stdout)).toMatch(/PONG/i);
   expect(inferenceResponseModel(chat.stdout)).toBe(SWITCH_MODEL);
 
-  progress.phase("run Hermes CLI against switched provider");
+  progress.phase("run Hermes CLI adapter forms against switched provider");
   const hermesCli = await runHermesCliPongWithRetry({
     run: (attempt) =>
       sandbox.exec(
@@ -433,15 +433,17 @@ test("Hermes inference set updates route/config and preserves live runtime", {
         SANDBOX_NAME,
         [
           "hermes",
-          "-z",
+          "chat",
+          "--query",
           "Reply with exactly one word: PONG",
+          "--quiet",
           "--provider",
           PROXY_RESOLUTION_PROVIDER,
           "--model",
           proxyResolutionModel,
         ],
         {
-          artifactName: `hermes-cli-split-provider-namespaced-model-proxy-resolution-${attempt}`,
+          artifactName: `hermes-cli-chat-split-provider-namespaced-model-proxy-resolution-${attempt}`,
           env: env(),
           redactionValues,
           timeoutMs: 150_000,

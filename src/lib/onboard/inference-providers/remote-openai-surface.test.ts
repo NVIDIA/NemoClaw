@@ -76,6 +76,17 @@ function createHarness() {
         modelMode: "input",
         defaultModel: MODEL,
       },
+      "llama-cpp": {
+        label: "Local llama.cpp",
+        providerName: "llama-cpp-local",
+        providerType: "openai",
+        credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+        endpointUrl: "http://127.0.0.1:8081/v1",
+        helpUrl: null,
+        modelMode: "input",
+        defaultModel: "",
+        skipVerify: true,
+      },
     },
     hydrateCredentialEnv: vi.fn(() => "test-secret"),
     promptValidationRecovery: vi.fn(async () => "selection" as const),
@@ -313,5 +324,46 @@ describe("OpenAI-compatible no-auth provider registration", () => {
     expect(persist).not.toHaveBeenCalled();
     expect(restore).toHaveBeenCalledOnce();
     expect(process.env[NO_AUTH_ENV]).toBe("committed-token");
+  });
+});
+
+describe("llama.cpp existing-server provider registration", () => {
+  it("registers the fixed llama.cpp gateway endpoint with NEMOCLAW_LLAMACPP_LOCAL_TOKEN (#8161)", async () => {
+    const harness = createHarness();
+    harness.deps.hydrateCredentialEnv.mockReturnValue("llama-secret");
+
+    await expect(
+      setupRemoteProviderInference(
+        {
+          sandboxName: SANDBOX,
+          model: "team/model-alias",
+          provider: "llama-cpp-local",
+          endpointUrl: "http://127.0.0.1:8081/v1",
+          credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+          preferredInferenceApi: "openai-completions",
+        },
+        harness.deps,
+      ),
+    ).resolves.toEqual({ done: false });
+
+    expect(harness.upsertProvider).toHaveBeenCalledWith(
+      "llama-cpp-local",
+      "openai",
+      "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      "http://host.openshell.internal:8081/v1",
+      { NEMOCLAW_LLAMACPP_LOCAL_TOKEN: "llama-secret" },
+    );
+    expect(harness.runOpenshell).toHaveBeenCalledWith(
+      [
+        "inference",
+        "set",
+        "--no-verify",
+        "--provider",
+        "llama-cpp-local",
+        "--model",
+        "team/model-alias",
+      ],
+      { ignoreError: true },
+    );
   });
 });

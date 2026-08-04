@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
   preflightOwnership: vi.fn(),
   persistRuntimeReceipt: vi.fn(),
   probeCapability: vi.fn(),
+  recoverRuntime: vi.fn(),
   probeDockerStorage: vi.fn(),
   probeHostStorage: vi.fn(),
   runCapture: vi.fn(),
@@ -93,6 +94,7 @@ vi.mock("./vllm-station-cluster-lifecycle", () => ({
 
 vi.mock("./vllm-station-runtime-receipt", () => ({
   persistDualStationVllmRuntimeReceipt: mocks.persistRuntimeReceipt,
+  recoverInstalledDualStationVllmRuntime: mocks.recoverRuntime,
 }));
 
 vi.mock("./vllm-api-key", () => ({
@@ -244,6 +246,7 @@ beforeEach(() => {
   mocks.cleanup.mockReturnValue({ ok: true, removedContainerIds: [] });
   mocks.commitLegacyMigration.mockResolvedValue({ ok: true, cleanupWarnings: [] });
   mocks.persistRuntimeReceipt.mockImplementation(() => {});
+  mocks.recoverRuntime.mockReturnValue({ kind: "not-installed" });
   mocks.rollbackLegacyMigration.mockResolvedValue({ ok: true });
   mocks.measureDirectorySizeBytes.mockReturnValue(0n);
   mocks.probeDockerStorage.mockReturnValue({
@@ -310,6 +313,7 @@ describe("dual DGX Station running-runtime receipt adoption", () => {
     });
 
     expect(mocks.probeCapability).toHaveBeenCalledOnce();
+    expect(mocks.recoverRuntime).not.toHaveBeenCalled();
     expect(mocks.preflightOwnership).toHaveBeenCalledWith(plan());
     expect(mocks.areContainersRunning).toHaveBeenCalledWith(plan());
     expect(mocks.persistRuntimeReceipt).toHaveBeenCalledWith(plan());
@@ -335,7 +339,104 @@ describe("dual DGX Station running-runtime receipt adoption", () => {
       ok: false,
       reason: "the managed dual-Station peer configuration is missing",
     });
+    expect(mocks.recoverRuntime).toHaveBeenCalledOnce();
     expect(mocks.probeCapability).not.toHaveBeenCalled();
+    expect(mocks.persistRuntimeReceipt).not.toHaveBeenCalled();
+  });
+
+  it("recovers and revalidates persisted pair ownership for a later onboarding process", async () => {
+    delete process.env.NEMOCLAW_DGX_STATION_PEER;
+    const recoveredPlan = plan();
+    let lifecycleActive = false;
+    mocks.recoverRuntime.mockReturnValue({ kind: "ready", plan: recoveredPlan });
+    mocks.withLifecycle.mockImplementation(async (operation) => {
+      lifecycleActive = true;
+      try {
+        return await operation();
+      } finally {
+        lifecycleActive = false;
+      }
+    });
+    mocks.recoverRuntime.mockImplementation(() => {
+      expect(lifecycleActive).toBe(true);
+      return { kind: "ready", plan: recoveredPlan };
+    });
+    mocks.preflightOwnership.mockImplementation(() => {
+      expect(lifecycleActive).toBe(true);
+      return { ok: true };
+    });
+    mocks.areContainersRunning.mockImplementation(() => {
+      expect(lifecycleActive).toBe(true);
+      return true;
+    });
+
+    await expect(persistConfiguredDualStationVllmRuntimeReceipt()).resolves.toEqual({
+      ok: true,
+      persisted: true,
+    });
+
+    expect(mocks.recoverRuntime).toHaveBeenCalledOnce();
+    expect(mocks.probeCapability).not.toHaveBeenCalled();
+    expect(mocks.preflightOwnership).toHaveBeenCalledWith(recoveredPlan);
+    expect(mocks.areContainersRunning).toHaveBeenCalledWith(recoveredPlan);
+    expect(mocks.persistRuntimeReceipt).not.toHaveBeenCalled();
+    expect(lifecycleActive).toBe(false);
+  });
+
+  it("fails closed when the receipt disappears before locked recovery", async () => {
+    delete process.env.NEMOCLAW_DGX_STATION_PEER;
+    let lifecycleActive = false;
+    mocks.withLifecycle.mockImplementation(async (operation) => {
+      lifecycleActive = true;
+      try {
+        mocks.recoverRuntime.mockImplementation(() => {
+          expect(lifecycleActive).toBe(true);
+          return { kind: "not-installed" };
+        });
+        return await operation();
+      } finally {
+        lifecycleActive = false;
+      }
+    });
+
+    await expect(persistConfiguredDualStationVllmRuntimeReceipt()).resolves.toEqual({
+      ok: false,
+      reason: "the managed dual-Station peer configuration is missing",
+    });
+    expect(mocks.recoverRuntime).toHaveBeenCalledOnce();
+    expect(mocks.preflightOwnership).not.toHaveBeenCalled();
+    expect(mocks.persistRuntimeReceipt).not.toHaveBeenCalled();
+    expect(lifecycleActive).toBe(false);
+  });
+
+  it("fails closed when persisted pair ownership is unsafe", async () => {
+    delete process.env.NEMOCLAW_DGX_STATION_PEER;
+    mocks.recoverRuntime.mockReturnValue({
+      kind: "unsafe",
+      reason: "could not revalidate the managed pair: managed runtime identity changed",
+    });
+
+    await expect(persistConfiguredDualStationVllmRuntimeReceipt()).resolves.toEqual({
+      ok: false,
+      reason:
+        "the managed dual-Station cleanup receipt is unsafe: could not revalidate the managed pair: managed runtime identity changed",
+    });
+    expect(mocks.preflightOwnership).not.toHaveBeenCalled();
+    expect(mocks.areContainersRunning).not.toHaveBeenCalled();
+    expect(mocks.persistRuntimeReceipt).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a recovered pair changes before locked ownership validation", async () => {
+    delete process.env.NEMOCLAW_DGX_STATION_PEER;
+    const recoveredPlan = plan();
+    mocks.recoverRuntime.mockReturnValue({ kind: "ready", plan: recoveredPlan });
+    mocks.areContainersRunning.mockReturnValue(false);
+
+    await expect(persistConfiguredDualStationVllmRuntimeReceipt()).resolves.toEqual({
+      ok: false,
+      reason: "the managed dual-Station containers changed before cleanup ownership validation",
+    });
+    expect(mocks.preflightOwnership).toHaveBeenCalledWith(recoveredPlan);
     expect(mocks.persistRuntimeReceipt).not.toHaveBeenCalled();
   });
 });

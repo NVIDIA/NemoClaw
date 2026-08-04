@@ -20,6 +20,16 @@ const HEAD_SHA = "a".repeat(40);
 const BASE_SHA = "b".repeat(40);
 const WORKFLOW_SHA = "d".repeat(40);
 const TRUSTED_SETUP_NODE_ACTION = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
+const PR_GATE_RUN_NAME = [
+  "${{ github.event_name == 'pull_request_target' &&",
+  "format('E2E Gate PR #{0} head {1} base {2} gate {3}',",
+  "github.event.pull_request.number, github.event.pull_request.head.sha,",
+  "github.event.pull_request.base.sha, github.event.action != 'closed') ||",
+  "github.event_name == 'workflow_run' &&",
+  "format('E2E Gate coordinate from {0}', github.event.workflow_run.display_title) ||",
+  "format('E2E Gate approve PR #{0} head {1} base {2}',",
+  "inputs.pr_number, inputs.expected_head_sha, inputs.expected_base_sha) }}",
+].join(" ");
 
 type CoordinatorJob = WorkflowJob & {
   concurrency?: { group: string; queue?: "max"; "cancel-in-progress": boolean };
@@ -276,12 +286,7 @@ describe("PR E2E gate workflow", () => {
     const observerPollMinutes = 21_480 / 60;
 
     expect(workflow.name).toBe("E2E / PR Gate Controller");
-    expect(workflow["run-name"]).toContain("E2E Gate PR #{0} head {1} base {2} gate {3}");
-    expect(workflow["run-name"]).toContain("github.event.pull_request.number");
-    expect(workflow["run-name"]).toContain("github.event.pull_request.head.sha");
-    expect(workflow["run-name"]).toContain("github.event.pull_request.base.sha");
-    expect(workflow["run-name"]).toContain("github.event.action != 'closed'");
-    expect(workflow["run-name"]).not.toContain("github.event.changes.base != null");
+    expect(workflow["run-name"]).toBe(PR_GATE_RUN_NAME);
     expect(workflow.on).toEqual({
       workflow_run: {
         workflows: ["CI / Pull Request"],

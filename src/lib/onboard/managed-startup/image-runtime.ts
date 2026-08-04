@@ -62,7 +62,7 @@ const HERMES_MANAGED_CONFIG_FILES = [
 ] as const;
 const FIXED_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const SHA256_RE = /^[a-f0-9]{64}$/u;
-const MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION = 1;
+export const MANAGED_STARTUP_COMPLETION_SCHEMA_VERSION = 1;
 const MAX_MANAGED_STARTUP_COMPLETION_BYTES = 4096;
 const MAX_MANAGED_STARTUP_RUNTIME_ENVIRONMENT_BYTES = 512 * 1024;
 
@@ -133,6 +133,11 @@ export interface ManagedStartupImageApplyResult {
 
 export interface ManagedStartupRootApplyResult extends ManagedStartupImageApplyResult {
   readonly transactionPending: boolean;
+}
+
+export interface ManagedStartupRootApplyOptions {
+  /** One-attempt identity for managed bootstrap; null keeps the direct root-apply contract. */
+  readonly bootstrapIdentity?: string | null;
 }
 
 export interface ManagedStartupCompletionMarker {
@@ -337,7 +342,7 @@ function requireSafeExistingRootTarget(target: string): void {
   }
 }
 
-function atomicWriteRootFile(target: string, contents: string | Buffer, mode: number): void {
+export function atomicWriteRootFile(target: string, contents: string | Buffer, mode: number): void {
   const parent = path.dirname(target);
   const parentStat = fs.lstatSync(parent);
   if (
@@ -739,7 +744,7 @@ function sealOpenClawConfiguration(
   runInternalSandboxAction("write-openclaw-hash", configurationEnvironment, applicationRuntime);
 }
 
-interface StableRegularFile {
+export interface StableRegularFile {
   readonly bytes: Buffer;
   readonly stat: fs.BigIntStats;
 }
@@ -763,7 +768,7 @@ function sameStableFileMetadata(left: fs.BigIntStats, right: fs.BigIntStats): bo
   );
 }
 
-function readStableRegularFileSnapshot(target: string, maxBytes: number): StableRegularFile {
+export function readStableRegularFileSnapshot(target: string, maxBytes: number): StableRegularFile {
   if (typeof fs.constants.O_NOFOLLOW !== "number") {
     fail("O_NOFOLLOW is unavailable for managed startup file reads");
   }
@@ -1421,6 +1426,7 @@ function completionAlreadyPublished(request: ManagedStartupRootApplyRequest): bo
 export async function applyManagedStartupRootRequest(
   request: ManagedStartupRootApplyRequest,
   env: Environment = process.env,
+  options: ManagedStartupRootApplyOptions = {},
 ): Promise<ManagedStartupRootApplyResult> {
   requireRoot();
   const profile = decodeManagedStartupProfile(request.encodedProfile);
@@ -1445,12 +1451,27 @@ export async function applyManagedStartupRootRequest(
   // these non-fingerprinted application-runtime values.
   mapManagedStartupProfileToAgentEnvironment(profile, imageEnvironment);
   const alreadyPublished = completionAlreadyPublished(request);
+  const bootstrapIdentity = options.bootstrapIdentity ?? null;
+  const transactionStatus =
+    alreadyPublished && bootstrapIdentity !== null
+      ? getManagedStartupSharedStateTransactionStatus({
+          agent: request.agent,
+          profileFingerprint: request.profileFingerprint,
+          bootstrapIdentity,
+        })
+      : null;
+  if (transactionStatus === "none") {
+    fail("completed startup profile has no shared-state authority for this bootstrap attempt");
+  }
   if (!alreadyPublished) {
     ensureRootOwnedDirectory(ROOT_STATE_PARENT);
-    beginManagedStartupSharedStateTransaction(profile);
+    beginManagedStartupSharedStateTransaction(profile, { bootstrapIdentity });
   }
   const result = await applyManagedStartupImageProfile(request.agent, imageEnvironment);
-  return { ...result, transactionPending: !alreadyPublished };
+  return {
+    ...result,
+    transactionPending: !alreadyPublished || transactionStatus === "pending",
+  };
 }
 
 function readBoundedRootApplyStdin(): string {
