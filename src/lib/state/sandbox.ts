@@ -1787,6 +1787,7 @@ function buildStagedRestoreCommand(
     `${refuseUnrecoveredRollback}; transaction_committed=0; drain_token=; ` +
     `trap ${shellQuote(cleanup)} EXIT; ${commands.join(" && ")}`
   );
+}
 
 function snapshotManifestAuthority(manifest: RebuildManifest): RebuildManifest {
   const normalized = {
