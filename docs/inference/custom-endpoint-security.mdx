@@ -72,11 +72,21 @@ Authenticated control health and route-registration requests remain loopback-onl
 NemoClaw refuses to expose the adapter when it cannot discover a valid bridge subnet.
 Adapter reuse also requires an authenticated health proof for the same source-subnet policy, so a running process with a stale or different policy is replaced.
 After an adapter restart, routes other than the one that triggered recovery return a recovery-needed response until their original `inference set --endpoint-url` command is rerun.
-Switching away from a route or destroying its last sandbox reference revokes it; a scoped uninstall that leaves sibling gateways in place preserves the shared adapter and its remaining routes.
-Revocation has to authenticate the running adapter first, and the control-plane proof binds the source-subnet policy that adapter was started with, so NemoClaw records that policy in host recovery state when it starts or reuses the adapter and reads it back at revocation time.
-It never re-derives the policy from the current host: a bridge that has since been recreated or renumbered would produce a value the running adapter never used.
-An adapter started before NemoClaw recorded that policy cannot be authenticated for revocation, so the superseded route stays registered and `inference set` reports that its upstream credentials are still resident.
-Rerun the `inference set --endpoint-url` command that registered the route: that records the policy for the running adapter, and the next switch revokes cleanly.
+
+### Recover a Route That Cannot Be Revoked
+
+Switching away from a route or destroying its last sandbox reference revokes it.
+A scoped uninstall that leaves sibling gateways in place preserves the shared adapter and its remaining routes.
+
+Revocation must authenticate the running adapter.
+The control-plane proof binds the source-subnet policy that the adapter used at startup.
+NemoClaw records that policy in host recovery state when it starts or reuses the adapter, then reads it during revocation.
+It does not derive the policy again from the current host because a recreated or renumbered bridge would produce a different value.
+
+An adapter started before NemoClaw recorded that policy cannot authenticate revocation.
+The superseded route stays registered, and `inference set` reports that its upstream credentials are still resident.
+Rerun the `inference set --endpoint-url` command that registered the route.
+The command records the policy for the running adapter, and the next switch revokes the route.
 
 This support is specific to `inference set` on an already-onboarded sandbox.
 Hermes Provider setup, host-side `config set`, and a direct blueprint run still reject DNS-backed HTTPS URLs as described above.
