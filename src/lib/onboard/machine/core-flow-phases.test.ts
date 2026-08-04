@@ -46,6 +46,7 @@ function context(
     hermesToolGateways: [],
     preferredInferenceApi: null,
     compatibleEndpointReasoning: null,
+
     compatibleEndpointReasoningEffort: null,
     nimContainer: null,
     webSearchConfig: null,
@@ -137,6 +138,7 @@ function createPhases(
         hermesToolGateways: ["local"],
         preferredInferenceApi: "chat",
         compatibleEndpointReasoning: null,
+
         compatibleEndpointReasoningEffort: null,
         nimContainer: "nim-test",
       })),
@@ -162,8 +164,10 @@ function createPhases(
       recordRepairEvent: vi.fn(async () => createSession()),
       hydrateCredentialEnv: vi.fn(),
       configureCompatibleEndpointReasoning: vi.fn(async () => "false" as const),
-      clearCompatibleEndpointReasoning: vi.fn(() => null),
+
       configureCompatibleEndpointReasoningEffort: vi.fn(async () => null),
+      clearCompatibleEndpointReasoning: vi.fn(() => null),
+
       clearCompatibleEndpointReasoningEffort: vi.fn(() => null),
       repairLocalInferenceSystemdOverrideOrExit: vi.fn(),
       isNonInteractive: () => true,
@@ -206,11 +210,8 @@ function createPhases(
       resolvePath: (value) => value,
       agentSupportsWebSearch: () => true,
       note: vi.fn(),
+
       cliName: () => "nemoclaw",
-      retireReplacedSandboxWorkload: vi.fn(() => ({
-        status: "skipped" as const,
-        reason: "replacement-unproven" as const,
-      })),
       updateSession: vi.fn((mutator) => mutator(createSession()) ?? createSession()),
       getStoredMessagingChannelConfig: () => null,
       hydrateMessagingChannelConfig: (config) => config,
@@ -394,6 +395,7 @@ describe("core onboard flow phases", () => {
       hermesToolGateways: [],
       preferredInferenceApi: "chat",
       compatibleEndpointReasoning: null,
+
       compatibleEndpointReasoningEffort: null,
       nimContainer: null,
     }));
@@ -883,7 +885,7 @@ describe("core onboard flow phases", () => {
         resume: true,
         recordRepairEvent: repairRecorder(),
       }),
-    ).rejects.toThrow("Unexpected onboarding live flow state before slice entry");
+    ).rejects.toThrow("Unexpected onboarding flow state before slice entry");
     expect(providerInference.run).not.toHaveBeenCalled();
     expect(sandbox.run).not.toHaveBeenCalled();
   });

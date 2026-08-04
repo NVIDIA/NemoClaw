@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   createSession,
@@ -45,26 +45,12 @@ function createRuntimeHarness() {
         Object.assign(current, filterSafeUpdates(updates));
         return current;
       }),
-    markStepCompleteRecordOnly: (stepName, updates: SessionUpdates = {}) =>
-      updateSession((current) => {
-        current.steps[stepName].status = "complete";
-        Object.assign(current, filterSafeUpdates(updates));
-        return current;
-      }),
     markStepSkipped: (stepName) =>
       updateSession((current) => {
         current.steps[stepName].status = "skipped";
         return current;
       }),
     markStepFailed: (stepName, message) =>
-      updateSession((current) => {
-        current.steps[stepName].status = "failed";
-        current.steps[stepName].error = message ?? null;
-        current.status = "failed";
-        current.failure = { step: stepName, message: message ?? null, recordedAt: "now" };
-        return current;
-      }),
-    markStepFailedRecordOnly: (stepName, message) =>
       updateSession((current) => {
         current.steps[stepName].status = "failed";
         current.steps[stepName].error = message ?? null;
@@ -91,63 +77,55 @@ function createRuntimeHarness() {
   };
 }
 
-describe("OnboardRuntimeBoundary record-only step/result pairing", () => {
-  it("pairs record-only step completion with an explicit state result", async () => {
+describe("OnboardRuntimeBoundary step/result pairing", () => {
+  it("pairs step completion with an explicit state result", async () => {
     const { boundary, events } = createRuntimeHarness();
 
     await boundary.recordStateResult(advanceTo("preflight"));
     const completed = await boundary.recordStepCompleteWithStateResult(
       "preflight",
-      { sandboxName: "record-only-sb" },
+      { sandboxName: "paired-step-sb" },
       advanceTo("gateway", { metadata: { state: "preflight" } }),
     );
 
     expect(completed).toMatchObject({
-      sandboxName: "record-only-sb",
+      sandboxName: "paired-step-sb",
       machine: { state: "gateway", revision: 2 },
       steps: { preflight: { status: "complete" } },
     });
     expect(events.map((event) => event.type)).toEqual([
       "state.exited",
       "state.entered",
+      "context.updated",
       "state.exited",
       "state.entered",
     ]);
   });
 
-  it("applies validated step completion results directly without compatibility diagnostics", async () => {
+  it("applies validated step completion results directly", async () => {
     const { boundary, events } = createRuntimeHarness();
-    const compatibilitySpy = vi
-      .spyOn(boundary, "recordStateResultWithStepCompatibility")
-      .mockRejectedValue(new Error("compatibility bridge should not be used"));
+    await boundary.recordStateResult(advanceTo("preflight"));
+    const completed = await boundary.recordStepCompleteWithStateResult(
+      "preflight",
+      { sandboxName: "strict-path-sb" },
+      advanceTo("gateway", { metadata: { state: "preflight" } }),
+    );
 
-    try {
-      await boundary.recordStateResult(advanceTo("preflight"));
-      const completed = await boundary.recordStepCompleteWithStateResult(
-        "preflight",
-        { sandboxName: "strict-path-sb" },
-        advanceTo("gateway", { metadata: { state: "preflight" } }),
-      );
-
-      expect(completed).toMatchObject({
-        sandboxName: "strict-path-sb",
-        machine: { state: "gateway", revision: 2 },
-        steps: { preflight: { status: "complete" } },
-      });
-      expect(compatibilitySpy).not.toHaveBeenCalled();
-      expect(events.map((event) => event.type)).toEqual([
-        "state.exited",
-        "state.entered",
-        "state.exited",
-        "state.entered",
-      ]);
-      expect(events.some((event) => event.type === "state.result.skipped")).toBe(false);
-    } finally {
-      compatibilitySpy.mockRestore();
-    }
+    expect(completed).toMatchObject({
+      sandboxName: "strict-path-sb",
+      machine: { state: "gateway", revision: 2 },
+      steps: { preflight: { status: "complete" } },
+    });
+    expect(events.map((event) => event.type)).toEqual([
+      "state.exited",
+      "state.entered",
+      "context.updated",
+      "state.exited",
+      "state.entered",
+    ]);
   });
 
-  it("pairs record-only step failure with an explicit failure result", async () => {
+  it("pairs step failure with an explicit failure result", async () => {
     const { boundary, events } = createRuntimeHarness();
 
     await boundary.recordStateResult(advanceTo("preflight"));
@@ -171,7 +149,7 @@ describe("OnboardRuntimeBoundary record-only step/result pairing", () => {
     ]);
   });
 
-  it("rejects invalid explicit results before persisting record-only step completion", async () => {
+  it("rejects invalid explicit results before persisting step completion", async () => {
     const { boundary, getSession } = createRuntimeHarness();
 
     await boundary.recordStateResult(advanceTo("preflight"));
@@ -185,25 +163,17 @@ describe("OnboardRuntimeBoundary record-only step/result pairing", () => {
     });
   });
 
-  it("rejects stale state results when record-only steps did not advance the machine", async () => {
+  it("rejects stale state results when step updates did not advance the machine", async () => {
     const { boundary, events } = createRuntimeHarness();
 
-    await boundary.recordStateResultWithStepCompatibility(
-      advanceTo("preflight", { metadata: { state: "init" } }),
-    );
+    await boundary.recordStateResult(advanceTo("preflight", { metadata: { state: "init" } }));
     await expect(
-      boundary.recordStateResultWithStepCompatibility(
-        advanceTo("preflight", { metadata: { state: "init" } }),
-      ),
-    ).rejects.toThrow("Record-only step result already reached target state: preflight");
+      boundary.recordStateResult(advanceTo("preflight", { metadata: { state: "init" } })),
+    ).rejects.toThrow("Onboarding state result already reached target state: preflight");
     await expect(
-      boundary.recordStateResultWithStepCompatibility(
-        advanceTo("gateway", { metadata: { state: "init" } }),
-      ),
-    ).rejects.toThrow("Record-only step result source mismatch: init != preflight");
-    await boundary.recordStateResultWithStepCompatibility(
-      advanceTo("gateway", { metadata: { state: "preflight" } }),
-    );
+      boundary.recordStateResult(advanceTo("gateway", { metadata: { state: "init" } })),
+    ).rejects.toThrow("Onboarding state result source mismatch: init != preflight");
+    await boundary.recordStateResult(advanceTo("gateway", { metadata: { state: "preflight" } }));
 
     expect(events.map((event) => event.type)).toEqual([
       "state.exited",
@@ -215,12 +185,12 @@ describe("OnboardRuntimeBoundary record-only step/result pairing", () => {
     expect(events[3]).toMatchObject({ state: "gateway" });
   });
 
-  it("rejects stale default results before compatibility replay", async () => {
+  it("rejects a stale result source before runtime application", async () => {
     const { boundary } = createRuntimeHarness();
     const result = advanceTo("preflight", { metadata: { state: "missing" } });
 
-    await expect(boundary.recordStateResultWithStepCompatibility(result)).rejects.toThrow(
-      "Record-only step result source mismatch: missing != init",
+    await expect(boundary.recordStateResult(result)).rejects.toThrow(
+      "Onboarding state result source mismatch: missing != init",
     );
   });
 });

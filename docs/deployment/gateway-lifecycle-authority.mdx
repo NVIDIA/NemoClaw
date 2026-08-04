@@ -151,6 +151,13 @@ Resume resolves the current authority again and compares the complete record wit
 If any value changes, including the per-port gateway binding, resume fails before gateway effects and directs you to start a fresh onboarding run.
 A completed gateway step does not bypass listener, supervisor, identity, health, registration, or checkpoint validation.
 
+### Migrate Managed Authority During Rebuild
+
+A transactional sandbox rebuild can adopt one managed lifecycle change when the recorded package-managed service is no longer selected and NemoClaw selects its standalone gateway.
+NemoClaw records the standalone authority in the replacement journal before it changes managed MCP state, providers, or deletes the sandbox.
+This exception does not apply to credential mutation, ordinary gateway teardown, an authority declaration change, the reverse transition to a package-managed service, or other authority drift.
+Those operations continue to fail closed before gateway effects.
+
 ## Inspect the selected authority
 
 Run `$$nemoclaw status` to see the management mode and redacted owner identity selected by the last onboarding run.

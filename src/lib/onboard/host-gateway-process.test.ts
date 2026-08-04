@@ -296,6 +296,7 @@ describe("stopHostGatewayProcesses", () => {
     );
 
     expect(result.stopped).toEqual([]);
+    expect(result.orphanScanComplete).toBe(false);
     expect(warn).toHaveBeenCalledWith(
       "pgrep not found; could not scan for orphan host openshell-gateway processes. " +
         "Inspect any remaining listener and stop only the matching gateway process.",
