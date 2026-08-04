@@ -45,11 +45,19 @@ Review the [Prerequisites](prerequisites) before you begin.
   </Step>
 
   <Step title="Complete Onboarding">
-    The wizard creates the sandbox.
-    If the installer displays `Run express install with these settings? [Y/n]:`, press Enter to use the recommended preset settings and managed local inference for that platform.
-    Enter `n` if you want to choose an inference provider and model, then provide its credential when prompted.
-    If you continue interactively, press Enter to accept the suggested `my-assistant` sandbox name.
+    The interactive wizard creates the sandbox.
+    Select **OpenClaw** when the installer prompts you to choose an agent.
+    Choose an inference provider and model, then provide its credential when prompted.
+    Press Enter to accept the suggested `my-assistant` sandbox name.
     For a first run, skip optional web search and messaging setup, then accept the suggested network policy tier.
+
+    <Note>
+      The installer can display `Run express install with these settings? [Y/n]:` before the agent-selection prompt only on supported DGX or Windows WSL hosts.
+      Press Enter to use the recommended preset settings and managed local inference for that platform.
+      Express install mode completes the remaining onboarding non-interactively.
+      If you accept, skip the rest of this procedure and [continue after express install](#continue-after-express-install).
+      Enter `n` to continue with the interactive onboarding flow described in this step.
+    </Note>
   </Step>
 
   <Step title="Confirm the Sandbox Is Ready">
