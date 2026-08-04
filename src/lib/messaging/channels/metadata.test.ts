@@ -182,7 +182,7 @@ describe("built-in messaging channel metadata", () => {
         packageId: "hermesAiohttpPackage",
         agents: ["hermes"],
         manager: "hermes-uv-pip",
-        spec: "aiohttp==3.14.1",
+        spec: "aiohttp==3.14.3",
       },
     ]);
   });

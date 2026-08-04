@@ -4,7 +4,10 @@
 import { createHash, randomBytes as defaultRandomBytes } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
-import { MANAGED_STARTUP_HOLD_EXECUTABLE } from "../managed-startup/hold";
+import {
+  MANAGED_STARTUP_EXECUTABLE,
+  MANAGED_STARTUP_HOLD_EXECUTABLE,
+} from "../managed-startup/hold";
 import type { ManagedStartupAgent } from "../managed-startup/profile";
 import {
   type ManagedStartupRootApplyRequest,
@@ -949,6 +952,9 @@ export function renderManagedBootstrapHeldCommand(
   if (executableIndex >= intendedWorkloadArgv.length) {
     protocolFail("intended workload executable is missing");
   }
+  if (intendedWorkloadArgv[executableIndex] !== MANAGED_STARTUP_EXECUTABLE) {
+    protocolFail(`intended workload executable must be ${MANAGED_STARTUP_EXECUTABLE}`);
+  }
   return Object.freeze([
     ...intendedWorkloadArgv.slice(0, executableIndex),
     MANAGED_STARTUP_HOLD_EXECUTABLE,
@@ -958,6 +964,8 @@ export function renderManagedBootstrapHeldCommand(
     request.profileFingerprint,
     "--bootstrap-identity",
     bootstrapIdentity,
+    "--",
+    ...intendedWorkloadArgv.slice(executableIndex + 1),
   ]);
 }
 
