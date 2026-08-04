@@ -23,11 +23,50 @@ $$nemoclaw uninstall
 | `--keep-openshell` | Leave OpenShell binaries, NemoClaw-managed gateway service files, and local gateway state in place, and do not stop the host gateway process. |
 | `--delete-models` | Also remove NemoClaw-pulled Ollama models. |
 | `--destroy-user-data` | Also remove preserved user data in `rebuild-backups/`, `backups/`, and `sandboxes.json`. |
+| `--all-gateway-ports` | Uninstall every gateway port on the host instead of only the selected one. |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT`. |
 
 `NEMOCLAW_GATEWAY_PORT` selects the gateway instance to uninstall (`nemoclaw` for port `8080`, or `nemoclaw-<port>` for a non-default port).
 For example, `NEMOCLAW_GATEWAY_PORT=9123 $$nemoclaw uninstall` selects `nemoclaw-9123` and its port-scoped state.
 Do not use `--gateway` to select another instance; when supplied for compatibility, its value must match the derived name or uninstall stops before cleanup.
+
+## Uninstall Every Gateway Port
+
+One uninstall removes one gateway port.
+A host that onboarded under more than one `NEMOCLAW_GATEWAY_PORT` keeps the other ports bound after that uninstall, because each port is a separate environment with its own sandboxes, registry, and gateway.
+When other ports remain, uninstall names them, prints the command that removes one of them, and prints the command that removes every port.
+An environment whose port cannot be read is reported as unidentified, and the per-port command appears only when at least one port is known.
+The report includes lines like these:
+
+```text
+  · gateway 'nemoclaw-9000' on port 9000
+  Remove one of them: NEMOCLAW_GATEWAY_PORT=9000 $$nemoclaw uninstall
+  Remove every gateway port: $$nemoclaw uninstall --all-gateway-ports
+```
+
+<Warning>
+The sweep applies the uninstall plan to every discovered gateway port.
+When it finds more than one port, review the port list before you confirm because `--yes` skips this confirmation.
+When it finds only the selected port, it uses the standard uninstall confirmation without a port list.
+If you also pass `--destroy-user-data`, the sweep can remove the preserved registry and backups for any port that reaches that cleanup step.
+</Warning>
+
+Pass `--all-gateway-ports`, or set `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS=1`, to uninstall all of them in one run:
+
+```bash
+$$nemoclaw uninstall --all-gateway-ports
+```
+
+When the sweep finds more than one port, it lists the ports, confirms once, then uninstalls each port in turn and the currently selected port last.
+When it finds only the selected port, it uses the standard uninstall confirmation and runs that port once.
+Running the selected port last lets that final pass remove the shared CLI, services, images, providers, configuration, models, and swap once no other environment needs them.
+`--delete-models`, `--destroy-user-data`, and `--keep-openshell` apply to every port in the sweep.
+If the sweep cannot enumerate the gateway state roots safely, it exits before uninstalling any port.
+The sweep cannot select an unidentified environment until its gateway port can be determined.
+If one port fails to uninstall, the sweep reports that port, continues with the remaining ports, and exits nonzero.
+The failed port still counts as a live environment, so the final pass keeps the shared host resources instead of removing state that the surviving environment needs.
+The sweep does not roll back cleanup that completed before a failure.
+Resolve the reported error, inspect the remaining gateways with `openshell gateway list`, and rerun the sweep or the reported per-port command.
 Default-port uninstall removes NemoClaw-managed entries in `openshell/gateway.env`.
 For a NemoClaw-managed authority, it also removes only NemoClaw's marked Linux gateway unit.
 It preserves upstream Linux package units, the macOS Homebrew service, and unrelated environment entries.
