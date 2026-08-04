@@ -580,6 +580,23 @@ printf '%s' ${JSON.stringify(soulContent)} > "$OPENCLAW_WORKSPACE_DIR/SOUL.md"`,
   );
   expect(freshOnboard.exitCode, resultText(freshOnboard)).toBe(0);
 
+  const reapplyBaselineExclusion = await host.command(
+    "nemoclaw",
+    [SANDBOX_NAME, "policy", "exclude", BASELINE_EXCLUSION_KEY, "--force"],
+    {
+      artifactName: "phase-4-reapply-baseline-exclusion",
+      env: commandEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  expect(reapplyBaselineExclusion.exitCode, resultText(reapplyBaselineExclusion)).toBe(0);
+  await expectBaselineExclusionAgreement(
+    host,
+    sandbox,
+    SANDBOX_NAME,
+    "phase-4-after-reapplying-baseline-exclusion",
+  );
+
   const replacementHasNoSnapshotMarkers = await sandbox.exec(
     SANDBOX_NAME,
     [
