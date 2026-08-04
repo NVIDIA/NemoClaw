@@ -813,9 +813,12 @@ describe("pull request and main workflow contracts", () => {
         "${{ github.workflow }}-${{ github.ref }}-${{ github.event.action != 'edited' || github.event.changes.base != null }}",
       "cancel-in-progress": true,
     });
-    expect(
-      requiredWorkflowStep(prWorkflow.jobs["static-checks"], "Checkout").with?.["fetch-depth"],
-    ).toBe(0);
+    for (const jobName of ["static-checks", "docs-only-checks"]) {
+      expect(requiredWorkflowStep(prWorkflow.jobs[jobName], "Checkout").with?.["fetch-depth"]).toBe(
+        0,
+      );
+    }
+    expect(stepRuns(prWorkflow.jobs["docs-only-checks"]).join("\n")).not.toContain("git fetch");
     for (const [jobName, stepName, trustedActionPath, mainActionPath] of [
       [
         "static-checks",
