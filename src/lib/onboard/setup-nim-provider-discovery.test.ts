@@ -15,6 +15,39 @@ const interactiveDeps = {
 };
 
 describe("prepareProviderDiscovery", () => {
+  it("does not read recorded provider state when recovery is disabled (#8135)", () => {
+    const readRecordedProvider = vi.fn(() => "vllm-local");
+    const readRecordedNimContainer = vi.fn(() => "stale-nim-container");
+    const readRecordedModel = vi.fn(() => "stale-recorded-model");
+    const getNonInteractiveModel = vi.fn((_providerKey, options) =>
+      options?.allowProviderModelFallback === false ? null : "fallback-model",
+    );
+
+    const result = prepareProviderDiscovery({
+      deps: {
+        ...interactiveDeps,
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "vllm",
+        getNonInteractiveModel,
+        readRecordedProvider,
+        readRecordedNimContainer,
+        readRecordedModel,
+      },
+      sandboxName: "fresh-sandbox",
+      recoverProvider: false,
+      rebuildRegistryInferenceRoute: null,
+      recoverySessionId: "stale-recovery-session",
+    });
+
+    expect(result.requestedModel).toBe("fallback-model");
+    expect(getNonInteractiveModel).toHaveBeenCalledWith("vllm", {
+      allowProviderModelFallback: true,
+    });
+    expect(readRecordedProvider).not.toHaveBeenCalled();
+    expect(readRecordedNimContainer).not.toHaveBeenCalled();
+    expect(readRecordedModel).not.toHaveBeenCalled();
+  });
+
   it("classifies recorded Local NIM before comparing the requested provider (#8135)", () => {
     const readRecordedNimContainer = vi.fn(() => "nim-container");
     const prepare = (requestedProvider: string) =>

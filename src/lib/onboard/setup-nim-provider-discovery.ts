@@ -110,7 +110,7 @@ export function prepareProviderDiscovery(options: {
   const nonInteractive = deps.isNonInteractive();
   const requestedProvider = deps.getNonInteractiveProvider();
   let providerChanged = false;
-  if (nonInteractive && requestedProvider) {
+  if (nonInteractive && requestedProvider && recoverProvider) {
     const recordedProviderName = deps.readRecordedProvider(sandboxName, recoverySessionId);
     const hasRecordedNimContainer =
       recordedProviderName === "vllm-local" &&
