@@ -34,7 +34,7 @@ The prompt tells your agent to use NemoClaw docs and skills, ask one question at
 
 Review [Prerequisites](https://docs.nvidia.com/nemoclaw/latest/get-started/prerequisites.html) before installing.
 The standard interactive path prompts you to select an agent and choose a sandbox name during onboarding.
-On a host that offers Express, decline Express to reach these prompts for Hermes or LangChain Deep Agents Code.
+On a host that offers **Express**, decline **Express** to reach these prompts for Hermes or LangChain Deep Agents Code.
 When connecting to a Hermes sandbox from a light terminal, NemoClaw may install a managed `nemoclaw-light` Hermes skin for readable assistant text; it removes that managed skin state again when the terminal no longer needs it and preserves any user-selected Hermes skin.
 
 | Agent | Guide |
