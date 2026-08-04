@@ -13,6 +13,7 @@ import {
   createManagedBootstrapIdentity,
   renderManagedBootstrapHeldCommand,
 } from "./managed-bootstrap/adapter";
+import { MANAGED_STARTUP_EXECUTABLE } from "./managed-startup/hold";
 import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
 import {
@@ -62,7 +63,13 @@ export interface SandboxCreateLaunchInput {
   openshellShellCommand: OpenshellShellCommand;
   openshellArgv?: OpenshellArgv;
   buildEnv?(): Record<string, string>;
-  /** Dormant until a complete runtime bundle and durable authority store are selected. */
+  /**
+   * Intentional partial migration: remains unset until production selects a
+   * complete runtime bundle with supported bootstrap after epic #7744's durable
+   * lifecycle, recovery, and rollback gates plus exact-head/base protected
+   * all-agent amd64/arm64, GPU/local-inference, and regression matrix pass.
+   * https://github.com/NVIDIA/NemoClaw/issues/7744
+   */
   managedStartupRootApplyRequest?: ManagedStartupRootApplyRequest | null;
 }
 
@@ -213,7 +220,7 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
   // lets the real exit code flow through to run().
-  const intendedSandboxStartupCommand = ["env", ...envArgs, "nemoclaw-start"];
+  const intendedSandboxStartupCommand = ["env", ...envArgs, MANAGED_STARTUP_EXECUTABLE];
   const managedStartupRootApplyRequest = input.managedStartupRootApplyRequest ?? null;
   const managedBootstrapIdentity = managedStartupRootApplyRequest
     ? createManagedBootstrapIdentity()

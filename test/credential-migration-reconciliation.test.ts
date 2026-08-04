@@ -68,6 +68,7 @@ async function finalizeMigration(
     webSearchProvider: null,
     deps: {
       ensureAgentDashboardForward: () => 0,
+      persistDashboardPort: () => undefined,
       setDefaultSandbox: () => undefined,
       toSessionUpdates: (updates) => updates,
       removeLegacyCredentialsFile,

@@ -159,7 +159,8 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     patch.waitForSupervisorReconnectIfNeeded();
     expect(onPatchFailureExit).not.toHaveBeenCalled();
 
-    await patch.commitAfterReady();
+    await expect(patch.commitAfterReady()).rejects.toThrow("rollback backup");
+    await expect(patch.commitAfterReady()).rejects.toThrow("rollback backup");
 
     expect(onPatchFailureExit).toHaveBeenCalledOnce();
     expect(onPatchFailureExit.mock.calls[0]?.[1]).toEqual(
@@ -175,6 +176,36 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
         }),
       }),
     );
+  });
+
+  it("rejects an early commit after rolling back before supervisor reconnect", async () => {
+    const deps = makeDeps();
+    const result = deferredCreateResult();
+    const finalizeBackup = vi.fn(() => ({ backupRemoved: false, rolledBack: true }));
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        finalizeBackup,
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+
+    await expect(patch.commitAfterReady()).rejects.toThrow(
+      "cannot commit before the recreated OpenShell supervisor reconnects",
+    );
+    await expect(patch.commitAfterReady()).rejects.toThrow(
+      "cannot commit before the recreated OpenShell supervisor reconnects",
+    );
+    expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: false }, deps);
+    expect(onPatchFailureExit).toHaveBeenCalledOnce();
   });
 
   it("rolls back to the backup container and surfaces rolledBack=true diagnostics when supervisorReady=false", () => {

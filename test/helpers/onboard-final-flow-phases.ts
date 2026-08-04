@@ -192,6 +192,7 @@ export function createPhases(
         order.push("agent-forward");
         return 45123;
       }),
+      persistDashboardPort: vi.fn(),
       recordStepSkipped: recorders.recordStepSkipped ?? vi.fn(async () => createSession()),
       isOpenclawReady: () => false,
       skippedStepMessage: vi.fn(),

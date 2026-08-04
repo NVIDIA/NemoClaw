@@ -18,6 +18,7 @@ import {
   type ManagedBootstrapObservedSnapshot,
   type ManagedBootstrapPreparedReplacementHandle,
   type ManagedBootstrapReplacementHandle,
+  sameManagedBootstrapCompletionReceipt,
 } from "./adapter";
 import type { DockerManagedBootstrapDeps } from "./docker";
 import {
@@ -26,7 +27,6 @@ import {
   DockerManagedBootstrapJournalAcknowledgementLostError,
   type DockerManagedBootstrapJournalPhase,
   type DockerManagedBootstrapJournalStore,
-  sameDockerManagedBootstrapReceipt,
   serializeDockerManagedBootstrapFinalizationRecord,
 } from "./docker-journal";
 import { normalizeDockerManagedBootstrapLaunchSpec } from "./docker-spec";
@@ -100,6 +100,7 @@ function agentInputs(agent: ManagedStartupAgent = "hermes") {
     request.profileFingerprint,
     "--bootstrap-identity",
     IDENTITY,
+    "--",
   ] as const;
   return {
     request,
@@ -163,7 +164,7 @@ export function authority(agent: ManagedStartupAgent = "hermes") {
     image: { repository: REPOSITORY, manifestDigest: MANIFEST },
     profile: { agent, fingerprint: inputs.request.profileFingerprint },
     agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
-    intendedWorkloadArgv: ["env", "A=1", "nemoclaw-start"],
+    intendedWorkloadArgv: ["env", "A=1", "/usr/local/bin/nemoclaw-start"],
     expectedSupervisorArgv: SUPERVISOR,
     metadata: inputs.metadata,
   };
@@ -276,7 +277,7 @@ export function fixture(options: DockerFixtureOptions = {}) {
       }
       if (
         journal.commitReceipt !== null &&
-        !sameDockerManagedBootstrapReceipt("completion", journal.commitReceipt, receipt)
+        !sameManagedBootstrapCompletionReceipt(journal.commitReceipt, receipt)
       ) {
         throw new Error("completion changed");
       }

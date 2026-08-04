@@ -26,6 +26,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   webSearchProvider: WebSearchVerifyProvider | null;
   deps: {
     ensureAgentDashboardForward(sandboxName: string, agent: Agent): number;
+    persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     /**
      * Mark this sandbox as the default. Called here (not at sandbox creation) so
      * a cancel at the policy-preset step never leaves an unconfigured sandbox
@@ -183,7 +184,10 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
     // Reconcile after the final recovery because any restart above can
     // invalidate the forward created earlier in onboarding.
-    deps.ensureAgentDashboardForward(sandboxName, agent);
+    const dashboardPort = deps.ensureAgentDashboardForward(sandboxName, agent);
+    if (dashboardPort > 0) {
+      deps.persistDashboardPort(sandboxName, dashboardPort);
+    }
   }
 
   return {

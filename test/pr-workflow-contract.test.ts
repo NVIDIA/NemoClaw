@@ -611,8 +611,10 @@ describe("pull request and main workflow contracts", () => {
   // source-shape-contract: compatibility -- Path-filter semantics keep documentation-only and code-changing PR lanes distinct
   it("routes only code-changing PRs through the code-check path", () => {
     const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
+    const docsOnlyCheckout = requiredWorkflowStep(prWorkflow.jobs["docs-only-checks"], "Checkout");
 
     expect(filterStep?.uses).toContain("dorny/paths-filter");
+    expect(docsOnlyCheckout.with?.["fetch-depth"]).toBe(0);
     expect(filterStep?.with?.["predicate-quantifier"]).toBe("every");
     expect(filterStep?.with?.filters).toContain("code:");
     expect(filterStep?.with?.filters).toContain("!**/*.md");
