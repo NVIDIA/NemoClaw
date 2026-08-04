@@ -13,7 +13,8 @@ Pin the NemoClaw Hermes runtime to the published, non-draft, non-prerelease `v20
 This replaces `v2026.7.1` and covers all three adjacent stable release ranges, including the four-component `v2026.7.7.2` tag.
 
 The upgrade is acceptable only with the downstream migrations recorded in this review.
-NemoClaw preserves manual command approval instead of inheriting Hermes 0.19's new smart-approval default, emits configuration schema 33, recognizes the new one-shot flags and `console` subcommand, and backs up the new default-profile cron and Discord recovery SQLite ledgers online.
+NemoClaw preserves manual command approval instead of inheriting Hermes 0.19's new smart-approval default and emits configuration schema 33.
+It uses a versioned CLI adapter for the two required translations, passes unrelated commands through, and backs up the new default-profile cron and Discord recovery SQLite ledgers online.
 Named-profile copies remain inside the raw `profiles` directory capture under the existing generic snapshot limitation; this bounded residual is recorded rather than described as online backup.
 The gateway-runtime-metadata, session-preview, Langfuse-placeholder, managed-light-skin, provider-routing, and resumed-one-shot workarounds remain necessary against the target source and retain exact-shape guards.
 
@@ -91,8 +92,19 @@ The image build creates a real fresh named profile, proves it remains config-les
 Hermes configuration schema moves from 32 to 33.
 The final image runs `hermes doctor --fix` before writing NemoClaw's generated configuration, so the generator and its hash contract now emit schema 33 directly.
 
-The target CLI adds the `console` subcommand, the value flag `--usage-file`, and the boolean flag `--no-restore-cwd`; this migration also closes the wrapper's pre-existing `--safe-mode` allowlist gap. Hermes 0.19 writes `--usage-file` reports only on its native one-shot path, so the NemoClaw wrapper rejects the narrower resumed/continued one-shot combination that it must translate to `chat --query`; accepting that combination would silently omit the requested report.
-The resumed-one-shot wrapper now recognizes those boundaries, global profile selectors, bare continue, and Hermes' exact preprocessing boundary set for unquoted multi-word session names across all four continue/resume spellings before translating session arguments, and still fails closed for an unknown future shape.
+The versioned CLI adapter records two managed command forms:
+
+- top-level resumed or continued one-shot invocations that NemoClaw translates to `chat --query`; and
+- invocations that combine separate provider and model flags.
+
+All other commands pass through without a duplicate upstream subcommand inventory.
+The image build validates each managed option against Hermes' machine-readable preparse, top-level, and `chat` parser metadata.
+Public help probes remain runtime evidence for the owned forms, not the compatibility authority.
+The wrapper parses each managed invocation once and verifies that the installed CLI is Hermes 0.19.0 before translation.
+Hermes 0.19 writes `--usage-file` reports only on its native one-shot path.
+The wrapper rejects a resumed or continued one-shot invocation with `--usage-file` because translation would omit the report.
+The wrapper also rejects separate provider and model flags after an unquoted multi-word session name because a later positional can be an upstream command.
+An invalid adapter, an unknown adapter version, or a Hermes CLI version mismatch fails closed before a translated command runs.
 
 The target source still contains all six session-list queries whose preview must reflect the latest resumed or continued one-shot turn.
 The session-preview patch remains exact-count guarded.
@@ -204,7 +216,7 @@ Artifact scanning must therefore inspect the assembled image and record the down
 | `HERMES-1` | High | Pin and test | The verified target tag, commit, source SHA-256, CalVer-to-semver mapping, registry cross-check, and producer runs are recorded, while final source-pin coherence still needs a test. |
 | `HERMES-2` | High | Migrate and test | `approvals.mode` is explicitly `manual`, and generated-config tests reject inheritance of smart authorization. |
 | `HERMES-3` | High | Migrate and test | Generated configuration and the doctor hash contract use schema 33 before runtime startup. |
-| `HERMES-4` | High | Migrate and test | Wrapper routing covers `console`, `--no-restore-cwd`, and `--safe-mode`; it preserves profile selectors, bare continue, and unquoted multi-word names against Hermes' exact coalescing boundaries across all four continue/resume spellings, and recognizes and explicitly rejects `--usage-file` only when the resumed one-shot append workaround would otherwise discard the report. The final image compares the wrapper's private session-name boundary AST to the pinned upstream coalescer instead of deriving it from public help. Unknown future versions remain guarded. |
+| `HERMES-4` | High | Migrate and test | The versioned adapter owns only top-level resumed or continued one-shot translation and separate provider and model composition. The image build validates its managed options against Hermes' machine-readable preparse, top-level, and `chat` parser metadata; public help remains runtime evidence. The wrapper reads session-name command boundaries from Hermes' installed coalescer source instead of copying its private set, parses a managed invocation once, rejects the unsupported `--usage-file` combination and ambiguous unquoted multi-word session names, and verifies Hermes 0.19.0 before translation. Unrelated commands pass through without a subcommand inventory. Each translation records its upstream source-fix constraint and removal condition. Invalid adapters, unknown adapter versions, incompatible upstream coalescer source shapes, and upstream version mismatches fail closed. |
 | `HERMES-5` | Medium | Guard and test | Every retained compatibility patch was compared with target source, retargeted, hash-bound, and exercised by a focused regression or image smoke probe. |
 | `HERMES-6` | High | Migrate, guard, test, and runtime-proof | Default-profile cron and Discord ledgers use online SQLite backup with nested-parent tests. The cron execution ledger is exact-source relocated to `runtime/cron-executions.db`, and Hermes quick snapshots follow the same path. The `cron` directory remains `root:sandbox` mode `0755` during Shields up, and its cron job definitions remain non-writable to the `sandbox` group. Descriptor-safe startup repair maintains only the writable runtime and gateway parents as `gateway:sandbox` `2770`. Gateway-to-sandbox-to-gateway image probes cover both ledgers; cron's live source is group-readable `0640` and its restored replacement is `0660`, while Discord additionally needs its guarded `0660` upstream chmod patch. Managed restart and rebuild persistence remain live E2E gates. |
 | `HERMES-7` | High | Test and runtime-proof | The target's `mcp__server__tool` names are compatible by source inspection, while managed-tool discovery and invocation remain a live E2E gate. |
