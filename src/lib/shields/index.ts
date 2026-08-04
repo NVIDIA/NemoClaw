@@ -2177,7 +2177,11 @@ function restoreLockedStateDirStartupAccess(sandboxName: string): void {
     const posture = getShieldsPostureWithoutHostLock(sandboxName, true);
     if (!posture.locked) return;
     const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
-    const issues = restoreStateDirStartupAccess(stateDirLockExec(sandboxName), target.configDir);
+    const issues = restoreStateDirStartupAccess(
+      stateDirLockExec(sandboxName),
+      target.configDir,
+      requireStateLockPlan(target),
+    );
     if (issues.length > 0) {
       throw new Error(`Locked startup access could not be restored: ${issues.join(", ")}`);
     }

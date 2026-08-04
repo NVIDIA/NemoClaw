@@ -308,6 +308,7 @@ function runHostStateDirGuard(
   privileged: PrivilegedExec,
   action: GuardAction,
   configDir: string,
+  plan: AgentStateLockPlan,
 ): string[] {
   let input: string;
   try {
@@ -316,7 +317,17 @@ function runHostStateDirGuard(
     const message = error instanceof Error ? error.message : String(error);
     return [`host state-dir helper cannot be read: ${message}`];
   }
-  const command = [...CONTAINER_TIMEOUT, "python3", "-I", "-", action, "--config-dir", configDir];
+  const command = [
+    ...CONTAINER_TIMEOUT,
+    "python3",
+    "-I",
+    "-",
+    action,
+    "--config-dir",
+    configDir,
+    "--plan-json",
+    JSON.stringify(plan),
+  ];
   return parseGuardOutput(action, privileged.run(command, input));
 }
 
@@ -393,6 +404,7 @@ export function restoreStateDirLockPosture(
 export function restoreStateDirStartupAccess(
   privileged: PrivilegedExec,
   configDir: string,
+  plan: AgentStateLockPlan,
 ): string[] {
-  return runHostStateDirGuard(privileged, "startup", configDir);
+  return runHostStateDirGuard(privileged, "startup", configDir, plan);
 }

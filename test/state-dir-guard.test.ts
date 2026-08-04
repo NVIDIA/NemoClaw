@@ -1215,6 +1215,32 @@ describe("state-dir-guard", () => {
     expect(mode(path.join(credentialsDir, "token.json"))).toBe(0o600);
   });
 
+  it("refuses startup traversal when the plan omits the confidential credentials root (#8006)", () => {
+    const { configDir } = fixture();
+    const credentialsDir = path.join(configDir, "credentials");
+    fs.mkdirSync(credentialsDir);
+    fs.chmodSync(credentialsDir, 0o700);
+
+    const result = runGuard(
+      "startup",
+      configDir,
+      {},
+      {
+        ...DEFAULT_PLAN,
+        confidentialRoots: [],
+      },
+    );
+
+    expect(result.status, JSON.stringify(result.lines)).toBe(1);
+    expect(result.lines).toContainEqual(
+      expect.objectContaining({
+        code: "startup-plan-mismatch",
+        path: credentialsDir,
+      }),
+    );
+    expect(mode(credentialsDir)).toBe(0o700);
+  });
+
   it("creates a missing sessions carveout during lock so a first-boot agent can write sessions (#7545)", () => {
     const { configDir } = fixture(".openclaw");
     const agentDir = path.join(configDir, "agents", "main");

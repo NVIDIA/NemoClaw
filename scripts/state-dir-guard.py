@@ -1936,6 +1936,7 @@ def _restore_empty_credentials_startup_access(
     config_dir: str,
     identity: Identity,
     deadline: float,
+    plan: AgentStateLockPlan,
 ) -> GuardResult:
     """Restore only the empty credentials traversal needed during startup."""
 
@@ -1943,6 +1944,15 @@ def _restore_empty_credentials_startup_access(
     config_fd = -1
     credentials_fd = -1
     path = _display_path(config_dir, "credentials")
+    if "credentials" not in plan.confidential_roots:
+        result.issues.append(
+            Issue(
+                "startup-plan-mismatch",
+                path,
+                "state lock plan must declare credentials as a confidential root",
+            )
+        )
+        return result
     try:
         config_fd = _open_absolute_dir_nofollow(config_dir)
         config_st = os.fstat(config_fd)
@@ -2057,7 +2067,7 @@ def _run_guard_unserialized(
     normalized_config = posixpath.normpath(config_dir)
     if action == "startup":
         return _restore_empty_credentials_startup_access(
-            normalized_config, identity, deadline
+            normalized_config, identity, deadline, plan
         )
     fail_closed_config_root = action == "lock" and (
         normalized_config in PRODUCTION_FAIL_CLOSED_CONFIG_DIRS

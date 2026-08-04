@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import type { AgentStateLockPlan } from "../agent/definition-types";
 import type { PrivilegedExec } from "./state-dir-lock";
@@ -184,7 +185,7 @@ describe("recursive state-dir lock host wiring", () => {
   it("uses the current host guard for the narrow startup repair (#8112)", () => {
     const { calls, privileged } = createExec();
 
-    expect(restoreStateDirStartupAccess(privileged, "/sandbox/.openclaw")).toEqual([]);
+    expect(restoreStateDirStartupAccess(privileged, "/sandbox/.openclaw", PLAN)).toEqual([]);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.cmd).toEqual([
       "timeout",
@@ -197,8 +198,43 @@ describe("recursive state-dir lock host wiring", () => {
       "startup",
       "--config-dir",
       "/sandbox/.openclaw",
+      "--plan-json",
+      JSON.stringify(PLAN),
     ]);
     expect(calls[0]?.input).toContain('choices=("preflight", "lock", "unlock", "startup")');
+  });
+
+  it("hands the manifest plan to an injected startup helper (#8006)", () => {
+    const startupPlan: AgentStateLockPlan = { ...PLAN, readOnlyRoots: ["agents", "skills"] };
+    let rawOutput = "";
+    let spawnError: Error | undefined;
+    const issues = restoreStateDirStartupAccess(
+      {
+        run: (cmd, input) => {
+          const result = spawnSync(cmd[0]!, cmd.slice(1), {
+            encoding: "utf-8",
+            input,
+            timeout: 15_000,
+          });
+          rawOutput = String(result.stdout) + String(result.stderr);
+          spawnError = result.error;
+          return {
+            status: result.status,
+            signal: result.signal,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            ...(result.error ? { error: result.error.message } : {}),
+          };
+        },
+      },
+      "/sandbox/.nemoclaw-startup-plan-test-" + String(process.pid),
+      startupPlan,
+    );
+
+    expect(spawnError).toBeUndefined();
+    expect(rawOutput).toContain('"action":"startup"');
+    expect(rawOutput).not.toContain('"code":"invalid-plan"');
+    expect(issues.join("\n")).not.toContain("[invalid-plan]");
   });
 
   it("injects the host helper and plan for agents without an image recovery plan", () => {
