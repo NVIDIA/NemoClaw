@@ -240,15 +240,26 @@ export interface DeadlineManagedMcpRuntimePolicy {
 }
 
 export function buildDeadlineRuntimeManagedMcpPolicy(
-  _basePolicyPath: string,
+  basePolicyPath: string,
   deps: ManagedMcpRuntimePolicyDeps,
 ): DeadlineManagedMcpRuntimePolicy {
   const baseYaml = deps.readBasePolicy();
+  const snapshotManagedPolicyKeys = deps.snapshotManagedPolicyKeys ?? [];
   const composition = composeDeadlineManagedMcpPolicies(
     baseYaml,
     deps.managedMcpPolicies,
-    deps.snapshotManagedPolicyKeys ?? [],
+    snapshotManagedPolicyKeys,
   );
+  // With no saved or current managed MCP entries, composition records every
+  // reserved snapshot key as an omission. No omissions means the snapshot is
+  // valid without modification, so restoration does not need temporary storage.
+  if (
+    deps.managedMcpPolicies.length === 0 &&
+    snapshotManagedPolicyKeys.length === 0 &&
+    composition.omissions.length === 0
+  ) {
+    return { path: basePolicyPath, omissions: composition.omissions };
+  }
   let runtimePath: string | null = null;
   try {
     runtimePath = deps.writeTempPolicy
