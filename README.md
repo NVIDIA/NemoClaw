@@ -33,7 +33,7 @@ The prompt tells your agent to use NemoClaw docs and skills, ask one question at
 ### Install Using the Installer in Your Terminal
 
 Review [Prerequisites](https://docs.nvidia.com/nemoclaw/latest/get-started/prerequisites.html) before installing.
-On a supported DGX or Windows WSL host, press Enter at the `Run express install with these settings? [Y/n]:` prompt to use the recommended preset settings for that platform.
+On a supported DGX or Windows Subsystem for Linux (WSL) host, press Enter at the `Run express install with these settings? [Y/n]:` prompt to use the recommended preset settings for that platform.
 Express install mode installs OpenClaw by default.
 If you accept, refer to [NemoClaw Quickstart with OpenClaw](https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart.html).
 Enter `n` if you want to choose Hermes or LangChain Deep Agents Code, a sandbox name, an inference provider, and a model interactively.
