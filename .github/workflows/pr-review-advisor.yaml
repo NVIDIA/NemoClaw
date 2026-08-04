@@ -88,7 +88,7 @@ jobs:
       # Workflow-boundary modules parse YAML before the advisor session starts.
       YAML_VERSION: "2.8.3"
       # Embedded Pi SDK sessions use Pi's proxy-aware Undici transport.
-      UNDICI_VERSION: "8.5.0"
+      UNDICI_VERSION: "8.10.0"
       # Credential-free inventory discovery executes the trusted Vitest entrypoint.
       VITEST_VERSION: "4.1.9"
       FD_FIND_VERSION: "9.0.0-1"
