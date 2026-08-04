@@ -483,6 +483,52 @@ describe("createSetupNim", () => {
     expect(handleRunningOllamaSelection).toHaveBeenCalledTimes(1);
   });
 
+  it("reuses the running daemon when mirrored networking exposes the Windows host on WSL loopback (#7472)", async () => {
+    const model = "qwen3.6:35b";
+    const handleRunningOllamaSelection = vi.fn<SetupNimFlowDeps["handleRunningOllamaSelection"]>(
+      async (_gpu, requestedModel, _recoveredModel, ollamaRunning, state) => {
+        expect(requestedModel).toBe(model);
+        expect(ollamaRunning).toBe(true);
+        state.model = model;
+        state.provider = "ollama-local";
+        state.endpointUrl = "http://127.0.0.1:11434/v1";
+        state.credentialEnv = null;
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const handleWindowsHostOllamaSelection = vi.fn<
+      SetupNimFlowDeps["handleWindowsHostOllamaSelection"]
+    >(async () => unexpected("Windows-host Ollama selection"));
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "install-windows-ollama",
+        getNonInteractiveModel: () => model,
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            // Mirrored networking puts the Windows daemon on the distro's own
+            // loopback, so the first probe candidate answers and the host reads
+            // as local even though the daemon is the Windows one.
+            ollamaHost: "127.0.0.1",
+            ollamaRunning: true,
+            isWindowsHostOllama: false,
+            isWsl: true,
+            hasWindowsOllama: false,
+            windowsHostOllamaDockerRequirement:
+              getWindowsHostOllamaDockerRequirement("docker-desktop"),
+          }),
+        handleRunningOllamaSelection,
+        handleWindowsHostOllamaSelection,
+      }),
+    );
+
+    await setupNim(null, null);
+
+    expect(handleRunningOllamaSelection).toHaveBeenCalledTimes(1);
+    expect(handleWindowsHostOllamaSelection).not.toHaveBeenCalled();
+  });
+
   it("applies same-gateway discovery constraints before a provider probe (#6315)", async () => {
     const providerProbe = vi.fn();
     const routeGuard = vi.fn(

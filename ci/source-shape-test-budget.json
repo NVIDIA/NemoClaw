@@ -747,6 +747,11 @@
       "category": "compatibility"
     },
     {
+      "file": "test/vitest-temp-root.test.ts",
+      "test": "isolates stateful non-live projects without redirecting live E2E state",
+      "category": "security"
+    },
+    {
       "file": "test/vitest-watch-triggers.test.ts",
       "test": "registers the focused mappings at the root configuration boundary (#6692)",
       "category": "compatibility"

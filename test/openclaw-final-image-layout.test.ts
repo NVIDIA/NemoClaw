@@ -55,6 +55,7 @@ describe("OpenClaw final image layout", () => {
           "COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts",
           "COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts",
           "COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts",
+          "COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts",
           "COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts",
         ],
       },
@@ -137,6 +138,7 @@ describe("OpenClaw final image layout", () => {
     ]);
     for (const metadataContract of [
       "/scripts/patch-bundled-npm-brace-expansion.mts 'root:root:755'",
+      "/scripts/lib/patch-bundled-npm-ip-address.mts 'root:root:755'",
       "/scripts/patch-bundled-npm-tar.mts 'root:root:755'",
       "/opt/nemoclaw/openclaw.plugin.json 'root:root:644'",
       "/usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts 'root:root:755'",
@@ -162,6 +164,10 @@ describe("OpenClaw final image layout", () => {
     const braceExpansionPatch = indexOfRequired(
       finalStage,
       "RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
+    );
+    const ipAddressPatch = indexOfRequired(
+      finalStage,
+      "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
     );
     const pluginInstall = indexOfRequired(finalStage, "RUN npm ci --omit=dev");
     const managedMessagingUnionInstall = indexOfRequired(
@@ -201,6 +207,7 @@ describe("OpenClaw final image layout", () => {
 
     expect(dependency).toBeLessThan(tarPatch);
     expect(tarPatch).toBeLessThan(braceExpansionPatch);
+    expect(braceExpansionPatch).toBeLessThan(ipAddressPatch);
     expect(plugin).toBeGreaterThan(pluginInstall);
     expect(plugin).toBeLessThan(pluginChmod);
     expect(managedMessagingUnionInstall).toBeLessThan(messagingPostInstall);
