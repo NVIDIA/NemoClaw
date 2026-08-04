@@ -171,6 +171,10 @@ export function resolveSandboxCreateIntent({
   );
 
   const normalizedInferenceProvider = inferenceProvider?.trim() || null;
+  const openclawJetsonGpu =
+    sandboxGpuConfig.sandboxGpuEnabled &&
+    sandboxGpuConfig.hostGpuPlatform === "jetson" &&
+    (agentName === undefined || agentName === null || agentName === "openclaw");
 
   return {
     sandboxName,
@@ -186,6 +190,7 @@ export function resolveSandboxCreateIntent({
       activeMessagingChannels: [...activeMessagingChannels],
       options: {
         directGpu: sandboxGpuConfig.sandboxGpuEnabled,
+        ...(openclawJetsonGpu ? { jetsonGpu: true } : {}),
         ...(sandboxGpuConfig.hostGpuDetected !== undefined
           ? { hostGpuAvailable: sandboxGpuConfig.hostGpuDetected }
           : {}),

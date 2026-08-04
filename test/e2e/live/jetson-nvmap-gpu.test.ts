@@ -249,10 +249,8 @@ exit "$status"`,
   expect(installedCli.exitCode, resultText(installedCli)).toBe(0);
   expect(installedCli.stdout.trim()).not.toBe("");
 
-  // A4: the Jetson recreate must grant Tegra device-node groups via --group-add.
-  expect(resultText(install)).toContain(
-    "Granting sandbox user the detected Jetson GPU device groups via --group-add",
-  );
+  // A4: the Jetson recreate must prepare Tegra device-node groups for the sandbox user.
+  expect(resultText(install)).toContain("Preparing detected Jetson GPU device groups");
 
   // A5: the sandbox user must be in the host /dev/nvmap owning GID.
   progress.phase("inspect sandbox nvmap access");

@@ -46,6 +46,7 @@ export function discloseInitialSandboxPolicy(policy: InitialSandboxPolicy): void
 const HERMES_MESSAGING_POLICY_KEYS = getMessagingPolicyKeysByChannel({ agent: "hermes" });
 
 const PROC_PATH = "/proc";
+const JETSON_GPU_LIBRARY_PATH = "/opt/nvidia/l4t-gpu-libs";
 const PROC_COMM_READ_WRITE_PATHS = ["/proc/self/comm", "/proc/self/task/*/comm"];
 const SYSFS_PATH = "/sys";
 const PCI_BDF_PATTERN = /^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$/iu;
@@ -77,6 +78,7 @@ function deduplicateDirectGpuSysfsEntries(
 type DirectGpuPolicyOptions = {
   procReadWrite?: boolean;
   sysfsReadOnlyPaths?: readonly string[];
+  jetsonGpu?: boolean;
 };
 
 export { isStationGb300ProductName };
@@ -222,6 +224,15 @@ export function buildDirectGpuPolicyYaml(
         readOnlySet.add(candidate);
       }
     }
+  }
+  if (
+    options.jetsonGpu &&
+    !fsPolicy.read_only.includes(JETSON_GPU_LIBRARY_PATH) &&
+    !fsPolicy.read_write.includes(JETSON_GPU_LIBRARY_PATH)
+  ) {
+    // OpenRM runtime injection places libcuda outside the base /usr and /lib
+    // grants. CUDA cannot load the driver unless Landlock permits this path.
+    fsPolicy.read_only.push(JETSON_GPU_LIBRARY_PATH);
   }
   if (options.procReadWrite && !fsPolicy.read_write.includes(PROC_PATH)) {
     // This exists only for the legacy post-create Docker GPU compatibility
@@ -381,6 +392,7 @@ export function prepareInitialSandboxCreatePolicy(
   options: {
     directGpu?: boolean;
     dockerGpuPatch?: boolean;
+    jetsonGpu?: boolean;
     hostGpuAvailable?: boolean;
     stationGb300SysfsReadOnlyPaths?: readonly string[];
     additionalPresets?: string[];
@@ -392,6 +404,7 @@ export function prepareInitialSandboxCreatePolicy(
   const directGpuPolicy = options.directGpu
     ? prepareDirectGpuSandboxPolicy(basePolicyPath, {
         procReadWrite: options.dockerGpuPatch === true,
+        jetsonGpu: options.jetsonGpu === true,
         sysfsReadOnlyPaths:
           options.stationGb300SysfsReadOnlyPaths ??
           discoverHostStationGb300SysfsReadOnlyPaths({

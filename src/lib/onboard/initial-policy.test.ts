@@ -369,6 +369,30 @@ network_policies: {}
     }
   });
 
+  it("permits the OpenRM driver library path only for an OpenClaw Jetson GPU policy (#7610)", () => {
+    const genericPolicy = YAML.parse(buildDirectGpuPolicyYaml(BASE_POLICY_FIXTURE));
+    const jetsonPolicy = YAML.parse(
+      buildDirectGpuPolicyYaml(BASE_POLICY_FIXTURE, { jetsonGpu: true }),
+    );
+
+    expect(genericPolicy.filesystem_policy.read_only).not.toContain("/opt/nvidia/l4t-gpu-libs");
+    expect(jetsonPolicy.filesystem_policy.read_only).toContain("/opt/nvidia/l4t-gpu-libs");
+    expect(jetsonPolicy.filesystem_policy.read_write).not.toContain("/opt/nvidia/l4t-gpu-libs");
+  });
+
+  it("threads the OpenClaw Jetson library path through public policy preparation (#7610)", () => {
+    const basePolicyPath = tmpPolicy(BASE_POLICY_FIXTURE);
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+      directGpu: true,
+      jetsonGpu: true,
+      stationGb300SysfsReadOnlyPaths: [],
+    });
+    const preparedDoc = YAML.parse(fs.readFileSync(prepared.policyPath, "utf-8"));
+
+    expect(preparedDoc.filesystem_policy.read_only).toContain("/opt/nvidia/l4t-gpu-libs");
+    expect(prepared.cleanup?.()).toBe(true);
+  });
+
   it("preserves best-effort Landlock for missing Station sysfs paths (#7103)", () => {
     const sysfsRoot = tmpSysfsRoot();
     addPciDevice(sysfsRoot, "0009:06:00.0", "0x10de\n", "0x030200\n");

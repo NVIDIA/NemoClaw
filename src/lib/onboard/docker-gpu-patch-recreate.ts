@@ -159,6 +159,7 @@ export function recreateOpenShellDockerSandboxContainer(
     requiredUlimits?: readonly import("./docker-gpu-patch-types").DockerUlimit[] | null;
     expectedOldContainerId?: string | null;
     backend?: "generic" | "jetson";
+    preserveJetsonDeviceGroupMembership?: boolean;
     dockerDesktopWsl?: boolean;
     modeOverride?: DockerGpuPatchMode;
   },
@@ -266,10 +267,14 @@ export function recreateOpenShellDockerSandboxContainer(
       const tegraGroupGids = d.detectTegraDeviceGroupGids();
       if (tegraGroupGids.length > 0) {
         cloneOptions.extraGroupGids = tegraGroupGids;
+        cloneOptions.preserveJetsonDeviceGroupMembership =
+          options.preserveJetsonDeviceGroupMembership === true;
         console.log(
-          `  ✓ Granting sandbox user the detected Jetson GPU device groups via --group-add ${tegraGroupGids.join(
+          `  ✓ Preparing detected Jetson GPU device groups ${tegraGroupGids.join(
             ", ",
-          )} (so CUDA can initialize as a non-root user)`,
+          )} for the recreated container${
+            options.preserveJetsonDeviceGroupMembership ? " and the OpenShell sandbox user" : ""
+          }`,
         );
       } else {
         console.warn(

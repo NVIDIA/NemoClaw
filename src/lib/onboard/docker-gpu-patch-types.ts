@@ -122,12 +122,16 @@ export type DockerGpuCloneRunOptions = {
   containerName?: string | null;
   /**
    * Extra supplementary group IDs to add to the recreated container via
-   * `--group-add`. On Jetson these are the host group(s) owning the Tegra GPU
-   * device nodes; granting the sandbox user membership lets CUDA's nvmap init
-   * open them instead of failing with `NvRmMemInitNvmap ... Permission
-   * denied` (#4231, #7610).
+   * `--group-add`. On Jetson these are the host groups that own Tegra GPU
+   * device nodes. Set `preserveJetsonDeviceGroupMembership` to add them to the
+   * OpenShell sandbox user's container group database.
    */
   extraGroupGids?: readonly string[] | null;
+  /**
+   * Add the detected Jetson device groups to the sandbox user's container group
+   * database before the OpenShell supervisor calls initgroups().
+   */
+  preserveJetsonDeviceGroupMembership?: boolean;
 };
 
 export type DockerGpuPatchDiagnostics = {

@@ -144,6 +144,7 @@ export function materializeSandboxCreatePlan({
     [...intent.policy.activeMessagingChannels],
     {
       directGpu: intent.policy.options.directGpu,
+      jetsonGpu: intent.policy.options.jetsonGpu,
       hostGpuAvailable: intent.policy.options.hostGpuAvailable,
       additionalPresets: [...intent.policy.options.additionalPresets],
       agentName: intent.policy.options.agentName,

@@ -7,6 +7,7 @@ export type SandboxGpuCreateConfig = {
   sandboxGpuEnabled: boolean;
   sandboxGpuDevice?: string | null;
   hostGpuDetected?: boolean;
+  hostGpuPlatform?: string | null;
 };
 
 export function buildSandboxGpuCreateArgs(
