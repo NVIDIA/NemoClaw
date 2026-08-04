@@ -60,7 +60,7 @@ describe("llama.cpp image PR workflow", () => {
       expect.arrayContaining([
         ".github/workflows/llama-cpp-image.yaml",
         "managed-inference/images/llama-cpp/**",
-        "scripts/checks/export-llama-cpp-image-config.mjs",
+        "scripts/checks/export-llama-cpp-image-config.mts",
       ]),
     );
     expect(Object.keys(workflow.on ?? {})).toEqual(["pull_request"]);
@@ -83,7 +83,7 @@ describe("llama.cpp image PR workflow", () => {
       source_revision: "${{ steps.manifest.outputs.source_revision }}",
     });
     expect(namedStep(config, "Compile image manifest").run).toBe(
-      "node scripts/checks/export-llama-cpp-image-config.mjs",
+      "node --experimental-strip-types --no-warnings scripts/checks/export-llama-cpp-image-config.mts",
     );
     expect(build.needs).toBe("config");
     expect(build["runs-on"]).toBe("${{ matrix.runner }}");

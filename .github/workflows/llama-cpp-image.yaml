@@ -8,7 +8,7 @@ on:
     paths:
       - ".github/workflows/llama-cpp-image.yaml"
       - "managed-inference/images/llama-cpp/**"
-      - "scripts/checks/export-llama-cpp-image-config.mjs"
+      - "scripts/checks/export-llama-cpp-image-config.mts"
       - "test/llama-cpp-image.test.ts"
       - "test/llama-cpp-image-workflow.test.ts"
 
@@ -45,7 +45,7 @@ jobs:
 
       - name: Compile image manifest
         id: manifest
-        run: node scripts/checks/export-llama-cpp-image-config.mjs
+        run: node --experimental-strip-types --no-warnings scripts/checks/export-llama-cpp-image-config.mts
 
   pr-build:
     name: Build native llama.cpp server (${{ matrix.arch }})

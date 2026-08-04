@@ -7,6 +7,31 @@ import { fileURLToPath } from "node:url";
 
 import YAML from "yaml";
 
+type ServerImageManifest = {
+  apiVersion?: unknown;
+  kind?: unknown;
+  metadata?: { id?: unknown };
+  spec?: {
+    build?: { cmake?: unknown; packages?: unknown; target?: unknown };
+    cuda?: { developmentBase?: unknown; runtimeBase?: unknown };
+    platforms?: Array<{
+      cudaArchitectures?: unknown;
+      platform?: unknown;
+      runner?: unknown;
+    }>;
+    repository?: unknown;
+    runtime?: {
+      entrypoint?: unknown;
+      gid?: unknown;
+      packages?: unknown;
+      port?: unknown;
+      uid?: unknown;
+      writablePaths?: unknown;
+    };
+    source?: { archiveSha256?: unknown; repository?: unknown; revision?: unknown };
+  };
+};
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "../..");
 const manifestPath = path.join(repoRoot, "managed-inference", "images", "llama-cpp", "image.yaml");
@@ -15,31 +40,33 @@ const digestReference = /^(?:docker\.io|ghcr\.io)\/[a-z0-9._/-]+@sha256:[0-9a-f]
 const fullRevision = /^[0-9a-f]{40}$/u;
 const sha256 = /^sha256:[0-9a-f]{64}$/u;
 
-function requiredString(value, name, pattern) {
+function requiredString(value: unknown, name: string, pattern: RegExp): string {
   if (typeof value !== "string" || !pattern.test(value)) {
     throw new Error(`invalid ${name}`);
   }
   return value;
 }
 
-function requiredRuntimeId(value, name) {
-  if (!Number.isSafeInteger(value) || value < 1 || value > 65535) {
+function requiredRuntimeId(value: unknown, name: string): string {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > 65535) {
     throw new Error(`invalid ${name}`);
   }
   return String(value);
 }
 
-function matchesExactRecord(value, expected) {
+function matchesExactRecord(value: unknown, expected: Record<string, unknown>): boolean {
   return (
     typeof value === "object" &&
     value !== null &&
     Object.keys(value).length === Object.keys(expected).length &&
-    Object.entries(expected).every(([key, expectedValue]) => value[key] === expectedValue)
+    Object.entries(expected).every(
+      ([key, expectedValue]) => (value as Record<string, unknown>)[key] === expectedValue,
+    )
   );
 }
 
 export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "utf8")) {
-  const manifest = YAML.parse(source);
+  const manifest = YAML.parse(source) as ServerImageManifest;
   if (
     manifest?.apiVersion !== "nemoclaw.nvidia.com/managed-inference/v1" ||
     manifest?.kind !== "ServerImageBuild" ||
@@ -147,7 +174,7 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
   };
 }
 
-export function githubOutput(config) {
+export function githubOutput(config: Record<string, string>): string {
   return `${Object.entries(config)
     .map(([name, value]) => `${name}=${value}`)
     .join("\n")}\n`;

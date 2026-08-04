@@ -18,7 +18,7 @@ const recipePath = path.join(
   "recipes",
   "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml",
 );
-const exporterPath = path.join(repoRoot, "scripts", "checks", "export-llama-cpp-image-config.mjs");
+const exporterPath = path.join(repoRoot, "scripts", "checks", "export-llama-cpp-image-config.mts");
 
 type ImageManifest = {
   apiVersion?: string;
@@ -113,11 +113,15 @@ describe("declarative llama.cpp server image", () => {
   });
 
   it("compiles the fail-closed workflow inputs from YAML (#8231)", () => {
-    const result = spawnSync(process.execPath, [exporterPath], {
-      cwd: repoRoot,
-      encoding: "utf8",
-      env: { ...process.env, GITHUB_OUTPUT: "" },
-    });
+    const result = spawnSync(
+      process.execPath,
+      ["--experimental-strip-types", "--no-warnings", exporterPath],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: { ...process.env, GITHUB_OUTPUT: "" },
+      },
+    );
     expect(result.status, result.stderr).toBe(0);
     const output = parseOutput(result.stdout);
     expect(output).toMatchObject({
