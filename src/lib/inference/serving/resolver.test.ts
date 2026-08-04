@@ -3,17 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 import type { SystemReadinessReport } from "../../readiness/types.js";
-import { loadManagedInferenceCatalog } from "./catalog-loader.js";
 import { managedInferenceDigest } from "./catalog-integrity.js";
-import type {
-  CompiledManagedInferenceCatalog,
-  ManagedInferencePresetRequirement,
-  ManagedInferenceReadinessSource,
-  ManagedInferenceResolverInput,
-  ManagedInferenceServingPreset,
-  ManagedInferenceServingRecipe,
-  ManagedInferenceTopologyQualification,
-} from "./types.js";
+import { loadManagedInferenceCatalog } from "./catalog-loader.js";
 import {
   FIXTURE_MANAGED_CLUSTER_PRESET_ID,
   fixtureManagedClusterSelection,
@@ -23,6 +14,15 @@ import {
   managedClusterTopologyOutputDigest,
 } from "./managed-cluster-topology.js";
 import { resolveManagedInferenceServing } from "./resolver.js";
+import type {
+  CompiledManagedInferenceCatalog,
+  ManagedInferencePresetRequirement,
+  ManagedInferenceReadinessSource,
+  ManagedInferenceResolverInput,
+  ManagedInferenceServingPreset,
+  ManagedInferenceServingRecipe,
+  ManagedInferenceTopologyQualification,
+} from "./types.js";
 
 const NOW = new Date("2026-08-02T18:00:00.000Z");
 const SOURCE_REVISION = "a".repeat(40);
@@ -162,7 +162,6 @@ function catalogWithSecondProfile(options: {
   readonly secondRecipeId: string;
 } {
   const catalog = shippedCatalog();
-  const firstCompiledPreset = shippedCompiledPreset(catalog);
   const firstCompiledRecipe = shippedCompiledRecipe(catalog);
   const firstPreset = shippedPreset(catalog);
   const firstRecipe = shippedRecipe(catalog);
