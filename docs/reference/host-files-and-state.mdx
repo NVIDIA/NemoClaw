@@ -41,6 +41,11 @@ In the table, `<selected-state-root>` is `~/.nemoclaw/` for the default gateway 
 | `<selected-state-root>/dual-station-vllm-runtime.json` | Owner-only managed dual-Station cleanup receipt. It contains no serving API key and binds the peer, cluster, and GPU identities used to revalidate and remove both managed vLLM containers during full uninstall. | No while the managed pair exists. A full `$$nemoclaw uninstall` removes the receipt after both exact containers are removed; gateway-scoped uninstall preserves it. |
 | `<selected-state-root>/dual-station-vllm-runtime.json.ssh-binding/` | Owner-only copied SSH host-key and Docker-command binding needed to reach the recorded worker during full uninstall. | No while the managed pair exists. Full uninstall removes it with the cleanup receipt after pair cleanup succeeds; gateway-scoped uninstall preserves it. |
 
+Earlier releases can store the dual-Station runtime receipt and its SSH-binding directory under `~/.nemoclaw/gateways/<port>/` when the managed pair was created from a non-default gateway port.
+The API key remains host-global at `~/.nemoclaw/dual-station-vllm-api-key`.
+Current releases discover and validate the legacy receipt location without moving or duplicating its ownership state.
+Do not move these files or directories manually.
+
 `sandboxes.json` is the current registry file name.
 If you see `registry.json` in older tests, notes, or discussions, treat it as legacy wording for the sandbox registry unless a specific release note says otherwise.
 
