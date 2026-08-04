@@ -1,0 +1,52 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import path from "node:path";
+
+import { REPO_ROOT } from "./paths.ts";
+
+const MANAGED_IMAGE_TARGET_PREFIXES = ["managed-image-", "podman-", "mxc-"] as const;
+
+const LEGACY_DOCKERFILE_BY_AGENT = {
+  openclaw: "agents/openclaw/Dockerfile",
+  hermes: "agents/hermes/Dockerfile",
+  "langchain-deepagents-code": "agents/langchain-deepagents-code/Dockerfile",
+} as const;
+
+type LegacyDockerfileAgent = keyof typeof LEGACY_DOCKERFILE_BY_AGENT;
+
+function isManagedImageTarget(targetId: string): boolean {
+  return MANAGED_IMAGE_TARGET_PREFIXES.some((prefix) => targetId.startsWith(prefix));
+}
+
+function legacyDockerfileAgent(env: NodeJS.ProcessEnv): LegacyDockerfileAgent {
+  const agent = env.NEMOCLAW_AGENT ?? "openclaw";
+  if (agent in LEGACY_DOCKERFILE_BY_AGENT) return agent as LegacyDockerfileAgent;
+  return "openclaw";
+}
+
+/**
+ * Existing live E2E targets predate managed-image activation and intentionally
+ * retain their Dockerfile coverage. Exact managed-image, Podman, and MXC
+ * targets must opt into the buildless path and never receive this override.
+ *
+ * This is applied at the final fixture spawn boundary so an agent selected by
+ * a test command receives its own Dockerfile rather than an OpenClaw default.
+ */
+export function resolveLiveE2eWorkloadSourceEnv(input: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const targetId = input.E2E_TARGET_ID;
+  const source = input.E2E_WORKLOAD_SOURCE;
+  if (
+    !targetId ||
+    source === "managed-image" ||
+    (source !== "legacy-dockerfile" && isManagedImageTarget(targetId))
+  ) {
+    return input;
+  }
+  if (input.NEMOCLAW_FROM_DOCKERFILE) return input;
+  const agent = legacyDockerfileAgent(input);
+  return {
+    ...input,
+    NEMOCLAW_FROM_DOCKERFILE: path.join(REPO_ROOT, LEGACY_DOCKERFILE_BY_AGENT[agent]),
+  };
+}
