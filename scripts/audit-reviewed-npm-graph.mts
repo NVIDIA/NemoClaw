@@ -59,12 +59,6 @@ const SOURCE_GRAPH = {
   id: "nemoclaw-cli",
   label: "NemoClaw CLI locked production graph",
 } as const;
-// Removal condition: delete these digest exceptions when PR #8126 changes the root lock so
-// same-tree main runs audit the remediated production graph.
-const DEFERRED_SAME_TREE_SOURCE_MANIFEST_SHA256 =
-  "8367ca8a60a645df0aa267c21f38e85badbd873c5f7a73be5adc815117051331";
-const DEFERRED_SAME_TREE_SOURCE_LOCK_SHA256 =
-  "a10b5705136e8750f3a9640972ef3ccbceb227eb5e8a9fd8b49f275a5c5dcdaf";
 const OPENCLAW_DOMEXCEPTION_ALIAS = {
   actualName: "@nolyfill/domexception",
   aliasPackagePath: "node_modules/openclaw/node_modules/node-domexception",
@@ -488,33 +482,6 @@ export function assertReviewedAuditReportsPass(
     throw new Error(`reviewed npm audit threshold failed\n${failures.join("\n")}`);
 }
 
-export function shouldAuditTargetSourceGraph(
-  trustedRepoRoot: string,
-  targetRepoRoot: string,
-): boolean {
-  const trustedRoot = fs.realpathSync(path.resolve(trustedRepoRoot));
-  const targetRoot = fs.realpathSync(path.resolve(targetRepoRoot));
-  if (trustedRoot !== targetRoot) return true;
-
-  const sourceManifest = path.join(targetRoot, "package.json");
-  const sourceLock = path.join(targetRoot, "package-lock.json");
-  assertRegularFile(sourceManifest, "NemoClaw CLI package manifest");
-  assertRegularFile(sourceLock, "NemoClaw CLI lockfile");
-  const manifestSha256 = createHash("sha256").update(fs.readFileSync(sourceManifest)).digest("hex");
-  const lockSha256 = createHash("sha256").update(fs.readFileSync(sourceLock)).digest("hex");
-  return !shouldDeferSameTreeSourceGraph(manifestSha256, lockSha256);
-}
-
-export function shouldDeferSameTreeSourceGraph(
-  manifestSha256: string,
-  lockSha256: string,
-): boolean {
-  return (
-    manifestSha256 === DEFERRED_SAME_TREE_SOURCE_MANIFEST_SHA256 &&
-    lockSha256 === DEFERRED_SAME_TREE_SOURCE_LOCK_SHA256
-  );
-}
-
 function main(): void {
   const config = readConfig();
   const expectedNode = `v${config.nodeVersion}`;
@@ -541,20 +508,16 @@ function main(): void {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-audit-"));
   try {
     const reports = [
-      ...(shouldAuditTargetSourceGraph(TRUSTED_REPO_ROOT, TARGET_REPO_ROOT)
-        ? [
-            {
-              label: SOURCE_GRAPH.label,
-              result: auditSourceGraph(
-                config,
-                tempRoot,
-                exceptionFile,
-                artifactDirectory,
-                npmVersion,
-              ),
-            },
-          ]
-        : []),
+      {
+        label: SOURCE_GRAPH.label,
+        result: auditSourceGraph(
+          config,
+          tempRoot,
+          exceptionFile,
+          artifactDirectory,
+          npmVersion,
+        ),
+      },
       {
         label: "reviewed archive graph",
         result: runReviewedNpmAudit({

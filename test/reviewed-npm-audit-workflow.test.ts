@@ -14,8 +14,6 @@ import {
   normalizeOpenClawSignatureAlias,
   parseAuditConfig,
   selectReviewedLockSha256,
-  shouldAuditTargetSourceGraph,
-  shouldDeferSameTreeSourceGraph,
 } from "../scripts/audit-reviewed-npm-graph.mts";
 import { verifyInstalledNpmLock } from "../scripts/lib/reviewed-npm-archive.mts";
 import type { AuditPolicyResult } from "../scripts/lib/reviewed-npm-audit.mts";
@@ -651,51 +649,6 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
           lockfilePath,
         }),
       ).toThrow("fixture lock has an invalid locked package record: node_modules/fixture");
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("defers only the reviewed root manifest and lock digests (#8116)", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-roots-"));
-    const lockDriftRoot = path.join(root, "lock-drift");
-    const manifestDriftRoot = path.join(root, "manifest-drift");
-    const targetRoot = path.join(root, "target");
-    try {
-      fs.mkdirSync(lockDriftRoot);
-      fs.mkdirSync(manifestDriftRoot);
-      fs.mkdirSync(targetRoot);
-      fs.copyFileSync(
-        path.join(REPO_ROOT, "package.json"),
-        path.join(lockDriftRoot, "package.json"),
-      );
-      fs.writeFileSync(path.join(lockDriftRoot, "package-lock.json"), "{}\n");
-      fs.writeFileSync(path.join(manifestDriftRoot, "package.json"), "{}\n");
-      fs.copyFileSync(
-        path.join(REPO_ROOT, "package-lock.json"),
-        path.join(manifestDriftRoot, "package-lock.json"),
-      );
-      expect(shouldAuditTargetSourceGraph(REPO_ROOT, targetRoot)).toBe(true);
-      expect(shouldAuditTargetSourceGraph(lockDriftRoot, lockDriftRoot)).toBe(true);
-      expect(shouldAuditTargetSourceGraph(manifestDriftRoot, manifestDriftRoot)).toBe(true);
-      expect(
-        shouldDeferSameTreeSourceGraph(
-          "8367ca8a60a645df0aa267c21f38e85badbd873c5f7a73be5adc815117051331",
-          "a10b5705136e8750f3a9640972ef3ccbceb227eb5e8a9fd8b49f275a5c5dcdaf",
-        ),
-      ).toBe(true);
-      expect(
-        shouldDeferSameTreeSourceGraph(
-          "8367ca8a60a645df0aa267c21f38e85badbd873c5f7a73be5adc815117051331",
-          "0".repeat(64),
-        ),
-      ).toBe(false);
-      expect(
-        shouldDeferSameTreeSourceGraph(
-          "0".repeat(64),
-          "a10b5705136e8750f3a9640972ef3ccbceb227eb5e8a9fd8b49f275a5c5dcdaf",
-        ),
-      ).toBe(false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
