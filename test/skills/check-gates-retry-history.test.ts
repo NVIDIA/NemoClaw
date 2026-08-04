@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { coordinationCheck, runGate } from "./check-gates-test-fixtures.ts";
+import {
+  coordinationCheck,
+  runGate,
+  successfulRequiredChecks,
+} from "./check-gates-test-fixtures.ts";
 
 const SIGNED_BODY = "Signed-off-by: Example User <user@example.com>";
 
@@ -18,10 +22,19 @@ function retryableFailure(id: number, reason: string, title = "Retryable E2E fai
 }
 
 function gateOutput(checkRuns: unknown[]) {
+  const currentCheckId = Math.max(...checkRuns.map((check) => (check as { id: number }).id));
   return JSON.parse(
     runGate({
       body: SIGNED_BODY,
       verified: true,
+      statusChecks: successfulRequiredChecks().map((check) =>
+        check.name === "E2E / PR Gate"
+          ? {
+              ...check,
+              detailsUrl: `https://github.com/NVIDIA/NemoClaw/runs/${currentCheckId}`,
+            }
+          : check,
+      ),
       coordinationCheckPages: [{ total_count: checkRuns.length, check_runs: checkRuns }],
     }).stdout,
   );
