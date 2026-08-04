@@ -4434,7 +4434,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     setupInferenceFactory.selectGatewayForFollowupOrExit(GATEWAY_NAME, runOpenshell);
     const finalFlowContext = prepareFinalOnboardFlowContext(coreFlowResult);
     let liveFinalFlowContext: InitialOnboardFlowContext = finalFlowContext;
-
     const finalFlowPhases = createFinalOnboardFlowPhases<
       InitialOnboardFlowContext,
       import("./dashboard/contract").DashboardDeliveryChain,

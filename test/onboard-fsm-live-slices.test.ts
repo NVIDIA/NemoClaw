@@ -202,6 +202,9 @@ function runSliceProbe(options: ProbeOptions) {
   const dashboardUrlCommandPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "dashboard-url-command.ts"),
   );
+  const finalizationDepsPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "finalization-deps.ts"),
+  );
 
   fs.writeFileSync(
     scriptPath,
@@ -219,11 +222,21 @@ const called = [];
 const sentinel = new Error("slice-called");
 
 if (scenario.mode === "dashboard-port-composition") {
+  const finalizationHandlerDeps = require(${finalizationDepsPath}).finalizationHandlerDeps;
+  finalizationHandlerDeps.checkAndRecoverSandboxProcesses = () => undefined;
+  finalizationHandlerDeps.warmupScopeUpgrade = () => undefined;
+  finalizationHandlerDeps.autoPairScopeApproval = () => undefined;
   const onboardDashboard = require(${onboardDashboardPath});
   const createOnboardDashboardHelpers = onboardDashboard.createOnboardDashboardHelpers;
+  let dashboardForwardCalls = 0;
   onboardDashboard.createOnboardDashboardHelpers = (deps) => ({
     ...createOnboardDashboardHelpers(deps),
-    ensureAgentDashboardForward: () => 18791,
+    ensureAgentDashboardForward: () => {
+      const port = dashboardForwardCalls === 0 ? 18791 : 18792;
+      dashboardForwardCalls += 1;
+      called.push("forward-port:" + String(port));
+      return port;
+    },
   });
   require(${agentOnboardPath}).handleAgentSetup = async () => undefined;
   require(${agentSelectionPath}).createOnboardAgentSelector = () => async () => ({
@@ -382,6 +395,9 @@ flowSlices.runFinalOnboardFlowSequence = async ({ context, phases }) => {
     const agentSetupPhase = phases.find((phase) => phase.state === "agent_setup");
     if (!agentSetupPhase) throw new Error("agent setup phase was not composed");
     await agentSetupPhase.run(context);
+    const finalizationPhase = phases.find((phase) => phase.state === "finalizing");
+    if (!finalizationPhase) throw new Error("finalization phase was not composed");
+    await finalizationPhase.run(context);
 
     const dashboardOutput = [];
     require(${dashboardUrlCommandPath}).runDashboardUrlCommand(
@@ -528,12 +544,14 @@ describe("live onboard FSM slice boundaries", () => {
     assert.deepEqual(runSliceProbe({ slice: "final" }), ["initial:init", "core", "final"]);
   });
 
-  it("returns the collision-selected dashboard port after agent onboarding (#8214)", () => {
+  it("returns the post-recovery dashboard port after agent onboarding (#8214)", () => {
     assert.deepEqual(runSliceProbe({ slice: "final", mode: "dashboard-port-composition" }), [
       "initial:init",
       "core",
-      "registry-port:18791",
-      "dashboard-url:http://127.0.0.1:18791/",
+      "forward-port:18791",
+      "forward-port:18792",
+      "registry-port:18792",
+      "dashboard-url:http://127.0.0.1:18792/",
     ]);
   }, 60_000);
 
