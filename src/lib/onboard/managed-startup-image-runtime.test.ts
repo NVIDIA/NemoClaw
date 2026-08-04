@@ -13,6 +13,7 @@ vi.mock("./managed-startup/coordinator", () => coordinatorMock);
 import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import {
   mockRootReplayFilesystem,
+  observeMatchingLink,
   observeMatchingRename,
   observeMatchingRenameTarget,
   observeMatchingUnlink,
@@ -819,13 +820,232 @@ describe("managed startup image runtime", () => {
     await expect(
       applyManagedBootstrapEnvelope(expected, {}, requestFile, completionFile),
     ).rejects.toThrow(/changed before its atomic claim/u);
+    expect(filesystem.readFile(requestFile)).toBe(replacement);
+    expect(filesystem.hasFile(claim.file)).toBe(false);
+    expect(filesystem.hasFile(completionFile)).toBe(false);
+    expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
+    expect(recoverManagedBootstrapEnvelopeClaim(expected, requestFile)).toBe(false);
+  });
+
+  it.each([
+    {
+      label: "default",
+      requestFile: MANAGED_BOOTSTRAP_REQUEST_FILE,
+      completionFile: MANAGED_BOOTSTRAP_COMPLETION_FILE,
+    },
+    {
+      label: "injected",
+      requestFile: "/run/nemoclaw/post-rename-managed-bootstrap-request.json",
+      completionFile: "/run/nemoclaw/post-rename-managed-bootstrap-completion.json",
+    },
+  ])("restores a $label replacement after interruption immediately after claim rename", async ({
+    requestFile,
+    completionFile,
+  }) => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    const fingerprint = fingerprintManagedStartupProfile(profile);
+    const bootstrapIdentity = "b".repeat(64);
+    const expected = { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity };
+    const rootApplyRequest = createManagedStartupRootApplyRequest({
+      agent: profile.agent,
+      encodedProfile,
+    });
+    const replacement = serializeManagedBootstrapEnvelope({
+      bootstrapIdentity: "c".repeat(64),
+      rootApplyRequest,
+    });
+    const filesystem = mockRootReplayFilesystem(
+      [],
+      new Map([
+        [
+          requestFile,
+          {
+            contents: serializeManagedBootstrapEnvelope({
+              bootstrapIdentity,
+              rootApplyRequest,
+            }),
+            mode: 0o400,
+          },
+        ],
+      ]),
+    );
+    const claim = managedBootstrapEnvelopeClaimPaths(requestFile);
+    filesystem.beforeRename(
+      observeMatchingRename(requestFile, claim.file, () => {
+        filesystem.writeFile(requestFile, replacement, 0o400);
+      }),
+    );
+    filesystem.afterRename(
+      observeMatchingRename(requestFile, claim.file, () => {
+        throw new Error("claim process interrupted");
+      }),
+    );
+
+    await expect(
+      applyManagedBootstrapEnvelope(expected, {}, requestFile, completionFile),
+    ).rejects.toThrow(/could not atomically claim managed bootstrap envelope/u);
     expect(filesystem.hasFile(requestFile)).toBe(false);
     expect(filesystem.readFile(claim.file)).toBe(replacement);
     expect(filesystem.hasFile(completionFile)).toBe(false);
     expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
-    expect(() => recoverManagedBootstrapEnvelopeClaim(expected, requestFile)).toThrow(
-      "identity does not match",
+
+    filesystem.afterRename(null);
+    expect(recoverManagedBootstrapEnvelopeClaim(expected, requestFile)).toBe(true);
+    expect(filesystem.readFile(requestFile)).toBe(replacement);
+    expect(filesystem.linkCount(requestFile)).toBe(1n);
+    expect(filesystem.hasFile(claim.file)).toBe(false);
+    expect(filesystem.hasFile(completionFile)).toBe(false);
+    expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: "default",
+      requestFile: MANAGED_BOOTSTRAP_REQUEST_FILE,
+      completionFile: MANAGED_BOOTSTRAP_COMPLETION_FILE,
+    },
+    {
+      label: "injected",
+      requestFile: "/run/nemoclaw/interrupted-restore-managed-bootstrap-request.json",
+      completionFile: "/run/nemoclaw/interrupted-restore-managed-bootstrap-completion.json",
+    },
+  ])("reconciles an interrupted $label pre-claim replacement restoration", async ({
+    requestFile,
+    completionFile,
+  }) => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    const fingerprint = fingerprintManagedStartupProfile(profile);
+    const bootstrapIdentity = "b".repeat(64);
+    const replacementIdentity = "c".repeat(64);
+    const expected = { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity };
+    const replacementExpected = {
+      agent: profile.agent,
+      profileFingerprint: fingerprint,
+      bootstrapIdentity: replacementIdentity,
+    };
+    const rootApplyRequest = createManagedStartupRootApplyRequest({
+      agent: profile.agent,
+      encodedProfile,
+    });
+    const replacement = serializeManagedBootstrapEnvelope({
+      bootstrapIdentity: replacementIdentity,
+      rootApplyRequest,
+    });
+    const filesystem = mockRootReplayFilesystem(
+      [],
+      new Map([
+        [
+          requestFile,
+          {
+            contents: serializeManagedBootstrapEnvelope({
+              bootstrapIdentity,
+              rootApplyRequest,
+            }),
+            mode: 0o400,
+          },
+        ],
+      ]),
     );
+    const claim = managedBootstrapEnvelopeClaimPaths(requestFile);
+    let interruptRestoration = true;
+    filesystem.beforeRename(
+      observeMatchingRename(requestFile, claim.file, () => {
+        filesystem.writeFile(requestFile, replacement, 0o400);
+      }),
+    );
+    filesystem.beforeUnlink(
+      observeMatchingUnlink(
+        claim.file,
+        () => {
+          throw new Error("restoration cleanup interrupted");
+        },
+        () => interruptRestoration,
+      ),
+    );
+
+    await expect(
+      applyManagedBootstrapEnvelope(expected, {}, requestFile, completionFile),
+    ).rejects.toThrow(/could not remove restored managed bootstrap envelope/u);
+    expect(filesystem.readFile(requestFile)).toBe(replacement);
+    expect(filesystem.readFile(claim.file)).toBe(replacement);
+    expect(filesystem.linkCount(requestFile)).toBe(2n);
+    expect(filesystem.hasFile(completionFile)).toBe(false);
+    expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
+
+    interruptRestoration = false;
+    expect(recoverManagedBootstrapEnvelopeClaim(replacementExpected, requestFile)).toBe(true);
+    expect(filesystem.readFile(requestFile)).toBe(replacement);
+    expect(filesystem.linkCount(requestFile)).toBe(1n);
+    expect(filesystem.hasFile(claim.file)).toBe(false);
+    expect(filesystem.hasFile(completionFile)).toBe(false);
+    expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
+  });
+
+  it("fails closed without clobbering a second replacement during claim restoration", async () => {
+    const profile = managedStartupE2eProfile("openclaw");
+    const encodedProfile = encodeManagedStartupProfile(profile);
+    const fingerprint = fingerprintManagedStartupProfile(profile);
+    const bootstrapIdentity = "b".repeat(64);
+    const displacedIdentity = "c".repeat(64);
+    const expected = { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity };
+    const displacedExpected = {
+      agent: profile.agent,
+      profileFingerprint: fingerprint,
+      bootstrapIdentity: displacedIdentity,
+    };
+    const rootApplyRequest = createManagedStartupRootApplyRequest({
+      agent: profile.agent,
+      encodedProfile,
+    });
+    const displaced = serializeManagedBootstrapEnvelope({
+      bootstrapIdentity: displacedIdentity,
+      rootApplyRequest,
+    });
+    const latest = serializeManagedBootstrapEnvelope({
+      bootstrapIdentity: "d".repeat(64),
+      rootApplyRequest,
+    });
+    const filesystem = mockRootReplayFilesystem(
+      [],
+      new Map([
+        [
+          MANAGED_BOOTSTRAP_REQUEST_FILE,
+          {
+            contents: serializeManagedBootstrapEnvelope({
+              bootstrapIdentity,
+              rootApplyRequest,
+            }),
+            mode: 0o400,
+          },
+        ],
+      ]),
+    );
+    const claim = managedBootstrapEnvelopeClaimPaths();
+    filesystem.beforeRename(
+      observeMatchingRename(MANAGED_BOOTSTRAP_REQUEST_FILE, claim.file, () => {
+        filesystem.writeFile(MANAGED_BOOTSTRAP_REQUEST_FILE, displaced, 0o400);
+      }),
+    );
+    filesystem.beforeLink(
+      observeMatchingLink(claim.file, MANAGED_BOOTSTRAP_REQUEST_FILE, () => {
+        filesystem.writeFile(MANAGED_BOOTSTRAP_REQUEST_FILE, latest, 0o400);
+      }),
+    );
+
+    await expect(applyManagedBootstrapEnvelope(expected, {})).rejects.toThrow(
+      /canonical managed bootstrap request was replaced again/u,
+    );
+    expect(filesystem.readFile(MANAGED_BOOTSTRAP_REQUEST_FILE)).toBe(latest);
+    expect(filesystem.readFile(claim.file)).toBe(displaced);
+    expect(filesystem.linkCount(MANAGED_BOOTSTRAP_REQUEST_FILE)).toBe(1n);
+    expect(filesystem.linkCount(claim.file)).toBe(1n);
+    expect(filesystem.hasFile(MANAGED_BOOTSTRAP_COMPLETION_FILE)).toBe(false);
+    expect(coordinatorMock.coordinateManagedStartupApplication).not.toHaveBeenCalled();
+    expect(recoverManagedBootstrapEnvelopeClaim(displacedExpected)).toBe(true);
+    expect(filesystem.readFile(MANAGED_BOOTSTRAP_REQUEST_FILE)).toBe(latest);
+    expect(filesystem.readFile(claim.file)).toBe(displaced);
   });
 
   it.each([

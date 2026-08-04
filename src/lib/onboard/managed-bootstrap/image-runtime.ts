@@ -38,6 +38,7 @@ export interface ManagedBootstrapImageRuntimeExpected {
 }
 
 interface ManagedBootstrapEnvelopeSnapshot {
+  readonly bootstrapIdentity: string;
   readonly bytes: Buffer;
   readonly request: ManagedStartupRootApplyRequest;
   readonly stat: fs.BigIntStats;
@@ -96,8 +97,7 @@ function readExpected(argv: readonly string[]): ManagedBootstrapImageRuntimeExpe
   };
 }
 
-function readManagedBootstrapEnvelopeSnapshot(
-  expected: ManagedBootstrapImageRuntimeExpected,
+function readProtectedManagedBootstrapEnvelopeSnapshot(
   requestFile: string = MANAGED_BOOTSTRAP_REQUEST_FILE,
 ): ManagedBootstrapEnvelopeSnapshot {
   requireRoot();
@@ -109,14 +109,34 @@ function readManagedBootstrapEnvelopeSnapshot(
     fail("managed bootstrap envelope must be root:root mode 0400 with one link");
   }
   const envelope = parseManagedBootstrapEnvelope(bytes.toString("utf8"));
-  if (
-    envelope.bootstrapIdentity !== expected.bootstrapIdentity ||
-    envelope.rootApplyRequest.agent !== expected.agent ||
-    envelope.rootApplyRequest.profileFingerprint !== expected.profileFingerprint
-  ) {
+  return {
+    bootstrapIdentity: envelope.bootstrapIdentity,
+    bytes,
+    request: envelope.rootApplyRequest,
+    stat,
+  };
+}
+
+function managedBootstrapEnvelopeMatchesExpected(
+  snapshot: ManagedBootstrapEnvelopeSnapshot,
+  expected: ManagedBootstrapImageRuntimeExpected,
+): boolean {
+  return (
+    snapshot.bootstrapIdentity === expected.bootstrapIdentity &&
+    snapshot.request.agent === expected.agent &&
+    snapshot.request.profileFingerprint === expected.profileFingerprint
+  );
+}
+
+function readManagedBootstrapEnvelopeSnapshot(
+  expected: ManagedBootstrapImageRuntimeExpected,
+  requestFile: string = MANAGED_BOOTSTRAP_REQUEST_FILE,
+): ManagedBootstrapEnvelopeSnapshot {
+  const snapshot = readProtectedManagedBootstrapEnvelopeSnapshot(requestFile);
+  if (!managedBootstrapEnvelopeMatchesExpected(snapshot, expected)) {
     fail("managed bootstrap envelope identity does not match the replacement");
   }
-  return { bytes, request: envelope.rootApplyRequest, stat };
+  return snapshot;
 }
 
 export function readManagedBootstrapEnvelope(
@@ -285,14 +305,16 @@ function openManagedBootstrapEnvelopeSnapshot(
       fail("managed bootstrap envelope changed while it was authenticated");
     }
     const envelope = parseManagedBootstrapEnvelope(bytes.toString("utf8"));
-    if (
-      envelope.bootstrapIdentity !== expected.bootstrapIdentity ||
-      envelope.rootApplyRequest.agent !== expected.agent ||
-      envelope.rootApplyRequest.profileFingerprint !== expected.profileFingerprint
-    ) {
+    const snapshot = {
+      bootstrapIdentity: envelope.bootstrapIdentity,
+      bytes,
+      request: envelope.rootApplyRequest,
+      stat: after,
+    };
+    if (!managedBootstrapEnvelopeMatchesExpected(snapshot, expected)) {
       fail("managed bootstrap envelope identity does not match the replacement");
     }
-    return { bytes, descriptor, request: envelope.rootApplyRequest, stat: after };
+    return { ...snapshot, descriptor };
   } catch (error) {
     try {
       fs.closeSync(descriptor);
@@ -301,6 +323,48 @@ function openManagedBootstrapEnvelopeSnapshot(
     }
     throw error;
   }
+}
+
+function restoreUnclaimedManagedBootstrapEnvelope(paths: ManagedBootstrapEnvelopeClaimPaths): void {
+  try {
+    fs.linkSync(paths.file, paths.requestFile);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      fail(
+        "canonical managed bootstrap request was replaced again; the displaced request remains in the private claim",
+      );
+    }
+    fail("could not restore replacement managed bootstrap envelope to its canonical path");
+  }
+  try {
+    fs.unlinkSync(paths.file);
+  } catch {
+    fail("could not remove restored managed bootstrap envelope from the private claim");
+  }
+  removeManagedBootstrapClaimDirectory(paths.directory);
+}
+
+function reconcileInterruptedManagedBootstrapRestoration(
+  paths: ManagedBootstrapEnvelopeClaimPaths,
+): boolean {
+  const canonical = lstatManagedBootstrapPath(paths.requestFile);
+  const privateClaim = lstatManagedBootstrapPath(paths.file);
+  if (
+    canonical === null ||
+    privateClaim === null ||
+    !isProtectedManagedBootstrapFile(canonical, 2n) ||
+    !isProtectedManagedBootstrapFile(privateClaim, 2n) ||
+    !sameStableManagedBootstrapFile(canonical, privateClaim)
+  ) {
+    return false;
+  }
+  try {
+    fs.unlinkSync(paths.file);
+  } catch {
+    fail("could not reconcile interrupted managed bootstrap envelope restoration");
+  }
+  removeManagedBootstrapClaimDirectory(paths.directory);
+  return true;
 }
 
 function claimManagedBootstrapEnvelope(
@@ -326,17 +390,18 @@ function claimManagedBootstrapEnvelope(
     } catch {
       fail("could not atomically claim managed bootstrap envelope");
     }
-    const descriptorAfterRename = fs.fstatSync(opened.descriptor, { bigint: true });
     try {
+      const descriptorAfterRename = fs.fstatSync(opened.descriptor, { bigint: true });
       claimed = readManagedBootstrapEnvelopeSnapshot(expected, paths.file);
+      if (
+        !sameClaimedManagedBootstrapFile(opened.stat, descriptorAfterRename) ||
+        !sameStableManagedBootstrapFile(descriptorAfterRename, claimed.stat) ||
+        !opened.bytes.equals(claimed.bytes)
+      ) {
+        fail("managed bootstrap envelope changed before its atomic claim");
+      }
     } catch {
-      fail("managed bootstrap envelope changed before its atomic claim");
-    }
-    if (
-      !sameClaimedManagedBootstrapFile(opened.stat, descriptorAfterRename) ||
-      !sameStableManagedBootstrapFile(descriptorAfterRename, claimed.stat) ||
-      !opened.bytes.equals(claimed.bytes)
-    ) {
+      restoreUnclaimedManagedBootstrapEnvelope(paths);
       fail("managed bootstrap envelope changed before its atomic claim");
     }
   } finally {
@@ -368,7 +433,13 @@ export function recoverManagedBootstrapEnvelopeClaim(
   if (entries.length !== 1 || entries[0] !== path.basename(paths.file)) {
     fail("managed bootstrap claim directory contains unexpected entries");
   }
-  readManagedBootstrapEnvelopeSnapshot(expected, paths.file);
+  if (reconcileInterruptedManagedBootstrapRestoration(paths)) return true;
+  const claim = readProtectedManagedBootstrapEnvelopeSnapshot(paths.file);
+  if (managedBootstrapEnvelopeMatchesExpected(claim, expected)) return true;
+  if (lstatManagedBootstrapPath(requestFile) !== null) {
+    fail("managed bootstrap envelope identity does not match the replacement");
+  }
+  restoreUnclaimedManagedBootstrapEnvelope(paths);
   return true;
 }
 

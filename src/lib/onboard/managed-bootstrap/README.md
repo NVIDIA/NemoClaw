@@ -193,16 +193,25 @@ completion, and authenticate that completion together with the ordinary startup
 handoff. The runtime retains the protected envelope through application and
 completion publication so the same attempt can retry after interruption;
 it atomically moves the authenticated inode into a root-private, same-filesystem
-claim before application. That private claim remains the sole retry authority
-after an application or completion-write failure; restart recovery resumes it
-without moving, deleting, or overwriting a newer canonical request. Success
-removes only the authenticated private claim. This protocol assumes the OCI
-writable layer supports same-device atomic rename, the producer writes only the
-canonical request path, one bootstrap consumer owns that path at a time, and
-container uid 0 is trusted. An unsupported cross-device rename fails closed
-before application and leaves the canonical request intact; the protocol does
-not claim protection from a hostile root process that can mutate the private
-mode-0700 namespace. The trampoline only sequences the authoritative Node
+claim before application. The canonical request is the producer-visible fixed
+bootstrap request path. If that path was replaced between authentication and
+rename, the runtime exclusively hard-links the displaced request back to the
+canonical path without overwriting a later request, then removes the private
+candidate. Restart recovery restores a protected, parseable displaced request
+when a crash leaves it private immediately after rename, and reconciles a crash
+between the later link and unlink steps only when the canonical and private
+paths are protected two-link aliases of the same inode. A second replacement makes restoration fail closed while
+preserving both the latest canonical request and the displaced private file.
+The private claim remains the sole retry authority after an application or
+completion-write failure; restart recovery resumes it without moving, deleting,
+or overwriting a newer canonical request. Success removes only the authenticated
+private claim. This protocol assumes the OCI writable layer supports same-device
+atomic rename and hard links, the producer writes only the canonical request
+path, one bootstrap consumer owns that path at a time, and container uid 0 is
+trusted. An unsupported cross-device rename or hard link fails closed before
+application and leaves request data intact; the protocol does not claim
+protection from a hostile root process that can mutate the private mode-0700
+namespace. The trampoline only sequences the authoritative Node
 recovery, apply, and verification modes; claim ownership and state transitions
 remain in that runtime. Bootstrap completion verification adds the
 bootstrap-identity receipt and then delegates the shared startup completion and

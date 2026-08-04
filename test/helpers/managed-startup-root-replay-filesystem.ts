@@ -23,6 +23,15 @@ export function observeMatchingRename(
     if (enabled() && source === expectedSource && target === expectedTarget) effect();
   };
 }
+
+export function observeMatchingLink(
+  expectedSource: string,
+  expectedTarget: string,
+  effect: ObserverEffect,
+): RenameObserver {
+  return observeMatchingRename(expectedSource, expectedTarget, effect);
+}
+
 export function observeMatchingRenameTarget(
   expectedTarget: string,
   effect: ObserverEffect,
@@ -50,8 +59,11 @@ export function mockRootReplayFilesystem(
   > = new Map(),
 ): {
   readonly beforeRename: (callback: ((source: string, target: string) => void) | null) => void;
+  readonly afterRename: (callback: ((source: string, target: string) => void) | null) => void;
+  readonly beforeLink: (callback: ((source: string, target: string) => void) | null) => void;
   readonly beforeUnlink: (callback: ((target: string) => void) | null) => void;
   readonly hasFile: (target: string) => boolean;
+  readonly linkCount: (target: string) => bigint;
   readonly readFile: (target: string) => string | null;
   readonly writeFile: (target: string, contents: string | Buffer, mode: number) => void;
 } {
@@ -93,9 +105,32 @@ export function mockRootReplayFilesystem(
   >();
   const pendingFiles = new Map<string, Buffer>();
   const pendingModes = new Map<string, number>();
+  let linkObserver: ((source: string, target: string) => void) | null = null;
   let renameObserver: ((source: string, target: string) => void) | null = null;
+  let afterRenameObserver: ((source: string, target: string) => void) | null = null;
   let unlinkObserver: ((target: string) => void) | null = null;
   let nextDescriptor = 91;
+  const fileLinkCount = (ino: bigint): bigint =>
+    BigInt([...fileInodes.values()].filter((candidate) => candidate === ino).length);
+  const bumpFileCtime = (ino: bigint): void => {
+    const currentCtimes = [
+      ...[...fileCtimes].flatMap(([target, ctimeNs]) =>
+        fileInodes.get(target) === ino ? [ctimeNs] : [],
+      ),
+      ...[...descriptorSnapshots.values()].flatMap((snapshot) =>
+        snapshot.ino === ino ? [snapshot.ctimeNs] : [],
+      ),
+    ];
+    const nextCtime =
+      currentCtimes.reduce((latest, ctimeNs) => (ctimeNs > latest ? ctimeNs : latest), 0n) + 1n;
+    for (const [target, targetInode] of fileInodes) {
+      if (targetInode === ino) fileCtimes.set(target, nextCtime);
+    }
+    for (const [descriptor, snapshot] of descriptorSnapshots) {
+      if (snapshot.ino === ino)
+        descriptorSnapshots.set(descriptor, { ...snapshot, ctimeNs: nextCtime });
+    }
+  };
   const stat = (kind: "directory" | "file", mode: number) =>
     ({
       gid: 0,
@@ -121,7 +156,7 @@ export function mockRootReplayFilesystem(
       size: 0n,
       uid: 0n,
     }) as fs.BigIntStats;
-  const bigFileStat = (bytes: Buffer, mode: number, ino: bigint, ctimeNs: bigint) =>
+  const bigFileStat = (bytes: Buffer, mode: number, ino: bigint, ctimeNs: bigint, nlink: bigint) =>
     ({
       ctimeNs,
       dev: 1n,
@@ -132,7 +167,7 @@ export function mockRootReplayFilesystem(
       isSymbolicLink: () => false,
       mode: BigInt(0o100000 | mode),
       mtimeNs: 1n,
-      nlink: 1n,
+      nlink,
       size: BigInt(bytes.length),
       uid: 0n,
     }) as fs.BigIntStats;
@@ -148,10 +183,12 @@ export function mockRootReplayFilesystem(
   };
   const deleteExistingFile = (resolved: string): void => {
     void (files.get(resolved) ?? missing());
+    const inode = fileInodes.get(resolved) ?? missing();
     files.delete(resolved);
     fileInodes.delete(resolved);
     fileCtimes.delete(resolved);
     fileModes.delete(resolved);
+    bumpFileCtime(inode);
   };
 
   vi.spyOn(process, "geteuid").mockReturnValue(0);
@@ -174,6 +211,7 @@ export function mockRootReplayFilesystem(
               mode,
               fileInodes.get(resolved) ?? missing(),
               fileCtimes.get(resolved) ?? missing(),
+              fileLinkCount(fileInodes.get(resolved) ?? missing()),
             )
           : stat("file", mode);
   }) as typeof fs.lstatSync);
@@ -218,7 +256,13 @@ export function mockRootReplayFilesystem(
   vi.spyOn(fs, "fstatSync").mockImplementation(((descriptor: number) => {
     const snapshot = descriptorSnapshots.get(descriptor);
     if (snapshot !== undefined) {
-      return bigFileStat(snapshot.bytes, snapshot.mode, snapshot.ino, snapshot.ctimeNs);
+      return bigFileStat(
+        snapshot.bytes,
+        snapshot.mode,
+        snapshot.ino,
+        snapshot.ctimeNs,
+        fileLinkCount(snapshot.ino),
+      );
     }
     const target = descriptorTargets.get(descriptor);
     const bytes = target === undefined ? undefined : files.get(target);
@@ -229,6 +273,7 @@ export function mockRootReplayFilesystem(
           fileModes.get(target as string) ?? 0o444,
           fileInodes.get(target as string) ?? missing(),
           fileCtimes.get(target as string) ?? missing(),
+          fileLinkCount(fileInodes.get(target as string) ?? missing()),
         );
   }) as typeof fs.fstatSync);
   vi.spyOn(fs, "readSync").mockImplementation(((
@@ -266,6 +311,20 @@ export function mockRootReplayFilesystem(
     descriptorSnapshots.delete(descriptor);
     descriptorTargets.delete(descriptor);
   });
+  vi.spyOn(fs, "linkSync").mockImplementation(((existingPath, newPath) => {
+    const resolvedSource = String(existingPath);
+    const resolvedTarget = String(newPath);
+    linkObserver?.(resolvedSource, resolvedTarget);
+    if (files.has(resolvedTarget) || directories.has(resolvedTarget)) {
+      throw Object.assign(new Error("exists"), { code: "EEXIST" });
+    }
+    const sourceInode = fileInodes.get(resolvedSource) ?? missing();
+    files.set(resolvedTarget, files.get(resolvedSource) ?? missing());
+    fileInodes.set(resolvedTarget, sourceInode);
+    fileCtimes.set(resolvedTarget, fileCtimes.get(resolvedSource) ?? missing());
+    fileModes.set(resolvedTarget, fileModes.get(resolvedSource) ?? missing());
+    bumpFileCtime(sourceInode);
+  }) as typeof fs.linkSync);
   vi.spyOn(fs, "renameSync").mockImplementation((source, target) => {
     const resolvedSource = String(source);
     const resolvedTarget = String(target);
@@ -283,28 +342,29 @@ export function mockRootReplayFilesystem(
     } else {
       const sourceBytes = files.get(resolvedSource) ?? missing();
       const sourceInode = fileInodes.get(resolvedSource) ?? missing();
+      const targetInode = fileInodes.get(resolvedTarget);
+      if (targetInode === sourceInode) {
+        afterRenameObserver?.(resolvedSource, resolvedTarget);
+        return;
+      }
       const sourceMode = fileModes.get(resolvedSource) ?? missing();
-      const sourceCtime = fileCtimes.get(resolvedSource) ?? missing();
       if (files.has(resolvedTarget)) deleteExistingFile(resolvedTarget);
       files.set(resolvedTarget, sourceBytes);
       fileInodes.set(resolvedTarget, sourceInode);
       fileModes.set(resolvedTarget, sourceMode);
-      fileCtimes.set(resolvedTarget, sourceCtime + 1n);
-      for (const [descriptor, snapshot] of descriptorSnapshots) {
-        if (snapshot.ino === sourceInode) {
-          descriptorSnapshots.set(descriptor, { ...snapshot, ctimeNs: sourceCtime + 1n });
-        }
-      }
+      fileCtimes.set(resolvedTarget, fileCtimes.get(resolvedSource) ?? missing());
       files.delete(resolvedSource);
       fileInodes.delete(resolvedSource);
       fileModes.delete(resolvedSource);
       fileCtimes.delete(resolvedSource);
+      bumpFileCtime(sourceInode);
     }
     runtimeWrites.push(
       ...(resolvedTarget === MANAGED_STARTUP_RUNTIME_ENV_FILE
         ? [(files.get(resolvedTarget) ?? missing()).toString("utf8")]
         : []),
     );
+    afterRenameObserver?.(resolvedSource, resolvedTarget);
   });
   vi.spyOn(fs, "unlinkSync").mockImplementation(((target: fs.PathLike) => {
     const resolved = String(target);
@@ -339,6 +399,12 @@ export function mockRootReplayFilesystem(
   }) as typeof fs.rmdirSync);
 
   return {
+    afterRename: (callback) => {
+      afterRenameObserver = callback;
+    },
+    beforeLink: (callback) => {
+      linkObserver = callback;
+    },
     beforeRename: (callback) => {
       renameObserver = callback;
     },
@@ -346,8 +412,10 @@ export function mockRootReplayFilesystem(
       unlinkObserver = callback;
     },
     hasFile: (target) => files.has(target),
+    linkCount: (target) => fileLinkCount(fileInodes.get(target) ?? missing()),
     readFile: (target) => files.get(target)?.toString("utf8") ?? null,
     writeFile: (target, contents, mode) => {
+      if (files.has(target)) deleteExistingFile(target);
       files.set(
         target,
         Buffer.isBuffer(contents) ? Buffer.from(contents) : Buffer.from(contents, "utf8"),
