@@ -10,6 +10,52 @@ metadata:
 spec:
   repository: ghcr.io/nvidia/nemoclaw/llama-cpp-server
 
+  publication:
+    enabled: false
+    trigger: workflow_dispatch
+    allowedRef: refs/heads/main
+    repository: ghcr.io/nvidia/nemoclaw/llama-cpp-server
+    candidateTagTemplate: llama-cpp-candidate-{runId}-{runAttempt}
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    evidence:
+      sbom:
+        format: spdx-json
+      provenance:
+        predicateType: https://slsa.dev/provenance/v1
+      signature:
+        mode: sigstore-keyless
+        certificateIdentity: https://github.com/NVIDIA/NemoClaw/.github/workflows/llama-cpp-image-attest.yaml@refs/heads/main
+        certificateOidcIssuer: https://token.actions.githubusercontent.com
+        transparencyLog: required
+      vulnerability:
+        scanner: grype
+        severityCutoff: high
+        onlyFixed: true
+      anonymousPull:
+        exactDigest: true
+      receipt:
+        schemaVersion: 1
+        retentionDays: 90
+    qualification:
+      required: true
+      profile: dgx-spark-gb10-single
+      platform: linux/arm64
+      runner: null
+      environment: null
+      model:
+        id: unsloth/Nemotron-3-Nano-30B-A3B-GGUF
+        digest: sha256:627f5b04aedc97f967332f331bd75b7a4ed2f33ca83e6ee74b44235cc1887890
+        hostPath: null
+      gpu:
+        vendor: nvidia
+        fullOffload: true
+        cpuFallback: reject
+      probes:
+        - health
+        - completion
+
   source:
     repository: https://github.com/ggml-org/llama.cpp
     revision: 22dc605c4ead20e36f447cc67b55ef87e523bd55
