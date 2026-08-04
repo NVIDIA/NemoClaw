@@ -307,6 +307,16 @@ describe("managed startup shared-state transaction", () => {
         options,
       ),
     ).toBe("pending");
+    expect(() =>
+      getManagedStartupSharedStateTransactionStatus(
+        {
+          agent,
+          profileFingerprint: "e".repeat(64),
+          bootstrapIdentity,
+        },
+        options,
+      ),
+    ).toThrow(/expected agent, profile fingerprint, or bootstrap identity/u);
     expect(commitManagedStartupSharedStateTransaction(agent, boundOptions)).toBe(true);
 
     const receiptDirectory = commitReceiptDirectory();
@@ -445,7 +455,7 @@ describe("managed startup shared-state transaction", () => {
         managedStartupE2eProfile("openclaw", true),
         options,
       ),
-    ).toThrow(/belongs to a different profile/u);
+    ).toThrow(/belongs to a different agent, profile fingerprint, or bootstrap attempt/u);
     expect(rollbackManagedStartupSharedStateTransaction("openclaw", options)).toBe(true);
   });
 
@@ -550,6 +560,25 @@ describe("managed startup shared-state transaction", () => {
     );
     expect(fs.existsSync(transactionDirectory)).toBe(true);
     expect(rollbackManagedStartupSharedStateTransaction("openclaw", options)).toBe(true);
+  });
+
+  it("rejects a malformed rollback receipt before restoring shared state", () => {
+    const root = agentRoot("openclaw");
+    fs.mkdirSync(root);
+    const config = path.join(root, "openclaw.json");
+    fs.writeFileSync(config, "before\n");
+    beginManagedStartupSharedStateTransaction(managedStartupE2eProfile("openclaw"), options);
+    fs.writeFileSync(config, "changed\n");
+    const manifest = path.join(transactionDirectory, "manifest.json");
+    fs.chmodSync(manifest, 0o600);
+    fs.writeFileSync(manifest, "{malformed\n");
+    fs.chmodSync(manifest, 0o400);
+
+    expect(() => rollbackManagedStartupSharedStateTransaction("openclaw", options)).toThrow(
+      /manifest is not valid JSON/u,
+    );
+    expect(fs.readFileSync(config, "utf8")).toBe("changed\n");
+    expect(fs.existsSync(transactionDirectory)).toBe(true);
   });
 
   it("rejects an oversized managed output before creating a receipt", () => {

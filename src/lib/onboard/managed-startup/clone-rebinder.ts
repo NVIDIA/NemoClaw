@@ -205,13 +205,7 @@ function currentAgentConfig(
   profile: ManagedStartupProfile,
   current: ManagedStartupCloneCurrentState,
 ): ManagedStartupProfile["agentConfig"] {
-  if (profile.agentConfig.agent === "openclaw") {
-    return {
-      ...profile.agentConfig,
-      webSearch: currentWebSearch(profile, current),
-    };
-  }
-  if (profile.agentConfig.agent === "hermes") {
+  if (profile.agentConfig.agent !== "langchain-deepagents-code") {
     return {
       ...profile.agentConfig,
       webSearch: currentWebSearch(profile, current),

@@ -124,23 +124,30 @@ type WebSearchProvider = keyof typeof WEB_SEARCH_PROVIDERS;
 const DEFAULT_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
 const DEFAULT_OPENCLAW_OTEL_SERVICE_NAME = "openclaw-gateway";
 // Runtime-facing IDs declared by the built-in messaging manifests. Package
-// selection remains manifest-derived in messaging-build-applier.mts; these IDs
-// describe only the neutral config written after those packages are installed.
-const MANAGED_IMAGE_OPENCLAW_CHANNEL_IDS = [
-  "telegram",
-  "discord",
-  "openclaw-weixin",
-  "slack",
-  "whatsapp",
-  "msteams",
+// selection remains manifest-derived in messaging-build-applier.mts; this
+// paired contract keeps each installed/bundled plugin bound to the channel key
+// that must remain disabled in a neutral managed image.
+export const MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES = [
+  { channelId: "telegram", pluginId: "telegram" },
+  { channelId: "discord", pluginId: "discord" },
+  { channelId: "openclaw-weixin", pluginId: "openclaw-weixin" },
+  { channelId: "slack", pluginId: "slack" },
+  { channelId: "whatsapp", pluginId: "whatsapp" },
+  { channelId: "msteams", pluginId: "msteams" },
+  { channelId: "googlechat", pluginId: "googlechat" },
+] as const;
+// OpenClaw also ships channel plugins outside NemoClaw's currently supported
+// messaging manifests. Keep those bundled entrypoints explicitly inert without
+// representing them as activatable managed-image capabilities.
+export const MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES = [
+  { channelId: "imessage", pluginId: "imessage" },
+] as const;
+const MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
+  ...MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
+  ...MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
 ] as const;
 const MANAGED_IMAGE_OPENCLAW_PLUGIN_IDS = [
-  "telegram",
-  "discord",
-  "openclaw-weixin",
-  "slack",
-  "whatsapp",
-  "msteams",
+  ...MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES.map(({ pluginId }) => pluginId),
   "diagnostics-otel",
   "brave",
   "tavily",
@@ -1465,7 +1472,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
 
   const channels: JsonObject = { defaults: {} };
   if (managedImageCapabilityUnion) {
-    for (const channelId of MANAGED_IMAGE_OPENCLAW_CHANNEL_IDS) {
+    for (const { channelId } of MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES) {
       channels[channelId] = { enabled: false };
     }
   }

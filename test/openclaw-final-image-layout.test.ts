@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { expectManagedBootstrapNativeImageContract } from "./support/managed-bootstrap-image-contract";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
@@ -71,6 +72,7 @@ describe("OpenClaw final image layout", () => {
           "COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts",
           "COPY scripts/patch-openclaw-chat-send.mts /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts",
           "COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts",
+          "COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts",
           "COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts",
           "COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts",
           "COPY scripts/extract-semver.sh /usr/local/lib/nemoclaw/extract-semver",
@@ -93,7 +95,8 @@ describe("OpenClaw final image layout", () => {
           "COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py",
           "COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start",
           "COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold",
-          "COPY scripts/managed-bootstrap-trampoline.sh /usr/local/bin/nemoclaw-managed-bootstrap",
+          "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap",
+          "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh",
           "COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control",
           "COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/",
           "COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/",
@@ -117,6 +120,7 @@ describe("OpenClaw final image layout", () => {
 
     expect(finalStageIndex).toBe(stages.length - 1);
     expect(hasBuildKitRunMount(dockerfile)).toBe(false);
+    expectManagedBootstrapNativeImageContract(dockerfile);
     for (const payload of payloads) {
       const stage = stages.find((entry) => entry.startsWith(`FROM scratch AS ${payload.stage}`));
       expect(stage?.match(/^COPY\b.*$/gmu)).toEqual(payload.copies);
@@ -136,6 +140,8 @@ describe("OpenClaw final image layout", () => {
       "/scripts/patch-bundled-npm-tar.mts 'root:root:755'",
       "/opt/nemoclaw/openclaw.plugin.json 'root:root:644'",
       "/usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts 'root:root:755'",
+      "/usr/local/bin/nemoclaw-managed-bootstrap 'root:root:755'",
+      "/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh 'root:root:444'",
       "/usr/local/bin/nemoclaw-gateway-control 'root:root:700'",
       "/usr/local/lib/nemoclaw/state-dir-guard.py 'root:root:500'",
       "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644'",
@@ -158,6 +164,18 @@ describe("OpenClaw final image layout", () => {
       "RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
     );
     const pluginInstall = indexOfRequired(finalStage, "RUN npm ci --omit=dev");
+    const managedMessagingUnionInstall = indexOfRequired(
+      finalStage,
+      "--agent openclaw --phase managed-image-capability-union",
+    );
+    const messagingPostInstall = indexOfRequired(
+      finalStage,
+      "--agent openclaw --phase post-agent-install",
+    );
+    const neutralConfigRegeneration = indexOfRequired(
+      finalStage,
+      "# A managed image is a neutral capability carrier",
+    );
     const pluginChmod = indexOfRequired(
       finalStage,
       "RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/",
@@ -185,6 +203,14 @@ describe("OpenClaw final image layout", () => {
     expect(tarPatch).toBeLessThan(braceExpansionPatch);
     expect(plugin).toBeGreaterThan(pluginInstall);
     expect(plugin).toBeLessThan(pluginChmod);
+    expect(managedMessagingUnionInstall).toBeLessThan(messagingPostInstall);
+    expect(messagingPostInstall).toBeLessThan(neutralConfigRegeneration);
+    expect(finalStage.slice(neutralConfigRegeneration)).toContain(
+      "openclaw config validate --json",
+    );
+    expect(finalStage).toContain("packageManifest.openclaw?.channel?.id");
+    expect(finalStage).toContain('channelId === "imessage"');
+    expect(finalStage).toContain("bundled OpenClaw channel is not neutral");
     expect(patch).toBeGreaterThan(wechatInstall);
     expect(patch).toBeLessThan(patchChmod);
     expect(runtime).toBeGreaterThan(blueprintSetup);
@@ -192,8 +218,9 @@ describe("OpenClaw final image layout", () => {
     expect(managedRuntimeDirectory).toBeLessThan(runtimeChmod);
     expect(finalStage).toContain("/usr/local/bin/nemoclaw-managed-bootstrap");
     expect(dockerfile).toContain(
-      "COPY src/lib/onboard/managed-bootstrap/envelope.ts ./src/lib/onboard/managed-bootstrap/",
+      "COPY src/lib/onboard/managed-bootstrap/ ./src/lib/onboard/managed-bootstrap/",
     );
+    expect(dockerfile).toContain("src/lib/onboard/managed-bootstrap/image-runtime.ts");
     expect(runtime).toBeLessThan(runtimeChmod);
     expect(scan).toBeLessThan(metadataCheck);
   });

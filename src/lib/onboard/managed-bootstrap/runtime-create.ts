@@ -10,7 +10,7 @@ import type {
   ManagedBootstrapAuthorityStore,
   ManagedBootstrapCreateReceipt,
   ManagedBootstrapImageIdentity,
-  ManagedBootstrapRecoveryReceipt,
+  ManagedBootstrapRecoveryReport,
 } from "./adapter";
 
 export interface ManagedBootstrapRuntimeCommandResult {
@@ -69,7 +69,6 @@ export interface ManagedBootstrapRuntimeCreateLifecycleInput {
   readonly launchArgv: readonly string[];
   readonly heldWorkloadArgv: readonly string[];
   readonly authorityStore: ManagedBootstrapAuthorityStore;
-  /** Protected tests can wrap the real provider adapter at this boundary. */
   readonly adapterOverride?: ManagedBootstrapAdapter;
   readonly route: ManagedBootstrapRuntimeRoute;
   readonly persistStartupCommand: boolean;
@@ -80,7 +79,7 @@ export interface ManagedBootstrapRuntimeCreateLifecycleInput {
   readonly onPatchFailure?: (error: unknown) => never;
   readonly network: {
     readonly inferenceProvider: string;
-    readonly dockerDriverGateway: boolean;
+    readonly gatewayUsesContainerBridge: boolean;
     readonly gatewayPort: number;
   };
   readonly dependencies: ManagedBootstrapRuntimeDependencies;
@@ -94,7 +93,7 @@ export interface ManagedBootstrapRuntimeCreateLaunchResult<T> {
 export interface ManagedBootstrapRuntimeCreateLifecycle {
   readonly launchArgv: readonly string[];
   readonly patch: ManagedBootstrapRuntimePatch;
-  recoverUnfinished(): Promise<readonly ManagedBootstrapRecoveryReceipt[]>;
+  recoverUnfinished(): Promise<ManagedBootstrapRecoveryReport>;
   prepareNetwork(): Promise<void>;
   runCreate<T>(
     launch: (input: {

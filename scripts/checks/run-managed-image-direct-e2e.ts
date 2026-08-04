@@ -4,8 +4,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import fs from "node:fs";
+import os from "node:os";
+import path, { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  createManagedBootstrapIdentity,
+  renderManagedBootstrapHeldCommand,
+} from "../../src/lib/onboard/managed-bootstrap/adapter.ts";
+import {
+  MANAGED_BOOTSTRAP_REQUEST_FILE,
+  serializeManagedBootstrapEnvelope,
+} from "../../src/lib/onboard/managed-bootstrap/envelope.ts";
+import { MANAGED_STARTUP_EXECUTABLE } from "../../src/lib/onboard/managed-startup/hold.ts";
 import {
   encodeManagedStartupProfile,
   MANAGED_STARTUP_AGENTS,
@@ -24,8 +35,9 @@ import {
 const CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const IMMUTABLE_IMAGE_RE = /^sha256:[a-f0-9]{64}$/u;
 const IMMUTABLE_REFERENCE_RE = /^(?:sha256:[a-f0-9]{64}|[^\s@]+@sha256:[a-f0-9]{64})$/u;
+const MANAGED_BOOTSTRAP = "/usr/local/bin/nemoclaw-managed-bootstrap";
+const MANAGED_BOOTSTRAP_BODY = "/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh";
 const RUNTIME = "/usr/local/lib/nemoclaw/managed-startup-image-runtime.cjs";
-const HOLD = "/usr/local/bin/nemoclaw-managed-startup-hold";
 const FIXED_ROOT_ENV = [
   "HOME=/root",
   "LANG=C.UTF-8",
@@ -50,6 +62,8 @@ interface ContainerInspect {
   readonly Id?: string;
   readonly Image?: string;
   readonly Config?: {
+    readonly Cmd?: readonly string[] | null;
+    readonly Entrypoint?: readonly string[] | null;
     readonly Env?: readonly string[] | null;
   } | null;
   readonly State?: {
@@ -132,6 +146,7 @@ function rootRuntimeArgs(
   agent: ManagedStartupAgent,
   action: "--apply-root-stdin" | "--commit-shared-state-transaction",
   user = "0:0",
+  bootstrapIdentity?: string,
 ): string[] {
   return [
     "exec",
@@ -149,7 +164,38 @@ function rootRuntimeArgs(
     action,
     "--agent",
     agent,
+    ...(bootstrapIdentity ? ["--bootstrap-identity", bootstrapIdentity] : []),
   ];
+}
+
+function stageManagedBootstrapEnvelope(
+  containerId: string,
+  bootstrapIdentity: string,
+  request: ManagedStartupRootApplyRequest,
+): void {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-bootstrap-e2e-"));
+  const source = path.join(directory, "request.json");
+  try {
+    fs.writeFileSync(
+      source,
+      serializeManagedBootstrapEnvelope({ bootstrapIdentity, rootApplyRequest: request }),
+      { encoding: "utf8", flag: "wx", mode: 0o400 },
+    );
+    fs.chmodSync(source, 0o400);
+    docker(["cp", source, `${containerId}:${MANAGED_BOOTSTRAP_REQUEST_FILE}`]);
+    docker([
+      "exec",
+      "--user",
+      "0:0",
+      containerId,
+      "/bin/sh",
+      "-eu",
+      "-c",
+      `test ! -L ${MANAGED_BOOTSTRAP_REQUEST_FILE} && test "$(stat -c '%u:%g:%a:%h' ${MANAGED_BOOTSTRAP_REQUEST_FILE})" = '0:0:400:1'`,
+    ]);
+  } finally {
+    fs.rmSync(directory, { force: true, recursive: true });
+  }
 }
 
 function managedConfig(agent: ManagedStartupAgent): string {
@@ -204,9 +250,78 @@ function exactProxyEnvironment(): string {
   ].join("\n");
 }
 
+function verifyManagedBootstrapNativeBoundary(
+  containerId: string,
+  platform: ManagedImageDirectE2eInputs["platform"],
+): void {
+  docker([
+    "exec",
+    "--user",
+    "0:0",
+    containerId,
+    "/bin/sh",
+    "-eu",
+    "-c",
+    [
+      `test -f ${MANAGED_BOOTSTRAP}`,
+      `test ! -L ${MANAGED_BOOTSTRAP}`,
+      `test "$(stat -c '%u:%g:%a' ${MANAGED_BOOTSTRAP})" = '0:0:755'`,
+      `test -f ${MANAGED_BOOTSTRAP_BODY}`,
+      `test ! -L ${MANAGED_BOOTSTRAP_BODY}`,
+      `test "$(stat -c '%u:%g:%a' ${MANAGED_BOOTSTRAP_BODY})" = '0:0:444'`,
+      `test ! -x ${MANAGED_BOOTSTRAP_BODY}`,
+    ].join("\n"),
+  ]);
+
+  const expectedMachine = platform === "linux/amd64" ? 62 : 183;
+  docker([
+    "exec",
+    "--user",
+    "0:0",
+    containerId,
+    "/usr/local/bin/node",
+    "-e",
+    `
+const fs = require("node:fs");
+const image = fs.readFileSync(${JSON.stringify(MANAGED_BOOTSTRAP)});
+const fail = (detail) => { throw new Error("invalid managed bootstrap ELF: " + detail); };
+if (image.length < 64) fail("truncated header");
+if (image.subarray(0, 4).toString("hex") !== "7f454c46") fail("magic");
+if (image[4] !== 2 || image[5] !== 1 || image[6] !== 1) fail("class, byte order, or version");
+if (image.readUInt16LE(16) !== 2) fail("not an executable file");
+if (image.readUInt16LE(18) !== Number(process.argv[1])) fail("wrong target architecture");
+const programOffset = Number(image.readBigUInt64LE(32));
+const programEntrySize = image.readUInt16LE(54);
+const programCount = image.readUInt16LE(56);
+if (!Number.isSafeInteger(programOffset) || programEntrySize < 56) fail("program header bounds");
+if (programOffset + programEntrySize * programCount > image.length) fail("truncated program headers");
+for (let index = 0; index < programCount; index += 1) {
+  const type = image.readUInt32LE(programOffset + index * programEntrySize);
+  if (type === 2) fail("dynamic segment");
+  if (type === 3) fail("interpreter segment");
+}
+`,
+    String(expectedMachine),
+  ]);
+
+  const smoke = docker(["exec", "--user", "0:0", containerId, MANAGED_BOOTSTRAP], {
+    ignoreError: true,
+    timeout: 30_000,
+  });
+  if (
+    smoke.status === 0 ||
+    !smoke.stderr.includes(
+      "[SECURITY] Managed bootstrap trampoline: managed bootstrap arguments are incomplete",
+    )
+  ) {
+    throw new Error(`managed bootstrap native smoke failed: ${commandDetail(smoke)}`);
+  }
+}
+
 export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): void {
   const request = requestFor(input.agent);
   const payload = serializeManagedStartupRootApplyRequest(request);
+  const bootstrapIdentity = createManagedBootstrapIdentity();
   const expectedImageId = docker([
     "image",
     "inspect",
@@ -233,6 +348,16 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
     "} > /tmp/nemoclaw-managed-command-proxy-env",
     "exec /usr/bin/tail -f /dev/null",
   ].join("\n");
+  const heldWorkloadArgv = renderManagedBootstrapHeldCommand(request, bootstrapIdentity, [
+    "env",
+    MANAGED_STARTUP_EXECUTABLE,
+    "/bin/sh",
+    "-c",
+    finalCommand,
+  ]);
+  if (heldWorkloadArgv[0] !== "env") {
+    throw new Error("production managed hold renderer did not preserve the env launcher");
+  }
   let containerId = "";
   try {
     // Mirror the supported OpenShell split: the image OCI user is root for its
@@ -260,15 +385,9 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
       "--env",
       "no_proxy=lower.internal",
       "--entrypoint",
-      HOLD,
+      "/usr/bin/env",
       input.image,
-      "--agent",
-      input.agent,
-      "--profile-fingerprint",
-      request.profileFingerprint,
-      "/bin/sh",
-      "-c",
-      finalCommand,
+      ...heldWorkloadArgv.slice(1),
     ]).stdout.trim();
     if (!CONTAINER_ID_RE.test(containerId)) {
       throw new Error("docker run did not return one exact container identity");
@@ -283,9 +402,13 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
     if (
       inspect.Id !== containerId ||
       inspect.Image !== expectedImageId ||
-      inspect.State?.Running !== true
+      inspect.State?.Running !== true ||
+      JSON.stringify(inspect.Config?.Entrypoint) !== JSON.stringify(["/usr/bin/env"]) ||
+      JSON.stringify(inspect.Config?.Cmd) !== JSON.stringify(heldWorkloadArgv.slice(1))
     ) {
-      throw new Error("managed startup did not pin one running exact-image container");
+      throw new Error(
+        "managed startup did not pin one running exact-image container with the rendered hold",
+      );
     }
     const inspectText = JSON.stringify(inspect);
     if (
@@ -297,15 +420,7 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
     ) {
       throw new Error("managed profile or corporate CA entered Docker argv/env metadata");
     }
-
-    const applied = docker(rootRuntimeArgs(containerId, input.agent, "--apply-root-stdin"), {
-      input: payload,
-      timeout: 300_000,
-    });
-    if (!applied.stdout.includes("transaction pending")) {
-      throw new Error("root application did not leave a pending shared-state transaction");
-    }
-    waitForAgentCommand(containerId);
+    verifyManagedBootstrapNativeBoundary(containerId, input.platform);
 
     const sandboxUid = docker([
       "exec",
@@ -316,6 +431,49 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
       "-u",
       "sandbox",
     ]).stdout.trim();
+    const sandboxGid = docker([
+      "exec",
+      "--user",
+      "0:0",
+      containerId,
+      "id",
+      "-g",
+      "sandbox",
+    ]).stdout.trim();
+    stageManagedBootstrapEnvelope(containerId, bootstrapIdentity, request);
+    const applied = docker(
+      [
+        "exec",
+        "--user",
+        "0:0",
+        "--workdir",
+        "/",
+        containerId,
+        MANAGED_BOOTSTRAP,
+        "--agent",
+        input.agent,
+        "--profile-fingerprint",
+        request.profileFingerprint,
+        "--bootstrap-identity",
+        bootstrapIdentity,
+        "--agent-uid",
+        sandboxUid,
+        "--agent-gid",
+        sandboxGid,
+        "--agent-workdir",
+        "/sandbox",
+        "--request-file",
+        MANAGED_BOOTSTRAP_REQUEST_FILE,
+        "--",
+        "/bin/true",
+      ],
+      { timeout: 300_000 },
+    );
+    if (!applied.stdout.includes("transaction pending")) {
+      throw new Error("root application did not leave a pending shared-state transaction");
+    }
+    waitForAgentCommand(containerId);
+
     const commandUid = docker([
       "exec",
       "--user",
@@ -432,7 +590,15 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
       }
     }
 
-    docker(rootRuntimeArgs(containerId, input.agent, "--commit-shared-state-transaction"));
+    docker(
+      rootRuntimeArgs(
+        containerId,
+        input.agent,
+        "--commit-shared-state-transaction",
+        "0:0",
+        bootstrapIdentity,
+      ),
+    );
     docker([
       "exec",
       "--user",
@@ -474,7 +640,7 @@ export function runManagedImageDirectE2e(input: ManagedImageDirectE2eInputs): vo
     }
 
     process.stdout.write(
-      `Validated exact ${input.agent} managed image ${input.image} through root stdin and sandbox hold.\n`,
+      `Validated exact ${input.agent} managed image ${input.image} through native bootstrap and the rendered sandbox hold.\n`,
     );
   } finally {
     if (CONTAINER_ID_RE.test(containerId)) {

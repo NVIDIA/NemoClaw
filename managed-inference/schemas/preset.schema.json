@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/managed-inference/schemas/preset.schema.json",
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "title": "NemoClaw managed inference serving preset",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "const": "nemoclaw.nvidia.com/managed-inference/v1" },
+    "kind": { "const": "ServingPreset" },
+    "metadata": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "$ref": "#/$defs/stableId" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 256 }
+      },
+      "additionalProperties": false
+    },
+    "spec": {
+      "type": "object",
+      "required": ["selection", "priority", "plan"],
+      "properties": {
+        "selection": { "enum": ["automatic", "explicit-only", "disabled"] },
+        "priority": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "requirements": {
+          "type": "object",
+          "required": ["all"],
+          "properties": {
+            "all": {
+              "type": "array",
+              "maxItems": 64,
+              "items": { "$ref": "#/$defs/readinessRequirement" }
+            }
+          },
+          "additionalProperties": false
+        },
+        "plan": {
+          "type": "object",
+          "required": ["backend", "recipeRef"],
+          "properties": {
+            "backend": { "$ref": "#/$defs/backendId" },
+            "recipeRef": { "$ref": "#/$defs/stableId" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "stableId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[._/-][a-z0-9]+)+$",
+      "maxLength": 160
+    },
+    "backendId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,63}$"
+    },
+    "readinessRequirement": {
+      "type": "object",
+      "required": ["readiness"],
+      "properties": {
+        "readiness": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["scope", "kind", "id", "state"],
+              "properties": {
+                "scope": { "enum": ["controller", "everyNode"] },
+                "kind": { "enum": ["observation", "capability"] },
+                "id": { "$ref": "#/$defs/stableId" },
+                "state": { "enum": ["present", "absent"] }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["scope", "kind", "id", "status"],
+              "properties": {
+                "scope": { "enum": ["controller", "everyNode"] },
+                "kind": { "const": "qualification" },
+                "id": { "$ref": "#/$defs/stableId" },
+                "status": { "enum": ["qualified", "unqualified"] }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

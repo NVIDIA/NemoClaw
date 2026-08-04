@@ -97,15 +97,20 @@ If policy restoration fails, the command keeps the channel disabled and exits wi
 
 ## Avoid Cross-Sandbox Conflicts
 
+<Warning title="Conflict Detection Scope">
+NemoClaw checks only the sandboxes recorded in the selected OpenShell gateway's sandbox registry.
+It cannot detect or prevent Slack credential reuse across independent OpenShell gateways.
+</Warning>
+
 Use distinct credentials and resources for each active messaging sandbox.
 Follow these channel-specific rules:
 
 - Use a distinct iLink `accountId` for each WeChat sandbox.
-- Use distinct bot and Socket Mode app tokens for each Slack sandbox.
-- Use a different gateway for each Slack sandbox.
+- Run only one active Slack sandbox on each OpenShell gateway.
+- Use distinct bot and Socket Mode app tokens across OpenShell gateways.
 - Use a different local webhook port for each Microsoft Teams sandbox.
 
-When you onboard, rebuild, or add a channel, the command aborts on a conflict or an incomplete required check.
+When you onboard, rebuild, or add a channel, the command aborts on a conflict or an incomplete required check within the selected OpenShell gateway's sandbox registry.
 Legacy entries without credential hashes count as incomplete.
 An unreadable messaging registry also causes onboarding and rebuild to abort.
 Onboarding and rebuild have no conflict override.
@@ -117,7 +122,7 @@ Rerun `channels add <channel>` with the intended token to refresh stored non-sec
 Before a rebuild, NemoClaw checks the messaging plan before backup or deletion.
 A conflict leaves the original sandbox intact.
 Resolve any conflict, then rerun the operation.
-`$$nemoclaw status` reports cross-sandbox overlaps.
+`$$nemoclaw status` reports cross-sandbox overlaps within the selected OpenShell gateway's sandbox registry.
 
 ## Stop All Delivery
 

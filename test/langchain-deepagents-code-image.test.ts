@@ -31,6 +31,7 @@ import {
   runWrapper,
 } from "./helpers/langchain-deepagents-code-image.ts";
 import { makeStartScriptFixture as makeIdentityStartScriptFixture } from "./support/dcode-start-script-fixture.ts";
+import { expectManagedBootstrapNativeImageContract } from "./support/managed-bootstrap-image-contract";
 
 function containsTokenShapedSecret(value: string): boolean {
   return TOKEN_PREFIX_PATTERNS.some((pattern) => {
@@ -163,7 +164,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "USER root",
     ].join("\n");
     const managedRuntimeDirectory = "&& install -d -o root -g root -m 0755 /run/nemoclaw";
-    const runtimeModeReplay = "RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts";
+    const runtimeModeReplay = "&& chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts";
 
     expect(dockerfile).toContain("ARG BASE_IMAGE\n");
     expect(dockerfile).toContain("ARG NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b");
@@ -193,6 +194,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       dockerfile.indexOf(managedRuntimeDirectory),
     );
     expect(dockerfile).toContain(finalRuntimeRoot);
+    expectManagedBootstrapNativeImageContract(dockerfile);
     expect(dockerfile.indexOf(finalRuntimeRoot)).toBeLessThan(
       dockerfile.indexOf(managedRuntimeDirectory),
     );
@@ -200,10 +202,14 @@ describe("LangChain Deep Agents Code image contracts", () => {
       dockerfile.indexOf(runtimeModeReplay),
     );
     expect(dockerfile).toContain(
-      "COPY src/lib/onboard/managed-bootstrap/envelope.ts ./src/lib/onboard/managed-bootstrap/",
+      "COPY src/lib/onboard/managed-bootstrap/ ./src/lib/onboard/managed-bootstrap/",
+    );
+    expect(dockerfile).toContain("src/lib/onboard/managed-bootstrap/image-runtime.ts");
+    expect(dockerfile).toContain(
+      "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap",
     );
     expect(dockerfile).toContain(
-      "COPY scripts/managed-bootstrap-trampoline.sh /usr/local/bin/nemoclaw-managed-bootstrap",
+      "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh",
     );
     expect(dockerfile).toContain(
       "chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap",
@@ -227,6 +233,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(startScript).not.toContain("TELEGRAM_BOT_TOKEN");
     expect(startScript).not.toContain("DISCORD_BOT_TOKEN");
     expect(startScript).not.toContain("SLACK_BOT_TOKEN");
+    expect(startScript).not.toContain("GOOGLECHAT_SERVICE_ACCOUNT");
+    expect(startScript).not.toContain("GOOGLE_CHAT_SERVICE_ACCOUNT");
   });
 
   it("prints NemoClaw setup output before idling as a terminal runtime", () => {

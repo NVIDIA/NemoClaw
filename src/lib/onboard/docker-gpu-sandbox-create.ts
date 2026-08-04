@@ -112,8 +112,9 @@ export type DockerGpuSandboxCreatePatch = {
   ensureApplied: () => Promise<void>;
   waitForSupervisorReconnectIfNeeded: () => void;
   /**
-   * Irreversibly commit managed shared state and remove any recreation backup.
-   * Call only after the authoritative Ready gate and required GPU proof pass.
+   * Commit an attached managed cutover or remove a legacy recreation backup.
+   * Call only after authoritative Ready and the required GPU and applicable
+   * local-inference checks pass.
    */
   commitAfterReady: () => Promise<void>;
   selectedMode: () => DockerGpuPatchMode | null;
@@ -204,9 +205,16 @@ export function createDockerGpuSandboxCreatePatch(
     }
     const finalization = (async () => {
       await managedBootstrapCutover?.rollback();
-      if (result) finalizeBackup({ result, supervisorReady: false }, options.deps);
+      const finalizeOutcome = result
+        ? finalizeBackup({ result, supervisorReady: false }, options.deps)
+        : null;
       cutoverFinalized = true;
       needsSupervisorWait = false;
+      if (finalizeOutcome && !finalizeOutcome.rolledBack) {
+        throw new Error(
+          "Docker container rollback failed; the pre-patch container was not restored.",
+        );
+      }
     })();
     cutoverFinalization = finalization;
     cutoverFinalizationOutcome = "rollback";
@@ -254,7 +262,7 @@ export function createDockerGpuSandboxCreatePatch(
         return;
       }
       console.log(
-        `  OpenShell Docker container detected; applying ${patchTarget} before readiness wait...`,
+        `  OpenShell Docker container detected; recreating it with ${patchTarget} before readiness wait...`,
       );
       try {
         applyPatch({
@@ -291,12 +299,16 @@ export function createDockerGpuSandboxCreatePatch(
         runCaptureOpenshell: options.deps.runCaptureOpenshell,
         dockerCapture: options.deps.dockerCapture,
         additionalSummaryLines: routeAdapter.additionalSummaryLines,
+        context: {
+          ...failureContext(),
+          rolledBack: false,
+        },
       });
     },
 
     async ensureApplied() {
       if (!patchEnabled || result) return;
-      console.log(`  Applying ${patchTarget} to the OpenShell Docker sandbox...`);
+      console.log(`  Recreating OpenShell Docker sandbox container with ${patchTarget}...`);
       try {
         applyPatch(options.deps);
       } catch (error) {
@@ -323,9 +335,9 @@ export function createDockerGpuSandboxCreatePatch(
         },
       );
       if (supervisorReady) {
-        // Reconnect is necessary but not sufficient for cutover. Keep both the
-        // managed shared-state receipt and recreation backup until the caller
-        // accepts authoritative Ready and any required GPU proof.
+        // Reconnect completes the legacy recreation check. Keep its rollback
+        // backup until the caller accepts authoritative Ready and the required
+        // GPU checks.
         needsSupervisorWait = false;
         return;
       }
@@ -492,6 +504,7 @@ export function createDockerGpuSandboxCreatePatch(
           });
           const rollbackError = await rollbackAfterFailure();
           if (rollbackError) {
+            console.error(`  ${rollbackError.message}`);
             (
               failure as Error & { managedBootstrapRollbackError?: unknown }
             ).managedBootstrapRollbackError = rollbackError;
@@ -517,6 +530,7 @@ export function createDockerGpuSandboxCreatePatch(
         });
         const rollbackError = await rollbackAfterFailure();
         if (rollbackError) {
+          console.error(`  ${rollbackError.message}`);
           (
             failure as Error & { managedBootstrapRollbackError?: unknown }
           ).managedBootstrapRollbackError = rollbackError;

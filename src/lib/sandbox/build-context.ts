@@ -75,7 +75,6 @@ function stageManagedStartupRuntimeSources(rootDir: string, buildCtx: string): v
   for (const relativePath of [
     path.join("core", "json-types.ts"),
     path.join("core", "ports.ts"),
-    path.join("onboard", "managed-bootstrap", "envelope.ts"),
     path.join("security", "credential-hash.ts"),
     path.join("state", "paths.ts"),
     path.join("state", "state-root.ts"),
@@ -85,6 +84,11 @@ function stageManagedStartupRuntimeSources(rootDir: string, buildCtx: string): v
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.copyFileSync(source, target);
   }
+  fs.cpSync(
+    path.join(rootDir, "src", "lib", "onboard", "managed-bootstrap"),
+    path.join(buildCtx, "src", "lib", "onboard", "managed-bootstrap"),
+    { recursive: true },
+  );
   fs.cpSync(
     path.join(rootDir, "src", "lib", "onboard", "managed-startup"),
     path.join(buildCtx, "src", "lib", "onboard", "managed-startup"),
@@ -226,6 +230,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "managed-startup-hold.sh"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "managed-bootstrap-entrypoint.c"),
+    path.join(stagedScriptsDir, "managed-bootstrap-entrypoint.c"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "managed-bootstrap-trampoline.sh"),
     path.join(stagedScriptsDir, "managed-bootstrap-trampoline.sh"),
   );
@@ -311,6 +319,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-mcp-npx.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-mcp-npx.mts"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-mcp-reliability.mts"),
+    path.join(stagedScriptsDir, "patch-openclaw-mcp-reliability.mts"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-issue-4434-diagnostics.mts"),

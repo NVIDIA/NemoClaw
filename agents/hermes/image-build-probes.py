@@ -124,6 +124,47 @@ def verify_gateway_process_identity() -> None:
     )
 
 
+def verify_neutral_platform_inertness() -> None:
+    import socket
+
+    from gateway.config import Platform, load_gateway_config
+
+    original_connect = socket.socket.connect
+    original_create_connection = socket.create_connection
+
+    def reject_network(*_args, **_kwargs):
+        raise AssertionError("neutral Hermes configuration attempted a network connection")
+
+    socket.socket.connect = reject_network
+    socket.create_connection = reject_network
+    try:
+        config = load_gateway_config()
+    finally:
+        socket.socket.connect = original_connect
+        socket.create_connection = original_create_connection
+    bundled_plugins = {
+        manifest.parent.name
+        for manifest in Path("/opt/hermes/plugins/platforms").glob("*/plugin.yaml")
+    }
+    built_in_optional = {
+        platform.value
+        for platform in Platform
+        if platform.value not in {"api_server", "local"}
+    }
+    expected = bundled_plugins | built_in_optional
+    assert "google_chat" in expected, expected
+    assert "whatsapp_cloud" in expected, expected
+
+    for name in expected:
+        platform = Platform(name)
+        platform_config = config.platforms.get(platform)
+        assert platform_config is not None, name
+        assert platform_config.enabled is False, (name, platform_config)
+        assert platform_config.token is None, (name, platform_config.token)
+        assert platform_config.api_key is None, (name, platform_config.api_key)
+        assert platform_config.extra == {}, (name, platform_config.extra)
+
+
 def verify_cron_runtime_source() -> None:
     from cron.executions import EXECUTIONS_FILE
     from hermes_cli.backup import _QUICK_STATE_FILES
@@ -199,65 +240,6 @@ def verify_langfuse_credentials() -> None:
         )
         is not None
     )
-
-
-def verify_wrapper_session_boundaries() -> None:
-    import ast
-
-    wrapper_tree = ast.parse(
-        Path("/usr/local/lib/nemoclaw/hermes-wrapper.py").read_text(encoding="utf-8")
-    )
-    wrapper_assignments = [
-        node
-        for node in wrapper_tree.body
-        if isinstance(node, ast.Assign)
-        and len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Name)
-        and node.targets[0].id == "_HERMES_SESSION_NAME_BOUNDARIES"
-    ]
-    if len(wrapper_assignments) != 1:
-        raise SystemExit("ERROR: expected one wrapper session-name boundary constant")
-    wrapper_value = wrapper_assignments[0].value
-    if not (
-        isinstance(wrapper_value, ast.Call)
-        and isinstance(wrapper_value.func, ast.Name)
-        and wrapper_value.func.id == "frozenset"
-        and len(wrapper_value.args) == 1
-        and not wrapper_value.keywords
-    ):
-        raise SystemExit("ERROR: wrapper session-name boundaries are not a literal frozenset")
-    wrapper_boundaries = set(ast.literal_eval(wrapper_value.args[0]))
-
-    upstream_tree = ast.parse(
-        Path("/opt/hermes/hermes_cli/main.py").read_text(encoding="utf-8")
-    )
-    coalescers = [
-        node
-        for node in upstream_tree.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_coalesce_session_name_args"
-    ]
-    if len(coalescers) != 1:
-        raise SystemExit("ERROR: expected one pinned Hermes session-name coalescer")
-    upstream_assignments = [
-        node
-        for node in coalescers[0].body
-        if isinstance(node, ast.Assign)
-        and len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Name)
-        and node.targets[0].id == "_SUBCOMMANDS"
-    ]
-    if len(upstream_assignments) != 1:
-        raise SystemExit("ERROR: expected one pinned Hermes coalescer boundary set")
-    upstream_boundaries = set(ast.literal_eval(upstream_assignments[0].value))
-
-    missing = sorted(upstream_boundaries - wrapper_boundaries)
-    stale = sorted(wrapper_boundaries - upstream_boundaries)
-    if missing or stale:
-        raise SystemExit(
-            "ERROR: Hermes wrapper session-name boundaries drifted from pinned coalescer: "
-            f"missing={','.join(missing)} stale={','.join(stale)}"
-        )
 
 
 def verify_dashboard_policy(path: Path) -> None:
@@ -417,9 +399,9 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "gateway-process-identity": verify_gateway_process_identity,
     "gateway-runtime-metadata": verify_gateway_runtime_metadata,
     "langfuse-credentials": verify_langfuse_credentials,
+    "neutral-platform-inertness": verify_neutral_platform_inertness,
     "profile-policy": verify_profile_policy,
     "session-preview": verify_session_preview,
-    "wrapper-session-boundaries": verify_wrapper_session_boundaries,
 }
 
 

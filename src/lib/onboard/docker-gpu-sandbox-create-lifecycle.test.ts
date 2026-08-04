@@ -93,6 +93,47 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(onPatchFailureExit).not.toHaveBeenCalled();
   });
 
+  it("reports a failed post-Ready rollback instead of treating it as restored", async () => {
+    const deps = makeDeps();
+    const result = deferredCreateResult();
+    const finalizeBackup = vi.fn(() => ({
+      backupRemoved: false,
+      rolledBack: false,
+    }));
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        waitForSupervisor: vi.fn(() => true),
+        finalizeBackup,
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    patch.waitForSupervisorReconnectIfNeeded();
+    await patch.rollbackManagedStartupAfterCreateFailure();
+
+    expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: false }, deps);
+    expect(onPatchFailureExit).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        message: expect.stringContaining("pre-patch container was not restored"),
+      }),
+      expect.objectContaining({
+        context: expect.objectContaining({
+          backupContainerName: result.backupContainerName,
+          rolledBack: false,
+        }),
+      }),
+    );
+  });
+
   it("refuses compatibility success when the backup container cannot be removed", async () => {
     const deps = makeDeps();
     const result = deferredCreateResult();
@@ -306,5 +347,37 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
         at: "2026-07-07T00:00:00.000Z",
       })),
     ).rejects.toThrow("Sandbox GPU proof returned failed status: nvidia-smi when available");
+  });
+
+  it("reports a failed rollback after GPU-proof diagnostics", async () => {
+    const deps = makeDeps();
+    const result = deferredCreateResult();
+    const patch = createDockerGpuSandboxCreatePatch({
+      route: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        waitForSupervisor: vi.fn(() => true),
+        finalizeBackup: vi.fn(() => ({
+          backupRemoved: false,
+          rolledBack: false,
+        })),
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    patch.waitForSupervisorReconnectIfNeeded();
+
+    await expect(
+      patch.verifyGpuOrExit(() => {
+        throw new Error("nvidia-smi failed");
+      }),
+    ).rejects.toThrow("nvidia-smi failed");
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("pre-patch container was not restored"),
+    );
   });
 });

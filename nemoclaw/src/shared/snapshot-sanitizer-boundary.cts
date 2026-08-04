@@ -119,6 +119,7 @@ export interface DescriptorSnapshotRoot {
  */
 const SNAPSHOT_SANITIZER_PYTHON = String.raw`
 import base64
+import hashlib
 import json
 import os
 import secrets
@@ -415,6 +416,87 @@ def create_staged_file(parent_fd):
     fail("snapshot staging file could not be created")
 
 
+def install_file(root_path, plan):
+    root = plan.get("root")
+    target_name = validate_name(plan.get("name"))
+    raw = plan.get("content")
+    if not isinstance(root, dict) or not isinstance(raw, str):
+        fail("snapshot install plan is invalid")
+    try:
+        payload = base64.b64decode(raw, validate=True)
+    except ValueError:
+        fail("snapshot install content is invalid")
+    if len(payload) > MAX_FILE_BYTES:
+        fail("snapshot install content exceeds the size limit")
+    expected_digest = hashlib.sha256(payload).digest()
+
+    root_fd = open_absolute_dir_no_follow(root_path)
+    target_fd = -1
+    target_metadata = None
+    installed = False
+    try:
+        if not same_version(root, os.fstat(root_fd)):
+            fail("snapshot root changed before output was installed")
+        try:
+            os.stat(target_name, dir_fd=root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            fail("snapshot install target already exists")
+
+        flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | O_NOFOLLOW | O_CLOEXEC
+        target_fd = os.open(target_name, flags, 0o600, dir_fd=root_fd)
+        opened = os.fstat(target_fd)
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+            fail("snapshot install target is unsafe")
+        target_metadata = metadata(opened)
+
+        written = 0
+        while written < len(payload):
+            written += os.write(target_fd, payload[written:])
+        os.fchmod(target_fd, 0o600)
+        os.fsync(target_fd)
+
+        verified_before = os.fstat(target_fd)
+        target_metadata = metadata(verified_before)
+        if (
+            not stat.S_ISREG(verified_before.st_mode)
+            or verified_before.st_nlink != 1
+            or verified_before.st_size != len(payload)
+        ):
+            fail("snapshot install target became unsafe while it was written")
+
+        os.lseek(target_fd, 0, os.SEEK_SET)
+        observed_digest = hashlib.sha256()
+        remaining = len(payload)
+        while remaining:
+            chunk = os.read(target_fd, min(64 * 1024, remaining))
+            if not chunk:
+                fail("snapshot install target became incomplete while it was verified")
+            observed_digest.update(chunk)
+            remaining -= len(chunk)
+
+        verified_after = os.fstat(target_fd)
+        verified_metadata = metadata(verified_before)
+        target_metadata = metadata(verified_after)
+        if not same_version(verified_metadata, verified_after):
+            fail("snapshot install target changed while its content was verified")
+        if not secrets.compare_digest(observed_digest.digest(), expected_digest):
+            fail("snapshot install target content changed while it was written")
+
+        current = os.stat(target_name, dir_fd=root_fd, follow_symlinks=False)
+        if not same_version(target_metadata, current):
+            fail("snapshot install target changed while it was written")
+        os.fsync(root_fd)
+        installed = True
+    finally:
+        if target_fd >= 0:
+            os.close(target_fd)
+        if not installed:
+            unlink_staged_if_owned(root_fd, target_name, target_metadata)
+        os.close(root_fd)
+
+
 def unlink_staged_if_owned(parent_fd, name, expected):
     if not name or expected is None:
         return
@@ -539,6 +621,9 @@ def main():
         return
     if mode == "apply" and len(sys.argv) == 3:
         apply(root_path, read_plan())
+        return
+    if mode == "install" and len(sys.argv) == 3:
+        install_file(root_path, read_plan())
         return
     fail("snapshot sanitizer mode is invalid")
 
@@ -675,6 +760,33 @@ export function applyDescriptorSnapshotActions(
       encoding: "utf-8",
       env: {},
       input: JSON.stringify({ root: scan.root, directories: scan.directories, actions }),
+      maxBuffer: HELPER_MAX_BUFFER_BYTES,
+      timeout: HELPER_TIMEOUT_MS,
+    },
+  );
+  return result.status === 0 && !result.error;
+}
+
+/** Create one direct child through a pinned directory descriptor without replacing an entry. */
+export function installDescriptorSnapshotFile(
+  root: DescriptorSnapshotRoot,
+  targetName: string,
+  content: string,
+): boolean {
+  if (!isSafeRelativePath(targetName) || targetName.includes("/")) return false;
+  const pythonPath = snapshotSanitizerPythonPath();
+  if (pythonPath === null) return false;
+  const result = spawnSync(
+    pythonPath,
+    ["-I", "-c", SNAPSHOT_SANITIZER_PYTHON, "install", root.canonicalPath],
+    {
+      encoding: "utf-8",
+      env: {},
+      input: JSON.stringify({
+        root: root.identity,
+        name: targetName,
+        content: Buffer.from(content, "utf-8").toString("base64"),
+      }),
       maxBuffer: HELPER_MAX_BUFFER_BYTES,
       timeout: HELPER_TIMEOUT_MS,
     },

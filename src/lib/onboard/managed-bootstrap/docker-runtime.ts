@@ -150,7 +150,7 @@ function createDockerLifecycle(
         input.network.inferenceProvider,
         input.sandboxGpuConfig,
         {
-          dockerDriverGateway: input.network.dockerDriverGateway,
+          dockerDriverGateway: input.network.gatewayUsesContainerBridge,
           selectedRoute: input.route,
           gatewayPort: input.network.gatewayPort,
           log: console.log,
