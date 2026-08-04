@@ -81,6 +81,8 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(release).toContain("signed annotated semver tag");
     expect(release).toContain("GitHub-Verified");
     expect(release).toContain("same tag object");
+    expect(release).toContain("--preflight-only");
+    expect(release).toContain("OpenPGP, SSH, or X.509 signer");
     expect(release).toContain("Do not run the retirement script directly");
     expect(release).toContain('--event push --commit "$RELEASE_SHA"');
     expect(release).toContain("Expected exactly one release-latest-tag push run");
@@ -269,6 +271,12 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(docsAgents).toContain("Every pre-tag release-note docs PR must create or update");
     expect(docsContributing).toContain("Create the planned release entry in the pre-tag");
     expect(policy).toContain("If any merge lands after `release:plan`, generate a fresh plan");
+    expect(releaseNotes).toContain(
+      "Keep the candidate SHA, E2E failure classifications, rerun ledger, and waiver rationale out of the public Announcement",
+    );
+    expect(releaseNotes).toContain(
+      "Never include the candidate SHA, internal E2E failure classifications, rerun details, or waiver rationale in the public Announcement",
+    );
   });
 
   it("keeps cross-issue sweeping separate from comparator scoring", () => {

@@ -14,6 +14,12 @@
 
 import { execFileSync } from "node:child_process";
 
+// GitHub list endpoints can briefly return pre-edit or pre-delete state. The
+// workflow cannot make those reads strongly consistent; remove this retry when
+// GitHub guarantees read-after-write consistency for labels and labeled items.
+const CONSISTENCY_ATTEMPTS = 5;
+const CONSISTENCY_DELAY_SECONDS = 2;
+
 interface MovedItem {
   number: number;
   title: string;
@@ -84,10 +90,7 @@ function main(): void {
     moved.push({ number: issue.number, title: issue.title, type: "issue" });
   }
 
-  const remaining = [
-    ...listOpenItems(repo, "pr", from).map((item) => `PR #${item.number}`),
-    ...listOpenItems(repo, "issue", from).map((item) => `issue #${item.number}`),
-  ];
+  const remaining = waitForNoOpenItems(repo, from);
   if (remaining.length > 0) {
     throw new Error(
       `Refusing to delete ${from}; open items still carry it: ${remaining.join(", ")}`,
@@ -95,12 +98,37 @@ function main(): void {
   }
 
   gh(["label", "delete", from, "--repo", repo, "--yes"]);
-  if (releaseLabelExists(repo, from)) {
+  if (!waitForReleaseLabelAbsence(repo, from)) {
     throw new Error(`Released label ${from} still exists after deletion`);
   }
 
   const output: RetireOutput = { from, to, moved, retired: true };
   console.log(JSON.stringify(output, null, 2));
+}
+
+function waitForNoOpenItems(repo: string, label: string): string[] {
+  let remaining: string[] = [];
+  for (let attempt = 1; attempt <= CONSISTENCY_ATTEMPTS; attempt += 1) {
+    remaining = [
+      ...listOpenItems(repo, "pr", label).map((item) => `PR #${item.number}`),
+      ...listOpenItems(repo, "issue", label).map((item) => `issue #${item.number}`),
+    ];
+    if (remaining.length === 0) return remaining;
+    if (attempt < CONSISTENCY_ATTEMPTS) sleepForConsistency();
+  }
+  return remaining;
+}
+
+function waitForReleaseLabelAbsence(repo: string, label: string): boolean {
+  for (let attempt = 1; attempt <= CONSISTENCY_ATTEMPTS; attempt += 1) {
+    if (!releaseLabelExists(repo, label)) return true;
+    if (attempt < CONSISTENCY_ATTEMPTS) sleepForConsistency();
+  }
+  return false;
+}
+
+function sleepForConsistency(): void {
+  execFileSync("sleep", [String(CONSISTENCY_DELAY_SECONDS)], { stdio: "inherit" });
 }
 
 function validateVersion(value: string, description: string): void {

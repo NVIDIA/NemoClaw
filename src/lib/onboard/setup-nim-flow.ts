@@ -28,6 +28,9 @@ import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-rout
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 import type { SetupNimSelectionState as BaseSetupNimSelectionState } from "./setup-nim-selection";
 
+export { probeLlamaCppAttachment } from "../inference/llama-cpp";
+export { createLlamaCppSelectionHandler } from "./llama-cpp-selection";
+
 export type SetupNimGpu = ReturnType<typeof import("../inference/nim").detectGpu>;
 export type SetupNimSelectionState = BaseSetupNimSelectionState<HermesAuthMethod>;
 export type SetupNimSelectionResult = "selected" | "retry-selection";
@@ -114,6 +117,11 @@ export interface SetupNimFlowDeps {
     args: SetupNimRemoteSelectionArgs,
     state: SetupNimSelectionState,
     recoveredRegistryRoute: RegistryInferenceRoute | null,
+  ): Promise<SetupNimSelectionResult>;
+  handleLlamaCppSelection(
+    state: SetupNimSelectionState,
+    requestedModel: string | null,
+    recoveredModel: string | null,
   ): Promise<SetupNimSelectionResult>;
   handleNimLocalSelection(
     gpu: SetupNimGpu,
@@ -240,6 +248,65 @@ function applyGatewayRouteDiscoveryConstraints(
   if (!state.preferredInferenceApi && constraints.requiredInferenceApi) {
     state.preferredInferenceApi = constraints.requiredInferenceApi;
   }
+}
+
+function isEndpointProviderSelection(deps: SetupNimFlowDeps, providerKey: string): boolean {
+  return providerKey === "llama-cpp" || Boolean(deps.remoteProviderConfig[providerKey]);
+}
+
+async function handleEndpointProviderSelection(input: {
+  deps: SetupNimFlowDeps;
+  selected: ProviderMenuChoice;
+  state: SetupNimSelectionState;
+  requestedModel: string | null;
+  recoveredFromSandbox: boolean;
+  recoveredModel: string | null;
+  sandboxName: string | null;
+  gatewayName: string | null;
+  recoverySessionId: string | null | undefined;
+  agent: AgentDefinition | null;
+  recoveredRegistryRoute: RegistryInferenceRoute | null;
+}): Promise<SetupNimSelectionResult> {
+  const {
+    deps,
+    selected,
+    state,
+    requestedModel,
+    recoveredFromSandbox,
+    recoveredModel,
+    sandboxName,
+    gatewayName,
+    recoverySessionId,
+    agent,
+    recoveredRegistryRoute,
+  } = input;
+  if (selected.key === "llama-cpp") {
+    return deps.handleLlamaCppSelection(
+      state,
+      requestedModel,
+      recoveredFromSandbox ? recoveredModel : null,
+    );
+  }
+  const remoteConfig = deps.remoteProviderConfig[selected.key];
+  if (!remoteConfig) throw new Error(`Missing remote provider config for '${selected.key}'.`);
+  return deps.handleRemoteProviderSelection(
+    {
+      selected,
+      requestedModel,
+      recoveredFromSandbox,
+      recoveredModel,
+      sandboxName,
+      gatewayName,
+      recoverySessionId,
+      intendedInferenceApi: resolveValidationInferenceApi(
+        selected.key,
+        remoteConfig.providerName,
+        agent,
+      ),
+    },
+    state,
+    recoveredRegistryRoute,
+  );
 }
 
 /** Create the provider-selection flow and seed agent-specific Ollama defaults. */
@@ -462,26 +529,21 @@ export function createSetupNim(
           hermesToolGateways = [];
         }
 
-        if (deps.remoteProviderConfig[selected.key]) {
+        if (isEndpointProviderSelection(deps, selected.key)) {
           const state = createSelectionState();
-          const result = await deps.handleRemoteProviderSelection(
-            {
-              selected,
-              requestedModel,
-              recoveredFromSandbox,
-              recoveredModel,
-              sandboxName,
-              gatewayName,
-              recoverySessionId,
-              intendedInferenceApi: resolveValidationInferenceApi(
-                selected.key,
-                deps.remoteProviderConfig[selected.key].providerName,
-                agent,
-              ),
-            },
+          const result = await handleEndpointProviderSelection({
+            deps,
+            selected,
             state,
+            requestedModel,
+            recoveredFromSandbox,
+            recoveredModel,
+            sandboxName,
+            gatewayName,
+            recoverySessionId,
+            agent,
             recoveredRegistryRoute,
-          );
+          });
           ({
             model,
             provider,
