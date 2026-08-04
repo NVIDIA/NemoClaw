@@ -89,6 +89,15 @@ const remoteProviders = [
   (provider): provider is typeof provider & { credentialEnv: string } =>
     typeof provider.credentialEnv === "string" && provider.credentialEnv.length > 0,
 );
+const remoteProviderRouteOverrides = new Map<string, Partial<SandboxEntry>>([
+  [
+    REMOTE_PROVIDER_CONFIG["llama-cpp"].providerName,
+    {
+      endpointUrl: REMOTE_PROVIDER_CONFIG["llama-cpp"].endpointUrl ?? null,
+      preferredInferenceApi: "openai-completions",
+    },
+  ],
+]);
 
 describe("commitRebuildRoutePreflight", () => {
   it("includes a credential-bearing provider in the migration matrix (#7798)", () => {
@@ -98,10 +107,12 @@ describe("commitRebuildRoutePreflight", () => {
   it.each(
     remoteProviders,
   )("migrates missing shared-gateway credential identity for $providerName (#7798)", (providerConfig) => {
+    const routeOverrides = remoteProviderRouteOverrides.get(providerConfig.providerName) ?? {};
     const target = sandbox("target", providerConfig.providerName, {
+      ...routeOverrides,
       credentialEnv: providerConfig.credentialEnv,
     });
-    const peer = sandbox("peer", providerConfig.providerName);
+    const peer = sandbox("peer", providerConfig.providerName, routeOverrides);
     const state = transactionDependencies(registry(target, peer));
 
     const result = commitRebuildRoutePreflight(

@@ -54,13 +54,14 @@ type HarnessOptions = {
     path: string;
     detail: string;
   }>;
-  fork?: () => {
+  fork?: (...args: unknown[]) => {
     pid: number;
     disconnect: () => void;
     unref: () => void;
     send: () => boolean;
     kill: () => boolean;
   };
+  livePolicyYaml?: string;
   run?: (cmd: unknown) => { status: number };
 };
 
@@ -81,7 +82,7 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
 
   const runner = requireDist("../runner.js");
   const policy = requireDist("../policy/index.js");
-  const sandboxConfig = requireDist("../sandbox/config.js");
+  const agentConfig = requireDist("../sandbox/agent-config.js");
   const registry = requireDist("../state/registry.js");
   const privilegedExec = requireDist("../sandbox/privileged-exec.js");
   const dockerExec = requireDist("../adapters/docker/exec.js");
@@ -90,7 +91,9 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   let openClawPosture: "locked" | "mutable" = "mutable";
 
   vi.spyOn(runner, "validateName").mockImplementation((name: unknown) => String(name));
-  vi.spyOn(runner, "runCapture").mockReturnValue("version: 1\nnetwork_policies:\n  test: {}\n");
+  vi.spyOn(runner, "runCapture").mockReturnValue(
+    options.livePolicyYaml ?? "version: 1\nnetwork_policies:\n  test: {}\n",
+  );
   const runSpy = vi.spyOn(runner, "run").mockImplementation((cmd: unknown) => {
     return options.run ? options.run(cmd) : { status: 0 };
   });
@@ -102,7 +105,7 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
     path.join(tmpDir, "permissive.yaml"),
   );
   fs.writeFileSync(path.join(tmpDir, "permissive.yaml"), "version: 1\nnetwork_policies: {}\n");
-  vi.spyOn(sandboxConfig, "resolveAgentConfig").mockReturnValue({
+  vi.spyOn(agentConfig, "resolveAgentConfig").mockReturnValue({
     agentName: "openclaw",
     configDir: "/sandbox/.openclaw",
     configFile: "openclaw.json",
@@ -922,6 +925,7 @@ describe("shields command flow", () => {
     let observedPreparingDuringPolicy = false;
     let observedPreparingDuringUnlock = false;
     let authorizationSawMarker = false;
+    let timerArgs: string[] = [];
     const readOnlyTransition = () => {
       const transitionName = fs
         .readdirSync(stateDir)
@@ -930,18 +934,21 @@ describe("shields command flow", () => {
       return JSON.parse(fs.readFileSync(path.join(stateDir, transitionName!), "utf-8"));
     };
     const harness = createHarness({
-      fork: () => ({
-        pid: 4242,
-        disconnect: vi.fn(),
-        unref: vi.fn(),
-        send: vi.fn(() => {
-          authorizationSawMarker = fs.existsSync(
-            path.join(stateDir, "shields-timer-openclaw.json"),
-          );
-          return true;
-        }),
-        kill: vi.fn(() => true),
-      }),
+      fork: (_modulePath, args) => {
+        timerArgs = args as string[];
+        return {
+          pid: 4242,
+          disconnect: vi.fn(),
+          unref: vi.fn(),
+          send: vi.fn(() => {
+            authorizationSawMarker = fs.existsSync(
+              path.join(stateDir, "shields-timer-openclaw.json"),
+            );
+            return true;
+          }),
+          kill: vi.fn(() => true),
+        };
+      },
       run: () => {
         observedPreparingDuringPolicy = readOnlyTransition().phase === "preparing";
         return { status: 0 };
@@ -974,6 +981,7 @@ describe("shields command flow", () => {
     expect(observedPreparingDuringPolicy).toBe(true);
     expect(observedPreparingDuringUnlock).toBe(true);
     expect(authorizationSawMarker).toBe(true);
+    expect(timerArgs.at(9)).toBe("openclaw");
     expect(transition).toMatchObject({
       version: 1,
       phase: "active",
@@ -982,6 +990,54 @@ describe("shields command flow", () => {
       snapshotPath: expect.stringContaining("policy-snapshot-"),
     });
     expect(fs.existsSync(path.join(stateDir, "shields-timer-openclaw.json"))).toBe(true);
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, "shields-timer-openclaw.json"), "utf-8")),
+    ).toMatchObject({
+      agentName: "openclaw",
+      configPath: "/sandbox/.openclaw/openclaw.json",
+      configDir: "/sandbox/.openclaw",
+    });
+  });
+
+  it("shields down removes the permissive runtime temp directory when the auto-restore timer fails (#7964)", () => {
+    const tempRoot = os.tmpdir();
+    const permissiveRuntimeDirs = () =>
+      fs.readdirSync(tempRoot).filter((name) => name.startsWith("nemoclaw-permissive-runtime-"));
+    const before = permissiveRuntimeDirs();
+    // shieldsDown builds the temp policy before it forks the auto-restore timer,
+    // so the fork mock observes the runtime-policy directory mid-transition. That
+    // proves the test exercises real temp-policy creation, not only the absence
+    // of a leak.
+    let runtimeDirsDuringFork: string[] = [];
+    // A real `openshell policy get --base` carries filesystem_policy paths, so the
+    // permissive merge writes a temp policy file instead of returning the static
+    // base path. That is the state that makes the leak reachable.
+    const harness = createHarness({
+      livePolicyYaml:
+        "version: 1\nfilesystem_policy:\n  read_write:\n    - /proc\n  read_only:\n    - /opt/hermes\n",
+      fork: () => {
+        runtimeDirsDuringFork = permissiveRuntimeDirs();
+        return {
+          pid: 0,
+          disconnect: vi.fn(),
+          unref: vi.fn(),
+          send: vi.fn(() => true),
+          kill: vi.fn(() => true),
+        };
+      },
+    });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "temp cleanup coverage",
+        throwOnError: true,
+      }),
+    ).toThrow("Cannot start auto-restore timer");
+    // One runtime-policy directory existed during the transition, and none
+    // remains after the failed shields down.
+    expect(runtimeDirsDuringFork.length).toBe(before.length + 1);
+    expect(permissiveRuntimeDirs()).toEqual(before);
   });
 
   it("shieldsUp refuses to mark lockdown active when the saved restrictive policy snapshot is missing", () => {

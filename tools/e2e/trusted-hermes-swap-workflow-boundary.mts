@@ -219,6 +219,7 @@ export const TRUSTED_HERMES_SWAP_SCRIPT = [
 
 const JOB_CONDITIONS = {
   "agent-turn-latency": `\${{ ${TRUSTED_HERMES_SWAP_IF} }}`,
+  "bedrock-runtime-compatible-anthropic": `\${{ ${TRUSTED_HERMES_SWAP_IF} && matrix.agent == 'hermes' }}`,
   "channels-stop-start": `\${{ ${TRUSTED_HERMES_SWAP_IF} && matrix.agent == 'hermes' }}`,
   "common-egress-agent": `\${{ ${TRUSTED_HERMES_SWAP_IF} && matrix.scenario == 'hermes-open-reference' }}`,
   "hermes-discord": `\${{ ${TRUSTED_HERMES_SWAP_IF} }}`,

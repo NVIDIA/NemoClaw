@@ -94,6 +94,36 @@ def verify_gateway_runtime_metadata() -> None:
     assert isinstance(home, Path)
 
 
+def verify_gateway_process_identity() -> None:
+    from gateway.status import (
+        _gateway_command_subcommand,
+        looks_like_gateway_command_line,
+        looks_like_gateway_runtime_command_line,
+    )
+
+    renamed = "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real gateway run"
+    upstream = "/opt/hermes/.venv/bin/python /usr/local/bin/hermes gateway run"
+
+    assert looks_like_gateway_command_line(renamed)
+    assert looks_like_gateway_runtime_command_line(renamed)
+    assert _gateway_command_subcommand(renamed) == "run"
+    assert _gateway_command_subcommand(
+        "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real gateway restart"
+    ) == "restart"
+
+    assert looks_like_gateway_command_line(upstream)
+    assert not looks_like_gateway_command_line(
+        "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real gateway status"
+    )
+    assert not looks_like_gateway_command_line(
+        "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.real dashboard"
+    )
+    assert not looks_like_gateway_command_line("python -m tui_gateway run")
+    assert not looks_like_gateway_command_line(
+        "/opt/hermes/.venv/bin/python /usr/local/bin/hermes.realish gateway run"
+    )
+
+
 def verify_cron_runtime_source() -> None:
     from cron.executions import EXECUTIONS_FILE
     from hermes_cli.backup import _QUICK_STATE_FILES
@@ -169,65 +199,6 @@ def verify_langfuse_credentials() -> None:
         )
         is not None
     )
-
-
-def verify_wrapper_session_boundaries() -> None:
-    import ast
-
-    wrapper_tree = ast.parse(
-        Path("/usr/local/lib/nemoclaw/hermes-wrapper.py").read_text(encoding="utf-8")
-    )
-    wrapper_assignments = [
-        node
-        for node in wrapper_tree.body
-        if isinstance(node, ast.Assign)
-        and len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Name)
-        and node.targets[0].id == "_HERMES_SESSION_NAME_BOUNDARIES"
-    ]
-    if len(wrapper_assignments) != 1:
-        raise SystemExit("ERROR: expected one wrapper session-name boundary constant")
-    wrapper_value = wrapper_assignments[0].value
-    if not (
-        isinstance(wrapper_value, ast.Call)
-        and isinstance(wrapper_value.func, ast.Name)
-        and wrapper_value.func.id == "frozenset"
-        and len(wrapper_value.args) == 1
-        and not wrapper_value.keywords
-    ):
-        raise SystemExit("ERROR: wrapper session-name boundaries are not a literal frozenset")
-    wrapper_boundaries = set(ast.literal_eval(wrapper_value.args[0]))
-
-    upstream_tree = ast.parse(
-        Path("/opt/hermes/hermes_cli/main.py").read_text(encoding="utf-8")
-    )
-    coalescers = [
-        node
-        for node in upstream_tree.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_coalesce_session_name_args"
-    ]
-    if len(coalescers) != 1:
-        raise SystemExit("ERROR: expected one pinned Hermes session-name coalescer")
-    upstream_assignments = [
-        node
-        for node in coalescers[0].body
-        if isinstance(node, ast.Assign)
-        and len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Name)
-        and node.targets[0].id == "_SUBCOMMANDS"
-    ]
-    if len(upstream_assignments) != 1:
-        raise SystemExit("ERROR: expected one pinned Hermes coalescer boundary set")
-    upstream_boundaries = set(ast.literal_eval(upstream_assignments[0].value))
-
-    missing = sorted(upstream_boundaries - wrapper_boundaries)
-    stale = sorted(wrapper_boundaries - upstream_boundaries)
-    if missing or stale:
-        raise SystemExit(
-            "ERROR: Hermes wrapper session-name boundaries drifted from pinned coalescer: "
-            f"missing={','.join(missing)} stale={','.join(stale)}"
-        )
 
 
 def verify_dashboard_policy(path: Path) -> None:
@@ -384,11 +355,11 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "discord-create": verify_discord_create,
     "discord-recovery-source": verify_discord_recovery_source,
     "discord-reopen": verify_discord_reopen,
+    "gateway-process-identity": verify_gateway_process_identity,
     "gateway-runtime-metadata": verify_gateway_runtime_metadata,
     "langfuse-credentials": verify_langfuse_credentials,
     "profile-policy": verify_profile_policy,
     "session-preview": verify_session_preview,
-    "wrapper-session-boundaries": verify_wrapper_session_boundaries,
 }
 
 

@@ -98,12 +98,15 @@ let stageCalls = 0;
 dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = () => ({
   maybeApplyDuringCreate: () => {},
   createFailureMessage: () => null,
-  exitOnPatchError: () => {},
-  ensureApplied: () => {},
+  exitOnPatchError: async () => {},
+  attachManagedBootstrapCutover: () => {},
+  rollbackManagedStartupAfterCreateFailure: async () => {},
+  ensureApplied: async () => {},
   waitForSupervisorReconnectIfNeeded: () => {},
+  commitAfterReady: async () => {},
   selectedMode: () => null,
   printReadinessFailureIfEnabled: () => {},
-  verifyGpuOrExit: (verify) => verify(sandboxName),
+  verifyGpuOrExit: async (verify) => verify(sandboxName),
 });
 
 buildContextStage.stageCreateSandboxBuildContext = () => {

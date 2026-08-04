@@ -18,8 +18,7 @@ import {
 import {
   isStaleBuiltinWebSearchPolicyPreset,
   mergeRequiredSetupPolicyPresets,
-  type PreparedPolicyResumeSelection,
-} from "./policy-selection";
+} from "./policy-preset-reconciliation";
 import { suppressedAgentRequiredPresets } from "./policy-tier-suppression";
 
 type Preset = { name: string; access?: string };
@@ -43,6 +42,13 @@ type PoliciesApi = {
     options?: { webSearchSupported?: boolean | null },
     customPresetNames?: Set<string>,
   ): string[];
+};
+
+export type PreparedPolicyResumeSelection = {
+  policyPresets: string[];
+  recordedPolicyPresetsNeedReconcile: boolean;
+  disabledMessagingPolicyPresetApplied: boolean;
+  suppressedAgentRequiredPresetsLive: boolean;
 };
 
 export function preparePolicyPresetResumeSelection(

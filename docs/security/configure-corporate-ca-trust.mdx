@@ -8,7 +8,7 @@ description-agent: "Configures corporate proxy CA trust for runtime TLS and supp
 keywords: ["nemoclaw corporate ca", "corporate proxy tls", "certificate verification"]
 content:
   type: "how_to"
-agent-variants: ["openclaw", "hermes"]
+agent-variants: ["openclaw", "hermes", "deepagents"]
 ---
 
 Configure a corporate Certificate Authority (CA) before onboarding when an enterprise proxy re-signs external TLS with a root that OpenShell does not provide.
@@ -40,6 +40,13 @@ It sets `NODE_EXTRA_CA_CERTS` before build-time Node.js dependency verification,
 <AgentOnly variant="hermes">
 
 The Hermes Dockerfile decodes the bundle after its managed build-time dependency steps, so the corporate CA does not apply to those earlier operations.
+
+</AgentOnly>
+
+<AgentOnly variant="deepagents">
+
+Deep Agents Code applies the corporate CA to its local base-image build before HTTPS dependency fetches and decodes it again in the final sandbox image.
+This supports cold builds on hosts where the base image is not cached.
 
 </AgentOnly>
 
@@ -91,6 +98,10 @@ Set `NEMOCLAW_CORPORATE_CA_IMPORT=0` to disable corporate CA import entirely.
 
 ## Related Topics
 
+<AgentOnly variant="openclaw,hermes">
+
 - [Troubleshooting](../reference/troubleshooting#external-channel-tls-fails-behind-a-corporate-mitm-proxy-netfail) for `NET:FAIL` symptoms and certificate diagnostics.
+
+</AgentOnly>
 - [Security Best Practices](best-practices) for the broader sandbox trust model.
 - [Credential Storage](credential-storage) for the OpenShell provider credential boundary.

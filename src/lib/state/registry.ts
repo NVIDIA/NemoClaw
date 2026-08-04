@@ -165,6 +165,8 @@ export function registerSandbox(entry: SandboxEntry): void {
           : null,
       imageTag: entry.imageTag || null,
       workload: cloneSandboxWorkloadReceipt(entry.workload),
+      lifecycleGeneration: entry.lifecycleGeneration,
+      lifecycleLiveIdentityFingerprint: entry.lifecycleLiveIdentityFingerprint,
       messaging: cloneSandboxMessagingState(entry.messaging),
       mcp: normalizeSandboxMcpState(entry.mcp),
       hermesToolGateways:

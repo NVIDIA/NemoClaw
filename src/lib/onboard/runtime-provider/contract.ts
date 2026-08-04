@@ -2,9 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
+import type {
+  ManagedBootstrapRuntimeCreateLifecycle,
+  ManagedBootstrapRuntimeCreateLifecycleInput,
+  ManagedBootstrapRuntimeOnboardRouting,
+  ManagedBootstrapRuntimeOnboardRoutingInput,
+} from "../managed-bootstrap/runtime-create";
 import type { ManagedImageSelectionPolicy } from "../workload/source";
 
 export const RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION = 1 as const;
+export const RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION = 1 as const;
+export const RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION = 1 as const;
 
 export type RuntimeProviderGatewayLauncher = "nemoclaw" | "openshell";
 export type RuntimeProviderLifecycleAction = "start" | "stop";
@@ -15,6 +23,7 @@ export type RuntimeProviderMutationOperation =
   | "stop"
   | "inference-set"
   | "rebuild"
+  | "clone"
   | "provider-cleanup"
   | "destroy"
   | "workload-cleanup";
@@ -152,7 +161,7 @@ export interface RuntimeProviderCleanupOperations {
 }
 
 /**
- * Provider-neutral, bounded state that later snapshot work may persist.
+ * Provider-neutral, bounded state persisted by provider-backed snapshots.
  * Provider handles remain opaque strings; acceleration is normalized so no
  * action module needs a Docker-, CDI-, or device-specific DTO.
  */
@@ -172,6 +181,49 @@ export interface RuntimeProviderRuntimeReceipt {
         readonly vendor: string;
         readonly devices: readonly string[];
       };
+}
+
+export type RuntimeProviderSnapshotOperation = "backup" | "restore";
+export type RuntimeProviderSnapshotLifecycleState = "running" | "paused" | "stopped";
+
+export interface RuntimeProviderSnapshotPreflightReceipt {
+  readonly schemaVersion: typeof RUNTIME_PROVIDER_SNAPSHOT_PREFLIGHT_SCHEMA_VERSION;
+  readonly providerId: string;
+  readonly operation: RuntimeProviderSnapshotOperation;
+  readonly sandboxName: string;
+  readonly providerHandle: string;
+  readonly lifecycleState: RuntimeProviderSnapshotLifecycleState;
+  readonly lifecycleGeneration: string;
+}
+
+export interface RuntimeProviderManagedProfileRestoreAuthority {
+  readonly agent: string;
+  readonly profileFingerprint: string;
+}
+
+/**
+ * Complete normalized source state supplied to the owning restore facet.
+ * `providerHandle` binds the lifecycle generation and full runtime receipt.
+ */
+export interface RuntimeProviderSnapshotRestoreSource {
+  readonly schemaVersion: 1;
+  readonly providerId: string;
+  readonly providerHandle: string;
+  readonly lifecycleState: RuntimeProviderSnapshotLifecycleState;
+  readonly lifecycleGeneration: string;
+  readonly runtime: RuntimeProviderRuntimeReceipt;
+}
+
+export interface RuntimeProviderSnapshotRestoreReceipt {
+  readonly schemaVersion: 1;
+  readonly providerId: string;
+  readonly sandboxName: string;
+  /** Provider-authored proof over preflight, source state, profile, and live runtime. */
+  readonly providerHandle: string;
+  readonly lifecycleState: RuntimeProviderSnapshotLifecycleState;
+  readonly lifecycleGeneration: string;
+  readonly runtime: RuntimeProviderRuntimeReceipt;
+  readonly managedProfile: RuntimeProviderManagedProfileRestoreAuthority;
 }
 
 export type RuntimeProviderPreflightDoctorSurface = RuntimeProviderSupportedSurface<{
@@ -215,14 +267,48 @@ export type RuntimeProviderMutationAuthoritySurface =
 
 export type RuntimeProviderBootstrapSurface =
   | RuntimeProviderSupportedSurface<{
-      prepare(sandbox: SandboxEntry): unknown;
+      createLifecycle(
+        input: ManagedBootstrapRuntimeCreateLifecycleInput,
+      ): ManagedBootstrapRuntimeCreateLifecycle;
+      createOnboardRouting(
+        input: ManagedBootstrapRuntimeOnboardRoutingInput,
+      ): ManagedBootstrapRuntimeOnboardRouting;
     }>
   | RuntimeProviderUnsupportedSurface;
 
 export type RuntimeProviderSnapshotSurface =
   | RuntimeProviderSupportedSurface<{
-      capture(sandbox: SandboxEntry): RuntimeProviderRuntimeReceipt;
-      restore(sandbox: SandboxEntry, receipt: RuntimeProviderRuntimeReceipt): void;
+      /**
+       * Version the snapshot facet independently so providers can reject a
+       * central contract they do not implement without forcing unrelated
+       * bundle surfaces to rev in lockstep.
+       */
+      readonly contractVersion: typeof RUNTIME_PROVIDER_SNAPSHOT_CONTRACT_VERSION;
+      readonly capabilities: {
+        readonly backup: boolean;
+        readonly restore: boolean;
+        readonly managedProfileRestore: boolean;
+      };
+      preflight(
+        operation: RuntimeProviderSnapshotOperation,
+        sandbox: SandboxEntry,
+      ): RuntimeProviderSnapshotPreflightReceipt;
+      capture(
+        sandbox: SandboxEntry,
+        preflight: RuntimeProviderSnapshotPreflightReceipt,
+      ): RuntimeProviderRuntimeReceipt;
+      validateRestore(
+        sandbox: SandboxEntry,
+        preflight: RuntimeProviderSnapshotPreflightReceipt,
+        source: RuntimeProviderSnapshotRestoreSource,
+        managedProfile: RuntimeProviderManagedProfileRestoreAuthority,
+      ): void;
+      restore(
+        sandbox: SandboxEntry,
+        preflight: RuntimeProviderSnapshotPreflightReceipt,
+        source: RuntimeProviderSnapshotRestoreSource,
+        managedProfile: RuntimeProviderManagedProfileRestoreAuthority,
+      ): RuntimeProviderSnapshotRestoreReceipt;
     }>
   | RuntimeProviderUnsupportedSurface;
 
