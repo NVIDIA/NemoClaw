@@ -93,6 +93,9 @@ NemoClaw declines the package unit when systemd positively identifies an untrust
 For a version rejection, NemoClaw reports the version once.
 After either rejection, it selects an existing marked NemoClaw user service when available.
 Otherwise, onboarding continues with the standalone gateway fallback.
+After `systemctl --user daemon-reload` and systemd identity validation, startup checks the effective binary's version again before any service-state mutation.
+If a known version is now unsupported, startup does not stop, enable, or restart the package service.
+Onboarding continues with the standalone fallback.
 For tarball installs, the NemoClaw installer stages a marked user-level `nemoclaw-openshell-gateway.service` based on the upstream unit.
 Onboarding validates and reuses a healthy selected service.
 It enables or restarts the service when startup or verified runtime drift requires it, then checks gateway health.

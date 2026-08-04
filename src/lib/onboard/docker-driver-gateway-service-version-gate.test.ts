@@ -11,6 +11,7 @@ import {
   hasOpenShellGatewayUserService,
   NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE,
   resetUpstreamGatewayVersionWarning,
+  startOpenShellGatewayUserService,
 } from "./docker-driver-gateway-service";
 
 const PACKAGE_UNIT = "/usr/lib/systemd/user/openshell-gateway.service";
@@ -185,5 +186,36 @@ describe("package-managed gateway version gate (#8094)", () => {
 
   it("keeps the package unit paths the gate scans in sync with the resolver", () => {
     expect(getOpenShellGatewayUserServicePaths()).toContain(PACKAGE_UNIT);
+  });
+
+  it("declines a package gateway that changes version before startup", () => {
+    const events: string[] = [];
+    const getUpstreamGatewayVersion = vi
+      .fn()
+      .mockReturnValueOnce("0.0.85")
+      .mockReturnValue("0.0.91");
+    const warn = vi.fn();
+
+    const result = startOpenShellGatewayUserService(
+      resolveOptions("ignored", {
+        commandExists: () => true,
+        getUpstreamGatewayVersion,
+        spawnSyncImpl: (_command: string, args: string[]) => {
+          events.push(args.slice(1).join(" "));
+          return args.includes("show") ? { status: 0, stdout: trustedShowOutput() } : { status: 0 };
+        },
+        warn,
+      }),
+    );
+
+    expect(result).toMatchObject({
+      attempted: false,
+      reason: expect.stringContaining("0.0.91"),
+      serviceName: "openshell-gateway",
+      started: false,
+    });
+    expect(getUpstreamGatewayVersion).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("0.0.91"));
+    expect(events.some((event) => /^(stop|enable|restart)/.test(event))).toBe(false);
   });
 });

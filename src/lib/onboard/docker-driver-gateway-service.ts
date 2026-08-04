@@ -270,6 +270,15 @@ export function checkUpstreamGatewayVersion(
 
 let warnedUnsupportedUpstreamGateway = false;
 
+function warnUnsupportedUpstreamGateway(
+  verdict: Extract<UpstreamGatewayVersionVerdict, { supported: false }>,
+  opts: Pick<OpenShellGatewayUserServiceOptions, "warn">,
+): void {
+  if (warnedUnsupportedUpstreamGateway) return;
+  warnedUnsupportedUpstreamGateway = true;
+  (opts.warn ?? ((message: string) => console.error(message)))(verdict.message);
+}
+
 /** Test seam: forget the warn-once latch between cases. */
 export function resetUpstreamGatewayVersionWarning(): void {
   warnedUnsupportedUpstreamGateway = false;
@@ -511,10 +520,7 @@ function resolveOpenShellGatewayUserService(
       if (verdict.supported) {
         return upstreamService;
       }
-      if (!warnedUnsupportedUpstreamGateway) {
-        warnedUnsupportedUpstreamGateway = true;
-        (opts.warn ?? ((message: string) => console.error(message)))(verdict.message);
-      }
+      warnUnsupportedUpstreamGateway(verdict, opts);
     }
   }
 
@@ -741,6 +747,21 @@ function serviceFailure(
   };
 }
 
+function serviceDeclined(
+  service: OpenShellGatewayUserServiceTarget,
+  reason: string,
+): OpenShellGatewayUserServiceStartResult {
+  return {
+    attempted: false,
+    logCommand: service.logCommand,
+    manager: service.manager,
+    reason,
+    serviceName: service.serviceName,
+    started: false,
+    statusCommand: service.statusCommand,
+  };
+}
+
 function runHook(
   hook: (() => void) | undefined,
   service: OpenShellGatewayUserServiceTarget,
@@ -800,6 +821,16 @@ export function startOpenShellGatewayUserService(
         identity.reason ?? "service identity is invalid",
         identity.trustFailure,
       );
+    if (service.serviceName === OPENSHELL_GATEWAY_USER_SERVICE) {
+      const verdict = checkUpstreamGatewayVersion(identity.execStartPath, opts);
+      if (!verdict.supported) {
+        warnUnsupportedUpstreamGateway(verdict, opts);
+        return serviceDeclined(
+          service,
+          `package-managed gateway changed before startup: ${verdict.binaryPath} is ${verdict.version}`,
+        );
+      }
+    }
   }
 
   const ownershipFailure = runHook(
