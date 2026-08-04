@@ -507,6 +507,70 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     }
   });
 
+  it.each([
+    ["retries a transient status health failure", "failure-then-success", 0, 2, 1],
+    ["fails after the bounded status health retries", "failure-always", 1, 3, 2],
+  ] as const)("%s before checking the DCode capability", (_label, mode, expectedStatus, expectedAttempts, expectedRetryMessages) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-status-retry-"));
+    const mockCli = path.join(tempDir, "nemoclaw");
+    const counterFile = path.join(tempDir, "attempts");
+    try {
+      fs.writeFileSync(
+        mockCli,
+        [
+          "#!/bin/bash",
+          "set -euo pipefail",
+          "count=0",
+          'if [ -f "$MOCK_STATUS_COUNTER_FILE" ]; then',
+          '  read -r count <"$MOCK_STATUS_COUNTER_FILE"',
+          "fi",
+          "count=$((count + 1))",
+          `printf '%s\\n' "$count" >"$MOCK_STATUS_COUNTER_FILE"`,
+          `printf '{"name":"deepagents-sandbox","agent":"langchain-deepagents-code","dcodeAutoApprovalMode":"disabled","attempt":%s,"inferenceHealth":{"ok":false,"probed":false}}\\n' "$count"`,
+          'if [ "$MOCK_STATUS_MODE" = "failure-always" ] || { [ "$MOCK_STATUS_MODE" = "failure-then-success" ] && [ "$count" -eq 1 ]; }; then',
+          "  exit 1",
+          "fi",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const result = spawnSync(
+        "/bin/bash",
+        [
+          "-c",
+          'source "$1"; CLI="$2"; SANDBOX_NAME="deepagents-sandbox"; NEMOCLAW_E2E_DCODE_STATUS_RETRY_DELAY_SECONDS=0; assert_status_mode disabled',
+          "bash",
+          dcodeApprovalCheck,
+          mockCli,
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            MOCK_STATUS_COUNTER_FILE: counterFile,
+            MOCK_STATUS_MODE: mode,
+          },
+        },
+      );
+
+      expect(result.status, result.stdout + "\n" + result.stderr).toBe(expectedStatus);
+      expect(Number(fs.readFileSync(counterFile, "utf8").trim())).toBe(expectedAttempts);
+      expect(
+        result.stderr.match(/Retrying NemoClaw status after a non-success health probe/gu) ?? [],
+      ).toHaveLength(expectedRetryMessages);
+      if (expectedStatus !== 0) {
+        expect(result.stderr).toContain(
+          "nemoclaw status failed while checking 'disabled' after 3 attempts",
+        );
+        expect(result.stderr).toContain('"dcodeAutoApprovalMode":"disabled"');
+        expect(result.stderr).toContain('"attempt":3');
+      }
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
   it("registers executable Deep Agents cloud-experimental checks in execution order", () => {
     expect(DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS).toEqual([
       "test/e2e/e2e-cloud-experimental/checks/03-deepagents-code-nemotron-ultra-profile.sh",
