@@ -54,7 +54,7 @@ function candidates(): Candidate[] {
       return {
         agent,
         platform,
-        artifact: `managed-image-candidate-${runId}-${runAttempt}-${agent}-${platform.replace("/", "-")}`,
+        artifact: `managed-image-candidate-${runId}-${runAttempt}-${agent}-${platform.replaceAll("/", "-")}`,
         contract: {
           contractVersion: 2,
           phase: "candidate",
@@ -76,7 +76,7 @@ function candidates(): Candidate[] {
               size: 900 + agentIndex * 10 + platformIndex,
               platform: {
                 os: "linux",
-                architecture: platform.replace("linux/", ""),
+                architecture: platform.replaceAll("linux/", ""),
               },
             },
             attestations: {
@@ -103,7 +103,7 @@ function candidates(): Candidate[] {
                   type: "https://in-toto.io/Statement/v1",
                   predicateType: "https://slsa.dev/provenance/v1",
                   subject: {
-                    name: `pkg:docker/${image}@latest?platform=${platform.replace("/", "%2F")}`,
+                    name: `pkg:docker/${image}@latest?platform=${platform.replaceAll("/", "%2F")}`,
                     digest: workloadDigest,
                   },
                   buildType:
@@ -132,7 +132,7 @@ function candidates(): Candidate[] {
                   type: "https://in-toto.io/Statement/v1",
                   predicateType: "https://spdx.dev/Document",
                   subject: {
-                    name: `pkg:docker/${image}@latest?platform=${platform.replace("/", "%2F")}`,
+                    name: `pkg:docker/${image}@latest?platform=${platform.replaceAll("/", "%2F")}`,
                     digest: workloadDigest,
                   },
                 },
@@ -309,7 +309,7 @@ fi
     const platformContracts: Record<string, Record<string, unknown>> = {};
     for (const agent of publicationAgents) {
       for (const platform of publicationPlatforms) {
-        const artifactPlatform = platform.replace("/", "-");
+        const artifactPlatform = platform.replaceAll("/", "-");
         const contract = path.join(contracts, agent, artifactPlatform, "contract.json");
         if (fs.existsSync(contract)) {
           platformContracts[`${agent}|${platform}`] = JSON.parse(

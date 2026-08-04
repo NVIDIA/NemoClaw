@@ -983,7 +983,7 @@ fi
       },
       ...publicationAgents.flatMap((agent) =>
         publicationPlatforms.map((platform) => {
-          const artifactPlatform = platform.replace("/", "-");
+          const artifactPlatform = platform.replaceAll("/", "-");
           const displayAgent =
             agent === "langchain-deepagents-code" ? "langchain-deepagents-code" : agent;
           return {

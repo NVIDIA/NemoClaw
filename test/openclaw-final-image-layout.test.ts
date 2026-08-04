@@ -209,6 +209,7 @@ describe("OpenClaw final image layout", () => {
       "openclaw config validate --json",
     );
     expect(finalStage).toContain("packageManifest.openclaw?.channel?.id");
+    expect(finalStage).toContain("if (!fs.existsSync(packagePath)) return []");
     expect(finalStage).toContain('channelId === "imessage"');
     expect(finalStage).toContain("bundled OpenClaw channel is not neutral");
     expect(patch).toBeGreaterThan(wechatInstall);

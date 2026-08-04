@@ -249,6 +249,8 @@ describe("runtime provider central source boundary", () => {
     const trampoline = read("scripts/managed-bootstrap-trampoline.sh");
     const hold = read("scripts/managed-startup-hold.sh");
     const directE2e = read("scripts/checks/run-managed-image-direct-e2e.ts");
+    const bootstrapRuntime = read("src/lib/onboard/managed-bootstrap/image-runtime.ts");
+    const startupRuntime = read("src/lib/onboard/managed-startup/image-runtime.ts");
     const packagingSources = packagingPaths.map((path) => [path, read(path)] as const);
     expect(entrypoint).toMatch(/exec_process\(NEMOCLAW_MANAGED_BOOTSTRAP_BASH/u);
     expect(entrypoint).toMatch(/NEMOCLAW_MANAGED_BOOTSTRAP_FREESTANDING/u);
@@ -263,6 +265,8 @@ describe("runtime provider central source boundary", () => {
     expect(directE2e).toContain("chown 0:0 ${MANAGED_BOOTSTRAP_REQUEST_FILE}");
     expect(directE2e).not.toContain(`docker(["cp"`);
     expect(directE2e).not.toMatch(/const HOLD\s*=/u);
+    expect(bootstrapRuntime.match(/require\.main === module/gu)).toHaveLength(1);
+    expect(startupRuntime).not.toMatch(/require\.main === module/u);
     for (const dockerfilePath of [
       "Dockerfile",
       "agents/hermes/Dockerfile",
