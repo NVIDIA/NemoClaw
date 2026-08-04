@@ -944,28 +944,35 @@ describe("state-dir-guard", () => {
     fs.mkdirSync(dashboardHome, { recursive: true, mode: 0o700 });
     fs.chmodSync(dashboardHome, 0o700);
     fs.writeFileSync(dashboardMemory, "dashboard runtime\n", { mode: 0o600 });
-    const oldMemoryInode = fs.statSync(dashboardMemory).ino;
+    const dashboardFd = fs.openSync(dashboardMemory, "a+");
+    const oldMemoryInode = fs.fstatSync(dashboardFd).ino;
 
-    const locked = runGuard("lock", configDir);
+    try {
+      const locked = runGuard("lock", configDir);
 
-    expect(locked.status, locked.stderr).toBe(0);
-    expect(mode(path.join(configDir, "profiles"))).toBe(0o755);
-    expect(mode(dashboardHome)).toBe(0o700);
-    expect(mode(dashboardMemory)).toBe(0o600);
-    expect(fs.statSync(dashboardMemory).ino).toBe(oldMemoryInode);
-    fs.appendFileSync(dashboardMemory, "updated\n");
+      expect(locked.status, locked.stderr).toBe(0);
+      expect(mode(path.join(configDir, "profiles"))).toBe(0o755);
+      expect(mode(dashboardHome)).toBe(0o700);
+      expect(mode(dashboardMemory)).toBe(0o600);
+      expect(fs.fstatSync(dashboardFd).ino).toBe(oldMemoryInode);
+      fs.writeSync(dashboardFd, "updated\n");
 
-    const relocked = runGuard("lock", configDir);
+      const relocked = runGuard("lock", configDir);
 
-    expect(relocked.status, relocked.stderr).toBe(0);
-    expect(mode(dashboardHome)).toBe(0o700);
-    expect(fs.statSync(dashboardMemory).ino).toBe(oldMemoryInode);
+      expect(relocked.status, relocked.stderr).toBe(0);
+      expect(mode(dashboardHome)).toBe(0o700);
+      expect(fs.fstatSync(dashboardFd).ino).toBe(oldMemoryInode);
 
-    const unlocked = runGuard("unlock", configDir);
+      const unlocked = runGuard("unlock", configDir);
 
-    expect(unlocked.status, unlocked.stderr).toBe(0);
-    expect(mode(dashboardHome)).toBe(0o700);
-    expect(fs.readFileSync(dashboardMemory, "utf-8")).toBe("dashboard runtime\nupdated\n");
+      expect(unlocked.status, unlocked.stderr).toBe(0);
+      expect(mode(dashboardHome)).toBe(0o700);
+      const contents = Buffer.alloc(fs.fstatSync(dashboardFd).size);
+      fs.readSync(dashboardFd, contents, 0, contents.length, 0);
+      expect(contents.toString("utf-8")).toBe("dashboard runtime\nupdated\n");
+    } finally {
+      fs.closeSync(dashboardFd);
+    }
   });
 
   it("keeps a dashboard-named OpenClaw profile inside the Shields boundary", () => {
