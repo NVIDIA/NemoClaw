@@ -51,7 +51,7 @@ The following table shows the scope of each component in the stack.
 |---------|--------|
 | LangChain Deep Agents Code | The terminal coding agent runtime, interactive TUI, headless `dcode -n` mode, skills, memory, and tool approval UI inside the container. |
 | OpenShell | The execution environment: sandbox lifecycle, network, filesystem, process policy, inference routing, and the operator-facing `openshell` CLI for those primitives. |
-| NemoClaw | The NVIDIA reference stack on the host: `nemo-deepagents` / `nemoclaw` CLI, versioned blueprint, managed Deep Agents runtime patches, credential-safe inference routing, policy presets, and state migration helpers. |
+| NemoClaw | The NVIDIA reference stack on the host: `nemo-deepagents` and `nemoclaw` CLI paths, versioned blueprint, managed Deep Agents integration layer, managed inference and Model Context Protocol (MCP) servers, host readiness reporting, trace export, and lifecycle operations. |
 
 ## NemoClaw Path versus OpenShell Path
 
@@ -73,14 +73,16 @@ The following table compares custom OpenShell integration with `nemo-deepagents 
 
 | Capability | Custom OpenShell + Deep Agents | `nemo-deepagents onboard` |
 |---|---|---|
-| Sandbox isolation | You define and apply OpenShell seccomp, Landlock, network namespace isolation, and no-new-privileges policy. | NemoClaw applies the managed Deep Agents policy through the blueprint and requires the runtime checks that the managed harness depends on. |
-| Credential handling | You create OpenShell providers manually and decide how `dcode` receives endpoint credentials. | NemoClaw creates OpenShell providers during onboarding, points Deep Agents at `https://inference.local/v1`, and keeps provider credentials on the host. |
-| Image hardening | Depends on your base image and install steps. | NemoClaw installs the pinned Deep Agents Code package in `/opt/venv`, uses managed launchers, and disables unsupported runtime escape paths such as unmanaged MCP autoloading, tracing exports, nested sandbox providers, and alternate model routes. |
+| Sandbox isolation | You define and apply OpenShell seccomp, Landlock, network namespace isolation, and no-new-privileges policy. | NemoClaw applies the managed Deep Agents policy through the blueprint and requires the runtime checks that the managed agent runtime depends on. |
+| Credential handling | You create OpenShell providers manually and decide how `dcode` receives endpoint credentials. | NemoClaw creates OpenShell providers during onboarding, points Deep Agents at `https://inference.local/v1`, and keeps provider credentials outside the sandbox. |
+| Image hardening | Depends on your base image and install steps. | NemoClaw installs the pinned Deep Agents Code package in `/opt/venv`, uses managed launchers, and rejects unsupported runtime paths such as unmanaged MCP autoloading, nested sandbox providers, and alternate model routes. |
 | Filesystem policy | You define read-only and read-write paths in policy YAML. | NemoClaw defines a targeted layout: system paths are read-only, `/sandbox` and `/tmp` are writable, and Deep Agents state lives under `/sandbox/.deepagents`. |
 | Inference setup | You configure OpenShell inference routing and Deep Agents provider settings manually. | NemoClaw validates the selected provider from the host, configures the OpenShell route, and writes `/sandbox/.deepagents/config.toml` for the managed OpenAI-compatible path. |
-| Optional integrations | You decide how web search, MCP, tracing, and other integrations enter the sandbox. | NemoClaw supports a maintained MCP projection and opt-in Tavily policy path, while keeping LangSmith and OpenTelemetry tracing disabled for the managed harness. |
+| Managed MCP | You decide how MCP servers enter the sandbox and how they receive credentials. | NemoClaw manages authenticated HTTPS Streamable HTTP MCP server lifecycle, ownership records, policy, credential placeholders, and the Deep Agents MCP projection through host-side commands. |
+| Optional integrations | You decide how web search, tracing, and other integrations enter the sandbox. | NemoClaw supports an explicit Tavily policy and credential path plus opt-in bounded trace export to an operator-managed host collector. Native LangSmith tracing and ambient OpenTelemetry exporter configuration remain disabled inside the sandbox. |
 | Blueprint versioning | No NemoClaw blueprint; your image tag is whatever you built locally. | NemoClaw downloads the blueprint artifact, checks version compatibility, and verifies its digest before applying. |
-| State migration | Not included unless you build it. | NemoClaw preserves manifest-declared Deep Agents state and omits credential-bearing user files from snapshots and rebuilds. |
+| Lifecycle state | Not included unless you build it. | NemoClaw preserves manifest-declared Deep Agents state and omits credential-bearing user files from snapshots and rebuilds. |
+| Host readiness and operations | You inspect host prerequisites and operate OpenShell resources directly. | NemoClaw provides read-only host readiness reporting, sandbox status and logs, recovery guidance, rebuild, snapshot, restore, and uninstall workflows. |
 
 ## When to Use Which
 
@@ -90,7 +92,7 @@ Use the following table to choose NemoClaw or custom OpenShell integration.
 |-----------|--------|
 | You want Deep Agents with NVIDIA defaults, managed inference routing, and the documented install and onboard flow. | NemoClaw (`nemo-deepagents`) |
 | You need maximum flexibility for custom images, a layout that does not match the NemoClaw Deep Agents blueprint, or an unsupported Deep Agents extension path. | OpenShell with your own integration |
-| You are standardizing on a managed terminal coding agent with sandbox policy and host-owned credentials. | NemoClaw (`nemo-deepagents`) |
+| You are standardizing on a managed terminal coding agent with sandbox policy and OpenShell-managed credentials. | NemoClaw (`nemo-deepagents`) |
 | You are building internal platform abstractions where the NemoClaw CLI or blueprint is not the right fit. | OpenShell and your orchestration |
 
 ## Related Topics
@@ -98,6 +100,9 @@ Use the following table to choose NemoClaw or custom OpenShell integration.
 - [Overview](overview) defines NemoClaw's capabilities, benefits, and use cases.
 - [Architecture Overview](how-it-works) describes how NemoClaw runs, the blueprint, sandbox creation, routing, and protection layers for Deep Agents.
 - [Architecture Details](../reference/architecture) describes the Deep Agents blueprint, file layout, policy paths, and managed runtime internals.
+- [Platform Support](../reference/platform-support) lists current support status and limitations.
+- [About Managed MCP Servers](../manage-sandboxes/mcp-servers/about-managed-mcp-servers) explains the managed MCP security and lifecycle boundary.
+- [Understand Deep Agents Trace Export](../monitoring/understand-deepagents-trace-export) explains the managed trace data and receiver trust boundaries.
 - [Quickstart with Deep Agents](../get-started/quickstart) installs NemoClaw and launches your first Deep Agents sandbox.
 - [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) explains provider choices and the `inference.local` route.
 - [Deep Agents Code overview](https://docs.langchain.com/oss/python/deepagents/code/overview) explains upstream `dcode` capabilities and commands.

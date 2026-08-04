@@ -509,7 +509,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
       "The first attempt requires the triggering actor to have current `maintain` or `admin` access.",
     );
     expect(mergeGate).toContain(
-      "Immediately before dispatch, it confirms that the PR SHA, base SHA, head repository, and coordination identity still match.",
+      "Immediately before dispatch, it confirms that the PR SHA, base SHA, head repository, and required-check identity still match.",
     );
     expect(mergeGate).toContain("Approval cannot record success by itself.");
     expect(salvage).toContain("`headRepository.nameWithOwner` is `NVIDIA/NemoClaw`");

@@ -20,6 +20,30 @@ set -euo pipefail
 # SECURITY: Lock down PATH before resolving or sourcing root startup helpers.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+# managed-entrypoint-env-wrapper begin
+_NEMOCLAW_ENTRYPOINT_ENV_WRAPPER="/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh"
+if [ ! -f "$_NEMOCLAW_ENTRYPOINT_ENV_WRAPPER" ]; then
+  _HERMES_ENTRYPOINT_SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER="${_HERMES_ENTRYPOINT_SOURCE_DIR}/../../scripts/lib/entrypoint-env-wrapper.sh"
+  unset _HERMES_ENTRYPOINT_SOURCE_DIR
+fi
+if [ ! -f "$_NEMOCLAW_ENTRYPOINT_ENV_WRAPPER" ]; then
+  printf '%s\n' '[SECURITY] Required entrypoint env-wrapper normalizer is missing.' >&2
+  exit 1
+fi
+# shellcheck source=scripts/lib/entrypoint-env-wrapper.sh
+source "$_NEMOCLAW_ENTRYPOINT_ENV_WRAPPER"
+nemoclaw_normalize_entrypoint_env_wrapper "$@"
+if [ "$NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC" -eq 0 ]; then
+  set --
+else
+  set -- "${NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV[@]}"
+fi
+unset NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGC NEMOCLAW_ENTRYPOINT_NORMALIZED_ARGV \
+  _NEMOCLAW_ENTRYPOINT_ENV_WRAPPER
+unset -f nemoclaw_normalize_entrypoint_env_wrapper
+# managed-entrypoint-env-wrapper end
+
 # ── Source shared sandbox initialisation library ─────────────────
 # Single source of truth for security-sensitive primitives shared with
 # scripts/nemoclaw-start.sh (OpenClaw). Ref: #2277
@@ -102,33 +126,6 @@ exec > >(tee -a "$_START_LOG") 2> >(tee -a "$_START_LOG" >&2)
 # ── Drop unnecessary Linux capabilities (shared) ────────────────
 drop_capabilities /usr/local/bin/nemoclaw-start "$@"
 
-# Normalize the self-wrapper bootstrap (same as OpenClaw entrypoint).
-if [ "${1:-}" = "env" ]; then
-  _raw_args=("$@")
-  _self_wrapper_index=""
-  for ((i = 1; i < ${#_raw_args[@]}; i += 1)); do
-    case "${_raw_args[$i]}" in
-      *=*) ;;
-      nemoclaw-start | /usr/local/bin/nemoclaw-start)
-        _self_wrapper_index="$i"
-        break
-        ;;
-      *)
-        break
-        ;;
-    esac
-  done
-  if [ -n "$_self_wrapper_index" ]; then
-    for ((i = 1; i < _self_wrapper_index; i += 1)); do
-      export "${_raw_args[$i]}"
-    done
-    set -- "${_raw_args[@]:$((_self_wrapper_index + 1))}"
-  fi
-fi
-
-case "${1:-}" in
-  nemoclaw-start | /usr/local/bin/nemoclaw-start) shift ;;
-esac
 NEMOCLAW_CMD=("$@")
 
 _chat_ui_url_port() {
@@ -1728,7 +1725,9 @@ merge_corporate_proxy_ca() {
   export _NEMOCLAW_CORPORATE_CA_MERGED=1
   echo "[nemoclaw] merged corporate proxy CA into sandbox trust bundle (#6210)" >&2
 }
-merge_corporate_proxy_ca
+if [ "${NEMOCLAW_MANAGED_STARTUP_APPLIED:-0}" != "1" ]; then
+  merge_corporate_proxy_ca
+fi
 
 # OpenShell injects SSL_CERT_FILE/CURL_CA_BUNDLE for its L7 proxy CA. Persist
 # them into connect-session shells so Python Slack probes and Hermes tools trust
@@ -2005,6 +2004,7 @@ refresh_hermes_runtime_config_hashes() {
 inspect_hermes_mcp_integrity() {
   local hash_file="${1:-}"
   local guard_status
+  local -a guard_command
   [ -n "$hash_file" ] || {
     if [ "$(id -u)" -eq 0 ]; then
       hash_file="$HERMES_HASH_FILE"
@@ -2017,11 +2017,20 @@ inspect_hermes_mcp_integrity() {
   # exact-parent proof used by --startup-owner. State is returned only through
   # the kernel-owned exit status: 0=current, 10=pending, anything else=failure.
   # This avoids a same-UID writable result file or ambiguous shell byte parsing.
-  if "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mcp-integrity \
-    --hermes-dir "$HERMES_DIR" \
-    --hash-file "$hash_file" \
-    --startup-owner \
-    --mcp-state-exit-code >/dev/null; then
+  guard_command=(
+    "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mcp-integrity
+    --hermes-dir "$HERMES_DIR"
+    --hash-file "$hash_file"
+    --startup-owner
+    --mcp-state-exit-code
+  )
+  if [ "$(id -u)" -eq 0 ]; then
+    # Hardened managed runtimes can remove root's DAC override before startup.
+    # Read the sandbox-owned mutable config through its owning identity; the
+    # step-down exec still leaves the guard as the startup owner's direct child.
+    guard_command=("${STEP_DOWN_PREFIX_SANDBOX[@]}" "${guard_command[@]}")
+  fi
+  if "${guard_command[@]}" >/dev/null; then
     guard_status=0
   else
     guard_status=$?
