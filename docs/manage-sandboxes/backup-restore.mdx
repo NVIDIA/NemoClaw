@@ -91,8 +91,14 @@ NemoClaw computes versions (`v1`, `v2`, through `vN`) from timestamp order, so `
 `snapshot create` requires shields to be down.
 Snapshot creation and restore share the per-sandbox transition lock with the shields auto-restore timer.
 
-If a timed shields-down window expires during snapshot work, auto-restore can interrupt the operation and restore lockdown instead of allowing state or policy changes to continue past the deadline.
-Retry the snapshot in a new shields-down window if the deadline interrupts it.
+If a timed shields-down window expires during snapshot work, auto-restore closes the per-sandbox lifecycle deadline gate.
+The gate blocks new mutations and waits for the recorded live owner to release its exact lock generation.
+NemoClaw does not signal the snapshot process.
+If ownership becomes ambiguous, NemoClaw attempts to record durable containment and reports exact-generation recovery guidance.
+If the containment commit fails, NemoClaw retains any exact lifecycle and deadline gates it already owns.
+A state-directory failure that prevented gate publication also prevents normal mutation-lock acquisition.
+Correct the reported state-directory write failure, then run `$$nemoclaw <name> shields status` to resume recovery or receive exact-generation recovery guidance.
+If the command reports exact-generation recovery guidance, stop all NemoClaw processes for the sandbox, then follow that guidance before you retry the snapshot.
 
 Tag a snapshot with a human-readable label:
 
@@ -207,11 +213,12 @@ If a registered docker-driver sandbox's container is stopped, `backup-all` start
 If the container cannot be returned to the stopped state, the backup run fails and reports that the container was left running.
 If a sandbox is not running and its container cannot be started this way, start the sandbox or its container and rerun `$$nemoclaw backup-all`.
 
-When Shields are UP for an eligible sandbox, `backup-all` opens a 30-minute shields-down window before it creates that sandbox's snapshot.
+For each eligible sandbox, `backup-all` holds one lifecycle transaction through the complete backup.
+Within that transaction, it starts a stopped container when required, opens a 30-minute shields-down window when the sandbox starts with Shields up, copies sandbox state, restores the previous Shields state, and returns any container it started to the stopped state.
 A sandbox that starts with Shields down remains down.
-An unlock failure marks that sandbox as failed, and `backup-all` continues with the next sandbox.
-Because the timer does not defer to the backup process, it can restore lockdown when the 30-minute deadline expires.
-NemoClaw always attempts to restore Shields lockdown before it processes the next sandbox, including when the backup fails.
+If the timer expires during the transaction, the deadline gate blocks new mutations and waits for the exact backup owner to finish without signaling it.
+An initial lock or unlock failure marks that sandbox as failed, and `backup-all` continues with the next sandbox.
+NemoClaw attempts to restore the previous Shields state before it processes the next sandbox, including when the backup fails.
 If lockdown cannot be restored, `backup-all` stops and does not process the remaining sandboxes.
 Correct the reported issue, run the printed `$$nemoclaw <name> shields up` command, and rerun `$$nemoclaw backup-all`.
 
