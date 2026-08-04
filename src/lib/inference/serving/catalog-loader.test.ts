@@ -135,11 +135,15 @@ describe("managed inference catalog loader", () => {
   it("retains registered host-local vLLM definitions (#8246)", () => {
     const servingCatalog = loadServingCatalog();
     const sourceRecipe = servingCatalog.recipes.find(({ spec }) => spec.backend === "vllm")!;
-    if (sourceRecipe.spec.backend !== "vllm") throw new Error("vLLM recipe is missing");
+    expect(sourceRecipe).toBeDefined();
+    const sourceSpec = sourceRecipe.spec as Exclude<
+      ServingRecipe["spec"],
+      { backend: "install-llama-cpp" }
+    >;
     const sourcePreset = servingCatalog.presets.find(
       ({ spec }) => spec.plan.recipeRef === sourceRecipe.metadata.id,
     )!;
-    const { bindings: _bindings, ...hostLocalSpec } = sourceRecipe.spec;
+    const { bindings: _bindings, ...hostLocalSpec } = sourceSpec;
     const execution = {
       materializerRef: HOST_LOCAL_VLLM_MATERIALIZER_REF,
       lifecycleRef: HOST_LOCAL_VLLM_LIFECYCLE_REF,
@@ -150,7 +154,7 @@ describe("managed inference catalog loader", () => {
       spec: {
         ...hostLocalSpec,
         backend: "vllm",
-        model: { ...sourceRecipe.spec.model, preparation: { ref: "none/v1" } },
+        model: { ...sourceSpec.model, preparation: { ref: "none/v1" } },
         execution,
       },
     } satisfies ServingRecipe;

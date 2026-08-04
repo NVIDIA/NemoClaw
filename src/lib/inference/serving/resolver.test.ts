@@ -64,10 +64,8 @@ function shippedCompiledRecipe(
 
 function shippedRecipe(catalog = shippedCatalog()): ManagedInferenceServingRecipe {
   const recipe = shippedCompiledRecipe(catalog);
-  if (!isManagedClusterInferenceServingRecipe(recipe)) {
-    throw new Error("managed-cluster fixture recipe is missing");
-  }
-  return recipe;
+  expect(isManagedClusterInferenceServingRecipe(recipe)).toBe(true);
+  return recipe as ManagedInferenceServingRecipe;
 }
 
 function shippedFixtureCatalog(): CompiledManagedInferenceCatalog {
