@@ -129,6 +129,14 @@ export function requireSingleReviewedDockerfileRunCommand(
 
   for (const instruction of dockerfileInstructions(source)) {
     if (instruction.keyword !== "RUN") continue;
+    const containsCommand = instruction.body.includes(command);
+    const hasUnsupportedShellConstruct = ["$(", "${", "`"].some((token) =>
+      instruction.body.includes(token),
+    );
+    if (containsCommand && hasUnsupportedShellConstruct) {
+      unreviewedInstructions += 1;
+      continue;
+    }
     const commandIndexes = unquotedTextIndexes(instruction.body, command);
     if (commandIndexes.length === 0) continue;
     if (

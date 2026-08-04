@@ -62,6 +62,18 @@ describe("Dockerfile RUN command discovery", () => {
   });
 
   it.each([
+    ["a command substitution", `RUN printf '%s\\n' "$(${invocation})"\n`],
+    ["backticks", `RUN printf '%s\\n' \`${invocation}\`\n`],
+    ["a parameter expansion", `RUN : \${#PATH}; ${invocation}\n`],
+  ])("rejects an extra invocation hidden by %s", (_label, hiddenInvocation) => {
+    const source = [`RUN ${invocation}`, hiddenInvocation].join("\n");
+
+    expect(() =>
+      requireSingleReviewedDockerfileRunCommand(source, command, requiredArguments),
+    ).toThrow("unreviewed RUN instruction");
+  });
+
+  it.each([
     ["a short-circuit branch", `RUN false && ${invocation}\n`],
     ["an uncalled function", `RUN patch() { ${invocation}; }; true\n`],
     ["an unreachable conditional branch", `RUN if false; then ${invocation}; fi\n`],
