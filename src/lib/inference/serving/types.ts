@@ -115,6 +115,28 @@ export interface ManagedInferenceServingRecipe {
   };
 }
 
+/** A single-host vLLM recipe, with cluster-only inputs unavailable by construction. */
+export interface HostLocalInferenceServingRecipe
+  extends Omit<ManagedInferenceServingRecipe, "spec"> {
+  readonly spec: Omit<
+    ManagedInferenceServingRecipe["spec"],
+    "backend" | "bindings" | "execution"
+  > & {
+    readonly backend: "vllm";
+    readonly bindings: never;
+    readonly execution: {
+      readonly materializerRef: "vllm.host-local/v1";
+      readonly lifecycleRef: "vllm.host-local.lifecycle/v1";
+      readonly topologyBinding: never;
+      readonly nodeCount: never;
+      readonly tensorParallelSize: never;
+      readonly pipelineParallelSize: never;
+      readonly distributedExecutorBackend: never;
+      readonly rendezvousPort: never;
+    };
+  };
+}
+
 interface ServingRecipeEnvelope {
   readonly apiVersion: "nemoclaw.nvidia.com/managed-inference/v1";
   readonly kind: "ServingRecipe";
@@ -513,7 +535,7 @@ export interface ResolvedHostLocalInferenceSelection {
   readonly presetDigest: string;
   readonly recipeDigest: string;
   readonly preset: ManagedInferenceServingPreset;
-  readonly recipe: ManagedInferenceServingRecipe;
+  readonly recipe: HostLocalInferenceServingRecipe;
 }
 
 export type ManagedInferenceResolution<TTopologyOutput = unknown> =

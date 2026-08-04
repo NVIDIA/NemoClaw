@@ -432,8 +432,7 @@ export async function tryInstallManagedClusterManagedVllm(
       return resolutionFailure(previewResolution, detected.selectionIntent, true, deps);
     }
     if (!("topologyQualification" in previewResolution)) {
-      deps.error("  Managed-cluster vLLM setup stopped: selected profile is host-local.");
-      return { kind: "handled", result: { ok: false } };
+      return { kind: "not-selected" };
     }
     const previewAdmission = selectedRecipeAdmissionFailure(detected, previewResolution.recipe);
     if (previewAdmission) {

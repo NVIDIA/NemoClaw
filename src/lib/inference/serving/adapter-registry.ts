@@ -7,6 +7,7 @@ import {
   MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
 } from "./managed-cluster-topology.js";
 import type {
+  HostLocalInferenceServingRecipe,
   ManagedInferenceServingRecipe,
   ManagedInferenceTopologyQualification,
   ServingCatalogRegistries,
@@ -253,13 +254,13 @@ function validateManagedClusterLifecycleRecipe(
 }
 
 function validateHostLocalVllmMaterializerRecipe(
-  recipe: ManagedInferenceServingRecipe,
+  recipe: HostLocalInferenceServingRecipe,
 ): string | undefined {
   if (recipe.spec.backend !== "vllm") return "host-local vLLM materializer requires backend vllm";
   if (recipe.spec.execution.materializerRef !== HOST_LOCAL_VLLM_MATERIALIZER_REF) {
     return "recipe does not select the host-local vLLM materializer";
   }
-  const execution = recipe.spec.execution as unknown as Record<string, unknown>;
+  const execution = recipe.spec.execution;
   if (
     execution.topologyBinding !== undefined ||
     execution.nodeCount !== undefined ||
@@ -270,11 +271,11 @@ function validateHostLocalVllmMaterializerRecipe(
   ) {
     return "host-local vLLM materializer does not accept distributed execution settings";
   }
-  const bindings = (recipe.spec as unknown as { readonly bindings?: unknown }).bindings;
-  if (bindings !== undefined && (!bindings || Object.keys(bindings as object).length > 0)) {
+  const bindings = recipe.spec.bindings;
+  if (bindings !== undefined) {
     return "host-local vLLM materializer does not accept topology bindings";
   }
-  const runtime = recipe.spec.runtime as unknown as Record<string, unknown>;
+  const runtime = recipe.spec.runtime;
   if (runtime.architecture !== "arm64") {
     return "host-local vLLM materializer requires an arm64 runtime";
   }
@@ -288,13 +289,19 @@ function validateHostLocalVllmMaterializerRecipe(
 }
 
 function validateHostLocalVllmLifecycleRecipe(
-  recipe: ManagedInferenceServingRecipe,
+  recipe: HostLocalInferenceServingRecipe,
 ): string | undefined {
   const materializerError = validateHostLocalVllmMaterializerRecipe(recipe);
   if (materializerError) return materializerError;
   return recipe.spec.execution.lifecycleRef === HOST_LOCAL_VLLM_LIFECYCLE_REF
     ? undefined
     : "recipe does not select the host-local vLLM lifecycle";
+}
+
+export function isHostLocalInferenceServingRecipe(
+  recipe: ManagedInferenceServingRecipe,
+): recipe is HostLocalInferenceServingRecipe {
+  return recipe.spec.execution.materializerRef === HOST_LOCAL_VLLM_MATERIALIZER_REF;
 }
 
 interface SnapshotPreparationInput {
@@ -434,7 +441,10 @@ const MATERIALIZER_DESCRIPTORS = [
     ref: HOST_LOCAL_VLLM_MATERIALIZER_REF,
     backend: "vllm",
     outputPlanSchema: "nemoclaw.nvidia.com/host-local-vllm-plan/v1",
-    validateRecipe: validateHostLocalVllmMaterializerRecipe,
+    validateRecipe: (recipe) =>
+      isHostLocalInferenceServingRecipe(recipe)
+        ? validateHostLocalVllmMaterializerRecipe(recipe)
+        : "recipe does not select the host-local vLLM materializer",
   },
 ] as const satisfies readonly ManagedInferenceMaterializerDescriptor[];
 
@@ -453,7 +463,10 @@ const LIFECYCLE_DESCRIPTORS = [
     acceptedMaterializerRefs: [HOST_LOCAL_VLLM_MATERIALIZER_REF],
     acceptedPlanSchemas: ["nemoclaw.nvidia.com/host-local-vllm-plan/v1"],
     secretHandlePermissions: [],
-    validateRecipe: validateHostLocalVllmLifecycleRecipe,
+    validateRecipe: (recipe) =>
+      isHostLocalInferenceServingRecipe(recipe)
+        ? validateHostLocalVllmLifecycleRecipe(recipe)
+        : "recipe does not select the host-local vLLM lifecycle",
   },
 ] as const satisfies readonly ManagedInferenceLifecycleDescriptor[];
 

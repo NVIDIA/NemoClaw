@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { HostLocalVllmSelectionResult } from "./serving/host-local-vllm-selection";
+
 const mocks = vi.hoisted(() => ({
   dockerCapture: vi.fn(),
   dockerForceRm: vi.fn(),
@@ -20,6 +22,9 @@ const mocks = vi.hoisted(() => ({
   measureDirectorySizeBytes: vi.fn(),
   probeDockerStorage: vi.fn(),
   probeHostStorage: vi.fn(),
+  resolveHostLocalVllmSelection: vi.fn<() => HostLocalVllmSelectionResult>(() => ({
+    kind: "not-selected",
+  })),
   runCapture: vi.fn(),
 }));
 
@@ -50,6 +55,14 @@ vi.mock("./vllm-storage", async (importOriginal) => {
     measureDirectorySizeBytes: mocks.measureDirectorySizeBytes,
     probeDockerStorage: mocks.probeDockerStorage,
     probeHostStorage: mocks.probeHostStorage,
+  };
+});
+
+vi.mock("./serving/vllm-managed-support", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./serving/vllm-managed-support")>();
+  return {
+    ...actual,
+    resolveHostLocalVllmSelection: mocks.resolveHostLocalVllmSelection,
   };
 });
 
@@ -93,6 +106,7 @@ beforeEach(() => {
       source: "Hugging Face cache",
     },
   });
+  mocks.resolveHostLocalVllmSelection.mockReturnValue({ kind: "not-selected" });
 });
 
 function currentHostIdentity(): string | null {
@@ -995,6 +1009,34 @@ describe("installVllm model resolution", () => {
     const summary = logSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
     expect(summary).not.toContain("Hugging Face download:");
     expect(summary).not.toContain("Hugging Face authentication is optional");
+  });
+
+  it("rejects a gated host-local preset before any Docker work", async () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
+    const gatedModel = {
+      ...profile.defaultModel,
+      id: "nvidia/gated-host-local-model",
+      gated: true,
+    };
+    mocks.resolveHostLocalVllmSelection.mockReturnValue({
+      kind: "selected",
+      profile: { ...profile, defaultModel: gatedModel },
+      model: gatedModel,
+      presetId: "spark.gated-host-local",
+      recipeId: "vllm.gated-host-local",
+    });
+
+    const result = await installVllm(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: false });
+    expect(mocks.runCapture).not.toHaveBeenCalled();
+    expect(mocks.dockerPullWithProgressWatchdog).not.toHaveBeenCalled();
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("gated on Hugging Face"));
   });
 
   it("guards the effective served model before any docker work (#6315)", async () => {

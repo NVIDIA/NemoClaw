@@ -7,6 +7,7 @@ import {
   getManagedInferenceMaterializerDescriptor,
   getManagedInferenceRecipeRegistrationError,
   getManagedInferenceTopologyQualificationDescriptor,
+  isHostLocalInferenceServingRecipe,
 } from "./adapter-registry.js";
 import { immutableManagedInferenceCopy, managedInferenceDigest } from "./catalog-integrity.js";
 import { loadManagedInferenceCatalog } from "./catalog-loader.js";
@@ -411,7 +412,15 @@ function selectedResolution<TOutput>(
     preset: candidate.preset,
     recipe: candidate.recipe,
   } as const;
-  return topologyQualification ? { ...common, topologyQualification } : common;
+  if (topologyQualification) return { ...common, topologyQualification };
+  if (isHostLocalInferenceServingRecipe(common.recipe)) {
+    return { ...common, recipe: common.recipe };
+  }
+  return {
+    outcome: "rejected",
+    code: "invalid-topology",
+    message: `Preset ${common.preset.metadata.id} selected a topology-dependent recipe without a topology qualification.`,
+  };
 }
 
 export function resolveManagedInferenceServing<TOutput>(

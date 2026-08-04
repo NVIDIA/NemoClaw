@@ -45,6 +45,7 @@ import {
   tryInstallManagedClusterManagedVllm,
 } from "./serving/vllm-managed-support";
 import {
+  assertGatedModelAccess,
   buildVllmServeCommand,
   NEMOTRON_ULTRA_DUAL_STATION_IMAGE,
   NEMOTRON_ULTRA_STATION_IMAGE,
@@ -1704,6 +1705,12 @@ async function runVllmInstall(
     dualStationPlan = capability.plan;
     peerModelSnapshot = capability.peerModelSnapshot;
   } else if (hostLocalSelection) {
+    try {
+      assertGatedModelAccess(hostLocalSelection.model);
+    } catch (error) {
+      console.error(`  vLLM install failed: ${(error as Error).message}`);
+      return { ok: false };
+    }
     resolved = { model: hostLocalSelection.model, source: "default" };
   } else {
     resolved = await resolveVllmInstallModel(profile, {
