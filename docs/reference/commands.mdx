@@ -1956,7 +1956,7 @@ If the preset is unknown or not currently applied, the command exits non-zero wi
 
 Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox.
 
-### `$$nemoclaw <name> policy exclude`
+### `$$nemoclaw <name> policy exclude <key>`
 
 Persistently exclude one exact entry from the agent baseline policy after previewing the egress and support impact that the change removes.
 The preview names the supported features that may stop working.
@@ -1972,20 +1972,34 @@ $$nemoclaw my-assistant policy exclude nous_research --dry-run
 $$nemoclaw my-assistant policy exclude nous_research --force
 ```
 
-When a release changes an excluded entry, first run `policy restore <key>` to clear the stale record, preview the current scope with `policy exclude <key> --dry-run`, and then explicitly exclude it again if you still accept the support impact.
-When a release removes the entry, run `policy restore <key>` only to clear the stale exclusion record; there is no replacement scope to review or re-approve.
+When a release changes an excluded entry, first run `$$nemoclaw <name> policy restore <key> --dry-run` to preview the current baseline egress that restoration would allow again.
+After you review the output, run `$$nemoclaw <name> policy restore <key> --force` to allow that egress again and clear the stale exclusion record.
+Then preview the current exclusion scope with `$$nemoclaw <name> policy exclude <key> --dry-run` and reapply it with `$$nemoclaw <name> policy exclude <key> --force` only if you still accept the support impact.
+When a release removes the entry, first run `$$nemoclaw <name> policy restore <key> --dry-run` to confirm that restoration will clear only the stale exclusion record.
+After you review the output, run `$$nemoclaw <name> policy restore <key> --force`; there is no replacement scope to review or approve.
 
-### `$$nemoclaw <name> policy restore`
+### `$$nemoclaw <name> policy restore <key>`
 
 Restore a previously excluded entry from the current agent baseline and clear its durable exclusion record.
-Use `--dry-run` to preview the egress that would be restored.
+When the current baseline still defines the entry, `--dry-run` lists the egress that restoration would allow again.
+After you review the output, `--force` allows that egress again and clears the exclusion record.
+When the baseline no longer defines the entry, `--dry-run` states that restoration will clear only the stale exclusion record.
+After you review the output, `--force` clears that record without changing live egress.
+Both paths require explicit acknowledgement unless you use `--dry-run`; use `--force` or `--yes` for non-interactive acknowledgement.
 If a restore is interrupted, NemoClaw finalizes it only when the durable exclusion still exactly matches the staged exclusion and the current release baseline still exactly matches the journaled live target.
 If either value changed or the current baseline is unreadable, the journal remains in `repair required` state so you can inspect and re-review the current scope instead of silently accepting a different entry.
 
 ```bash
 $$nemoclaw my-assistant policy restore nous_research --dry-run
-$$nemoclaw my-assistant policy restore nous_research
+$$nemoclaw my-assistant policy restore nous_research --force
 ```
+
+The restore command accepts these flags:
+
+| Flag | Description |
+|------|-------------|
+| `--yes`, `-y`, `--force` | Skip the confirmation prompt |
+| `--dry-run` | Preview the egress restoration or stale-record cleanup without applying changes |
 
 ### `$$nemoclaw <name> policy explain`
 
