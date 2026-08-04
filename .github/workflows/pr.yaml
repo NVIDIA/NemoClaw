@@ -76,7 +76,7 @@ jobs:
           [ "$HADOLINT_SHA256" = "$ACTUAL" ] || { echo "::error::hadolint checksum mismatch"; exit 1; }
           chmod +x /usr/local/bin/hadolint
 
-      - name: Select checked-out merge base for docs-only checks
+      - name: Record pull request base SHA for docs-only checks
         shell: bash
         run: |
           DOCS_ONLY_FROM_REF="${{ github.event.pull_request.base.sha }}"
