@@ -876,7 +876,7 @@ Connect to a sandbox and start its agent in one host-side command.
 Use it instead of running `$$nemoclaw <name> connect` and then typing the agent command inside the sandbox.
 
 `launch` runs the same preflight as [`$$nemoclaw <name> connect`](#$$nemoclaw-name-connect), including the readiness wait, in-sandbox agent process recovery, and inference-route reconciliation.
-It runs every check that `connect` runs.
+It runs every check in that shared preflight.
 After the preflight, `launch` starts the sandbox's agent in your terminal instead of opening a sandbox shell.
 
 The agent command comes from the sandbox's agent manifest.
