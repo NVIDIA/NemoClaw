@@ -217,6 +217,9 @@ describe("onboard machine lifecycle traces (#6225)", () => {
     await runtime.start({ resumed: true });
     const session = await runtime.session();
     const journal = bindJournaledRecreate(session, "my-assistant", "openclaw", updateSession);
+    updateSession((current) => {
+      current.checkpoint = session.checkpoint;
+    });
     const { calls, deps } = createDeps({
       getSandboxReuseState: () => "not_ready",
       getSandboxRecreateObservation: journal.observe,
