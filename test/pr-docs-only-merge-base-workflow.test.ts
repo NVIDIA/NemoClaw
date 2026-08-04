@@ -17,8 +17,8 @@ const workflow = readYaml<PullRequestWorkflow>(".github/workflows/pr.yaml");
 
 function requiredStep(job: WorkflowJob, name: string): WorkflowStep {
   const step = job.steps?.find((candidate) => candidate.name === name);
-  if (!step) throw new Error(`Missing workflow step: ${name}`);
-  return step;
+  expect(step, `Missing workflow step: ${name}`).toBeDefined();
+  return step!;
 }
 
 describe("pull request docs-only merge base", () => {
