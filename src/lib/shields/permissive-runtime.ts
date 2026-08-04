@@ -79,7 +79,8 @@ export interface PermissiveRuntimeDeps {
   ownedNetworkPolicyKeys: readonly string[];
   // Called when owned routes exist but the merge degraded to the static
   // policy, so the caller can say so instead of dropping them silently.
-  onDegraded?: (detail: string) => void;
+  // Receives the route keys that were lost.
+  onDegraded?: (detail: string, lostKeys: readonly string[]) => void;
 }
 
 export function buildRuntimePermissivePolicy(
@@ -94,7 +95,7 @@ export function buildRuntimePermissivePolicy(
 
   // Report a degrade only when there was something owned to lose.
   const degrade = (detail: string): string => {
-    if (liveNetworkNames.length > 0) deps.onDegraded?.(detail);
+    if (liveNetworkNames.length > 0) deps.onDegraded?.(detail, liveNetworkNames);
     return basePermissivePath;
   };
 

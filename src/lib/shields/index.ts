@@ -2890,11 +2890,16 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       livePolicyYaml: policyYaml,
       readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
       ownedNetworkPolicyKeys: registeredNetworkPolicyKeys(sandboxName),
-      onDegraded: (detail) => {
+      onDegraded: (detail: string, lostKeys: readonly string[]) => {
         console.warn(
-          `  Warning: ${detail}, so registered network routes were not carried into the permissive policy.`,
+          `  Warning: ${detail}, so these registered network routes were not carried into the applied policy: ${lostKeys.join(", ")}.`,
         );
-        console.warn(`  Re-apply them with \`${CLI_NAME} ${sandboxName} mcp restart\`.`);
+        // A registered route is either a generated MCP bridge policy or a
+        // custom preset the operator added, and they are restored by
+        // different commands.
+        console.warn(
+          `  Re-apply the owning policy: \`${CLI_NAME} ${sandboxName} mcp restart <server>\` for a managed MCP server, or \`${CLI_NAME} ${sandboxName} policy add --from-file <path>\` for a custom preset.`,
+        );
       },
     });
     policyFileIsTemp = policyFile !== basePath;

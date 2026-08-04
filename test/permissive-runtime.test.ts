@@ -411,12 +411,12 @@ describe("buildRuntimePermissivePolicy network routes (#7952)", () => {
         throw new Error("ENOENT");
       },
       ownedNetworkPolicyKeys: [MCP_KEY],
-      onDegraded: (detail) => degraded.push(detail),
+      onDegraded: (detail, lostKeys) => degraded.push(`${detail}: ${lostKeys.join(",")}`),
     });
 
     // Degrading to the static policy is deliberate; going silent is not.
     expect(out).toBe(basePath);
-    expect(degraded).toEqual(["the permissive baseline could not be read"]);
+    expect(degraded).toEqual([`the permissive baseline could not be read: ${MCP_KEY}`]);
   });
 
   it("reports the loss when the merged policy cannot be written (#7952)", () => {
@@ -431,11 +431,11 @@ describe("buildRuntimePermissivePolicy network routes (#7952)", () => {
       writeTempPolicy: () => {
         throw new Error("ENOSPC");
       },
-      onDegraded: (detail) => degraded.push(detail),
+      onDegraded: (detail, lostKeys) => degraded.push(`${detail}: ${lostKeys.join(",")}`),
     });
 
     expect(out).toBe(basePath);
-    expect(degraded).toEqual(["the merged policy could not be written"]);
+    expect(degraded).toEqual([`the merged policy could not be written: ${MCP_KEY}`]);
   });
 
   it("stays quiet when a degrade loses no owned route (#7952)", () => {
@@ -454,6 +454,7 @@ describe("buildRuntimePermissivePolicy network routes (#7952)", () => {
       ownedNetworkPolicyKeys: [],
       onDegraded: (detail) => degraded.push(detail),
     });
+    // Nothing owned was at stake, so there is nothing to warn about.
 
     expect(out).toBe(basePath);
     expect(degraded).toEqual([]);
