@@ -79,6 +79,41 @@ function loadTargetSession(target: GatewayTeardownTarget, env: NodeJS.ProcessEnv
 }
 
 /**
+ * Raised when authority cannot be revalidated for the exact gateway.
+ *
+ * A distinct type so command boundaries can recognise this refusal without
+ * matching on message text. Three callers (rebuild, `onboard
+ * --recreate-sandbox`, and final-sandbox gateway cleanup) previously let the
+ * plain `Error` escape, which crashed the CLI with a Node stack trace and — as
+ * every sanctioned recovery path hits one of them — left no way out at all
+ * (#8103).
+ */
+export class GatewayAuthorityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GatewayAuthorityError";
+  }
+}
+
+/**
+ * Render an authority-revalidation refusal for a command boundary.
+ *
+ * Single source of truth for this wording; `credentialsGatewayAuthorityFailureLines`
+ * already reported the same refusal this way, so the remaining callers reuse it
+ * rather than growing a second phrasing of the same contract. The remedy line
+ * stays binary-agnostic so this module does not take a branding dependency that
+ * the source-architecture budget counts against every consumer.
+ */
+export function gatewayAuthorityFailureLines(error: unknown, operation: string): string[] {
+  const detail = error instanceof Error ? error.message : String(error);
+  return [
+    `  Refusing ${operation} because the gateway lifecycle authority could not be revalidated.`,
+    `  ${detail}`,
+    "  Re-run onboarding to bind the current gateway authority before retrying.",
+  ];
+}
+
+/**
  * Resolve the current owner and revalidate checkpointed authority for the exact
  * gateway before rebuild, teardown, or provider credential mutation. A
  * declaration or recorded-owner change is an explicit migration. Only the
@@ -96,7 +131,7 @@ function resolveGatewayEffectAuthority(
         ? "sandbox rebuild"
         : "provider credential mutation";
   if (resolveGatewayName(target.gatewayPort) !== target.gatewayName) {
-    throw new Error(
+    throw new GatewayAuthorityError(
       `Refusing ${operation} for noncanonical target '${target.gatewayName}@${String(target.gatewayPort)}'.`,
     );
   }
@@ -122,14 +157,14 @@ function resolveGatewayEffectAuthority(
   const recordedDecision = session?.checkpoint?.gatewayAuthority;
   if (!recordedDecision || recordedDecision.kind === "unset") return resolved;
   if (recordedDecision.kind === "declined") {
-    throw new Error(
+    throw new GatewayAuthorityError(
       `Refusing ${operation} for '${target.gatewayName}': the onboarding checkpoint contains an invalid declined gateway authority.`,
     );
   }
 
   const recorded = gatewayOwnerFromCheckpoint(recordedDecision.value);
   if (recorded.gatewayName !== target.gatewayName || recorded.gatewayPort !== target.gatewayPort) {
-    throw new Error(
+    throw new GatewayAuthorityError(
       `Refusing ${operation} for '${target.gatewayName}@${String(target.gatewayPort)}': ` +
         `the recorded authority targets '${recorded.gatewayName}@${String(recorded.gatewayPort)}'.`,
     );
@@ -138,7 +173,7 @@ function resolveGatewayEffectAuthority(
   if (effect === "rebuild" && isManagedPackagedServiceMigration(recorded, resolved)) {
     return resolved;
   }
-  throw new Error(
+  throw new GatewayAuthorityError(
     "Gateway lifecycle authority changed since onboarding " +
       `(${describeGatewayOwnerForError(recorded)} -> ${describeGatewayOwnerForError(resolved)}). ` +
       `Changing authority requires a fresh onboarding run; ${operation} will not perform gateway effects.`,
