@@ -1163,6 +1163,15 @@ $$nemoclaw my-assistant shields down --timeout 5m --reason "maintenance"
 If `shields up` reports that the config remains unlocked or drifted, confirm that the sandbox is running and ready, then retry `$$nemoclaw <name> shields up`.
 If the retry still fails, rebuild a known-good baseline with `$$nemoclaw <name> rebuild --yes`.
 
+<AgentOnly variant="deepagents">
+
+A `CRITICAL` Deep Agents config-lock failure is not an ordinary unlocked or drifted result.
+The retry and rebuild guidance above does not apply to a `CRITICAL` Deep Agents config-lock diagnostic.
+Do not retry `shields up` or attempt an in-sandbox repair.
+Follow [Deep Agents Config Lock Failure Recovery](troubleshooting#deep-agents-config-lock-failure-recovery) to restore a trusted snapshot or recreate the sandbox before retrying.
+
+</AgentOnly>
+
 Host-side config and inference writes, snapshot mutation, sandbox destruction, and shields transitions serialize per sandbox.
 When a timed shields-down window reaches its deadline, auto-restore can interrupt the exact process tree holding that transition and restore lockdown.
 Retry an interrupted command in a new shields-down window.

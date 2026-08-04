@@ -3,6 +3,7 @@
 
 export {
   activateManagedBootstrapSequence,
+  enforceManagedBootstrapRecoveryForSandbox,
   finalizeManagedBootstrapSequence,
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   type ManagedBootstrapActivatedTransaction,
@@ -10,7 +11,12 @@ export {
   type ManagedBootstrapAuthorityStore,
   type ManagedBootstrapExpectedPlan,
   type ManagedBootstrapPreparedTransaction,
+  ManagedBootstrapRecoveryBlockedError,
+  type ManagedBootstrapRecoveryFailure,
+  type ManagedBootstrapRecoveryReceipt,
+  type ManagedBootstrapRecoveryReport,
   prepareManagedBootstrapSequence,
+  recoverManagedBootstrapTransactions,
 } from "./adapter";
 export {
   MANAGED_BOOTSTRAP_COMPLETION_FILE,

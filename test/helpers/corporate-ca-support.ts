@@ -283,9 +283,13 @@ export function runDockerfileCorporateCaDecode(
     // Redirect the fixed /tmp decode scratch path into the per-test dir so
     // concurrent test runs never collide.
     .replaceAll("/tmp/nemoclaw-corporate-ca.decoded", path.join(outDir, "decoded"))
-    // Root ownership requires root; the test only exercises the base64/cert
-    // guards, so chown to the current user keeps the shipped fail-fast `&&`
-    // chain intact while running unprivileged.
+    // Root ownership requires root. The contract test preserves the exact
+    // production command; this extracted-script test substitutes the current
+    // user and group so the certificate guards run unprivileged.
+    .replaceAll(
+      "install -d -o root -g root -m 0755",
+      'install -d -o "$(id -u)" -g "$(id -g)" -m 0755',
+    )
     .replaceAll("chown root:root", 'chown "$(id -u):$(id -g)"');
   const wrapper = path.join(outDir, "decode.sh");
   fs.writeFileSync(

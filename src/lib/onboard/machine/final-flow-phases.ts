@@ -18,7 +18,7 @@ import {
   handlePostVerifyState,
 } from "./handlers/finalization";
 import { handlePoliciesState, type PoliciesStateOptions } from "./handlers/policies";
-import { UnexpectedLiveOnboardFlowSliceStateError } from "./live-flow-slice";
+import { UnexpectedOnboardFlowSliceStateError } from "./flow-slice-error";
 import { createPhaseProgressReporter } from "./phase-progress";
 import type { OnboardStateResult } from "./result";
 import type { OnboardMachineRunnerRuntime, OnboardStateHandlerResult } from "./runner";
@@ -336,7 +336,7 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
   const durableEntry = await options.runtime.session();
   const allowedStates = [branchState, ...FINAL_FLOW_DOWNSTREAM_STATES] as const;
   if (!allowedStates.includes(durableEntry.machine.state as (typeof allowedStates)[number])) {
-    throw new UnexpectedLiveOnboardFlowSliceStateError(
+    throw new UnexpectedOnboardFlowSliceStateError(
       durableEntry.machine.state,
       [branchState],
       FINAL_FLOW_DOWNSTREAM_STATES,
