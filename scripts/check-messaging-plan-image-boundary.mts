@@ -28,7 +28,7 @@ export const TEAMS_SECRET_PLACEHOLDER = "openshell:resolve:env:MSTEAMS_APP_PASSW
 export const OPENCLAW_TEAMS_PACKAGE_SPEC = "npm:@openclaw/msteams@{{openclaw.version}}";
 export const OPENCLAW_TEAMS_PACKAGE_VERSION = "2026.7.1";
 export const HERMES_TEAMS_PACKAGE_SPEC = "microsoft-teams-apps==2.0.13.4";
-export const HERMES_AIOHTTP_PACKAGE_SPEC = "aiohttp==3.14.1";
+export const HERMES_AIOHTTP_PACKAGE_SPEC = "aiohttp==3.14.3";
 
 const PLAN_ENV_KEY = "NEMOCLAW_MESSAGING_PLAN_B64";
 const RUNTIME_PLAN_PATH = "/usr/local/share/nemoclaw/messaging-runtime-plan.json";
@@ -488,7 +488,7 @@ function assertHermesEvidence(runner: DockerRunner, image: string): void {
   if (
     !isObject(packageVersions) ||
     packageVersions["microsoft-teams-apps"] !== "2.0.13.4" ||
-    packageVersions.aiohttp !== "3.14.1"
+    packageVersions.aiohttp !== "3.14.3"
   ) {
     throw new Error(
       `Hermes package evidence must include ${HERMES_TEAMS_PACKAGE_SPEC} and ${HERMES_AIOHTTP_PACKAGE_SPEC}`,
