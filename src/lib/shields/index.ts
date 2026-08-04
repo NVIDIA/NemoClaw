@@ -95,6 +95,7 @@ const {
   applyStateDirLockMode,
   preflightStateDirLock,
   restoreStateDirLockPosture,
+  restoreStateDirStartupAccess,
 }: typeof import("./state-dir-lock") = require("./state-dir-lock");
 const {
   OPENCLAW_CONFIG_DIR,
@@ -2349,6 +2350,20 @@ function repairMutableConfigPerms(sandboxName: string): MutableConfigRepairResul
   );
 }
 
+function restoreLockedStateDirStartupAccess(sandboxName: string): void {
+  validateName(sandboxName, "sandbox name");
+  prepareExpiredAutoRestoreHostLockTakeover(sandboxName);
+  withTimerBoundShieldsMutationLock(sandboxName, "restore locked startup access", () => {
+    const posture = getShieldsPostureWithoutHostLock(sandboxName, true);
+    if (!posture.locked) return;
+    const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
+    const issues = restoreStateDirStartupAccess(stateDirLockExec(sandboxName), target.configDir);
+    if (issues.length > 0) {
+      throw new Error(`Locked startup access could not be restored: ${issues.join(", ")}`);
+    }
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Config lock — used by shields-up (opt-in lockdown), auto-restore timer,
 // and rollback
@@ -4215,6 +4230,7 @@ export {
   parseDuration,
   prepareAutoRestoreTransitionTakeover,
   repairMutableConfigPerms,
+  restoreLockedStateDirStartupAccess,
   resolvePersistedAutoRestoreTarget,
   shieldsDown,
   shieldsStatus,
