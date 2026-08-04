@@ -101,6 +101,10 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     ),
   },
   {
+    pattern: /(?:^|\/)scripts\/checks\/validate-managed-base-index\.sh$/,
+    testsToRun: runTests("test/validate-managed-base-index.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)scripts\/e2e\/sanitize-trace-timing\.py$/,
     testsToRun: runTests(
       "test/e2e/support/e2e-scorecard.test.ts",
