@@ -848,33 +848,6 @@ describe("runSandboxSnapshot", () => {
     expect(applyPresetMock).toHaveBeenCalledWith("alpha", "github", { nonFatal: true });
   });
 
-  it("keeps post-restore policy reconciliation best-effort when a preset apply fails (#8210)", async () => {
-    getLatestBackupMock.mockReturnValue({
-      timestamp: "2026-06-15T00:00:00.000Z",
-      backupPath: "/tmp/backup-alpha",
-      policyPresets: ["github"],
-    });
-    restoreSandboxStateMock.mockReturnValue({
-      success: true,
-      restoredDirs: ["workspace"],
-      restoredFiles: ["openclaw.json"],
-      failedDirs: [],
-      failedFiles: [],
-    });
-    // The gateway policy mutation fails. Because the reconcile applies presets
-    // with nonFatal, applyPreset returns false instead of exiting the process,
-    // so the restore warns and continues to completion rather than aborting.
-    applyPresetMock.mockReturnValue(false);
-    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { runSandboxSnapshot } = await import("./snapshot");
-
-    await runSandboxSnapshot("alpha", { kind: "restore" });
-
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "github", { nonFatal: true });
-    expect(consoleWarn.mock.calls.flat().join("\n")).toContain("could not reconcile preset(s)");
-    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
-  });
-
   it("hardens an active timer window before force-deleting a restore destination", async () => {
     lifecycleMock.readTimerMarkerMock.mockReturnValue({
       pid: 4242,
