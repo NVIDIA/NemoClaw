@@ -36,6 +36,7 @@ readonly TOOLKIT_VERSION="1.19.1"
 readonly STATION_PACKAGE_ARCH="arm64"
 readonly FACTORY_DKMS_VERSION="3.0.11-1ubuntu13"
 readonly TARGET_DKMS_VERSION="1:3.4.0-1ubuntu1"
+readonly DRIVER_PIN_PACKAGE_SPEC="nvidia-driver-pinning-610=610-2ubuntu1"
 # NemoClaw DGX Station maintainers own this allowlist. The qualified tuple below
 # binds each retained revision to the complete generic-Ubuntu package contract.
 # Update both only after requalification; remove an entry when runtime
@@ -64,7 +65,7 @@ PACKAGEKIT_WAS_ACTIVE=0
 
 readonly -a PACKAGE_SPECS=(
   "dkms=${TARGET_DKMS_VERSION}"
-  "nvidia-driver-pinning-610=610-2ubuntu1"
+  "${DRIVER_PIN_PACKAGE_SPEC}"
   "nvidia-driver-open=610.43.02-1ubuntu1"
   "containerd.io=2.2.6-1~ubuntu.24.04~noble"
   "docker-buildx-plugin=0.35.0-1~ubuntu.24.04~noble"
@@ -78,7 +79,7 @@ readonly -a PACKAGE_SPECS=(
 
 readonly -a RETAINED_DKMS_QUALIFIED_PACKAGE_SPECS=(
   "dkms=1:3.4.0-1ubuntu1"
-  "nvidia-driver-pinning-610=610-2ubuntu1"
+  "${DRIVER_PIN_PACKAGE_SPEC}"
   "nvidia-driver-open=610.43.02-1ubuntu1"
   "containerd.io=2.2.6-1~ubuntu.24.04~noble"
   "docker-buildx-plugin=0.35.0-1~ubuntu.24.04~noble"
@@ -1832,10 +1833,11 @@ configure_repositories() {
   info "repository_keys=verified"
 }
 
-collect_package_transaction_specs() {
+collect_remaining_package_transaction_specs() {
   local spec state
   PACKAGE_TRANSACTION_SPECS=()
   for spec in "${PACKAGE_SPECS[@]}"; do
+    [[ "$spec" == "$DRIVER_PIN_PACKAGE_SPEC" ]] && continue
     state="$(package_state "$spec")"
     case "$state" in
       missing | approved-transition) PACKAGE_TRANSACTION_SPECS+=("$spec") ;;
@@ -1843,8 +1845,6 @@ collect_package_transaction_specs() {
       *) fatal "Package transaction contains an unapproved prerequisite state: ${spec} (${state})" ;;
     esac
   done
-  ((${#PACKAGE_TRANSACTION_SPECS[@]} > 0)) \
-    || fatal "Package transaction has no missing or approved-transition prerequisites"
 }
 
 validate_package_availability() {
@@ -2110,28 +2110,64 @@ simulate_install() {
   info "apt_simulation=missing_only retained_packages=unchanged"
 }
 
+activate_driver_package_pin() {
+  local state
+  state="$(package_state "$DRIVER_PIN_PACKAGE_SPEC")"
+  case "$state" in
+    exact)
+      info "driver_package_pin=active package=${DRIVER_PIN_PACKAGE_SPEC}"
+      return 0
+      ;;
+    missing | approved-transition) ;;
+    *)
+      fatal "Driver package pin has an unapproved prerequisite state: ${DRIVER_PIN_PACKAGE_SPEC} (${state})"
+      ;;
+  esac
+
+  PACKAGE_TRANSACTION_SPECS=("$DRIVER_PIN_PACKAGE_SPEC")
+  validate_package_availability "$DRIVER_PIN_PACKAGE_SPEC"
+  create_apt_transaction_guard
+  assert_package_transaction_ready "Station driver package pin simulation"
+  simulate_install "$DRIVER_PIN_PACKAGE_SPEC"
+  assert_package_transaction_ready "Station driver package pin installation"
+  info "Installing the pinned Station driver package policy"
+  sudo env DEBIAN_FRONTEND=noninteractive LC_ALL=C \
+    apt-get install -y --no-install-recommends --no-remove \
+    -o "DPkg::Pre-Install-Pkgs::=${APT_TRANSACTION_HOOK}" \
+    -o "DPkg::Tools::options::/bin/bash::Version=3" \
+    "$DRIVER_PIN_PACKAGE_SPEC"
+  cleanup_apt_transaction_guard
+  check_dpkg_database_health
+  package_is_exact "$DRIVER_PIN_PACKAGE_SPEC" \
+    || fatal "Driver package pin did not reach the exact configured state: ${DRIVER_PIN_PACKAGE_SPEC}"
+  info "driver_package_pin=activated package=${DRIVER_PIN_PACKAGE_SPEC}"
+}
+
 install_packages() {
   quiesce_packagekit_for_transaction
   assert_package_transaction_ready "Station repository configuration"
   configure_repositories
   assert_package_transaction_ready "APT metadata refresh"
-  collect_package_transaction_specs
   info "Refreshing package metadata"
   sudo apt-get update
-  validate_package_availability "${PACKAGE_TRANSACTION_SPECS[@]}"
-  create_apt_transaction_guard
-  assert_package_transaction_ready "APT transaction simulation"
-  simulate_install "${PACKAGE_TRANSACTION_SPECS[@]}"
-  require_docker_restart_quiescence "Station prerequisite package installation"
-  assert_package_transaction_ready "Station prerequisite package installation"
-  info "Installing missing pinned Station prerequisites"
-  sudo env DEBIAN_FRONTEND=noninteractive LC_ALL=C \
-    apt-get install -y --no-install-recommends --no-remove \
-    -o "DPkg::Pre-Install-Pkgs::=${APT_TRANSACTION_HOOK}" \
-    -o "DPkg::Tools::options::/bin/bash::Version=3" \
-    "${PACKAGE_TRANSACTION_SPECS[@]}"
-  cleanup_apt_transaction_guard
-  check_dpkg_database_health
+  activate_driver_package_pin
+  collect_remaining_package_transaction_specs
+  if ((${#PACKAGE_TRANSACTION_SPECS[@]} > 0)); then
+    validate_package_availability "${PACKAGE_TRANSACTION_SPECS[@]}"
+    create_apt_transaction_guard
+    assert_package_transaction_ready "APT transaction simulation"
+    simulate_install "${PACKAGE_TRANSACTION_SPECS[@]}"
+    require_docker_restart_quiescence "Station prerequisite package installation"
+    assert_package_transaction_ready "Station prerequisite package installation"
+    info "Installing missing pinned Station prerequisites"
+    sudo env DEBIAN_FRONTEND=noninteractive LC_ALL=C \
+      apt-get install -y --no-install-recommends --no-remove \
+      -o "DPkg::Pre-Install-Pkgs::=${APT_TRANSACTION_HOOK}" \
+      -o "DPkg::Tools::options::/bin/bash::Version=3" \
+      "${PACKAGE_TRANSACTION_SPECS[@]}"
+    cleanup_apt_transaction_guard
+    check_dpkg_database_health
+  fi
 
   local spec
   for spec in "${PACKAGE_SPECS[@]}"; do
