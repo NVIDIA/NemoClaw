@@ -83,6 +83,8 @@ Only after that pair cleanup succeeds does NemoClaw start the remaining full-uni
 If validation or pair cleanup fails, uninstall exits nonzero and keeps the receipt so you can resolve the reported SSH, Docker, or peer-host error and retry.
 Pair cleanup can partially complete before an error, so inspect both Stations before retrying.
 When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state and preserves those shared host resources.
+A recorded sandbox that OpenShell reports as already removed leaves nothing to delete, so the scoped path reports it, finishes the remaining gateway cleanup, and exits `0`.
+A sandbox that OpenShell cannot reach or refuses to delete still leaves state behind, so uninstall keeps the selected gateway state for a retry and exits nonzero.
 This gateway-scoped path leaves the managed pair running and preserves its cleanup receipt and copied SSH binding, including when you pass `--destroy-user-data`.
 If the OpenShell command is unavailable or its gateway list cannot be read, uninstall cannot confirm that the selected gateway is the last one, so it uses the same scoped path and preserves the shared resources.
 When the command itself is unavailable, uninstall exits nonzero before OpenShell cleanup so you can restore the command and retry.
