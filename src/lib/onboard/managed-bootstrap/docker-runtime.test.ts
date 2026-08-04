@@ -78,7 +78,7 @@ describe("Docker managed-bootstrap lifecycle composition", () => {
       onPatchFailure,
       network: {
         inferenceProvider: "openai",
-        dockerDriverGateway: false,
+        gatewayUsesContainerBridge: false,
         gatewayPort: 0,
       },
       dependencies: {},
