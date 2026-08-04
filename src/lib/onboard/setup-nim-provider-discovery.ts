@@ -112,10 +112,13 @@ export function prepareProviderDiscovery(options: {
   let providerChanged = false;
   if (nonInteractive && requestedProvider) {
     const recordedProviderName = deps.readRecordedProvider(sandboxName, recoverySessionId);
+    const hasRecordedNimContainer =
+      recordedProviderName === "vllm-local" &&
+      Boolean(deps.readRecordedNimContainer(sandboxName, recoverySessionId));
     const recordedProviderKey = providerNameToOptionKey(
       deps.remoteProviderConfig,
       recordedProviderName,
-      { hasNimContainer: false },
+      { hasNimContainer: hasRecordedNimContainer },
     );
     providerChanged = Boolean(recordedProviderKey && recordedProviderKey !== requestedProvider);
   }

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 
 const interactiveDeps = {
@@ -15,6 +15,51 @@ const interactiveDeps = {
 };
 
 describe("prepareProviderDiscovery", () => {
+  it("classifies recorded Local NIM before comparing the requested provider (#8135)", () => {
+    const readRecordedNimContainer = vi.fn(() => "nim-container");
+    const prepare = (requestedProvider: string) =>
+      prepareProviderDiscovery({
+        deps: {
+          ...interactiveDeps,
+          isNonInteractive: () => true,
+          getNonInteractiveProvider: () => requestedProvider,
+          getNonInteractiveModel: (_providerKey, options) =>
+            options?.allowProviderModelFallback === false ? null : "fallback-model",
+          readRecordedProvider: () => "vllm-local",
+          readRecordedNimContainer,
+        },
+        sandboxName: "existing-sandbox",
+        recoverProvider: true,
+        rebuildRegistryInferenceRoute: null,
+        recoverySessionId: "recovery-session",
+      });
+
+    expect(prepare("vllm").requestedModel).toBeNull();
+    expect(prepare("nim-local").requestedModel).toBe("fallback-model");
+    expect(readRecordedNimContainer).toHaveBeenCalledWith("existing-sandbox", "recovery-session");
+  });
+
+  it("classifies recorded standalone vLLM before comparing the requested provider (#8135)", () => {
+    const prepare = (requestedProvider: string) =>
+      prepareProviderDiscovery({
+        deps: {
+          ...interactiveDeps,
+          isNonInteractive: () => true,
+          getNonInteractiveProvider: () => requestedProvider,
+          getNonInteractiveModel: (_providerKey, options) =>
+            options?.allowProviderModelFallback === false ? null : "fallback-model",
+          readRecordedProvider: () => "vllm-local",
+        },
+        sandboxName: "existing-sandbox",
+        recoverProvider: true,
+        rebuildRegistryInferenceRoute: null,
+        recoverySessionId: "recovery-session",
+      });
+
+    expect(prepare("nim-local").requestedModel).toBeNull();
+    expect(prepare("vllm").requestedModel).toBe("fallback-model");
+  });
+
   it("keeps local daemon probes on for the interactive menu when the route preflight reports a conflict (#6750)", () => {
     const result = prepareProviderDiscovery({
       deps: interactiveDeps,
