@@ -448,6 +448,7 @@ describe("base-image publication behavior", () => {
     expect(metadata?.with?.tags).toContain("type=raw,value=latest");
     expect(metadata?.with?.tags).toContain("type=ref,event=tag");
     expect(metadata?.with?.tags).toContain("type=sha,prefix=,format=short");
+    expect(createManifest?.env?.AGENT).toBe("openclaw");
     const openClawManifestScript = createManifest?.run ?? "";
     expect(openClawManifestScript).toContain('"${#digest_files[@]}" -ne 2');
     expect(openClawManifestScript).toContain("^(amd64|arm64)-([0-9a-f]{64})$");
@@ -463,6 +464,7 @@ describe("base-image publication behavior", () => {
       'docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"',
     );
     expect(openClawManifestScript).toContain('"amd64,arm64"');
+    expect(openClawManifestScript).toContain("scripts/export-managed-base-image-contract.sh");
     for (const step of (manifestJob?.steps ?? []).filter((step) => step.uses)) {
       expect(step.uses, step.name).toMatch(FULL_SHA_ACTION);
     }
@@ -472,6 +474,7 @@ describe("base-image publication behavior", () => {
     const publishers = publisherJobs(workflow);
     const imagePublishers = [
       {
+        agent: "hermes",
         platformJobName: "build-hermes-platforms",
         manifestJobName: "build-and-push-hermes",
         manifestName: "Build and push Hermes base image",
@@ -479,6 +482,7 @@ describe("base-image publication behavior", () => {
         image: "${{ env.REGISTRY }}/nvidia/nemoclaw/hermes-sandbox-base",
       },
       {
+        agent: "langchain-deepagents-code",
         platformJobName: "build-dcode-platforms",
         manifestJobName: "build-and-push-dcode",
         manifestName: "Build and push Deep Agents Code base image",
@@ -571,6 +575,7 @@ describe("base-image publication behavior", () => {
       expect(metadata?.with?.tags).toContain("type=raw,value=latest");
       expect(metadata?.with?.tags).toContain("type=ref,event=tag");
       expect(metadata?.with?.tags).toContain("type=sha,prefix=,format=short");
+      expect(createManifest?.env?.AGENT).toBe(imagePublisher.agent);
       expect(createManifest?.env?.IMAGE).toBe(imagePublisher.image);
       const manifestScript = createManifest?.run ?? "";
       expect(manifestScript).toContain('"${#digest_files[@]}" -ne 2');
@@ -585,6 +590,8 @@ describe("base-image publication behavior", () => {
         'docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"',
       );
       expect(manifestScript).toContain('"amd64,arm64"');
+      expect(manifestScript).toContain("scripts/checks/validate-managed-base-index.sh");
+      expect(manifestScript).toContain("scripts/export-managed-base-image-contract.sh");
       for (const step of (manifestJob?.steps ?? []).filter((step) => step.uses)) {
         expect(step.uses, step.name).toMatch(FULL_SHA_ACTION);
       }
