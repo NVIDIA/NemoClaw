@@ -7,11 +7,11 @@ import { checkSystemReadinessSchemaVersion } from "../../readiness/compatibility
 import type { SystemReadinessReport } from "../../readiness/types.js";
 import { managedInferenceDigest } from "./catalog-integrity.js";
 import type { ManagedInferenceTopologyQualification } from "./catalog-types.js";
+import { MANAGED_CLUSTER_ID_PATTERN } from "./managed-cluster-identifiers.js";
 
 export const MANAGED_CLUSTER_TOPOLOGY_ID = "host-cluster.direct-cx7" as const;
 export const MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION = 1 as const;
 
-const SAFE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SAFE_INTERFACE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
 const SAFE_BINDING_HANDLE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,8191}$/;
 const SSH_USERNAME_PATTERN = /^[A-Za-z_][A-Za-z0-9._-]*$/;
@@ -139,8 +139,7 @@ export type ManagedClusterTopologyFailureCode =
   | "ssh-binding-unavailable"
   | "fabric-degraded"
   | "fabric-multiple"
-  | "fabric-mismatch"
-  | "artifact-digest-failed";
+  | "fabric-mismatch";
 
 export type ManagedClusterTopologyQualificationResult =
   | { outcome: "qualified"; artifact: ManagedClusterTopologyArtifact }
@@ -250,13 +249,13 @@ function validateNode(
   evaluatedAtMs: number,
   maxReadinessAgeMs: number,
 ): QualifiedNode | QualificationFailure {
-  if (!SAFE_ID_PATTERN.test(node.nodeId)) {
+  if (!MANAGED_CLUSTER_ID_PATTERN.test(node.nodeId)) {
     return {
       code: "node-identity-unavailable",
       message: "A node identity is missing or invalid.",
     };
   }
-  if (node.gpuIds.length !== 1 || !SAFE_ID_PATTERN.test(node.gpuIds[0] ?? "")) {
+  if (node.gpuIds.length !== 1 || !MANAGED_CLUSTER_ID_PATTERN.test(node.gpuIds[0] ?? "")) {
     return {
       code: "gpu-identity-unavailable",
       message: "Each DGX Spark node must have exactly one valid GPU identity.",
@@ -305,7 +304,7 @@ function validateRail(rail: ManagedClusterRailObservation): ValidatedRail | Qual
     };
   }
   if (
-    !SAFE_ID_PATTERN.test(rail.physicalPortId) ||
+    !MANAGED_CLUSTER_ID_PATTERN.test(rail.physicalPortId) ||
     !SAFE_INTERFACE_PATTERN.test(rail.netdev) ||
     !SAFE_INTERFACE_PATTERN.test(rail.hcaDevice) ||
     !Number.isInteger(rail.hcaPort) ||
@@ -314,7 +313,7 @@ function validateRail(rail: ManagedClusterRailObservation): ValidatedRail | Qual
     !validAddress(rail.address, rail.prefixLength) ||
     net.isIP(rail.peerAddress) === 0 ||
     rail.address === rail.peerAddress ||
-    !SAFE_ID_PATTERN.test(rail.peerNodeId)
+    !MANAGED_CLUSTER_ID_PATTERN.test(rail.peerNodeId)
   ) {
     return {
       code: "fabric-mismatch",
@@ -593,7 +592,7 @@ function topologyOutputError(
   const output = record(value);
   if (!output) return "topology qualification output is invalid";
   const controllerNodeId = output.controllerNodeId;
-  if (typeof controllerNodeId !== "string" || !SAFE_ID_PATTERN.test(controllerNodeId)) {
+  if (typeof controllerNodeId !== "string" || !MANAGED_CLUSTER_ID_PATTERN.test(controllerNodeId)) {
     return "topology controller node is invalid";
   }
   if (!Array.isArray(output.nodes) || output.nodes.length !== subjectNodeIds.length) {
@@ -610,9 +609,9 @@ function topologyOutputError(
         node.rank !== rank ||
         node.role !== (rank === 0 ? "head" : "worker") ||
         typeof node.nodeId !== "string" ||
-        !SAFE_ID_PATTERN.test(node.nodeId) ||
+        !MANAGED_CLUSTER_ID_PATTERN.test(node.nodeId) ||
         typeof node.gpuId !== "string" ||
-        !SAFE_ID_PATTERN.test(node.gpuId),
+        !MANAGED_CLUSTER_ID_PATTERN.test(node.gpuId),
     ) ||
     nodeIds[0] !== controllerNodeId ||
     new Set(nodeIds).size !== nodeIds.length ||
@@ -753,7 +752,7 @@ export function getManagedClusterTopologyArtifactError(
     subjectNodeIds.length < 2 ||
     subjectNodeIds.length > 1024 ||
     new Set(subjectNodeIds).size !== subjectNodeIds.length ||
-    subjectNodeIds.some((nodeId) => !SAFE_ID_PATTERN.test(nodeId)) ||
+    subjectNodeIds.some((nodeId) => !MANAGED_CLUSTER_ID_PATTERN.test(nodeId)) ||
     subjectNodeIds.some((nodeId, index) => index > 0 && subjectNodeIds[index - 1]! >= nodeId)
   ) {
     return "topology qualification subject is invalid";
@@ -858,23 +857,16 @@ export function qualifyManagedClusterTopology(
     }),
   };
   const subjectNodeIds = [...nodeIds].sort(compareStrings);
-  try {
-    return {
-      outcome: "qualified",
-      artifact: {
-        id: MANAGED_CLUSTER_TOPOLOGY_ID,
-        schemaVersion: MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
-        status: "qualified",
-        subjectNodeIds,
-        subjectDigest: managedClusterTopologySubjectDigest(subjectNodeIds),
-        outputDigest: managedClusterTopologyOutputDigest(output),
-        output,
-      },
-    };
-  } catch {
-    return failure(input.intent, {
-      code: "artifact-digest-failed",
-      message: "The qualified topology could not be bound to its subject and output.",
-    });
-  }
+  return {
+    outcome: "qualified",
+    artifact: {
+      id: MANAGED_CLUSTER_TOPOLOGY_ID,
+      schemaVersion: MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
+      status: "qualified",
+      subjectNodeIds,
+      subjectDigest: managedClusterTopologySubjectDigest(subjectNodeIds),
+      outputDigest: managedClusterTopologyOutputDigest(output),
+      output,
+    },
+  };
 }

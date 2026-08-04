@@ -72,6 +72,7 @@ describe("managed cluster vLLM preparation materializer", () => {
   it.each([
     {
       label: "snapshot traversal",
+      error: /snapshot copy source path must be a normalized relative POSIX path/u,
       preparation: {
         ref: SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
         snapshotCopy: { sourcePath: "../escape.py", targetPath: "/opt/vllm/copied.py" },
@@ -84,6 +85,7 @@ describe("managed cluster vLLM preparation materializer", () => {
     },
     {
       label: "relative container target",
+      error: /snapshot copy target path must be a normalized absolute container path/u,
       preparation: {
         ref: SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
         snapshotCopy: { sourcePath: "safe.py", targetPath: "relative/copied.py" },
@@ -96,6 +98,7 @@ describe("managed cluster vLLM preparation materializer", () => {
     },
     {
       label: "unchanged replacement",
+      error: /exact-text replacement must change the matched text/u,
       preparation: {
         ref: SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
         snapshotCopy: { sourcePath: "safe.py", targetPath: "/opt/vllm/copied.py" },
@@ -106,7 +109,9 @@ describe("managed cluster vLLM preparation materializer", () => {
         },
       },
     },
-  ])("rejects bounded operation input with $label", ({ preparation }) => {
-    expect(() => materializeManagedClusterVllmPreparation({ ...MODEL, preparation })).toThrow();
+  ])("rejects bounded operation input with $label", ({ error, preparation }) => {
+    expect(() => materializeManagedClusterVllmPreparation({ ...MODEL, preparation })).toThrow(
+      error,
+    );
   });
 });

@@ -12,7 +12,7 @@ import {
 } from "./managed-cluster-topology.js";
 
 export const MANAGED_CLUSTER_VLLM_MATERIALIZER_REF = "vllm.managed-cluster/v1" as const;
-export const MANAGED_CLUSTER_VLLM_LIFECYCLE_REF = "vllm.managed-cluster/v1" as const;
+export const MANAGED_CLUSTER_VLLM_LIFECYCLE_REF = "vllm.managed-cluster.lifecycle/v1" as const;
 export const SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF =
   "snapshot-copy-and-exact-text-replacement/v1" as const;
 export const NO_PREPARATION_REF = "none/v1" as const;

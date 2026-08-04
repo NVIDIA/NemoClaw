@@ -6,14 +6,6 @@ import path from "node:path";
 
 import { ensureLocalAdapterStateDir } from "../local-adapter-lifecycle";
 import { loadManagedVllmApiKey, managedVllmStateDir } from "../vllm-api-key";
-import {
-  clearDualStationSshBinding,
-  copyDualStationSshBinding,
-  type DualStationSshBinding,
-  encodeDualStationSshBindingHandoff,
-  loadDualStationSshBindingForStatePath,
-  loadDualStationSshBindingHandoff,
-} from "../vllm-station-ssh-binding";
 import { managedInferenceHexDigest } from "./catalog-integrity";
 import {
   assertManagedClusterVllmExecutorConfig,
@@ -21,6 +13,7 @@ import {
   inspectManagedClusterVllmNodesSync,
   type ManagedClusterVllmNodeSnapshots,
 } from "./managed-cluster-executor";
+import { MANAGED_CLUSTER_ID_PATTERN } from "./managed-cluster-identifiers";
 import {
   classifyManagedClusterExistingState,
   cleanupManagedClusterManagedVllm,
@@ -29,6 +22,14 @@ import {
 } from "./managed-cluster-lifecycle";
 import { type ManagedClusterVllmPlan, managedClusterHeadRole } from "./managed-cluster-materialize";
 import { MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE } from "./managed-cluster-runtime-receipt-path";
+import {
+  clearManagedVllmSshBinding,
+  copyManagedVllmSshBinding,
+  encodeManagedVllmSshBindingHandoff,
+  loadManagedVllmSshBindingForStatePath,
+  loadManagedVllmSshBindingHandoff,
+  type ManagedVllmSshBinding,
+} from "./managed-cluster-ssh-binding";
 
 const MAX_RECEIPT_BYTES = 128 * 1024;
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -43,7 +44,13 @@ const RECEIPT_NODE_KEYS = [
   "nodeId",
   "sshBinding",
 ] as const;
-const EXACT_BINDING_KEYS = [
+function exactBindingKeys<const Keys extends readonly (keyof ManagedVllmSshBinding)[]>(
+  keys: Keys & (Exclude<keyof ManagedVllmSshBinding, Keys[number]> extends never ? unknown : never),
+): Keys {
+  return keys;
+}
+
+const EXACT_BINDING_KEYS = exactBindingKeys([
   "schemaVersion",
   "peerTarget",
   "resolvedHost",
@@ -60,7 +67,7 @@ const EXACT_BINDING_KEYS = [
   "sshWrapperDirectory",
   "sshWrapperFile",
   "sshWrapperSha256",
-] as const satisfies readonly (keyof DualStationSshBinding)[];
+] as const);
 
 interface PersistedReceipt {
   readonly schemaVersion: 1;
@@ -89,7 +96,7 @@ export interface PersistManagedClusterVllmRuntimeReceiptNode {
   readonly nodeId: string;
   readonly cacheRoot: string;
   readonly containerId: string;
-  readonly sshBinding?: DualStationSshBinding;
+  readonly sshBinding?: ManagedVllmSshBinding;
   readonly discoveryStatePath?: string;
 }
 
@@ -100,7 +107,7 @@ export interface LoadedManagedClusterVllmRuntime {
 }
 
 export interface LoadedManagedClusterVllmRuntimeNode extends PersistedReceiptNode {
-  readonly binding?: DualStationSshBinding;
+  readonly binding?: ManagedVllmSshBinding;
 }
 
 type CleanupDeps = Pick<
@@ -212,6 +219,9 @@ function parseReceipt(value: unknown): PersistedReceipt {
     throw new Error("Managed cluster vLLM runtime receipt schema is unsupported");
   }
   const plan = value.plan as unknown as ManagedClusterVllmPlan;
+  if (!Array.isArray(plan.roles)) {
+    throw new Error("Managed cluster runtime receipt node ownership is incomplete");
+  }
   const digest = requireString(value.planDigest, "managed cluster plan digest", SHA256, 64);
   if (planDigest(plan) !== digest)
     throw new Error("Managed cluster vLLM runtime plan digest changed");
@@ -224,7 +234,7 @@ function parseReceipt(value: unknown): PersistedReceipt {
     const nodeId = requireString(
       entry.nodeId,
       "managed cluster node ID",
-      /^[A-Za-z0-9._:-]+$/,
+      MANAGED_CLUSTER_ID_PATTERN,
       128,
     );
     const rolePlan = plan.roles.find((role) => role.nodeId === nodeId);
@@ -407,11 +417,11 @@ function durablePlan(
 function loadedRuntime(receipt: PersistedReceipt): LoadedManagedClusterVllmRuntime {
   const nodes = receipt.nodes.map((node): LoadedManagedClusterVllmRuntimeNode => {
     if (node.sshBinding === null) return node;
-    const binding = loadDualStationSshBindingHandoff(
+    const binding = loadManagedVllmSshBindingHandoff(
       node.sshBinding,
       workerTarget(receipt.plan, node.nodeId),
     );
-    if (encodeDualStationSshBindingHandoff(binding) !== node.sshBinding) {
+    if (encodeManagedVllmSshBindingHandoff(binding) !== node.sshBinding) {
       throw new Error("Managed cluster runtime SSH binding identity changed");
     }
     return { ...node, binding };
@@ -420,7 +430,7 @@ function loadedRuntime(receipt: PersistedReceipt): LoadedManagedClusterVllmRunti
   return { ...receipt, nodes };
 }
 
-function bindingDigest(binding: DualStationSshBinding): string {
+function bindingDigest(binding: ManagedVllmSshBinding): string {
   return managedInferenceHexDigest(
     Object.fromEntries(EXACT_BINDING_KEYS.map((field) => [field, binding[field]])),
   );
@@ -428,11 +438,11 @@ function bindingDigest(binding: DualStationSshBinding): string {
 
 function loadReceiptOwnedDiscoveryBinding(
   runtime: LoadedManagedClusterVllmRuntime,
-): readonly { readonly nodeId: string; readonly binding: DualStationSshBinding | null }[] {
+): readonly { readonly nodeId: string; readonly binding: ManagedVllmSshBinding | null }[] {
   return runtime.nodes
     .filter((node) => node.binding)
     .map((node) => {
-      const binding = loadDualStationSshBindingForStatePath(
+      const binding = loadManagedVllmSshBindingForStatePath(
         node.discoveryStatePath!,
         node.binding!.peerTarget,
         node.binding!.hostKeyDigest,
@@ -465,12 +475,13 @@ function sameInput(
       ),
     ),
   );
+  const existingNodes = new Map(existing.nodes.map((node) => [node.nodeId, node]));
   return (
     planDigest(durable) === planDigest(existing.plan) &&
     input.apiKeyFingerprint === existing.apiKeyFingerprint &&
     input.nodes.length === existing.nodes.length &&
-    input.nodes.every((node, index) => {
-      const current = existing.nodes[index];
+    input.nodes.every((node) => {
+      const current = existingNodes.get(node.nodeId);
       return (
         current?.nodeId === node.nodeId &&
         current.cacheRoot === node.cacheRoot &&
@@ -514,7 +525,7 @@ export function persistManagedClusterVllmRuntimeReceipt(
         nodeId: node.nodeId,
         cacheRoot,
         containerId: node.containerId,
-        sshBinding: node.sshBinding ? encodeDualStationSshBindingHandoff(node.sshBinding) : null,
+        sshBinding: node.sshBinding ? encodeManagedVllmSshBindingHandoff(node.sshBinding) : null,
         discoveryStatePath: node.discoveryStatePath ?? null,
         discoveryBindingDigest: node.sshBinding ? bindingDigest(node.sshBinding) : null,
         ...(node.sshBinding ? { binding: node.sshBinding } : {}),
@@ -534,11 +545,12 @@ export function persistManagedClusterVllmRuntimeReceipt(
   const receiptPath = managedClusterVllmRuntimeReceiptPath(stateDir);
   const createdBindingStatePaths: string[] = [];
   try {
-    const runtimeBindings = new Map<string, DualStationSshBinding>();
-    const persistedNodes = inputNodes.map((node, rank): PersistedReceiptNode => {
+    const runtimeBindings = new Map<string, ManagedVllmSshBinding>();
+    const persistedNodes = inputNodes.map((node, index): PersistedReceiptNode => {
       const { binding, ...persisted } = node;
       if (!binding) return persisted;
-      const runtimeStatePath = `${receiptPath}.rank-${String(rank)}`;
+      const rolePlan = input.plan.roles[index]!;
+      const runtimeStatePath = `${receiptPath}.rank-${String(rolePlan.rank)}`;
       const bindingPath = `${runtimeStatePath}.ssh-binding`;
       try {
         fs.mkdirSync(bindingPath, { mode: 0o700 });
@@ -549,9 +561,9 @@ export function persistManagedClusterVllmRuntimeReceipt(
         throw error;
       }
       createdBindingStatePaths.push(runtimeStatePath);
-      const runtimeBinding = copyDualStationSshBinding(runtimeStatePath, binding);
+      const runtimeBinding = copyManagedVllmSshBinding(runtimeStatePath, binding);
       runtimeBindings.set(node.nodeId, runtimeBinding);
-      return { ...persisted, sshBinding: encodeDualStationSshBindingHandoff(runtimeBinding) };
+      return { ...persisted, sshBinding: encodeManagedVllmSshBindingHandoff(runtimeBinding) };
     });
     fsyncDirectory(stateDir);
     const plan = durablePlan(
@@ -579,7 +591,7 @@ export function persistManagedClusterVllmRuntimeReceipt(
   } catch (error) {
     try {
       for (const statePath of createdBindingStatePaths.reverse()) {
-        clearDualStationSshBinding(statePath);
+        clearManagedVllmSshBinding(statePath);
       }
     } catch {
       // Preserve the receipt persistence error.
@@ -593,7 +605,7 @@ function clearReceipt(stateDir: string, runtime: LoadedManagedClusterVllmRuntime
   fs.unlinkSync(filePath);
   for (const rolePlan of runtime.plan.roles) {
     if (rolePlan.execution.kind === "ssh") {
-      clearDualStationSshBinding(`${filePath}.rank-${String(rolePlan.rank)}`);
+      clearManagedVllmSshBinding(`${filePath}.rank-${String(rolePlan.rank)}`);
     }
   }
   fsyncDirectory(stateDir);
@@ -715,7 +727,7 @@ export async function cleanupInstalledManagedClusterVllmRuntime(
   for (const entry of currentDiscoveryBindings) {
     if (entry.binding) {
       const node = runtime.nodes.find(({ nodeId }) => nodeId === entry.nodeId)!;
-      clearDualStationSshBinding(node.discoveryStatePath!);
+      clearManagedVllmSshBinding(node.discoveryStatePath!);
     }
   }
   clearReceipt(stateDir, runtime);

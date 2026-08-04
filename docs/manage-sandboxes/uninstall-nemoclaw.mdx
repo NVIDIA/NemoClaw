@@ -43,7 +43,7 @@ When uninstall confirms that no sibling gateways remain, it also removes the sha
 During full uninstall, a managed distributed-vLLM receipt makes NemoClaw first revalidate the recorded plan and every cluster node, GPU, container, and SSH peer identity.
 It then removes only the exact receipt-owned containers.
 The managed-cluster receipt is host-global under `~/.nemoclaw/`.
-A dual-DGX Station receipt uses the selected gateway state root.
+A legacy dual-DGX Station receipt uses the selected gateway state root.
 NemoClaw starts the remaining full-uninstall steps only after distributed runtime cleanup succeeds.
 For a host-global managed-cluster receipt, successful cleanup also retires every recorded temporary discovery claim.
 An interrupted transaction can leave `~/.nemoclaw/managed-cluster-managed-serving.json.<node-id>.ssh-binding/` without a durable runtime receipt.

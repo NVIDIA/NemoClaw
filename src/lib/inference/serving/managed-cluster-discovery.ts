@@ -6,10 +6,6 @@ import path from "node:path";
 
 import type { BuildIdentity } from "../../core/version.js";
 import type { SystemReadinessReport } from "../../readiness/types.js";
-import {
-  type DualStationSshBinding,
-  type QualifiedStationSshIdentity,
-} from "../vllm-station-ssh-binding.js";
 import { MANAGED_CLUSTER_VLLM_MATERIALIZER_REF } from "./adapter-registry.js";
 import { loadManagedInferenceCatalog } from "./catalog.js";
 import { immutableManagedInferenceCopy } from "./catalog-integrity.js";
@@ -19,6 +15,10 @@ import {
   type ManagedClusterNodeSnapshot,
   type ManagedClusterObservedContainer,
 } from "./managed-cluster-lifecycle.js";
+import {
+  type ManagedVllmSshBinding,
+  type QualifiedManagedVllmSshIdentity,
+} from "./managed-cluster-ssh-binding.js";
 import {
   getManagedClusterTopologyArtifactError,
   type ManagedClusterNodeObservation,
@@ -159,8 +159,10 @@ export interface ManagedClusterDiscoveryDeps {
   getBuildIdentity(): BuildIdentity;
   localTransport(): ManagedClusterReadOnlyHostTransport;
   probeHost(transport: ManagedClusterReadOnlyHostTransport): ManagedClusterHostObservation;
-  inspectPretrustedTarget(target: string): QualifiedStationSshIdentity | null;
-  openPinnedPeerTransport(identity: QualifiedStationSshIdentity): ManagedClusterPinnedPeerTransport;
+  inspectPretrustedTarget(target: string): QualifiedManagedVllmSshIdentity | null;
+  openPinnedPeerTransport(
+    identity: QualifiedManagedVllmSshIdentity,
+  ): ManagedClusterPinnedPeerTransport;
   createReadiness(
     host: ManagedClusterHostObservation,
     transport: ManagedClusterReadOnlyHostTransport,
@@ -173,9 +175,9 @@ export interface ManagedClusterDiscoveryDeps {
   ): boolean;
   /** Atomically claim a new binding root. False means an existing owner won. */
   claimBinding(statePath: string): boolean;
-  writeBinding(statePath: string, identity: QualifiedStationSshIdentity): DualStationSshBinding;
+  writeBinding(statePath: string, identity: QualifiedManagedVllmSshIdentity): ManagedVllmSshBinding;
   clearBinding(statePath: string): void;
-  encodeBinding(binding: DualStationSshBinding): string;
+  encodeBinding(binding: ManagedVllmSshBinding): string;
   resolveBindingStatePath(nodeId: string): string;
 }
 
@@ -219,11 +221,11 @@ export type ManagedClusterDetectedManagedServingCapability = {
 export interface ManagedClusterSshClaim {
   readonly nodeId: string;
   readonly statePath: string;
-  readonly identity: QualifiedStationSshIdentity;
+  readonly identity: QualifiedManagedVllmSshIdentity;
 }
 
 export interface ManagedClusterSshBinding extends ManagedClusterSshClaim {
-  readonly binding: DualStationSshBinding;
+  readonly binding: ManagedVllmSshBinding;
   readonly handle: string;
 }
 
@@ -851,7 +853,7 @@ function topologyRail(rail: QualifiedRail, peerNodeId: string): ManagedClusterRa
 function topologyObservations(
   cluster: ClusterPlan,
   readiness: ReadonlyMap<string, SystemReadinessReport>,
-  identities: ReadonlyMap<string, QualifiedStationSshIdentity>,
+  identities: ReadonlyMap<string, QualifiedManagedVllmSshIdentity>,
   bindingHandles: ReadonlyMap<string, string>,
 ): { local: ManagedClusterNodeObservation; peers: readonly ManagedClusterPeerObservation[] } {
   const controller = cluster.nodes[0]!;
@@ -888,8 +890,8 @@ function hostPolicyFailure(
 }
 
 function samePhysicalSshIdentity(
-  left: QualifiedStationSshIdentity,
-  right: QualifiedStationSshIdentity,
+  left: QualifiedManagedVllmSshIdentity,
+  right: QualifiedManagedVllmSshIdentity,
 ): boolean {
   return (
     left.sshUser === right.sshUser &&
@@ -899,8 +901,8 @@ function samePhysicalSshIdentity(
 }
 
 function sameExactSshIdentity(
-  left: QualifiedStationSshIdentity,
-  right: QualifiedStationSshIdentity,
+  left: QualifiedManagedVllmSshIdentity,
+  right: QualifiedManagedVllmSshIdentity,
 ): boolean {
   return (
     left.requestedTarget === right.requestedTarget &&
@@ -1056,7 +1058,7 @@ export function probeManagedClusterManagedServingCapability(
     const unique = new Map<
       string,
       {
-        identity: QualifiedStationSshIdentity;
+        identity: QualifiedManagedVllmSshIdentity;
         transport: ManagedClusterReadOnlyHostTransport;
         host: ManagedClusterHostObservation;
       }

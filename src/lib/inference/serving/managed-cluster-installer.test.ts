@@ -487,6 +487,7 @@ describe("managed-cluster vLLM installer selection", () => {
     const beforeInstall = vi.fn();
     const clearBinding = vi.fn();
     const persistReceipt = vi.fn();
+    const stageCalls: string[] = [];
     let capturedStage: ManagedClusterExecutorStageNode | undefined;
     const executor = {} as ManagedClusterVllmLifecycleDeps;
     const createExecutor = vi.fn((config: CreateManagedClusterVllmExecutorOptions) => {
@@ -494,7 +495,7 @@ describe("managed-cluster vLLM installer selection", () => {
       return executor;
     });
     const start = vi.fn(async (plan) => {
-      expect(capturedStage).toBeDefined();
+      stageCalls.push(plan.roles[1].nodeId);
       await capturedStage!(
         { rolePlan: plan.roles[1], preparation: plan.roles[1].preparation },
         {
@@ -504,6 +505,7 @@ describe("managed-cluster vLLM installer selection", () => {
           sshBinding: confirmed.sshBindings[0].binding,
         },
       );
+      stageCalls.push(plan.roles[0].nodeId);
       await capturedStage!(
         { rolePlan: plan.roles[0], preparation: plan.roles[0].preparation },
         {
@@ -539,6 +541,8 @@ describe("managed-cluster vLLM installer selection", () => {
     );
 
     expect(result).toEqual({ kind: "handled", result: { ok: true } });
+    expect(capturedStage).toBeDefined();
+    expect(stageCalls).toEqual(["spark-worker", "spark-head"]);
     expect(beforeInstall).toHaveBeenCalledWith("deepseek-v4-flash-0731");
     expect(installEffects.pullImage).toHaveBeenCalledTimes(2);
     expect(installEffects.downloadModel).toHaveBeenNthCalledWith(

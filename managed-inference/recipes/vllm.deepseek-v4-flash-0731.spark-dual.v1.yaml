@@ -99,7 +99,7 @@ spec:
 
   execution:
     materializerRef: vllm.managed-cluster/v1
-    lifecycleRef: vllm.managed-cluster/v1
+    lifecycleRef: vllm.managed-cluster.lifecycle/v1
     topologyBinding: sparkTopology
     nodeCount: 2
     tensorParallelSize: 2

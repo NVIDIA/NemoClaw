@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadManagedInferenceCatalog } from "./serving/catalog";
-import { managedInferenceDigest } from "./serving/catalog-integrity";
+import { managedInferenceDigest, managedInferenceHexDigest } from "./serving/catalog-integrity";
 import type { CompiledManagedInferenceCatalog } from "./serving/catalog-types";
 import { fixtureManagedClusterSelection } from "./serving/managed-cluster-fixture.test-support";
 import {
@@ -31,17 +31,17 @@ import {
   recoverInstalledManagedClusterVllmEndpoint,
 } from "./serving/managed-cluster-runtime-receipt";
 import { MANAGED_CLUSTER_MANAGED_SERVING_STATE_FILE } from "./serving/managed-cluster-runtime-receipt-path";
+import {
+  clearManagedVllmSshBinding,
+  copyManagedVllmSshBinding,
+  encodeManagedVllmSshBindingHandoff,
+  type ManagedVllmSshBinding,
+} from "./serving/managed-cluster-ssh-binding";
+import {
+  createManagedVllmSshBindingFixture,
+  type ManagedVllmSshBindingFixture,
+} from "./serving/managed-cluster-ssh-binding.test-support";
 import { managedClusterTopologyOutputDigest } from "./serving/managed-cluster-topology";
-import {
-  clearDualStationSshBinding,
-  copyDualStationSshBinding,
-  type DualStationSshBinding,
-  encodeDualStationSshBindingHandoff,
-} from "./vllm-station-ssh-binding";
-import {
-  createDualStationSshBindingFixture,
-  type DualStationSshBindingFixture,
-} from "./vllm-station-ssh-binding.test-support";
 
 const API_KEY = "a".repeat(64);
 const HEAD_ID = "b".repeat(64);
@@ -50,12 +50,12 @@ const TRANSACTION_ID = "d".repeat(32);
 
 let root: string;
 let stateDir: string;
-let sshFixture: DualStationSshBindingFixture;
+let sshFixture: ManagedVllmSshBindingFixture;
 
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-cluster-runtime-receipt-"));
   stateDir = path.join(root, ".nemoclaw");
-  sshFixture = createDualStationSshBindingFixture("nvidia@spark-worker.local");
+  sshFixture = createManagedVllmSshBindingFixture("nvidia@spark-worker.local");
 });
 
 afterEach(() => {
@@ -66,7 +66,7 @@ afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-function plan(sshBinding: DualStationSshBinding = sshFixture.binding): ManagedClusterVllmPlan {
+function plan(sshBinding: ManagedVllmSshBinding = sshFixture.binding): ManagedClusterVllmPlan {
   const selection = fixtureManagedClusterSelection();
   const sourceTopology = selection.topologyQualification;
   const output = {
@@ -74,7 +74,7 @@ function plan(sshBinding: DualStationSshBinding = sshFixture.binding): ManagedCl
     peers: sourceTopology.output.peers.map((peer) => ({
       ...peer,
       target: sshBinding.peerTarget,
-      sshBindingHandle: encodeDualStationSshBindingHandoff(sshBinding),
+      sshBindingHandle: encodeManagedVllmSshBindingHandoff(sshBinding),
     })),
   };
   return materializeManagedClusterVllmPlan({
@@ -88,7 +88,7 @@ function plan(sshBinding: DualStationSshBinding = sshFixture.binding): ManagedCl
 }
 
 function input(
-  sshBinding: DualStationSshBinding = sshFixture.binding,
+  sshBinding: ManagedVllmSshBinding = sshFixture.binding,
 ): PersistManagedClusterVllmRuntimeReceiptInput {
   const runtimePlan = plan(sshBinding);
   return {
@@ -114,11 +114,11 @@ function catalogWithUnrelatedProfile(): CompiledManagedInferenceCatalog {
   const selectedRecipe = current.recipes[0]!;
   const unrelatedRecipe = {
     ...selectedRecipe.definition,
-    metadata: { ...selectedRecipe.definition.metadata, id: "vllm.unrelated.spark-dual.v1" },
+    metadata: { ...selectedRecipe.definition.metadata, id: "vllm.unrelated.managed-cluster.v1" },
   };
   const unrelatedPreset = {
     ...selectedPreset.definition,
-    metadata: { ...selectedPreset.definition.metadata, id: "vllm.unrelated.spark-dual" },
+    metadata: { ...selectedPreset.definition.metadata, id: "vllm.unrelated.managed-cluster" },
     spec: {
       ...selectedPreset.definition.spec,
       plan: {
@@ -130,11 +130,11 @@ function catalogWithUnrelatedProfile(): CompiledManagedInferenceCatalog {
   const sourceFiles = [
     ...current.sourceFiles,
     {
-      path: "managed-inference/presets/vllm.unrelated.spark-dual.yaml",
+      path: "managed-inference/presets/vllm.unrelated.managed-cluster.yaml",
       digest: `sha256:${"1".repeat(64)}`,
     },
     {
-      path: "managed-inference/recipes/vllm.unrelated.spark-dual.v1.yaml",
+      path: "managed-inference/recipes/vllm.unrelated.managed-cluster.v1.yaml",
       digest: `sha256:${"2".repeat(64)}`,
     },
   ] as const;
@@ -170,7 +170,7 @@ function persistWithDiscoveryBinding(): {
 } {
   fs.mkdirSync(stateDir, { mode: 0o700 });
   const discoveryStatePath = path.join(stateDir, MANAGED_CLUSTER_MANAGED_SERVING_STATE_FILE);
-  const binding = copyDualStationSshBinding(discoveryStatePath, sshFixture.binding);
+  const binding = copyManagedVllmSshBinding(discoveryStatePath, sshFixture.binding);
   return {
     discoveryBindingPath: `${discoveryStatePath}.ssh-binding`,
     discoveryStatePath,
@@ -265,6 +265,12 @@ describe("managed cluster vLLM runtime receipt", () => {
     const original = fs.readFileSync(receiptPath, "utf8");
 
     expect(persistManagedClusterVllmRuntimeReceipt(source, { stateDir })).toEqual(first);
+    expect(
+      persistManagedClusterVllmRuntimeReceipt(
+        { ...source, nodes: [...source.nodes].reverse() },
+        { stateDir },
+      ),
+    ).toEqual(first);
     expect(() =>
       persistManagedClusterVllmRuntimeReceipt(
         {
@@ -357,6 +363,19 @@ describe("managed cluster vLLM runtime receipt", () => {
     expect(() => loadManagedClusterVllmRuntimeReceipt({ stateDir })).toThrow("plan digest changed");
   });
 
+  it("rejects a digest-valid receipt whose plan omits role ownership", () => {
+    persistManagedClusterVllmRuntimeReceipt(input(), { stateDir });
+    const receiptPath = managedClusterVllmRuntimeReceiptPath(stateDir);
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+    receipt.plan.roles = {};
+    receipt.planDigest = managedInferenceHexDigest(receipt.plan);
+    fs.writeFileSync(receiptPath, `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
+
+    expect(() => loadManagedClusterVllmRuntimeReceipt({ stateDir })).toThrow(
+      "node ownership is incomplete",
+    );
+  });
+
   it("recovers only the exact healthy receipt-owned endpoint synchronously", () => {
     const runtime = persistManagedClusterVllmRuntimeReceipt(input(), { stateDir });
     expect(
@@ -429,8 +448,8 @@ describe("managed cluster vLLM runtime receipt", () => {
 
   it("preserves a replaced canonical discovery binding before container cleanup", async () => {
     const { discoveryBindingPath, discoveryStatePath, runtime } = persistWithDiscoveryBinding();
-    clearDualStationSshBinding(discoveryStatePath);
-    copyDualStationSshBinding(discoveryStatePath, sshFixture.binding);
+    clearManagedVllmSshBinding(discoveryStatePath);
+    copyManagedVllmSshBinding(discoveryStatePath, sshFixture.binding);
     const { deps, removeContainer } = cleanupDeps(runtime.plan);
     const createLifecycleDeps = vi.fn(() => deps);
 

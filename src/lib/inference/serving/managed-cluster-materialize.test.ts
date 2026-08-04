@@ -391,6 +391,20 @@ describe("managed-cluster vLLM materializer", () => {
     expect(() => materializeManagedClusterVllmPlan(selection)).toThrow(/master address/u);
   });
 
+  it("selects each role endpoint by direct reachability to the qualified master", () => {
+    const selection = selectionWithDigests();
+    const artifact = selection.topologyQualification;
+    (artifact.output as { masterAddress: string }).masterAddress = "192.168.101.10";
+    (artifact as { outputDigest: string }).outputDigest = managedClusterTopologyOutputDigest(
+      artifact.output,
+    );
+
+    const plan = materializeManagedClusterVllmPlan(selection);
+
+    expect(plan.roles[0].fabric.address).toBe("192.168.101.10");
+    expect(plan.roles[1].fabric.address).toBe("192.168.101.11");
+  });
+
   it("materializes bounded preparation operations from recipe data", () => {
     const selection = selectionWithDigests();
     const preparation = materializeManagedClusterVllmPlan(selection).roles[0].preparation;
@@ -483,28 +497,16 @@ describe("managed-cluster vLLM materializer", () => {
     expect(originalFromExpandedCatalog.planId).toBe(originalPlan.planId);
   });
 
-  it("takes cluster cardinality and parallelism from a synthetic three-node catalog profile", () => {
+  it("rejects a larger catalog profile only when its fabric cannot reach the master", () => {
     const { catalog, selection } = syntheticSecondProfile("/dev/shm-scratch", 3);
-    const plan = materializeManagedClusterVllmPlan(selection, { catalog });
 
-    expect(plan.roles).toHaveLength(3);
-    expect(plan.roles.map(({ rank, role }) => ({ rank, role }))).toEqual([
-      { rank: 0, role: "head" },
-      { rank: 1, role: "worker" },
-      { rank: 2, role: "worker" },
-    ]);
-    for (const role of plan.roles) {
-      expect(role.command.arguments).toEqual(
-        expect.arrayContaining([
-          "--nnodes",
-          "3",
-          "--tensor-parallel-size",
-          "3",
-          "--node-rank",
-          String(role.rank),
-        ]),
-      );
-    }
+    expect(selection.recipe.spec.execution).toMatchObject({
+      nodeCount: 3,
+      tensorParallelSize: 3,
+    });
+    expect(() => materializeManagedClusterVllmPlan(selection, { catalog })).toThrow(
+      /spark-worker-b has no direct fabric endpoint to master address/u,
+    );
   });
 
   it("rejects a temporary filesystem that shadows the model cache", () => {

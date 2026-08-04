@@ -5,7 +5,6 @@ import { isAffirmativeAnswer } from "../../onboard/prompt-helpers.js";
 import type { VllmProfile } from "../vllm.js";
 import { ensureManagedVllmApiKey } from "../vllm-api-key.js";
 import { assertGatedModelAccess, VLLM_EXTRA_ARGS_ENV, type VllmModelDef } from "../vllm-models.js";
-import { clearDualStationSshBinding } from "../vllm-station-ssh-binding.js";
 import { imageStorageRequirementBytes, modelStorageRequirementBytes } from "../vllm-storage.js";
 import {
   type ManagedInferenceResolution,
@@ -42,6 +41,7 @@ import {
   type PersistManagedClusterVllmRuntimeReceiptInput,
   persistManagedClusterVllmRuntimeReceipt,
 } from "./managed-cluster-runtime-receipt.js";
+import { clearManagedVllmSshBinding } from "./managed-cluster-ssh-binding.js";
 import type { ManagedClusterTopologyOutput } from "./managed-cluster-topology.js";
 import { assertNoManagedDistributedVllmRuntimeReceipts } from "./managed-runtime-receipts.js";
 import { resolveManagedInferenceServing } from "./resolver.js";
@@ -87,7 +87,7 @@ interface ManagedClusterInstallerDeps {
   readonly persistReceipt: typeof persistManagedClusterVllmRuntimeReceipt;
   readonly ensureApiKey: typeof ensureManagedVllmApiKey;
   readonly assertNoRuntimeReceipts: typeof assertNoManagedDistributedVllmRuntimeReceipts;
-  readonly clearBinding: typeof clearDualStationSshBinding;
+  readonly clearBinding: typeof clearManagedVllmSshBinding;
   readonly assertGatedModelAccess: typeof assertGatedModelAccess;
   readonly log: (line?: string) => void;
   readonly error: (line: string) => void;
@@ -106,7 +106,7 @@ const DEFAULT_DEPS: ManagedClusterInstallerDeps = {
   persistReceipt: persistManagedClusterVllmRuntimeReceipt,
   ensureApiKey: ensureManagedVllmApiKey,
   assertNoRuntimeReceipts: assertNoManagedDistributedVllmRuntimeReceipts,
-  clearBinding: clearDualStationSshBinding,
+  clearBinding: clearManagedVllmSshBinding,
   assertGatedModelAccess,
   log: (line = "") => console.log(line),
   error: (line) => console.error(line),

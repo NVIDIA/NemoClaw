@@ -11,7 +11,6 @@ import { DUAL_STATION_VLLM_RUNTIME_RECEIPT_FILE } from "../vllm-station-runtime-
 import {
   isManagedClusterDiscoveryBindingStateEntry,
   isManagedClusterRuntimeBindingStateEntry,
-  MANAGED_CLUSTER_MANAGED_SERVING_STATE_FILE,
   MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
 } from "./managed-cluster-runtime-receipt-path";
 

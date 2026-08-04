@@ -252,7 +252,7 @@ describe("managed DGX Spark cluster topology qualification", () => {
     ).toEqual(expect.arrayContaining(["spark-head", "spark-worker"]));
   });
 
-  it("reports a fabric mismatch rather than rejecting a larger cluster by cardinality", () => {
+  it("reports a fabric mismatch when two peers claim the same rail addresses", () => {
     expect(
       qualifyManagedClusterTopology(qualificationInput([peerNode(), peerNode(1)])),
     ).toMatchObject({

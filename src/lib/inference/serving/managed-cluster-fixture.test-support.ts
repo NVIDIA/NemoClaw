@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { MANAGED_CLUSTER_VLLM_MATERIALIZER_REF } from "./adapter-registry.js";
 import { loadManagedInferenceCatalog } from "./catalog.js";
 import type { ResolvedManagedInferenceSelection } from "./catalog-types.js";
 import {
@@ -8,24 +9,34 @@ import {
   materializeManagedClusterVllmPlan,
 } from "./managed-cluster-materialize.js";
 import {
+  MANAGED_CLUSTER_TOPOLOGY_ID,
+  MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
   type ManagedClusterTopologyOutput,
   managedClusterTopologyOutputDigest,
   managedClusterTopologySubjectDigest,
 } from "./managed-cluster-topology.js";
 
-export const FIXTURE_MANAGED_CLUSTER_PRESET_ID = "vllm.dgx-spark-gb10.dual.deepseek-v4-flash-0731";
+function fixtureCatalogDefinitions() {
+  const catalog = loadManagedInferenceCatalog();
+  for (const compiledPreset of catalog.presets) {
+    const compiledRecipe = catalog.recipes.find(
+      ({ definition }) => definition.metadata.id === compiledPreset.definition.spec.plan.recipeRef,
+    );
+    if (
+      compiledRecipe?.definition.spec.execution.materializerRef ===
+      MANAGED_CLUSTER_VLLM_MATERIALIZER_REF
+    ) {
+      return { catalog, compiledPreset, compiledRecipe };
+    }
+  }
+  throw new Error("managed inference fixture catalog is incomplete");
+}
+
+export const FIXTURE_MANAGED_CLUSTER_PRESET_ID =
+  fixtureCatalogDefinitions().compiledPreset.definition.metadata.id;
 
 export function fixtureManagedClusterSelection(): ResolvedManagedInferenceSelection<ManagedClusterTopologyOutput> {
-  const catalog = loadManagedInferenceCatalog();
-  const compiledPreset = catalog.presets.find(
-    ({ definition }) => definition.metadata.id === FIXTURE_MANAGED_CLUSTER_PRESET_ID,
-  );
-  const compiledRecipe = catalog.recipes.find(
-    ({ definition }) => definition.metadata.id === compiledPreset?.definition.spec.plan.recipeRef,
-  );
-  if (!compiledPreset || !compiledRecipe) {
-    throw new Error("managed inference fixture catalog is incomplete");
-  }
+  const { catalog, compiledPreset, compiledRecipe } = fixtureCatalogDefinitions();
   const preset = structuredClone(compiledPreset.definition);
   const recipe = structuredClone(compiledRecipe.definition);
   const subjectNodeIds = ["spark-head", "spark-worker"] as const;
@@ -105,8 +116,8 @@ export function fixtureManagedClusterSelection(): ResolvedManagedInferenceSelect
     preset,
     recipe,
     topologyQualification: {
-      id: "host-cluster.direct-cx7",
-      schemaVersion: 1,
+      id: MANAGED_CLUSTER_TOPOLOGY_ID,
+      schemaVersion: MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
       status: "qualified",
       subjectNodeIds,
       subjectDigest: managedClusterTopologySubjectDigest(subjectNodeIds),

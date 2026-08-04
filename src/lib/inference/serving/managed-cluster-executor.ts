@@ -11,15 +11,11 @@ import { dockerCapture } from "../../adapters/docker/run.js";
 import { createBearerAuthConfig } from "../../adapters/http/auth-config.js";
 import { runCurlProbe } from "../../adapters/http/probe.js";
 import {
-  buildLocalDualStationDockerEnv,
+  buildLocalManagedVllmDockerEnv,
   buildRemoteVllmDockerEnv,
   captureManagedVllmTcpListeners,
 } from "../vllm-docker-env.js";
 import { withHostGlobalVllmLifecycleLock } from "../vllm-station-lifecycle-lock.js";
-import {
-  type DualStationSshBinding,
-  encodeDualStationSshBindingHandoff,
-} from "../vllm-station-ssh-binding.js";
 import {
   NO_PREPARATION_REF,
   SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
@@ -56,6 +52,10 @@ import {
   managedClusterHeadRole,
 } from "./managed-cluster-materialize.js";
 import { materializeManagedClusterVllmPreparation } from "./managed-cluster-preparation.js";
+import {
+  encodeManagedVllmSshBindingHandoff,
+  type ManagedVllmSshBinding,
+} from "./managed-cluster-ssh-binding.js";
 import {
   MANAGED_CLUSTER_TOPOLOGY_ID,
   MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
@@ -112,7 +112,7 @@ export interface ManagedClusterExecutorStageTarget {
   readonly nodeId: string;
   readonly dockerEnv: Readonly<Record<string, string>>;
   readonly modelCacheRoot: string;
-  readonly sshBinding?: DualStationSshBinding;
+  readonly sshBinding?: ManagedVllmSshBinding;
 }
 
 export type ManagedClusterExecutorStageNode = (
@@ -129,14 +129,14 @@ export interface CreateManagedClusterVllmExecutorOptions {
 export interface ManagedClusterExecutorNodeTarget {
   readonly nodeId: string;
   readonly modelCacheRoot: string;
-  readonly sshBinding?: DualStationSshBinding;
+  readonly sshBinding?: ManagedVllmSshBinding;
 }
 
 export interface ManagedClusterVllmExecutorRuntimeDeps {
   dockerCapture: typeof dockerCapture;
   dockerForceRm: typeof dockerForceRm;
   dockerRunDetached: typeof dockerRunDetached;
-  captureListeners(rolePlan: ManagedClusterVllmRolePlan, binding?: DualStationSshBinding): string;
+  captureListeners(rolePlan: ManagedClusterVllmRolePlan, binding?: ManagedVllmSshBinding): string;
   createBearerAuthConfig: typeof createBearerAuthConfig;
   createTransactionId(): string;
   now(): number;
@@ -157,7 +157,7 @@ const DEFAULT_DEPS: ManagedClusterVllmExecutorRuntimeDeps = {
     }
     return captureManagedVllmTcpListeners(
       rolePlan.role,
-      binding ?? ({} as DualStationSshBinding),
+      binding ?? ({} as ManagedVllmSshBinding),
       DOCKER_INSPECTION_TIMEOUT_MS,
     );
   },
@@ -363,7 +363,7 @@ export function assertManagedClusterVllmExecutorConfig(
         (!target.sshBinding ||
           rolePlan.execution.expectedTarget !== target.sshBinding.peerTarget ||
           rolePlan.execution.bindingHandle !==
-            encodeDualStationSshBindingHandoff(target.sshBinding)))
+            encodeManagedVllmSshBindingHandoff(target.sshBinding)))
     ) {
       throw new Error(`Managed cluster executor target ${target.nodeId} is invalid`);
     }
@@ -688,7 +688,7 @@ function roleDockerEnv(
   const target = targetFor(rolePlan, config);
   const env =
     rolePlan.execution.kind === "local"
-      ? buildLocalDualStationDockerEnv()
+      ? buildLocalManagedVllmDockerEnv()
       : buildRemoteVllmDockerEnv(target.sshBinding!);
   delete env.VLLM_API_KEY;
   return env;
@@ -817,7 +817,7 @@ async function waitForRoleProcess(
   do {
     try {
       const observed = exactWaitObservation(
-        await inspectRoleNode(request.rolePlan, config, deps),
+        inspectRoleNode(request.rolePlan, config, deps),
         request,
       );
       const headAbsent =
@@ -1013,7 +1013,7 @@ export function createManagedClusterVllmExecutor(
       }
       let observed: ManagedClusterObservedContainer | null = null;
       try {
-        const snapshot = await inspectRoleNode(request.rolePlan, config, deps);
+        const snapshot = inspectRoleNode(request.rolePlan, config, deps);
         const candidates = snapshot.containers.filter(
           (container) =>
             container.name === request.rolePlan.containerName &&
@@ -1056,7 +1056,7 @@ export function createManagedClusterVllmExecutor(
       if (!CONTAINER_ID_PATTERN.test(exactContainerId)) {
         return { ok: false, reason: `${rolePlan.role} cleanup container ID is invalid` };
       }
-      const before = await inspectRoleNode(rolePlan, config, deps);
+      const before = inspectRoleNode(rolePlan, config, deps);
       const matches = before.containers.filter(({ id }) => id === exactContainerId);
       if (
         matches.length !== 1 ||
@@ -1082,7 +1082,7 @@ export function createManagedClusterVllmExecutor(
       }
       if (!removed) {
         try {
-          const after = await inspectRoleNode(rolePlan, config, deps);
+          const after = inspectRoleNode(rolePlan, config, deps);
           removed = !after.containers.some(({ id }) => id === exactContainerId);
         } catch {
           removed = false;
@@ -1093,6 +1093,7 @@ export function createManagedClusterVllmExecutor(
         : { ok: false, reason: `${rolePlan.role} exact container removal failed` };
     },
     async probeModels(request) {
+      assertPlan(config.plan);
       if (
         request.baseUrl !== managedClusterHeadRole(config.plan).endpoint ||
         request.expectedModel !== config.plan.readiness.expectedModel
@@ -1102,6 +1103,7 @@ export function createManagedClusterVllmExecutor(
       return await probeAuthenticatedApi(request, "models", deps);
     },
     async probeChat(request) {
+      assertPlan(config.plan);
       if (
         request.baseUrl !== managedClusterHeadRole(config.plan).endpoint ||
         request.expectedModel !== config.plan.readiness.expectedModel

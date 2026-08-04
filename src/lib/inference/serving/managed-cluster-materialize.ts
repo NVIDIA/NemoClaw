@@ -511,7 +511,14 @@ function rolePlan(input: RolePlanInput): ManagedClusterVllmRolePlan {
   const output = selection.topologyQualification.output;
   const { nodeId, rank, role } = node;
   const fabricEndpoints = endpointsForNode(output, nodeId);
-  const primaryEndpoint = fabricEndpoints[0]!;
+  const primaryEndpoint = fabricEndpoints.find((endpoint) =>
+    role === "head"
+      ? endpoint.address === output.masterAddress
+      : endpoint.peerAddress === output.masterAddress,
+  );
+  if (!primaryEndpoint) {
+    fail(`node ${nodeId} has no direct fabric endpoint to master address ${output.masterAddress}`);
+  }
   const peer = output.peers.find((candidate) => candidate.nodeId === nodeId);
   if (rank > 0 && !peer) fail(`worker rank ${String(rank)} is missing its SSH binding`);
   const baseLabels = {
@@ -547,7 +554,7 @@ function rolePlan(input: RolePlanInput): ManagedClusterVllmRolePlan {
     rank,
     nodeId,
     gpuId: node.gpuId,
-    containerName: `nemoclaw-vllm-cluster-rank-${String(rank)}`,
+    containerName: `${MANAGED_CLUSTER_VLLM_PROJECT_ID}-rank-${String(rank)}`,
     execution:
       role === "head"
         ? { kind: "local" }

@@ -10,11 +10,6 @@ import { describe, expect, it } from "vitest";
 
 import type { SystemReadinessReport } from "../../readiness/types.js";
 import {
-  type DualStationSshBinding,
-  type QualifiedStationSshIdentity,
-  stationKnownHostsDigest,
-} from "../vllm-station-ssh-binding.js";
-import {
   confirmManagedClusterManagedServingCapability,
   createManagedClusterDiscoveryDeps,
   type ManagedClusterDetectedManagedServingCapability,
@@ -29,6 +24,11 @@ import {
 } from "./managed-cluster-discovery.js";
 import { FIXTURE_MANAGED_CLUSTER_PRESET_ID } from "./managed-cluster-fixture.test-support.js";
 import { MANAGED_CLUSTER_MANAGED_LABEL } from "./managed-cluster-materialize.js";
+import {
+  type ManagedVllmSshBinding,
+  managedVllmKnownHostsDigest,
+  type QualifiedManagedVllmSshIdentity,
+} from "./managed-cluster-ssh-binding.js";
 
 const NOW = new Date("2026-08-02T20:00:00.000Z");
 const SOURCE_REVISION = "1d6948d89b46eab739728215f9a19ef40b8f6121";
@@ -209,7 +209,7 @@ const transport = (name: string): ManagedClusterReadOnlyHostTransport => ({
   readdir: () => [],
 });
 
-function identity(target: string): QualifiedStationSshIdentity {
+function identity(target: string): QualifiedManagedVllmSshIdentity {
   const knownHostsLines = [`${target} ssh-ed25519 AAAA`];
   return {
     requestedTarget: target,
@@ -218,12 +218,12 @@ function identity(target: string): QualifiedStationSshIdentity {
     sshUser: "nvidia",
     port: 22,
     lookupHost: target,
-    hostKeyDigest: stationKnownHostsDigest(`${knownHostsLines.join("\n")}\n`),
+    hostKeyDigest: managedVllmKnownHostsDigest(`${knownHostsLines.join("\n")}\n`),
     knownHostsLines,
   };
 }
 
-function binding(peerIdentity: QualifiedStationSshIdentity): DualStationSshBinding {
+function binding(peerIdentity: QualifiedManagedVllmSshIdentity): ManagedVllmSshBinding {
   return {
     schemaVersion: 2,
     peerTarget: peerIdentity.sshTarget,

@@ -14,16 +14,7 @@ import { createHostReadinessReport } from "../../readiness/host.js";
 import { collectPlatformIdentity } from "../../readiness/platform-qualification.js";
 import type { SystemReadinessReport } from "../../readiness/types.js";
 import { managedVllmStateDir } from "../vllm-api-key.js";
-import { buildLocalDualStationDockerEnv, buildVllmSshTransportEnv } from "../vllm-docker-env.js";
-import {
-  clearDualStationSshBinding,
-  dualStationSshBindingDirectory,
-  encodeDualStationSshBindingHandoff,
-  type QualifiedStationSshIdentity,
-  stationKnownHostsDigest,
-  strictStationSshTransportArgs,
-  writeDualStationSshBinding,
-} from "../vllm-station-ssh-binding.js";
+import { buildLocalManagedVllmDockerEnv, buildVllmSshTransportEnv } from "../vllm-docker-env.js";
 import type {
   ManagedClusterCommandResult,
   ManagedClusterConnectivityRequest,
@@ -33,6 +24,15 @@ import type {
   ManagedClusterReadOnlyHostTransport,
 } from "./managed-cluster-discovery.js";
 import { MANAGED_CLUSTER_MANAGED_SERVING_STATE_FILE } from "./managed-cluster-runtime-receipt-path.js";
+import {
+  clearManagedVllmSshBinding,
+  encodeManagedVllmSshBindingHandoff,
+  managedVllmKnownHostsDigest,
+  managedVllmSshBindingDirectory,
+  type QualifiedManagedVllmSshIdentity,
+  strictManagedVllmSshTransportArgs,
+  writeManagedVllmSshBinding,
+} from "./managed-cluster-ssh-binding.js";
 
 const COMMAND_TIMEOUT_MS = 20_000;
 const MAX_COMMAND_OUTPUT_BYTES = 4 * 1024 * 1024;
@@ -591,7 +591,7 @@ function createLocalTransport(spawn: ManagedClusterSpawnSync): ManagedClusterRea
         argv[0]!,
         argv.slice(1),
         "",
-        buildLocalDualStationDockerEnv({ LC_ALL: "C", LANG: "C" }),
+        buildLocalManagedVllmDockerEnv({ LC_ALL: "C", LANG: "C" }),
       );
     },
     readFile: readBoundedLocalFile,
@@ -735,16 +735,21 @@ function trustedKnownHostLines(
   }
   if (!positive || lines.size === 0) return null;
   const result = [...lines].sort(compareStrings);
-  stationKnownHostsDigest(`${result.join("\n")}\n`);
+  managedVllmKnownHostsDigest(`${result.join("\n")}\n`);
   return result;
 }
 
 function inspectPretrustedTarget(
   spawn: ManagedClusterSpawnSync,
   rawTarget: string,
-): QualifiedStationSshIdentity | null {
+): QualifiedManagedVllmSshIdentity | null {
   const target = validatePeerTarget(rawTarget);
-  const result = runCommand(spawn, "ssh", ["-G", ...strictStationSshTransportArgs(), "--", target]);
+  const result = runCommand(spawn, "ssh", [
+    "-G",
+    ...strictManagedVllmSshTransportArgs(),
+    "--",
+    target,
+  ]);
   if (!commandSucceeded(result, true)) return null;
   const config = parseSshConfiguration(result.stdout);
   assertStrictSshConfiguration(config);
@@ -778,12 +783,12 @@ function inspectPretrustedTarget(
     sshUser,
     port,
     lookupHost,
-    hostKeyDigest: stationKnownHostsDigest(`${knownHostsLines.join("\n")}\n`),
+    hostKeyDigest: managedVllmKnownHostsDigest(`${knownHostsLines.join("\n")}\n`),
     knownHostsLines,
   };
 }
 
-function assertPinnedIdentity(identity: QualifiedStationSshIdentity): void {
+function assertPinnedIdentity(identity: QualifiedManagedVllmSshIdentity): void {
   if (
     validatePeerTarget(identity.sshTarget) !== identity.sshTarget ||
     identity.requestedTarget !== identity.sshTarget ||
@@ -809,7 +814,7 @@ function assertPinnedIdentity(identity: QualifiedStationSshIdentity): void {
     identity.knownHostsLines.some(
       (line) => !line || line !== line.trim() || /[\u0000\r\n]/.test(line),
     ) ||
-    stationKnownHostsDigest(contents) !== identity.hostKeyDigest
+    managedVllmKnownHostsDigest(contents) !== identity.hostKeyDigest
   ) {
     throw new Error("Qualified DGX Spark SSH host-key evidence is invalid");
   }
@@ -834,7 +839,7 @@ function assertTemporaryPinnedFiles(
     fileMetadata.uid !== uid ||
     (fileMetadata.mode & 0o777) !== 0o600 ||
     fs.readdirSync(directory).some((entry) => entry !== path.basename(knownHostsFile)) ||
-    stationKnownHostsDigest(readBoundedLocalFile(knownHostsFile)) !== expectedDigest
+    managedVllmKnownHostsDigest(readBoundedLocalFile(knownHostsFile)) !== expectedDigest
   ) {
     throw new Error("Temporary DGX Spark SSH host-key pin is unsafe");
   }
@@ -842,7 +847,7 @@ function assertTemporaryPinnedFiles(
 
 function openPinnedPeerTransport(
   spawn: ManagedClusterSpawnSync,
-  identity: QualifiedStationSshIdentity,
+  identity: QualifiedManagedVllmSshIdentity,
 ): ManagedClusterPinnedPeerTransport {
   assertPinnedIdentity(identity);
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-cluster-"));
@@ -876,7 +881,7 @@ function openPinnedPeerTransport(
       [
         "-F",
         "/dev/null",
-        ...strictStationSshTransportArgs(),
+        ...strictManagedVllmSshTransportArgs(),
         "-o",
         `UserKnownHostsFile=${knownHostsFile}`,
         "-o",
@@ -1108,7 +1113,7 @@ function createCanonicalReadiness(
 }
 
 function claimBinding(statePath: string): boolean {
-  const bindingDirectory = dualStationSshBindingDirectory(statePath);
+  const bindingDirectory = managedVllmSshBindingDirectory(statePath);
   const parent = path.dirname(bindingDirectory);
   const uid = process.getuid?.();
   if (uid === undefined) throw new Error("DGX Spark binding claim requires a POSIX user identity");
@@ -1168,9 +1173,9 @@ export function createProductionManagedClusterDiscoveryDeps(
     createReadiness: createCanonicalReadiness,
     probeConnectivity,
     claimBinding,
-    writeBinding: writeDualStationSshBinding,
-    clearBinding: clearDualStationSshBinding,
-    encodeBinding: encodeDualStationSshBindingHandoff,
+    writeBinding: writeManagedVllmSshBinding,
+    clearBinding: clearManagedVllmSshBinding,
+    encodeBinding: encodeManagedVllmSshBindingHandoff,
     resolveBindingStatePath: (nodeId) =>
       path.join(managedVllmStateDir(), `${MANAGED_CLUSTER_MANAGED_SERVING_STATE_FILE}.${nodeId}`),
   };

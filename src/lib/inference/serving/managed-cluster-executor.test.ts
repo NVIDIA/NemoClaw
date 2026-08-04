@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import {
-  createDualStationSshBindingFixture,
-  type DualStationSshBindingFixture,
-} from "../vllm-station-ssh-binding.test-support.js";
 import { NO_PREPARATION_REF } from "./adapter-registry.js";
 import {
   assertManagedClusterVllmExecutorConfig,
@@ -24,6 +19,10 @@ import {
   type ManagedClusterVllmRole,
   type ManagedClusterVllmRolePlan,
 } from "./managed-cluster-materialize.js";
+import {
+  createManagedVllmSshBindingFixture,
+  type ManagedVllmSshBindingFixture,
+} from "./managed-cluster-ssh-binding.test-support.js";
 
 const API_KEY = "a".repeat(64);
 const FINGERPRINT = "b".repeat(64);
@@ -66,7 +65,7 @@ const STOPPED_FOREIGN_CONTAINER_FIXTURES: readonly StoppedForeignContainerFixtur
   },
 ];
 
-function bindPlan(fixture: DualStationSshBindingFixture): ManagedClusterVllmPlan {
+function bindPlan(fixture: ManagedVllmSshBindingFixture): ManagedClusterVllmPlan {
   const plan = fixtureManagedClusterPlan();
   return {
     ...plan,
@@ -161,11 +160,11 @@ function routeDockerCapture(
 }
 
 describe("managed-cluster vLLM executor", () => {
-  let bindingFixture: DualStationSshBindingFixture;
+  let bindingFixture: ManagedVllmSshBindingFixture;
   let plan: ManagedClusterVllmPlan;
 
   beforeEach(() => {
-    bindingFixture = createDualStationSshBindingFixture("spark-worker.local");
+    bindingFixture = createManagedVllmSshBindingFixture("spark-worker.local");
     plan = bindPlan(bindingFixture);
   });
 
@@ -774,6 +773,36 @@ describe("managed-cluster vLLM executor", () => {
     expect(createBearerAuthConfig).toHaveBeenCalledWith(API_KEY, expect.any(Object));
     expect(cleanup).toHaveBeenCalledTimes(2);
     expect(runCurlProbe).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects API probes after a caller-owned plan changes", async () => {
+    const mutablePlan = structuredClone(plan);
+    const runCurlProbe = vi.fn();
+    const executor = createManagedClusterVllmExecutor(
+      {
+        plan: mutablePlan,
+        nodes: [
+          { nodeId: mutablePlan.roles[0].nodeId, modelCacheRoot: LOCAL_CACHE_ROOT },
+          {
+            nodeId: mutablePlan.roles[1].nodeId,
+            modelCacheRoot: PEER_CACHE_ROOT,
+            sshBinding: bindingFixture.binding,
+          },
+        ],
+      },
+      runtimeOverrides({ runCurlProbe }),
+    );
+    const request = {
+      baseUrl: mutablePlan.roles[0].endpoint!,
+      apiKey: API_KEY,
+      expectedModel: mutablePlan.model.servedName,
+      timeoutMs: 10_000,
+    };
+    (mutablePlan.readiness as { expectedModel: string }).expectedModel = "mutated-model";
+
+    await expect(executor.probeModels(request)).rejects.toThrow("changed materialized plan");
+    await expect(executor.probeChat(request)).rejects.toThrow("changed materialized plan");
+    expect(runCurlProbe).not.toHaveBeenCalled();
   });
 
   it("generates 32-hex transactions and serializes through the shared lifecycle lock", async () => {

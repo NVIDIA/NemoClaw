@@ -81,23 +81,22 @@ function managedContainer(
 
 function classifiedSnapshots(
   plan: ManagedClusterVllmPlan,
-  snapshots: Record<ManagedClusterVllmRole, ManagedClusterNodeSnapshot>,
+  snapshots: Record<string, ManagedClusterNodeSnapshot>,
 ) {
   return plan.roles.map((rolePlan) => ({
     nodeId: rolePlan.nodeId,
-    snapshot: snapshots[rolePlan.role],
+    snapshot: snapshots[rolePlan.nodeId],
   }));
 }
 
 function createHarness(plan: ManagedClusterVllmPlan) {
   const events: string[] = [];
-  const snapshots: Record<ManagedClusterVllmRole, ManagedClusterNodeSnapshot> = {
-    head: { containers: [], listeningPorts: [] },
-    worker: { containers: [], listeningPorts: [] },
-  };
+  const snapshots: Record<string, ManagedClusterNodeSnapshot> = Object.fromEntries(
+    plan.roles.map(({ nodeId }) => [nodeId, { containers: [], listeningPorts: [] }]),
+  );
   const inspectNode = vi.fn(async (rolePlan: ManagedClusterVllmRolePlan) => {
     events.push(`inspect:${rolePlan.role}`);
-    return snapshots[rolePlan.role];
+    return snapshots[rolePlan.nodeId];
   });
   const stageNode = vi.fn(async ({ rolePlan }: { rolePlan: ManagedClusterVllmRolePlan }) => {
     events.push(`stage:${rolePlan.role}`);
@@ -107,8 +106,8 @@ function createHarness(plan: ManagedClusterVllmPlan) {
     const { rolePlan, labels } = request;
     events.push(`start:${rolePlan.role}`);
     const id = rolePlan.role === "head" ? HEAD_ID : WORKER_ID;
-    snapshots[rolePlan.role] = {
-      ...snapshots[rolePlan.role],
+    snapshots[rolePlan.nodeId] = {
+      ...snapshots[rolePlan.nodeId],
       containers: [
         {
           id,
@@ -132,9 +131,9 @@ function createHarness(plan: ManagedClusterVllmPlan) {
   });
   const removeContainer = vi.fn(async (rolePlan: ManagedClusterVllmRolePlan, id: string) => {
     events.push(`remove:${rolePlan.role}:${id}`);
-    snapshots[rolePlan.role] = {
-      ...snapshots[rolePlan.role],
-      containers: snapshots[rolePlan.role].containers.filter((container) => container.id !== id),
+    snapshots[rolePlan.nodeId] = {
+      ...snapshots[rolePlan.nodeId],
+      containers: snapshots[rolePlan.nodeId]!.containers.filter((container) => container.id !== id),
     };
     return { ok: true };
   });
@@ -191,7 +190,7 @@ describe("automatic managed-cluster vLLM lifecycle", () => {
   });
 
   it("preserves singleton, Station, and related external setups", async () => {
-    harness.snapshots.head = {
+    harness.snapshots[plan.roles[0].nodeId] = {
       containers: [
         {
           id: "9".repeat(64),
@@ -216,7 +215,7 @@ describe("automatic managed-cluster vLLM lifecycle", () => {
   it.each(
     STOPPED_FOREIGN_CONTAINER_FIXTURES,
   )("preserves a stopped foreign vLLM setup identified by $signal", async (container) => {
-    harness.snapshots.head = {
+    harness.snapshots[plan.roles[0].nodeId] = {
       containers: [
         {
           id: "9".repeat(64),
@@ -240,7 +239,7 @@ describe("automatic managed-cluster vLLM lifecycle", () => {
 
   it("does not classify an arbitrary stopped container as a managed vLLM setup", () => {
     const snapshots = {
-      head: {
+      [plan.roles[0].nodeId]: {
         containers: [
           {
             id: "9".repeat(64),
@@ -253,7 +252,7 @@ describe("automatic managed-cluster vLLM lifecycle", () => {
         ],
         listeningPorts: [],
       },
-      worker: { containers: [], listeningPorts: [] },
+      [plan.roles[1].nodeId]: { containers: [], listeningPorts: [] },
     };
 
     expect(
@@ -266,11 +265,11 @@ describe("automatic managed-cluster vLLM lifecycle", () => {
   });
 
   it("reuses only one exact healthy cluster with the same transaction", async () => {
-    harness.snapshots.head = {
+    harness.snapshots[plan.roles[0].nodeId] = {
       containers: [managedContainer(plan, "head")],
       listeningPorts: [8000],
     };
-    harness.snapshots.worker = {
+    harness.snapshots[plan.roles[1].nodeId] = {
       containers: [managedContainer(plan, "worker")],
       listeningPorts: [25000],
     };
@@ -292,11 +291,11 @@ describe("automatic managed-cluster vLLM lifecycle", () => {
   });
 
   it("does not implicitly repair a stopped or partial managed deployment", async () => {
-    harness.snapshots.head = {
+    harness.snapshots[plan.roles[0].nodeId] = {
       containers: [managedContainer(plan, "head", { running: false, healthy: false })],
       listeningPorts: [],
     };
-    harness.snapshots.worker = {
+    harness.snapshots[plan.roles[1].nodeId] = {
       containers: [managedContainer(plan, "worker")],
       listeningPorts: [],
     };
@@ -330,7 +329,7 @@ describe("automatic managed-cluster vLLM lifecycle", () => {
 
   it("retains SSH ownership when a failed worker create leaves runtime state", async () => {
     harness.startContainer.mockImplementation(async ({ rolePlan, labels }) => {
-      harness.snapshots.worker = {
+      harness.snapshots[plan.roles[1].nodeId] = {
         containers: [
           {
             id: WORKER_ID,
@@ -390,9 +389,9 @@ describe("automatic managed-cluster vLLM lifecycle", () => {
 
   it("leaves a container untouched when transaction ownership changes before rollback", async () => {
     harness.probeChat.mockImplementation(async () => {
-      const worker = harness.snapshots.worker.containers[0]!;
-      harness.snapshots.worker = {
-        ...harness.snapshots.worker,
+      const worker = harness.snapshots[plan.roles[1].nodeId]!.containers[0]!;
+      harness.snapshots[plan.roles[1].nodeId] = {
+        ...harness.snapshots[plan.roles[1].nodeId],
         containers: [
           {
             ...worker,
@@ -414,7 +413,7 @@ describe("automatic managed-cluster vLLM lifecycle", () => {
       "worker rollback ownership changed; container was left untouched",
     );
     expect(harness.removeContainer.mock.calls.map((call) => call[1])).toEqual([HEAD_ID]);
-    expect(harness.snapshots.worker.containers).toHaveLength(1);
+    expect(harness.snapshots[plan.roles[1].nodeId]!.containers).toHaveLength(1);
   });
 
   it("classifies port conflicts on either node as nonselectable", () => {
@@ -423,8 +422,8 @@ describe("automatic managed-cluster vLLM lifecycle", () => {
         plan,
         managedClusterVllmApiKeyFingerprint(API_KEY),
         classifiedSnapshots(plan, {
-          head: { containers: [], listeningPorts: [] },
-          worker: { containers: [], listeningPorts: [25000] },
+          [plan.roles[0].nodeId]: { containers: [], listeningPorts: [] },
+          [plan.roles[1].nodeId]: { containers: [], listeningPorts: [25000] },
         }),
       ),
     ).toEqual({
@@ -434,11 +433,11 @@ describe("automatic managed-cluster vLLM lifecycle", () => {
   });
 
   it("cleans up only a complete exact cluster and retains all cache state", async () => {
-    harness.snapshots.head = {
+    harness.snapshots[plan.roles[0].nodeId] = {
       containers: [managedContainer(plan, "head")],
       listeningPorts: [],
     };
-    harness.snapshots.worker = {
+    harness.snapshots[plan.roles[1].nodeId] = {
       containers: [managedContainer(plan, "worker")],
       listeningPorts: [],
     };
@@ -453,11 +452,11 @@ describe("automatic managed-cluster vLLM lifecycle", () => {
   });
 
   it("retries cleanup after one receipt-owned container was already removed", async () => {
-    harness.snapshots.head = {
+    harness.snapshots[plan.roles[0].nodeId] = {
       containers: [managedContainer(plan, "head")],
       listeningPorts: [],
     };
-    harness.snapshots.worker = {
+    harness.snapshots[plan.roles[1].nodeId] = {
       containers: [managedContainer(plan, "worker")],
       listeningPorts: [],
     };
@@ -466,9 +465,9 @@ describe("automatic managed-cluster vLLM lifecycle", () => {
       const shouldFailWorker = rolePlan.role === "worker" && workerAttempts === 0;
       workerAttempts += Number(rolePlan.role === "worker");
       const removeOwnedContainer = () => {
-        harness.snapshots[rolePlan.role] = {
-          ...harness.snapshots[rolePlan.role],
-          containers: harness.snapshots[rolePlan.role].containers.filter(
+        harness.snapshots[rolePlan.nodeId] = {
+          ...harness.snapshots[rolePlan.nodeId],
+          containers: harness.snapshots[rolePlan.nodeId]!.containers.filter(
             (container) => container.id !== id,
           ),
         };

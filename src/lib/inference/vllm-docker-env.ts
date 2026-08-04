@@ -148,6 +148,9 @@ export function buildLocalDualStationDockerEnv(
   return env;
 }
 
+/** Cardinality-neutral name for managed-cluster consumers. */
+export const buildLocalManagedVllmDockerEnv = buildLocalDualStationDockerEnv;
+
 /** Minimal environment shared by strict SSH probes and Docker's SSH helper. */
 export function buildVllmSshTransportEnv(
   extra: Record<string, string> = {},
@@ -161,7 +164,7 @@ export function buildVllmSshTransportEnv(
   return { ...env, ...extra };
 }
 
-/** Capture the listening TCP sockets from one side of a pinned managed-vLLM pair. */
+/** Capture the listening TCP sockets from one node in a pinned managed-vLLM cluster. */
 export function captureManagedVllmTcpListeners(
   role: "head" | "worker",
   binding: DualStationSshBinding,

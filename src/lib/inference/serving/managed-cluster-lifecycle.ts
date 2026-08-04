@@ -10,6 +10,7 @@ import {
   MANAGED_CLUSTER_VLLM_PROJECT_ID,
   type ManagedClusterVllmPlan,
   type ManagedClusterVllmRolePlan,
+  managedClusterHeadRole,
 } from "./managed-cluster-materialize.js";
 
 const API_KEY_PATTERN = /^[a-f0-9]{64}$/;
@@ -536,7 +537,7 @@ async function probeManagedApi(
   apiKey: string,
   deps: Pick<ManagedClusterVllmLifecycleDeps, "probeModels" | "probeChat">,
 ): Promise<boolean> {
-  const baseUrl = plan.roles.find(({ rank }) => rank === 0)?.endpoint;
+  const baseUrl = managedClusterHeadRole(plan).endpoint;
   if (!baseUrl) return false;
   const request = {
     baseUrl,
@@ -651,7 +652,7 @@ async function startNewCluster(
   return {
     ok: true,
     reusedExisting: false,
-    baseUrl: plan.roles.find(({ rank }) => rank === 0)!.endpoint!,
+    baseUrl: managedClusterHeadRole(plan).endpoint!,
     containers: created.map(({ rolePlan, containerId }) => ({
       nodeId: rolePlan.nodeId,
       containerId,
@@ -693,7 +694,7 @@ export async function startAutomaticManagedClusterVllm(
         return {
           ok: true,
           reusedExisting: true,
-          baseUrl: plan.roles.find(({ rank }) => rank === 0)!.endpoint!,
+          baseUrl: managedClusterHeadRole(plan).endpoint!,
           containers: preflight.containers,
           apiKeyFingerprint,
         };
