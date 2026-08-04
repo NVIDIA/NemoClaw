@@ -568,9 +568,10 @@ describe("managed inference resolver", () => {
     );
 
     expect(result.outcome).toBe("selected");
-    const selected = result as Extract<typeof result, { outcome: "selected" }>;
+    const selected = result as Extract<typeof result, { outcome: "selected" }> & {
+      readonly topologyQualification: ManagedInferenceTopologyQualification<ManagedClusterTopologyOutput>;
+    };
     expect("topologyQualification" in selected).toBe(true);
-    if (!("topologyQualification" in selected)) throw new Error("expected topology selection");
     (artifact.output as { masterAddress: string }).masterAddress = "192.168.100.99";
     expect(selected.topologyQualification.output.masterAddress).toBe("192.168.100.10");
     expect(Object.isFrozen(selected.topologyQualification.output)).toBe(true);
