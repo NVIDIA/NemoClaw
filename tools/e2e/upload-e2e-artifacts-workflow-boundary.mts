@@ -144,6 +144,13 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "managed-image-multiarch-startup",
+    {
+      name: "e2e-managed-image-multiarch-startup-${{ matrix.shard }}",
+      path: "e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}/",
+    },
+  ],
+  [
     "network-policy",
     {
       name: "e2e-network-policy-${{ matrix.scenario }}",
