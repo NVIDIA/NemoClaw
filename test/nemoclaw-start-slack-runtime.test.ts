@@ -9,10 +9,11 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
+const SANDBOX_INIT = path.join(import.meta.dirname, "..", "scripts", "lib", "sandbox-init.sh");
 
 function messagingRuntimeSetupSection(src: string, planPath: string): string {
   const start = src.indexOf("# ── Messaging runtime setup from manifest metadata");
-  const end = src.indexOf("_read_gateway_token()", start);
+  const end = src.indexOf("# ── End messaging runtime setup", start);
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
   return src
@@ -64,7 +65,7 @@ function encodeRuntimeSetupPlan(channelId: string, value: Record<string, unknown
 }
 
 describe("Slack runtime env normalization (#4274)", () => {
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const src = `${fs.readFileSync(SANDBOX_INIT, "utf-8")}\n${fs.readFileSync(START_SCRIPT, "utf-8")}`;
 
   function runNormalize(env: Record<string, string | undefined> = {}): {
     bot: string;

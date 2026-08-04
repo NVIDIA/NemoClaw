@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 const ROOT = path.join(import.meta.dirname, "..");
 const CANONICAL_FIX = path.join(ROOT, "nemoclaw-blueprint", "scripts", "http-proxy-fix.js");
 const START_SCRIPT = path.join(ROOT, "scripts", "nemoclaw-start.sh");
+const SANDBOX_INIT = path.join(ROOT, "scripts", "lib", "sandbox-init.sh");
 
 function extractShellFunction(source: string, name: string): string {
   const header = `${name}() {`;
@@ -23,7 +24,7 @@ function extractShellFunction(source: string, name: string): string {
 
 describe("http-proxy-fix preload sync (#2109)", () => {
   it("entrypoint emits the proxy fix preload and registers it in NODE_OPTIONS", () => {
-    const startScript = fs.readFileSync(START_SCRIPT, "utf-8");
+    const startScript = `${fs.readFileSync(SANDBOX_INIT, "utf-8")}\n${fs.readFileSync(START_SCRIPT, "utf-8")}`;
     const start = startScript.indexOf('_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"');
     const end = startScript.indexOf(
       "# NVIDIA endpoint model-specific inference parameter injection",

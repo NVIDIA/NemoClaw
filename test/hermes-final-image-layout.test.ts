@@ -77,11 +77,6 @@ const HERMES_INTEGRITY_FILES = [
     source: "agents/hermes/patch-neutral-platform-env-activation.py",
     target: "/opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py",
   },
-  {
-    arg: "NEMOCLAW_HERMES_WHATSAPP_SESSION_PATCHER_SHA256",
-    source: "agents/hermes/patch-whatsapp-session-path.mts",
-    target: "/opt/nemoclaw-hermes-config/patch-whatsapp-session-path.mts",
-  },
 ] as const;
 
 type LegacyDataFixture =
@@ -244,7 +239,6 @@ describe("Hermes final image layout", () => {
           "COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py",
           "COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py",
           "COPY agents/hermes/patch-neutral-platform-env-activation.py /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py",
-          "COPY agents/hermes/patch-whatsapp-session-path.mts /opt/nemoclaw-hermes-config/patch-whatsapp-session-path.mts",
           "COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json",
           "COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts",
           "COPY src/lib/messaging/ /src/lib/messaging/",
@@ -280,6 +274,7 @@ describe("Hermes final image layout", () => {
           "COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.85.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json",
           "COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py",
           "COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/",
+          "COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/",
         ],
       },
       {

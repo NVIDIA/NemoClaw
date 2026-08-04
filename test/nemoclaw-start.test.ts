@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { openClawBootstrapSnippet } from "./support/entrypoint-script-fixture";
+import * as entrypointFixture from "./support/entrypoint-script-fixture";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "scripts", "lib");
@@ -36,7 +36,7 @@ function messagingRuntimeSetupSection(
   } = {},
 ): string {
   const start = src.indexOf("# ── Messaging runtime setup from manifest metadata");
-  const end = src.indexOf("_read_gateway_token()", start);
+  const end = src.indexOf("# ── End messaging runtime setup", start);
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
   let section = src.slice(start, end);
@@ -353,7 +353,7 @@ describe("nemoclaw-start non-root fallback", () => {
   });
 
   it("unwraps the sandbox-create env self-wrapper and applies dashboard port defaults", () => {
-    const snippet = openClawBootstrapSnippet(
+    const snippet = entrypointFixture.openClawBootstrapSnippet(
       START_SCRIPT,
       path.join(import.meta.dirname, "..", "scripts", "lib", "entrypoint-env-wrapper.sh"),
     );
@@ -1337,7 +1337,7 @@ describe("runtime CORS origin override (#719)", () => {
 });
 
 describe("Slack channel guard — unhandled-rejection safety net (#2340)", () => {
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const src = entrypointFixture.readOpenClawSources(START_SCRIPT);
   const extractGuardScript = () => startScriptHeredoc(src, "SLACK_GUARD_EOF");
 
   function runSlackGuardHarness(body: string): ReturnType<typeof spawnSync> {
@@ -2793,7 +2793,7 @@ describe("seed_default_workspace_templates (#3240)", () => {
 });
 
 describe("Slack secrets-on-disk tripwire (#2085)", () => {
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const src = entrypointFixture.readOpenClawSources(START_SCRIPT);
 
   it("refuses to serve when real Slack tokens leak to disk", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-secret-"));
@@ -3457,7 +3457,7 @@ describe("provider placeholder refresh (#4251)", () => {
 });
 
 describe("Telegram diagnostics (#2766)", () => {
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const src = entrypointFixture.readOpenClawSources(START_SCRIPT);
   const telegramDiagnosticsScript = startScriptHeredoc(src, "TELEGRAM_DIAGNOSTICS_EOF");
 
   function preGatewaySetupBlock(

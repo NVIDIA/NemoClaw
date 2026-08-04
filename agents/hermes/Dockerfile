@@ -21,6 +21,12 @@ RUN ./install-reviewed-runtime.sh \
 RUN chown -R root:root /opt/mcp-tool-discovery-runtime \
     && chmod -R a=rX /opt/mcp-tool-discovery-runtime
 
+FROM mcp-tool-discovery-runtime AS runtime-preload-builder
+WORKDIR /opt/nemoclaw-root
+COPY tsconfig.runtime-preloads.json /opt/nemoclaw-root/
+COPY src/lib/messaging/channels/ /opt/nemoclaw-root/src/lib/messaging/channels/
+RUN /opt/mcp-tool-discovery-runtime/node_modules/.bin/tsc -p tsconfig.runtime-preloads.json
+
 FROM mcp-tool-discovery-runtime AS managed-startup-runtime-builder
 WORKDIR /opt/nemoclaw-managed-startup-build
 COPY src/lib/core/json-types.ts src/lib/core/ports.ts ./src/lib/core/
@@ -103,7 +109,6 @@ COPY agents/hermes/patch-gateway-runtime-metadata.py /opt/nemoclaw-hermes-config
 COPY agents/hermes/patch-gateway-process-identity.py /opt/nemoclaw-hermes-config/patch-gateway-process-identity.py
 COPY agents/hermes/patch-cron-execution-runtime.py /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py
 COPY agents/hermes/patch-neutral-platform-env-activation.py /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py
-COPY agents/hermes/patch-whatsapp-session-path.mts /opt/nemoclaw-hermes-config/patch-whatsapp-session-path.mts
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
 COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
 COPY src/lib/messaging/ /src/lib/messaging/
@@ -137,6 +142,7 @@ COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-
 COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.85.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json
 COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
+COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/
 
 FROM scratch AS hermes-wrapper-payload
 
@@ -318,6 +324,11 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-star
     && chmod 444 /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py \
     && chmod 444 /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
     && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json \
+    && if [ -d /usr/local/lib/nemoclaw/preloads-compiled-channels ]; then \
+        find /usr/local/lib/nemoclaw/preloads-compiled-channels -path '*/runtime/*.js' -type f \
+            -exec sh -c 'for file do cp "$file" "/usr/local/lib/nemoclaw/preloads/$(basename "$file")"; done' sh {} +; \
+    fi \
+    && rm -rf /usr/local/lib/nemoclaw/preloads-compiled-channels \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then \
         chown -R 0:0 /usr/local/lib/nemoclaw/preloads \
         && find /usr/local/lib/nemoclaw/preloads -type f -exec chmod 444 {} + \
@@ -380,39 +391,6 @@ RUN /usr/bin/python3 -I \
         /opt/hermes/gateway/config.py \
     && printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256" /opt/hermes/gateway/config.py \
-    | sha256sum -c -
-
-# Hermes v0.19.0 resolves WhatsApp state relative to each process's
-# HERMES_HOME. NemoClaw isolates the dashboard home, and the CLI still uses a
-# legacy path, so successful pairing can write credentials outside the
-# manifest-owned durable directory. Bind the three consumers to their reviewed
-# sources before making the existing /sandbox/.hermes/platforms/whatsapp/session
-# directory authoritative for pairing and gateway startup. Dashboard and CLI
-# pairing child processes use umask 0007 so their state remains accessible to
-# the separate Hermes gateway user through the shared sandbox group. Other
-# processes retain their inherited umask.
-ARG NEMOCLAW_HERMES_WHATSAPP_SESSION_PATCHER_SHA256=20e768d4617108180246c531475e21f00738272fcc0a8448d598534aa1eb16cb
-ARG NEMOCLAW_HERMES_WHATSAPP_ADAPTER_SOURCE_SHA256=96730b2261eed2eb34affd1cec980a039c8cb8a7cc864b798b6e1b7f17a354a9
-ARG NEMOCLAW_HERMES_WHATSAPP_WEB_SERVER_SOURCE_SHA256=0bf9d4dd17a1b7c3d96c94dacea9884426e7bbb5c8818685b43ef68f2465b3f2
-ARG NEMOCLAW_HERMES_WHATSAPP_MAIN_SOURCE_SHA256=18bab193cf86e1198bcea7ca09f62b88f1d30615aeed367b88388de21c3723c0
-ARG NEMOCLAW_HERMES_WHATSAPP_ADAPTER_OUTPUT_SHA256=4e480d766267478a3dac7a0cdb2ab3c2264b33bec29860dc21e93f1422e742fd
-ARG NEMOCLAW_HERMES_WHATSAPP_WEB_SERVER_OUTPUT_SHA256=4a773388ab1cd38ace0a8c7e21388aaa6c4a775ddbf6d7f1623cca461a09f3b3
-ARG NEMOCLAW_HERMES_WHATSAPP_MAIN_OUTPUT_SHA256=5c175a2dbeb23ccad66a3ce1cdbaa12f424cb925abc4fcf5e4d0064240d4f400
-# hadolint ignore=DL4006
-RUN printf '%s  %s\n' \
-        "$NEMOCLAW_HERMES_WHATSAPP_SESSION_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-whatsapp-session-path.mts \
-        "$NEMOCLAW_HERMES_WHATSAPP_ADAPTER_SOURCE_SHA256" /opt/hermes/plugins/platforms/whatsapp/adapter.py \
-        "$NEMOCLAW_HERMES_WHATSAPP_WEB_SERVER_SOURCE_SHA256" /opt/hermes/hermes_cli/web_server.py \
-        "$NEMOCLAW_HERMES_WHATSAPP_MAIN_SOURCE_SHA256" /opt/hermes/hermes_cli/main.py \
-    | sha256sum -c - \
-    || { echo "ERROR: Hermes WhatsApp session source identity mismatch" >&2; exit 1; }
-# hadolint ignore=DL4006
-RUN node --experimental-strip-types \
-        /opt/nemoclaw-hermes-config/patch-whatsapp-session-path.mts \
-    && printf '%s  %s\n' \
-        "$NEMOCLAW_HERMES_WHATSAPP_ADAPTER_OUTPUT_SHA256" /opt/hermes/plugins/platforms/whatsapp/adapter.py \
-        "$NEMOCLAW_HERMES_WHATSAPP_WEB_SERVER_OUTPUT_SHA256" /opt/hermes/hermes_cli/web_server.py \
-        "$NEMOCLAW_HERMES_WHATSAPP_MAIN_OUTPUT_SHA256" /opt/hermes/hermes_cli/main.py \
     | sha256sum -c -
 
 # Prove the source-level fallback on the real installed runtime through the

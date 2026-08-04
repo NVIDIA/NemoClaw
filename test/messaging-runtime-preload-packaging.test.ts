@@ -7,6 +7,10 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+const hermesDockerfile = fs.readFileSync(
+  path.join(repoRoot, "agents", "hermes", "Dockerfile"),
+  "utf8",
+);
 
 describe("messaging runtime preload packaging", () => {
   it("packages preload JavaScript compiled from TypeScript without requiring root npm metadata", () => {
@@ -29,5 +33,22 @@ describe("messaging runtime preload packaging", () => {
       "COPY src/lib/messaging/channels/*/runtime/*.ts /usr/local/lib/nemoclaw/preloads-ts/",
     );
     expect(dockerfile).not.toContain('basename "$file" .ts');
+  });
+
+  it("packages the same manifest-owned runtime preloads for Hermes", () => {
+    expect(hermesDockerfile).toContain(
+      "FROM mcp-tool-discovery-runtime AS runtime-preload-builder",
+    );
+    expect(hermesDockerfile).toContain("COPY tsconfig.runtime-preloads.json /opt/nemoclaw-root/");
+    expect(hermesDockerfile).toContain(
+      "COPY src/lib/messaging/channels/ /opt/nemoclaw-root/src/lib/messaging/channels/",
+    );
+    expect(hermesDockerfile).toContain(
+      "/opt/mcp-tool-discovery-runtime/node_modules/.bin/tsc -p tsconfig.runtime-preloads.json",
+    );
+    expect(hermesDockerfile).toContain(
+      "COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/",
+    );
+    expect(hermesDockerfile).toContain("-path '*/runtime/*.js'");
   });
 });

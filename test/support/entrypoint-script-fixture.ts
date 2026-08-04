@@ -2,6 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
+
+export function readEntrypointSources(...sourcePaths: string[]): string {
+  return sourcePaths.map((sourcePath) => fs.readFileSync(sourcePath, "utf8")).join("\n");
+}
+
+export function readOpenClawSources(startScriptPath: string): string {
+  return readEntrypointSources(
+    path.join(path.dirname(startScriptPath), "lib", "sandbox-init.sh"),
+    startScriptPath,
+  );
+}
 
 export function openClawBootstrapSnippet(
   startScriptPath: string,
