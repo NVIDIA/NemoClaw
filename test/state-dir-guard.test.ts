@@ -231,7 +231,7 @@ function fixture(configDirName = ".agent"): { root: string; configDir: string } 
 }
 
 function runGuard(
-  action: "preflight" | "lock" | "unlock",
+  action: "preflight" | "lock" | "unlock" | "startup",
   configDir: string,
   env: Record<string, string> = {},
 ) {
@@ -981,6 +981,26 @@ describe("state-dir-guard", () => {
     expect(locked.status, locked.stderr).toBe(0);
     expect(mode(dashboardHome)).toBe(0o755);
     expect(fs.statSync(dashboardMemory).ino).not.toBe(oldMemoryInode);
+  });
+
+  it("restores startup traversal only for an empty sealed credentials root (#8112)", () => {
+    const { configDir } = fixture();
+    const credentialsDir = path.join(configDir, "credentials");
+    fs.mkdirSync(credentialsDir);
+    fs.chmodSync(credentialsDir, 0o700);
+
+    const restored = runGuard("startup", configDir);
+
+    expect(restored.status, JSON.stringify(restored.lines)).toBe(0);
+    expect(mode(credentialsDir)).toBe(0o710);
+
+    fs.writeFileSync(path.join(credentialsDir, "token.json"), "secret\n", { mode: 0o600 });
+
+    const nonemptyStartup = runGuard("startup", configDir);
+
+    expect(nonemptyStartup.status, nonemptyStartup.stderr).toBe(0);
+    expect(mode(credentialsDir)).toBe(0o700);
+    expect(mode(path.join(credentialsDir, "token.json"))).toBe(0o600);
   });
 
   it("creates a missing sessions carveout during lock so a first-boot agent can write sessions (#7545)", () => {

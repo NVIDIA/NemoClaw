@@ -377,6 +377,31 @@ describe("Docker managed bootstrap adapter", () => {
     expect(fake.replacement).toBeNull();
   });
 
+  it("rejects a divergent snapshot image before creating durable recovery state", async () => {
+    const fake = fixture();
+    const adapter = createDockerManagedBootstrapAdapter(fake.deps);
+    const { handle, request: rootRequest, snapshot } = authority();
+
+    await expect(
+      adapter.prepareBootstrapReplacement({
+        handle,
+        snapshot: {
+          ...snapshot,
+          image: {
+            ...snapshot.image,
+            repository: "registry.example/nemoclaw/divergent",
+          },
+        },
+        request: rootRequest,
+        replacementOptions: { values: {} },
+      }),
+    ).rejects.toThrow("replacement snapshot image does not match its plan");
+    expect(fake.replacement).toBeNull();
+    expect(fake.journal).toBeNull();
+    expect(fake.events).not.toContain("create:replacement");
+    expect(fake.events).not.toContain("journal:staged");
+  });
+
   it.each(
     SUPPORTED_AGENTS,
   )("prepares, activates, and exactly rolls back the %s agent without a central switch", async (agent) => {

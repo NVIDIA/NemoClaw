@@ -9,13 +9,17 @@ import {
 import type {
   ManagedInferenceServingRecipe,
   ManagedInferenceTopologyQualification,
-  ReadinessEntityKind,
   ServingCatalogRegistries,
+  ServingReadinessRegistryValue,
   ServingRecipe,
 } from "./types.js";
 
 export const MANAGED_CLUSTER_VLLM_MATERIALIZER_REF = "vllm.managed-cluster/v1" as const;
 export const MANAGED_CLUSTER_VLLM_LIFECYCLE_REF = "vllm.managed-cluster.lifecycle/v1" as const;
+export const LLAMA_CPP_HOST_LOCAL_RECEIPT_REF = "llama-cpp.host-local.receipt/v1" as const;
+export const LLAMA_CPP_HOST_LOCAL_MATERIALIZER_REF = "llama-cpp.host-local/v1" as const;
+export const LLAMA_CPP_HOST_LOCAL_LIFECYCLE_REF = "llama-cpp.host-local.lifecycle/v1" as const;
+export const LLAMA_CPP_SERVER_READINESS_REF = "llama-cpp.server-readiness/v1" as const;
 export const SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF =
   "snapshot-copy-and-exact-text-replacement/v1" as const;
 export const NO_PREPARATION_REF = "none/v1" as const;
@@ -495,8 +499,16 @@ export function getManagedInferenceRecipeRegistrationError(
 
 const SERVING_READINESS_REGISTRY: ServingCatalogRegistries["readiness"] = new Map<
   string,
-  ReadinessEntityKind | ReadonlySet<ReadinessEntityKind>
+  ServingReadinessRegistryValue
 >([
+  ["host.os.platform", { kind: "observation", valueType: "string", role: "operating-system" }],
+  ["host.os.architecture", { kind: "observation", valueType: "string", role: "architecture" }],
+  ["host.docker.runtime", { kind: "observation", valueType: "string", role: "container-runtime" }],
+  ["host.gpu.count", { kind: "observation", valueType: "number", role: "gpu-count" }],
+  [
+    "host.gpu.driver_version",
+    { kind: "observation", valueType: "version", role: "driver-version" },
+  ],
   ["host.platform.dgx_spark", new Set(["qualification", "capability"] as const)],
   ["host.platform.supported", "capability"],
   ["host.docker.available", "capability"],
@@ -510,10 +522,16 @@ const SERVING_READINESS_REGISTRY: ServingCatalogRegistries["readiness"] = new Ma
 
 export function getManagedInferenceServingCatalogRegistries(): ServingCatalogRegistries {
   return {
-    receipts: new Set(),
-    materializers: new Set(MATERIALIZER_DESCRIPTORS.map(({ ref }) => ref)),
-    lifecycles: new Set(LIFECYCLE_DESCRIPTORS.map(({ ref }) => ref)),
-    readinessContracts: new Set(),
+    receipts: new Set([LLAMA_CPP_HOST_LOCAL_RECEIPT_REF]),
+    materializers: new Set([
+      ...MATERIALIZER_DESCRIPTORS.map(({ ref }) => ref),
+      LLAMA_CPP_HOST_LOCAL_MATERIALIZER_REF,
+    ]),
+    lifecycles: new Set([
+      ...LIFECYCLE_DESCRIPTORS.map(({ ref }) => ref),
+      LLAMA_CPP_HOST_LOCAL_LIFECYCLE_REF,
+    ]),
+    readinessContracts: new Set([LLAMA_CPP_SERVER_READINESS_REF]),
     readiness: SERVING_READINESS_REGISTRY,
     facts: new Set(["cluster.nodeCount"]),
     topologyQualifications: new Map(
