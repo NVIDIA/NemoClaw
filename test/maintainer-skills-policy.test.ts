@@ -140,7 +140,14 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(policy).toContain("Do not maintain a separate release-gating test list");
     expect(policy).toContain("at least one completed, successful execution");
     expect(policy).toContain("multiple workflow runs, selective runs, reruns, and attempts");
-    expect(policy).toContain("explicit selection and every expanded matrix execution");
+    expect(policy).toContain(
+      "explicit selection, including activation-gated jobs whose path exists at that SHA",
+    );
+    expect(policy).toContain("and every expanded matrix execution");
+    expect(policy).toContain("`RELEASE_E2E_ACTIVATION_PATH` enters the release denominator only");
+    expect(policy).toContain("do not dispatch it and do not count it as missing evidence");
+    expect(release).toContain("`RELEASE_E2E_ACTIVATION_PATH` in its workflow environment");
+    expect(release).toContain("do not dispatch it and do not treat it as missing release evidence");
     expect(policy).toContain("each expanded matrix execution as a separate ledger entry");
     expect(policy).toContain("matrix `id`");
     expect(policy).toContain("A later failure does not erase an earlier successful execution");

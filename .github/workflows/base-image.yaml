@@ -442,6 +442,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Download platform digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -474,6 +479,7 @@ jobs:
       - name: Create and verify multi-platform manifest
         id: manifest
         env:
+          AGENT: hermes
           IMAGE: ${{ env.REGISTRY }}/nvidia/nemoclaw/hermes-sandbox-base
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
@@ -542,71 +548,30 @@ jobs:
             echo "ERROR: published manifest has unexpected platforms: $actual_platforms" >&2
             exit 1
           fi
-          manifest_inspect="$(docker buildx imagetools inspect "$first_tag")"
-          mapfile -t manifest_digests < <(
-            printf '%s\n' "$manifest_inspect" \
-              | sed -nE 's/^Digest:[[:space:]]*(sha256:[0-9a-f]{64})$/\1/p'
-          )
-          if [ "${#manifest_digests[@]}" -ne 1 ]; then
+          digest="$(
+            docker buildx imagetools inspect "$first_tag" \
+              --format '{{.Manifest.Digest}}'
+          )"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "ERROR: expected one published Hermes base digest." >&2
             exit 1
           fi
-          digest="${manifest_digests[0]}"
           reference="$IMAGE@$digest"
-          docker buildx imagetools inspect "$reference" >/dev/null
+          scripts/checks/validate-managed-base-index.sh \
+            "$reference" \
+            "${platform_digests[linux/amd64]}" \
+            "${platform_digests[linux/arm64]}"
 
-          contract_dir="$RUNNER_TEMP/managed-base-contract"
-          mkdir -p "$contract_dir"
-          jq -n \
-            --arg amd64Digest "${platform_digests[linux/amd64]}" \
-            --arg amd64Reference "$IMAGE@${platform_digests[linux/amd64]}" \
-            --arg arm64Digest "${platform_digests[linux/arm64]}" \
-            --arg arm64Reference "$IMAGE@${platform_digests[linux/arm64]}" \
-            --arg digest "$digest" \
-            --arg image "$IMAGE" \
-            --arg reference "$reference" \
-            --arg revision "$GITHUB_SHA" \
-            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
-            --argjson runId "$GITHUB_RUN_ID" \
-            '{
-              contractVersion: 1,
-              agent: "hermes",
-              image: $image,
-              digest: $digest,
-              reference: $reference,
-              platforms: ["linux/amd64", "linux/arm64"],
-              platformDigests: {
-                "linux/amd64": $amd64Digest,
-                "linux/arm64": $arm64Digest
-              },
-              platformReferences: {
-                "linux/amd64": $amd64Reference,
-                "linux/arm64": $arm64Reference
-              },
-              sourceRevision: $revision,
-              run: {
-                id: $runId,
-                attempt: $runAttempt
-              }
-            }' > "$contract_dir/contract.json"
-          jq -e \
-            '.contractVersion == 1
-             and .agent == "hermes"
-             and (.sourceRevision | test("^[0-9a-f]{40}$"))
-             and (.digest | test("^sha256:[0-9a-f]{64}$"))
-             and .reference == (.image + "@" + .digest)
-             and .platforms == ["linux/amd64", "linux/arm64"]
-             and (.platformDigests | keys | sort) == .platforms
-             and (.platformReferences | keys | sort) == .platforms
-             and ([
-               .platforms[] as $platform
-               | (
-                   (.platformDigests[$platform] | test("^sha256:[0-9a-f]{64}$"))
-                   and .platformReferences[$platform] ==
-                     (.image + "@" + .platformDigests[$platform])
-                 )
-             ] | all)' \
-            "$contract_dir/contract.json" >/dev/null
+          scripts/export-managed-base-image-contract.sh \
+            "$AGENT" \
+            "$IMAGE" \
+            "$digest" \
+            "${platform_digests[linux/amd64]}" \
+            "${platform_digests[linux/arm64]}" \
+            "$GITHUB_SHA" \
+            "$GITHUB_RUN_ID" \
+            "$GITHUB_RUN_ATTEMPT" \
+            "$RUNNER_TEMP/managed-base-contract/contract.json"
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
 
       - name: Upload managed base image contract
@@ -624,6 +589,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Download platform digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -656,6 +626,7 @@ jobs:
       - name: Create and verify multi-platform manifest
         id: manifest
         env:
+          AGENT: langchain-deepagents-code
           IMAGE: ${{ env.REGISTRY }}/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
@@ -724,71 +695,30 @@ jobs:
             echo "ERROR: published manifest has unexpected platforms: $actual_platforms" >&2
             exit 1
           fi
-          manifest_inspect="$(docker buildx imagetools inspect "$first_tag")"
-          mapfile -t manifest_digests < <(
-            printf '%s\n' "$manifest_inspect" \
-              | sed -nE 's/^Digest:[[:space:]]*(sha256:[0-9a-f]{64})$/\1/p'
-          )
-          if [ "${#manifest_digests[@]}" -ne 1 ]; then
+          digest="$(
+            docker buildx imagetools inspect "$first_tag" \
+              --format '{{.Manifest.Digest}}'
+          )"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "ERROR: expected one published Deep Agents Code base digest." >&2
             exit 1
           fi
-          digest="${manifest_digests[0]}"
           reference="$IMAGE@$digest"
-          docker buildx imagetools inspect "$reference" >/dev/null
+          scripts/checks/validate-managed-base-index.sh \
+            "$reference" \
+            "${platform_digests[linux/amd64]}" \
+            "${platform_digests[linux/arm64]}"
 
-          contract_dir="$RUNNER_TEMP/managed-base-contract"
-          mkdir -p "$contract_dir"
-          jq -n \
-            --arg amd64Digest "${platform_digests[linux/amd64]}" \
-            --arg amd64Reference "$IMAGE@${platform_digests[linux/amd64]}" \
-            --arg arm64Digest "${platform_digests[linux/arm64]}" \
-            --arg arm64Reference "$IMAGE@${platform_digests[linux/arm64]}" \
-            --arg digest "$digest" \
-            --arg image "$IMAGE" \
-            --arg reference "$reference" \
-            --arg revision "$GITHUB_SHA" \
-            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
-            --argjson runId "$GITHUB_RUN_ID" \
-            '{
-              contractVersion: 1,
-              agent: "langchain-deepagents-code",
-              image: $image,
-              digest: $digest,
-              reference: $reference,
-              platforms: ["linux/amd64", "linux/arm64"],
-              platformDigests: {
-                "linux/amd64": $amd64Digest,
-                "linux/arm64": $arm64Digest
-              },
-              platformReferences: {
-                "linux/amd64": $amd64Reference,
-                "linux/arm64": $arm64Reference
-              },
-              sourceRevision: $revision,
-              run: {
-                id: $runId,
-                attempt: $runAttempt
-              }
-            }' > "$contract_dir/contract.json"
-          jq -e \
-            '.contractVersion == 1
-             and .agent == "langchain-deepagents-code"
-             and (.sourceRevision | test("^[0-9a-f]{40}$"))
-             and (.digest | test("^sha256:[0-9a-f]{64}$"))
-             and .reference == (.image + "@" + .digest)
-             and .platforms == ["linux/amd64", "linux/arm64"]
-             and (.platformDigests | keys | sort) == .platforms
-             and (.platformReferences | keys | sort) == .platforms
-             and ([
-               .platforms[] as $platform
-               | (
-                   (.platformDigests[$platform] | test("^sha256:[0-9a-f]{64}$"))
-                   and .platformReferences[$platform] ==
-                     (.image + "@" + .platformDigests[$platform])
-                 )
-             ] | all)' \
-            "$contract_dir/contract.json" >/dev/null
+          scripts/export-managed-base-image-contract.sh \
+            "$AGENT" \
+            "$IMAGE" \
+            "$digest" \
+            "${platform_digests[linux/amd64]}" \
+            "${platform_digests[linux/arm64]}" \
+            "$GITHUB_SHA" \
+            "$GITHUB_RUN_ID" \
+            "$GITHUB_RUN_ATTEMPT" \
+            "$RUNNER_TEMP/managed-base-contract/contract.json"
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
 
       - name: Upload managed base image contract
@@ -808,6 +738,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Download platform digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -840,6 +775,7 @@ jobs:
       - name: Create and verify multi-platform manifest
         id: manifest
         env:
+          AGENT: openclaw
           IMAGE: ${{ env.REGISTRY }}/nvidia/nemoclaw/sandbox-base
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
@@ -908,71 +844,30 @@ jobs:
             echo "ERROR: published manifest has unexpected platforms: $actual_platforms" >&2
             exit 1
           fi
-          manifest_inspect="$(docker buildx imagetools inspect "$first_tag")"
-          mapfile -t manifest_digests < <(
-            printf '%s\n' "$manifest_inspect" \
-              | sed -nE 's/^Digest:[[:space:]]*(sha256:[0-9a-f]{64})$/\1/p'
-          )
-          if [ "${#manifest_digests[@]}" -ne 1 ]; then
+          digest="$(
+            docker buildx imagetools inspect "$first_tag" \
+              --format '{{.Manifest.Digest}}'
+          )"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "ERROR: expected one published OpenClaw base digest." >&2
             exit 1
           fi
-          digest="${manifest_digests[0]}"
           reference="$IMAGE@$digest"
-          docker buildx imagetools inspect "$reference" >/dev/null
+          scripts/checks/validate-managed-base-index.sh \
+            "$reference" \
+            "${platform_digests[linux/amd64]}" \
+            "${platform_digests[linux/arm64]}"
 
-          contract_dir="$RUNNER_TEMP/managed-base-contract"
-          mkdir -p "$contract_dir"
-          jq -n \
-            --arg amd64Digest "${platform_digests[linux/amd64]}" \
-            --arg amd64Reference "$IMAGE@${platform_digests[linux/amd64]}" \
-            --arg arm64Digest "${platform_digests[linux/arm64]}" \
-            --arg arm64Reference "$IMAGE@${platform_digests[linux/arm64]}" \
-            --arg digest "$digest" \
-            --arg image "$IMAGE" \
-            --arg reference "$reference" \
-            --arg revision "$GITHUB_SHA" \
-            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
-            --argjson runId "$GITHUB_RUN_ID" \
-            '{
-              contractVersion: 1,
-              agent: "openclaw",
-              image: $image,
-              digest: $digest,
-              reference: $reference,
-              platforms: ["linux/amd64", "linux/arm64"],
-              platformDigests: {
-                "linux/amd64": $amd64Digest,
-                "linux/arm64": $arm64Digest
-              },
-              platformReferences: {
-                "linux/amd64": $amd64Reference,
-                "linux/arm64": $arm64Reference
-              },
-              sourceRevision: $revision,
-              run: {
-                id: $runId,
-                attempt: $runAttempt
-              }
-            }' > "$contract_dir/contract.json"
-          jq -e \
-            '.contractVersion == 1
-             and .agent == "openclaw"
-             and (.sourceRevision | test("^[0-9a-f]{40}$"))
-             and (.digest | test("^sha256:[0-9a-f]{64}$"))
-             and .reference == (.image + "@" + .digest)
-             and .platforms == ["linux/amd64", "linux/arm64"]
-             and (.platformDigests | keys | sort) == .platforms
-             and (.platformReferences | keys | sort) == .platforms
-             and ([
-               .platforms[] as $platform
-               | (
-                   (.platformDigests[$platform] | test("^sha256:[0-9a-f]{64}$"))
-                   and .platformReferences[$platform] ==
-                     (.image + "@" + .platformDigests[$platform])
-                 )
-             ] | all)' \
-            "$contract_dir/contract.json" >/dev/null
+          scripts/export-managed-base-image-contract.sh \
+            "$AGENT" \
+            "$IMAGE" \
+            "$digest" \
+            "${platform_digests[linux/amd64]}" \
+            "${platform_digests[linux/arm64]}" \
+            "$GITHUB_SHA" \
+            "$GITHUB_RUN_ID" \
+            "$GITHUB_RUN_ATTEMPT" \
+            "$RUNNER_TEMP/managed-base-contract/contract.json"
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
 
       - name: Upload managed base image contract
