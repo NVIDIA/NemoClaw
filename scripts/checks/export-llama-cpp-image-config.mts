@@ -12,7 +12,13 @@ type ServerImageManifest = {
   kind?: unknown;
   metadata?: { id?: unknown };
   spec?: {
-    build?: { cmake?: unknown; compiler?: unknown; packages?: unknown; target?: unknown };
+    build?: {
+      backendDirectory?: unknown;
+      cmake?: unknown;
+      compiler?: unknown;
+      packages?: unknown;
+      target?: unknown;
+    };
     cuda?: { developmentBase?: unknown; runtimeBase?: unknown };
     platforms?: Array<{
       cudaArchitectures?: unknown;
@@ -89,7 +95,13 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
     "runtime",
     "source",
   ]);
-  assertExactKeys(manifest.spec?.build, "build", ["cmake", "compiler", "packages", "target"]);
+  assertExactKeys(manifest.spec?.build, "build", [
+    "backendDirectory",
+    "cmake",
+    "compiler",
+    "packages",
+    "target",
+  ]);
   assertExactKeys(manifest.spec?.cuda, "cuda", ["developmentBase", "runtimeBase"]);
   assertExactKeys(manifest.spec?.runtime, "runtime", [
     "entrypoint",
@@ -149,6 +161,7 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
     libgomp1: "14.2.0-4ubuntu2~24.04.1",
   };
   const expectedRequiredPaths = [
+    "/opt/llama.cpp/lib/libggml-cuda.so",
     "/usr/local/bin/llama-server",
     "/usr/local/share/licenses/llama.cpp/AUTHORS",
     "/usr/local/share/licenses/llama.cpp/LICENSE",
@@ -168,6 +181,7 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
   if (
     spec?.source?.repository !== "https://github.com/ggml-org/llama.cpp" ||
     spec?.build?.target !== "llama-server" ||
+    spec?.build?.backendDirectory !== "/opt/llama.cpp/lib" ||
     !matchesExactRecord(cmake, expectedCmake) ||
     !matchesExactRecord(spec?.build?.compiler, expectedCompiler) ||
     !matchesExactRecord(spec?.build?.packages, expectedBuildPackages) ||
@@ -209,6 +223,7 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
   }
 
   return {
+    backend_directory: "/opt/llama.cpp/lib",
     compiler_c: expectedCompiler.c,
     compiler_cuda_host_cxx: expectedCompiler.cudaHostCxx,
     compiler_cxx: expectedCompiler.cxx,

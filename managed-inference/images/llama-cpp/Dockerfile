@@ -9,6 +9,7 @@ FROM ${CUDA_DEV_IMAGE} AS build
 ARG LLAMA_CPP_REVISION
 ARG LLAMA_CPP_ARCHIVE_SHA256
 ARG CUDA_ARCHITECTURES
+ARG GGML_BACKEND_DIR
 ARG C_COMPILER
 ARG CXX_COMPILER
 ARG CUDA_HOST_CXX_COMPILER
@@ -18,6 +19,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 RUN test -n "${LLAMA_CPP_REVISION}" \
     && test -n "${LLAMA_CPP_ARCHIVE_SHA256}" \
     && test -n "${CUDA_ARCHITECTURES}" \
+    && test -n "${GGML_BACKEND_DIR}" \
     && test -n "${C_COMPILER}" \
     && test -n "${CXX_COMPILER}" \
     && test -n "${CUDA_HOST_CXX_COMPILER}"
@@ -51,6 +53,7 @@ RUN curl --fail --location --proto '=https' --tlsv1.2 --retry 5 \
 RUN cmake -S . -B build \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
+      -DGGML_BACKEND_DIR="${GGML_BACKEND_DIR}" \
       -DGGML_BACKEND_DL=ON \
       -DGGML_CPU_ALL_VARIANTS=ON \
       -DGGML_CUDA=ON \
@@ -72,7 +75,10 @@ RUN cmake -S . -B build \
     && cp build/bin/llama-server /opt/llama.cpp/bin/llama-server \
     && find build -type f -name '*.so*' -exec cp -P '{}' /opt/llama.cpp/lib/ \; \
     && find build -type l -name '*.so*' -exec cp -P '{}' /opt/llama.cpp/lib/ \; \
-    && cp LICENSE AUTHORS /opt/llama.cpp/licenses/llama.cpp/
+    && cp LICENSE AUTHORS /opt/llama.cpp/licenses/llama.cpp/ \
+    && test -f "${GGML_BACKEND_DIR}/libggml-cuda.so" \
+    && find /opt/llama.cpp/licenses -type d -exec chmod 0555 '{}' + \
+    && find /opt/llama.cpp/licenses -type f -exec chmod 0444 '{}' +
 
 FROM ${CUDA_RUNTIME_IMAGE} AS runtime
 
@@ -117,7 +123,7 @@ RUN apt-get update \
 
 COPY --from=build --chmod=0555 /opt/llama.cpp/bin/llama-server /usr/local/bin/llama-server
 COPY --from=build --chmod=0555 /opt/llama.cpp/lib/ /opt/llama.cpp/lib/
-COPY --from=build --chmod=0444 /opt/llama.cpp/licenses/ /usr/local/share/licenses/
+COPY --from=build /opt/llama.cpp/licenses/ /usr/local/share/licenses/
 
 ENV CUDA_CACHE_PATH=/tmp/nemoclaw-cuda-cache \
     HOME=/tmp/nemoclaw-home \

@@ -8,6 +8,7 @@ on:
     paths:
       - ".github/workflows/llama-cpp-image.yaml"
       - "managed-inference/images/llama-cpp/**"
+      - "managed-inference/recipes/llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml"
       - "scripts/checks/export-llama-cpp-image-config.mts"
       - "test/llama-cpp-image.test.ts"
       - "test/llama-cpp-image-workflow.test.ts"
@@ -15,12 +16,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   config:
     name: Compile declarative image configuration
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
+      backend_directory: ${{ steps.manifest.outputs.backend_directory }}
       compiler_c: ${{ steps.manifest.outputs.compiler_c }}
       compiler_cuda_host_cxx: ${{ steps.manifest.outputs.compiler_cuda_host_cxx }}
       compiler_cxx: ${{ steps.manifest.outputs.compiler_cxx }}
@@ -85,6 +91,7 @@ jobs:
             CUDA_ARCHITECTURES=${{ matrix.cuda_architectures }}
             CUDA_DEV_IMAGE=${{ needs.config.outputs.cuda_dev_image }}
             CUDA_RUNTIME_IMAGE=${{ needs.config.outputs.cuda_runtime_image }}
+            GGML_BACKEND_DIR=${{ needs.config.outputs.backend_directory }}
             LLAMA_CPP_ARCHIVE_SHA256=${{ needs.config.outputs.source_archive_sha256 }}
             LLAMA_CPP_REVISION=${{ needs.config.outputs.source_revision }}
             NEMOCLAW_REVISION=${{ github.sha }}
@@ -93,6 +100,8 @@ jobs:
             TARGETPLATFORM=${{ matrix.platform }}
           provenance: false
           sbom: false
+          cache-from: type=gha,scope=llama-cpp-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=llama-cpp-${{ matrix.arch }}
 
       - name: Validate native PR image contract
         shell: bash

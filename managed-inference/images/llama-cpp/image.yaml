@@ -29,6 +29,7 @@ spec:
 
   build:
     target: llama-server
+    backendDirectory: /opt/llama.cpp/lib
     compiler:
       c: gcc-14
       cxx: g++-14
@@ -65,6 +66,7 @@ spec:
     port: 8081
     entrypoint: /usr/local/bin/llama-server
     requiredPaths:
+      - /opt/llama.cpp/lib/libggml-cuda.so
       - /usr/local/bin/llama-server
       - /usr/local/share/licenses/llama.cpp/AUTHORS
       - /usr/local/share/licenses/llama.cpp/LICENSE

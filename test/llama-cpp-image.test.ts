@@ -28,6 +28,7 @@ type ImageManifest = {
   metadata?: { id?: string };
   spec?: {
     build?: {
+      backendDirectory?: string;
       cmake?: Record<string, boolean>;
       compiler?: { c?: string; cudaHostCxx?: string; cxx?: string };
       packages?: Record<string, string>;
@@ -67,7 +68,10 @@ function parseOutput(value: string): Record<string, string> {
     value
       .trim()
       .split("\n")
-      .map((line) => line.split("=", 2) as [string, string]),
+      .map((line) => {
+        const separator = line.indexOf("=");
+        return [line.slice(0, separator), line.slice(separator + 1)] as [string, string];
+      }),
   );
 }
 
@@ -84,11 +88,13 @@ describe("declarative llama.cpp server image", () => {
       metadata: { id: "llama-cpp-server.v1" },
       spec: {
         repository: "ghcr.io/nvidia/nemoclaw/llama-cpp-server",
+        build: { backendDirectory: "/opt/llama.cpp/lib" },
         runtime: {
           entrypoint: "/usr/local/bin/llama-server",
           forbiddenPaths: expect.arrayContaining(["/bin/sh", "/usr/bin/sh"]),
           port: 8081,
           requiredPaths: expect.arrayContaining([
+            "/opt/llama.cpp/lib/libggml-cuda.so",
             "/usr/local/bin/llama-server",
             "/usr/local/share/licenses/llama.cpp/LICENSE",
           ]),
@@ -136,6 +142,7 @@ describe("declarative llama.cpp server image", () => {
     expect(result.status, result.stderr).toBe(0);
     const output = parseOutput(result.stdout);
     expect(output).toMatchObject({
+      backend_directory: manifest.spec?.build?.backendDirectory,
       compiler_c: manifest.spec?.build?.compiler?.c,
       compiler_cuda_host_cxx: manifest.spec?.build?.compiler?.cudaHostCxx,
       compiler_cxx: manifest.spec?.build?.compiler?.cxx,
@@ -219,6 +226,8 @@ describe("declarative llama.cpp server image", () => {
 
     expect(manifest.spec?.build?.target).toBe("llama-server");
     expect(dockerfile).toContain("--target llama-server");
+    expect(dockerfile).toContain('-DGGML_BACKEND_DIR="${GGML_BACKEND_DIR}"');
+    expect(dockerfile).toContain('test -f "${GGML_BACKEND_DIR}/libggml-cuda.so"');
     for (const [packageName, version] of Object.entries({
       ...manifest.spec?.build?.packages,
       ...manifest.spec?.runtime?.packages,
@@ -238,6 +247,9 @@ describe("declarative llama.cpp server image", () => {
     }
     expect(dockerfile).toContain("sha256sum --check --strict");
     expect(dockerfile).toContain("cp LICENSE AUTHORS");
+    expect(dockerfile).toContain("find /opt/llama.cpp/licenses -type d -exec chmod 0555");
+    expect(dockerfile).toContain("find /opt/llama.cpp/licenses -type f -exec chmod 0444");
+    expect(dockerfile).not.toContain("COPY --from=build --chmod=0444");
     expect(dockerfile).not.toContain("# syntax=");
     expect(dockerfile).not.toContain("git clone");
     expect(dockerfile).not.toContain(" huggingface");

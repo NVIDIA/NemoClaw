@@ -26,6 +26,7 @@ type Job = {
 };
 
 type Workflow = {
+  concurrency?: { "cancel-in-progress"?: boolean; group?: string };
   jobs?: Record<string, Job>;
   on?: Record<string, { paths?: string[] }>;
   permissions?: Record<string, string>;
@@ -64,19 +65,29 @@ describe("llama.cpp image PR workflow", () => {
       expect.arrayContaining([
         ".github/workflows/llama-cpp-image.yaml",
         "managed-inference/images/llama-cpp/**",
+        "managed-inference/recipes/llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml",
         "scripts/checks/export-llama-cpp-image-config.mts",
       ]),
     );
     expect(Object.keys(workflow.on ?? {})).toEqual(["pull_request"]);
     expect(workflow.permissions).toEqual({ contents: "read" });
-    expect(JSON.stringify(workflow)).not.toContain("packages:write");
+    const permissionValues = [
+      ...Object.values(workflow.permissions ?? {}),
+      ...Object.values(workflow.jobs ?? {}).flatMap((job) => Object.values(job.permissions ?? {})),
+    ];
+    expect(permissionValues).not.toContain("write");
     expect(JSON.stringify(workflow)).not.toContain("docker/login-action");
     expect(buildStep.with?.push).toBe(false);
     expect(buildStep.with?.load).toBe(true);
+    expect(workflow.concurrency).toEqual({
+      "cancel-in-progress": true,
+      group: "${{ github.workflow }}-${{ github.event.pull_request.number }}",
+    });
   });
 
   it("passes declarative source, base image, runtime ID, and platform values to each image build (#8231)", () => {
     expect(config.outputs).toEqual({
+      backend_directory: "${{ steps.manifest.outputs.backend_directory }}",
       compiler_c: "${{ steps.manifest.outputs.compiler_c }}",
       compiler_cuda_host_cxx: "${{ steps.manifest.outputs.compiler_cuda_host_cxx }}",
       compiler_cxx: "${{ steps.manifest.outputs.compiler_cxx }}",
@@ -100,6 +111,7 @@ describe("llama.cpp image PR workflow", () => {
 
     const args = String(buildStep.with?.["build-args"] ?? "");
     for (const output of [
+      "backend_directory",
       "compiler_c",
       "compiler_cuda_host_cxx",
       "compiler_cxx",
@@ -130,6 +142,10 @@ describe("llama.cpp image PR workflow", () => {
     expect(buildStep.with?.platforms).toBe("${{ matrix.platform }}");
     expect(buildStep.with?.provenance).toBe(false);
     expect(buildStep.with?.sbom).toBe(false);
+    expect(buildStep.with?.["cache-from"]).toBe("type=gha,scope=llama-cpp-${{ matrix.arch }}");
+    expect(buildStep.with?.["cache-to"]).toBe(
+      "type=gha,mode=max,scope=llama-cpp-${{ matrix.arch }}",
+    );
     expect(validate.run).toContain('.Config.User == ($uid + ":" + $gid)');
     expect(validate.run).toContain("io.nvidia.nemoclaw.inference-server.upstream.revision");
     expect(validate.run).toContain("--network none");
