@@ -609,7 +609,7 @@ const releasePath = process.argv[3];
       lifecycleLock.withMcpLifecycleLock(
         "alpha",
         () => undefined,
-        options({ timeoutMs: 50, corruptLockGraceMs: 20 }),
+        options({ timeoutMs: 1_000, corruptLockGraceMs: 20 }),
       ),
     ).rejects.toThrow("Sandbox mutation containment is active");
     expect(fs.existsSync(lockPath)).toBe(true);

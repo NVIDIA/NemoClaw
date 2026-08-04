@@ -436,12 +436,20 @@ describe("shields command flow", () => {
       const harness = createHarness({
         dockerExecFileSync: (argv: unknown) => {
           const args = Array.isArray(argv) ? argv.map(String) : [];
-          if (args.includes("sha256sum")) return `${"a".repeat(64)}  ${String(args.at(-1))}\n`;
-          if (args.includes("lsattr")) return `----i---------e----- ${String(args.at(-1))}\n`;
-          if (!args.includes("stat")) return "";
-          if (args.at(-1) === "/sandbox") return "1775 root:sandbox\n";
-          if (args.at(-1) === "/sandbox/.openclaw") return "755 root:root\n";
-          return "444 root:root\n";
+          switch (true) {
+            case args.includes("sha256sum"):
+              return `${"a".repeat(64)}  ${String(args.at(-1))}\n`;
+            case args.includes("lsattr"):
+              return `----i---------e----- ${String(args.at(-1))}\n`;
+            case !args.includes("stat"):
+              return "";
+            case args.at(-1) === "/sandbox":
+              return "1775 root:sandbox\n";
+            case args.at(-1) === "/sandbox/.openclaw":
+              return "755 root:root\n";
+            default:
+              return "444 root:root\n";
+          }
         },
       });
       const containmentPath = `${lifecycleLock.getMcpLifecycleLockPath(sandboxName, stateDir)}.containment`;
@@ -744,31 +752,27 @@ describe("shields command flow", () => {
       expect(ownerStartIdentity).toBeTypeOf("string");
       const processKillSpy = vi.spyOn(process, "kill");
       const nativeAtomicsWait = Atomics.wait;
-      let releaseObserved = false;
-      vi.spyOn(Atomics, "wait").mockImplementation(((
-        _typedArray: Int32Array,
-        _index: number,
-        _value: number,
-        _timeout?: number,
-      ) => {
-        if (!releaseObserved) {
-          const ownerState = timerControl.readProcessState(owner.pid);
-          expect(ownerState).not.toBeNull();
-          expect(ownerState?.startsWith("Z")).toBe(false);
-          expect(fs.existsSync(lockPath)).toBe(true);
-          expect(processKillSpy).not.toHaveBeenCalledWith(owner.pid, "SIGSTOP");
-          expect(processKillSpy).not.toHaveBeenCalledWith(owner.pid, "SIGKILL");
-          fs.writeFileSync(releasePath, "release");
-          const releaseDeadline = Date.now() + 5_000;
-          const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
-          while (fs.existsSync(lockPath) && Date.now() < releaseDeadline) {
-            nativeAtomicsWait(waitBuffer, 0, 0, 10);
-          }
-          expect(fs.existsSync(lockPath)).toBe(false);
-          releaseObserved = true;
-        }
-        return "timed-out";
-      }) as typeof Atomics.wait);
+      const atomicsWaitSpy = vi
+        .spyOn(Atomics, "wait")
+        .mockImplementationOnce(
+          (_typedArray: Int32Array, _index: number, _value: number, _timeout?: number) => {
+            const ownerState = timerControl.readProcessState(owner.pid);
+            expect(ownerState).not.toBeNull();
+            expect(ownerState?.startsWith("Z")).toBe(false);
+            expect(fs.existsSync(lockPath)).toBe(true);
+            expect(processKillSpy).not.toHaveBeenCalledWith(owner.pid, "SIGSTOP");
+            expect(processKillSpy).not.toHaveBeenCalledWith(owner.pid, "SIGKILL");
+            fs.writeFileSync(releasePath, "release");
+            const releaseDeadline = Date.now() + 5_000;
+            const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
+            while (fs.existsSync(lockPath) && Date.now() < releaseDeadline) {
+              nativeAtomicsWait(waitBuffer, 0, 0, 10);
+            }
+            expect(fs.existsSync(lockPath)).toBe(false);
+            return "timed-out";
+          },
+        )
+        .mockReturnValue("timed-out");
       const harness = createHarness({
         dockerExecFileSync: (argv: unknown) => {
           const args = Array.isArray(argv) ? argv.map(String) : [];
@@ -791,7 +795,7 @@ describe("shields command flow", () => {
 
       harness.shieldsStatus(sandboxName);
 
-      expect(releaseObserved).toBe(true);
+      expect(atomicsWaitSpy).toHaveBeenCalled();
       expect(processKillSpy).not.toHaveBeenCalledWith(owner.pid, "SIGSTOP");
       expect(processKillSpy).not.toHaveBeenCalledWith(owner.pid, "SIGKILL");
       await vi.waitFor(

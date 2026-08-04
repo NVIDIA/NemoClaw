@@ -58,13 +58,9 @@ describe("detached Shields timer process", () => {
           stdio: ["ignore", "ignore", "pipe", "ipc"],
         },
       );
-      const childPid = child.pid;
-      if (childPid === undefined) throw new Error("Detached timer did not start");
-      let childExited = false;
+      expect(child.pid).toBeTypeOf("number");
+      const childPid = child.pid as number;
       let childStderr = "";
-      child.once("exit", () => {
-        childExited = true;
-      });
       child.stderr?.setEncoding("utf-8");
       child.stderr?.on("data", (chunk: string) => {
         childStderr += chunk;
@@ -108,13 +104,11 @@ describe("detached Shields timer process", () => {
           cause: error,
         });
       } finally {
-        if (!childExited) {
-          const forcedExit = once(child, "exit", { signal: AbortSignal.timeout(1_000) }).catch(
-            () => undefined,
-          );
-          child.kill("SIGKILL");
-          await forcedExit;
-        }
+        child.kill("SIGKILL");
+        await vi.waitFor(
+          () => expect(child.exitCode !== null || child.signalCode !== null).toBe(true),
+          { timeout: 1_000, interval: 10 },
+        );
       }
     },
   );
