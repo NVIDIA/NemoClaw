@@ -813,7 +813,10 @@ On ordinary native Linux, the compatibility path uses an available NVIDIA CDI sp
 On Docker Desktop WSL, the compatibility path skips CDI and tries Docker `--gpus all` before the NVIDIA runtime.
 On Jetson/Tegra hosts, the compatibility path uses the NVIDIA runtime and adds eligible host group IDs for the supported GPU device nodes.
 These include selected `/dev/nvmap`, `/dev/nvhost-*`, and `/dev/nvgpu/igpu0/*` nodes plus real `/dev/dri/renderD*` character devices.
-If the compatibility attempt fails, onboarding keeps its diagnostics and the failed sandbox in place and prints a manual cleanup command.
+After compatibility recreation starts, onboarding keeps the pre-patch container as a rollback backup until the replacement passes the Ready, GPU, and applicable local-inference checks.
+If a later check fails, onboarding prints failure diagnostics and attempts to restore the pre-patch container.
+If rollback fails, onboarding reports that the pre-patch container was not restored and prints container-cleanup guidance.
+GPU-proof diagnostics are captured before rollback and can print that guidance before the final container state is known, so inspect the sandbox and its labeled Docker containers before running a deletion command.
 
 Prerequisites:
 
@@ -1160,6 +1163,15 @@ $$nemoclaw my-assistant shields down --timeout 5m --reason "maintenance"
 If `shields up` reports that the config remains unlocked or drifted, confirm that the sandbox is running and ready, then retry `$$nemoclaw <name> shields up`.
 If the retry still fails, rebuild a known-good baseline with `$$nemoclaw <name> rebuild --yes`.
 
+<AgentOnly variant="deepagents">
+
+A `CRITICAL` Deep Agents config-lock failure is not an ordinary unlocked or drifted result.
+The retry and rebuild guidance above does not apply to a `CRITICAL` Deep Agents config-lock diagnostic.
+Do not retry `shields up` or attempt an in-sandbox repair.
+Follow [Deep Agents Config Lock Failure Recovery](troubleshooting#deep-agents-config-lock-failure-recovery) to restore a trusted snapshot or recreate the sandbox before retrying.
+
+</AgentOnly>
+
 Host-side config and inference writes, snapshot mutation, sandbox destruction, and shields transitions serialize per sandbox.
 When a timed shields-down window reaches its deadline, auto-restore can interrupt the exact process tree holding that transition and restore lockdown.
 Retry an interrupted command in a new shields-down window.
@@ -1421,7 +1433,8 @@ When OpenShell reports an active policy version, the displayed YAML `version` li
 If the sandbox is running an outdated agent version, the output includes an `Update` line with the available version and a `$$nemoclaw <name> rebuild` hint.
 
 <AgentOnly variant="openclaw,hermes">
-When other sandboxes have the same messaging channel enabled (Telegram, Discord, or Slack) with the same bot token, the output includes a cross-sandbox overlap warning so you can resolve the conflict before messages start dropping.
+When NemoClaw detects a messaging overlap between sandboxes in the selected OpenShell gateway's sandbox registry, the output includes a cross-sandbox overlap warning.
+The command cannot report overlaps in an independent OpenShell gateway's registry.
 The command also tails `/tmp/gateway.log` inside the default sandbox and flags Telegram `409 Conflict` errors that indicate a duplicate consumer for the bot token.
 </AgentOnly>
 
@@ -1507,7 +1520,7 @@ The rebuild reuses the existing sandbox name and preserved manifest-defined stat
 Run a focused health check for one sandbox and the host services it depends on.
 The command checks the local CLI build, Docker daemon, OpenShell CLI, NemoClaw gateway container, gateway port mapping, live sandbox state, inference route, configured-provider model invocation, Ollama reachability, and the cloudflared tunnel state.
 <AgentOnly variant="openclaw,hermes">
-For gateway-based agents, it also reports messaging channel conflicts.
+For gateway-based agents, it also reports messaging channel conflicts within the selected OpenShell gateway's sandbox registry.
 </AgentOnly>
 
 `doctor` also checks whether the sandbox registry contains the metadata required for snapshot, rebuild, upgrade, recovery, and reboot.
@@ -1769,7 +1782,11 @@ If sandbox deletion is refused after destroy has restored lockdown, NemoClaw ope
 If a shields auto-restore timer is active, `destroy` holds the same per-sandbox transition through state wipe and deletion.
 It restores and verifies lockdown and revokes the active timer before deletion.
 It clears the remaining local shields state only after deletion succeeds.
-If hardening fails, the command refuses deletion and leaves the timer authority available to retry lockdown.
+If the pre-delete re-lock fails, the command warns and attempts to destroy the sandbox.
+If the destroy operation succeeds, it destroys the sandbox and deletes its unguarded configuration.
+If the destroy operation fails, NemoClaw keeps the local shields state and the auto-restore timer.
+The timer keeps retrying lockdown and can restore it after the sandbox is reachable again.
+NemoClaw records Shields down until a retry verifies lockdown, or until you destroy or rebuild the sandbox.
 If deletion fails after hardening, the command keeps the surviving sandbox's locked shields state instead of cleaning it up as though deletion succeeded.
 By default, unattended final-sandbox destroys (`--yes`, `--force`, or `NEMOCLAW_NON_INTERACTIVE=1`) remove the shared NemoClaw gateway on macOS so the host listener is released, while Linux preserves it for reuse.
 Pass `--cleanup-gateway` to force removal, or `--no-cleanup-gateway` to force preservation.
@@ -1791,6 +1808,7 @@ If the OpenShell gateway is unreachable and the sandbox has no managed MCP owner
 Gateway-side deletion remains unconfirmed, shared host-service and gateway teardown are skipped, and the sandbox and retained volume may still exist if the gateway returns.
 Start the gateway with `$$nemoclaw <name> status` and retry destroy when you need a confirmed deletion.
 Managed MCP ownership disables the local-only fallback because exact provider cleanup requires the retained ownership state, and other delete failures remain fatal.
+A failed pre-delete re-lock also disables the local-only fallback, because the auto-restore timer is then the only authority that can lock the configuration again after the gateway returns.
 
 ```bash
 $$nemoclaw my-assistant destroy [--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]
@@ -1943,7 +1961,7 @@ If the preset is unknown or not currently applied, the command exits non-zero wi
 
 Unchecking a preset in the onboard TUI checkbox also removes it from the sandbox.
 
-### `$$nemoclaw <name> policy exclude`
+### `$$nemoclaw <name> policy exclude <key>`
 
 Persistently exclude one exact entry from the agent baseline policy after previewing the egress and support impact that the change removes.
 The preview names the supported features that may stop working.
@@ -1959,20 +1977,34 @@ $$nemoclaw my-assistant policy exclude nous_research --dry-run
 $$nemoclaw my-assistant policy exclude nous_research --force
 ```
 
-When a release changes an excluded entry, first run `policy restore <key>` to clear the stale record, preview the current scope with `policy exclude <key> --dry-run`, and then explicitly exclude it again if you still accept the support impact.
-When a release removes the entry, run `policy restore <key>` only to clear the stale exclusion record; there is no replacement scope to review or re-approve.
+When a release changes an excluded entry, first run `$$nemoclaw <name> policy restore <key> --dry-run` to preview the current baseline egress that restoration would allow again.
+After you review the output, run `$$nemoclaw <name> policy restore <key> --force` to allow that egress again and clear the stale exclusion record.
+Then preview the current exclusion scope with `$$nemoclaw <name> policy exclude <key> --dry-run` and reapply it with `$$nemoclaw <name> policy exclude <key> --force` only if you still accept the support impact.
+When a release removes the entry, first run `$$nemoclaw <name> policy restore <key> --dry-run` to confirm that restoration will clear only the stale exclusion record.
+After you review the output, run `$$nemoclaw <name> policy restore <key> --force`; there is no replacement scope to review or approve.
 
-### `$$nemoclaw <name> policy restore`
+### `$$nemoclaw <name> policy restore <key>`
 
 Restore a previously excluded entry from the current agent baseline and clear its durable exclusion record.
-Use `--dry-run` to preview the egress that would be restored.
+When the current baseline still defines the entry, `--dry-run` lists the egress that restoration would allow again.
+After you review the output, `--force` allows that egress again and clears the exclusion record.
+When the baseline no longer defines the entry, `--dry-run` states that restoration will clear only the stale exclusion record.
+After you review the output, `--force` clears that record without changing live egress.
+Both paths require explicit acknowledgement unless you use `--dry-run`; use `--force` or `--yes` for non-interactive acknowledgement.
 If a restore is interrupted, NemoClaw finalizes it only when the durable exclusion still exactly matches the staged exclusion and the current release baseline still exactly matches the journaled live target.
 If either value changed or the current baseline is unreadable, the journal remains in `repair required` state so you can inspect and re-review the current scope instead of silently accepting a different entry.
 
 ```bash
 $$nemoclaw my-assistant policy restore nous_research --dry-run
-$$nemoclaw my-assistant policy restore nous_research
+$$nemoclaw my-assistant policy restore nous_research --force
 ```
+
+The restore command accepts these flags:
+
+| Flag | Description |
+|------|-------------|
+| `--yes`, `-y`, `--force` | Skip the confirmation prompt |
+| `--dry-run` | Preview the egress restoration or stale-record cleanup without applying changes |
 
 ### `$$nemoclaw <name> policy explain`
 
@@ -2099,6 +2131,9 @@ $$nemoclaw my-assistant channels add telegram
 | `--force` | Add the channel despite a credential conflict, shared-resource conflict, or incomplete required check. This flag is the only conflict override. |
 
 Slack requires both `SLACK_BOT_TOKEN` (bot user OAuth) and `SLACK_APP_TOKEN` (app-level Socket Mode token); the command prompts for each in turn.
+The conflict check compares only sandboxes in the selected OpenShell gateway's sandbox registry.
+It cannot detect Slack token reuse across independent OpenShell gateways.
+Run only one active Slack sandbox on each OpenShell gateway, and use distinct Slack bot and app tokens across gateways.
 Optional Slack allowlists come from `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` at rebuild time.
 Telegram and Discord mention mode default to `1` when no environment, session, or saved state value exists for that setting.
 Discord applies that default only when a server ID is configured.
@@ -2805,7 +2840,8 @@ Before backup or deletion, `rebuild` also refuses an incomplete MCP destroy tran
 It also refuses a pending baseline exclusion transaction before opening a shields-down window, starting backup, or deleting the sandbox, and prints the exact `policy exclude` or `policy restore` command to rerun.
 For a prepared-only transaction, the redacted diagnostic points to `$$nemoclaw <name> mcp remove <server> --force` when the sandbox is still live.
 For a pending or both-marker transaction, it points to `$$nemoclaw <name> destroy` because the registry records that OpenShell deletion was already confirmed.
-Before backup or deletion, rebuild checks the staged messaging configuration for credentials or channel resources already used by another registered sandbox.
+Before backup or deletion, rebuild checks the staged messaging configuration against other sandboxes in the selected OpenShell gateway's sandbox registry.
+A rebuild cannot detect messaging conflicts in an independent OpenShell gateway's registry.
 A conflict aborts with the original sandbox registered and intact so you can resolve the conflict before retrying.
 After OpenShell accepts the sandbox deletion, `rebuild` waits until OpenShell explicitly reports that the old sandbox is absent.
 Only then can NemoClaw perform any required local registry removal and begin creating the replacement.
@@ -3163,7 +3199,7 @@ Supervisor-owned agent runtime processes remain managed inside their sandbox.
 Show the global sandbox list and the status of host auxiliary services (for example cloudflared).
 This command is host-wide. It summarizes registered sandboxes, the default sandbox's live inference route, gateway health, and host services.
 <AgentOnly variant="openclaw,hermes">
-For gateway-based messaging agents, it also reports messaging overlap warnings.
+For gateway-based messaging agents, it also reports messaging overlap warnings within the selected OpenShell gateway's sandbox registry.
 </AgentOnly>
 Use `$$nemoclaw <name> status` when you need one sandbox's live health and recovery guidance.
 Pass `--json` for machine-readable output with registered sandboxes, service state, inference routes, and health details.
@@ -3455,10 +3491,11 @@ Uninstall does not otherwise target the declared external directory.
 | `--keep-openshell` | Leave OpenShell binaries, NemoClaw-managed gateway service files, and local gateway state in place, and do not stop the host gateway process |
 | `--delete-models` | Also remove NemoClaw-pulled Ollama models |
 | `--destroy-user-data` | Also remove preserved user data (`rebuild-backups/`, `backups/`, `sandboxes.json`) |
+| `--all-gateway-ports` | Uninstall every gateway port on the host, not only the port `NEMOCLAW_GATEWAY_PORT` selects |
 | `--gateway <name>` | Optional consistency check; must match the name derived from `NEMOCLAW_GATEWAY_PORT` |
 
 ```bash
-$$nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models] [--destroy-user-data] [--gateway <name>]
+$$nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models] [--destroy-user-data] [--all-gateway-ports] [--gateway <name>]
 ```
 
 `NEMOCLAW_GATEWAY_PORT` selects the gateway instance and state root to uninstall.
@@ -3471,6 +3508,26 @@ It preserves upstream Linux package units, the macOS Homebrew service, and unrel
 For an externally supervised authority, uninstall preserves the selected local gateway state in both full and gateway-scoped cleanup.
 It also preserves the gateway process, supervisor resources, marked Linux unit, Docker resources, OpenShell binaries, and the declared external state directory.
 A custom-port uninstall does not stop or remove the default gateway service or its environment file.
+
+##### Uninstalling Every Gateway Port
+
+A single uninstall is scoped to one gateway port, so the other ports on the host keep running and keep their ports bound.
+When uninstall detects other gateway-port environments, it names each one, gives the `NEMOCLAW_GATEWAY_PORT=<port>` command that removes one of them, and points at the whole-host sweep.
+A gateway environment whose port cannot be read is reported as an unidentified environment rather than omitted.
+
+`--all-gateway-ports`, or `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS=1`, uninstalls all of them in one run.
+The sweep enumerates the default state root and the non-default roots under `~/.nemoclaw/gateways/`.
+When the sweep finds more than one port, it confirms once against the resulting port list, then uninstalls each other port before the port `NEMOCLAW_GATEWAY_PORT` selects.
+When it finds only the selected port, it uses the standard uninstall confirmation without a port list and runs that port once.
+Each port runs as its own uninstall so that every port-scoped value, including the state root, registry file, gateway name, and Docker resource names, resolves from that port rather than from the calling environment.
+The selected port runs last so its pass can remove the shared host resources once no other environment remains.
+`--delete-models`, `--destroy-user-data`, and `--keep-openshell` apply to every port; `--gateway` remains a check against the selected port only.
+A failure to enumerate the gateway state roots safely stops the sweep before any port uninstall begins.
+The sweep cannot select an unidentified environment until its gateway port can be determined.
+A port that fails to uninstall is reported, the sweep continues, and the exit code is nonzero.
+That port still counts as a live sibling, so the final pass falls back to gateway-scoped cleanup and preserves the shared host resources.
+Cleanup that completed before a port failure is not rolled back.
+Resolve the reported error, inspect the remaining gateways with `openshell gateway list`, and rerun the sweep or the named per-port command.
 
 ##### User-data preservation under `~/.nemoclaw/`
 
@@ -3608,7 +3665,8 @@ Passthrough commands do not consume flags intended for the downstream command as
 </AgentOnly>
 
 If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error.
-`NEMOCLAW_GATEWAY_PORT` also cannot overlap configured service, vLLM, Ollama, Ollama proxy, OpenRouter runtime adapter, or HTTPS Pin Runtime adapter ports, and cannot use reserved auto-allocation ranges or the default inference/proxy ports `8000`, `11434`, `11435`, `11437`, and `11438`.
+`NEMOCLAW_GATEWAY_PORT` also cannot overlap configured service, vLLM, Ollama, Ollama proxy, OpenRouter runtime adapter, or HTTPS Pin Runtime adapter ports, and cannot use reserved auto-allocation ranges or the default inference/proxy ports `8000`, `8081`, `11434`, `11435`, `11437`, and `11438`.
+Port `8081` is reserved for authenticated llama.cpp existing-server attachment and cannot be assigned to any configurable NemoClaw service port.
 When you select OpenRouter, `NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT` must also be distinct from the gateway, vLLM, Ollama, Ollama proxy, and HTTPS Pin Runtime adapter ports.
 When you run multiple NemoClaw gateways with different `NEMOCLAW_GATEWAY_PORT` values, NemoClaw derives a separate gateway name, state directory, and compatibility container name from the port so one gateway does not tear down another.
 Only port `8080` uses a NemoClaw-managed Linux systemd user service or macOS Homebrew service.
@@ -3673,7 +3731,7 @@ Set them before running `$$nemoclaw onboard`.
 
 | Variable | Format | Effect |
 |----------|--------|--------|
-| `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openrouter`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `routed`, `hermes-provider`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. Aliases: `cloud` → `build`, `open-router` / `openrouterai` → `openrouter`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
+| `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openrouter`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `routed`, `hermes-provider`, `llama-cpp`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. `llama-cpp` selects attachment of an authenticated, operator-managed llama.cpp server on loopback port `8081`. Set `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`; set `NEMOCLAW_MODEL` to the served alias when the server exposes multiple models. If the server does not provide consistent native llama.cpp evidence, select `custom`. Aliases: `cloud` → `build`, `open-router` / `openrouterai` → `openrouter`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
 | `NEMOCLAW_TOOL_DISCLOSURE` | `progressive` or `direct` | Selects progressive tool discovery or the prior direct-exposure behavior. Defaults to `progressive`; `--tool-disclosure` takes precedence when both are set. |
 | `NEMOCLAW_ENDPOINT_URL` | URL | Custom endpoint URL. Used together with `NEMOCLAW_PROVIDER=custom` for OpenAI-compatible endpoints or `NEMOCLAW_PROVIDER=anthropicCompatible` for Anthropic-compatible endpoints. |
 | `NEMOCLAW_COMPATIBLE_AUTH_MODE` | `none` or unset | Explicitly selects no authentication for an HTTP OpenAI-compatible endpoint using `localhost`, `127.0.0.1`, or `[::1]` and port `8000`, `11434`, or `11435` during non-interactive onboarding. |
@@ -3981,24 +4039,23 @@ Defaults are sized for typical hardware; override only if you see false-positive
 
 ### Onboard and Sandbox Readiness Timeouts
 
-The following environment variables tune onboard-time wall-clock limits.
-`NEMOCLAW_SANDBOX_READY_TIMEOUT` also covers OpenShell command re-registration after onboarding applies policy presets.
-
-<AgentOnly variant="openclaw,hermes">
-`NEMOCLAW_SANDBOX_READY_TIMEOUT` also applies when managed recovery transactionally recreates an existing sandbox.
-</AgentOnly>
-Set them before running `$$nemoclaw onboard` if a slow connection or large model pull risks tripping the default.
+The following environment variables tune onboard-time and recovery wall-clock limits.
+Set the onboarding variables before running `$$nemoclaw onboard` if a slow connection or large model pull risks tripping the default.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
-| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness and OpenShell command re-registration after policy application, in seconds. Raise when the sandbox image build, gateway upload, in-sandbox boot, or post-policy re-registration exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). When the post-create deadline expires, onboarding deletes an orphaned sandbox and prints the retry hint. |
+| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for post-create readiness, in seconds. Raise when the sandbox image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). When the post-create deadline expires, onboarding deletes an orphaned sandbox and prints the retry hint. |
 | `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE` | `30` | Consecutive `Error`-phase polls the post-create readiness wait tolerates before treating `Error` as terminal. Polling starts at 250ms and backs off to a 2-second cap, while `NEMOCLAW_SANDBOX_READY_TIMEOUT` remains the overall deadline. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. `Failed` and `CrashLoopBackOff` always fail immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
+| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | `30`, `90`, or `120`, depending on the recovery phase | Wall-clock timeout for OpenShell command re-registration after policy application, plus gateway health and re-registration during managed OpenClaw or Hermes recovery. A valid finite, nonnegative value overrides the internal budget for the current recovery phase. |
+
+An unset, blank, invalid, or negative `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` value uses 30 seconds for OpenClaw gateway health and 90 seconds for Hermes gateway health.
+Recreated-sandbox OpenShell registration uses 120 seconds when the recovery path does not supply another budget.
 
 <AgentOnly variant="openclaw,hermes">
 
-For managed recovery, the same timeout covers OpenShell re-registration before state restoration and replacement commit.
+For managed recovery, `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` covers OpenShell re-registration before state restoration and replacement commit.
 When the deadline expires, NemoClaw attempts to roll back the replacement and leaves the primary dashboard or API host forward stopped.
 
 </AgentOnly>
@@ -4008,6 +4065,17 @@ export NEMOCLAW_OLLAMA_PULL_TIMEOUT=3600
 export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
 $$nemoclaw onboard
 ```
+
+<AgentOnly variant="openclaw,hermes">
+
+Set the recovery override before a `start` or `recover` command that can recreate the sandbox.
+
+```bash
+export NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS=300
+$$nemoclaw <sandbox-name> recover
+```
+
+</AgentOnly>
 
 If the Ollama pull or post-create readiness timeout fires, onboarding emits the elapsed budget plus a hint to raise the relevant variable.
 The Ollama pull preserves its partial download for the next attempt.
@@ -4030,6 +4098,7 @@ The following flags change defaults for commands that manage existing sandboxes.
 | `NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE` | `1` to opt in | Allows advanced immutable-config verification to trust the current on-disk bytes for older or partial content baselines. Use only after you have rebuilt or manually inspected the sandbox state and accepted that the baseline is operator-approved. |
 | `NEMOCLAW_SHIELDS_SETTLE_MS` | milliseconds (default `750`, clamped to `0` to `10000`) | Settle window NemoClaw waits after re-applying a config lockdown (during shields auto-restore and `$$nemoclaw <name> shields up` drift remediation) before re-confirming the lock still holds. Detects when an in-sandbox reconciler changes config file permissions after lockdown and re-applies the lock; if NemoClaw cannot re-confirm the lock within the retry budget, shields stay down. This narrows the window in which a reconciler can revert permissions rather than eliminating it. The best-effort `chattr +i` immutable bit remains the only fully durable lock. Raise it on hosts where the gateway settles slowly. |
 | `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP` | Exactly `1` to opt in (`true`, `yes`, `0` are not accepted) | Applies to standalone `$$nemoclaw backup-all` runs. Skips running sandboxes whose in-sandbox SSH endpoint does not answer. It does not relax the installer's strict pre-upgrade backup, which still aborts if any registered sandbox is skipped or fails. Any uncommitted state since the last successful backup is not included in the skipped backup. |
+| `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS` | `1` to opt in | Makes `$$nemoclaw uninstall` remove every gateway port on the host instead of only the port `NEMOCLAW_GATEWAY_PORT` selects. Equivalent to passing the `--all-gateway-ports` flag; the whole-host `Proceed?` confirmation still applies unless `--yes` is also passed. Each port runs as its own uninstall, and the variable is dropped from those runs so the sweep cannot re-enter itself. |
 | `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA` | `1` to opt in | Acknowledges data loss during `$$nemoclaw uninstall` and removes the otherwise-preserved entries (`rebuild-backups/`, `backups/`, `sandboxes.json`) under `~/.nemoclaw/`. Equivalent to passing the `--destroy-user-data` flag; the global `Proceed?` confirmation still applies unless `--yes` is also passed. |
 
 <AgentOnly variant="openclaw">

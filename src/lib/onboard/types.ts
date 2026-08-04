@@ -64,6 +64,8 @@ export interface SandboxCreateIntent {
   readonly dcodeAutoApprovalMode?: import("./dcode-auto-approval").DcodeAutoApprovalMode;
   /** Non-secret upstream endpoint metadata for managed image config generation. */
   readonly endpointUrl?: string | null;
+  /** Validated OpenAI-compatible reasoning capability selected during onboarding. */
+  readonly compatibleEndpointReasoning?: "true" | "false";
   /** Provenance for the endpoint recorded with the created sandbox. */
   readonly endpointSource?: import("../inference/selection").InferenceEndpointSource | null;
   /** Internal authoritative rebuild tier used before replacement registration completes. */
@@ -78,6 +80,8 @@ export interface SandboxCreateIntent {
     readonly targetGeneration: string;
     readonly targetIntentFingerprint: string;
   };
+  /** Validated non-secret Hermes environment assignments carried by a rebuild. */
+  readonly rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
 }
 
 export type OnboardOptions = {
@@ -109,6 +113,8 @@ export type OnboardOptions = {
   providerRecoveryReceipt?: import("./rebuild-route-handoff").ProviderRecoveryReceipt;
   /** Internal one-shot handoff for the exact image context validated before rebuild deletion. */
   preparedImageRebuild?: import("./prepared-dcode-rebuild").PreparedImageRebuildHandoff;
+  /** Internal validated non-secret Hermes environment assignments carried by a rebuild. */
+  rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
   /** Internal hint for resolving the sandbox base image without repeating remote discovery. */
   baseImageResolutionHint?:
     | import("../sandbox-base-image").SandboxBaseImageResolutionMetadata

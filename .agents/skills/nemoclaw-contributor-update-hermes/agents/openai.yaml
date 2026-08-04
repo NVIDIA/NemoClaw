@@ -1,4 +1,0 @@
-interface:
-  display_name: "Update Hermes"
-  short_description: "Audit and deliver Hermes upgrades"
-  default_prompt: "Use $nemoclaw-contributor-update-hermes to audit and deliver this Hermes upgrade end to end."

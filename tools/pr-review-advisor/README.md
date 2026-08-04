@@ -112,7 +112,7 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
   job that the model omits or downgrades. The PR E2E controller separately dispatches every listed
   job without consuming the advisor's normalized result.
 
-Risk plan version 10 maps runtime changes from these paths to the `focused-e2e` family:
+Risk plan version 12 maps runtime changes from these paths to the `focused-e2e` family:
 
 - `src/lib/onboard/managed-startup/**`.
 - `src/lib/onboard/sandbox-create-launch.ts`.
@@ -123,6 +123,17 @@ Each match selects these focused E2E jobs:
 - `device-auth-health`.
 - `issue-4462-scope-upgrade-approval`.
 - `openclaw-inference-switch`.
+
+The same risk plan maps these Hermes CLI adapter paths to `focused-e2e`:
+
+- `agents/hermes/hermes-cli-adapter-v1.json`.
+- `agents/hermes/hermes-wrapper.py`.
+- `agents/hermes/validate-cli-adapter.py`.
+
+Each Hermes CLI adapter match selects these focused E2E jobs:
+
+- `channels-stop-start`.
+- `mcp-bridge`.
 
 ## Required secret
 
@@ -144,7 +155,7 @@ instead of failing closed without artifacts.
 
 - `prompts/00-system.md` — system prompt sent to the advisor.
 - `prompts/01-scope-risk-map-analysis.md` through `prompts/16-validate-synthesis-json.md` — seven alternating analysis/commit pairs followed by draft and validation synthesis turns in the same session, in execution order.
-- `prompts/*.tool-results/` — bounded deterministic, domain-specific context payloads exposed as real tools after the matching user turn. The untrusted truncated diff appears only in the first turn, and repeated risk-plan projections use capped path samples.
+- `prompts/*.tool-results/` — deterministic, domain-specific context payloads exposed as real tools after the matching user turn. The complete untrusted diff appears only in the first turn, and repeated risk-plan projections use capped path samples.
 - `turns/01-scope-risk-map-analysis.txt` through `turns/16-validate-synthesis-json.txt` — assistant output and completed/failed/timed-out status written as each turn settles.
 - `context/drift-context.json` — deterministic drift and overlap context.
 - `context/security-context.json` — deterministic security-risk context and the risk plan for the
@@ -152,7 +163,7 @@ instead of failing closed without artifacts.
 - `context/validation-context.json` — deterministic acceptance, source-of-truth, static
   test-inventory, simplification-signal, and risk plan for the PR SHA, including the
   regression invariants reviewed for the PR.
-- `context/pr.diff` — truncated PR diff used by the advisor.
+- `context/pr.diff` — complete PR diff used by the advisor.
 - `pr-review-advisor-raw-output.txt` — raw multi-turn advisor transcript and diagnostics.
 - `pr-review-advisor-result.json` — normalized advisor result with findings projected from the canonical open ledger records, or execution metadata when analysis is unavailable.
 - `pr-review-advisor-final-result.json` — normalized canonical result used for comments.

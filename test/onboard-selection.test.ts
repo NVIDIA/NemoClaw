@@ -71,7 +71,6 @@ const CREDENTIAL_RETRY_PROMPT_RE =
 const OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE =
   '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
 const PROVIDER_SELECTION_TEST_TIMEOUT_MS = testTimeout(60_000);
-
 const TEST_REMOTE_PROVIDER_CONFIG = {
   build: { label: "NVIDIA Endpoints", providerName: "nvidia-prod" },
   openai: { label: "OpenAI", providerName: "openai-api" },
@@ -183,6 +182,7 @@ function makeSetupNimFlowDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupN
     error: () => {},
     exitProcess: (code) => unexpected(`exitProcess(${code})`),
     abortNonInteractive: (message) => unexpected(`abortNonInteractive(${message})`),
+    handleLlamaCppSelection: async () => unexpected("llama.cpp selection"),
     handleRemoteProviderSelection: async () => unexpected("remote provider selection"),
     handleNimLocalSelection: async () => unexpected("local NIM selection"),
     handleRunningOllamaSelection: async () => unexpected("running Ollama selection"),
