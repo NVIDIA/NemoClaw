@@ -7,16 +7,14 @@ import {
   mergeMessagingChannelConfigs,
 } from "../messaging-channel-config";
 import type { Session } from "../state/onboard-session";
-import * as registry from "../state/registry";
+import { getRegistrySandboxMessagingAuthority } from "./messaging-channel-setup";
 
 export function getStoredMessagingChannelConfig(
   sandboxName: string | null,
   session: Session | null,
 ): MessagingChannelConfig | null {
   const registryConfig = sandboxName
-    ? getMessagingChannelConfigFromPlan(
-        registry.getMessagingPlanFromEntry(registry.getSandbox(sandboxName)),
-      )
+    ? getMessagingChannelConfigFromPlan(getRegistrySandboxMessagingAuthority(sandboxName).plan)
     : null;
   const sessionMatchesSandbox =
     !session?.sandboxName || !sandboxName || session.sandboxName === sandboxName;

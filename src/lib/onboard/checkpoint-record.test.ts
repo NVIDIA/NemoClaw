@@ -130,6 +130,83 @@ describe("recordCheckpointProviderEffectGroup", () => {
 
     expect(session.checkpoint?.effectGroups.web_search_provider?.fingerprint).toBe(currentWeb.name);
     expect(session.checkpoint?.effectGroups.messaging_providers?.fingerprint).toBe("old-chat");
-    expect(session.checkpoint?.bindings.registeredProviders).toContainEqual(currentWeb);
+    expect(session.checkpoint?.bindings).toEqual({
+      credentialEnvs: ["SHARED_KEY", "CURRENT_WEB_KEY"],
+      registeredProviders: [
+        { name: "old-chat", type: "generic", credentialEnv: "SHARED_KEY" },
+        currentWeb,
+      ],
+    });
+  });
+
+  it("adopts a same-name unowned binding and removes its replaced credential key", () => {
+    const session = sessionWithProviderReceipts();
+    const checkpoint = session.checkpoint;
+    if (!checkpoint) throw new Error("expected a provider checkpoint");
+    const orphan = {
+      name: "current-web",
+      type: "tavily",
+      credentialEnv: "ORPHAN_WEB_KEY",
+    };
+    const currentWeb = {
+      name: orphan.name,
+      type: orphan.type,
+      credentialEnv: "CURRENT_WEB_KEY",
+    };
+    session.checkpoint = {
+      ...checkpoint,
+      bindings: {
+        credentialEnvs: [...checkpoint.bindings.credentialEnvs, orphan.credentialEnv],
+        registeredProviders: [...checkpoint.bindings.registeredProviders, orphan],
+      },
+    };
+
+    recordCheckpointProviderEffectGroup(session, "web_search_provider", [currentWeb]);
+
+    expect(session.checkpoint?.bindings).toEqual({
+      credentialEnvs: ["SHARED_KEY", "CURRENT_WEB_KEY"],
+      registeredProviders: [
+        { name: "old-chat", type: "generic", credentialEnv: "SHARED_KEY" },
+        currentWeb,
+      ],
+    });
+    expect(session.checkpoint?.effectGroups.web_search_provider?.fingerprint).toBe(currentWeb.name);
+  });
+
+  it("clears an empty provider group and its owned binding", () => {
+    const session = sessionWithProviderReceipts();
+
+    recordCheckpointProviderEffectGroup(session, "web_search_provider", []);
+
+    expect(session.checkpoint?.effectGroups.web_search_provider).toBeUndefined();
+    expect(session.checkpoint?.effectGroups.messaging_providers?.fingerprint).toBe("old-chat");
+    expect(session.checkpoint?.bindings).toEqual({
+      credentialEnvs: ["SHARED_KEY"],
+      registeredProviders: [{ name: "old-chat", type: "generic", credentialEnv: "SHARED_KEY" }],
+    });
+  });
+
+  it("rejects a malformed previous group receipt without changing the checkpoint", () => {
+    const session = sessionWithProviderReceipts();
+    const checkpoint = session.checkpoint;
+    const previousReceipt = checkpoint?.effectGroups.web_search_provider;
+    if (!checkpoint || !previousReceipt) {
+      throw new Error("expected a web-search provider receipt");
+    }
+    session.checkpoint = {
+      ...checkpoint,
+      effectGroups: {
+        ...checkpoint.effectGroups,
+        web_search_provider: { ...previousReceipt, fingerprint: ",old-web" },
+      },
+    };
+    const previousCheckpoint = session.checkpoint;
+
+    expect(() =>
+      recordCheckpointProviderEffectGroup(session, "web_search_provider", [
+        { name: "current-web", type: "tavily", credentialEnv: "CURRENT_WEB_KEY" },
+      ]),
+    ).toThrow("provider effect group receipt contains invalid or duplicate provider names");
+    expect(session.checkpoint).toBe(previousCheckpoint);
   });
 });

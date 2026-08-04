@@ -216,7 +216,7 @@ describe("observeProviderEffectFingerprint", () => {
     ).toBeNull();
   });
 
-  it("rejects a same-name provider when its type or credential environment changes", () => {
+  it("rejects a same-name provider when its type or credential key changes", () => {
     const cp = checkpoint({
       effectGroups: {
         web_search_provider: { completedAt: ISO, fingerprint: "search" },
@@ -282,7 +282,7 @@ describe("requiredWebSearchProviderType", () => {
 });
 
 describe("requiredMessagingProviderBindings", () => {
-  it("includes the current Google Chat bridge profile binding", () => {
+  it("includes the Google Chat bridge profile binding", () => {
     const plan: SandboxMessagingPlan = {
       schemaVersion: 1,
       sandboxName: "my-assistant",
@@ -315,6 +315,18 @@ describe("requiredMessagingProviderBindings", () => {
       type: "google-chat-bridge",
       credentialEnv: "GOOGLE_CHAT_ACCESS_TOKEN",
     });
+
+    const disabledPlan: SandboxMessagingPlan = {
+      ...plan,
+      channels: plan.channels.map((channel) => ({
+        ...channel,
+        active: false,
+        disabled: true,
+      })),
+      disabledChannels: ["googlechat"],
+    };
+
+    expect(requiredMessagingProviderBindings("my-assistant", disabledPlan)).toEqual([]);
   });
 });
 

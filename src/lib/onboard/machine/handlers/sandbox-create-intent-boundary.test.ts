@@ -256,6 +256,7 @@ describe("sandbox create intent machine boundary", () => {
     const readMessagingPlanFromEnv = vi
       .fn<() => typeof messagingPlan | null>()
       .mockReturnValueOnce(null)
+      .mockReturnValueOnce(null)
       .mockReturnValueOnce(messagingPlan)
       .mockReturnValue(null);
     const { deps, calls } = createDeps({
@@ -297,9 +298,12 @@ describe("sandbox create intent machine boundary", () => {
       enabledChannels: [],
       webSearchConfig: braveConfig,
       agent: null,
+      requiredBindings: [
+        { name: "tm-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+      ],
     });
-    expect(stageSandboxCredentialProviders.mock.invocationCallOrder[0]).toBeLessThan(
-      setupMessagingChannels.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    expect(stageSandboxCredentialProviders.mock.invocationCallOrder[0]).toBeGreaterThan(
+      setupMessagingChannels.mock.invocationCallOrder[0] ?? Number.NEGATIVE_INFINITY,
     );
     expect(stageSandboxCredentialProviders.mock.invocationCallOrder[0]).toBeLessThan(
       calls.selectResourceProfile.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
@@ -309,6 +313,13 @@ describe("sandbox create intent machine boundary", () => {
       enabledChannels: ["telegram"],
       webSearchConfig: null,
       agent: null,
+      requiredBindings: [
+        {
+          name: "tm-telegram-bridge",
+          type: "generic",
+          credentialEnv: "TELEGRAM_BOT_TOKEN",
+        },
+      ],
     });
     expect(stageSandboxCredentialProviders.mock.invocationCallOrder[1]).toBeGreaterThan(
       setupMessagingChannels.mock.invocationCallOrder[0] ?? Number.NEGATIVE_INFINITY,

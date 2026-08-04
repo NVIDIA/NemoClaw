@@ -148,6 +148,7 @@ describe("handleSandboxState provider effect replay", () => {
       enabledChannels: ["slack"],
       webSearchConfig: null,
       agent: null,
+      requiredBindings: slackProviderBindings,
     });
     expect(calls.createSandbox).toHaveBeenCalledTimes(1);
     expect(result.session?.checkpoint?.bindings).toEqual({
@@ -159,6 +160,8 @@ describe("handleSandboxState provider effect replay", () => {
     );
     expect(JSON.stringify(result.session)).not.toContain(slackBotToken);
     expect(JSON.stringify(result.session)).not.toContain(slackAppToken);
+    expect(JSON.stringify(persistence.readSession())).not.toContain(slackBotToken);
+    expect(JSON.stringify(persistence.readSession())).not.toContain(slackAppToken);
   });
 
   it("registers selected Tavily provider when a Brave receipt still matches the gateway (#7702)", async () => {
@@ -230,6 +233,7 @@ describe("handleSandboxState provider effect replay", () => {
       enabledChannels: [],
       webSearchConfig: { fetchEnabled: true, provider: "tavily" },
       agent: null,
+      requiredBindings: [tavilyBinding],
     });
     expect(calls.createSandbox).toHaveBeenCalledTimes(1);
     expect(result.session?.checkpoint?.bindings).toEqual({
@@ -307,74 +311,7 @@ describe("handleSandboxState provider effect replay", () => {
     expect(result.session?.checkpoint?.effectGroups.messaging_providers).toBeUndefined();
   });
 
-  it("removes an orphan binding left by an earlier append-only receipt update (#7702)", async () => {
-    const orphanBinding = {
-      name: "my-assistant-brave-search",
-      type: "brave",
-      credentialEnv: "BRAVE_API_KEY",
-    };
-    const currentBinding = {
-      name: "my-assistant-tavily-search",
-      type: "tavily",
-      credentialEnv: "TAVILY_API_KEY",
-    };
-    const session = createSession({
-      sandboxName: "my-assistant",
-      webSearchConfig: { fetchEnabled: true, provider: "tavily" },
-    });
-    session.checkpoint = {
-      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
-      sessionId: session.sessionId,
-      machineState: "sandbox",
-      updatedAt: "2026-01-01T00:00:00.000Z",
-      sandboxIdentity: decisionSelected({ name: "my-assistant", agent: "openclaw" }),
-      webSearch: decisionSelected({ fetchEnabled: true, provider: "tavily" }),
-      messaging: decisionDeclined(),
-      resourceProfile: decisionUnset(),
-      gatewayAuthority: decisionUnset(),
-      effectGroups: {
-        web_search_provider: {
-          completedAt: "2026-01-01T00:00:00.000Z",
-          fingerprint: currentBinding.name,
-        },
-      },
-      bindings: {
-        credentialEnvs: [orphanBinding.credentialEnv, currentBinding.credentialEnv],
-        registeredProviders: [orphanBinding, currentBinding],
-      },
-      sandboxRecreate: null,
-    };
-    const persistence = createImmutableSessionPersistence(session);
-    const stageSandboxCredentialProviders = vi.fn(async () => []);
-    const { deps, calls } = createDeps(
-      {
-        updateSession: persistence.updateSession,
-        recordStepComplete: persistence.recordStepComplete,
-        stageSandboxCredentialProviders,
-        providerMatchesGatewayCredential: (name, type, credentialEnv) =>
-          name === currentBinding.name &&
-          type === currentBinding.type &&
-          credentialEnv === currentBinding.credentialEnv,
-      },
-      session,
-    );
-
-    const result = await handleSandboxState({
-      ...baseOptions(deps, session),
-      resume: true,
-      sandboxName: "my-assistant",
-      webSearchConfig: { fetchEnabled: true, provider: "tavily" },
-    });
-
-    expect(stageSandboxCredentialProviders).not.toHaveBeenCalled();
-    expect(calls.createSandbox).toHaveBeenCalledTimes(1);
-    expect(result.session?.checkpoint?.bindings).toEqual({
-      credentialEnvs: ["TAVILY_API_KEY"],
-      registeredProviders: [currentBinding],
-    });
-  });
-
-  it("records web registration before messaging reconciliation starts (#7702)", async () => {
+  it("adopts a same-name orphan when replacing the recorded web provider (#7702)", async () => {
     const oldBinding = {
       name: "my-assistant-brave-search",
       type: "brave",
@@ -406,16 +343,15 @@ describe("handleSandboxState provider effect replay", () => {
         },
       },
       bindings: {
-        credentialEnvs: [oldBinding.credentialEnv],
-        registeredProviders: [oldBinding],
+        credentialEnvs: [oldBinding.credentialEnv, currentBinding.credentialEnv],
+        registeredProviders: [oldBinding, currentBinding],
       },
       sandboxRecreate: null,
     };
-    const liveBindings = new Map([[oldBinding.name, oldBinding]]);
     const persistence = createImmutableSessionPersistence(session);
+    let currentBindingLive = true;
     const stageSandboxCredentialProviders = vi.fn(async () => {
-      liveBindings.delete(oldBinding.name);
-      liveBindings.set(currentBinding.name, currentBinding);
+      currentBindingLive = true;
       return [currentBinding];
     });
     const { deps, calls } = createDeps(
@@ -423,9 +359,117 @@ describe("handleSandboxState provider effect replay", () => {
         updateSession: persistence.updateSession,
         recordStepComplete: persistence.recordStepComplete,
         stageSandboxCredentialProviders,
-        readMessagingPlanFromEnv: () => {
-          throw new Error("messaging reconciliation failed");
+        providerMatchesGatewayCredential: (name, type, credentialEnv) =>
+          currentBindingLive &&
+          name === currentBinding.name &&
+          type === currentBinding.type &&
+          credentialEnv === currentBinding.credentialEnv,
+      },
+      session,
+    );
+
+    const result = await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+    });
+
+    expect(stageSandboxCredentialProviders).toHaveBeenCalledTimes(1);
+    expect(calls.createSandbox).toHaveBeenCalledTimes(1);
+    expect(result.session?.checkpoint?.bindings).toEqual({
+      credentialEnvs: ["TAVILY_API_KEY"],
+      registeredProviders: [currentBinding],
+    });
+  });
+
+  it("reuses a completed web provider group after messaging registration fails (#7702)", async () => {
+    const oldBinding = {
+      name: "my-assistant-brave-search",
+      type: "brave",
+      credentialEnv: "BRAVE_API_KEY",
+    };
+    const currentBinding = {
+      name: "my-assistant-tavily-search",
+      type: "tavily",
+      credentialEnv: "TAVILY_API_KEY",
+    };
+    const messagingBinding = {
+      name: "my-assistant-telegram-bridge",
+      type: "generic",
+      credentialEnv: "TELEGRAM_BOT_TOKEN",
+    };
+    const telegramToken = "telegram-current-token";
+    const messagingPlan: SandboxMessagingPlan = {
+      ...makeMinimalPlan("my-assistant", "openclaw", ["telegram"]),
+      credentialBindings: [
+        {
+          channelId: "telegram",
+          credentialId: "bot-token",
+          sourceInput: "botToken",
+          providerName: messagingBinding.name,
+          providerEnvKey: messagingBinding.credentialEnv,
+          placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+          credentialAvailable: true,
+          credentialHash: hashCredential(telegramToken) ?? undefined,
         },
+      ],
+    };
+    const session = createSession({
+      sandboxName: "my-assistant",
+      webSearchConfig: { fetchEnabled: true, provider: "brave" },
+      messagingPlan,
+    });
+    session.checkpoint = {
+      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      sessionId: session.sessionId,
+      machineState: "sandbox",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sandboxIdentity: decisionSelected({ name: "my-assistant", agent: "openclaw" }),
+      webSearch: decisionSelected({ fetchEnabled: true, provider: "brave" }),
+      messaging: decisionSelected({ selectedChannels: ["telegram"], disabledChannels: [] }),
+      resourceProfile: decisionUnset(),
+      gatewayAuthority: decisionUnset(),
+      effectGroups: {
+        web_search_provider: {
+          completedAt: "2026-01-01T00:00:00.000Z",
+          fingerprint: oldBinding.name,
+        },
+      },
+      bindings: {
+        credentialEnvs: [oldBinding.credentialEnv],
+        registeredProviders: [oldBinding],
+      },
+      sandboxRecreate: null,
+    };
+    const liveBindings = new Map([[oldBinding.name, oldBinding]]);
+    const persistence = createImmutableSessionPersistence(session);
+    let messagingAttempts = 0;
+    const stageSandboxCredentialProviders = vi.fn(
+      async (input: {
+        requiredBindings: readonly {
+          name: string;
+          type: string;
+          credentialEnv: string;
+        }[];
+      }) => {
+        if (input.requiredBindings.some((binding) => binding.name === currentBinding.name)) {
+          liveBindings.delete(oldBinding.name);
+          liveBindings.set(currentBinding.name, currentBinding);
+          return [currentBinding];
+        }
+        messagingAttempts += 1;
+        if (messagingAttempts === 1) throw new Error("messaging registration failed");
+        liveBindings.set(messagingBinding.name, messagingBinding);
+        return [messagingBinding];
+      },
+    );
+    const { deps, calls } = createDeps(
+      {
+        updateSession: persistence.updateSession,
+        recordStepComplete: persistence.recordStepComplete,
+        stageSandboxCredentialProviders,
+        readMessagingPlanFromEnv: () => messagingPlan,
         providerMatchesGatewayCredential: (name, type, credentialEnv) =>
           liveBindings.get(name)?.type === type &&
           liveBindings.get(name)?.credentialEnv === credentialEnv,
@@ -433,22 +477,66 @@ describe("handleSandboxState provider effect replay", () => {
       session,
     );
 
-    await expect(
-      handleSandboxState({
-        ...baseOptions(deps, session),
-        resume: true,
-        sandboxName: "my-assistant",
-        webSearchConfig: { fetchEnabled: true, provider: "tavily" },
-      }),
-    ).rejects.toThrow("messaging reconciliation failed");
+    await withEnv("TELEGRAM_BOT_TOKEN", telegramToken, () =>
+      expect(
+        handleSandboxState({
+          ...baseOptions(deps, session),
+          resume: true,
+          sandboxName: "my-assistant",
+          webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+        }),
+      ).rejects.toThrow("messaging registration failed"),
+    );
 
+    expect(stageSandboxCredentialProviders).toHaveBeenCalledTimes(2);
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(
       persistence.readSession().checkpoint?.effectGroups.web_search_provider?.fingerprint,
     ).toBe(currentBinding.name);
-    expect(persistence.readSession().checkpoint?.bindings.registeredProviders).toContainEqual(
-      currentBinding,
+    expect(persistence.readSession().checkpoint?.effectGroups.messaging_providers).toBeUndefined();
+    expect(persistence.readSession().checkpoint?.bindings).toEqual({
+      credentialEnvs: [currentBinding.credentialEnv],
+      registeredProviders: [currentBinding],
+    });
+
+    const interruptedSession = persistence.readSession();
+    const resumed = createDeps(
+      {
+        updateSession: persistence.updateSession,
+        recordStepComplete: persistence.recordStepComplete,
+        stageSandboxCredentialProviders,
+        readMessagingPlanFromEnv: () => messagingPlan,
+        providerMatchesGatewayCredential: (name, type, credentialEnv) =>
+          liveBindings.get(name)?.type === type &&
+          liveBindings.get(name)?.credentialEnv === credentialEnv,
+      },
+      interruptedSession,
     );
+
+    const result = await withEnv("TELEGRAM_BOT_TOKEN", telegramToken, () =>
+      handleSandboxState({
+        ...baseOptions(resumed.deps, interruptedSession),
+        resume: true,
+        sandboxName: "my-assistant",
+        webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      }),
+    );
+
+    expect(stageSandboxCredentialProviders).toHaveBeenCalledTimes(3);
+    expect(
+      stageSandboxCredentialProviders.mock.calls.filter(([input]) =>
+        input.requiredBindings.some((binding) => binding.name === currentBinding.name),
+      ),
+    ).toHaveLength(1);
+    expect(resumed.calls.createSandbox).toHaveBeenCalledTimes(1);
+    expect(result.session?.checkpoint?.bindings).toEqual({
+      credentialEnvs: [currentBinding.credentialEnv, messagingBinding.credentialEnv],
+      registeredProviders: [currentBinding, messagingBinding],
+    });
+    expect(result.session?.checkpoint?.effectGroups).toMatchObject({
+      web_search_provider: { fingerprint: currentBinding.name },
+      messaging_providers: { fingerprint: messagingBinding.name },
+    });
   });
 
   it("does not record a provider receipt when registration lacks the live binding (#7702)", async () => {
@@ -596,6 +684,170 @@ describe("handleSandboxState provider effect replay", () => {
     ).rejects.toThrow("exit 1");
 
     expect(lockCount).toBe(2);
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+  });
+
+  it("rejects a messaging binding that collides with the web provider before provider setup (#7701)", async () => {
+    const collidingPlan: SandboxMessagingPlan = {
+      ...makeMinimalPlan("my-assistant", "openclaw", ["telegram"]),
+      credentialBindings: [
+        {
+          channelId: "telegram",
+          credentialId: "bot-token",
+          sourceInput: "botToken",
+          providerName: "my-assistant-brave-search",
+          providerEnvKey: "TELEGRAM_BOT_TOKEN",
+          placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+          credentialAvailable: true,
+        },
+      ],
+    };
+    const session = createSession({
+      sandboxName: "my-assistant",
+      webSearchConfig: { fetchEnabled: true, provider: "brave" },
+    });
+    const stageSandboxCredentialProviders = vi.fn(async () => []);
+    const { deps, calls, getSession } = createDeps(
+      {
+        readMessagingPlanFromEnv: () => collidingPlan,
+        stageSandboxCredentialProviders,
+      },
+      session,
+    );
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+        webSearchConfig: { fetchEnabled: true, provider: "brave" },
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(stageSandboxCredentialProviders).not.toHaveBeenCalled();
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(getSession().checkpoint?.bindings.registeredProviders).toEqual([]);
+    expect(getSession().checkpoint?.effectGroups.web_search_provider).toBeUndefined();
+    expect(getSession().checkpoint?.effectGroups.messaging_providers).toBeUndefined();
+  });
+
+  it("rejects a web binding owned by the recorded messaging group before provider setup (#7701)", async () => {
+    const crossOwnedBinding = {
+      name: "my-assistant-tavily-search",
+      type: "generic",
+      credentialEnv: "TELEGRAM_BOT_TOKEN",
+    };
+    const session = createSession({
+      sandboxName: "my-assistant",
+      webSearchConfig: { fetchEnabled: true, provider: "brave" },
+    });
+    session.checkpoint = {
+      schemaVersion: CHECKPOINT_SCHEMA_VERSION,
+      sessionId: session.sessionId,
+      machineState: "sandbox",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sandboxIdentity: decisionSelected({ name: "my-assistant", agent: "openclaw" }),
+      webSearch: decisionSelected({ fetchEnabled: true, provider: "brave" }),
+      messaging: decisionDeclined(),
+      resourceProfile: decisionUnset(),
+      gatewayAuthority: decisionUnset(),
+      effectGroups: {
+        messaging_providers: {
+          completedAt: "2026-01-01T00:00:00.000Z",
+          fingerprint: crossOwnedBinding.name,
+        },
+      },
+      bindings: {
+        credentialEnvs: [crossOwnedBinding.credentialEnv],
+        registeredProviders: [crossOwnedBinding],
+      },
+      sandboxRecreate: null,
+    };
+    const stageSandboxCredentialProviders = vi.fn(async () => []);
+    const { deps, calls } = createDeps(
+      {
+        stageSandboxCredentialProviders,
+      },
+      session,
+    );
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+        webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(stageSandboxCredentialProviders).not.toHaveBeenCalled();
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.error.mock.calls.flat().join("\n")).toContain("nemoclaw onboard --fresh");
+  });
+
+  it("rejects a staged messaging plan for another sandbox before provider setup (#7701)", async () => {
+    const session = createSession({ sandboxName: "my-assistant" });
+    const mismatchedPlan = makeMinimalPlan("other-assistant", "openclaw", ["telegram"]);
+    const stageSandboxCredentialProviders = vi.fn(async () => [
+      {
+        name: "my-assistant-telegram-bridge",
+        type: "generic",
+        credentialEnv: "TELEGRAM_BOT_TOKEN",
+      },
+    ]);
+    const { deps, calls } = createDeps(
+      {
+        getRecordedMessagingChannelsForResume: () => ["telegram"],
+        readMessagingPlanFromEnv: () => mismatchedPlan,
+        stageSandboxCredentialProviders,
+      },
+      session,
+    );
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+        webSearchConfig: { fetchEnabled: true, provider: "brave" },
+      }),
+    ).rejects.toThrow("Staged messaging plan targets 'other-assistant', not 'my-assistant'.");
+
+    expect(stageSandboxCredentialProviders).not.toHaveBeenCalled();
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+  });
+
+  it("rejects a session messaging plan for another sandbox before provider setup (#7701)", async () => {
+    const mismatchedPlan = makeMinimalPlan("other-assistant", "openclaw", ["telegram"]);
+    const session = createSession({
+      sandboxName: "my-assistant",
+      messagingPlan: mismatchedPlan,
+      webSearchConfig: { fetchEnabled: true, provider: "brave" },
+    });
+    const stageSandboxCredentialProviders = vi.fn(async () => [
+      {
+        name: "my-assistant-brave-search",
+        type: "brave",
+        credentialEnv: "BRAVE_API_KEY",
+      },
+    ]);
+    const { deps, calls } = createDeps(
+      {
+        stageSandboxCredentialProviders,
+      },
+      session,
+    );
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+        webSearchConfig: { fetchEnabled: true, provider: "brave" },
+      }),
+    ).rejects.toThrow("Session messaging plan targets 'other-assistant', not 'my-assistant'.");
+
+    expect(stageSandboxCredentialProviders).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
   });
 });

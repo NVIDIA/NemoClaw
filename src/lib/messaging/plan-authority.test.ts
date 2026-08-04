@@ -80,4 +80,26 @@ describe("messaging plan authority", () => {
       }),
     ).toThrow("Registry messaging plan targets 'beta', not 'alpha'.");
   });
+
+  it("rejects a staged plan that targets another sandbox", () => {
+    expect(() =>
+      resolveMessagingPlanAuthority({
+        sandboxName: "alpha",
+        registry: { authoritative: false, plan: null },
+        stagedPlan: plan("beta", "onboard"),
+        sessionPlan: null,
+      }),
+    ).toThrow("Staged messaging plan targets 'beta', not 'alpha'.");
+  });
+
+  it("rejects a session plan that targets another sandbox", () => {
+    expect(() =>
+      resolveMessagingPlanAuthority({
+        sandboxName: "alpha",
+        registry: { authoritative: false, plan: null },
+        stagedPlan: null,
+        sessionPlan: plan("beta", "onboard"),
+      }),
+    ).toThrow("Session messaging plan targets 'beta', not 'alpha'.");
+  });
 });

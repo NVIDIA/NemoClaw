@@ -422,8 +422,11 @@ export function getRegistrySandboxMessagingAuthority(
   sandboxName: string,
 ): RegistryMessagingAuthority {
   const entry = registry.getSandbox(sandboxName);
+  if (!entry || entry.pendingRouteReservation === true) {
+    return { authoritative: false, plan: null };
+  }
   return {
-    authoritative: Boolean(entry && entry.pendingRouteReservation !== true),
+    authoritative: true,
     plan: registry.getHydratedMessagingPlanFromEntry(entry),
   };
 }

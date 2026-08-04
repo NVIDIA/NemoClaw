@@ -1,13 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import type { Session } from "../state/onboard-session";
+import * as registry from "../state/registry";
 import { getStoredMessagingChannelConfig } from "./messaging-config";
 
 describe("getStoredMessagingChannelConfig", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("uses legacy Telegram and WeChat session fields as read-only fallback", () => {
     expect(
       getStoredMessagingChannelConfig(null, {
@@ -33,6 +38,29 @@ describe("getStoredMessagingChannelConfig", () => {
         messagingPlan: makePlan(),
       } as Session),
     ).toEqual({
+      TELEGRAM_REQUIRE_MENTION: "0",
+    });
+  });
+
+  it("does not read messaging config from a pending route reservation", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "demo",
+      pendingRouteReservation: true,
+    });
+    const getHydratedMessagingPlanFromEntry = vi
+      .spyOn(registry, "getHydratedMessagingPlanFromEntry")
+      .mockReturnValue(makePlan());
+
+    expect(getStoredMessagingChannelConfig("demo", null)).toBeNull();
+    expect(getHydratedMessagingPlanFromEntry).not.toHaveBeenCalled();
+  });
+
+  it("reads messaging config from a registered sandbox", () => {
+    const entry = { name: "demo" };
+    vi.spyOn(registry, "getSandbox").mockReturnValue(entry);
+    vi.spyOn(registry, "getHydratedMessagingPlanFromEntry").mockReturnValue(makePlan());
+
+    expect(getStoredMessagingChannelConfig("demo", null)).toEqual({
       TELEGRAM_REQUIRE_MENTION: "0",
     });
   });

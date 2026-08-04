@@ -3,10 +3,15 @@
 
 import type { SandboxMessagingPlan } from "./manifest";
 
-export interface RegistryMessagingAuthority {
-  readonly authoritative: boolean;
-  readonly plan: SandboxMessagingPlan | null;
-}
+export type RegistryMessagingAuthority =
+  | {
+      readonly authoritative: true;
+      readonly plan: SandboxMessagingPlan | null;
+    }
+  | {
+      readonly authoritative: false;
+      readonly plan: null;
+    };
 
 export interface MessagingPlanAuthorityInput {
   readonly sandboxName: string;
@@ -36,8 +41,18 @@ export function resolveMessagingPlanAuthority(
     }
     return { source: "registry", plan: input.registry.plan };
   }
+  if (input.stagedPlan && !planTargetsSandbox(input.stagedPlan, input.sandboxName)) {
+    throw new Error(
+      `Staged messaging plan targets '${input.stagedPlan.sandboxName}', not '${input.sandboxName}'.`,
+    );
+  }
   if (input.stagedPlan && planTargetsSandbox(input.stagedPlan, input.sandboxName)) {
     return { source: "staged", plan: input.stagedPlan };
+  }
+  if (input.sessionPlan && !planTargetsSandbox(input.sessionPlan, input.sandboxName)) {
+    throw new Error(
+      `Session messaging plan targets '${input.sessionPlan.sandboxName}', not '${input.sandboxName}'.`,
+    );
   }
   if (input.sessionPlan && planTargetsSandbox(input.sessionPlan, input.sandboxName)) {
     return { source: "session", plan: input.sessionPlan };

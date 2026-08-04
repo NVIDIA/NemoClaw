@@ -258,6 +258,7 @@ export interface SandboxStateOptions<
       enabledChannels: readonly string[];
       webSearchConfig: WebSearchConfig | null;
       agent: Agent;
+      requiredBindings: readonly CheckpointProviderBinding[];
     }): Promise<readonly CheckpointProviderBinding[]>;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     selectResourceProfileForSandbox(): Promise<ResourceProfile | null>;
@@ -468,6 +469,45 @@ type ProviderEffectGroupName = Extract<
   CheckpointEffectGroupName,
   "web_search_provider" | "messaging_providers"
 >;
+
+function canonicalCheckpointProviderReceiptNames(checkpoint: OnboardCheckpoint): string[] | null {
+  const fingerprints = (["web_search_provider", "messaging_providers"] as const)
+    .map((group) => checkpoint.effectGroups[group]?.fingerprint)
+    .filter((fingerprint): fingerprint is string => typeof fingerprint === "string");
+  const receiptNamesByGroup = fingerprints.map((fingerprint) =>
+    fingerprint.split(",").filter(Boolean),
+  );
+  const malformed = receiptNamesByGroup.some(
+    (names, index) =>
+      names.length === 0 ||
+      names.some((name) => name.trim() !== name) ||
+      names.join(",") !== fingerprints[index] ||
+      new Set(names).size !== names.length,
+  );
+  if (malformed) return null;
+  const receiptNames = receiptNamesByGroup.flat();
+  return new Set(receiptNames).size === receiptNames.length ? receiptNames : null;
+}
+
+function checkpointProviderReceiptNames(
+  checkpoint: OnboardCheckpoint,
+  group: ProviderEffectGroupName,
+): string[] {
+  return checkpoint.effectGroups[group]?.fingerprint.split(",") ?? [];
+}
+
+function checkpointProviderBindingKey(binding: CheckpointProviderBinding): string {
+  return JSON.stringify([binding.name, binding.type, binding.credentialEnv]);
+}
+
+function isCanonicalCheckpointProviderBinding(binding: CheckpointProviderBinding): boolean {
+  return (
+    Boolean(binding.name && binding.type && binding.credentialEnv) &&
+    binding.name.trim() === binding.name &&
+    binding.type.trim() === binding.type &&
+    binding.credentialEnv.trim() === binding.credentialEnv
+  );
+}
 
 class SandboxStateFlow<
   Gpu,
@@ -681,7 +721,7 @@ class SandboxStateFlow<
 
     const bindingCheck = revalidateCheckpointBindings(
       checkpoint,
-      this.checkpointBindingAvailability(checkpoint),
+      this.checkpointBindingAvailabilityBeforeProviderReplay(checkpoint),
     );
     if (bindingCheck.status === "stale") return this.rejectStaleCheckpointBindings(bindingCheck);
 
@@ -748,12 +788,30 @@ class SandboxStateFlow<
     return this.deps.exitProcess(1);
   }
 
-  private checkpointBindingAvailability(checkpoint: OnboardCheckpoint): {
+  private checkpointBindingAvailability(
+    checkpoint: OnboardCheckpoint,
+    provisionallyAvailableBindings: readonly CheckpointProviderBinding[] = [],
+  ): {
     availableCredentialEnvs: ReadonlySet<string>;
     liveRegisteredProviders: ReadonlySet<string>;
   } {
-    const liveRegisteredBindings = checkpoint.bindings.registeredProviders.filter((binding) =>
-      this.deps.providerMatchesGatewayCredential(binding.name, binding.type, binding.credentialEnv),
+    const provisionallyAvailableBindingKeys = new Set(
+      provisionallyAvailableBindings.map(checkpointProviderBindingKey),
+    );
+    const bindingNameCounts = new Map<string, number>();
+    for (const binding of checkpoint.bindings.registeredProviders) {
+      bindingNameCounts.set(binding.name, (bindingNameCounts.get(binding.name) ?? 0) + 1);
+    }
+    const liveRegisteredBindings = checkpoint.bindings.registeredProviders.filter(
+      (binding) =>
+        bindingNameCounts.get(binding.name) === 1 &&
+        isCanonicalCheckpointProviderBinding(binding) &&
+        (provisionallyAvailableBindingKeys.has(checkpointProviderBindingKey(binding)) ||
+          this.deps.providerMatchesGatewayCredential(
+            binding.name,
+            binding.type,
+            binding.credentialEnv,
+          )),
     );
     return {
       availableCredentialEnvs: new Set(
@@ -762,13 +820,59 @@ class SandboxStateFlow<
             Boolean(this.options.env[name]?.trim()),
           ),
           // Provider setup deliberately scrubs raw credentials from process.env
-          // after registration. The exact live name/type/credential-key binding
+          // after registration. The exact live provider name, provider type, and credential key
           // is sufficient evidence for that scrubbed credential key (#7022).
           ...liveRegisteredBindings.map((binding) => binding.credentialEnv),
         ].filter(Boolean),
       ),
       liveRegisteredProviders: new Set(liveRegisteredBindings.map((binding) => binding.name)),
     };
+  }
+
+  private checkpointBindingAvailabilityBeforeProviderReplay(checkpoint: OnboardCheckpoint): {
+    availableCredentialEnvs: ReadonlySet<string>;
+    liveRegisteredProviders: ReadonlySet<string>;
+  } {
+    const replayableBindings = this.replayableCheckpointProviderBindings(checkpoint);
+    return this.checkpointBindingAvailability(checkpoint, replayableBindings);
+  }
+
+  private replayableCheckpointProviderBindings(
+    checkpoint: OnboardCheckpoint,
+  ): CheckpointProviderBinding[] {
+    const registeredBindings = checkpoint.bindings.registeredProviders;
+    const registeredByName = new Map(registeredBindings.map((binding) => [binding.name, binding]));
+    if (
+      registeredByName.size !== registeredBindings.length ||
+      registeredBindings.some((binding) => !isCanonicalCheckpointProviderBinding(binding))
+    ) {
+      return this.rejectInvalidCheckpointProviderBindings();
+    }
+
+    // Only canonical provider-effect receipts may defer their exact bindings
+    // to the reconciliation that runs before sandbox creation.
+    const receiptNames = canonicalCheckpointProviderReceiptNames(checkpoint);
+    if (!receiptNames) {
+      return this.rejectInvalidCheckpointProviderBindings();
+    }
+
+    const replayableBindings = receiptNames.map((name) => registeredByName.get(name));
+    if (
+      replayableBindings.some(
+        (binding) => !binding || !isCanonicalCheckpointProviderBinding(binding),
+      )
+    ) {
+      return this.rejectInvalidCheckpointProviderBindings();
+    }
+    return replayableBindings as CheckpointProviderBinding[];
+  }
+
+  private rejectInvalidCheckpointProviderBindings(): never {
+    this.deps.error("  A previous onboarding attempt recorded invalid provider bindings.");
+    this.deps.error(
+      `  Run ${this.deps.cliName()} onboard --fresh to discard the invalid checkpoint and start again.`,
+    );
+    return this.deps.exitProcess(1);
   }
 
   private rejectStaleCheckpointBindings(
@@ -877,6 +981,7 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
   ): Promise<SandboxStepState<WebSearchConfig>> {
     return this.deps.withGatewayRouteMutationLock(this.options.gatewayName, async () => {
+      this.assertCheckpointBindingsStillLive(state);
       this.assertGatewayRouteCompatible(state.sandboxName);
       if (state.webSearchConfig) {
         const provider = webSearchProviderForConfig(
@@ -1189,6 +1294,7 @@ class SandboxStateFlow<
           enabledChannels,
           webSearchConfig,
           agent: this.options.agent,
+          requiredBindings,
         });
         const stagedProviderNames = new Set<string>();
         for (const binding of staged) {
@@ -1688,6 +1794,44 @@ class SandboxStateFlow<
       : withDashboardAndGatewayLocks();
   }
 
+  private assertMessagingPlanTargetsSandbox(sandboxName: string, session: Session | null): void {
+    resolveMessagingPlanAuthority({
+      sandboxName,
+      registry: this.deps.getRegistrySandboxMessagingAuthority(sandboxName),
+      stagedPlan: this.deps.readMessagingPlanFromEnv(),
+      sessionPlan: session?.messagingPlan ?? null,
+    });
+  }
+
+  private validateProviderBindingsForRegistration(
+    checkpoint: OnboardCheckpoint | null,
+    webSearchBindings: readonly CheckpointProviderBinding[],
+    messagingBindings: readonly CheckpointProviderBinding[],
+  ): void {
+    const bindings = [...webSearchBindings, ...messagingBindings];
+    const providerNames = new Set(bindings.map((binding) => binding.name));
+    if (
+      providerNames.size !== bindings.length ||
+      bindings.some((binding) => !isCanonicalCheckpointProviderBinding(binding))
+    ) {
+      this.deps.error("  Provider setup produced conflicting credential bindings.");
+      return this.deps.exitProcess(1);
+    }
+    if (!checkpoint) return;
+    const recordedWebSearchNames = new Set(
+      checkpointProviderReceiptNames(checkpoint, "web_search_provider"),
+    );
+    const recordedMessagingNames = new Set(
+      checkpointProviderReceiptNames(checkpoint, "messaging_providers"),
+    );
+    if (
+      webSearchBindings.some((binding) => recordedMessagingNames.has(binding.name)) ||
+      messagingBindings.some((binding) => recordedWebSearchNames.has(binding.name))
+    ) {
+      return this.rejectInvalidCheckpointProviderBindings();
+    }
+  }
+
   private async recreateSandbox(
     state: SandboxStepState<WebSearchConfig>,
     decision: SandboxCreationDecision,
@@ -1726,11 +1870,29 @@ class SandboxStateFlow<
       },
       webSearchConfig,
     );
+    this.assertMessagingPlanTargetsSandbox(requestedSandboxName, nextState.session);
     const webSearchProviderBindings = requiredWebSearchProviderBindings(
       requestedSandboxName,
       nextState.webSearchConfig as unknown as SharedWebSearchConfig | null,
       this.options.agent as { name?: string } | null,
     );
+    const messaging = await reconcileSandboxMessaging({
+      resume: this.options.resume,
+      session: nextState.session,
+      sandboxName: requestedSandboxName,
+      agent: this.options.agent,
+      deps: this.deps,
+    });
+    const messagingProviderBindings = requiredMessagingProviderBindings(
+      requestedSandboxName,
+      messaging.plan,
+    );
+    this.validateProviderBindingsForRegistration(
+      nextState.session?.checkpoint ?? null,
+      webSearchProviderBindings,
+      messagingProviderBindings,
+    );
+    nextState = this.checkpointMessaging(nextState, messaging);
     await this.registerCompletedCredentialProviders(
       requestedSandboxName,
       [],
@@ -1743,18 +1905,6 @@ class SandboxStateFlow<
       nextState,
       "web_search_provider",
       webSearchProviderBindings,
-    );
-    const messaging = await reconcileSandboxMessaging({
-      resume: this.options.resume,
-      session: nextState.session,
-      sandboxName: requestedSandboxName,
-      agent: this.options.agent,
-      deps: this.deps,
-    });
-    nextState = this.checkpointMessaging(nextState, messaging);
-    const messagingProviderBindings = requiredMessagingProviderBindings(
-      requestedSandboxName,
-      messaging.plan,
     );
     await this.registerCompletedCredentialProviders(
       requestedSandboxName,
@@ -1770,16 +1920,6 @@ class SandboxStateFlow<
       messagingProviderBindings,
     );
     if (this.resumesSandboxPrompts) {
-      const providerNames = new Set(
-        [...webSearchProviderBindings, ...messagingProviderBindings].map((binding) => binding.name),
-      );
-      if (
-        providerNames.size !==
-        webSearchProviderBindings.length + messagingProviderBindings.length
-      ) {
-        this.deps.error("  Provider setup produced conflicting credential bindings.");
-        return this.deps.exitProcess(1);
-      }
       const session = this.deps.updateSession((current) => {
         recordCheckpointProviderEffectGroups(current, {
           webSearch: webSearchProviderBindings,
@@ -1829,6 +1969,9 @@ class SandboxStateFlow<
   }
 
   async run(): Promise<SandboxStateResult<WebSearchConfig>> {
+    if (this.options.session?.checkpoint) {
+      this.replayableCheckpointProviderBindings(this.options.session.checkpoint);
+    }
     this.dcodeAutoApprovalMode = dcodeResume.resolveAutoApprovalMode(
       this.options,
       this.options.sandboxName,

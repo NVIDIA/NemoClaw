@@ -106,12 +106,17 @@ describe("getRegistrySandboxMessagingAuthority", () => {
     const registryPlan = messagingPlan("alpha", "rebuild");
     const stagedPlan = messagingPlan("alpha", "onboard");
     vi.spyOn(registry, "getSandbox").mockReturnValue(entry);
-    vi.spyOn(registry, "getHydratedMessagingPlanFromEntry").mockReturnValue(registryPlan);
+    const getHydratedMessagingPlanFromEntry = vi
+      .spyOn(registry, "getHydratedMessagingPlanFromEntry")
+      .mockReturnValue(registryPlan);
+    const authority = getRegistrySandboxMessagingAuthority("alpha");
 
+    expect(authority).toEqual({ authoritative: false, plan: null });
+    expect(getHydratedMessagingPlanFromEntry).not.toHaveBeenCalled();
     expect(
       resolveMessagingPlanAuthority({
         sandboxName: "alpha",
-        registry: getRegistrySandboxMessagingAuthority("alpha"),
+        registry: authority,
         stagedPlan,
         sessionPlan: null,
       }),
@@ -123,11 +128,13 @@ describe("getRegistrySandboxMessagingAuthority", () => {
     const registryPlan = messagingPlan("alpha", "rebuild");
     vi.spyOn(registry, "getSandbox").mockReturnValue(entry);
     vi.spyOn(registry, "getHydratedMessagingPlanFromEntry").mockReturnValue(registryPlan);
+    const authority = getRegistrySandboxMessagingAuthority("alpha");
 
+    expect(authority).toEqual({ authoritative: true, plan: registryPlan });
     expect(
       resolveMessagingPlanAuthority({
         sandboxName: "alpha",
-        registry: getRegistrySandboxMessagingAuthority("alpha"),
+        registry: authority,
         stagedPlan: messagingPlan("alpha", "onboard"),
         sessionPlan: null,
       }),

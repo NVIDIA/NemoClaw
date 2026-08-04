@@ -50,12 +50,21 @@ function registrationDeps(
   };
 }
 
-function sandboxInput() {
+function requiredBindings(tokenDefs: readonly MessagingTokenDef[]) {
+  return tokenDefs.map((tokenDef) => ({
+    name: tokenDef.name,
+    type: tokenDef.providerType || "generic",
+    credentialEnv: tokenDef.envKey,
+  }));
+}
+
+function sandboxInput(bindings: ReturnType<typeof requiredBindings>) {
   return {
     sandboxName: "alpha",
     enabledChannels: ["discord"],
     webSearchConfig: null,
     agent: {},
+    requiredBindings: bindings,
   };
 }
 
@@ -94,7 +103,7 @@ describe("credential provider registration", () => {
     ];
 
     const registered = await registration.stageSandboxCredentialProviders(
-      sandboxInput(),
+      sandboxInput(requiredBindings(tokenDefs)),
       async () => ({ messagingTokenDefs: tokenDefs }),
     );
 
@@ -152,17 +161,16 @@ describe("credential provider registration", () => {
       registrationDeps(runOpenshell, session),
     );
 
+    const tokenDefs: MessagingTokenDef[] = [
+      {
+        name: "alpha-discord-bridge",
+        envKey: "DISCORD_BOT_TOKEN",
+        token: DISCORD_SECRET,
+      },
+    ];
     const registered = await registration.stageSandboxCredentialProviders(
-      sandboxInput(),
-      async () => ({
-        messagingTokenDefs: [
-          {
-            name: "alpha-discord-bridge",
-            envKey: "DISCORD_BOT_TOKEN",
-            token: DISCORD_SECRET,
-          },
-        ],
-      }),
+      sandboxInput(requiredBindings(tokenDefs)),
+      async () => ({ messagingTokenDefs: tokenDefs }),
     );
 
     expect(registered).toEqual([
@@ -186,7 +194,7 @@ describe("credential provider registration", () => {
     );
   });
 
-  it("does not update or receipt a mismatched existing provider (#6743)", async () => {
+  it("rejects a mismatched existing provider before updating it (#6743)", async () => {
     const session = {
       stagedCredentialProviders: ["alpha-brave-search"],
     } as unknown as Session;
@@ -202,24 +210,142 @@ describe("credential provider registration", () => {
       registrationDeps(runOpenshell, session),
     );
 
-    const registered = await registration.stageSandboxCredentialProviders(
-      sandboxInput(),
-      async () => ({
-        messagingTokenDefs: [
-          {
-            name: "alpha-brave-search",
-            envKey: "BRAVE_API_KEY",
-            token: BRAVE_SECRET,
-            providerType: "brave",
-          },
-        ],
-      }),
-    );
+    const tokenDefs: MessagingTokenDef[] = [
+      {
+        name: "alpha-brave-search",
+        envKey: "BRAVE_API_KEY",
+        token: BRAVE_SECRET,
+        providerType: "brave",
+      },
+    ];
+    await expect(
+      registration.stageSandboxCredentialProviders(
+        sandboxInput(requiredBindings(tokenDefs)),
+        async () => ({ messagingTokenDefs: tokenDefs }),
+      ),
+    ).rejects.toThrow("An existing credential provider does not match the required binding.");
 
-    expect(registered).toEqual([]);
-    expect(session.stagedCredentialProviders).toEqual([]);
+    expect(session.stagedCredentialProviders).toEqual(["alpha-brave-search"]);
     expect(runOpenshell.mock.calls.map(([args]) => args.join(" "))).not.toContain(
       "provider update -g test-gateway alpha-brave-search --credential BRAVE_API_KEY",
     );
+  });
+
+  it("rejects a conflicting Slack binding before writing any provider in the batch (#7701)", async () => {
+    const session = {
+      stagedCredentialProviders: ["alpha-slack-bridge", "alpha-slack-app"],
+    } as unknown as Session;
+    const missing = { status: 1, stdout: "", stderr: "not found" };
+    const success = { status: 0, stdout: "", stderr: "" };
+    const runOpenshell = vi.fn((args: string[]) => {
+      const command = args.join(" ");
+      if (command === "provider get -g test-gateway alpha-slack-bridge") {
+        return providerMetadata("alpha-slack-bridge", "slack", "SLACK_BOT_TOKEN");
+      }
+      if (command === "provider get -g test-gateway alpha-slack-app") return missing;
+      return success;
+    });
+    const deps = registrationDeps(runOpenshell, session);
+    const registration = createCredentialProviderRegistration(deps);
+    const tokenDefs: MessagingTokenDef[] = [
+      {
+        name: "alpha-slack-bridge",
+        envKey: "SLACK_BOT_TOKEN",
+        token: "xoxb-current-token",
+      },
+      {
+        name: "alpha-slack-app",
+        envKey: "SLACK_APP_TOKEN",
+        token: "xapp-current-token",
+      },
+    ];
+
+    await expect(
+      registration.stageSandboxCredentialProviders(
+        sandboxInput(requiredBindings(tokenDefs)),
+        async () => ({ messagingTokenDefs: tokenDefs }),
+      ),
+    ).rejects.toThrow("An existing credential provider does not match the required binding.");
+
+    expect(session.stagedCredentialProviders).toEqual(["alpha-slack-bridge", "alpha-slack-app"]);
+    expect(deps.updateSession).not.toHaveBeenCalled();
+    expect(
+      runOpenshell.mock.calls
+        .map(([args]) => args)
+        .filter((args) => args[0] === "provider" && (args[1] === "create" || args[1] === "update")),
+    ).toEqual([]);
+  });
+
+  it.each([
+    {
+      mismatch: "name",
+      required: {
+        name: "other-discord-bridge",
+        type: "generic",
+        credentialEnv: "DISCORD_BOT_TOKEN",
+      },
+    },
+    {
+      mismatch: "type",
+      required: {
+        name: "alpha-discord-bridge",
+        type: "discord",
+        credentialEnv: "DISCORD_BOT_TOKEN",
+      },
+    },
+    {
+      mismatch: "credential key",
+      required: {
+        name: "alpha-discord-bridge",
+        type: "generic",
+        credentialEnv: "OTHER_DISCORD_TOKEN",
+      },
+    },
+  ])("rejects a credential plan with a different $mismatch before gateway mutation (#7701)", async ({
+    required,
+  }) => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn();
+    const deps = registrationDeps(runOpenshell, session);
+    const registration = createCredentialProviderRegistration(deps);
+    const tokenDefs: MessagingTokenDef[] = [
+      {
+        name: "alpha-discord-bridge",
+        envKey: "DISCORD_BOT_TOKEN",
+        token: DISCORD_SECRET,
+      },
+    ];
+
+    await expect(
+      registration.stageSandboxCredentialProviders(sandboxInput([required]), async () => ({
+        messagingTokenDefs: tokenDefs,
+      })),
+    ).rejects.toThrow("Credential provider plan does not match the required bindings.");
+
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(deps.updateSession).not.toHaveBeenCalled();
+    expect(session.stagedCredentialProviders).toEqual([]);
+  });
+
+  it("rejects duplicate planned provider names before gateway mutation (#7701)", async () => {
+    const session = { stagedCredentialProviders: [] } as unknown as Session;
+    const runOpenshell = vi.fn();
+    const deps = registrationDeps(runOpenshell, session);
+    const registration = createCredentialProviderRegistration(deps);
+    const tokenDef: MessagingTokenDef = {
+      name: "alpha-discord-bridge",
+      envKey: "DISCORD_BOT_TOKEN",
+      token: DISCORD_SECRET,
+    };
+
+    await expect(
+      registration.stageSandboxCredentialProviders(
+        sandboxInput(requiredBindings([tokenDef])),
+        async () => ({ messagingTokenDefs: [tokenDef, tokenDef] }),
+      ),
+    ).rejects.toThrow("Credential provider plan does not match the required bindings.");
+
+    expect(runOpenshell).not.toHaveBeenCalled();
+    expect(deps.updateSession).not.toHaveBeenCalled();
   });
 });

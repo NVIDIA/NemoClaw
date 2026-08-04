@@ -411,7 +411,7 @@ async function selectionFromCompletedMessagingAuthority<Agent>(
   if (stagedPlan) {
     return selectionFromCompletedMessagingCheckpoint(envPlan, options, stagedPlan, false);
   }
-  return selectionFromCompletedMessagingCheckpoint(envPlan, options);
+  return selectionFromCompletedMessagingCheckpoint(envPlan, options, authority.plan);
 }
 
 export async function reconcileSandboxMessaging<Agent>(
