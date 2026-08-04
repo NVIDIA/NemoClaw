@@ -3042,14 +3042,29 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     // auto-restore timer/transition) and fail closed. Otherwise `shields
     // status` would report DOWN/permissive for an unlock that never happened.
     // See #8198.
-    saveShieldsState(sandboxName, {
-      shieldsDown: false,
-      shieldsDownAt: null,
-      shieldsDownTimeout: null,
-      shieldsDownReason: null,
-      shieldsDownPolicy: null,
-      shieldsPolicySnapshotPath: null,
-    });
+    try {
+      saveShieldsState(sandboxName, {
+        shieldsDown: false,
+        shieldsDownAt: null,
+        shieldsDownTimeout: null,
+        shieldsDownReason: null,
+        shieldsDownPolicy: null,
+        shieldsPolicySnapshotPath: null,
+      });
+    } catch (stateErr) {
+      // Clearing the persisted down-state failed, so on disk the sandbox still
+      // reads shields-down. Keep the auto-restore timer and its transition
+      // marker: they are the only remaining recovery authority and will
+      // reclaim the (already-restrictive) policy on owner death. Clearing them
+      // here would strand the sandbox reporting down with no recovery. Report
+      // and fail closed.
+      const stateMessage = stateErr instanceof Error ? stateErr.message : String(stateErr);
+      console.error(
+        `  ERROR: Could not apply the ${policyName} policy, and clearing shields-down state failed: ${stateMessage}`,
+      );
+      console.error("  The scheduled auto-restore remains authoritative.");
+      return failShieldsCommand(`Could not apply ${policyName} policy`, opts.throwOnError);
+    }
     if (transition) clearShieldsDownTransition(sandboxName, transition.processToken);
     killTimer(sandboxName);
     console.error(
