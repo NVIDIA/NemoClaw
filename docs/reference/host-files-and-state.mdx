@@ -18,13 +18,11 @@ Deep Agents-specific runtime state lives inside the sandbox under `/sandbox/.dee
 </AgentOnly>
 
 <Warning>
-Do not paste a legacy `credentials.json`, provider tokens, bot tokens, proxy tokens, or debug archives containing them into chat or issue comments.
+Do not paste a legacy `credentials.json`, provider tokens, bot tokens, proxy tokens, `dual-station-vllm-api-key`, or debug archives containing them into chat or issue comments.
 Share redacted diagnostics only.
 </Warning>
 
 ## Files
-
-In the table, `<selected-state-root>` is `~/.nemoclaw/` for the default gateway or `~/.nemoclaw/gateways/<port>/` for a non-default gateway.
 
 | Path | Purpose | Safe to delete |
 |---|---|---|
@@ -34,8 +32,14 @@ In the table, `<selected-state-root>` is `~/.nemoclaw/` for the default gateway 
 | `~/.nemoclaw/onboard-session.json` | Resume marker for an onboarding attempt that failed before completion. | Yes, when you intentionally want to discard the failed session and start over. Prefer `$$nemoclaw onboard --fresh` when available. |
 | `~/.nemoclaw/usage-notice.json` | Records the third-party software notice version in `acceptedVersion` and the acceptance time in `acceptedAt`. Install, onboarding, and rebuild flows consult this file and prompt again when its recorded version differs from the current notice or the file is absent. | Yes; deleting it makes the next applicable install, onboarding, or rebuild flow prompt for acceptance again. |
 | `~/.nemoclaw/ollama-proxy-token` | Local auth token used by the host-side Ollama auth proxy. | Yes, but re-run onboarding afterward so NemoClaw recreates and registers the proxy token. |
-| `<selected-state-root>/dual-station-vllm-runtime.json` | Owner-only managed dual-Station cleanup receipt. It contains no serving API key and binds the peer, cluster, and GPU identities used to revalidate and remove both managed vLLM containers during full uninstall. | No while the managed pair exists. A full `$$nemoclaw uninstall` removes the receipt after both exact containers are removed; gateway-scoped uninstall preserves it. |
-| `<selected-state-root>/dual-station-vllm-runtime.json.ssh-binding/` | Owner-only copied SSH host-key and Docker-command binding needed to reach the recorded worker during full uninstall. | No while the managed pair exists. Full uninstall removes it with the cleanup receipt after pair cleanup succeeds; gateway-scoped uninstall preserves it. |
+| `~/.nemoclaw/dual-station-vllm-api-key` | Host-global, owner-only bearer key shared by gateways that route to the managed dual-Station vLLM endpoint. The head requires this key for inference requests, and the worker does not receive it. | No while the managed pair exists. Full uninstall removes it after pair cleanup succeeds; gateway-scoped uninstall preserves it while sibling gateways remain. |
+| `~/.nemoclaw/dual-station-vllm-runtime.json` | Host-global, owner-only managed dual-Station cleanup receipt. It contains no serving API key and binds the peer, cluster, and GPU identities used to revalidate and remove both managed vLLM containers during full uninstall. | No while the managed pair exists. A full `$$nemoclaw uninstall` removes the receipt after both exact containers are removed; gateway-scoped uninstall preserves it. |
+| `~/.nemoclaw/dual-station-vllm-runtime.json.ssh-binding/` | Host-global, owner-only copied SSH host-key and Docker-command binding needed to reach the recorded worker during full uninstall. | No while the managed pair exists. Full uninstall removes it with the cleanup receipt after pair cleanup succeeds; gateway-scoped uninstall preserves it. |
+
+Earlier releases can store the runtime receipt and its SSH-binding directory under `~/.nemoclaw/gateways/<port>/` when the managed pair was created from a non-default gateway port.
+The API key remains host-global at `~/.nemoclaw/dual-station-vllm-api-key`.
+Current releases discover and validate the legacy receipt location without moving or duplicating its ownership state.
+Do not move these files or directories manually.
 
 `sandboxes.json` is the current registry file name.
 If you see `registry.json` in older tests, notes, or discussions, treat it as legacy wording for the sandbox registry unless a specific release note says otherwise.
@@ -83,6 +87,11 @@ Preserved entries include `rebuild-backups/`, `backups/`, and `sandboxes.json`.
 Preserved `sandboxes.json` records are not automatically recoverable after reinstall, because uninstall removes the gateway registration, provider registrations, and Docker image they reference; uninstall warns about this at preserve time, and a later reinstall reports such records as not found on their recorded gateway with `$$nemoclaw <name> destroy` / `$$nemoclaw onboard` remediation.
 Interactive uninstall prompts before removing preserved state.
 For non-interactive runs, pass `--destroy-user-data` only when you accept losing local registry metadata and backups.
+
+Uninstall scopes cleanup to one gateway port: it operates on the selected state root and leaves every other `~/.nemoclaw/gateways/<port>/` root and its gateway in place.
+It names the environments it left behind and prints the command that removes one of them.
+Pass `--all-gateway-ports`, or set `NEMOCLAW_UNINSTALL_ALL_GATEWAY_PORTS=1`, to remove every gateway port in one run.
+The shared host state is eligible for removal only when `--keep-openshell` is absent, no port fails or survives, and the selected gateway is not externally supervised.
 
 For operational uninstall steps, refer to:
 
