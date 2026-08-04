@@ -47,6 +47,14 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)managed-inference\/(?:presets|recipes|schemas)\/[^/]+\.(?:json|yaml)$/,
+    testsToRun: runTests(
+      "src/lib/inference/serving/catalog.test.ts",
+      "src/lib/inference/serving/resolver.test.ts",
+      "test/managed-inference-catalog-compiler.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)(?:Dockerfile|agents\/(?:hermes|langchain-deepagents-code)\/Dockerfile)$/,
     testsToRun: runTests("src/lib/onboard/managed-startup-profile.test.ts"),
   },

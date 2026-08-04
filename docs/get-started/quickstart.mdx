@@ -38,7 +38,6 @@ Review the [Prerequisites](prerequisites) before you begin.
     Run the hosted installer in a terminal.
 
     ```bash
-    export NEMOCLAW_SANDBOX_NAME=my-gpt-claw
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
     ```
 
@@ -46,18 +45,26 @@ Review the [Prerequisites](prerequisites) before you begin.
   </Step>
 
   <Step title="Complete Onboarding">
-    The wizard creates the sandbox.
-    If the installer offers Express, you can accept it to use managed local inference for that platform.
-    Otherwise, choose an inference provider and model, then provide its credential when prompted.
-    The install command uses `my-gpt-claw` as the sandbox name.
+    The interactive wizard creates the sandbox.
+    Select **OpenClaw** when the installer prompts you to choose an agent.
+    Choose an inference provider and model, then provide its credential when prompted.
+    Press Enter to accept the suggested `my-assistant` sandbox name.
     For a first run, skip optional web search and messaging setup, then accept the suggested network policy tier.
+
+    <Note>
+      The installer can display `Run express install with these settings? [Y/n]:` before the agent-selection prompt only on supported DGX or Windows Subsystem for Linux (WSL) hosts.
+      Press Enter to use the recommended preset settings and managed local inference for that platform.
+      Express install mode completes the remaining onboarding non-interactively.
+      If you accept, wait for the installer to finish, then continue with **Confirm the Sandbox Is Ready**.
+      Enter `n` to continue with the interactive onboarding flow described in this step.
+    </Note>
   </Step>
 
   <Step title="Confirm the Sandbox Is Ready">
     Wait for the ready summary, then check the sandbox state.
 
     ```bash
-    nemoclaw my-gpt-claw status
+    nemoclaw my-assistant status
     ```
   </Step>
 
@@ -65,13 +72,13 @@ Review the [Prerequisites](prerequisites) before you begin.
     Use either the dashboard or the terminal.
 
     ```bash
-    nemoclaw my-gpt-claw dashboard-url --quiet
+    nemoclaw my-assistant dashboard-url --quiet
     ```
 
     Open the printed URL in your browser, or connect from the terminal and start the OpenClaw TUI.
 
     ```bash
-    nemoclaw my-gpt-claw connect
+    nemoclaw my-assistant connect
     openclaw tui
     ```
   </Step>
@@ -152,10 +159,10 @@ Use these details when your first-run path needs more control.
     Before you install from Windows, follow [Prepare a Windows Machine to Install NemoClaw](additional-setup/windows-preparation).
     Before you install on DGX Station, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation).
 
-    DGX Spark, qualifying DGX Station hosts, and Windows WSL can offer an interactive express path after the third-party software notice.
+    DGX Spark, qualifying DGX Station hosts, and Windows WSL can offer the recommended express install mode after the third-party software notice.
 
-    After you confirm the Express prompt, the installer switches the remaining onboarding to non-interactive mode and selects the managed local inference path for that platform.
-    Express install uses `my-assistant` unless you set `NEMOCLAW_SANDBOX_NAME`, and it applies the suggested Balanced policy.
+    After you press Enter at the express install prompt, the installer switches the remaining onboarding to non-interactive mode and selects the managed local inference path for that platform.
+    Express install mode uses `my-assistant` unless you set `NEMOCLAW_SANDBOX_NAME`, and it applies the suggested Balanced policy.
     It can still prompt for `sudo` when host setup needs it.
     Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` to choose a provider yourself.
 
