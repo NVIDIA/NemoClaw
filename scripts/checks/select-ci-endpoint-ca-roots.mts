@@ -57,13 +57,16 @@ function parseCertificates(bundle: string, label: string): CertificateRecord[] {
   });
 }
 
-function isSelfSigned(cert: X509Certificate): boolean {
-  if (cert.subject !== cert.issuer) return false;
+function isSignedBy(cert: X509Certificate, issuer: X509Certificate): boolean {
   try {
-    return cert.verify(cert.publicKey);
+    return cert.verify(issuer.publicKey);
   } catch {
     return false;
   }
+}
+
+function isSelfSigned(cert: X509Certificate): boolean {
+  return cert.subject === cert.issuer && isSignedBy(cert, cert);
 }
 
 function isCurrentSelfSignedRoot(cert: X509Certificate, nowMs = Date.now()): boolean {
@@ -198,9 +201,11 @@ function selectRoot(
   roots: readonly CertificateRecord[],
   tempDir: string,
 ): CertificateRecord {
-  const issuer = chain.filter(({ cert }) => !isSelfSigned(cert)).at(-1)?.cert.issuer;
+  const untrusted = chain.filter(({ cert }) => !isSelfSigned(cert));
   const candidates = roots
-    .filter(({ cert }) => cert.subject === issuer)
+    .filter(({ cert: root }) =>
+      untrusted.some(({ cert }) => cert.issuer === root.subject && isSignedBy(cert, root)),
+    )
     .sort((left, right) => fingerprint(left.cert).localeCompare(fingerprint(right.cert)));
   const selected = candidates.find((root) =>
     verifiesOffline(runner, endpoint, chain, root, tempDir),

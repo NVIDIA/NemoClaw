@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { X509Certificate } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -30,7 +31,21 @@ function openssl(args: readonly string[], cwd: string): void {
   expect(result.status, `OpenSSL fixture command failed: ${args[0]}`).toBe(0);
 }
 
-function createEndpointCertificate(directory: string): { leaf: string; root: string } {
+function createEndpointCertificate(directory: string): {
+  chain: string;
+  crossSignedRoot: string;
+  root: string;
+} {
+  fs.writeFileSync(
+    path.join(directory, "root.ext"),
+    [
+      "basicConstraints=critical,CA:TRUE",
+      "keyUsage=critical,keyCertSign,cRLSign",
+      "subjectKeyIdentifier=hash",
+      "authorityKeyIdentifier=keyid,issuer",
+      "",
+    ].join("\n"),
+  );
   fs.writeFileSync(
     path.join(directory, "leaf.ext"),
     [
@@ -60,6 +75,52 @@ function createEndpointCertificate(directory: string): { leaf: string; root: str
       "basicConstraints=critical,CA:TRUE",
       "-addext",
       "keyUsage=critical,keyCertSign,cRLSign",
+    ],
+    directory,
+  );
+  openssl(
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-subj",
+      "/CN=NemoClaw Alternate Root",
+      "-keyout",
+      "alternate-root.key",
+      "-out",
+      "alternate-root.pem",
+      "-days",
+      "2",
+      "-addext",
+      "basicConstraints=critical,CA:TRUE",
+      "-addext",
+      "keyUsage=critical,keyCertSign,cRLSign",
+    ],
+    directory,
+  );
+  openssl(
+    ["req", "-new", "-key", "root.key", "-subj", "/CN=NemoClaw CI Root", "-out", "root.csr"],
+    directory,
+  );
+  openssl(
+    [
+      "x509",
+      "-req",
+      "-in",
+      "root.csr",
+      "-CA",
+      "alternate-root.pem",
+      "-CAkey",
+      "alternate-root.key",
+      "-CAcreateserial",
+      "-out",
+      "root-cross-signed.pem",
+      "-days",
+      "2",
+      "-extfile",
+      "root.ext",
     ],
     directory,
   );
@@ -98,8 +159,13 @@ function createEndpointCertificate(directory: string): { leaf: string; root: str
     ],
     directory,
   );
+  const leaf = fs.readFileSync(path.join(directory, "leaf.pem"), "utf8").trim();
+  const crossSignedRoot = fs
+    .readFileSync(path.join(directory, "root-cross-signed.pem"), "utf8")
+    .trim();
   return {
-    leaf: fs.readFileSync(path.join(directory, "leaf.pem"), "utf8"),
+    chain: `${leaf}\n${crossSignedRoot}\n`,
+    crossSignedRoot,
     root: fs.readFileSync(path.join(directory, "root.pem"), "utf8"),
   };
 }
@@ -124,12 +190,20 @@ describe("CI endpoint CA root selection", () => {
   });
 
   it.skipIf(!hasOpenSsl)(
-    "selects one system root after offline hostname verification for every endpoint",
+    "selects a self-signed system root when the server sends its cross-signed form",
     () => {
       const directory = tmpDir();
       const output = path.join(directory, "compact.pem");
       fs.writeFileSync(output, "", { mode: 0o600 });
       const fixture = createEndpointCertificate(directory);
+      const systemRoot = new X509Certificate(fixture.root);
+      const crossSignedRoot = new X509Certificate(fixture.crossSignedRoot);
+      expect(crossSignedRoot.subject).toBe(systemRoot.subject);
+      expect(crossSignedRoot.issuer).not.toBe(crossSignedRoot.subject);
+      expect(crossSignedRoot.publicKey.export({ format: "der", type: "spki" })).toEqual(
+        systemRoot.publicKey.export({ format: "der", type: "spki" }),
+      );
+      expect(crossSignedRoot.verify(crossSignedRoot.publicKey)).toBe(false);
       const realReadFile = fs.readFileSync.bind(fs);
       vi.spyOn(fs, "readFileSync").mockImplementation(((file, ...args) =>
         file === CI_CA_SYSTEM_BUNDLE
@@ -142,7 +216,7 @@ describe("CI endpoint CA root selection", () => {
         return {
           status: 0,
           stderr: "",
-          stdout: `${fixture.leaf}\nVerify return code: 0 (ok)\n`,
+          stdout: `${fixture.chain}Verify return code: 0 (ok)\n`,
         };
       };
       const runActualOpenSsl: OpenSslRunner = (args) => {
