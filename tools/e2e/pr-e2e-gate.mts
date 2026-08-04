@@ -63,6 +63,7 @@ export { validateWorkflowDispatchDetails } from "./pr-e2e-dispatch-reconciliatio
 
 const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
+const JETSON_E2E_JOB = "jetson-nvmap-gpu";
 const PR_GATE_WORKFLOW = "pr-e2e-gate.yaml";
 const CHECK_NAME = "E2E / PR Gate";
 const WORKFLOW_NAME = "E2E / PR Gate Controller";
@@ -690,7 +691,7 @@ export function validateRiskPlan(value: unknown, allowedJobs: ReadonlySet<string
   const rebuilt = buildRiskPlan({
     headSha: value.headSha,
     changedFiles: value.changedFiles as string[],
-    focusedE2eJobs: focusedE2eJobsForChangedFiles(value.changedFiles as string[]),
+    focusedE2eJobs: focusedPrGateE2eJobsForChangedFiles(value.changedFiles as string[]),
   });
   if (JSON.stringify(value) !== JSON.stringify(rebuilt)) {
     throw new Error("risk plan does not match its hash and inputs");
@@ -715,6 +716,17 @@ export function validateRiskPlan(value: unknown, allowedJobs: ReadonlySet<string
     }
   }
   return rebuilt;
+}
+
+export function focusedPrGateE2eJobsForChangedFiles(
+  changedFiles: readonly string[],
+  inventory = readFreeStandingJobsInventory(),
+): ReturnType<typeof focusedE2eJobsForChangedFiles> {
+  // The automatic PR gate cannot confirm an online self-hosted Jetson runner.
+  // Remove this exclusion after the Colossus-backed runner path can make that confirmation.
+  return focusedE2eJobsForChangedFiles(changedFiles, inventory).filter(
+    (selection) => selection.id !== JETSON_E2E_JOB,
+  );
 }
 
 function riskPlanSelectionIds(plan: RiskPlan): string[] {
@@ -3135,7 +3147,7 @@ export async function startPrGate(
       buildRiskPlan({
         headSha: command.headSha,
         changedFiles,
-        focusedE2eJobs: focusedE2eJobsForChangedFiles(changedFiles, inventory),
+        focusedE2eJobs: focusedPrGateE2eJobsForChangedFiles(changedFiles, inventory),
       }),
       allowedJobs,
     );
@@ -3257,7 +3269,7 @@ async function startAuthorizedPrGate(command: AuthorizedE2ECommand): Promise<voi
       buildRiskPlan({
         headSha: command.headSha,
         changedFiles,
-        focusedE2eJobs: focusedE2eJobsForChangedFiles(changedFiles, inventory),
+        focusedE2eJobs: focusedPrGateE2eJobsForChangedFiles(changedFiles, inventory),
       }),
       new Set(inventory.allowedJobs),
     );
