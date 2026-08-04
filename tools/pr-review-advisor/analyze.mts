@@ -34,7 +34,7 @@ import {
   stringOrDefault,
   stringOrUndefined,
 } from "../advisors/json.mts";
-import { buildRiskPlan, type RiskPlan } from "../advisors/risk-plan.mts";
+import { buildRiskPlan, isPrE2ePlanningJob, type RiskPlan } from "../advisors/risk-plan.mts";
 import {
   type AdvisorCompletedTurn,
   type AdvisorContextToolResult,
@@ -1043,7 +1043,9 @@ async function collectDeterministicContext(options: {
   const riskPlan = buildRiskPlan({
     headSha: options.headSha,
     changedFiles: options.changedFiles,
-    focusedE2eJobs: focusedE2eJobsForChangedFiles(options.changedFiles),
+    focusedE2eJobs: focusedE2eJobsForChangedFiles(options.changedFiles).filter((selection) =>
+      isPrE2ePlanningJob(selection.id),
+    ),
   });
   const riskyAreas = [
     ...detectRiskyAreas(options.changedFiles),

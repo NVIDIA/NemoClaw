@@ -2601,6 +2601,16 @@ $$nemoclaw my-assistant sessions list
 $$nemoclaw my-assistant sessions list --source cli --limit 20
 ```
 
+### `$$nemoclaw <name> sessions delete <id>`
+
+Invoke `hermes sessions delete <id> --yes` inside the sandbox to remove a session from the Hermes store.
+Pass a native Hermes session id from `sessions list` (for example `20260727_130357_cb2b61`).
+The OpenClaw-only `--agent`, `--keep-transcript`, `--json`, and `--verbose` flags are not supported on a Hermes sandbox.
+
+```bash
+$$nemoclaw my-assistant sessions delete 20260727_130357_cb2b61
+```
+
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
