@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
-import fs from "node:fs";
 import path from "node:path";
 
 import {
@@ -30,10 +29,8 @@ test("binds protected all-agent direct startup to the exact multiarch dispatch (
   const dispatch = protectedManagedImageDispatchEnvironment();
 
   const activationPath = path.join(dispatch.workspace, PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH);
-  const activationStatus = fs.lstatSync(activationPath);
-  expect(activationStatus.isFile()).toBe(true);
-  expect(activationStatus.isSymbolicLink()).toBe(false);
-  parseProtectedManagedImageActivation(JSON.parse(fs.readFileSync(activationPath, "utf8")));
+  const activationBytes = readRegularArtifact(activationPath, dispatch.workspace);
+  parseProtectedManagedImageActivation(JSON.parse(activationBytes.toString("utf8")));
 
   progress.phase("validate exact all-agent managed-image contracts");
   const contractBytes = readRegularArtifact(dispatch.contractFile, dispatch.artifactDirectory);

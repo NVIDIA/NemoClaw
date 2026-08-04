@@ -21,7 +21,7 @@ function preflight(
 ) {
   return buildReleaseE2ePreflight({
     candidateSha,
-    candidatePathExists: input.candidatePathExists,
+    candidatePathExists: input.candidatePathExists ?? (() => false),
     jetsonRunnerOnline: input.jetsonRunnerOnline ?? "true",
   });
 }
@@ -123,6 +123,15 @@ describe("release E2E evidence", () => {
     expect(
       plan.executions.filter((execution) => execution.jobId === "managed-image-multiarch-startup"),
     ).toHaveLength(2);
+  });
+
+  it("fails when the candidate commit cannot be inspected for activation paths", () => {
+    expect(() =>
+      buildReleaseE2ePreflight({
+        candidateSha: "0".repeat(40),
+        jetsonRunnerOnline: "true",
+      }),
+    ).toThrow("could not inspect release E2E activation path");
   });
 
   it("keeps every static and dynamic matrix row as a distinct execution", () => {

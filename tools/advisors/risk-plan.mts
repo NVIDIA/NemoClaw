@@ -3,6 +3,11 @@
 
 import { createHash } from "node:crypto";
 
+import {
+  PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH,
+  PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID,
+} from "../../scripts/checks/protected-managed-image-contract.ts";
+
 export const RISK_PLAN_VERSION = 14 as const;
 
 export const PR_E2E_TYPED_TARGET_IDS = [
@@ -49,12 +54,10 @@ const HERMES_MANAGED_POLICY_FILES = new Set([
   "agents/hermes/start.sh",
   "src/lib/hermes-managed-route.ts",
 ]);
-const MANAGED_IMAGE_MULTIARCH_ACTIVATION =
-  "ci/protected-managed-image-multiarch-activation-v1.json";
 const MANAGED_IMAGE_PROTECTED_RUNTIME_ACTIVATION =
   "ci/protected-managed-image-runtime-activation-v1.json";
 const MANAGED_IMAGE_MULTIARCH_INPUTS = new Set([
-  MANAGED_IMAGE_MULTIARCH_ACTIVATION,
+  PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH,
   ".dockerignore",
   ".github/workflows/managed-images.yaml",
   "Dockerfile",
@@ -419,11 +422,11 @@ export const RISK_RULES: readonly RiskRule[] = [
     summary:
       "Protected managed-image qualification must build and directly start every shipped agent on each supported architecture from exact base and candidate digests.",
     tier: 3,
-    requiredJobs: ["managed-image-multiarch-startup"],
+    requiredJobs: [PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID],
     invariants: [
       "OpenClaw, Hermes, and Deep Agents Code use platform-specific digest-pinned bases from one exact PR head and cohort",
       "each built image is addressed by its isolated-registry digest and exercises the managed root-stdin and sandbox-hold startup boundary",
-      "amd64 and arm64 shards emit exact head, base, platform, cohort, base, image, and direct-start evidence before cleanup",
+      "amd64 and arm64 shards emit exact head, base, platform, cohort, image, and direct-start evidence before cleanup",
       "the isolated registry is removed before a shard can publish passing risk evidence",
     ],
     // Keep this source boundary synchronized with the managed-image workflow's

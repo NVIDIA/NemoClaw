@@ -1730,6 +1730,7 @@ jobs:
       E2E_JOB: "1"
       E2E_TARGET_ID: "managed-image-multiarch-startup"
       RELEASE_E2E_ACTIVATION_PATH: ci/protected-managed-image-multiarch-activation-v1.json
+      NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
       NEMOCLAW_E2E_SHARD: ${{ matrix.shard }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.base_sha }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT: protected-${{ github.run_id }}-${{ github.run_attempt }}
@@ -2257,8 +2258,7 @@ jobs:
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
           export OPENSHELL_BIN="$(command -v openshell)"
           "$OPENSHELL_BIN" --version
-          npx tsx tools/e2e/live-vitest-invocation.mts run \
-            --test-path test/e2e/live/managed-image-protected-runtime.test.ts
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-protected-runtime.test.ts
 
       - name: Remove isolated protected runtime registry
         if: always()

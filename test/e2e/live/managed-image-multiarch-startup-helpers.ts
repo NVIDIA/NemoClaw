@@ -5,12 +5,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  PROTECTED_MANAGED_IMAGE_COHORT_PATTERN,
   PROTECTED_MANAGED_IMAGE_PLATFORMS,
+  PROTECTED_MANAGED_IMAGE_SHA_PATTERN,
   type ProtectedManagedImagePlatform,
 } from "../../../scripts/checks/protected-managed-image-contract.ts";
-
-const SHA_PATTERN = /^[a-f0-9]{40}$/u;
-const COHORT_PATTERN = /^protected-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$/u;
 
 export interface ProtectedManagedImageDispatchEnvironment {
   artifactDirectory: string;
@@ -49,10 +48,10 @@ export function protectedManagedImageDispatchEnvironment(): ProtectedManagedImag
 
   if (
     !(PROTECTED_MANAGED_IMAGE_PLATFORMS as readonly string[]).includes(platform) ||
-    !COHORT_PATTERN.test(cohort) ||
-    !SHA_PATTERN.test(headSha) ||
-    !SHA_PATTERN.test(baseSha) ||
-    !SHA_PATTERN.test(workflowSha)
+    !PROTECTED_MANAGED_IMAGE_COHORT_PATTERN.test(cohort) ||
+    !PROTECTED_MANAGED_IMAGE_SHA_PATTERN.test(headSha) ||
+    !PROTECTED_MANAGED_IMAGE_SHA_PATTERN.test(baseSha) ||
+    !PROTECTED_MANAGED_IMAGE_SHA_PATTERN.test(workflowSha)
   ) {
     throw new Error("protected managed-image dispatch identity is invalid");
   }
@@ -73,13 +72,22 @@ export function protectedManagedImageDispatchEnvironment(): ProtectedManagedImag
 }
 
 export function readRegularArtifact(file: string, artifactDirectory: string): Buffer {
-  const relative = path.relative(fs.realpathSync(artifactDirectory), fs.realpathSync(file));
+  const root = fs.realpathSync(artifactDirectory);
+  const parent = fs.realpathSync(path.dirname(file));
+  const candidate = path.join(parent, path.basename(file));
+  const relative = path.relative(root, candidate);
   if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new Error(`${file} must be a child of the protected artifact directory`);
   }
-  const status = fs.lstatSync(file);
-  if (!status.isFile() || status.isSymbolicLink() || status.size > 1024 * 1024) {
-    throw new Error(`${file} must be a bounded regular file`);
+
+  const descriptor = fs.openSync(candidate, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const status = fs.fstatSync(descriptor);
+    if (!status.isFile() || status.size > 1024 * 1024) {
+      throw new Error(`${file} must be a bounded regular file`);
+    }
+    return fs.readFileSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
   }
-  return fs.readFileSync(file);
 }

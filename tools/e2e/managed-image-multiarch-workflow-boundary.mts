@@ -3,6 +3,11 @@
 
 import { isDeepStrictEqual } from "node:util";
 
+import {
+  PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH,
+  PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID,
+} from "../../scripts/checks/protected-managed-image-contract.ts";
+
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
   env?: WorkflowRecord;
@@ -12,10 +17,9 @@ type WorkflowStep = WorkflowRecord & {
   with?: WorkflowRecord;
 };
 
-const JOB_ID = "managed-image-multiarch-startup";
-const SELECTOR =
-  "${{ contains(format(',{0},', inputs.jobs), ',managed-image-multiarch-startup,') || contains(format(',{0},', inputs.targets), ',managed-image-multiarch-startup,') }}";
-const ACTIVATION_PATH = "ci/protected-managed-image-multiarch-activation-v1.json";
+const JOB_ID = PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID;
+const SELECTOR = `\${{ contains(format(',{0},', inputs.jobs), ',${JOB_ID},') || contains(format(',{0},', inputs.targets), ',${JOB_ID},') }}`;
+const ACTIVATION_PATH = PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH;
 const DIRECT_TEST_PATH = "test/e2e/live/managed-image-multiarch-startup.test.ts";
 const REGISTRY_IMAGE =
   "docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373";
@@ -121,6 +125,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     E2E_DEFAULT_ENABLED: "0",
     E2E_JOB: "1",
     E2E_TARGET_ID: JOB_ID,
+    NEMOCLAW_E2E_EXPECTED_SHA: "${{ inputs.checkout_sha }}",
     NEMOCLAW_E2E_SHARD: "${{ matrix.shard }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: "${{ inputs.base_sha }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT:

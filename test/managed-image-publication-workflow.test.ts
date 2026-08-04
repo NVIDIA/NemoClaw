@@ -122,6 +122,16 @@ function step(job: Job, name: string): Step {
   );
 }
 
+function isStrictChildPath(root: string, candidate: string): boolean {
+  const relative = path.relative(fs.realpathSync(root), fs.realpathSync(candidate));
+  return (
+    relative !== "" &&
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
+}
+
 function managedPublisher(workflow: Workflow): Job {
   return required(
     workflow.jobs?.["build-and-validate"],
@@ -158,6 +168,48 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
   const base = step(publisher, "Validate exact base image contract");
   const validate = step(publisher, "Validate exact managed image before promotion");
   const workflowSource = JSON.stringify(managedWorkflow);
+  const publisherSource = JSON.stringify(publisher);
+  const validationMarkers = [
+    'mktemp -d "$RUNNER_TEMP/anonymous-docker-XXXXXX"',
+    'DOCKER_CONFIG="$anonymous_config" docker pull --platform "$PLATFORM" "$reference"',
+    "bootstrap the GHCR package",
+    "/opt/nemoclaw-blueprint/blueprint.yaml",
+    "/usr/local/share/nemoclaw/node-tar-inventory.json",
+    "/usr/local/share/nemoclaw/corporate-ca.pem",
+    'entry.status !== "fixed"',
+    '--entrypoint "$REQUIRED_BINARY"',
+    "io.nvidia.nemoclaw.managed-image.contract",
+    "io.nvidia.nemoclaw.managed-image.startup-profile",
+    "io.nvidia.nemoclaw.managed-image.capabilities",
+    "io.nvidia.nemoclaw.managed-image.cohort",
+    "^ghrun-[1-9][0-9]{0,19}-[1-9][0-9]{0,9}$",
+    "NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION",
+    "@openclaw/diagnostics-otel",
+    "@openclaw/brave-plugin",
+    "@openclaw/discord",
+    "@tencent-weixin/openclaw-weixin",
+    "@openclaw/slack",
+    "@openclaw/whatsapp",
+    "@openclaw/msteams",
+    "@openclaw/googlechat",
+    "/sandbox/.openclaw/npm/projects",
+    'const nodeModulesRoot = path.join(projectRoot, "node_modules")',
+    'path.join(nodeModulesRoot, ...name.split("/"))',
+    "lstatSync(packageRoot).isDirectory()",
+    "lstatSync(manifestPath).isFile()",
+    "realpathSync(nodeModulesRoot)",
+    "realpathSync(packageRoot)",
+    "packageRelative.startsWith(`..${path.sep}`)",
+    "path.isAbsolute(packageRelative)",
+    "matches.length !== 1",
+    "microsoft-teams-apps",
+    "config.plugins?.entries?.[id]?.enabled !== false",
+    'config["platforms"].get(name) != {"enabled": False}',
+    "run-managed-image-direct-e2e.ts",
+    '--agent "$AGENT"',
+    '--image "$reference"',
+    '--platform "$PLATFORM"',
+  ];
   const forbiddenPerLanePromotionMarkers = [
     'aliases=("${IMAGE}:${GITHUB_SHA}")',
     "docker buildx imagetools create",
@@ -195,6 +247,12 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
     base.run.includes(".run == {id: $runId, attempt: $runAttempt}")
       ? []
       : ["managed image build must consume the same-run exact base digest contract"]),
+    ...validationMarkers
+      .filter((marker) => !validate.run?.includes(marker))
+      .map((marker) => `exact managed image validation is missing ${marker}`),
+    ...forbiddenPerLanePromotionMarkers
+      .filter((marker) => publisherSource.includes(marker))
+      .map((marker) => `per-agent lane must not publish mutable alias with ${marker}`),
     ...(buildIndex >= 0 && buildIndex < validateIndex
       ? []
       : ["managed image validation must follow its immutable digest build"]),
@@ -205,6 +263,24 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
 }
 
 describe("complete managed-image publication workflow", () => {
+  it("rejects managed package paths redirected outside node_modules", () => {
+    const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-plugin-"));
+    try {
+      const nodeModulesRoot = path.join(fixtureRoot, "project", "node_modules");
+      const outsideScope = path.join(fixtureRoot, "outside-scope");
+      const installedPackageRoot = path.join(nodeModulesRoot, "direct-package");
+      const escapedPackageRoot = path.join(nodeModulesRoot, "@scope", "plugin");
+      fs.mkdirSync(installedPackageRoot, { recursive: true });
+      fs.mkdirSync(path.join(outsideScope, "plugin"), { recursive: true });
+      fs.symlinkSync(outsideScope, path.join(nodeModulesRoot, "@scope"));
+
+      expect(isStrictChildPath(nodeModulesRoot, installedPackageRoot)).toBe(true);
+      expect(isStrictChildPath(nodeModulesRoot, escapedPackageRoot)).toBe(false);
+    } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
+    }
+  });
+
   it("starts after exact base contracts with complete main triggers and does not cancel release-tag runs (#7744)", () => {
     const baseWorkflow = readWorkflow("base-image.yaml");
     const managedWorkflow = readWorkflow("managed-images.yaml");
@@ -218,10 +294,35 @@ describe("complete managed-image publication workflow", () => {
     const validationRun =
       step(managedPublisher(managedWorkflow), "Validate exact managed image before promotion")
         .run ?? "";
+    expect(validationRun).not.toContain('path.join(projectsRoot, entry.name, "package.json")');
     const channelGuardEnd = validationRun.indexOf("managed OpenClaw channel");
     const channelGuardStart = validationRun.lastIndexOf("for (const id of [", channelGuardEnd);
     expect(channelGuardStart).toBeGreaterThan(-1);
     expect(validationRun.slice(channelGuardStart, channelGuardEnd)).toContain('"googlechat",');
+    const weakenedWorkflow = structuredClone(managedWorkflow);
+    const weakenedValidation = step(
+      managedPublisher(weakenedWorkflow),
+      "Validate exact managed image before promotion",
+    );
+    weakenedValidation.run = weakenedValidation.run?.replace(
+      "!fs.lstatSync(manifestPath).isFile()",
+      "false",
+    );
+    expect(publicationBoundaryErrors(baseWorkflow, weakenedWorkflow)).toContain(
+      "exact managed image validation is missing lstatSync(manifestPath).isFile()",
+    );
+    const projectRootWeakenedWorkflow = structuredClone(managedWorkflow);
+    const projectRootWeakenedValidation = step(
+      managedPublisher(projectRootWeakenedWorkflow),
+      "Validate exact managed image before promotion",
+    );
+    projectRootWeakenedValidation.run = projectRootWeakenedValidation.run?.replace(
+      'path.join(nodeModulesRoot, ...name.split("/"))',
+      "",
+    );
+    expect(publicationBoundaryErrors(baseWorkflow, projectRootWeakenedWorkflow)).toContain(
+      'exact managed image validation is missing path.join(nodeModulesRoot, ...name.split("/"))',
+    );
     expect(publisher).toMatchObject({
       needs: ["build-and-push-hermes", "build-and-push-dcode", "build-and-push-openclaw"],
       permissions: {
@@ -266,6 +367,7 @@ describe("complete managed-image publication workflow", () => {
       expect(manifest.env?.AGENT).toBe(expectedPublisher.agent);
       expect(manifest.run).toContain('reference="$IMAGE@$digest"');
       expect(manifest.run).toContain("--format '{{.Manifest.Digest}}'");
+      expect(manifest.run).toContain("scripts/checks/validate-managed-base-index.sh");
       expect(manifest.run).toContain("scripts/export-managed-base-image-contract.sh");
       expect(manifest.run).toContain('"${platform_digests[linux/amd64]}"');
       expect(manifest.run).toContain('"${platform_digests[linux/arm64]}"');
