@@ -40,6 +40,20 @@ function hashBaseImageInputs(
   return hash.digest("hex");
 }
 
+function hashBuildArgs(buildArgs: Record<string, string> | undefined): string | null {
+  if (!buildArgs || Object.keys(buildArgs).length === 0) return null;
+  const hash = crypto.createHash("sha256");
+  for (const [key, value] of Object.entries(buildArgs).sort(([left], [right]) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  )) {
+    hash.update(key);
+    hash.update("\0");
+    hash.update(value);
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
 function dockerPlatform(): string {
   const reported = dockerInfoFormat("{{.OSType}}/{{.Architecture}}", {
     ignoreError: true,
@@ -56,6 +70,8 @@ export function createSandboxBaseImageBuildProvenanceKey(options: ResolveBaseIma
     imageName: options.imageName,
     sourceRevisions: getSourceRevisionIds(rootDir, env),
     inputFingerprint: hashBaseImageInputs(rootDir, options.dockerfilePath, options.inputPaths),
+
+    buildArgsFingerprint: hashBuildArgs(options.buildArgs),
   };
   return crypto.createHash("sha256").update(JSON.stringify(material)).digest("hex");
 }
@@ -79,6 +95,8 @@ export function createSandboxBaseImageResolutionKey(options: ResolveBaseImageOpt
     sourceTags: getSourceShortShaTags(rootDir, env),
     localTag: options.localTag,
     inputFingerprint: hashBaseImageInputs(rootDir, options.dockerfilePath, options.inputPaths),
+
+    buildArgsFingerprint: hashBuildArgs(options.buildArgs),
     platform: dockerPlatform(),
     requireOpenshellSandboxAbi: options.requireOpenshellSandboxAbi === true,
     minGlibcVersion: options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC,

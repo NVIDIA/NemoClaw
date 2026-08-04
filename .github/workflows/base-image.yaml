@@ -41,6 +41,7 @@ on:
       - "scripts/lib/reviewed-npm-archive.mts"
       - "agents/hermes/Dockerfile.base"
       - "agents/hermes/security-dependencies.patch"
+      - "agents/hermes/whatsapp-proxy.patch"
       - "agents/langchain-deepagents-code/Dockerfile.base"
       - "agents/langchain-deepagents-code/manifest.yaml"
       - "agents/langchain-deepagents-code/requirements.lock"

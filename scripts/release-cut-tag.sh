@@ -6,6 +6,7 @@ set -euo pipefail
 
 PLAN_PATH=""
 CONFIRMATION="${RELEASE_CONFIRMATION:-}"
+PREFLIGHT_ONLY=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -17,11 +18,18 @@ while [[ $# -gt 0 ]]; do
       CONFIRMATION="${2:-}"
       shift 2
       ;;
+    --preflight-only)
+      PREFLIGHT_ONLY=true
+      shift
+      ;;
     --help | -h)
       cat <<'USAGE'
-Usage: scripts/release-cut-tag.sh --plan PATH --confirm "CONFIRM RELEASE vX.Y.Z <sha>"
+Usage:
+  scripts/release-cut-tag.sh --plan PATH --preflight-only
+  scripts/release-cut-tag.sh --plan PATH --confirm "CONFIRM RELEASE vX.Y.Z <sha>"
 
-Creates and pushes only the signed annotated semver tag described by a release plan.
+Preflight mode verifies that Git can create a signed annotated tag with the configured signer.
+Cut mode creates and pushes only the signed annotated semver tag described by a release plan.
 USAGE
       exit 0
       ;;
@@ -39,7 +47,9 @@ fail() {
 
 [[ -n "$PLAN_PATH" ]] || fail "--plan is required"
 [[ -f "$PLAN_PATH" ]] || fail "Plan file not found: $PLAN_PATH"
-[[ -n "$CONFIRMATION" ]] || fail "--confirm is required"
+if [[ "$PREFLIGHT_ONLY" != true ]]; then
+  [[ -n "$CONFIRMATION" ]] || fail "--confirm is required"
+fi
 
 json_field() {
   node -e 'const fs=require("fs"); const data=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); const path=process.argv[2].split("."); let value=data; for (const key of path) value=value?.[key]; if (value == null) process.exit(1); process.stdout.write(String(value));' "$PLAN_PATH" "$1"
@@ -62,7 +72,9 @@ plan_hash="$(json_field planHash)"
 
 [[ "$schema_version" == "1" ]] || fail "Unsupported plan schemaVersion: $schema_version"
 [[ "$mode" == "tag-only" ]] || fail "Unsupported plan mode: $mode"
-[[ "$CONFIRMATION" == "$expected_confirmation" ]] || fail "Confirmation phrase does not match plan"
+if [[ "$PREFLIGHT_ONLY" != true ]]; then
+  [[ "$CONFIRMATION" == "$expected_confirmation" ]] || fail "Confirmation phrase does not match plan"
+fi
 [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "Plan tag is not semver: $tag"
 [[ "$target" =~ ^[0-9a-f]{40}$ ]] || fail "Plan target commit is not a full SHA: $target"
 [[ "$plan_hash" =~ ^[0-9a-f]{64}$ ]] || fail "Plan hash is not a SHA-256 hex string: $plan_hash"
@@ -80,6 +92,27 @@ if git show-ref --verify --quiet "refs/tags/$tag"; then
 fi
 if git ls-remote --exit-code --tags origin "$tag" >/dev/null; then
   fail "Remote tag already exists: $tag"
+fi
+
+if [[ "$PREFLIGHT_ONLY" == true ]]; then
+  preflight_tag="nemoclaw-release-signing-preflight-$$"
+  preflight_ref="refs/tags/$preflight_tag"
+  git show-ref --verify --quiet "$preflight_ref" && fail "Local preflight tag already exists: $preflight_tag"
+
+  cleanup_preflight_tag() {
+    if git show-ref --verify --quiet "$preflight_ref"; then
+      git update-ref -d "$preflight_ref"
+    fi
+  }
+  trap cleanup_preflight_tag EXIT
+
+  # Exercise Git's configured OpenPGP, SSH, or X.509 signer without publishing a ref.
+  git tag -s "$preflight_tag" "$target" -m "NemoClaw release signing preflight"
+  cleanup_preflight_tag
+  trap - EXIT
+
+  printf 'release-cut-tag: signing preflight passed for %s at %s\n' "$tag" "$target"
+  exit 0
 fi
 
 # Release tags are immutable once pushed. Sign the tag on the release

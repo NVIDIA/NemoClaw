@@ -198,9 +198,24 @@ describe("DGX Station stock DGX OS classification", () => {
   });
 
   it.each([
-    ["supported-colossus-baseos", writeNoOtaFactoryRelease("colossus-baseos")],
-    ["supported-ai-developer-tools", writeNoOtaFactoryRelease("ai-developer-tools")],
-  ])("accepts the exact no-OTA factory profile as %s", (expected, release) => {
+    [
+      "April 2026 Colossus BaseOS",
+      "supported-colossus-baseos",
+      writeNoOtaFactoryRelease("colossus-baseos"),
+    ],
+    [
+      "June 2026 AI Developer Tools",
+      "supported-ai-developer-tools",
+      writeNoOtaFactoryRelease("ai-developer-tools"),
+    ],
+    [
+      "May 2026 AI Developer Tools build 2026-05-13-18-42-38",
+      "supported-ai-developer-tools",
+      writeNoOtaFactoryRelease("ai-developer-tools", {
+        buildDate: "2026-05-13-18-42-38",
+      }),
+    ],
+  ])("accepts the exact no-OTA %s profile as %s", (_scenario, expected, release) => {
     const { result, output } = runSourced(
       STATION_PREPARE,
       `

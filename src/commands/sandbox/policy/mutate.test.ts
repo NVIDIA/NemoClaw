@@ -92,6 +92,35 @@ describe("policy mutation oclif commands", () => {
     });
   });
 
+  it("accepts the same acknowledgement flags on restore as on exclude (#8114)", async () => {
+    await PolicyRestoreCommand.run(["alpha", "nous_research", "-y"], rootDir);
+
+    expect(mocks.restoreSandboxBaseline).toHaveBeenCalledWith("alpha", {
+      key: "nous_research",
+      yes: true,
+      force: false,
+      dryRun: false,
+    });
+
+    await PolicyRestoreCommand.run(["alpha", "nous_research", "--yes"], rootDir);
+
+    expect(mocks.restoreSandboxBaseline).toHaveBeenLastCalledWith("alpha", {
+      key: "nous_research",
+      yes: true,
+      force: false,
+      dryRun: false,
+    });
+
+    await PolicyRestoreCommand.run(["alpha", "nous_research", "--force"], rootDir);
+
+    expect(mocks.restoreSandboxBaseline).toHaveBeenLastCalledWith("alpha", {
+      key: "nous_research",
+      yes: false,
+      force: true,
+      dryRun: false,
+    });
+  });
+
   it("requires an explicit baseline key before dispatch", async () => {
     await expect(PolicyExcludeCommand.run(["alpha"], rootDir)).rejects.toThrow();
 
