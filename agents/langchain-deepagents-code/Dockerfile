@@ -35,9 +35,9 @@ FROM ${BASE_IMAGE}
 
 ARG NEMOCLAW_CORPORATE_CA_B64
 
-# Decode the host corporate-proxy CA (#6210) for runtime trust when onboard
-# bakes one into the final DCode image. Published/cached bases may not carry
-# the host-specific CA, so the final image owns this no-op-safe decode too.
+# Decode the host corporate-proxy CA (#6210) for runtime trust when onboarding
+# includes one in the final DCode image. Published or cached bases may not carry
+# the host-specific CA, so decode the argument again when it is present.
 # hadolint ignore=DL3059,DL4006
 RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
       command -v base64 >/dev/null 2>&1 || { echo "[nemoclaw] base64 is required to decode NEMOCLAW_CORPORATE_CA_B64 but is not installed in the build image" >&2; exit 1; }; \
