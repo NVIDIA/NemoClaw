@@ -5,6 +5,8 @@
 
 Review date: 2026-07-21
 
+Last updated: 2026-08-03
+
 ## Decision
 
 Pin the production OpenClaw runtime and matching official plugins to the
@@ -17,10 +19,16 @@ the exact plugin graph reports no vulnerabilities after that update.
 
 The production OpenClaw install uses the authoritative committed lock at
 `agents/openclaw/openclaw-runtime/package-lock.json`, with SHA-256
-`82489f62febb12da52833c0b1f7f6969f7e21a098c565ef1f91342b1e5e32d88`.
+`759b31779f40867f35f15065b582eb1d3efb8fddb1fe43c207507c905fa2a421`.
 NemoClaw derives that lock from the SRI-verified `openclaw@2026.7.1` archive
-after replacing the reviewed affected `brace-expansion@5.0.7` and
-`fast-uri@3.1.2` resolutions with `5.0.8` and `3.1.4`.
+after applying the reviewed dependency remediation.
+The remediation replaces `brace-expansion@5.0.7` with `5.0.9`.
+It also replaces `fast-uri@3.1.2` with `3.1.5` and `ip-address@10.2.0` with
+`10.3.1` in the OpenClaw core graph.
+The same reviewed `undici@8.10.0` replacement applies to the OpenClaw core
+dependency and the Discord manifest, shrinkwrap, and bundled package tree.
+The committed mcporter lock also selects `fast-uri@3.1.5` and
+`ip-address@10.3.1`.
 Image builds verify the lock digest and installed production graph before they
 expose the OpenClaw binary.
 
@@ -39,12 +47,14 @@ whose amd64 config reports Node `22.23.1`.
 - `openclaw@2026.7.1`
   - `sha512-ge/Xss99CHAjPL/ikmH/UFoiOrjcxDB4sW3y9mhyCD+dYW3wzV7TKbAVdkrXFgAG2d2BjpJofP97zUZ+umxo8g==`
   - `https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1.tgz`
+  - remediated package tree: `sha512-ugtX/U1jNS+ZlZqEXa+Y9nN+wlhPxeZJrx6tJZFLcGspWPFhsC5qOjTkzBbOda9lEZF6TWKt6wU9m9p2tidqdQ==`
 - `@openclaw/diagnostics-otel@2026.7.1`
   - `sha512-XXhMifYWTgoR6yFN4T3JkHxdPvQCe8k1cNZjVIgXNmk1svCdBWuALfQQicmpemlmWwauIQuHYgBURY6k63e+rw==`
 - `@openclaw/brave-plugin@2026.7.1`
   - `sha512-7Z+GZ/6K6a8LlkTsWVnAZ1hv8EarORzHQvFHD7ekcg033FGJOXYPEZSbvvE3qR9vM+vnoZplNjMZ7vFMRcvQgw==`
 - `@openclaw/discord@2026.7.1`
   - `sha512-tZfdC1YA8oVLvc2BK1w0F6rUljS5ugCOp2uWe0vPsbG1fbzVVIO4V32RoqZznGHe5u2R9u4n1aV5Z/qa1m2oFg==`
+  - remediated package tree: `sha512-w+F8FrRl0wPd0EN2RnLyu6yfixel7BT8Iex4wLLQDvfIac8rLhuksNpFU4uZa8W9wXgh47hguq0F9NSN0BZfOQ==`
 - `@openclaw/slack@2026.7.1`
   - `sha512-dwVGEVCmoTQrOIeZaSCIOPg8pT7hB883QQEXdp9EZUDzTGuvSc+KxH2iERSOV/59hROQctYdcobGn/vdB1H4XA==`
   - remediated package tree: `sha512-4ThnsNS+yBlFSkTaQn2xosxrDu1s0vrxcqka5QqFj+8dCEaTa9JVLRgNniYV/QNhO53wc7a2R5oQFElzYspT2w==`
@@ -61,23 +71,51 @@ whose amd64 config reports Node `22.23.1`.
 - `tar@7.5.20` (NemoClaw plugin direct dependency)
   - `sha512-9FcyK4PA6+WbzlTM9WhQm6vB5W7cP7dUiPsv1g7YDwEQnQ1CGpK3MGlKk/ITVWMk05kHZuBhmVhiv8LZoy/PFQ==`
   - `https://registry.npmjs.org/tar/-/tar-7.5.20.tgz`
-- `brace-expansion@5.0.8` (OpenClaw locked-runtime remediation)
-  - `sha512-JZyDyq3D4AUifKTPOB7DELf6XsB3WdPuNxCtob1vFXPsSXhdAiHBWJ/tJ8HAc9aH84BK+5JFZLNkJKx3G9kzQg==`
-  - `https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.8.tgz`
-- `fast-uri@3.1.4` (OpenClaw and mcporter locked-runtime remediation)
-  - `sha512-8JnbkQ4juDyvYs4mgFGQqg4yCYtFDtUtmp2QIQq11ZZe5CFQ5wcqm1rqDgAh/QdMySuBnPzMUiJUNZG5N/AiQw==`
-  - `https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.4.tgz`
+- `brace-expansion@5.0.9` (OpenClaw locked-runtime remediation)
+  - `sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==`
+  - `https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz`
+- `fast-uri@3.1.5` (OpenClaw and mcporter locked-runtime remediation)
+  - `sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==`
+  - `https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz`
+  - `BSD-3-Clause`; no dependencies
+- `undici@8.10.0` (OpenClaw core and Discord remediation)
+  - `sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==`
+  - `https://registry.npmjs.org/undici/-/undici-8.10.0.tgz`
+  - `MIT`; no dependencies; Node `>=22.19.0`
+- `ip-address@10.3.1` (OpenClaw and mcporter locked-runtime remediation)
+  - `sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==`
+  - `https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz`
+  - `MIT`; no dependencies; Node `>= 12`
+  - annotated source tag commit: `be7e626c0d49fccb518899f520a3fb64ee189741`; unsigned tag
+- `mcporter@0.7.3` committed runtime lock
+  - SHA-256: `962dee34f6b0a493521d1619d1cf030e2630cbdfce8bf0598217202f57078793`
+
+`fast-uri@3.1.5` has a valid npm registry signature and no registry attestation.
+`undici@8.10.0` has a valid npm registry signature and SLSA provenance.
+`ip-address@10.3.1` has two valid npm registry signatures and SLSA provenance.
 
 ## Audit result and temporary dependency remediations
 
 The reviewed audit materializes three production-compatible boundaries: the
 remediated reviewed-archive graph, the committed OpenClaw runtime lock, and the
-committed mcporter runtime lock. A real registry-backed run reports `0` high
-and `0` critical vulnerabilities for all three boundaries, and npm registry
-signature verification passes for both locked graphs. The critical `tar`
-finding that blocked the previous pin and the high Jaeger,
-`brace-expansion`, and `fast-uri` findings are gone. Lower-severity findings
-remain visible below the configured `high` threshold.
+committed mcporter runtime lock.
+The final registry-backed audit completed successfully under Node `22.23.1`.
+Its exact results are:
+
+- Reviewed archive graph: `info=0`, `low=0`, `moderate=6`, `high=0`,
+  `critical=0`, `clean`.
+- OpenClaw locked runtime: `info=0`, `low=0`, `moderate=7`, `high=0`,
+  `critical=0`, `clean`.
+- mcporter runtime: `info=0`, `low=0`, `moderate=1`, `high=0`, `critical=0`,
+  `clean`.
+
+Registry signature checks completed within the successful audit.
+The critical `tar` finding that blocked the previous pin and the high Jaeger,
+`brace-expansion`, `fast-uri`, `undici`, and `ip-address` findings are gone.
+All three post-remediation boundaries report `0` high and `0` critical
+findings.
+Lower-severity findings remain visible below the configured `high`
+threshold.
 
 The independently installed `nemoclaw/` plugin graph reports `0`
 vulnerabilities after resolving its direct `tar` dependency to `7.5.20`.
@@ -94,28 +132,84 @@ major-version compatibility boundary.
 
 OpenClaw's `minimatch@10.2.5` edge originally resolved
 `brace-expansion@5.0.7`, which is affected by `GHSA-mh99-v99m-4gvg`.
-The reviewed OpenClaw remediation selects `5.0.8`, retains the declared
+The initial remediation selected `5.0.8` for that advisory.
+`GHSA-rgw5-rvv9-x895` affects `brace-expansion` versions `>=4.0.0 <5.0.9`,
+and `5.0.9` fixes the advisory.
+The current OpenClaw remediation selects `5.0.9`, retains the declared
 `balanced-match@^4.0.2` dependency shape, and fails if the upstream shrinkwrap
 or replacement archive identity changes.
 
 The AJV graphs in OpenClaw and mcporter request `fast-uri@^3.0.1`.
 The reviewed upstream OpenClaw shrinkwrap resolves `3.1.2`, and
 `GHSA-v2hh-gcrm-f6hx` affects releases through `3.1.3`.
-Both committed runtime locks select the first compatible release outside that
-range, `3.1.4`. Image assembly reports lower-severity findings and blocks
-unaccepted high or critical findings through the empty-by-default audit
-exception registry. Signature verification and the exact committed locks
-remain mandatory.
+The initial remediation selected `3.1.4` for that advisory.
+The high-severity `GHSA-7p8r-x3mc-p8w7` later affected that release.
+Both committed runtime locks now select reviewed `3.1.5`.
+
+The OpenClaw core package manifest and shrinkwrap directly pin `undici@8.5.0`.
+The published `@openclaw/discord@2026.7.1` archive also pins that version in
+its package manifest and shrinkwrap.
+Discord lists `undici` in `bundledDependencies` and contains bundled
+`node_modules/undici@8.5.0`.
+`GHSA-8xcm-r25x-g524` and `GHSA-4cwx-7wf7-3272` affect releases
+`>=8.0.0 <8.9.0`.
+The current remediation selects the same reviewed `8.10.0` archive for both
+packages.
+The replacement retains the no-dependency package shape and Node `>=22.19.0`
+engine requirement.
+For Discord, the remediation fails closed unless the manifest, shrinkwrap, and
+bundled package identities match the reviewed `undici@8.5.0` boundary.
+It updates the manifest and shrinkwrap and replaces the complete bundled
+package tree with the verified `undici@8.10.0` archive.
+
+The upstream `undici@8.10.0` release CI reported one flaky Node 24 failure in
+`test/http2-request-never-settles.js`: 1,502 tests passed, and one failed.
+The Node 22 `no-intl` and `no-ssl` jobs, type checks, lint, fuzz, release, and
+Scorecard jobs passed.
+NemoClaw's focused remediation and locked-install tests, audit validation,
+registry-signature verification, and provenance verification provide
+compensating evidence for the reviewed archive.
+
+The OpenClaw core and mcporter graphs resolve `express-rate-limit@8.5.2` and
+its declared `ip-address@^10.2.0` dependency to affected `10.2.0`.
+The high-severity `GHSA-mwp4-54f8-5fhr` affects releases through `10.3.0`
+because leading-zero IPv4 inputs can cross SSRF and trust boundaries through
+decimal or octal interpretation differences.
+Version `10.3.1` also contains the fixes for `GHSA-4xrf-jv44-h6hh` and
+`GHSA-22jq-vg5j-6vgg`.
+Both committed locks select the first release outside all three affected
+boundaries, `10.3.1`, while preserving the declared `^10.2.0` consumer range.
+
+The full non-shallow `v10.2.0..v10.3.1` source range was reviewed.
+The change adds correct host-only classification and rejects leading-zero IPv4
+inputs.
+The annotated `v10.3.1` tag resolves to commit
+`be7e626c0d49fccb518899f520a3fb64ee189741` and is unsigned.
+Release check `30150298200` succeeded.
+Its trusted OpenID Connect (OIDC) publish workflow ran `npm ci` and `npm test`
+before publication.
+The focused repository tests pass 103/103, and the bundle-specific unit suite
+passes 16/16.
+Both committed locks report no problems through `npm ls`.
+`npm run build:cli`, `npm run typecheck:cli`, and
+`npm run checks:repository` pass.
+
+Image assembly reports lower-severity findings and blocks high or critical
+findings unless they match the empty-by-default audit exception registry.
+Signature verification and the exact committed locks remain mandatory.
 
 The OpenClaw audit first applies the same fail-closed remediation to the
 SRI-verified reviewed archive, then independently installs and verifies the
 committed lock. The audit configuration pins the official npm registry origin,
 package identity, tarball URL, SRI, and lock SHA-256. It rejects repository
 path escapes, lock drift, registry-origin drift, or an installed graph that
-does not match the lock before evaluating advisories. Remove the two OpenClaw
-core replacements only after a supported OpenClaw archive publishes both
-corrected transitive resolutions and the regenerated lock, installed-graph
-verification, audit, and signature checks all pass.
+does not match the lock before evaluating advisories. Remove the OpenClaw core
+replacements only after a supported OpenClaw archive publishes every corrected
+dependency identity and the regenerated lock, installed-graph verification,
+audit, and signature checks all pass.
+Remove the Discord `undici` replacement only after a supported Discord plugin
+archive publishes the corrected identity in its manifest, shrinkwrap, and
+bundled package tree and passes the same audit, signature, and runtime checks.
 
 The published Slack and Microsoft Teams plugin archives bundle `axios@1.16.0`.
 That version is in the affected range for the newly disclosed Axios
@@ -162,12 +256,17 @@ The child-process probe confirms these results:
 `scripts/lib/openclaw-npm-remediation.mts` verifies each original package and
 replacement package identities before it writes the archive. It rejects an
 upstream graph that no longer resolves the reviewed Axios, Jaeger,
-`brace-expansion`, or `fast-uri` source versions and dependency shapes. It then
-verifies the deterministic remediated package-tree integrity before
-installation or lock generation. This canonical tree digest is independent of
-npm-generated tar metadata, which can vary between npm patch releases without
-changing package contents. The production plugin installer, OpenClaw lock
-workflow, and `reviewed-npm-audit` use this same function.
+`brace-expansion`, `fast-uri`, `undici`, or `ip-address` source versions and
+dependency shapes.
+For Discord, it requires the package manifest dependency and
+`bundledDependencies`, shrinkwrap, and bundled package tree to retain the
+reviewed `undici@8.5.0` identities before replacement.
+It then verifies the deterministic remediated package-tree integrity before
+installation or lock generation.
+This canonical tree digest is independent of npm-generated tar metadata, which
+can vary between npm patch releases without changing package contents.
+The production plugin installer, OpenClaw lock workflow, and
+`reviewed-npm-audit` use this same function.
 The tree hash opens each regular file without following symbolic links and
 validates the opened descriptor before it reads the content. This keeps the
 metadata and content checks bound to the same file.
