@@ -431,7 +431,7 @@ describe("pullOllamaModel CLI-vs-HTTP dispatch", () => {
 
   it("pulls over HTTP when the daemon resolves on the Windows host", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
-    active = loadProxyForDispatch({ host: "host.docker.internal", hasLocalCli: false });
+    active = loadProxyForDispatch({ host: "host.docker.internal", hasLocalCli: true });
 
     await active.proxy.pullOllamaModel("qwen3.5:9b");
 
