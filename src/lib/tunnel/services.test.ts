@@ -12,6 +12,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -467,6 +468,7 @@ describe("stopAll", () => {
       }
       return reply;
     };
+    syncBuiltinESMExports();
     // The Ollama proxy source module destructures `spawnSync` at
     // require time, so to make `stopAll` pick up the patched function we
     // bust its cache. `services.ts` requires the proxy lazily, so the
@@ -476,6 +478,7 @@ describe("stopAll", () => {
 
   afterEach(() => {
     childProcess.spawnSync = originalSpawnSync;
+    syncBuiltinESMExports();
     delete require.cache[require.resolve(ollamaProxySourcePath)];
     rmSync(pidDir, { recursive: true, force: true });
   });
