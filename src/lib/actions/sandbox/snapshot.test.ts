@@ -845,7 +845,34 @@ describe("runSandboxSnapshot", () => {
     expect(lifecycleMock.events).toContain("lock:restore sandbox snapshot");
     expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
     expect(shieldsMock.repairMutableConfigPermsMock).toHaveBeenCalledWith("alpha");
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "github");
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "github", { nonFatal: true });
+  });
+
+  it("keeps post-restore policy reconciliation best-effort when a preset apply fails (#8210)", async () => {
+    getLatestBackupMock.mockReturnValue({
+      timestamp: "2026-06-15T00:00:00.000Z",
+      backupPath: "/tmp/backup-alpha",
+      policyPresets: ["github"],
+    });
+    restoreSandboxStateMock.mockReturnValue({
+      success: true,
+      restoredDirs: ["workspace"],
+      restoredFiles: ["openclaw.json"],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    // The gateway policy mutation fails. Because the reconcile applies presets
+    // with nonFatal, applyPreset returns false instead of exiting the process,
+    // so the restore warns and continues to completion rather than aborting.
+    applyPresetMock.mockReturnValue(false);
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore" });
+
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "github", { nonFatal: true });
+    expect(consoleWarn.mock.calls.flat().join("\n")).toContain("could not reconcile preset(s)");
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
   });
 
   it("hardens an active timer window before force-deleting a restore destination", async () => {
@@ -1011,7 +1038,7 @@ describe("runSandboxSnapshot", () => {
     getAppliedPresetsMock.mockReturnValue(["npm"]);
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local");
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local", { nonFatal: true });
     expect(removePresetMock).not.toHaveBeenCalled();
   });
 
@@ -1223,7 +1250,7 @@ describe("runSandboxSnapshot", () => {
       "alpha",
       customPolicy.name,
       customPolicy.content,
-      { custom: { sourcePath: customPolicy.sourcePath } },
+      { custom: { sourcePath: customPolicy.sourcePath }, nonFatal: true },
     );
     expect(removePresetMock).toHaveBeenCalledTimes(1);
     expect(removePresetMock).toHaveBeenCalledWith("alpha", "observability-otlp-local");
@@ -1263,7 +1290,7 @@ describe("runSandboxSnapshot", () => {
       "alpha",
       customPolicy.name,
       customPolicy.content,
-      { custom: { sourcePath: customPolicy.sourcePath } },
+      { custom: { sourcePath: customPolicy.sourcePath }, nonFatal: true },
     );
     expect(applyPresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
     expect(removePresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
@@ -1336,7 +1363,7 @@ describe("runSandboxSnapshot", () => {
     const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
     await runSandboxSnapshot("alpha", { kind: "restore" });
-    expect(removePresetMock).toHaveBeenCalledWith("alpha", currentCustomPolicy.name);
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", currentCustomPolicy.name, { nonFatal: true });
     expect(applyPresetMock).not.toHaveBeenCalledWith("alpha", "observability-otlp-local");
     expect(consoleWarn.mock.calls.flat().join("\n")).toContain(
       "leaving live policy presets unchanged",
@@ -1461,9 +1488,9 @@ describe("runSandboxSnapshot", () => {
     await runSandboxSnapshot("alpha", { kind: "restore" });
 
     expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/alpha/v2");
-    expect(removePresetMock).toHaveBeenCalledWith("alpha", "old-preset");
-    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "github");
-    expect(removePresetMock).toHaveBeenCalledWith("alpha", "old-custom");
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", "old-preset", { nonFatal: true });
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "github", { nonFatal: true });
+    expect(removePresetMock).toHaveBeenCalledWith("alpha", "old-custom", { nonFatal: true });
     expect(removePresetMock).not.toHaveBeenCalledWith("alpha", "team-egress");
     expect(applyPresetContentMock).not.toHaveBeenCalled();
     const output = consoleLog.mock.calls.flat().join("\n");

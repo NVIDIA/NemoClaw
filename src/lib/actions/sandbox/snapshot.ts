@@ -893,7 +893,12 @@ function reconcileSnapshotPolicyPresets(
       continue;
     }
     try {
-      if (!policies.removePreset(targetSandbox, preset)) failed.push(`${preset} (remove failed)`);
+      // Post-restore policy reconciliation is best-effort by design: a failed
+      // gateway policy mutation must be reported as a warning, not terminate
+      // the restore before gateway pairing. Pass nonFatal so setPolicyFile
+      // returns false on failure instead of exiting the process (#8210).
+      if (!policies.removePreset(targetSandbox, preset, { nonFatal: true }))
+        failed.push(`${preset} (remove failed)`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       failed.push(`${preset} (remove: ${message})`);
@@ -901,7 +906,8 @@ function reconcileSnapshotPolicyPresets(
   }
   for (const preset of toAdd) {
     try {
-      if (!policies.applyPreset(targetSandbox, preset)) failed.push(`${preset} (apply failed)`);
+      if (!policies.applyPreset(targetSandbox, preset, { nonFatal: true }))
+        failed.push(`${preset} (apply failed)`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       failed.push(`${preset} (apply: ${message})`);
@@ -936,7 +942,8 @@ function reconcileSnapshotCustomPolicies(
   const failed: string[] = [];
   for (const entry of toRemove) {
     try {
-      if (!policies.removePreset(targetSandbox, entry.name)) {
+      // Best-effort like the built-in preset reconciliation above (#8210).
+      if (!policies.removePreset(targetSandbox, entry.name, { nonFatal: true })) {
         failed.push(`${entry.name} (remove failed)`);
       }
     } catch (err) {
@@ -949,6 +956,7 @@ function reconcileSnapshotCustomPolicies(
       if (
         !policies.applyPresetContent(targetSandbox, entry.name, entry.content, {
           custom: { sourcePath: entry.sourcePath },
+          nonFatal: true,
         })
       ) {
         failed.push(`${entry.name} (apply failed)`);
