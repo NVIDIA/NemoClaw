@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ManagedMcpPolicyOmission } from "../actions/sandbox/mcp-bridge-policy";
 import {
   beginCommittedMcpLifecycleContainmentSync,
   getMcpLifecycleLockPath,
@@ -16,7 +17,7 @@ const shieldsIndexMock = vi.hoisted(() => ({
   applyShieldsPolicySnapshot: vi.fn(
     (): {
       status: number;
-      managedMcpOmissions?: Array<{ server: string; reason: string }>;
+      managedMcpOmissions?: ManagedMcpPolicyOmission[];
     } => ({ status: 0 }),
   ),
   completeAutoRestoreTransition: vi.fn(() => true),

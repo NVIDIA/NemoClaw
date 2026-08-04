@@ -582,7 +582,11 @@ describe("shields — unit logic", () => {
       });
 
       expect(result.managedMcpOmissions).toEqual([
-        expect.objectContaining({ reason: expect.stringMatching(/Cannot read config file:/) }),
+        expect.objectContaining({
+          reason: expect.stringMatching(
+            /Managed MCP registry inspection failed at the auto-restore deadline/,
+          ),
+        }),
       ]);
       expect(appliedPolicy).toContain("restrictive_baseline");
       expect(appliedPolicy).not.toContain("mcp_bridge_alpha");

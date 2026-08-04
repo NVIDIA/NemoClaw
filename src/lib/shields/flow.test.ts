@@ -228,7 +228,7 @@ describe("shields command flow", () => {
     expect(fs.existsSync(path.dirname(stagedPolicyPath))).toBe(false);
   });
 
-  it("timer restore uses persisted MCP ownership after its transition marker clears (#7952)", () => {
+  it("manual restore uses persisted MCP ownership after its transition marker clears (#7952)", () => {
     const alpha = managedMcpPolicy("alpha", "8.8.8.8");
     const beta = managedMcpPolicy("beta", "1.1.1.1");
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
