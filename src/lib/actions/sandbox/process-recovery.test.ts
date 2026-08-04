@@ -497,7 +497,7 @@ describe("recreated sandbox OpenShell readiness", () => {
     expect(sleeps).toEqual([3, 3]);
   });
 
-  it("does not let the legacy gateway timeout shorten the sandbox readiness budget (#7273)", () => {
+  it("lets the recovery wait override replace an explicit readiness budget", () => {
     vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", "1");
     vi.stubEnv("NEMOCLAW_SANDBOX_READY_TIMEOUT", "6");
     const captureOpenshellImpl = vi.fn(() => ({
@@ -516,8 +516,8 @@ describe("recreated sandbox OpenShell readiness", () => {
         timeoutSeconds: Number(process.env.NEMOCLAW_SANDBOX_READY_TIMEOUT),
       }),
     ).toBe(false);
-    expect(captureOpenshellImpl).toHaveBeenCalledTimes(3);
-    expect(sleeps).toEqual([3, 3]);
+    expect(captureOpenshellImpl).toHaveBeenCalledOnce();
+    expect(sleeps).toEqual([]);
   });
 });
 
