@@ -220,6 +220,19 @@ sys.exit(exit_code)
     expect(output).toContain("PROVIDER=install-ollama");
   });
 
+  it("does not defer a DOCKER_HOST override when Node.js is unavailable (#8199)", () => {
+    const { result, output } = runInstallerSourced(
+      `mkdir -p "$HOME/.docker"\n` +
+        `printf '%s' '{}' > "$HOME/.docker/config.json"\n` +
+        `export DOCKER_HOST=tcp://10.0.0.5:2375\n` +
+        `express_wsl_docker_operating_system() { printf 'Docker Desktop\\n'; }\n` +
+        `activate_express_install "Windows WSL"\n` +
+        `printf 'DEFERRED=%s PROVIDER=%s\\n' "\${_EXPRESS_WSL_PROVIDER_PENDING:-}" "\${NEMOCLAW_PROVIDER:-}"\n`,
+    );
+    expect(result.status, output).toBe(0);
+    expect(output).toContain("DEFERRED= PROVIDER=install-ollama");
+  });
+
   it("activate_express_install rejects a remote Docker Desktop target via DOCKER_CONTEXT", () => {
     const { result, output } = runInstallerSourced(
       `export DOCKER_CONTEXT=my-remote\n` +
@@ -287,7 +300,7 @@ sys.exit(exit_code)
     expect(output).toContain("PROVIDER=install-ollama");
   });
 
-  it("activate_express_install fails closed on malformed Docker config once Node is installed", () => {
+  it("activate_express_install fails closed on malformed Docker configuration after Node.js is installed", () => {
     const { result, output } = runInstallerSourced(
       `mkdir -p "$HOME/.docker"\n` +
         `printf '%s' 'not-json {"currentContext":"default"}' > "$HOME/.docker/config.json"\n` +

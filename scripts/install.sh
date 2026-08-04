@@ -4146,12 +4146,13 @@ express_wsl_can_use_windows_host_ollama() {
   express_wsl_docker_operating_system | grep -qi 'docker desktop'
 }
 
-# True when a readable Docker config decides the context but no Node.js can
+# True when a readable Docker configuration decides the context but no Node.js can
 # parse it yet. The express prompt runs before install_nodejs, so treating that
 # window as non-local pinned WSL-local Ollama on hosts whose Docker Desktop
 # topology supports Windows-host Ollama, and onboarding then rejected the
 # preselected provider (#8199). Selection waits for the runtime instead.
 express_wsl_docker_context_needs_node() {
+  [ -z "${DOCKER_HOST:-}" ] || return 1
   [ -z "${DOCKER_CONTEXT:-}" ] || return 1
   local cfg="${DOCKER_CONFIG:-${HOME:-}/.docker}/config.json"
   [ -e "$cfg" ] && [ -r "$cfg" ] || return 1
