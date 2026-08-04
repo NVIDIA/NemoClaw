@@ -80,4 +80,13 @@ describe("Dockerfile RUN command discovery", () => {
       requireSingleReviewedDockerfileRunCommand(source, command, requiredArguments),
     ).toThrow("unreviewed RUN instruction");
   });
+
+  it.each([
+    ["between the command and arguments", `RUN ${command}\u00a0${requiredArguments.join(" ")}\n`],
+    ["after the arguments", `RUN ${invocation}\u00a0\n`],
+  ])("rejects non-shell whitespace %s", (_label, source) => {
+    expect(() =>
+      requireSingleReviewedDockerfileRunCommand(source, command, requiredArguments),
+    ).toThrow("unreviewed RUN instruction");
+  });
 });

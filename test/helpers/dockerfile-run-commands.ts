@@ -113,8 +113,8 @@ function unquotedTextIndexes(source: string, text: string): number[] {
 function normalizedInstructionBody(source: string): string {
   return source
     .replace(/\\\r?\n/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim();
+    .replace(/[ \t\r\n]+/gu, " ")
+    .replace(/^[ \t\r\n]+|[ \t\r\n]+$/gu, "");
 }
 
 export function requireSingleReviewedDockerfileRunCommand(

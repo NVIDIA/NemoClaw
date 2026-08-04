@@ -213,7 +213,8 @@ describe("Hermes corporate proxy CA final-stage trust", () => {
         instruction.keyword === "RUN" && instruction.body.includes(agentInstallCommand),
     );
     const expectedPackageInstallRun = [
-      "RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \\",
+      "RUN unset SSL_CERT_FILE REQUESTS_CA_BUNDLE; \\",
+      "    if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \\",
       "      export SSL_CERT_FILE=/usr/local/share/nemoclaw/corporate-ca.pem; \\",
       "      export REQUESTS_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \\",
       "    fi; \\",
