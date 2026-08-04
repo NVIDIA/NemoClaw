@@ -234,11 +234,10 @@ export function collectDockerGpuPatchDiagnostics(
   if (cleanupPendingRollback) {
     cleanupDisposition = "pending_rollback";
   } else if (!prePatchRestored) {
-    cleanupDisposition = "manual";
-    cleanupCommands = dockerGpuPatchCleanupCommands(sandboxName).map(redactor.redactText);
+    cleanupDisposition = "unknown";
   } else if (replacementPresence === "absent") {
     cleanupDisposition = "not_required";
-  } else if (replacementPresence === "present" && replacementId) {
+  } else if (replacementId) {
     cleanupDisposition = "manual";
     cleanupCommands = dockerGpuReplacementCleanupCommands(replacementId).map(redactor.redactText);
   } else {

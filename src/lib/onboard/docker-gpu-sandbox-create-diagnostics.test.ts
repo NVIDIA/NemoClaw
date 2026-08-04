@@ -328,7 +328,7 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
       );
       const output = stderr.join("\n");
       expect(output).toContain("pre-patch sandbox container was restored and started");
-      expect(output).toContain("failed replacement container is still present");
+      expect(output).toContain("failed replacement container may still be present");
       expect(output).toContain(`docker rm -f ${JSON.stringify(replacementId)}`);
       expect(output).not.toContain("openshell sandbox delete");
     } finally {

@@ -184,6 +184,8 @@ export type DockerGpuPatchFailureKind =
 export type DockerGpuPatchFailureClassification = {
   kind: DockerGpuPatchFailureKind;
   headline: string;
+  /** Stable create-mode identity used when a saved verdict crosses rollback. */
+  selectedModeKind?: DockerGpuPatchModeKind | null;
   summaryLines: string[];
   /**
    * Prose guidance for failure signatures whose cause is supported by an

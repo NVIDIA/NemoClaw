@@ -643,6 +643,12 @@ sudo ufw allow from "$SUBNET" to any port 8080 proto tcp
 $$nemoclaw onboard
 ```
 
+This reachability check uses a disposable Docker probe and does not create or replace a sandbox.
+If Docker GPU compatibility recreation fails later, follow [GPU routing or compatibility patch failed](#gpu-routing-or-compatibility-patch-failed).
+That path can restore the pre-patch sandbox.
+If its diagnostics report manual cleanup, use only the printed exact-container command.
+That command targets the failed replacement and preserves the restored sandbox.
+
 <AgentOnly variant="openclaw">
 
 ### Custom OpenClaw image creates without a gateway or dashboard
@@ -664,10 +670,11 @@ If NemoClaw saves pre-rollback diagnostics, the reported directory contains the 
 If rollback succeeds, NemoClaw restores and starts the pre-patch sandbox container.
 It does not print a sandbox deletion command for the restored sandbox.
 If the failed replacement container remains, NemoClaw prints an exact-container Docker cleanup command.
-If NemoClaw cannot confirm whether the replacement remains, it reports cleanup as unknown and prints no deletion command.
+If NemoClaw cannot confirm whether the replacement remains but retains its validated exact ID, it prints the same target-safe command.
+Without a validated exact ID, it reports cleanup as unknown and prints no deletion command.
 If rollback fails, sandbox and container state can be uncertain.
 If NemoClaw reports a diagnostics directory, inspect it.
-Verify the container state before you use any printed cleanup command.
+Inspect the diagnostics before removing any container.
 
 </AgentOnly>
 

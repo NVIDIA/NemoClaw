@@ -14,6 +14,7 @@ import {
 const PRE_ROLLBACK: DockerGpuPatchFailureClassification = {
   kind: "patched_container_failed",
   headline: "Patched GPU container exited with code 127 (--gpus all).",
+  selectedModeKind: "gpus",
   summaryLines: ["patched_container_exit_code=127", "patched_create_option=--gpus all"],
   hints: [
     "Container logs show that the sandbox image does not provide the NemoClaw-managed `nemoclaw-start` command.",
@@ -109,6 +110,25 @@ describe("Docker GPU patch failure reporting (#7996)", () => {
     expect(stderr).not.toContain("patched_container_exit_code=127");
   });
 
+  it("matches a saved verdict by mode kind when its display label changes (#7996)", () => {
+    const selectedMode = { ...buildDockerGpuMode("gpus"), label: "--gpus=all" };
+    const stderr = printAndCapture({
+      runCaptureOpenshell: vi.fn(() => "alpha   Error   1m ago\n"),
+      dockerCapture: vi.fn(() => ""),
+      context: {
+        sandboxName: "alpha",
+        newContainerId: "new-container-id",
+        selectedMode,
+        rolledBack: true,
+      },
+      preRollbackClassification: PRE_ROLLBACK,
+    });
+
+    expect(stderr).toContain("Patched GPU container exited with code 127");
+    expect(stderr).toContain("patched_container_exit_code=127");
+    expect(stderr).not.toContain("entered Error phase");
+  });
+
   it("falls back to the observed verdict when no pre-rollback verdict was captured", () => {
     const stderr = printAndCapture({
       runCaptureOpenshell: vi.fn(() => "alpha   Error   1m ago\n"),
@@ -122,5 +142,25 @@ describe("Docker GPU patch failure reporting (#7996)", () => {
     });
 
     expect(stderr).toContain("entered Error phase");
+  });
+
+  it("does not suggest deleting the sandbox when rollback fails (#7996)", () => {
+    const stderr = printAndCapture({
+      runCaptureOpenshell: vi.fn(() => ""),
+      dockerCapture: vi.fn(() => ""),
+      context: {
+        sandboxName: "alpha",
+        newContainerId: "a".repeat(64),
+        selectedMode: buildDockerGpuMode("gpus"),
+        rolledBack: false,
+      },
+      preRollbackClassification: null,
+    });
+
+    expect(stderr).toContain("container state is uncertain");
+    expect(stderr).toContain("before removing any container");
+    expect(stderr).not.toContain("Manual cleanup");
+    expect(stderr).not.toContain("openshell sandbox delete");
+    expect(stderr).not.toContain("docker rm -f");
   });
 });

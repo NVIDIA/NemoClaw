@@ -28,10 +28,7 @@ export {
   parseDockerInspectJson,
 } from "./docker-gpu-patch-clone";
 
-import {
-  collectDockerGpuPatchDiagnostics,
-  dockerGpuPatchCleanupCommands,
-} from "./docker-gpu-patch-diagnostics";
+import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch-diagnostics";
 import {
   getDockerGpuPatchFailureContext,
   recreateOpenShellDockerSandboxContainer,
@@ -102,14 +99,13 @@ export {
 };
 
 function printDockerGpuPatchCleanup(
-  sandboxName: string,
   context: DockerGpuPatchFailureContext | null,
   diagnostics: ReturnType<typeof collectDockerGpuPatchDiagnostics>,
 ): void {
   if (context?.rolledBack === true) {
     console.error("  The pre-patch sandbox container was restored and started.");
     if (diagnostics?.cleanupDisposition === "manual") {
-      console.error("  The failed replacement container is still present.");
+      console.error("  The failed replacement container may still be present.");
       console.error("  Manual cleanup:");
       for (const command of diagnostics.cleanupCommands) console.error(`    ${command}`);
     } else if (
@@ -124,12 +120,8 @@ function printDockerGpuPatchCleanup(
     return;
   }
   console.error(
-    "  The failed sandbox and container state is uncertain. Inspect it before cleanup.",
+    "  The failed sandbox and container state is uncertain. Inspect the diagnostics before removing any container.",
   );
-  console.error("  Manual cleanup:");
-  for (const command of dockerGpuPatchCleanupCommands(sandboxName)) {
-    console.error(`    ${command}`);
-  }
 }
 
 export function applyDockerGpuPatchOrExit(
@@ -199,7 +191,7 @@ function classificationMatchesSelectedMode(
   selectedMode: DockerGpuPatchMode | null,
 ): boolean {
   if (!selectedMode) return false;
-  return classification.summaryLines.includes(`patched_create_option=${selectedMode.label}`);
+  return classification.selectedModeKind === selectedMode.kind;
 }
 
 export function printDockerGpuPatchFailureAndExit(
@@ -268,7 +260,7 @@ export function printDockerGpuPatchFailureAndExit(
   console.error(
     "    NEMOCLAW_SANDBOX_GPU=0      skip GPU passthrough entirely (or rerun with --no-gpu).",
   );
-  printDockerGpuPatchCleanup(sandboxName, context, diagnostics);
+  printDockerGpuPatchCleanup(context, diagnostics);
   process.exit(1);
 }
 
@@ -303,7 +295,7 @@ export function printDockerGpuReadinessFailure(
   if (diagnostics) {
     console.error(`  Docker GPU diagnostics saved: ${diagnostics.dir}`);
   }
-  printDockerGpuPatchCleanup(sandboxName, context, diagnostics);
+  printDockerGpuPatchCleanup(context, diagnostics);
 }
 
 export function printDockerGpuProofFailure(
@@ -341,7 +333,7 @@ export function printDockerGpuProofFailure(
   if (diagnostics) {
     console.error(`  Diagnostics saved: ${diagnostics.dir}`);
   }
-  printDockerGpuPatchCleanup(sandboxName, context, diagnostics);
+  printDockerGpuPatchCleanup(context, diagnostics);
 }
 
 const SANDBOX_FAILURE_PHASE_TOKENS = new Set(["Error", "Failed", "CrashLoopBackOff"]);
@@ -577,7 +569,11 @@ export function classifyDockerGpuPatchFailure(
       options.proofError instanceof Error ? options.proofError.message : String(options.proofError);
     if (proofText) lines.push(`proof_error=${proofText}`);
   }
-  return hints.length > 0
-    ? { kind, headline, summaryLines: lines, hints }
-    : { kind, headline, summaryLines: lines };
+  const classification = {
+    kind,
+    headline,
+    selectedModeKind: selectedMode?.kind ?? null,
+    summaryLines: lines,
+  };
+  return hints.length > 0 ? { ...classification, hints } : classification;
 }
