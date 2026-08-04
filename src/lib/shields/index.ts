@@ -307,12 +307,20 @@ function persistUnresolvedShieldsContainment(
   sandboxName: string,
   processToken: string,
   reason: string,
+  assertTakeoverAuthority?: () => void,
 ): void {
   const containmentPath = `${getMcpLifecycleLockPath(sandboxName, STATE_DIR)}.containment`;
   if (fs.existsSync(containmentPath)) return;
   try {
-    beginCommittedMcpLifecycleContainmentSync(sandboxName, processToken, reason, STATE_DIR);
+    beginCommittedMcpLifecycleContainmentSync(
+      sandboxName,
+      processToken,
+      reason,
+      STATE_DIR,
+      assertTakeoverAuthority,
+    );
   } catch (error) {
+    if (isDurableContainmentFailure(error)) throw error;
     if (fs.existsSync(containmentPath)) return;
     throw error;
   }
@@ -366,8 +374,11 @@ function waitForShieldsDownForwardCommit(
           `Shields recovery owner PID ${String(
             observed.ownerPid,
           )} exited without descendant-containment proof`,
+          assertTakeoverAuthority,
         );
       } catch (error) {
+        if (isDurableContainmentFailure(error)) throw error;
+        assertTakeoverAuthority?.();
         throw durableMcpLifecycleContainmentFailure(
           error,
           getMcpLifecycleLockPath(sandboxName, STATE_DIR),
@@ -972,9 +983,11 @@ function failInteractiveAutoRestoreClosed(
         sandboxName,
         marker.processToken,
         `Interactive auto-restore could not complete safely: ${message}`,
+        () => assertTimerMarkerGeneration(sandboxName, marker),
       );
       break;
     } catch (error) {
+      if (isDurableContainmentFailure(error)) throw error;
       if (fs.existsSync(containmentPath)) break;
       assertTimerMarkerGeneration(sandboxName, marker);
       const containmentError = error instanceof Error ? error.message : String(error);
@@ -1040,6 +1053,7 @@ function retryInlineAutoRestore(
         notifiedError = message;
       }
     } catch (error) {
+      if (isDurableContainmentFailure(error)) throw error;
       assertTimerMarkerGeneration(sandboxName, marker);
       const message = error instanceof Error ? error.message : String(error);
       if (message !== notifiedError) {
@@ -1117,11 +1131,9 @@ function withExpiredAutoRestoreDeadlineFence<T>(
           );
           return recoverThenRun();
         } catch (error) {
+          if (isDurableContainmentFailure(error)) throw error;
           assertTakeoverAuthority();
-          if (
-            isDurableContainmentFailure(error) ||
-            fs.existsSync(`${getMcpLifecycleLockPath(sandboxName, STATE_DIR)}.containment`)
-          ) {
+          if (fs.existsSync(`${getMcpLifecycleLockPath(sandboxName, STATE_DIR)}.containment`)) {
             throw error;
           }
           const message = error instanceof Error ? error.message : String(error);
@@ -2736,8 +2748,11 @@ function prepareAutoRestoreTransitionTakeover(
         sandboxName,
         processToken,
         `Shields recovery owner PID ${String(owner.pid)} exited without descendant-containment proof`,
+        assertTakeoverAuthority,
       );
     } catch (error) {
+      if (isDurableContainmentFailure(error)) throw error;
+      assertTakeoverAuthority?.();
       throw durableMcpLifecycleContainmentFailure(
         error,
         getMcpLifecycleLockPath(sandboxName, STATE_DIR),
@@ -3196,6 +3211,7 @@ function recoverExpiredAutoRestoreInline(
         assertTakeoverAuthority: () => assertTimerMarkerGeneration(sandboxName, marker),
       });
     } catch (error) {
+      if (isDurableContainmentFailure(error)) throw error;
       const message = error instanceof Error ? error.message : String(error);
       appendAuditEntry({
         action: "shields_up_failed",
@@ -3214,6 +3230,7 @@ function recoverExpiredAutoRestoreInline(
   const activation = activateLockdownFromSnapshot(
     sandboxName,
     marker.snapshotPath,
+    marker.allowLegacyHermesProtocol === true,
     cachedTarget,
     undefined,
     marker.processToken && /^[0-9a-f]{32}$/.test(marker.processToken)
@@ -3529,7 +3546,6 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
         }
         clearTimerMarker(sandboxName);
         clearShieldsDownTransition(sandboxName, processToken);
-        cleanupRuntimePolicyFile();
         const message = err instanceof Error ? err.message : String(err);
         console.error(`  Cannot start auto-restore timer: ${message}`);
         return failShieldsCommand(`Cannot start auto-restore timer: ${message}`, opts.throwOnError);
@@ -3551,7 +3567,6 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
         clearShieldsDownTransition(sandboxName, transition.processToken);
         killTimer(sandboxName);
       }
-      cleanupRuntimePolicyFile();
       throw error;
     }
 

@@ -117,6 +117,7 @@ function beginCommittedContainmentAtPathSync(
   sandboxName: string,
   takeoverToken: string | undefined,
   reason: string,
+  assertAuthority?: () => void,
 ): void {
   const containmentPath = committedContainmentPath(lockPath);
   const token = crypto.randomUUID();
@@ -124,6 +125,7 @@ function beginCommittedContainmentAtPathSync(
     ...createMcpLifecycleLockOwner(sandboxName, token, takeoverToken),
     containmentReason: reason,
   };
+  assertAuthority?.();
   fs.mkdirSync(path.dirname(lockPath), { recursive: true, mode: 0o700 });
   if (!writeMcpLifecycleLockCandidateAndLinkSync(containmentPath, owner)) {
     throw new Error(
@@ -132,8 +134,27 @@ function beginCommittedContainmentAtPathSync(
   }
   try {
     fsyncLockDirectorySync(containmentPath);
+    assertAuthority?.();
   } catch (error) {
-    safelyReleaseMcpLifecycleLockSync(containmentPath, token);
+    let rolledBack = false;
+    try {
+      const published = readMcpLifecycleLockObservationSync(containmentPath);
+      if (published?.owner?.token === token) {
+        rolledBack = reclaimStaleMcpLifecycleLockGenerationSync(containmentPath, published);
+        if (rolledBack) fsyncLockDirectorySync(containmentPath);
+      }
+    } catch {
+      rolledBack = false;
+    }
+    if (!rolledBack) {
+      throw durableMcpLifecycleContainmentFailure(
+        new Error(
+          `Containment publication for sandbox '${sandboxName}' lost authority or durability, and its exact generation could not be rolled back`,
+        ),
+        lockPath,
+        { retainOwnedLifecycleGates: true },
+      );
+    }
     throw error;
   }
 }
@@ -168,6 +189,7 @@ export function beginCommittedMcpLifecycleContainmentSync(
   takeoverToken: string,
   reason: string,
   stateDir = resolveNemoclawStateDir(),
+  assertAuthority?: () => void,
 ): void {
   if (!/^[0-9a-f]{32}$/.test(takeoverToken)) {
     throw new Error("Auto-restore takeover token must be 32 lowercase hexadecimal characters");
@@ -177,6 +199,7 @@ export function beginCommittedMcpLifecycleContainmentSync(
     sandboxName,
     takeoverToken,
     reason,
+    assertAuthority,
   );
 }
 
@@ -693,21 +716,32 @@ function isDurableContainmentError(error: unknown): boolean {
   );
 }
 
+function durableContainmentMustRetainOwnedLifecycleGates(error: unknown): boolean {
+  return (
+    isDurableContainmentError(error) &&
+    (error as Error & { retainOwnedLifecycleGates?: boolean }).retainOwnedLifecycleGates === true
+  );
+}
+
 export function durableMcpLifecycleContainmentFailure(
   error: unknown,
   lockPath: string,
-): Error & { code: string } {
+  options: { retainOwnedLifecycleGates?: boolean } = {},
+): Error & { code: string; retainOwnedLifecycleGates?: boolean } {
   const lease = heldLocks.getStore()?.get(lockPath);
   if (lease?.active) lease.retainForDurableContainment = true;
   if (isDurableContainmentError(error)) {
-    return error as Error & { code: string };
+    const failure = error as Error & { code: string; retainOwnedLifecycleGates?: boolean };
+    if (options.retainOwnedLifecycleGates) failure.retainOwnedLifecycleGates = true;
+    return failure;
   }
   const failure = new Error(
     `Durable sandbox mutation containment requires operator resolution: ${
       error instanceof Error ? error.message : String(error)
     }`,
-  ) as Error & { code: string };
+  ) as Error & { code: string; retainOwnedLifecycleGates?: boolean };
   failure.code = "NEMOCLAW_DURABLE_CONTAINMENT";
+  if (options.retainOwnedLifecycleGates) failure.retainOwnedLifecycleGates = true;
   return failure;
 }
 
@@ -736,11 +770,13 @@ async function retainOwnedLifecycleGateAfterFailure(
   lockPath: string,
 ): Promise<boolean> {
   if (!isDurableContainmentError(error)) return false;
+  if (durableContainmentMustRetainOwnedLifecycleGates(error)) return true;
   return await ownedLifecycleGateMustRemainClosed(lockPath);
 }
 
 function retainOwnedLifecycleGateAfterFailureSync(error: unknown, lockPath: string): boolean {
   if (!isDurableContainmentError(error)) return false;
+  if (durableContainmentMustRetainOwnedLifecycleGates(error)) return true;
   return ownedLifecycleGateMustRemainClosedSync(lockPath);
 }
 
@@ -1462,7 +1498,10 @@ export function withMcpLifecycleLockSync<T>(
   if (inherited?.get(lockPath)?.active) return operation();
 
   const acquired = acquireMcpLifecycleLockSync(sandboxName, { ...options, stateDir });
-  const lease: HeldLockLease = { active: true, retainForDurableContainment: false };
+  const lease: HeldLockLease = {
+    active: true,
+    retainForDurableContainment: false,
+  };
   const context = new Map(inherited ?? []);
   context.set(lockPath, lease);
   let retainOwnedGate = false;
@@ -1511,7 +1550,10 @@ export async function withMcpLifecycleLock<T>(
     ...options,
     stateDir,
   });
-  const lease: HeldLockLease = { active: true, retainForDurableContainment: false };
+  const lease: HeldLockLease = {
+    active: true,
+    retainForDurableContainment: false,
+  };
   const context = new Map(inherited ?? []);
   context.set(lockKey, lease);
   return heldLocks.run(context, async () => {

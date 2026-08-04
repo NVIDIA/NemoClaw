@@ -11,7 +11,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isObjectRecord, type UnknownRecord } from "../core/json-types";
-import { withMcpLifecycleDeadlineFence } from "../state/mcp-lifecycle-lock";
+import {
+  beginCommittedMcpLifecycleContainmentSync,
+  durableMcpLifecycleContainmentFailure,
+  getMcpLifecycleLockPath,
+  withMcpLifecycleDeadlineFence,
+} from "../state/mcp-lifecycle-lock";
 import {
   readShieldsTimerMarkerFile,
   type ShieldsTimerMarker,
@@ -52,6 +57,7 @@ interface TimerArgs {
 
 interface TimerRuntimeOptions {
   retryDelayMs?: number;
+  maxRestoreAttempts?: number;
 }
 
 type LockAgentConfig = typeof shields.lockAgentConfig;
@@ -59,6 +65,7 @@ type RestoreAttemptOutcome = "complete" | "retry" | "revoked";
 
 const STATE_DIR = resolveNemoclawStateDir();
 const AUTO_RESTORE_RETRY_MS = 5_000;
+const AUTO_RESTORE_MAX_ATTEMPTS = 7;
 
 function parseTimerArgs(argv: string[]): TimerArgs | null {
   const [
@@ -112,6 +119,13 @@ function appendAudit(entry: ShieldsAuditEntry): void {
   } catch {
     // Best effort — don't crash the timer
   }
+}
+
+function isDurableContainmentFailure(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error as Error & { code?: string }).code === "NEMOCLAW_DURABLE_CONTAINMENT"
+  );
 }
 
 function readStateFile(stateFile: string): UnknownRecord {
@@ -242,8 +256,14 @@ async function runRestoreTimer(
     Number.isFinite(runtimeOptions.retryDelayMs) && (runtimeOptions.retryDelayMs ?? 0) >= 0
       ? Math.floor(runtimeOptions.retryDelayMs!)
       : AUTO_RESTORE_RETRY_MS;
+  const maxRestoreAttempts =
+    Number.isInteger(runtimeOptions.maxRestoreAttempts) &&
+    (runtimeOptions.maxRestoreAttempts ?? 0) > 0
+      ? runtimeOptions.maxRestoreAttempts!
+      : AUTO_RESTORE_MAX_ATTEMPTS;
   let exitCode = 0;
   let retryScheduled = false;
+  let terminalContainment = false;
   let managedMcpWarning: string | undefined;
   const scheduleRetry = (): boolean => {
     if (!markerMatchesCurrentTimer(args)) return false;
@@ -465,7 +485,7 @@ async function runRestoreTimer(
         },
       );
     const restoreWhileDeadlineOwned = async (): Promise<void> => {
-      for (;;) {
+      for (let attempt = 1; ; attempt += 1) {
         let outcome: RestoreAttemptOutcome;
         try {
           shields.prepareAutoRestoreTransitionTakeover(
@@ -476,6 +496,11 @@ async function runRestoreTimer(
           );
           outcome = restoreUnderDeadlineFence();
         } catch (error) {
+          const lockPath = getMcpLifecycleLockPath(args.sandboxName, STATE_DIR);
+          if (isDurableContainmentFailure(error) || fs.existsSync(`${lockPath}.containment`)) {
+            terminalContainment = true;
+            throw durableMcpLifecycleContainmentFailure(error, lockPath);
+          }
           appendAudit({
             action: "shields_up_failed",
             sandbox: args.sandboxName,
@@ -489,6 +514,40 @@ async function runRestoreTimer(
         }
         if (outcome !== "retry") return;
         if (!markerMatchesCurrentTimer(args)) return;
+        if (attempt >= maxRestoreAttempts) {
+          const lockPath = getMcpLifecycleLockPath(args.sandboxName, STATE_DIR);
+          const reason = `Auto-restore failed after ${String(attempt)} attempts while the exact timer generation retained the lifecycle deadline`;
+          try {
+            beginCommittedMcpLifecycleContainmentSync(
+              args.sandboxName,
+              args.processToken!,
+              reason,
+              STATE_DIR,
+              assertTakeoverAuthority,
+            );
+          } catch (error) {
+            if (isDurableContainmentFailure(error)) {
+              terminalContainment = true;
+              throw error;
+            }
+            if (!markerMatchesCurrentTimer(args)) throw error;
+            terminalContainment = true;
+            const message = error instanceof Error ? error.message : String(error);
+            throw durableMcpLifecycleContainmentFailure(
+              new Error(
+                `${reason}; durable containment could not be committed: ${message}. Correct the state-directory write failure, then retry a NemoClaw command for this sandbox to obtain exact-generation recovery guidance`,
+              ),
+              lockPath,
+            );
+          }
+          terminalContainment = true;
+          throw durableMcpLifecycleContainmentFailure(
+            new Error(
+              `${reason}. Durable containment now blocks sandbox mutations. Stop all NemoClaw processes for this sandbox, then follow the exact-generation recovery guidance from the next NemoClaw command.`,
+            ),
+            lockPath,
+          );
+        }
         await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
         if (!markerMatchesCurrentTimer(args)) return;
       }
@@ -514,6 +573,7 @@ async function runRestoreTimer(
       },
     );
   } catch (error: unknown) {
+    if (isDurableContainmentFailure(error)) terminalContainment = true;
     appendAudit({
       action: "shields_up_failed",
       sandbox: args.sandboxName,
@@ -522,7 +582,7 @@ async function runRestoreTimer(
       error: error instanceof Error ? error.message : String(error),
     });
     exitCode = 1;
-    scheduleRetry();
+    if (!terminalContainment) scheduleRetry();
   } finally {
     if (!retryScheduled) process.exit(exitCode);
   }

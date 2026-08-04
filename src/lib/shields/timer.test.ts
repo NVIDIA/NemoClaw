@@ -6,7 +6,11 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getMcpLifecycleLockPath, withMcpLifecycleLock } from "../state/mcp-lifecycle-lock";
+import {
+  beginCommittedMcpLifecycleContainmentSync,
+  getMcpLifecycleLockPath,
+  withMcpLifecycleLock,
+} from "../state/mcp-lifecycle-lock";
 
 const shieldsIndexMock = vi.hoisted(() => ({
   applyShieldsPolicySnapshot: vi.fn(
@@ -22,6 +26,11 @@ const shieldsIndexMock = vi.hoisted(() => ({
 }));
 
 const PROCESS_TOKEN = "a".repeat(32);
+
+interface TimerTestOptions {
+  retryDelayMs?: number;
+  maxRestoreAttempts?: number;
+}
 
 vi.mock("./index", () => ({
   applyShieldsPolicySnapshot: shieldsIndexMock.applyShieldsPolicySnapshot,
@@ -72,15 +81,16 @@ describe("shields timer authorization", () => {
   });
 
   async function invokeTimerAndCaptureExit(
-    runRestoreTimer: (args: any, options?: { retryDelayMs?: number }) => Promise<void>,
+    runRestoreTimer: (args: any, options?: TimerTestOptions) => Promise<void>,
     args: unknown,
+    options: TimerTestOptions = { retryDelayMs: 1 },
   ): Promise<number> {
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((code?: any) => {
       throw new Error(`process.exit:${String(code ?? 0)}`);
     });
 
     try {
-      await runRestoreTimer(args, { retryDelayMs: 1 });
+      await runRestoreTimer(args, options);
       throw new Error("Expected runRestoreTimer to exit");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -98,12 +108,12 @@ describe("shields timer authorization", () => {
         expect(fs.existsSync(deadlinePath)).toBe(true);
         expect(fs.existsSync(auditPath)).toBe(true);
       },
-      { interval: 1, timeout: 200 },
+      { interval: 1, timeout: 2_000 },
     );
   }
 
   async function invokeTimerAndExpectRetry(
-    runRestoreTimer: (args: any, options?: { retryDelayMs?: number }) => Promise<void>,
+    runRestoreTimer: (args: any, options?: TimerTestOptions) => Promise<void>,
     args: unknown,
   ): Promise<void> {
     const exitSpy = vi
@@ -119,22 +129,63 @@ describe("shields timer authorization", () => {
       path.join(tmpHome, ".nemoclaw", "state"),
     )}.deadline`;
     const auditPath = path.join(path.dirname(markerPath), "shields-audit.jsonl");
+    const pending = runRestoreTimer(args, { retryDelayMs: 50 });
+    let policyApplicationsBeforeRevocation: number | undefined;
     try {
-      const pending = runRestoreTimer(args, { retryDelayMs: 50 });
       await waitForRetryBoundary(deadlinePath, auditPath);
       expect(exitSpy).not.toHaveBeenCalled();
       expect(fs.existsSync(deadlinePath)).toBe(true);
-      const policyApplicationsBeforeRevocation =
+      policyApplicationsBeforeRevocation =
         shieldsIndexMock.applyShieldsPolicySnapshot.mock.calls.length;
+    } finally {
       fs.rmSync(markerPath, { force: true });
       await pending;
-      expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(
-        policyApplicationsBeforeRevocation,
-      );
-    } finally {
       fs.writeFileSync(markerPath, markerContents);
       exitSpy.mockRestore();
     }
+    if (policyApplicationsBeforeRevocation !== undefined) {
+      expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(
+        policyApplicationsBeforeRevocation,
+      );
+    }
+  }
+
+  function createFailedRestoreFixture(
+    sandboxName: string,
+    parseTimerArgs: (argv: string[]) => unknown,
+  ) {
+    const stateDir = path.join(tmpHome, ".nemoclaw", "state");
+    const snapshotPath = path.join(stateDir, "snapshot.yaml");
+    const restoreAtIso = new Date().toISOString();
+    const markerPath = path.join(stateDir, `shields-timer-${sandboxName}.json`);
+    const mutationLockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  default: {}\n");
+    const writeMarker = (processToken: string) =>
+      fs.writeFileSync(
+        markerPath,
+        JSON.stringify({
+          pid: process.pid,
+          sandboxName,
+          snapshotPath,
+          restoreAt: restoreAtIso,
+          processToken,
+        }),
+      );
+    writeMarker(PROCESS_TOKEN);
+    shieldsIndexMock.applyShieldsPolicySnapshot.mockReturnValue({ status: 1 });
+    const args = parseTimerArgs([sandboxName, snapshotPath, restoreAtIso, "", "", PROCESS_TOKEN]);
+    expect(args).not.toBeNull();
+    return {
+      args,
+      containmentPath: `${mutationLockPath}.containment`,
+      deadlinePath: `${mutationLockPath}.deadline`,
+      markerPath,
+      mutationLockPath,
+      sandboxName,
+      stateDir,
+      writeMarker,
+    };
   }
 
   it("does not restore or rewrite state when marker is missing", async () => {
@@ -764,6 +815,190 @@ describe("shields timer authorization", () => {
     } finally {
       exitSpy.mockRestore();
     }
+  });
+
+  it("commits durable containment after the default seven-attempt auto-restore budget", async () => {
+    const timer = await import("./timer");
+    const fixture = createFailedRestoreFixture("retry-containment", timer.parseTimerArgs);
+    const {
+      args,
+      containmentPath,
+      deadlinePath,
+      markerPath,
+      mutationLockPath,
+      sandboxName,
+      stateDir,
+    } = fixture;
+    const auditPath = path.join(stateDir, "shields-audit.jsonl");
+
+    const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args, {
+      retryDelayMs: 0,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(7);
+    expect(fs.existsSync(markerPath)).toBe(true);
+    expect(fs.existsSync(mutationLockPath)).toBe(false);
+    expect(fs.existsSync(deadlinePath)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(containmentPath, "utf-8"))).toMatchObject({
+      sandboxName,
+      shieldsTakeoverToken: PROCESS_TOKEN,
+      containmentReason: expect.stringContaining("failed after 7 attempts"),
+    });
+    await expect(withMcpLifecycleLock(sandboxName, () => undefined, { stateDir })).rejects.toThrow(
+      "Sandbox mutation containment is active",
+    );
+    const auditEntries = fs
+      .readFileSync(auditPath, "utf-8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(auditEntries).toHaveLength(8);
+    expect(auditEntries.at(-1)).toMatchObject({
+      action: "shields_up_failed",
+      sandbox: sandboxName,
+      error: expect.stringContaining("Durable containment now blocks sandbox mutations"),
+    });
+  });
+
+  it("reclaims its exact containment generation when timer authority changes during publication", async () => {
+    const timer = await import("./timer");
+    const fixture = createFailedRestoreFixture(
+      "containment-publication-revoked",
+      timer.parseTimerArgs,
+    );
+    const { args, containmentPath, deadlinePath, markerPath, mutationLockPath, writeMarker } =
+      fixture;
+    const replacementToken = "f".repeat(32);
+    const originalLink = fs.linkSync.bind(fs);
+    const linkSpy = vi.spyOn(fs, "linkSync").mockImplementation((existingPath, newPath) => {
+      const result = originalLink(existingPath, newPath);
+      if (String(newPath) === containmentPath) writeMarker(replacementToken);
+      return result;
+    });
+
+    try {
+      const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args, {
+        retryDelayMs: 0,
+        maxRestoreAttempts: 1,
+      });
+      expect(exitCode).toBe(1);
+    } finally {
+      linkSpy.mockRestore();
+    }
+
+    expect(JSON.parse(fs.readFileSync(markerPath, "utf-8"))).toMatchObject({
+      processToken: replacementToken,
+    });
+    expect(fs.existsSync(containmentPath)).toBe(false);
+    expect(fs.existsSync(mutationLockPath)).toBe(false);
+    expect(fs.existsSync(deadlinePath)).toBe(false);
+  });
+
+  it("retains the exact deadline gates when revoked containment rollback cannot be proven", async () => {
+    const timer = await import("./timer");
+    const fixture = createFailedRestoreFixture(
+      "containment-publication-rollback-failure",
+      timer.parseTimerArgs,
+    );
+    const { args, containmentPath, deadlinePath, markerPath, mutationLockPath, writeMarker } =
+      fixture;
+    const replacementToken = "e".repeat(32);
+    const originalLink = fs.linkSync.bind(fs);
+    const linkSpy = vi.spyOn(fs, "linkSync").mockImplementation((existingPath, newPath) => {
+      const result = originalLink(existingPath, newPath);
+      if (String(newPath) === containmentPath) writeMarker(replacementToken);
+      return result;
+    });
+    const originalRename = fs.renameSync.bind(fs);
+    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation((oldPath, newPath) => {
+      if (String(oldPath) === containmentPath) {
+        const error = new Error("simulated exact rollback failure") as NodeJS.ErrnoException;
+        error.code = "EACCES";
+        throw error;
+      }
+      return originalRename(oldPath, newPath);
+    });
+
+    try {
+      const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args, {
+        retryDelayMs: 0,
+        maxRestoreAttempts: 1,
+      });
+      expect(exitCode).toBe(1);
+    } finally {
+      renameSpy.mockRestore();
+      linkSpy.mockRestore();
+    }
+
+    expect(JSON.parse(fs.readFileSync(markerPath, "utf-8"))).toMatchObject({
+      processToken: replacementToken,
+    });
+    expect(fs.existsSync(containmentPath)).toBe(true);
+    expect(fs.existsSync(mutationLockPath)).toBe(true);
+    expect(fs.existsSync(deadlinePath)).toBe(true);
+  });
+
+  it("retains the exact deadline gates when durable containment cannot be committed", async () => {
+    const timer = await import("./timer");
+    const { args, containmentPath, deadlinePath, markerPath, mutationLockPath, stateDir } =
+      createFailedRestoreFixture("retry-containment-failure", timer.parseTimerArgs);
+    const originalLink = fs.linkSync.bind(fs);
+    const linkSpy = vi.spyOn(fs, "linkSync").mockImplementation((existingPath, newPath) => {
+      if (String(newPath) === containmentPath) {
+        const error = new Error("simulated containment commit failure") as NodeJS.ErrnoException;
+        error.code = "EROFS";
+        throw error;
+      }
+      return originalLink(existingPath, newPath);
+    });
+
+    try {
+      const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args, {
+        retryDelayMs: 1,
+        maxRestoreAttempts: 1,
+      });
+      expect(exitCode).toBe(1);
+    } finally {
+      linkSpy.mockRestore();
+    }
+
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(markerPath)).toBe(true);
+    expect(fs.existsSync(containmentPath)).toBe(false);
+    expect(fs.existsSync(mutationLockPath)).toBe(true);
+    expect(fs.existsSync(deadlinePath)).toBe(true);
+    expect(fs.readFileSync(path.join(stateDir, "shields-audit.jsonl"), "utf-8")).toContain(
+      "Correct the state-directory write failure",
+    );
+  });
+
+  it("stops retrying when transition takeover commits durable containment", async () => {
+    const timer = await import("./timer");
+    const { args, markerPath, mutationLockPath, sandboxName, stateDir } =
+      createFailedRestoreFixture("takeover-containment", timer.parseTimerArgs);
+    shieldsIndexMock.prepareAutoRestoreTransitionTakeover.mockImplementationOnce(() => {
+      beginCommittedMcpLifecycleContainmentSync(
+        sandboxName,
+        PROCESS_TOKEN,
+        "transition takeover requires operator recovery",
+        stateDir,
+      );
+      throw new Error("transition takeover stopped");
+    });
+
+    const exitCode = await invokeTimerAndCaptureExit(timer.runRestoreTimer, args, {
+      retryDelayMs: 1,
+      maxRestoreAttempts: 3,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(shieldsIndexMock.prepareAutoRestoreTransitionTakeover).toHaveBeenCalledTimes(1);
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).not.toHaveBeenCalled();
+    expect(fs.existsSync(markerPath)).toBe(true);
+    expect(fs.existsSync(mutationLockPath)).toBe(false);
+    expect(fs.existsSync(`${mutationLockPath}.deadline`)).toBe(false);
+    expect(fs.existsSync(`${mutationLockPath}.containment`)).toBe(true);
   });
 
   it("retains recovery authority when the locked-state commit cannot be persisted", async () => {

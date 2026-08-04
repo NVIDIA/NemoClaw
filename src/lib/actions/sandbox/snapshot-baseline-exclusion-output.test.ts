@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { runSandboxSnapshot } from "./snapshot";
 
 const mocks = vi.hoisted(() => ({
   backupSandboxState: vi.fn(),
@@ -30,6 +31,10 @@ vi.mock("../../shields/timer-bound-lock", () => ({
   ),
 }));
 
+vi.mock("../../state/mcp-lifecycle-lock", () => ({
+  withSandboxMutationLock: vi.fn((_sandboxName: string, operation: () => unknown) => operation()),
+}));
+
 vi.mock("../../state/registry", () => ({
   getBaselineExclusions: mocks.getBaselineExclusions,
   getSandbox: vi.fn(() => ({ name: "alpha", agent: "hermes" })),
@@ -38,6 +43,10 @@ vi.mock("../../state/registry", () => ({
 vi.mock("../../state/sandbox", () => ({
   backupSandboxState: mocks.backupSandboxState,
   findBackup: mocks.findBackup,
+}));
+
+vi.mock("./snapshot/dependencies", () => ({
+  backupSandboxStateWithManagedAuthority: mocks.backupSandboxState,
 }));
 
 vi.mock("./sandbox-gateway-routing", () => ({
@@ -71,7 +80,6 @@ describe("snapshot baseline exclusion output", () => {
 
   it("reports active exclusions and support impact after a successful snapshot (#7178)", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
-    const { runSandboxSnapshot } = await import("./snapshot");
 
     await runSandboxSnapshot("alpha", { kind: "create" });
 

@@ -326,6 +326,20 @@ function expectStagedDriverNeutralRecovery(
   return output;
 }
 
+function expectManagedPolicyCleanup(harness: ShieldsHarness): void {
+  expect(harness.cleanupTempDirSpy).toHaveBeenCalledWith(
+    expect.stringContaining("nemoclaw-permissive-runtime"),
+    "nemoclaw-permissive-runtime",
+  );
+  expect(harness.cleanupTempDirSpy).toHaveBeenCalledTimes(1);
+  const stagedPolicyPath = String(harness.cleanupTempDirSpy.mock.calls.at(-1)?.[0]);
+  expect(fs.existsSync(path.dirname(stagedPolicyPath))).toBe(false);
+}
+
+function writeOpenClawShieldsState(stateDir: string, state: Record<string, unknown>): void {
+  fs.writeFileSync(path.join(stateDir, "shields-openclaw.json"), JSON.stringify(state));
+}
+
 function writeExpiredShieldsFixture(
   processToken: string,
   reason: string,
@@ -472,13 +486,7 @@ describe("shields command flow", () => {
       }),
     ).toThrow("Cannot start auto-restore timer: timer startup failed");
 
-    expect(harness.cleanupTempDirSpy).toHaveBeenCalledWith(
-      expect.stringContaining("nemoclaw-permissive-runtime"),
-      "nemoclaw-permissive-runtime",
-    );
-    expect(harness.cleanupTempDirSpy).toHaveBeenCalledTimes(1);
-    const stagedPolicyPath = String(harness.cleanupTempDirSpy.mock.calls.at(-1)?.[0]);
-    expect(fs.existsSync(path.dirname(stagedPolicyPath))).toBe(false);
+    expectManagedPolicyCleanup(harness);
   });
 
   it("cleans the staged managed MCP policy when state persistence fails", () => {
@@ -501,13 +509,7 @@ describe("shields command flow", () => {
       }),
     ).toThrow(/EISDIR|directory/i);
 
-    expect(harness.cleanupTempDirSpy).toHaveBeenCalledWith(
-      expect.stringContaining("nemoclaw-permissive-runtime"),
-      "nemoclaw-permissive-runtime",
-    );
-    expect(harness.cleanupTempDirSpy).toHaveBeenCalledTimes(1);
-    const stagedPolicyPath = String(harness.cleanupTempDirSpy.mock.calls.at(-1)?.[0]);
-    expect(fs.existsSync(path.dirname(stagedPolicyPath))).toBe(false);
+    expectManagedPolicyCleanup(harness);
   });
 
   it("timer restore uses persisted MCP ownership after its transition marker clears (#7952)", () => {
@@ -526,14 +528,11 @@ describe("shields command flow", () => {
         },
       }),
     );
-    fs.writeFileSync(
-      path.join(stateDir, "shields-openclaw.json"),
-      JSON.stringify({
-        shieldsDown: true,
-        shieldsPolicySnapshotPath: snapshotPath,
-        shieldsManagedMcpPolicyKeys: ["mcp_bridge_alpha"],
-      }),
-    );
+    writeOpenClawShieldsState(stateDir, {
+      shieldsDown: true,
+      shieldsPolicySnapshotPath: snapshotPath,
+      shieldsManagedMcpPolicyKeys: ["mcp_bridge_alpha"],
+    });
     const harness = createHarness({
       livePolicy: YAML.stringify({
         version: 1,
@@ -565,14 +564,11 @@ describe("shields command flow", () => {
     const snapshotPath = path.join(stateDir, "policy-snapshot-corrupt-state.yaml");
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n");
-    fs.writeFileSync(
-      path.join(stateDir, "shields-openclaw.json"),
-      JSON.stringify({
-        shieldsDown: true,
-        shieldsPolicySnapshotPath: snapshotPath,
-        shieldsManagedMcpPolicyKeys: ["../not-a-managed-key"],
-      }),
-    );
+    writeOpenClawShieldsState(stateDir, {
+      shieldsDown: true,
+      shieldsPolicySnapshotPath: snapshotPath,
+      shieldsManagedMcpPolicyKeys: ["../not-a-managed-key"],
+    });
     const harness = createHarness();
 
     expect(() => harness.applyShieldsPolicySnapshot("openclaw", snapshotPath)).toThrow(
@@ -588,13 +584,10 @@ describe("shields command flow", () => {
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(expectedSnapshotPath, "version: 1\nnetwork_policies: {}\n");
     fs.writeFileSync(requestedSnapshotPath, "version: 1\nnetwork_policies: {}\n");
-    fs.writeFileSync(
-      path.join(stateDir, "shields-openclaw.json"),
-      JSON.stringify({
-        shieldsDown: true,
-        shieldsPolicySnapshotPath: expectedSnapshotPath,
-      }),
-    );
+    writeOpenClawShieldsState(stateDir, {
+      shieldsDown: true,
+      shieldsPolicySnapshotPath: expectedSnapshotPath,
+    });
     const harness = createHarness();
 
     expect(() => harness.applyShieldsPolicySnapshot("openclaw", requestedSnapshotPath)).toThrow(
@@ -618,14 +611,11 @@ describe("shields command flow", () => {
       }),
     );
     fs.writeFileSync(oldSnapshotPath, "version: 1\nnetwork_policies: {}\n");
-    fs.writeFileSync(
-      path.join(stateDir, "shields-openclaw.json"),
-      JSON.stringify({
-        shieldsDown: false,
-        shieldsPolicySnapshotPath: oldSnapshotPath,
-        shieldsManagedMcpPolicyKeys: [],
-      }),
-    );
+    writeOpenClawShieldsState(stateDir, {
+      shieldsDown: false,
+      shieldsPolicySnapshotPath: oldSnapshotPath,
+      shieldsManagedMcpPolicyKeys: [],
+    });
     fs.writeFileSync(
       path.join(stateDir, `shields-transition-openclaw-${processToken}.json`),
       JSON.stringify({
@@ -667,14 +657,11 @@ describe("shields command flow", () => {
     );
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(snapshotPath, YAML.stringify({ network_policies: networkPolicies }));
-    fs.writeFileSync(
-      path.join(stateDir, "shields-openclaw.json"),
-      JSON.stringify({
-        shieldsDown: true,
-        shieldsPolicySnapshotPath: snapshotPath,
-        shieldsManagedMcpPolicyKeys: keys,
-      }),
-    );
+    writeOpenClawShieldsState(stateDir, {
+      shieldsDown: true,
+      shieldsPolicySnapshotPath: snapshotPath,
+      shieldsManagedMcpPolicyKeys: keys,
+    });
     const harness = createHarness({
       livePolicy: YAML.stringify({ version: 1, network_policies: networkPolicies }),
       sandboxEntry: managedMcpSandbox(policies),
@@ -1122,17 +1109,14 @@ describe("shields command flow", () => {
     const harness = createHarness();
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(stateDir, "shields-openclaw.json"),
-      JSON.stringify({
-        shieldsDown: true,
-        shieldsDownAt: new Date(Date.now() - 120_000).toISOString(),
-        shieldsDownTimeout: 300,
-        shieldsDownReason: "coverage",
-        shieldsDownPolicy: "permissive",
-        shieldsPolicySnapshotPath: path.join(stateDir, "missing-snapshot.yaml"),
-      }),
-    );
+    writeOpenClawShieldsState(stateDir, {
+      shieldsDown: true,
+      shieldsDownAt: new Date(Date.now() - 120_000).toISOString(),
+      shieldsDownTimeout: 300,
+      shieldsDownReason: "coverage",
+      shieldsDownPolicy: "permissive",
+      shieldsPolicySnapshotPath: path.join(stateDir, "missing-snapshot.yaml"),
+    });
 
     expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
       "Saved policy snapshot is missing",
@@ -1162,17 +1146,14 @@ describe("shields command flow", () => {
     const snapshotPath = path.join(stateDir, "policy-snapshot-failed-restore.yaml");
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n");
-    fs.writeFileSync(
-      path.join(stateDir, "shields-openclaw.json"),
-      JSON.stringify({
-        shieldsDown: true,
-        shieldsDownAt: new Date().toISOString(),
-        shieldsDownTimeout: 300,
-        shieldsDownReason: "recovery-hint coverage",
-        shieldsDownPolicy: "permissive",
-        shieldsPolicySnapshotPath: snapshotPath,
-      }),
-    );
+    writeOpenClawShieldsState(stateDir, {
+      shieldsDown: true,
+      shieldsDownAt: new Date().toISOString(),
+      shieldsDownTimeout: 300,
+      shieldsDownReason: "recovery-hint coverage",
+      shieldsDownPolicy: "permissive",
+      shieldsPolicySnapshotPath: snapshotPath,
+    });
 
     expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
       "policy restore exited with status 1",
@@ -1228,73 +1209,57 @@ describe("shields command flow", () => {
     expect(output).not.toContain("CRITICAL: OpenClaw lock rollback");
   });
 
-  it("retains critical recovery for non-transient OpenClaw rollback failures (#6126)", () => {
-    const harness = createHarness({
-      failOpenClawGuardActions: ["lock"],
-      openClawGuardFailure: {
-        code: "unsafe-config-path",
-        path: "/sandbox/.openclaw/openclaw.json",
-        detail: "canonical config path is not a safe regular file",
-      },
-    });
-
-    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
-      /unsafe-config-path/,
-    );
-
-    const output = harness.errorSpy.mock.calls.flat().map(String).join("\n");
-    expect(output).toContain(
-      "CRITICAL: OpenClaw lock rollback could not restore the trusted posture. Restore from a trusted backup and recreate the sandbox.",
-    );
-    expect(output).not.toContain(
-      "Warning: OpenClaw lock rollback could not restore the trusted posture",
-    );
-  });
-
-  it("retains critical recovery for structural startup-not-ready diagnostics (#6126)", () => {
-    const harness = createHarness({
-      failOpenClawGuardActions: ["lock"],
-      openClawGuardFailure: {
-        code: "startup-not-ready",
-        path: "/run/nemoclaw/openclaw-config-ready.json",
-        detail: "installed config guard requires NemoClaw PID 1",
-      },
-    });
-
-    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
-      /requires NemoClaw PID 1/,
-    );
-
-    const output = harness.errorSpy.mock.calls.flat().map(String).join("\n");
-    expect(output).toContain(
-      "CRITICAL: OpenClaw lock rollback could not restore the trusted posture. Restore from a trusted backup and recreate the sandbox.",
-    );
-    expect(output).not.toContain(
-      "Warning: OpenClaw lock rollback could not restore the trusted posture",
-    );
-  });
-
-  it("retains critical recovery when a transient diagnostic is followed by another issue (#6126)", () => {
-    const harness = createHarness({
-      failOpenClawGuardActions: ["lock"],
-      openClawGuardFailures: [
-        {
-          code: "startup-not-ready",
-          path: "/run/nemoclaw/openclaw-config-ready.json",
-          detail: "OpenClaw startup is not ready for host config mutations",
-        },
-        {
+  it.each<{
+    scenario: string;
+    options: HarnessOptions;
+    expectedError: RegExp;
+  }>([
+    {
+      scenario: "non-transient OpenClaw rollback failures",
+      options: {
+        failOpenClawGuardActions: ["lock"],
+        openClawGuardFailure: {
           code: "unsafe-config-path",
           path: "/sandbox/.openclaw/openclaw.json",
           detail: "canonical config path is not a safe regular file",
         },
-      ],
-    });
-
-    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
-      /unsafe-config-path/,
-    );
-
+      },
+      expectedError: /unsafe-config-path/,
+    },
+    {
+      scenario: "structural startup-not-ready diagnostics",
+      options: {
+        failOpenClawGuardActions: ["lock"],
+        openClawGuardFailure: {
+          code: "startup-not-ready",
+          path: "/run/nemoclaw/openclaw-config-ready.json",
+          detail: "installed config guard requires NemoClaw PID 1",
+        },
+      },
+      expectedError: /requires NemoClaw PID 1/,
+    },
+    {
+      scenario: "a transient diagnostic followed by another issue",
+      options: {
+        failOpenClawGuardActions: ["lock"],
+        openClawGuardFailures: [
+          {
+            code: "startup-not-ready",
+            path: "/run/nemoclaw/openclaw-config-ready.json",
+            detail: "OpenClaw startup is not ready for host config mutations",
+          },
+          {
+            code: "unsafe-config-path",
+            path: "/sandbox/.openclaw/openclaw.json",
+            detail: "canonical config path is not a safe regular file",
+          },
+        ],
+      },
+      expectedError: /unsafe-config-path/,
+    },
+  ])("retains critical recovery for $scenario (#6126)", ({ options, expectedError }) => {
+    const harness = createHarness(options);
+    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(expectedError);
     const output = harness.errorSpy.mock.calls.flat().map(String).join("\n");
     expect(output).toContain(
       "CRITICAL: OpenClaw lock rollback could not restore the trusted posture. Restore from a trusted backup and recreate the sandbox.",
@@ -1308,17 +1273,14 @@ describe("shields command flow", () => {
     const harness = createHarness({ failOpenClawGuardActions: ["lock"] });
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(stateDir, "shields-openclaw.json"),
-      JSON.stringify({
-        shieldsDown: false,
-        chattrApplied: false,
-        fileHashes: {
-          "/sandbox/.openclaw/openclaw.json": "a".repeat(64),
-          "/sandbox/.openclaw/.config-hash": "a".repeat(64),
-        },
-      }),
-    );
+    writeOpenClawShieldsState(stateDir, {
+      shieldsDown: false,
+      chattrApplied: false,
+      fileHashes: {
+        "/sandbox/.openclaw/openclaw.json": "a".repeat(64),
+        "/sandbox/.openclaw/.config-hash": "a".repeat(64),
+      },
+    });
 
     expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
       /startup-not-ready/,
@@ -1335,17 +1297,14 @@ describe("shields command flow", () => {
     const markerPath = path.join(stateDir, "shields-timer-openclaw.json");
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n");
-    fs.writeFileSync(
-      path.join(stateDir, "shields-openclaw.json"),
-      JSON.stringify({
-        shieldsDown: true,
-        shieldsDownAt: new Date().toISOString(),
-        shieldsDownTimeout: 1800,
-        shieldsDownReason: "rebuild",
-        shieldsDownPolicy: "permissive",
-        shieldsPolicySnapshotPath: snapshotPath,
-      }),
-    );
+    writeOpenClawShieldsState(stateDir, {
+      shieldsDown: true,
+      shieldsDownAt: new Date().toISOString(),
+      shieldsDownTimeout: 1800,
+      shieldsDownReason: "rebuild",
+      shieldsDownPolicy: "permissive",
+      shieldsPolicySnapshotPath: snapshotPath,
+    });
     fs.writeFileSync(
       markerPath,
       JSON.stringify({
@@ -1431,7 +1390,13 @@ describe("shields command flow", () => {
     });
     const harness = createHarness({
       beginContainment: () => {
-        throw new Error("state directory is read-only");
+        const error = new Error("state directory is read-only") as Error & {
+          code: string;
+          retainOwnedLifecycleGates: boolean;
+        };
+        error.code = "NEMOCLAW_DURABLE_CONTAINMENT";
+        error.retainOwnedLifecycleGates = true;
+        throw error;
       },
     });
     let containmentFailure: unknown;
@@ -1447,6 +1412,7 @@ describe("shields command flow", () => {
     expect(result).toBe("handled");
     expect(containmentFailure).toMatchObject({
       code: "NEMOCLAW_DURABLE_CONTAINMENT",
+      retainOwnedLifecycleGates: true,
     });
     expect(String(containmentFailure)).toContain("state directory is read-only");
     expect(fs.existsSync(containmentPath)).toBe(false);

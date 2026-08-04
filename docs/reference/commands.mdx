@@ -1176,11 +1176,15 @@ Host-side config and inference writes, snapshot mutation, sandbox destruction, a
 When a timed shields-down window reaches its deadline, auto-restore closes the per-sandbox lifecycle deadline gate.
 The gate blocks new mutations and waits for the recorded live owner to release its exact lock generation before auto-restore restores lockdown.
 NemoClaw does not signal that process because portable process inspection cannot prove that all descendants stopped.
-When an interactive command takes over an expired timer, NemoClaw makes up to 7 restoration attempts over an additional 30-second completion-grace window.
+An interactive command can take over an expired timer.
+The interactive takeover and the detached auto-restore timer each make up to 7 restoration attempts, with 5 seconds between attempts and up to 30 seconds of retry delay.
 The deadline gate remains closed during those attempts.
-If restoration cannot commit, NemoClaw records durable containment before the command returns an error.
+If restoration cannot commit, NemoClaw attempts to record durable containment.
+If that containment commit also fails, NemoClaw retains the exact lifecycle and deadline gates instead.
+Correct the reported state-directory write failure, then retry a NemoClaw command for the sandbox to obtain exact-generation recovery guidance.
+The interactive command returns an error, or the detached timer exits with a failure status.
 NemoClaw also records durable containment when an owner exits before it can prove that the owner's descendants stopped, or when ownership becomes ambiguous.
-Durable containment blocks new mutations until you complete exact-generation operator recovery.
+Durable containment, or the retained exact gates after a failed containment commit, blocks new mutations until you complete exact-generation operator recovery.
 Stop all NemoClaw processes for the sandbox, then follow the paths, identities, tokens, and removal order in the reported error.
 Verify each recorded generation is unchanged, remove only the exact stale generations first, and remove the exact containment generation last.
 

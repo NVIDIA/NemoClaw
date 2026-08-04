@@ -297,8 +297,27 @@ describe("managed MCP Shields policy transitions (#7952)", () => {
         getSandbox: () => sandbox ?? null,
       }),
     ).toThrow(
-      /Reserved MCP policy key 'mcp_bridge_retired'.*no committed managed bridge ownership/,
+      /Reserved MCP policy key "mcp_bridge_retired".*no committed managed bridge ownership/,
     );
+  });
+
+  it("escapes unclassified live policy keys in operator diagnostics", () => {
+    const maliciousKey = "mcp_bridge_\u001b[31mforged\nline\u0085";
+
+    let failure: unknown;
+    try {
+      inspectRegisteredManagedMcpPolicies("alpha", livePolicy([], { [maliciousKey]: {} }), {
+        getSandbox: () => null,
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain(
+      String.raw`"mcp_bridge_\u001b[31mforged\u000aline\u0085"`,
+    );
+    expect((failure as Error).message).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
   });
 
   it("retains additions while restoring the restrictive snapshot", () => {

@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 
 import type { AgentMcpAdapter } from "../../agent/defs";
+import { diagnosticPreview } from "../../name-validation";
 import * as policies from "../../policy";
 import { isBlockedMcpUrlTargetHost } from "../../security/mcp-url-target";
 import type { McpBridgeEntry } from "../../state/registry";
@@ -243,7 +244,7 @@ export function inspectExactManagedMcpPolicies(
     const unclassifiedKey = Object.keys(livePolicies).find((key) => key.startsWith("mcp_bridge_"));
     if (unclassifiedKey) {
       throw new Error(
-        `Reserved MCP policy key '${unclassifiedKey}' has no committed managed bridge ownership`,
+        `Reserved MCP policy key ${diagnosticPreview(unclassifiedKey)} has no committed managed bridge ownership`,
       );
     }
     return [];
@@ -255,13 +256,13 @@ export function inspectExactManagedMcpPolicies(
     const orphaned = generatedRegistrations[0];
     if (orphaned) {
       throw new Error(
-        `Generated MCP policy '${orphaned.name}' has no committed managed bridge ownership`,
+        `Generated MCP policy ${diagnosticPreview(orphaned.name)} has no committed managed bridge ownership`,
       );
     }
     const unclassifiedKey = Object.keys(livePolicies).find((key) => key.startsWith("mcp_bridge_"));
     if (unclassifiedKey) {
       throw new Error(
-        `Reserved MCP policy key '${unclassifiedKey}' has no committed managed bridge ownership`,
+        `Reserved MCP policy key ${diagnosticPreview(unclassifiedKey)} has no committed managed bridge ownership`,
       );
     }
     return [];
@@ -284,7 +285,7 @@ export function inspectExactManagedMcpPolicies(
   );
   if (orphaned) {
     throw new Error(
-      `Generated MCP policy '${orphaned.name}' has no committed managed bridge ownership`,
+      `Generated MCP policy ${diagnosticPreview(orphaned.name)} has no committed managed bridge ownership`,
     );
   }
 
@@ -300,7 +301,7 @@ export function inspectExactManagedMcpPolicies(
   );
   if (unclassifiedKey) {
     throw new Error(
-      `Reserved MCP policy key '${unclassifiedKey}' has no committed managed bridge ownership`,
+      `Reserved MCP policy key ${diagnosticPreview(unclassifiedKey)} has no committed managed bridge ownership`,
     );
   }
   return exact.sort((left, right) => left.key.localeCompare(right.key));

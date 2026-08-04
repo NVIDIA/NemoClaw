@@ -292,6 +292,36 @@ describe("MCP lifecycle lock acquisition", () => {
     expect(fs.existsSync(`${lockPath}.containment`)).toBe(true);
   });
 
+  it("releases async owned generations when committed containment is proven present", async () => {
+    const processToken = "a".repeat(32);
+    const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
+    writeTimerMarker(processToken);
+
+    await expect(
+      withMcpLifecycleDeadlineFence(
+        SANDBOX_NAME,
+        processToken,
+        () => {
+          beginCommittedMcpLifecycleContainmentSync(
+            SANDBOX_NAME,
+            processToken,
+            "test async containment",
+            stateDir,
+          );
+          throw durableMcpLifecycleContainmentFailure(
+            new Error("async containment reporting stopped"),
+            lockPath,
+          );
+        },
+        options(),
+      ),
+    ).rejects.toThrow("async containment reporting stopped");
+
+    expect(fs.existsSync(lockPath)).toBe(false);
+    expect(fs.existsSync(`${lockPath}.deadline`)).toBe(false);
+    expect(fs.existsSync(`${lockPath}.containment`)).toBe(true);
+  });
+
   it("retains owned generations when committed containment cannot be inspected", () => {
     const processToken = "2".repeat(32);
     const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
