@@ -877,11 +877,34 @@ _NEMOCLAW_STATUS_CODE_CLASSIFIERS = {
     "504": ("Timeout", "request_timeout", "true"),
 }
 
-# Exception-type fallback (#8121). When no checkpoint row explains the failure,
-# classify from the raised exception's type name only — never from its message,
-# which upstream serializes with request, model, and tool payloads. Unlisted
-# type names stay `unknown` so an arbitrary third-party class name is never
-# echoed into the managed log line.
+# Exception-type fallback (#8121).
+# - Invalid state: a managed non-interactive run fails with no `__error__` row
+#   to classify, so every cause reads as `error_class=unknown`. Two sources
+#   create that state. The failure can happen before the graph writes any
+#   checkpoint (transport, authorization, or model-resolution errors raised on
+#   the first request), and the LangGraph server writes checkpoints from its own
+#   process, so a row for a later failure can land after the client-side
+#   exception this handler is already reporting.
+# - Source boundary: the checkpoint writer is the LangGraph server in
+#   `langgraph.checkpoint`, reached over the remote graph protocol. It owns both
+#   the write and its timing; this handler is a read-only consumer of
+#   `/sandbox/.deepagents/.state/sessions.db`.
+# - Source-fix constraint: NemoClaw cannot make a third-party server write a row
+#   for a failure that never reached it, and waiting for a late row here would
+#   delay the exit path of every failing run for a write that may never come.
+#   The exception is already in hand at this call site, so its type is the only
+#   evidence available without changing upstream.
+# - Scope: type names only, matched against an allow-list. The message is never
+#   read, because upstream serializes request, model, and tool payloads into it.
+#   An unlisted type name yields `unknown` rather than being echoed.
+# - Current consumer: `_nemoclaw_report_non_interactive_error`, the single call
+#   site, which is the managed replacement for upstream's generic handler.
+# - Regression: test/non-interactive-error-classification.test.ts covers the
+#   no-checkpoint run, the chained cause, and the unlisted type name.
+# - Removal condition: delete this fallback when the managed runtime can read a
+#   structured cause for every failure — either because the LangGraph server
+#   persists a row before the client observes the exception, or because upstream
+#   exposes a classified error object on the non-interactive path.
 _NEMOCLAW_EXCEPTION_CLASSIFIERS = {
     "ResourceExhausted": ("ResourceExhausted", "upstream_provider_capacity", "true"),
     "RateLimitError": ("RateLimited", "rate_limited", "true"),
