@@ -33,8 +33,28 @@ function namedStep(value: WorkflowRecord, name: string): Record<string, unknown>
 }
 
 describe("protected managed-image runtime workflow boundary", () => {
-  it("accepts the exact dormant trusted runtime lane", () => {
+  it("accepts the exact activated trusted runtime lane", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(workflow())).toEqual([]);
+  });
+
+  it("ships the exact activation contract consumed by the trusted lane (#7744)", () => {
+    const activation = JSON.parse(
+      fs.readFileSync(
+        path.resolve(
+          import.meta.dirname,
+          "../../../ci/protected-managed-image-runtime-activation-v1.json",
+        ),
+        "utf8",
+      ),
+    ) as unknown;
+
+    expect(activation).toEqual({
+      agents: ["openclaw", "hermes", "langchain-deepagents-code"],
+      contractVersion: 1,
+      jobId: "managed-image-protected-runtime",
+      platform: "linux/amd64",
+      providers: ["ollama", "nim", "vllm"],
+    });
   });
 
   it("rejects job-scoped NGC credentials", () => {

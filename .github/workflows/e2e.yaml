@@ -2033,10 +2033,9 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
-  # This explicit-only lane remains dormant until its trusted workflow and
-  # validation boundary land on main. A follow-on candidate activates it with
-  # ci/protected-managed-image-runtime-activation-v1.json so the trusted
-  # controller can qualify that candidate's exact head without executing
+  # This explicit-only lane runs only when the exact candidate includes
+  # ci/protected-managed-image-runtime-activation-v1.json. The trusted
+  # controller can then qualify that candidate's exact head without executing
   # PR-controlled workflow code.
   managed-image-protected-runtime:
     name: Protected managed-image GPU and local inference
