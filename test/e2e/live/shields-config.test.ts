@@ -174,6 +174,46 @@ async function expectStopStartRecovery(
   expect(resultText(shields)).toContain(`Shields: ${posture}`);
 }
 
+async function expectCredentialsTraversalBoundary(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  containerId: string,
+): Promise<void> {
+  const credentialsDir = "/sandbox/.openclaw/credentials";
+  const seededPath = `${credentialsDir}/.nemoclaw-permission-probe`;
+  const seeded = await docker(
+    host,
+    ["exec", "--user", "0", containerId, "sh", "-c", `umask 077; : > ${seededPath}`],
+    { artifactName: "phase-5a-seed-credential-permission-probe" },
+  );
+  expect(seeded.exitCode, resultText(seeded)).toBe(0);
+
+  try {
+    const metadata = await statPath(
+      sandbox,
+      credentialsDir,
+      "phase-5a-credential-directory-metadata",
+    );
+    expect(metadata.mode).toBe("710");
+    expect(metadata.owner).toBe("root:sandbox");
+
+    const boundary = await sandboxShell(
+      sandbox,
+      `python3 - <<'PY'\nimport os\n\ndirectory = ${JSON.stringify(credentialsDir)}\nseeded = ${JSON.stringify(seededPath)}\noptional = os.path.join(directory, "optional.json")\n\ntry:\n    os.stat(optional)\nexcept FileNotFoundError:\n    print("traversal=allowed")\nelse:\n    raise RuntimeError("optional credential path unexpectedly exists")\n\noperations = (\n    ("listing", lambda: os.listdir(directory)),\n    ("reading", lambda: open(seeded, "rb").read()),\n    ("creation", lambda: open(os.path.join(directory, "created"), "wb").close()),\n    ("removal", lambda: os.unlink(seeded)),\n)\nfor label, operation in operations:\n    try:\n        operation()\n    except PermissionError:\n        print(f"{label}=denied")\n    else:\n        raise RuntimeError(f"{label} unexpectedly allowed")\nPY`,
+      { artifactName: "phase-5a-credential-traversal-boundary" },
+    );
+    expect(boundary.exitCode, resultText(boundary)).toBe(0);
+    expect(boundary.stdout).toContain("traversal=allowed");
+    for (const operation of ["listing", "reading", "creation", "removal"]) {
+      expect(boundary.stdout).toContain(`${operation}=denied`);
+    }
+  } finally {
+    await docker(host, ["exec", "--user", "0", containerId, "rm", "-f", seededPath], {
+      artifactName: "phase-5a-remove-credential-permission-probe",
+    });
+  }
+}
+
 async function preCleanSandbox(
   host: HostCliClient,
   sandbox: SandboxClient,
@@ -280,6 +320,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
       "documented nemoclaw exec doctor path preserves 2770/660 and gateway writes",
       "shields up locks config/workspace and config get redacts secrets",
       "start restores a stopped OpenClaw sandbox while shields are up",
+      "empty sealed credentials allow traversal but deny sandbox identity access",
       "host-root chmod-write-chmod tamper is detected as content drift",
       "a perms-only .config-hash drift is re-sealed by shields up, not failed closed",
       "shields down restores mutable modes and records audit JSONL",
@@ -556,6 +597,7 @@ test("shields-config: live Shields lifecycle restores stopped OpenClaw under bot
   );
   expect(configAfterLockedRestart.mode).toMatch(/^4[0-4][0-4]$/);
   expect(configAfterLockedRestart.owner).toBe("root:root");
+  await expectCredentialsTraversalBoundary(host, sandbox, containerId);
 
   progress.phase("detect host-root config drift and refuse resealing");
   const originalConfig = path.join(os.tmpdir(), `nemoclaw-shields-orig-${process.pid}.json`);
