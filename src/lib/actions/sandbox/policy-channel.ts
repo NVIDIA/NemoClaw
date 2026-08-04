@@ -2039,6 +2039,7 @@ async function restoreSandboxBaselineUnlocked(
   }
 
   const entry = policies.getSandboxBaselineEntry(sandboxName, key);
+  const expectedTargetDigest = entry ? digestBaselineEntry(entry) : null;
   if (entry) {
     printBaselineEntryScope(
       `  Restoring baseline entry '${key}' for '${sandboxName}' re-allows:`,
@@ -2078,7 +2079,7 @@ async function restoreSandboxBaselineUnlocked(
     if (!confirm.trim().toLowerCase().startsWith("y")) return;
   }
 
-  if (!policies.restoreBaselineEntry(sandboxName, key)) {
+  if (!policies.restoreBaselineEntry(sandboxName, key, { expectedTargetDigest })) {
     refreshSandboxPolicyContextFile(sandboxName);
     process.exit(1);
   }

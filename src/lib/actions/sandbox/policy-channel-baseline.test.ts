@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 
 import * as store from "../../credentials/store";
 import * as policies from "../../policy";
+import { digestBaselineEntry } from "../../policy/baseline-exclusion";
 import type { PolicyObject } from "../../policy/preset-parsing";
 import * as registry from "../../state/registry";
 
@@ -195,7 +196,9 @@ describe("restoreSandboxBaseline (#7178)", () => {
     getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
     await restoreSandboxBaseline("alpha", { key: "nous_research" });
     expect(promptMock).toHaveBeenCalledOnce();
-    expect(restoreBaselineEntryMock).toHaveBeenCalledWith("alpha", "nous_research");
+    expect(restoreBaselineEntryMock).toHaveBeenCalledWith("alpha", "nous_research", {
+      expectedTargetDigest: digestBaselineEntry(NOUS_ENTRY),
+    });
   });
 
   it("requires explicit acknowledgement in non-interactive mode (#8114)", async () => {
@@ -230,14 +233,29 @@ describe("restoreSandboxBaseline (#7178)", () => {
     process.env.NEMOCLAW_NON_INTERACTIVE = "1";
     await restoreSandboxBaseline("alpha", { key: "nous_research", yes: true });
     expect(promptMock).not.toHaveBeenCalled();
-    expect(restoreBaselineEntryMock).toHaveBeenCalledWith("alpha", "nous_research");
+    expect(restoreBaselineEntryMock).toHaveBeenCalledWith("alpha", "nous_research", {
+      expectedTargetDigest: digestBaselineEntry(NOUS_ENTRY),
+    });
   });
 
   it("restores without prompting when acknowledged via --force (#8114)", async () => {
     getBaselineExclusionsMock.mockReturnValue([{ key: "nous_research", digest: "digest-1" }]);
     await restoreSandboxBaseline("alpha", { key: "nous_research", force: true });
     expect(promptMock).not.toHaveBeenCalled();
-    expect(restoreBaselineEntryMock).toHaveBeenCalledWith("alpha", "nous_research");
+    expect(restoreBaselineEntryMock).toHaveBeenCalledWith("alpha", "nous_research", {
+      expectedTargetDigest: digestBaselineEntry(NOUS_ENTRY),
+    });
+  });
+
+  it("binds stale exclusion cleanup to an absent preview", async () => {
+    getBaselineExclusionsMock.mockReturnValue([{ key: "legacy_entry", digest: "digest-1" }]);
+    vi.mocked(policies.getSandboxBaselineEntry).mockReturnValue(null);
+
+    await restoreSandboxBaseline("alpha", { key: "legacy_entry", force: true });
+
+    expect(restoreBaselineEntryMock).toHaveBeenCalledWith("alpha", "legacy_entry", {
+      expectedTargetDigest: null,
+    });
   });
 
   it("discloses the restored egress before interactive acknowledgement (#8114)", async () => {
