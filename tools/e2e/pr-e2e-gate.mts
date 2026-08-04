@@ -64,7 +64,7 @@ export { validateWorkflowDispatchDetails } from "./pr-e2e-dispatch-reconciliatio
 const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
 const PR_GATE_WORKFLOW = "pr-e2e-gate.yaml";
-const CHECK_NAME = "E2E / PR Gate Coordination";
+const CHECK_NAME = "E2E / PR Gate";
 const WORKFLOW_NAME = "E2E / PR Gate Controller";
 const RESERVED_CHECK_TITLE = "Waiting for PR CI";
 const RESERVED_CHECK_SUMMARY =
@@ -1978,12 +1978,15 @@ function validateCompatibleMainComparison(
     !Number.isSafeInteger(value.ahead_by) ||
     (value.ahead_by as number) < 1 ||
     value.behind_by !== 0 ||
+    value.total_commits !== value.ahead_by ||
     !isObjectRecord(value.base_commit) ||
     value.base_commit.sha !== workflowSha ||
     !isObjectRecord(value.merge_base_commit) ||
     value.merge_base_commit.sha !== workflowSha ||
-    !isObjectRecord(value.head_commit) ||
-    value.head_commit.sha !== mainSha ||
+    !Array.isArray(value.commits) ||
+    value.commits.length !== value.ahead_by ||
+    !isObjectRecord(value.commits.at(-1)) ||
+    value.commits.at(-1)?.sha !== mainSha ||
     !Array.isArray(value.files)
   ) {
     throw new Error(`main is not a validated descendant of workflow commit ${workflowSha}`);
@@ -2118,14 +2121,14 @@ function authorizedExecutionTitle(maintainer: string): string {
 
 function maintainerApprovalStateError(check: CheckRun, expectedTitle: string): Error {
   const title = check.output?.title;
-  const expected = `Wait for the coordination title "${expectedTitle}", then launch a fresh first-attempt approve-e2e run for the same exact revision.`;
+  const expected = `Wait for the required-check title "${expectedTitle}", then launch a fresh first-attempt approve-e2e run for the same exact revision.`;
 
   if (
     check.status === "completed" ||
     (check.conclusion !== undefined && check.conclusion !== null)
   ) {
     return new Error(
-      `PR gate is not ready for maintainer approval: coordination is terminal. Update the PR or rerun eligible CI to create a fresh pending authorization state; do not reuse this approval. Expected title: "${expectedTitle}".`,
+      `PR gate is not ready for maintainer approval: the required check is terminal. Update the PR or rerun eligible CI to create a fresh pending authorization state; do not reuse this approval. Expected title: "${expectedTitle}".`,
     );
   }
   if (
@@ -2136,7 +2139,7 @@ function maintainerApprovalStateError(check: CheckRun, expectedTitle: string): E
         title === RUNNER_LOSS_RETRY_PREPARATION_TITLE))
   ) {
     return new Error(
-      `PR gate is not ready for maintainer approval: coordination is still preparing. ${expected}`,
+      `PR gate is not ready for maintainer approval: the required check is still preparing. ${expected}`,
     );
   }
   if (
@@ -2149,7 +2152,7 @@ function maintainerApprovalStateError(check: CheckRun, expectedTitle: string): E
     );
   }
   return new Error(
-    `PR gate is not ready for maintainer approval: coordination is malformed or unknown. Inspect the coordination check and do not retry until the state is understood. Expected title: "${expectedTitle}".`,
+    `PR gate is not ready for maintainer approval: the required check is malformed or unknown. Inspect the required check and do not retry until the state is understood. Expected title: "${expectedTitle}".`,
   );
 }
 

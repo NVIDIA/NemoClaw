@@ -24,8 +24,8 @@ Use a host firewall with default-deny inbound rules.
 Allow TCP port `8000` only from the OpenShell Docker subnet to its gateway address, keep loopback access, and deny the port on every other interface.
 Do not expose the port to your LAN or the internet.
 
-The qualified dual-DGX Station path instead binds its bearer-protected `/v1` API to one selected private rail address and uses host networking on both runtime containers.
-Follow [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for its isolation requirements.
+The qualified two-DGX Spark and two-DGX Station paths use bearer-protected `/v1` routes and Docker host networking on both runtime containers; network isolation remains required for other endpoints and distributed traffic.
+Follow [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) or [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for their isolation requirements.
 </Warning>
 
 ## Use an Existing Server
@@ -83,7 +83,8 @@ Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PR
 In an interactive run, the managed path lists the supported model registry for your host profile.
 Press **Enter** to use the profile default or select another validated model with its registered `vllm serve` arguments.
 
-NemoClaw pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, starts the `nemoclaw-vllm` container on `localhost:8000`, streams Hugging Face download progress, and polls `/v1/models` until the model is ready.
+The single-host path pulls the vLLM image, downloads model weights into `~/.cache/huggingface`, and starts the `nemoclaw-vllm` container on `localhost:8000`.
+The distributed DGX pages document their separate container names, endpoints, and lifecycle checks.
 The container carries a NemoClaw ownership label so later onboarding runs can distinguish it from a bring-your-own server without trusting the container name alone.
 
 If an existing `nemoclaw-vllm` container does not carry that label, NemoClaw preserves it and asks you to remove or rename it before installing managed vLLM.
@@ -102,7 +103,7 @@ The two-Station page records the distributed recipe's image and runtime versions
 
 The first run duration depends on image and model size, storage performance, and network throughput.
 Later runs reuse the cached image and model weights.
-The managed container uses Docker's `--restart unless-stopped` policy, so Docker restarts it unless an operator explicitly stops it.
+The single-host managed container uses Docker's `--restart unless-stopped` policy, so Docker restarts it unless an operator explicitly stops it.
 
 ### Authenticate Hugging Face Downloads
 
@@ -197,6 +198,9 @@ When you start managed vLLM outside the installer express flow, NemoClaw uses th
 On DGX Station, accepting the installer express prompt selects `NEMOCLAW_VLLM_MODEL=nemotron-3-ultra-550b-a55b`.
 Express uses the single-Station Ultra recipe unless a trusted reciprocal pair qualifies for distributed serving.
 Refer to [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for pair qualification, lifecycle receipts, runtime topology, and network controls.
+
+On DGX Spark, Express selects the pinned two-node profile when exactly one pretrusted reciprocal pair qualifies and no inference intent or related runtime conflicts.
+Refer to [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) for automatic and explicit selection, profile requirements, and cleanup behavior.
 
 To select the existing `deepseek-v4-flash` recipe while retaining the same one-confirmation express flow, run:
 
@@ -331,6 +335,7 @@ If the selected image does not support an argument, the managed container exits 
 ## Related Topics
 
 - [Choose a Local Inference Server](choose-local-inference-server) to compare vLLM with Ollama and NVIDIA NIM.
+- [Set Up vLLM on Two DGX Sparks](set-up-vllm-on-two-dgx-sparks) for the Experimental distributed DeepSeek V4 Flash profile.
 - [Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations) for the Deferred distributed-serving workflow.
 - [Configure Inference Timeouts](../manage-inference/configure-inference-timeouts) when model startup or validation needs more time.
 - [Verify the Inference Route](../validate-inference/verify-inference-route) after setup.

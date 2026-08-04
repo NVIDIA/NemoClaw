@@ -75,19 +75,31 @@ It also preserves the gateway process, supervisor resources, marked Linux unit, 
 A custom-port uninstall does not stop or remove the default gateway service or its environment file.
 
 <Note>
+In this section, `<selected-state-root>` is `~/.nemoclaw/` for the default gateway or `~/.nemoclaw/gateways/<port>/` for a non-default gateway.
 For the default gateway, the uninstall command preserves `~/.nemoclaw/rebuild-backups/`, `~/.nemoclaw/backups/`, and `~/.nemoclaw/sandboxes.json` by default.
 A non-default gateway uses the corresponding entries under `~/.nemoclaw/gateways/<port>/`.
 When uninstall confirms that no sibling gateways remain, it also removes the shared CLI, services, images, providers, configuration, models, and swap.
-During full uninstall, a managed dual-Station cleanup receipt makes NemoClaw first revalidate the recorded peer, cluster, and GPU identities and remove both exact managed vLLM containers.
-Only after that pair cleanup succeeds does NemoClaw start the remaining full-uninstall steps.
-If validation or pair cleanup fails, uninstall exits nonzero and keeps the receipt so you can resolve the reported SSH, Docker, or peer-host error and retry.
-Pair cleanup can partially complete before an error, so inspect both Stations before retrying.
+During full uninstall, a managed distributed-vLLM receipt makes NemoClaw first revalidate the recorded plan and every cluster node, GPU, container, and SSH peer identity.
+It then removes only the exact receipt-owned containers.
+The managed-cluster receipt is host-global under `~/.nemoclaw/`.
+Current dual-DGX Station receipts and copied SSH bindings are also host-global under `~/.nemoclaw/`.
+Earlier releases can leave Station receipts and bindings under `~/.nemoclaw/gateways/<port>/`; NemoClaw discovers and validates those legacy locations in place.
+NemoClaw starts the remaining full-uninstall steps only after distributed runtime cleanup succeeds.
+For a host-global managed-cluster receipt, successful cleanup also retires every recorded temporary discovery claim.
+An interrupted transaction can leave `~/.nemoclaw/managed-cluster-managed-serving.json.<node-id>.ssh-binding/` without a durable runtime receipt.
+In that state, full uninstall fails closed before mutation and preserves every claim for explicit recovery or removal.
+These temporary claims are host-global regardless of the selected gateway.
+If validation, runtime cleanup, or temporary-claim retirement fails, uninstall exits nonzero and keeps the receipt.
+Resolve the reported SSH, Docker, peer-host, or claim error before you retry.
+Runtime cleanup can partially complete before an error, so inspect every cluster node before retrying.
 When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state and preserves those shared host resources.
-This gateway-scoped path leaves the managed pair running and preserves its cleanup receipt and copied SSH binding, including when you pass `--destroy-user-data`.
+This gateway-scoped path leaves a managed distributed runtime running.
+It preserves the cleanup receipt, copied SSH bindings, temporary discovery claims, and host-global API key.
+This preservation also applies when you pass `--destroy-user-data`.
 If the OpenShell command is unavailable or its gateway list cannot be read, uninstall cannot confirm that the selected gateway is the last one, so it uses the same scoped path and preserves the shared resources.
 When the command itself is unavailable, uninstall exits nonzero before OpenShell cleanup so you can restore the command and retry.
 The preserved `rebuild-backups/`, `backups/`, and `sandboxes.json` entries stay unless you pass `--destroy-user-data`.
-That flag does not override gateway-scoped preservation of the managed pair receipt or its copied SSH binding.
+That flag does not override gateway-scoped preservation of the managed runtime receipt, copied SSH bindings, or temporary discovery claims.
 
 Interactive runs prompt before they remove the preserved entries, and the default answer keeps them.
 For non-interactive runs using `--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell, pass `--destroy-user-data` or set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries.
