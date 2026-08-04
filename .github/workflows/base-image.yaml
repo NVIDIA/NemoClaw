@@ -492,7 +492,7 @@ jobs:
           fi
 
           declare -A seen_arches=()
-          declare -A platform_digests=()
+          declare -A source_digests=()
           sources=()
           for digest_file in "${digest_files[@]}"; do
             digest_artifact="$(basename "$digest_file")"
@@ -516,7 +516,7 @@ jobs:
               exit 1
             fi
             seen_arches["$expected_arch"]=1
-            platform_digests["linux/$expected_arch"]="sha256:$digest"
+            source_digests["linux/$expected_arch"]="sha256:$digest"
             sources+=("$source")
           done
           if [ "${seen_arches[amd64]:-0}" -ne 1 ] || [ "${seen_arches[arm64]:-0}" -ne 1 ]; then
@@ -536,31 +536,40 @@ jobs:
             exit 1
           fi
 
-          docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"
-          first_tag="${tags[0]}"
+          candidate_tag="$IMAGE:base-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          candidate_metadata="$RUNNER_TEMP/$AGENT-base-candidate-metadata.json"
+          docker buildx imagetools create \
+            --tag "$candidate_tag" \
+            --metadata-file "$candidate_metadata" \
+            "${sources[@]}"
+          digest="$(jq -er '.["containerimage.descriptor"].digest' "$candidate_metadata")"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: expected one staged Hermes base digest." >&2
+            exit 1
+          fi
+          reference="$IMAGE@$digest"
           actual_platforms="$(
-            docker buildx imagetools inspect "$first_tag" --raw \
+            docker buildx imagetools inspect "$reference" --raw \
               | jq -r '.manifests[] | select(.platform.os == "linux") | .platform.architecture' \
               | sort -u \
               | paste -sd, -
           )"
           if [ "$actual_platforms" != "amd64,arm64" ]; then
-            echo "ERROR: published manifest has unexpected platforms: $actual_platforms" >&2
+            echo "ERROR: staged manifest has unexpected platforms: $actual_platforms" >&2
             exit 1
           fi
-          digest="$(
-            docker buildx imagetools inspect "$first_tag" \
-              --format '{{.Manifest.Digest}}'
+          platform_digests_json="$(
+            scripts/checks/validate-managed-base-index.sh \
+              "$reference" \
+              "${source_digests[linux/amd64]}" \
+              "${source_digests[linux/arm64]}"
           )"
-          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "ERROR: expected one published Hermes base digest." >&2
-            exit 1
-          fi
-          reference="$IMAGE@$digest"
-          scripts/checks/validate-managed-base-index.sh \
-            "$reference" \
-            "${platform_digests[linux/amd64]}" \
-            "${platform_digests[linux/arm64]}"
+          declare -A platform_digests=()
+          for platform in linux/amd64 linux/arm64; do
+            platform_digests["$platform"]="$(
+              jq -er --arg platform "$platform" '.[$platform]' <<< "$platform_digests_json"
+            )"
+          done
 
           scripts/export-managed-base-image-contract.sh \
             "$AGENT" \
@@ -572,6 +581,17 @@ jobs:
             "$GITHUB_RUN_ID" \
             "$GITHUB_RUN_ATTEMPT" \
             "$RUNNER_TEMP/managed-base-contract/contract.json"
+
+          publication_metadata="$RUNNER_TEMP/$AGENT-base-publication-metadata.json"
+          docker buildx imagetools create \
+            "${tag_args[@]}" \
+            --metadata-file "$publication_metadata" \
+            "$reference"
+          published_digest="$(jq -er '.["containerimage.descriptor"].digest' "$publication_metadata")"
+          if [ "$published_digest" != "$digest" ]; then
+            echo "ERROR: published Hermes base digest differs from the validated candidate." >&2
+            exit 1
+          fi
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
 
       - name: Upload managed base image contract
@@ -639,7 +659,7 @@ jobs:
           fi
 
           declare -A seen_arches=()
-          declare -A platform_digests=()
+          declare -A source_digests=()
           sources=()
           for digest_file in "${digest_files[@]}"; do
             digest_artifact="$(basename "$digest_file")"
@@ -663,7 +683,7 @@ jobs:
               exit 1
             fi
             seen_arches["$expected_arch"]=1
-            platform_digests["linux/$expected_arch"]="sha256:$digest"
+            source_digests["linux/$expected_arch"]="sha256:$digest"
             sources+=("$source")
           done
           if [ "${seen_arches[amd64]:-0}" -ne 1 ] || [ "${seen_arches[arm64]:-0}" -ne 1 ]; then
@@ -683,31 +703,40 @@ jobs:
             exit 1
           fi
 
-          docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"
-          first_tag="${tags[0]}"
+          candidate_tag="$IMAGE:base-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          candidate_metadata="$RUNNER_TEMP/$AGENT-base-candidate-metadata.json"
+          docker buildx imagetools create \
+            --tag "$candidate_tag" \
+            --metadata-file "$candidate_metadata" \
+            "${sources[@]}"
+          digest="$(jq -er '.["containerimage.descriptor"].digest' "$candidate_metadata")"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: expected one staged Deep Agents Code base digest." >&2
+            exit 1
+          fi
+          reference="$IMAGE@$digest"
           actual_platforms="$(
-            docker buildx imagetools inspect "$first_tag" --raw \
+            docker buildx imagetools inspect "$reference" --raw \
               | jq -r '.manifests[] | select(.platform.os == "linux") | .platform.architecture' \
               | sort -u \
               | paste -sd, -
           )"
           if [ "$actual_platforms" != "amd64,arm64" ]; then
-            echo "ERROR: published manifest has unexpected platforms: $actual_platforms" >&2
+            echo "ERROR: staged manifest has unexpected platforms: $actual_platforms" >&2
             exit 1
           fi
-          digest="$(
-            docker buildx imagetools inspect "$first_tag" \
-              --format '{{.Manifest.Digest}}'
+          platform_digests_json="$(
+            scripts/checks/validate-managed-base-index.sh \
+              "$reference" \
+              "${source_digests[linux/amd64]}" \
+              "${source_digests[linux/arm64]}"
           )"
-          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "ERROR: expected one published Deep Agents Code base digest." >&2
-            exit 1
-          fi
-          reference="$IMAGE@$digest"
-          scripts/checks/validate-managed-base-index.sh \
-            "$reference" \
-            "${platform_digests[linux/amd64]}" \
-            "${platform_digests[linux/arm64]}"
+          declare -A platform_digests=()
+          for platform in linux/amd64 linux/arm64; do
+            platform_digests["$platform"]="$(
+              jq -er --arg platform "$platform" '.[$platform]' <<< "$platform_digests_json"
+            )"
+          done
 
           scripts/export-managed-base-image-contract.sh \
             "$AGENT" \
@@ -719,6 +748,17 @@ jobs:
             "$GITHUB_RUN_ID" \
             "$GITHUB_RUN_ATTEMPT" \
             "$RUNNER_TEMP/managed-base-contract/contract.json"
+
+          publication_metadata="$RUNNER_TEMP/$AGENT-base-publication-metadata.json"
+          docker buildx imagetools create \
+            "${tag_args[@]}" \
+            --metadata-file "$publication_metadata" \
+            "$reference"
+          published_digest="$(jq -er '.["containerimage.descriptor"].digest' "$publication_metadata")"
+          if [ "$published_digest" != "$digest" ]; then
+            echo "ERROR: published Deep Agents Code base digest differs from the validated candidate." >&2
+            exit 1
+          fi
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
 
       - name: Upload managed base image contract
@@ -788,7 +828,7 @@ jobs:
           fi
 
           declare -A seen_arches=()
-          declare -A platform_digests=()
+          declare -A source_digests=()
           sources=()
           for digest_file in "${digest_files[@]}"; do
             digest_artifact="$(basename "$digest_file")"
@@ -812,7 +852,7 @@ jobs:
               exit 1
             fi
             seen_arches["$expected_arch"]=1
-            platform_digests["linux/$expected_arch"]="sha256:$digest"
+            source_digests["linux/$expected_arch"]="sha256:$digest"
             sources+=("$source")
           done
           if [ "${seen_arches[amd64]:-0}" -ne 1 ] || [ "${seen_arches[arm64]:-0}" -ne 1 ]; then
@@ -832,31 +872,40 @@ jobs:
             exit 1
           fi
 
-          docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"
-          first_tag="${tags[0]}"
+          candidate_tag="$IMAGE:base-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          candidate_metadata="$RUNNER_TEMP/$AGENT-base-candidate-metadata.json"
+          docker buildx imagetools create \
+            --tag "$candidate_tag" \
+            --metadata-file "$candidate_metadata" \
+            "${sources[@]}"
+          digest="$(jq -er '.["containerimage.descriptor"].digest' "$candidate_metadata")"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: expected one staged OpenClaw base digest." >&2
+            exit 1
+          fi
+          reference="$IMAGE@$digest"
           actual_platforms="$(
-            docker buildx imagetools inspect "$first_tag" --raw \
+            docker buildx imagetools inspect "$reference" --raw \
               | jq -r '.manifests[] | select(.platform.os == "linux") | .platform.architecture' \
               | sort -u \
               | paste -sd, -
           )"
           if [ "$actual_platforms" != "amd64,arm64" ]; then
-            echo "ERROR: published manifest has unexpected platforms: $actual_platforms" >&2
+            echo "ERROR: staged manifest has unexpected platforms: $actual_platforms" >&2
             exit 1
           fi
-          digest="$(
-            docker buildx imagetools inspect "$first_tag" \
-              --format '{{.Manifest.Digest}}'
+          platform_digests_json="$(
+            scripts/checks/validate-managed-base-index.sh \
+              "$reference" \
+              "${source_digests[linux/amd64]}" \
+              "${source_digests[linux/arm64]}"
           )"
-          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "ERROR: expected one published OpenClaw base digest." >&2
-            exit 1
-          fi
-          reference="$IMAGE@$digest"
-          scripts/checks/validate-managed-base-index.sh \
-            "$reference" \
-            "${platform_digests[linux/amd64]}" \
-            "${platform_digests[linux/arm64]}"
+          declare -A platform_digests=()
+          for platform in linux/amd64 linux/arm64; do
+            platform_digests["$platform"]="$(
+              jq -er --arg platform "$platform" '.[$platform]' <<< "$platform_digests_json"
+            )"
+          done
 
           scripts/export-managed-base-image-contract.sh \
             "$AGENT" \
@@ -868,6 +917,17 @@ jobs:
             "$GITHUB_RUN_ID" \
             "$GITHUB_RUN_ATTEMPT" \
             "$RUNNER_TEMP/managed-base-contract/contract.json"
+
+          publication_metadata="$RUNNER_TEMP/$AGENT-base-publication-metadata.json"
+          docker buildx imagetools create \
+            "${tag_args[@]}" \
+            --metadata-file "$publication_metadata" \
+            "$reference"
+          published_digest="$(jq -er '.["containerimage.descriptor"].digest' "$publication_metadata")"
+          if [ "$published_digest" != "$digest" ]; then
+            echo "ERROR: published OpenClaw base digest differs from the validated candidate." >&2
+            exit 1
+          fi
           printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
 
       - name: Upload managed base image contract

@@ -2033,6 +2033,285 @@ jobs:
         shell: bash
         run: bash .github/scripts/docker-auth-cleanup.sh
 
+  # This explicit-only lane runs only when the exact candidate includes
+  # ci/protected-managed-image-runtime-activation-v1.json. The trusted
+  # controller can then qualify that candidate's exact head without executing
+  # PR-controlled workflow code.
+  managed-image-protected-runtime:
+    name: Protected managed-image GPU and local inference
+    needs: generate-matrix
+    if: ${{ contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,') }}
+    runs-on: linux-amd64-gpu-rtxpro6000-latest-1
+    timeout-minutes: 300
+    permissions:
+      contents: read
+    env:
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_JOB: "1"
+      E2E_TARGET_ID: "managed-image-protected-runtime"
+      RELEASE_E2E_ACTIVATION_PATH: ci/protected-managed-image-runtime-activation-v1.json
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_E2E_SHARD: linux-amd64-gpu
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.base_sha }}
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT: protected-${{ github.run_id }}-${{ github.run_attempt }}
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT: ${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime/contracts.json
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM: linux/amd64
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+      NEMOCLAW_PROTECTED_REGISTRY_NAME: nemoclaw-managed-runtime-${{ github.run_id }}-${{ github.run_attempt }}
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - name: Validate protected runtime exact-head dispatch
+        env:
+          ACTOR: ${{ github.actor }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.workflow_sha }}
+          REF: ${{ github.ref }}
+          REPOSITORY: ${{ github.repository }}
+          RUNNER_ARCH_KIND: ${{ runner.arch }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$REPOSITORY" == "NVIDIA/NemoClaw" && "$REF" == "refs/heads/main" && "$EVENT_NAME" == "workflow_dispatch" ]] || {
+            echo "::error::Protected managed-image runtime must run from trusted NVIDIA/NemoClaw main" >&2
+            exit 1
+          }
+          [[ "$ACTOR" == "github-actions[bot]" ]] || {
+            echo "::error::Protected managed-image runtime requires the trusted controller actor" >&2
+            exit 1
+          }
+          [[ "$CHECKOUT_SHA" =~ ^[a-f0-9]{40}$ && "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
+            echo "::error::Protected managed-image runtime requires exact PR and base SHAs" >&2
+            exit 1
+          }
+          [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ && "$WORKFLOW_SHA" == "$EXPECTED_WORKFLOW_SHA" ]] || {
+            echo "::error::Protected managed-image runtime requires the exact trusted workflow SHA" >&2
+            exit 1
+          }
+          [[ "$RUNNER_ARCH_KIND" == "X64" ]] || {
+            echo "::error::Protected managed-image runtime requires a native linux/amd64 GPU runner" >&2
+            exit 1
+          }
+
+      - name: Checkout trusted protected runtime qualification
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout exact protected runtime candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.checkout_repository || github.repository }}
+          ref: ${{ inputs.checkout_sha || github.sha }}
+          path: .candidate-runtime
+          fetch-depth: 0
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Set up protected runtime Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          driver-opts: network=host
+          buildkitd-config-inline: |
+            [registry."localhost:5000"]
+              http = true
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+
+      - name: Validate protected runtime activation contract
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate_root=".candidate-runtime"
+          activation="$candidate_root/ci/protected-managed-image-runtime-activation-v1.json"
+          [[ "$(git -C "$candidate_root" rev-parse --verify HEAD)" == "$CHECKOUT_SHA" ]] || {
+            echo "::error::Protected managed-image runtime checkout does not match the exact PR SHA" >&2
+            exit 1
+          }
+          [[ -f "$activation" && ! -L "$activation" ]] || {
+            echo "::error::Protected managed-image runtime activation contract is absent" >&2
+            exit 1
+          }
+          jq -e '
+            (keys | sort) == ["agents", "contractVersion", "jobId", "platform", "providers"] and
+            .contractVersion == 1 and
+            .jobId == "managed-image-protected-runtime" and
+            .agents == ["openclaw", "hermes", "langchain-deepagents-code"] and
+            .platform == "linux/amd64" and
+            .providers == ["ollama", "nim", "vllm"]
+          ' "$activation" >/dev/null || {
+            echo "::error::Protected managed-image runtime activation contract is invalid" >&2
+            exit 1
+          }
+          install -d -m 0700 "$E2E_ARTIFACT_DIR"
+
+      - id: runtime-bases
+        name: Resolve exact amd64 runtime base images
+        shell: bash
+        run: |
+          set -euo pipefail
+          work_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-runtime-bases.XXXXXX")"
+          trap 'rm -rf -- "$work_dir"' EXIT
+
+          resolve_base() {
+            local output_name="$1"
+            local alias="$2"
+            local repository="$3"
+            local alias_raw="$work_dir/${output_name}-alias.raw"
+            local exact_raw="$work_dir/${output_name}-exact.raw"
+            docker buildx imagetools inspect "$alias" --raw > "$alias_raw"
+            local digest
+            digest="$(
+              jq -er '
+                if (
+                  .mediaType == "application/vnd.oci.image.index.v1+json" or
+                  .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"
+                ) then
+                  [.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")]
+                  | if length == 1 then .[0].digest else error("not one exact amd64 descriptor") end
+                else
+                  error("base alias is not a platform index")
+                end
+              ' "$alias_raw"
+            )"
+            [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+              echo "::error::${output_name} base alias returned an invalid digest" >&2
+              exit 1
+            }
+            local reference="${repository}@${digest}"
+            docker buildx imagetools inspect "$reference" --raw > "$exact_raw"
+            [[ "sha256:$(sha256sum "$exact_raw" | awk '{print $1}')" == "$digest" ]] || {
+              echo "::error::${output_name} exact base bytes do not match the selected digest" >&2
+              exit 1
+            }
+            printf '%s=%s\n' "$output_name" "$reference" >> "$GITHUB_OUTPUT"
+          }
+
+          resolve_base openclaw \
+            ghcr.io/nvidia/nemoclaw/sandbox-base:latest \
+            ghcr.io/nvidia/nemoclaw/sandbox-base
+          resolve_base hermes \
+            ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest \
+            ghcr.io/nvidia/nemoclaw/hermes-sandbox-base
+          resolve_base dcode \
+            ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest \
+            ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base
+
+      - name: Start isolated protected runtime registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          if docker container inspect "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >/dev/null 2>&1; then
+            echo "::error::Protected runtime registry name already exists" >&2
+            exit 1
+          fi
+          if curl --fail --silent --show-error http://127.0.0.1:5000/v2/ >/dev/null 2>&1; then
+            echo "::error::Refusing to reuse an existing localhost:5000 registry" >&2
+            exit 1
+          fi
+          docker run --detach \
+            --name "$NEMOCLAW_PROTECTED_REGISTRY_NAME" \
+            --label "io.nvidia.nemoclaw.e2e-owner=${NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT}" \
+            --label "io.nvidia.nemoclaw.e2e-platform=linux/amd64" \
+            --publish 127.0.0.1:5000:5000 \
+            docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
+          for _ in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:5000/v2/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >&2
+          exit 1
+
+      - name: Build exact all-agent protected runtime images
+        env:
+          BASE_DCODE: ${{ steps.runtime-bases.outputs.dcode }}
+          BASE_HERMES: ${{ steps.runtime-bases.outputs.hermes }}
+          BASE_OPENCLAW: ${{ steps.runtime-bases.outputs.openclaw }}
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/checks/build-protected-managed-images.sh \
+            --output "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT" \
+            --revision "$CHECKOUT_SHA" \
+            --cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" \
+            --platform linux/amd64 \
+            --source-root "$GITHUB_WORKSPACE/.candidate-runtime" \
+            --openclaw-base "$BASE_OPENCLAW" \
+            --hermes-base "$BASE_HERMES" \
+            --dcode-base "$BASE_DCODE"
+
+      - name: Install OpenShell CLI
+        shell: bash
+        run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
+      - name: Run all-agent GPU, local inference, rollback, and cleanup qualification
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse --verify HEAD)" == "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_WORKFLOW_SHA" ]] || {
+            echo "::error::Protected NIM qualification must execute trusted workflow code" >&2
+            exit 1
+          }
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          export OPENSHELL_BIN="$(command -v openshell)"
+          "$OPENSHELL_BIN" --version
+          npx tsx tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/managed-image-protected-runtime.test.ts
+
+      - name: Remove isolated protected runtime registry
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if docker container inspect "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >/dev/null 2>&1; then
+            owner="$(
+              docker container inspect \
+                --format '{{index .Config.Labels "io.nvidia.nemoclaw.e2e-owner"}}' \
+                "$NEMOCLAW_PROTECTED_REGISTRY_NAME"
+            )"
+            [[ "$owner" == "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" ]] || {
+              echo "::error::Refusing to remove a runtime registry not owned by this protected job" >&2
+              exit 1
+            }
+            docker rm -f "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >/dev/null
+          fi
+          if docker container inspect "$NEMOCLAW_PROTECTED_REGISTRY_NAME" >/dev/null 2>&1; then
+            echo "::error::Protected managed-image runtime registry remained after cleanup" >&2
+            exit 1
+          fi
+          if curl --fail --silent --show-error http://127.0.0.1:5000/v2/ >/dev/null 2>&1; then
+            echo "::error::Protected managed-image runtime registry listener remained after cleanup" >&2
+            exit 1
+          fi
+
+      - name: Upload protected managed-image runtime artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-managed-image-protected-runtime
+          path: e2e-artifacts/live/managed-image-protected-runtime/
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   agent-turn-latency:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',agent-turn-latency,') || contains(format(',{0},', inputs.targets), ',agent-turn-latency,') }}
@@ -6071,6 +6350,7 @@ jobs:
         cloud-inference,
         gpu-e2e,
         managed-image-multiarch-startup,
+        managed-image-protected-runtime,
         agent-turn-latency,
         kimi-inference-compat,
         hermes-inference-switch,

@@ -24,6 +24,7 @@ const HERMES_SANDBOX_BOUNDARY_JOBS = [
   "full-e2e",
   "hermes-e2e",
   "hermes-inference-switch",
+  "managed-image-multiarch-startup",
   "security-posture",
 ];
 const HERMES_CLI_ADAPTER_JOBS = ["channels-stop-start", "mcp-bridge"];
@@ -79,7 +80,7 @@ describe("deterministic PR risk plan", () => {
     const second = plan("src/lib/onboard.ts", "src/lib/state/registry.ts");
 
     expect(first).toEqual(second);
-    expect(first.version).toBe(13);
+    expect(first.version).toBe(14);
     expect(first.headSha).toBe(HEAD_SHA);
     expect(first.planHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(first.changedFiles).toEqual(["src/lib/onboard.ts", "src/lib/state/registry.ts"]);
@@ -223,6 +224,7 @@ describe("deterministic PR risk plan", () => {
       "full-e2e",
       "hermes-e2e",
       "hermes-inference-switch",
+      "managed-image-multiarch-startup",
       "security-posture",
     ]);
   });
@@ -317,29 +319,91 @@ describe("deterministic PR risk plan", () => {
     ]);
   });
 
-  it("keeps the protected managed-image lane dormant until its trusted activation marker (#7744)", () => {
+  it("activates protected multiarch qualification for every managed-image build input (#7744)", () => {
     const activation = "ci/protected-managed-image-multiarch-activation-v1.json";
-    const result = plan(activation);
-    const preActivationPaths = [
+    const managedImageInputs = [
+      activation,
+      ".github/workflows/managed-images.yaml",
+      "Dockerfile",
+      "agents/hermes/Dockerfile",
+      "agents/langchain-deepagents-code/Dockerfile",
       "scripts/checks/run-managed-image-direct-e2e.ts",
-      "scripts/checks/build-protected-managed-images.sh",
-      "scripts/checks/protected-managed-image-contract.ts",
-      "test/e2e/live/managed-image-multiarch-startup.test.ts",
+      "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.99.json",
+      "src/lib/onboard/managed-startup/image-runtime.ts",
     ];
+    const result = plan(...managedImageInputs);
+    const adjacentOnboardChange = plan("src/lib/onboard/provider-selection.ts");
 
     expect(result.families).toContainEqual(
       expect.objectContaining({
         id: "managed-image-multiarch",
-        matchedFiles: [activation],
+        matchedFiles: [...managedImageInputs].sort((left, right) => left.localeCompare(right)),
         requiredJobs: ["managed-image-multiarch-startup"],
       }),
     );
-    expect(riskPlanRequiredJobIds(result)).toEqual(["managed-image-multiarch-startup"]);
-    for (const file of preActivationPaths) {
-      expect(plan(file).families.map((family) => family.id)).not.toContain(
-        "managed-image-multiarch",
-      );
-    }
+    expect(riskPlanRequiredJobIds(result)).toContain("managed-image-multiarch-startup");
+    expect(riskPlanRequiredJobIds(plan(activation))).toEqual(["managed-image-multiarch-startup"]);
+    expect(
+      adjacentOnboardChange.families.some((family) => family.id === "managed-image-multiarch"),
+    ).toBe(false);
+  });
+
+  it.each([
+    ".github/workflows/managed-images.yaml",
+    ".dockerignore",
+    "Dockerfile",
+    "agents/hermes/Dockerfile",
+    "ci/npm-audit-exceptions.json",
+    "nemoclaw/src/index.ts",
+    "nemoclaw-blueprint/blueprint.yaml",
+    "scripts/checks/build-protected-managed-images.sh",
+    "src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.99.json",
+    "src/lib/core/json-types.ts",
+    "src/lib/core/ports.ts",
+    "src/lib/messaging/runtime.ts",
+    "src/lib/onboard/managed-bootstrap/envelope.ts",
+    "src/lib/onboard/managed-startup/image-runtime.ts",
+    "src/lib/security/credential-hash.ts",
+    "src/lib/state/paths.ts",
+    "src/lib/state/state-root.ts",
+    "src/lib/tool-disclosure.ts",
+    "tools/mcp-tool-discovery-runtime/index.ts",
+    "tsconfig.runtime-preloads.json",
+  ])("selects protected multiarch qualification for managed-image input %s (#7744)", (file) => {
+    expect(riskPlanRequiredJobIds(plan(file))).toContain("managed-image-multiarch-startup");
+  });
+
+  it("does not select protected multiarch qualification for adjacent changes (#7744)", () => {
+    expect(
+      plan(
+        ".github/workflows/e2e.yaml",
+        "docs/get-started/quickstart.mdx",
+        "src/lib/onboard/provider-selection.ts",
+      ).families.some((family) => family.id === "managed-image-multiarch"),
+    ).toBe(false);
+  });
+
+  it("keeps protected GPU and local-inference qualification activation-only until trusted (#7744)", () => {
+    const activation = "ci/protected-managed-image-runtime-activation-v1.json";
+    const result = plan(activation);
+    const dormantImplementation = plan(
+      "scripts/checks/run-managed-image-openshell-e2e.ts",
+      "test/e2e/live/managed-image-protected-runtime.test.ts",
+    );
+
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "managed-image-protected-runtime",
+        matchedFiles: [activation],
+        requiredJobs: ["managed-image-protected-runtime"],
+      }),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(["managed-image-protected-runtime"]);
+    expect(
+      dormantImplementation.families.some(
+        (family) => family.id === "managed-image-protected-runtime",
+      ),
+    ).toBe(false);
   });
 
   it("loads protected multiarch identifiers through the workflow node loader (#7744)", () => {
@@ -475,7 +539,8 @@ describe("deterministic PR risk plan", () => {
         matchedFiles: ["agents/langchain-deepagents-code/patch-managed-deepagents-code.py"],
       }),
     ]);
-    expect(result.tier).toBe(2);
+    expect(result.tier).toBe(3);
+    expect(riskPlanRequiredJobIds(result)).toContain("managed-image-multiarch-startup");
     expect(riskPlanRequiredTargetIds(docsAndTestsOnly)).toEqual([]);
   });
 
@@ -582,8 +647,13 @@ describe("deterministic PR risk plan", () => {
     expect(rootImage.families.map((family) => family.id)).toEqual([
       "platform-install",
       "openclaw-image",
+      "managed-image-multiarch",
     ]);
-    expect(riskPlanRequiredJobIds(rootImage)).toEqual(["cloud-onboard", "full-e2e"]);
+    expect(riskPlanRequiredJobIds(rootImage)).toEqual([
+      "cloud-onboard",
+      "full-e2e",
+      "managed-image-multiarch-startup",
+    ]);
     expect(adjacentImage.families.map((family) => family.id)).toEqual(["platform-install"]);
     expect(riskPlanRequiredJobIds(adjacentImage)).toEqual(["cloud-onboard"]);
   });
@@ -694,6 +764,7 @@ describe("deterministic PR risk plan", () => {
     expect(riskPlanRequiredJobIds(result)).toEqual([
       "cloud-inference",
       "cloud-onboard",
+      "managed-image-multiarch-startup",
       "security-posture",
       "channels-add-remove",
       "channels-stop-start",
