@@ -209,19 +209,18 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gpu-composed-rollback-"));
     const replacementId = "a".repeat(64);
     let captured: DockerGpuPreRollbackDiagnostics | null = null;
-    const dockerCapture = vi.fn((args: readonly string[]) => {
-      const command = args.join(" ");
-      if (
-        command ===
-        "ps -a --no-trunc --filter label=openshell.ai/managed-by=openshell --filter label=openshell.ai/sandbox-name=alpha --format {{.ID}}"
-      ) {
-        return `${replacementId}\n`;
-      }
-      if (command === `inspect --format {{json .State}} ${replacementId}`) {
-        return JSON.stringify({ Status: "exited", Running: false, ExitCode: 127 });
-      }
-      if (command === `inspect ${replacementId}`) {
-        return JSON.stringify([
+    const dockerResponses = new Map([
+      [
+        "ps -a --no-trunc --filter label=openshell.ai/managed-by=openshell --filter label=openshell.ai/sandbox-name=alpha --format {{.ID}}",
+        `${replacementId}\n`,
+      ],
+      [
+        `inspect --format {{json .State}} ${replacementId}`,
+        JSON.stringify({ Status: "exited", Running: false, ExitCode: 127 }),
+      ],
+      [
+        `inspect ${replacementId}`,
+        JSON.stringify([
           {
             Id: replacementId,
             Name: "/failed-replacement",
@@ -229,17 +228,22 @@ describe("Docker GPU create diagnostics fail-safety (#6110)", () => {
             HostConfig: {},
             NetworkSettings: { Networks: {} },
           },
-        ]);
-      }
-      if (command === "inspect old-container-id" || command === "inspect backup-container") {
-        return "[]";
-      }
-      return "";
-    });
-    const runCaptureOpenshell = vi.fn((args: readonly string[]) => {
-      if (args[0] !== "sandbox") return "";
-      return args[1] === "get" ? "Phase: Error\n" : "alpha  Error\n";
-    });
+        ]),
+      ],
+      ["inspect old-container-id", "[]"],
+      ["inspect backup-container", "[]"],
+    ]);
+    const dockerCapture = vi.fn(
+      (args: readonly string[]) => dockerResponses.get(args.join(" ")) ?? "",
+    );
+    const openshellResponses = new Map([
+      ["sandbox get", "Phase: Error\n"],
+      ["sandbox list", "alpha  Error\n"],
+    ]);
+    const runCaptureOpenshell = vi.fn(
+      (args: readonly string[]) =>
+        openshellResponses.get(`${args[0] ?? ""} ${args[1] ?? ""}`.trim()) ?? "",
+    );
     const dockerRm = vi.fn(() => ({ status: 1, stderr: "daemon timeout" }));
     const dockerRun = vi.fn(() => ({ status: 0, stdout: `${replacementId}\n` }));
     const dockerRename = vi.fn(() => ({ status: 0 }));

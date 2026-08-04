@@ -180,16 +180,22 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
   });
 
   it("retains exit code 127 without assigning a cause when the bundle cannot be created (#7996)", () => {
-    const dockerCapture = vi.fn((args: readonly string[]) =>
-      args.join(" ") === "inspect --format {{json .State}} new-container-id"
-        ? JSON.stringify({ Status: "exited", Running: false, ExitCode: 127 })
-        : "",
+    const dockerResponses = new Map([
+      [
+        "inspect --format {{json .State}} new-container-id",
+        JSON.stringify({ Status: "exited", Running: false, ExitCode: 127 }),
+      ],
+    ]);
+    const dockerCapture = vi.fn(
+      (args: readonly string[]) => dockerResponses.get(args.join(" ")) ?? "",
     );
-    const runCaptureOpenshell = vi.fn((args: string[]) => {
-      if (args[0] !== "sandbox") return "";
-      if (args[1] === "get") return "Phase: Error\n";
-      return args[1] === "list" ? "alpha  Error\n" : "";
-    });
+    const openshellResponses = new Map([
+      ["sandbox get", "Phase: Error\n"],
+      ["sandbox list", "alpha  Error\n"],
+    ]);
+    const runCaptureOpenshell = vi.fn(
+      (args: string[]) => openshellResponses.get(`${args[0] ?? ""} ${args[1] ?? ""}`.trim()) ?? "",
+    );
 
     const captured = captureDockerGpuPreRollbackDiagnostics("alpha", patchResult(), {
       dockerCapture,
@@ -208,16 +214,22 @@ describe("Docker GPU pre-rollback diagnostics (#6110)", () => {
   });
 
   it("adds missing-startup guidance only for the exact captured env error (#7996)", () => {
-    const dockerCapture = vi.fn((args: readonly string[]) =>
-      args.join(" ") === "inspect --format {{json .State}} new-container-id"
-        ? JSON.stringify({ Status: "exited", Running: false, ExitCode: 127 })
-        : "",
+    const dockerResponses = new Map([
+      [
+        "inspect --format {{json .State}} new-container-id",
+        JSON.stringify({ Status: "exited", Running: false, ExitCode: 127 }),
+      ],
+    ]);
+    const dockerCapture = vi.fn(
+      (args: readonly string[]) => dockerResponses.get(args.join(" ")) ?? "",
     );
-    const runCaptureOpenshell = vi.fn((args: string[]) => {
-      if (args[0] !== "sandbox") return "";
-      if (args[1] === "get") return "Phase: Error\n";
-      return args[1] === "list" ? "alpha  Error\n" : "";
-    });
+    const openshellResponses = new Map([
+      ["sandbox get", "Phase: Error\n"],
+      ["sandbox list", "alpha  Error\n"],
+    ]);
+    const runCaptureOpenshell = vi.fn(
+      (args: string[]) => openshellResponses.get(`${args[0] ?? ""} ${args[1] ?? ""}`.trim()) ?? "",
+    );
 
     const captured = captureDockerGpuPreRollbackDiagnostics("alpha", patchResult(), {
       dockerCapture,
