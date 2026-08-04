@@ -118,6 +118,7 @@ describe("selectPreUpgradeBackupForCreate", () => {
       gatewayName: GATEWAY_NAME,
       gatewayPort: GATEWAY_PORT,
       registryEntry: SOURCE_ENTRY,
+      readRegistryEntry: () => SOURCE_ENTRY,
       sandboxName: "my-assistant",
       note,
       ...rest,
@@ -179,7 +180,7 @@ describe("selectPreUpgradeBackupForCreate", () => {
     process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
     const rotated: SandboxEntry = { ...SOURCE_ENTRY, imageTag: "nemoclaw/my-assistant:2" };
 
-    expect(() => select({ registryEntry: rotated })).toThrow(
+    expect(() => select({ readRegistryEntry: () => rotated })).toThrow(
       /source registry row changed after the transaction recorded it/,
     );
     expect(getLatestBackupSpy).not.toHaveBeenCalled();
@@ -200,7 +201,9 @@ describe("selectPreUpgradeBackupForCreate", () => {
   it("throws before backup access when the source registry row is absent (#7736)", () => {
     process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
 
-    expect(() => select({ registryEntry: null })).toThrow(/source registry row is absent/);
+    expect(() => select({ readRegistryEntry: () => null })).toThrow(
+      /source registry row is absent/,
+    );
     expect(getLatestBackupSpy).not.toHaveBeenCalled();
   });
 

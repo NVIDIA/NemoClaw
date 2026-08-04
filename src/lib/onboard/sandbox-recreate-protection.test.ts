@@ -51,12 +51,14 @@ describe("createSandboxRecreateProtection", () => {
       targetGeneration: "3c9a1b7e-target",
     };
     const observation = { state: "missing" as const, liveIdentityFingerprint: null };
+    const readRegistryEntry = vi.fn(() => sandboxEntry);
 
     expect(
       protection.selectPreUpgradeBackup({
         sourceProof: () => sourceProof,
         gatewayName: "nemoclaw",
         gatewayPort: 8080,
+        readRegistryEntry,
         observation: () => observation,
       }),
     ).toBe("/tmp/backup");
@@ -65,7 +67,7 @@ describe("createSandboxRecreateProtection", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       registryEntry: sandboxEntry,
-      readRegistryEntry: undefined,
+      readRegistryEntry,
       observation: expect.any(Function),
       existingSandboxEntry: sandboxEntry,
       requireOpenClawImagePluginProvenance: true,
@@ -74,6 +76,7 @@ describe("createSandboxRecreateProtection", () => {
     });
     const forwarded = selectPreUpgradeBackupForCreate.mock.calls[0][0];
     expect(forwarded.sourceProof()).toBe(sourceProof);
+    expect(forwarded.readRegistryEntry()).toBe(sandboxEntry);
     expect(forwarded.observation()).toBe(observation);
 
     expect(protection.resolveNotReadyOutcome()).toEqual({
@@ -155,7 +158,7 @@ describe("createSandboxRecreateProtection", () => {
       const openJournal = vi.fn(() => journaled);
       const protection = protectionWith((input) => {
         expect(input.sourceProof()).toBe(JOURNALED_PROOF);
-        expect(input.readRegistryEntry?.()).toEqual({ name: "my-assistant" });
+        expect(input.readRegistryEntry()).toEqual({ name: "my-assistant" });
         return "/tmp/backup";
       });
 

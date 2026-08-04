@@ -108,7 +108,7 @@ export interface PreUpgradeBackupSelectInput {
   gatewayName: string;
   gatewayPort: number;
   registryEntry: SandboxEntry | null;
-  readRegistryEntry?: () => SandboxEntry | null;
+  readRegistryEntry: () => SandboxEntry | null;
   observation: () => SandboxRecreateObservation;
   existingSandboxEntry?: SandboxEntry | null;
   requireOpenClawImagePluginProvenance?: boolean;
@@ -132,7 +132,7 @@ export function selectPreUpgradeBackupForCreate(input: PreUpgradeBackupSelectInp
   }
   const sourceProof = input.sourceProof();
   const observation = input.observation();
-  const registryEntry = (input.readRegistryEntry ?? (() => input.registryEntry))();
+  const registryEntry = input.readRegistryEntry();
   assertSandboxRecreateSourceProof(sourceProof, {
     sandboxName: input.sandboxName,
     gatewayName: input.gatewayName,

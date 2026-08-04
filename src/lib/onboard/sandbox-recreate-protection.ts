@@ -16,7 +16,7 @@ export interface PreUpgradeBackupBinding {
   sourceProof: () => SandboxRecreateSourceProof | null;
   gatewayName: string;
   gatewayPort: number;
-  readRegistryEntry?: () => SandboxEntry | null;
+  readRegistryEntry: () => SandboxEntry | null;
   observation: () => SandboxRecreateObservation;
 }
 
