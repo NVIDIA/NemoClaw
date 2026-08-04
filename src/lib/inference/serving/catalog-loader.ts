@@ -6,6 +6,8 @@ import { join } from "node:path";
 
 import {
   getManagedInferenceRecipeRegistrationError,
+  HOST_LOCAL_VLLM_LIFECYCLE_REF,
+  HOST_LOCAL_VLLM_MATERIALIZER_REF,
   MANAGED_CLUSTER_VLLM_LIFECYCLE_REF,
   MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
 } from "./adapter-registry.js";
@@ -60,10 +62,8 @@ function assertManagedRecipe(
 function assertManagedPreset(
   preset: ServingPreset,
 ): asserts preset is ManagedInferenceServingPreset {
-  if (!preset.spec.requirements || !preset.spec.plan.bindings) {
-    throw new Error(
-      `Managed inference preset ${preset.metadata.id} must declare requirements and topology bindings`,
-    );
+  if (!preset.spec.requirements) {
+    throw new Error(`Managed inference preset ${preset.metadata.id} must declare requirements`);
   }
 }
 
@@ -97,11 +97,13 @@ export function parseCompiledManagedInferenceCatalogJson(
 function isManagedClusterRecipeCandidate(recipe: ServingRecipe): boolean {
   return (
     recipe.spec.execution.materializerRef === MANAGED_CLUSTER_VLLM_MATERIALIZER_REF ||
-    recipe.spec.execution.lifecycleRef === MANAGED_CLUSTER_VLLM_LIFECYCLE_REF
+    recipe.spec.execution.lifecycleRef === MANAGED_CLUSTER_VLLM_LIFECYCLE_REF ||
+    recipe.spec.execution.materializerRef === HOST_LOCAL_VLLM_MATERIALIZER_REF ||
+    recipe.spec.execution.lifecycleRef === HOST_LOCAL_VLLM_LIFECYCLE_REF
   );
 }
 
-/** The managed-cluster runtime accepts only recipes backed by its vLLM materializer and lifecycle. */
+/** Project recipes backed by a registered NemoClaw-managed vLLM runtime. */
 export function managedInferenceCatalogFromServingCatalog(
   catalog: CompiledServingCatalog,
 ): CompiledManagedInferenceCatalog {

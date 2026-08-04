@@ -4,11 +4,12 @@
 import { checkSystemReadinessSchemaVersion } from "../../readiness/compatibility.js";
 import { getSystemReadinessReferenceErrors } from "../../readiness/references.js";
 import {
+  getManagedInferenceMaterializerDescriptor,
   getManagedInferenceRecipeRegistrationError,
   getManagedInferenceTopologyQualificationDescriptor,
 } from "./adapter-registry.js";
-import { loadManagedInferenceCatalog } from "./catalog-loader.js";
 import { immutableManagedInferenceCopy, managedInferenceDigest } from "./catalog-integrity.js";
+import { loadManagedInferenceCatalog } from "./catalog-loader.js";
 import type {
   CompiledManagedInferenceCatalog,
   ManagedInferenceFactRequirement,
@@ -22,6 +23,8 @@ import type {
   ManagedInferenceServingRecipe,
   ManagedInferenceTopologyQualification,
   ManagedInferenceTopologyRequirement,
+  ResolvedHostLocalInferenceSelection,
+  ResolvedManagedInferenceSelection,
 } from "./types.js";
 
 export const MANAGED_INFERENCE_READINESS_MAX_AGE_MS = 30_000;
@@ -46,7 +49,7 @@ interface MatchingCandidate<TOutput> {
   readonly recipe: ManagedInferenceServingRecipe;
   readonly recipeDigest: string;
   readonly priority: number;
-  readonly topologyQualification: ManagedInferenceTopologyQualification<TOutput>;
+  readonly topologyQualification?: ManagedInferenceTopologyQualification<TOutput>;
 }
 
 function hasText(value: string | undefined): value is string {
@@ -357,10 +360,14 @@ function matchingCandidate<TOutput>(
     input.topologyQualifications,
   );
   if (requirements.outcome !== "matched") return requirements;
-  if (requirements.topologyQualifications.length !== 1) {
+  const materializer = getManagedInferenceMaterializerDescriptor(
+    recipe.spec.execution.materializerRef,
+  );
+  const expectedTopologyCount = materializer?.topology ? 1 : 0;
+  if (requirements.topologyQualifications.length !== expectedTopologyCount) {
     return {
       outcome: "invalid-topology",
-      message: `Preset ${preset.metadata.id} must resolve exactly one topology qualification.`,
+      message: `Preset ${preset.metadata.id} must resolve exactly ${String(expectedTopologyCount)} topology qualification${expectedTopologyCount === 1 ? "" : "s"}.`,
     };
   }
   return {
@@ -371,7 +378,9 @@ function matchingCandidate<TOutput>(
       recipe,
       recipeDigest: managedInferenceDigest(compiledRecipe),
       priority: presetPriority(preset),
-      topologyQualification: requirements.topologyQualifications[0]!,
+      ...(requirements.topologyQualifications[0]
+        ? { topologyQualification: requirements.topologyQualifications[0] }
+        : {}),
     },
   };
 }
@@ -381,17 +390,19 @@ function selectedResolution<TOutput>(
   candidate: MatchingCandidate<TOutput>,
   selection: "automatic" | "explicit",
 ): ManagedInferenceResolution<TOutput> {
-  let topologyQualification: ManagedInferenceTopologyQualification<TOutput>;
-  try {
-    topologyQualification = immutableManagedInferenceCopy(candidate.topologyQualification);
-  } catch {
-    return {
-      outcome: "rejected",
-      code: "invalid-topology",
-      message: "Topology qualification is not immutable JSON data.",
-    };
+  let topologyQualification: ManagedInferenceTopologyQualification<TOutput> | undefined;
+  if (candidate.topologyQualification) {
+    try {
+      topologyQualification = immutableManagedInferenceCopy(candidate.topologyQualification);
+    } catch {
+      return {
+        outcome: "rejected",
+        code: "invalid-topology",
+        message: "Topology qualification is not immutable JSON data.",
+      };
+    }
   }
-  return {
+  const common = {
     outcome: "selected",
     selection,
     catalogDigest: catalog.catalogDigest,
@@ -399,8 +410,8 @@ function selectedResolution<TOutput>(
     recipeDigest: candidate.recipeDigest,
     preset: candidate.preset,
     recipe: candidate.recipe,
-    topologyQualification,
-  };
+  } as const;
+  return topologyQualification ? { ...common, topologyQualification } : common;
 }
 
 export function resolveManagedInferenceServing<TOutput>(

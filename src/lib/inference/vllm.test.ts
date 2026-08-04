@@ -499,6 +499,38 @@ describe("vLLM run command", () => {
     expect(args).toContain("8000:8000");
   });
 
+  it("labels catalog-selected host-local containers with immutable recipe provenance (#8246)", () => {
+    const profile = detectVllmProfile({ platform: "spark", type: "nvidia" });
+    expect(profile).not.toBeNull();
+    const catalogProfile = {
+      ...profile!,
+      servingCatalog: {
+        presetId: "vllm.dgx-spark-gb10.single.optional-model",
+        presetDigest: `sha256:${"a".repeat(64)}`,
+        recipeId: "vllm.optional-model.spark-single.v1",
+        recipeDigest: `sha256:${"b".repeat(64)}`,
+      },
+    };
+    const args = buildVllmRunArgs(
+      catalogProfile,
+      catalogProfile.defaultModel,
+      catalogProfile.dockerRunFlags,
+    );
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--label",
+        `com.nvidia.nemoclaw.serving-preset=${catalogProfile.servingCatalog.presetId}`,
+        "--label",
+        `com.nvidia.nemoclaw.serving-preset-digest=${catalogProfile.servingCatalog.presetDigest}`,
+        "--label",
+        `com.nvidia.nemoclaw.serving-recipe=${catalogProfile.servingCatalog.recipeId}`,
+        "--label",
+        `com.nvidia.nemoclaw.serving-recipe-digest=${catalogProfile.servingCatalog.recipeDigest}`,
+      ]),
+    );
+  });
+
   it("preserves profile run flags and image as argv tokens", () => {
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
     expect(profile).not.toBeNull();

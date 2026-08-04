@@ -350,7 +350,7 @@ export interface ManagedInferenceServingPreset {
     readonly plan: {
       readonly backend: string;
       readonly recipeRef: string;
-      readonly bindings: Readonly<Record<string, ServingPresetTopologyBinding>>;
+      readonly bindings?: Readonly<Record<string, ServingPresetTopologyBinding>>;
     };
   };
 }
@@ -506,8 +506,19 @@ export interface ResolvedManagedInferenceSelection<TTopologyOutput = unknown> {
   readonly topologyQualification: ManagedInferenceTopologyQualification<TTopologyOutput>;
 }
 
+export interface ResolvedHostLocalInferenceSelection {
+  readonly outcome: "selected";
+  readonly selection: "automatic" | "explicit";
+  readonly catalogDigest: string;
+  readonly presetDigest: string;
+  readonly recipeDigest: string;
+  readonly preset: ManagedInferenceServingPreset;
+  readonly recipe: ManagedInferenceServingRecipe;
+}
+
 export type ManagedInferenceResolution<TTopologyOutput = unknown> =
   | ResolvedManagedInferenceSelection<TTopologyOutput>
+  | ResolvedHostLocalInferenceSelection
   | {
       readonly outcome: "no-match";
       readonly code: "explicit-intent" | "requirements-not-met";
