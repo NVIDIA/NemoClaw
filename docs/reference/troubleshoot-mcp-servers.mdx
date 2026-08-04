@@ -88,6 +88,73 @@ A refused or unreachable endpoint is also not retried inside a turn; check the e
 A catalog that contains a server diagnostic is not cached for the session.
 NemoClaw rebuilds the catalog on the next agent turn and contacts the affected server again, so a brief upstream outage clears on its own and a repaired credential or policy takes effect without a new session.
 A catalog without server diagnostics is cached and reused as usual.
+
+## A Remote MCP Request Fails Without Saying Where
+
+A transport error such as `fetch failed` does not say which step failed.
+For OpenClaw remote Streamable HTTP requests, NemoClaw adds a failure-only diagnostic at the `fetch` boundary.
+When that request fails inside a sandbox, OpenClaw attempts to write one `managed_transport_failure` line group to the sandbox log:
+
+```bash
+$$nemoclaw <sandbox> logs --tail 100
+```
+
+```text
+[nemoclaw] managed_transport_failure
+[nemoclaw] consumer=mcp
+[nemoclaw] route=proxy_configured
+[nemoclaw] proxy=127.0.0.1:3128
+[nemoclaw] target=mcp.example.com:443
+[nemoclaw] transport_phase=response_headers
+[nemoclaw] http_status=503
+[nemoclaw] elapsed_ms=1512
+[nemoclaw] server=envoy
+[nemoclaw] x_envoy_response_flags=UF,URX
+[nemoclaw] session_present=true
+[nemoclaw] diagnostic_id=<generated-id>
+```
+
+Read `transport_phase` first.
+It states which transport step failed:
+
+| Transport phase | What failed |
+|-----------------|-------------|
+| `policy` | The network policy refused the destination |
+| `connect` | The proxy CONNECT tunnel failed for a reason other than a denial |
+| `tls` | TLS setup or certificate validation failed |
+| `app_connect` | The upstream connection was refused, unreachable, or unresolved |
+| `request` | The request failed before any response arrived |
+| `response_headers` | A response arrived and its status or headers report the failure |
+
+`route=proxy_configured` states that OpenClaw received a supported proxy environment variable.
+`route=unknown` states that the diagnostic did not observe one.
+These values report configuration evidence and do not prove whether the failed request used a proxy.
+When present, `proxy` contains the configured proxy endpoint without credentials.
+`server`, `via`, `x_request_id`, and the `x_envoy_*` fields are the proxy's own account of the failure and appear only when the proxy sends them.
+A proxy-generated response does not by itself prove whether the proxy or its upstream produced the failure; keep both the status and the cause chain when reporting one.
+
+The line group is written only for a failure, so normal traffic adds no logging.
+A 2xx response does not emit this diagnostic or read its body.
+This fetch boundary cannot report a failure that occurs while the caller later reads a 2xx response body.
+For a non-2xx response, OpenClaw does not wait for asynchronous body sampling before it receives the response.
+Non-2xx response diagnostics are best-effort.
+If detached collection fails, OpenClaw still returns the original response and the line group can be absent.
+The line group can also be absent if OpenClaw exits before collection completes.
+The sampler waits at most 250 ms and retains at most 2,048 response bytes.
+The redacted `error_body` value contains at most 2,048 UTF-8 bytes before JSON encoding.
+It redacts session identifiers, bearer tokens, structured credentials such as `access_token`, `refresh_token`, and `client_secret`, and known token prefixes.
+The diagnostic does not include a JSON-RPC operation because this boundary sees only the endpoint.
+
+To find the matching sandbox audit record, read the audit log for the same endpoint around the failure time:
+
+```bash
+$$nemoclaw <sandbox> logs --audit --tail 200
+```
+
+Match on `target` and the timestamp.
+`diagnostic_id` is a local identifier created for one line group.
+It is not a distributed trace identifier and does not appear in OpenShell audit events.
+Correlate with OpenShell by endpoint and time until OpenShell records a shared identifier.
 </AgentOnly>
 
 ## Policy or Provider Ownership Drifted

@@ -29,6 +29,7 @@ import {
   MANAGED_STARTUP_E2E_CORPORATE_CA_PEM,
   managedStartupE2eProfile,
 } from "./generate-managed-startup-profile-fixture.mts";
+import type { ProtectedManagedImagePlatform } from "./protected-managed-image-contract.ts";
 
 const CONTAINER_ID_RE = /^[a-f0-9]{64}$/u;
 const IMMUTABLE_IMAGE_RE = /^sha256:[a-f0-9]{64}$/u;
@@ -47,7 +48,7 @@ const FIXED_ROOT_ENV = [
 export interface ManagedImageDirectE2eInputs {
   readonly agent: ManagedStartupAgent;
   readonly image: string;
-  readonly platform: "linux/amd64" | "linux/arm64";
+  readonly platform: ProtectedManagedImagePlatform;
 }
 
 interface CommandResult {

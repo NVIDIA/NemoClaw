@@ -490,6 +490,7 @@ export function createSetupNim(
             remoteProviderConfig: deps.remoteProviderConfig,
             isWsl: isWslHost,
             isWindowsHostOllama,
+            ollamaRunning,
             windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
             hermesProviderAvailable,
             preferManagedVllmDefault: gpu?.platform === "spark",

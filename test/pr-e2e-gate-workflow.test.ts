@@ -268,12 +268,9 @@ describe("PR E2E gate workflow", () => {
     const ciWorkflow = readYaml<Workflow>(".github/workflows/pr.yaml");
     const ciRequired =
       "${{ github.event.action != 'edited' || github.event.changes.base != null }}";
-    const requiredObserverCondition =
-      "github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.action != 'closed'";
     const ciVerification = step(ciWorkflow.jobs.checks, "Verify required PR checks");
     const workflow = readYaml<TriggeredWorkflow>(PR_GATE_PATH);
     const initialize = workflow.jobs.initialize;
-    const required = workflow.jobs.required;
     const cancel = workflow.jobs["cancel-superseded"];
     const coordinate = workflow.jobs.coordinate;
     const longestSelectedE2eMinutes = 130;
@@ -281,9 +278,6 @@ describe("PR E2E gate workflow", () => {
     const evidenceAndKillGraceMinutes = 10.5;
     const twoAttemptMinimum = 2 * (controllerWaitMinutes + evidenceAndKillGraceMinutes);
     const controllerSetupReserveMinutes = 25;
-    const maxPrerequisiteCiMinutes = 15;
-    const observerApiSlackMinutes = 13;
-    const observerPollMinutes = 21_480 / 60;
 
     expect(workflow.name).toBe("E2E / PR Gate Controller");
     expect(workflow["run-name"]).toBe(PR_GATE_RUN_NAME);
@@ -360,36 +354,7 @@ describe("PR E2E gate workflow", () => {
     );
     expect(initialize.concurrency?.queue).toBe("max");
     expect(initialize.concurrency?.["cancel-in-progress"]).toBe(false);
-    expect(required.name).toBe(
-      `\${{ ${requiredObserverCondition} && 'E2E / PR Gate' || 'E2E / PR Gate (not applicable)' }}`,
-    );
-    expect(required.if).toBe(`\${{ ${requiredObserverCondition} }}`);
-    expect(required.permissions).toEqual({
-      checks: "read",
-      contents: "read",
-      "pull-requests": "read",
-    });
-    expect(required.concurrency).toEqual({
-      group: "pr-e2e-required-${{ github.event.pull_request.number }}",
-      "cancel-in-progress": true,
-    });
-    expect(required["timeout-minutes"]).toBe(360);
-    expect(required.secrets).toBeUndefined();
-    expect(step(required, "Checkout observer").with).toEqual({
-      ref: "${{ github.workflow_sha }}",
-      "persist-credentials": false,
-    });
-    const observer = step(required, "Wait for trusted PR/base SHA verdict");
-    expect(observer.env).toEqual({
-      BASE_SHA: "${{ github.event.pull_request.base.sha }}",
-      GITHUB_TOKEN: "${{ github.token }}",
-      HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
-      PR_NUMBER: "${{ github.event.pull_request.number }}",
-    });
-    expect(observer.run).toContain("tools/e2e/pr-e2e-required.mts");
-    expect(observer.run).toContain('--head "$HEAD_SHA"');
-    expect(observer.run).toContain('--base "$BASE_SHA"');
-    expect(observer.run).toContain("--timeout-seconds 21480");
+    expect(workflow.jobs.required).toBeUndefined();
     expect(cancel.if).toContain("github.event_name == 'pull_request_target'");
     expect(cancel.if).toContain("github.run_attempt == 1");
     expect(cancel.if).not.toContain(
@@ -433,10 +398,6 @@ describe("PR E2E gate workflow", () => {
     expect(coordinate["timeout-minutes"]).toBeGreaterThanOrEqual(
       twoAttemptMinimum + controllerSetupReserveMinutes,
     );
-    expect(observerPollMinutes).toBeGreaterThanOrEqual(
-      coordinate["timeout-minutes"]! + maxPrerequisiteCiMinutes + observerApiSlackMinutes,
-    );
-    expect(required["timeout-minutes"]).toBeGreaterThan(observerPollMinutes);
     expect(collectStrings(initialize).some((value) => value.includes("--mode seed"))).toBe(true);
     expect(step(initialize, "Reserve PR/base SHA gate").run).toContain('--head "$HEAD_SHA"');
     expect(step(initialize, "Reserve PR/base SHA gate").env?.BASE_SHA).toBe(
@@ -498,7 +459,7 @@ describe("PR E2E gate workflow", () => {
       (candidate) => candidate.name === "Install controller dependencies",
     );
 
-    expect(checkouts).toHaveLength(4);
+    expect(checkouts).toHaveLength(3);
     expect(
       checkouts.every(
         (checkout) =>
@@ -506,7 +467,7 @@ describe("PR E2E gate workflow", () => {
           checkout.with?.["persist-credentials"] === false,
       ),
     ).toBe(true);
-    expect(nodeSetups).toHaveLength(4);
+    expect(nodeSetups).toHaveLength(3);
     expect(nodeSetups.every((setup) => setup.uses === TRUSTED_SETUP_NODE_ACTION)).toBe(true);
     expect(nodeSetups.every((setup) => setup.with?.["node-version"] === "22")).toBe(true);
     expect(nodeSetups.every((setup) => !("cache" in (setup.with ?? {})))).toBe(true);

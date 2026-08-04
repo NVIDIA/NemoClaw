@@ -10,14 +10,18 @@ import { parseDocument } from "yaml";
 import type {
   CompiledServingCatalog,
   CompiledServingCatalogPayload,
+  LlamaCppServingRecipe,
   ServingCatalogRegistries,
   ServingCatalogSchemas,
   ServingCatalogSource,
+  ServingCatalogSourceProvenance,
   ServingDefinitionKind,
   ServingPreset,
   ServingReadinessComparison,
   ServingReadinessObservationRole,
+  ServingReadinessRegistryEntry,
   ServingReadinessRequirement,
+  ServingReadinessRegistryValue,
   ServingRecipe,
 } from "./types";
 
@@ -57,9 +61,7 @@ function compareCanonicalText(left: string, right: string): number {
 }
 
 function normalizeForCanonicalJson(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(normalizeForCanonicalJson);
-  }
+  if (Array.isArray(value)) return value.map(normalizeForCanonicalJson);
   if (value !== null && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value)
@@ -74,7 +76,7 @@ export function canonicalServingCatalogJson(value: unknown): string {
   return JSON.stringify(normalizeForCanonicalJson(value));
 }
 
-function digest(value: unknown): string {
+export function servingCatalogDigest(value: unknown): string {
   return `sha256:${createHash("sha256").update(canonicalServingCatalogJson(value)).digest("hex")}`;
 }
 
@@ -87,11 +89,7 @@ function createValidators(schemas: ServingCatalogSchemas): CatalogValidators {
   if (!recipe || !preset) {
     throw new ServingCatalogValidationError("Serving catalog schemas have invalid identifiers.");
   }
-  return {
-    recipe,
-    preset,
-    catalog: ajv.compile(schemas.catalog as AnySchema),
-  };
+  return { recipe, preset, catalog: ajv.compile(schemas.catalog as AnySchema) };
 }
 
 function validationDetails(validate: ValidateFunction): string {
@@ -147,10 +145,37 @@ function definitionIdentity(
   return { kind, id };
 }
 
-type LlamaCppServingRecipe = Extract<ServingRecipe, { spec: { providerId: "llama-cpp-local" } }>;
-
 function isLlamaCppServingRecipe(recipe: ServingRecipe): recipe is LlamaCppServingRecipe {
   return recipe.spec.providerId === "llama-cpp-local";
+}
+
+function isReadinessRegistryEntry(
+  registered: ServingReadinessRegistryValue,
+): registered is ServingReadinessRegistryEntry {
+  return typeof registered === "object" && registered !== null && "kind" in registered;
+}
+
+function readinessKindMatches(
+  registered: ServingReadinessRegistryValue,
+  kind: ServingReadinessRequirement["readiness"]["kind"],
+): boolean {
+  if (typeof registered === "string") return registered === kind;
+  if (isReadinessRegistryEntry(registered)) return registered.kind === kind;
+  return registered.has(kind);
+}
+
+function readinessKindLabel(registered: ServingReadinessRegistryValue): string {
+  if (typeof registered === "string") return registered;
+  if (isReadinessRegistryEntry(registered)) return registered.kind;
+  return [...registered].join(" or ");
+}
+
+function readinessDescriptor(
+  registered: ServingReadinessRegistryValue | undefined,
+  kind: ServingReadinessRequirement["readiness"]["kind"],
+): ServingReadinessRegistryEntry | undefined {
+  if (registered === undefined || !readinessKindMatches(registered, kind)) return undefined;
+  return isReadinessRegistryEntry(registered) ? registered : { kind };
 }
 
 function validateRecipeSemantics(
@@ -173,12 +198,14 @@ function validateRecipeSemantics(
       `Recipe ${recipe.metadata.id} references unknown lifecycle adapter ${lifecycleRef}.`,
     );
   }
+
   const readinessContractRef = recipe.spec.readiness?.contractRef;
   if (readinessContractRef && !registries.readinessContracts.has(readinessContractRef)) {
     throw new ServingCatalogValidationError(
       `Recipe ${recipe.metadata.id} references unknown readiness contract ${readinessContractRef}.`,
     );
   }
+
   if (!isLlamaCppServingRecipe(recipe)) {
     const argumentNames = new Set<string>();
     for (const argument of recipe.spec.serve?.arguments ?? []) {
@@ -220,6 +247,11 @@ function validateRecipeSemantics(
         `Recipe ${recipe.metadata.id} request token limits exceed serve.contextSize.`,
       );
     }
+    if (serve.microBatchSize > serve.batchSize) {
+      throw new ServingCatalogValidationError(
+        `Recipe ${recipe.metadata.id} serve.microBatchSize cannot exceed serve.batchSize.`,
+      );
+    }
     const agents = new Set<string>();
     for (const agent of recipe.spec.capabilities.agents) {
       if (agents.has(agent.id)) {
@@ -228,13 +260,22 @@ function validateRecipeSemantics(
         );
       }
       agents.add(agent.id);
-      const qualification = registries.readiness.get(agent.qualificationRef);
-      if (qualification?.kind !== "qualification") {
+      if (!readinessDescriptor(registries.readiness.get(agent.qualificationRef), "qualification")) {
         throw new ServingCatalogValidationError(
           `Recipe ${recipe.metadata.id} references unknown agent qualification ${agent.qualificationRef} for ${agent.id}.`,
         );
       }
     }
+  }
+
+  let registrationError: string | undefined;
+  try {
+    registrationError = registries.validateRecipe?.(recipe);
+  } catch {
+    registrationError = "does not satisfy its registered adapter contract";
+  }
+  if (registrationError) {
+    throw new ServingCatalogValidationError(`Recipe ${recipe.metadata.id}: ${registrationError}.`);
   }
 }
 
@@ -255,66 +296,98 @@ function readinessRequirementKey(requirement: ServingReadinessRequirement): stri
   return `${readiness.scope}:${readiness.kind}:${readiness.id}`;
 }
 
-function validatePresetReadiness(
+function validatePresetRequirements(
   preset: ServingPreset,
   registries: ServingCatalogRegistries,
 ): void {
+  const requirements = new Set<string>();
   const requirementsByEntity = new Map<string, string>();
   for (const requirement of preset.spec.requirements?.all ?? []) {
-    const readiness = requirement.readiness;
-    const registered = registries.readiness.get(readiness.id);
-    if (registered === undefined) {
+    const requirementKey = canonicalServingCatalogJson(requirement);
+    if (requirements.has(requirementKey)) {
+      const requirementLabel = "readiness" in requirement ? "readiness requirement" : "requirement";
       throw new ServingCatalogValidationError(
-        `Preset ${preset.metadata.id} references unknown readiness entity ${readiness.id}.`,
+        `Preset ${preset.metadata.id} repeats ${requirementLabel} ${requirementKey}.`,
       );
     }
-    if (registered.kind !== readiness.kind) {
-      throw new ServingCatalogValidationError(
-        `Preset ${preset.metadata.id} uses ${readiness.id} as ${readiness.kind}, but the readiness registry declares ${registered.kind}.`,
-      );
-    }
+    requirements.add(requirementKey);
 
-    if ("comparison" in readiness) {
-      if (registered.kind !== "observation") {
+    if ("readiness" in requirement) {
+      const { readiness } = requirement;
+      const registered = registries.readiness.get(readiness.id);
+      if (registered === undefined) {
         throw new ServingCatalogValidationError(
-          `Preset ${preset.metadata.id} cannot compare readiness entity ${readiness.id}.`,
+          `Preset ${preset.metadata.id} references unknown readiness entity ${readiness.id}.`,
         );
       }
-      const comparisonType = comparisonValueType(readiness.comparison);
-      if (!registered.valueType || comparisonType !== registered.valueType) {
+      if (!readinessKindMatches(registered, readiness.kind)) {
         throw new ServingCatalogValidationError(
-          `Preset ${preset.metadata.id} compares ${readiness.id} as ${comparisonType}, but the readiness registry declares ${registered.valueType ?? "no value type"}.`,
+          `Preset ${preset.metadata.id} uses ${readiness.id} as ${readiness.kind}, but the readiness registry declares ${readinessKindLabel(registered)}.`,
         );
       }
-    }
 
-    const key = readinessRequirementKey(requirement);
-    const canonicalRequirement = canonicalServingCatalogJson(requirement);
-    const previous = requirementsByEntity.get(key);
-    if (previous === canonicalRequirement) {
+      if ("comparison" in readiness) {
+        const descriptor = readinessDescriptor(registered, readiness.kind);
+        const comparisonType = comparisonValueType(readiness.comparison);
+        if (!descriptor?.valueType || comparisonType !== descriptor.valueType) {
+          throw new ServingCatalogValidationError(
+            `Preset ${preset.metadata.id} compares ${readiness.id} as ${comparisonType}, but the readiness registry declares ${descriptor?.valueType ?? "no value type"}.`,
+          );
+        }
+      }
+
+      const key = readinessRequirementKey(requirement);
+      const previous = requirementsByEntity.get(key);
+      if (previous !== undefined && previous !== requirementKey) {
+        throw new ServingCatalogValidationError(
+          `Preset ${preset.metadata.id} has contradictory readiness requirements for ${key}.`,
+        );
+      }
+      requirementsByEntity.set(key, requirementKey);
+      continue;
+    }
+    if ("fact" in requirement) {
+      if (registries.facts && !registries.facts.has(requirement.fact)) {
+        throw new ServingCatalogValidationError(
+          `Preset ${preset.metadata.id} references unknown selection fact ${requirement.fact}.`,
+        );
+      }
+      continue;
+    }
+    const key = `${requirement.topologyQualification.id}@${String(requirement.topologyQualification.schemaVersion)}`;
+    if (registries.topologyQualifications && !registries.topologyQualifications.has(key)) {
       throw new ServingCatalogValidationError(
-        `Preset ${preset.metadata.id} repeats readiness requirement ${key}.`,
+        `Preset ${preset.metadata.id} references unknown topology qualification ${key}.`,
       );
     }
-    if (previous !== undefined) {
-      throw new ServingCatalogValidationError(
-        `Preset ${preset.metadata.id} has contradictory readiness requirements for ${key}.`,
-      );
-    }
-    requirementsByEntity.set(key, canonicalRequirement);
   }
 }
 
 function canonicalReadinessComparison(comparison: ServingReadinessComparison): string {
-  if (comparison.operator !== "one-of") {
-    return canonicalServingCatalogJson(comparison);
-  }
+  if (comparison.operator !== "one-of") return canonicalServingCatalogJson(comparison);
   return canonicalServingCatalogJson({
     ...comparison,
     values: [...comparison.values].sort((left, right) =>
       compareCanonicalText(canonicalServingCatalogJson(left), canonicalServingCatalogJson(right)),
     ),
   });
+}
+
+function llamaCppReadinessComparisonMatches(
+  recipe: LlamaCppServingRecipe,
+  role: ServingReadinessObservationRole,
+  actual: ServingReadinessComparison,
+  expected: ServingReadinessComparison,
+): boolean {
+  if (role !== "architecture" || actual.operator !== "equals") {
+    return canonicalReadinessComparison(actual) === canonicalReadinessComparison(expected);
+  }
+  return (
+    typeof actual.value === "string" &&
+    recipe.spec.runtime.platforms.includes(
+      `linux/${actual.value}` as LlamaCppServingRecipe["spec"]["runtime"]["platforms"][number],
+    )
+  );
 }
 
 function validateLlamaCppPreset(
@@ -342,12 +415,14 @@ function validateLlamaCppPreset(
   const qualified = new Set<string>();
 
   for (const requirement of preset.spec.requirements?.all ?? []) {
-    const readiness = requirement.readiness;
+    if (!("readiness" in requirement)) continue;
+    const { readiness } = requirement;
     if (readiness.kind === "qualification" && readiness.status === "qualified") {
       qualified.add(readiness.id);
     }
     const registered = registries.readiness.get(readiness.id);
-    if (registered?.kind !== "observation" || registered.role === undefined) continue;
+    if (registered === undefined || !isReadinessRegistryEntry(registered)) continue;
+    if (registered.kind !== "observation" || registered.role === undefined) continue;
     const expected = expectedComparisons.get(registered.role);
     if (!expected) continue;
     if (seenRoles.has(registered.role)) {
@@ -358,7 +433,7 @@ function validateLlamaCppPreset(
     seenRoles.add(registered.role);
     if (
       !("comparison" in readiness) ||
-      canonicalReadinessComparison(readiness.comparison) !== canonicalReadinessComparison(expected)
+      !llamaCppReadinessComparisonMatches(recipe, registered.role, readiness.comparison, expected)
     ) {
       throw new ServingCatalogValidationError(
         `Preset ${preset.metadata.id} must require ${registered.role} matching llama.cpp recipe ${recipe.metadata.id}.`,
@@ -377,6 +452,42 @@ function validateLlamaCppPreset(
     if (!qualified.has(agent.qualificationRef)) {
       throw new ServingCatalogValidationError(
         `Preset ${preset.metadata.id} must require qualified status for ${agent.qualificationRef} before selecting llama.cpp recipe ${recipe.metadata.id}.`,
+      );
+    }
+  }
+}
+
+function validateBindings(
+  preset: ServingPreset,
+  recipe: ServingRecipe,
+  registries: ServingCatalogRegistries,
+): void {
+  const recipeBindingsByName = recipe.spec.bindings ?? {};
+  const presetBindingsByName = preset.spec.plan.bindings ?? {};
+  const recipeBindings = Object.keys(recipeBindingsByName).sort();
+  const presetBindings = Object.keys(presetBindingsByName).sort();
+  if (
+    recipeBindings.length !== presetBindings.length ||
+    recipeBindings.some((name, index) => name !== presetBindings[index])
+  ) {
+    throw new ServingCatalogValidationError(
+      `Preset ${preset.metadata.id} bindings do not match recipe ${recipe.metadata.id}.`,
+    );
+  }
+  for (const name of recipeBindings) {
+    const expected = recipeBindingsByName[name]!;
+    const actual = presetBindingsByName[name]!.valueFromTopologyQualification;
+    const key = `${expected.qualificationId}@${String(expected.schemaVersion)}`;
+    const descriptor = registries.topologyQualifications?.get(key);
+    if (
+      actual.id !== expected.qualificationId ||
+      actual.schemaVersion !== expected.schemaVersion ||
+      (descriptor &&
+        (actual.output !== descriptor.bindingOutput ||
+          expected.outputSchema !== descriptor.outputSchema))
+    ) {
+      throw new ServingCatalogValidationError(
+        `Preset ${preset.metadata.id} has invalid topology binding ${name}.`,
       );
     }
   }
@@ -413,6 +524,19 @@ function validateCatalogSemantics(
       }
       validateLlamaCppPreset(recipe, preset, registries);
     }
+    validateBindings(preset, recipe, registries);
+    const nodeCount = (preset.spec.requirements?.all ?? []).find(
+      (requirement) =>
+        "fact" in requirement &&
+        requirement.fact === "cluster.nodeCount" &&
+        requirement.operator === "equals" &&
+        typeof requirement.value === "number",
+    );
+    if (nodeCount && "fact" in nodeCount && recipe.spec.execution.nodeCount !== nodeCount.value) {
+      throw new ServingCatalogValidationError(
+        `Preset ${preset.metadata.id} node-count requirement does not match recipe ${recipe.metadata.id}.`,
+      );
+    }
   }
 
   const automaticSelectors = new Map<string, string>();
@@ -447,7 +571,7 @@ export function compileTrustedServingCatalog(
   const validators = createValidators(options.schemas);
   const recipes: ServingRecipe[] = [];
   const presets: ServingPreset[] = [];
-  const sources: CompiledServingCatalog["sources"] = [];
+  const sources: ServingCatalogSourceProvenance[] = [];
   const definitionIds = new Set<string>();
   const sourcePaths = new Set<string>();
 
@@ -493,10 +617,10 @@ export function compileTrustedServingCatalog(
       recipes.push(recipe);
     } else {
       const preset = value as unknown as ServingPreset;
-      validatePresetReadiness(preset, options.registries);
+      validatePresetRequirements(preset, options.registries);
       presets.push(preset);
     }
-    sources.push({ path: source.path, kind, id, digest: digest(value) });
+    sources.push({ path: source.path, kind, id, digest: servingCatalogDigest(value) });
   }
 
   recipes.sort((left, right) => compareCanonicalText(left.metadata.id, right.metadata.id));
@@ -512,7 +636,10 @@ export function compileTrustedServingCatalog(
     presets,
     sources,
   };
-  const catalog: CompiledServingCatalog = { ...payload, catalogDigest: digest(payload) };
+  const catalog: CompiledServingCatalog = {
+    ...payload,
+    catalogDigest: servingCatalogDigest(payload),
+  };
   if (!validators.catalog(catalog)) {
     throw new ServingCatalogValidationError(
       `Compiled serving catalog is invalid: ${validationDetails(validators.catalog)}`,
@@ -540,7 +667,7 @@ export function parseCompiledServingCatalogJson(
     );
   }
   const catalog = value as CompiledServingCatalog;
-  const expectedDigest = digest(catalogPayload(catalog));
+  const expectedDigest = servingCatalogDigest(catalogPayload(catalog));
   if (catalog.catalogDigest !== expectedDigest) {
     throw new ServingCatalogValidationError(
       `Compiled serving catalog digest mismatch: expected ${expectedDigest}.`,

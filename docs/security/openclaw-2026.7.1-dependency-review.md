@@ -433,6 +433,72 @@ The proof asserts that the rejected-credential scenario is contacted once per ru
 
 Removal criterion: drop this patch when the reviewed OpenClaw release provides equivalent bounded startup retry, negative-catalog invalidation, and temporary-transport failure attribution.
 
+## Managed Outbound Transport Diagnostics
+
+`scripts/patch-openclaw-managed-transport-diagnostics.mts` is a version-scoped, fail-closed compatibility patch for issue #7957.
+In `2026.7.1`, a failed remote Streamable HTTP MCP request surfaces only the transport error text, such as `fetch failed` or a request timeout.
+That text does not say whether policy evaluation, proxy CONNECT, TLS setup, the upstream connection, the request, or the response headers failed.
+An operator therefore has to correlate agent output with OpenShell audit logs by hand.
+
+The patch wraps the `fetch` passed to `StreamableHTTPClientTransport` and identifies the compiled target by the `"openclaw-bundle-mcp"` client identity.
+It requires the rewritten anchor to appear exactly once.
+The sibling SSE transport boundary is deliberately left unwrapped.
+An unrecognized compiled shape fails the image build instead of silently skipping.
+`--audit` re-verifies the applied state.
+
+Reviewed behavior:
+
+- Failure-only.
+  A 2xx response returns untouched and emits nothing, so normal traffic produces no per-request logging.
+- The wrapper never retries, never alters the request, never changes proxy selection, and never weakens TLS verification.
+  It rethrows a transport error unchanged.
+- `route=proxy_configured` means that `HTTPS_PROXY`, `https_proxy`, `HTTP_PROXY`, or `http_proxy` was configured.
+  `route=unknown` means that the diagnostic did not observe one of those variables.
+  These values report configuration evidence and do not prove whether the failed request used a proxy.
+- For a non-2xx response, the wrapper returns the original response without waiting for asynchronous sampling of `response.clone()`.
+  The diagnostic task waits at most 250 ms and retains at most 2,048 response bytes for an allowed content type.
+  It limits the redacted `error_body` value to 2,048 UTF-8 bytes before JSON encoding.
+- Non-2xx response diagnostics are best-effort.
+  If detached collection fails, the wrapper still returns the original response and the diagnostic can be absent.
+  The diagnostic can also be absent if the process exits before collection completes.
+- The wrapper does not inspect a 2xx response body.
+  This fetch boundary cannot classify a failure that occurs while the caller later reads that body.
+- Response metadata is an allowlist: `content-type`, `retry-after`, `server`, `via`, `x-request-id`, `x-envoy-attempt-count`, `x-envoy-decorator-operation`, `x-envoy-response-flags`, and `x-envoy-upstream-service-time`.
+  Emitted header keys use underscores.
+  The wrapper does not access any other response header for diagnostics.
+- Allowed header values, error bodies, and cause messages pass the same bounded redaction.
+  It removes session identifiers, bearer tokens, known token prefixes, and structured credentials such as `access_token`, `refresh_token`, and `client_secret`.
+- The cause chain is bounded to 8 entries and keeps only error name, code, errno, syscall, address family, port, and a redacted message.
+  The peer address is not recorded.
+- Session state is reported as a boolean.
+  The `mcp-session-id` value is never emitted.
+- The `transport_phase` field classifies a thrown failure as `policy`, `connect`, `tls`, `app_connect`, `response_headers`, or `request`.
+  A policy denial takes precedence over its accompanying transport code.
+  Without a higher-priority transport-phase signal, a thrown `UND_ERR_HEADERS_TIMEOUT` failure is classified as `response_headers`.
+  That diagnostic has no response headers or `http_status` because `fetch` did not return a response.
+- A returned non-2xx response sets `transport_phase=response_headers`.
+  It carries `http_status` and any allowlisted response headers that are present.
+- The fetch boundary does not expose the JSON-RPC operation, so the diagnostic records the endpoint without an `operation` field.
+- Each emitted diagnostic receives a local 32-character hexadecimal `diagnostic_id`.
+- The wrapper is inert unless `OPENSHELL_SANDBOX=1`, so it does not change host-side behavior.
+
+`diagnostic_id` is not a distributed trace identifier and does not correlate with an OpenShell audit event.
+`NVIDIA/OpenShell#2508` tracks span emission from the sandbox supervisor, and the OCSF `http_request` object in the pinned OpenShell `0.0.85` has no slot for a request-scoped correlation identifier, so a shared identifier is not representable today.
+The local identifier distinguishes application-side diagnostics, but operators still correlate each diagnostic with OpenShell audit events by endpoint and time.
+
+Managed transport diagnostics remains separate from `scripts/patch-openclaw-mcp-reliability.mts`.
+The diagnostics patch wraps every failed remote Streamable HTTP fetch and has its own exact-shape audit and removal condition.
+The reliability patch owns startup catalog and retry behavior.
+The two patches compose independently.
+
+The injected helper in `scripts/patch-openclaw-managed-transport-diagnostics.mts` is the shipped runtime source of truth.
+`test/openclaw-managed-transport-diagnostics-patch.test.ts` executes that exact helper.
+It pins the compiled preimage, patch idempotence, fail-closed rejection of an unrecognized shape, and the untouched SSE boundary.
+It also covers failure-only emission, no-retry and unchanged-response contracts, asynchronous body sampling, byte and time bounds, redaction, the header allowlist, local diagnostic identifiers, session-presence reporting, transport-phase classification, route evidence, and sandbox gating.
+A reusable source schema is deferred until a production consumer requires one.
+
+Removal criterion: drop this patch when the reviewed OpenClaw release emits redacted diagnostics classified by transport phase for remote MCP fetch failures.
+
 ## Gateway Startup Migration Compatibility
 
 OpenClaw `2026.7.1` requires its migration checkpoint to complete without

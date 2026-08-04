@@ -47,6 +47,14 @@ function runTests(...tests: string[]): () => string[] {
 
 export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
+    pattern: /(?:^|\/)managed-inference\/(?:presets|recipes|schemas)\/[^/]+\.(?:json|yaml)$/,
+    testsToRun: runTests(
+      "src/lib/inference/serving/catalog.test.ts",
+      "src/lib/inference/serving/resolver.test.ts",
+      "test/managed-inference-catalog-compiler.test.ts",
+    ),
+  },
+  {
     pattern: /(?:^|\/)(?:Dockerfile|agents\/(?:hermes|langchain-deepagents-code)\/Dockerfile)$/,
     testsToRun: runTests("src/lib/onboard/managed-startup-profile.test.ts"),
   },
@@ -84,6 +92,19 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
     testsToRun: runTests("test/setup-jetson.test.ts"),
   },
   {
+    pattern:
+      /(?:^|\/)(?:\.github\/workflows\/base-image\.yaml|scripts\/export-managed-base-image-contract\.sh)$/,
+    testsToRun: runTests(
+      "test/managed-base-image-contract.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+      "test/dcode-base-image-workflow.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/checks\/validate-managed-base-index\.sh$/,
+    testsToRun: runTests("test/validate-managed-base-index.test.ts"),
+  },
+  {
     pattern: /(?:^|\/)scripts\/e2e\/sanitize-trace-timing\.py$/,
     testsToRun: runTests(
       "test/e2e/support/e2e-scorecard.test.ts",
@@ -112,7 +133,7 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-e2e-gate\.yaml$/,
-    testsToRun: runTests("test/pr-e2e-gate-workflow.test.ts", "test/pr-e2e-required.test.ts"),
+    testsToRun: runTests("test/pr-e2e-gate-workflow.test.ts"),
   },
   {
     pattern: /(?:^|\/)\.github\/workflows\/pr-merge-conflict-fixer\.yaml$/,

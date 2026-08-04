@@ -76,9 +76,61 @@ export async function readMcpLifecycleLockObservation(
   }
 }
 
+export function readMcpLifecycleLockObservationSync(lockPath: string): LockObservation | null {
+  let fd: number;
+  try {
+    fd = fs.openSync(
+      lockPath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+    );
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return null;
+    try {
+      const stat = fs.lstatSync(lockPath);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        return { owner: null, mtimeMs: stat.mtimeMs, dev: stat.dev, ino: stat.ino };
+      }
+    } catch (statError) {
+      if (isErrnoException(statError) && statError.code === "ENOENT") return null;
+      throw statError;
+    }
+    throw error;
+  }
+
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) {
+      return { owner: null, mtimeMs: stat.mtimeMs, dev: stat.dev, ino: stat.ino };
+    }
+    try {
+      const parsed: unknown = JSON.parse(fs.readFileSync(fd, "utf8"));
+      return {
+        owner: isMcpLifecycleLockOwner(parsed) ? parsed : null,
+        mtimeMs: stat.mtimeMs,
+        dev: stat.dev,
+        ino: stat.ino,
+      };
+    } catch {
+      return { owner: null, mtimeMs: stat.mtimeMs, dev: stat.dev, ino: stat.ino };
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 export async function mcpLifecycleLockPathExists(targetPath: string): Promise<boolean> {
   try {
     await fs.promises.lstat(targetPath);
+    return true;
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+export function mcpLifecycleLockPathExistsSync(targetPath: string): boolean {
+  try {
+    fs.lstatSync(targetPath);
     return true;
   } catch (error) {
     if (isErrnoException(error) && error.code === "ENOENT") return false;
@@ -95,6 +147,12 @@ export async function safelyReleaseMcpLifecycleLock(
   // Claim and verify the generation before deletion. A replacement appearing
   // after the token read is restored rather than unlinked.
   await reclaimStaleMcpLifecycleLockGeneration(lockPath, observation);
+}
+
+export function safelyReleaseMcpLifecycleLockSync(lockPath: string, token: string): void {
+  const observation = readMcpLifecycleLockObservationSync(lockPath);
+  if (!observation || observation.owner?.token !== token) return;
+  reclaimStaleMcpLifecycleLockGenerationSync(lockPath, observation);
 }
 
 export async function reclaimStaleMcpLifecycleLockGeneration(
@@ -140,6 +198,41 @@ export async function reclaimStaleMcpLifecycleLockGeneration(
   return false;
 }
 
+export function reclaimStaleMcpLifecycleLockGenerationSync(
+  targetPath: string,
+  expected: LockObservation,
+): boolean {
+  const quarantinePath = `${targetPath}.reclaim-${process.pid}-${crypto.randomUUID()}`;
+  try {
+    fs.renameSync(targetPath, quarantinePath);
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") return false;
+    throw error;
+  }
+
+  const claimed = readMcpLifecycleLockObservationSync(quarantinePath);
+  const expectedToken = expected.owner?.token ?? null;
+  const claimedExpectedGeneration =
+    expectedToken === null
+      ? claimed !== null &&
+        claimed.owner === null &&
+        claimed.dev === expected.dev &&
+        claimed.ino === expected.ino
+      : claimed?.owner?.token === expectedToken;
+  if (claimedExpectedGeneration) {
+    fs.rmSync(quarantinePath, { force: true, recursive: true });
+    return true;
+  }
+
+  try {
+    fs.linkSync(quarantinePath, targetPath);
+    fs.rmSync(quarantinePath, { force: true });
+  } catch (error) {
+    if (!isErrnoException(error) || error.code !== "EEXIST") throw error;
+  }
+  return false;
+}
+
 export async function writeMcpLifecycleLockCandidateAndLink(
   lockPath: string,
   owner: McpLifecycleLockOwner,
@@ -177,6 +270,40 @@ export async function writeMcpLifecycleLockCandidateAndLink(
       // Publication is decided only by LINK plus owner-token reconciliation.
       // A unique candidate cleanup failure must not strand a live canonical
       // self-lock before the caller enters its protected operation.
+    }
+  }
+}
+
+export function writeMcpLifecycleLockCandidateAndLinkSync(
+  lockPath: string,
+  owner: McpLifecycleLockOwner,
+): boolean {
+  const candidatePath = `${lockPath}.candidate-${process.pid}-${owner.token}`;
+  try {
+    const fd = fs.openSync(candidatePath, "wx", 0o600);
+    try {
+      fs.writeFileSync(fd, ownerFileContent(owner), "utf8");
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    try {
+      fs.linkSync(candidatePath, lockPath);
+      return true;
+    } catch (error) {
+      const candidateStat = fs.statSync(candidatePath);
+      const published = readMcpLifecycleLockObservationSync(lockPath);
+      if (candidateStat.nlink >= 2 && published?.owner?.token === owner.token) {
+        return true;
+      }
+      if (isErrnoException(error) && error.code === "EEXIST") return false;
+      throw error;
+    }
+  } finally {
+    try {
+      fs.rmSync(candidatePath, { force: true });
+    } catch {
+      // Publication is decided only by LINK plus owner-token reconciliation.
     }
   }
 }

@@ -47,8 +47,8 @@ describe("PR E2E signal shard policy", () => {
     });
     const broadPlan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: BROAD_FILES });
     const broadShards = expectedSignalShards(riskPlanRequiredJobIds(broadPlan));
-    expect(Object.keys(broadShards)).toHaveLength(13);
-    expect(Object.values(broadShards).flat()).toHaveLength(15);
+    expect(Object.keys(broadShards)).toHaveLength(14);
+    expect(Object.values(broadShards).flat()).toHaveLength(17);
     expect(() => expectedSignalShards(["not-a-workflow-job"])).toThrow(/does not define/u);
   });
 
