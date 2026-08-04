@@ -369,7 +369,7 @@ describe("dual DGX Station running-runtime receipt adoption", () => {
       return true;
     });
 
-    await expect(persistConfiguredDualStationVllmRuntimeReceipt()).resolves.toEqual({
+    await expect(persistConfiguredManagedVllmRuntimeReceipt()).resolves.toEqual({
       ok: true,
       persisted: true,
     });
@@ -398,7 +398,7 @@ describe("dual DGX Station running-runtime receipt adoption", () => {
       }
     });
 
-    await expect(persistConfiguredDualStationVllmRuntimeReceipt()).resolves.toEqual({
+    await expect(persistConfiguredManagedVllmRuntimeReceipt()).resolves.toEqual({
       ok: false,
       reason: "the managed dual-Station peer configuration is missing",
     });
@@ -415,7 +415,7 @@ describe("dual DGX Station running-runtime receipt adoption", () => {
       reason: "could not revalidate the managed pair: managed runtime identity changed",
     });
 
-    await expect(persistConfiguredDualStationVllmRuntimeReceipt()).resolves.toEqual({
+    await expect(persistConfiguredManagedVllmRuntimeReceipt()).resolves.toEqual({
       ok: false,
       reason:
         "the managed dual-Station cleanup receipt is unsafe: could not revalidate the managed pair: managed runtime identity changed",
@@ -431,7 +431,7 @@ describe("dual DGX Station running-runtime receipt adoption", () => {
     mocks.recoverRuntime.mockReturnValue({ kind: "ready", plan: recoveredPlan });
     mocks.areContainersRunning.mockReturnValue(false);
 
-    await expect(persistConfiguredDualStationVllmRuntimeReceipt()).resolves.toEqual({
+    await expect(persistConfiguredManagedVllmRuntimeReceipt()).resolves.toEqual({
       ok: false,
       reason: "the managed dual-Station containers changed before cleanup ownership validation",
     });
