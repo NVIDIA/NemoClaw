@@ -29,7 +29,7 @@ const baseReference = `ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${"5".repeat(
 const image = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox";
 const buildkitBaseDependencyUri = (targetPlatform: string) => {
   const [repositoryName, digest] = baseReference.split("@sha256:");
-  return `pkg:docker/${repositoryName}?digest=sha256:${digest}&platform=${targetPlatform.replace("/", "%2F")}`;
+  return `pkg:docker/${repositoryName}?digest=sha256:${digest}&platform=${targetPlatform.replaceAll("/", "%2F")}`;
 };
 
 type FixtureOptions = {

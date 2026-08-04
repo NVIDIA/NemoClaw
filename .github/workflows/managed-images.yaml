@@ -615,6 +615,7 @@ jobs:
             "slack",
             "whatsapp",
             "msteams",
+            "googlechat",
           ]) {
             if (config.channels?.[id]?.enabled !== false) {
               throw new Error(`managed OpenClaw channel ${id} is not explicitly disabled`);

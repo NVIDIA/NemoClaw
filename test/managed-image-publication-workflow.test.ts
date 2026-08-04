@@ -255,6 +255,13 @@ describe("complete managed-image publication workflow", () => {
 
     expect(publicationBoundaryErrors(baseWorkflow, managedWorkflow)).toEqual([]);
     expect(JSON.stringify(managedWorkflow)).not.toContain("config.plugins?.installs?.[id]");
+    const validationRun =
+      step(managedPublisher(managedWorkflow), "Validate exact managed image before promotion")
+        .run ?? "";
+    const channelGuardEnd = validationRun.indexOf("managed OpenClaw channel");
+    const channelGuardStart = validationRun.lastIndexOf("for (const id of [", channelGuardEnd);
+    expect(channelGuardStart).toBeGreaterThan(-1);
+    expect(validationRun.slice(channelGuardStart, channelGuardEnd)).toContain('"googlechat",');
     expect(publisher).toMatchObject({
       needs: ["build-and-push-hermes", "build-and-push-dcode", "build-and-push-openclaw"],
       permissions: {
