@@ -236,6 +236,14 @@ Before showing the confirmation prompt, present:
 Do not ask for the phrase until each test and the exact Brev Launchable E2E job has successful evidence or its own itemized maintainer exception.
 Immediately before asking, refresh `origin/main` once and compare its full SHA with the plan. If it moved, discard all prior candidate-bound evidence, regenerate the plan, rerun preflight and every required default, explicit, conditional, and exact Brev Launchable E2E group for the new SHA, capture a new manifest, and rebuild the ledger before requesting confirmation; merges did not need to stop while the earlier evidence ran.
 
+Exercise the configured Git signing backend before asking for confirmation:
+
+```bash
+npm run release:cut -- --plan <plan.json> --preflight-only
+```
+
+Require status 0. This preflight creates and deletes one local temporary tag. It does not push a ref. Git selects the maintainer's configured OpenPGP, SSH, or X.509 signer.
+
 Ask the maintainer to paste this phrase:
 
 ```text
@@ -373,6 +381,7 @@ If the Announcement is valid, return its URL with the release artifacts and mark
 - Launchable E2E or cleanup evidence is missing or invalid: reject the run. Do not infer Launchable E2E success from the workflow conclusion.
 - `origin/main` moved after plan generation: regenerate the plan and ask for the new confirmation phrase.
 - Remote semver tag already exists: stop; do not retag unless the maintainer explicitly starts protected-tag remediation.
+- Signing preflight fails: fix the reported Git signer or signing-key failure. Run the preflight again before requesting confirmation.
 - `latest` workflow fails or times out: report the workflow/status; do not move `latest` manually.
 - `latest` workflow rejects a rollback: keep `latest` unchanged, inspect the plan target commit, and regenerate the plan for the current `origin/main` tip if appropriate.
 - `lkg` changed: stop and escalate to a release admin.
