@@ -167,7 +167,7 @@ describe("OpenClaw final image layout", () => {
     );
     const ipAddressPatch = indexOfRequired(
       finalStage,
-      "RUN node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
+      "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
     );
     const pluginInstall = indexOfRequired(finalStage, "RUN npm ci --omit=dev");
     const managedMessagingUnionInstall = indexOfRequired(

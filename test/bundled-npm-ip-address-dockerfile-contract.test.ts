@@ -26,8 +26,8 @@ const finalDockerfiles = [
 ] as const;
 const copyInstruction =
   "COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts";
-const patchInstruction =
-  "RUN node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts";
+const patchCommand =
+  "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts";
 
 function instructionBody(source: string, start: number): string {
   return source.slice(start).split(/\n(?=\S)/u, 1)[0] ?? "";
@@ -52,7 +52,7 @@ describe("bundled npm ip-address image remediation contract", () => {
     const upgrade = source.indexOf(
       "RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
     );
-    const patch = source.indexOf(patchInstruction);
+    const patch = source.indexOf(patchCommand);
 
     expect(copy, file).toBeGreaterThanOrEqual(0);
     expect(upgrade, file).toBeGreaterThan(copy);
@@ -71,7 +71,7 @@ describe("bundled npm ip-address image remediation contract", () => {
     const bracePatch = source.indexOf(
       "RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
     );
-    const ipAddressPatch = source.indexOf(patchInstruction);
+    const ipAddressPatch = source.indexOf(patchCommand);
 
     expect(copy, file).toBeGreaterThanOrEqual(0);
     expect(tarPatch, file).toBeGreaterThan(copy);
