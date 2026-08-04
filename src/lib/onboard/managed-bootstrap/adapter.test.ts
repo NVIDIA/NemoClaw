@@ -20,6 +20,7 @@ import {
   type ManagedBootstrapAuthorityStore,
   type ManagedBootstrapCompletionReceipt,
   type ManagedBootstrapCreateReceipt,
+  type ManagedBootstrapDurablePreparationReceipt,
   type ManagedBootstrapFinalizationReceipt,
   type ManagedBootstrapHeldWorkloadHandle,
   type ManagedBootstrapObservedSnapshot,
@@ -29,7 +30,10 @@ import {
   prepareManagedBootstrapSequence,
   recoverManagedBootstrapTransactions,
   renderManagedBootstrapHeldCommand,
+  sameManagedBootstrapCompletionReceipt,
+  sameManagedBootstrapDurablePreparationReceipt,
 } from "./adapter";
+import { reverseKeys } from "./managed-bootstrap-test-fixture";
 
 const IDENTITY = "1".repeat(64);
 const CONFIG_ID = `sha256:${"2".repeat(64)}`;
@@ -356,6 +360,45 @@ async function captureFailure<T>(promise: Promise<T>) {
 }
 
 describe("managed bootstrap adapter contract", () => {
+  it("compares provider-neutral durable receipts by canonical value", () => {
+    const handle = handleFor(requestFor("hermes"));
+    const preparation: ManagedBootstrapDurablePreparationReceipt = {
+      schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+      sandbox: handle.sandbox,
+      bootstrapIdentity: handle.bootstrapIdentity,
+      authorityFingerprint: "a".repeat(64),
+      recordId: "mxc-durable-authority",
+      recordedAt: "2026-07-29T12:00:30.000Z",
+    };
+    const reorderedPreparation = reverseKeys({
+      ...preparation,
+      sandbox: reverseKeys({ ...preparation.sandbox }),
+    });
+    expect(sameManagedBootstrapDurablePreparationReceipt(preparation, reorderedPreparation)).toBe(
+      true,
+    );
+    expect(
+      sameManagedBootstrapDurablePreparationReceipt(preparation, {
+        ...reorderedPreparation,
+        recordId: "changed-authority",
+      }),
+    ).toBe(false);
+
+    const completion = completionFor(requestFor("hermes"), handle);
+    const reorderedCompletion = reverseKeys({
+      ...completion,
+      image: reverseKeys({ ...completion.image }),
+      sandbox: reverseKeys({ ...completion.sandbox }),
+    });
+    expect(sameManagedBootstrapCompletionReceipt(completion, reorderedCompletion)).toBe(true);
+    expect(
+      sameManagedBootstrapCompletionReceipt(completion, {
+        ...reorderedCompletion,
+        transactionPending: false,
+      }),
+    ).toBe(false);
+  });
+
   it.each(
     MANAGED_STARTUP_AGENTS,
   )("prepares, durably records, and only then activates %s through a provider-neutral adapter", async (agent) => {

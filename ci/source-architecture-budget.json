@@ -11,7 +11,7 @@
       "src/lib/adapters/openshell/runtime.ts": 52,
       "src/lib/adapters/openshell/timeouts.ts": 37,
       "src/lib/agent/defs.ts": 32,
-      "src/lib/cli/branding.ts": 85,
+      "src/lib/cli/branding.ts": 86,
       "src/lib/cli/nemoclaw-oclif-command.ts": 103,
       "src/lib/cli/terminal-style.ts": 45,
       "src/lib/core/json-types.ts": 37,
@@ -28,7 +28,7 @@
       "src/lib/security/redact.ts": 51,
       "src/lib/state/onboard-session.ts": 36,
       "src/lib/state/registry.ts": 101,
-      "src/lib/state/state-root.ts": 23,
+      "src/lib/state/state-root.ts": 22,
       "src/lib/subprocess-env.ts": 24,
       "src/lib/validation.ts": 25
     }
@@ -46,7 +46,7 @@
       "src/lib/actions/sandbox/snapshot.ts": 39,
       "src/lib/actions/uninstall/run-plan.ts": 25,
       "src/lib/inference/onboard-probes.ts": 21,
-      "src/lib/inference/vllm.ts": 23,
+      "src/lib/inference/vllm.ts": 21,
       "src/lib/onboard.ts": 225,
       "src/lib/onboard/machine/handlers/sandbox.ts": 21,
       "src/lib/sandbox/config.ts": 22,
