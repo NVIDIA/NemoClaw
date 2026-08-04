@@ -130,9 +130,11 @@ describe("runtime provider central source boundary", () => {
       [providerContract.current, providerContract.docker, providerContract.registry].join("\n"),
     ).not.toMatch(/managed-bootstrap/u);
     expect(providerContract.current).not.toMatch(/\b(?:podman|mxc)\b/iu);
-    expect(providerContract.stateMutation).not.toMatch(/\b(?:docker|podman|hermes|mxc)\b/iu);
     expect(providerContract.stateMutation).not.toMatch(
-      /(?:child_process|execFile|spawn|shell|command|callback)/iu,
+      /\b(?:docker|podman|kubernetes|k8s|hermes|mxc)\b/iu,
+    );
+    expect(providerContract.stateMutation).not.toMatch(
+      /\b(?:child_process|exec|execFile|execSync|fork|spawn|shell|command|callback)\b/iu,
     );
   });
 

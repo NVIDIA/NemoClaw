@@ -46,10 +46,57 @@ describe("runtime provider state-mutation plan", () => {
       ...plan(),
       projectionSha256: "b".repeat(64),
     });
+    const changedScope = prepareRuntimeProviderStateMutationPlan({
+      ...plan(),
+      selectors: [{ kind: "path", path: "scripts" }],
+    });
 
     expect(protectionTransition.planSha256).not.toBe(restore.planSha256);
     expect(changedProjection.planSha256).not.toBe(restore.planSha256);
+    expect(changedScope.planSha256).not.toBe(restore.planSha256);
     expect(changedProjection.projectionSha256).toBe("b".repeat(64));
+  });
+
+  it("does not let inherited JSON hooks change the digest or size limit (#7744)", () => {
+    const baseline = prepareRuntimeProviderStateMutationPlan(plan());
+    const objectToJson = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
+    const arrayToJson = Object.getOwnPropertyDescriptor(Array.prototype, "toJSON");
+    let pollutedDigest = "";
+    let oversizedRejected = false;
+
+    try {
+      Object.defineProperty(Object.prototype, "toJSON", {
+        configurable: true,
+        value: () => "polluted-object",
+      });
+      Object.defineProperty(Array.prototype, "toJSON", {
+        configurable: true,
+        value: () => ["polluted-array"],
+      });
+
+      pollutedDigest = prepareRuntimeProviderStateMutationPlan(plan()).planSha256;
+      try {
+        prepareRuntimeProviderStateMutationPlan({
+          ...plan(),
+          selectors: Array.from({ length: 256 }, (_, index) => ({
+            kind: "path",
+            path: `${String(index)}-${"a".repeat(300)}`,
+          })),
+        });
+      } catch (error) {
+        oversizedRejected =
+          error instanceof Error &&
+          /canonical plan exceeds its bounded transport/u.test(error.message);
+      }
+    } finally {
+      if (objectToJson) Object.defineProperty(Object.prototype, "toJSON", objectToJson);
+      else Reflect.deleteProperty(Object.prototype, "toJSON");
+      if (arrayToJson) Object.defineProperty(Array.prototype, "toJSON", arrayToJson);
+      else Reflect.deleteProperty(Array.prototype, "toJSON");
+    }
+
+    expect(pollutedDigest).toBe(baseline.planSha256);
+    expect(oversizedRejected).toBe(true);
   });
 
   it("rejects accessor-backed values before validation can drift (#7744)", () => {
@@ -89,16 +136,33 @@ describe("runtime provider state-mutation plan", () => {
   });
 
   it.each([
-    ["relative state root", () => ({ ...plan(), stateRoot: "sandbox/.hermes" })],
-    ["filesystem root", () => ({ ...plan(), stateRoot: "/" })],
-    ["system state root", () => ({ ...plan(), stateRoot: "/etc/nemoclaw" })],
-    ["state-root traversal", () => ({ ...plan(), stateRoot: "/sandbox/../etc" })],
+    [
+      "relative state root",
+      () => ({ ...plan(), stateRoot: "sandbox/.hermes" }),
+      /canonical absolute path below \/sandbox/u,
+    ],
+    [
+      "filesystem root",
+      () => ({ ...plan(), stateRoot: "/" }),
+      /canonical absolute path below \/sandbox/u,
+    ],
+    [
+      "system state root",
+      () => ({ ...plan(), stateRoot: "/etc/nemoclaw" }),
+      /canonical absolute path below \/sandbox/u,
+    ],
+    [
+      "state-root traversal",
+      () => ({ ...plan(), stateRoot: "/sandbox/../etc" }),
+      /canonical absolute path below \/sandbox/u,
+    ],
     [
       "relative-path traversal",
       () => ({
         ...plan(),
         selectors: [{ kind: "path", path: "scripts/../../etc" }],
       }),
+      /canonical relative path/u,
     ],
     [
       "control characters",
@@ -106,6 +170,20 @@ describe("runtime provider state-mutation plan", () => {
         ...plan(),
         selectors: [{ kind: "path", path: "scripts\u0000escape" }],
       }),
+      /bounded exact string/u,
+    ],
+    [
+      "an unpaired surrogate in the state root",
+      () => ({ ...plan(), stateRoot: "/sandbox/state-\ud800" }),
+      /Unicode scalar values/u,
+    ],
+    [
+      "an unpaired surrogate in a selector path",
+      () => ({
+        ...plan(),
+        selectors: [{ kind: "path", path: "state-\ud800" }],
+      }),
+      /Unicode scalar values/u,
     ],
     [
       "uppercase projection digest",
@@ -113,14 +191,29 @@ describe("runtime provider state-mutation plan", () => {
         ...plan(),
         projectionSha256: "A".repeat(64),
       }),
+      /lowercase SHA-256/u,
     ],
-  ])("rejects %s (#7744)", (_label, value) => {
-    expect(() => prepareRuntimeProviderStateMutationPlan(value())).toThrow(
-      /state-mutation plan is invalid/u,
-    );
+    [
+      "dot prefix",
+      () => ({
+        ...plan(),
+        selectors: [{ kind: "prefix", prefix: "." }],
+      }),
+      /prefix is not canonical/u,
+    ],
+    [
+      "dot-dot prefix",
+      () => ({
+        ...plan(),
+        selectors: [{ kind: "prefix", prefix: ".." }],
+      }),
+      /prefix is not canonical/u,
+    ],
+  ])("rejects %s (#7744)", (_label, value, expected) => {
+    expect(() => prepareRuntimeProviderStateMutationPlan(value())).toThrow(expected);
   });
 
-  it("rejects duplicate and oversized selector sets (#7744)", () => {
+  it("rejects duplicate, oversized, and UTF-8-aliasing selector sets (#7744)", () => {
     expect(() => prepareRuntimeProviderStateMutationPlan({ ...plan(), selectors: [] })).toThrow(
       /non-empty bounded array/u,
     );
@@ -154,5 +247,15 @@ describe("runtime provider state-mutation plan", () => {
         })),
       }),
     ).toThrow(/bounded transport/u);
+
+    expect(() =>
+      prepareRuntimeProviderStateMutationPlan({
+        ...plan(),
+        selectors: [
+          { kind: "path", path: "state-\ud800" },
+          { kind: "path", path: "state-\ufffd" },
+        ],
+      }),
+    ).toThrow(/Unicode scalar values/u);
   });
 });

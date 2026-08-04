@@ -109,6 +109,9 @@ function boundedString(value: unknown, label: string, maxBytes: number): string 
   ) {
     fail(`${label} must be one bounded exact string`);
   }
+  if (Buffer.from(value, "utf8").toString("utf8") !== value) {
+    fail(`${label} must contain only Unicode scalar values`);
+  }
   return value;
 }
 
@@ -152,14 +155,35 @@ function normalizeSelector(value: unknown, index: number): RuntimeProviderStateM
   if (selector.kind === "prefix") {
     requireExactKeys(selector, ["kind", "prefix"], `selector ${String(index)}`);
     const prefix = boundedString(selector.prefix, `selector ${String(index)} prefix`, 128);
-    if (!PREFIX_PATTERN.test(prefix)) fail(`selector ${String(index)} prefix is not canonical`);
+    if (prefix === "." || prefix === ".." || !PREFIX_PATTERN.test(prefix)) {
+      fail(`selector ${String(index)} prefix is not canonical`);
+    }
     return Object.freeze({ kind: "prefix", prefix });
   }
   fail(`selector ${String(index)} kind is unsupported`);
 }
 
-function sha256(value: unknown): string {
-  return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
+function serializePlan(plan: RuntimeProviderStateMutationPlan): string {
+  const selectors: Array<Record<string, string>> = plan.selectors.map((selector) => {
+    const transport: Record<string, string> = Object.create(null);
+    transport.kind = selector.kind;
+    if (selector.kind === "path") transport.path = selector.path;
+    else transport.prefix = selector.prefix;
+    return transport;
+  });
+  Object.setPrototypeOf(selectors, null);
+
+  const transport: Record<string, unknown> = Object.create(null);
+  transport.schemaVersion = plan.schemaVersion;
+  transport.intent = plan.intent;
+  transport.stateRoot = plan.stateRoot;
+  transport.selectors = selectors;
+  transport.projectionSha256 = plan.projectionSha256;
+  return JSON.stringify(transport);
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
 /** Validate, canonicalize, clone, freeze, and digest an untrusted state plan. */
@@ -197,12 +221,13 @@ export function prepareRuntimeProviderStateMutationPlan(
     selectors: Object.freeze(selectors),
     projectionSha256: input.projectionSha256,
   });
-  if (Buffer.byteLength(JSON.stringify(plan), "utf8") > MAX_PLAN_BYTES) {
+  const serializedPlan = serializePlan(plan);
+  if (Buffer.byteLength(serializedPlan, "utf8") > MAX_PLAN_BYTES) {
     fail("canonical plan exceeds its bounded transport");
   }
   return Object.freeze({
     plan,
-    planSha256: sha256(plan),
+    planSha256: sha256(serializedPlan),
     projectionSha256: plan.projectionSha256,
   });
 }
