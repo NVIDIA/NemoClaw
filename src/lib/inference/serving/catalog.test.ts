@@ -143,10 +143,12 @@ spec:
         license: Apache-2.0
   runtime:
     image: registry.example/test/llama-server@sha256:${"2".repeat(64)}
+    imageDownloadSizeBytes: 1073741824
     platforms:
       - linux/amd64
       - linux/arm64
     containerRuntime: docker
+    networkExposure: loopback
     hosts: 1
     cuda:
       baseImage: registry.example/nvidia/cuda@sha256:${"3".repeat(64)}
@@ -166,11 +168,19 @@ spec:
     lifecycleRef: test.lifecycle/v1
   serve:
     protocol: openai-completions
+    authentication: bearer
     port: 8081
     chatTemplate: test-chat
     contextSize: 32768
     slots: 1
     idleSleepSeconds: -1
+    batchSize: 2048
+    microBatchSize: 512
+    flashAttention: enabled
+    kvCache:
+      key: f16
+      value: f16
+    speculativeDecoding: disabled
     limits:
       maxRequestBodyBytes: 1048576
       maxPromptTokens: 24576
@@ -326,10 +336,22 @@ describe("managed inference serving catalog compiler", () => {
       providerId: "llama-cpp-local",
       server: { technology: "llama.cpp" },
       runtime: {
+        imageDownloadSizeBytes: 1073741824,
         platforms: ["linux/amd64", "linux/arm64"],
+        networkExposure: "loopback",
         gpu: { count: 1, cpuFallback: "reject" },
       },
-      serve: { protocol: "openai-completions", port: 8081, slots: 1 },
+      serve: {
+        protocol: "openai-completions",
+        authentication: "bearer",
+        port: 8081,
+        slots: 1,
+        batchSize: 2048,
+        microBatchSize: 512,
+        flashAttention: "enabled",
+        kvCache: { key: "f16", value: "f16" },
+        speculativeDecoding: "disabled",
+      },
       capabilities: { agents: [], protocols: ["openai-completions"] },
     });
     expect(first.presets[0]?.spec.selection).toBe("explicit-only");
@@ -357,6 +379,7 @@ describe("managed inference serving catalog compiler", () => {
       "      baseImage: registry.example/nvidia/cuda:12.8",
     ],
     ["incomplete platform coverage", "      - linux/arm64\n", ""],
+    ["a missing image byte size", "    imageDownloadSizeBytes: 1073741824\n", ""],
     ["missing process limits", "      pidsLimit: 256\n", ""],
     [
       "an embedded credential",
@@ -372,6 +395,15 @@ describe("managed inference serving catalog compiler", () => {
       "    protocol: openai-responses",
     ],
     ["CPU fallback", "      cpuFallback: reject", "      cpuFallback: allow"],
+    ["external network exposure", "    networkExposure: loopback", "    networkExposure: lan"],
+    ["missing authentication", "    authentication: bearer\n", ""],
+    ["an unsafe KV cache type", "      key: f16", "      key: q4_0"],
+    ["disabled flash attention", "    flashAttention: enabled", "    flashAttention: disabled"],
+    [
+      "enabled speculative decoding",
+      "    speculativeDecoding: disabled",
+      "    speculativeDecoding: enabled",
+    ],
     ["server egress", "    egress: disabled", "    egress: enabled"],
     ["a remote model source", "    modelSource: verified-local", "    modelSource: remote"],
     [
@@ -383,6 +415,49 @@ describe("managed inference serving catalog compiler", () => {
     ["a malformed agent qualification", "    agents: []", "    agents: [openclaw]"],
     ["a path-based served model name", "    servedName: test-model", "    servedName: test/model"],
   ])("rejects %s in a llama.cpp recipe (#8181)", (_case, expected, replacement) => {
+    const recipe = replaceSource(llamaCppRecipeSource(), expected, replacement);
+
+    expect(() => compile([recipe])).toThrow("does not satisfy the ServingRecipe schema");
+  });
+
+  it.each([
+    [
+      "top-level topology bindings",
+      "  backend: install-llama-cpp",
+      `  backend: install-llama-cpp
+  bindings:
+    cluster:
+      type: topologyQualificationOutput
+      qualificationId: test.qualification
+      schemaVersion: 1
+      outputSchema: test.output`,
+    ],
+    [
+      "managed model preparation",
+      "    servedName: test-model",
+      `    servedName: test-model
+    preparation:
+      ref: none/v1`,
+    ],
+    [
+      "managed runtime networking",
+      "    networkExposure: loopback",
+      `    networkExposure: loopback
+    networkMode: host`,
+    ],
+    [
+      "managed cluster execution sizing",
+      "    receiptRef: test.receipt/v1",
+      `    receiptRef: test.receipt/v1
+    nodeCount: 1`,
+    ],
+    [
+      "an executable override",
+      "    authentication: bearer",
+      `    authentication: bearer
+    executable: /usr/local/bin/llama-server`,
+    ],
+  ])("rejects generic-only %s in a llama.cpp recipe (#8173)", (_case, expected, replacement) => {
     const recipe = replaceSource(llamaCppRecipeSource(), expected, replacement);
 
     expect(() => compile([recipe])).toThrow("does not satisfy the ServingRecipe schema");
@@ -409,6 +484,18 @@ describe("managed inference serving catalog compiler", () => {
 
     expect(() => compile([excessiveTokenLimits])).toThrow(
       "request token limits exceed serve.contextSize",
+    );
+  });
+
+  it("rejects a llama.cpp micro-batch larger than its batch (#8173)", () => {
+    const invalidBatching = replaceSource(
+      llamaCppRecipeSource(),
+      "    microBatchSize: 512",
+      "    microBatchSize: 4096",
+    );
+
+    expect(() => compile([invalidBatching])).toThrow(
+      "serve.microBatchSize cannot exceed serve.batchSize",
     );
   });
 
@@ -481,6 +568,16 @@ describe("managed inference serving catalog compiler", () => {
     expect(() => compile([llamaCppRecipeSource(), presetWithoutReadiness])).toThrow(
       "must declare readiness requirements for llama.cpp recipe",
     );
+  });
+
+  it("allows an explicit llama.cpp preset to narrow a multiarch image to arm64 (#8173)", () => {
+    const arm64Preset = replaceSource(
+      llamaCppPresetSource(),
+      "            operator: one-of\n            values:\n              - amd64\n              - arm64",
+      "            operator: equals\n            value: arm64",
+    );
+
+    expect(() => compile([llamaCppRecipeSource(), arm64Preset])).not.toThrow();
   });
 
   it.each([
