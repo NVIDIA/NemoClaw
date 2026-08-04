@@ -91,6 +91,17 @@ const GRAPH_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/u;
 const MAX_EXCEPTION_LIFETIME_DAYS = 30;
 const GHSA_ID_IN_URL = /GHSA(?:-[23456789cfghjmpqrvwx]{4}){3}/gi;
+const NPM_AUDIT_ATTEMPT_TIMEOUT_MS = 45_000;
+const NPM_AUDIT_RETRY_DELAYS_MS = [1_000, 2_000] as const;
+
+type NpmAuditCommandResult = Readonly<{
+  error?: Error;
+  status: number | null;
+  stderr: string;
+  stdout: string;
+}>;
+
+type NpmAuditRetryReason = "empty-output" | "incomplete-report" | "invalid-json" | "timeout";
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -267,6 +278,67 @@ export function parseAuditReport(result: {
     );
   }
   return report;
+}
+
+function waitSynchronously(delayMs: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+}
+
+function npmAuditRetryReason(result: NpmAuditCommandResult): NpmAuditRetryReason {
+  if (result.error) return "timeout";
+  if (!result.stdout.trim()) return "empty-output";
+  try {
+    JSON.parse(result.stdout);
+  } catch {
+    return "invalid-json";
+  }
+  return "incomplete-report";
+}
+
+export function runNpmAuditWithRetry(
+  input: Readonly<{
+    run: () => NpmAuditCommandResult;
+    wait?: (delayMs: number) => void;
+    warn?: (message: string) => void;
+  }>,
+): Readonly<{
+  failure?: Error;
+  report?: Record<string, unknown>;
+  result: NpmAuditCommandResult;
+}> {
+  const wait = input.wait ?? waitSynchronously;
+  const warn = input.warn ?? console.warn;
+  const attemptCount = NPM_AUDIT_RETRY_DELAYS_MS.length + 1;
+  let lastResult: NpmAuditCommandResult | undefined;
+
+  for (let attempt = 1; attempt <= attemptCount; attempt += 1) {
+    const result = input.run();
+    if (result.error && (result.error as NodeJS.ErrnoException).code !== "ETIMEDOUT") {
+      throw result.error;
+    }
+    lastResult = result;
+    try {
+      if (result.error) {
+        throw new Error(`npm audit exceeded its ${NPM_AUDIT_ATTEMPT_TIMEOUT_MS} ms timeout`);
+      }
+      return { report: parseAuditReport(result), result };
+    } catch {
+      const delayMs = NPM_AUDIT_RETRY_DELAYS_MS[attempt - 1];
+      if (delayMs === undefined) break;
+      warn(
+        `npm audit scan incomplete on attempt ${attempt}/${attemptCount}; retrying in ${delayMs} ms (reason=${npmAuditRetryReason(result)})`,
+      );
+      wait(delayMs);
+    }
+  }
+
+  if (!lastResult) throw new Error("npm audit retry loop completed without running the scanner");
+  return {
+    failure: new Error(
+      `npm audit scan remained incomplete after ${attemptCount} attempts (reason=${npmAuditRetryReason(lastResult)})`,
+    ),
+    result: lastResult,
+  };
 }
 
 export function vulnerabilityCounts(report: Record<string, unknown>): Record<Severity, number> {
@@ -577,23 +649,21 @@ export function runReviewedNpmAudit(
   }
   const exceptionRegistry = readAuditExceptionRegistry(options.exceptionFile);
   const startedAt = new Date().toISOString();
-  const result = spawnSync("npm", ["audit", "--omit=dev", "--json"], {
-    cwd: options.directory,
-    encoding: "utf-8",
-    env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
-    maxBuffer: 64 * 1024 * 1024,
-    stdio: ["ignore", "pipe", "pipe"],
+  const audit = runNpmAuditWithRetry({
+    run: () =>
+      spawnSync("npm", ["audit", "--omit=dev", "--json"], {
+        cwd: options.directory,
+        encoding: "utf-8",
+        env: { ...process.env, NPM_CONFIG_UPDATE_NOTIFIER: "false" },
+        maxBuffer: 64 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: NPM_AUDIT_ATTEMPT_TIMEOUT_MS,
+      }),
   });
   const finishedAt = new Date().toISOString();
-  if (result.error) throw result.error;
-  if (options.reportFile) fs.writeFileSync(options.reportFile, result.stdout);
-  let report: Record<string, unknown> = {};
-  let auditFailure: Error | undefined;
-  try {
-    report = parseAuditReport(result);
-  } catch (error) {
-    auditFailure = error instanceof Error ? error : new Error(String(error));
-  }
+  const auditFailure = audit.failure;
+  const report = audit.report ?? {};
+  if (options.reportFile) fs.writeFileSync(options.reportFile, audit.result.stdout);
   if (options.provenance && options.reportFile) {
     const provenance = buildAuditProvenance({
       failure: auditFailure?.message,

@@ -16,6 +16,7 @@ function createResumeConfig(overrides: Partial<RebuildResumeConfig> = {}): Rebui
     credentialEnv: "COMPATIBLE_API_KEY",
     preferredInferenceApi: "openai",
     compatibleEndpointReasoning: "true",
+    compatibleEndpointReasoningEffort: null,
     pinEndpoint: true,
     endpointUrl: "https://new-provider.example/v1",
     registryInferenceRoute: null,
@@ -91,6 +92,7 @@ describe("rewindSessionForRebuildResume", () => {
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai",
       compatibleEndpointReasoning: "true",
+      compatibleEndpointReasoningEffort: null,
       hermesToolGateways: [],
     });
     expect(rewound.machine).toMatchObject({
@@ -119,10 +121,12 @@ describe("rewindSessionForRebuildResume", () => {
     const session = createSession({
       sandboxName: "other",
       compatibleEndpointReasoning: "true",
+      compatibleEndpointReasoningEffort: null,
     });
     const resumeConfig = {
       ...createResumeConfig(),
       compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
     };
 
     const rewound = rewindSessionForRebuildResume(session, {

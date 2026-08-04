@@ -11,6 +11,7 @@ import { addTraceEvent, withTraceSpan } from "../trace";
 import type { TrustedPrivateEndpointCapability } from "./endpoint-ssrf-preflight";
 import { resolveMaxTokensField } from "./max-tokens-field";
 import { isDeepSeekV4ProModel } from "./openai-probe-models";
+import { STREAMING_EVENT_PROBE_MAX_SECONDS } from "./probe-http-helpers";
 
 const RETRIABLE_HTTP_STATUSES = new Set([429, 502, 503, 504]);
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
@@ -290,7 +291,11 @@ export async function probeOpenAiLikeEndpointWithValidationSession(
           const streamResult = await session.request({
             ...auth,
             body: responsesPayload(model, false, true),
-            timeoutMs: deps.getResponsesTimeoutMs(options),
+            // Cap the streaming probe deadline, mirroring the curl path. See #7792.
+            timeoutMs: Math.min(
+              deps.getResponsesTimeoutMs(options),
+              STREAMING_EVENT_PROBE_MAX_SECONDS * 1000,
+            ),
           });
           const events = streamingEventTypes(streamResult.body);
           if (streamResult.curlStatus !== 0 && streamResult.curlStatus !== 28) {

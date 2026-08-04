@@ -12,6 +12,7 @@
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, D, R } from "../../cli/terminal-style";
 import { normalizeInferenceSelection } from "../../inference/selection";
+import type { ReasoningEffort } from "../../onboard/reasoning-mode";
 import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
 import * as onboardSession from "../../state/onboard-session";
 import type { AmbientRecreateEnvAssessment } from "./rebuild-env-isolation";
@@ -47,6 +48,7 @@ export interface RebuildResumeConfig {
   readonly credentialEnv: string | null;
   readonly preferredInferenceApi: string | null;
   readonly compatibleEndpointReasoning: "true" | "false" | null;
+  readonly compatibleEndpointReasoningEffort: ReasoningEffort | null;
   /**
    * Whether this endpoint was derived without trusting the matching onboard
    * session. Kept for preflight/tests; rebuild writes `endpointUrl`
@@ -97,6 +99,10 @@ export function prepareRebuildResumeConfig(
   const matchingSessionSelection = sessionMatchesSandbox
     ? normalizeInferenceSelection(session)
     : null;
+  const registryHasReasoningEffort = Object.prototype.hasOwnProperty.call(
+    sb,
+    "compatibleEndpointReasoningEffort",
+  );
   const sessionSelectionMatchesRegistry = Boolean(
     matchingSessionSelection &&
       (!registrySelection.provider ||
@@ -113,6 +119,9 @@ export function prepareRebuildResumeConfig(
       registrySelection.preferredInferenceApi ?? legacySelection?.preferredInferenceApi,
     compatibleEndpointReasoning:
       registrySelection.compatibleEndpointReasoning ?? legacySelection?.compatibleEndpointReasoning,
+    compatibleEndpointReasoningEffort: registryHasReasoningEffort
+      ? registrySelection.compatibleEndpointReasoningEffort
+      : legacySelection?.compatibleEndpointReasoningEffort,
     nimContainer: registrySelection.nimContainer ?? legacySelection?.nimContainer,
   });
   if (!trustedSelection.provider || !trustedSelection.model) {
@@ -145,6 +154,7 @@ export function prepareRebuildResumeConfig(
     );
   }
   const compatibleEndpointReasoning = trustedSelection.compatibleEndpointReasoning;
+  const compatibleEndpointReasoningEffort = trustedSelection.compatibleEndpointReasoningEffort;
   const { credentialEnv, rebuildEndpoint, explicitTargetEndpoint, registryInferenceRoute } =
     assessRebuildInferencePreflight({
       sandboxName,
@@ -232,6 +242,7 @@ export function prepareRebuildResumeConfig(
     // the stale value to re-arm gateway provider setup before recreation.
     preferredInferenceApi: trustedSelection.preferredInferenceApi,
     compatibleEndpointReasoning,
+    compatibleEndpointReasoningEffort,
     pinEndpoint: rebuildEndpoint.known || explicitTargetEndpoint !== null,
     endpointUrl,
     registryInferenceRoute,

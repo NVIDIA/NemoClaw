@@ -269,6 +269,11 @@ function pickVerdict(signals: DiagnosticSignal[], input: TelegramProbeInput): Te
   }
   if (bc?.startupFailedNetwork) return "unreachable";
   if (bc?.bridgeNotStarted) return "not_started";
+  // A definitive non-auth Bot API startup error (403/429/5xx; 401/404 already
+  // map to token_rejected above) is a runtime failure, not an inconclusive
+  // outcome. Surface it as unreachable so `channels status` exits nonzero
+  // instead of treating the channel as passing.
+  if (bc?.startupHttpError != null) return "unreachable";
   return "unknown";
 }
 
@@ -288,7 +293,7 @@ function buildHints(verdict: TelegramVerdict): string[] {
       ];
     case "unreachable":
       return [
-        "The sandbox could not reach api.telegram.org. Confirm the telegram egress policy is loaded and the corporate network allows Telegram.",
+        "The sandbox could not reach api.telegram.org, or the Telegram Bot API returned an error status. Confirm the telegram egress policy is loaded and the network allows Telegram, and check `nemoclaw <sandbox> logs --follow` for a Bot API HTTP status.",
       ];
     case "not_started":
       return [

@@ -31,6 +31,7 @@ If you cannot add memory, configure at least 8 GB of swap to work around the iss
 |------------|----------------------------------|
 | Node.js    | 22.19 or later |
 | npm        | 10 or later |
+| Python     | Python 3 at a trusted system location, with POSIX descriptor-relative filesystem support |
 | Docker     | Docker Engine, Docker Desktop, or Colima on a tested platform |
 | Platform   | Refer to [Platforms](#platforms) below |
 
@@ -39,6 +40,13 @@ The installer can install Docker, start the Docker service, and add your user to
 When Docker is missing, the installer downloads Docker's official convenience script, prompts for `sudo`, and starts the service when systemd is available.
 In a non-interactive run, the installer can reactivate the group through `sg docker` and continue onboarding.
 If that path is unavailable or does not restore Docker access, the installer exits with `newgrp docker` guidance before it starts onboarding.
+
+NemoClaw uses an isolated `python3` helper for descriptor-relative migration snapshot sanitization and deletion.
+NemoClaw does not resolve this credential-bearing helper through the host `PATH`.
+It accepts a verified executable at `/usr/bin/python3`, `/usr/local/bin/python3`, `/opt/homebrew/bin/python3`, `/opt/local/bin/python3`, or beside the Node.js executable.
+The sanitizer fails closed before it reads snapshot content if no candidate passes its ownership, permission, and executable checks.
+Supported Linux, macOS, and WSL environments provide the required POSIX filesystem operations.
+Native Windows is not a supported execution path; use WSL.
 
 If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
 The installer also requires `strings` from `binutils` to verify the OpenShell binary before it continues with OpenShell install work.

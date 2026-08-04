@@ -85,8 +85,8 @@ describe("MCP credential-resolution probe command security", () => {
       buildCredentialResolutionProbeCommand(baseEntry, "deepagents-config")?.command ?? "";
 
     expect(mcporter).toContain("nemoclaw-start node -e");
-    expect(hermes).toContain("/opt/hermes/.venv/bin/python -c");
-    expect(deepagents).toContain("/opt/venv/bin/python3 -c");
+    expect(hermes).toContain("/opt/hermes/.venv/bin/python -I -c");
+    expect(deepagents).toContain("/opt/venv/bin/python3 -I -c");
     for (const command of [mcporter, hermes, deepagents]) {
       expect(command).toContain("'/dev/null'");
       expect(command).not.toContain("head -c");

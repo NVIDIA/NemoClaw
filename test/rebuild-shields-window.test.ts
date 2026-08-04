@@ -15,6 +15,10 @@ import {
   openRebuildShieldsWindow,
   relockRebuildShieldsWindow,
 } from "../src/lib/actions/sandbox/rebuild-shields";
+import {
+  openBackupShieldsWindow,
+  relockBackupShieldsWindow,
+} from "../src/lib/actions/sandbox/backup-shields-window";
 
 describe("rebuild shields window", () => {
   beforeEach(() => {
@@ -38,6 +42,48 @@ describe("rebuild shields window", () => {
       deferAutoRestoreWhileOwnerAlive: true,
       allowLegacyHermesProtocol: true,
     });
+  });
+
+  it("keeps ordinary backup windows bounded without the rebuild legacy bypass (#6455)", () => {
+    shieldsMock.isShieldsDown.mockReturnValue(false);
+    const options = {
+      operation: "backup-all",
+      reason: "auto-unlock for backup-all",
+      retryCommand: "nemoclaw backup-all",
+      shieldsUpCommand: "nemoclaw locked-sandbox shields up",
+    };
+
+    const window = openBackupShieldsWindow("locked-sandbox", options);
+
+    expect(window).not.toBeNull();
+    expect(shieldsMock.shieldsDown).toHaveBeenCalledWith("locked-sandbox", {
+      reason: "auto-unlock for backup-all",
+      timeout: "30m",
+      throwOnError: true,
+    });
+
+    expect(relockBackupShieldsWindow("locked-sandbox", window!, true, options)).toBe(true);
+    expect(shieldsMock.shieldsUp).toHaveBeenCalledWith("locked-sandbox", {
+      throwOnError: true,
+    });
+  });
+  it("does not open a backup window when corrupt Shields state blocks unlock (#6455)", () => {
+    shieldsMock.isShieldsDown.mockReturnValue(false);
+    shieldsMock.shieldsDown.mockImplementation(() => {
+      throw new Error("Shields state is corrupt for locked-sandbox");
+    });
+    const options = {
+      operation: "backup-all",
+      reason: "auto-unlock for backup-all",
+      retryCommand: "nemoclaw backup-all",
+      shieldsUpCommand: "nemoclaw locked-sandbox shields up",
+    };
+
+    expect(openBackupShieldsWindow("locked-sandbox", options)).toBeNull();
+    expect(shieldsMock.shieldsUp).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("Shields state is corrupt for locked-sandbox"),
+    );
   });
 
   it("relocks a previously locked sandbox and records the closed window", () => {
@@ -68,6 +114,21 @@ describe("rebuild shields window", () => {
     expect(window.relocked).toBe(false);
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining("Failed to re-apply shields lockdown"),
+    );
+    const recovery = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(recovery).toContain("nemoclaw locked-sandbox shields up");
+    expect(recovery).toContain("nemoclaw locked-sandbox rebuild");
+    expect(recovery.indexOf("shields up")).toBeLessThan(recovery.indexOf("rebuild"));
+  });
+
+  it("preserves the caller CLI name in missing-sandbox recovery guidance", () => {
+    const window = { relocked: false, wasLocked: true };
+
+    const relocked = relockRebuildShieldsWindow("deleted-sandbox", window, false, "nemo-dev");
+
+    expect(relocked).toBe(false);
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining("nemo-dev deleted-sandbox shields up"),
     );
   });
 

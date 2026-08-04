@@ -6,7 +6,11 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { normalizeOpenClawSignatureAlias } from "../scripts/audit-reviewed-npm-graph.mts";
+import {
+  normalizeOpenClawSignatureAlias,
+  parseAuditConfig,
+  selectReviewedLockSha256,
+} from "../scripts/audit-reviewed-npm-graph.mts";
 import { readYaml } from "./helpers/e2e-workflow-contract";
 
 type WorkflowStep = {
@@ -46,6 +50,54 @@ function requiredStep(job: WorkflowJob, name: string): WorkflowStep {
 }
 
 describe("trusted reviewed npm audit workflow (#5896)", () => {
+  it("accepts only an explicitly reviewed lock during a dependency transition", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-lock-transition-"));
+    const lockfile = path.join(root, "package-lock.json");
+    fs.writeFileSync(lockfile, "reviewed lock\n");
+    const actualLock = "534ade489fdb2d8ff619a8b110c28fedbd2066e16ebf434738f64a5a44ec9860";
+    const previousLock = "a".repeat(64);
+    const unreviewedLock = "b".repeat(64);
+    try {
+      expect(selectReviewedLockSha256(lockfile, actualLock, undefined, "test graph")).toBe(
+        actualLock,
+      );
+      expect(selectReviewedLockSha256(lockfile, previousLock, actualLock, "test graph")).toBe(
+        actualLock,
+      );
+      expect(() =>
+        selectReviewedLockSha256(lockfile, previousLock, unreviewedLock, "test graph"),
+      ).toThrow("lock SHA-256 mismatch");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a replacement lock digest that duplicates the current digest", () => {
+    const digest = "a".repeat(64);
+    const config = {
+      archiveGraphId: "reviewed-archive-graph",
+      archivePackages: [],
+      artifactDirectory: "artifacts/reviewed-npm-audit",
+      exceptionFile: "ci/npm-audit-exceptions.json",
+      lockedGraphs: [
+        {
+          directory: "agents/openclaw/openclaw-runtime",
+          id: "openclaw-runtime",
+          lockSha256: digest,
+          replacementLockSha256: digest,
+        },
+      ],
+      nodeVersion: "22.23.1",
+      registryOrigin: "https://registry.npmjs.org/",
+      schemaVersion: 2,
+      severityThreshold: "high",
+    };
+
+    expect(() => parseAuditConfig(JSON.stringify(config))).toThrow(
+      "ci/reviewed-npm-audit.json is invalid",
+    );
+  });
+
   // source-shape-contract: security -- PR dependency audit code must come from the base SHA or the one-time signed bootstrap
   it("runs PR audits from trusted code and keeps the main audit on the checked-in action", () => {
     const pr = readYaml<Workflow>(".github/workflows/pr.yaml");
@@ -129,6 +181,10 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
       path.join(REPO_ROOT, "scripts", "audit-reviewed-npm-graph.mts"),
       "utf8",
     );
+    const helper = fs.readFileSync(
+      path.join(REPO_ROOT, "scripts", "lib", "reviewed-npm-audit.mts"),
+      "utf8",
+    );
 
     expect(action).toContain('node-version: "22.23.1"');
     expect(action).toContain("npm install --global npm@10.9.4");
@@ -139,6 +195,8 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     );
     expect(action).not.toContain("run: node --experimental-strip-types scripts/");
     expect(driver).toContain("resolveTrustedAuditConfigPath(TRUSTED_REPO_ROOT)");
+    expect(helper).toContain("const NPM_AUDIT_ATTEMPT_TIMEOUT_MS = 45_000");
+    expect(helper).toContain("timeout: NPM_AUDIT_ATTEMPT_TIMEOUT_MS");
     expect(driver).not.toContain('resolveTargetPath(\n  "ci/reviewed-npm-audit.json"');
   });
 

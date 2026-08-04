@@ -9,7 +9,10 @@ const registryState = vi.hoisted(() => ({
   removeSandbox: vi.fn(),
   sandbox: null as SandboxEntry | null,
 }));
-const onboardSessionState = vi.hoisted(() => ({ sessionId: "session-owner" as string | null }));
+const onboardSessionState = vi.hoisted(() => ({
+  sessionId: "session-owner" as string | null,
+  recreate: null as { sandboxName: string; phase: string } | null,
+}));
 
 vi.mock("../state/registry", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../state/registry")>();
@@ -21,9 +24,15 @@ vi.mock("../state/registry", async (importOriginal) => {
 });
 vi.mock("../state/onboard-session", () => ({
   loadSession: () =>
-    onboardSessionState.sessionId === null ? null : { sessionId: onboardSessionState.sessionId },
+    onboardSessionState.sessionId === null
+      ? null
+      : {
+          sessionId: onboardSessionState.sessionId,
+          checkpoint: onboardSessionState.recreate
+            ? { sandboxRecreate: onboardSessionState.recreate }
+            : null,
+        },
 }));
-
 import {
   createSandboxLifecycleHelpers,
   removeSandboxUnlessSessionReservation,
@@ -33,6 +42,7 @@ describe("sandbox recreate reservation ownership", () => {
   beforeEach(() => {
     registryState.removeSandbox.mockReset();
     onboardSessionState.sessionId = "session-owner";
+    onboardSessionState.recreate = null;
   });
 
   it("preserves a pending reservation owned by the active session (#6562)", () => {
@@ -44,6 +54,13 @@ describe("sandbox recreate reservation ownership", () => {
       },
       "alpha",
     );
+
+    expect(registryState.removeSandbox).not.toHaveBeenCalled();
+  });
+
+  it("preserves the source registry row while a recreate journal is active (#6492)", () => {
+    onboardSessionState.recreate = { sandboxName: "alpha", phase: "deleting" };
+    removeSandboxUnlessSessionReservation({ name: "alpha", agent: "openclaw" }, "alpha");
 
     expect(registryState.removeSandbox).not.toHaveBeenCalled();
   });

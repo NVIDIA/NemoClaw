@@ -32,7 +32,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
@@ -49,13 +49,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: source
           persist-credentials: false
 
       - name: Check out the trusted ShellCheck converter
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.workflow_sha }}
           path: trusted-shellcheck-converter
@@ -83,7 +83,35 @@ jobs:
 
       - name: Install ShellCheck
         if: steps.converter.outputs.present == 'true'
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+        run: |
+          set -euo pipefail
+          probe="$RUNNER_TEMP/shellcheck-json1-probe.sh"
+          printf '#!/bin/sh\ntrue\n' > "$probe"
+          if command -v shellcheck >/dev/null 2>&1 &&
+            shellcheck --format=json1 "$probe" >/dev/null 2>&1; then
+            echo "Using preinstalled ShellCheck"
+            shellcheck --version
+          else
+            apt_options=(
+              -o Acquire::Retries=3
+              -o Acquire::http::Timeout=15
+              -o Acquire::https::Timeout=15
+            )
+            if ! sudo apt-get "${apt_options[@]}" update; then
+              echo "Failed to update apt package indexes for ShellCheck" >&2
+              exit 1
+            fi
+            if ! sudo apt-get "${apt_options[@]}" install -y shellcheck; then
+              echo "Failed to install ShellCheck" >&2
+              exit 1
+            fi
+            if ! shellcheck --format=json1 "$probe" >/dev/null 2>&1; then
+              echo "Installed ShellCheck does not support --format=json1" >&2
+              exit 1
+            fi
+            echo "Using installed ShellCheck"
+            shellcheck --version
+          fi
 
       - name: Collect shell files
         id: shell-files

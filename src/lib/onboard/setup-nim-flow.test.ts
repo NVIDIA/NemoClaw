@@ -122,6 +122,7 @@ function makeDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupNimFlowDeps {
     error: vi.fn(),
     exitProcess: (code) => unexpected(`exitProcess(${code})`),
     abortNonInteractive: (message) => unexpected(`abortNonInteractive(${message})`),
+    handleLlamaCppSelection: async () => unexpected("llama.cpp selection"),
     handleRemoteProviderSelection: async () => unexpected("remote provider selection"),
     handleNimLocalSelection: async () => unexpected("local NIM selection"),
     handleRunningOllamaSelection: async () => unexpected("running Ollama selection"),
@@ -294,6 +295,7 @@ describe("createSetupNim", () => {
       hermesToolGateways: [],
       preferredInferenceApi: "openai-completions",
       compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
       nimContainer: null,
       allowToolsIncompatible: false,
       skipHostInferenceSmoke: false,
@@ -625,6 +627,58 @@ describe("createSetupNim", () => {
     });
   });
 
+  it("ignores recorded provider state when fresh setup disables recovery (#6237)", async () => {
+    const prompt = vi.fn(async () => unexpected("interactive provider prompt"));
+    const note = vi.fn();
+    const readRecordedProvider = vi.fn(() => "ollama-local");
+    const readRecordedNimContainer = vi.fn(() => null);
+    const readRecordedModel = vi.fn(() => "llama3.1");
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (args, state) => {
+        expect(args).toMatchObject({
+          selected: { key: "build", label: "NVIDIA Endpoints" },
+          requestedModel: null,
+          recoveredFromSandbox: false,
+          recoveredModel: null,
+          sandboxName: "dcode-station",
+        });
+        state.model = "nvidia/test-model";
+        state.provider = "nvidia-prod";
+        state.endpointUrl = "https://integrate.api.nvidia.com/v1";
+        state.credentialEnv = "NVIDIA_INFERENCE_API_KEY";
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        prompt,
+        note,
+        readRecordedProvider,
+        readRecordedNimContainer,
+        readRecordedModel,
+        handleRemoteProviderSelection,
+      }),
+    );
+
+    const result = await setupNim(null, "dcode-station", null, false);
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(readRecordedProvider).not.toHaveBeenCalled();
+    expect(readRecordedNimContainer).not.toHaveBeenCalled();
+    expect(readRecordedModel).not.toHaveBeenCalled();
+    expect(note).toHaveBeenCalledTimes(1);
+    expect(note).toHaveBeenCalledWith("  [non-interactive] Provider: build");
+    expect(result).toMatchObject({
+      model: "nvidia/test-model",
+      provider: "nvidia-prod",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+  });
+
   it("honors a rebuild route and preserves credential-reuse return contracts (#6245)", async () => {
     const agent = { name: "langchain-deepagents-code" } as AgentDefinition;
     const recoveredRegistryRoute = {
@@ -688,6 +742,7 @@ describe("createSetupNim", () => {
       endpointSource: "inference-set",
       preferredInferenceApi: "openai-completions",
       compatibleEndpointReasoning: null,
+      compatibleEndpointReasoningEffort: null,
       skipHostInferenceSmoke: true,
       reuseGatewayCredentialWithoutLocalKey: true,
     });
@@ -1068,13 +1123,44 @@ describe("createSetupNim", () => {
       }),
     );
 
-    await expect(setupNim(null)).rejects.toThrow("vLLM is already running on localhost:8000");
+    await expect(setupNim(null)).rejects.toThrow("vLLM is already running on this host");
 
     expect(error).toHaveBeenCalledWith(expect.stringContaining("Select Local vLLM"));
     expect(error).toHaveBeenCalledWith(expect.stringContaining("stop the existing server"));
     expect(abortNonInteractive).toHaveBeenCalledOnce();
     expect(installVllm).not.toHaveBeenCalled();
     expect(handleVllmSelection).not.toHaveBeenCalled();
+  });
+
+  it("dispatches llama.cpp existing-server selection without a managed install path (#8161)", async () => {
+    const handleLlamaCppSelection = vi.fn<SetupNimFlowDeps["handleLlamaCppSelection"]>(
+      async (selection, requestedModel) => {
+        expect(requestedModel).toBe("team/model-alias");
+        selection.provider = "llama-cpp-local";
+        selection.model = "team/model-alias";
+        selection.endpointUrl = "http://127.0.0.1:8081/v1";
+        selection.credentialEnv = "NEMOCLAW_LLAMACPP_LOCAL_TOKEN";
+        selection.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "llama-cpp",
+        getNonInteractiveModel: () => "team/model-alias",
+        handleLlamaCppSelection,
+      }),
+    );
+
+    await expect(setupNim(null)).resolves.toMatchObject({
+      provider: "llama-cpp-local",
+      model: "team/model-alias",
+      endpointUrl: "http://127.0.0.1:8081/v1",
+      credentialEnv: "NEMOCLAW_LLAMACPP_LOCAL_TOKEN",
+      preferredInferenceApi: "openai-completions",
+    });
+    expect(handleLlamaCppSelection).toHaveBeenCalledOnce();
   });
 
   it("returns interactive occupied-port selection to the provider menu", async () => {

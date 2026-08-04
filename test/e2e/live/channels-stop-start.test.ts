@@ -18,7 +18,7 @@ test(
         "onboard sandbox with all messaging channels",
         "validate active channel integrations",
         "disable channels and rebuild sandbox",
-        "re-enable channels and rebuild sandbox",
+        "re-enable channels and validate lifecycle state",
       ],
     },
   },

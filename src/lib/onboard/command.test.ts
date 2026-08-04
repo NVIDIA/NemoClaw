@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { resolveOnboardOptions, runOnboardCommand } from "./command";
 import type { OnboardFlags } from "./command-support";
+import { invalidGatewayManagementDeclarationError } from "./gateway-management";
 
 function exitWithCode(code: number): never {
   throw new Error(`exit:${code}`);
@@ -259,6 +260,68 @@ describe("onboard command options", () => {
       }),
     ).rejects.toThrow("exit:1");
     expect(errors.join("\n")).toContain("Installation cancelled");
+  });
+
+  it("prints a clean CLI error for an invalid gateway management contract (#7627)", async () => {
+    const errors: string[] = [];
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw invalidGatewayManagementDeclarationError(
+            "unsupported gateway-management contract version; this NemoClaw build supports version 1",
+          );
+        },
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+    const output = errors.join("\n");
+    expect(output).toContain("Invalid gateway management declaration");
+    expect(output).toContain("unsupported gateway-management contract version");
+    // No stack frames leaked into the user-facing output.
+    expect(output).not.toContain(".js:");
+    expect(output).not.toContain("    at ");
+  });
+
+  it("escapes terminal controls in gateway declaration errors before printing (#7627)", async () => {
+    const errors: string[] = [];
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw invalidGatewayManagementDeclarationError(
+            "unknown declaration field(s): forged\n\u001b[31mError: \u202efake failure",
+          );
+        },
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+
+    expect(errors).toEqual([
+      "  Invalid gateway management declaration: unknown declaration field(s): forged\\u000a\\u001b[31mError: \\u202efake failure",
+    ]);
+    expect(errors[0]?.split(/\r?\n/u)).toHaveLength(1);
+    expect(errors[0]).not.toMatch(
+      /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u,
+    );
+  });
+
+  it("re-throws a non-cancellation, non-gateway error so genuine bugs still surface (#7627)", async () => {
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw new Error("unexpected boom");
+        },
+        error: () => {},
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("unexpected boom");
   });
 
   it("returns without rethrowing when a prompt rejects with SIGINT (#7439)", async () => {

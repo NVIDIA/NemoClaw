@@ -51,7 +51,7 @@ const APPROVED_STEP_SHAPES = [
   },
   {
     name: "Check out the trusted base revision",
-    sha256: "ca92ffc6907f8ef3ddcf98eacb19dee0de5b7a76b0520f0ada097fa88b0af3b2",
+    sha256: "4ec2659f39a08af0cb6abf60ab63a6732ab2375f538fc5b80601d566fdbcbc5a",
   },
   {
     name: "Detect guardrail tools on the base revision",

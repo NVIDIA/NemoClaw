@@ -13,6 +13,7 @@ export const BASE_IMAGE_INPUT_PATHS = [
   "scripts/lib/sandbox-rlimits.sh",
   "agents/openclaw/mcporter-runtime/package.json",
   "agents/openclaw/mcporter-runtime/package-lock.json",
+  "scripts/security/build-perl-security-packages.sh",
   "scripts/lib/openclaw-npm-remediation.mts",
   "scripts/lib/reviewed-npm-archive.mts",
   "scripts/checks/node-tar-image-scan.mts",

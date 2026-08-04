@@ -12,9 +12,9 @@ import { readGatewayRegistryFile } from "../../state/gateway-registry";
 import { migrateLegacyPortState } from "../../state/legacy-port-migration";
 import {
   type RunResult,
+  runUninstallPlan as runUninstallPlanBase,
   type UninstallRunDeps,
   type UninstallRunOptions,
-  runUninstallPlan as runUninstallPlanBase,
 } from "./run-plan";
 
 function ok(stdout = ""): RunResult {
@@ -55,11 +55,22 @@ describe("uninstall gateway-port segregation (#3053)", () => {
     ["full", "systemd-user"],
     ["scoped", "systemd-system"],
     ["scoped", "systemd-user"],
-  ] as const)("preserves the gateway process, Docker resources, and OpenShell binaries during %s uninstall for a %s-supervised gateway (#6576)", (scope, kind) => {
+  ] as const)("preserves the gateway process, Docker resources, OpenShell binaries, and gateway state during %s uninstall for a %s-supervised gateway (#6576)", (scope, kind) => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-external-"));
     try {
       const stateDir = path.join(tmpHome, ".nemoclaw");
+      const gatewayStatePath = path.join(
+        tmpHome,
+        ".local",
+        "state",
+        "nemoclaw",
+        "openshell-docker-gateway",
+        "openshell-gateway.toml",
+      );
+      const gatewayState = 'listen_address = "127.0.0.1:8080"\n';
       fs.mkdirSync(stateDir, { recursive: true });
+      fs.mkdirSync(path.dirname(gatewayStatePath), { recursive: true });
+      fs.writeFileSync(gatewayStatePath, gatewayState);
       const prepareScope = {
         full: () => undefined,
         scoped: () =>
@@ -129,6 +140,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
             command === "rm" && args.includes("/usr/local/bin/openshell-gateway"),
         ),
       ).toBe(false);
+      expect(fs.existsSync(gatewayStatePath)).toBe(true);
+      expect(fs.readFileSync(gatewayStatePath, "utf8")).toBe(gatewayState);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
@@ -980,19 +993,32 @@ describe("uninstall gateway-port segregation (#3053)", () => {
   it("refuses host-wide cleanup when OpenShell is unavailable and no sibling files exist (#7315)", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-no-openshell-"));
     try {
+      const servicePath = path.join(
+        tmpHome,
+        ".config",
+        "systemd",
+        "user",
+        "nemoclaw-openshell-gateway.service",
+      );
+      fs.mkdirSync(path.dirname(servicePath), { recursive: true });
+      fs.writeFileSync(servicePath, `${NEMOCLAW_OPENSHELL_GATEWAY_USER_SERVICE_MARKER_LINE}\n`);
       const calls: Array<{ args: string[]; command: string }> = [];
+      const kill = vi.fn();
       const logs: string[] = [];
+      const rmSync = vi.fn();
       const warnings: string[] = [];
       const result = runUninstallPlan(
         { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
         {
-          commandExists: (command) => command === "npm",
+          commandExists: (command) => command === "npm" || command === "systemctl",
           env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
           error: (line) => warnings.push(line),
           existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
           isTty: false,
+          kill,
           log: (line) => logs.push(line),
-          rmSync: fs.rmSync,
+          platform: "linux",
+          rmSync,
           run: (command, args) => {
             calls.push({ args, command });
             return ok();
@@ -1004,9 +1030,11 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(result.exitCode).toBe(1);
       expect(logs.join("\n")).toContain("resources owned by gateway 'nemoclaw'");
       expect(warnings.join("\n")).toContain(
-        "openshell not found; skipping gateway/provider/sandbox cleanup",
+        "openshell command not found. Restore it to PATH and re-run nemoclaw uninstall.",
       );
-      expect(calls.some(({ command }) => command === "npm")).toBe(false);
+      expect(calls).toEqual([]);
+      expect(kill).not.toHaveBeenCalled();
+      expect(rmSync).not.toHaveBeenCalled();
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
@@ -1044,6 +1072,11 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
+      const runtimeReceipt = path.join(stateDir, "dual-station-vllm-runtime.json");
+      const runtimeBinding = `${runtimeReceipt}.ssh-binding`;
+      fs.writeFileSync(runtimeReceipt, "{}\n", { mode: 0o600 });
+      fs.mkdirSync(runtimeBinding, { mode: 0o700 });
+      fs.writeFileSync(path.join(runtimeBinding, "known_hosts"), "host-key\n", { mode: 0o600 });
       const logs: string[] = [];
       const openshellCalls: string[][] = [];
       const result = runUninstallPlan(
@@ -1067,6 +1100,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(openshellCalls).toContainEqual(["gateway", "select", "nemoclaw"]);
       expect(openshellCalls).not.toContainEqual(["sandbox", "delete", "--all"]);
       expect(logs.join("\n")).toContain("Sibling gateways remain");
+      expect(fs.existsSync(runtimeReceipt)).toBe(true);
+      expect(fs.existsSync(runtimeBinding)).toBe(true);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
@@ -1086,6 +1121,11 @@ describe("uninstall gateway-port segregation (#3053)", () => {
           },
         }),
       );
+      const runtimeReceipt = path.join(stateDir, "dual-station-vllm-runtime.json");
+      const runtimeBinding = `${runtimeReceipt}.ssh-binding`;
+      fs.writeFileSync(runtimeReceipt, "{}\n", { mode: 0o600 });
+      fs.mkdirSync(runtimeBinding, { mode: 0o700 });
+      fs.writeFileSync(path.join(runtimeBinding, "known_hosts"), "host-key\n", { mode: 0o600 });
       const openshellCalls: string[][] = [];
       const warnings: string[] = [];
       let gatewayListCalls = 0;
@@ -1121,6 +1161,8 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(openshellCalls).toContainEqual(["gateway", "select", "nemoclaw"]);
       expect(openshellCalls).not.toContainEqual(["sandbox", "delete", "--all"]);
       expect(warnings.join("\n")).toContain("switching to gateway-scoped cleanup");
+      expect(fs.existsSync(runtimeReceipt)).toBe(true);
+      expect(fs.existsSync(runtimeBinding)).toBe(true);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
@@ -1167,6 +1209,101 @@ describe("uninstall gateway-port segregation (#3053)", () => {
       expect(openshellCalls).toContainEqual(["gateway", "select", "nemoclaw"]);
       expect(openshellCalls).not.toContainEqual(["sandbox", "delete", "--all"]);
       expect(logs.join("\n")).toContain("Sibling gateways remain");
+      expect(fs.existsSync(path.join(stateDir, "gateways", "8091"))).toBe(true);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("does not treat the selected gateway's own port directory as a sibling (#7987)", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-self-sibling-"));
+    try {
+      const stateDir = path.join(tmpHome, ".nemoclaw");
+      // The selected gateway runs on the default port, so its state root is the
+      // shared root rather than gateways/8080. A leftover directory named for
+      // its own port must not make it count itself as a sibling.
+      fs.mkdirSync(path.join(stateDir, "gateways", "8080"), { recursive: true });
+      fs.writeFileSync(
+        path.join(stateDir, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "my-assistant",
+          sandboxes: {
+            "my-assistant": { name: "my-assistant", gatewayName: "nemoclaw", gatewayPort: 8080 },
+          },
+        }),
+      );
+      const logs: string[] = [];
+      const openshellCalls: string[][] = [];
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
+        {
+          commandExists: (command) => command === "openshell",
+          env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
+          existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          isTty: false,
+          log: (line) => logs.push(line),
+          rmSync: fs.rmSync,
+          run: (_command, args) => {
+            openshellCalls.push(args);
+            // Only the selected gateway is live; there is no sibling at all.
+            return args[0] === "gateway" && args[1] === "list"
+              ? ok(JSON.stringify([{ name: "nemoclaw" }]))
+              : ok();
+          },
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(logs.join("\n")).not.toContain("Sibling gateways remain");
+      expect(logs.join("\n")).not.toContain("resources owned by gateway 'nemoclaw'");
+      // A single-gateway host must get the full teardown, not the scoped one.
+      expect(openshellCalls).toContainEqual(["sandbox", "delete", "--all"]);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("still detects a live sibling alongside the selected gateway's own port directory (#7987)", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-self-and-sibling-"));
+    try {
+      const stateDir = path.join(tmpHome, ".nemoclaw");
+      fs.mkdirSync(path.join(stateDir, "gateways", "8080"), { recursive: true });
+      fs.mkdirSync(path.join(stateDir, "gateways", "8091"), { recursive: true });
+      fs.writeFileSync(
+        path.join(stateDir, "sandboxes.json"),
+        JSON.stringify({
+          defaultSandbox: "my-assistant",
+          sandboxes: {
+            "my-assistant": { name: "my-assistant", gatewayName: "nemoclaw", gatewayPort: 8080 },
+          },
+        }),
+      );
+      const logs: string[] = [];
+      const openshellCalls: string[][] = [];
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, destroyUserData: true, keepOpenShell: false },
+        {
+          commandExists: (command) => command === "openshell",
+          env: { HOME: tmpHome, NEMOCLAW_NON_INTERACTIVE: "1" } as NodeJS.ProcessEnv,
+          existsSync: (target) => target.startsWith(tmpHome) && fs.existsSync(target),
+          isTty: false,
+          log: (line) => logs.push(line),
+          rmSync: fs.rmSync,
+          run: (_command, args) => {
+            openshellCalls.push(args);
+            return args[0] === "gateway" && args[1] === "list"
+              ? ok(JSON.stringify([{ name: "nemoclaw" }, { name: "nemoclaw-8091" }]))
+              : ok();
+          },
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      // Excluding our own port must not suppress a genuine sibling.
+      expect(logs.join("\n")).toContain("Sibling gateways remain");
+      expect(openshellCalls).not.toContainEqual(["sandbox", "delete", "--all"]);
       expect(fs.existsSync(path.join(stateDir, "gateways", "8091"))).toBe(true);
     } finally {
       fs.rmSync(tmpHome, { recursive: true, force: true });

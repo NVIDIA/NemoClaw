@@ -10,9 +10,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildRunPlan,
   type RunResult,
+  runUninstallPlan as runUninstallPlanBase,
   type UninstallRunDeps,
   type UninstallRunOptions,
-  runUninstallPlan as runUninstallPlanBase,
 } from "./run-plan";
 
 function ok(stdout = ""): RunResult {

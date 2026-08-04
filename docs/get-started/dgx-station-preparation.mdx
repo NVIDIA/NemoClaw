@@ -20,7 +20,8 @@ DGX Station GB300 Express install accepts these host images:
 - Stock OTA-form DGX OS `7.2.0`, `7.4.0`, or `7.5.0`.
 - Stock no-OTA DGX OS `7.6.x` with `DGX_PRETTY_NAME=NVIDIA DGX GB300WS`.
 
-Every stock DGX OS form requires a safe, root-owned `/etc/dgx-release` marker with `DGX_PLATFORM=DGX Server for GALAXY-GB300`.
+Every stock DGX OS form requires `/etc/dgx-release` to be a nonempty regular non-symlink file of at most 4096 bytes, owned by UID and GID 0, and not writable by group or other users.
+The marker must include `DGX_PLATFORM=DGX Server for GALAXY-GB300`.
 OTA-form qualification uses the latest `DGX_OTA_VERSION` and accepts `7.2.0`, `7.4.0`, or `7.5.0`.
 When `DGX_OTA_PRETTY_NAME` is present, it must equal `DGX OS`.
 An OTA-upgraded host can omit `DGX_OTA_PRETTY_NAME`.
@@ -34,7 +35,7 @@ NemoClaw also recognizes these exact no-OTA factory profiles for bounded qualifi
 Each profile requires `DGX_PLATFORM=DGX Server for GALAXY-GB300`, requires every `DGX_OTA_*` field to be absent, and requires every profile-specific field below:
 
 - April 2026 NVIDIA Colossus BaseOS with `DGX_PRETTY_NAME=NVIDIA DGX Server`, `DGX_SWBUILD_VERSION=7.5.0-GB300ws-GB200ws`, and `DGX_SWBUILD_DATE=2026-04-02-08-20-16`.
-- June 2026 NVIDIA AI Developer Tools with `DGX_PRETTY_NAME=NVIDIA DGX GB300WS`, `DGX_SWBUILD_VERSION=7.5.0`, and `DGX_SWBUILD_DATE=2026-06-16-11-48-10`.
+- May and June 2026 NVIDIA AI Developer Tools with `DGX_PRETTY_NAME=NVIDIA DGX GB300WS`, `DGX_SWBUILD_VERSION=7.5.0`, and `DGX_SWBUILD_DATE` set to `2026-05-13-18-42-38` or `2026-06-16-11-48-10`.
 
 By default, an unknown version, malformed or unsafe marker, unmatched no-OTA factory image, or other Station generation stops before host preparation.
 On an unqualified system, set `NEMOCLAW_PROVIDER` or `NEMOCLAW_NO_EXPRESS=1` explicitly to continue without Station host automation.
@@ -153,7 +154,8 @@ The Colossus BaseOS path still blocks on `packagekitd`, while generic Ubuntu qui
 When that CDI device is missing, the AI Developer Tools path first confirms that no workloads are active, then enables the packaged `nvidia-cdi-refresh.path` and `nvidia-cdi-refresh.service` units, starts the path unit, restarts the refresh service, and checks the device again.
 It stops with service diagnostics if packaged refresh fails or omits the device.
 It never generates CDI directly, rewrites the Docker runtime, or restarts Docker or containerd.
-This compatibility repair is owned by the June 2026 AI Developer Tools factory-image boundary, which can leave its packaged CDI units disabled; it can be removed after repeat clean-host qualification shows that the qualified image consistently advertises `nvidia.com/gpu=all` at boot.
+The qualified May and June 2026 AI Developer Tools factory-image boundary defines this compatibility repair because those images can leave their packaged CDI units disabled.
+NemoClaw maintainers can remove the repair after repeated clean-host qualification confirms that the qualified images consistently advertise `nvidia.com/gpu=all` at boot.
 The Colossus BaseOS path requires the exact reviewed package and failed-service fingerprints, preserves the factory kernel, driver, DKMS, Docker, and NVIDIA Container Toolkit packages, and prepares only Docker access and packaged CDI.
 Only the Colossus BaseOS path registers the NVIDIA Docker runtime when the launch probe proves that the runtime is missing, and it restores the prior daemon configuration if registration fails.
 The preparation helper writes a private audit log under `~/station-bootstrap-logs`.
@@ -161,6 +163,17 @@ Aside from the installer's separately disclosed `docker`-group membership grant 
 The AI Developer Tools path can also leave the packaged CDI refresh units enabled when it repairs a missing device.
 
 For the current support status and direct GPU policy boundaries, see [Platform Support](../../reference/platform-support).
+
+## Prepare a Two-Station Pair
+
+Complete NVIDIA's [two-Station CX8 fabric playbook](https://build.nvidia.com/station/connect-two-stations/instructions) before running NemoClaw pair preparation.
+
+Configure both Stations before installation with exactly two active 400 Gbit/s Ethernet rails, MTU 9000, and one usable private `/30` address per rail.
+The reciprocal addresses must use direct-link routes, the expected peer MAC neighbors, and jumbo-frame connectivity in both directions.
+The SSH target must already have usable host-key trust and non-interactive authentication, and the selected peer account must have passwordless `sudo` for remote preparation.
+NemoClaw checks only the two deterministic `/30` counterpart addresses; it does not scan other addresses, configure the rails, enroll SSH trust, or accept a shared `/24` as equivalent evidence.
+
+Follow [Set Up vLLM on Two DGX Stations](../../inference/local-inference/set-up-vllm-on-two-dgx-stations) for pair selection, qualification, fallback, reboot and resume behavior, runtime trust, and cleanup.
 
 ## Next Step
 

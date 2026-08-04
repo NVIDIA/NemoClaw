@@ -24,5 +24,9 @@ describe("sandbox MCP public display layout", () => {
       "MCP Servers",
       "MCP Servers",
     ]);
+    expect(SANDBOX_MCP_DISPLAY_LAYOUT["sandbox:mcp"]?.[2]).toMatchObject({
+      description: "Inspect MCP server health and advertised tools",
+      flags: "[server] [--json] [--probe|--no-probe] [--tools]",
+    });
   });
 });

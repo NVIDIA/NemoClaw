@@ -9,7 +9,9 @@
 _STATION_LOCAL_VLLM_SELECTED=""
 
 station_local_vllm_resume_file() {
-  printf '%s/.nemoclaw/station-local-vllm-resume' "$HOME"
+  local state_root
+  state_root="$(nemoclaw_state_root)" || return 1
+  printf '%s/station-local-vllm-resume' "$state_root"
 }
 
 assert_station_local_vllm_resume_file_safe() {

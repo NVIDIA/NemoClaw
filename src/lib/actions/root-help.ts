@@ -85,6 +85,9 @@ export function help(): void {
   lines.push(
     `    --destroy-user-data${" ".repeat(15)}Remove preserved ~/.nemoclaw/ user data (rebuild-backups/, backups/, sandboxes.json)`,
   );
+  lines.push(
+    `    --all-gateway-ports${" ".repeat(15)}Uninstall every gateway port on this host, not only NEMOCLAW_GATEWAY_PORT`,
+  );
 
   lines.push("");
   lines.push(`  ${G}Reconfiguration (after onboard):${R}`);

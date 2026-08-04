@@ -8,8 +8,9 @@
 //
 // The Hermes dashboard runs under its own HERMES_HOME, so it never sees the
 // model/custom_providers block NemoClaw writes to the gateway config. This
-// script mirrors those routing keys into the dashboard config so the Models
-// page and kanban specifier/dispatcher resolve the routed model.
+// script mirrors those routing keys and reviewed policy leaves into the
+// dashboard config so the Models page and kanban specifier/dispatcher resolve
+// the routed model without falling back to unsafe or privacy-expanding defaults.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -34,6 +35,27 @@ const GENERATED_HEX_TOKEN = Array.from({ length: 64 }, (_value, index) =>
   (index % 16).toString(16),
 ).join("");
 const TAVILY_API_KEY_PLACEHOLDER = "openshell:resolve:env:TAVILY_API_KEY";
+
+const REVIEWED_POLICY = {
+  approvals: { mode: "manual" },
+  browser: { restrict_evaluate: true },
+  session_reset: {
+    mode: "both",
+    at_hour: 4,
+    idle_minutes: 1440,
+    notify: true,
+    notify_exclude_platforms: ["api_server", "webhook"],
+    bg_process_max_age_hours: 24,
+  },
+  display: {
+    show_reasoning: false,
+    show_commentary: false,
+  },
+  updates: {
+    pre_update_backup: false,
+    refresh_cua_driver: false,
+  },
+};
 
 const GATEWAY_CONFIG = {
   _config_version: 12,
@@ -64,6 +86,7 @@ const GATEWAY_CONFIG = {
   // Intentionally present to assert it is NOT mirrored (would collide with the
   // gateway's api_server bind).
   platforms: { api_server: { enabled: true, extra: { port: 18642 } } },
+  ...REVIEWED_POLICY,
 };
 
 let tmpDir: string;
@@ -120,6 +143,11 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     expect(dash.providers).toEqual(GATEWAY_CONFIG.providers);
     expect(dash.custom_providers).toEqual(GATEWAY_CONFIG.custom_providers);
     expect(dash._nemoclaw_upstream).toEqual(GATEWAY_CONFIG._nemoclaw_upstream);
+    expect(dash.approvals).toEqual(REVIEWED_POLICY.approvals);
+    expect(dash.browser).toEqual(REVIEWED_POLICY.browser);
+    expect(dash.session_reset).toEqual(REVIEWED_POLICY.session_reset);
+    expect(dash.display).toEqual(REVIEWED_POLICY.display);
+    expect(dash.updates).toEqual(REVIEWED_POLICY.updates);
   });
 
   it("mirrors only the exact native Tavily backend into dashboard config", () => {
@@ -167,6 +195,7 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
           discover_models: true,
         },
       ],
+      ...REVIEWED_POLICY,
     };
     const src = writeYaml("gw.yaml", legacy);
     const dst = path.join(tmpDir, "dash.yaml");
@@ -323,7 +352,9 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
 
     runSeed(src, dst);
 
-    const dash = readYaml(dst) as { custom_providers: Array<Record<string, unknown>> };
+    const dash = readYaml(dst) as {
+      custom_providers: Array<Record<string, unknown>>;
+    };
     expect(dash.custom_providers[0].discover_models).toBe(true);
     // No hard-coded models: list — the dashboard live-lists /v1/models.
     expect(dash.custom_providers[0]).not.toHaveProperty("models");
@@ -338,7 +369,7 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     expect(readYaml(dst)).not.toHaveProperty("platforms");
   });
 
-  it("merges into an existing config: overwrites the empty model, preserves local keys", () => {
+  it("merges policy leaves while preserving dashboard-owned sibling settings", () => {
     const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
     // Mirrors what `hermes dashboard` writes on first launch: empty model,
     // empty providers, plus a higher config version and a dashboard-local pref.
@@ -346,7 +377,27 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
       _config_version: 27,
       model: "",
       providers: {},
-      display: { compact: true },
+      approvals: { mode: "off", dashboard_note: "keep" },
+      browser: { restrict_evaluate: false, headed: true },
+      session_reset: {
+        mode: "none",
+        at_hour: 0,
+        idle_minutes: 1,
+        notify: false,
+        notify_exclude_platforms: ["discord"],
+        bg_process_max_age_hours: 1,
+        dashboard_scope: "keep",
+      },
+      display: {
+        compact: true,
+        show_reasoning: true,
+        show_commentary: true,
+      },
+      updates: {
+        pre_update_backup: "quick",
+        refresh_cua_driver: true,
+        channel: "stable",
+      },
     });
 
     const res = runSeed(src, dst);
@@ -359,7 +410,61 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     expect(dash.custom_providers).toEqual(GATEWAY_CONFIG.custom_providers);
     // ...dashboard-local keys preserved.
     expect(dash._config_version).toBe(27);
-    expect(dash.display).toEqual({ compact: true });
+    expect(dash.approvals).toEqual({
+      mode: "manual",
+      dashboard_note: "keep",
+    });
+    expect(dash.browser).toEqual({
+      restrict_evaluate: true,
+      headed: true,
+    });
+    expect(dash.session_reset).toEqual({
+      ...REVIEWED_POLICY.session_reset,
+      dashboard_scope: "keep",
+    });
+    expect(dash.display).toEqual({
+      compact: true,
+      show_reasoning: false,
+      show_commentary: false,
+    });
+    expect(dash.updates).toEqual({
+      pre_update_backup: false,
+      refresh_cua_driver: false,
+      channel: "stable",
+    });
+  });
+
+  it.each([
+    ["missing approvals", { approvals: undefined }],
+    ["wrong browser boolean", { browser: { restrict_evaluate: "true" } }],
+    ["incomplete session policy", { session_reset: { mode: "both" } }],
+    [
+      "unexpected session policy field",
+      {
+        session_reset: {
+          ...REVIEWED_POLICY.session_reset,
+          dashboard_only: true,
+        },
+      },
+    ],
+    ["wrong display boolean", { display: { show_reasoning: "false", show_commentary: false } }],
+    ["wrong update mode", { updates: { pre_update_backup: 0, refresh_cua_driver: false } }],
+  ])("fails closed on %s", (_label, override) => {
+    const src = writeYaml("gw.yaml", {
+      ...GATEWAY_CONFIG,
+      ...override,
+    });
+    const dst = writeYaml("dash.yaml", {
+      display: { compact: true },
+    });
+    const before = fs.readFileSync(dst, "utf-8");
+
+    const res = runSeed(src, dst);
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("[SECURITY]");
+    expect(res.stderr).toContain("gateway policy is invalid");
+    expect(fs.readFileSync(dst, "utf-8")).toBe(before);
   });
 
   it("is idempotent across repeated launches", () => {
@@ -395,18 +500,86 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     expect(fs.readFileSync(envDst, "utf-8")).toBe(`API_SERVER_KEY=${GENERATED_HEX_TOKEN}\n`);
   });
 
-  it("skips seeding when the gateway config has no model routing", () => {
-    const src = writeYaml("gw.yaml", { _config_version: 12, terminal: { backend: "local" } });
-    const dst = path.join(tmpDir, "dash.yaml");
+  it("fails closed without changing stale dashboard config when gateway routing is absent", () => {
+    const src = writeYaml("gw.yaml", {
+      _config_version: 12,
+      terminal: { backend: "local" },
+    });
+    const dst = writeYaml("dash.yaml", {
+      model: { default: "stale-model" },
+      approvals: { mode: "off" },
+    });
+    const before = fs.readFileSync(dst, "utf-8");
 
     const res = runSeed(src, dst);
-    expect(res.status).toBe(0);
-    expect(fs.existsSync(dst)).toBe(false);
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("[SECURITY]");
+    expect(res.stderr).toContain("no model routing");
+    expect(fs.readFileSync(dst, "utf-8")).toBe(before);
+  });
+
+  it("does not expose malformed gateway YAML or replace stale dashboard config", () => {
+    const secret = "sk-secret-NEMOCLAW-PARSER-LEAK";
+    const src = path.join(tmpDir, "gw.yaml");
+    const dst = writeYaml("dash.yaml", {
+      model: { default: "stale-model" },
+      approvals: { mode: "off" },
+    });
+    const envSrc = path.join(tmpDir, "gw.env");
+    const envDst = path.join(tmpDir, "dash.env");
+    const before = fs.readFileSync(dst, "utf-8");
+    fs.writeFileSync(envSrc, `API_SERVER_KEY=${GENERATED_HEX_TOKEN}\n`);
+    fs.writeFileSync(envDst, "API_SERVER_HOST=stale.invalid\n");
+    const envBefore = fs.readFileSync(envDst, "utf-8");
+    fs.writeFileSync(src, `model:\n  api_key: [${secret}\n`);
+
+    const res = runSeed(src, dst, envSrc, envDst);
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("[SECURITY]");
+    expect(res.stderr).toContain("gateway config is invalid or unreadable");
+    expect(res.stderr).not.toContain(secret);
+    expect(fs.readFileSync(dst, "utf-8")).toBe(before);
+    expect(fs.readFileSync(envDst, "utf-8")).toBe(envBefore);
+  });
+
+  it("rejects a non-mapping gateway document without replacing stale dashboard config", () => {
+    const src = writeYaml("gw.yaml", ["not", "a", "mapping"]);
+    const dst = writeYaml("dash.yaml", {
+      model: { default: "stale-model" },
+      approvals: { mode: "off" },
+    });
+    const before = fs.readFileSync(dst, "utf-8");
+
+    const res = runSeed(src, dst);
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("[SECURITY]");
+    expect(res.stderr).toContain("gateway config is invalid or unreadable");
+    expect(fs.readFileSync(dst, "utf-8")).toBe(before);
+  });
+
+  it("does not expose or recreate malformed existing dashboard YAML", () => {
+    const secret = "sk-secret-NEMOCLAW-DASHBOARD-LEAK";
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const dst = path.join(tmpDir, "dash.yaml");
+    fs.writeFileSync(dst, `model:\n  api_key: [${secret}\n`);
+    const before = fs.readFileSync(dst, "utf-8");
+
+    const res = runSeed(src, dst);
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("[SECURITY]");
+    expect(res.stderr).toContain("existing dashboard config is invalid or unreadable");
+    expect(res.stderr).not.toContain(secret);
+    expect(fs.readFileSync(dst, "utf-8")).toBe(before);
   });
 
   it("refuses to follow a symlink at the dashboard config path", () => {
     const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
-    const realTarget = writeYaml("real-target.yaml", { secret: "do-not-touch" });
+    const realTarget = writeYaml("real-target.yaml", {
+      secret: "do-not-touch",
+    });
     const dst = path.join(tmpDir, "dash.yaml");
     fs.symlinkSync(realTarget, dst);
 
@@ -439,7 +612,9 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
   it("refuses a pre-existing temp symlink when writing the dashboard config", () => {
     const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
     const dst = path.join(tmpDir, "dash.yaml");
-    const realTarget = writeYaml("real-target.yaml", { secret: "do-not-touch" });
+    const realTarget = writeYaml("real-target.yaml", {
+      secret: "do-not-touch",
+    });
     fs.symlinkSync(realTarget, `${dst}.nemoclaw.tmp`);
 
     const res = runSeed(src, dst);

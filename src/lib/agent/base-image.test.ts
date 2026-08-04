@@ -6,6 +6,9 @@ import fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeAgent, withMockedDocker } from "../../../test/helpers/base-image-test-harness";
+
+import { tmpDir, writeCa } from "../onboard/__test-helpers__/corporate-ca-fixtures";
+import { testTimeout } from "../../../test/helpers/timeouts";
 import {
   createSandboxBaseImageBuildProvenanceKey,
   type SandboxBaseImageResolutionMetadata,
@@ -49,6 +52,7 @@ function makeDifferingImageInspection(
 
 describe("agent base image provisioning", () => {
   beforeEach(() => {
+    vi.stubEnv("NEMOCLAW_CORPORATE_CA_ANCHOR_DIRS", "");
     vi.restoreAllMocks();
   });
 
@@ -56,54 +60,58 @@ describe("agent base image provisioning", () => {
     vi.unstubAllEnvs();
   });
 
-  it("reuses a compatible resolved agent base image during normal onboarding", () => {
-    withMockedDocker(
-      ({
-        ensureAgentBaseImage,
-        dockerBuildMock,
-        dockerImageInspectMock,
-        resolveSandboxBaseImageMock,
-        root,
-      }) => {
-        const resolutionHint = makeResolutionMetadata({ key: "cached-resolution-key" });
-        const resolvedMetadata = makeResolutionMetadata({ key: "fresh-resolution-key" });
-        resolveSandboxBaseImageMock.mockReturnValue({
-          ref: resolvedMetadata.ref,
-          digest: resolvedMetadata.digest,
-          source: resolvedMetadata.source,
-          glibcVersion: resolvedMetadata.glibcVersion,
-          metadata: resolvedMetadata,
-        });
+  it(
+    "reuses a compatible resolved agent base image during normal onboarding",
+    () => {
+      withMockedDocker(
+        ({
+          ensureAgentBaseImage,
+          dockerBuildMock,
+          dockerImageInspectMock,
+          resolveSandboxBaseImageMock,
+          root,
+        }) => {
+          const resolutionHint = makeResolutionMetadata({ key: "cached-resolution-key" });
+          const resolvedMetadata = makeResolutionMetadata({ key: "fresh-resolution-key" });
+          resolveSandboxBaseImageMock.mockReturnValue({
+            ref: resolvedMetadata.ref,
+            digest: resolvedMetadata.digest,
+            source: resolvedMetadata.source,
+            glibcVersion: resolvedMetadata.glibcVersion,
+            metadata: resolvedMetadata,
+          });
 
-        const result = ensureAgentBaseImage(makeAgent(), {
-          resolutionHint,
-          forceBaseImageRefresh: true,
-        });
-
-        expect(result).toEqual({
-          imageTag: "nemoclaw-hermes-sandbox-base-local:compatible",
-          built: false,
-          resolutionMetadata: resolvedMetadata,
-        });
-        expect(resolveSandboxBaseImageMock).toHaveBeenCalledWith(
-          expect.objectContaining({
-            imageName: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
-            dockerfilePath: "/test/root/agents/hermes/Dockerfile.base",
-            envVar: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
-            label: "Hermes Agent sandbox base image",
-            requireOpenshellSandboxAbi: process.platform === "linux",
+          const result = ensureAgentBaseImage(makeAgent(), {
             resolutionHint,
-            forceRefresh: true,
-            rootDir: root,
-            validateImage: expect.any(Function),
-            validationDescription: "the required MCP Streamable HTTP runtime",
-          }),
-        );
-        expect(dockerImageInspectMock).not.toHaveBeenCalled();
-        expect(dockerBuildMock).not.toHaveBeenCalled();
-      },
-    );
-  });
+            forceBaseImageRefresh: true,
+          });
+
+          expect(result).toEqual({
+            imageTag: "nemoclaw-hermes-sandbox-base-local:compatible",
+            built: false,
+            resolutionMetadata: resolvedMetadata,
+          });
+          expect(resolveSandboxBaseImageMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+              imageName: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
+              dockerfilePath: "/test/root/agents/hermes/Dockerfile.base",
+              envVar: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
+              label: "Hermes Agent sandbox base image",
+              requireOpenshellSandboxAbi: process.platform === "linux",
+              resolutionHint,
+              forceRefresh: true,
+              rootDir: root,
+              validateImage: expect.any(Function),
+              validationDescription: "the required MCP Streamable HTTP runtime",
+            }),
+          );
+          expect(dockerImageInspectMock).not.toHaveBeenCalled();
+          expect(dockerBuildMock).not.toHaveBeenCalled();
+        },
+      );
+    },
+    testTimeout(15_000),
+  );
 
   it("marks only an exact warm resolution-hint reuse as handoff authority", () => {
     withMockedDocker(({ ensureAgentBaseImage, resolveSandboxBaseImageMock }) => {
@@ -357,8 +365,70 @@ describe("agent base image provisioning", () => {
             "/test/root/agents/langchain-deepagents-code/requirements.lock",
           ],
           validateImage: expect.any(Function),
-          validationDescription: "deepagents-code==0.1.34",
+          validationDescription:
+            "deepagents-code==0.1.34 and the immutable security package inventory",
         }),
+      );
+    });
+  });
+
+  it("passes the resolved corporate CA into local agent base image builds (#8119)", () => {
+    vi.stubEnv("NEMOCLAW_CORPORATE_CA_BUNDLE", writeCa(tmpDir()));
+    withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock, resolveSandboxBaseImageMock }) => {
+      resolveSandboxBaseImageMock.mockReturnValue({
+        ref: "nemoclaw-dcode-sandbox-base-local:compatible",
+        digest: null,
+        source: "local",
+        glibcVersion: "2.41",
+      });
+
+      ensureAgentBaseImage(
+        makeAgent({
+          name: "langchain-deepagents-code",
+          displayName: "LangChain Deep Agents Code",
+          expectedVersion: "0.1.34",
+          dockerfileBasePath: "/test/root/agents/langchain-deepagents-code/Dockerfile.base",
+          dockerfilePath: "/test/root/agents/langchain-deepagents-code/Dockerfile",
+        }),
+        { forceBaseImageRebuild: true },
+      );
+
+      const options = dockerBuildMock.mock.calls[0]?.[3] as {
+        buildArgs?: Record<string, string>;
+      };
+      const encoded = options.buildArgs?.NEMOCLAW_CORPORATE_CA_B64;
+      expect(encoded).toBeTypeOf("string");
+      expect(Buffer.from(encoded ?? "", "base64").toString("utf8")).toContain("BEGIN CERTIFICATE");
+    });
+  });
+
+  it("omits corporate CA build inputs when corporate CA import is disabled (#8119)", () => {
+    vi.stubEnv("NEMOCLAW_CORPORATE_CA_BUNDLE", writeCa(tmpDir()));
+    vi.stubEnv("NEMOCLAW_CORPORATE_CA_IMPORT", "0");
+    withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock, resolveSandboxBaseImageMock }) => {
+      resolveSandboxBaseImageMock.mockReturnValue({
+        ref: "nemoclaw-dcode-sandbox-base-local:compatible",
+        digest: null,
+        source: "local",
+        glibcVersion: "2.41",
+      });
+
+      ensureAgentBaseImage(
+        makeAgent({
+          name: "langchain-deepagents-code",
+          displayName: "LangChain Deep Agents Code",
+          expectedVersion: "0.1.34",
+          dockerfileBasePath: "/test/root/agents/langchain-deepagents-code/Dockerfile.base",
+          dockerfilePath: "/test/root/agents/langchain-deepagents-code/Dockerfile",
+        }),
+        { forceBaseImageRebuild: true },
+      );
+
+      expect(resolveSandboxBaseImageMock).toHaveBeenCalledWith(
+        expect.objectContaining({ buildArgs: undefined }),
+      );
+      expect(dockerBuildMock.mock.calls[0]?.[3]).toEqual(
+        expect.objectContaining({ buildArgs: undefined }),
       );
     });
   });

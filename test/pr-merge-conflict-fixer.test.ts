@@ -482,6 +482,7 @@ describe("PR merge conflict fixer", () => {
     expect(configuration).toContain('bind_address = "127.0.0.1:8080"');
     expect(configuration).toContain("allow_unauthenticated_users = true");
     expect(configuration).toContain('supervisor_bin = "/trusted/bin/openshell-sandbox"');
+    expect(configuration).not.toContain("enable_bind_mounts");
     expect(configuration).not.toContain("provider-secret");
     expect(fs.statSync(configurationPath).mode & 0o777).toBe(0o600);
 

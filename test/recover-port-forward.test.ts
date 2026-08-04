@@ -12,6 +12,7 @@ import { execTimeout, testTimeoutOptions } from "./helpers/timeouts";
 
 const tmpFixtures: string[] = [];
 const listenerProcesses: ChildProcess[] = [];
+const FIXTURE_LISTENER_READY_TIMEOUT_MS = 5_000;
 
 // Each fixture grabs a unique high port. Sharing port 18789 across tests
 // collides with real nemoclaw installs on the developer's machine: the
@@ -44,9 +45,10 @@ afterEach(() => {
   }
 });
 
-function forwardListenerScript(port: string): string {
+function forwardListenerScript(port: string, readyFile: string): string {
   return (
     'const net=require("node:net");' +
+    'const fs=require("node:fs");' +
     "const server=net.createServer(()=>{});" +
     "let stopping=false;" +
     'process.on("SIGTERM",()=>{' +
@@ -54,29 +56,36 @@ function forwardListenerScript(port: string): string {
     "stopping=true;" +
     "setTimeout(()=>server.close(()=>process.exit(0)),150);" +
     "});" +
-    `server.listen(${JSON.stringify(Number(port))},"127.0.0.1");`
+    `server.listen(${JSON.stringify(Number(port))},"127.0.0.1",()=>` +
+    `fs.writeFileSync(${JSON.stringify(readyFile)},"ready",{mode:0o600}));`
   );
 }
 
-function startReachableForward(port: string, listenerPidFile: string): void {
-  const child = spawn(process.execPath, ["-e", forwardListenerScript(port)], { stdio: "ignore" });
+function waitForFixtureListener(readyFile: string): boolean {
+  const deadline = Date.now() + FIXTURE_LISTENER_READY_TIMEOUT_MS;
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  while (!fs.existsSync(readyFile) && Date.now() < deadline) {
+    Atomics.wait(sleeper, 0, 0, 25);
+  }
+  return fs.existsSync(readyFile);
+}
+
+function startReachableForward(
+  port: string,
+  listenerPidFile: string,
+  listenerReadyFile: string,
+): void {
+  fs.rmSync(listenerReadyFile, { force: true });
+  const child = spawn(process.execPath, ["-e", forwardListenerScript(port, listenerReadyFile)], {
+    stdio: "ignore",
+  });
   listenerProcesses.push(child);
   expect(child.pid, `test forward listener failed to spawn for ${port}`).toBeDefined();
   fs.appendFileSync(listenerPidFile, `${String(child.pid)}\n`);
-
-  const probe =
-    "const net=require('node:net');" +
-    `const s=net.createConnection({host:'127.0.0.1',port:${Number(port)}});` +
-    "s.setTimeout(100);" +
-    "s.on('connect',()=>{s.destroy();process.exit(0)});" +
-    "s.on('error',()=>process.exit(1));" +
-    "s.on('timeout',()=>{s.destroy();process.exit(1)});";
-  const deadline = Date.now() + 2000;
-  let listenerReady = false;
-  while (Date.now() < deadline && !listenerReady) {
-    listenerReady = spawnSync(process.execPath, ["-e", probe], { stdio: "ignore" }).status === 0;
-  }
-  expect(listenerReady, `test forward listener failed to bind port ${port}`).toBe(true);
+  expect(
+    waitForFixtureListener(listenerReadyFile),
+    `test forward listener failed to bind port ${port}`,
+  ).toBe(true);
 }
 
 interface Fixture {
@@ -136,6 +145,7 @@ function setupFixture(opts: {
   const forwardStateFile = path.join(tmpDir, "forward-state");
   const forwardPollCountFile = path.join(tmpDir, "forward-poll-count");
   const listenerPidFile = path.join(tmpDir, "forward-listener-pids");
+  const listenerReadyFile = path.join(tmpDir, "forward-listener-ready");
   fs.writeFileSync(forwardStateFile, "initial");
   fs.writeFileSync(forwardPollCountFile, "0");
   fs.writeFileSync(listenerPidFile, "");
@@ -219,13 +229,24 @@ if (args[0] === "forward" && args[1] === "stop") {
 
 if (args[0] === "forward" && args[1] === "start") {
   if (${opts.forwardStartHeals === false ? "false" : "true"}) {
-    const listener = spawn(process.execPath, ["-e", ${JSON.stringify(forwardListenerScript(port))}], {
+    fs.rmSync(${JSON.stringify(listenerReadyFile)}, { force: true });
+    const listener = spawn(process.execPath, ["-e", ${JSON.stringify(
+      forwardListenerScript(port, listenerReadyFile),
+    )}], {
       detached: true,
       stdio: "ignore",
     });
     listener.unref();
     if (listener.pid !== undefined) {
       fs.appendFileSync(${JSON.stringify(listenerPidFile)}, String(listener.pid) + "\\n");
+    }
+    const readyDeadline = Date.now() + ${FIXTURE_LISTENER_READY_TIMEOUT_MS};
+    const readySleeper = new Int32Array(new SharedArrayBuffer(4));
+    while (!fs.existsSync(${JSON.stringify(listenerReadyFile)}) && Date.now() < readyDeadline) {
+      Atomics.wait(readySleeper, 0, 0, 25);
+    }
+    if (!fs.existsSync(${JSON.stringify(listenerReadyFile)})) {
+      process.exit(1);
     }
     fs.writeFileSync(
       ${JSON.stringify(forwardStateFile)},
@@ -259,7 +280,9 @@ process.exit(0);
   // answers. Keep the listener alive in a separate process because runRecover
   // uses spawnSync and blocks this Vitest worker's event loop.
   const reachablePorts = opts.forwardStartHeals !== false ? [port] : [];
-  reachablePorts.forEach((reachablePort) => startReachableForward(reachablePort, listenerPidFile));
+  reachablePorts.forEach((reachablePort) =>
+    startReachableForward(reachablePort, listenerPidFile, listenerReadyFile),
+  );
 
   return {
     tmpDir,

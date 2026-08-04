@@ -30,7 +30,7 @@ const repoRoot = path.resolve(__dirname, "..");
 const starterPromptMarkdownSource = path.join(repoRoot, "docs", "resources", "starter-prompt.md");
 // CI resolves this Git commit and byte-compares its prompt-asset blobs with
 // the local files. The digests independently assert those same immutable bytes.
-const promptAssetRevision = "ebf29b024c7a24e69ab8386b68e426d31a4c6821";
+const promptAssetRevision = "bf46e62f901825f19e570c17f8c870a0eae04fbc";
 
 type PromptAsset = {
   path: string;
@@ -53,7 +53,7 @@ const promptAssets = {
   ),
   dgxStation: definePromptAsset(
     "docs/resources/prompt-assets/dgx-station.md",
-    "9f506ece27dcda3cf85735d7c6a80846a7727696b825cf8ca161334ac6925c1f", // gitleaks:allow -- pinned prompt-asset SHA-256
+    "9b620ffe898847718fc25e230039c0bf07dd574e26a27479c45297eb17d2cfa4", // gitleaks:allow -- pinned prompt-asset SHA-256
   ),
   windowsWsl: definePromptAsset(
     "docs/resources/prompt-assets/windows-wsl.md",
@@ -817,10 +817,10 @@ describe("starter prompt docs CTA", () => {
     expect(sparkSource).toContain("nvidia/Qwen3.6-35B-A3B-NVFP4");
     expect(sparkSource).toContain("Leave `NEMOCLAW_VLLM_MODEL` and `NEMOCLAW_MODEL` unset");
     expect(stationSource).toContain("`nemotron-3-ultra-550b-a55b`");
-    expect(stationSource).toContain("`nvidia/nemotron-3-ultra-550b-a55b`");
+    expect(stationSource).toContain("`nemotron-ultra`");
     expect(stationSource).toContain("`deepseek-v4-flash`");
     expect(stationSource).toContain("`deepseek-ai/DeepSeek-V4-Flash`");
-    expect(stationSource).toContain("Nemotron 3 Ultra 550B, the ordinary installer default");
+    expect(stationSource).toContain("Automatic pair selection");
     expect(stationSource).toContain(
       "DeepSeek V4 Flash, the explicit `--station-deepseek` override",
     );
@@ -837,8 +837,12 @@ describe("starter prompt docs CTA", () => {
     expect(stationSource).toContain(
       "Do not run `scripts/prepare-dgx-station-host.sh --check`, `--verify`, or `--apply` separately",
     );
-    expect(stationSource).toContain("For Nemotron Ultra, run the ordinary installer without");
+    expect(stationSource).toContain(
+      "For automatic pair selection, run the ordinary installer without",
+    );
     expect(stationSource).toContain("For DeepSeek, pass `--station-deepseek`");
+    expect(stationSource).toContain("TCP port `6379`");
+    expect(stationSource).toContain("shared `/24`");
     for (const environmentName of [
       "NEMOCLAW_PROVIDER",
       "NEMOCLAW_VLLM_MODEL",
@@ -952,7 +956,7 @@ describe("starter prompt docs CTA", () => {
     );
     const stationConfirmationIndex = stationSource.indexOf("Choices:");
     const stationDefaultIndex = stationSource.indexOf(
-      "For Nemotron Ultra, run the ordinary installer without",
+      "For automatic pair selection, run the ordinary installer without",
     );
     const stationOverrideIndex = stationSource.indexOf("For DeepSeek, pass `--station-deepseek`");
     expect(stationDisclosureIndex).toBeGreaterThan(-1);

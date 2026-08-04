@@ -86,6 +86,11 @@ function writeBootstrapUnavailableResult(
       oneLine: `PR review advisor skipped: ${reason}`,
     },
     findings: [],
+    terminologyReview: {
+      status: "limited",
+      decisions: [],
+      noChangesReason: reason,
+    },
     acceptanceCoverage: [],
     securityCategories: [
       {
@@ -138,6 +143,12 @@ export function runPrReviewAdvisorAnalysis(
   const analyzePath = path.join(input.advisorDir, "tools", "pr-review-advisor", "analyze.mts");
   const schemaPath = path.join(input.advisorDir, "tools", "pr-review-advisor", "schema.json");
   const sessionPath = path.join(input.advisorDir, "tools", "advisors", "session.mts");
+  const providerConstantsPath = path.join(
+    input.advisorDir,
+    "tools",
+    "advisors",
+    "provider-constants.mts",
+  );
   const commentPath = path.join(input.advisorDir, "tools", "pr-review-advisor", "comment.mts");
   const fileExists = options.fileExists ?? fs.existsSync;
   const readText = options.readText ?? ((file: string): string => fs.readFileSync(file, "utf8"));
@@ -228,7 +239,10 @@ export function runPrReviewAdvisorAnalysis(
 
   if (
     input.model !== LEGACY_PRIMARY_MODEL &&
-    (!trustedTextIncludes(sessionPath, input.model) ||
+    (!(
+      trustedTextIncludes(sessionPath, input.model) ||
+      trustedTextIncludes(providerConstantsPath, input.model)
+    ) ||
       !trustedTextIncludes(analyzePath, "PR_REVIEW_ADVISOR_MODEL") ||
       !trustedTextIncludes(commentPath, "PR_REVIEW_ADVISOR_COMMENT_MARKER"))
   ) {

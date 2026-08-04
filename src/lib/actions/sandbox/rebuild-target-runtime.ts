@@ -208,6 +208,7 @@ export async function preflightRebuildTargetRuntime(
       provider: target.resumeConfig.provider,
       preferredInferenceApi: target.resumeConfig.preferredInferenceApi,
       compatibleEndpointReasoning: target.resumeConfig.compatibleEndpointReasoning,
+      compatibleEndpointReasoningEffort: target.resumeConfig.compatibleEndpointReasoningEffort,
       webSearchConfig: target.durableConfig.webSearchConfig,
       toolDisclosure: target.durableConfig.toolDisclosure,
       hermesToolGateways: target.hermesToolGateways,

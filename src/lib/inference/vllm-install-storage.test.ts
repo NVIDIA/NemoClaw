@@ -152,7 +152,7 @@ describe("managed vLLM install storage", () => {
     stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     delete process.env.NEMOCLAW_VLLM_MODEL;
     delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;
-    delete process.env.HF_TOKEN;
+    process.env.HF_TOKEN = "hf_test";
     delete process.env.HUGGING_FACE_HUB_TOKEN;
   });
 

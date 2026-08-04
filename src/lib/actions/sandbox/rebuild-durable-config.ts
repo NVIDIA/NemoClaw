@@ -306,6 +306,7 @@ export function validatedRebuildRegistryUpdate(
     credentialEnv,
     preferredInferenceApi: resume.preferredInferenceApi,
     compatibleEndpointReasoning: resume.compatibleEndpointReasoning,
+    compatibleEndpointReasoningEffort: resume.compatibleEndpointReasoningEffort,
     nimContainer: resume.nimContainer,
     webSearchEnabled: durable.webSearchConfig?.fetchEnabled === true,
     webSearchProvider: durable.webSearchConfig

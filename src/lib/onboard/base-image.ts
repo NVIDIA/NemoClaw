@@ -9,7 +9,16 @@ import {
   OPENCLAW_SANDBOX_BASE_IMAGE as SANDBOX_BASE_IMAGE,
   type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
+import { sandboxBaseImageHasSecurityInventory } from "../sandbox-base-image/security-inventory";
 import { getInstalledOpenshellVersion } from "./openshell-version";
+
+/**
+ * Reject a published or cached OpenClaw base that predates the immutable
+ * security package inventory consumed by the completed-image verification.
+ * Accepting that base only defers the mismatch to the last Dockerfile layer,
+ * after the expensive final image has already been built.
+ */
+export const openClawBaseImageHasSecurityInventory = sandboxBaseImageHasSecurityInventory;
 
 /**
  * Resolve a compatible sandbox-base image and pin it to a repo digest when
@@ -38,6 +47,8 @@ export function pullAndResolveBaseImageDigest(
     envVar: "NEMOCLAW_SANDBOX_BASE_IMAGE_REF",
     label: "OpenClaw sandbox base image",
     requireOpenshellSandboxAbi: options.requireOpenshellSandboxAbi === true,
+    validateImage: openClawBaseImageHasSecurityInventory,
+    validationDescription: "the immutable security package inventory",
     resolutionHint: options.resolutionHint,
     forceRefresh: options.forceRefresh,
     rootDir: ROOT,

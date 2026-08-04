@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type fs from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
 const SNAP = "/snap/20260323";
 
 // ── In-memory filesystem ────────────────────────────────────────
@@ -265,9 +266,10 @@ describe("snapshot", () => {
 
       const error = await restoreIntoSandbox(SNAP, longName).catch((e: Error) => e);
       expect(error).toBeInstanceOf(Error);
-      // The full 200-char name must NOT appear — only the first 80 chars + ellipsis
-      expect((error as Error).message).toContain("…");
-      expect((error as Error).message).not.toContain(longName);
+      const message = (error as Error).message;
+      expect(message).toContain(`"${"a".repeat(80)}..."`);
+      expect(message).not.toContain(longName);
+      expect(message).toMatch(/^[\x20-\x7e]+$/);
       expect(mockExeca).not.toHaveBeenCalled();
     });
 

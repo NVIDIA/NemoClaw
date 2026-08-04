@@ -12,6 +12,7 @@ import {
 } from "../tool-disclosure";
 import { applyAgentsManifestEnv } from "./agents-manifest";
 import type { OnboardFlags } from "./command-support";
+import { GatewayManagementDeclarationError } from "./gateway-management";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
@@ -207,6 +208,13 @@ export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<vo
       // preserve status 130 without leaking this rejected prompt error through
       // oclif as a raw stack trace (#7439).
       return;
+    }
+    // A rejected NEMOCLAW_GATEWAY_MANAGEMENT contract is operator input error,
+    // not a crash: print the validation reason as a clean single-line CLI error
+    // and exit nonzero instead of re-throwing it into a Node.js stack trace
+    // (#7627). `fail` sets exit code 1.
+    if (error instanceof GatewayManagementDeclarationError) {
+      fail(deps, `  ${error.message}`);
     }
     // Stdin EOF at any onboarding prompt is a cancellation, not a failure:
     // print a clear message and exit non-zero instead of either crashing with

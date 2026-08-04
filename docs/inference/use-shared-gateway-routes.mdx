@@ -38,6 +38,17 @@ Before changing the route, `connect` verifies the same provider-global identity 
 When the identity is compatible, `connect` warns and re-points the route to the sandbox's recorded provider and model.
 When the identity differs or required metadata is incomplete, `connect` stops because a provider-and-model-only route change cannot safely reconstruct that configuration.
 
+## Rebuild a Legacy Shared Route
+
+During rebuild, NemoClaw may find same-gateway legacy sandbox records that use the selected supported provider but omit its credential environment-variable name.
+Before deleting the target sandbox, NemoClaw fills only those missing names from the provider's canonical configuration and saves the target and peer metadata together.
+The peer migration does not replace an explicit credential environment-variable name.
+
+Credential environment-variable name, custom endpoint, or API-family conflicts still stop the rebuild.
+Incomplete routes and invalid gateway bindings also stop the rebuild.
+NemoClaw reads a fresh registry snapshot immediately before deletion.
+If that snapshot contains a target route change or peer provider-identity conflict, rebuild stops and leaves the original sandbox intact.
+
 ## Inspect Recorded and Live Routes
 
 Run sandbox status to compare the sandbox's recorded route with the gateway's live route.

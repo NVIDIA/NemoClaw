@@ -10,6 +10,8 @@ import {
   type CredentialFreeTestMatrixRow,
   discoverCredentialFreeTests,
 } from "./credential-free-tests.mts";
+import { selectedRetiredControllerJobs } from "./retired-selector-compatibility.mts";
+import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
 import { readFreeStandingJobsInventory } from "./workflow-boundary.mts";
 
 export type WorkflowPlanSelectors = {
@@ -26,6 +28,11 @@ export type E2eWorkflowPlan = {
 
 type WorkflowPlanCliOptions = WorkflowPlanSelectors & {
   ciOutput: boolean;
+};
+
+type TrustedControllerSelectorMap = {
+  retiredSelectorSelected: boolean;
+  selectors: WorkflowPlanSelectors;
 };
 
 const SAFE_SELECTOR_LIST_PATTERN = /^[A-Za-z0-9_-]+(?:,[A-Za-z0-9_-]+)*$/;
@@ -118,7 +125,7 @@ function selectorIds(value: string | undefined, label: "jobs" | "targets"): stri
       `Invalid ${label} input; use comma-separated ids containing only letters, numbers, underscores, and hyphens`,
     );
   }
-  return value.split(",");
+  return normalizeE2eSelectorIds(value.split(","));
 }
 
 function selectTestRows(
@@ -130,25 +137,58 @@ function selectTestRows(
   return rows.filter((row) => selected.has(row.id));
 }
 
-function mapTrustedControllerBootstrapJob(
+function mapTrustedControllerJobs(
   selectors: WorkflowPlanSelectors,
   environment: NodeJS.ProcessEnv,
-): WorkflowPlanSelectors {
-  if (!COMMIT_SHA_PATTERN.test(environment.NEMOCLAW_E2E_EXPECTED_SHA ?? "")) return selectors;
-
-  const jobs = selectorIds(selectors.jobs, "jobs");
-  if (!jobs.includes(LEGACY_BOOTSTRAP_INSTALL_JOB_ID)) return selectors;
+): TrustedControllerSelectorMap {
+  if (!COMMIT_SHA_PATTERN.test(environment.NEMOCLAW_E2E_EXPECTED_SHA ?? "")) {
+    return { retiredSelectorSelected: false, selectors };
+  }
 
   const inventory = readFreeStandingJobsInventory();
-  if (!inventory.allowedJobs.includes(BOOTSTRAP_INSTALL_JOB_ID)) return selectors;
+  const jobs = selectorIds(selectors.jobs, "jobs").map((job) =>
+    job === LEGACY_BOOTSTRAP_INSTALL_JOB_ID &&
+    inventory.allowedJobs.includes(BOOTSTRAP_INSTALL_JOB_ID)
+      ? BOOTSTRAP_INSTALL_JOB_ID
+      : job,
+  );
+  const targets = selectorIds(selectors.targets, "targets");
+  const retiredJobs = new Set<string>(
+    selectedRetiredControllerJobs({
+      allowedJobs: inventory.allowedJobs,
+      expectedSha: environment.NEMOCLAW_E2E_EXPECTED_SHA,
+      jobs: jobs.join(","),
+    }),
+  );
+  const retiredTargets = new Set<string>(
+    selectedRetiredControllerJobs({
+      allowedJobs: inventory.allowedJobs,
+      expectedSha: environment.NEMOCLAW_E2E_EXPECTED_SHA,
+      targets: targets.join(","),
+    }),
+  );
+  const compatibleJobs = jobs.filter((job) => !retiredJobs.has(job));
+  const compatibleTargets = targets.filter((target) => !retiredTargets.has(target));
 
-  // Trusted main selects the old job ID until this workflow rename merges, while
-  // the checked-out PR planner already reads the renamed inventory.
+  // Trusted main can select a renamed or newly retired job until the candidate
+  // workflow becomes the controller. Keep the raw IDs for evidence, but plan
+  // only jobs that still execute in the candidate.
   return {
-    ...selectors,
-    jobs: jobs
-      .map((job) => (job === LEGACY_BOOTSTRAP_INSTALL_JOB_ID ? BOOTSTRAP_INSTALL_JOB_ID : job))
-      .join(","),
+    retiredSelectorSelected: retiredJobs.size > 0 || retiredTargets.size > 0,
+    selectors: {
+      ...selectors,
+      jobs: compatibleJobs.join(","),
+      targets: compatibleTargets.join(","),
+    },
+  };
+}
+
+function emptyE2eWorkflowPlan(): E2eWorkflowPlan {
+  return {
+    matrix: [],
+    testMatrix: [],
+    hermesSelected: false,
+    explicitOnlyJobs: readFreeStandingJobsInventory().explicitOnlyJobs,
   };
 }
 
@@ -207,11 +247,15 @@ export function validateE2eWorkflowPlan(plan: unknown): E2eWorkflowPlan {
   return plan as E2eWorkflowPlan;
 }
 
-function expectedHermesSelection(selectors: WorkflowPlanSelectors): boolean {
-  const selected = [selectors.jobs, selectors.targets]
-    .filter((value): value is string => !!value)
-    .flatMap((value) => value.split(","));
-  return selected.length === 0 || selected.includes(HERMES_JOB_ID);
+function expectedHermesSelection(
+  selectors: WorkflowPlanSelectors,
+  retiredSelectorSelected: boolean,
+): boolean {
+  const selected = [
+    ...selectorIds(selectors.jobs, "jobs"),
+    ...selectorIds(selectors.targets, "targets"),
+  ];
+  return (selected.length === 0 && !retiredSelectorSelected) || selected.includes(HERMES_JOB_ID);
 }
 
 export function renderE2eWorkflowPlanSummary(plan: E2eWorkflowPlan): string {
@@ -238,9 +282,18 @@ export function writeE2eWorkflowPlanCiOutput(
   if (!INFERENCE_MODES.has(inferenceMode)) {
     throw new Error(`Invalid inference_mode: ${inferenceMode}`);
   }
-  const plannerSelectors = mapTrustedControllerBootstrapJob(selectors, environment);
-  const plan = validateE2eWorkflowPlan(buildE2eWorkflowPlan(plannerSelectors));
-  if (plan.hermesSelected !== expectedHermesSelection(plannerSelectors)) {
+  const controllerMap = mapTrustedControllerJobs(selectors, environment);
+  const plannerSelectors = controllerMap.selectors;
+  const hasPlannerSelectors = Boolean(plannerSelectors.jobs || plannerSelectors.targets);
+  const plan = validateE2eWorkflowPlan(
+    controllerMap.retiredSelectorSelected && !hasPlannerSelectors
+      ? emptyE2eWorkflowPlan()
+      : buildE2eWorkflowPlan(plannerSelectors),
+  );
+  if (
+    plan.hermesSelected !==
+    expectedHermesSelection(plannerSelectors, controllerMap.retiredSelectorSelected)
+  ) {
     throw new Error("E2E planner changed the trusted Hermes selection");
   }
   const output = environment.GITHUB_OUTPUT;

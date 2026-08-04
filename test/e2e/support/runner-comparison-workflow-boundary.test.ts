@@ -30,10 +30,8 @@ type Workflow = {
 
 const JOBS = [
   "agent-turn-latency",
-  "bedrock-runtime-compatible-anthropic",
   "channels-stop-start",
   "common-egress-agent",
-  "hermes-dashboard",
   "hermes-discord",
   "hermes-e2e",
   "hermes-inference-switch",
@@ -62,7 +60,7 @@ function telemetrySteps(workflow: Workflow, jobId: string): WorkflowStep[] {
 }
 
 describe("runner comparison E2E workflow boundary (#7140)", () => {
-  it("accepts 14 routed workflow lane identities / 17 concrete job executions", () => {
+  it("accepts 12 routed workflow lane identities / 14 concrete job executions", () => {
     const workflow = loadWorkflow();
 
     expect(validateRunnerComparisonWorkflowBoundary(workflow)).toEqual([]);
@@ -84,20 +82,16 @@ describe("runner comparison E2E workflow boundary (#7140)", () => {
     const inferenceSwitchModes = workflow.jobs[
       "hermes-inference-switch"
     ]!.strategy!.matrix!.include?.map((entry) => entry.mode);
-    expect(inferenceSwitchModes).toEqual(["hosted", "anthropic"]);
+    expect(inferenceSwitchModes).toEqual(["anthropic"]);
     const routedLanes = JOBS.length - 1 + mcpLanes;
     const concreteExecutions =
       routedLanes + commonEgressScenarios!.length - 1 + inferenceSwitchModes!.length - 1;
-    expect(routedLanes).toBe(14);
-    expect(concreteExecutions).toBe(17);
+    expect(routedLanes).toBe(12);
+    expect(concreteExecutions).toBe(14);
   });
 
-  it("locks the matrix topology that produces seventeen concrete executions", () => {
+  it("locks the matrix topology that produces fourteen concrete executions", () => {
     const workflow = loadWorkflow();
-    workflow.jobs["bedrock-runtime-compatible-anthropic"]!.strategy!.matrix!.agent = [
-      "openclaw",
-      "openclaw",
-    ];
     workflow.jobs["mcp-bridge"]!.strategy!.matrix!.agent = ["openclaw", "hermes", "hermes"];
     workflow.jobs["channels-stop-start"]!.strategy!.matrix!.agent = ["openclaw", "openclaw"];
     workflow.jobs["common-egress-agent"]!.strategy!.matrix!.include = [
@@ -110,23 +104,22 @@ describe("runner comparison E2E workflow boundary (#7140)", () => {
       { agent: "openclaw" },
     ];
     workflow.jobs["hermes-inference-switch"]!.strategy!.matrix!.include = [
-      { mode: "hosted" },
-      { mode: "hosted" },
+      { mode: "anthropic" },
+      { mode: "anthropic" },
     ];
 
     expect(validateRunnerComparisonWorkflow(workflow)).toEqual(
       expect.arrayContaining([
-        "bedrock-runtime-compatible-anthropic matrix must contain exactly openclaw, hermes for runner comparison telemetry",
         "channels-stop-start matrix must contain exactly openclaw, hermes for runner comparison telemetry",
         "common-egress-agent matrix must contain exactly openclaw-balanced-weather, openclaw-open-reference, hermes-open-reference for runner comparison telemetry",
         "mcp-bridge matrix must contain exactly openclaw, hermes, deepagents for runner comparison telemetry",
         "security-posture matrix must contain exactly openclaw, hermes for runner comparison telemetry",
-        "hermes-inference-switch matrix must contain exactly hosted, anthropic for runner comparison telemetry",
+        "hermes-inference-switch matrix must contain exactly anthropic for runner comparison telemetry",
       ]),
     );
   });
 
-  it("rejects runner comparison consumers outside the thirteen comparison jobs", () => {
+  it("rejects runner comparison consumers outside the eleven comparison jobs", () => {
     const workflow = loadWorkflow();
     workflow.jobs["shields-config"]!.steps.push(
       structuredClone(telemetrySteps(workflow, "common-egress-agent")[0]!),
@@ -243,11 +236,6 @@ describe("runner comparison E2E workflow boundary (#7140)", () => {
           "(matrix.agent == 'openclaw' || matrix.agent == 'hermes')",
         );
       }
-      const bedrockComparison = step(workflow, "bedrock-runtime-compatible-anthropic", name);
-      bedrockComparison.if = bedrockComparison.if!.replace(
-        "matrix.agent == 'hermes'",
-        "(matrix.agent == 'openclaw' || matrix.agent == 'hermes')",
-      );
     }
 
     expect(validateRunnerComparisonWorkflow(workflow)).toEqual(
@@ -258,8 +246,6 @@ describe("runner comparison E2E workflow boundary (#7140)", () => {
         "channels-stop-start must use the exact always-run trusted finalize telemetry step",
         "security-posture must use the exact trusted initialize telemetry step",
         "security-posture must use the exact always-run trusted finalize telemetry step",
-        "bedrock-runtime-compatible-anthropic must use the exact trusted initialize telemetry step",
-        "bedrock-runtime-compatible-anthropic must use the exact always-run trusted finalize telemetry step",
       ]),
     );
   });

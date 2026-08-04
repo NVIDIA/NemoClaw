@@ -28,6 +28,9 @@ import type { RebuildRouteHandoff, RegistryInferenceRoute } from "./rebuild-rout
 import { prepareProviderDiscovery } from "./setup-nim-provider-discovery";
 import type { SetupNimSelectionState as BaseSetupNimSelectionState } from "./setup-nim-selection";
 
+export { probeLlamaCppAttachment } from "../inference/llama-cpp";
+export { createLlamaCppSelectionHandler } from "./llama-cpp-selection";
+
 export type SetupNimGpu = ReturnType<typeof import("../inference/nim").detectGpu>;
 export type SetupNimSelectionState = BaseSetupNimSelectionState<HermesAuthMethod>;
 export type SetupNimSelectionResult = "selected" | "retry-selection";
@@ -115,6 +118,11 @@ export interface SetupNimFlowDeps {
     state: SetupNimSelectionState,
     recoveredRegistryRoute: RegistryInferenceRoute | null,
   ): Promise<SetupNimSelectionResult>;
+  handleLlamaCppSelection(
+    state: SetupNimSelectionState,
+    requestedModel: string | null,
+    recoveredModel: string | null,
+  ): Promise<SetupNimSelectionResult>;
   handleNimLocalSelection(
     gpu: SetupNimGpu,
     args: Pick<
@@ -170,6 +178,7 @@ export interface SetupNimFlowDeps {
     preferredInferenceApi: string | null,
   ): string | null;
   clearCompatibleEndpointReasoning(): null;
+  clearCompatibleEndpointReasoningEffort?(): null;
   maybePromptForInferenceInputCapability(model: string | null): Promise<void>;
 }
 
@@ -207,6 +216,25 @@ function clearReasoningUnlessCompatible(
   return deps.clearCompatibleEndpointReasoning();
 }
 
+function readSelectionReasoningState(state: SetupNimSelectionState): {
+  reasoning: string | null;
+  effort: string | null;
+} {
+  return {
+    reasoning: state.compatibleEndpointReasoning ?? null,
+    effort: state.compatibleEndpointReasoningEffort ?? null,
+  };
+}
+
+function clearReasoningEffortUnlessCompatible(
+  provider: string,
+  current: string | null,
+  deps: Pick<SetupNimFlowDeps, "clearCompatibleEndpointReasoningEffort">,
+): string | null {
+  if (provider === "compatible-endpoint") return current;
+  return deps.clearCompatibleEndpointReasoningEffort?.() ?? null;
+}
+
 function applyGatewayRouteDiscoveryConstraints(
   state: SetupNimSelectionState,
   constraints: GatewayRouteDiscoveryConstraints,
@@ -220,6 +248,65 @@ function applyGatewayRouteDiscoveryConstraints(
   if (!state.preferredInferenceApi && constraints.requiredInferenceApi) {
     state.preferredInferenceApi = constraints.requiredInferenceApi;
   }
+}
+
+function isEndpointProviderSelection(deps: SetupNimFlowDeps, providerKey: string): boolean {
+  return providerKey === "llama-cpp" || Boolean(deps.remoteProviderConfig[providerKey]);
+}
+
+async function handleEndpointProviderSelection(input: {
+  deps: SetupNimFlowDeps;
+  selected: ProviderMenuChoice;
+  state: SetupNimSelectionState;
+  requestedModel: string | null;
+  recoveredFromSandbox: boolean;
+  recoveredModel: string | null;
+  sandboxName: string | null;
+  gatewayName: string | null;
+  recoverySessionId: string | null | undefined;
+  agent: AgentDefinition | null;
+  recoveredRegistryRoute: RegistryInferenceRoute | null;
+}): Promise<SetupNimSelectionResult> {
+  const {
+    deps,
+    selected,
+    state,
+    requestedModel,
+    recoveredFromSandbox,
+    recoveredModel,
+    sandboxName,
+    gatewayName,
+    recoverySessionId,
+    agent,
+    recoveredRegistryRoute,
+  } = input;
+  if (selected.key === "llama-cpp") {
+    return deps.handleLlamaCppSelection(
+      state,
+      requestedModel,
+      recoveredFromSandbox ? recoveredModel : null,
+    );
+  }
+  const remoteConfig = deps.remoteProviderConfig[selected.key];
+  if (!remoteConfig) throw new Error(`Missing remote provider config for '${selected.key}'.`);
+  return deps.handleRemoteProviderSelection(
+    {
+      selected,
+      requestedModel,
+      recoveredFromSandbox,
+      recoveredModel,
+      sandboxName,
+      gatewayName,
+      recoverySessionId,
+      intendedInferenceApi: resolveValidationInferenceApi(
+        selected.key,
+        remoteConfig.providerName,
+        agent,
+      ),
+    },
+    state,
+    recoveredRegistryRoute,
+  );
 }
 
 /** Create the provider-selection flow and seed agent-specific Ollama defaults. */
@@ -253,6 +340,7 @@ export function createSetupNim(
     let hermesToolGateways: string[] = [];
     let preferredInferenceApi: string | null = null;
     let compatibleEndpointReasoning: string | null = null;
+    let compatibleEndpointReasoningEffort: string | null = null;
     let allowToolsIncompatible = false;
     let reuseGatewayCredential = false;
     let endpointPinnedAddresses: string[] | undefined;
@@ -274,6 +362,7 @@ export function createSetupNim(
         hermesToolGateways,
         preferredInferenceApi,
         compatibleEndpointReasoning,
+        compatibleEndpointReasoningEffort,
         nimContainer,
         allowToolsIncompatible,
         ollamaContextWindowFloor: getOllamaContextWindowFloorForAgent(agent?.name ?? null),
@@ -440,26 +529,21 @@ export function createSetupNim(
           hermesToolGateways = [];
         }
 
-        if (deps.remoteProviderConfig[selected.key]) {
+        if (isEndpointProviderSelection(deps, selected.key)) {
           const state = createSelectionState();
-          const result = await deps.handleRemoteProviderSelection(
-            {
-              selected,
-              requestedModel,
-              recoveredFromSandbox,
-              recoveredModel,
-              sandboxName,
-              gatewayName,
-              recoverySessionId,
-              intendedInferenceApi: resolveValidationInferenceApi(
-                selected.key,
-                deps.remoteProviderConfig[selected.key].providerName,
-                agent,
-              ),
-            },
+          const result = await handleEndpointProviderSelection({
+            deps,
+            selected,
             state,
+            requestedModel,
+            recoveredFromSandbox,
+            recoveredModel,
+            sandboxName,
+            gatewayName,
+            recoverySessionId,
+            agent,
             recoveredRegistryRoute,
-          );
+          });
           ({
             model,
             provider,
@@ -472,7 +556,9 @@ export function createSetupNim(
             endpointPinnedAddresses,
             endpointTrustedPrivateCapability,
           } = state);
-          compatibleEndpointReasoning = state.compatibleEndpointReasoning ?? null;
+          const reasoningState = readSelectionReasoningState(state);
+          compatibleEndpointReasoning = reasoningState.reasoning;
+          compatibleEndpointReasoningEffort = reasoningState.effort;
           reuseGatewayCredential = state.reuseGatewayCredentialWithoutLocalKey === true;
           if (result === "retry-selection") continue selectionLoop;
           break;
@@ -568,7 +654,7 @@ export function createSetupNim(
           }
           if (vllmRunning) {
             const message =
-              `vLLM is already running on localhost:${String(deps.vllmPort)}. ` +
+              "vLLM is already running on this host. " +
               "Select Local vLLM, or stop the existing server before selecting the managed install path.";
             deps.error(`  ${message}`);
             if (deps.isNonInteractive()) {
@@ -643,6 +729,11 @@ export function createSetupNim(
       compatibleEndpointReasoning,
       deps,
     );
+    compatibleEndpointReasoningEffort = clearReasoningEffortUnlessCompatible(
+      provider,
+      compatibleEndpointReasoningEffort,
+      deps,
+    );
     const selectedModel = isBackToSelection(model) ? null : model;
     const recoveredRegistryRouteMatches =
       recoveredRegistryRoute?.provider === provider &&
@@ -667,6 +758,7 @@ export function createSetupNim(
         deps.coerceAgentInferenceApi(agent, preferredInferenceApi),
       ),
       compatibleEndpointReasoning,
+      compatibleEndpointReasoningEffort,
       nimContainer,
       allowToolsIncompatible,
       skipHostInferenceSmoke: reuseGatewayCredential,

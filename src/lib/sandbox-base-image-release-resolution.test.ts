@@ -208,6 +208,34 @@ describe("sandbox base-image release resolution", () => {
     });
   });
 
+  it("builds locally when the selected OpenClaw release predates its security inventory (#7605)", () => {
+    const state = installDockerState({
+      allowBuild: true,
+      present: [RELEASE_REF],
+      pullable: [RELEASE_REF],
+    });
+    const options = {
+      ...versionedResolutionOptions("1"),
+      validateImage: state.validateImage,
+      validationDescription: "the immutable security package inventory",
+    };
+
+    const resolved = resolveSandboxBaseImage(options);
+
+    expect(resolved).toMatchObject({
+      ref: LOCAL_TAG,
+      source: "local",
+    });
+    expect(dockerMocks.pull).toHaveBeenCalledWith(RELEASE_REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.pull).toHaveBeenCalledTimes(1);
+    expect(state.validateImage).toHaveBeenNthCalledWith(1, RELEASE_REF);
+    expect(state.validateImage).toHaveBeenNthCalledWith(2, RELEASE_REF);
+    expect(dockerMocks.build).toHaveBeenCalledTimes(1);
+  });
+
   it("fails closed when a release-tag base is unavailable and local builds are disabled (#6456)", () => {
     installDockerState();
 
@@ -230,7 +258,7 @@ describe("sandbox base-image release resolution", () => {
     ).toThrow("versioned base image");
   });
 
-  it("tries the nearest release-tag base before latest for source checkouts (#6456)", () => {
+  it("prefers the exact source-SHA base over a nearby release tag for source checkouts (#6456)", () => {
     sourceMocks.nearestTags.mockReturnValue(["v0.0.78"]);
     const sourceShaRef = `${IMAGE_NAME}:12345678`;
     installDockerState({ present: [NEAREST_RELEASE_REF, sourceShaRef] });
@@ -238,14 +266,16 @@ describe("sandbox base-image release resolution", () => {
     const resolved = resolveSandboxBaseImage(resolutionOptions());
 
     expect(resolved).toMatchObject({
-      ref: NEAREST_RELEASE_REF,
-      source: "version-tag",
+      ref: sourceShaRef,
+      source: "source-sha",
     });
-    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(NEAREST_RELEASE_REF, {
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(sourceShaRef, {
       ignoreError: true,
       suppressOutput: true,
     });
-    expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(sourceShaRef, expect.anything());
+    expect(dockerMocks.imageInspect.mock.calls.map(([ref]) => ref)).not.toContain(
+      NEAREST_RELEASE_REF,
+    );
     expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 

@@ -49,6 +49,15 @@ function expressEnv(): NodeJS.ProcessEnv {
   };
 }
 
+function dualExpressEnv(): NodeJS.ProcessEnv {
+  return {
+    ...expressEnv(),
+    NEMOCLAW_MODEL: "nemotron-ultra",
+    NEMOCLAW_DGX_STATION_PEER: "192.168.240.2",
+    NEMOCLAW_DGX_STATION_SSH_BINDING: "sha256:qualified-pair-binding",
+  };
+}
+
 function receiptText(generation = receiptGeneration, model = "nemotron-3-ultra-550b-a55b"): string {
   return `revision=${receiptRevision}\nmodel=${model}\ngeneration=${generation}\n`;
 }
@@ -99,6 +108,28 @@ describe("DGX Station Express resume (#7048)", () => {
       ok: true,
       intent: ultraIntent,
     });
+  });
+
+  it("captures the qualified dual-Station served alias in the sealed intent", () => {
+    expect(getStationExpressResumeIntent(dualExpressEnv(), "my-assistant")).toEqual({
+      ok: true,
+      intent: {
+        ...ultraIntent,
+        servedModel: "nemotron-ultra",
+        checkpointModel: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
+      },
+    });
+  });
+
+  it("rejects the dual-Station served alias without both qualified pair signals", () => {
+    for (const missing of ["NEMOCLAW_DGX_STATION_PEER", "NEMOCLAW_DGX_STATION_SSH_BINDING"]) {
+      const env = dualExpressEnv();
+      delete env[missing];
+      expect(getStationExpressResumeIntent(env, "my-assistant")).toEqual({
+        ok: false,
+        message: "DGX Station Express has a conflicting NEMOCLAW_MODEL value.",
+      });
+    }
   });
 
   it("carries the installer receipt generation in the persisted intent", () => {

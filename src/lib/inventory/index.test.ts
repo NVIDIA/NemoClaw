@@ -128,7 +128,6 @@ describe("inventory commands", () => {
           agent: "openclaw",
           isDefault: true,
           activeSessionCount: 1,
-          connected: true,
         },
       ],
     });
@@ -213,6 +212,108 @@ describe("inventory commands", () => {
       { name: "blank-model", provider: "nvidia-prod", model: null },
       { name: "configured", provider: "nvidia-prod", model: "nvidia/test" },
     ]);
+  });
+
+  it("hides a route-only reservation (never-created sandbox) from the list (#7609)", async () => {
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [
+          // A failed onboard (e.g. untrusted base image rejected) leaves this:
+          // pendingRouteReservation with no createdAt — never a live sandbox.
+          {
+            name: "base-img-reject",
+            provider: "nvidia-prod",
+            model: "m",
+            pendingRouteReservation: true,
+          },
+          { name: "real", provider: "nvidia-prod", model: "m", createdAt: "2026-01-01T00:00:00Z" },
+        ],
+        defaultSandbox: null,
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => null,
+    });
+
+    expect(inventory.sandboxes.map((sandbox) => sandbox.name)).toEqual(["real"]);
+  });
+
+  it("keeps a created sandbox with a lingering pending reservation flag (#7609)", async () => {
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => ({
+        // createdAt is set, so this is a real sandbox — the filter must NOT hide
+        // it just because the reservation flag was not cleared.
+        sandboxes: [
+          {
+            name: "created",
+            provider: "nvidia-prod",
+            model: "m",
+            pendingRouteReservation: true,
+            createdAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+        defaultSandbox: null,
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => null,
+    });
+
+    expect(inventory.sandboxes.map((sandbox) => sandbox.name)).toEqual(["created"]);
+  });
+
+  it("hides route-only reservations from status output too (#7609)", () => {
+    const report = getStatusReport({
+      listSandboxes: () => ({
+        sandboxes: [
+          {
+            name: "base-img-reject",
+            provider: "nvidia-prod",
+            model: "m",
+            pendingRouteReservation: true,
+          },
+          { name: "real", provider: "nvidia-prod", model: "m", createdAt: "2026-01-01T00:00:00Z" },
+        ],
+        defaultSandbox: "real",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+    });
+
+    expect(report.sandboxes.map((sandbox) => sandbox.name)).toEqual(["real"]);
+
+    const lines: string[] = [];
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [
+          {
+            name: "base-img-reject",
+            provider: "nvidia-prod",
+            model: "m",
+            pendingRouteReservation: true,
+          },
+        ],
+        defaultSandbox: null,
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+      log: (message = "") => lines.push(message),
+    });
+    expect(lines.some((line) => line.includes("base-img-reject"))).toBe(false);
+  });
+
+  it("shows the empty-state hint when only route-only reservations exist (#7609)", async () => {
+    const lines: string[] = [];
+    await listSandboxesCommand({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [{ name: "base-img-reject", pendingRouteReservation: true }],
+        defaultSandbox: null,
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => null,
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines.some((line) => line.includes("No sandboxes registered"))).toBe(true);
+    expect(lines.some((line) => line.includes("base-img-reject"))).toBe(false);
   });
 
   it("normalizes invalid configured inference fields out of status rows", () => {
@@ -747,7 +848,7 @@ describe("inventory commands", () => {
         ],
         defaultSandbox: "alpha",
       }),
-      getLiveInference: () => ({ provider: "nvidia-prod", model: "minimaxai/minimax-m2.7" }),
+      getLiveInference: () => ({ provider: "nvidia-prod", model: "provider/runtime-model" }),
       showServiceStatus,
       log: (message = "") => lines.push(message),
     });
@@ -756,7 +857,7 @@ describe("inventory commands", () => {
     expect(lines).toContain("  Sandboxes:");
     // Default sandbox shows the live gateway model (#2369), annotated with
     // the onboarded model when they differ.
-    expect(lines).toContain("    alpha * (minimaxai/minimax-m2.7)");
+    expect(lines).toContain("    alpha * (provider/runtime-model)");
     expect(lines).toContain("      (onboarded: nvidia/nemotron-3-super-120b-a12b)");
     // Non-default sandbox keeps its stored model — the gateway only applies
     // to whichever sandbox is currently connected.
@@ -938,12 +1039,12 @@ describe("inventory commands", () => {
         sandboxes: [{ name: "alpha" }],
         defaultSandbox: "alpha",
       }),
-      getLiveInference: () => ({ provider: "nvidia-prod", model: "minimaxai/minimax-m2.7" }),
+      getLiveInference: () => ({ provider: "nvidia-prod", model: "provider/runtime-model" }),
       showServiceStatus: vi.fn(),
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines).toContain("    alpha * (minimaxai/minimax-m2.7)");
+    expect(lines).toContain("    alpha * (provider/runtime-model)");
     expect(lines).toContain("      (onboarded: unknown)");
   });
 
@@ -988,7 +1089,7 @@ describe("inventory commands", () => {
     expect(lines).toContain("      Inference: live-provider / live-model");
   });
 
-  it("emits a Connected line per sandbox when getActiveSessionCount is provided (#2604)", () => {
+  it("emits an SSH sessions line per sandbox when getActiveSessionCount is provided (#2604)", () => {
     const lines: string[] = [];
     showStatusCommand({
       listSandboxes: () => ({
@@ -1004,11 +1105,11 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines).toContain("      Connected: yes (2 sessions)");
-    expect(lines).toContain("      Connected: no");
+    expect(lines).toContain("      SSH sessions: 2");
+    expect(lines).toContain("      SSH sessions: none");
   });
 
-  it("renders `1 session` (singular) when the active count is exactly one (#2604)", () => {
+  it("renders the exact active count when exactly one session (#2604)", () => {
     const lines: string[] = [];
     showStatusCommand({
       listSandboxes: () => ({
@@ -1021,10 +1122,10 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines).toContain("      Connected: yes (1 session)");
+    expect(lines).toContain("      SSH sessions: 1");
   });
 
-  it("omits the Connected line when getActiveSessionCount returns null (probe unavailable)", () => {
+  it("omits the SSH sessions line when getActiveSessionCount returns null (probe unavailable)", () => {
     const lines: string[] = [];
     showStatusCommand({
       listSandboxes: () => ({
@@ -1037,10 +1138,10 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines.some((l) => l.includes("Connected:"))).toBe(false);
+    expect(lines.some((l) => l.includes("SSH sessions:"))).toBe(false);
   });
 
-  it("omits the Connected line when the dep is not wired", () => {
+  it("omits the SSH sessions line when the dep is not wired", () => {
     const lines: string[] = [];
     showStatusCommand({
       listSandboxes: () => ({
@@ -1052,7 +1153,7 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(lines.some((l) => l.includes("Connected:"))).toBe(false);
+    expect(lines.some((l) => l.includes("SSH sessions:"))).toBe(false);
   });
 
   it("emits a gateway-down diagnostic and sets process.exitCode when the gateway is unhealthy (#3386)", () => {

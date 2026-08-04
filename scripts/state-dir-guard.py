@@ -66,12 +66,17 @@ MAX_ALLOCATED_BYTES_PER_PASS = 8 * 1024 * 1024 * 1024
 MAX_COPIED_BYTES_PER_PASS = 8 * 1024 * 1024 * 1024
 MAX_GUARD_SECONDS = 10 * 60
 PRODUCTION_FAIL_CLOSED_CONFIG_DIRS = frozenset(
-    {"/sandbox/.openclaw", "/sandbox/.hermes"}
+    {"/sandbox/.openclaw", "/sandbox/.hermes", "/sandbox/.deepagents"}
 )
 OPENCLAW_MUTATION_MUTEX_PATH = "/run/nemoclaw/openclaw-config-mutation.lock"
 # Keep this exact source/target contract aligned with
 # src/lib/state/openclaw-managed-extensions.ts.
-OPENCLAW_GLOBAL_PACKAGE_PATH = "/usr/local/lib/node_modules/openclaw"
+OPENCLAW_IMAGE_PACKAGE_PATHS = frozenset(
+    {
+        "/usr/local/lib/node_modules/openclaw",
+        "/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw",
+    }
+)
 OPENCLAW_EXTENSION_PEER_LINK_SUFFIX = ("node_modules", "openclaw")
 SAFE_EXTENSION_ID_CHARS = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
@@ -236,6 +241,14 @@ def _is_under_runtime_carveout(relative_path: str) -> bool:
         and parts[1] not in {"", ".", ".."}
         and parts[2] == "sessions"
     )
+
+
+def _is_runtime_carveout_parent(relative_path: str) -> bool:
+    """Return whether this is an agent directory whose ``sessions`` child is
+    the carveout location."""
+
+    parts = relative_path.split("/")
+    return len(parts) == 2 and parts[0] == "agents" and parts[1] not in {"", ".", ".."}
 
 
 def _no_follow_flag() -> int:
@@ -555,9 +568,9 @@ def _is_allowed_openclaw_extension_peer_symlink(
     relative_path: str,
     target: str,
 ) -> bool:
-    """Recognize the one image-owned peer link that may leave the state tree."""
+    """Recognize an exact image-owned peer link that may leave the state tree."""
 
-    if target != OPENCLAW_GLOBAL_PACKAGE_PATH:
+    if target not in OPENCLAW_IMAGE_PACKAGE_PATHS:
         return False
     if posixpath.basename(context.config_path) != ".openclaw":
         return False
@@ -1221,6 +1234,73 @@ def _chown_symlink(
             raise GuardOperationError(issue)
 
 
+def _ensure_runtime_carveout(
+    context: TraversalContext,
+    parent_fd: int,
+    relative_dir: str,
+    policy: Policy,
+    identity: Identity,
+    result: GuardResult,
+) -> None:
+    """Create the writable sessions carveout for an agent that has none.
+
+    The locked agent directory is root-owned and read-only for the sandbox
+    identity, so an agent booting for the first time after shields-up cannot
+    create its own sessions directory and fails with EACCES.  ``_mutate_dir``
+    calls this after its entry loop so an agent whose unsafe ``sessions``
+    entry was removed earlier in the same lock pass also converges on a
+    created carveout; a surviving non-directory entry keeps its locked
+    posture.  A name that appears between the existence check and the mkdir
+    makes the lock fail closed, matching the raced-entry policy.
+    """
+
+    relative_path = posixpath.join(relative_dir, "sessions")
+    path = context.display(relative_path)
+    try:
+        os.stat("sessions", dir_fd=parent_fd, follow_symlinks=False)
+        return
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        raise GuardOperationError(
+            _os_issue(
+                "carveout-create-failed",
+                path,
+                "check for a sessions carveout",
+                exc,
+            )
+        ) from exc
+    try:
+        os.mkdir("sessions", mode=0o700, dir_fd=parent_fd)
+        os.fsync(parent_fd)
+        created = os.stat("sessions", dir_fd=parent_fd, follow_symlinks=False)
+        context.budget.observe_entry(path, created)
+        child_fd = _open_child_dir(parent_fd, "sessions", created)
+    except OSError as exc:
+        raise GuardOperationError(
+            _os_issue(
+                "carveout-create-failed",
+                path,
+                "create writable sessions carveout",
+                exc,
+            )
+        ) from exc
+    try:
+        _set_dir_metadata(child_fd, policy, "unlock", identity)
+    except OSError as exc:
+        raise GuardOperationError(
+            _os_issue(
+                "metadata-update-failed",
+                path,
+                "prepare writable sessions carveout",
+                exc,
+            )
+        ) from exc
+    finally:
+        os.close(child_fd)
+    result.directories += 1
+
+
 def _mutate_dir(
     context: TraversalContext,
     dir_fd: int,
@@ -1391,6 +1471,11 @@ def _mutate_dir(
                     )
                 ) from exc
             result.removed_entries += 1
+
+    if action == "lock" and _is_runtime_carveout_parent(relative_dir):
+        _ensure_runtime_carveout(
+            context, dir_fd, relative_dir, policy, identity, result
+        )
 
     if action == "unlock":
         try:
@@ -1626,6 +1711,7 @@ def _run_guard_unserialized(
         normalized_config in PRODUCTION_FAIL_CLOSED_CONFIG_DIRS
         or os.environ.get("NEMOCLAW_TEST_OPENCLAW_FAIL_CLOSED") == "1"
         or os.environ.get("NEMOCLAW_TEST_HERMES_FAIL_CLOSED") == "1"
+        or os.environ.get("NEMOCLAW_TEST_DEEP_AGENTS_FAIL_CLOSED") == "1"
     )
     config_fd = -1
     try:

@@ -30,6 +30,20 @@ Language findings are suggestions unless ambiguity can change behavior, security
 test meaning, or release meaning. A blocking comment must name that effect. A suggestion should
 include a proposed rewrite.
 
+### Full-Corpus Audits
+
+Use full-corpus audit mode only when the task explicitly requests an audit of existing text.
+The changed-text scope does not apply to the assigned author-maintained sources during that audit.
+
+- Review unchanged text in the assigned corpus.
+- Preserve literal identifiers, commands, output, API fields, quotations, and official
+  third-party names.
+- Exclude generated files unless the task assigns their source or generator.
+- Preserve accurate historical statements. Report them only when their meaning is incorrect or
+  can misdirect a current action.
+- Group repeated low-impact language debt into one finding with representative evidence.
+- Report findings without editing the audited text unless the task also authorizes edits.
+
 ## Writing Rules
 
 1. Use one term for one concept. Do not use synonyms to add variety.
@@ -51,26 +65,11 @@ Sentence lengths are review targets, not mechanical limits. Do not make a senten
 meet a word count. Quoted user text, external text, code, identifiers, commands, URLs, and generated
 content are outside the word and sentence rules.
 
-## Project Word List
+## Controlled Word List
 
-Use these terms consistently:
-
-| Term | Meaning | Avoid |
-|---|---|---|
-| PR SHA | The PR-branch commit that the evidence covers. Use its short SHA in reports. Use the full SHA only when a command or API requires it. | relative revision terms without a SHA |
-| base SHA | The target-branch commit used to evaluate the PR. | current base without a SHA |
-| required check | A named GitHub check required by repository policy. | CI gate when no check is named |
-| passing | A command exited with status 0, or a check concluded with `SUCCESS`. | green when the result is not named |
-| approval-ready | All product, contributor, CI, merge-state, review, and test gates pass. | ready, good to go |
-| blocked | A named decision, dependency, access problem, or input prevents progress. | stuck, cannot proceed without a reason |
-| advisory | Information that does not change a gate, approval, or merge state. | warning when no risk requires attention |
-| changed text | Explanatory text added or modified by the diff. | the whole file when unchanged text is out of scope |
-| user-visible change | A change to a command, output, configuration, workflow, or supported behavior. | improvement without the changed behavior |
-| release entry | The dated `docs/changelog/YYYY-MM-DD.mdx` record created before the tag. | release notes when the dated entry is intended |
-| Announcement | The post-tag release communication. | release entry |
-
-Use a different term only when it identifies a different concept. Define that difference where the
-term first appears.
+Use the [NemoClaw Controlled Word List](.agents/skills/_shared/controlled-words.md) for approved technical terms,
+lifecycle verbs, product names, and engineering evidence terms.
+The list gives one meaning to each controlled term and explains how to add or change an entry.
 
 ## Rewrite Examples
 
@@ -97,4 +96,4 @@ These examples use recurring NemoClaw concepts. They show the required level of 
 | Announcement | `Added more robust E2E handling.` | `The PR gate now retries evidence download after a child run is cancelled.` |
 | Release entry | `Fixed various issues.` | `The CLI now rejects a provider configuration that has no endpoint.` |
 | Release entry | `Better error handling.` | `The CLI now reports the provider authentication error without a stack trace.` |
-| Procedure | `Refresh and rerun as needed.` | `Fetch origin/main. Rerun the gate after the PR SHA changes.` |
+| Procedure | `Refresh and rerun as needed.` | `Push the next commit. Rerun the gate.` |

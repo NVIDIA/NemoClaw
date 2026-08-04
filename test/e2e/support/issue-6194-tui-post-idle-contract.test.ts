@@ -75,9 +75,11 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       "expect_pair_or_exit {NEMOCLAW6194_CHAT_OK} chat_reply {connected[^\\r\\n]*idle} connected_idle_after_chat 20 21 22 23",
     );
     expect(script).toContain("/nemoclaw status");
+    expect(script).toContain("expect_or_exit {Sandbox:} slash_status_output 30 31");
     expect(script).toContain(
-      "expect_pair_or_exit {NemoClaw Status} slash_status_output {connected[^\\r\\n]*idle} connected_idle_after_status 30 31 32 33",
+      "expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_status 32 33",
     );
+    expect(script).not.toContain("{NemoClaw Status}");
     expect(script).toContain("if {!$firstSeen} { exit $firstTimeoutExit }");
     expect(script).toContain("if {!$firstSeen} { exit $firstEofExit }");
     expect(script).toContain("mark clean_exit");

@@ -4,7 +4,8 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { RD as _RD, R } from "../../cli/terminal-style";
-import * as registry from "../../state/registry";
+import type { SandboxRegistry } from "../../state/registry";
+import { load as loadRegistry } from "../../state/registry/persistence";
 import * as sandboxState from "../../state/sandbox";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
@@ -89,16 +90,16 @@ export function revalidatePreparedRecoveryBeforeDelete(
   sandboxName: string,
   initialEntry: RebuildSandboxEntry,
   candidate: sandboxState.RebuildManifest | null,
-  registrySnapshot: registry.SandboxRegistry | null,
+  registrySnapshot: SandboxRegistry | null,
   allowLegacyManagedImageRecovery: boolean,
   bail: RebuildBail,
 ): {
   manifest: sandboxState.RebuildManifest | null;
-  registrySnapshot: registry.SandboxRegistry | null;
+  registrySnapshot: SandboxRegistry | null;
 } {
   if (!candidate) return { manifest: null, registrySnapshot };
 
-  const refreshedRegistrySnapshot = registry.load();
+  const refreshedRegistrySnapshot = loadRegistry();
   const currentEntry = refreshedRegistrySnapshot.sandboxes[sandboxName];
   if (!currentEntry) {
     return failPreparedRecoveryPreDelete(

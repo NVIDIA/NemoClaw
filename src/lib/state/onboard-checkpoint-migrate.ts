@@ -86,6 +86,7 @@ export function deriveCheckpointFromSession(session: Session): OnboardCheckpoint
       credentialEnvs: [],
       registeredProviders: [],
     },
+    sandboxRecreate: null,
   };
 }
 

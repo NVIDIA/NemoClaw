@@ -5,12 +5,16 @@
 //   - validateSnapshotName accepts/rejects names
 //   - listBackups computes virtual v<N> versions by timestamp-ascending position
 //   - findBackup resolves selectors (v<N>, name, exact timestamp)
+
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { managedStartupE2eProfile } from "../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { encodeManagedStartupProfile } from "../src/lib/onboard/managed-startup/profile";
 
 // Override HOME BEFORE importing sandbox-state — it reads process.env.HOME
 // at module-load time to compute REBUILD_BACKUPS_DIR. Captured original is
@@ -65,6 +69,39 @@ function writeBackup(
   };
   fs.writeFileSync(path.join(dir, "rebuild-manifest.json"), JSON.stringify(manifest, null, 2));
   return manifest;
+}
+function managedSnapshotAuthority() {
+  const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
+  return {
+    workload: {
+      schemaVersion: 1,
+      kind: "managed-image",
+      reference: `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`,
+      platform: "linux/amd64",
+      release: "v0.0.97",
+      sourceRevision: "b".repeat(40),
+      sourceCohort: "ghrun-123456-1",
+      capabilityContractVersion: 1,
+      startupProfileContractVersion: 1,
+      encodedProfile,
+      startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+      credentialProxyReplayRequired: false,
+      shared: true,
+    },
+    runtimeSnapshot: {
+      schemaVersion: 1,
+      providerId: "docker",
+      providerHandle: "opaque-provider-handle",
+      lifecycleState: "running",
+      lifecycleGeneration: "generation-1",
+      runtime: {
+        schemaVersion: 1,
+        providerId: "docker",
+        runtime: { kind: "docker-container", handle: "opaque-container-id" },
+        acceleration: { kind: "none" },
+      },
+    },
+  } as const;
 }
 afterAll(() => {
   if (ORIGINAL_HOME === undefined) {
@@ -189,6 +226,38 @@ describe("listBackups computes virtual versions", () => {
     expect(entry.customPolicies).toEqual(custom);
   });
 
+  it("round-trips normalized managed workload and provider runtime authority", () => {
+    const authority = managedSnapshotAuthority();
+    writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
+      workload: { ...authority.workload, ignored: "not-authority" },
+      runtimeSnapshot: {
+        ...authority.runtimeSnapshot,
+        containerName: "not-authority",
+      },
+    });
+
+    const [entry] = sandboxState.listBackups("test-sandbox");
+
+    expect(entry?.workload).toEqual(authority.workload);
+    expect(entry?.runtimeSnapshot).toEqual(authority.runtimeSnapshot);
+  });
+
+  it("rejects a managed snapshot manifest without valid provider runtime authority", () => {
+    const authority = managedSnapshotAuthority();
+    writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
+      workload: authority.workload,
+    });
+    writeBackup("test-sandbox", "2026-04-21T14-01-00-000Z", {
+      ...authority,
+      runtimeSnapshot: {
+        ...authority.runtimeSnapshot,
+        lifecycleGeneration: "",
+      },
+    });
+
+    expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
+  });
+
   it("preserves an empty customPolicies array so restore can distinguish zero-custom from legacy snapshots", () => {
     writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", { customPolicies: [] });
     const [entry] = sandboxState.listBackups("test-sandbox");
@@ -291,6 +360,32 @@ describe("listBackups computes virtual versions", () => {
       restoredFiles: [],
       failedFiles: [],
     });
+  });
+});
+
+describe("snapshot restore content authority", () => {
+  it("binds the selected manifest and payload bytes to one digest", () => {
+    const manifest = writeBackup("alpha", "2026-04-21T14-00-00-000Z", {
+      backedUpDirs: ["workspace"],
+      stateDirs: ["workspace"],
+    });
+    const backupPath = String(manifest.backupPath);
+    fs.mkdirSync(path.join(backupPath, "workspace"));
+    fs.writeFileSync(path.join(backupPath, "workspace", "state.txt"), "before\n");
+    const selected = sandboxState.getLatestBackup("alpha");
+    expect(selected).not.toBeNull();
+
+    const authority = sandboxState.captureSnapshotRestoreAuthority(backupPath, selected!);
+    expect(authority).toMatchObject({
+      schemaVersion: 1,
+      backupPath,
+      contentSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+
+    fs.writeFileSync(path.join(backupPath, "workspace", "state.txt"), "after\n");
+    expect(sandboxState.captureSnapshotRestoreAuthority(backupPath)?.contentSha256).not.toBe(
+      authority?.contentSha256,
+    );
   });
 });
 
@@ -537,6 +632,25 @@ process.exit(0);
       expect(backup.manifest?.reconcileOpenClawImagePluginProvenance).toBe(true);
       expect(backup.manifest?.openclawImagePluginInstalls).toEqual([]);
       expect(fs.readdirSync(stagingRoot)).toEqual([]);
+
+      const rejected = sandboxState.backupSandboxState("alpha", {
+        validateBeforePublish: () => {
+          throw new Error("runtime generation changed");
+        },
+      });
+      expect(rejected).toMatchObject({
+        success: false,
+        error: expect.stringContaining(
+          "Snapshot authority changed during backup: runtime generation changed",
+        ),
+      });
+      const published = fs
+        .readdirSync(path.join(BACKUPS_ROOT, "alpha"))
+        .filter((entry) =>
+          fs.existsSync(path.join(BACKUPS_ROOT, "alpha", entry, "rebuild-manifest.json")),
+        );
+      expect(published).toHaveLength(1);
+      expect(fs.readdirSync(stagingRoot)).toEqual([]);
     } finally {
       restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);
       restoreEnv("TMPDIR", oldTmpdir);
@@ -710,11 +824,11 @@ process.exit(0);
       const existingDirs = ["agents", "extensions", "workspace"];
       fs.mkdirSync(binDir, { recursive: true });
       for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
-
       const auditLines = [
         "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/.bin/qrcode-terminal\t../qrcode-terminal/bin/qrcode-terminal.js",
         "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
         "l\t/sandbox/.openclaw/extensions/slack/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
+        "l\t/sandbox/.openclaw/extensions/whatsapp/node_modules/openclaw\t/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw",
         "l\t/sandbox/.openclaw/extensions/weather/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
       ].join("\n");
 
@@ -1333,166 +1447,6 @@ process.exit(0);
       oldOpenshell === undefined
         ? delete process.env.NEMOCLAW_OPENSHELL_BIN
         : (process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell);
-      process.env.PATH = oldPath;
-      fs.rmSync(fixture, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("Hermes durable state files", () => {
-  it("restores durable state without overwriting a replacement home's API key (#7175)", () => {
-    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-snapshot-"));
-    const oldPath = process.env.PATH;
-    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
-    try {
-      const binDir = path.join(fixture, "bin");
-      const fakeRoot = path.join(fixture, "sandbox-root");
-      const hermesDir = path.join(fakeRoot, ".hermes");
-      const envPath = path.join(hermesDir, ".env");
-      const runtimeDir = path.join(hermesDir, "runtime");
-      const sshLog = path.join(fixture, "ssh-log.jsonl");
-      const readText = (filePath: string) => fs.readFileSync(filePath, "utf-8");
-      fs.mkdirSync(binDir, { recursive: true });
-      fs.mkdirSync(runtimeDir, { recursive: true });
-      fs.writeFileSync(path.join(hermesDir, "SOUL.md"), "original soul\n");
-      fs.writeFileSync(path.join(hermesDir, ".hermes_history"), "original history\n");
-      fs.writeFileSync(path.join(runtimeDir, "state.db"), "original sqlite backup\n");
-      fs.writeFileSync(path.join(hermesDir, "config.yaml"), "token: should-not-copy\n");
-      const originalEnv = `API_SERVER_KEY=${"a".repeat(64)}\n`;
-      const replacementEnv = `API_SERVER_KEY=${"b".repeat(64)}\n`;
-      fs.writeFileSync(envPath, originalEnv);
-      fs.writeFileSync(path.join(hermesDir, "auth.json"), '{"token":"should-not-copy"}\n');
-
-      const openshell = path.join(binDir, "openshell");
-      writeExecutable(
-        openshell,
-        `#!/usr/bin/env node
-const args = process.argv.slice(2);
-if (args[0] === "sandbox" && args[1] === "ssh-config") {
-  process.stdout.write("Host openshell-hermes\\n  HostName 127.0.0.1\\n  User sandbox\\n");
-  process.exit(0);
-}
-process.exit(0);
-`,
-      );
-
-      writeExecutable(
-        path.join(binDir, "ssh"),
-        `#!/usr/bin/env node
-const fs = require("fs");
-const path = require("path");
-const root = ${JSON.stringify(fakeRoot)};
-const log = ${JSON.stringify(sshLog)};
-const cmd = process.argv[process.argv.length - 1] || "";
-fs.appendFileSync(log, JSON.stringify({ cmd }) + "\\n");
-const hermesDir = path.join(root, ".hermes");
-function readStdin() {
-  const chunks = [];
-  for (;;) {
-    const buf = Buffer.alloc(65536);
-    const n = fs.readSync(0, buf, 0, buf.length, null);
-    if (n === 0) break;
-    chunks.push(buf.subarray(0, n));
-  }
-  return Buffer.concat(chunks);
-}
-if (cmd.includes("[ -d ")) {
-  process.exit(0);
-}
-if (cmd.includes("nemoclaw-sqlite-backup")) {
-  if (cmd.includes("kanban.db")) process.exit(2);
-  process.stdout.write(fs.readFileSync(path.join(hermesDir, "runtime", "state.db")));
-  process.exit(0);
-}
-if (cmd.includes("SOUL.md") && cmd.includes("cat --")) {
-  process.stdout.write(fs.readFileSync(path.join(hermesDir, "SOUL.md")));
-  process.exit(0);
-}
-if (cmd.includes(".hermes_history") && cmd.includes("cat --")) {
-  process.stdout.write(fs.readFileSync(path.join(hermesDir, ".hermes_history")));
-  process.exit(0);
-}
-if (cmd.includes("nemoclaw-sqlite-restore")) {
-  fs.mkdirSync(path.join(hermesDir, "runtime"), { recursive: true });
-  fs.writeFileSync(path.join(hermesDir, "runtime", "state.db"), readStdin());
-  process.exit(0);
-}
-if (cmd.includes(".nemoclaw-restore") && cmd.includes("SOUL.md")) {
-  fs.writeFileSync(path.join(hermesDir, "SOUL.md"), readStdin());
-  process.exit(0);
-}
-if (cmd.includes(".nemoclaw-restore") && cmd.includes(".hermes_history")) {
-  fs.writeFileSync(path.join(hermesDir, ".hermes_history"), readStdin());
-  process.exit(0);
-}
-process.exit(0);
-`,
-      );
-
-      fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
-      fs.writeFileSync(
-        path.join(TMP_HOME, ".nemoclaw", "sandboxes.json"),
-        JSON.stringify({
-          defaultSandbox: "hermes",
-          sandboxes: {
-            hermes: {
-              name: "hermes",
-              model: "m",
-              provider: "p",
-              gpuEnabled: false,
-              policies: [],
-              agent: "hermes",
-            },
-          },
-        }),
-      );
-
-      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
-      process.env.PATH = `${binDir}:${oldPath || ""}`;
-
-      const backup = sandboxState.backupSandboxState("hermes", { name: "hermes-state" });
-      expect(backup.success).toBe(true);
-      expect(backup.manifest).toBeDefined();
-      const backupPath = backup.manifest!.backupPath;
-      expect(backup.backedUpFiles).toEqual(["SOUL.md", ".hermes_history", "runtime/state.db"]);
-      expect(backup.failedFiles).toEqual([]);
-      expect(backup.manifest?.stateFiles).toEqual([
-        { path: "SOUL.md", strategy: "copy" },
-        { path: ".hermes_history", strategy: "copy" },
-        { path: "runtime/state.db", strategy: "sqlite_backup" },
-        { path: "kanban.db", strategy: "sqlite_backup" },
-      ]);
-      expect(readText(path.join(backupPath, "SOUL.md"))).toBe("original soul\n");
-      expect(readText(path.join(backupPath, ".hermes_history"))).toBe("original history\n");
-      expect(readText(path.join(backupPath, "runtime", "state.db"))).toBe(
-        "original sqlite backup\n",
-      );
-      expect(fs.existsSync(path.join(backupPath, "config.yaml"))).toBe(false);
-      expect(fs.existsSync(path.join(backupPath, ".env"))).toBe(false);
-      expect(fs.existsSync(path.join(backupPath, "auth.json"))).toBe(false);
-
-      fs.writeFileSync(path.join(hermesDir, "SOUL.md"), "changed soul\n");
-      fs.writeFileSync(path.join(hermesDir, ".hermes_history"), "changed history\n");
-      fs.writeFileSync(path.join(runtimeDir, "state.db"), "changed db\n");
-      fs.writeFileSync(envPath, replacementEnv);
-      const restore = sandboxState.restoreSandboxState("hermes", backup.manifest!.backupPath);
-      expect(restore.success).toBe(true);
-      expect(restore.restoredFiles).toEqual(["SOUL.md", ".hermes_history", "runtime/state.db"]);
-      expect(readText(path.join(hermesDir, "SOUL.md"))).toBe("original soul\n");
-      expect(readText(path.join(hermesDir, ".hermes_history"))).toBe("original history\n");
-      expect(readText(path.join(runtimeDir, "state.db"))).toBe("original sqlite backup\n");
-      expect(readText(envPath)).toBe(replacementEnv);
-
-      const loggedCommands = fs.readFileSync(sshLog, "utf-8");
-      expect(loggedCommands).toContain("sqlite3.connect");
-      expect(loggedCommands).toContain("src_conn.backup(dst_conn)");
-      expect(loggedCommands).toContain("PRAGMA quick_check");
-    } finally {
-      if (oldOpenshell === undefined) {
-        delete process.env.NEMOCLAW_OPENSHELL_BIN;
-      } else {
-        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
-      }
       process.env.PATH = oldPath;
       fs.rmSync(fixture, { recursive: true, force: true });
     }

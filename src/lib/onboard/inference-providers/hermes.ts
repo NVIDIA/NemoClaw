@@ -58,7 +58,9 @@ export async function setupHermesProviderInference(
     // so a DNS-backed HTTPS endpoint must be set after onboarding via
     // `inference set --endpoint-url`.
     try {
-      const validated = await rewriteConfigUrlsWithDnsPinning(endpointUrl, deps.lookup);
+      const validated = await rewriteConfigUrlsWithDnsPinning(endpointUrl, deps.lookup, {
+        allowOpenShellBridge: true,
+      });
       resolvedEndpointUrl = typeof validated === "string" ? validated : endpointUrl;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

@@ -22,7 +22,12 @@ const EXTENSION_NPM_BIN_RE = /^extensions\/[A-Za-z0-9][A-Za-z0-9._-]*\/node_modu
 // target; source-only matching would permit repointing it to an arbitrary file.
 const OPENCLAW_EXTENSION_PEER_LINK_RE =
   /^extensions\/[A-Za-z0-9][A-Za-z0-9._-]*\/node_modules\/openclaw$/;
-const OPENCLAW_GLOBAL_PACKAGE_PATH = "/usr/local/lib/node_modules/openclaw";
+const OPENCLAW_IMAGE_PACKAGE_PATHS: ReadonlySet<string> = new Set([
+  // Legacy global install used by older sandboxes that still need to rebuild.
+  "/usr/local/lib/node_modules/openclaw",
+  // Locked runtime install used by current images; the global path points here.
+  "/usr/local/lib/nemoclaw/openclaw-runtime/node_modules/openclaw",
+]);
 
 // Preserve extensions baked into the freshly rebuilt image instead of
 // replacing them with archived copies. Messaging IDs come from the reviewed
@@ -63,7 +68,7 @@ function isAllowedOpenClawExtensionPeerSymlink(relPath: string, linkTarget: stri
   const normalizedRelPath = relPath.split(path.sep).join("/");
   return (
     OPENCLAW_EXTENSION_PEER_LINK_RE.test(normalizedRelPath) &&
-    linkTarget === OPENCLAW_GLOBAL_PACKAGE_PATH
+    OPENCLAW_IMAGE_PACKAGE_PATHS.has(linkTarget)
   );
 }
 

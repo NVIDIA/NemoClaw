@@ -29,6 +29,18 @@ import { CLI_ENTRYPOINT, REPO_ROOT } from "../fixtures/paths.ts";
 import type { TestProgress } from "../fixtures/progress.ts";
 import { parseJsonFromText } from "./json-envelope.ts";
 import {
+  CURRENT_LIFECYCLE_TEST_SELECTOR,
+  type OpenClawPluginRuntimeExdevFixture,
+  RELEASE_BASELINE_TEST_SELECTOR,
+  RELEASE_SANDBOX_BASE_IMAGE_REF,
+  resolveOpenClawPluginRuntimeExdevFixture,
+} from "./openclaw-plugin-runtime-exdev-fixture.ts";
+import {
+  CURRENT_LIFECYCLE_PHASES,
+  currentLifecycleCommands,
+  type WeatherFixtureVersion,
+} from "./openclaw-plugin-runtime-exdev-lifecycle.ts";
+import {
   createOpenShellDriverConfigTestWrapper,
   type OpenShellComponents,
   type OpenShellDriverConfigTestWrapper,
@@ -37,7 +49,7 @@ import {
 } from "./openshell-driver-config-test-wrapper.ts";
 
 // Keep this contract as a focused live test: build a deterministic custom plugin
-// on top of the complete managed runtime, prove it survives restart/rebuild, then
+// on top of the complete managed runtime, prove it survives restart/recreation, then
 // run the in-sandbox Node replacement probe that guards #3513/#3127's EXDEV
 // cross-device runtime-deps failure mode. No registry or ledger is required.
 
@@ -72,7 +84,6 @@ const NEMOCLAW_RELEASE_COMMIT = "e4b9111f5f0535c2fc3d6fbe8dc8dca101a6fdce";
 const NEMOCLAW_RELEASE_OPENSHELL_VERSION = "0.0.71";
 const CURRENT_OPENSHELL_VERSION = "0.0.85";
 const NEMOCLAW_SOURCE_REPOSITORY = "https://github.com/NVIDIA/NemoClaw.git";
-const SANDBOX_BASE_IMAGE_REF = "ghcr.io/nvidia/nemoclaw/sandbox-base:v0.0.71";
 const RELEASE_BUILDER_IMAGE_REF =
   "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d";
 const CURRENT_BUILDER_IMAGE_REF =
@@ -80,7 +91,6 @@ const CURRENT_BUILDER_IMAGE_REF =
 const TOOL_DISCLOSURE_ENV_REFERENCE = "${NEMOCLAW_TOOL_DISCLOSURE}";
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-openclaw-plugin-exdev";
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;
-const REBUILD_TIMEOUT_MS = 20 * 60_000;
 const PROBE_TIMEOUT_MS = 60_000;
 const EXDEV_TMPFS_MOUNT = "/tmp/nemoclaw-exdev-tmpfs";
 const EXDEV_TMPFS_SOURCE = `${EXDEV_TMPFS_MOUNT}/source`;
@@ -115,11 +125,6 @@ const EXDEV_PATTERNS = [
   /EXDEV: cross-device link not permitted/i,
   /cross-device link not permitted/i,
 ];
-type WeatherFixtureVersion = "v1" | "v2" | "v3";
-
-const RELEASE_BASELINE_TEST_SELECTOR = "release-baseline";
-const CURRENT_LIFECYCLE_TEST_SELECTOR = "current-lifecycle";
-
 const GATEWAY_CATALOG_CALL_SOURCE = String.raw`
 import { Buffer } from "node:buffer";
 import { accessSync, constants, realpathSync } from "node:fs";
@@ -389,9 +394,13 @@ type CustomPluginBuildContext = {
   pluginDirPath: string;
 };
 
+type PreparedCustomPluginBuildContext = CustomPluginBuildContext & {
+  runtimeOpenClawVersion: string;
+};
+
 function createCustomPluginBuildContext(): CustomPluginBuildContext {
   const nonce = randomUUID();
-  const sourceParentDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-v0.0.71-weather-"));
+  const sourceParentDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-weather-plugin-"));
   const sourceRoot = path.join(sourceParentDir, "NemoClaw");
   return {
     sourceParentDir,
@@ -466,31 +475,40 @@ function writeCustomPluginVersion(
 
 function createCustomPluginDockerfile(
   context: CustomPluginBuildContext,
-  builderImageRef: string,
-): void {
+  fixture: OpenClawPluginRuntimeExdevFixture,
+): string {
   const sourceDockerfile = path.join(context.sourceRoot, "Dockerfile");
   const source = fs.readFileSync(sourceDockerfile, "utf8");
   const baseImageAnchor = "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest\n";
-  const builderImageAnchor = `FROM ${RELEASE_BUILDER_IMAGE_REF} AS builder\n`;
+  const builderImageRef =
+    fixture.source === "release" ? RELEASE_BUILDER_IMAGE_REF : CURRENT_BUILDER_IMAGE_REF;
+  const builderImageAnchor = `FROM ${builderImageRef} AS builder\n`;
   const runtimeAnchor = "FROM ${BASE_IMAGE}\n";
   expect(
     source.match(/^ARG BASE_IMAGE=ghcr\.io\/nvidia\/nemoclaw\/sandbox-base:latest$/gm)?.length,
   ).toBe(1);
   expect(source.split(builderImageAnchor)).toHaveLength(2);
   expect(source.match(/^FROM \$\{BASE_IMAGE\}$/gm)?.length, "expected one runtime stage").toBe(1);
+  const runtimeOpenClawDeclarations = [...source.matchAll(/^ARG OPENCLAW_VERSION=([0-9.]+)$/gm)];
+  expect(runtimeOpenClawDeclarations, "expected one OpenClaw version declaration").toHaveLength(1);
+  const runtimeOpenClawVersion = runtimeOpenClawDeclarations[0]?.[1];
+  expect(runtimeOpenClawVersion, "source Dockerfile must declare an OpenClaw version").toMatch(
+    /^\d+(?:\.\d+)+$/,
+  );
   expect(
-    source.match(/^ARG OPENCLAW_VERSION=([0-9.]+)$/m)?.[1],
+    fixture.source !== "release" || runtimeOpenClawVersion === WEATHER_OPENCLAW_VERSION,
     "weather fixture SDK must match the v0.0.71 managed runtime target",
-  ).toBe(WEATHER_OPENCLAW_VERSION);
+  ).toBe(true);
   expect(
     WEATHER_FIXTURE_PACKAGE.devDependencies?.openclaw,
     "weather fixture devDependency must match its declared OpenClaw build target",
   ).toBe(WEATHER_OPENCLAW_VERSION);
 
-  const runtime = source
-    .replace(baseImageAnchor, `ARG BASE_IMAGE=${SANDBOX_BASE_IMAGE_REF}\n`)
-    .replace(builderImageAnchor, `FROM ${builderImageRef} AS builder\n`)
-    .replace(runtimeAnchor, "FROM ${BASE_IMAGE} AS nemoclaw-runtime\n");
+  const selectedSource =
+    fixture.source === "release"
+      ? source.replace(baseImageAnchor, `ARG BASE_IMAGE=${RELEASE_SANDBOX_BASE_IMAGE_REF}\n`)
+      : source;
+  const runtime = selectedSource.replace(runtimeAnchor, "FROM ${BASE_IMAGE} AS nemoclaw-runtime\n");
   const pluginDirName = path.basename(context.pluginDirPath);
   const versionSourceName = path.basename(context.versionSourcePath);
   const extension = String.raw`
@@ -530,7 +548,7 @@ USER sandbox
 RUN test ! -e /opt/weather-plugin/node_modules/openclaw \
     && HOME=/sandbox openclaw plugins install /opt/weather-plugin \
     && test -L /sandbox/.openclaw/extensions/weather/node_modules/openclaw \
-    && test "$(realpath /sandbox/.openclaw/extensions/weather/node_modules/openclaw)" = /usr/local/lib/node_modules/openclaw \
+    && test "$(realpath /sandbox/.openclaw/extensions/weather/node_modules/openclaw)" = "${fixture.openClawModulePath}" \
     && HOME=/sandbox openclaw plugins enable weather \
     && HOME=/sandbox openclaw plugins inspect weather --json > /dev/null
 
@@ -549,6 +567,7 @@ RUN chown sandbox:sandbox /sandbox/.openclaw/openclaw.json \
     encoding: "utf8",
     flag: "wx",
   });
+  return String(runtimeOpenClawVersion);
 }
 
 async function buildAndVerifyTaggedCli(
@@ -648,15 +667,17 @@ async function assertWeatherPluginRuntime(
   sandbox: SandboxClient,
   phase: string,
   expectedFixtureVersion: WeatherFixtureVersion,
+  expectedOpenClawVersion: string,
+  expectedOpenClawModulePath: OpenClawPluginRuntimeExdevFixture["openClawModulePath"],
 ): Promise<WeatherRuntimeProof> {
   const imageProbe = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(`set -eu
 test -s /tmp/gateway.log
 test -s /usr/local/share/nemoclaw/e2e-weather-plugin.sha256
-test "$(openclaw --version 2>/dev/null | awk '{print $2}')" = "${WEATHER_OPENCLAW_VERSION}"
+test "$(openclaw --version 2>/dev/null | awk '{print $2}')" = "${expectedOpenClawVersion}"
 test -L /sandbox/.openclaw/extensions/weather/node_modules/openclaw
-test "$(realpath /sandbox/.openclaw/extensions/weather/node_modules/openclaw)" = /usr/local/lib/node_modules/openclaw
+test "$(realpath /sandbox/.openclaw/extensions/weather/node_modules/openclaw)" = "${expectedOpenClawModulePath}"
 expected=$(cat /usr/local/share/nemoclaw/e2e-weather-plugin.sha256)
 actual=$(cd /sandbox/.openclaw/extensions/weather && sha256sum dist/index.js dist/version.js | sha256sum | cut -d ' ' -f 1)
 [ "$expected" = "$actual" ]
@@ -885,46 +906,55 @@ const runtimeDepsReplacementProbe = trustedSandboxShellScript(runtimeDepsReplace
 async function prepareCustomPluginSource(
   host: HostCliClient,
   cleanup: CleanupRegistry,
-  builderImageRef: string,
-): Promise<CustomPluginBuildContext> {
+  fixture: OpenClawPluginRuntimeExdevFixture,
+): Promise<PreparedCustomPluginBuildContext> {
   const context = createCustomPluginBuildContext();
-  cleanup.add("remove v0.0.71 custom-plugin source worktree", () =>
+  cleanup.add(`remove ${fixture.source} custom-plugin source clone`, () =>
     fs.rmSync(context.sourceParentDir, { recursive: true, force: true }),
   );
-  const cloneRelease = await host.command(
-    "git",
-    [
-      "clone",
-      "--depth",
-      "1",
-      "--branch",
-      NEMOCLAW_RELEASE_TAG,
-      "--single-branch",
-      NEMOCLAW_SOURCE_REPOSITORY,
-      context.sourceRoot,
-    ],
-    {
-      artifactName: "clone-nemoclaw-v0-0-71-plugin-source",
-      env: liveEnv(),
-      timeoutMs: 180_000,
-    },
-  );
-  expect(cloneRelease.exitCode, resultText(cloneRelease)).toBe(0);
-  const releaseHead = await host.command("git", ["-C", context.sourceRoot, "rev-parse", "HEAD"], {
-    artifactName: "verify-nemoclaw-v0-0-71-plugin-source",
+  const currentHead = await host.command("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], {
+    artifactName: "resolve-current-nemoclaw-plugin-source",
     env: liveEnv(),
     timeoutMs: 30_000,
   });
-  expect(releaseHead.exitCode, resultText(releaseHead)).toBe(0);
-  expect(releaseHead.stdout.trim()).toBe(NEMOCLAW_RELEASE_COMMIT);
-  createCustomPluginDockerfile(context, builderImageRef);
-  return context;
+  expect(currentHead.exitCode, resultText(currentHead)).toBe(0);
+  const expectedSourceHead =
+    fixture.source === "release" ? NEMOCLAW_RELEASE_COMMIT : currentHead.stdout.trim();
+  const cloneArgs =
+    fixture.source === "release"
+      ? [
+          "clone",
+          "--depth",
+          "1",
+          "--branch",
+          NEMOCLAW_RELEASE_TAG,
+          "--single-branch",
+          NEMOCLAW_SOURCE_REPOSITORY,
+          context.sourceRoot,
+        ]
+      : ["clone", "--local", "--no-hardlinks", REPO_ROOT, context.sourceRoot];
+  const cloneSource = await host.command("git", cloneArgs, {
+    artifactName: `clone-${fixture.source}-nemoclaw-plugin-source`,
+    env: liveEnv(),
+    timeoutMs: 180_000,
+  });
+  expect(cloneSource.exitCode, resultText(cloneSource)).toBe(0);
+  const sourceHead = await host.command("git", ["-C", context.sourceRoot, "rev-parse", "HEAD"], {
+    artifactName: `verify-${fixture.source}-nemoclaw-plugin-source`,
+    env: liveEnv(),
+    timeoutMs: 30_000,
+  });
+  expect(sourceHead.exitCode, resultText(sourceHead)).toBe(0);
+  expect(sourceHead.stdout.trim()).toBe(expectedSourceHead);
+  const runtimeOpenClawVersion = createCustomPluginDockerfile(context, fixture);
+  return { ...context, runtimeOpenClawVersion };
 }
 
 async function startDeploymentFixture(
   artifacts: ArtifactSink,
   cleanup: CleanupRegistry,
   progress: TestProgress,
+  fixture: OpenClawPluginRuntimeExdevFixture,
 ): Promise<NodeJS.ProcessEnv> {
   const fake = await startFakeOpenAiCompatibleServer({
     apiKey: "nemoclaw-exdev-dummy-key",
@@ -944,12 +974,12 @@ async function startDeploymentFixture(
   });
 
   return liveEnv({
+    ...fixture.baseImageEnv,
     COMPATIBLE_API_KEY: "nemoclaw-exdev-dummy-key",
     NEMOCLAW_ENDPOINT_URL: fake.baseUrl,
     NEMOCLAW_MODEL: "nemoclaw-exdev-probe",
     NEMOCLAW_PROVIDER_KEY: "nemoclaw-exdev-dummy-key",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-    NEMOCLAW_SANDBOX_BASE_IMAGE_REF: SANDBOX_BASE_IMAGE_REF,
     NEMOCLAW_POLICY_MODE: "skip",
     NEMOCLAW_PREFERRED_API: "openai-completions",
     NEMOCLAW_PROVIDER: "custom",
@@ -985,6 +1015,7 @@ test("the release-baseline custom plugin loads with its exact NemoClaw and OpenS
     ],
   },
 }, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+  const fixture = resolveOpenClawPluginRuntimeExdevFixture(RELEASE_BASELINE_TEST_SELECTOR);
   await artifacts.target.declare({
     id: "openclaw-plugin-runtime-exdev-release",
     boundary: "fresh-openclaw-sandbox-exec",
@@ -995,11 +1026,11 @@ test("the release-baseline custom plugin loads with its exact NemoClaw and OpenS
       "release-matched peer/dev dependencies prune private OpenClaw and link the host runtime",
       "the release weather plugin loads from the custom image without an EXDEV bootstrap failure",
     ],
-    selector: RELEASE_BASELINE_TEST_SELECTOR,
+    selector: fixture.selector,
     nemoclawSourceRelease: NEMOCLAW_RELEASE_TAG,
     nemoclawSourceCommit: NEMOCLAW_RELEASE_COMMIT,
     taggedOpenshellVersion: NEMOCLAW_RELEASE_OPENSHELL_VERSION,
-    sandboxBaseImageRef: SANDBOX_BASE_IMAGE_REF,
+    sandboxBaseImageRef: RELEASE_SANDBOX_BASE_IMAGE_REF,
     openclawVersion: WEATHER_OPENCLAW_VERSION,
   });
 
@@ -1031,11 +1062,7 @@ test("the release-baseline custom plugin loads with its exact NemoClaw and OpenS
   );
 
   progress.phase("clone and build the tagged plugin fixture");
-  const customPluginContext = await prepareCustomPluginSource(
-    host,
-    cleanup,
-    RELEASE_BUILDER_IMAGE_REF,
-  );
+  const customPluginContext = await prepareCustomPluginSource(host, cleanup, fixture);
   await buildAndVerifyTaggedCli(host, customPluginContext);
   progress.phase("install tagged OpenShell and onboard the release sandbox");
   await stopOpenShellGatewayBeforeVersionSwitch(host, "existing");
@@ -1047,7 +1074,7 @@ test("the release-baseline custom plugin loads with its exact NemoClaw and OpenS
   );
   const taggedOpenShellWrapper = createOpenShellTmpfsWrapper(taggedPinnedOpenshell.cli);
   cleanup.add("remove v0.0.71 EXDEV OpenShell PATH wrapper", taggedOpenShellWrapper.remove);
-  const deploymentEnv = await startDeploymentFixture(artifacts, cleanup, progress);
+  const deploymentEnv = await startDeploymentFixture(artifacts, cleanup, progress, fixture);
   const taggedSandboxEnv = withOpenShellWrapperEnv(
     deploymentEnv,
     taggedOpenShellWrapper,
@@ -1134,41 +1161,35 @@ test("the release-baseline custom plugin loads with its exact NemoClaw and OpenS
   });
 });
 
-test("the current-lifecycle custom plugin survives restart, recreation, and rebuild without EXDEV failures (#6108)", {
-  timeout: ONBOARD_TIMEOUT_MS * 2 + REBUILD_TIMEOUT_MS + 15 * 60_000,
+test("the current-lifecycle custom plugin survives restart and recreation without EXDEV failures (#6108)", {
+  timeout: ONBOARD_TIMEOUT_MS * 2 + 15 * 60_000,
   meta: {
-    e2ePhases: [
-      "confirm Docker CLI and clear the current plugin sandbox",
-      "clone and prepare the current plugin fixture",
-      "install current OpenShell and onboard plugin v1",
-      "restart the gateway and confirm plugin v1",
-      "recreate the sandbox with plugin v2",
-      "rebuild the sandbox with plugin v3",
-      "prove cross-device runtime dependency replacement",
-    ],
+    e2ePhases: [...CURRENT_LIFECYCLE_PHASES],
   },
 }, async ({ artifacts, cleanup, host, progress, sandbox, skip }) => {
+  const fixture = resolveOpenClawPluginRuntimeExdevFixture(CURRENT_LIFECYCLE_TEST_SELECTOR);
   await artifacts.target.declare({
     id: "openclaw-plugin-runtime-exdev",
     boundary: "fresh-openclaw-sandbox-exec",
     regressionTargets: ["#6108", "#3513", "#3127"],
     contract: [
       "the current CLI uses OpenShell 0.0.85 for current lifecycle coverage",
+      "the CLI and Dockerfile use the same checkout source and a compatible sandbox base image",
       "gateway log, runtime inspection, tools.catalog, and tools.invoke prove weather/get_weather",
-      "custom-plugin v1 survives restart, recreation installs v2, and rebuild installs v3",
-      "workspace state survives both onboarding recreation and rebuild",
+      "custom-plugin v1 survives restart and recreation installs v2",
+      "workspace state survives onboarding recreation",
       `test-only driver config mounts tmpfs at ${EXDEV_TMPFS_MOUNT} without changing production policies`,
-      "stock OpenClaw policy source bytes remain unchanged through onboard and rebuild",
+      "stock OpenClaw policy source bytes remain unchanged through onboard and recreation",
       `sandbox proves ${EXDEV_TMPFS_SOURCE} and plugin-runtime-deps are distinct devices`,
       `legacy source-side staging fails with EXDEV across the same ${EXDEV_TMPFS_SOURCE} to plugin-runtime-deps boundary`,
       "OpenClaw-style target-side plugin runtime-deps replacement completes without EXDEV",
     ],
-    selector: CURRENT_LIFECYCLE_TEST_SELECTOR,
-    nemoclawSourceRelease: NEMOCLAW_RELEASE_TAG,
-    nemoclawSourceCommit: NEMOCLAW_RELEASE_COMMIT,
+    selector: fixture.selector,
+    nemoclawSource: "current-checkout",
     currentOpenshellVersion: CURRENT_OPENSHELL_VERSION,
-    sandboxBaseImageRef: SANDBOX_BASE_IMAGE_REF,
-    openclawVersion: WEATHER_OPENCLAW_VERSION,
+    sandboxBaseImageResolution: "current-cli",
+    pluginBuildOpenClawVersion: WEATHER_OPENCLAW_VERSION,
+    runtimeOpenClawVersionSource: "current-source",
   });
 
   await requireDocker(
@@ -1213,13 +1234,9 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
 
   progress.phase("clone and prepare the current plugin fixture");
   const policySourceSnapshot = snapshotPolicySources();
-  const customPluginContext = await prepareCustomPluginSource(
-    host,
-    cleanup,
-    CURRENT_BUILDER_IMAGE_REF,
-  );
-  const deploymentEnv = await startDeploymentFixture(artifacts, cleanup, progress);
-  progress.phase("install current OpenShell and onboard plugin v1");
+  const customPluginContext = await prepareCustomPluginSource(host, cleanup, fixture);
+  const deploymentEnv = await startDeploymentFixture(artifacts, cleanup, progress, fixture);
+  progress.phase("install and validate current OpenShell");
   await stopOpenShellGatewayBeforeVersionSwitch(host, "existing");
   const pinnedOpenshell = await installAndResolvePinnedOpenShell(
     host,
@@ -1248,20 +1265,16 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
     "current OpenShell wrapper and components must pass onboard coherence preflight",
   ).toBe(true);
   const sandboxEnv = withOpenShellWrapperEnv(deploymentEnv, openshellWrapper, pinnedOpenshell);
+  const lifecycleCommands = currentLifecycleCommands({
+    cliEntrypoint: CLI_ENTRYPOINT,
+    dockerfilePath: customPluginContext.dockerfilePath,
+    sandboxName: SANDBOX_NAME,
+  });
 
+  progress.phase("build and onboard plugin v1");
   const onboard = await host.command(
-    "node",
-    [
-      CLI_ENTRYPOINT,
-      "onboard",
-      "--fresh",
-      "--non-interactive",
-      "--yes-i-accept-third-party-software",
-      "--agent",
-      "openclaw",
-      "--from",
-      customPluginContext.dockerfilePath,
-    ],
+    lifecycleCommands.onboard.command,
+    lifecycleCommands.onboard.args,
     {
       artifactName: "openclaw-plugin-exdev-onboard",
       env: sandboxEnv,
@@ -1275,43 +1288,45 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
   const tmpfsMountedAfterOnboard = await assertExdevTmpfsMounted(sandbox, "after-onboard");
   assertPolicySourcesUnchanged(policySourceSnapshot, "onboard");
 
-  const weatherAfterOnboard = await assertWeatherPluginRuntime(sandbox, "after-onboard", "v1");
+  const weatherAfterOnboard = await assertWeatherPluginRuntime(
+    sandbox,
+    "after-onboard",
+    "v1",
+    customPluginContext.runtimeOpenClawVersion,
+    fixture.openClawModulePath,
+  );
 
   progress.phase("restart the gateway and confirm plugin v1");
-  const restart = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "gateway", "restart"], {
-    artifactName: "openclaw-weather-plugin-gateway-restart",
-    env: sandboxEnv,
-    timeoutMs: 180_000,
-  });
+  const restart = await host.command(
+    lifecycleCommands.restart.command,
+    lifecycleCommands.restart.args,
+    {
+      artifactName: "openclaw-weather-plugin-gateway-restart",
+      env: sandboxEnv,
+      timeoutMs: 180_000,
+    },
+  );
   expect(restart.exitCode, resultText(restart)).toBe(0);
-  const weatherAfterRestart = await assertWeatherPluginRuntime(sandbox, "after-restart", "v1");
+  const weatherAfterRestart = await assertWeatherPluginRuntime(
+    sandbox,
+    "after-restart",
+    "v1",
+    customPluginContext.runtimeOpenClawVersion,
+    fixture.openClawModulePath,
+  );
   expect(weatherAfterRestart.imageMarker).toBe(weatherAfterOnboard.imageMarker);
 
   const workspaceMarker = `plugin-lifecycle-${randomUUID()}`;
   await writeWorkspaceMarker(sandbox, workspaceMarker);
 
-  // Change an actual build-context input so rebuild must produce a distinct
-  // plugin artifact. Onboarding recreation must preserve the fresh v2
+  // Change an actual build-context input so recreation must produce a distinct
+  // plugin artifact. Recreation must preserve the fresh v2
   // extension instead of replacing it with the backed-up v1 directory.
   progress.phase("recreate the sandbox with plugin v2");
   writeCustomPluginVersion(customPluginContext.versionSourcePath, "v2");
   const recreate = await host.command(
-    "node",
-    [
-      CLI_ENTRYPOINT,
-      "onboard",
-      "--fresh",
-      "--recreate-sandbox",
-      "--non-interactive",
-      "--yes",
-      "--yes-i-accept-third-party-software",
-      "--name",
-      SANDBOX_NAME,
-      "--agent",
-      "openclaw",
-      "--from",
-      customPluginContext.dockerfilePath,
-    ],
+    lifecycleCommands.recreate.command,
+    lifecycleCommands.recreate.args,
     {
       artifactName: "openclaw-weather-plugin-recreate",
       env: sandboxEnv,
@@ -1321,25 +1336,15 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
   expect(recreate.exitCode, resultText(recreate)).toBe(0);
   const tmpfsMountedAfterRecreate = await assertExdevTmpfsMounted(sandbox, "after-recreate");
   assertPolicySourcesUnchanged(policySourceSnapshot, "recreate");
-  const weatherAfterRecreate = await assertWeatherPluginRuntime(sandbox, "after-recreate", "v2");
+  const weatherAfterRecreate = await assertWeatherPluginRuntime(
+    sandbox,
+    "after-recreate",
+    "v2",
+    customPluginContext.runtimeOpenClawVersion,
+    fixture.openClawModulePath,
+  );
   expect(weatherAfterRecreate.imageMarker).not.toBe(weatherAfterOnboard.imageMarker);
   await assertWorkspaceMarker(sandbox, "after-recreate", workspaceMarker);
-
-  // A subsequent rebuild exercises the same semantic recreated-sandbox
-  // restore boundary with another fresh image artifact.
-  progress.phase("rebuild the sandbox with plugin v3");
-  writeCustomPluginVersion(customPluginContext.versionSourcePath, "v3");
-  const rebuild = await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "rebuild", "--yes"], {
-    artifactName: "openclaw-weather-plugin-rebuild",
-    env: sandboxEnv,
-    timeoutMs: REBUILD_TIMEOUT_MS,
-  });
-  expect(rebuild.exitCode, resultText(rebuild)).toBe(0);
-  const tmpfsMountedAfterRebuild = await assertExdevTmpfsMounted(sandbox, "after-rebuild");
-  assertPolicySourcesUnchanged(policySourceSnapshot, "rebuild");
-  const weatherAfterRebuild = await assertWeatherPluginRuntime(sandbox, "after-rebuild", "v3");
-  expect(weatherAfterRebuild.imageMarker).not.toBe(weatherAfterRecreate.imageMarker);
-  await assertWorkspaceMarker(sandbox, "after-rebuild", workspaceMarker);
 
   progress.phase("prove cross-device runtime dependency replacement");
   const df = await sandbox.execShell(
@@ -1377,9 +1382,9 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
     onboardExitCode: onboard.exitCode,
     restartExitCode: restart.exitCode,
     recreateExitCode: recreate.exitCode,
-    rebuildExitCode: rebuild.exitCode,
     filesystemProbeExitCode: df.exitCode,
     runtimeDepsProbeExitCode: probe.exitCode,
+    runtimeOpenClawVersion: customPluginContext.runtimeOpenClawVersion,
     testOnlyTmpfsSource: EXDEV_TMPFS_SOURCE,
     assertions: {
       weatherAfterOnboard:
@@ -1394,10 +1399,6 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
         weatherAfterRecreate.inspectLoaded &&
         weatherAfterRecreate.catalogToolIds.includes("get_weather") &&
         weatherAfterRecreate.toolInvoked,
-      weatherAfterRebuild:
-        weatherAfterRebuild.inspectLoaded &&
-        weatherAfterRebuild.catalogToolIds.includes("get_weather") &&
-        weatherAfterRebuild.toolInvoked,
       v1MarkerStableThroughRestart:
         weatherAfterOnboard.imageMarker === weatherAfterRestart.imageMarker &&
         weatherAfterOnboard.fixtureVersion === "v1" &&
@@ -1405,9 +1406,6 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
       recreatedV2ReplacedV1:
         weatherAfterRecreate.imageMarker !== weatherAfterOnboard.imageMarker &&
         weatherAfterRecreate.fixtureVersion === "v2",
-      rebuiltV3ReplacedV2:
-        weatherAfterRebuild.imageMarker !== weatherAfterRecreate.imageMarker &&
-        weatherAfterRebuild.fixtureVersion === "v3",
       distinctDevices: /source_device=\d+ target_device=\d+/.test(probeText),
       sourceSideExdevSelfCheck: probeText.includes(
         "source-side staging failure self-check completed",
@@ -1415,8 +1413,7 @@ test("the current-lifecycle custom plugin survives restart, recreation, and rebu
       noExdevSignature: !EXDEV_PATTERNS.some((pattern) => pattern.test(probeText)),
       successMarker: probeText.includes("runtime deps replacement completed"),
       workspaceStatePreserved: true,
-      testOnlyTmpfsMounted:
-        tmpfsMountedAfterOnboard && tmpfsMountedAfterRecreate && tmpfsMountedAfterRebuild,
+      testOnlyTmpfsMounted: tmpfsMountedAfterOnboard && tmpfsMountedAfterRecreate,
       stockPolicySourcesUnchanged: true,
     },
   });

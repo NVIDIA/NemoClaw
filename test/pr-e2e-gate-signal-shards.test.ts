@@ -8,7 +8,7 @@ import {
   PR_E2E_TYPED_TARGET_IDS,
   riskPlanRequiredJobIds,
 } from "../tools/advisors/risk-plan.mts";
-import { expectedSignalShards } from "../tools/e2e/pr-e2e-gate.mts";
+import { expandPrGateJobSelections, expectedSignalShards } from "../tools/e2e/pr-e2e-gate.mts";
 
 const HEAD_SHA = "a".repeat(40);
 const DCODE_TARGET = PR_E2E_TYPED_TARGET_IDS[0];
@@ -28,12 +28,12 @@ describe("PR E2E signal shard policy", () => {
       "onboard-repair": ["default"],
       "onboard-resume": ["default"],
     });
-    expect(expectedSignalShards(["docs-validation"])).toEqual({
-      "docs-validation": ["default"],
+    expect(expectedSignalShards(["vllm-docker-storage"])).toEqual({
+      "vllm-docker-storage": ["default"],
     });
     expect(expectedSignalShards(["hermes-inference-switch", "openclaw-inference-switch"])).toEqual({
-      "hermes-inference-switch": ["hosted", "anthropic"],
-      "openclaw-inference-switch": ["hosted", "anthropic"],
+      "hermes-inference-switch": ["anthropic"],
+      "openclaw-inference-switch": ["anthropic"],
     });
     expect(expectedSignalShards(["openshell-gateway-upgrade"], undefined, [DCODE_TARGET])).toEqual({
       "openshell-gateway-upgrade": [
@@ -48,7 +48,25 @@ describe("PR E2E signal shard policy", () => {
     const broadPlan = buildRiskPlan({ headSha: HEAD_SHA, changedFiles: BROAD_FILES });
     const broadShards = expectedSignalShards(riskPlanRequiredJobIds(broadPlan));
     expect(Object.keys(broadShards)).toHaveLength(13);
-    expect(Object.values(broadShards).flat()).toHaveLength(16);
+    expect(Object.values(broadShards).flat()).toHaveLength(15);
     expect(() => expectedSignalShards(["not-a-workflow-job"])).toThrow(/does not define/u);
+  });
+
+  it("expects the credential window evidence coupled to an MCP bridge selection", () => {
+    expect(expandPrGateJobSelections(["mcp-bridge"])).toEqual([
+      "mcp-bridge",
+      "openshell-credential-generation-window",
+    ]);
+    expect(
+      expandPrGateJobSelections(["mcp-bridge", "openshell-credential-generation-window"]),
+    ).toEqual(["mcp-bridge", "openshell-credential-generation-window"]);
+    expect(expectedSignalShards(["mcp-bridge"])).toEqual({
+      "mcp-bridge": ["openclaw", "hermes", "deepagents"],
+      "openshell-credential-generation-window": ["default"],
+    });
+    expect(expectedSignalShards(["mcp-bridge", "openshell-credential-generation-window"])).toEqual({
+      "mcp-bridge": ["openclaw", "hermes", "deepagents"],
+      "openshell-credential-generation-window": ["default"],
+    });
   });
 });

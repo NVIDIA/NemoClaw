@@ -83,16 +83,20 @@ describe("rebuild-Hermes base reuse", () => {
         HOME: process.env.HOME,
         PATH: process.env.PATH,
         BUILDX_BUILDER: "external-builder",
+        COMPATIBLE_API_KEY: "must-not-reach-child",
         NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
         NEMOCLAW_OPENSHELL_CHANNEL: "dev",
         NVIDIA_API_KEY: "must-not-reach-child",
+        NVIDIA_INFERENCE_API_KEY: "must-not-reach-child",
       },
       {},
     );
 
     expect(childEnv.NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL).toBe("1");
     expect(childEnv.NEMOCLAW_OPENSHELL_CHANNEL).toBe("dev");
+    expect(childEnv.COMPATIBLE_API_KEY).toBeUndefined();
     expect(childEnv.NVIDIA_API_KEY).toBeUndefined();
+    expect(childEnv.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
     expect(childEnv.BUILDX_BUILDER).toBeUndefined();
   });
 });

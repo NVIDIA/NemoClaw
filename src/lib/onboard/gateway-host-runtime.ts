@@ -23,7 +23,10 @@ import {
   isGatewayHttpReady,
   waitForGatewayHttpReady,
 } from "./gateway-http-readiness";
-import { loadGatewayManagementDeclaration } from "./gateway-management";
+import {
+  invalidGatewayManagementDeclarationError,
+  loadGatewayManagementDeclaration,
+} from "./gateway-management";
 import {
   assertGatewayEffectAllowed,
   cgroupBelongsToUnit,
@@ -113,7 +116,7 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
   function resolveCurrentGatewayOwner(gatewayName: string, gatewayPort: number): GatewayOwner {
     const loaded = loadGatewayManagementDeclaration();
     if (!loaded.ok) {
-      throw new Error(`Invalid gateway management declaration: ${loaded.reason}`);
+      throw invalidGatewayManagementDeclarationError(loaded.reason);
     }
     return resolveGatewayOwner({
       gatewayName,

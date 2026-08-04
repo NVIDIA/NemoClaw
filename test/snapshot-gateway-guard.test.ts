@@ -302,7 +302,7 @@ describe("snapshot VM-driver gateway guard", () => {
 
   // `snapshot restore --to <new>` on VM driver must use the registered
   // imageTag, not the legacy `docker exec ... kubectl` probe.
-  it("snapshot restore --to uses registered imageTag for VM-driver auto-create instead of kubectl probe", () => {
+  it("snapshot restore --to uses registered imageTag and restarts the VM gateway before pairing verification", () => {
     const env = makeVmRestoreToEnv("nemoclaw-snap-vm-gw-restore-to-");
 
     const seed = runCli("alpha snapshot create --name baseline", env);
@@ -315,7 +315,7 @@ describe("snapshot VM-driver gateway guard", () => {
     expect(r.out).not.toContain("kubectl-must-not-run");
     expect(r.out).toContain("openshell/sandbox-from:fast-path-test");
     expect(fs.readFileSync(path.join(env.HOME, "gateway-lifecycle.log"), "utf8")).toBe(
-      "restart clone-1\n",
+      "restart clone-1\nrestart clone-1\n",
     );
   }, 15000);
 

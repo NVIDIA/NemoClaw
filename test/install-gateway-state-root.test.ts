@@ -154,6 +154,23 @@ printf 'state=%s\n' "$(nemoclaw_state_dir)"`,
     }
   });
 
+  it("normalizes a trailing slash in HOME before selecting its state root", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-home-slash-"));
+    try {
+      const result = runInstallerFunctions(
+        `${home}/`,
+        `NEMOCLAW_GATEWAY_PORT=8080
+printf 'state=%s\n' "$(nemoclaw_state_dir)"`,
+      );
+
+      expect(result.status, result.output).toBe(0);
+      expect(result.output).toContain(`state=${home}/.nemoclaw`);
+      expect(result.output).not.toContain(`${home}//.nemoclaw`);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("rejects an overlong digit-only gateway port before selecting its state root (#7203)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-overlong-port-"));
     try {
@@ -175,6 +192,7 @@ nemoclaw_state_dir`,
 
   it.each([
     "08000",
+    "08081",
     "11434",
     "18790",
   ])("rejects conflicting gateway port %s before writing selected state", (gatewayPort) => {
@@ -189,6 +207,32 @@ save_usage_notice_acceptance_shell "test-version"`,
       expect(result.status, result.output).not.toBe(0);
       expect(result.output).toContain("NEMOCLAW_GATEWAY_PORT");
       expect(fs.existsSync(path.join(home, ".nemoclaw", "gateways", gatewayPort))).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    "NEMOCLAW_DASHBOARD_PORT",
+    "NEMOCLAW_VLLM_PORT",
+    "NEMOCLAW_OLLAMA_PORT",
+    "NEMOCLAW_OLLAMA_PROXY_PORT",
+    "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
+    "NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT",
+    "NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT",
+  ])("rejects %s on fixed llama.cpp port 8081 before writing selected state", (envName) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-llamacpp-port-"));
+    try {
+      const result = runInstallerFunctions(
+        home,
+        `${envName}=08081
+save_usage_notice_acceptance_shell "test-version"`,
+      );
+
+      expect(result.status, result.output).not.toBe(0);
+      expect(result.output).toContain(`${envName} must not overlap`);
+      expect(result.output).toContain("fixed llama.cpp inference port (8081)");
+      expect(fs.existsSync(path.join(home, ".nemoclaw", "gateways", "9123"))).toBe(false);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

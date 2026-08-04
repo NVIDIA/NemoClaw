@@ -9,31 +9,42 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
-import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import {
   closeServer,
   writeJsonResponse as jsonResponse,
   listenServer as listenOnRandomPort,
   readRequestBody,
 } from "../fixtures/http-protocol.ts";
+import { spawnObservedChild } from "../fixtures/observed-child-process.ts";
 import type { TestProgress, TestProgressCapability } from "../fixtures/progress.ts";
 
 type TestServer = http.Server | https.Server;
+
+export const HERMES_DEFERRED_TOOL_SEARCH_MISS =
+  "Hermes tool_search did not return the deferred target";
 
 export interface StartedHttpServer {
   port: number;
   close(): Promise<void>;
 }
 
+export interface FakeMcpRequest {
+  method: string;
+  path: string;
+  auth: string;
+  body: string;
+  sessionId: string;
+  protocolVersion: string;
+  rpcMethod?: string;
+  responseStatus?: number;
+  responseHasResult?: boolean;
+  negotiatedSessionId?: string;
+  negotiatedProtocolVersion?: string;
+}
+
 export interface FakeMcpHttpsServer extends StartedHttpServer {
   setSecret(secret: string): void;
-  requests: Array<{
-    method: string;
-    path: string;
-    auth: string;
-    body: string;
-    rpcMethod?: string;
-  }>;
+  requests: FakeMcpRequest[];
 }
 
 export interface StartedPublicMcpTunnel {
@@ -47,7 +58,7 @@ type TunnelCleanupRegistry = Pick<CleanupRegistry, "add">;
 interface McpRequestPayload {
   id?: unknown;
   method?: unknown;
-  params?: { name?: unknown; arguments?: { challenge?: unknown } };
+  params?: { name?: unknown; arguments?: { challenge?: unknown }; cursor?: unknown };
 }
 
 const MCP_NOTIFICATION_METHODS = new Set([
@@ -401,6 +412,54 @@ export async function startCompatibleMock(options: {
           requiredContent.every((value) => content.includes(value))
         );
       };
+      const parsedToolResult = (index: number, toolCallId: string) => {
+        const message = toolResults[index];
+        if (message?.tool_call_id !== toolCallId || typeof message.content !== "string") {
+          return undefined;
+        }
+        try {
+          const parsed = JSON.parse(message.content);
+          return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+            ? (parsed as Record<string, unknown>)
+            : undefined;
+        } catch {
+          return undefined;
+        }
+      };
+      const classifyHermesSearchResult = (
+        index: number,
+        toolName: string,
+      ): "target" | "miss" | "invalid" => {
+        const parsed = parsedToolResult(index, "call_hermes_tool_search");
+        if (!Array.isArray(parsed?.matches)) return "invalid";
+        const matches = parsed.matches;
+        const hasValidEntries = matches.every(
+          (match) =>
+            match &&
+            typeof match === "object" &&
+            !Array.isArray(match) &&
+            typeof (match as Record<string, unknown>).name === "string",
+        );
+        if (!hasValidEntries) return "invalid";
+        return matches.some((match) => (match as Record<string, unknown>).name === toolName)
+          ? "target"
+          : "miss";
+      };
+      const hasExpectedHermesDescription = (index: number, toolName: string) => {
+        const parsed = parsedToolResult(index, "call_hermes_tool_describe");
+        const parameters = parsed?.parameters;
+        const properties =
+          parameters && typeof parameters === "object" && !Array.isArray(parameters)
+            ? (parameters as Record<string, unknown>).properties
+            : undefined;
+        return (
+          parsed?.name === toolName &&
+          properties !== null &&
+          typeof properties === "object" &&
+          !Array.isArray(properties) &&
+          Object.hasOwn(properties, "challenge")
+        );
+      };
       let plannedToolCall:
         | { id: string; name: string; arguments: Record<string, unknown> }
         | undefined;
@@ -446,28 +505,23 @@ export async function startCompatibleMock(options: {
             arguments: { query: options.deferredToolName },
           };
         } else if (toolResultCount === 1) {
-          if (
-            hasExpectedToolResult(0, "call_hermes_tool_search", [
-              "matches",
-              options.deferredToolName,
-            ])
-          ) {
+          const searchResult = classifyHermesSearchResult(0, options.deferredToolName);
+          if (searchResult === "target") {
             plannedToolCall = {
               id: "call_hermes_tool_describe",
               name: "tool_describe",
               arguments: { name: options.deferredToolName },
             };
+          } else if (searchResult === "miss") {
+            protocolError = HERMES_DEFERRED_TOOL_SEARCH_MISS;
           } else {
-            protocolError = "Hermes tool_search did not return the deferred target";
+            protocolError = "Hermes returned an unexpected deferred tool result sequence";
           }
-        } else if (toolResultCount === 2) {
-          if (
-            hasExpectedToolResult(1, "call_hermes_tool_describe", [
-              options.deferredToolName,
-              "parameters",
-              "challenge",
-            ])
-          ) {
+        } else if (
+          toolResultCount === 2 &&
+          toolResults.at(-1)?.tool_call_id === "call_hermes_tool_describe"
+        ) {
+          if (hasExpectedHermesDescription(1, options.deferredToolName)) {
             plannedToolCall = {
               id: "call_hermes_tool_call",
               name: "tool_call",
@@ -480,7 +534,7 @@ export async function startCompatibleMock(options: {
             protocolError = "Hermes tool_describe did not return the deferred schema";
           }
         } else {
-          protocolError = "Hermes returned an unexpected number of tool results";
+          protocolError = "Hermes returned an unexpected deferred tool result sequence";
         }
       } else if (!sawAuthenticatedToolResult) {
         const directToolName = [...visibleToolNames].find((name) =>
@@ -601,6 +655,8 @@ export async function startFakeMcpHttpsServer(options: {
   tls?: { cert: Buffer; key: Buffer };
 }): Promise<FakeMcpHttpsServer> {
   let expectedSecret = options.secret;
+  let nextSessionId = 1;
+  const sessions = new Map<string, string>();
   const tls =
     options.tls ??
     (() => {
@@ -613,18 +669,19 @@ export async function startFakeMcpHttpsServer(options: {
       }
       return { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) };
     })();
-  const requests: Array<{
-    method: string;
-    path: string;
-    auth: string;
-    body: string;
-  }> = [];
+  const requests: FakeMcpRequest[] = [];
   const server = https.createServer(tls, async (req, res) => {
     const requestPath = new URL(req.url ?? "/", "https://fake-mcp.local").pathname;
     const body = await readRequestBody(req);
     const auth = Array.isArray(req.headers.authorization)
       ? req.headers.authorization.join(",")
       : (req.headers.authorization ?? "");
+    const sessionId = Array.isArray(req.headers["mcp-session-id"])
+      ? req.headers["mcp-session-id"].join(",")
+      : (req.headers["mcp-session-id"] ?? "");
+    const protocolVersion = Array.isArray(req.headers["mcp-protocol-version"])
+      ? req.headers["mcp-protocol-version"].join(",")
+      : (req.headers["mcp-protocol-version"] ?? "");
     let parsedPayload: McpRequestPayload | null = null;
     try {
       parsedPayload = JSON.parse(body) as McpRequestPayload;
@@ -634,43 +691,82 @@ export async function startFakeMcpHttpsServer(options: {
     // The public quick-tunnel readiness probe uses HEAD /mcp. Keep it out of
     // the protocol request ledger so zero-upstream decoy and policy-denial
     // assertions continue to measure only attempted MCP traffic.
+    let recordedRequest: FakeMcpRequest | undefined;
     if (req.method !== "HEAD") {
-      requests.push({
+      recordedRequest = {
         method: req.method ?? "",
         path: requestPath,
         auth,
         body,
+        sessionId,
+        protocolVersion,
         ...(typeof parsedPayload?.method === "string" ? { rpcMethod: parsedPayload.method } : {}),
-      });
+      };
+      requests.push(recordedRequest);
     }
+    const respondJson = (status: number, payload: unknown): void => {
+      if (recordedRequest) {
+        recordedRequest.responseStatus = status;
+        recordedRequest.responseHasResult =
+          typeof payload === "object" &&
+          payload !== null &&
+          Object.prototype.hasOwnProperty.call(payload, "result") &&
+          !Object.prototype.hasOwnProperty.call(payload, "error");
+      }
+      jsonResponse(res, status, payload);
+    };
+    const respondEmpty = (status: number, headers?: http.OutgoingHttpHeaders): void => {
+      if (recordedRequest) recordedRequest.responseStatus = status;
+      res.writeHead(status, headers);
+      res.end();
+    };
     if (requestPath !== "/mcp") {
-      jsonResponse(res, 404, { error: { message: "not found" } });
+      respondJson(404, { error: { message: "not found" } });
       return;
     }
     if (req.method === "HEAD" || req.method === "GET") {
-      res.writeHead(405, { Allow: "POST" });
-      res.end();
+      respondEmpty(405, { Allow: "POST" });
       return;
     }
-    if (req.method !== "POST") {
-      jsonResponse(res, 405, { error: { message: "method not allowed" } });
+    if (req.method !== "POST" && req.method !== "DELETE") {
+      respondJson(405, { error: { message: "method not allowed" } });
       return;
     }
     if (auth !== `Bearer ${expectedSecret}`) {
-      jsonResponse(res, 401, { error: { message: "missing rewritten bearer credential" } });
+      respondJson(401, { error: { message: "missing rewritten bearer credential" } });
+      return;
+    }
+    if (req.method === "DELETE") {
+      const negotiatedProtocolVersion = sessions.get(sessionId);
+      if (!negotiatedProtocolVersion || protocolVersion !== negotiatedProtocolVersion) {
+        respondJson(400, { error: { message: "missing negotiated MCP session metadata" } });
+        return;
+      }
+      sessions.delete(sessionId);
+      respondEmpty(204);
       return;
     }
 
     if (!parsedPayload) {
-      jsonResponse(res, 400, { error: { message: "invalid json" } });
+      respondJson(400, { error: { message: "invalid json" } });
       return;
+    }
+    // This shared fixture also serves intentional stateless policy probes.
+    // Validate any supplied session metadata as an all-or-nothing pair; the
+    // focused discovery assertion separately requires the negotiated pair on
+    // every post-initialize request.
+    if (parsedPayload.method !== "initialize" && (sessionId !== "" || protocolVersion !== "")) {
+      const negotiatedProtocolVersion = sessions.get(sessionId);
+      if (!negotiatedProtocolVersion || protocolVersion !== negotiatedProtocolVersion) {
+        respondJson(400, { error: { message: "missing negotiated MCP session metadata" } });
+        return;
+      }
     }
     if (
       typeof parsedPayload.method === "string" &&
       MCP_NOTIFICATION_METHODS.has(parsedPayload.method)
     ) {
-      res.writeHead(202);
-      res.end();
+      respondEmpty(202);
       return;
     }
     let result: unknown;
@@ -678,33 +774,62 @@ export async function startFakeMcpHttpsServer(options: {
       const request = JSON.parse(body) as {
         params?: { protocolVersion?: string };
       };
+      const negotiatedProtocolVersion = request.params?.protocolVersion ?? "2025-03-26";
+      const negotiatedSessionId = `fake-session-${nextSessionId}`;
+      nextSessionId += 1;
+      sessions.set(negotiatedSessionId, negotiatedProtocolVersion);
+      res.setHeader("mcp-session-id", negotiatedSessionId);
+      if (recordedRequest) {
+        recordedRequest.negotiatedSessionId = negotiatedSessionId;
+        recordedRequest.negotiatedProtocolVersion = negotiatedProtocolVersion;
+      }
       result = {
-        protocolVersion: request.params?.protocolVersion ?? "2025-03-26",
+        protocolVersion: negotiatedProtocolVersion,
         capabilities: { tools: {} },
         serverInfo: { name: "fake", version: "1.0.0" },
       };
     } else if (parsedPayload.method === "tools/list") {
-      result = {
-        tools: [
-          {
-            name: "fake_echo",
-            description: "Returns an authenticated MCP proof token",
-            inputSchema: {
-              type: "object",
-              properties: { challenge: { type: "string" } },
-              required: ["challenge"],
-              additionalProperties: false,
+      if (parsedPayload.params?.cursor === undefined) {
+        result = {
+          tools: [
+            {
+              name: "fake_echo",
+              description: "Returns an authenticated MCP proof token",
+              inputSchema: {
+                type: "object",
+                properties: { challenge: { type: "string" } },
+                required: ["challenge"],
+                additionalProperties: false,
+              },
             },
-          },
-        ],
-      };
+          ],
+          nextCursor: "fake-page-2",
+        };
+      } else if (parsedPayload.params.cursor === "fake-page-2") {
+        result = {
+          tools: [
+            {
+              name: "fake_status",
+              description: "Returns fixture status",
+              inputSchema: { type: "object", properties: {}, additionalProperties: false },
+            },
+          ],
+        };
+      } else {
+        respondJson(200, {
+          jsonrpc: "2.0",
+          id: parsedPayload.id ?? 1,
+          error: { code: -32602, message: "invalid tools/list cursor" },
+        });
+        return;
+      }
     } else if (parsedPayload.method === "tools/call") {
       const challenge = parsedPayload.params?.arguments?.challenge;
       if (
         parsedPayload.params?.name !== "fake_echo" ||
         (options.challenge !== undefined && challenge !== options.challenge)
       ) {
-        jsonResponse(res, 200, {
+        respondJson(200, {
           jsonrpc: "2.0",
           id: parsedPayload.id ?? 1,
           error: { code: -32602, message: "invalid fake_echo challenge" },
@@ -726,14 +851,14 @@ export async function startFakeMcpHttpsServer(options: {
     ) {
       result = MCP_EMPTY_RESULT_BY_METHOD[parsedPayload.method];
     } else {
-      jsonResponse(res, 200, {
+      respondJson(200, {
         jsonrpc: "2.0",
         id: parsedPayload.id ?? 1,
         error: { code: -32601, message: "method not found" },
       });
       return;
     }
-    jsonResponse(res, 200, {
+    respondJson(200, {
       jsonrpc: "2.0",
       id: parsedPayload.id ?? 1,
       result,

@@ -17,6 +17,7 @@ const LARGE_OLLAMA_FIT_MEMORY_MB = Math.max(
 );
 
 import {
+  buildOllamaProbeOptions,
   CONTAINER_REACHABILITY_IMAGE,
   DEFAULT_OLLAMA_MODEL,
   getBootstrapOllamaModelOptions,
@@ -31,6 +32,7 @@ import {
   getOllamaModelOptions,
   getOllamaProbeCommand,
   getOllamaWarmupCommand,
+  isLocalProviderProbeOutputHealthy,
   isOllamaRunnerCrash,
   LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
   parseOllamaList,
@@ -39,6 +41,8 @@ import {
   probeOllamaAuthProxyHealth,
   QWEN3_6_OLLAMA_MODEL,
   resetOllamaContainerPortCache,
+  resetOllamaHostCache,
+  setResolvedOllamaHost,
   validateLocalProvider,
   validateOllamaModel,
 } from "./local";
@@ -81,11 +85,26 @@ describe("local inference helpers", () => {
   });
 
   afterEach(() => {
+    resetOllamaHostCache();
     if (originalSandboxHostUrl === undefined) {
       delete process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV];
     } else {
       process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV] = originalSandboxHostUrl;
     }
+  });
+
+  it("uses Docker-context validation only for Windows-host Ollama (#8127)", () => {
+    expect(buildOllamaProbeOptions(false)).toMatchObject({
+      allowHostDockerInternal: false,
+      probeFromDocker: null,
+    });
+
+    setResolvedOllamaHost("host.docker.internal");
+
+    expect(buildOllamaProbeOptions(false)).toMatchObject({
+      allowHostDockerInternal: true,
+      probeFromDocker: { expectedPort: 11434 },
+    });
   });
 
   it("returns the expected base URL for vllm-local", () => {
@@ -173,6 +192,16 @@ describe("local inference helpers", () => {
       "%{http_code}",
       `http://host.openshell.internal:${getOllamaContainerPort()}/api/tags`,
     ]);
+  });
+
+  it("requires HTTP 200 for managed health output and rejects curl connection status 000", () => {
+    expect(isLocalProviderProbeOutputHealthy("http://10.40.0.1:8000/health", "200")).toBe(true);
+    expect(isLocalProviderProbeOutputHealthy("http://10.40.0.1:8000/health", "204")).toBe(false);
+    expect(isLocalProviderProbeOutputHealthy("http://10.40.0.1:8000/health", "000")).toBe(false);
+    expect(isLocalProviderProbeOutputHealthy("http://127.0.0.1:8000/v1/models", "000")).toBe(false);
+    expect(
+      isLocalProviderProbeOutputHealthy("http://127.0.0.1:8000/v1/models", '{"data":[]}'),
+    ).toBe(true);
   });
 
   it("validates a reachable local provider", () => {

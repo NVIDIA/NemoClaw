@@ -22,11 +22,13 @@ spec:
     policyTier: balanced
     messaging: []
     # Lifecycle phase opt-in. The Vitest live runner dispatches this
-    # profile through `LifecyclePhaseFixture.simulate(...)`, which:
-    #   1. `docker stop`s the labeled sandbox container (gateway is
-    #      left HEALTHY; see definitions/baseline.ts for why a real
-    #      gateway restart can't be expressed from `ubuntu-latest`),
-    #   2. invokes `nemoclaw <name> status` so any destructive
+    # profile through `LifecyclePhaseFixture`, which:
+    #   1. ensures OpenShell is installed and stages the managed gateway
+    #      user service before onboarding so NemoClaw writes the service's
+    #      Docker-driver environment,
+    #   2. `docker stop`s the labeled sandbox container, then restarts
+    #      the gateway through that service,
+    #   3. invokes `nemoclaw <name> status` so any destructive
     #      registry/container path runs against host-observable
     #      state.
     # The host-side state-validation probes

@@ -10,15 +10,16 @@ import path from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import { MCP_BRIDGE_ALLOWED_METHODS } from "../src/lib/actions/sandbox/mcp-bridge-policy";
+import { startTestProgress } from "./e2e/fixtures/progress.ts";
 import {
   buildCloudflaredQuickTunnelArgs,
+  HERMES_DEFERRED_TOOL_SEARCH_MISS,
   parseTryCloudflareOrigin,
   type StartedHttpServer,
   startCompatibleMock,
   startFakeMcpHttpsServer,
   startPublicMcpHttpsTunnel,
 } from "./e2e/live/mcp-bridge-servers";
-import { startTestProgress } from "./e2e/fixtures/progress.ts";
 
 const servers: StartedHttpServer[] = [];
 function progressProbe() {
@@ -36,7 +37,7 @@ type CompatibleToolCallResponse = {
   choices: Array<{
     message: {
       content?: unknown;
-      tool_calls: Array<{ function: { name: string; arguments: string } }>;
+      tool_calls: Array<{ id: string; function: { name: string; arguments: string } }>;
     };
   }>;
 };
@@ -556,13 +557,14 @@ describe("authenticated MCP live fixtures", () => {
   });
 
   it("uses Hermes progressive disclosure when the MCP tool is deferred", async () => {
+    const deferredToolName = "mcp__fake__fake_echo";
     const resultToken = "MCP_AUTH_REWRITE_OK::deferred-fixture";
     const server = await startCompatibleMock({
       apiKey: "compatible-key",
       model: "mock/model",
       toolChallenge: "deferred-fixture",
       toolResultToken: resultToken,
-      deferredToolName: "mcp_fake_fake_echo",
+      deferredToolName,
     });
     servers.push(server);
     const url = `http://127.0.0.1:${server.port}/v1/chat/completions`;
@@ -587,9 +589,10 @@ describe("authenticated MCP live fixtures", () => {
       ).json()) as CompatibleToolCallResponse;
     const searchBody = await call([{ role: "user", content: "use the deferred tool" }]);
     expect(searchBody.choices[0].message.tool_calls[0]).toMatchObject({
+      id: "call_hermes_tool_search",
       function: {
         name: "tool_search",
-        arguments: JSON.stringify({ query: "mcp_fake_fake_echo" }),
+        arguments: JSON.stringify({ query: deferredToolName }),
       },
     });
     const missedSearch = await call([
@@ -601,19 +604,39 @@ describe("authenticated MCP live fixtures", () => {
     ]);
     expect(missedSearch).toMatchObject({
       choices: [
-        { message: { content: expect.stringContaining("did not return the deferred target") } },
+        {
+          message: {
+            content: `mock protocol error: ${HERMES_DEFERRED_TOOL_SEARCH_MISS}`,
+          },
+        },
+      ],
+    });
+    const echoedSearchQueryWithoutMatch = await call([
+      {
+        role: "tool",
+        tool_call_id: "call_hermes_tool_search",
+        content: JSON.stringify({ query: deferredToolName, matches: [] }),
+      },
+    ]);
+    expect(echoedSearchQueryWithoutMatch).toMatchObject({
+      choices: [
+        {
+          message: {
+            content: `mock protocol error: ${HERMES_DEFERRED_TOOL_SEARCH_MISS}`,
+          },
+        },
       ],
     });
     const searchResult = {
       role: "tool",
       tool_call_id: "call_hermes_tool_search",
-      content: '{"matches":[{"name":"mcp_fake_fake_echo"}]}',
+      content: JSON.stringify({ matches: [{ name: deferredToolName }] }),
     };
     const describeBody = await call([searchResult]);
     expect(describeBody.choices[0].message.tool_calls[0]).toMatchObject({
       function: {
         name: "tool_describe",
-        arguments: JSON.stringify({ name: "mcp_fake_fake_echo" }),
+        arguments: JSON.stringify({ name: deferredToolName }),
       },
     });
     const wrongDescription = await call([
@@ -621,7 +644,7 @@ describe("authenticated MCP live fixtures", () => {
       {
         role: "tool",
         tool_call_id: "call_hermes_tool_describe",
-        content: '{"name":"mcp_fake_fake_echo","parameters":{}}',
+        content: JSON.stringify({ name: deferredToolName, parameters: {} }),
       },
     ]);
     expect(wrongDescription).toMatchObject({
@@ -632,15 +655,17 @@ describe("authenticated MCP live fixtures", () => {
     const descriptionResult = {
       role: "tool",
       tool_call_id: "call_hermes_tool_describe",
-      content:
-        '{"name":"mcp_fake_fake_echo","parameters":{"properties":{"challenge":{"type":"string"}}}}',
+      content: JSON.stringify({
+        name: deferredToolName,
+        parameters: { properties: { challenge: { type: "string" } } },
+      }),
     };
     const callBody = await call([searchResult, descriptionResult]);
     expect(callBody.choices[0].message.tool_calls[0]).toMatchObject({
       function: {
         name: "tool_call",
         arguments: JSON.stringify({
-          name: "mcp_fake_fake_echo",
+          name: deferredToolName,
           arguments: { challenge: "deferred-fixture" },
         }),
       },
@@ -662,11 +687,12 @@ describe("authenticated MCP live fixtures", () => {
   });
 
   it("fails closed when a Hermes deferred tool leaks into the model registry", async () => {
+    const deferredToolName = "mcp__fake__fake_echo";
     const server = await startCompatibleMock({
       apiKey: "compatible-key",
       model: "mock/model",
       toolChallenge: "leak-fixture",
-      deferredToolName: "mcp_fake_fake_echo",
+      deferredToolName,
     });
     servers.push(server);
     const response = await fetch(`http://127.0.0.1:${server.port}/v1/chat/completions`, {
@@ -677,7 +703,7 @@ describe("authenticated MCP live fixtures", () => {
       },
       body: JSON.stringify({
         messages: [{ role: "user", content: "use the deferred tool" }],
-        tools: ["tool_search", "tool_describe", "tool_call", "mcp_fake_fake_echo"].map((name) => ({
+        tools: ["tool_search", "tool_describe", "tool_call", deferredToolName].map((name) => ({
           type: "function",
           function: { name, parameters: {} },
         })),
@@ -687,7 +713,7 @@ describe("authenticated MCP live fixtures", () => {
       choices: [
         {
           message: {
-            content: expect.stringContaining("deferred target mcp_fake_fake_echo leaked"),
+            content: expect.stringContaining(`deferred target ${deferredToolName} leaked`),
           },
         },
       ],

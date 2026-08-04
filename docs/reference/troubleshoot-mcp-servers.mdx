@@ -68,6 +68,28 @@ If a Hermes sandbox is alive but its gateway is not running after a supervisor o
 Recovery re-establishes the managed service lifecycle, API forwarding, and the exit-75 reload loop used for transactional MCP configuration changes.
 </AgentOnly>
 
+<AgentOnly variant="openclaw">
+
+## Remote MCP Tools Are Missing for One Agent Turn
+
+If a remote Streamable HTTP MCP server times out or resets while its tools are being loaded, NemoClaw retries that startup once with a fresh connection before the agent turn continues.
+A successful retry loads the expected tools in the same turn, so no new session is needed.
+
+If the retry also ends in a classified transient transport failure, the sandbox log records a temporary MCP transport failure and states that credentials and configuration were not rejected.
+Read that line before rotating a credential:
+
+```bash
+$$nemoclaw <sandbox> logs --tail 100
+```
+
+NemoClaw does not retry an authentication, authorization, TLS-validation, network-policy, or invalid-configuration failure inside a turn, because repeating the same request cannot succeed.
+A refused or unreachable endpoint is also not retried inside a turn; check the endpoint and its egress policy instead.
+
+A catalog that contains a server diagnostic is not cached for the session.
+NemoClaw rebuilds the catalog on the next agent turn and contacts the affected server again, so a brief upstream outage clears on its own and a repaired credential or policy takes effect without a new session.
+A catalog without server diagnostics is cached and reused as usual.
+</AgentOnly>
+
 ## Policy or Provider Ownership Drifted
 
 If generated policy or provider metadata drifted, restart fails closed instead of overwriting same-name state.

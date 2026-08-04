@@ -10,14 +10,24 @@ import path from "node:path";
 import { resolveAgentInferenceApi } from "../../../src/lib/inference/config.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { resultText } from "../fixtures/clients/index.ts";
 import {
   type SandboxClient,
   trustedSandboxShellScript,
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
+import {
+  type CompatibleAnthropicSwitchBinding,
+  compatibleAnthropicSwitchBinding,
+  compatibleAnthropicSwitchEnv,
+  requireCompatibleAnthropicProviderAbsent,
+} from "../fixtures/compatible-anthropic-switch.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import type { FakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts";
+import {
+  DEFAULT_HOSTED_INFERENCE_BASE_URL,
+  DEFAULT_HOSTED_INFERENCE_MODEL,
+} from "../fixtures/hosted-inference.ts";
 import {
   closeServer,
   writeJsonResponse as jsonResponse,
@@ -51,6 +61,12 @@ export const RUNTIME_SWITCH_API =
   resolveAgentInferenceApi("hermes", SWITCH_PROVIDER, SWITCH_API) ?? SWITCH_API;
 const SWITCH_MOCK_PORT = Number.parseInt(process.env.NEMOCLAW_SWITCH_MOCK_PORT ?? "0", 10);
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
+export const PROXY_RESOLUTION_PROVIDER = "nvidia-prod";
+export const PROXY_RESOLUTION_MODEL = "nvidia/nemotron-proxy-resolution-e2e";
+export const PROXY_FORBIDDEN_MARKERS = [
+  "openshell:resolve:env:",
+  "sk-OPENSHELL-PROXY-REWRITE",
+] as const;
 
 interface MockCompatibleAnthropicProvider {
   endpointUrl: string;
@@ -98,6 +114,31 @@ export function expectAuthenticatedBaselineInventoryRequest(
   );
 }
 
+export function expectAuthenticatedProxyResolutionRequests(
+  baseline: Pick<FakeOpenAiCompatibleServer, "requests"> | undefined,
+  requestOffset: number,
+  expectedModel: string,
+): void {
+  if (!baseline) return;
+  const attemptRequests = baseline.requests().slice(requestOffset);
+  expect(attemptRequests.filter((request) => (request.forbiddenMarkerMatches ?? 0) > 0)).toEqual(
+    [],
+  );
+  const proxyRequests = attemptRequests.filter(
+    (request) =>
+      request.method === "POST" &&
+      ["/v1/chat/completions", "/chat/completions"].includes(request.path),
+  );
+  expect(proxyRequests.length).toBeGreaterThan(0);
+  for (const request of proxyRequests) {
+    expect(request).toMatchObject({
+      auth: "ok",
+      authorizationSent: true,
+      model: expectedModel,
+    });
+  }
+}
+
 export function hostedInstallModel(runtimeEnv: NodeJS.ProcessEnv = process.env): string {
   return (
     runtimeEnv.NEMOCLAW_MODEL ?? runtimeEnv.NEMOCLAW_COMPAT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL
@@ -131,6 +172,101 @@ export function env(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Proc
       NEMOCLAW_PROVIDER: "custom",
     });
   return { ...out, ...extra };
+}
+
+export async function expectOpenAiProvider(
+  host: HostCliClient,
+  providerName: string,
+  credentialEnv: string,
+): Promise<void> {
+  const provider = await host.command(
+    "openshell",
+    ["provider", "get", "-g", "nemoclaw", providerName],
+    {
+      artifactName: `${providerName}-openai-provider-metadata`,
+      env: env(),
+      timeoutMs: 30_000,
+    },
+  );
+  const output = resultText(provider);
+  expect(provider.exitCode, output).toBe(0);
+  const plain = stripAnsi(output);
+  expect(plain).toMatch(/^\s*Type:\s*openai\s*$/imu);
+  expect(plain).toContain(credentialEnv);
+  expect(plain).toContain("OPENAI_BASE_URL");
+}
+
+export async function prepareProxyResolutionRoute({
+  apiKey,
+  host,
+  mockBaseline,
+  publicProvider,
+  redactionValues,
+}: {
+  apiKey: string;
+  host: HostCliClient;
+  mockBaseline: FakeOpenAiCompatibleServer | undefined;
+  publicProvider: ShellProbeResult | null;
+  redactionValues: string[];
+}): Promise<{ model: string; requestOffset: number }> {
+  const endpoint =
+    mockBaseline?.baseUrl ?? process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL;
+  const model = mockBaseline ? PROXY_RESOLUTION_MODEL : SWITCH_MODEL;
+  const requestOffset = mockBaseline?.requests().length ?? 0;
+
+  // Hosted mode already registered and attached the exact nvidia-prod
+  // provider. The mock path needs an OpenAI provider for its local fixture.
+  if (publicProvider !== null) {
+    return { model, requestOffset };
+  }
+
+  const registered = await host.command(
+    "openshell",
+    [
+      "provider",
+      "create",
+      "-g",
+      "nemoclaw",
+      "--name",
+      PROXY_RESOLUTION_PROVIDER,
+      "--type",
+      "openai",
+      "--credential",
+      "NVIDIA_INFERENCE_API_KEY",
+      "--config",
+      `OPENAI_BASE_URL=${endpoint}`,
+    ],
+    {
+      artifactName: "register-proxy-resolution-provider",
+      env: env(undefined, { NVIDIA_INFERENCE_API_KEY: apiKey }),
+      redactionValues,
+      timeoutMs: 120_000,
+    },
+  );
+  expect(registered.exitCode, resultText(registered)).toBe(0);
+  await expectOpenAiProvider(host, PROXY_RESOLUTION_PROVIDER, "NVIDIA_INFERENCE_API_KEY");
+
+  const setRoute = await host.command(
+    "node",
+    [
+      CLI,
+      "inference",
+      "set",
+      "--provider",
+      PROXY_RESOLUTION_PROVIDER,
+      "--model",
+      model,
+      "--no-verify",
+    ],
+    {
+      artifactName: "set-proxy-resolution-route",
+      env: env(),
+      redactionValues,
+      timeoutMs: 180_000,
+    },
+  );
+  expect(setRoute.exitCode, resultText(setRoute)).toBe(0);
+  return { model, requestOffset };
 }
 
 export async function preCleanBestEffort(run: () => Promise<unknown>): Promise<void> {
@@ -381,42 +517,22 @@ async function startMockAnthropicProvider(): Promise<MockCompatibleAnthropicProv
   };
 }
 
-export async function ensureCompatibleAnthropicSwitchProvider(
+export async function prepareCompatibleAnthropicSwitchBinding(
   host: HostCliClient,
   cleanup: { add(name: string, run: () => Promise<void> | void): void },
-): Promise<string | null> {
+): Promise<CompatibleAnthropicSwitchBinding | null> {
   if (SWITCH_PROVIDER !== "compatible-anthropic-endpoint" || SWITCH_API !== "anthropic-messages")
     return null;
   const mock = mockAnthropicSwitchEnabled() ? await startMockAnthropicProvider() : undefined;
   mock && cleanup.add("close compatible Anthropic switch mock", () => mock.close());
-  const endpointUrl = process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? mock?.endpointUrl ?? "";
-  const compatibleKey = process.env.COMPATIBLE_ANTHROPIC_API_KEY ?? "test-compatible-anthropic-key";
-  expect(
-    endpointUrl,
-    "NEMOCLAW_SWITCH_ENDPOINT_URL is required for compatible Anthropic inference switches",
-  ).not.toBe("");
-  expect(
-    compatibleKey,
-    "COMPATIBLE_ANTHROPIC_API_KEY is required for compatible Anthropic inference switches",
-  ).not.toBe("");
-  const providerScript = [
-    "set -euo pipefail",
-    "if openshell provider get -g nemoclaw compatible-anthropic-endpoint >/dev/null 2>&1; then",
-    "  openshell provider delete -g nemoclaw compatible-anthropic-endpoint",
-    "fi",
-    'openshell provider create -g nemoclaw --name compatible-anthropic-endpoint --type openai --credential COMPATIBLE_ANTHROPIC_API_KEY --config "OPENAI_BASE_URL=${SWITCH_OPENAI_ENDPOINT_URL}"',
-  ].join("\n");
-  const result = await host.command("bash", ["-lc", providerScript], {
-    artifactName: "register-compatible-anthropic-switch-provider",
-    env: env(undefined, {
-      COMPATIBLE_ANTHROPIC_API_KEY: compatibleKey,
-      SWITCH_OPENAI_ENDPOINT_URL: openAiSurfaceEndpointUrl(endpointUrl),
-    }),
-    redactionValues: [compatibleKey],
-    timeoutMs: 120_000,
+  const binding = compatibleAnthropicSwitchBinding(
+    process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? mock?.endpointUrl ?? "",
+  );
+  await requireCompatibleAnthropicProviderAbsent(host, {
+    artifactName: "compatible-anthropic-provider-absent-before-switch",
+    env: env(),
   });
-  expect(result.exitCode).toBe(0);
-  return endpointUrl;
+  return { ...binding, endpointUrl: openAiSurfaceEndpointUrl(binding.endpointUrl) };
 }
 
 export async function installHermes(
@@ -453,7 +569,11 @@ export async function runHermesInferenceSetWithRetry(
   host: HostCliClient,
   redactionValues: string[],
   compatibleMetadataArgs: string[],
-  options: { attempts?: number; delay?: (milliseconds: number) => Promise<void> } = {},
+  options: {
+    attempts?: number;
+    compatibleBinding?: CompatibleAnthropicSwitchBinding | null;
+    delay?: (milliseconds: number) => Promise<void>;
+  } = {},
 ): Promise<ShellProbeResult> {
   const args = [
     CLI,
@@ -474,7 +594,7 @@ export async function runHermesInferenceSetWithRetry(
         artifactName: verify
           ? `hermes-inference-set-${attempt}`
           : "hermes-inference-set-no-verify-after-transient-failures",
-        env: env(),
+        env: env(undefined, compatibleAnthropicSwitchEnv(options.compatibleBinding ?? null)),
         redactionValues,
         timeoutMs: 180_000,
       }),

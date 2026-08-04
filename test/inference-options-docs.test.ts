@@ -54,6 +54,12 @@ const localChoicePath = path.join(
   "choose-local-inference-server.mdx",
 );
 const vllmSetupPath = path.join(repoRoot, "docs", "inference", "set-up-vllm.mdx");
+const dualStationVllmPath = path.join(
+  repoRoot,
+  "docs",
+  "inference",
+  "set-up-vllm-on-two-dgx-stations.mdx",
+);
 const quickstartPath = path.join(repoRoot, "docs", "get-started", "quickstart.mdx");
 const troubleshootingPath = path.join(repoRoot, "docs", "reference", "troubleshooting.mdx");
 const verifyInferenceRoutePath = path.join(
@@ -289,6 +295,32 @@ describe("inference setup navigation", () => {
     expect(markdown).toContain("only from the OpenShell Docker subnet to its gateway address");
   });
 
+  it("documents the dual-Station host-network trust boundary", () => {
+    const vllm = fs.readFileSync(vllmSetupPath, "utf8");
+    const dualStation = fs.readFileSync(dualStationVllmPath, "utf8");
+
+    expect(vllm).toContain("Existing-server and single-host managed-vLLM paths need port `8000`");
+    expect(vllm).toContain("[Set Up vLLM on Two DGX Stations](set-up-vllm-on-two-dgx-stations)");
+    expect(vllm).not.toContain(
+      "qualified dual-Station runtime intentionally uses Docker host networking",
+    );
+    expect(dualStation).toContain(
+      "qualified dual-Station runtime intentionally uses Docker host networking",
+    );
+    expect(dualStation).toContain("Neither container publishes a Docker port");
+    expect(dualStation).toContain("All Linux capabilities dropped");
+    expect(dualStation).toContain("Only the selected GPU UUID and exact `uverbs` devices");
+    expect(dualStation).toContain("worker does not receive the serving key");
+    expect(dualStation).toContain("`/health` endpoint remains unauthenticated for readiness");
+    expect(dualStation).toContain("Deny port `8000` on management and LAN interfaces");
+    expect(dualStation).not.toContain(
+      "keeps its existing bridge-networked managed-inference topology instead of importing the playbook's host-network setting",
+    );
+    expect(dualStation).not.toContain(
+      "NemoClaw needs port `8000` on host loopback for validation and on the OpenShell Docker bridge",
+    );
+  });
+
   it("keeps managed image tags, digests, and compressed sizes in sync with source", () => {
     const markdown = fs.readFileSync(vllmSetupPath, "utf8");
     const entries = [
@@ -396,7 +428,7 @@ describe("inference setup navigation", () => {
     expect(getSandboxRuntimeInferenceEndpoint("nvidia-nim")).toBeNull();
     expect(getSandboxRuntimeInferenceEndpoint("compatible-endpoint")).toBeNull();
     expect(section).toContain(
-      "For local Ollama and vLLM on Docker GPU sandboxes using the compatibility route",
+      "For local Ollama, local vLLM, and local NVIDIA NIM on Docker GPU sandboxes using the compatibility route",
     );
     expect(section).toContain("NVIDIA NIM and other compatible endpoints");
   });
@@ -475,6 +507,15 @@ describe("inference setup navigation", () => {
       expect(markdown).not.toMatch(positionalSecret);
     }
     expect(markdown).toContain('os.environ["NVIDIA_API_KEY"]');
+  });
+
+  it("keeps the Omni demo on the current hosted model identifier (#7729)", () => {
+    const markdown = fs.readFileSync(subAgentSetupPath, "utf8");
+
+    expect(markdown).toContain("`nvidia-omni/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`");
+    expect(markdown).not.toContain(
+      "`nvidia-omni/private/nvidia/nemotron-3-nano-omni-reasoning-30b-a3b`",
+    );
   });
 
   it("retains self-hosted setup and verification guidance across focused pages", () => {

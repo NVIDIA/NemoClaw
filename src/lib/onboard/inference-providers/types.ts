@@ -226,6 +226,7 @@ export type VllmDeps = CommonDeps & {
   applyLocalInferenceRoute: (provider: string, model: string) => Promise<boolean>;
   run: RunFn;
   VLLM_LOCAL_CREDENTIAL_ENV: string;
+  getManagedVllmProviderBinding: () => { baseUrl: string; apiKey: string } | null;
 };
 
 export type OllamaDeps = CommonDeps & {
@@ -279,6 +280,7 @@ export const REMOTE_PROVIDER_NAMES = [
   "compatible-anthropic-endpoint",
   "gemini-api",
   "compatible-endpoint",
+  "llama-cpp-local",
 ] as const;
 
 export type RemoteProviderName = (typeof REMOTE_PROVIDER_NAMES)[number];

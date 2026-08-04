@@ -36,7 +36,6 @@ const PROTECTED_JOBS = [
   "bedrock-runtime-compatible-anthropic",
   "channels-stop-start",
   "common-egress-agent",
-  "hermes-dashboard",
   "hermes-discord",
   "hermes-e2e",
   "hermes-inference-switch",
@@ -267,6 +266,12 @@ describe("trusted Hermes swap workflow boundary", () => {
       expect(provision.run?.trimEnd()).toBe(TRUSTED_HERMES_SWAP_SCRIPT);
       expect(JSON.stringify(provision.env)).not.toContain("secrets.");
     }
+    expect(trustedSwapStep(workflow, "hermes-e2e").if).toContain(
+      "inputs.jobs), ',hermes-dashboard,'",
+    );
+    expect(trustedSwapStep(workflow, "hermes-e2e").if).toContain(
+      "inputs.targets), ',hermes-dashboard,'",
+    );
   });
 
   it("keeps the trusted program fail-closed, bounded, and syntactically valid (#7145)", () => {
@@ -372,17 +377,17 @@ describe("trusted Hermes swap workflow boundary", () => {
     },
     {
       expected: "checkout SHA must be lowercase 40-hex",
-      name: "the exact-head checkout SHA is malformed",
+      name: "the PR E2E checkout SHA is malformed",
       options: { checkoutSha: "A".repeat(40) },
     },
     {
       expected: "workflow source must match the trusted dispatch revision",
-      name: "the exact-head workflow SHA is missing",
+      name: "the PR E2E workflow SHA is missing",
       options: { expectedWorkflowSha: "" },
     },
     {
       expected: "workflow source must match the trusted dispatch revision",
-      name: "the exact-head workflow SHA differs",
+      name: "the PR E2E workflow SHA differs",
       options: { expectedWorkflowSha: "c".repeat(40) },
     },
     {
@@ -520,9 +525,6 @@ describe("trusted Hermes swap workflow boundary", () => {
     securityProvision.if = securityProvision.if!.replace(" && matrix.agent == 'hermes'", "");
     securityProvision.env!.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
 
-    const bedrockProvision = trustedSwapStep(workflow, "bedrock-runtime-compatible-anthropic");
-    bedrockProvision.run = "sudo bash tools/e2e/live-vitest-invocation.mts";
-
     const channelsProvision = trustedSwapStep(workflow, "channels-stop-start");
     channelsProvision.if = channelsProvision.if!.replace(" && matrix.agent == 'hermes'", "");
 
@@ -534,7 +536,7 @@ describe("trusted Hermes swap workflow boundary", () => {
 
     const hermesE2eProvision = trustedSwapStep(workflow, "hermes-e2e");
     hermesE2eProvision.if = hermesE2eProvision.if!.replace(
-      " && (github.event_name == 'schedule' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,')))",
+      " && (github.event_name == 'schedule' || inputs.checkout_sha == '' || (github.event_name == 'workflow_dispatch' && inputs.checkout_sha != '' && (contains(format(',{0},', inputs.jobs), ',hermes-e2e,') || contains(format(',{0},', inputs.targets), ',hermes-e2e,') || contains(format(',{0},', inputs.jobs), ',hermes-dashboard,') || contains(format(',{0},', inputs.targets), ',hermes-dashboard,')))",
       "",
     );
 
@@ -552,7 +554,6 @@ describe("trusted Hermes swap workflow boundary", () => {
         "common-egress-agent trusted Hermes swap step must preserve the trusted main guard",
         "security-posture trusted Hermes swap step must preserve the trusted main guard",
         "security-posture trusted Hermes swap step must bind only trusted workflow, checkout, and runner identity",
-        "bedrock-runtime-compatible-anthropic trusted Hermes swap step must preserve the fixed privileged program",
         "mcp-bridge-dev job must not provision trusted Hermes swap",
       ]),
     );

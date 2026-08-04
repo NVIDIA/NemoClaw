@@ -49,7 +49,6 @@
  */
 
 import type { AgentMcpAdapter } from "../../agent/defs";
-import { shellQuote } from "../../core/shell-quote";
 import type { McpBridgeEntry } from "../../state/registry";
 import { authorizationValue } from "./mcp-bridge-adapter-status";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
@@ -57,6 +56,10 @@ import {
   type CredentialResolutionProbeReadiness,
   credentialResolutionReadinessSkipDetail,
 } from "./mcp-bridge-resolution-readiness";
+import {
+  MCP_RUNTIME_SANITIZED_ENV_VARS,
+  wrapMcpRuntimeCommand,
+} from "./mcp-bridge-runtime-command";
 import { normalizeMcpServerUrl } from "./mcp-bridge-validation";
 import { executeSandboxCommand, type SandboxCommandResult } from "./process-recovery";
 import {
@@ -90,13 +93,7 @@ const PROBE_CURL_MAX_TIME_SECONDS = 6;
  * first child process, so neither the adapter runtime nor curl inherits them
  * (same sanitize set nemoclaw-start uses for un-managed openclaw children).
  */
-export const PROBE_SANITIZED_ENV_VARS = [
-  "OPENCLAW_GATEWAY_URL",
-  "OPENCLAW_GATEWAY_PORT",
-  "OPENCLAW_GATEWAY_TOKEN",
-  "OPENCLAW_ALLOW_INSECURE_PRIVATE_WS",
-  "NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS",
-] as const;
+export const PROBE_SANITIZED_ENV_VARS = MCP_RUNTIME_SANITIZED_ENV_VARS;
 
 export interface CredentialResolutionProbe {
   /**
@@ -151,28 +148,8 @@ const MCP_INITIALIZE_BODY = JSON.stringify({
  * so the curl child must keep the adapter's runtime binary as an ancestor.
  * Same construction as the live E2E DNS-rebinding probe.
  */
-function runtimeWrappedCommand(adapter: AgentMcpAdapter, quotedCurl: string): string {
-  switch (adapter) {
-    case "mcporter": {
-      const runner =
-        'const { spawnSync } = require("node:child_process"); const result = spawnSync(process.argv[1], process.argv.slice(2), { stdio: "inherit" }); process.exit(result.status ?? 1);';
-      return `nemoclaw-start node -e ${shellQuote(runner)} ${quotedCurl}`;
-    }
-    case "hermes-config": {
-      const runner =
-        "import subprocess, sys; raise SystemExit(subprocess.run(sys.argv[1:], check=False).returncode)";
-      return `/opt/hermes/.venv/bin/python -c ${shellQuote(runner)} ${quotedCurl}`;
-    }
-    case "deepagents-config": {
-      const runner =
-        "import subprocess, sys; raise SystemExit(subprocess.run(sys.argv[1:], check=False).returncode)";
-      return `/opt/venv/bin/python3 -c ${shellQuote(runner)} ${quotedCurl}`;
-    }
-  }
-}
-
-function quotedCurlCommand(url: string, authorization: string, httpMarker: string): string {
-  const curlArgs = [
+function curlCommand(url: string, authorization: string, httpMarker: string): string[] {
+  return [
     "curl",
     "-sS",
     "--max-time",
@@ -196,7 +173,6 @@ function quotedCurlCommand(url: string, authorization: string, httpMarker: strin
     "--data-binary",
     MCP_INITIALIZE_BODY,
   ];
-  return curlArgs.map(shellQuote).join(" ");
 }
 
 export function buildCredentialResolutionProbeCommand(
@@ -215,17 +191,17 @@ export function buildCredentialResolutionProbeCommand(
   }
   const resultMarker = createSandboxExecMarker();
   const markers = probeOutputMarkers(resultMarker);
-  const placeholderCurl = quotedCurlCommand(entry.url, authorization, markers.placeholderHttp);
-  const controlCurl = quotedCurlCommand(
+  const placeholderCurl = curlCommand(entry.url, authorization, markers.placeholderHttp);
+  const controlCurl = curlCommand(
     entry.url,
     `Bearer ${MCP_PROBE_CONTROL_BEARER}`,
     markers.controlHttp,
   );
   const probeBody = [
-    runtimeWrappedCommand(adapter, placeholderCurl),
+    wrapMcpRuntimeCommand(adapter, placeholderCurl),
     "rc=$?",
     `printf '\\n${markers.placeholderExit}%s\\n' "$rc"`,
-    runtimeWrappedCommand(adapter, controlCurl),
+    wrapMcpRuntimeCommand(adapter, controlCurl),
     "crc=$?",
     `printf '\\n${markers.controlExit}%s\\n' "$crc"`,
     // Always exit 0 so a nonzero SSH status unambiguously means transport

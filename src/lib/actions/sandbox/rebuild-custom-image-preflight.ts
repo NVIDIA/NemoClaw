@@ -8,7 +8,14 @@ import { fingerprintBuildContext } from "../../adapters/fs/build-context-fingerp
 import type { AgentDefinition } from "../../agent/defs";
 import { createAgentSandbox } from "../../agent/onboard";
 import type { WebSearchConfig } from "../../inference/web-search";
+import type { SandboxMessagingPlan } from "../../messaging";
 import { stageCreateSandboxBuildContext } from "../../onboard/build-context-stage";
+import { patchStagedDockerfileMessagingPlan } from "../../onboard/dockerfile-patch";
+import {
+  applyReasoningEffortEnv,
+  REASONING_EFFORT_ENV,
+  type ReasoningEffort,
+} from "../../onboard/reasoning-mode";
 import { prepareSandboxDockerfilePatch } from "../../onboard/sandbox-dockerfile-patch-flow";
 import type { SandboxGpuConfig } from "../../onboard/sandbox-gpu-mode";
 import { ROOT } from "../../runner";
@@ -18,11 +25,13 @@ import {
   SANDBOX_BASE_TAG,
   type SandboxBaseImageResolutionMetadata,
 } from "../../sandbox-base-image";
+import type { PreservedEnvFile } from "../../state/preserved-env";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import {
   createBuildContextVerifier,
   createIdempotentBuildContextCleanup,
   type FingerprintedPreparedBuildContext,
+  verifyPreparedBuildContext,
 } from "./rebuild-prepared-image-context";
 
 type PreflightInput = {
@@ -32,6 +41,7 @@ type PreflightInput = {
   provider: string | null;
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: "true" | "false" | null;
+  compatibleEndpointReasoningEffort: ReasoningEffort | null;
   webSearchConfig: WebSearchConfig | null;
   toolDisclosure: ToolDisclosure;
   hermesToolGateways: string[];
@@ -46,6 +56,7 @@ type PreflightDeps = {
   prepareDockerfilePatch?: typeof prepareSandboxDockerfilePatch;
   buildImage?: typeof dockerBuild;
   removeImage?: typeof dockerRmi;
+  registerExitHandler?: (listener: () => void) => void;
 };
 
 export type PreparedRebuildImage = FingerprintedPreparedBuildContext & {
@@ -59,6 +70,13 @@ export type RebuildImagePreflightResult =
   | { ok: true; imageTag: string; prepared: PreparedRebuildImage }
   | { ok: false; detail: string };
 
+type FinalizePreparedImageDeps = {
+  patchMessagingPlan?: typeof patchStagedDockerfileMessagingPlan;
+  buildImage?: typeof dockerBuild;
+  removeImage?: typeof dockerRmi;
+  registerExitHandler?: (listener: () => void) => void;
+};
+
 function resultDetail(result: {
   error?: unknown;
   stderr?: unknown;
@@ -71,6 +89,35 @@ function resultDetail(result: {
   );
 }
 
+function removeTemporaryRebuildImage(
+  imageTag: string | null,
+  imageBuilt: boolean,
+  label: "preflight" | "finalization",
+  removeImage: typeof dockerRmi,
+  registerExitHandler: (listener: () => void) => void,
+): void {
+  let imageRemoved = false;
+  try {
+    imageRemoved =
+      imageTag !== null &&
+      removeImage(imageTag, { ignoreError: true, suppressOutput: true }).status === 0;
+  } catch {
+    // Best effort; retained-context ownership and environment restoration must continue.
+  }
+  if (!imageBuilt || !imageTag || imageRemoved) return;
+  const retainedImageTag = imageTag;
+  console.warn(
+    `  Warning: failed to remove temporary rebuild ${label} image '${retainedImageTag}'.`,
+  );
+  registerExitHandler(() => {
+    try {
+      removeImage(retainedImageTag, { ignoreError: true, suppressOutput: true });
+    } catch {
+      // Best effort process-exit retry.
+    }
+  });
+}
+
 export async function preflightRebuildImage(
   input: PreflightInput,
   deps: PreflightDeps = {},
@@ -79,16 +126,21 @@ export async function preflightRebuildImage(
   const preparePatch = deps.prepareDockerfilePatch ?? prepareSandboxDockerfilePatch;
   const buildImage = deps.buildImage ?? dockerBuild;
   const removeImage = deps.removeImage ?? dockerRmi;
+  const registerExitHandler =
+    deps.registerExitHandler ?? ((listener: () => void) => process.once("exit", listener));
   let cleanup: (() => boolean) | null = null;
   let imageTag: string | null = null;
   let imageBuilt = false;
   let retainBuildContext = false;
   const previousReasoning = process.env.NEMOCLAW_REASONING;
+  const previousReasoningEffort = process.env[REASONING_EFFORT_ENV];
   try {
     if (input.provider === "compatible-endpoint") {
       process.env.NEMOCLAW_REASONING = input.compatibleEndpointReasoning ?? "false";
+      applyReasoningEffortEnv(input.compatibleEndpointReasoningEffort);
     } else {
       delete process.env.NEMOCLAW_REASONING;
+      delete process.env[REASONING_EFFORT_ENV];
     }
     const staged = stage({
       root: ROOT,
@@ -154,27 +206,13 @@ export async function preflightRebuildImage(
   } catch (err) {
     return { ok: false, detail: err instanceof Error ? err.message : String(err) };
   } finally {
-    let imageRemoved = false;
-    try {
-      imageRemoved =
-        imageTag !== null &&
-        removeImage(imageTag, { ignoreError: true, suppressOutput: true }).status === 0;
-    } catch {
-      // Best effort; retained-context ownership and environment restoration must continue.
-    }
-    if (imageBuilt && imageTag && !imageRemoved) {
-      const retainedImageTag = imageTag;
-      console.warn(
-        `  Warning: failed to remove temporary rebuild preflight image '${retainedImageTag}'.`,
-      );
-      process.once("exit", () => {
-        try {
-          removeImage(retainedImageTag, { ignoreError: true, suppressOutput: true });
-        } catch {
-          // Best effort process-exit retry.
-        }
-      });
-    }
+    removeTemporaryRebuildImage(
+      imageTag,
+      imageBuilt,
+      "preflight",
+      removeImage,
+      registerExitHandler,
+    );
     if (!retainBuildContext) {
       try {
         cleanup?.();
@@ -184,5 +222,58 @@ export async function preflightRebuildImage(
     }
     if (previousReasoning === undefined) delete process.env.NEMOCLAW_REASONING;
     else process.env.NEMOCLAW_REASONING = previousReasoning;
+    if (previousReasoningEffort === undefined) delete process.env[REASONING_EFFORT_ENV];
+    else process.env[REASONING_EFFORT_ENV] = previousReasoningEffort;
+  }
+}
+
+export function finalizePreparedRebuildImageMessagingPlan(
+  prepared: PreparedRebuildImage,
+  messagingPlan: SandboxMessagingPlan,
+  preservedEnv: readonly PreservedEnvFile[],
+  deps: FinalizePreparedImageDeps = {},
+): RebuildImagePreflightResult {
+  if (!verifyPreparedBuildContext(prepared)) {
+    return { ok: false, detail: "replacement build context changed before backup finalization" };
+  }
+  const patchMessagingPlan = deps.patchMessagingPlan ?? patchStagedDockerfileMessagingPlan;
+  const buildImage = deps.buildImage ?? dockerBuild;
+  const removeImage = deps.removeImage ?? dockerRmi;
+  const registerExitHandler =
+    deps.registerExitHandler ?? ((listener: () => void) => process.once("exit", listener));
+  const imageTag = `nemoclaw-rebuild-finalize:${String(process.pid)}-${String(Date.now())}`;
+  let imageBuilt = false;
+  try {
+    patchMessagingPlan(prepared.stagedDockerfile, messagingPlan, preservedEnv);
+    const contextFingerprint = fingerprintBuildContext(prepared.buildCtx);
+    const result = buildImage(prepared.stagedDockerfile, imageTag, prepared.buildCtx, {
+      ignoreError: true,
+      suppressOutput: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (result.status !== 0) return { ok: false, detail: resultDetail(result) };
+    imageBuilt = true;
+    if (fingerprintBuildContext(prepared.buildCtx) !== contextFingerprint) {
+      return { ok: false, detail: "replacement build context changed during backup finalization" };
+    }
+    return {
+      ok: true,
+      imageTag,
+      prepared: {
+        ...prepared,
+        contextFingerprint,
+        verifyBuildCtx: createBuildContextVerifier(prepared.buildCtx, contextFingerprint),
+      },
+    };
+  } catch (err) {
+    return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+  } finally {
+    removeTemporaryRebuildImage(
+      imageTag,
+      imageBuilt,
+      "finalization",
+      removeImage,
+      registerExitHandler,
+    );
   }
 }

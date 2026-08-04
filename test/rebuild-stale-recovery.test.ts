@@ -169,6 +169,9 @@ process.exit(0);
     path.join(tmpDir, "docker"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
+const { isOpenClawSecurityInventoryProbe } = require(${JSON.stringify(
+      path.join(REPO_ROOT, "test", "helpers", "onboard-script-mocks.cjs"),
+    )});
 if (a[0]==="info") {
   process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"Docker Engine", NCPU:8, MemTotal:17179869184}) + "\\n");
   process.exit(0);
@@ -184,6 +187,7 @@ if (a[0]==="image" && a[1]==="inspect") {
 if (a[0]==="tag" || a[0]==="rmi") { process.exit(0); }
 if (a[0]==="run") {
   if (a.includes("nslookup")) process.stdout.write("Server: 127.0.0.11\\n** server can't find nemoclaw.invalid: NXDOMAIN\\n");
+  else if (isOpenClawSecurityInventoryProbe(a)) process.stdout.write("nemoclaw-security-inventory-ok\\n");
   else if (a.includes("/usr/bin/ldd")) process.stdout.write("ldd (GNU libc) 2.41\\n");
   process.exit(0);
 }
@@ -271,7 +275,9 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
         targetGatewayPort: 8080,
       }),
     );
-    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).toHaveBeenCalledOnce();
+    // The journaled source row is the durable replacement contract, so it is
+    // preserved until replacement registration commits (#7734).
+    expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
     expect(harness.restoreSandboxEntrySpy).not.toHaveBeenCalled();
     expect(harness.restoreSandboxEntryIfMissingSpy).not.toHaveBeenCalled();
   });
@@ -361,10 +367,12 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
     expect(output).not.toContain("Backing up sandbox state");
     expect(output).toContain("Creating new sandbox with current image");
     expect(output).toContain("Recovery recreate failed");
-    // The preserved entry must survive the failed recreate. Its obsolete image
-    // tag is intentionally cleared so a leftover image remains eligible for GC.
+    // The preserved entry must survive the failed recreate carrying no obsolete
+    // image tag, so a leftover image remains eligible for GC. The journaled row
+    // is now preserved in place rather than removed and restored, so the field
+    // is absent instead of explicitly null (#7734).
     const registry = readRegistry(fixture);
     expect(registry.defaultSandbox).toBe(fixture.sandboxName);
-    expect(registry.sandboxes[fixture.sandboxName].imageTag).toBe(null);
+    expect(registry.sandboxes[fixture.sandboxName].imageTag ?? null).toBe(null);
   });
 });

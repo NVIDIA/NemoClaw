@@ -4,6 +4,7 @@
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 // pull_request_target content is fetched manually so no PR-controlled action,
@@ -16,7 +17,7 @@ const TARGET_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const TARGET_PR_PATTERN = /^[0-9]+$/u;
 const TARGET_BASE_PATTERN = /^[A-Za-z0-9._/-]+$/u;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
-const DEFAULT_TARGET_DIR = "/tmp/pr-review-advisor-target";
+const DEFAULT_TARGET_DIR = "/tmp/pr-review-advisor-target/pr-workdir";
 
 export class PrepareTargetPrError extends Error {
   constructor(message: string) {
@@ -72,6 +73,28 @@ export function validatePrepareTargetPrInput(input: PrepareTargetPrInput): void 
   }
 }
 
+export function validatePrepareTargetDirectory(
+  value: string,
+  currentDirectory = process.cwd(),
+): string {
+  if (!value || value.includes("\0")) {
+    fail("target directory must be a non-empty filesystem path");
+  }
+  const resolved = path.resolve(value);
+  const relativeCurrentDirectory = path.relative(resolved, path.resolve(currentDirectory));
+  const containsCurrentDirectory =
+    relativeCurrentDirectory === "" ||
+    (!relativeCurrentDirectory.startsWith("..") && !path.isAbsolute(relativeCurrentDirectory));
+  if (
+    resolved === path.parse(resolved).root ||
+    path.basename(resolved) !== "pr-workdir" ||
+    containsCurrentDirectory
+  ) {
+    fail("target directory must resolve to a dedicated pr-workdir directory");
+  }
+  return resolved;
+}
+
 /**
  * Fetch and check out a target PR's head into an isolated, hardened workspace,
  * verifying the fetched base/head against the immutable SHAs from the
@@ -85,7 +108,7 @@ export function prepareTargetPr(
 ): { workdir: string; prNumber: string } {
   validatePrepareTargetPrInput(input);
 
-  const targetDir = options.targetDir ?? DEFAULT_TARGET_DIR;
+  const targetDir = validatePrepareTargetDirectory(options.targetDir ?? DEFAULT_TARGET_DIR);
   const runGit =
     options.runGit ??
     ((args: string[]): string =>
@@ -149,13 +172,16 @@ export function prepareTargetPr(
 
 function main(): void {
   try {
-    prepareTargetPr({
-      targetRepo: process.env.TARGET_REPO ?? "",
-      targetPr: process.env.TARGET_PR ?? "",
-      targetBase: process.env.TARGET_BASE ?? "",
-      prBaseSha: process.env.PR_BASE_SHA || undefined,
-      expectedHeadSha: process.env.EXPECTED_HEAD_SHA || undefined,
-    });
+    prepareTargetPr(
+      {
+        targetRepo: process.env.TARGET_REPO ?? "",
+        targetPr: process.env.TARGET_PR ?? "",
+        targetBase: process.env.TARGET_BASE ?? "",
+        prBaseSha: process.env.PR_BASE_SHA || undefined,
+        expectedHeadSha: process.env.EXPECTED_HEAD_SHA || undefined,
+      },
+      { targetDir: process.env.TARGET_DIR || undefined },
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`::error::${message}`);

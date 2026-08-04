@@ -31,6 +31,7 @@ import {
   getSandboxAgent,
   getSandboxOrThrow,
 } from "./mcp-bridge-state";
+import { discoverMcpTools } from "./mcp-bridge-tool-discovery";
 import {
   assertAuthenticatedBridgeEntry,
   normalizeMcpServerUrl,
@@ -128,6 +129,11 @@ export interface McpBridgeStatusOptions {
    * the dispatch layer enables it only where the operator asked for it.
    */
   probeCredentialResolution?: boolean;
+  /**
+   * Enumerate names advertised by one managed MCP endpoint. The dispatch
+   * layer restricts this live operation to an explicitly named server.
+   */
+  discoverTools?: boolean;
 }
 
 export async function statusMcpBridge(
@@ -168,6 +174,17 @@ export async function statusMcpBridge(
         },
         policy: { registryPresent: false, gatewayPresent: false },
         adapter: { registered: null },
+        ...(options.discoverTools
+          ? {
+              toolDiscovery: {
+                ok: false,
+                count: 0,
+                tools: [],
+                truncated: false,
+                detail: "tool discovery skipped: MCP server is not registered",
+              },
+            }
+          : {}),
       },
     ];
   }
@@ -223,6 +240,11 @@ export async function statusMcpBridge(
     }
     const unsafeCredentialMayBeAttached =
       !!credentialWarning && !!entry?.providerName && attached !== false;
+    const readiness = {
+      policyGatewayPresent: policyPresence,
+      providerAttached: attached,
+      providerCredentialReady,
+    };
     const credentialResolution =
       options.probeCredentialResolution && entry
         ? unsafeCredentialMayBeAttached
@@ -231,16 +253,25 @@ export async function statusMcpBridge(
               detail:
                 "probe skipped: the unsupported legacy credential may still be attached to fresh sandbox children",
             }
-          : probeCredentialResolution(sandboxName, entry, support.adapter, {
-              policyGatewayPresent: policyPresence,
-              providerAttached: attached,
-              providerCredentialReady,
-            })
+          : probeCredentialResolution(sandboxName, entry, support.adapter, readiness)
         : undefined;
     const resolutionWarning = credentialResolution
       ? credentialResolutionWarning(entry?.env[0], credentialResolution)
       : undefined;
     if (resolutionWarning) warnings.push(resolutionWarning);
+    const toolDiscovery =
+      options.discoverTools && entry
+        ? unsafeCredentialMayBeAttached
+          ? {
+              ok: false,
+              count: 0,
+              tools: [],
+              truncated: false,
+              detail:
+                "tool discovery skipped: the unsupported legacy credential may still be attached to fresh sandbox children",
+            }
+          : discoverMcpTools(sandboxName, entry, support.adapter, readiness)
+        : undefined;
     return {
       server: name,
       agent: entry?.agent ?? agent.name,
@@ -277,6 +308,7 @@ export async function statusMcpBridge(
               "Adapter inspection was skipped because the unsupported legacy credential may still be attached to fresh sandbox children.",
           }
         : getAdapterRegistration(sandboxName, support.adapter, entry, hermesReconciliation),
+      ...(toolDiscovery ? { toolDiscovery } : {}),
       ...(entry?.addedAt ? { addedAt: entry.addedAt } : {}),
       ...(entry?.updatedAt ? { updatedAt: entry.updatedAt } : {}),
     };

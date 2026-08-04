@@ -155,7 +155,7 @@ describe("credential-free test discovery", () => {
   });
 
   it("rejects selector arguments owned by the workflow planner", () => {
-    const result = spawnSync(TSX, [CREDENTIAL_FREE_TESTS_CLI, "--jobs", "docs-validation"], {
+    const result = spawnSync(TSX, [CREDENTIAL_FREE_TESTS_CLI, "--jobs", "vllm-docker-storage"], {
       cwd: REPO_ROOT,
       encoding: "utf8",
       timeout: 30_000,

@@ -319,6 +319,19 @@ interface E2eCoordinationEvidence {
   trustedLegacyCheckId?: number;
 }
 
+const E2E_RETRYABLE_FAILURE_MARKER_PREFIX = "<!-- nemoclaw-pr-e2e-retry:v1:";
+const E2E_RETRYABLE_FAILURE_MARKER_SUFFIX = " -->";
+const E2E_RETRYABLE_FAILURE_REASONS = new Set([
+  "prerequisite-ci",
+  "child-cancelled",
+  "evidence-download",
+]);
+const E2E_NEVER_RETRY_FAILURE_TITLES = new Set([
+  "Authorized E2E run requires reconciliation",
+  "PR base changed",
+  "Controller stopped early",
+  "Run could not start",
+]);
 function parseGitHubTimestamp(value: string | undefined): number {
   const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?Z$/u);
   if (!match) return Number.NaN;
@@ -335,6 +348,48 @@ function parseGitHubTimestamp(value: string | undefined): number {
     : Number.NaN;
 }
 
+function hasRetryableE2eFailureMarker(check: Record<string, unknown>): boolean {
+  if (check.status !== "completed" || check.conclusion !== "failure") return false;
+  const output = check.output;
+  if (typeof output !== "object" || output === null || Array.isArray(output)) return false;
+  const { summary, title } = output as Record<string, unknown>;
+  if (
+    (title !== undefined && title !== null && typeof title !== "string") ||
+    E2E_NEVER_RETRY_FAILURE_TITLES.has(typeof title === "string" ? title : "")
+  ) {
+    return false;
+  }
+  if (typeof summary !== "string") return false;
+  const markerBoundary = `\n\n${E2E_RETRYABLE_FAILURE_MARKER_PREFIX}`;
+  const markerStart = summary.lastIndexOf(markerBoundary);
+  if (markerStart < 0) return false;
+  const marker = summary.slice(markerStart + 2);
+  if (!marker.endsWith(E2E_RETRYABLE_FAILURE_MARKER_SUFFIX)) return false;
+  const reason = marker.slice(
+    E2E_RETRYABLE_FAILURE_MARKER_PREFIX.length,
+    -E2E_RETRYABLE_FAILURE_MARKER_SUFFIX.length,
+  );
+  return (
+    E2E_RETRYABLE_FAILURE_REASONS.has(reason) &&
+    marker ===
+      `${E2E_RETRYABLE_FAILURE_MARKER_PREFIX}${reason}${E2E_RETRYABLE_FAILURE_MARKER_SUFFIX}`
+  );
+}
+
+function currentE2eCoordinationCheck(
+  checks: Array<Record<string, unknown>>,
+): Record<string, unknown> | undefined {
+  if (checks.length === 0) return undefined;
+  const ordered = [...checks].sort((left, right) => (left.id as number) - (right.id as number));
+  const active = ordered.filter((check) => check.status !== "completed");
+  if (active.length > 1) return undefined;
+  if (ordered.slice(0, -1).some((check) => !hasRetryableE2eFailureMarker(check))) {
+    return undefined;
+  }
+  const current = ordered.at(-1)!;
+  if (active[0] && active[0].id !== current.id) return undefined;
+  return current;
+}
 function fetchE2eCoordinationEvidence(
   repo: string,
   exactDiff: ExactDiffIdentity,
@@ -391,9 +446,30 @@ function fetchE2eCoordinationEvidence(
   }
 
   const externalId = `nemoclaw-pr-e2e:v2:${exactDiff.number}:${exactDiff.headSha}:${exactDiff.baseSha}`;
-  const exactChecks = checkRuns.filter((check) => check.external_id === externalId);
-  if (exactChecks.length !== 1) return { valid: false };
-  const exact = exactChecks[0];
+  const claimedChecks = checkRuns.filter((check) => check.external_id === externalId);
+  if (
+    claimedChecks.some(
+      (check) =>
+        check.head_sha !== exactDiff.headSha ||
+        typeof check.name !== "string" ||
+        !checkNames.includes(check.name) ||
+        typeof check.app !== "object" ||
+        check.app === null ||
+        Array.isArray(check.app) ||
+        (check.app as Record<string, unknown>).id !== 15368,
+    )
+  ) {
+    return { valid: false };
+  }
+  const currentNameChecks = claimedChecks.filter(
+    (check) => check.name === "E2E / PR Gate Coordination",
+  );
+  const exactChecks =
+    currentNameChecks.length > 0
+      ? currentNameChecks
+      : claimedChecks.filter((check) => check.name === "E2E / PR Gate");
+  const exact = currentE2eCoordinationCheck(exactChecks);
+  if (!exact) return { valid: false };
   const app = exact.app;
   const startedAt =
     typeof exact.started_at === "string" ? parseGitHubTimestamp(exact.started_at) : Number.NaN;

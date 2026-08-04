@@ -16,7 +16,12 @@ vi.mock("../auto-pair-approval", () => ({
   runSandboxAutoPairApprovalPass: vi.fn(),
 }));
 
+vi.mock("../../../state/registry", () => ({
+  getSandbox: vi.fn(() => ({ name: "alpha", agent: "openclaw" })),
+}));
+
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
+import * as registry from "../../../state/registry";
 import { runSandboxAutoPairApprovalPass } from "../auto-pair-approval";
 import {
   buildGatewayAdminRpcShell,
@@ -26,6 +31,7 @@ import {
 
 const captureMock = captureOpenshell as unknown as ReturnType<typeof vi.fn>;
 const autoPairMock = runSandboxAutoPairApprovalPass as unknown as ReturnType<typeof vi.fn>;
+const getSandboxMock = registry.getSandbox as unknown as ReturnType<typeof vi.fn>;
 
 function captureResult(
   status: number,
@@ -56,6 +62,8 @@ let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   captureMock.mockReset();
   autoPairMock.mockReset();
+  getSandboxMock.mockReset();
+  getSandboxMock.mockReturnValue({ name: "alpha", agent: "openclaw" });
   processExitSpy = vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
     throw new Error(`process.exit:${code ?? 0}`);
   });
@@ -255,6 +263,104 @@ describe("callOpenclawGateway", () => {
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       "  Refusing unsupported OpenClaw gateway admin RPC method 'devices.approve' for sandbox 'alpha'.",
     );
+  });
+
+  it("refuses a sandbox whose agent has no OpenClaw gateway admin RPCs", () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+
+    expect(() =>
+      callOpenclawGateway({
+        sandboxName: "alpha",
+        method: "sessions.reset",
+        params: { key: "agent:main:main", reason: "reset" },
+      }),
+    ).toThrow(/process\.exit:1/);
+
+    expect(autoPairMock).not.toHaveBeenCalled();
+    expect(captureMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "  Refusing to invoke 'sessions.reset' for sandbox 'alpha': it uses the 'hermes' agent, which does not expose the OpenClaw gateway admin RPCs. These commands only support the OpenClaw agent.",
+    );
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("alpha sessions list"));
+  });
+
+  it("dispatches when the registry records the OpenClaw agent", () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "openclaw" });
+    captureMock.mockReturnValue(captureResult(0, '{"ok":true,"key":"agent:main:main"}'));
+
+    const result = callOpenclawGateway({
+      sandboxName: "alpha",
+      method: "sessions.delete",
+      params: { key: "agent:main:main" },
+    });
+
+    expect(result.payload).toMatchObject({ ok: true });
+    expect(captureMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    undefined,
+    null,
+  ])("dispatches for an existing legacy registry entry whose agent is %s", (agent) => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent });
+    captureMock.mockReturnValue(captureResult(0, '{"ok":true,"key":"agent:main:main"}'));
+
+    const result = callOpenclawGateway({
+      sandboxName: "alpha",
+      method: "sessions.reset",
+      params: { key: "agent:main:main", reason: "reset" },
+    });
+
+    expect(result.payload).toMatchObject({ ok: true });
+    expect(captureMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses when the registry has no sandbox entry", () => {
+    getSandboxMock.mockReturnValue(null);
+
+    expect(() =>
+      callOpenclawGateway({
+        sandboxName: "alpha",
+        method: "sessions.delete",
+        params: { key: "agent:main:main" },
+      }),
+    ).toThrow(/process\.exit:1/);
+
+    expect(autoPairMock).not.toHaveBeenCalled();
+    expect(captureMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("no registry entry"));
+  });
+
+  it("refuses an existing registry entry whose agent is empty", () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "" });
+
+    expect(() =>
+      callOpenclawGateway({
+        sandboxName: "alpha",
+        method: "sessions.delete",
+        params: { key: "agent:main:main" },
+      }),
+    ).toThrow(/process\.exit:1/);
+
+    expect(autoPairMock).not.toHaveBeenCalled();
+    expect(captureMock).not.toHaveBeenCalled();
+  });
+
+  it("does not dispatch when the registry lookup throws", () => {
+    getSandboxMock.mockImplementation(() => {
+      throw new Error("registry unreadable");
+    });
+
+    expect(() =>
+      callOpenclawGateway({
+        sandboxName: "alpha",
+        method: "sessions.reset",
+        params: { key: "agent:main:main", reason: "reset" },
+      }),
+    ).toThrow("registry unreadable");
+
+    expect(autoPairMock).not.toHaveBeenCalled();
+    expect(captureMock).not.toHaveBeenCalled();
   });
 
   it("does not retry unrelated gateway failures", () => {

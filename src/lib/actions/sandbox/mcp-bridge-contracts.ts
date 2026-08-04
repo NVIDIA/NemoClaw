@@ -71,6 +71,14 @@ export interface McpBridgeStatus {
     registered: boolean | null;
     detail?: string;
   };
+  /** Names advertised by the MCP endpoint when live discovery is requested. */
+  toolDiscovery?: {
+    ok: boolean;
+    count: number;
+    tools: string[];
+    truncated: boolean;
+    detail?: string;
+  };
   addState?: "prepared" | "preflighted";
   addedAt?: string;
   updatedAt?: string;

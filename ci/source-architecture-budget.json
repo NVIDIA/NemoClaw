@@ -1,0 +1,65 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "fanIn": {
+    "defaultMax": 20,
+    "maxByFile": {
+      "src/lib/actions/sandbox/mcp-bridge-contracts.ts": 26,
+      "src/lib/actions/sandbox/process-recovery.ts": 26,
+      "src/lib/adapters/docker/index.ts": 43,
+      "src/lib/adapters/openshell/client.ts": 23,
+      "src/lib/adapters/openshell/resolve.ts": 27,
+      "src/lib/adapters/openshell/runtime.ts": 52,
+      "src/lib/adapters/openshell/timeouts.ts": 37,
+      "src/lib/agent/defs.ts": 32,
+      "src/lib/cli/branding.ts": 85,
+      "src/lib/cli/nemoclaw-oclif-command.ts": 103,
+      "src/lib/cli/terminal-style.ts": 45,
+      "src/lib/core/json-types.ts": 37,
+      "src/lib/core/ports.ts": 89,
+      "src/lib/core/shell-quote.ts": 26,
+      "src/lib/core/url-utils.ts": 28,
+      "src/lib/core/wait.ts": 35,
+      "src/lib/credentials/store.ts": 46,
+      "src/lib/inference/config.ts": 29,
+      "src/lib/inference/web-search.ts": 21,
+      "src/lib/messaging/channels/index.ts": 26,
+      "src/lib/onboard/gateway-binding.ts": 49,
+      "src/lib/runner.ts": 89,
+      "src/lib/security/redact.ts": 51,
+      "src/lib/state/onboard-session.ts": 36,
+      "src/lib/state/registry.ts": 101,
+      "src/lib/state/state-root.ts": 23,
+      "src/lib/subprocess-env.ts": 24,
+      "src/lib/validation.ts": 25
+    }
+  },
+  "fanOut": {
+    "defaultMax": 20,
+    "maxByFile": {
+      "src/lib/actions/inference-set.ts": 32,
+      "src/lib/actions/sandbox/connect.ts": 38,
+      "src/lib/actions/sandbox/destroy.ts": 29,
+      "src/lib/actions/sandbox/doctor.ts": 29,
+      "src/lib/actions/sandbox/policy-channel.ts": 29,
+      "src/lib/actions/sandbox/process-recovery.ts": 21,
+      "src/lib/actions/sandbox/rebuild-pipeline.ts": 28,
+      "src/lib/actions/sandbox/snapshot.ts": 39,
+      "src/lib/actions/uninstall/run-plan.ts": 25,
+      "src/lib/inference/onboard-probes.ts": 21,
+      "src/lib/inference/vllm.ts": 23,
+      "src/lib/onboard.ts": 225,
+      "src/lib/onboard/machine/handlers/sandbox.ts": 21,
+      "src/lib/sandbox/config.ts": 22,
+      "src/lib/shields/index.ts": 23
+    }
+  },
+  "allowedCycles": [],
+  "maxRootFiles": {
+    "src/lib/onboard": 310,
+    "src/lib/actions": 19,
+    "src/lib/actions/sandbox": 183,
+    "src/lib/state": 37,
+    "src/lib/inference": 62,
+    "scripts": 45
+  }
+}

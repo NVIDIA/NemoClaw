@@ -18,9 +18,56 @@ const TRACE_SOURCES = [
   "monitoring/manage-deepagents-trace-export.mdx",
 ] as const;
 const QUICKSTART_SOURCE = "get-started/quickstart-langchain-deepagents-code.mdx";
+const LEGACY_TRACE_POINTERS = [
+  {
+    anchors: ["understand-the-export-boundary"],
+    linkText: "Understand Deep Agents Trace Export",
+    target: "../monitoring/understand-deepagents-trace-export",
+  },
+  {
+    anchors: [
+      "enable-trace-export",
+      "recover-a-skipped-policy",
+      "create-langsmith-credentials",
+      "find-the-private-host-bind-address",
+      "configure-the-collector",
+      "start-and-verify-the-collector",
+    ],
+    linkText: "Set Up Deep Agents Trace Export",
+    target: "../monitoring/set-up-deepagents-trace-export",
+  },
+  {
+    anchors: ["verify-traces-end-to-end", "troubleshoot-trace-export"],
+    linkText: "Verify Deep Agents Trace Export",
+    target: "../monitoring/verify-deepagents-trace-export",
+  },
+  {
+    anchors: ["stop-or-disable-trace-export"],
+    linkText: "Manage Deep Agents Trace Export",
+    target: "../monitoring/manage-deepagents-trace-export",
+  },
+] as const;
 
 function readDoc(source: string): string {
   return readFileSync(path.join(process.cwd(), "docs", source), "utf8");
+}
+
+function expectUniqueAnchorsBeforePointer(
+  source: string,
+  anchors: readonly string[],
+  linkText: string,
+  target: string,
+): void {
+  const pointer = `[${linkText}](${target})`;
+
+  for (const anchor of anchors) {
+    const marker = `<a id="${anchor}"></a>`;
+    expect(source.split(marker)).toHaveLength(2);
+    const anchorIndex = source.indexOf(marker);
+    const pointerIndex = source.indexOf(pointer, anchorIndex + marker.length);
+    expect(pointerIndex).toBeGreaterThan(anchorIndex);
+    expect(source.slice(anchorIndex + marker.length, pointerIndex)).not.toContain("](");
+  }
 }
 
 describe("Deep Agents monitoring published routes", () => {
@@ -41,20 +88,22 @@ describe("Deep Agents monitoring published routes", () => {
     }
   });
 
-  it("keeps the Quickstart compatibility pointer on the focused setup path", () => {
+  it("keeps every Quickstart trace fragment on the focused monitoring paths (#7495)", () => {
     const index = buildPublishedRouteIndex();
+    const quickstart = readDoc(QUICKSTART_SOURCE);
 
     expect(findBrokenPublishedRoutes(QUICKSTART_SOURCE, index)).toEqual([]);
-    expect([
-      ...resolvePageLinksByText(QUICKSTART_SOURCE, "Set Up Deep Agents Trace Export", index),
-    ]).toEqual([
-      {
-        fromRoute: "/user-guide/deepagents/get-started/quickstart",
-        published: true,
-        resolved: "/user-guide/deepagents/monitoring/set-up-deepagents-trace-export",
-        target: "../monitoring/set-up-deepagents-trace-export",
-      },
-    ]);
-    expect(readDoc(QUICKSTART_SOURCE)).toContain('id="export-traces-through-a-local-collector"');
+    for (const { anchors, linkText, target } of LEGACY_TRACE_POINTERS) {
+      expect([...resolvePageLinksByText(QUICKSTART_SOURCE, linkText, index)]).toEqual([
+        {
+          fromRoute: "/user-guide/deepagents/get-started/quickstart",
+          published: true,
+          resolved: `/user-guide/deepagents/monitoring/${target.split("/").at(-1)}`,
+          target,
+        },
+      ]);
+      expectUniqueAnchorsBeforePointer(quickstart, anchors, linkText, target);
+    }
+    expect(quickstart).toContain('id="export-traces-through-a-local-collector"');
   });
 });

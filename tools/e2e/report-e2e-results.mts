@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { normalizeE2eSelectorCsv } from "./selector-aliases.mts";
+
 export type ReportApiJob = {
   completed_at?: string | null;
   conclusion?: string | null;
@@ -173,8 +175,12 @@ export function renderE2eReport(input: {
   const rawRequestedTargets = env.JOB_TARGETS || "";
   const rawRequestedTestIds = env.JOBS || "";
   const selectorValidationPassed = needs["generate-matrix"]?.result === "success";
-  const requestedTargets = selectorValidationPassed ? rawRequestedTargets : "";
-  const requestedTestIdsCsv = selectorValidationPassed ? rawRequestedTestIds : "";
+  const requestedTargets = selectorValidationPassed
+    ? normalizeE2eSelectorCsv(rawRequestedTargets)
+    : "";
+  const requestedTestIdsCsv = selectorValidationPassed
+    ? normalizeE2eSelectorCsv(rawRequestedTestIds)
+    : "";
   const explicitOnlyReasons: Record<string, { job: string; target: string; reason: string }> = {
     "openshell-gateway-auth-contract": {
       job: "openshell-gateway-auth-contract",
@@ -192,11 +198,6 @@ export function renderE2eReport(input: {
       target: "jetson-nvmap-gpu",
       reason:
         "default dispatch excludes Jetson; explicit dispatch requires allow_jetson_runner_queue=true after confirming an online Jetson runner because queued jobs do not honor timeout-minutes before assignment",
-    },
-    "sandbox-rlimits-connect": {
-      job: "sandbox-rlimits-connect",
-      target: "sandbox-rlimits-connect",
-      reason: "default dispatch excludes the destructive rlimit fork/connect probe unless selected",
     },
   };
   const explicitOnlySkippedJobs = (env.EXPLICIT_ONLY_JOBS || "")
@@ -422,7 +423,7 @@ export function renderE2eReport(input: {
       ? "**Requested test IDs:** _(selector rejected by workflow validation)_"
       : requestedTestIdsCsv
         ? `**Requested test IDs:** \`${requestedTestIdsCsv}\``
-        : "**Requested test IDs:** _(default — all default-enabled tests; explicit-only tests `openshell-gateway-auth-contract`, `mcp-bridge-dev`, `hermes-gpu-startup`, `sandbox-rlimits-connect`, and `jetson-nvmap-gpu` are skipped unless selected)_",
+        : "**Requested test IDs:** _(default — all default-enabled tests; explicit-only tests `openshell-gateway-auth-contract`, `mcp-bridge-dev`, `hermes-gpu-startup`, and `jetson-nvmap-gpu` are skipped unless selected)_",
     `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped, ${unknown.length} unknown`,
     "",
     "| Test | Result | Total wall clock time |",

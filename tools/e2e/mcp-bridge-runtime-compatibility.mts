@@ -6,6 +6,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import * as importedMcpBridgeValidation from "../../src/lib/actions/sandbox/mcp-bridge-validation.ts";
+import { createPrivateRegularFile } from "./private-file.mts";
+import type { E2eRiskSignal } from "./risk-signal.ts";
+import * as importedRiskSignal from "./risk-signal.ts";
 
 // The root TypeScript package is exposed as CJS under the exact `node --import
 // tsx` / `npx tsx` workflow execution mode, but as an ESM namespace under
@@ -22,6 +25,12 @@ const {
   MCP_CREDENTIAL_BOUNDARY_OPENSHELL_VERSION,
   McpCredentialBoundaryRuntimeVersionError,
 } = mcpBridgeValidation;
+const riskSignal = (
+  "default" in importedRiskSignal && importedRiskSignal.default
+    ? importedRiskSignal.default
+    : importedRiskSignal
+) as typeof import("./risk-signal.ts");
+const { buildRiskSignal, configuredRiskSignalEnvironment, RISK_SIGNAL_FILE } = riskSignal;
 
 export const MCP_BRIDGE_RUNTIME_COMPATIBILITY_ARTIFACT = "openshell-runtime-compatibility.json";
 
@@ -34,6 +43,8 @@ export interface McpBridgeRuntimeCompatibilityResult {
 }
 
 type AssertRuntimeVersion = () => void;
+const MCP_BRIDGE_DEV_JOB = "mcp-bridge-dev";
+const MCP_BRIDGE_DEV_SHARDS = new Set(["openclaw", "hermes", "deepagents"]);
 
 // invalidState: A moving OpenShell dev artifact enters credential-bearing MCP
 // lifecycle assertions even though it is outside the reviewed manifest version.
@@ -82,10 +93,14 @@ export function recordMcpBridgeRuntimeCompatibility(
     artifactDirectory: string;
     githubOutputPath: string;
     githubStepSummaryPath?: string;
+    riskSignal?: E2eRiskSignal | null;
   },
 ): void {
   fs.mkdirSync(options.artifactDirectory, { recursive: true });
   const fullLifecycle = result.mode === "full-lifecycle";
+  if (fullLifecycle && options.riskSignal) {
+    throw new Error("aligned OpenShell compatibility must defer risk evidence to the live test");
+  }
   const artifact = {
     schemaVersion: 1,
     lane: "mcp-bridge-dev",
@@ -103,6 +118,12 @@ export function recordMcpBridgeRuntimeCompatibility(
     `${JSON.stringify(artifact, null, 2)}\n`,
     "utf8",
   );
+  if (options.riskSignal) {
+    createPrivateRegularFile(
+      path.join(options.artifactDirectory, RISK_SIGNAL_FILE),
+      `${JSON.stringify(options.riskSignal, null, 2)}\n`,
+    );
+  }
   fs.appendFileSync(
     options.githubOutputPath,
     [
@@ -129,6 +150,33 @@ export function recordMcpBridgeRuntimeCompatibility(
   }
 }
 
+export function mcpBridgeCompatibilityRiskSignal(
+  result: McpBridgeRuntimeCompatibilityResult,
+  env: NodeJS.ProcessEnv,
+  resolveHead?: (workspace: string) => string,
+): E2eRiskSignal | null {
+  if (result.mode !== "expected-version-mismatch") return null;
+  const environment = configuredRiskSignalEnvironment(env, resolveHead);
+  if (!environment) return null;
+  if (environment.jobId !== MCP_BRIDGE_DEV_JOB) {
+    throw new Error(`MCP dev compatibility risk signal requires ${MCP_BRIDGE_DEV_JOB}`);
+  }
+  if (!MCP_BRIDGE_DEV_SHARDS.has(environment.shardId)) {
+    throw new Error("MCP dev compatibility risk signal requires a reviewed agent shard");
+  }
+  // This explicit-only lane tests the moving runtime's compatibility boundary.
+  // Rejecting an unreviewed version is its passing assertion; credential-bearing
+  // lifecycle evidence remains exclusive to the aligned Vitest branch.
+  return buildRiskSignal(environment, {
+    passed: 1,
+    failed: 0,
+    skipped: 0,
+    pending: 0,
+    unhandledErrors: 0,
+    runReason: "passed",
+  });
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const artifactDirectory = process.env.E2E_ARTIFACT_DIR;
@@ -137,10 +185,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       throw new Error("E2E_ARTIFACT_DIR and GITHUB_OUTPUT are required");
     }
     const result = classifyMcpBridgeRuntimeCompatibility();
+    const riskSignal = mcpBridgeCompatibilityRiskSignal(result, process.env);
     recordMcpBridgeRuntimeCompatibility(result, {
       artifactDirectory,
       githubOutputPath,
       githubStepSummaryPath: process.env.GITHUB_STEP_SUMMARY,
+      riskSignal,
     });
     if (result.mode === "expected-version-mismatch") {
       console.log(

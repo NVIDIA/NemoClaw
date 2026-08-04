@@ -9,8 +9,10 @@ import { describe, expect, it } from "vitest";
 import {
   buildLiveVitestArgs,
   LIVE_VITEST_PROJECT,
+  MCP_BRIDGE_TEST_PATH,
   type LiveVitestSpawner,
   RISK_SIGNAL_REPORTER,
+  resolveLiveSelector,
   runLiveVitestCommand,
   validateLiveProject,
   validateLiveSelector,
@@ -105,6 +107,50 @@ describe("validateLiveSelector (#6961)", () => {
   });
 });
 
+describe("resolveLiveSelector (#6901)", () => {
+  it.each([
+    ["openclaw", "^mcp-bridge$"],
+    ["hermes", "^mcp-bridge-hermes$"],
+    ["deepagents", "^mcp-bridge-deepagents$"],
+  ])("infers the reviewed %s selector for trusted base-workflow compatibility", (agent, expected) => {
+    expect(
+      resolveLiveSelector(MCP_BRIDGE_TEST_PATH, undefined, {
+        NEMOCLAW_MCP_BRIDGE_AGENT: agent,
+      }),
+    ).toBe(expected);
+    expect(
+      resolveLiveSelector(MCP_BRIDGE_TEST_PATH, expected, {
+        NEMOCLAW_MCP_BRIDGE_AGENT: agent,
+      }),
+    ).toBe(expected);
+  });
+
+  it("keeps the existing OpenClaw default for local MCP runs", () => {
+    expect(resolveLiveSelector(MCP_BRIDGE_TEST_PATH, undefined, {})).toBe("^mcp-bridge$");
+  });
+
+  it("rejects an unsupported MCP agent or mismatched explicit selector", () => {
+    expect(() =>
+      resolveLiveSelector(MCP_BRIDGE_TEST_PATH, undefined, {
+        NEMOCLAW_MCP_BRIDGE_AGENT: "all",
+      }),
+    ).toThrow(/unsupported NEMOCLAW_MCP_BRIDGE_AGENT/u);
+    expect(() =>
+      resolveLiveSelector(MCP_BRIDGE_TEST_PATH, "^mcp-bridge-hermes$", {
+        NEMOCLAW_MCP_BRIDGE_AGENT: "openclaw",
+      }),
+    ).toThrow(/does not match agent/u);
+  });
+
+  it("does not infer selectors for unrelated live tests", () => {
+    expect(
+      resolveLiveSelector("test/e2e/live/cloud-inference.test.ts", undefined, {
+        NEMOCLAW_MCP_BRIDGE_AGENT: "hermes",
+      }),
+    ).toBeUndefined();
+  });
+});
+
 describe("buildLiveVitestArgs (#6961)", () => {
   it("builds the standard invocation with a selector", () => {
     expect(
@@ -129,14 +175,14 @@ describe("buildLiveVitestArgs (#6961)", () => {
   it("omits the selector arguments for a single-file target", () => {
     expect(
       buildLiveVitestArgs({
-        testPath: "test/e2e/live/diagnostics.test.ts",
+        testPath: "test/e2e/live/cloud-inference.test.ts",
       }),
     ).toEqual([
       "vitest",
       "run",
       "--project",
       "e2e-live",
-      "test/e2e/live/diagnostics.test.ts",
+      "test/e2e/live/cloud-inference.test.ts",
       "--silent=false",
       "--reporter=default",
       `--reporter=${RISK_SIGNAL_REPORTER}`,
@@ -161,7 +207,7 @@ describe("buildLiveVitestArgs (#6961)", () => {
 });
 
 describe("runLiveVitestCommand (#6961)", () => {
-  const validArgs = ["run", "--test-path", "test/e2e/live/diagnostics.test.ts"];
+  const validArgs = ["run", "--test-path", "test/e2e/live/cloud-inference.test.ts"];
 
   it.each([
     ["child status", { status: 7, signal: null }, 7],
@@ -182,7 +228,7 @@ describe("runLiveVitestCommand (#6961)", () => {
         "run",
         "--project",
         "e2e-live",
-        "test/e2e/live/diagnostics.test.ts",
+        "test/e2e/live/cloud-inference.test.ts",
         "--silent=false",
         "--reporter=default",
         `--reporter=${RISK_SIGNAL_REPORTER}`,
@@ -202,10 +248,26 @@ describe("runLiveVitestCommand (#6961)", () => {
     expect(() => runLiveVitestCommand(validArgs, spawn)).toThrow(launchError);
   });
 
+  it("passes the inferred MCP selector to Vitest when trusted base YAML omits it", () => {
+    let spawned: Parameters<LiveVitestSpawner> | undefined;
+    const spawn: LiveVitestSpawner = (...args) => {
+      spawned = args;
+      return { status: 0 };
+    };
+
+    expect(
+      runLiveVitestCommand(["run", "--test-path", MCP_BRIDGE_TEST_PATH], spawn, {
+        NEMOCLAW_MCP_BRIDGE_AGENT: "hermes",
+      }),
+    ).toBe(0);
+    expect(spawned?.[1]).toContain("-t");
+    expect(spawned?.[1]).toContain("^mcp-bridge-hermes$");
+  });
+
   it.each([
     [
       "unknown option",
-      ["run", "--test-path", "test/e2e/live/diagnostics.test.ts", "--selctor", "^x$"],
+      ["run", "--test-path", "test/e2e/live/cloud-inference.test.ts", "--selctor", "^x$"],
     ],
     ["bare selector", [...validArgs, "--selector"]],
   ])("rejects an %s before spawning Vitest", (_label, args) => {

@@ -29,7 +29,7 @@ it.each([
 });
 
 it.each([
-  "hermes-dashboard",
+  "hermes-e2e",
   "hermes-discord",
   "hermes-shields-config",
   null,
@@ -40,7 +40,7 @@ it.each([
 it.each([
   ["rebuild-hermes", 15_000],
   ["rebuild-hermes-stale-base", 15_000],
-  ["hermes-dashboard", 60_000],
+  ["hermes-e2e", 60_000],
 ] as const)("wires the live %s comparison cadence into progress options (#7144)", (targetId, intervalMs) => {
   const samples: Array<{ kind: string; phase: string }> = [];
   const options = runnerComparisonProgressOptions(

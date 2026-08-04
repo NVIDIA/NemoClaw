@@ -32,15 +32,18 @@ const UPLOAD_ARTIFACT_ACTION = "actions/upload-artifact@043fb46d1a93c77aae656e7c
 const UPLOAD_ARTIFACT_ACTION_PREFIX = "actions/upload-artifact@";
 const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
+const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
 const MCP_SCANNED_UPLOAD_CONDITION =
   "${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}";
+const CREDENTIAL_WINDOW_SCANNED_UPLOAD_CONDITION =
+  "${{ always() && steps.credential_window_artifact_secret_scan.outcome == 'success' }}";
 const GATEWAY_AUTH_SCANNED_UPLOAD_CONDITION =
   "${{ always() && steps.artifact_safety.outcome == 'success' && steps.artifact_safety.outputs.approved_path != '' }}";
 const TARGET_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 const SCORECARD_RUNTIME_UPLOAD_CONTRACT: WorkflowStep = {
   name: "Upload E2E runtime summary",
-  if: "${{ always() && github.event_name == 'schedule' && steps.scorecard.outcome == 'success' }}",
+  if: "${{ always() && github.event_name == 'schedule' }}",
   uses: UPLOAD_E2E_ARTIFACTS_ACTION,
   with: {
     name: "e2e-runtime-summary",
@@ -67,12 +70,27 @@ type ExplicitUploadContract = {
 
 const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
   [
+    "generate-matrix",
+    {
+      name: "e2e-dispatch-${{ github.run_id }}-${{ github.run_attempt }}",
+      path: "${{ runner.temp }}/nemoclaw-e2e-dispatch/dispatch.json",
+    },
+  ],
+  [
+    "retired-selector-compatibility",
+    {
+      name: "e2e-retired-selector-compatibility",
+      path: "e2e-artifacts/live/retired-selector-compatibility/",
+    },
+  ],
+  [
     "staging-brev-launchable",
     {
       name: "staging-brev-launchable-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}",
       path: [
         "${{ steps.workspace.outputs.work_dir }}/lane.log",
-        "${{ steps.workspace.outputs.work_dir }}/qualification.json",
+        "${{ steps.workspace.outputs.work_dir }}/dispatch.json",
+        "${{ steps.workspace.outputs.work_dir }}/launchable-e2e.json",
         "${{ steps.workspace.outputs.work_dir }}/full-e2e.log",
         "${{ steps.workspace.outputs.work_dir }}/cleanup.json",
         "",
@@ -215,12 +233,21 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
       path: "e2e-artifacts/live/mcp-bridge-dev/${{ matrix.agent }}/",
     },
   ],
+  [
+    "openshell-credential-generation-window",
+    {
+      name: "e2e-openshell-credential-generation-window",
+      path: "e2e-artifacts/live/openshell-credential-generation-window/",
+    },
+  ],
 ]);
 
 const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
+  ["generate-matrix", "${{ github.event_name == 'workflow_dispatch' }}"],
   ["staging-brev-launchable", "${{ always() && steps.workspace.outputs.work_dir != '' }}"],
   ["mcp-bridge", MCP_SCANNED_UPLOAD_CONDITION],
   ["mcp-bridge-dev", MCP_SCANNED_UPLOAD_CONDITION],
+  ["openshell-credential-generation-window", CREDENTIAL_WINDOW_SCANNED_UPLOAD_CONDITION],
   ["openshell-gateway-auth-contract", GATEWAY_AUTH_SCANNED_UPLOAD_CONDITION],
 ]);
 
@@ -344,7 +371,9 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         const env = record(job.env);
         return (
           jobName === "staging-brev-launchable" ||
+          jobName === "generate-matrix" ||
           jobName === "live" ||
+          jobName === RETIRED_SELECTOR_COMPATIBILITY_JOB ||
           env.E2E_JOB === "1" ||
           env.NEMOCLAW_RUN_LIVE_E2E === "1" ||
           SHARED_E2E_JOBS.has(jobName) ||

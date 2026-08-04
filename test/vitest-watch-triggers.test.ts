@@ -48,22 +48,31 @@ const E2E_WORKFLOW_CONTRACTS = [
 ] as const;
 
 const OPAQUE_INPUTS = [
+  "Dockerfile",
+  "agents/hermes/Dockerfile",
+  "agents/langchain-deepagents-code/Dockerfile",
   "agents/hermes/policy-additions.yaml",
   "src/lib/messaging/channels/telegram/policy/openclaw.yaml",
   "nemoclaw-blueprint/policies/presets/local-inference.yaml",
+  "nemoclaw-blueprint/policies/presets/claude-code.yaml",
   "agents/hermes/runtime-config-guard.py",
   "agents/hermes/mcp-config-transaction.py",
   "test/e2e/lib/ci-compatible-inference.sh",
+  "scripts/setup-jetson.sh",
   "scripts/e2e/sanitize-trace-timing.py",
   "test/e2e/manifests/openclaw-nvidia.yaml",
   "test/e2e/docs/parity-inventory.generated.json",
   ".github/workflows/e2e.yaml",
   ".github/workflows/code-scanning.yaml",
+  ".github/workflows/approve-maintainer-pr-workflow-runs.yaml",
   ".github/workflows/pr-e2e-gate.yaml",
+  ".github/workflows/pr-review-advisor.yaml",
+  "tools/pr-review-advisor/openshell-policy.yaml",
   ".github/workflows/hosted-runner-recovery.yaml",
   ".github/workflows/wsl-e2e.yaml",
   ".github/workflows/macos-e2e.yaml",
   ".github/workflows/platform-vitest-main.yaml",
+  "tools/wsl/ci-helper.ps1",
   "ci/platform-vitest-macos-requirements.lock",
 ] as const;
 
@@ -78,6 +87,13 @@ describe("Vitest opaque-input watch triggers", () => {
   });
 
   it("maps current opaque inputs to their direct contract tests (#6692)", () => {
+    expect(triggeredBy("Dockerfile")).toEqual(["src/lib/onboard/managed-startup-profile.test.ts"]);
+    expect(triggeredBy("agents/hermes/Dockerfile")).toEqual([
+      "src/lib/onboard/managed-startup-profile.test.ts",
+    ]);
+    expect(triggeredBy("agents/langchain-deepagents-code/Dockerfile")).toEqual([
+      "src/lib/onboard/managed-startup-profile.test.ts",
+    ]);
     expect(triggeredBy("agents/hermes/policy-additions.yaml")).toEqual([
       "src/lib/onboard/initial-policy-real-policy.test.ts",
       "src/lib/onboard/initial-policy.test.ts",
@@ -88,6 +104,9 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("nemoclaw-blueprint/policies/presets/local-inference.yaml")).toEqual([
       "src/lib/onboard/inference-providers/compatible-endpoint-gateway-route.test.ts",
     ]);
+    expect(triggeredBy("nemoclaw-blueprint/policies/presets/claude-code.yaml")).toEqual([
+      "test/effective-policy-contracts.test.ts",
+    ]);
     expect(triggeredBy("agents/hermes/runtime-config-guard.py")).toEqual([
       "src/lib/actions/sandbox/gateway-restart-hermes-drift.test.ts",
     ]);
@@ -97,6 +116,7 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy("test/e2e/lib/ci-compatible-inference.sh")).toEqual([
       "test/e2e/support/hosted-inference.test.ts",
     ]);
+    expect(triggeredBy("scripts/setup-jetson.sh")).toEqual(["test/setup-jetson.test.ts"]);
     expect(triggeredBy("scripts/e2e/sanitize-trace-timing.py")).toEqual([
       "test/e2e/support/e2e-scorecard.test.ts",
       "test/e2e/support/sanitize-trace-timing.test.ts",
@@ -112,15 +132,27 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/code-scanning.yaml")).toEqual([
       "test/code-scanning-workflow.test.ts",
     ]);
+    expect(triggeredBy(".github/workflows/approve-maintainer-pr-workflow-runs.yaml")).toEqual([
+      "test/maintainer-pr-workflow-approval.test.ts",
+    ]);
     expect(triggeredBy(".github/workflows/pr-e2e-gate.yaml")).toEqual([
       "test/pr-e2e-gate-workflow.test.ts",
       "test/pr-e2e-required.test.ts",
+    ]);
+    expect(triggeredBy(".github/workflows/pr-review-advisor.yaml")).toEqual([
+      "test/pr-review-advisor-workflow-boundary.test.ts",
+      "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
+    ]);
+    expect(triggeredBy("tools/pr-review-advisor/openshell-policy.yaml")).toEqual([
+      "test/pr-review-advisor-openshell-workflow-boundary.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/hosted-runner-recovery.yaml")).toEqual([
       "test/hosted-runner-recovery-workflow.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/wsl-e2e.yaml")).toEqual([
       "test/hosted-runner-recovery-workflow.test.ts",
+      "test/platform-vitest-main-workflow.test.ts",
+      "test/wsl-ci-helper.test.ts",
     ]);
     expect(triggeredBy(".github/workflows/macos-e2e.yaml")).toEqual([
       "test/hosted-runner-recovery-workflow.test.ts",
@@ -128,6 +160,11 @@ describe("Vitest opaque-input watch triggers", () => {
     expect(triggeredBy(".github/workflows/platform-vitest-main.yaml")).toEqual([
       "test/hosted-runner-recovery-workflow.test.ts",
       "test/platform-vitest-main-workflow.test.ts",
+      "test/wsl-ci-helper.test.ts",
+    ]);
+    expect(triggeredBy("tools/wsl/ci-helper.ps1")).toEqual([
+      "test/platform-vitest-main-workflow.test.ts",
+      "test/wsl-ci-helper.test.ts",
     ]);
     expect(triggeredBy("ci/platform-vitest-macos-requirements.lock")).toEqual([
       "test/platform-vitest-main-workflow.test.ts",

@@ -72,11 +72,24 @@ export interface SandboxCreateIntent {
   readonly extraProviders?: readonly string[];
   /** Internal OpenClaw resume authority for exact registered provider reuse. */
   readonly reuseRegisteredCredentials?: true;
+  /** Internal durable handoff for one journaled same-name replacement. */
+  readonly recreateTransaction?: {
+    readonly id: string;
+    readonly targetGeneration: string;
+    readonly targetIntentFingerprint: string;
+  };
+  /** Validated non-secret Hermes environment assignments carried by a rebuild. */
+  readonly rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
 }
 
 export type OnboardOptions = {
   nonInteractive?: boolean;
   recreateSandbox?: boolean;
+  /** Internal CLI composition for host-only Google Chat tunnel effects. */
+  googlechatTunnelRuntime?: Omit<
+    import("../messaging/channels/googlechat/hooks/tunnel-runtime").GooglechatTunnelRuntimeDeps,
+    "prompt" | "sandboxName"
+  >;
   authoritativeResumeConfig?: boolean;
   /** Internal endpoint provenance preserved across an authoritative rebuild. */
   endpointSource?: import("../inference/selection").InferenceEndpointSource | null;
@@ -86,6 +99,8 @@ export type OnboardOptions = {
   targetGatewayPort?: number | null;
   /** Internal rebuild handoff: the outer destructive lifecycle owns the onboard lock. */
   onboardLockAlreadyHeld?: boolean;
+  /** Internal rebuild handoff: target fingerprint of the journal opened before deletion. */
+  recreateJournalTargetIntentFingerprint?: string | null;
   /** Internal one-shot handoff for a prevalidated managed DCode replacement. */
   preparedDcodeRebuild?: import("./prepared-dcode-rebuild").PreparedDcodeRebuildHandoff;
   /** Internal authoritative registry route captured before rebuild deletion. */
@@ -96,6 +111,8 @@ export type OnboardOptions = {
   providerRecoveryReceipt?: import("./rebuild-route-handoff").ProviderRecoveryReceipt;
   /** Internal one-shot handoff for the exact image context validated before rebuild deletion. */
   preparedImageRebuild?: import("./prepared-dcode-rebuild").PreparedImageRebuildHandoff;
+  /** Internal validated non-secret Hermes environment assignments carried by a rebuild. */
+  rebuildPreservedEnv?: readonly import("../state/preserved-env").PreservedEnvFile[];
   /** Internal hint for resolving the sandbox base image without repeating remote discovery. */
   baseImageResolutionHint?:
     | import("../sandbox-base-image").SandboxBaseImageResolutionMetadata

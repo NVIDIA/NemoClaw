@@ -63,8 +63,9 @@ const EXPECTED_AUTH_ENV = {
   DOCKERHUB_TOKEN: `\${{ ${TRUSTED_PREDICATE} && secrets.DOCKERHUB_TOKEN || '' }}`,
 };
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
+// Shell-expanded values are unknown; only literal `--push=false` is statically non-writing.
 const REGISTRY_WRITE =
-  /(?:\bdocker\s+(?:image\s+)?push\b|\bdocker\s+buildx\s+build\b[^\n]*\s--push(?:\s|$)|\b(?:oras|crane)\s+push\b|\bskopeo\s+copy\b)/u;
+  /(?:\bdocker\s+(?:image\s+)?push\b|\bdocker\s+buildx\s+build\b[^\n]*\s--push(?:=(?!false(?=$|[\s;&|<>()]))[^\s;&|<>()]+)?(?=$|[\s;&|<>()])|\b(?:oras|crane)\s+push\b|\bskopeo\s+copy\b)/u;
 
 function normalizeShellContinuations(run: string): string {
   return run.replace(/\\\r?\n[ \t]*/gu, " ");
@@ -883,7 +884,7 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
   const consumerBuilds = steps(testJob).filter(
     (step) =>
       String(step.uses ?? "").startsWith("docker/build-push-action@") ||
-      /\bdocker\s+(?:build|buildx\s+build)\b/u.test(step.run ?? ""),
+      /\bdocker\s+(?:build|buildx\s+build)\b/u.test(normalizeShellContinuations(step.run ?? "")),
   );
   if (consumerBuilds.length !== 0) {
     errors.push("Hermes image test consumer must not rebuild the prebuilt image");

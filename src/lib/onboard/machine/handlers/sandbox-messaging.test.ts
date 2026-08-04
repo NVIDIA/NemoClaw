@@ -176,6 +176,7 @@ function withMessagingCheckpoint(
     gatewayAuthority: decisionUnset(),
     effectGroups: {},
     bindings: { credentialEnvs: [], registeredProviders: [] },
+    sandboxRecreate: null,
   };
   session.checkpoint = checkpoint;
   return session;

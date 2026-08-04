@@ -45,7 +45,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
-
 function githubResponse(value?: unknown, status = 200): Response {
   return {
     ok: status >= 200 && status < 300,
@@ -329,8 +328,8 @@ function mutationResponse(request: RecordedGitHubRequest, id = 18): Response {
     checkRun(id, {
       status: "in_progress",
       conclusion: null,
-      ...(request.body as Record<string, unknown> | undefined),
       details_url: `https://github.com/NVIDIA/NemoClaw/runs/${id}`,
+      ...(request.body as Record<string, unknown> | undefined),
     }),
   );
 }
@@ -387,11 +386,16 @@ function retryRoutes(
   let historyRead = 0;
   let annotationRead = 0;
   const source = canonicalRunnerLossCheck();
-  const defaultHistories = [
-    [source],
-    [source, checkRun(18, { status: "in_progress", conclusion: null, details_url: null })],
-    [source, checkRun(18, { status: "in_progress", conclusion: null, details_url: null })],
-  ];
+  const retryCheck = checkRun(18, {
+    status: "in_progress",
+    conclusion: null,
+    details_url: null,
+    output: {
+      title: "Preparing one-time hosted-runner-loss retry",
+      summary: `Revalidating the exact PR/base SHA and risk plan after [attempt 1](${ORIGINAL_RUN_URL}) lost its GitHub-hosted runner.`,
+    },
+  });
+  const defaultHistories = [[source], ...Array.from({ length: 3 }, () => [source, retryCheck])];
   return createGitHubFetchRouter(
     [
       githubFetchRoute(
@@ -443,8 +447,9 @@ function retryRoutes(
         (request) => mutationResponse(request),
       ),
       githubFetchRoute(
-        ({ url, method }) => url.endsWith("/check-runs/18") && method === "PATCH",
-        (request) => mutationResponse(request),
+        ({ url }) => url.endsWith("/check-runs/18"),
+        (request) =>
+          request.method === "GET" ? githubResponse(retryCheck) : mutationResponse(request),
       ),
       githubFetchRoute(
         ({ url, method }) => url.endsWith("/git/ref/heads/main") && method === "GET",
@@ -477,7 +482,6 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
     const context = setup();
     const requests: RecordedGitHubRequest[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(retryRoutes(requests));
-
     try {
       await expect(
         retryRunnerLossPrGate({ ...context.command, workflowRunAttempt: 2 }),
@@ -492,7 +496,6 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
     const context = setup();
     const requests: RecordedGitHubRequest[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(retryRoutes(requests));
-
     try {
       await expect(abandonRunnerLossRetrySource(17, 23, 2)).rejects.toThrow(
         /first controller workflow run attempt/u,
@@ -591,7 +594,6 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
         ?.correlation_id;
       expect(correlationId).toMatch(/^[a-f0-9-]{36}$/u);
       expect(correlationId).not.toBe(ORIGINAL_CORRELATION_ID);
-
       const retryState = JSON.parse(fs.readFileSync(context.retryStatePath, "utf8"));
       expect(retryState).toEqual({ ...state(), correlationId });
       expect(fs.readFileSync(context.statePath, "utf8")).toBe(context.serializedState);
@@ -605,7 +607,7 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
       ).toHaveLength(0);
       expect(
         requests.filter((request) => request.url.includes(`/commits/${HEAD_SHA}/check-runs?`)),
-      ).toHaveLength(3);
+      ).toHaveLength(4);
       expect(
         requests.some((request) => request.url.includes("/actions/runs/23/attempts/1/jobs?")),
       ).toBe(true);
@@ -615,7 +617,7 @@ describe("PR E2E one-time hosted-runner-loss retry", () => {
       expect(
         new Set(
           requests
-            .filter((request) => request.url.endsWith("/check-runs/18"))
+            .filter((request) => request.url.endsWith("/check-runs/18") && request.body)
             .map((request) => (request.body as { output?: { title?: string } }).output?.title),
         ),
       ).toEqual(new Set(["Preparing one-time hosted-runner-loss retry", "Running 2 E2E checks"]));

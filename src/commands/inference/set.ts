@@ -7,6 +7,7 @@ import { InferenceSetError, runInferenceSet } from "../../lib/actions/inference-
 import { nonEmptyFlag } from "../../lib/cli/flag-helpers";
 import { inferenceSetRequiredFlagsFailureLines } from "../../lib/cli/inference-set-help";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
+import { REASONING_EFFORT_VALUES } from "../../lib/onboard/reasoning-mode";
 
 // Global inference:set is paired with the sandbox-first sandbox:inference:set
 // command; both delegate to the shared runInferenceSet action.
@@ -17,7 +18,7 @@ export default class InferenceSetCommand extends NemoClawCommand {
   static description =
     "Update the OpenShell inference route and sync the running OpenClaw or Hermes sandbox config.";
   static usage = [
-    "inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>]",
+    "inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>] [--reasoning-effort <effort>]",
   ];
   static examples = [
     "<%= config.bin %> inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b",
@@ -44,6 +45,11 @@ export default class InferenceSetCommand extends NemoClawCommand {
       description:
         "Trusted API family to persist for compatible custom providers (openai-completions, anthropic-messages, openai-responses)",
     }),
+    "reasoning-effort": Flags.string({
+      description:
+        "Reasoning effort to send in the request body of a compatible OpenAI endpoint (low, medium, high, or default to clear it)",
+      options: [...REASONING_EFFORT_VALUES],
+    }),
   };
 
   public async run(): Promise<void> {
@@ -61,6 +67,7 @@ export default class InferenceSetCommand extends NemoClawCommand {
         endpointUrl: flags["endpoint-url"] ?? null,
         credentialEnv: flags["credential-env"] ?? null,
         inferenceApi: flags["inference-api"] ?? null,
+        reasoningEffort: flags["reasoning-effort"] ?? null,
       });
     } catch (error) {
       if (error instanceof InferenceSetError) {

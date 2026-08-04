@@ -71,6 +71,40 @@ describe("evaluateTelegramDiagnostics verdict", () => {
     ).toBe(true);
   });
 
+  it("reports unreachable for a definitive Bot API startup HTTP error", () => {
+    for (const status of [403, 429, 500, 502, 503]) {
+      const report = evaluateTelegramDiagnostics(
+        baseInput({ breadcrumbs: breadcrumbs({ startupHttpError: status }) }),
+      );
+      expect(report.verdict).toBe("unreachable");
+    }
+  });
+
+  it("keeps provider-ready ahead of a stale Bot API startup error", () => {
+    const idle = evaluateTelegramDiagnostics(
+      baseInput({ breadcrumbs: breadcrumbs({ providerReady: true, startupHttpError: 502 }) }),
+    );
+    expect(idle.verdict).toBe("idle");
+
+    const healthy = evaluateTelegramDiagnostics(
+      baseInput({
+        breadcrumbs: breadcrumbs({
+          providerReady: true,
+          inboundReceived: true,
+          startupHttpError: 502,
+        }),
+      }),
+    );
+    expect(healthy.verdict).toBe("healthy");
+  });
+
+  it("stays unknown when there is no conclusive breadcrumb", () => {
+    expect(evaluateTelegramDiagnostics(baseInput({ breadcrumbs: null })).verdict).toBe("unknown");
+    expect(evaluateTelegramDiagnostics(baseInput({ breadcrumbs: breadcrumbs() })).verdict).toBe(
+      "unknown",
+    );
+  });
+
   it("reports not_started when the gateway process is dead or the bridge never started", () => {
     expect(evaluateTelegramDiagnostics(baseInput({ gatewayProcessAlive: false })).verdict).toBe(
       "not_started",

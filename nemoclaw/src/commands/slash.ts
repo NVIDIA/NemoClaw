@@ -13,17 +13,13 @@
  */
 
 import { loadState } from "../blueprint/state.js";
-import {
-  getPluginConfig,
-  type OpenClawPluginApi,
-  type PluginCommandContext,
-  type PluginCommandResult,
-} from "../index.js";
+import type { OpenClawPluginApi, PluginCommandContext, PluginCommandResult } from "../index.js";
 import {
   describeOnboardEndpoint,
   describeOnboardProvider,
   loadOnboardConfig,
 } from "../onboard/config.js";
+import { getPluginConfig } from "../plugin-config.js";
 import { slashConfigShow } from "./config-show.js";
 import { slashShieldsStatus } from "./shields-status.js";
 

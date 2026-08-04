@@ -51,6 +51,22 @@ describe("sandbox build context staging", () => {
       "package.json",
       "package-lock.json",
       "tsconfig.json",
+      "install-reviewed-runtime.sh",
+      "build-runtime.ts",
+      "mcp-tool-discovery.ts",
+      "streamable-http-client.test.ts",
+      "tool-discovery-core.ts",
+    ]) {
+      writeFixture(
+        path.join("tools", "mcp-tool-discovery-runtime", fileName),
+        "fixture\n",
+        fileName === "install-reviewed-runtime.sh" ? 0o755 : 0o644,
+      );
+    }
+    for (const fileName of [
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
       "openclaw.plugin.json",
     ]) {
       writeFixture(path.join("nemoclaw", fileName), "{}\n", 0o600);
@@ -115,6 +131,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-chat-send.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-mcp-npx.mts"));
+    writeFixture(path.join("scripts", "patch-openclaw-mcp-reliability.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-issue-4434-diagnostics.mts"));
     writeFixture(path.join("scripts", "patch-openclaw-device-self-approval.mts"));
     writeFixture(path.join("scripts", "extract-semver.sh"));
@@ -210,6 +227,31 @@ describe("sandbox build context staging", () => {
     }
   }
 
+  function expectStagedMcpToolDiscoveryRuntime(buildCtx: string, sourceRoot: string) {
+    const runtimeDir = path.join(buildCtx, "tools", "mcp-tool-discovery-runtime");
+    expect(fs.readdirSync(runtimeDir).sort()).toEqual([
+      "build-runtime.ts",
+      "install-reviewed-runtime.sh",
+      "mcp-tool-discovery.ts",
+      "package-lock.json",
+      "package.json",
+      "streamable-http-client.test.ts",
+      "tool-discovery-core.ts",
+      "tsconfig.json",
+    ]);
+    for (const fileName of fs.readdirSync(runtimeDir)) {
+      expect(fs.readFileSync(path.join(runtimeDir, fileName), "utf8")).toBe(
+        fs.readFileSync(
+          path.join(sourceRoot, "tools", "mcp-tool-discovery-runtime", fileName),
+          "utf8",
+        ),
+      );
+      expect((fs.statSync(path.join(runtimeDir, fileName)).mode & 0o777).toString(8)).toBe(
+        fileName === "install-reviewed-runtime.sh" ? "755" : "644",
+      );
+    }
+  }
+
   function expectStagedToolDisclosureContract(buildCtx: string) {
     expect(fs.existsSync(path.join(buildCtx, "src", "lib", "tool-disclosure.ts"))).toBe(true);
   }
@@ -291,6 +333,7 @@ describe("sandbox build context staging", () => {
       const { buildCtx } = stageOptimizedSandboxBuildContext(sourceRoot, tmpDir);
       expectStagedBlueprintModes(buildCtx);
       expectStagedOpenClawRuntimeGraphs(buildCtx, sourceRoot);
+      expectStagedMcpToolDiscoveryRuntime(buildCtx, sourceRoot);
       expectStagedToolDisclosureContract(buildCtx);
     } finally {
       fs.rmSync(sourceRoot, { recursive: true, force: true });
@@ -321,6 +364,7 @@ describe("sandbox build context staging", () => {
       const { buildCtx } = stageLegacySandboxBuildContext(sourceRoot, tmpDir);
       expectStagedBlueprintModes(buildCtx);
       expectStagedOpenClawRuntimeGraphs(buildCtx, sourceRoot);
+      expectStagedMcpToolDiscoveryRuntime(buildCtx, sourceRoot);
       expectStagedToolDisclosureContract(buildCtx);
     } finally {
       fs.rmSync(sourceRoot, { recursive: true, force: true });
@@ -428,6 +472,7 @@ describe("sandbox build context staging", () => {
         fs.readFileSync(path.join(repoRoot, "ci", "npm-audit-exceptions.json"), "utf8"),
       );
       expectStagedOpenClawRuntimeGraphs(buildCtx, repoRoot);
+      expectStagedMcpToolDiscoveryRuntime(buildCtx, repoRoot);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", ".venv"))).toBe(false);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "blueprint.yaml"))).toBe(true);
       expect(
@@ -513,6 +558,9 @@ describe("sandbox build context staging", () => {
       expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-mcp-npx.mts"))).toBe(
         true,
       );
+      expect(
+        fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-mcp-reliability.mts")),
+      ).toBe(true);
       expect(
         fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-issue-4434-diagnostics.mts")),
       ).toBe(true);
