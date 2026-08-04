@@ -793,12 +793,147 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
         },
       });
       await expect(approvePrE2E(approvalCommand(workDirs[1]!))).rejects.toThrow(
-        /matching pending E2E authorization state/u,
+        /coordination is terminal/u,
       );
       expect(requests.filter((request) => request.url.endsWith("/dispatches"))).toHaveLength(1);
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
       for (const workDir of workDirs) fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      name: "approval is early",
+      check: {
+        status: "in_progress",
+        conclusion: null,
+        output: { title: "Waiting for PR CI" },
+      },
+      expected: /coordination is still preparing.*Wait for the coordination title/u,
+    },
+    {
+      name: "coordination is queued",
+      check: {
+        status: "queued",
+        conclusion: null,
+        output: { title: "Maintainer approval required to run fork E2E" },
+      },
+      expected: /coordination is still preparing.*Wait for the coordination title/u,
+    },
+    {
+      name: "runner-loss retry is preparing",
+      check: {
+        status: "in_progress",
+        conclusion: null,
+        output: { title: "Preparing one-time hosted-runner-loss retry" },
+      },
+      expected: /coordination is still preparing.*Wait for the coordination title/u,
+    },
+    {
+      name: "E2E authorization is already published",
+      check: {
+        status: "in_progress",
+        conclusion: null,
+        output: { title: "E2E execution authorized by @maintainer" },
+      },
+      expected: /E2E is already executing.*do not launch another approval/u,
+    },
+    {
+      name: "E2E is already running",
+      check: {
+        status: "in_progress",
+        conclusion: null,
+        output: { title: "Running 3 E2E checks" },
+      },
+      expected: /E2E is already executing.*do not launch another approval/u,
+    },
+    {
+      name: "the gate is terminal",
+      check: {
+        status: "completed",
+        conclusion: "failure",
+        output: { title: "Maintainer approval required to run fork E2E" },
+      },
+      expected: /coordination is terminal.*do not reuse this approval/u,
+    },
+    {
+      name: "the coordination title is malformed",
+      check: {
+        status: "in_progress",
+        conclusion: null,
+        output: { title: "unexpected remote title" },
+      },
+      expected: /coordination is malformed or unknown.*do not retry/u,
+    },
+    {
+      name: "the coordination title is missing",
+      check: {
+        status: "in_progress",
+        conclusion: null,
+        output: {},
+      },
+      expected: /coordination is malformed or unknown.*do not retry/u,
+    },
+    {
+      name: "the coordination title is null",
+      check: {
+        status: "in_progress",
+        conclusion: null,
+        output: { title: null },
+      },
+      expected: /coordination is malformed or unknown.*do not retry/u,
+    },
+    {
+      name: "the coordination title is not a string",
+      check: {
+        status: "in_progress",
+        conclusion: null,
+        output: { title: 7319 },
+      },
+      expected: /coordination is malformed or unknown.*do not retry/u,
+    },
+  ])("rejects fork authorization when $name", async ({ check, expected }) => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-title-"));
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    const requests: RecordedGitHubRequest[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/collaborators/maintainer/permission"),
+            () => githubResponse({ role_name: "maintain", user: { login: "maintainer" } }),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.endsWith("/pulls/42"),
+            () => githubResponse(forkPullRequest()),
+          ),
+          githubFetchRoute(
+            ({ url }) => url.includes("/pulls/42/files?"),
+            () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
+          ),
+          existingPrGateCheckRunsRoute(check),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      const error = await approvePrE2E(approvalCommand(workDir)).then(
+        () => undefined,
+        (reason: unknown) => reason,
+      );
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(expected);
+      expect((error as Error).message).toContain("Maintainer approval required to run fork E2E");
+      expect((error as Error).message).not.toContain("unexpected remote title");
+      expect((error as Error).message).not.toContain("7319");
+      expect((error as Error).message).not.toContain("null");
+      expect(requests.some((request) => request.method === "PATCH")).toBe(false);
+      expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
     }
   });
 

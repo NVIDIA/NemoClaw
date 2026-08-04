@@ -137,7 +137,7 @@ describe("selected route consumers", () => {
     expect(reverifyBridgeReachability).not.toHaveBeenCalled();
   });
 
-  it("skips compatibility-only inference gates after native wins", () => {
+  it("skips compatibility-only inference gates after native wins", async () => {
     const execInSandbox = vi.fn();
     expect(
       verifyDockerGpuSandboxLocalInference(GPU_CONFIG, "ollama-local", {
@@ -149,7 +149,7 @@ describe("selected route consumers", () => {
     ).toEqual({ status: "skipped", reason: "not-docker-gpu-patch" });
 
     const verifyDirectSandboxGpu = vi.fn();
-    verifyGpuSandboxAfterReady(GPU_CONFIG, "ollama-local", {
+    await verifyGpuSandboxAfterReady(GPU_CONFIG, "ollama-local", {
       sandboxName: "alpha",
       dockerDriverGateway: true,
       selectedRoute: "native",
@@ -162,11 +162,11 @@ describe("selected route consumers", () => {
     expect(execInSandbox).not.toHaveBeenCalled();
   });
 
-  it("defers native proof diagnostics while automatic fallback owns recovery", () => {
+  it("defers native proof diagnostics while automatic fallback owns recovery", async () => {
     const proofError = new Error("native CUDA proof failed");
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      expect(() =>
+      await expect(
         verifyGpuSandboxAfterReady(GPU_CONFIG, "ollama-local", {
           sandboxName: "alpha",
           dockerDriverGateway: true,
@@ -178,7 +178,7 @@ describe("selected route consumers", () => {
           selectedMode: () => null,
           runCaptureOpenshell: vi.fn(() => ""),
         }),
-      ).toThrow(proofError);
+      ).rejects.toThrow(proofError);
       expect(consoleError).not.toHaveBeenCalled();
     } finally {
       consoleError.mockRestore();
