@@ -268,7 +268,7 @@ RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 # Replace npm 11.18.0's private brace-expansion 5.0.7 package with the
-# registry- and SRI-pinned 5.0.8 release.
+# registry- and SRI-pinned 5.0.9 release.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
     --npm-root /usr/local/lib/node_modules/npm
