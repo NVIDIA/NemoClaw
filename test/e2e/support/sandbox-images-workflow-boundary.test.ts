@@ -428,10 +428,20 @@ describe("sandbox image workflow boundary", () => {
     const hermes = probe.steps!.find(
       (step) => step.name === "Build and verify Hermes messaging plan boundary",
     )!;
-    hermes.run = hermes.run!.replace(
-      "check-messaging-plan-image-boundary.mts verify",
-      "check-messaging-plan-image-boundary.mts bypass",
-    );
+    hermes.run = hermes
+      .run!.replace(
+        "corporate_ca_bundle=/etc/ssl/certs/ca-certificates.crt",
+        "corporate_ca_bundle=/missing/ca-certificates.crt",
+      )
+      .replace(
+        '--build-arg "NEMOCLAW_CORPORATE_CA_B64=${corporate_ca_b64}"',
+        '--build-arg "NEMOCLAW_CORPORATE_CA_B64="',
+      )
+      .replace("crl2pkcs7 -nocrl", "version")
+      .replace(
+        "check-messaging-plan-image-boundary.mts verify",
+        "check-messaging-plan-image-boundary.mts bypass",
+      );
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
@@ -440,6 +450,9 @@ describe("sandbox image workflow boundary", () => {
         "messaging plan image boundary must set up Node exactly once",
         "messaging plan image boundary must use Node 22.19.0",
         'openclaw messaging plan image boundary must include scripts/check-production-build-args.sh "${build_args[@]}"',
+        'hermes messaging plan image boundary must include corporate_ca_bundle=/etc/ssl/certs/ca-certificates.crt test -s "$corporate_ca_bundle" corporate_ca_b64="$(base64 -w 0 "$corporate_ca_bundle")"',
+        'hermes messaging plan image boundary must include --build-arg "NEMOCLAW_CORPORATE_CA_B64=${corporate_ca_b64}"',
+        "hermes messaging plan image boundary must include docker run --rm --network none --entrypoint openssl nemoclaw-hermes-plan-boundary crl2pkcs7 -nocrl -certfile /usr/local/share/nemoclaw/corporate-ca.pem -out /dev/null",
         "hermes messaging plan image boundary must include node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts verify nemoclaw-hermes-plan-boundary hermes",
         "messaging plan image boundary must not publish probe image artifacts",
       ]),

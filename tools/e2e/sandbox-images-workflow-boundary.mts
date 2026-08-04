@@ -597,6 +597,7 @@ function validateMessagingPlanBoundaryBuild(
     readonly agent: "hermes" | "openclaw";
     readonly baseArgName: "BASE_IMAGE";
     readonly baseEnvName: "BASE_IMAGE" | "HERMES_BASE_IMAGE";
+    readonly extraRequiredFragments?: readonly string[];
     readonly stepName: string;
     readonly target: string;
   },
@@ -614,6 +615,7 @@ function validateMessagingPlanBoundaryBuild(
     'scripts/check-production-build-args.sh "${build_args[@]}"',
     `docker build \"\${build_args[@]}\" -t ${options.target} .`,
     `node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts verify ${options.target} ${options.agent}`,
+    ...(options.extraRequiredFragments ?? []),
   ];
 
   if (step.shell !== "bash" || !isDeepStrictEqual(record(step.env), expectedEnv)) {
@@ -677,6 +679,11 @@ function validateMessagingPlanImageBoundary(
     agent: "hermes",
     baseArgName: "BASE_IMAGE",
     baseEnvName: "HERMES_BASE_IMAGE",
+    extraRequiredFragments: [
+      'corporate_ca_bundle=/etc/ssl/certs/ca-certificates.crt test -s "$corporate_ca_bundle" corporate_ca_b64="$(base64 -w 0 "$corporate_ca_bundle")"',
+      '--build-arg "NEMOCLAW_CORPORATE_CA_B64=${corporate_ca_b64}"',
+      "docker run --rm --network none --entrypoint openssl nemoclaw-hermes-plan-boundary crl2pkcs7 -nocrl -certfile /usr/local/share/nemoclaw/corporate-ca.pem -out /dev/null",
+    ],
     stepName: "Build and verify Hermes messaging plan boundary",
     target: "nemoclaw-hermes-plan-boundary",
   });
