@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { NODE_BASES_REQUIRING_BUNDLED_NPM_TAR_PATCH } from "../scripts/patch-bundled-npm-tar.mts";
+import { requireSingleDockerfileRunCommand } from "./helpers/dockerfile-run-commands";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const dockerfiles = [
@@ -62,7 +63,7 @@ describe("node-tar image remediation contract", () => {
   ])("installs curl before patching the bundled npm tar in $file", (file) => {
     const source = completedStage(fs.readFileSync(path.join(repoRoot, file), "utf8"));
     const curlInstall = source.indexOf("curl=");
-    const patchRun = source.indexOf(patchCommand);
+    const patchRun = requireSingleDockerfileRunCommand(source, patchCommand).commandStart;
 
     expect(curlInstall, file).toBeGreaterThanOrEqual(0);
     expect(patchRun, file).toBeGreaterThan(curlInstall);
@@ -89,13 +90,14 @@ describe("node-tar image remediation contract", () => {
     const patchCopy = patchInputStage.indexOf(
       "COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts",
     );
-    const patchRun = source.indexOf(patchCommand);
+    const patchRun = requireSingleDockerfileRunCommand(source, patchCommand).commandStart;
     const scanCopy = scanInputStage.indexOf(
       "COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts",
     );
-    const scanRun = source.indexOf(
+    const scanRun = requireSingleDockerfileRunCommand(
+      source,
       "node --experimental-strip-types /scripts/checks/node-tar-image-scan.mts",
-    );
+    ).commandStart;
     const patchInputReady = patchPayloadLayer >= 0 ? patchPayloadLayer : patchCopy;
     const scanInputReady = scanPayloadLayer >= 0 ? scanPayloadLayer : scanCopy;
 
@@ -148,13 +150,14 @@ describe("reviewed npm image remediation contract", () => {
     { file: "agents/langchain-deepagents-code/Dockerfile.base", installsWithNpm: false },
   ])("upgrades npm before use in $file", ({ file, installsWithNpm }) => {
     const source = completedStage(fs.readFileSync(path.join(repoRoot, file), "utf8"));
-    const patchRun = source.indexOf(patchCommand);
+    const patchRun = requireSingleDockerfileRunCommand(source, patchCommand).commandStart;
     const upgradeCopy = source.indexOf(
       "COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts",
     );
-    const upgradeRun = source.indexOf(
-      "RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
-    );
+    const upgradeRun = requireSingleDockerfileRunCommand(
+      source,
+      "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+    ).commandStart;
 
     expect(upgradeCopy, file).toBeGreaterThanOrEqual(0);
     expect(patchRun, file).toBeGreaterThan(upgradeCopy);

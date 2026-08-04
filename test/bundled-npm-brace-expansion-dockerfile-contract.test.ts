@@ -12,6 +12,7 @@ import {
   REVIEWED_NPM_VERSION,
 } from "../scripts/patch-bundled-npm-brace-expansion.mts";
 import { REVIEWED_NPM_VERSION as UPGRADED_NPM_VERSION } from "../scripts/upgrade-bundled-npm.mts";
+import { requireSingleDockerfileRunCommand } from "./helpers/dockerfile-run-commands";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const baseDockerfiles = [
@@ -43,15 +44,16 @@ describe("bundled npm brace-expansion image remediation contract", () => {
   it.each(baseDockerfiles)("patches the reviewed npm tree after upgrading it in %s", (file) => {
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const copy = source.indexOf(copyInstruction);
-    const upgrade = source.indexOf(
-      "RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
-    );
-    const patch = source.indexOf(patchInstruction);
+    const upgrade = requireSingleDockerfileRunCommand(
+      source,
+      "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+    ).commandStart;
+    const patch = requireSingleDockerfileRunCommand(source, patchInstruction);
 
     expect(copy, file).toBeGreaterThanOrEqual(0);
     expect(upgrade, file).toBeGreaterThan(copy);
-    expect(patch, file).toBeGreaterThan(upgrade);
-    expect(source.slice(patch)).toContain("--npm-root /usr/local/lib/node_modules/npm");
+    expect(patch.commandStart, file).toBeGreaterThan(upgrade);
+    expect(patch.instruction.text, file).toContain("--npm-root /usr/local/lib/node_modules/npm");
   });
 
   it.each(
@@ -59,14 +61,17 @@ describe("bundled npm brace-expansion image remediation contract", () => {
   )("reasserts the private package fix in the completed %s filesystem", (file) => {
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const copy = source.indexOf(copyInstruction);
-    const tarPatch = source.indexOf(
+    const tarPatch = requireSingleDockerfileRunCommand(
+      source,
       "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
-    );
-    const bracePatch = source.indexOf(patchInstruction);
+    ).commandStart;
+    const bracePatch = requireSingleDockerfileRunCommand(source, patchInstruction);
 
     expect(copy, file).toBeGreaterThanOrEqual(0);
     expect(tarPatch, file).toBeGreaterThan(copy);
-    expect(bracePatch, file).toBeGreaterThan(tarPatch);
-    expect(source.slice(bracePatch)).toContain("--npm-root /usr/local/lib/node_modules/npm");
+    expect(bracePatch.commandStart, file).toBeGreaterThan(tarPatch);
+    expect(bracePatch.instruction.text, file).toContain(
+      "--npm-root /usr/local/lib/node_modules/npm",
+    );
   });
 });

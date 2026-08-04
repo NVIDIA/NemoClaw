@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { requireSingleDockerfileRunCommand } from "./helpers/dockerfile-run-commands";
 import { dockerRunCommandBetween, runDockerShell } from "./helpers/hermes-dockerfile-run";
 import { expectManagedBootstrapNativeImageContract } from "./support/managed-bootstrap-image-contract";
 
@@ -317,10 +318,10 @@ describe("Hermes final image layout", () => {
     const runtime = indexOfRequired(finalStage, runtimeCopy);
     const wrapper = indexOfRequired(finalStage, wrapperCopy);
     const scan = indexOfRequired(finalStage, scanCopy);
-    const tarPatch = indexOfRequired(
+    const tarPatch = requireSingleDockerfileRunCommand(
       finalStage,
       "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
-    );
+    ).commandStart;
     const certifiInstall = indexOfRequired(finalStage, "RUN _hermes_certifi=");
     const agentChmod = indexOfRequired(
       finalStage,
