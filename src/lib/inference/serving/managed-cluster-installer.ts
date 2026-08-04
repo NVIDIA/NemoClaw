@@ -10,7 +10,7 @@ import {
   type ManagedInferenceResolution,
   type ManagedInferenceResolverInput,
   type ManagedInferenceServingRecipe,
-} from "./catalog-types.js";
+} from "./types.js";
 import {
   claimManagedClusterManagedServingCapability,
   type ManagedClusterConfirmedManagedServingCapability,
@@ -230,7 +230,7 @@ function managedProfile(
 ): VllmProfile {
   const head = managedClusterHeadRole(plan);
   return {
-    name: recipe.metadata.displayName,
+    name: recipe.metadata.displayName ?? recipe.metadata.id,
     platform: "spark",
     image: head.image,
     imageDownloadSizeBytes: head.runtime.imageDownloadSizeBytes,
@@ -249,7 +249,7 @@ function managedModel(
 ): VllmModelDef {
   return {
     id: plan.model.id,
-    label: recipe.metadata.displayName,
+    label: recipe.metadata.displayName ?? recipe.metadata.id,
     envValue: plan.model.servedName,
     downloadSizeBytes: managedClusterHeadRole(plan).preparation.modelDownloadSizeBytes,
     maxModelLen: requiredPositiveIntegerArgument(recipe, "--max-model-len"),

@@ -10,7 +10,7 @@
     "metadata": { "$ref": "#/$defs/metadata" },
     "spec": {
       "type": "object",
-      "required": ["selection", "priority", "requirements", "plan"],
+      "required": ["selection", "priority", "plan"],
       "properties": {
         "selection": { "enum": ["automatic", "explicit-only", "disabled"] },
         "priority": { "type": "integer", "minimum": -1000000, "maximum": 1000000 },
@@ -36,7 +36,7 @@
         },
         "plan": {
           "type": "object",
-          "required": ["backend", "recipeRef", "bindings"],
+          "required": ["backend", "recipeRef"],
           "properties": {
             "backend": { "$ref": "#/$defs/token" },
             "recipeRef": { "$ref": "#/$defs/stableId" },
@@ -58,7 +58,7 @@
   "$defs": {
     "metadata": {
       "type": "object",
-      "required": ["id", "displayName"],
+      "required": ["id"],
       "properties": {
         "id": { "$ref": "#/$defs/stableId" },
         "displayName": { "type": "string", "minLength": 1, "maxLength": 128 }
@@ -78,7 +78,7 @@
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
     },
     "scope": {
-      "enum": ["everyNode", "anyNode"]
+      "enum": ["controller", "everyNode", "anyNode"]
     },
     "state": {
       "type": "string",
@@ -129,12 +129,24 @@
         "operator": { "enum": ["equals", "oneOf", "atLeast", "atMost", "between"] },
         "value": {
           "oneOf": [
-            { "type": ["string", "number", "boolean"] },
+            {
+              "oneOf": [
+                { "type": "string" },
+                { "type": "number" },
+                { "type": "boolean" }
+              ]
+            },
             {
               "type": "array",
               "minItems": 1,
               "maxItems": 128,
-              "items": { "type": ["string", "number", "boolean"] }
+              "items": {
+                "oneOf": [
+                  { "type": "string" },
+                  { "type": "number" },
+                  { "type": "boolean" }
+                ]
+              }
             }
           ]
         }

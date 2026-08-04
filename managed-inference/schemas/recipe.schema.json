@@ -10,7 +10,7 @@
     "metadata": { "$ref": "#/$defs/metadata" },
     "spec": {
       "type": "object",
-      "required": ["backend", "bindings", "model", "runtime", "execution", "serve", "readiness"],
+      "required": ["backend", "model", "execution"],
       "properties": {
         "backend": { "$ref": "#/$defs/token" },
         "bindings": {
@@ -22,21 +22,39 @@
         },
         "model": {
           "type": "object",
-          "required": ["id", "revision", "servedName", "downloadSizeBytes", "gated", "installFastSafetensors", "preparation"],
+          "required": ["id", "revision"],
           "properties": {
             "id": { "type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", "maxLength": 256 },
-            "revision": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+            "revision": { "type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64}|sha256:[0-9a-f]{64})$" },
             "servedName": { "$ref": "#/$defs/stableId" },
             "downloadSizeBytes": { "$ref": "#/$defs/positiveSafeInteger" },
             "gated": { "type": "boolean" },
             "installFastSafetensors": { "type": "boolean" },
-            "preparation": { "$ref": "#/$defs/modelPreparation" }
+            "preparation": { "$ref": "#/$defs/modelPreparation" },
+            "files": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "required": ["path", "digest"],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "pattern": "^(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+                  },
+                  "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+                },
+                "additionalProperties": false
+              }
+            }
           },
           "additionalProperties": false
         },
         "runtime": {
           "type": "object",
-          "required": ["image", "imageDownloadSizeBytes", "pullTimeoutSeconds", "architecture", "networkMode", "ipcMode", "sharedMemoryBytes", "gpuRequest", "devices", "ulimits", "modelCache", "temporaryFilesystems", "environment"],
           "properties": {
             "image": { "type": "string", "pattern": "^[a-z0-9.-]+(?::[0-9]+)?(?:/[a-z0-9._-]+)+@sha256:[0-9a-f]{64}$", "maxLength": 1024 },
             "imageDownloadSizeBytes": { "$ref": "#/$defs/positiveSafeInteger" },
@@ -85,13 +103,19 @@
               "maxProperties": 128,
               "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]{0,127}$" },
               "additionalProperties": { "type": "string", "maxLength": 4096 }
+            },
+            "components": {
+              "type": "object",
+              "maxProperties": 32,
+              "propertyNames": { "$ref": "#/$defs/stableId" },
+              "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 128 }
             }
           },
           "additionalProperties": false
         },
         "execution": {
           "type": "object",
-          "required": ["materializerRef", "lifecycleRef", "topologyBinding", "nodeCount", "tensorParallelSize", "pipelineParallelSize", "distributedExecutorBackend", "rendezvousPort"],
+          "required": ["materializerRef", "lifecycleRef"],
           "properties": {
             "materializerRef": { "$ref": "#/$defs/stableId" },
             "lifecycleRef": { "$ref": "#/$defs/stableId" },
@@ -106,7 +130,6 @@
         },
         "serve": {
           "type": "object",
-          "required": ["authentication", "executable", "arguments"],
           "properties": {
             "authentication": { "$ref": "#/$defs/token" },
             "executable": { "$ref": "#/$defs/absolutePath" },
@@ -149,7 +172,7 @@
   "$defs": {
     "metadata": {
       "type": "object",
-      "required": ["id", "displayName"],
+      "required": ["id"],
       "properties": {
         "id": { "$ref": "#/$defs/stableId" },
         "displayName": { "type": "string", "minLength": 1, "maxLength": 128 }

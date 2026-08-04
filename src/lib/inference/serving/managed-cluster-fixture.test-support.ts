@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { MANAGED_CLUSTER_VLLM_MATERIALIZER_REF } from "./adapter-registry.js";
-import { loadManagedInferenceCatalog } from "./catalog.js";
-import type { ResolvedManagedInferenceSelection } from "./catalog-types.js";
+import { loadManagedInferenceCatalog } from "./catalog-loader.js";
+import { managedInferenceDigest } from "./catalog-integrity.js";
+import type { ResolvedManagedInferenceSelection } from "./types.js";
 import {
   type ManagedClusterVllmPlan,
   materializeManagedClusterVllmPlan,
@@ -20,12 +21,9 @@ function fixtureCatalogDefinitions() {
   const catalog = loadManagedInferenceCatalog();
   for (const compiledPreset of catalog.presets) {
     const compiledRecipe = catalog.recipes.find(
-      ({ definition }) => definition.metadata.id === compiledPreset.definition.spec.plan.recipeRef,
+      ({ metadata }) => metadata.id === compiledPreset.spec.plan.recipeRef,
     );
-    if (
-      compiledRecipe?.definition.spec.execution.materializerRef ===
-      MANAGED_CLUSTER_VLLM_MATERIALIZER_REF
-    ) {
+    if (compiledRecipe?.spec.execution.materializerRef === MANAGED_CLUSTER_VLLM_MATERIALIZER_REF) {
       return { catalog, compiledPreset, compiledRecipe };
     }
   }
@@ -33,12 +31,12 @@ function fixtureCatalogDefinitions() {
 }
 
 export const FIXTURE_MANAGED_CLUSTER_PRESET_ID =
-  fixtureCatalogDefinitions().compiledPreset.definition.metadata.id;
+  fixtureCatalogDefinitions().compiledPreset.metadata.id;
 
 export function fixtureManagedClusterSelection(): ResolvedManagedInferenceSelection<ManagedClusterTopologyOutput> {
   const { catalog, compiledPreset, compiledRecipe } = fixtureCatalogDefinitions();
-  const preset = structuredClone(compiledPreset.definition);
-  const recipe = structuredClone(compiledRecipe.definition);
+  const preset = structuredClone(compiledPreset);
+  const recipe = structuredClone(compiledRecipe);
   const subjectNodeIds = ["spark-head", "spark-worker"] as const;
   const output: ManagedClusterTopologyOutput = {
     controllerNodeId: "spark-head",
@@ -111,8 +109,8 @@ export function fixtureManagedClusterSelection(): ResolvedManagedInferenceSelect
     outcome: "selected",
     selection: "automatic",
     catalogDigest: catalog.catalogDigest,
-    presetDigest: compiledPreset.definitionDigest,
-    recipeDigest: compiledRecipe.definitionDigest,
+    presetDigest: managedInferenceDigest(compiledPreset),
+    recipeDigest: managedInferenceDigest(compiledRecipe),
     preset,
     recipe,
     topologyQualification: {

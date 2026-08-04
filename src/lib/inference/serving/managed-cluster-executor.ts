@@ -20,9 +20,12 @@ import {
   NO_PREPARATION_REF,
   SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
 } from "./adapter-registry.js";
-import { getManagedInferenceCompiledPreset, getManagedInferenceCompiledRecipe } from "./catalog.js";
-import { managedInferenceHexDigest } from "./catalog-integrity.js";
-import type { ManagedInferenceServingRecipe } from "./catalog-types.js";
+import {
+  getManagedInferenceCompiledPreset,
+  getManagedInferenceCompiledRecipe,
+} from "./catalog-loader.js";
+import { managedInferenceDigest, managedInferenceHexDigest } from "./catalog-integrity.js";
+import type { ManagedInferenceServingRecipe } from "./types.js";
 import {
   isRelatedManagedVllmContainer,
   type ManagedClusterApiProbeRequest,
@@ -373,16 +376,16 @@ export function assertManagedClusterVllmExecutorConfig(
   if (
     !compiledPreset ||
     !compiledRecipe ||
-    compiledPreset.definitionDigest !== plan.presetDigest ||
-    compiledRecipe.definitionDigest !== plan.recipeDigest ||
-    compiledPreset.definition.spec.plan.recipeRef !== compiledRecipe.definition.metadata.id ||
-    compiledPreset.definition.spec.plan.backend !== compiledRecipe.definition.spec.backend
+    managedInferenceDigest(compiledPreset) !== plan.presetDigest ||
+    managedInferenceDigest(compiledRecipe) !== plan.recipeDigest ||
+    compiledPreset.spec.plan.recipeRef !== compiledRecipe.metadata.id ||
+    compiledPreset.spec.plan.backend !== compiledRecipe.spec.backend
   ) {
     throw new Error(
       "Managed cluster executor input does not match its selected definition digests",
     );
   }
-  const recipe = compiledRecipe.definition.spec;
+  const recipe = compiledRecipe.spec;
   const topologyIdentity = {
     id: plan.topologyId,
     schemaVersion: plan.topologySchemaVersion,
@@ -400,10 +403,10 @@ export function assertManagedClusterVllmExecutorConfig(
     schemaVersion: 1,
     adapterId: MANAGED_CLUSTER_VLLM_ADAPTER_ID,
     catalogDigest: plan.catalogDigest,
-    presetId: compiledPreset.definition.metadata.id,
-    presetDigest: compiledPreset.definitionDigest,
-    recipeId: compiledRecipe.definition.metadata.id,
-    recipeDigest: compiledRecipe.definitionDigest,
+    presetId: compiledPreset.metadata.id,
+    presetDigest: managedInferenceDigest(compiledPreset),
+    recipeId: compiledRecipe.metadata.id,
+    recipeDigest: managedInferenceDigest(compiledRecipe),
     topologyId: MANAGED_CLUSTER_TOPOLOGY_ID,
     topologySchemaVersion: MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
     topologySubjectDigest: plan.topologySubjectDigest,

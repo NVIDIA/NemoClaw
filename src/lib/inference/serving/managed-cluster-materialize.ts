@@ -12,7 +12,7 @@ import {
   isManagedClusterMaterializerOwnedEnvironment,
   MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
 } from "./adapter-registry.js";
-import { loadManagedInferenceCatalog } from "./catalog.js";
+import { loadManagedInferenceCatalog } from "./catalog-loader.js";
 import {
   immutableManagedInferenceCopy,
   managedInferenceDigest,
@@ -20,12 +20,11 @@ import {
 } from "./catalog-integrity.js";
 import {
   type CompiledManagedInferenceCatalog,
-  type CompiledManagedInferenceDefinition,
   isManagedInferenceMaterializerOwnedArgument,
   type ManagedInferenceServingPreset,
   type ManagedInferenceServingRecipe,
   type ResolvedManagedInferenceSelection,
-} from "./catalog-types.js";
+} from "./types.js";
 import {
   type ManagedClusterVllmPreparationPlan,
   materializeManagedClusterVllmPreparation,
@@ -195,27 +194,24 @@ function safeAbsolutePath(value: string): boolean {
 }
 
 function selectedDefinition<TDefinition extends { readonly metadata: { readonly id: string } }>(
-  definitions: readonly CompiledManagedInferenceDefinition<TDefinition>[],
+  definitions: readonly TDefinition[],
   selected: TDefinition,
   selectedDigest: string,
   label: string,
 ): TDefinition {
-  const matches = definitions.filter(
-    ({ definition }) => definition.metadata.id === selected.metadata.id,
-  );
+  const matches = definitions.filter(({ metadata }) => metadata.id === selected.metadata.id);
   if (matches.length !== 1) {
     fail(`selected ${label} ${selected.metadata.id} is not unique in the compiled catalog`);
   }
   const compiled = matches[0]!;
   if (
     !SHA256_PATTERN.test(selectedDigest) ||
-    compiled.definitionDigest !== selectedDigest ||
-    managedInferenceDigest(compiled.definition) !== selectedDigest ||
+    managedInferenceDigest(compiled) !== selectedDigest ||
     managedInferenceDigest(selected) !== selectedDigest
   ) {
     fail(`selected ${label} ${selected.metadata.id} does not match its definition digest`);
   }
-  return compiled.definition;
+  return compiled;
 }
 
 function assertCatalogSelection(
@@ -230,10 +226,7 @@ function assertCatalogSelection(
   ) {
     fail("the resolved selection does not match the compiled catalog digest");
   }
-  if (
-    !SHA256_PATTERN.test(catalog.sourceRevision) ||
-    managedInferenceDigest(catalog.sourceFiles) !== catalog.sourceRevision
-  ) {
+  if (!/^[0-9a-f]{40,64}$/u.test(catalog.sourceRevision)) {
     fail("the compiled catalog provenance is invalid");
   }
 

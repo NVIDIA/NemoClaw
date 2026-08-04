@@ -18,8 +18,8 @@ import {
   NO_PREPARATION_REF,
   SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
 } from "./adapter-registry.js";
-import { loadManagedInferenceCatalog } from "./catalog.js";
-import type { ManagedInferenceServingRecipe } from "./catalog-types.js";
+import { loadManagedInferenceCatalog } from "./catalog-loader.js";
+import type { ManagedInferenceServingRecipe } from "./types.js";
 import { fixtureManagedClusterSelection } from "./managed-cluster-fixture.test-support.js";
 import {
   MANAGED_CLUSTER_TOPOLOGY_ID,
@@ -28,9 +28,8 @@ import {
 
 function shippedRecipe(): ManagedInferenceServingRecipe {
   const recipe = loadManagedInferenceCatalog().recipes.find(
-    ({ definition }) =>
-      definition.spec.execution.materializerRef === MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
-  )?.definition;
+    ({ spec }) => spec.execution.materializerRef === MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
+  );
   expect(recipe).toBeDefined();
   return structuredClone(recipe as ManagedInferenceServingRecipe);
 }

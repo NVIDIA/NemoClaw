@@ -6,7 +6,7 @@ import net from "node:net";
 import { checkSystemReadinessSchemaVersion } from "../../readiness/compatibility.js";
 import type { SystemReadinessReport } from "../../readiness/types.js";
 import { managedInferenceDigest } from "./catalog-integrity.js";
-import type { ManagedInferenceTopologyQualification } from "./catalog-types.js";
+import type { ManagedInferenceTopologyQualification } from "./types.js";
 import { MANAGED_CLUSTER_ID_PATTERN } from "./managed-cluster-identifiers.js";
 
 export const MANAGED_CLUSTER_TOPOLOGY_ID = "host-cluster.direct-cx7" as const;

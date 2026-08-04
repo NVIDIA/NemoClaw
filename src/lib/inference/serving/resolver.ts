@@ -7,8 +7,8 @@ import {
   getManagedInferenceRecipeRegistrationError,
   getManagedInferenceTopologyQualificationDescriptor,
 } from "./adapter-registry.js";
-import { loadManagedInferenceCatalog } from "./catalog.js";
-import { immutableManagedInferenceCopy } from "./catalog-integrity.js";
+import { loadManagedInferenceCatalog } from "./catalog-loader.js";
+import { immutableManagedInferenceCopy, managedInferenceDigest } from "./catalog-integrity.js";
 import type {
   CompiledManagedInferenceCatalog,
   ManagedInferenceFactRequirement,
@@ -22,7 +22,7 @@ import type {
   ManagedInferenceServingRecipe,
   ManagedInferenceTopologyQualification,
   ManagedInferenceTopologyRequirement,
-} from "./catalog-types.js";
+} from "./types.js";
 
 export const MANAGED_INFERENCE_READINESS_MAX_AGE_MS = 30_000;
 const MAX_FUTURE_CLOCK_SKEW_MS = 5_000;
@@ -315,7 +315,7 @@ function recipeForPreset(
   preset: ManagedInferenceServingPreset,
 ): CompiledManagedInferenceCatalog["recipes"][number] {
   const matches = catalog.recipes.filter(
-    ({ definition }) => definition.metadata.id === preset.spec.plan.recipeRef,
+    ({ metadata }) => metadata.id === preset.spec.plan.recipeRef,
   );
   if (matches.length !== 1) {
     throw new Error(
@@ -323,7 +323,7 @@ function recipeForPreset(
     );
   }
   const compiledRecipe = matches[0]!;
-  const recipe = compiledRecipe.definition;
+  const recipe = compiledRecipe;
   if (recipe.spec.backend !== preset.spec.plan.backend) {
     throw new Error(
       `managed inference preset ${preset.metadata.id} backend does not match its recipe`,
@@ -345,9 +345,9 @@ function matchingCandidate<TOutput>(
   | { readonly outcome: "unmet"; readonly message: string }
   | { readonly outcome: "invalid-topology"; readonly message: string }
   | { readonly outcome: "incompatible-intent"; readonly message: string } {
-  const preset = compiledPreset.definition;
+  const preset = compiledPreset;
   const compiledRecipe = recipeForPreset(catalog, preset);
-  const recipe = compiledRecipe.definition;
+  const recipe = compiledRecipe;
   const intentError = intentCompatibilityError(input.intent ?? {}, preset, recipe);
   if (intentError) return { outcome: "incompatible-intent", message: intentError };
   const requirements = evaluateRequirements(
@@ -366,9 +366,9 @@ function matchingCandidate<TOutput>(
     outcome: "matched",
     candidate: {
       preset,
-      presetDigest: compiledPreset.definitionDigest,
+      presetDigest: managedInferenceDigest(compiledPreset),
       recipe,
-      recipeDigest: compiledRecipe.definitionDigest,
+      recipeDigest: managedInferenceDigest(compiledRecipe),
       priority: presetPriority(preset),
       topologyQualification: requirements.topologyQualifications[0]!,
     },
@@ -431,9 +431,7 @@ export function resolveManagedInferenceServing<TOutput>(
   }
 
   if (explicitPresetId) {
-    const matches = catalog.presets.filter(
-      ({ definition }) => definition.metadata.id === explicitPresetId,
-    );
+    const matches = catalog.presets.filter(({ metadata }) => metadata.id === explicitPresetId);
     if (matches.length !== 1) {
       return {
         outcome: "rejected",
@@ -442,7 +440,7 @@ export function resolveManagedInferenceServing<TOutput>(
       };
     }
     const compiledPreset = matches[0]!;
-    const preset = compiledPreset.definition;
+    const preset = compiledPreset;
     if (preset.spec.selection === "disabled") {
       return {
         outcome: "rejected",
@@ -469,7 +467,7 @@ export function resolveManagedInferenceServing<TOutput>(
   const matching: MatchingCandidate<TOutput>[] = [];
   let firstInvalidTopology: string | undefined;
   for (const compiledPreset of catalog.presets) {
-    const preset = compiledPreset.definition;
+    const preset = compiledPreset;
     if (preset.spec.selection !== "automatic") continue;
     const evaluated = matchingCandidate(catalog, compiledPreset, input);
     if (evaluated.outcome === "matched") matching.push(evaluated.candidate);

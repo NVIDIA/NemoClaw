@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  ReadinessEntityKind,
+  ServingCatalogRegistries,
+  ServingRecipe,
   ManagedInferenceServingRecipe,
   ManagedInferenceTopologyQualification,
-} from "./catalog-types.js";
+} from "./types.js";
 import {
   getManagedClusterTopologyArtifactError,
   MANAGED_CLUSTER_TOPOLOGY_ID,
@@ -485,4 +488,39 @@ export function getManagedInferenceRecipeRegistrationError(
     lifecycle.validateRecipe(recipe) ??
     preparation.validateRecipe(recipe)
   );
+}
+
+const SERVING_READINESS_REGISTRY: ServingCatalogRegistries["readiness"] = new Map<
+  string,
+  ReadinessEntityKind | ReadonlySet<ReadinessEntityKind>
+>([
+  ["host.platform.dgx_spark", new Set(["qualification", "capability"] as const)],
+  ["host.platform.supported", "capability"],
+  ["host.docker.available", "capability"],
+  ["host.docker.daemon_reachable", "capability"],
+  ["host.docker.runtime_supported", "capability"],
+  ["host.docker.storage_compatible", "capability"],
+  ["host.gpu.nvidia_available", "capability"],
+  ["host.gpu.container_toolkit_available", "capability"],
+  ["host.gpu.cdi_healthy", "capability"],
+] as const);
+
+export function getManagedInferenceServingCatalogRegistries(): ServingCatalogRegistries {
+  return {
+    materializers: new Set(MATERIALIZER_DESCRIPTORS.map(({ ref }) => ref)),
+    lifecycles: new Set(LIFECYCLE_DESCRIPTORS.map(({ ref }) => ref)),
+    readiness: SERVING_READINESS_REGISTRY,
+    facts: new Set(["cluster.nodeCount"]),
+    topologyQualifications: new Map(
+      TOPOLOGY_DESCRIPTORS.map((descriptor) => [
+        `${descriptor.id}@${String(descriptor.schemaVersion)}`,
+        {
+          bindingOutput: descriptor.bindingOutput,
+          outputSchema: descriptor.outputSchema,
+        },
+      ]),
+    ),
+    validateRecipe: (recipe: ServingRecipe) =>
+      getManagedInferenceRecipeRegistrationError(recipe as ManagedInferenceServingRecipe),
+  };
 }

@@ -6,9 +6,9 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadManagedInferenceCatalog } from "./serving/catalog";
+import { loadManagedInferenceCatalog } from "./serving/catalog-loader";
 import { managedInferenceDigest, managedInferenceHexDigest } from "./serving/catalog-integrity";
-import type { CompiledManagedInferenceCatalog } from "./serving/catalog-types";
+import type { CompiledManagedInferenceCatalog } from "./serving/types";
 import { fixtureManagedClusterSelection } from "./serving/managed-cluster-fixture.test-support";
 import {
   type ManagedClusterNodeSnapshot,
@@ -60,7 +60,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
-  vi.doUnmock("./serving/generated/catalog.json");
+  vi.doUnmock("./serving/catalog-loader");
   vi.resetModules();
   sshFixture.cleanup();
   fs.rmSync(root, { recursive: true, force: true });
@@ -113,52 +113,43 @@ function catalogWithUnrelatedProfile(): CompiledManagedInferenceCatalog {
   const selectedPreset = current.presets[0]!;
   const selectedRecipe = current.recipes[0]!;
   const unrelatedRecipe = {
-    ...selectedRecipe.definition,
-    metadata: { ...selectedRecipe.definition.metadata, id: "vllm.unrelated.managed-cluster.v1" },
+    ...selectedRecipe,
+    metadata: { ...selectedRecipe.metadata, id: "vllm.unrelated.managed-cluster.v1" },
   };
   const unrelatedPreset = {
-    ...selectedPreset.definition,
-    metadata: { ...selectedPreset.definition.metadata, id: "vllm.unrelated.managed-cluster" },
+    ...selectedPreset,
+    metadata: { ...selectedPreset.metadata, id: "vllm.unrelated.managed-cluster" },
     spec: {
-      ...selectedPreset.definition.spec,
+      ...selectedPreset.spec,
       plan: {
-        ...selectedPreset.definition.spec.plan,
+        ...selectedPreset.spec.plan,
         recipeRef: unrelatedRecipe.metadata.id,
       },
     },
   };
-  const sourceFiles = [
-    ...current.sourceFiles,
+  const sources = [
+    ...current.sources,
     {
       path: "managed-inference/presets/vllm.unrelated.managed-cluster.yaml",
-      digest: `sha256:${"1".repeat(64)}`,
+      kind: "ServingPreset" as const,
+      id: unrelatedPreset.metadata.id,
+      digest: managedInferenceDigest(unrelatedPreset),
     },
     {
       path: "managed-inference/recipes/vllm.unrelated.managed-cluster.v1.yaml",
-      digest: `sha256:${"2".repeat(64)}`,
+      kind: "ServingRecipe" as const,
+      id: unrelatedRecipe.metadata.id,
+      digest: managedInferenceDigest(unrelatedRecipe),
     },
   ] as const;
   const contents = {
     compilerVersion: current.compilerVersion,
-    presets: [
-      ...current.presets,
-      {
-        definition: unrelatedPreset,
-        definitionDigest: managedInferenceDigest(unrelatedPreset),
-        sourceFile: sourceFiles.at(-2)!.path,
-      },
-    ],
-    recipes: [
-      ...current.recipes,
-      {
-        definition: unrelatedRecipe,
-        definitionDigest: managedInferenceDigest(unrelatedRecipe),
-        sourceFile: sourceFiles.at(-1)!.path,
-      },
-    ],
+    presets: [...current.presets, unrelatedPreset],
+    recipes: [...current.recipes, unrelatedRecipe],
+    readinessSchemaRef: current.readinessSchemaRef,
     schemaVersion: current.schemaVersion,
-    sourceFiles,
-    sourceRevision: managedInferenceDigest(sourceFiles),
+    sources,
+    sourceRevision: current.sourceRevision,
   } as const;
   return { ...contents, catalogDigest: managedInferenceDigest(contents) };
 }
@@ -294,22 +285,28 @@ describe("managed cluster vLLM runtime receipt", () => {
     persistManagedClusterVllmRuntimeReceipt(source, { stateDir });
 
     expect(changedCatalog.catalogDigest).not.toBe(currentCatalog.catalogDigest);
-    vi.doMock("./serving/generated/catalog.json", () => ({ default: changedCatalog }));
+    vi.doMock("./serving/catalog-loader", () => ({
+      loadManagedInferenceCatalog: () => changedCatalog,
+      getManagedInferenceCompiledPreset: (id: string) =>
+        changedCatalog.presets.find(({ metadata }) => metadata.id === id),
+      getManagedInferenceCompiledRecipe: (id: string) =>
+        changedCatalog.recipes.find(({ metadata }) => metadata.id === id),
+    }));
     vi.resetModules();
     const { loadManagedClusterVllmRuntimeReceipt: loadAgainstChangedCatalog } = await import(
       "./serving/managed-cluster-runtime-receipt"
     );
     const loaded = loadAgainstChangedCatalog({ stateDir });
     const currentPreset = changedCatalog.presets.find(
-      ({ definition }) => definition.metadata.id === source.plan.presetId,
+      ({ metadata }) => metadata.id === source.plan.presetId,
     );
     const currentRecipe = changedCatalog.recipes.find(
-      ({ definition }) => definition.metadata.id === source.plan.recipeId,
+      ({ metadata }) => metadata.id === source.plan.recipeId,
     );
 
     expect(loaded?.plan.catalogDigest).toBe(currentCatalog.catalogDigest);
-    expect(loaded?.plan.presetDigest).toBe(currentPreset?.definitionDigest);
-    expect(loaded?.plan.recipeDigest).toBe(currentRecipe?.definitionDigest);
+    expect(loaded?.plan.presetDigest).toBe(managedInferenceDigest(currentPreset));
+    expect(loaded?.plan.recipeDigest).toBe(managedInferenceDigest(currentRecipe));
   });
 
   it("preserves a receipt-write failure when temporary-file cleanup also fails", () => {

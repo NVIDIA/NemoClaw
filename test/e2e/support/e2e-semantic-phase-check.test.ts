@@ -31,7 +31,7 @@ const TEST_PROGRESS_SOURCE = path.join(REPO_ROOT, "test/e2e/fixtures/progress.ts
 const FAKE_OPENAI_SOURCE = path.join(REPO_ROOT, "test/e2e/fixtures/fake-openai-compatible.ts");
 
 describe("semantic E2E phase checker", () => {
-  // source-shape-contract: compatibility -- Generated catalog and policy output must precede semantic collection and remain shared with the canonical CLI build
+  // source-shape-contract: compatibility -- Generated policy output must precede semantic collection and remain shared with the canonical CLI build
   test("builds the policy boundary before semantic collection and CLI compilation", () => {
     const scripts = (
       JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")) as {
@@ -41,10 +41,10 @@ describe("semantic E2E phase checker", () => {
 
     expect(scripts["build:policy-boundary"]).toBe("tsc -p nemoclaw/tsconfig.shared.json");
     expect(scripts["test:e2e-phases:check"]).toMatch(
-      /^npm run catalog:compile && npm run build:policy-boundary && node .*tools\/e2e\/check-semantic-phases\.mts$/u,
+      /^npm run build:policy-boundary && node .*tools\/e2e\/check-semantic-phases\.mts$/u,
     );
     expect(scripts["build:cli"]).toMatch(
-      /^npm run build:policy-boundary && npm run catalog:compile && tsc -p tsconfig\.src\.json &&/u,
+      /^npm run build:policy-boundary && tsc -p tsconfig\.src\.json &&/u,
     );
   });
 

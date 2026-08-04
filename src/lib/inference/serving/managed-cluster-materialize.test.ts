@@ -7,14 +7,14 @@ import {
   NO_PREPARATION_REF,
   SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
 } from "./adapter-registry.js";
-import { loadManagedInferenceCatalog } from "./catalog.js";
-import { managedInferenceDigest, managedInferenceTextDigest } from "./catalog-integrity.js";
+import { loadManagedInferenceCatalog } from "./catalog-loader.js";
+import { managedInferenceDigest } from "./catalog-integrity.js";
 import type {
   CompiledManagedInferenceCatalog,
   ManagedInferenceServingPreset,
   ManagedInferenceServingRecipe,
   ResolvedManagedInferenceSelection,
-} from "./catalog-types.js";
+} from "./types.js";
 import { fixtureManagedClusterSelection } from "./managed-cluster-fixture.test-support.js";
 import {
   MANAGED_CLUSTER_PRESET_LABEL,
@@ -106,11 +106,11 @@ function syntheticSecondProfile(
   const baseSelection = selectionWithDigests();
   const topology = nodeCount === 3 ? threeNodeTopology() : baseSelection.topologyQualification;
   const basePreset = baseCatalog.presets.find(
-    ({ definition }) => definition.metadata.id === baseSelection.preset.metadata.id,
-  )?.definition;
+    ({ metadata }) => metadata.id === baseSelection.preset.metadata.id,
+  );
   const baseRecipe = baseCatalog.recipes.find(
-    ({ definition }) => definition.metadata.id === baseSelection.recipe.metadata.id,
-  )?.definition;
+    ({ metadata }) => metadata.id === baseSelection.recipe.metadata.id,
+  );
   expect(basePreset).toBeDefined();
   expect(baseRecipe).toBeDefined();
   const presetTemplate = basePreset as ManagedInferenceServingPreset;
@@ -196,38 +196,29 @@ function syntheticSecondProfile(
   const presetDigest = managedInferenceDigest(preset);
   const recipeSourceFile = "managed-inference/recipes/vllm.synthetic-model.managed-cluster.v1.yaml";
   const presetSourceFile = "managed-inference/presets/vllm.synthetic-profile.managed-cluster.yaml";
-  const sourceFiles = [
-    ...baseCatalog.sourceFiles,
+  const sources = [
+    ...baseCatalog.sources,
     {
       path: presetSourceFile,
-      digest: managedInferenceTextDigest("synthetic preset"),
+      kind: "ServingPreset" as const,
+      id: preset.metadata.id,
+      digest: presetDigest,
     },
     {
       path: recipeSourceFile,
-      digest: managedInferenceTextDigest("synthetic recipe"),
+      kind: "ServingRecipe" as const,
+      id: recipe.metadata.id,
+      digest: recipeDigest,
     },
   ];
   const catalogContents = {
     compilerVersion: baseCatalog.compilerVersion,
-    presets: [
-      ...baseCatalog.presets,
-      {
-        definition: preset,
-        definitionDigest: presetDigest,
-        sourceFile: presetSourceFile,
-      },
-    ],
-    recipes: [
-      ...baseCatalog.recipes,
-      {
-        definition: recipe,
-        definitionDigest: recipeDigest,
-        sourceFile: recipeSourceFile,
-      },
-    ],
+    presets: [...baseCatalog.presets, preset],
+    recipes: [...baseCatalog.recipes, recipe],
+    readinessSchemaRef: baseCatalog.readinessSchemaRef,
     schemaVersion: baseCatalog.schemaVersion,
-    sourceFiles,
-    sourceRevision: managedInferenceDigest(sourceFiles),
+    sources,
+    sourceRevision: baseCatalog.sourceRevision,
   } as const;
   const catalog: CompiledManagedInferenceCatalog = {
     ...catalogContents,

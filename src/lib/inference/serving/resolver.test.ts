@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { SystemReadinessReport } from "../../readiness/types.js";
-import { loadManagedInferenceCatalog } from "./catalog.js";
+import { loadManagedInferenceCatalog } from "./catalog-loader.js";
 import { managedInferenceDigest } from "./catalog-integrity.js";
 import type {
   CompiledManagedInferenceCatalog,
@@ -13,7 +13,7 @@ import type {
   ManagedInferenceServingPreset,
   ManagedInferenceServingRecipe,
   ManagedInferenceTopologyQualification,
-} from "./catalog-types.js";
+} from "./types.js";
 import {
   FIXTURE_MANAGED_CLUSTER_PRESET_ID,
   fixtureManagedClusterSelection,
@@ -35,27 +35,27 @@ function shippedCompiledPreset(
   catalog = shippedCatalog(),
 ): CompiledManagedInferenceCatalog["presets"][number] {
   const preset = catalog.presets.find(
-    ({ definition }) => definition.metadata.id === FIXTURE_MANAGED_CLUSTER_PRESET_ID,
+    ({ metadata }) => metadata.id === FIXTURE_MANAGED_CLUSTER_PRESET_ID,
   );
   expect(preset).toBeDefined();
   return preset as CompiledManagedInferenceCatalog["presets"][number];
 }
 
 function shippedPreset(catalog = shippedCatalog()): ManagedInferenceServingPreset {
-  return shippedCompiledPreset(catalog).definition;
+  return shippedCompiledPreset(catalog);
 }
 
 function shippedCompiledRecipe(
   catalog = shippedCatalog(),
 ): CompiledManagedInferenceCatalog["recipes"][number] {
-  const recipeRef = shippedCompiledPreset(catalog).definition.spec.plan.recipeRef;
-  const recipe = catalog.recipes.find(({ definition }) => definition.metadata.id === recipeRef);
+  const recipeRef = shippedCompiledPreset(catalog).spec.plan.recipeRef;
+  const recipe = catalog.recipes.find(({ metadata }) => metadata.id === recipeRef);
   expect(recipe).toBeDefined();
   return recipe as CompiledManagedInferenceCatalog["recipes"][number];
 }
 
 function shippedRecipe(catalog = shippedCatalog()): ManagedInferenceServingRecipe {
-  return shippedCompiledRecipe(catalog).definition;
+  return shippedCompiledRecipe(catalog);
 }
 
 function shippedFixtureCatalog(): CompiledManagedInferenceCatalog {
@@ -210,28 +210,8 @@ function catalogWithSecondProfile(options: {
   return {
     catalog: {
       ...catalog,
-      presets: [
-        {
-          ...firstCompiledPreset,
-          definition: normalizedFirst,
-          definitionDigest: managedInferenceDigest(normalizedFirst),
-        },
-        {
-          ...firstCompiledPreset,
-          definition: secondPreset,
-          definitionDigest: managedInferenceDigest(secondPreset),
-          sourceFile: "managed-inference/presets/vllm.synthetic.dual-second.yaml",
-        },
-      ],
-      recipes: [
-        firstCompiledRecipe,
-        {
-          ...firstCompiledRecipe,
-          definition: secondRecipe,
-          definitionDigest: managedInferenceDigest(secondRecipe),
-          sourceFile: "managed-inference/recipes/vllm.synthetic.second-recipe.yaml",
-        },
-      ],
+      presets: [normalizedFirst, secondPreset],
+      recipes: [firstCompiledRecipe, secondRecipe],
     },
     secondPresetId,
     secondRecipeId,
@@ -248,8 +228,8 @@ describe("managed inference resolver", () => {
     expect(result).toMatchObject({
       outcome: "selected",
       selection: "automatic",
-      presetDigest: compiledPreset.definitionDigest,
-      recipeDigest: compiledRecipe.definitionDigest,
+      presetDigest: managedInferenceDigest(compiledPreset),
+      recipeDigest: managedInferenceDigest(compiledRecipe),
       preset: { metadata: { id: shippedPreset(catalog).metadata.id } },
       recipe: { metadata: { id: shippedRecipe(catalog).metadata.id } },
       topologyQualification: { output: { masterAddress: "192.168.100.10" } },
@@ -302,10 +282,10 @@ describe("managed inference resolver", () => {
     });
     const highCompiledPreset = shippedCompiledPreset(baseCatalog);
     const secondCompiledPreset = baseCatalog.presets.find(
-      ({ definition }) => definition.metadata.id === secondPresetId,
+      ({ metadata }) => metadata.id === secondPresetId,
     );
     expect(secondCompiledPreset).toBeDefined();
-    const highPreset = highCompiledPreset.definition;
+    const highPreset = highCompiledPreset;
     const unavailableHighPreset = {
       ...highPreset,
       spec: {
@@ -328,11 +308,7 @@ describe("managed inference resolver", () => {
     const catalog: CompiledManagedInferenceCatalog = {
       ...baseCatalog,
       presets: [
-        {
-          ...highCompiledPreset,
-          definition: unavailableHighPreset,
-          definitionDigest: managedInferenceDigest(unavailableHighPreset),
-        },
+        unavailableHighPreset,
         secondCompiledPreset as CompiledManagedInferenceCatalog["presets"][number],
       ],
     };
@@ -393,13 +369,7 @@ describe("managed inference resolver", () => {
     } as ManagedInferenceServingPreset;
     const customizedCatalog: CompiledManagedInferenceCatalog = {
       ...catalog,
-      presets: [
-        {
-          ...shippedCompiledPreset(catalog),
-          definition: customizedPreset,
-          definitionDigest: managedInferenceDigest(customizedPreset),
-        },
-      ],
+      presets: [customizedPreset],
     };
 
     expect(resolveManagedInferenceServing(resolverInput(), customizedCatalog)).toMatchObject({
@@ -452,13 +422,7 @@ describe("managed inference resolver", () => {
     } as ManagedInferenceServingPreset;
     const customizedCatalog: CompiledManagedInferenceCatalog = {
       ...catalog,
-      presets: [
-        {
-          ...shippedCompiledPreset(catalog),
-          definition: customizedPreset,
-          definitionDigest: managedInferenceDigest(customizedPreset),
-        },
-      ],
+      presets: [customizedPreset],
     };
     const reports = readinessSources();
     reports[1] = {

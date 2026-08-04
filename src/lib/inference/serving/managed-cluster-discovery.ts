@@ -7,7 +7,7 @@ import path from "node:path";
 import type { BuildIdentity } from "../../core/version.js";
 import type { SystemReadinessReport } from "../../readiness/types.js";
 import { MANAGED_CLUSTER_VLLM_MATERIALIZER_REF } from "./adapter-registry.js";
-import { loadManagedInferenceCatalog } from "./catalog.js";
+import { loadManagedInferenceCatalog } from "./catalog-loader.js";
 import { immutableManagedInferenceCopy } from "./catalog-integrity.js";
 import { createProductionManagedClusterDiscoveryDeps } from "./managed-cluster-discovery-production.js";
 import {
@@ -385,14 +385,9 @@ function selectionFromEnvironment(
         "The selected managed inference preset catalog is unavailable.",
       );
     }
-    const compiledPreset = catalog.presets.find(
-      ({ definition }) => definition.metadata.id === preset,
-    );
+    const compiledPreset = catalog.presets.find(({ metadata }) => metadata.id === preset);
     const recipe = compiledPreset
-      ? catalog.recipes.find(
-          ({ definition }) =>
-            definition.metadata.id === compiledPreset.definition.spec.plan.recipeRef,
-        )?.definition
+      ? catalog.recipes.find(({ metadata }) => metadata.id === compiledPreset.spec.plan.recipeRef)
       : undefined;
     if (recipe?.spec.execution.materializerRef !== MANAGED_CLUSTER_VLLM_MATERIALIZER_REF) {
       return peers.length > 0
