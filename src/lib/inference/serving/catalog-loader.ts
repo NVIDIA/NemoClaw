@@ -94,7 +94,7 @@ export function parseCompiledManagedInferenceCatalogJson(
   return catalog;
 }
 
-function isManagedClusterRecipeCandidate(recipe: ServingRecipe): boolean {
+function isManagedInferenceRecipeCandidate(recipe: ServingRecipe): boolean {
   return (
     recipe.spec.execution.materializerRef === MANAGED_CLUSTER_VLLM_MATERIALIZER_REF ||
     recipe.spec.execution.lifecycleRef === MANAGED_CLUSTER_VLLM_LIFECYCLE_REF ||
@@ -107,7 +107,7 @@ function isManagedClusterRecipeCandidate(recipe: ServingRecipe): boolean {
 export function managedInferenceCatalogFromServingCatalog(
   catalog: CompiledServingCatalog,
 ): CompiledManagedInferenceCatalog {
-  const recipes = catalog.recipes.filter(isManagedClusterRecipeCandidate);
+  const recipes = catalog.recipes.filter(isManagedInferenceRecipeCandidate);
   const recipeIds = new Set(recipes.map(({ metadata }) => metadata.id));
   const presets = catalog.presets.filter((preset) => recipeIds.has(preset.spec.plan.recipeRef));
   const definitionIds = new Set([...recipeIds, ...presets.map(({ metadata }) => metadata.id)]);
