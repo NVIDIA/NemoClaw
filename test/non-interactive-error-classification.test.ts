@@ -198,6 +198,78 @@ os.unlink(db_path)
     expect(result.stderr).toContain("correlation_id=thread-policy");
   });
 
+  it("does not classify a supported name quoted inside payload content (#8121)", () => {
+    // Every name the classifiers support, placed where a model or tool payload
+    // would put it rather than where a serializer would. None may classify: the
+    // quoted text is the model's words, not the failure. (PRA-1 blocker)
+    const supportedNames = [
+      "ResourceExhausted",
+      "RateLimitError",
+      "TooManyRequests",
+      "AuthenticationError",
+      "PermissionDeniedError",
+      "PermissionDenied",
+      "Unauthenticated",
+      "NotFoundError",
+      "ModelNotFoundError",
+      "model_not_found",
+      "APITimeoutError",
+      "DeadlineExceeded",
+      "ReadTimeout",
+      "ConnectTimeout",
+      "TimeoutError",
+      "APIConnectionError",
+      "ClientConnectorError",
+      "ProxyError",
+      "SSLCertVerificationError",
+      "SSLError",
+      "ConnectionRefusedError",
+      "ConnectionResetError",
+      "InternalServerError",
+      "ServiceUnavailable",
+      "BadGateway",
+    ];
+    const quoted = supportedNames.map((name) => `APIError('tool output: ${name}')`);
+    quoted.push("APIError('tool said status_code=429')");
+
+    for (const persisted of quoted) {
+      const result = runPatchedNonInteractive(
+        persistedErrorDriver({ "thread-quoted": persisted }, "thread-quoted"),
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(
+        "error_class=RemoteException category=agent_remote_failure retryable=false " +
+          "correlation_id=thread-quoted",
+      );
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain(persisted);
+    }
+  });
+
+  it("classifies a supported name in serialized position (#8121)", () => {
+    // The counterpart to the quoted-payload case: the same names classify when
+    // a serializer wrote them, including nested inside an outer exception repr.
+    const cases = [
+      [
+        "APIError('ResourceExhausted: Worker local total request limit reached (32/32)')",
+        "ResourceExhausted",
+        "upstream_provider_capacity",
+      ],
+      ["ResourceExhausted: capacity exceeded", "ResourceExhausted", "upstream_provider_capacity"],
+      ["openai.RateLimitError: rate limit exceeded", "RateLimited", "rate_limited"],
+    ] as const;
+
+    for (const [persisted, errorClass, category] of cases) {
+      const result = runPatchedNonInteractive(
+        persistedErrorDriver({ "thread-serialized": persisted }, "thread-serialized"),
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain(`error_class=${errorClass} category=${category} `);
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain(persisted);
+    }
+  });
+
   it("does not classify prose quoted from model or tool output (#8121)", () => {
     // Each row carries a classifier word only inside quoted content, with no
     // exception name and no named status field, so the checkpoint text must

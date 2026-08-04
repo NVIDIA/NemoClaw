@@ -798,70 +798,118 @@ import time as _nemoclaw_time
 # matched row is ever emitted, so a credential inside the persisted text cannot
 # reach the log line or the console.
 #
-# Only structural evidence classifies: an exception or gRPC/HTTP status *name*,
-# or a named status *field* carrying a code. Prose is deliberately excluded,
-# because a persisted row embeds model output and tool results — classifying on
-# words such as "timeout" or "connection refused" would let quoted tool text
-# ("tool output: timeout") produce a confident transport verdict for an
-# unrelated failure. A row with no structural indicator stays unclassified and
-# falls through to the exception-type fallback, then to `unknown`.
+# Only structural evidence classifies: an exception or gRPC/HTTP status *name*
+# in serialized position, or a named status *field* carrying a code. A persisted
+# row embeds model output and tool results, so neither prose nor a bare name is
+# enough on its own — `APIError('tool output: timeout')` and
+# `APIError('tool output: ResourceExhausted')` must both stay unclassified,
+# because the quoted payload is the model's words rather than the failure.
+#
+# `_NEMOCLAW_SERIALIZED_NAME_PREFIX` supplies the position rule: a name counts
+# only where a serializer would have written it — at the start of the row, or
+# directly after an opening delimiter, quote, or module dot, with no separating
+# whitespace. `_NEMOCLAW_SERIALIZED_NAME_SUFFIX` then requires the name to
+# introduce its own message (`Name:`) or argument list (`Name(`). Together they
+# accept `ResourceExhausted: ...`, `APIError('ResourceExhausted: ...')`, and
+# `openai.RateLimitError: ...` while rejecting the same names quoted inside
+# payload prose. A row with no structural indicator stays unclassified and falls
+# through to the exception-type fallback, then to `unknown`.
 # Order is most-specific first; the first match wins.
+#
+# Names are matched case-sensitively because they are class and status names.
+_NEMOCLAW_SERIALIZED_NAME_PREFIX = r"""(?<![^'"(\[{.])"""
+_NEMOCLAW_SERIALIZED_NAME_SUFFIX = r"(?=[:(])"
+
+
+def _nemoclaw_serialized_name_pattern(names):
+    """Match an allow-listed name only where a serializer would have put it."""
+    return _nemoclaw_re.compile(
+        _NEMOCLAW_SERIALIZED_NAME_PREFIX
+        + "(?:"
+        + "|".join(names)
+        + ")"
+        + _NEMOCLAW_SERIALIZED_NAME_SUFFIX
+    )
+
+
 _NEMOCLAW_PERSISTED_ERROR_CLASSIFIERS = (
     (
-        # `ResourceExhausted` is the provider's own status name, so the bare
-        # token is specific enough; #7415's longer "Worker local total request
-        # limit reached (n/m)" wording is one message under that status and must
-        # not be required, or a reworded capacity error falls back to unknown.
-        _nemoclaw_re.compile(r"\bResourceExhausted\b"),
+        # `ResourceExhausted` is the provider's own status name, so the name
+        # alone is specific enough in serialized position; #7415's longer
+        # "Worker local total request limit reached (n/m)" wording is one
+        # message under that status and must not be required, or a reworded
+        # capacity error falls back to unknown.
+        _nemoclaw_serialized_name_pattern(("ResourceExhausted",)),
         ("ResourceExhausted", "upstream_provider_capacity", "true"),
     ),
     (
-        _nemoclaw_re.compile(r"\b(?:RateLimitError|TooManyRequests)\b"),
+        _nemoclaw_serialized_name_pattern(("RateLimitError", "TooManyRequests")),
         ("RateLimited", "rate_limited", "true"),
     ),
     (
-        _nemoclaw_re.compile(
-            r"""\b(?:AuthenticationError|PermissionDeniedError|PermissionDenied
-                |Unauthenticated)\b""",
-            _nemoclaw_re.VERBOSE,
+        _nemoclaw_serialized_name_pattern(
+            (
+                "AuthenticationError",
+                "PermissionDeniedError",
+                "PermissionDenied",
+                "Unauthenticated",
+            )
         ),
         ("Unauthorized", "authorization_rejected", "false"),
     ),
     (
-        _nemoclaw_re.compile(r"\b(?:NotFoundError|ModelNotFoundError|model_not_found)\b"),
+        _nemoclaw_serialized_name_pattern(
+            ("NotFoundError", "ModelNotFoundError", "model_not_found")
+        ),
         ("NotFound", "model_or_route_not_found", "false"),
     ),
     (
-        _nemoclaw_re.compile(
-            r"""\b(?:APITimeoutError|DeadlineExceeded|ReadTimeout|ConnectTimeout
-                |TimeoutError)\b""",
-            _nemoclaw_re.VERBOSE,
+        _nemoclaw_serialized_name_pattern(
+            (
+                "APITimeoutError",
+                "DeadlineExceeded",
+                "ReadTimeout",
+                "ConnectTimeout",
+                "TimeoutError",
+            )
         ),
         ("Timeout", "request_timeout", "true"),
     ),
     (
-        _nemoclaw_re.compile(
-            r"""\b(?:APIConnectionError|ClientConnectorError|ProxyError|SSLError
-                |SSLCertVerificationError|ConnectionRefusedError
-                |ConnectionResetError)\b""",
-            _nemoclaw_re.VERBOSE,
+        _nemoclaw_serialized_name_pattern(
+            (
+                "APIConnectionError",
+                "ClientConnectorError",
+                "ProxyError",
+                "SSLCertVerificationError",
+                "SSLError",
+                "ConnectionRefusedError",
+                "ConnectionResetError",
+            )
         ),
         ("Unavailable", "route_unreachable", "true"),
     ),
     (
-        _nemoclaw_re.compile(r"\b(?:InternalServerError|ServiceUnavailable|BadGateway)\b"),
+        _nemoclaw_serialized_name_pattern(
+            ("InternalServerError", "ServiceUnavailable", "BadGateway")
+        ),
         ("InternalServerError", "remote_server_error", "true"),
     ),
 )
 
 # Status codes only count when they appear in a named status field, never as a
-# bare number that model or tool text could contain. Names are matched
-# case-sensitively above and here where they are class names; the field name
-# itself is matched case-insensitively because serializers disagree on case.
+# bare number that model or tool text could contain. The field name carries the
+# same serialized-position rule as the class names above, so a quoted payload
+# such as `APIError('tool said status_code=429')` does not classify. The field
+# name itself is matched case-insensitively because serializers disagree on
+# case.
 _NEMOCLAW_STATUS_CODE_FIELD = _nemoclaw_re.compile(
-    r"""["']?\b(?:http_status|http_status_code|status_code|statusCode|status)\b["']?
-            \s*[:=]\s*["']?(\d{3})\b
-        |\bHTTP(?:/\d(?:\.\d)?)?\s+(\d{3})\b""",
+    r"""(?<![^'"(\[{.,])
+        (?:
+            (?:http_status|http_status_code|status_code|statusCode|status)["']?
+                \s*[:=]\s*["']?(\d{3})\b
+            |HTTP(?:/\d(?:\.\d)?)?\s+(\d{3})\b
+        )""",
     _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
 )
 
