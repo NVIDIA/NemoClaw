@@ -730,11 +730,11 @@ describe("managed startup image runtime", () => {
     );
     await mainManagedBootstrapImageRuntime(["--verify-bootstrap-completion", ...cliArguments]);
     expect(log).toHaveBeenLastCalledWith(
-      `[managed-startup] verified ${profile.agent} profile ${fingerprint} bootstrap ${bootstrapIdentity}`,
+      `[managed-startup] verified ${profile.agent} profile ${fingerprint} bootstrap ${bootstrapIdentity}; transaction pending`,
     );
   });
 
-  it("consumes the bootstrap request without publishing completion when application fails", async () => {
+  it("retains the exact bootstrap request after failure and consumes it after a successful retry", async () => {
     const profile = managedStartupE2eProfile("openclaw");
     const encodedProfile = encodeManagedStartupProfile(profile);
     const fingerprint = fingerprintManagedStartupProfile(profile);
@@ -762,9 +762,21 @@ describe("managed startup image runtime", () => {
     vi.spyOn(sharedStateTransaction, "beginManagedStartupSharedStateTransaction").mockReturnValue(
       true,
     );
-    coordinatorMock.coordinateManagedStartupApplication.mockRejectedValue(
-      new Error("application failed"),
-    );
+    coordinatorMock.coordinateManagedStartupApplication
+      .mockRejectedValueOnce(new Error("application failed"))
+      .mockResolvedValue({
+        adapterApplied: false,
+        application: {
+          status: "committed",
+          stateDirectory: "/var/lib/nemoclaw/managed-startup",
+          generationDirectory: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}`,
+          profilePath: `/var/lib/nemoclaw/managed-startup/generation-${fingerprint}/profile.json`,
+          corporateCaPath: null,
+          fingerprint,
+          expectedAgent: "openclaw",
+          profile,
+        },
+      });
 
     await expect(
       applyManagedBootstrapEnvelope(
@@ -774,8 +786,27 @@ describe("managed startup image runtime", () => {
         completionFile,
       ),
     ).rejects.toThrow("application failed");
-    expect(filesystem.hasFile(requestFile)).toBe(false);
+    expect(filesystem.hasFile(requestFile)).toBe(true);
     expect(filesystem.hasFile(completionFile)).toBe(false);
+
+    await expect(
+      applyManagedBootstrapEnvelope(
+        { agent: profile.agent, profileFingerprint: fingerprint, bootstrapIdentity },
+        {},
+        requestFile,
+        completionFile,
+      ),
+    ).resolves.toMatchObject({ fingerprint, transactionPending: true });
+    expect(filesystem.hasFile(requestFile)).toBe(false);
+    expect(
+      parseManagedBootstrapImageCompletion(filesystem.readFile(completionFile) ?? ""),
+    ).toMatchObject({
+      agent: profile.agent,
+      bootstrapIdentity,
+      profileFingerprint: fingerprint,
+      transactionPending: true,
+    });
+    expect(coordinatorMock.coordinateManagedStartupApplication).toHaveBeenCalledTimes(2);
   });
 
   it.each([

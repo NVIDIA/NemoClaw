@@ -77,7 +77,7 @@ function readExpected(argv: readonly string[]): ManagedBootstrapImageRuntimeExpe
   };
 }
 
-export function consumeManagedBootstrapEnvelope(
+export function readManagedBootstrapEnvelope(
   expected: ManagedBootstrapImageRuntimeExpected,
   requestFile: string = MANAGED_BOOTSTRAP_REQUEST_FILE,
 ): ManagedStartupRootApplyRequest {
@@ -102,7 +102,6 @@ export function consumeManagedBootstrapEnvelope(
   ) {
     fail("managed bootstrap envelope identity does not match the replacement");
   }
-  fs.unlinkSync(requestFile);
   return envelope.rootApplyRequest;
 }
 
@@ -112,7 +111,7 @@ export async function applyManagedBootstrapEnvelope(
   requestFile: string = MANAGED_BOOTSTRAP_REQUEST_FILE,
   completionFile: string = MANAGED_BOOTSTRAP_COMPLETION_FILE,
 ): Promise<ManagedStartupRootApplyResult> {
-  const request = consumeManagedBootstrapEnvelope(expected, requestFile);
+  const request = readManagedBootstrapEnvelope(expected, requestFile);
   const result = await applyManagedStartupRootRequest(request, env, {
     bootstrapIdentity: expected.bootstrapIdentity,
   });
@@ -126,6 +125,7 @@ export async function applyManagedBootstrapEnvelope(
     }),
     0o444,
   );
+  fs.unlinkSync(requestFile);
   return result;
 }
 
@@ -178,9 +178,11 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   }
   if (argv[0] === "--verify-bootstrap-completion") {
     const expected = readExpected(argv);
-    verifyManagedBootstrapImageCompletion(expected);
+    const completion = verifyManagedBootstrapImageCompletion(expected);
     console.log(
-      `[managed-startup] verified ${expected.agent} profile ${expected.profileFingerprint} bootstrap ${expected.bootstrapIdentity}`,
+      `[managed-startup] verified ${expected.agent} profile ${expected.profileFingerprint} bootstrap ${expected.bootstrapIdentity}${
+        completion.transactionPending ? "; transaction pending" : ""
+      }`,
     );
     return;
   }

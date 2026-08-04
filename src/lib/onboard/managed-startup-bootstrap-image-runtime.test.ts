@@ -13,7 +13,7 @@ import {
   serializeManagedBootstrapImageCompletion,
 } from "./managed-bootstrap/envelope";
 import {
-  consumeManagedBootstrapEnvelope,
+  readManagedBootstrapEnvelope,
   verifyManagedBootstrapImageCompletion,
 } from "./managed-bootstrap/image-runtime";
 import {
@@ -125,7 +125,7 @@ afterEach(() => {
 });
 
 describe("managed bootstrap image runtime", () => {
-  it("consumes one exact root-owned bootstrap envelope", () => {
+  it("validates one exact root-owned bootstrap envelope without ending retry authority", () => {
     const directory = temporaryDirectory();
     const requestFile = path.join(directory, "request.json");
     const fixture = requestFixture();
@@ -139,10 +139,10 @@ describe("managed bootstrap image runtime", () => {
     );
     mockRootFileOwnership();
 
-    expect(consumeManagedBootstrapEnvelope(fixture.expected, requestFile)).toEqual(
+    expect(readManagedBootstrapEnvelope(fixture.expected, requestFile)).toEqual(
       fixture.rootApplyRequest,
     );
-    expect(fs.existsSync(requestFile)).toBe(false);
+    expect(fs.existsSync(requestFile)).toBe(true);
   });
 
   it.each([
@@ -163,7 +163,7 @@ describe("managed bootstrap image runtime", () => {
     mockRootFileOwnership();
 
     expect(() =>
-      consumeManagedBootstrapEnvelope(
+      readManagedBootstrapEnvelope(
         { ...fixture.expected, bootstrapIdentity: identity },
         requestFile,
       ),
