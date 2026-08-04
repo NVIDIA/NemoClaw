@@ -10,6 +10,7 @@
  * Usage: node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number> [--repo OWNER/REPO]
  */
 
+import { isDeepStrictEqual } from "node:util";
 import {
   ghJson,
   isRiskyFile,
@@ -317,6 +318,55 @@ interface E2eCoordinationEvidence {
   startedAt?: number;
   completedAt?: number;
   trustedCustomCheckId?: number;
+  checkSnapshot?: E2eCoordinationCheckSnapshot;
+  coordinatorSnapshot?: E2eCoordinatorInventorySnapshot;
+  selectedCheckId?: number;
+}
+
+interface E2eCoordinationCheckSnapshot {
+  checkRuns: Array<Record<string, unknown>>;
+}
+
+interface E2eCoordinatorRunMetadata {
+  id: number;
+  attempt: number;
+  createdAt: number;
+  updatedAt: number;
+  event: E2eCoordinatorEvent;
+  displayTitle: string;
+  headSha: string;
+  status: string;
+  conclusion: string | null;
+}
+
+type E2eCoordinatorEvent = "workflow_run" | "workflow_dispatch";
+
+interface E2eCoordinatorRunPartition {
+  startedAt: number;
+  completedAt: number;
+}
+
+interface E2eCoordinatorInventoryRecord {
+  value: Record<string, unknown>;
+  createdAt: number;
+  event: E2eCoordinatorEvent;
+  partitionIndex: number;
+}
+
+interface E2eCoordinatorCandidateSnapshot {
+  listedRun: Record<string, unknown>;
+  firstRun: Record<string, unknown>;
+  jobPages: unknown[];
+  refreshedRun: Record<string, unknown>;
+}
+
+interface E2eCoordinatorInventorySnapshot {
+  candidates: E2eCoordinatorCandidateSnapshot[];
+}
+
+interface E2eCoordinatorEvaluation {
+  valid: boolean | null;
+  snapshot?: E2eCoordinatorInventorySnapshot;
 }
 
 const E2E_RETRYABLE_FAILURE_MARKER_PREFIX = "<!-- nemoclaw-pr-e2e-retry:v1:";
@@ -346,6 +396,504 @@ function parseGitHubTimestamp(value: string | undefined): number {
     parsed.getUTCSeconds() === second
     ? Date.parse(match[0])
     : Number.NaN;
+}
+
+const E2E_COORDINATOR_WORKFLOW_PATH = ".github/workflows/pr-e2e-gate.yaml";
+const E2E_COORDINATOR_PARTITION_MS = 12 * 60 * 60 * 1000;
+const E2E_COORDINATOR_INVENTORY_MAX_MS = 14 * 24 * 60 * 60 * 1000;
+const E2E_COORDINATOR_MAX_PARTITIONS = Math.ceil(
+  E2E_COORDINATOR_INVENTORY_MAX_MS / E2E_COORDINATOR_PARTITION_MS,
+);
+const GITHUB_WORKFLOW_RUN_RESULT_CAP = 1000;
+
+function formatGitHubTimestamp(value: number): string {
+  return new Date(value).toISOString().replace(".000Z", "Z");
+}
+
+function e2eCoordinatorRunPartitions(
+  historyStartedAt: number,
+  observationAt: number,
+): E2eCoordinatorRunPartition[] | null {
+  if (!Number.isFinite(historyStartedAt) || !Number.isFinite(observationAt)) return null;
+  const checkStart = new Date(historyStartedAt);
+  const inventoryStartedAt = Date.UTC(
+    checkStart.getUTCFullYear(),
+    checkStart.getUTCMonth(),
+    checkStart.getUTCDate() - 1,
+  );
+  const inventoryCompletedAt = Math.ceil(observationAt / 1000) * 1000;
+  const inventorySpan = inventoryCompletedAt - inventoryStartedAt;
+  const partitionCount = Math.ceil(inventorySpan / E2E_COORDINATOR_PARTITION_MS);
+  if (
+    inventorySpan <= 0 ||
+    inventorySpan > E2E_COORDINATOR_INVENTORY_MAX_MS ||
+    !Number.isSafeInteger(partitionCount) ||
+    partitionCount < 1 ||
+    partitionCount > E2E_COORDINATOR_MAX_PARTITIONS
+  ) {
+    return null;
+  }
+  return Array.from({ length: partitionCount }, (_value, index) => {
+    const startedAt = inventoryStartedAt + index * E2E_COORDINATOR_PARTITION_MS;
+    return {
+      startedAt,
+      completedAt: Math.min(startedAt + E2E_COORDINATOR_PARTITION_MS, inventoryCompletedAt),
+    };
+  });
+}
+
+function automaticE2eCoordinatorRunTitle(exactDiff: ExactDiffIdentity): string {
+  return (
+    "E2E Gate coordinate from CI PR #" +
+    exactDiff.number +
+    " head " +
+    exactDiff.headSha +
+    " base " +
+    exactDiff.baseSha +
+    " gate true"
+  );
+}
+
+function manualE2eCoordinatorRunTitle(exactDiff: ExactDiffIdentity): string {
+  return (
+    "E2E Gate approve PR #" +
+    exactDiff.number +
+    " head " +
+    exactDiff.headSha +
+    " base " +
+    exactDiff.baseSha
+  );
+}
+
+function hasRepositoryName(value: unknown, repo: string): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    (value as Record<string, unknown>).full_name === repo
+  );
+}
+
+function parseE2eCoordinatorRun(
+  value: unknown,
+  repo: string,
+  exactDiff: ExactDiffIdentity,
+): E2eCoordinatorRunMetadata | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const createdAt =
+    typeof record.created_at === "string" ? parseGitHubTimestamp(record.created_at) : Number.NaN;
+  const updatedAt =
+    typeof record.updated_at === "string" ? parseGitHubTimestamp(record.updated_at) : Number.NaN;
+  const status = typeof record.status === "string" ? record.status.toUpperCase() : null;
+  const conclusion =
+    typeof record.conclusion === "string" ? record.conclusion.toUpperCase() : record.conclusion;
+  const event =
+    record.event === "workflow_run" || record.event === "workflow_dispatch" ? record.event : null;
+  const expectedTitle =
+    event === "workflow_run"
+      ? automaticE2eCoordinatorRunTitle(exactDiff)
+      : event === "workflow_dispatch"
+        ? manualE2eCoordinatorRunTitle(exactDiff)
+        : null;
+  const headSha = typeof record.head_sha === "string" ? record.head_sha : "";
+  if (
+    !Number.isSafeInteger(record.id) ||
+    (record.id as number) < 1 ||
+    record.run_attempt !== 1 ||
+    !event ||
+    !expectedTitle ||
+    record.display_title !== expectedTitle ||
+    record.path !== E2E_COORDINATOR_WORKFLOW_PATH ||
+    record.head_branch !== "main" ||
+    !/^[0-9a-f]{40}$/u.test(headSha) ||
+    (event === "workflow_run" && headSha !== exactDiff.baseSha) ||
+    !status ||
+    !ACTION_STATUSES.has(status) ||
+    (conclusion !== null &&
+      (typeof conclusion !== "string" || !ACTION_CONCLUSIONS.has(conclusion))) ||
+    (status === "COMPLETED" ? conclusion === null : conclusion !== null) ||
+    !hasRepositoryName(record.repository, repo) ||
+    !hasRepositoryName(record.head_repository, repo) ||
+    !Number.isFinite(createdAt) ||
+    !Number.isFinite(updatedAt) ||
+    createdAt > updatedAt
+  ) {
+    return null;
+  }
+  return {
+    id: record.id as number,
+    attempt: 1,
+    createdAt,
+    updatedAt,
+    event,
+    displayTitle: expectedTitle,
+    headSha,
+    status,
+    conclusion,
+  };
+}
+
+function sameE2eCoordinatorRun(
+  left: E2eCoordinatorRunMetadata,
+  right: E2eCoordinatorRunMetadata,
+): boolean {
+  return (
+    left.id === right.id &&
+    left.attempt === right.attempt &&
+    left.createdAt === right.createdAt &&
+    left.updatedAt === right.updatedAt &&
+    left.event === right.event &&
+    left.displayTitle === right.displayTitle &&
+    left.headSha === right.headSha &&
+    left.status === right.status &&
+    left.conclusion === right.conclusion
+  );
+}
+
+type E2eCoordinatorCandidateResult =
+  | "authorization-predecessor"
+  | "enclosing"
+  | "history"
+  | false
+  | null;
+
+interface E2eCoordinatorCandidateEvaluation {
+  result: E2eCoordinatorCandidateResult;
+  snapshot?: E2eCoordinatorCandidateSnapshot;
+  event?: E2eCoordinatorEvent;
+  runCreatedAt?: number;
+  runUpdatedAt?: number;
+  coordinateStartedAt?: number;
+  coordinateCompletedAt?: number;
+}
+
+function evaluateE2eCoordinatorCandidate(
+  listedValue: unknown,
+  repo: string,
+  exactDiff: ExactDiffIdentity,
+  coordinationStartedAt: number,
+  coordinationCompletedAt: number,
+): E2eCoordinatorCandidateEvaluation {
+  const listedRun = parseE2eCoordinatorRun(listedValue, repo, exactDiff);
+  if (!listedRun) return { result: false };
+  const firstRunResponse = ghJson(["api", "repos/" + repo + "/actions/runs/" + listedRun.id]);
+  if (firstRunResponse === null) return { result: null };
+  const firstRun = parseE2eCoordinatorRun(firstRunResponse, repo, exactDiff);
+  if (!firstRun || !sameE2eCoordinatorRun(listedRun, firstRun)) return { result: false };
+
+  const jobPages = ghJson([
+    "api",
+    "--paginate",
+    "--slurp",
+    "repos/" +
+      repo +
+      "/actions/runs/" +
+      firstRun.id +
+      "/attempts/" +
+      firstRun.attempt +
+      "/jobs?per_page=100",
+  ]);
+  if (!Array.isArray(jobPages) || jobPages.length === 0) return { result: null };
+
+  let expectedJobs: number | null = null;
+  let observedJobs = 0;
+  const jobIds = new Set<number>();
+  const coordinateJobs: Array<Record<string, unknown>> = [];
+  for (const page of jobPages) {
+    if (typeof page !== "object" || page === null || Array.isArray(page)) {
+      return { result: null };
+    }
+    const { total_count: totalCount, jobs } = page as Record<string, unknown>;
+    if (
+      !Number.isSafeInteger(totalCount) ||
+      (totalCount as number) < 0 ||
+      (expectedJobs !== null && totalCount !== expectedJobs) ||
+      !Array.isArray(jobs)
+    ) {
+      return { result: null };
+    }
+    expectedJobs = totalCount as number;
+    observedJobs += jobs.length;
+    for (const value of jobs) {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        return { result: null };
+      }
+      const record = value as Record<string, unknown>;
+      if (
+        !Number.isSafeInteger(record.id) ||
+        (record.id as number) < 1 ||
+        jobIds.has(record.id as number) ||
+        typeof record.name !== "string" ||
+        !record.name
+      ) {
+        return { result: false };
+      }
+      jobIds.add(record.id as number);
+      if (record.name === "coordinate") coordinateJobs.push(record);
+    }
+  }
+
+  const refreshedRunResponse = ghJson(["api", "repos/" + repo + "/actions/runs/" + firstRun.id]);
+  if (refreshedRunResponse === null) return { result: null };
+  const refreshedRun = parseE2eCoordinatorRun(refreshedRunResponse, repo, exactDiff);
+  if (!refreshedRun || !sameE2eCoordinatorRun(firstRun, refreshedRun)) {
+    return { result: false };
+  }
+
+  const snapshot: E2eCoordinatorCandidateSnapshot = {
+    listedRun: listedValue as Record<string, unknown>,
+    firstRun: firstRunResponse as Record<string, unknown>,
+    jobPages,
+    refreshedRun: refreshedRunResponse as Record<string, unknown>,
+  };
+  if (
+    expectedJobs === null ||
+    observedJobs !== expectedJobs ||
+    jobIds.size !== expectedJobs ||
+    coordinateJobs.length !== 1
+  ) {
+    return { result: false, snapshot };
+  }
+
+  const coordinate = coordinateJobs[0];
+  const coordinateStatus =
+    typeof coordinate.status === "string" ? coordinate.status.toUpperCase() : null;
+  const coordinateConclusion =
+    typeof coordinate.conclusion === "string"
+      ? coordinate.conclusion.toUpperCase()
+      : coordinate.conclusion;
+  const coordinateStartedAt =
+    typeof coordinate.started_at === "string"
+      ? parseGitHubTimestamp(coordinate.started_at)
+      : Number.NaN;
+  const coordinateCompletedAt =
+    typeof coordinate.completed_at === "string"
+      ? parseGitHubTimestamp(coordinate.completed_at)
+      : Number.NaN;
+  if (
+    !coordinateStatus ||
+    !ACTION_STATUSES.has(coordinateStatus) ||
+    (coordinateConclusion !== null &&
+      (typeof coordinateConclusion !== "string" ||
+        !ACTION_CONCLUSIONS.has(coordinateConclusion))) ||
+    (coordinateStatus === "COMPLETED"
+      ? coordinateConclusion === null
+      : coordinateConclusion !== null) ||
+    !Number.isFinite(coordinateStartedAt) ||
+    !Number.isFinite(coordinateCompletedAt) ||
+    coordinateStartedAt > coordinateCompletedAt
+  ) {
+    return { result: false, snapshot };
+  }
+
+  const completedSuccessfully =
+    firstRun.status === "COMPLETED" &&
+    firstRun.conclusion === "SUCCESS" &&
+    coordinateStatus === "COMPLETED" &&
+    coordinateConclusion === "SUCCESS";
+  const coordinateWithinRun =
+    firstRun.createdAt <= coordinateStartedAt &&
+    coordinateStartedAt <= coordinateCompletedAt &&
+    coordinateCompletedAt <= firstRun.updatedAt;
+  const candidateEvidence = {
+    snapshot,
+    event: firstRun.event,
+    runCreatedAt: firstRun.createdAt,
+    runUpdatedAt: firstRun.updatedAt,
+    coordinateStartedAt,
+    coordinateCompletedAt,
+  };
+  if (
+    completedSuccessfully &&
+    coordinateWithinRun &&
+    coordinateStartedAt <= coordinationCompletedAt &&
+    coordinationCompletedAt <= coordinateCompletedAt
+  ) {
+    return { result: "enclosing", ...candidateEvidence };
+  }
+
+  const completedHistory =
+    completedSuccessfully && coordinateWithinRun && firstRun.updatedAt <= coordinationStartedAt;
+  if (completedHistory) return { result: "history", ...candidateEvidence };
+
+  const authorizationPredecessor =
+    completedSuccessfully &&
+    coordinateWithinRun &&
+    firstRun.event === "workflow_run" &&
+    coordinationStartedAt <= coordinateStartedAt &&
+    coordinateCompletedAt < coordinationCompletedAt;
+  return {
+    result: authorizationPredecessor ? "authorization-predecessor" : false,
+    ...candidateEvidence,
+  };
+}
+
+function fetchE2eCoordinatorEvidence(
+  repo: string,
+  exactDiff: ExactDiffIdentity,
+  historyStartedAt: number,
+  coordinationStartedAt: number,
+  coordinationCompletedAt: number,
+  observationAt: number,
+): E2eCoordinatorEvaluation {
+  const inventoryById = new Map<number, E2eCoordinatorInventoryRecord>();
+  const partitions = e2eCoordinatorRunPartitions(historyStartedAt, observationAt);
+  if (!partitions) return { valid: null };
+  const events: E2eCoordinatorEvent[] = ["workflow_run", "workflow_dispatch"];
+  for (const event of events) {
+    for (const [partitionIndex, partition] of partitions.entries()) {
+      const createdRange = encodeURIComponent(
+        formatGitHubTimestamp(partition.startedAt) +
+          ".." +
+          formatGitHubTimestamp(partition.completedAt),
+      );
+      const pages = ghJson([
+        "api",
+        "--paginate",
+        "--slurp",
+        "repos/" +
+          repo +
+          "/actions/workflows/pr-e2e-gate.yaml/runs?event=" +
+          event +
+          "&created=" +
+          createdRange +
+          "&per_page=100",
+      ]);
+      if (!Array.isArray(pages) || pages.length === 0) return { valid: null };
+
+      let expectedTotal: number | null = null;
+      let observedTotal = 0;
+      const partitionIds = new Set<number>();
+      const partitionRecords: Array<{ value: Record<string, unknown>; createdAt: number }> = [];
+      for (const page of pages) {
+        if (typeof page !== "object" || page === null || Array.isArray(page)) {
+          return { valid: null };
+        }
+        const { total_count: totalCount, workflow_runs: workflowRuns } = page as Record<
+          string,
+          unknown
+        >;
+        if (
+          !Number.isSafeInteger(totalCount) ||
+          (totalCount as number) < 0 ||
+          (totalCount as number) >= GITHUB_WORKFLOW_RUN_RESULT_CAP ||
+          (expectedTotal !== null && totalCount !== expectedTotal) ||
+          !Array.isArray(workflowRuns)
+        ) {
+          return { valid: null };
+        }
+        expectedTotal = totalCount as number;
+        observedTotal += workflowRuns.length;
+        for (const value of workflowRuns) {
+          if (typeof value !== "object" || value === null || Array.isArray(value)) {
+            return { valid: null };
+          }
+          const record = value as Record<string, unknown>;
+          const createdAt =
+            typeof record.created_at === "string"
+              ? parseGitHubTimestamp(record.created_at)
+              : Number.NaN;
+          if (
+            !Number.isSafeInteger(record.id) ||
+            (record.id as number) < 1 ||
+            partitionIds.has(record.id as number) ||
+            record.event !== event ||
+            !Number.isFinite(createdAt) ||
+            createdAt < partition.startedAt ||
+            createdAt > partition.completedAt
+          ) {
+            return { valid: null };
+          }
+          partitionIds.add(record.id as number);
+          partitionRecords.push({ value: record, createdAt });
+        }
+      }
+      if (
+        expectedTotal === null ||
+        observedTotal !== expectedTotal ||
+        partitionIds.size !== expectedTotal
+      ) {
+        return { valid: null };
+      }
+
+      for (const record of partitionRecords) {
+        const id = record.value.id as number;
+        const existing = inventoryById.get(id);
+        if (!existing) {
+          inventoryById.set(id, {
+            value: record.value,
+            createdAt: record.createdAt,
+            event,
+            partitionIndex,
+          });
+          continue;
+        }
+        const exactBoundaryDuplicate =
+          existing.event === event &&
+          existing.partitionIndex === partitionIndex - 1 &&
+          existing.createdAt === partition.startedAt &&
+          record.createdAt === partition.startedAt &&
+          isDeepStrictEqual(existing.value, record.value);
+        if (!exactBoundaryDuplicate) return { valid: null };
+      }
+    }
+  }
+
+  const expectedTitles = new Set([
+    automaticE2eCoordinatorRunTitle(exactDiff),
+    manualE2eCoordinatorRunTitle(exactDiff),
+  ]);
+  const candidates = [...inventoryById.values()]
+    .map((record) => record.value)
+    .filter((record) => expectedTitles.has(String(record.display_title)));
+  if (candidates.length === 0) return { valid: false };
+
+  const enclosingCandidates: E2eCoordinatorCandidateEvaluation[] = [];
+  const authorizationPredecessors: E2eCoordinatorCandidateEvaluation[] = [];
+  const candidateSnapshots: E2eCoordinatorCandidateSnapshot[] = [];
+  for (const candidate of candidates) {
+    const evaluation = evaluateE2eCoordinatorCandidate(
+      candidate,
+      repo,
+      exactDiff,
+      coordinationStartedAt,
+      coordinationCompletedAt,
+    );
+    if (evaluation.result === null) return { valid: null };
+    if (evaluation.result === false || !evaluation.snapshot) return { valid: false };
+    candidateSnapshots.push(evaluation.snapshot);
+    if (evaluation.result === "enclosing") enclosingCandidates.push(evaluation);
+    if (evaluation.result === "authorization-predecessor") {
+      authorizationPredecessors.push(evaluation);
+    }
+  }
+  if (enclosingCandidates.length !== 1) return { valid: false };
+  if (authorizationPredecessors.length > 0) {
+    const predecessor = authorizationPredecessors[0];
+    const encloser = enclosingCandidates[0];
+    if (
+      exactDiff.headRepository === repo ||
+      authorizationPredecessors.length !== 1 ||
+      predecessor.event !== "workflow_run" ||
+      encloser.event !== "workflow_dispatch" ||
+      predecessor.runUpdatedAt === undefined ||
+      encloser.runCreatedAt === undefined ||
+      predecessor.coordinateCompletedAt === undefined ||
+      encloser.coordinateStartedAt === undefined ||
+      predecessor.runUpdatedAt > encloser.runCreatedAt ||
+      predecessor.coordinateCompletedAt > encloser.coordinateStartedAt
+    ) {
+      return { valid: false };
+    }
+  }
+  candidateSnapshots.sort(
+    (left, right) => (left.listedRun.id as number) - (right.listedRun.id as number),
+  );
+  return {
+    valid: true,
+    snapshot: { candidates: candidateSnapshots },
+  };
 }
 
 function hasRetryableE2eFailureMarker(check: Record<string, unknown>): boolean {
@@ -390,10 +938,11 @@ function currentE2eCoordinationCheck(
   if (active[0] && active[0].id !== current.id) return undefined;
   return current;
 }
-function fetchE2eCoordinationEvidence(
+
+function fetchE2eCoordinationCheckSnapshot(
   repo: string,
   exactDiff: ExactDiffIdentity,
-): E2eCoordinationEvidence {
+): E2eCoordinationCheckSnapshot | null {
   const checkNames = ["E2E / PR Gate", "E2E / PR Gate Coordination"];
   const checkRuns: Array<Record<string, unknown>> = [];
   const ids = new Set<number>();
@@ -404,14 +953,12 @@ function fetchE2eCoordinationEvidence(
       "--slurp",
       `repos/${repo}/commits/${exactDiff.headSha}/check-runs?check_name=${encodeURIComponent(checkName)}&filter=all&per_page=100`,
     ]);
-    if (!Array.isArray(pages) || pages.length === 0) return { valid: null };
+    if (!Array.isArray(pages) || pages.length === 0) return null;
 
     let expectedTotal: number | null = null;
     let observedTotal = 0;
     for (const page of pages) {
-      if (typeof page !== "object" || page === null || Array.isArray(page)) {
-        return { valid: null };
-      }
+      if (typeof page !== "object" || page === null || Array.isArray(page)) return null;
       const { total_count: totalCount, check_runs: pageRuns } = page as Record<string, unknown>;
       if (
         !Number.isSafeInteger(totalCount) ||
@@ -419,14 +966,12 @@ function fetchE2eCoordinationEvidence(
         (expectedTotal !== null && totalCount !== expectedTotal) ||
         !Array.isArray(pageRuns)
       ) {
-        return { valid: null };
+        return null;
       }
       expectedTotal = totalCount as number;
       observedTotal += pageRuns.length;
       for (const value of pageRuns) {
-        if (typeof value !== "object" || value === null || Array.isArray(value)) {
-          return { valid: null };
-        }
+        if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
         const record = value as Record<string, unknown>;
         if (
           !Number.isSafeInteger(record.id) ||
@@ -434,19 +979,32 @@ function fetchE2eCoordinationEvidence(
           ids.has(record.id as number) ||
           (typeof record.external_id !== "string" && record.external_id !== null)
         ) {
-          return { valid: null };
+          return null;
         }
         ids.add(record.id as number);
         checkRuns.push(record);
       }
     }
-    if (expectedTotal === null || observedTotal !== expectedTotal) {
-      return { valid: null };
+    if (
+      expectedTotal === null ||
+      observedTotal !== expectedTotal ||
+      ids.size !== checkRuns.length
+    ) {
+      return null;
     }
   }
 
+  checkRuns.sort((left, right) => (left.id as number) - (right.id as number));
+  return { checkRuns };
+}
+
+function selectE2eCoordinationCheck(
+  snapshot: E2eCoordinationCheckSnapshot,
+  exactDiff: ExactDiffIdentity,
+): Record<string, unknown> | undefined {
+  const checkNames = ["E2E / PR Gate", "E2E / PR Gate Coordination"];
   const externalId = `nemoclaw-pr-e2e:v2:${exactDiff.number}:${exactDiff.headSha}:${exactDiff.baseSha}`;
-  const claimedChecks = checkRuns.filter((check) => check.external_id === externalId);
+  const claimedChecks = snapshot.checkRuns.filter((check) => check.external_id === externalId);
   if (
     claimedChecks.some(
       (check) =>
@@ -459,20 +1017,58 @@ function fetchE2eCoordinationEvidence(
         (check.app as Record<string, unknown>).id !== 15368,
     )
   ) {
-    return { valid: false };
+    return undefined;
   }
   const currentNameChecks = claimedChecks.filter((check) => check.name === "E2E / PR Gate");
   const exactChecks =
     currentNameChecks.length > 0
       ? currentNameChecks
       : claimedChecks.filter((check) => check.name === "E2E / PR Gate Coordination");
-  const exact = currentE2eCoordinationCheck(exactChecks);
+  return currentE2eCoordinationCheck(exactChecks);
+}
+
+function e2eCoordinationHistoryStartedAt(
+  snapshot: E2eCoordinationCheckSnapshot,
+  exactDiff: ExactDiffIdentity,
+): number {
+  const externalId = `nemoclaw-pr-e2e:v2:${exactDiff.number}:${exactDiff.headSha}:${exactDiff.baseSha}`;
+  const claimedChecks = snapshot.checkRuns.filter((check) => check.external_id === externalId);
+  if (claimedChecks.length === 0) return Number.NaN;
+
+  let earliest = Number.POSITIVE_INFINITY;
+  for (const check of claimedChecks) {
+    const startedAt =
+      typeof check.started_at === "string" ? parseGitHubTimestamp(check.started_at) : Number.NaN;
+    const completedAt =
+      typeof check.completed_at === "string"
+        ? parseGitHubTimestamp(check.completed_at)
+        : Number.NaN;
+    if (
+      !Number.isFinite(startedAt) ||
+      (check.status === "completed" && (!Number.isFinite(completedAt) || startedAt > completedAt))
+    ) {
+      return Number.NaN;
+    }
+    earliest = Math.min(earliest, startedAt);
+  }
+  return earliest;
+}
+
+function fetchE2eCoordinationEvidence(
+  repo: string,
+  exactDiff: ExactDiffIdentity,
+): E2eCoordinationEvidence {
+  const checkSnapshot = fetchE2eCoordinationCheckSnapshot(repo, exactDiff);
+  if (!checkSnapshot) return { valid: null };
+  const exact = selectE2eCoordinationCheck(checkSnapshot, exactDiff);
   if (!exact) return { valid: false };
+  const checkNames = ["E2E / PR Gate", "E2E / PR Gate Coordination"];
   const app = exact.app;
   const startedAt =
     typeof exact.started_at === "string" ? parseGitHubTimestamp(exact.started_at) : Number.NaN;
   const completedAt =
     typeof exact.completed_at === "string" ? parseGitHubTimestamp(exact.completed_at) : Number.NaN;
+  const historyStartedAt = e2eCoordinationHistoryStartedAt(checkSnapshot, exactDiff);
   const valid =
     typeof exact.name === "string" &&
     checkNames.includes(exact.name) &&
@@ -485,11 +1081,30 @@ function fetchE2eCoordinationEvidence(
     exact.conclusion === "success" &&
     Number.isFinite(startedAt) &&
     Number.isFinite(completedAt) &&
+    Number.isFinite(historyStartedAt) &&
     startedAt <= completedAt;
+  const coordinator = valid
+    ? fetchE2eCoordinatorEvidence(
+        repo,
+        exactDiff,
+        historyStartedAt,
+        startedAt,
+        completedAt,
+        Date.now(),
+      )
+    : { valid: false };
+  const completeEvidence = valid && coordinator.valid === true && Boolean(coordinator.snapshot);
   return {
-    valid,
-    ...(valid ? { startedAt, completedAt } : {}),
-    ...(valid && exact.name === "E2E / PR Gate"
+    valid: coordinator.valid === null ? null : completeEvidence,
+    ...(completeEvidence ? { startedAt, completedAt } : {}),
+    ...(completeEvidence
+      ? {
+          checkSnapshot,
+          coordinatorSnapshot: coordinator.snapshot,
+          selectedCheckId: exact.id as number,
+        }
+      : {}),
+    ...(completeEvidence && exact.name === "E2E / PR Gate"
       ? { trustedCustomCheckId: exact.id as number }
       : {}),
   };
@@ -571,6 +1186,18 @@ interface ActionJobMetadata {
   conclusion: string | null;
 }
 
+interface CiActionEvidenceCache {
+  actionRunMetadataById: Map<string, ActionRunMetadata | null>;
+  latestAttemptJobsByRun: Map<string, Map<string, ActionJobMetadata> | null>;
+}
+
+function createCiActionEvidenceCache(): CiActionEvidenceCache {
+  return {
+    actionRunMetadataById: new Map(),
+    latestAttemptJobsByRun: new Map(),
+  };
+}
+
 interface CurrentCheckRollup {
   checks: StatusCheck[];
   incompleteAttemptEvidence: string[];
@@ -581,12 +1208,14 @@ function currentCheckRollup(
   repo: string,
   exactDiff: ExactDiffIdentity,
   e2eCoordinationEvidence: E2eCoordinationEvidence,
+  actionEvidence = createCiActionEvidenceCache(),
+  allowActionEvidenceReads = true,
 ): CurrentCheckRollup {
-  const actionRunMetadataById = new Map<string, ActionRunMetadata | null>();
-  const latestAttemptJobsByRun = new Map<string, Map<string, ActionJobMetadata> | null>();
+  const { actionRunMetadataById, latestAttemptJobsByRun } = actionEvidence;
   const incompleteAttemptEvidence = new Set<string>();
 
   const fetchActionRunMetadata = (runId: string): ActionRunMetadata | null => {
+    if (!allowActionEvidenceReads) return null;
     const runData = ghJson(["api", `repos/${repo}/actions/runs/${runId}`]);
     if (typeof runData !== "object" || runData === null || Array.isArray(runData)) {
       return null;
@@ -734,6 +1363,7 @@ function currentCheckRollup(
 
   const actionRunMetadata = (runId: string): ActionRunMetadata | null => {
     if (actionRunMetadataById.has(runId)) return actionRunMetadataById.get(runId) ?? null;
+    if (!allowActionEvidenceReads) return null;
     const metadata = fetchActionRunMetadata(runId);
     actionRunMetadataById.set(runId, metadata);
     return metadata;
@@ -741,6 +1371,7 @@ function currentCheckRollup(
 
   const latestAttemptJobs = (runId: string): Map<string, ActionJobMetadata> | null => {
     if (latestAttemptJobsByRun.has(runId)) return latestAttemptJobsByRun.get(runId) ?? null;
+    if (!allowActionEvidenceReads) return null;
 
     const metadata = actionRunMetadata(runId);
     if (!metadata) {
@@ -899,13 +1530,8 @@ function currentCheckRollup(
       : "unknown";
   };
 
-  const e2eCoordinationIsEnclosed = (run: ActionRunMetadata): boolean =>
-    e2eControllerHeadBinding(run) === "current" &&
-    run.e2eGateRun === true &&
-    e2eCoordinationEvidence.startedAt !== undefined &&
-    e2eCoordinationEvidence.completedAt !== undefined &&
-    run.createdAt <= e2eCoordinationEvidence.startedAt &&
-    e2eCoordinationEvidence.completedAt <= run.updatedAt;
+  const isCurrentE2eSeedRun = (run: ActionRunMetadata): boolean =>
+    e2eControllerHeadBinding(run) === "current" && run.e2eGateRun === true;
 
   const isNonAttemptRun = (runId: string): boolean => {
     const run = actionRunMetadata(runId);
@@ -1083,7 +1709,7 @@ function currentCheckRollup(
     const e2eHeadBinding = e2eControllerHeadBinding(metadata);
     if (e2eHeadBinding === "other") return "other";
     if (e2eHeadBinding === "current") {
-      return e2eCoordinationIsEnclosed(metadata) ? "current" : "unknown";
+      return isCurrentE2eSeedRun(metadata) ? "current" : "unknown";
     }
     if (
       exactDiff.headRepository !== repo &&
@@ -1300,22 +1926,74 @@ function currentCheckRollup(
   return { checks: current, incompleteAttemptEvidence: [...incompleteAttemptEvidence].sort() };
 }
 
-function checkCi(
-  statusCheckRollup: StatusCheck[] | null,
-  repo: string,
-  exactDiff: ExactDiffIdentity,
-): GateResult & {
+interface CiGateResult extends GateResult {
   failingChecks?: string[];
   pendingChecks?: string[];
   missingChecks?: string[];
   trustedCustomCheckId?: number;
-} {
+}
+
+interface RequiredCheckSnapshotRecord {
+  type: string | null;
+  name: string | null;
+  context: string | null;
+  workflowName: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  detailsUrl: string | null;
+  status: string | null;
+  conclusion: string | null;
+  state: string | null;
+}
+
+interface CiEvaluation {
+  gate: CiGateResult;
+  e2eCoordinationEvidence: E2eCoordinationEvidence;
+  requiredCheckSnapshot: RequiredCheckSnapshotRecord[] | null;
+}
+
+function captureRequiredCheckSnapshot(
+  statusCheckRollup: StatusCheck[] | null,
+): RequiredCheckSnapshotRecord[] | null {
+  if (!statusCheckRollup) return null;
+  const snapshot = statusCheckRollup
+    .filter((check) => REQUIRED_CHECK_NAMES.includes(check.name ?? check.context ?? ""))
+    .map((check) => ({
+      type: check.__typename ?? null,
+      name: check.name ?? null,
+      context: check.context ?? null,
+      workflowName: check.workflowName ?? null,
+      startedAt: check.startedAt ?? null,
+      completedAt: check.completedAt ?? null,
+      detailsUrl: check.detailsUrl ?? null,
+      status: check.status ?? null,
+      conclusion: check.conclusion ?? null,
+      state: check.state ?? null,
+    }));
+  snapshot.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  return snapshot;
+}
+
+function evaluateCiRollup(
+  statusCheckRollup: StatusCheck[] | null,
+  repo: string,
+  exactDiff: ExactDiffIdentity,
+  e2eCoordinationEvidence: E2eCoordinationEvidence,
+  actionEvidence = createCiActionEvidenceCache(),
+  allowActionEvidenceReads = true,
+): CiGateResult {
   if (!statusCheckRollup || statusCheckRollup.length === 0) {
     return { pass: false, details: "No status checks found" };
   }
 
-  const e2eCoordinationEvidence = fetchE2eCoordinationEvidence(repo, exactDiff);
-  const rollup = currentCheckRollup(statusCheckRollup, repo, exactDiff, e2eCoordinationEvidence);
+  const rollup = currentCheckRollup(
+    statusCheckRollup,
+    repo,
+    exactDiff,
+    e2eCoordinationEvidence,
+    actionEvidence,
+    allowActionEvidenceReads,
+  );
   const currentChecks = rollup.checks;
   const incompleteAttemptEvidence = new Set(rollup.incompleteAttemptEvidence);
   if (e2eCoordinationEvidence.valid !== true) {
@@ -1391,6 +2069,122 @@ function checkCi(
       ? { trustedCustomCheckId: e2eCoordinationEvidence.trustedCustomCheckId }
       : {}),
   };
+}
+
+function checkCi(
+  statusCheckRollup: StatusCheck[] | null,
+  repo: string,
+  exactDiff: ExactDiffIdentity,
+): CiEvaluation {
+  const e2eCoordinationEvidence =
+    statusCheckRollup && statusCheckRollup.length > 0
+      ? fetchE2eCoordinationEvidence(repo, exactDiff)
+      : { valid: false };
+  return {
+    gate: evaluateCiRollup(statusCheckRollup, repo, exactDiff, e2eCoordinationEvidence),
+    e2eCoordinationEvidence,
+    requiredCheckSnapshot: captureRequiredCheckSnapshot(statusCheckRollup),
+  };
+}
+
+function checkFinalCi(
+  initial: CiEvaluation,
+  finalStatusCheckRollup: StatusCheck[] | null,
+  repo: string,
+  exactDiff: ExactDiffIdentity,
+  actionEvidence: CiActionEvidenceCache,
+): CiGateResult {
+  if (!initial.gate.pass) return initial.gate;
+  const finalGate = evaluateCiRollup(
+    finalStatusCheckRollup,
+    repo,
+    exactDiff,
+    initial.e2eCoordinationEvidence,
+    actionEvidence,
+  );
+  if (!finalGate.pass) return finalGate;
+  const finalRequiredCheckSnapshot = captureRequiredCheckSnapshot(finalStatusCheckRollup);
+  if (
+    !initial.requiredCheckSnapshot ||
+    !finalRequiredCheckSnapshot ||
+    !isDeepStrictEqual(finalRequiredCheckSnapshot, initial.requiredCheckSnapshot)
+  ) {
+    return {
+      pass: false,
+      details: "Required check rollup changed during gate evaluation",
+      failingChecks: ["Required check rollup changed during gate evaluation"],
+    };
+  }
+  return finalGate;
+}
+
+function checkFinalE2eEvidence(
+  ci: CiGateResult,
+  initial: CiEvaluation,
+  finalE2eEvidence: E2eCoordinationEvidence,
+  exactDiff: ExactDiffIdentity,
+): CiGateResult {
+  if (!ci.pass) return ci;
+  const initialE2eCheckSnapshot = initial.e2eCoordinationEvidence.checkSnapshot;
+  const initialCoordinatorSnapshot = initial.e2eCoordinationEvidence.coordinatorSnapshot;
+  const initialSelectedCheckId = initial.e2eCoordinationEvidence.selectedCheckId;
+  const finalE2eCheckSnapshot = finalE2eEvidence.checkSnapshot;
+  const finalSelectedCheck = finalE2eCheckSnapshot
+    ? selectE2eCoordinationCheck(finalE2eCheckSnapshot, exactDiff)
+    : undefined;
+  if (
+    !initialE2eCheckSnapshot ||
+    !initialCoordinatorSnapshot ||
+    initialSelectedCheckId === undefined ||
+    finalE2eEvidence.valid !== true ||
+    !finalE2eCheckSnapshot ||
+    !finalE2eEvidence.coordinatorSnapshot ||
+    !finalSelectedCheck ||
+    finalSelectedCheck.id !== initialSelectedCheckId ||
+    !isDeepStrictEqual(finalE2eCheckSnapshot, initialE2eCheckSnapshot) ||
+    !isDeepStrictEqual(finalE2eEvidence.coordinatorSnapshot, initialCoordinatorSnapshot)
+  ) {
+    return {
+      pass: false,
+      details: "E2E custom-check history changed during gate evaluation",
+      failingChecks: ["E2E / PR Gate: final evidence changed"],
+    };
+  }
+  return ci;
+}
+
+function checkLastCi(
+  ci: CiGateResult,
+  initial: CiEvaluation,
+  lastStatusCheckRollup: StatusCheck[] | null,
+  repo: string,
+  exactDiff: ExactDiffIdentity,
+  finalE2eEvidence: E2eCoordinationEvidence,
+  actionEvidence: CiActionEvidenceCache,
+): CiGateResult {
+  if (!ci.pass) return ci;
+  const lastGate = evaluateCiRollup(
+    lastStatusCheckRollup,
+    repo,
+    exactDiff,
+    finalE2eEvidence,
+    actionEvidence,
+    false,
+  );
+  if (!lastGate.pass) return lastGate;
+  const lastRequiredCheckSnapshot = captureRequiredCheckSnapshot(lastStatusCheckRollup);
+  if (
+    !initial.requiredCheckSnapshot ||
+    !lastRequiredCheckSnapshot ||
+    !isDeepStrictEqual(lastRequiredCheckSnapshot, initial.requiredCheckSnapshot)
+  ) {
+    return {
+      pass: false,
+      details: "Required check rollup changed during final gate evaluation",
+      failingChecks: ["Required check rollup changed during final gate evaluation"],
+    };
+  }
+  return lastGate;
 }
 
 // ---------------------------------------------------------------------------
@@ -1766,6 +2560,7 @@ interface PrRevisionSnapshot {
   headRefName: string;
   baseRefName: string;
   headRepository: string;
+  statusCheckRollup: StatusCheck[];
 }
 
 function parseHeadRepository(headRepository: unknown, headRepositoryOwner: unknown): string | null {
@@ -1807,7 +2602,7 @@ function fetchPrRevisionSnapshot(repo: string, number: number): PrRevisionSnapsh
     "--repo",
     repo,
     "--json",
-    "title,body,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefOid,headRefName,baseRefName,headRepository,headRepositoryOwner",
+    "title,body,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefOid,headRefName,baseRefName,headRepository,headRepositoryOwner,statusCheckRollup",
   ]);
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -1823,6 +2618,10 @@ function fetchPrRevisionSnapshot(repo: string, number: number): PrRevisionSnapsh
     typeof record.baseRefOid !== "string" ||
     typeof record.headRefName !== "string" ||
     typeof record.baseRefName !== "string" ||
+    !Array.isArray(record.statusCheckRollup) ||
+    record.statusCheckRollup.some(
+      (check) => typeof check !== "object" || check === null || Array.isArray(check),
+    ) ||
     !headRepository
   ) {
     return null;
@@ -1839,6 +2638,7 @@ function fetchPrRevisionSnapshot(repo: string, number: number): PrRevisionSnapsh
     headRefName: record.headRefName,
     baseRefName: record.baseRefName,
     headRepository,
+    statusCheckRollup: record.statusCheckRollup as StatusCheck[],
   };
 }
 
@@ -1946,13 +2746,14 @@ function main(): void {
     process.exit(1);
   }
 
-  const ci = checkCi(prData.statusCheckRollup, repo, {
+  const exactDiff = {
     number: prNumber,
     headSha: prData.headRefOid,
     baseSha: prData.baseRefOid,
     headRefName: prData.headRefName,
     headRepository,
-  });
+  };
+  const initialCi = checkCi(prData.statusCheckRollup, repo, exactDiff);
   const coderabbit = checkCodeRabbit(repo, prNumber);
   const riskyCodeTested = checkRiskyCodeTested(prData.files ?? []);
   const contributorCompliance = checkContributorCompliance(
@@ -1966,25 +2767,57 @@ function main(): void {
     prData,
     contributorApprovalHistory,
   );
+  const capturedRevision: PrRevisionSnapshot = {
+    title: prData.title,
+    body: prData.body,
+    state: prData.state,
+    isDraft: prData.isDraft,
+    mergeable: prData.mergeable,
+    mergeStateStatus: prData.mergeStateStatus,
+    headRefOid: prData.headRefOid,
+    baseRefOid: prData.baseRefOid,
+    headRefName: prData.headRefName,
+    baseRefName: prData.baseRefName,
+    headRepository,
+    statusCheckRollup: prData.statusCheckRollup,
+  };
   const currentBaseSha = fetchCurrentBaseSha(repo, prNumber);
+  const revisionBeforeFinalCi = fetchPrRevisionSnapshot(repo, prNumber);
+  const finalCiActionEvidence = createCiActionEvidenceCache();
+  const evaluatedRollupCi = checkFinalCi(
+    initialCi,
+    revisionBeforeFinalCi?.statusCheckRollup ?? null,
+    repo,
+    exactDiff,
+    finalCiActionEvidence,
+  );
+  const finalE2eEvidence = evaluatedRollupCi.pass
+    ? fetchE2eCoordinationEvidence(repo, exactDiff)
+    : { valid: false };
+  const evaluatedCi = checkFinalE2eEvidence(
+    evaluatedRollupCi,
+    initialCi,
+    finalE2eEvidence,
+    exactDiff,
+  );
   const currentRevision = fetchPrRevisionSnapshot(repo, prNumber);
-  const conflicts = checkFinalRevision(
-    {
-      title: prData.title,
-      body: prData.body,
-      state: prData.state,
-      isDraft: prData.isDraft,
-      mergeable: prData.mergeable,
-      mergeStateStatus: prData.mergeStateStatus,
-      headRefOid: prData.headRefOid,
-      baseRefOid: prData.baseRefOid,
-      headRefName: prData.headRefName,
-      baseRefName: prData.baseRefName,
-      headRepository,
-    },
-    currentRevision,
+  const ci = checkLastCi(
+    evaluatedCi,
+    initialCi,
+    currentRevision?.statusCheckRollup ?? null,
+    repo,
+    exactDiff,
+    finalE2eEvidence,
+    finalCiActionEvidence,
+  );
+  const revisionBeforeFinalCiGate = checkFinalRevision(
+    capturedRevision,
+    revisionBeforeFinalCi,
     currentBaseSha,
   );
+  const conflicts = revisionBeforeFinalCiGate.pass
+    ? checkFinalRevision(revisionBeforeFinalCi!, currentRevision, currentBaseSha)
+    : revisionBeforeFinalCiGate;
 
   const output: GateOutput = {
     pr: prNumber,
