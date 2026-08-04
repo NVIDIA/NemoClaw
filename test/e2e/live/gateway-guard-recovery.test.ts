@@ -312,7 +312,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     originalContainerId,
     "restart-command-before",
   );
-  expect(originalStartupCommand).toMatch(/(?:^| )(?:\/usr\/local\/bin\/)?nemoclaw-start$/);
+  expect(originalStartupCommand).toMatch(/(?:^| )\/usr\/local\/bin\/nemoclaw-start$/);
   await host.cleanupForward(18789, {
     artifactName: "restart-stop-dashboard-forward",
     env: buildAvailabilityProbeEnv(),
@@ -356,7 +356,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     recoveredContainerId,
     "restart-command-after",
   );
-  expect(recoveredStartupCommand).toMatch(/(?:^| )(?:\/usr\/local\/bin\/)?nemoclaw-start$/);
+  expect(recoveredStartupCommand).toMatch(/(?:^| )\/usr\/local\/bin\/nemoclaw-start$/);
   expect(recoveredStartupCommand).not.toContain("CUSTOM_PROVIDER_CREDENTIAL");
   expect(recoveredStartupCommand).not.toContain(credentialCanary);
 
