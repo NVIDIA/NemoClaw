@@ -67,12 +67,15 @@ const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "")
 dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch = () => ({
   maybeApplyDuringCreate: () => {},
   createFailureMessage: () => null,
-  exitOnPatchError: () => {},
-  ensureApplied: () => {},
+  exitOnPatchError: async () => {},
+  attachManagedBootstrapCutover: () => {},
+  rollbackManagedStartupAfterCreateFailure: async () => {},
+  ensureApplied: async () => {},
   waitForSupervisorReconnectIfNeeded: () => {},
+  commitAfterReady: async () => {},
   selectedMode: () => null,
   printReadinessFailureIfEnabled: () => {},
-  verifyGpuOrExit: (verify) => verify(sandboxName),
+  verifyGpuOrExit: async (verify) => verify(sandboxName),
 });
 
 agentOnboard.createAgentSandbox = () => {

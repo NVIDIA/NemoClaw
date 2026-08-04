@@ -71,6 +71,23 @@ Compatible endpoint validation sends a real inference request because many proxi
 For an OpenAI-compatible endpoint, a reasoning model that returns only reasoning content can receive a retry with a larger response budget before NemoClaw reports failure.
 Route, configuration, and authentication failures still fail immediately.
 
+During one onboarding invocation, NemoClaw can reuse one successful Chat Completions validation instead of sending the same immediate host-side request.
+Reuse requires all these inputs to match:
+
+- The public endpoint URL.
+- The model ID.
+- The authentication mode.
+- Whether tool calling is required.
+- The validated DNS IP address set.
+
+Trailing endpoint slashes, duplicate IP addresses, and IP address order do not prevent reuse.
+NemoClaw sends another validation request in any of these cases:
+
+- Any listed input differs after NemoClaw normalizes the endpoint URL and IP address set, including when the DNS IP address set changes.
+- The endpoint URL contains embedded credentials, a query string, or a fragment.
+- Validation uses custom headers.
+- The endpoint is an operator-trusted private endpoint.
+
 An endpoint that is reachable only through `http://host.openshell.internal:<port>` cannot receive the host-side API probe.
 Verify that route from inside the sandbox after onboarding.
 

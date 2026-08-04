@@ -589,6 +589,9 @@ and advisor concurrency groups include that eligibility, so an ignored
 metadata-edit run cannot cancel an eligible run for the same PR. The trusted
 controller reads all changed files after eligible PR CI completes and builds
 the deterministic risk plan.
+The controller's Actions run name carries that CI display title so operators
+can distinguish simultaneous PR, head, and base identities even when the event
+omits pull-request metadata.
 Runtime families and changes to workflow-wired live tests or their owning
 helpers select canonical jobs from the trusted `e2e.yaml` inventory
 independently of advisor output. A workflow-wired live test or owning helper
@@ -616,13 +619,17 @@ controller completes it as cancelled with `Superseded by PR update` or
 `PR closed — gate no longer applies` and identifies the obsolete head and base.
 The closed-PR outcome also applies when a fork repository was deleted and
 GitHub consequently returns no head-repository object.
-Shared sandbox-boundary changes have a floor of `full-e2e`, `hermes-e2e`, and
-`security-posture`. E2E control-plane changes select `cloud-onboard`,
-`cloud-inference`, and `security-posture`. The `e2e-control-plane`
+Shared sandbox-boundary changes have a floor of `full-e2e`, `hermes-e2e`,
+`hermes-inference-switch`, and `security-posture`. E2E control-plane changes
+select `cloud-onboard`, `cloud-inference`, and `security-posture`. The `e2e-control-plane`
 family remains the conservative boundary for shared E2E tools, workflow and
 security files, unknown live test paths, risk policy, dependency and test
 configuration, and preparation and upload actions. These cross-cutting changes
 keep the broad three-job floor.
+Changes to the Hermes CLI wrapper, adapter manifest, or adapter validator also
+select `channels-stop-start` and `mcp-bridge`. Both jobs include the Hermes
+shard. The Hermes shards exercise the wrapper during `channels stop` and
+`channels start`, and the adapter during `mcp add`, `mcp restart`, and `mcp remove`.
 Repository-root `Dockerfile` changes additionally select `full-e2e` alongside
 the platform-install `cloud-onboard` floor so OpenClaw final-image changes run
 through cold onboarding and a real first turn.
@@ -796,8 +803,16 @@ commit SHA, base SHA, selected jobs and targets, and
 maintainer then chooses **Run workflow** on `main`, selects `approve-e2e`, and
 supplies the PR number, recorded head SHA, recorded base SHA, and a specific
 review reason.
+The manual controller run name includes the supplied PR, head, and base
+identity for operator coordination.
 GitHub supplies the triggering actor; the controller requires that account to
 have current `maintain` or `admin` permission.
+Approval is valid only while coordination has the exact
+`Maintainer approval required to run fork E2E` title for the live revision.
+An early or stale approval fails closed. The diagnostic classifies the
+coordination state as preparing, executing, terminal, or malformed. It gives a
+fixed remediation and the expected title without echoing the observed check
+output.
 
 The shared resolver revalidates the open PR, head repository, PR SHA and base
 SHA, deterministic plan, matching pending coordination state, and that the

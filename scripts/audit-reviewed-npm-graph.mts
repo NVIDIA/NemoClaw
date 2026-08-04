@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -27,7 +28,12 @@ type ReviewedPackage = Readonly<{
   tarballUrl: string;
 }>;
 type LockedGraph = ReviewedPackage &
-  Readonly<{ directory: string; id: string; lockSha256: string }>;
+  Readonly<{
+    directory: string;
+    id: string;
+    lockSha256: string;
+    replacementLockSha256?: string;
+  }>;
 type AuditConfig = Readonly<{
   archivePackages: readonly ReviewedPackage[];
   archiveGraphId: string;
@@ -115,8 +121,8 @@ function run(command: string, args: readonly string[], cwd: string) {
   return result;
 }
 
-function readConfig(): AuditConfig {
-  const parsed = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8")) as AuditConfig;
+export function parseAuditConfig(contents: string): AuditConfig {
+  const parsed = JSON.parse(contents) as AuditConfig;
   if (
     parsed.schemaVersion !== 2 ||
     !SEVERITIES.includes(parsed.severityThreshold) ||
@@ -135,12 +141,20 @@ function readConfig(): AuditConfig {
         typeof graph.directory !== "string" ||
         !graph.directory ||
         typeof graph.lockSha256 !== "string" ||
-        !/^[0-9a-f]{64}$/.test(graph.lockSha256),
+        !/^[0-9a-f]{64}$/.test(graph.lockSha256) ||
+        (graph.replacementLockSha256 !== undefined &&
+          (typeof graph.replacementLockSha256 !== "string" ||
+            !/^[0-9a-f]{64}$/.test(graph.replacementLockSha256) ||
+            graph.replacementLockSha256 === graph.lockSha256)),
     )
   ) {
     throw new Error("ci/reviewed-npm-audit.json is invalid");
   }
   return parsed;
+}
+
+function readConfig(): AuditConfig {
+  return parseAuditConfig(fs.readFileSync(CONFIG_PATH, "utf-8"));
 }
 
 function materializeArchiveGraph(packages: readonly ReviewedPackage[], tempRoot: string): string {
@@ -192,9 +206,15 @@ function materializeLockedGraph(
     path.join(graph.directory, "package-lock.json"),
     `${graph.label} lockfile`,
   );
+  const expectedLockSha256 = selectReviewedLockSha256(
+    sourceLock,
+    graph.lockSha256,
+    graph.replacementLockSha256,
+    graph.label,
+  );
   verifyReviewedNpmLock({
     expectedIntegrity: graph.integrity,
-    expectedLockSha256: graph.lockSha256,
+    expectedLockSha256,
     label: graph.label,
     lockfilePath: sourceLock,
     packageSpec: graph.packageSpec,
@@ -207,12 +227,29 @@ function materializeLockedGraph(
   fs.copyFileSync(sourceLock, path.join(destination, "package-lock.json"));
   run("npm", ["ci", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"], destination);
   verifyInstalledNpmLock({
-    expectedLockSha256: graph.lockSha256,
+    expectedLockSha256,
     installRoot: destination,
     label: graph.label,
     lockfilePath: path.join(destination, "package-lock.json"),
   });
   return destination;
+}
+
+export function selectReviewedLockSha256(
+  lockfilePath: string,
+  lockSha256: string,
+  replacementLockSha256: string | undefined,
+  label: string,
+): string {
+  const actual = createHash("sha256").update(fs.readFileSync(lockfilePath)).digest("hex");
+  const reviewedDigests =
+    replacementLockSha256 === undefined ? [lockSha256] : [lockSha256, replacementLockSha256];
+  if (!reviewedDigests.includes(actual)) {
+    throw new Error(
+      `${label} lock SHA-256 mismatch\nExpected one of: ${reviewedDigests.join(", ")}\nActual:          ${actual}`,
+    );
+  }
+  return actual;
 }
 
 function readJsonObject(file: string, label: string): Record<string, any> {
