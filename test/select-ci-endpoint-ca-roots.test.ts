@@ -285,6 +285,22 @@ describe("CI endpoint CA root selection", () => {
         /compact CA verification for registry\.npmjs\.org failed/u,
       );
       expect(fs.readFileSync(output, "utf8")).toBe("unchanged");
+
+      const hardLink = path.join(directory, "compact-hard-link.pem");
+      fs.linkSync(output, hardLink);
+      expect(() => selectCiEndpointCaRoots(output, runner)).toThrow(
+        /output must be an existing single-link regular file/u,
+      );
+      expect(fs.readFileSync(output, "utf8")).toBe("unchanged");
+      expect(fs.readFileSync(hardLink, "utf8")).toBe("unchanged");
+      fs.unlinkSync(hardLink);
+
+      const symlink = path.join(directory, "compact-symlink.pem");
+      fs.symlinkSync(output, symlink);
+      expect(() => selectCiEndpointCaRoots(symlink, runner)).toThrow(
+        /output must be an existing single-link regular file/u,
+      );
+      expect(fs.readFileSync(output, "utf8")).toBe("unchanged");
     },
   );
 });

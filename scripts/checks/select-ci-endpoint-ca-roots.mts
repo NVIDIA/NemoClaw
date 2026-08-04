@@ -215,15 +215,18 @@ function selectRoot(
 }
 
 function writeOutput(outputPath: string, bundle: string): void {
-  const stat = fs.lstatSync(outputPath);
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw new Error("output must be an existing regular file that is not a symlink");
-  }
-  const fd = fs.openSync(
-    outputPath,
-    fs.constants.O_WRONLY | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW,
-  );
+  let fd: number;
   try {
+    fd = fs.openSync(outputPath, fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW);
+  } catch {
+    throw new Error("output must be an existing single-link regular file");
+  }
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1) {
+      throw new Error("output must be an existing single-link regular file");
+    }
+    fs.ftruncateSync(fd, 0);
     fs.writeFileSync(fd, bundle);
     fs.fchmodSync(fd, 0o600);
   } finally {
