@@ -15,6 +15,7 @@ import { githubApi, githubApiWithResponse, githubRestPaginated } from "../adviso
 import { parseArgs } from "../advisors/io.mts";
 import {
   buildRiskPlan,
+  isPrE2ePlanningJob,
   isPrE2eTypedTargetId,
   RISK_PLAN_VERSION,
   type RiskPlan,
@@ -690,7 +691,7 @@ export function validateRiskPlan(value: unknown, allowedJobs: ReadonlySet<string
   const rebuilt = buildRiskPlan({
     headSha: value.headSha,
     changedFiles: value.changedFiles as string[],
-    focusedE2eJobs: focusedE2eJobsForChangedFiles(value.changedFiles as string[]),
+    focusedE2eJobs: focusedPrGateE2eJobsForChangedFiles(value.changedFiles as string[]),
   });
   if (JSON.stringify(value) !== JSON.stringify(rebuilt)) {
     throw new Error("risk plan does not match its hash and inputs");
@@ -715,6 +716,15 @@ export function validateRiskPlan(value: unknown, allowedJobs: ReadonlySet<string
     }
   }
   return rebuilt;
+}
+
+export function focusedPrGateE2eJobsForChangedFiles(
+  changedFiles: readonly string[],
+  inventory = readFreeStandingJobsInventory(),
+): ReturnType<typeof focusedE2eJobsForChangedFiles> {
+  return focusedE2eJobsForChangedFiles(changedFiles, inventory).filter((selection) =>
+    isPrE2ePlanningJob(selection.id),
+  );
 }
 
 function riskPlanSelectionIds(plan: RiskPlan): string[] {
@@ -3135,7 +3145,7 @@ export async function startPrGate(
       buildRiskPlan({
         headSha: command.headSha,
         changedFiles,
-        focusedE2eJobs: focusedE2eJobsForChangedFiles(changedFiles, inventory),
+        focusedE2eJobs: focusedPrGateE2eJobsForChangedFiles(changedFiles, inventory),
       }),
       allowedJobs,
     );
@@ -3257,7 +3267,7 @@ async function startAuthorizedPrGate(command: AuthorizedE2ECommand): Promise<voi
       buildRiskPlan({
         headSha: command.headSha,
         changedFiles,
-        focusedE2eJobs: focusedE2eJobsForChangedFiles(changedFiles, inventory),
+        focusedE2eJobs: focusedPrGateE2eJobsForChangedFiles(changedFiles, inventory),
       }),
       new Set(inventory.allowedJobs),
     );

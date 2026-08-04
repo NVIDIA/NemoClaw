@@ -26,6 +26,7 @@ import {
   type InferenceSwitchWorkflow,
   validateInferenceSwitchWorkflow,
 } from "./inference-switch-workflow-boundary.mts";
+import { validateManagedImageMultiarchWorkflow } from "./managed-image-multiarch-workflow-boundary.mts";
 import {
   type OpenClawPluginRuntimeExdevWorkflow,
   validateOpenClawPluginRuntimeExdevWorkflow,
@@ -4237,6 +4238,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   errors.push(...validateHermesDashboardWorkflow(workflow as unknown as HermesDashboardWorkflow));
   errors.push(...validateHermesGpuStartupWorkflow(workflow));
   errors.push(...validateInferenceSwitchWorkflow(workflow as unknown as InferenceSwitchWorkflow));
+  errors.push(...validateManagedImageMultiarchWorkflow(workflow));
   errors.push(
     ...validateOpenClawPluginRuntimeExdevWorkflow(
       workflow as unknown as OpenClawPluginRuntimeExdevWorkflow,
