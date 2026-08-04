@@ -31,7 +31,7 @@ let packagingPaths: string[] = [];
 const managedBootstrapLoad =
   /(?:from\s*|import\s*|import\s*\(\s*|require\s*\(\s*)["']([^"']*managed-bootstrap(?:\/[^"']*)?)["']/giu;
 const allowedManagedBootstrapLoad =
-  /\/managed-bootstrap\/(?:adapter|runtime-create)(?:\.[cm]?[jt]s)?$/u;
+  /\/managed-bootstrap\/(?:adapter|envelope|runtime-create)(?:\.[cm]?[jt]s)?$/u;
 const packagedBootstrapAsset =
   /(?:nemoclaw-managed-bootstrap|managed-bootstrap-trampoline|managed-startup-image-runtime\.cjs|nemoclaw-managed-startup-hold)/u;
 
@@ -198,6 +198,7 @@ describe("runtime provider central source boundary", () => {
       disallowedManagedBootstrapLoads(
         [
           'import type { Contract } from "../managed-bootstrap/adapter";',
+          'import { envelope } from "../managed-bootstrap/envelope";',
           'import type { Lifecycle } from "../../managed-bootstrap/runtime-create.mts";',
         ].join("\n"),
       ),
@@ -242,21 +243,58 @@ describe("runtime provider central source boundary", () => {
     expect(dockerProvider.match(/recovery:\s*unsupported\(/gu)).toHaveLength(2);
   });
 
-  // source-shape-contract: security -- Image packaging must expose only the reviewed dormant native boundary sources until every required bootstrap runtime asset is activated together
-  it("keeps managed-bootstrap assets out of image packaging", () => {
+  // source-shape-contract: security -- Every managed image must package the same reviewed native boundary while provider activation remains independently gated
+  it("packages the dormant managed-bootstrap native boundary for every agent image", () => {
     const entrypoint = read("scripts/managed-bootstrap-entrypoint.c");
     const trampoline = read("scripts/managed-bootstrap-trampoline.sh");
+    const hold = read("scripts/managed-startup-hold.sh");
+    const directE2e = read("scripts/checks/run-managed-image-direct-e2e.ts");
+    const bootstrapRuntime = read("src/lib/onboard/managed-bootstrap/image-runtime.ts");
+    const startupRuntime = read("src/lib/onboard/managed-startup/image-runtime.ts");
     const packagingSources = packagingPaths.map((path) => [path, read(path)] as const);
     expect(entrypoint).toMatch(/exec_process\(NEMOCLAW_MANAGED_BOOTSTRAP_BASH/u);
     expect(entrypoint).toMatch(/NEMOCLAW_MANAGED_BOOTSTRAP_FREESTANDING/u);
     expect(trampoline).toMatch(/Non-executable image-owned bootstrap body/u);
+    expect(hold.startsWith("#!/bin/bash -p\n")).toBe(true);
+    expect(hold).toContain('[ "$7" = "--" ]');
+    expect(hold).toContain("/usr/local/bin/nemoclaw-start");
+    expect(directE2e).toContain("renderManagedBootstrapHeldCommand(request, bootstrapIdentity");
+    expect(directE2e).toContain("...heldWorkloadArgv.slice(1)");
+    expect(directE2e).toContain(`"--interactive"`);
+    expect(directE2e).toContain("cat > ${MANAGED_BOOTSTRAP_REQUEST_FILE}");
+    expect(directE2e).toContain("chown 0:0 ${MANAGED_BOOTSTRAP_REQUEST_FILE}");
+    expect(directE2e).not.toContain(`docker(["cp"`);
+    expect(directE2e).not.toMatch(/const HOLD\s*=/u);
+    expect(bootstrapRuntime.match(/require\.main === module/gu)).toHaveLength(1);
+    expect(startupRuntime).not.toMatch(/require\.main === module/u);
+    for (const dockerfilePath of [
+      "Dockerfile",
+      "agents/hermes/Dockerfile",
+      "agents/langchain-deepagents-code/Dockerfile",
+    ]) {
+      const dockerfile = read(dockerfilePath);
+      expect(dockerfile).toContain(" AS managed-bootstrap-entrypoint-builder");
+      expect(dockerfile).toContain("COPY scripts/managed-bootstrap-entrypoint.c ./");
+      expect(dockerfile).toContain(
+        "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap",
+      );
+      expect(dockerfile).toContain(
+        "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh",
+      );
+    }
     expect(
       packagingSources
         .filter(([, source]) => packagedBootstrapAsset.test(source))
         .map(([path]) => path),
     ).toEqual([
+      ".github/workflows/managed-images.yaml",
+      "Dockerfile",
+      "agents/hermes/Dockerfile",
+      "agents/langchain-deepagents-code/Dockerfile",
+      "scripts/checks/run-managed-image-direct-e2e.ts",
       "scripts/managed-bootstrap-entrypoint.c",
       "scripts/managed-bootstrap-trampoline.sh",
+      "scripts/managed-startup-hold.sh",
     ]);
   });
 });

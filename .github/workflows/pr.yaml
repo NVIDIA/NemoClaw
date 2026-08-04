@@ -52,6 +52,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Node.js for docs-only checks
@@ -75,11 +76,12 @@ jobs:
           [ "$HADOLINT_SHA256" = "$ACTUAL" ] || { echo "::error::hadolint checksum mismatch"; exit 1; }
           chmod +x /usr/local/bin/hadolint
 
-      - name: Fetch checked-out merge base for docs-only checks
+      - name: Resolve checked-out merge base for docs-only checks
         shell: bash
         run: |
-          DOCS_ONLY_FROM_REF="${{ github.event.pull_request.base.sha }}"
-          git fetch --no-tags --depth=1 origin "$DOCS_ONLY_FROM_REF"
+          set -euo pipefail
+          DOCS_ONLY_FROM_REF="$(git merge-base HEAD "origin/${GITHUB_BASE_REF}")"
+          [ -n "$DOCS_ONLY_FROM_REF" ]
           echo "DOCS_ONLY_FROM_REF=$DOCS_ONLY_FROM_REF" >> "$GITHUB_ENV"
 
       - name: Run docs-only hook checks

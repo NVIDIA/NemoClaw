@@ -248,10 +248,13 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(updateDocs).toContain("/nemoclaw-contributor-update-docs for vX.Y.Z");
     expect(updateDocs).toContain("Every pre-tag release-note docs PR must add");
     expect(updateDocs).toContain("docs/changelog/YYYY-MM-DD.mdx");
-    expect(updateDocs).toContain("parser-safe MDX SPDX comment");
-    expect(updateDocs).toContain("scan `<previous-tag>..origin/main`");
+    expect(updateDocs).toContain("current documentation contributor guide");
+    expect(updateDocs).toContain("current repository policy");
+    expect(updateDocs).toContain("../nemoclaw-maintainer-policies/references/release-train.md");
+    expect(updateDocs).not.toContain("parser-safe MDX SPDX comment");
+    expect(updateDocs).not.toContain("scan `<previous-tag>..origin/main`");
     expect(updateDocs).toContain("planned release date");
-    expect(updateDocs).toContain("stop before PR creation");
+    expect(updateDocs).toContain("Stop before PR creation");
     expect(createPr).toContain('--label "area: docs"');
     expect(createPr).not.toContain('--label "documentation"');
     expect(evening.indexOf("/nemoclaw-contributor-update-docs for <version>")).toBeLessThan(
@@ -266,7 +269,9 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(policy).toContain("Run `/nemoclaw-contributor-update-docs for vX.Y.Z`");
     expect(policy).toContain("The pre-tag release-note docs PR must create or update");
     expect(priorities).toContain("the pre-tag changelog PR contains");
-    expect(skillsGuide).toContain("create the canonical `docs/changelog/YYYY-MM-DD.mdx` entry");
+    expect(skillsGuide).toContain(
+      "update their owning documentation under current repository policy",
+    );
     expect(agents).toContain("a PR that updates ordinary pages without the dated changelog entry");
     expect(docsAgents).toContain("Every pre-tag release-note docs PR must create or update");
     expect(docsContributing).toContain("Create the planned release entry in the pre-tag");

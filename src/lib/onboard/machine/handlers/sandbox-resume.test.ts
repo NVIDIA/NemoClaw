@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   applySandboxResumeDecision,
   decideSandboxResume,
+  hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
   type SandboxResumeDeps,
   type SandboxResumeSignals,
@@ -18,6 +19,7 @@ function resumeSignals(overrides: Partial<SandboxResumeSignals> = {}): SandboxRe
     sandboxStepComplete: true,
     sandboxReuseState: "ready",
     inferenceRouteConfigChanged: false,
+    compatibleEndpointReasoningChanged: false,
     webSearchConfigChanged: false,
     sandboxGpuConfigChanged: false,
     recreateSandboxRequested: false,
@@ -37,6 +39,7 @@ describe("decideSandboxResume", () => {
 
   it.each([
     ["agent", { resumeAgentChanged: true }, false],
+    ["compatible endpoint reasoning", { compatibleEndpointReasoningChanged: true }, false],
     ["web search", { webSearchConfigChanged: true }, true],
     ["explicit recreate", { recreateSandboxRequested: true }, false],
     ["sandbox GPU", { sandboxGpuConfigChanged: true }, true],
@@ -143,12 +146,63 @@ describe("decideSandboxResume", () => {
     ).toEqual({ kind: "repair-and-recreate" });
   });
 
+  it("repairs a not-ready sandbox before recreating for reasoning capability drift (#7570)", () => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxReuseState: "not_ready",
+          compatibleEndpointReasoningChanged: true,
+        }),
+      ),
+    ).toEqual({ kind: "repair-and-recreate" });
+  });
+
   it("creates without resume-specific cleanup when the step is incomplete", () => {
     expect(
       decideSandboxResume(
-        resumeSignals({ sandboxStepComplete: false, webSearchConfigChanged: true }),
+        resumeSignals({
+          sandboxStepComplete: false,
+          compatibleEndpointReasoningChanged: true,
+          webSearchConfigChanged: true,
+        }),
       ),
     ).toEqual({ kind: "create" });
+  });
+});
+
+describe("hasCompatibleEndpointReasoningDrift", () => {
+  it("compares the validated capability with the image-baked registry value (#7570)", () => {
+    expect(
+      hasCompatibleEndpointReasoningDrift({
+        provider: "compatible-endpoint",
+        compatibleEndpointReasoning: "true",
+        registryEntry: { name: "saved", compatibleEndpointReasoning: "false" },
+      }),
+    ).toBe(true);
+    expect(
+      hasCompatibleEndpointReasoningDrift({
+        provider: "compatible-endpoint",
+        compatibleEndpointReasoning: "true",
+        registryEntry: { name: "saved", compatibleEndpointReasoning: "true" },
+      }),
+    ).toBe(false);
+    expect(
+      hasCompatibleEndpointReasoningDrift({
+        provider: "compatible-endpoint",
+        compatibleEndpointReasoning: "true",
+        registryEntry: { name: "saved" },
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores reasoning metadata for providers that do not support the capability", () => {
+    expect(
+      hasCompatibleEndpointReasoningDrift({
+        provider: "provider",
+        compatibleEndpointReasoning: "true",
+        registryEntry: { name: "saved", compatibleEndpointReasoning: "false" },
+      }),
+    ).toBe(false);
   });
 });
 
