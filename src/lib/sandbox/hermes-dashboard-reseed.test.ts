@@ -3,7 +3,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfigTarget } from "./config";
-import { seedHermesDashboardConfig } from "./config";
+import { restoreHermesDashboardConfig, seedHermesDashboardConfig } from "./config";
 
 interface CaptureResult {
   status: number | null;
@@ -142,6 +142,21 @@ describe("seedHermesDashboardConfig", () => {
     expect(capture).toHaveBeenCalledTimes(4);
     expect(sandboxCommand(capture.mock.calls[2][1]).at(-1)).toBe("/sandbox/.hermes/dashboard-home");
     expect(sandboxCommand(capture.mock.calls[3][1])).toContain(DASHBOARD_CONFIG);
+  });
+
+  it("requests a no-clobber legacy merge after rebuild restore (#7200)", () => {
+    mockReseedFlow();
+
+    expect(restoreHermesDashboardConfig("hermes", TARGET, deps)).toBe("converged");
+    expect(sandboxCommand(capture.mock.calls[2][1])).toEqual([
+      PYTHON,
+      SEEDER,
+      "--merge-legacy",
+      TARGET.configPath,
+      DASHBOARD_CONFIG,
+      "/sandbox/.hermes/.env",
+      "/sandbox/.hermes/profiles/dashboard-home/.env",
+    ]);
   });
 
   it("fails closed when the legacy profile cannot be inspected (#7200)", () => {

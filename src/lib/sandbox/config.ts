@@ -677,10 +677,11 @@ function hermesDashboardReseedFailureDetail(
  * no-follow atomic writes and refuses symlinked paths. Best-effort: returns
  * `failed` on failure so the caller can warn without aborting the route switch.
  */
-function seedHermesDashboardConfig(
+function runHermesDashboardConfigSeed(
   sandboxName: string,
   target: AgentConfigTarget,
-  deps: HermesDashboardReseedDeps = { getOpenshellBinary, captureOpenshellCommand },
+  mergeLegacy: boolean,
+  deps: HermesDashboardReseedDeps,
 ): HermesDashboardReseedResult {
   const dashboardHome = `${target.configDir}/profiles/dashboard-home`;
   const legacyDashboardHome = `${target.configDir}/dashboard-home`;
@@ -752,6 +753,7 @@ function seedHermesDashboardConfig(
   const seed = capture([
     python,
     HERMES_DASHBOARD_SEEDER_PATH,
+    ...(mergeLegacy ? ["--merge-legacy"] : []),
     target.configPath,
     dashboardConfigPath,
     `${target.configDir}/.env`,
@@ -771,6 +773,22 @@ function seedHermesDashboardConfig(
     return "failed";
   }
   return "converged";
+}
+
+function seedHermesDashboardConfig(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  deps: HermesDashboardReseedDeps = { getOpenshellBinary, captureOpenshellCommand },
+): HermesDashboardReseedResult {
+  return runHermesDashboardConfigSeed(sandboxName, target, false, deps);
+}
+
+function restoreHermesDashboardConfig(
+  sandboxName: string,
+  target: AgentConfigTarget,
+  deps: HermesDashboardReseedDeps = { getOpenshellBinary, captureOpenshellCommand },
+): HermesDashboardReseedResult {
+  return runHermesDashboardConfigSeed(sandboxName, target, true, deps);
 }
 
 // ---------------------------------------------------------------------------
@@ -1500,6 +1518,7 @@ export {
   resolveAgentConfig,
   restartSandboxAgentAfterConfigSet,
   rewriteConfigUrlsWithDnsPinning,
+  restoreHermesDashboardConfig,
   seedHermesDashboardConfig,
   setDotpath,
   validateConfigDotpath,

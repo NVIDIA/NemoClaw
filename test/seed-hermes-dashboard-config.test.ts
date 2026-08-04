@@ -97,9 +97,16 @@ function runSeed(
   envSrcPath?: string,
   envDstPath?: string,
   env: Record<string, string | undefined> = {},
+  mergeLegacy = false,
 ) {
   const envArgs = envSrcPath && envDstPath ? [envSrcPath, envDstPath] : [];
-  const args = [SCRIPT_PATH, srcPath, dstPath, ...envArgs];
+  const args = [
+    SCRIPT_PATH,
+    ...(mergeLegacy ? ["--merge-legacy"] : []),
+    srcPath,
+    dstPath,
+    ...envArgs,
+  ];
   return spawnSync("python3", args, {
     encoding: "utf-8",
     env: { ...process.env, ...env },
@@ -245,6 +252,59 @@ finally:
 
     expect(res.status).toBe(1);
     expect(res.stderr).toContain("Refusing to merge legacy and current dashboard profiles");
+    expect(fs.readFileSync(path.join(legacyHome, "MEMORY.md"), "utf-8")).toBe("legacy\n");
+    expect(fs.readFileSync(path.join(dashboardHome, "MEMORY.md"), "utf-8")).toBe("current\n");
+  });
+
+  it("merges disjoint restored dashboard profile entries without clobbering (#7200)", () => {
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const hermesHome = path.join(tmpDir, ".hermes");
+    const legacyHome = path.join(hermesHome, "dashboard-home");
+    const dashboardHome = path.join(hermesHome, "profiles", "dashboard-home");
+    fs.mkdirSync(legacyHome, { recursive: true });
+    fs.mkdirSync(dashboardHome, { recursive: true });
+    fs.writeFileSync(path.join(legacyHome, "MEMORY.md"), "legacy memory\n");
+    fs.writeFileSync(path.join(dashboardHome, "CURRENT.md"), "current memory\n");
+
+    const res = runSeed(
+      src,
+      path.join(dashboardHome, "config.yaml"),
+      undefined,
+      undefined,
+      {},
+      true,
+    );
+
+    expect(res.status).toBe(0);
+    expect(res.stderr).toContain("merged restored legacy dashboard profile");
+    expect(fs.existsSync(legacyHome)).toBe(false);
+    expect(fs.readFileSync(path.join(dashboardHome, "MEMORY.md"), "utf-8")).toBe("legacy memory\n");
+    expect(fs.readFileSync(path.join(dashboardHome, "CURRENT.md"), "utf-8")).toBe(
+      "current memory\n",
+    );
+  });
+
+  it("refuses a colliding restored dashboard profile merge without clobbering (#7200)", () => {
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const hermesHome = path.join(tmpDir, ".hermes");
+    const legacyHome = path.join(hermesHome, "dashboard-home");
+    const dashboardHome = path.join(hermesHome, "profiles", "dashboard-home");
+    fs.mkdirSync(legacyHome, { recursive: true });
+    fs.mkdirSync(dashboardHome, { recursive: true });
+    fs.writeFileSync(path.join(legacyHome, "MEMORY.md"), "legacy\n");
+    fs.writeFileSync(path.join(dashboardHome, "MEMORY.md"), "current\n");
+
+    const res = runSeed(
+      src,
+      path.join(dashboardHome, "config.yaml"),
+      undefined,
+      undefined,
+      {},
+      true,
+    );
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("because an entry collides");
     expect(fs.readFileSync(path.join(legacyHome, "MEMORY.md"), "utf-8")).toBe("legacy\n");
     expect(fs.readFileSync(path.join(dashboardHome, "MEMORY.md"), "utf-8")).toBe("current\n");
   });

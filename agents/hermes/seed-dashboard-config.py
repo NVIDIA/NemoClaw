@@ -39,6 +39,7 @@ because the root entrypoint may invoke this helper over sandbox-writable paths.
 Usage:
     seed-dashboard-config.py <gateway-config.yaml> <dashboard-config.yaml>
     seed-dashboard-config.py <gateway-config.yaml> <dashboard-config.yaml> <gateway.env> <dashboard.env>
+    seed-dashboard-config.py --merge-legacy <gateway-config.yaml> <dashboard-config.yaml>
 
 Exits 0 on success or a benign no-op for a missing gateway config.
 Exits 1 when an existing config is invalid or unreadable, routing is absent, a
@@ -135,6 +136,100 @@ def _directory_is_empty_at(parent_fd: int, name: str) -> bool:
         os.close(fd)
 
 
+def _rename_no_replace_at(src_fd: int, name: str, dst_fd: int) -> None:
+    """Move one entry between anchored directories without replacing a peer."""
+
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    renameat2 = getattr(libc, "renameat2", None)
+    if renameat2 is None:
+        raise OSError(errno.ENOSYS, "renameat2 is unavailable")
+    renameat2.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    renameat2.restype = ctypes.c_int
+    encoded = os.fsencode(name)
+    if renameat2(src_fd, encoded, dst_fd, encoded, 1) != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number))
+
+
+def _merge_legacy_profile(config_fd: int, profiles_fd: int, dashboard_home: str) -> bool:
+    """Merge disjoint restored legacy entries into the canonical profile."""
+
+    legacy_fd = -1
+    dashboard_fd = -1
+    try:
+        legacy_fd = _open_directory_no_follow("dashboard-home", dir_fd=config_fd)
+        dashboard_fd = _open_directory_no_follow("dashboard-home", dir_fd=profiles_fd)
+        entries = sorted(os.listdir(legacy_fd))
+        for name in entries:
+            try:
+                os.stat(name, dir_fd=dashboard_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            print(
+                "[dashboard] Refusing to merge restored legacy and current dashboard "
+                "profiles because an entry collides",
+                file=sys.stderr,
+            )
+            return False
+
+        moved: list[str] = []
+        for name in entries:
+            try:
+                _rename_no_replace_at(legacy_fd, name, dashboard_fd)
+                moved.append(name)
+            except OSError as exc:
+                rollback_failed = False
+                for moved_name in reversed(moved):
+                    try:
+                        _rename_no_replace_at(dashboard_fd, moved_name, legacy_fd)
+                    except OSError:
+                        rollback_failed = True
+                prefix = "[SECURITY]" if rollback_failed else "[dashboard]"
+                print(
+                    f"{prefix} failed to merge restored legacy dashboard profile ({exc})",
+                    file=sys.stderr,
+                )
+                return False
+        try:
+            os.rmdir("dashboard-home", dir_fd=config_fd)
+        except OSError as exc:
+            rollback_failed = False
+            for moved_name in reversed(moved):
+                try:
+                    _rename_no_replace_at(dashboard_fd, moved_name, legacy_fd)
+                except OSError:
+                    rollback_failed = True
+            prefix = "[SECURITY]" if rollback_failed else "[dashboard]"
+            print(
+                f"{prefix} failed to finish restored legacy dashboard profile merge ({exc})",
+                file=sys.stderr,
+            )
+            return False
+        print(
+            f"[dashboard] merged restored legacy dashboard profile into {dashboard_home}",
+            file=sys.stderr,
+        )
+        return True
+    except OSError as exc:
+        print(
+            f"[SECURITY] Refusing to merge restored legacy dashboard profile ({exc})",
+            file=sys.stderr,
+        )
+        return False
+    finally:
+        if dashboard_fd >= 0:
+            os.close(dashboard_fd)
+        if legacy_fd >= 0:
+            os.close(legacy_fd)
+
 def _open_profile_parent(config_fd: int, path: str) -> int | None:
     """Create and securely open the canonical profile parent."""
 
@@ -158,7 +253,9 @@ def _open_profile_parent(config_fd: int, path: str) -> int | None:
         return None
 
 
-def _prepare_dashboard_destination(dst: str) -> tuple[bool, int | None]:
+def _prepare_dashboard_destination(
+    dst: str, *, merge_legacy: bool = False
+) -> tuple[bool, int | None]:
     """Migrate and securely open the canonical dashboard profile when applicable."""
 
     dashboard_home = os.path.dirname(dst)
@@ -221,31 +318,35 @@ def _prepare_dashboard_destination(dst: str) -> tuple[bool, int | None]:
                 )
                 return False, None
             if not destination_is_empty:
-                print(
-                    "[dashboard] Refusing to merge legacy and current dashboard profiles; "
-                    "move the legacy files manually before restarting",
-                    file=sys.stderr,
+                if not merge_legacy:
+                    print(
+                        "[dashboard] Refusing to merge legacy and current dashboard profiles; "
+                        "move the legacy files manually before restarting",
+                        file=sys.stderr,
+                    )
+                    return False, None
+                if not _merge_legacy_profile(config_fd, profiles_fd, dashboard_home):
+                    return False, None
+                legacy_stat = None
+                current_stat = os.stat(
+                    "dashboard-home", dir_fd=profiles_fd, follow_symlinks=False
                 )
-                return False, None
-            try:
-                os.rmdir("dashboard-home", dir_fd=profiles_fd)
-            except OSError as exc:
-                print(
-                    f"[SECURITY] Refusing to migrate legacy dashboard profile because "
-                    f"{dashboard_home} changed unexpectedly ({exc})",
-                    file=sys.stderr,
-                )
-                return False, None
-            current_stat = None
+                destination_is_empty = False
+            if destination_is_empty:
+                try:
+                    os.rmdir("dashboard-home", dir_fd=profiles_fd)
+                except OSError as exc:
+                    print(
+                        f"[SECURITY] Refusing to migrate legacy dashboard profile because "
+                        f"{dashboard_home} changed unexpectedly ({exc})",
+                        file=sys.stderr,
+                    )
+                    return False, None
+                current_stat = None
 
         if legacy_stat is not None:
             try:
-                os.rename(
-                    "dashboard-home",
-                    "dashboard-home",
-                    src_dir_fd=config_fd,
-                    dst_dir_fd=profiles_fd,
-                )
+                _rename_no_replace_at(config_fd, "dashboard-home", profiles_fd)
             except OSError as exc:
                 print(
                     f"[dashboard] failed to migrate legacy dashboard profile ({exc})",
@@ -927,20 +1028,25 @@ def _seed_dashboard(argv: list[str], dashboard_fd: int | None) -> int:
 
 def main(argv: list[str]) -> int:
     """Validate arguments, anchor the destination, and run the dashboard seed."""
-    if len(argv) not in (3, 5):
+    merge_legacy = len(argv) > 1 and argv[1] == "--merge-legacy"
+    seed_argv = [argv[0], *argv[2:]] if merge_legacy else argv
+    if len(seed_argv) not in (3, 5):
         print(
             "[dashboard] usage: seed-dashboard-config.py "
-            "<gateway-config.yaml> <dashboard-config.yaml> [<gateway.env> <dashboard.env>]",
+            "[--merge-legacy] <gateway-config.yaml> <dashboard-config.yaml> "
+            "[<gateway.env> <dashboard.env>]",
             file=sys.stderr,
         )
         return 1
 
-    destination_ok, dashboard_fd = _prepare_dashboard_destination(argv[2])
+    destination_ok, dashboard_fd = _prepare_dashboard_destination(
+        seed_argv[2], merge_legacy=merge_legacy
+    )
     if not destination_ok:
         return 1
 
     try:
-        return _seed_dashboard(argv, dashboard_fd)
+        return _seed_dashboard(seed_argv, dashboard_fd)
     finally:
         if dashboard_fd is not None:
             os.close(dashboard_fd)
