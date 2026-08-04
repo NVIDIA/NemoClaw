@@ -107,14 +107,25 @@ export function prepareProviderDiscovery(options: {
     canProbeRoute,
     recoverySessionId,
   } = options;
+  const recoveredRegistryRoute =
+    rebuildRegistryInferenceRoute?.sandboxName === sandboxName &&
+    rebuildRegistryInferenceRoute.route.source === "registry"
+      ? rebuildRegistryInferenceRoute.route
+      : null;
+  const recordedProviderReaders = bindRecordedProviderReaders(
+    deps,
+    recoverProvider,
+    recoveredRegistryRoute,
+    recoverySessionId,
+  );
   const nonInteractive = deps.isNonInteractive();
   const requestedProvider = deps.getNonInteractiveProvider();
   let providerChanged = false;
   if (nonInteractive && requestedProvider && recoverProvider) {
-    const recordedProviderName = deps.readRecordedProvider(sandboxName, recoverySessionId);
+    const recordedProviderName = recordedProviderReaders.readRecordedProvider(sandboxName);
     const hasRecordedNimContainer =
       recordedProviderName === "vllm-local" &&
-      Boolean(deps.readRecordedNimContainer(sandboxName, recoverySessionId));
+      Boolean(recordedProviderReaders.readRecordedNimContainer(sandboxName));
     const recordedProviderKey = providerNameToOptionKey(
       deps.remoteProviderConfig,
       recordedProviderName,
@@ -130,17 +141,6 @@ export function prepareProviderDiscovery(options: {
         allowProviderModelFallback: !providerChanged,
       })
     : null;
-  const recoveredRegistryRoute =
-    rebuildRegistryInferenceRoute?.sandboxName === sandboxName &&
-    rebuildRegistryInferenceRoute.route.source === "registry"
-      ? rebuildRegistryInferenceRoute.route
-      : null;
-  const recordedProviderReaders = bindRecordedProviderReaders(
-    deps,
-    recoverProvider,
-    recoveredRegistryRoute,
-    recoverySessionId,
-  );
   const recoveredProbeProvider =
     nonInteractive && !requestedProvider
       ? recordedProviderReaders.readRecordedProvider(sandboxName)

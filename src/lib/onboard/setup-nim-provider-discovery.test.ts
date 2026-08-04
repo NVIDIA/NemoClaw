@@ -14,6 +14,22 @@ const interactiveDeps = {
   readRecordedModel: () => null,
 };
 
+const rebuildProviderSwitchRoute = {
+  sandboxName: "existing-sandbox",
+  route: {
+    provider: "nvidia-prod",
+    model: "recorded-model",
+    endpointUrl: "https://integrate.api.nvidia.com/v1",
+    preferredInferenceApi: "openai-completions",
+    source: "registry",
+  },
+} as const;
+
+const remoteProviderConfig = {
+  build: { providerName: "nvidia-prod" },
+  openai: { providerName: "openai-api" },
+};
+
 describe("prepareProviderDiscovery", () => {
   it("does not read recorded provider state when recovery is disabled (#8135)", () => {
     const readRecordedProvider = vi.fn(() => "vllm-local");
@@ -46,6 +62,60 @@ describe("prepareProviderDiscovery", () => {
     expect(readRecordedProvider).not.toHaveBeenCalled();
     expect(readRecordedNimContainer).not.toHaveBeenCalled();
     expect(readRecordedModel).not.toHaveBeenCalled();
+  });
+
+  it("omits NEMOCLAW_PROVIDER_MODEL for a same-sandbox rebuild provider switch (#8135)", () => {
+    const readRecordedProvider = vi.fn(() => "openai-api");
+    const getNonInteractiveModel = vi.fn((_providerKey, options) =>
+      options?.allowProviderModelFallback === false ? null : "fallback-model",
+    );
+
+    const result = prepareProviderDiscovery({
+      deps: {
+        ...interactiveDeps,
+        remoteProviderConfig,
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "openai",
+        getNonInteractiveModel,
+        readRecordedProvider,
+      },
+      sandboxName: "existing-sandbox",
+      recoverProvider: true,
+      rebuildRegistryInferenceRoute: rebuildProviderSwitchRoute,
+      recoverySessionId: "recovery-session",
+    });
+
+    expect(result.requestedModel).toBeNull();
+    expect(getNonInteractiveModel).toHaveBeenCalledWith("openai", {
+      allowProviderModelFallback: false,
+    });
+    expect(readRecordedProvider).not.toHaveBeenCalled();
+  });
+
+  it("preserves NEMOCLAW_MODEL for a same-sandbox rebuild provider switch (#8135)", () => {
+    const readRecordedProvider = vi.fn(() => "openai-api");
+    const getNonInteractiveModel = vi.fn(() => "explicit-model");
+
+    const result = prepareProviderDiscovery({
+      deps: {
+        ...interactiveDeps,
+        remoteProviderConfig,
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "openai",
+        getNonInteractiveModel,
+        readRecordedProvider,
+      },
+      sandboxName: "existing-sandbox",
+      recoverProvider: true,
+      rebuildRegistryInferenceRoute: rebuildProviderSwitchRoute,
+      recoverySessionId: "recovery-session",
+    });
+
+    expect(result.requestedModel).toBe("explicit-model");
+    expect(getNonInteractiveModel).toHaveBeenCalledWith("openai", {
+      allowProviderModelFallback: false,
+    });
+    expect(readRecordedProvider).not.toHaveBeenCalled();
   });
 
   it("classifies recorded Local NIM before comparing the requested provider (#8135)", () => {
