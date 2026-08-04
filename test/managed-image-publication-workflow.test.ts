@@ -181,6 +181,9 @@ function publicationBoundaryErrors(baseWorkflow: Workflow, managedWorkflow: Work
     "@openclaw/slack",
     "@openclaw/whatsapp",
     "@openclaw/msteams",
+    "@openclaw/googlechat",
+    "/sandbox/.openclaw/npm/projects",
+    "matches.length !== 1",
     "microsoft-teams-apps",
     "config.plugins?.entries?.[id]?.enabled !== false",
     'config["platforms"].get(name) != {"enabled": False}',
@@ -251,6 +254,7 @@ describe("complete managed-image publication workflow", () => {
     );
 
     expect(publicationBoundaryErrors(baseWorkflow, managedWorkflow)).toEqual([]);
+    expect(JSON.stringify(managedWorkflow)).not.toContain("config.plugins?.installs?.[id]");
     expect(publisher).toMatchObject({
       needs: ["build-and-push-hermes", "build-and-push-dcode", "build-and-push-openclaw"],
       permissions: {
