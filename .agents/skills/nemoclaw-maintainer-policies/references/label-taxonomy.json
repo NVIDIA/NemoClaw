@@ -384,6 +384,7 @@
         "platform: k8s",
         "platform: linux",
         "platform: macos",
+        "platform: n1x",
         "platform: ubuntu",
         "platform: windows",
         "platform: wsl"
@@ -454,6 +455,12 @@
           "description": "macOS, Darwin, Homebrew, or Apple Silicon behavior.",
           "positive_signals": ["macOS-specific error", "Darwin", "Homebrew", "Apple Silicon path", "macOS permission behavior"],
           "negative_signals": ["macOS only listed as tested environment", "Docker only listed in environment", "same issue reproduced on Linux or Windows"]
+        },
+        {
+          "name": "platform: n1x",
+          "description": "Affects N1X hardware or workflows.",
+          "positive_signals": ["N1X hardware named as affected platform", "N1x Linux Laptop", "NVIDIA RTX Spark N1X", "N1X-specific install or runtime behavior"],
+          "negative_signals": ["ARM64 issue without N1X evidence", "NVIDIA hardware mentioned without N1X relevance", "N1X appears only in an unrelated environment inventory"]
         },
         {
           "name": "platform: ubuntu",

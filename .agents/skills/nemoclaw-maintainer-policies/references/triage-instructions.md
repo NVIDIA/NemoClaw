@@ -25,6 +25,7 @@ They apply to Issue Type, labels, Project fields, comments, and questions.
 1. Classify the issue using native GitHub Issue Type: `Bug`, `Enhancement`, `Task`, `Documentation`, `Epic`, or `Initiative`.
 2. Add area labels only when the affected surface is clear.
 3. Require evidence for platform, provider, and integration labels.
+   Map N1X, N1x Linux Laptop, and NVIDIA RTX Spark N1X evidence to `platform: n1x` when N1X is the affected platform.
    If a listed integration is the affected subject, add its `integration:*` label.
    Do not use only `area: integrations`.
    Map LangChain Deep Code, Deep Code, `langchain-deepagents-code`, and `dcode` to `integration: dcode`.
