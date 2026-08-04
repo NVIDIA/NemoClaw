@@ -103,6 +103,7 @@ describe("final gateway startup failure cleanup", () => {
         printError: (message = "") => {
           errors.push(message);
         },
+        supportsLifecycleCommands: () => false,
       }),
     ).toThrow("exit 1");
 

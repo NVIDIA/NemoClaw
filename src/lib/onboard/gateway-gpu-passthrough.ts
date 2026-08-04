@@ -221,6 +221,12 @@ export function reconcileGatewayGpuReuseForGpuIntent({
       process.exit(1);
     }
   } else if (gatewayGpuReuseDecision === "abort-with-recovery") {
+    // Defensive uniformity with the sibling call above: this branch is only
+    // reached with a non-empty registeredSandboxNames (abort-with-recovery
+    // implies !cpuOnlyGatewayRestartSafe, which implies names.length > 0), so
+    // gpuPassthroughRecoveryLines always takes its one-sandbox/multi-sandbox
+    // branch here and supportsLifecycleCommands cannot reach the gated
+    // gatewayRemovalHintLines output.
     reportGpuPassthroughRecovery(console.error, () => registeredSandboxNames, {
       supportsLifecycleCommands,
     });

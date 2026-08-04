@@ -530,6 +530,28 @@ describe("handleGatewayState", () => {
     expect(calls.startGateway).toHaveBeenCalledOnce();
     expect(result.gatewayReuseState).toBe("missing");
   });
+
+  it("forwards the CLI lifecycle-support probe result to the GPU reuse reconciler (#8139)", async () => {
+    const { deps: supportedDeps, calls: supportedCalls } = createDeps({
+      gatewayCliSupportsLifecycleCommands: vi.fn(() => true),
+    });
+
+    await handleGatewayState(baseOptions(supportedDeps, "missing"));
+
+    expect(supportedCalls.reconcileGpu).toHaveBeenCalledWith(
+      expect.objectContaining({ supportsLifecycleCommands: true }),
+    );
+
+    const { deps: unsupportedDeps, calls: unsupportedCalls } = createDeps({
+      gatewayCliSupportsLifecycleCommands: vi.fn(() => false),
+    });
+
+    await handleGatewayState(baseOptions(unsupportedDeps, "missing"));
+
+    expect(unsupportedCalls.reconcileGpu).toHaveBeenCalledWith(
+      expect.objectContaining({ supportsLifecycleCommands: false }),
+    );
+  });
 });
 
 describe("externally supervised gateway lifecycle authority", () => {
