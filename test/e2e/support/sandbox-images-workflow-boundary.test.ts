@@ -551,6 +551,23 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
+  it("rejects the Hermes CA build argument after the image build", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const hermes = imageWorkflow.jobs["messaging-plan-image-boundary"].steps!.find(
+      (step) => step.name === "Build and verify Hermes messaging plan boundary",
+    )!;
+    const buildArg = '--build-arg "NEMOCLAW_CORPORATE_CA_B64=${corporate_ca_b64}"';
+    const buildCommand = 'docker build "${build_args[@]}" -t nemoclaw-hermes-plan-boundary .';
+    expect(hermes.run).toContain(buildArg);
+    hermes.run = hermes
+      .run!.replace(buildArg, "")
+      .replace(buildCommand, `${buildCommand}\n${buildArg}`);
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "hermes messaging plan image boundary CA fixture steps are out of order",
+    );
+  });
+
   it("requires bounded swap before every hosted Hermes image export", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     for (const jobName of ["build-hermes-sandbox-image", "messaging-plan-image-boundary"]) {

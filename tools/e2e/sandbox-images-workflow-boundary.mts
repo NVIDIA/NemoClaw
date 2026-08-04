@@ -676,6 +676,7 @@ function validateHermesMessagingPlanCaFixture(
     'node --experimental-strip-types scripts/checks/select-ci-endpoint-ca-roots.mts --output "$compact_ca_bundle"';
   const compactEncoding = 'corporate_ca_b64="$(base64 -w 0 "$compact_ca_bundle")"';
   const sourceHash = 'corporate_ca_sha256="$(sha256sum "$compact_ca_bundle" | cut -d \' \' -f 1)"';
+  const corporateCaBuildArg = '--build-arg "NEMOCLAW_CORPORATE_CA_B64=${corporate_ca_b64}"';
   const installedHash =
     "installed_ca_sha256=\"$( docker run --rm --network none --entrypoint sha256sum nemoclaw-hermes-plan-boundary /usr/local/share/nemoclaw/corporate-ca.pem | cut -d ' ' -f 1 )\"";
   const matchingHash = 'test "$installed_ca_sha256" = "$corporate_ca_sha256"';
@@ -688,6 +689,7 @@ function validateHermesMessagingPlanCaFixture(
     compactEncoding,
     sourceHash,
     "check-messaging-plan-image-boundary.mts plan",
+    corporateCaBuildArg,
     "check-production-build-args.sh",
     'docker build "${build_args[@]}" -t nemoclaw-hermes-plan-boundary',
     installedHash,

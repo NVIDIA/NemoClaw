@@ -214,17 +214,43 @@ function selectRoot(
   return selected;
 }
 
-function writeOutput(outputPath: string, bundle: string): void {
+export function writeCiEndpointCaRootsOutput(outputPath: string, bundle: string): void {
+  const noFollow = fs.constants.O_NOFOLLOW;
+  if (typeof noFollow !== "number") {
+    throw new Error("output requires O_NOFOLLOW support");
+  }
+
+  const beforeOpen = fs.lstatSync(outputPath);
+  if (!beforeOpen.isFile() || beforeOpen.isSymbolicLink() || beforeOpen.nlink !== 1) {
+    throw new Error("output must be an existing regular file with exactly one link");
+  }
+
   let fd: number;
   try {
-    fd = fs.openSync(outputPath, fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW);
-  } catch {
-    throw new Error("output must be an existing single-link regular file");
+    fd = fs.openSync(
+      outputPath,
+      fs.constants.O_WRONLY | noFollow | (fs.constants.O_NONBLOCK ?? 0),
+    );
+  } catch (error) {
+    throw new Error("output must be an existing regular file that is not a symlink", {
+      cause: error,
+    });
   }
   try {
-    const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || stat.nlink !== 1) {
-      throw new Error("output must be an existing single-link regular file");
+    const opened = fs.fstatSync(fd);
+    const afterOpen = fs.lstatSync(outputPath);
+    if (
+      !opened.isFile() ||
+      opened.nlink !== 1 ||
+      !afterOpen.isFile() ||
+      afterOpen.isSymbolicLink() ||
+      afterOpen.nlink !== 1 ||
+      beforeOpen.dev !== opened.dev ||
+      beforeOpen.ino !== opened.ino ||
+      opened.dev !== afterOpen.dev ||
+      opened.ino !== afterOpen.ino
+    ) {
+      throw new Error("output must remain the same regular file with exactly one link");
     }
     fs.ftruncateSync(fd, 0);
     fs.writeFileSync(fd, bundle);
@@ -271,7 +297,7 @@ export function selectCiEndpointCaRoots(
         true,
       );
     }
-    writeOutput(outputPath, bundle);
+    writeCiEndpointCaRootsOutput(outputPath, bundle);
     return {
       certificates: parseCertificates(bundle, "compact CA bundle").length,
       encodedBytes: Buffer.from(bundle).toString("base64").length,

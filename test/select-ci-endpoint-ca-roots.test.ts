@@ -16,6 +16,7 @@ import {
   normalizeCompactRootBundle,
   type OpenSslRunner,
   selectCiEndpointCaRoots,
+  writeCiEndpointCaRootsOutput,
 } from "../scripts/checks/select-ci-endpoint-ca-roots.mts";
 import { LEAF_PEM, PEM, tmpDir } from "../src/lib/onboard/__test-helpers__/corporate-ca-fixtures";
 
@@ -189,6 +190,121 @@ describe("CI endpoint CA root selection", () => {
     );
   });
 
+  it("validates each CA output identity before truncating it", () => {
+    const output = path.join(tmpDir(), "compact.pem");
+    fs.writeFileSync(output, "unchanged", { mode: 0o644 });
+    const calls: string[] = [];
+    const realLstatSync = fs.lstatSync.bind(fs);
+    const realOpenSync = fs.openSync.bind(fs);
+    const realFstatSync = fs.fstatSync.bind(fs);
+    const realFtruncateSync = fs.ftruncateSync.bind(fs);
+    vi.spyOn(fs, "lstatSync").mockImplementation((file) => {
+      calls.push("lstat");
+      return realLstatSync(file);
+    });
+    vi.spyOn(fs, "openSync").mockImplementation((file, flags, mode) => {
+      calls.push("open");
+      return realOpenSync(file, flags, mode);
+    });
+    vi.spyOn(fs, "fstatSync").mockImplementation((descriptor) => {
+      calls.push("fstat");
+      expect(fs.readFileSync(output, "utf8")).toBe("unchanged");
+      return realFstatSync(descriptor);
+    });
+    vi.spyOn(fs, "ftruncateSync").mockImplementation((descriptor, length) => {
+      calls.push("truncate");
+      expect(fs.readFileSync(output, "utf8")).toBe("unchanged");
+      return realFtruncateSync(descriptor, length);
+    });
+
+    writeCiEndpointCaRootsOutput(output, "replacement");
+
+    expect(calls).toEqual(["lstat", "open", "fstat", "lstat", "truncate"]);
+    expect(fs.readFileSync(output, "utf8")).toBe("replacement");
+    expect(fs.statSync(output).mode & 0o777).toBe(0o600);
+  });
+
+  it.skipIf(process.platform === "win32")("rejects a FIFO CA output before opening it", () => {
+    const output = path.join(tmpDir(), "compact.pem");
+    const created = spawnSync("mkfifo", [output], { encoding: "utf8", timeout: 5_000 });
+    expect(created.status, created.stderr).toBe(0);
+    const openSync = vi.spyOn(fs, "openSync");
+
+    expect(() => writeCiEndpointCaRootsOutput(output, "replacement")).toThrow(
+      "output must be an existing regular file with exactly one link",
+    );
+
+    expect(openSync).not.toHaveBeenCalled();
+    expect(fs.lstatSync(output).isFIFO()).toBe(true);
+  });
+
+  it.skipIf(process.platform === "win32")("rejects a symlinked CA output before opening it", () => {
+    const directory = tmpDir();
+    const target = path.join(directory, "target.pem");
+    const output = path.join(directory, "compact.pem");
+    fs.writeFileSync(target, "target", { mode: 0o640 });
+    fs.symlinkSync(target, output);
+    const openSync = vi.spyOn(fs, "openSync");
+
+    expect(() => writeCiEndpointCaRootsOutput(output, "replacement")).toThrow(
+      "output must be an existing regular file with exactly one link",
+    );
+
+    expect(openSync).not.toHaveBeenCalled();
+    expect(fs.lstatSync(output).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(target, "utf8")).toBe("target");
+    expect(fs.statSync(target).mode & 0o777).toBe(0o640);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a hard-linked CA output without changing either path",
+    () => {
+      const directory = tmpDir();
+      const output = path.join(directory, "compact.pem");
+      const linked = path.join(directory, "linked.pem");
+      fs.writeFileSync(output, "unchanged", { mode: 0o640 });
+      fs.linkSync(output, linked);
+      const openSync = vi.spyOn(fs, "openSync");
+
+      expect(() => writeCiEndpointCaRootsOutput(output, "replacement")).toThrow(
+        "output must be an existing regular file with exactly one link",
+      );
+
+      expect(openSync).not.toHaveBeenCalled();
+      for (const file of [output, linked]) {
+        expect(fs.readFileSync(file, "utf8")).toBe("unchanged");
+        expect(fs.statSync(file).mode & 0o777).toBe(0o640);
+      }
+    },
+  );
+
+  it("rejects a substituted CA output without changing either file", () => {
+    const directory = tmpDir();
+    const output = path.join(directory, "compact.pem");
+    const original = path.join(directory, "original.pem");
+    const replacement = path.join(directory, "replacement.pem");
+    fs.writeFileSync(output, "original", { mode: 0o640 });
+    fs.writeFileSync(replacement, "replacement", { mode: 0o604 });
+    const realFstatSync = fs.fstatSync.bind(fs);
+    vi.spyOn(fs, "fstatSync").mockImplementation((descriptor) => {
+      const stat = realFstatSync(descriptor);
+      fs.renameSync(output, original);
+      fs.renameSync(replacement, output);
+      return stat;
+    });
+    const ftruncateSync = vi.spyOn(fs, "ftruncateSync");
+
+    expect(() => writeCiEndpointCaRootsOutput(output, "written")).toThrow(
+      "output must remain the same regular file with exactly one link",
+    );
+
+    expect(ftruncateSync).not.toHaveBeenCalled();
+    expect(fs.readFileSync(original, "utf8")).toBe("original");
+    expect(fs.statSync(original).mode & 0o777).toBe(0o640);
+    expect(fs.readFileSync(output, "utf8")).toBe("replacement");
+    expect(fs.statSync(output).mode & 0o777).toBe(0o604);
+  });
+
   it.skipIf(!hasOpenSsl)(
     "selects a self-signed system root when the server sends its cross-signed form",
     () => {
@@ -283,22 +399,6 @@ describe("CI endpoint CA root selection", () => {
           : runner(args);
       expect(() => selectCiEndpointCaRoots(output, rejectCompactVerification)).toThrow(
         /compact CA verification for registry\.npmjs\.org failed/u,
-      );
-      expect(fs.readFileSync(output, "utf8")).toBe("unchanged");
-
-      const hardLink = path.join(directory, "compact-hard-link.pem");
-      fs.linkSync(output, hardLink);
-      expect(() => selectCiEndpointCaRoots(output, runner)).toThrow(
-        /output must be an existing single-link regular file/u,
-      );
-      expect(fs.readFileSync(output, "utf8")).toBe("unchanged");
-      expect(fs.readFileSync(hardLink, "utf8")).toBe("unchanged");
-      fs.unlinkSync(hardLink);
-
-      const symlink = path.join(directory, "compact-symlink.pem");
-      fs.symlinkSync(output, symlink);
-      expect(() => selectCiEndpointCaRoots(symlink, runner)).toThrow(
-        /output must be an existing single-link regular file/u,
       );
       expect(fs.readFileSync(output, "utf8")).toBe("unchanged");
     },
