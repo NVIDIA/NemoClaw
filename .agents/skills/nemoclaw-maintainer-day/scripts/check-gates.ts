@@ -316,7 +316,7 @@ interface E2eCoordinationEvidence {
   valid: boolean | null;
   startedAt?: number;
   completedAt?: number;
-  trustedLegacyCheckId?: number;
+  trustedCustomCheckId?: number;
 }
 
 const E2E_RETRYABLE_FAILURE_MARKER_PREFIX = "<!-- nemoclaw-pr-e2e-retry:v1:";
@@ -394,7 +394,7 @@ function fetchE2eCoordinationEvidence(
   repo: string,
   exactDiff: ExactDiffIdentity,
 ): E2eCoordinationEvidence {
-  const checkNames = ["E2E / PR Gate Coordination", "E2E / PR Gate"];
+  const checkNames = ["E2E / PR Gate", "E2E / PR Gate Coordination"];
   const checkRuns: Array<Record<string, unknown>> = [];
   const ids = new Set<number>();
   for (const checkName of checkNames) {
@@ -461,13 +461,11 @@ function fetchE2eCoordinationEvidence(
   ) {
     return { valid: false };
   }
-  const currentNameChecks = claimedChecks.filter(
-    (check) => check.name === "E2E / PR Gate Coordination",
-  );
+  const currentNameChecks = claimedChecks.filter((check) => check.name === "E2E / PR Gate");
   const exactChecks =
     currentNameChecks.length > 0
       ? currentNameChecks
-      : claimedChecks.filter((check) => check.name === "E2E / PR Gate");
+      : claimedChecks.filter((check) => check.name === "E2E / PR Gate Coordination");
   const exact = currentE2eCoordinationCheck(exactChecks);
   if (!exact) return { valid: false };
   const app = exact.app;
@@ -492,7 +490,7 @@ function fetchE2eCoordinationEvidence(
     valid,
     ...(valid ? { startedAt, completedAt } : {}),
     ...(valid && exact.name === "E2E / PR Gate"
-      ? { trustedLegacyCheckId: exact.id as number }
+      ? { trustedCustomCheckId: exact.id as number }
       : {}),
   };
 }
@@ -1016,11 +1014,11 @@ function currentCheckRollup(
   const actionRunId = (check: StatusCheck): string | undefined =>
     check.detailsUrl?.match(/\/actions\/runs\/(\d+)(?:\/|$)/)?.[1];
 
-  const isTrustedLegacyE2eCheck = (check: StatusCheck): boolean =>
-    e2eCoordinationEvidence.trustedLegacyCheckId !== undefined &&
+  const isTrustedCustomE2eCheck = (check: StatusCheck): boolean =>
+    e2eCoordinationEvidence.trustedCustomCheckId !== undefined &&
     check.name === "E2E / PR Gate" &&
     check.detailsUrl?.match(/\/runs\/(\d+)(?:[/?#]|$)/u)?.[1] ===
-      String(e2eCoordinationEvidence.trustedLegacyCheckId);
+      String(e2eCoordinationEvidence.trustedCustomCheckId);
 
   const associationLessHeadBinding = (
     metadata: ActionRunMetadata,
@@ -1143,7 +1141,7 @@ function currentCheckRollup(
     );
     if (
       (requiredCheck || expectsActionEvidence) &&
-      group.some((check) => !actionRunId(check) && !isTrustedLegacyE2eCheck(check))
+      group.some((check) => !actionRunId(check) && !isTrustedCustomE2eCheck(check))
     ) {
       incompleteAttemptEvidence.add(groupName);
     }
@@ -1306,7 +1304,12 @@ function checkCi(
   statusCheckRollup: StatusCheck[] | null,
   repo: string,
   exactDiff: ExactDiffIdentity,
-): GateResult & { failingChecks?: string[]; pendingChecks?: string[]; missingChecks?: string[] } {
+): GateResult & {
+  failingChecks?: string[];
+  pendingChecks?: string[];
+  missingChecks?: string[];
+  trustedCustomCheckId?: number;
+} {
   if (!statusCheckRollup || statusCheckRollup.length === 0) {
     return { pass: false, details: "No status checks found" };
   }
@@ -1381,7 +1384,13 @@ function checkCi(
       failingChecks: incompleteNames.map((name) => `${name}: latest attempt evidence incomplete`),
     };
   }
-  return { pass: true, details: `All ${currentChecks.length} current checks green` };
+  return {
+    pass: true,
+    details: `All ${currentChecks.length} current checks green`,
+    ...(e2eCoordinationEvidence.trustedCustomCheckId !== undefined
+      ? { trustedCustomCheckId: e2eCoordinationEvidence.trustedCustomCheckId }
+      : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
