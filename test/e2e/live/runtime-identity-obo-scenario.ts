@@ -8,9 +8,9 @@ import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import { type E2ETargetFixtures, expect } from "../fixtures/e2e-test.ts";
-import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 import { resolveVerifiedCloudflaredBinary } from "./cloudflared-prerequisite.ts";
+import { startFakeHttpsCompatibleServer } from "./https-pin-compatible-server.ts";
 import {
   cleanupSandbox,
   expectOnboardSuccess,
@@ -64,7 +64,6 @@ export async function runRuntimeIdentityOboE2EScenario({
 
   const model = "nemoclaw-e2e-runtime-identity-obo";
   const inferenceKey = "sk-runtime-identity-obo-TEST-NOT-A-REAL-VALUE";
-  const inferencePort = 8000;
   const prerequisiteSandboxName = inferenceSandboxName("e2e-tc-inf-14-prerequisite");
   const sandboxName = inferenceSandboxName("e2e-tc-inf-14");
   const providerType = "okta-obo-v1";
@@ -92,16 +91,10 @@ export async function runRuntimeIdentityOboE2EScenario({
   await cleanupSandbox(host, sandbox, sandboxName);
   await cleanupSandbox(host, sandbox, prerequisiteSandboxName);
 
-  const inference = await startFakeOpenAiCompatibleServer({
+  const inference = await startFakeHttpsCompatibleServer({
     apiKey: inferenceKey,
     chatContent: "PONG",
-    host: "0.0.0.0",
     model,
-    port: inferencePort,
-    progress,
-    publicHost: "localhost",
-    requireAuth: true,
-    requireAuthModels: true,
   });
   cleanup.add("close OBO runtime identity inference prerequisite", () => inference.close());
   const cloudflaredBin = await resolveVerifiedCloudflaredBinary(cleanup, host);
@@ -112,7 +105,7 @@ export async function runRuntimeIdentityOboE2EScenario({
     progress,
     readinessPath: "/v1/models",
     readinessStatus: 401,
-    server: { port: inferencePort, close: () => inference.close() },
+    server: inference,
   });
   const inferenceEndpoint = `${inferenceTunnel.origin}/v1`;
 
