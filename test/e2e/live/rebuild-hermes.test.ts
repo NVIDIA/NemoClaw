@@ -60,6 +60,7 @@ import {
 import { buildRebuildHermesOldSandboxDockerfile } from "./rebuild-hermes-old-sandbox.ts";
 import { REBUILD_HERMES_PHASES } from "./rebuild-hermes-phases.ts";
 import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
+import { REBUILD_HERMES_STATE } from "./rebuild-hermes-state-fixture.ts";
 import { buildRebuildHermesTimingSummary, describeRunnerClass } from "./rebuild-hermes-timing.ts";
 
 // Protected PR E2E checks out the PR commit while the trusted controller runs
@@ -89,14 +90,12 @@ SANDBOX_NAME.startsWith(TEST_SANDBOX_PREFIX) ||
   fail(
     `rebuild-hermes live test is destructive and only accepts sandbox names with prefix ${TEST_SANDBOX_PREFIX}; got ${SANDBOX_NAME}`,
   );
-const MARKER_FILE = "/sandbox/.hermes/memories/rebuild-marker.txt";
-const MARKER_CONTENT = `REBUILD_HM_E2E_${Date.now()}`;
 const KANBAN_FILE = "/sandbox/.hermes/kanban.db";
 const KANBAN_TASK_TITLE = `NEMOCLAW_REBUILD_KANBAN_${Date.now()}`;
 const EXCLUDED_KANBAN_FILE = "/sandbox/.hermes/kanban/excluded-rebuild-marker.txt";
 const DISCORD_PLACEHOLDER = "openshell:resolve:env:DISCORD_BOT_TOKEN";
 const DISCORD_FAKE_TOKEN = "test-fake-discord-token-rebuild-e2e";
-const PRE_REBUILD_API_SERVER_KEY = createHash("sha256").update(MARKER_CONTENT).digest("hex");
+const PRE_REBUILD_API_SERVER_KEY = REBUILD_HERMES_STATE.apiServerKey;
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const BACKUP_ROOT = path.join(os.homedir(), ".nemoclaw", "rebuild-backups");
@@ -662,7 +661,7 @@ test(STALE_BASE_REBUILD
     oldHermesVersion: OLD_HERMES_VERSION,
     oldBaseFixture: REBUILD_HERMES_OLD_BASE_FIXTURE,
     expectedHermesVersion: expectedVersion,
-    markerFile: MARKER_FILE,
+    markerFile: REBUILD_HERMES_STATE.markerFile,
     preservedBoundaries: [
       "production current Hermes base resolution without a disposable sandbox",
       "product gateway startup plus exact compatible-endpoint provider/model route",
@@ -1064,16 +1063,7 @@ test(STALE_BASE_REBUILD
   expect(resultText(seededKanban)).toContain(KANBAN_TASK_TITLE);
   const writeMarker = await host.command(
     activeOpenshellBin,
-    [
-      "sandbox",
-      "exec",
-      "--name",
-      SANDBOX_NAME,
-      "--",
-      "sh",
-      "-c",
-      `mkdir -p /sandbox/.hermes/memories && printf '%s' ${shellQuote(MARKER_CONTENT)} > ${shellQuote(MARKER_FILE)}`,
-    ],
+    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "sh", "-c", REBUILD_HERMES_STATE.seedScript],
     {
       artifactName: "phase-4-write-hermes-marker",
       env: testEnv(apiKey),
@@ -1094,7 +1084,7 @@ test(STALE_BASE_REBUILD
       "-c",
       [
         `mkdir -p ${shellQuote(path.dirname(EXCLUDED_KANBAN_FILE))}`,
-        `printf '%s' ${shellQuote(MARKER_CONTENT)} > ${shellQuote(EXCLUDED_KANBAN_FILE)}`,
+        `printf '%s' ${shellQuote(REBUILD_HERMES_STATE.markerContent)} > ${shellQuote(EXCLUDED_KANBAN_FILE)}`,
       ].join(" && "),
     ],
     {
@@ -1258,6 +1248,7 @@ test(STALE_BASE_REBUILD
   );
   expectExitZero(backedUpKanbanDatabase, "verify backed-up Hermes kanban database");
   expect(resultText(backedUpKanbanDatabase)).toContain(KANBAN_TASK_TITLE);
+  REBUILD_HERMES_STATE.assertBackup(rebuildBackupPath);
 
   const oldImageInspect = await host.command(
     "docker",
@@ -1278,7 +1269,7 @@ test(STALE_BASE_REBUILD
   progress.phase("validate upgraded state inference and backup hygiene");
   const restoredMarker = await host.command(
     activeOpenshellBin,
-    ["sandbox", "exec", "--name", SANDBOX_NAME, "--", "cat", MARKER_FILE],
+    REBUILD_HERMES_STATE.restoredProbeArgs(SANDBOX_NAME),
     {
       artifactName: "phase-7-read-marker-after-rebuild",
       env: testEnv(apiKey),
@@ -1286,8 +1277,8 @@ test(STALE_BASE_REBUILD
       timeoutMs: OPENSHELL_TIMEOUT_MS,
     },
   );
-  expectExitZero(restoredMarker, "read Hermes marker after rebuild");
-  expect(restoredMarker.stdout).toBe(MARKER_CONTENT);
+  expectExitZero(restoredMarker, "verify restored Hermes state and dashboard profile migration");
+  expect(restoredMarker.stdout).toBe(REBUILD_HERMES_STATE.expectedOutput);
 
   const hermesVersion = await host.command(
     "docker",
