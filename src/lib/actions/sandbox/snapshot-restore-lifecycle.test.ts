@@ -817,19 +817,15 @@ describe("runSandboxSnapshot restore: gateway pairing on a freshly created desti
     f.registerSandboxMock.mockImplementation((entry) => {
       registeredClone = entry as f.SandboxRecord;
     });
-    f.getSandboxMock.mockImplementation((name) => {
-      if (name === "alpha") {
-        return {
-          name: "alpha",
-          agent: "openclaw",
-          imageTag: "nemoclaw-alpha:test",
-          openshellDriver: "docker",
-          provider: "nvidia-nim",
-          model: "nvidia/model-a",
-        };
-      }
-      return registeredClone;
-    });
+    const alphaEntry = {
+      name: "alpha",
+      agent: "openclaw",
+      imageTag: "nemoclaw-alpha:test",
+      openshellDriver: "docker",
+      provider: "nvidia-nim",
+      model: "nvidia/model-a",
+    } as f.SandboxRecord;
+    f.getSandboxMock.mockImplementation((name) => (name === "alpha" ? alphaEntry : registeredClone));
     f.parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha"]));
     f.captureOpenshellMock.mockImplementation((args) =>
       f.openshellResponses(args, {
