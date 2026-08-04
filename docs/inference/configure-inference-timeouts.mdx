@@ -3,13 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Configure Inference Timeouts"
 sidebar-title: "Configure Timeouts"
-description: "Configure NemoClaw inference request, provider-validation, and sandbox-readiness timeouts."
-description-agent: "Configures inference-related time budgets. Use when local validation, agent requests, or sandbox readiness exceeds the default timeout."
-keywords: ["nemoclaw inference timeout", "local inference timeout", "sandbox ready timeout"]
+description: "Configure NemoClaw inference request, provider-validation, sandbox-readiness, and recovery timeouts."
+description-agent: "Configures inference, sandbox-readiness, and recovery time budgets. Use when provider validation, agent requests, sandbox readiness, or recovery exceeds its default timeout."
+keywords: ["nemoclaw inference timeout", "local inference timeout", "sandbox ready timeout", "gateway recovery wait"]
 content:
   type: "how_to"
 ---
-NemoClaw uses separate time budgets for agent requests, local provider validation, and sandbox readiness.
+NemoClaw uses separate time budgets for agent requests, local provider validation, sandbox readiness, and recovery.
 Change the budget that matches the phase that times out.
 
 ## Choose the Timeout
@@ -54,6 +54,12 @@ Hermes does not consume the OpenClaw-only `NEMOCLAW_AGENT_TIMEOUT` setting.
 
 </AgentOnly>
 
+<AgentOnly variant="deepagents">
+
+Deep Agents does not consume the OpenClaw-only `NEMOCLAW_AGENT_TIMEOUT` setting.
+
+</AgentOnly>
+
 ## Increase the Local Validation Timeout
 
 Raise `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` when the inference-server validation probe needs more than 180 seconds.
@@ -77,11 +83,25 @@ export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
 $$nemoclaw onboard
 ```
 
+## Increase the Recovery Wait
+
 Set `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` when OpenShell needs more than 120 seconds to re-register the sandbox after onboarding applies policy presets.
+
+<AgentOnly variant="openclaw">
+
+Managed OpenClaw gateway health uses 30 seconds by default.
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
+Managed Hermes gateway health uses 90 seconds by default.
+
+</AgentOnly>
 
 <AgentOnly variant="openclaw,hermes">
 
-Set `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` before `start` or `recover` when a recreated sandbox needs more than 120 seconds to restore gateway health or re-register with OpenShell.
+Set `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` before `start` or `recover` to extend the agent-specific gateway-health wait and, when recovery recreates the sandbox, the 120-second OpenShell re-registration wait.
 
 ```bash
 export NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS=300
