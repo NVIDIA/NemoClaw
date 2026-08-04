@@ -8,8 +8,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  isShieldsTransitionLockUnavailable,
   ShieldsTransitionLockManager,
   type ShieldsTransitionLockOwner,
+  type ShieldsTransitionLockUnavailableError,
   shieldsTransitionLockPath,
 } from "./transition-lock";
 
@@ -105,6 +107,20 @@ describe("host shields transition lock", () => {
   function writeRecoveryGuardOwner(guardPath: string, value: ShieldsTransitionLockOwner): void {
     fs.writeFileSync(guardPath, JSON.stringify(value), { mode: 0o600 });
   }
+
+  it("escapes control characters in a rejected sandbox name (#7796)", () => {
+    const hostileName = `bad${String.fromCharCode(27)}[31mX`;
+
+    let message = "";
+    try {
+      shieldsTransitionLockPath(hostileName, stateDir);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    expect(message).toContain(String.raw`Invalid sandbox name: "bad\u001b[31mX".`);
+    expect(message).not.toContain(String.fromCharCode(27));
+  });
 
   it("atomically creates a regular owner file and removes it after the callback", () => {
     const locker = manager();
@@ -1028,6 +1044,65 @@ describe("host shields transition lock", () => {
         malformedStaleMs: 30_000,
       }),
     ).toThrow(/owner record is incomplete.*will not remove.*remove '.*' manually/s);
+    expect(fs.readFileSync(lockPath, "utf8")).toBe("{incomplete");
+  });
+
+  it("refuses an old malformed owner record without waiting out the timeout (#8108)", () => {
+    const lockPath = writeOwner("alpha", "{incomplete");
+    fs.utimesSync(lockPath, new Date(1_000), new Date(1_000));
+    let nowMs = 60_000;
+    let sleepCalls = 0;
+    const locker = manager({
+      now: () => nowMs,
+      sleep: (milliseconds) => {
+        sleepCalls += 1;
+        nowMs += milliseconds;
+      },
+    });
+
+    let caught: unknown;
+    try {
+      locker.withShieldsTransitionLock("alpha", "nemoclaw alpha shields status", () => undefined, {
+        waitTimeoutMs: 30_000,
+        pollIntervalMs: 50,
+        malformedStaleMs: 30_000,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(sleepCalls).toBe(0);
+    expect(nowMs).toBe(60_000);
+    expect(isShieldsTransitionLockUnavailable(caught)).toBe(true);
+    const failure = caught as ShieldsTransitionLockUnavailableError;
+    expect(failure.summary).toContain("Cannot acquire shields transition lock");
+    expect(failure.summary).toContain("the owner record is incomplete");
+    expect(failure.summary).not.toContain("will not remove");
+    expect(failure.recovery).toContain(`remove '${lockPath}' manually`);
+    expect(failure.lockPath).toBe(lockPath);
+    expect(fs.readFileSync(lockPath, "utf8")).toBe("{incomplete");
+  });
+
+  it("refuses an old malformed owner record on the async path (#8108)", async () => {
+    const lockPath = writeOwner("alpha", "{incomplete");
+    fs.utimesSync(lockPath, new Date(1_000), new Date(1_000));
+    let sleepCalls = 0;
+    const locker = manager({
+      now: () => 60_000,
+      sleepAsync: async () => {
+        sleepCalls += 1;
+      },
+    });
+
+    await expect(
+      locker.withShieldsTransitionLockAsync(
+        "alpha",
+        "nemoclaw alpha shields status",
+        async () => undefined,
+        { waitTimeoutMs: 30_000, pollIntervalMs: 50, malformedStaleMs: 30_000 },
+      ),
+    ).rejects.toThrow(/Cannot acquire shields transition lock/);
+    expect(sleepCalls).toBe(0);
     expect(fs.readFileSync(lockPath, "utf8")).toBe("{incomplete");
   });
 

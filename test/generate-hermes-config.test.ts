@@ -12,7 +12,10 @@ import {
   readHermesBuildSettings,
 } from "../agents/hermes/config/build-env.ts";
 import { generateHermesConfig } from "../agents/hermes/config/generate.ts";
-import { buildHermesConfig } from "../agents/hermes/config/hermes-config.ts";
+import {
+  buildHermesConfig,
+  MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS,
+} from "../agents/hermes/config/hermes-config.ts";
 import { discoverModelSpecificSetups } from "../agents/hermes/config/model-specific-setup.ts";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../src/lib/hermes-proxy-api-key";
 import {
@@ -998,6 +1001,27 @@ describe("agents/hermes/generate-config.ts", () => {
 
     expect(config.platforms.slack).toBeUndefined();
     expect(Object.keys(config.platforms)).toEqual(["api_server"]);
+  });
+
+  it("keeps every managed-image messaging platform explicitly disabled before first start (#7744)", () => {
+    const { config, envFile } = generateBaseConfig({
+      NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
+    });
+
+    for (const platform of MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS) {
+      expect(config.platforms[platform], platform).toEqual({ enabled: false });
+      expect(config.platform_toolsets[platform], platform).toBeUndefined();
+    }
+    for (const credential of [
+      "TELEGRAM_BOT_TOKEN",
+      "DISCORD_BOT_TOKEN",
+      "WEIXIN_TOKEN",
+      "SLACK_BOT_TOKEN",
+      "WHATSAPP_ENABLED",
+      "TEAMS_CLIENT_SECRET",
+    ]) {
+      expect(envFile, credential).not.toContain(`${credential}=`);
+    }
   });
 
   it("enables Slack under platforms even when the slack token allowlist is empty", async () => {

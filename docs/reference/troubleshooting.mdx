@@ -134,7 +134,7 @@ docker info
 The managed default gateway service accepts `DOCKER_HOST` only as an absolute local `unix://` socket path.
 It rejects remote endpoints and relative socket paths before service startup.
 
-### Onboarding reports `invalid_docker_host`
+### Onboarding Reports an Invalid Docker Host
 
 The `invalid_docker_host` advisory means that `DOCKER_HOST` is not an absolute local `unix://` socket path that NemoClaw can write to the managed OpenShell gateway service environment.
 NemoClaw does not use the standalone gateway fallback when this validation fails.
@@ -390,6 +390,46 @@ These dashboard ports are separate from the gateway-wide inference route.
 
 </AgentOnly>
 
+### A Gateway Port Stays Bound After Uninstall or Re-Onboard
+
+A gateway port that keeps listening after you uninstall, or that keeps serving after you re-onboard without `NEMOCLAW_GATEWAY_PORT` set, can belong to a second environment.
+
+Onboarding under a non-default `NEMOCLAW_GATEWAY_PORT` registers the sandbox on gateway `nemoclaw-<port>` and stores its registry and state under `~/.nemoclaw/gateways/<port>/`.
+Every later command reads the state root that its own `NEMOCLAW_GATEWAY_PORT` selects, so a command run without that variable operates on port `8080` and neither reuses nor stops the other environment.
+Clearing the variable does not move an existing sandbox back to the default port.
+
+List the gateways the host still has:
+
+```bash
+openshell gateway list
+```
+
+If the gateway name and its port-scoped state remain, treat it as a second environment and select that port for cleanup.
+If the gateway is absent but the port still listens, cleanup did not stop the listener; follow the process or service remediation printed by uninstall before you retry.
+
+Remove one environment by selecting its port:
+
+```bash
+NEMOCLAW_GATEWAY_PORT=9000 $$nemoclaw uninstall
+```
+
+Remove every gateway port in one run:
+
+```bash
+$$nemoclaw uninstall --all-gateway-ports
+```
+
+After you confirm uninstall and it exits with status `0`, run `openshell gateway list` again.
+For a NemoClaw-managed gateway without `--keep-openshell`, the gateway name that uninstall removed must be absent.
+An externally supervised gateway or a run with `--keep-openshell` preserves the gateway process and its resources.
+
+The same scoping applies to `$$nemoclaw <name> stop`.
+When `stop` reports that no valid gateway binding is registered for a sandbox, the sandbox can be registered under a different gateway port.
+Rerun `stop` with that `NEMOCLAW_GATEWAY_PORT` value set.
+If that does not find the sandbox, resolve the missing, invalid, or unreadable registry entry that the command reports.
+
+Refer to [Uninstall NemoClaw](../manage-sandboxes/operate-sandboxes/uninstall-nemoclaw) for the full sweep contract.
+
 ### A shared inference route conflicts with another sandbox
 
 Refer to [Use Shared Gateway Routes](../inference/manage-inference/use-shared-gateway-routes) for route time-sharing, provider-global compatibility, and status drift fields.
@@ -487,6 +527,27 @@ Upgrade NemoClaw to a version that supports your OpenShell release, or install a
 
 For fresh installs, NemoClaw passes the blueprint range to `install-openshell.sh` and resolves a compatible published OpenShell release before downloading.
 If GitHub release metadata is unavailable, the script uses its bundled fallback pin and the post-install gate still enforces the configured range.
+
+### Installer Reports an OpenShell Gateway Version Mismatch
+
+On Linux, an existing OpenShell package can provide a systemd user service that starts a different gateway version from the user-local version that NemoClaw installs.
+The installer stops before onboarding instead of using the two versions together.
+The error reports both gateway versions and binary paths.
+
+<Warning>
+Do not remove the existing OpenShell package if its gateway manages resources outside NemoClaw.
+Package removal can stop that gateway.
+Align the package with the version in the installer error, or plan the migration of those resources first.
+</Warning>
+
+If you no longer need the APT-installed OpenShell package, remove it and rerun the installer:
+
+```bash
+sudo apt remove openshell
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+The next installer run must continue past the OpenShell installation step without reporting a version mismatch.
 
 <AgentOnly variant="openclaw">
 
@@ -637,10 +698,47 @@ The in-sandbox OpenClaw gateway can drop its HTTP listener while its process sta
 A restart-class configuration change makes the gateway restart itself in place, and if that restart fails the process parks with no listener (`/tmp/gateway.log` shows `gateway startup failed: ... Process will stay alive`).
 Docker then marks the container `(unhealthy)` even though `pgrep` still finds the gateway.
 
-NemoClaw prevents and self-heals this:
+NemoClaw prevents restart-class configuration changes from causing this condition and recovers a gateway that stops serving:
 
 - The generated sandbox config pins `gateway.reload.mode` to `hot`, so configuration changes never make the gateway restart itself out from under the sandbox supervisor.
-- A serving watchdog inside the sandbox kills a gateway that stops listening after it has served, and the supervisor relaunches it (look for `[gateway-watchdog]` lines in `$$nemoclaw <name> logs`).
+- A serving watchdog inside the sandbox stops a gateway process that no longer serves after returning at least one serving response, and the supervisor relaunches it.
+
+The watchdog treats the gateway as serving only while the local health endpoint answers `200` or `401`, the same response requirement the sandbox applies when it waits for the gateway at startup.
+After the gateway returns a serving response, these probe outcomes count as not serving:
+
+- The connection is refused.
+- The probe times out.
+- The connection is accepted and then closed without a response.
+- The health endpoint returns an HTTP status other than `200` or `401`.
+
+The watchdog logs the cause of each not-serving probe only after a serving response.
+It stops the gateway after four not-serving probes without an intervening serving response.
+At the default 30-second interval, this takes roughly two minutes when there are no inconclusive probes.
+Look for `[gateway-watchdog]` lines in `$$nemoclaw <name> logs`.
+
+If the watchdog reports `health probe inconclusive`, the probe itself could not run inside the sandbox.
+An inconclusive probe leaves the gateway untouched and preserves the number of not-serving probes since the last serving response.
+If `curl` is missing, the watchdog reports this exact diagnostic:
+
+```text
+[gateway-watchdog] curl is unavailable; serving watchdog disabled (#7377)
+```
+
+This diagnostic means that the watchdog is disabled.
+For a custom image, add `curl` to the image first.
+Then rebuild the sandbox:
+
+```bash
+$$nemoclaw <name> rebuild --yes
+```
+
+When the gateway is not serving, `openclaw health` can report `gateway_transport_error`, often `1006 abnormal closure (no close frame)`, while the container stays `running` with no restarts.
+An agent reply can come from the OpenClaw CLI's embedded in-process fallback instead of the gateway.
+Therefore, an agent reply does not confirm that the gateway is serving.
+
+The watchdog converts a gateway that cannot serve into a process exit that the sandbox supervisor already knows how to relaunch.
+It does not correct the OpenClaw lifecycle condition that left the process running.
+It stays necessary until an OpenClaw gateway that cannot serve exits on its own.
 
 Because of the `hot` pin, restart-class configuration changes made inside the sandbox log `config reload requires gateway restart; hot mode ignoring` and do not take effect until the gateway restarts.
 For example, `openclaw plugins install` logs that message until the gateway restarts.
@@ -663,6 +761,11 @@ $$nemoclaw <name> rebuild --yes
 Sandbox names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
 The CLI rejects names that do not match these rules.
 It prints a `Try: <suggested-slug>` recovery line whenever it can derive a valid lowercase, hyphen-separated form from the input, so passing `--name MyAssistant` reports `Try: myassistant` and you can rerun with the suggested slug.
+
+The CLI writes the rejected value as a quoted preview instead of raw input.
+The preview reads at most the first 80 UTF-16 code units from the input and escapes each code unit outside printable ASCII as `\uXXXX`.
+Escaping can make the preview longer than 80 output characters.
+This prevents a rejected name from injecting control sequences into terminal or CI output.
 
 Names that collide with global CLI commands are also rejected.
 Reserved names include `onboard`, `list`, `deploy`, `setup`, `start`, `stop`, `status`, `debug`, `uninstall`, `credentials`, and `help`.
@@ -1257,6 +1360,69 @@ Run `openshell sandbox list` on the host to check the underlying sandbox state.
 <AgentOnly variant="deepagents">
 
 ## Deep Agents
+
+### Deep Agents Config Lock Failure Recovery
+
+A `CRITICAL` Deep Agents config-lock diagnostic can report `fail-closed containment=`, `rollback failed`, or that the lock rollback could not restore the trusted posture.
+A containment result identifies one of two confirmed postures or an incomplete containment attempt.
+A `rollback failed` result or lock-rollback diagnostic does not confirm containment.
+Both rollback diagnostics mean NemoClaw could not restore or confirm the original trusted posture.
+
+- **Config-root posture** (`fail-closed containment=config-root`) means NemoClaw installed fresh `0444 root:root` config and hash inodes.
+  NemoClaw also confirmed `0500 root:root` on `/sandbox/.deepagents` and `1775 root:sandbox` on `/sandbox`.
+- **Sandbox-parent posture** (`fail-closed containment=sandbox-parent`) means NemoClaw confirmed `0700 root:root` on `/sandbox`.
+  NemoClaw uses this posture when it cannot confirm the complete config-root posture.
+- `fail-closed containment=incomplete` means NemoClaw could not confirm either complete posture.
+
+Preserve the complete `CRITICAL` diagnostic.
+Do not retry `shields up`.
+Do not run `chmod`, `chown`, or another repair inside the sandbox.
+A confirmed containment posture removes the sandbox identity's access to the Deep Agents configuration.
+An incomplete containment result, a `rollback failed` result, or a lock-rollback diagnostic does not establish a trustworthy boundary from which to accept the current bytes.
+An ordinary `rebuild` cannot turn the current state into a trustworthy snapshot.
+
+If you have a trusted host-side snapshot from before the failure, list the snapshots and record its selector:
+
+```bash
+$$nemoclaw <name> snapshot list
+```
+
+<Warning>
+Destroying the sandbox permanently discards state newer than the selected snapshot.
+Confirm that the trusted host-side snapshot exists before you destroy the sandbox.
+</Warning>
+
+Destroy the sandbox, re-onboard the same name from trusted host configuration, and restore the snapshot:
+
+```bash
+$$nemoclaw <name> destroy
+$$nemoclaw onboard --name <name> --agent dcode
+$$nemoclaw <name> snapshot restore <selector>
+```
+
+For snapshot contents and selector rules, refer to [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots).
+
+If no trusted snapshot exists and you do not need to preserve the current state, recreate the sandbox from host-side onboarding configuration.
+
+<Warning>
+This recreation permanently discards the current sandbox state.
+Continue only if you accept that loss.
+</Warning>
+
+```bash
+$$nemoclaw <name> destroy
+$$nemoclaw onboard --name <name> --agent dcode
+```
+
+After either recovery path, verify the recreated sandbox from the host:
+
+```bash
+$$nemoclaw <name> status
+$$nemoclaw <name> shields status
+```
+
+Continue only when `status` identifies the expected Deep Agents sandbox and `shields status` returns without a `CRITICAL` or corrupt-state diagnostic.
+Then retry the original `shields up` operation.
 
 ### `dcode status` reports a stale inference route
 
@@ -2501,7 +2667,7 @@ Identify the matching path before applying the recovery guidance.
 | --- | --- | --- |
 | Native `--gpu` is rejected, host runtime evidence identifies GPU injection failure, or an explicit driver proof fails and host configuration confirms no GPU attachment | Ordinary Linux native attempt | The default native-only route stops. Retry with `NEMOCLAW_DOCKER_GPU_PATCH=fallback` only if you explicitly accept one bounded compatibility retry, or use `=1` to select compatibility before creation. |
 | `Cleanup could not be proven safe` | Native-to-compatibility handoff | Run the printed sandbox deletion command, verify both the gateway row and OpenShell-managed Docker containers labeled for that sandbox are absent, then rerun onboarding. |
-| The patched container exits or the compatibility attempt fails | Compatibility recreation | Inspect the saved diagnostics, repair the NVIDIA Container Toolkit/CDI configuration, clean up the failed sandbox, and rerun onboarding. |
+| The patched container exits or the compatibility attempt fails | Compatibility recreation | Inspect the saved diagnostics and the rollback outcome, then repair the NVIDIA Container Toolkit/CDI configuration. Keep the sandbox when the pre-patch container was restored; delete it only after inspection confirms restoration failed. Then rerun onboarding. |
 | A recreated container inherits only a loopback DNS stub and no usable upstream | Compatibility DNS fallback | Repair the host's `systemd-resolved` upstream configuration, then rerun onboarding. |
 
 For bridge-networked compatibility recreation without an explicit container DNS setting, NemoClaw selects a usable IPv4 upstream from `systemd-resolved` and probes that exact `--dns` path before it stops the original container.
@@ -2547,20 +2713,26 @@ Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses t
 
 #### Common compatibility-path recovery
 
-If the compatibility attempt fails on any host, onboarding leaves the failed sandbox and diagnostic bundle in place so you can inspect the OpenShell and Docker state.
+After compatibility recreation starts, onboarding keeps the pre-patch container as a rollback backup until the replacement passes the Ready, direct GPU, and applicable local-inference checks.
+If a later check fails, onboarding prints failure diagnostics and attempts to restore the pre-patch container before it exits.
+When rollback succeeds, the pre-patch sandbox remains available.
+When rollback fails, onboarding reports that the pre-patch container was not restored and prints container-cleanup guidance.
+GPU-proof diagnostics are captured before rollback and can print that guidance before the final container state is known.
+Inspect the sandbox and its labeled Docker containers before running a deletion command.
 
 <Note>
 Starting with NemoClaw v0.0.43, the standard installer handles the `/proc/<pid>/task/<tid>/comm` permission case during this patch path.
 If an older release fails direct GPU proof with that path and `Permission denied`, upgrade NemoClaw and rerun onboarding.
 </Note>
 
-The output includes a cleanup command such as:
+When inspection confirms that the failed sandbox remains, delete it with a command such as:
 
 ```bash
 openshell sandbox delete <sandbox-name>
 ```
 
-Fix the NVIDIA Container Toolkit or CDI configuration reported in the diagnostics, clean up the failed sandbox, then rerun onboarding.
+Fix the NVIDIA Container Toolkit or CDI configuration reported in the diagnostics.
+Run the deletion command only after confirming that the pre-patch sandbox was not restored, then rerun onboarding.
 If you do not need GPU access inside the sandbox, rerun with `--no-sandbox-gpu`.
 
 If sandbox creation fails with `CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`, the OpenShell gateway tried `docker create --device nvidia.com/gpu=all` and Docker could not resolve the CDI spec.

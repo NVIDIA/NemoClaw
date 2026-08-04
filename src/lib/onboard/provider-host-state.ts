@@ -85,6 +85,7 @@ export interface DetectInferenceProviderHostStateDeps {
     runtime: ContainerRuntime | null,
   ) => WindowsHostOllamaDockerRequirement;
   detectVllmProfile: (gpu: InferenceProviderHostGpu | null | undefined) => VllmProfile | null;
+  getLocalProviderAvailabilityEndpoint: (provider: string) => string | null;
 }
 
 const LOCAL_PROVIDER_PROBE_CURL_ARGS = ["--connect-timeout", "2", "--max-time", "5"] as const;
@@ -113,16 +114,23 @@ function buildDeps(
     detectVllmProfile:
       overrides.detectVllmProfile ??
       ((gpu) => detectVllmProfile(gpu as Parameters<typeof detectVllmProfile>[0])),
+    getLocalProviderAvailabilityEndpoint:
+      overrides.getLocalProviderAvailabilityEndpoint ?? getLocalProviderAvailabilityEndpoint,
   };
 }
 
-function probeVllmRunning(runCapture: RunCapture): boolean {
-  const endpoint = getLocalProviderAvailabilityEndpoint("vllm-local");
+function probeVllmRunning(deps: DetectInferenceProviderHostStateDeps): boolean {
+  let endpoint: string | null;
+  try {
+    endpoint = deps.getLocalProviderAvailabilityEndpoint("vllm-local");
+  } catch {
+    return false;
+  }
   if (!endpoint) return false;
   const writeOut = endpoint.endsWith("/health")
     ? ["--noproxy", "*", "--write-out", "%{http_code}"]
     : [];
-  const output = runCapture(
+  const output = deps.runCapture(
     ["curl", "-sf", ...LOCAL_PROVIDER_PROBE_CURL_ARGS, ...writeOut, endpoint],
     {
       ignoreError: true,
@@ -179,7 +187,7 @@ export function detectInferenceProviderHostState(
   const ollamaHost = input.probeOllama === false ? null : deps.findReachableOllamaHost();
   const ollamaRunning = ollamaHost !== null;
   const isWindowsHostOllama = ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL;
-  const vllmRunning = input.probeVllm === false ? false : probeVllmRunning(deps.runCapture);
+  const vllmRunning = input.probeVllm === false ? false : probeVllmRunning(deps);
   const vllmProfile = deps.detectVllmProfile(input.gpu);
   const hasVllmImage = !!(
     vllmProfile &&

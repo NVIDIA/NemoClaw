@@ -371,6 +371,37 @@ describe("validateName", () => {
     );
   });
 
+  it("escapes control characters in a rejected name instead of echoing raw bytes (#7796)", () => {
+    const { validateName } = require(runnerPath);
+    const escapeByte = String.fromCharCode(27);
+
+    let message = "";
+    try {
+      validateName(`bad${escapeByte}[31mX`, "sandbox name");
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    expect(message).toContain(String.raw`Invalid sandbox name: "bad\u001b[31mX".`);
+    expect(message).not.toContain(escapeByte);
+  });
+
+  it("escapes control characters in an over-length rejected name (#7796)", () => {
+    const { validateName } = require(runnerPath);
+    const escapeByte = String.fromCharCode(27);
+
+    let message = "";
+    try {
+      validateName(`bad${escapeByte}[31m${"x".repeat(200)}`, "sandbox name");
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    expect(message).toContain("sandbox name too long (max 63 chars)");
+    expect(message).not.toContain(escapeByte);
+    expect(message).toContain('..."');
+  });
+
   it("rejects uppercase and special characters", () => {
     const { validateName } = require(runnerPath);
     expect(() => validateName("1sandbox")).toThrow(/Invalid/);

@@ -6,6 +6,7 @@ import {
   type SpawnSyncReturns,
   spawnSync,
 } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -16,7 +17,11 @@ import type { ProbeResult } from "../../onboard/types";
 import { buildScrubbedCurlProbeEnv, scrubCredentialEnv } from "../../security/credential-env";
 import { ROOT } from "../../state/paths";
 import { addTraceEvent, withTraceSpan } from "../../trace";
-import { buildCurlProbeSpawnArgs, validateCurlProbeArgs } from "./curl-args";
+import {
+  buildBoundedCurlProbeSpawnArgs,
+  buildCurlProbeSpawnArgs,
+  validateCurlProbeArgs,
+} from "./curl-args";
 
 export type CurlProbeResult = ProbeResult;
 
@@ -25,6 +30,8 @@ export interface CurlProbeOptions {
   env?: NodeJS.ProcessEnv;
   replaceEnv?: boolean;
   timeoutMs?: number;
+  /** Maximum response-body bytes captured by the curl process. */
+  maxResponseBytes?: number;
   /** Absolute or cwd-relative curl config files created by trusted NemoClaw callers. */
   trustedConfigFiles?: readonly string[];
   /**
@@ -50,6 +57,8 @@ export interface StreamingProbeResult {
 
 const DEFAULT_CURL_PROCESS_TIMEOUT_MS = 30_000;
 const CURL_PROCESS_TIMEOUT_SLACK_MS = 5_000;
+const CURL_HTTP_STATUS_MARKER_PREFIX = "\n__NEMOCLAW_HTTP_STATUS_";
+const CURL_OVERSIZED_RESPONSE_STATUS = 63;
 
 function resolveCurlProbeSpawnEnv(
   args: readonly string[],
@@ -150,6 +159,31 @@ function normalizeSpawnErrorCode(error: unknown): number {
   if (isErrnoException(error) && error.code === "ETIMEDOUT") return -110;
   const rawErrorCode = isErrnoException(error) ? (error.errno ?? error.code) : undefined;
   return typeof rawErrorCode === "number" ? rawErrorCode : 1;
+}
+
+function normalizeMaxResponseBytes(value: number | undefined): number | null {
+  if (value === undefined) return null;
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("curl probe maxResponseBytes must be a positive safe integer");
+  }
+  return value;
+}
+
+function isSpawnBufferOverflow(error: unknown): boolean {
+  return isErrnoException(error) && error.code === "ENOBUFS";
+}
+
+function splitBoundedCurlOutput(
+  stdout: string,
+  statusMarker: string,
+): { body: string; status: number } {
+  const markerIndex = stdout.lastIndexOf(statusMarker);
+  if (markerIndex < 0) return { body: "", status: 0 };
+  const status = Number(stdout.slice(markerIndex + statusMarker.length).trim());
+  return {
+    body: stdout.slice(0, markerIndex),
+    status: Number.isFinite(status) ? status : 0,
+  };
 }
 
 function sanitizeCurlUrl(value: string): string {
@@ -261,7 +295,16 @@ function runCurlProbeImpl(argv: string[], opts: CurlProbeOptions = {}): CurlProb
     const { args, url } = validateCurlProbeArgs(argv, opts);
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
     const timeout = resolveCurlProcessTimeoutMs(argv, opts);
-    const curlArgs = buildCurlProbeSpawnArgs(args, url, bodyFile, "json");
+    const maxResponseBytes = normalizeMaxResponseBytes(opts.maxResponseBytes);
+    const statusMarker = `${CURL_HTTP_STATUS_MARKER_PREFIX}${randomUUID()}__:`;
+    const curlArgs =
+      maxResponseBytes === null
+        ? buildCurlProbeSpawnArgs(args, url, bodyFile, "json")
+        : buildBoundedCurlProbeSpawnArgs(args, url, statusMarker);
+    const maxBuffer =
+      maxResponseBytes === null
+        ? undefined
+        : maxResponseBytes + Buffer.byteLength(`${statusMarker}999`);
     const result = spawnSyncImpl(
       "curl",
       // lgtm[js/file-access-to-http] curlArgs were validated and rebuilt from safe probe fields.
@@ -271,26 +314,54 @@ function runCurlProbeImpl(argv: string[], opts: CurlProbeOptions = {}): CurlProb
         encoding: "utf8",
         timeout,
         env: resolveCurlProbeSpawnEnv(args, opts),
+        ...(maxBuffer === undefined ? {} : { maxBuffer }),
       },
     );
-    const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
+    const boundedOutput =
+      maxResponseBytes === null
+        ? null
+        : splitBoundedCurlOutput(String(result.stdout || ""), statusMarker);
+    const body =
+      boundedOutput?.body ?? (fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "");
     if (result.error) {
-      const errorCode = normalizeSpawnErrorCode(result.error);
-      const errorMessage = compactText(
-        `${result.error.message || String(result.error)} ${String(result.stderr || "")}`,
-      );
+      const overflow = isSpawnBufferOverflow(result.error);
+      const errorCode = overflow
+        ? CURL_OVERSIZED_RESPONSE_STATUS
+        : normalizeSpawnErrorCode(result.error);
+      const errorMessage = overflow
+        ? "curl response exceeded the configured process byte limit"
+        : compactText(
+            `${result.error.message || String(result.error)} ${String(result.stderr || "")}`,
+          );
       const failure = {
         ok: false,
         httpStatus: 0,
         curlStatus: errorCode,
-        body,
+        body: overflow ? "" : body,
         stderr: errorMessage,
-        message: summarizeProbeFailure(body, 0, errorCode, errorMessage),
+        message: summarizeProbeFailure(overflow ? "" : body, 0, errorCode, errorMessage),
       };
       emitCurlResultTraceEvent({ ok: false, http_status: 0, curl_status: errorCode });
       return failure;
     }
-    const status = Number(String(result.stdout || "").trim());
+    if (maxResponseBytes !== null && Buffer.byteLength(body) > maxResponseBytes) {
+      const errorMessage = "curl response exceeded the configured process byte limit";
+      const failure = {
+        ok: false,
+        httpStatus: 0,
+        curlStatus: CURL_OVERSIZED_RESPONSE_STATUS,
+        body: "",
+        stderr: errorMessage,
+        message: summarizeCurlFailure(CURL_OVERSIZED_RESPONSE_STATUS, errorMessage),
+      };
+      emitCurlResultTraceEvent({
+        ok: false,
+        http_status: 0,
+        curl_status: CURL_OVERSIZED_RESPONSE_STATUS,
+      });
+      return failure;
+    }
+    const status = boundedOutput?.status ?? Number(String(result.stdout || "").trim());
     const probeResult = {
       ok: result.status === 0 && status >= 200 && status < 300,
       httpStatus: Number.isFinite(status) ? status : 0,
