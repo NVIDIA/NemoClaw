@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
@@ -206,13 +206,16 @@ export async function onboardBrave(
 
 export interface SecretFingerprint {
   byteLength: number;
-  sha256: string;
+  hmacKey: string;
+  hmacSha256: string;
 }
 
 export function fingerprintSecret(secret: string): SecretFingerprint {
+  const hmacKey = randomBytes(32);
   return {
     byteLength: Buffer.byteLength(secret, "utf8"),
-    sha256: createHash("sha256").update(secret, "utf8").digest("hex"),
+    hmacKey: hmacKey.toString("hex"),
+    hmacSha256: createHmac("sha256", hmacKey).update(secret, "utf8").digest("hex"),
   };
 }
 
@@ -225,13 +228,18 @@ export async function assertRawConfigHasNoSecret(
     trustedSandboxShellScript(
       `python3 - <<'PY'
 import hashlib
+import hmac
 from pathlib import Path
 
 body = Path('/sandbox/.openclaw/openclaw.json').read_bytes()
 needle_length = ${fingerprint.byteLength}
-needle_sha256 = '${fingerprint.sha256}'
+needle_hmac_key = bytes.fromhex('${fingerprint.hmacKey}')
+needle_hmac_sha256 = '${fingerprint.hmacSha256}'
 found = any(
-    hashlib.sha256(body[offset : offset + needle_length]).hexdigest() == needle_sha256
+    hmac.compare_digest(
+        hmac.new(needle_hmac_key, body[offset : offset + needle_length], hashlib.sha256).hexdigest(),
+        needle_hmac_sha256,
+    )
     for offset in range(max(0, len(body) - needle_length + 1))
 )
 raise SystemExit(1 if found else 0)
@@ -267,9 +275,9 @@ export function assertOptionalBraveEnv(value: string, braveKey: string): void {
 
 /**
  * Runs the same OpenClaw turn used to prove Brave Search works while checking
- * the live agent process environment against a one-way fingerprint. The check
- * runs before the process exits and returns only an exit status; the raw key is
- * never copied into the sandbox as test material.
+ * the live agent process environment against an ephemeral HMAC-SHA-256
+ * fingerprint. The check runs before the process exits and returns only an exit
+ * status; the raw key is never copied into the sandbox as test material.
  */
 export async function runBraveAgentWithSecretBoundaryCheck(
   sandbox: SandboxClient,
@@ -288,8 +296,9 @@ attempt=0
 while [ "$attempt" -lt 100 ]; do
   if [ -r "/proc/$agent_pid/environ" ]; then
     probe_rc=0
-    python3 - "/proc/$agent_pid/environ" ${fingerprint.byteLength} ${fingerprint.sha256} <<'PY' || probe_rc=$?
+    python3 - "/proc/$agent_pid/environ" ${fingerprint.byteLength} ${fingerprint.hmacKey} ${fingerprint.hmacSha256} <<'PY' || probe_rc=$?
 import hashlib
+import hmac
 from pathlib import Path
 import sys
 
@@ -298,9 +307,13 @@ try:
 except OSError:
     raise SystemExit(97)
 needle_length = int(sys.argv[2])
-needle_sha256 = sys.argv[3]
+needle_hmac_key = bytes.fromhex(sys.argv[3])
+needle_hmac_sha256 = sys.argv[4]
 found = any(
-    hashlib.sha256(body[offset : offset + needle_length]).hexdigest() == needle_sha256
+    hmac.compare_digest(
+        hmac.new(needle_hmac_key, body[offset : offset + needle_length], hashlib.sha256).hexdigest(),
+        needle_hmac_sha256,
+    )
     for offset in range(max(0, len(body) - needle_length + 1))
 )
 raise SystemExit(98 if found else 0)
@@ -347,11 +360,11 @@ exit "$agent_rc"`,
  *   1. a fresh login-style shell environment, widened to every variable name;
  *   2. the OpenClaw config/state tree the agent can `cat`.
  *
- * The scan compares fixed-length windows to a one-way SHA-256 fingerprint and
- * returns only an exit code. The raw key is never copied into the sandbox as
- * test material, so the test itself does not create an agent-readable secret
- * channel. Exit 0 means the key is absent from the tested surfaces; exit 1 means
- * it is present and could be disclosed. The
+ * The scan compares fixed-length windows to an ephemeral HMAC-SHA-256
+ * fingerprint and returns only an exit code. The raw key is never copied into
+ * the sandbox as test material, so the test itself does not create an
+ * agent-readable secret channel. Exit 0 means the key is absent from the tested
+ * surfaces; exit 1 means it is present and could be disclosed. The
  * `openshell:resolve:env:BRAVE_API_KEY` placeholder is a reference, not the
  * secret, so it never trips the scan.
  */
@@ -362,18 +375,23 @@ export async function assertBraveKeyAbsentFromAgentSurfaces(
 ): Promise<void> {
   const probe = await sandboxShell(
     sandbox,
-    `python3 - ${fingerprint.byteLength} ${fingerprint.sha256} <<'PY'
+    `python3 - ${fingerprint.byteLength} ${fingerprint.hmacKey} ${fingerprint.hmacSha256} <<'PY'
 import hashlib
+import hmac
 import os
 from pathlib import Path
 import sys
 
 needle_length = int(sys.argv[1])
-needle_sha256 = sys.argv[2]
+needle_hmac_key = bytes.fromhex(sys.argv[2])
+needle_hmac_sha256 = sys.argv[3]
 
 def contains_secret(body):
     return any(
-        hashlib.sha256(body[offset : offset + needle_length]).hexdigest() == needle_sha256
+        hmac.compare_digest(
+            hmac.new(needle_hmac_key, body[offset : offset + needle_length], hashlib.sha256).hexdigest(),
+            needle_hmac_sha256,
+        )
         for offset in range(max(0, len(body) - needle_length + 1))
     )
 
