@@ -227,6 +227,7 @@ export function writeCiEndpointCaRootsOutput(outputPath: string, bundle: string)
 
   let fd: number;
   try {
+    // lgtm[js/file-system-race] Pre-open and post-open device and inode checks bind the descriptor to the validated path.
     fd = fs.openSync(
       outputPath,
       fs.constants.O_WRONLY | noFollow | (fs.constants.O_NONBLOCK ?? 0),
