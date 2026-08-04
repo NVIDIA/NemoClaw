@@ -4434,7 +4434,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     setupInferenceFactory.selectGatewayForFollowupOrExit(GATEWAY_NAME, runOpenshell);
     const finalFlowContext = prepareFinalOnboardFlowContext(coreFlowResult);
     let liveFinalFlowContext: InitialOnboardFlowContext = finalFlowContext;
-
     const finalFlowPhases = createFinalOnboardFlowPhases<
       InitialOnboardFlowContext,
       import("./dashboard/contract").DashboardDeliveryChain,
@@ -4460,6 +4459,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         }),
         ensureAgentDashboardForward: (name, selectedAgent) =>
           selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : 0,
+        persistDashboardPort: (name, port) => registry.updateSandbox(name, { dashboardPort: port }),
         recordStepSkipped,
         isOpenclawReady,
         skippedStepMessage,
