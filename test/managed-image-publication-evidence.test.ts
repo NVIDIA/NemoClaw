@@ -27,6 +27,10 @@ const runAttempt = "1";
 const cohort = `ghrun-${runId}-${runAttempt}`;
 const baseReference = `ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:${"5".repeat(64)}`;
 const image = "ghcr.io/nvidia/nemoclaw/openclaw-sandbox";
+const buildkitBaseDependencyUri = (targetPlatform: string) => {
+  const [repositoryName, digest] = baseReference.split("@sha256:");
+  return `pkg:docker/${repositoryName}?digest=sha256:${digest}&platform=${targetPlatform.replaceAll("/", "%2F")}`;
+};
 
 type FixtureOptions = {
   attestationWorkloadDigest?: string;
@@ -117,7 +121,7 @@ function runEvidence(options: FixtureOptions = {}, digestOverride?: string) {
         internalParameters: { buildConfig: {} },
         resolvedDependencies: [
           {
-            uri: options.slsaDependencyUri ?? `pkg:docker/${baseReference}?platform=linux%2Famd64`,
+            uri: options.slsaDependencyUri ?? buildkitBaseDependencyUri(platform),
             digest: { sha256: baseReference.split("@sha256:")[1] },
           },
         ],
@@ -488,7 +492,7 @@ describe("managed image publication evidence verifier", () => {
     [
       "base dependency platform",
       {
-        slsaDependencyUri: `pkg:docker/${baseReference}?platform=linux%2Farm64`,
+        slsaDependencyUri: buildkitBaseDependencyUri("linux/arm64"),
       },
     ],
     [
