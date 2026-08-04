@@ -180,6 +180,7 @@ describe("Docker managed-bootstrap shared-state rollback authority", () => {
         ),
       ),
     );
+    expect(fake.deps.dockerRm).not.toHaveBeenCalled();
   });
 
   it("removes the exact failed container without rollback when both receipts are absent", () => {
@@ -210,7 +211,6 @@ describe("Docker managed-bootstrap shared-state rollback authority", () => {
 
     const outcome = finalizeDockerManagedStartupSharedState(
       {
-        retainContainerAfterRollback: true,
         transaction: TRANSACTION,
         supervisorReady: true,
       },

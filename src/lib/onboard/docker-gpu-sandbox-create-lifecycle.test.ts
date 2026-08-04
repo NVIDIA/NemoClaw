@@ -160,6 +160,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(onPatchFailureExit).not.toHaveBeenCalled();
 
     await expect(patch.commitAfterReady()).rejects.toThrow("rollback backup");
+    await expect(patch.commitAfterReady()).rejects.toThrow("rollback backup");
 
     expect(onPatchFailureExit).toHaveBeenCalledOnce();
     expect(onPatchFailureExit.mock.calls[0]?.[1]).toEqual(
@@ -197,6 +198,9 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
 
     patch.maybeApplyDuringCreate();
 
+    await expect(patch.commitAfterReady()).rejects.toThrow(
+      "cannot commit before the recreated OpenShell supervisor reconnects",
+    );
     await expect(patch.commitAfterReady()).rejects.toThrow(
       "cannot commit before the recreated OpenShell supervisor reconnects",
     );

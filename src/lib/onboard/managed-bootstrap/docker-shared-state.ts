@@ -628,16 +628,16 @@ export function finalizeDockerManagedStartupSharedState(
         { cause: stopError },
       );
     }
-    rollbackManagedStartupSharedState(transaction, deps, receiptPath);
-    if (!input.patchResult && !input.retainContainerAfterRollback) {
+    const restoredSharedState = rollbackManagedStartupSharedState(transaction, deps, receiptPath);
+    if (!restoredSharedState && !input.patchResult && !input.retainContainerAfterRollback) {
       removeFailedUnbackedContainer(transaction, deps);
     }
     return { supervisorReady: false, failure };
   }
 
   quiesceManagedStartupContainer(transaction, deps);
-  rollbackManagedStartupSharedState(transaction, deps);
-  if (!input.patchResult && !input.retainContainerAfterRollback) {
+  const restoredSharedState = rollbackManagedStartupSharedState(transaction, deps);
+  if (!restoredSharedState && !input.patchResult && !input.retainContainerAfterRollback) {
     removeFailedUnbackedContainer(transaction, deps);
   }
   return { supervisorReady: false, failure: null };

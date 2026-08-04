@@ -147,6 +147,7 @@ export function createDockerGpuSandboxCreatePatch(
   let cutoverFinalized = false;
   let cutoverFinalization: Promise<void> | null = null;
   let cutoverFinalizationOutcome: "commit" | "rollback" | null = null;
+  let cutoverFinalizationFailure: Error | null = null;
 
   const findContainerIds =
     options.overrides?.findContainerIds ?? findOpenShellDockerSandboxContainerIds;
@@ -374,6 +375,7 @@ export function createDockerGpuSandboxCreatePatch(
     },
 
     async commitAfterReady() {
+      if (cutoverFinalizationFailure) throw cutoverFinalizationFailure;
       if (cutoverFinalized || (!managedBootstrapCutover && !result)) return;
       if (needsSupervisorWait) {
         const error = new Error(
@@ -383,6 +385,7 @@ export function createDockerGpuSandboxCreatePatch(
         const failure = rollbackError
           ? new Error(`${error.message} Rollback failed: ${rollbackError.message}`)
           : error;
+        cutoverFinalizationFailure = failure;
         onPatchFailureExit(options.sandboxName, failure, {
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
           dockerCapture: options.deps.dockerCapture,
@@ -417,6 +420,7 @@ export function createDockerGpuSandboxCreatePatch(
                 failure as Error & { managedBootstrapRollbackError?: unknown }
               ).managedBootstrapRollbackError = rollbackError;
             }
+            cutoverFinalizationFailure = failure;
             onPatchFailureExit(options.sandboxName, failure, {
               runCaptureOpenshell: options.deps.runCaptureOpenshell,
               dockerCapture: options.deps.dockerCapture,
@@ -437,6 +441,7 @@ export function createDockerGpuSandboxCreatePatch(
         const failure = new Error(
           "Managed startup passed Ready, but its rollback backup could not be removed.",
         );
+        cutoverFinalizationFailure = failure;
         onPatchFailureExit(options.sandboxName, failure, {
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
           dockerCapture: options.deps.dockerCapture,
