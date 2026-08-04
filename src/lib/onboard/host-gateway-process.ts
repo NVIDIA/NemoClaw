@@ -9,8 +9,8 @@ import path from "node:path";
 import { waitUntil } from "../core/wait";
 import { clearDockerDriverGatewayRuntimeMarker } from "./docker-driver-gateway-runtime-marker";
 import {
-  hostGatewayCmdlineMatches as sharedHostGatewayCmdlineMatches,
   type OpenShellGatewayProcessTarget,
+  hostGatewayCmdlineMatches as sharedHostGatewayCmdlineMatches,
 } from "./gateway-process-identity";
 
 export interface RunResult {
@@ -50,6 +50,8 @@ export interface StopHostGatewayOptions {
 
 export interface StopHostGatewayResult {
   failed: number[];
+  /** Whether a requested pgrep fallback completed with a usable result. */
+  orphanScanComplete?: boolean;
   skippedDeadPids: number[];
   skippedNonMatchingPids: number[];
   stopped: number[];
@@ -194,9 +196,29 @@ function waitForExit(
   );
 }
 
-function clearRuntimeFiles(pidFile: string, stateDir: string): void {
-  fs.rmSync(pidFile, { force: true });
+export function clearHostGatewayRuntimeFiles(stateDir: string, pidFile: string): void {
   clearDockerDriverGatewayRuntimeMarker(stateDir);
+  fs.rmSync(pidFile, { force: true });
+}
+
+export function isHostPortFree(port: number, spawnSyncImpl: typeof spawnSync = spawnSync): boolean {
+  const script =
+    "const net = require('node:net');" +
+    "const server = net.createServer();" +
+    "let done = false;" +
+    "const finish = (code) => { if (!done) { done = true; process.exit(code); } };" +
+    "server.once('error', () => finish(1));" +
+    `server.listen(${String(port)}, '127.0.0.1', () => server.close(() => finish(0)));`;
+  try {
+    return (
+      spawnSyncImpl(process.execPath, ["-e", script], {
+        stdio: "ignore",
+        timeout: 2_000,
+      }).status === 0
+    );
+  } catch {
+    return false;
+  }
 }
 
 function addPid(candidates: Map<number, Set<string>>, pid: number, source: string): void {
@@ -263,6 +285,7 @@ export function stopHostGatewayProcesses(
   const candidates = new Map<number, Set<string>>();
   const result: StopHostGatewayResult = {
     failed: [],
+    orphanScanComplete: true,
     skippedDeadPids: [],
     skippedNonMatchingPids: [],
     stopped: [],
@@ -274,7 +297,7 @@ export function stopHostGatewayProcesses(
     if (pidFromFile !== null) {
       addPid(candidates, pidFromFile, "pid-file");
     } else if (clearRuntimeState && fs.existsSync(pidFile)) {
-      clearRuntimeFiles(pidFile, stateDir);
+      clearHostGatewayRuntimeFiles(stateDir, pidFile);
     }
   }
 
@@ -293,6 +316,7 @@ export function stopHostGatewayProcesses(
   if (useFallback) {
     const sweep = pgrepHostGatewayPids(deps);
     pgrepRan = sweep.scanned;
+    result.orphanScanComplete = pgrepRan;
     for (const pid of sweep.pids) addPid(candidates, pid, "pgrep");
   }
 
@@ -313,7 +337,7 @@ export function stopHostGatewayProcesses(
     if (!pidExists(pid, deps)) {
       result.skippedDeadPids.push(pid);
       if (clearRuntimeState && sources.has("pid-file") && !clearedRuntimeFiles) {
-        clearRuntimeFiles(pidFile, stateDir);
+        clearHostGatewayRuntimeFiles(stateDir, pidFile);
         clearedRuntimeFiles = true;
       }
       continue;
@@ -332,7 +356,7 @@ export function stopHostGatewayProcesses(
         sources.has("pid-file") &&
         !clearedRuntimeFiles
       ) {
-        clearRuntimeFiles(pidFile, stateDir);
+        clearHostGatewayRuntimeFiles(stateDir, pidFile);
         clearedRuntimeFiles = true;
       }
       continue;
@@ -341,7 +365,7 @@ export function stopHostGatewayProcesses(
     if (tryStopPid(pid, deps, waitOptions) === "stopped") {
       result.stopped.push(pid);
       if (clearRuntimeState && !clearedRuntimeFiles) {
-        clearRuntimeFiles(pidFile, stateDir);
+        clearHostGatewayRuntimeFiles(stateDir, pidFile);
         clearedRuntimeFiles = true;
       }
     } else {

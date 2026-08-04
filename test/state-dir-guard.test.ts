@@ -348,6 +348,31 @@ describe("state-dir-guard", () => {
     expect(mode(path.join(versionDir, "plugin.js"))).toBe(0o644);
   });
 
+  it("keeps the runtime ledger writable while sealing cron job definitions", () => {
+    const { configDir } = fixture(".hermes");
+    const cronDir = path.join(configDir, "cron");
+    const cronLedger = path.join(cronDir, "executions.db");
+    const runtimeDir = path.join(configDir, "runtime");
+    const runtimeLedger = path.join(runtimeDir, "cron-executions.db");
+    fs.mkdirSync(cronDir);
+    fs.mkdirSync(runtimeDir);
+    fs.chmodSync(cronDir, 0o2770);
+    fs.chmodSync(runtimeDir, 0o2770);
+    fs.writeFileSync(cronLedger, "legacy ledger\n", { mode: 0o660 });
+    fs.writeFileSync(runtimeLedger, "active ledger\n", { mode: 0o660 });
+    fs.chmodSync(runtimeLedger, 0o660);
+
+    const locked = runGuard("lock", configDir);
+
+    expect(locked.status, locked.stderr).toBe(0);
+    expect(mode(cronDir)).toBe(0o755);
+    expect(mode(cronLedger)).toBe(0o640);
+    expect(mode(runtimeDir)).toBe(0o2770);
+    expect(mode(runtimeLedger)).toBe(0o660);
+    fs.appendFileSync(runtimeLedger, "still writable\n");
+    expect(fs.readFileSync(runtimeLedger, "utf8")).toContain("still writable");
+  });
+
   it("rejects a nested symlink target replaced during unlock ownership change", () => {
     const { root, configDir } = fixture();
     const pluginsDir = path.join(configDir, "plugins");
@@ -723,6 +748,7 @@ describe("state-dir-guard", () => {
   it.each([
     ["OpenClaw", "NEMOCLAW_TEST_OPENCLAW_FAIL_CLOSED"],
     ["Hermes", "NEMOCLAW_TEST_HERMES_FAIL_CLOSED"],
+    ["Deep Agents", "NEMOCLAW_TEST_DEEP_AGENTS_FAIL_CLOSED"],
   ])("leaves the %s config root fail-closed when a state-tree budget aborts lock", (_agent, env) => {
     const { configDir } = fixture();
     const pluginsDir = path.join(configDir, "plugins");
@@ -751,6 +777,25 @@ describe("state-dir-guard", () => {
     } finally {
       fs.closeSync(staleFd);
     }
+  });
+
+  it.each([
+    ["OpenClaw", "NEMOCLAW_TEST_OPENCLAW_FAIL_CLOSED"],
+    ["Hermes", "NEMOCLAW_TEST_HERMES_FAIL_CLOSED"],
+    ["Deep Agents", "NEMOCLAW_TEST_DEEP_AGENTS_FAIL_CLOSED"],
+  ])("restores traversal of the %s config root only after a successful lock", (_agent, env) => {
+    const { configDir } = fixture();
+    const pluginsDir = path.join(configDir, "plugins");
+    fs.mkdirSync(pluginsDir);
+    fs.writeFileSync(path.join(pluginsDir, "plugin.js"), "module.exports = true;\n");
+
+    const result = runGuard("lock", configDir, { [env]: "1" });
+
+    expect(result.status).toBe(0);
+    expect(result.lines).toContainEqual(
+      expect.objectContaining({ type: "result", action: "lock", status: "ok" }),
+    );
+    expect(mode(configDir)).toBe(0o755);
   });
 
   it("serializes an orphaned recursive unlock ahead of the restoring lock", async () => {

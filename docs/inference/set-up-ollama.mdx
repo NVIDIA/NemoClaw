@@ -72,6 +72,7 @@ $$nemoclaw onboard
 Select the Ollama entry for your host.
 The menu identifies a reachable daemon as running and labels an installed but stopped daemon **Start local Ollama**.
 NemoClaw lists installed models or offers starter models when none are installed.
+
 For registry-known models, each menu entry shows the download size and approximate VRAM requirement.
 The menu shows currently available GPU memory when the host reports it, or total GPU memory when available memory is unknown.
 
@@ -82,6 +83,7 @@ It pulls the selected model, loads it into memory, and validates it before conti
 <AgentOnly variant="openclaw">
 When Ollama reports a loaded-model context length, NemoClaw uses it for the `contextWindow` written to `openclaw.json` unless you set `NEMOCLAW_CONTEXT_WINDOW`.
 Onboarding stops when the selected model does not declare tool support or returns tool-call JSON as plain message text instead of structured tool calls.
+
 If the validation probe times out, NemoClaw retries with a larger timeout before failing.
 Each Ollama-backed OpenClaw passthrough checks whether the selected model is still loaded and sends a bounded warm-up request when necessary.
 </AgentOnly>
@@ -90,6 +92,7 @@ Each Ollama-backed OpenClaw passthrough checks whether the selected model is sti
 Hermes requires at least `64000` tokens, so NemoClaw requests that host-side context length when it starts Ollama on macOS or Linux.
 Fresh onboarding verifies after model warm-up that `/api/ps` reports at least `64000` for the loaded model.
 Resumed onboarding and sandbox rebuilds warm the exact recorded Ollama model and repeat this verification before reusing its route.
+
 When `NEMOCLAW_CONTEXT_WINDOW` is unset, NemoClaw writes the verified runtime value as `model.context_length` in `/sandbox/.hermes/config.yaml`.
 An explicit `NEMOCLAW_CONTEXT_WINDOW` must be at least `64000`; NemoClaw writes that value only when the loaded model reports at least the same context length.
 If an existing or unmanaged daemon reports less, omits the value, or returns a malformed value, onboarding stops before building the sandbox and shows the required `OLLAMA_CONTEXT_LENGTH` value for restarting Ollama.
@@ -167,50 +170,8 @@ If the probe cannot run because the host uses another routing model, onboarding 
 
 ## Point Memory Search at a Host Ollama Container
 
-On DGX Spark and other local-inference hosts, you can use one local server for chat and a separate Ollama container for OpenClaw memory-search embeddings.
-For example, managed vLLM can serve the chat model while a host-side Ollama container serves `qwen3-embedding:4b` on port `11434`.
-
-The sandbox reaches that container through `http://host.openshell.internal:11434`.
-The `local-inference` policy preset allows that egress path, while `config set` separately validates that the bridge URL is written only to supported provider `baseUrl` fields.
-
-First make sure the embedding server is reachable from the sandbox:
-
-```bash
-$$nemoclaw my-assistant policy add local-inference --yes
-$$nemoclaw my-assistant exec -- curl -fsS http://host.openshell.internal:11434/api/tags
-```
-
-Then define an OpenClaw provider for the embedding model and point memory search at it:
-
-```bash
-$$nemoclaw my-assistant shields down
-
-$$nemoclaw my-assistant config set \
-  --key models.providers.ollama-mem \
-  --value '{"api":"ollama","baseUrl":"http://host.openshell.internal:11434","apiKey":"x","models":[{"id":"qwen3-embedding:4b","name":"Qwen3 embedding 4B"}]}' \
-  --config-accept-new-path
-
-$$nemoclaw my-assistant config set \
-  --key agents.defaults.memorySearch.provider \
-  --value ollama-mem \
-  --config-accept-new-path \
-  --restart
-
-$$nemoclaw my-assistant shields up
-```
-
-If your memory index already contains documents, check whether OpenClaw reports an index-identity mismatch, rebuild the index, then verify the configured memory provider:
-
-```bash
-$$nemoclaw my-assistant exec -- openclaw memory status --index
-$$nemoclaw my-assistant exec -- openclaw memory index --force
-$$nemoclaw my-assistant exec -- openclaw memory status --deep
-```
-
-Add `--agent <id>` to those `openclaw memory` commands when you are configuring a specific non-default OpenClaw agent.
-
-Keep the Ollama container bound only to the local host or a reviewed host interface.
-Port `11434` is commonly unauthenticated, so allow it only from the OpenShell Docker bridge or the equivalent local container network path.
+OpenClaw can use a separate host Ollama container for memory-search embeddings.
+Follow [Configure Memory Search](../../configure-agents/configure-memory-search) to permit the bridge route, configure the provider, and rebuild an existing index.
 
 </AgentOnly>
 
@@ -244,6 +205,7 @@ Onboarding exits when a download requires confirmation and the run cannot prompt
 When `NEMOCLAW_MODEL` and the `NEMOCLAW_PROVIDER_MODEL` compatibility fallback are unset, NemoClaw selects a starter model based on currently available memory.
 During interactive onboarding, if the requested model env contains a safe model tag that appears in the current Ollama menu, NemoClaw uses that menu entry as the default.
 If the tag is absent from the rendered installed or starter list, the normal memory-based default remains.
+
 If a known bootstrap model does not fit, NemoClaw warns and falls back to the largest known model that does fit.
 Unknown or custom tags pass through to the Ollama runner for validation.
 

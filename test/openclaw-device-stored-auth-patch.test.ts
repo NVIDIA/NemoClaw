@@ -167,7 +167,7 @@ describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
     }
   });
 
-  it("keeps the admin retry for a normal non-repair request", async () => {
+  it("keeps cold bootstrap transport on the exact bounded non-repair target", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-admin-retry-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -198,9 +198,15 @@ describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
       await runtime.approve({ json: true }, "request-1");
 
       expect(runtime.calls).toHaveLength(3);
+      expect(runtime.calls[1]).toMatchObject({
+        method: "device.pair.approve",
+        params: { requestId: "request-1" },
+        scopes: ["operator.pairing", "operator.read", "operator.write"],
+      });
       expect(runtime.calls[1]).not.toHaveProperty("useStoredDeviceAuth");
       expect(runtime.calls[2]).toMatchObject({
         method: "device.pair.approve",
+        params: { requestId: "request-1" },
         scopes: ["operator.admin"],
       });
       expect(runtime.calls[2]).not.toHaveProperty("useStoredDeviceAuth");

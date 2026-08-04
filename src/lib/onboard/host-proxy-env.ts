@@ -12,18 +12,33 @@ const HOST_PROXY_ENV_NAMES = [
   "https_proxy",
   "no_proxy",
 ] as const;
+const HOST_PROXY_URL_ENV_NAMES = [
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "http_proxy",
+  "https_proxy",
+] as const;
 
 type HostProxyEnvOptions = {
   dropCredentialBearingProxyUrls?: boolean;
 };
 
-function isCredentialBearingProxyUrl(value: string): boolean {
+export function isCredentialBearingProxyUrl(value: string): boolean {
   try {
     const parsed = new URL(value.includes("://") ? value : `http://${value}`);
     return parsed.username !== "" || parsed.password !== "";
   } catch {
     return /[^/@:]+:[^/@]*@/.test(value);
   }
+}
+
+export function hasCredentialBearingHostProxyEnvironment(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return HOST_PROXY_URL_ENV_NAMES.some((name) => {
+    const value = env[name]?.trim();
+    return value ? isCredentialBearingProxyUrl(value) : false;
+  });
 }
 
 export function appendHostProxyEnvArgs(

@@ -727,14 +727,17 @@ describe("PR E2E dispatch-not-observed recovery", () => {
     }
   });
 
-  it("dispatches controller-only changes through the normal evidence path", async () => {
+  it("dispatches internal control-plane changes through the normal evidence path", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-controller-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
-    const controllerFiles = [".github/workflows/pr-e2e-gate.yaml", "tools/e2e/pr-e2e-gate.mts"];
+    const controllerFiles = [
+      ".github/workflows/pr-e2e-gate.yaml",
+      "test/e2e/risk-signal-reporter.ts",
+    ];
     const controllerPull = { ...pullRequest(), changed_files: controllerFiles.length };
     const { changed_files: _changedFiles, ...controllerPullListItem } = controllerPull;
     const requests: RecordedGitHubRequest[] = [];

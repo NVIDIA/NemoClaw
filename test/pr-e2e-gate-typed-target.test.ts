@@ -98,7 +98,7 @@ describe("PR E2E typed-target gate (#7031)", () => {
     ).rejects.toThrow(/Controller dispatch inputs are invalid/u);
   });
 
-  it("accepts the trusted post-reboot target in an exact-head plan (#7824)", () => {
+  it("accepts the trusted post-reboot target in a PR E2E plan (#7824)", () => {
     const plan = buildRiskPlan({
       headSha: HEAD_SHA,
       changedFiles: ["src/lib/actions/sandbox/status-snapshot.ts"],

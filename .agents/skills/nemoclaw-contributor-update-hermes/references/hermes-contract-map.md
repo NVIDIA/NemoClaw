@@ -75,28 +75,37 @@ Audit each workaround against target source and its removal condition:
 
 | Contract | NemoClaw surface |
 |---|---|
-| Resumed one-shot session append | `agents/hermes/hermes-wrapper.py` and `test/hermes-wrapper-oneshot-routing.test.ts`. |
-| Provider plus model proxy routing | `agents/hermes/hermes-wrapper.py` and `test/hermes-wrapper-provider-merge.test.ts`. |
+| Resumed one-shot session append | `agents/hermes/hermes-cli-adapter-v1.json`, `agents/hermes/hermes-wrapper.py`, and `test/hermes-wrapper-oneshot-routing.test.ts`. |
+| Provider plus model proxy routing | `agents/hermes/hermes-cli-adapter-v1.json`, `agents/hermes/hermes-wrapper.py`, and `test/hermes-wrapper-provider-merge.test.ts`. |
 | Latest session-list preview | `agents/hermes/patch-session-list-preview.py` and the Dockerfile smoke test. |
 | Config-less profile policy defaults | `agents/hermes/patch-profile-policy-defaults.py`, `test/hermes-profile-policy-defaults.test.ts`, and the final-image named-profile probe. |
 | Writable managed gateway runtime metadata | `agents/hermes/patch-gateway-runtime-metadata.py`, `test/hermes-gateway-runtime-metadata-patch.test.ts`, and the final-image source-shape, integrity, and path probes. Preserve Hermes' process-scoped home selector while relocating central default-gateway PID, lock, and status helpers. Search the full pinned tree for explicit metadata paths before claiming broader support; patch and runtime-test each supported direct consumer or document inherited `--replace`, marker, profile/multiplexer, service/boot, and packaging residuals. |
+| Writable cron execution history | `agents/hermes/patch-cron-execution-runtime.py`, `test/hermes-cron-execution-runtime-patch.test.ts`, the manifest path, and the final-image cross-identity probe. Keep cron job definitions inside the high-risk `cron` directory, relocate only the mutable SQLite audit ledger below `runtime`, and patch the upstream quick snapshot inventory in the same guarded patch operation. |
 | OpenShell Langfuse placeholders | `agents/hermes/patch-langfuse-credentials.mts` and its Dockerfile source-shape probe. |
 | Managed light-terminal skin | `src/lib/domain/sandbox/connect-env.ts` and `test/hermes-light-skin-boundary.test.ts`. |
 | Config output masking and gateway secret boundary | `agents/hermes/hermes-wrapper.py`, validator scripts, and live secret-boundary tests. |
 
-Compare top-level and `chat` help in target source.
-Update wrapper value flags, boolean flags, subcommands, scan boundaries, tests, and the wrapper SHA-256 together.
-Do not infer arity from help text alone: inspect the target parser and any argv preprocessing or
-coalescing that runs before it.
-Hermes 0.19 defines `-c/--continue` with an optional value, where the bare flag means the most
-recent session, and coalesces unquoted multi-word names after all four continue/resume spellings.
-The coalescer's boundary set can differ from the full command inventory, so bind each consumer to
-the correct target-source set rather than deriving both from help.
-Have the final image AST-compare the wrapper boundary constant with the pinned upstream
-`_coalesce_session_name_args` local subcommand set; public help cannot prove this private parser
-contract.
-Test bare, quoted, and unquoted forms plus global profile selectors anywhere wrapper ordering or
-one-shot routing is involved.
+Review the top-level and `chat` parser metadata in the target source.
+Update `hermes-cli-adapter-v1.json` only for a managed translation form.
+Do not add an upstream subcommand to the adapter.
+`validate-cli-adapter.py` compares the contract with Hermes' machine-readable parser metadata.
+The wrapper reads session-name command boundaries from the installed upstream coalescer source.
+Do not copy that boundary set into the adapter or wrapper.
+The top-level and `chat` help probes are runtime evidence and are not the compatibility authority.
+
+Hermes 0.19 defines `-c/--continue` with an optional session value.
+The bare flag selects the most recent session.
+The adapter owns the resumed one-shot forms that require translation, including unquoted multi-word
+session names before the one-shot option.
+Test bare, quoted, and unquoted forms plus global profile selectors.
+Provider and model composition accepts a session name as one argument.
+The `provider_model_composition` key names this managed translation, not the
+`NEMOCLAW_PROVIDER_MODEL` environment value.
+The adapter rejects an unquoted multi-word session plus provider and model flags before Hermes
+runs because a later positional can be an upstream command. Quote the session name to make it one
+argument.
+Test that a new unrelated command passes through without an adapter change.
+The wrapper must verify the upstream CLI version before it invokes a translated command.
 The final Dockerfile intentionally rejects a new semver while version-bound workarounds remain unreviewed.
 
 Retarget a patch comment only after confirming that its exact upstream source shape remains applicable.
@@ -125,10 +134,15 @@ parent's owner, shared group, and setgid mode. Record the real producer-selected
 the live source must be group-readable for online backup, while the sandbox-owned restored
 replacement must be group-writable so the gateway can reopen it. Prove both identities' behavior
 instead of assuming every SQLite creator uses mode `0660`.
-Do not assume a state directory inherited the shared contract because a neighboring ledger did:
-Hermes 0.19 creates both `cron/executions.db` and
+Do not assume a state directory inherited the shared contract because a neighboring ledger did.
+Hermes 0.19 creates cron execution history and
 `gateway/discord_message_recovery.db` from gateway-owned processes, while sandbox performs the
 snapshot restore.
+NemoClaw keeps cron job definitions in the high-risk `cron` directory and removes group write
+access during Shields up.
+NemoClaw relocates only the execution ledger to `runtime/cron-executions.db`.
+Making the whole `cron` directory cross-identity writable would let the `sandbox` group modify
+cron job definitions.
 Use distinct-user image or runtime probes; a single-uid temporary-directory test cannot prove this contract.
 Resolve whether each ledger follows `get_hermes_home()` or the default root.
 Hermes named profiles relocate profile-local state below `profiles/<name>/`; a static default-profile `state_files` entry does not online-back up those copies.
@@ -171,13 +185,13 @@ Bind runtime evidence to the PR SHA and the final pinned image digest.
 
 ## Build-system contract
 
-The final Hermes Dockerfile contains executable heredoc probes.
-Build it with BuildKit/buildx and never with `DOCKER_BUILDKIT=0`.
-A legacy builder can give the interpreter an empty heredoc while returning success for that layer,
-so a later-path failure or even a completed legacy build is not proof that the embedded assertions
-ran.
-Inspect the BuildKit step list and require the Hermes source, wrapper, state, and cross-identity
-probe layers to execute.
+The final Hermes Dockerfile invokes the checked-in `image-build-probes.py` runner for source,
+wrapper, state, and cross-identity assertions.
+Build it with BuildKit/buildx for canonical validation, and require every probe-runner command to
+execute.
+When a change affects gateway-builder compatibility, run a separate legacy-builder build and
+require its log to show the same commands executing successfully.
+Do not treat that compatibility result as a replacement for the BuildKit image proof.
 
 ## Historical selectors
 
@@ -205,6 +219,6 @@ Use this order:
 7. Pin the published digest in the final Dockerfile.
 8. Rebuild and inspect the final image.
 9. Push the digest commit.
-10. Run exact-head CI, review, and E2E.
+10. Run CI, review, and E2E on the head commit.
 
 Repeat steps 3 through 9 when a base-image input changes.

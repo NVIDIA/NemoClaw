@@ -19,6 +19,10 @@
 #   6. New .hermes subdirectory — add mkdir/chmod below
 # ────────────────────────────────────────────────────────────────
 
+ARG PERL_VERSION=5.44.0
+ARG PERL_SHA256=505cf43912e9480495c344c70260452e32aa2a73c546a026b3f100053b23ce91
+ARG PERL_PACKAGE_REVISION=1nemoclaw1
+
 FROM node:24-trixie-slim@sha256:05c08ce4291e9a58f59456a7985176defb12cdd42271f35ff81a3e167ea61d4c AS native-security-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -38,9 +42,24 @@ COPY scripts/security/patches/python3.13-htmlparser-cve-2026-15308.patch /script
 
 RUN bash /scripts/security/build-native-security-packages.sh /out
 
+FROM native-security-builder AS perl-builder
+
+ARG PERL_VERSION
+ARG PERL_SHA256
+ARG PERL_PACKAGE_REVISION
+
+COPY scripts/security/build-perl-security-packages.sh /scripts/security/build-perl-security-packages.sh
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        netbase=6.5 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN bash /scripts/security/build-perl-security-packages.sh \
+    /out "${PERL_VERSION}" "${PERL_SHA256}" "${PERL_PACKAGE_REVISION}"
+
 FROM node:24-trixie-slim@sha256:05c08ce4291e9a58f59456a7985176defb12cdd42271f35ff81a3e167ea61d4c
 
-COPY --from=native-security-builder /out /tmp/nemoclaw-native-security
+COPY --from=perl-builder /out /tmp/nemoclaw-native-security
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -56,7 +75,8 @@ ARG HERMES_SEMVER=0.19.0
 ARG HERMES_TARBALL_SHA256=285f3fc134ff466a90065e1517801a68993733b807158ee8f32aa01613786990
 ARG HERMES_NPM_INTEGRITY=sha512-+oVKG3lXbk2kEP+J6BXZjtmSBSaFfczIdOWQ9CUSTdTqq2uyHbk4p+kPyZ6MeGs56JU5qXzMNbqGKRVOQRGC1A==
 ARG HERMES_UV_EXTRAS="anthropic messaging web pty mcp"
-ARG UV_VERSION=0.11.8
+ARG NODE_VERSION=24.18.1
+ARG UV_VERSION=0.11.33
 
 # build-essential: hermes-agent >= 0.16.0 ships npm dependencies that need a
 # node-gyp native build during `npm ci`; the runtime Dockerfile purges build
@@ -145,6 +165,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "$security_deb_dir/vim-tiny.deb" \
         /tmp/nemoclaw-native-security/libssh2-1t64.deb \
         /tmp/nemoclaw-native-security/nemoclaw-python3.13-htmlparser-fix.deb \
+    && apt-get install -y --no-install-recommends \
+        /tmp/nemoclaw-native-security/perl-base.deb \
+        /tmp/nemoclaw-native-security/perl.deb \
+    && test "$(dpkg-query -W -f='${Version}' perl-base)" = "5.44.0-1nemoclaw1" \
+    && test "$(dpkg-query -W -f='${Version}' perl)" = "5.44.0-1nemoclaw1" \
     && test "$(dpkg-query -W -f='${Version}' libexpat1)" = "2.8.2-1" \
     && test "$(dpkg-query -W -f='${Version}' libonig5)" = "6.9.9-1+b1" \
     && test "$(dpkg-query -W -f='${Version}' libjq1)" = "1.8.2-1" \
@@ -164,6 +189,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && python3 -c "import sys; from pathlib import Path; import html.parser; Path(html.parser.__file__).resolve() == Path('/usr/lib/python3.13/html/parser.py').resolve() or sys.exit('html.parser loaded from an unexpected path'); from html.parser import HTMLParser; p=HTMLParser(); [p.feed('') for _ in range(20000)]; p._pending == [] or sys.exit('empty feeds accumulated pending entries'); p.feed('<!--'); [p.feed('a' * 64) for _ in range(20000)]; p.feed('-->'); p.close(); p.rawdata == '' or sys.exit('incremental parsing retained raw data')" \
     && python3 -c "import ctypes, sys; lib=ctypes.CDLL('libssh2.so.1'); lib.libssh2_version.restype=ctypes.c_char_p; lib.libssh2_version(0) == b'1.11.1' or sys.exit('unexpected libssh2 runtime version')" \
     && vim.tiny --version | head -n 1 | grep -Eq '^VIM - Vi IMproved 9[.]2 ' \
+    && test "$(perl -e 'print $^V')" = "v5.44.0" \
+    && test "$(perl -MSocket -e 'print Socket->VERSION')" = "2.041" \
+    && test "$(perl -MStorable -e 'print Storable->VERSION')" = "3.41" \
+    && test "$(perl -MHTTP::Tiny -e 'print HTTP::Tiny->VERSION')" = "0.096" \
+    && test "$(perl -MIO::Compress::Base -e 'print IO::Compress::Base->VERSION')" = "2.223" \
+    && test "$(perl -MIO::Uncompress::Unzip -e 'print IO::Uncompress::Unzip->VERSION')" = "2.223" \
+    && test "$(perl -MFile::GlobMapper -e 'print File::GlobMapper->VERSION')" = "1.001" \
+    && perl -MSocket=pack_ip_mreq_source -e \
+        'eval { pack_ip_mreq_source("\0" x 4, "\0" x 3) }; die "short source accepted" unless $@ =~ /Bad arg length/' \
+    && perl -e \
+        'my $x = join "|", "aaa".."mzz"; my $y = join "|", "naa".."zzz"; use re "Debug"; "fnord" =~ m/(?:$x)|(?:$y)/' \
     && install -d -o root -g root -m 0755 /usr/local/share/nemoclaw \
     && printf '%s\n' \
         "architecture=$arch" \
@@ -175,19 +211,51 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "vim-tiny=2:9.2.0782-1" \
         "libssh2-1t64=1.11.1-1+deb13u1+nemoclaw1" \
         "nemoclaw-python3.13-htmlparser-fix=3.13.5-2+deb13u4+nemoclaw1" \
+        "perl-base=5.44.0-1nemoclaw1" \
+        "perl=5.44.0-1nemoclaw1" \
         > /usr/local/share/nemoclaw/security-packages.txt \
     && chown root:root /usr/local/share/nemoclaw/security-packages.txt \
     && chmod 0444 /usr/local/share/nemoclaw/security-packages.txt \
     && rm -rf /tmp/nemoclaw-native-security \
     && rm -rf "$security_deb_dir" \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && test -z "$(dpkg --audit)"
+
+# The current node:24-trixie-slim digest still contains Node.js 24.16.0. Overlay
+# the reviewed Node.js 24.18.1 release from nodejs.org so the Hermes runtime
+# includes the security fixes without waiting for Docker Hub tag rotation.
+# hadolint ignore=DL4006
+RUN arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+        amd64) node_asset_arch="x64"; node_sha256="9f5eb6ac21845a66c493c91a253b1da32fd684e89e9b7202d4936982336be4ca" ;; \
+        arm64) node_asset_arch="arm64"; node_sha256="df224555a083b918e46260cc969838501b9f9a87140c1195e5b9597b56d5dae2" ;; \
+        *) echo "Unsupported architecture for Node.js: $arch" >&2; exit 1 ;; \
+    esac \
+    && node_archive="/tmp/node-v${NODE_VERSION}-linux-${node_asset_arch}.tar.gz" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 300 \
+        -o "$node_archive" \
+        "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_asset_arch}.tar.gz" \
+    && printf '%s  %s\n' "$node_sha256" "$node_archive" | sha256sum -c - \
+    && rm -rf \
+        /usr/local/include/node \
+        /usr/local/lib/node_modules/corepack \
+        /usr/local/lib/node_modules/npm \
+        /usr/local/share/doc/node \
+        /usr/local/share/man/man1/node.1 \
+    && rm -f /usr/local/bin/corepack /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx \
+    && tar --extract --gzip --file "$node_archive" \
+        --directory /usr/local --strip-components=1 --no-same-owner \
+    && rm -f "$node_archive" \
+    && test "$(node --version)" = "v${NODE_VERSION}" \
+    && test "$(npm --version)" = "11.16.0"
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
 
-# npm 11.13.0 in the pinned Node 24 image bundles an affected node-tar copy.
+# npm 11.16.0 in Node.js 24.18.1 bundles an affected node-tar copy.
 # Patch that private package after curl is installed and before npm processes
 # the reviewed npm archive.
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts \
@@ -200,7 +268,7 @@ RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 # Replace npm 11.18.0's private brace-expansion 5.0.7 package with the
-# registry- and SRI-pinned 5.0.8 release.
+# registry- and SRI-pinned 5.0.9 release.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
     --npm-root /usr/local/lib/node_modules/npm
@@ -343,11 +411,15 @@ RUN printf '%s\n' \
 # writes under /opt/hermes. If a future Hermes tarball removes the lockfile,
 # skip rather than doing a nondeterministic dependency resolve during image
 # build.
-RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}"
+RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}" \
+    && uv_version_output="$(uv --version)" \
+    && uv_version="${uv_version_output#uv }" \
+    && test "${uv_version%% *}" = "${UV_VERSION}"
 # Upstream tests are not part of the production runtime and can contain
 # intentionally hostile security-test fixtures. Remove them in the extraction
 # RUN so their bytes never enter a published image layer.
 COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch
+COPY agents/hermes/whatsapp-proxy.patch /tmp/hermes-whatsapp-proxy.patch
 RUN mkdir -p /opt/hermes \
     && curl -fsSL "https://github.com/NousResearch/hermes-agent/archive/refs/tags/${HERMES_VERSION}.tar.gz" -o /tmp/hermes.tar.gz \
     && printf '%s  /tmp/hermes.tar.gz\n' "${HERMES_TARBALL_SHA256}" > /tmp/hermes.tar.gz.sha256 \
@@ -356,7 +428,10 @@ RUN mkdir -p /opt/hermes \
     && rm -rf /opt/hermes/tests \
     && git -C /opt/hermes apply --check /tmp/hermes-security-dependencies.patch \
     && git -C /opt/hermes apply /tmp/hermes-security-dependencies.patch \
-    && rm /tmp/hermes.tar.gz /tmp/hermes.tar.gz.sha256 /tmp/hermes-security-dependencies.patch
+    && git -C /opt/hermes apply --check /tmp/hermes-whatsapp-proxy.patch \
+    && git -C /opt/hermes apply /tmp/hermes-whatsapp-proxy.patch \
+    && rm /tmp/hermes.tar.gz /tmp/hermes.tar.gz.sha256 \
+        /tmp/hermes-security-dependencies.patch /tmp/hermes-whatsapp-proxy.patch
 
 # Cross-check the pinned release against two independent sources before
 # installing anything from it: the extracted tarball must declare
@@ -406,7 +481,7 @@ RUN set -eu; \
     uv sync --frozen --no-dev "$@" --no-cache \
     && uv pip check --python /opt/hermes/.venv/bin/python \
     && /opt/hermes/.venv/bin/python -I -c \
-        "from importlib.metadata import version; expected = {'cryptography': '48.0.1', 'pillow': '12.3.0', 'starlette': '1.3.1'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
+        "from importlib.metadata import version; expected = {'cryptography': '48.0.1', 'mcp': '1.28.1', 'pillow': '12.3.0', 'starlette': '1.3.1', 'tornado': '6.5.7'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
     && npm ci --prefer-offline --no-audit --no-fund \
     && for ui_dir in ui-tui web; do \
         if [ -f "${ui_dir}/package-lock.json" ]; then \
@@ -421,6 +496,7 @@ RUN set -eu; \
     && bridge_dir=scripts/whatsapp-bridge \
     && if [ -f "${bridge_dir}/package-lock.json" ]; then \
         npm ci --prefix "${bridge_dir}" --prefer-offline --no-audit --no-fund; \
+        node --experimental-test-module-mocks --test "${bridge_dir}/proxy-agent.test.mjs"; \
     elif [ -f "${bridge_dir}/package.json" ]; then \
         echo "Skipping optional Hermes bridge ${bridge_dir}: package-lock.json not found"; \
     else \
@@ -452,6 +528,8 @@ RUN set -eu; \
 # differential. Keep this hash-verified downstream override at the first stable
 # release that fixes those issues plus GHSA-v9pg-7xvm-68hf. Re-review the
 # version and both hashes on every Hermes version bump.
+# uv creates a phony .git cache marker even with --no-cache. Remove the cache
+# after the final uv command because the root cache is not used at runtime.
 # hadolint ignore=DL3059
 RUN printf '%s\n' \
         "python-multipart==0.0.32 \\" \
@@ -462,7 +540,8 @@ RUN printf '%s\n' \
         --no-deps --no-cache --require-hashes -r /tmp/multipart-req.txt \
     && rm -f /tmp/multipart-req.txt \
     && /opt/hermes/.venv/bin/python -c \
-        "import multipart; assert multipart.__version__ == '0.0.32', multipart.__version__"
+        "import multipart; assert multipart.__version__ == '0.0.32', multipart.__version__" \
+    && rm -rf /root/.cache/uv
 
 ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
     HERMES_TUI_DIR="/opt/hermes/ui-tui" \
@@ -490,7 +569,7 @@ RUN chmod -R a+rX /opt/hermes/.venv \
 # Gate the exact completed base filesystem before it can be published.
 COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
 RUN set -eu; \
-    for build_only_path in /opt/hermes/tests /root/.npm /root/.cache/electron /root/.cache/node-gyp; do \
+    for build_only_path in /opt/hermes/tests /root/.npm /root/.cache/electron /root/.cache/node-gyp /root/.cache/uv; do \
         if [ -e "$build_only_path" ] || [ -L "$build_only_path" ]; then \
             echo "ERROR: build-only Hermes path leaked into the base image: $build_only_path" >&2; \
             exit 1; \

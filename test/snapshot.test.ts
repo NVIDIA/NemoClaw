@@ -5,12 +5,16 @@
 //   - validateSnapshotName accepts/rejects names
 //   - listBackups computes virtual v<N> versions by timestamp-ascending position
 //   - findBackup resolves selectors (v<N>, name, exact timestamp)
+
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { managedStartupE2eProfile } from "../scripts/checks/generate-managed-startup-profile-fixture.mts";
+import { encodeManagedStartupProfile } from "../src/lib/onboard/managed-startup/profile";
 
 // Override HOME BEFORE importing sandbox-state — it reads process.env.HOME
 // at module-load time to compute REBUILD_BACKUPS_DIR. Captured original is
@@ -65,6 +69,39 @@ function writeBackup(
   };
   fs.writeFileSync(path.join(dir, "rebuild-manifest.json"), JSON.stringify(manifest, null, 2));
   return manifest;
+}
+function managedSnapshotAuthority() {
+  const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
+  return {
+    workload: {
+      schemaVersion: 1,
+      kind: "managed-image",
+      reference: `ghcr.io/nvidia/nemoclaw/openclaw-sandbox@sha256:${"a".repeat(64)}`,
+      platform: "linux/amd64",
+      release: "v0.0.97",
+      sourceRevision: "b".repeat(40),
+      sourceCohort: "ghrun-123456-1",
+      capabilityContractVersion: 1,
+      startupProfileContractVersion: 1,
+      encodedProfile,
+      startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+      credentialProxyReplayRequired: false,
+      shared: true,
+    },
+    runtimeSnapshot: {
+      schemaVersion: 1,
+      providerId: "docker",
+      providerHandle: "opaque-provider-handle",
+      lifecycleState: "running",
+      lifecycleGeneration: "generation-1",
+      runtime: {
+        schemaVersion: 1,
+        providerId: "docker",
+        runtime: { kind: "docker-container", handle: "opaque-container-id" },
+        acceleration: { kind: "none" },
+      },
+    },
+  } as const;
 }
 afterAll(() => {
   if (ORIGINAL_HOME === undefined) {
@@ -189,6 +226,38 @@ describe("listBackups computes virtual versions", () => {
     expect(entry.customPolicies).toEqual(custom);
   });
 
+  it("round-trips normalized managed workload and provider runtime authority", () => {
+    const authority = managedSnapshotAuthority();
+    writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
+      workload: { ...authority.workload, ignored: "not-authority" },
+      runtimeSnapshot: {
+        ...authority.runtimeSnapshot,
+        containerName: "not-authority",
+      },
+    });
+
+    const [entry] = sandboxState.listBackups("test-sandbox");
+
+    expect(entry?.workload).toEqual(authority.workload);
+    expect(entry?.runtimeSnapshot).toEqual(authority.runtimeSnapshot);
+  });
+
+  it("rejects a managed snapshot manifest without valid provider runtime authority", () => {
+    const authority = managedSnapshotAuthority();
+    writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
+      workload: authority.workload,
+    });
+    writeBackup("test-sandbox", "2026-04-21T14-01-00-000Z", {
+      ...authority,
+      runtimeSnapshot: {
+        ...authority.runtimeSnapshot,
+        lifecycleGeneration: "",
+      },
+    });
+
+    expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
+  });
+
   it("preserves an empty customPolicies array so restore can distinguish zero-custom from legacy snapshots", () => {
     writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", { customPolicies: [] });
     const [entry] = sandboxState.listBackups("test-sandbox");
@@ -291,6 +360,32 @@ describe("listBackups computes virtual versions", () => {
       restoredFiles: [],
       failedFiles: [],
     });
+  });
+});
+
+describe("snapshot restore content authority", () => {
+  it("binds the selected manifest and payload bytes to one digest", () => {
+    const manifest = writeBackup("alpha", "2026-04-21T14-00-00-000Z", {
+      backedUpDirs: ["workspace"],
+      stateDirs: ["workspace"],
+    });
+    const backupPath = String(manifest.backupPath);
+    fs.mkdirSync(path.join(backupPath, "workspace"));
+    fs.writeFileSync(path.join(backupPath, "workspace", "state.txt"), "before\n");
+    const selected = sandboxState.getLatestBackup("alpha");
+    expect(selected).not.toBeNull();
+
+    const authority = sandboxState.captureSnapshotRestoreAuthority(backupPath, selected!);
+    expect(authority).toMatchObject({
+      schemaVersion: 1,
+      backupPath,
+      contentSha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+
+    fs.writeFileSync(path.join(backupPath, "workspace", "state.txt"), "after\n");
+    expect(sandboxState.captureSnapshotRestoreAuthority(backupPath)?.contentSha256).not.toBe(
+      authority?.contentSha256,
+    );
   });
 });
 
@@ -536,6 +631,25 @@ process.exit(0);
       expect(backup.manifest?.backedUpDirs).toEqual(existingDirs);
       expect(backup.manifest?.reconcileOpenClawImagePluginProvenance).toBe(true);
       expect(backup.manifest?.openclawImagePluginInstalls).toEqual([]);
+      expect(fs.readdirSync(stagingRoot)).toEqual([]);
+
+      const rejected = sandboxState.backupSandboxState("alpha", {
+        validateBeforePublish: () => {
+          throw new Error("runtime generation changed");
+        },
+      });
+      expect(rejected).toMatchObject({
+        success: false,
+        error: expect.stringContaining(
+          "Snapshot authority changed during backup: runtime generation changed",
+        ),
+      });
+      const published = fs
+        .readdirSync(path.join(BACKUPS_ROOT, "alpha"))
+        .filter((entry) =>
+          fs.existsSync(path.join(BACKUPS_ROOT, "alpha", entry, "rebuild-manifest.json")),
+        );
+      expect(published).toHaveLength(1);
       expect(fs.readdirSync(stagingRoot)).toEqual([]);
     } finally {
       restoreEnv("NEMOCLAW_OPENSHELL_BIN", oldOpenshell);

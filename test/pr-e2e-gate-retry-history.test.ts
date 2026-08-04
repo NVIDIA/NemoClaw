@@ -155,7 +155,7 @@ describe("PR E2E controller retry history", () => {
     });
   });
 
-  it("creates a fresh check after a marker-backed infrastructure failure before internal PR code can receive E2E credentials (#7052)", async () => {
+  it("creates a fresh check and dispatches internal E2E after a marker-backed infrastructure failure (#7052)", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-control-"));
     const outputPath = path.join(workDir, "github-output");
     fs.writeFileSync(outputPath, "", { mode: 0o600 });
@@ -194,6 +194,14 @@ describe("PR E2E controller retry history", () => {
             () => githubResponse([{ filename: "test/e2e/risk-signal-reporter.ts" }]),
           ),
           githubFetchRoute(
+            ({ url, method }) => url.endsWith("/git/ref/heads/main") && method === "GET",
+            () =>
+              githubResponse({
+                ref: "refs/heads/main",
+                object: { type: "commit", sha: WORKFLOW_SHA },
+              }),
+          ),
+          githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs") && method === "POST",
             (request) => {
               const created = exactPrGateCheck({
@@ -219,6 +227,20 @@ describe("PR E2E controller retry history", () => {
               return githubResponse(checkRuns[1]);
             },
           ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/18") && method === "GET",
+            () => githubResponse(checkRuns[1]),
+          ),
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.endsWith("/actions/workflows/e2e.yaml/dispatches") && method === "POST",
+            () =>
+              githubResponse({
+                workflow_run_id: 23,
+                run_url: "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/23",
+                html_url: "https://github.com/NVIDIA/NemoClaw/actions/runs/23",
+              }),
+          ),
         ],
         requests,
       ),
@@ -226,7 +248,7 @@ describe("PR E2E controller retry history", () => {
 
     try {
       await expect(startPrGate(startCommand(workDir))).resolves.toBeUndefined();
-      expect(requests.some((request) => request.url.endsWith("/dispatches"))).toBe(false);
+      expect(requests.filter((request) => request.url.endsWith("/dispatches"))).toHaveLength(1);
       expect(
         requests.some(
           (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
@@ -247,10 +269,7 @@ describe("PR E2E controller retry history", () => {
       expect(completion?.body).toMatchObject({
         status: "in_progress",
         output: {
-          title: "Maintainer approval required to run E2E",
-          summary: expect.stringContaining(
-            "No selected E2E job or target ran and no repository secret was exposed",
-          ),
+          title: "Running 3 E2E checks",
         },
       });
       expect(completion?.body).not.toHaveProperty("conclusion");
@@ -260,16 +279,12 @@ describe("PR E2E controller retry history", () => {
         status: "in_progress",
         conclusion: null,
         output: {
-          title: "Maintainer approval required to run E2E",
-          summary: expect.stringContaining(
-            "No selected E2E job or target ran and no repository secret was exposed",
-          ),
+          title: "Running 3 E2E checks",
         },
       });
-      expect(JSON.stringify(completion?.body)).toContain("`approve-e2e`");
       expect(fs.readFileSync(outputPath, "utf8")).not.toContain("approval_");
       expect(fs.readFileSync(outputPath, "utf8")).toContain("check_id=18");
-      expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
+      expect(fs.readFileSync(outputPath, "utf8")).toContain("dispatched=true");
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
     }

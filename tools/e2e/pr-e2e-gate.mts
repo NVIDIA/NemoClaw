@@ -18,7 +18,6 @@ import {
   isPrE2eTypedTargetId,
   RISK_PLAN_VERSION,
   type RiskPlan,
-  requiresCredentialedE2eAuthorization,
   riskPlanRequiredJobIds,
   riskPlanRequiredTargetIds,
 } from "../advisors/risk-plan.mts";
@@ -70,11 +69,11 @@ const WORKFLOW_NAME = "E2E / PR Gate Controller";
 const RESERVED_CHECK_TITLE = "Waiting for PR CI";
 const RESERVED_CHECK_SUMMARY =
   "This PR SHA and base SHA are reserved for deterministic E2E planning after CI completes.";
-const CONTROL_PLANE_AUTHORIZATION_TITLE = "Maintainer approval required to run E2E";
 const FORK_E2E_AUTHORIZATION_TITLE = "Maintainer approval required to run fork E2E";
 const EVALUATING_PR_COMMIT_TITLE = "Evaluating PR commit";
 const RUNNER_LOSS_RETRY_PREPARATION_TITLE = "Preparing one-time hosted-runner-loss retry";
 const AUTHORIZED_EXECUTION_TITLE_PREFIX = "E2E execution authorized by @";
+const RUNNING_E2E_TITLE_PATTERN = /^Running [1-9][0-9]* E2E checks?$/u;
 const PRE_DISPATCH_CHECK_READ_TIMEOUT_MS = 5_000;
 const RECONCILED_CHILD_VALIDATION_TIMEOUT_MS = 10_000;
 const CHILD_AUTHORIZATION_PUBLISH_TIMEOUT_MS = 5_000;
@@ -1866,7 +1865,8 @@ export function expectedSignalShards(
   workflowPath = ".github/workflows/e2e.yaml",
   targetIds: readonly string[] = [],
 ): Record<string, string[]> {
-  const selections = [...jobIds, ...targetIds];
+  const expandedJobIds = expandPrGateJobSelections(jobIds);
+  const selections = [...expandedJobIds, ...targetIds];
   if (new Set(selections).size !== selections.length) {
     throw new Error("E2E evidence jobs and targets must be unique");
   }
@@ -1879,7 +1879,7 @@ export function expectedSignalShards(
   const jobs = isObjectRecord(workflow) && isObjectRecord(workflow.jobs) ? workflow.jobs : {};
   const inventory = readFreeStandingJobsInventory(workflowPath);
   const jobShards = Object.fromEntries(
-    jobIds.map((jobId) => {
+    expandedJobIds.map((jobId) => {
       const executionJobId = inventory.targetToJob.get(jobId) ?? jobId;
       if (!isObjectRecord(jobs[executionJobId])) {
         throw new Error(`E2E workflow does not define ${executionJobId} for ${jobId}`);
@@ -1943,6 +1943,14 @@ export function expectedSignalShards(
     ...jobShards,
     ...Object.fromEntries(targetIds.map((targetId) => [targetId, ["default"]])),
   };
+}
+
+export function expandPrGateJobSelections(jobIds: readonly string[]): string[] {
+  const jobs = [...jobIds];
+  if (jobs.includes("mcp-bridge") && !jobs.includes("openshell-credential-generation-window")) {
+    jobs.push("openshell-credential-generation-window");
+  }
+  return jobs;
 }
 
 function validateMainReference(value: unknown): string {
@@ -2106,6 +2114,43 @@ function isValidExpectedPreDispatchTitle(title: string): boolean {
 
 function authorizedExecutionTitle(maintainer: string): string {
   return `${AUTHORIZED_EXECUTION_TITLE_PREFIX}${maintainer}`;
+}
+
+function maintainerApprovalStateError(check: CheckRun, expectedTitle: string): Error {
+  const title = check.output?.title;
+  const expected = `Wait for the coordination title "${expectedTitle}", then launch a fresh first-attempt approve-e2e run for the same exact revision.`;
+
+  if (
+    check.status === "completed" ||
+    (check.conclusion !== undefined && check.conclusion !== null)
+  ) {
+    return new Error(
+      `PR gate is not ready for maintainer approval: coordination is terminal. Update the PR or rerun eligible CI to create a fresh pending authorization state; do not reuse this approval. Expected title: "${expectedTitle}".`,
+    );
+  }
+  if (
+    check.status === "queued" ||
+    (check.status === "in_progress" &&
+      (title === RESERVED_CHECK_TITLE ||
+        title === EVALUATING_PR_COMMIT_TITLE ||
+        title === RUNNER_LOSS_RETRY_PREPARATION_TITLE))
+  ) {
+    return new Error(
+      `PR gate is not ready for maintainer approval: coordination is still preparing. ${expected}`,
+    );
+  }
+  if (
+    check.status === "in_progress" &&
+    typeof title === "string" &&
+    (title.startsWith(AUTHORIZED_EXECUTION_TITLE_PREFIX) || RUNNING_E2E_TITLE_PATTERN.test(title))
+  ) {
+    return new Error(
+      `PR gate is not ready for maintainer approval: E2E is already executing. Follow the existing controller and child run; do not launch another approval. Expected title: "${expectedTitle}".`,
+    );
+  }
+  return new Error(
+    `PR gate is not ready for maintainer approval: coordination is malformed or unknown. Inspect the coordination check and do not retry until the state is understood. Expected title: "${expectedTitle}".`,
+  );
 }
 
 function assertCurrentPreDispatchCheck(
@@ -2552,7 +2597,7 @@ async function dispatchSelectedPrGate(options: {
   expectedCheckTitle: string;
   paths: ControllerPaths;
 }): Promise<void> {
-  const jobs = riskPlanRequiredJobIds(options.plan);
+  const jobs = expandPrGateJobSelections(riskPlanRequiredJobIds(options.plan));
   const targets = riskPlanRequiredTargetIds(options.plan);
   const expectedShards = expectedSignalShards(jobs, E2E_WORKFLOW_PATH, targets);
   const correlationId = randomUUID();
@@ -3121,8 +3166,8 @@ export async function startPrGate(
         [
           `Review scope: PR #${pull.number}; head repository \`${command.headRepository}\`; head SHA \`${command.headSha}\`; base SHA \`${ciIdentity.baseSha}\`; ${selectionSummary}; deterministic plan \`${plan.planHash}\`.`,
           "No selected E2E job or target ran. No repository credential was exposed to fork code.",
-          `A repository maintainer must review the exact fork code and risk plan in ${gateRunLink}, then launch a first-attempt \`approve-e2e\` operation from the [${WORKFLOW_NAME}](${workflowUrl}) workflow.`,
-          `Use \`pr_number=${pull.number}\`, \`expected_head_sha=${command.headSha}\`, \`expected_base_sha=${ciIdentity.baseSha}\`, and a specific \`review_reason\`. The trusted controller verifies the maintainer role and exact reviewed inputs before it dispatches this plan.`,
+          `A repository maintainer must review the fork code and risk plan in ${gateRunLink}, then launch a first-attempt \`approve-e2e\` operation from the [${WORKFLOW_NAME}](${workflowUrl}) workflow.`,
+          `Use \`pr_number=${pull.number}\`, \`expected_head_sha=${command.headSha}\`, \`expected_base_sha=${ciIdentity.baseSha}\`, and a specific \`review_reason\`. The trusted controller verifies the maintainer role and recorded PR and base SHAs before it dispatches this plan.`,
           "This gate passes only if the dispatched evidence references both SHAs and verifies successfully.",
         ].join("\n\n"),
       );
@@ -3131,38 +3176,6 @@ export async function startPrGate(
       finalized = true;
       console.log(
         `Fork authorization required: pr=${pull.number} sha=${command.headSha} plan=${plan.planHash} jobs=${jobs.join(",")} targets=${targets.join(",")}`,
-      );
-      return;
-    }
-    const controlPlaneFamily = plan.families.find((family) => family.id === "e2e-control-plane");
-    if (controlPlaneFamily && requiresCredentialedE2eAuthorization(plan)) {
-      const workflowUrl = `https://github.com/${repository}/actions/workflows/${PR_GATE_WORKFLOW}`;
-      const gateRunUrl = `https://github.com/${repository}/actions/runs/${command.gateRunId}`;
-      const gateRunLink = `[${WORKFLOW_NAME} run ${command.gateRunId}](${gateRunUrl})`;
-      await markCheckInProgress(
-        {
-          repository,
-          checkRunId,
-          prNumber: ciIdentity.prNumber,
-          headSha: command.headSha,
-          baseSha: ciIdentity.baseSha,
-        },
-        token,
-        CONTROL_PLANE_AUTHORIZATION_TITLE,
-        [
-          `This internal diff (PR SHA \`${command.headSha}\`, base SHA \`${ciIdentity.baseSha}\`) changes code that the selected credential-bearing E2E jobs or targets execute or trust (${selectionSummary}).`,
-          "No selected E2E job or target ran and no repository secret was exposed.",
-          `A repository maintainer must review PR SHA \`${command.headSha}\` against base SHA \`${ciIdentity.baseSha}\` and the risk plan in ${gateRunLink}, then launch a first-attempt \`approve-e2e\` operation from the [${WORKFLOW_NAME}](${workflowUrl}) workflow.`,
-          `Use \`pr_number=${pull.number}\`, \`expected_head_sha=${command.headSha}\`, \`expected_base_sha=${ciIdentity.baseSha}\`, and a specific \`review_reason\`. The trusted controller verifies the maintainer role and exact reviewed inputs before it dispatches this plan.`,
-          "This gate passes only if the dispatched evidence references both SHAs and verifies successfully.",
-          `Deterministic plan: \`${plan.planHash}\`.`,
-        ].join("\n\n"),
-      );
-      appendOutput("dispatched", "false");
-      appendOutput("finalized", "true");
-      finalized = true;
-      console.log(
-        `Control-plane authorization required: pr=${pull.number} sha=${command.headSha} plan=${plan.planHash} jobs=${jobs.join(",")} targets=${targets.join(",")}`,
       );
       return;
     }
@@ -3221,7 +3234,7 @@ async function startAuthorizedPrGate(command: AuthorizedE2ECommand): Promise<voi
   }
   const reason = normalizedWaiverReason(command.reason);
   const executionTitle = authorizedExecutionTitle(command.maintainer);
-  let pendingTitle = CONTROL_PLANE_AUTHORIZATION_TITLE;
+  const pendingTitle = FORK_E2E_AUTHORIZATION_TITLE;
 
   let checkRunId: number | undefined;
   try {
@@ -3232,8 +3245,9 @@ async function startAuthorizedPrGate(command: AuthorizedE2ECommand): Promise<voi
       headSha: command.headSha,
       baseSha: command.baseSha,
     });
-    const isFork = pull.head.repo?.full_name !== repository;
-    pendingTitle = isFork ? FORK_E2E_AUTHORIZATION_TITLE : CONTROL_PLANE_AUTHORIZATION_TITLE;
+    if (pull.head.repo?.full_name === repository) {
+      throw new Error("approve-e2e is only supported for fork pull requests");
+    }
     const changedFiles = await pullChangedFiles(repository, pull, token);
     const inventory = readFreeStandingJobsInventory();
     const plan = validateRiskPlan(
@@ -3244,9 +3258,6 @@ async function startAuthorizedPrGate(command: AuthorizedE2ECommand): Promise<voi
       }),
       new Set(inventory.allowedJobs),
     );
-    if (!isFork && !requiresCredentialedE2eAuthorization(plan)) {
-      throw new Error("pull request does not require credentialed E2E authorization");
-    }
     const jobs = riskPlanRequiredJobIds(plan);
     const targets = riskPlanRequiredTargetIds(plan);
     if (jobs.length + targets.length === 0) {
@@ -3277,7 +3288,7 @@ async function startAuthorizedPrGate(command: AuthorizedE2ECommand): Promise<voi
     const check = matchingChecks[0]!;
     const pendingAuthorization = check.status === "in_progress" && check.conclusion === null;
     if (!pendingAuthorization || check.output?.title !== pendingTitle) {
-      throw new Error("PR gate must have the matching pending E2E authorization state");
+      throw maintainerApprovalStateError(check, pendingTitle);
     }
     checkRunId = check.id;
     appendOutput("check_id", String(checkRunId));
@@ -3301,7 +3312,7 @@ async function startAuthorizedPrGate(command: AuthorizedE2ECommand): Promise<voi
       },
       token,
       executionTitle,
-      `Running the exact reviewed head and base revision. Review reason: ${reason.replace(/`/gu, "'")}`,
+      `Running the reviewed fork PR commit against the recorded base SHA. Review reason: ${reason.replace(/`/gu, "'")}`,
     );
     await dispatchSelectedPrGate({
       repository,
