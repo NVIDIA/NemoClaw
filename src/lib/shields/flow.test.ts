@@ -930,6 +930,41 @@ describe("shields command flow", () => {
     expect(permissiveRuntimeDirs()).toEqual(before);
   });
 
+  it("shields down clears state and reports the sandbox as up when the permissive policy is rejected (#8198)", () => {
+    // OpenShell refuses the live policy change — e.g. a Deep Agents sandbox
+    // whose landlock policy is sealed at startup — so the permissive
+    // `policy set` exits non-zero and nothing is actually weakened.
+    const harness = createHarness({
+      run: (cmd) => {
+        const argv = Array.isArray(cmd) ? cmd.map(String) : [];
+        return argv.includes("policy") && argv.includes("set") ? { status: 1 } : { status: 0 };
+      },
+      fork: () => ({
+        pid: 4242,
+        disconnect: vi.fn(),
+        unref: vi.fn(),
+        send: vi.fn(() => true),
+        kill: vi.fn(() => true),
+      }),
+    });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "verify",
+        throwOnError: true,
+      }),
+    ).toThrow(/Could not apply/);
+
+    // The unlock never took effect, so status must not claim DOWN/permissive.
+    expect(harness.isShieldsDown("openclaw")).toBe(false);
+    const statePath = path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json");
+    const stateOnDisk = fs.existsSync(statePath)
+      ? JSON.parse(fs.readFileSync(statePath, "utf-8"))
+      : { shieldsDown: false };
+    expect(stateOnDisk.shieldsDown).toBe(false);
+  });
+
   it("shieldsUp refuses to mark lockdown active when the saved restrictive policy snapshot is missing", () => {
     const harness = createHarness();
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");

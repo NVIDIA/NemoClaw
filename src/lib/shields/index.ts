@@ -3025,10 +3025,40 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   }
 
   console.log(`  Applying ${policyName} policy...`);
+  let policySetResult: ReturnType<typeof run>;
   try {
-    run(buildPolicySetCommand(policyFile, sandboxName));
+    policySetResult = run(buildPolicySetCommand(policyFile, sandboxName), {
+      ignoreError: true,
+    });
   } finally {
     cleanupRuntimePolicyFile();
+  }
+  if (policySetResult.status !== 0) {
+    // The permissive policy was rejected before it applied — e.g. OpenShell
+    // refuses a live landlock change on a sandbox whose policy is sealed at
+    // startup (Deep Agents). Nothing was weakened: config is still locked and
+    // the restrictive policy is unchanged. The shields-down state persisted
+    // above is therefore false, so clear it (and cancel the now-pointless
+    // auto-restore timer/transition) and fail closed. Otherwise `shields
+    // status` would report DOWN/permissive for an unlock that never happened.
+    // See #8198.
+    saveShieldsState(sandboxName, {
+      shieldsDown: false,
+      shieldsDownAt: null,
+      shieldsDownTimeout: null,
+      shieldsDownReason: null,
+      shieldsDownPolicy: null,
+      shieldsPolicySnapshotPath: null,
+    });
+    if (transition) clearShieldsDownTransition(sandboxName, transition.processToken);
+    killTimer(sandboxName);
+    console.error(
+      `  ERROR: Could not apply the ${policyName} policy; the sandbox remains shielded.`,
+    );
+    console.error(
+      "  Shields down did not take effect. `shields status` continues to report the sandbox as up.",
+    );
+    return failShieldsCommand(`Could not apply ${policyName} policy`, opts.throwOnError);
   }
 
   // 2b. Return config to default mutable state.
