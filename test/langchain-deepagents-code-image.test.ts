@@ -31,6 +31,7 @@ import {
   runWrapper,
 } from "./helpers/langchain-deepagents-code-image.ts";
 import { makeStartScriptFixture as makeIdentityStartScriptFixture } from "./support/dcode-start-script-fixture.ts";
+import { expectManagedBootstrapNativeImageContract } from "./support/managed-bootstrap-image-contract";
 
 function containsTokenShapedSecret(value: string): boolean {
   return TOKEN_PREFIX_PATTERNS.some((pattern) => {
@@ -155,19 +156,69 @@ function assertEveryRequirementIsHashLocked(requirementsLock: string): void {
 describe("LangChain Deep Agents Code image contracts", () => {
   it("hardens copied NemoClaw blueprints against sandbox-user mutation", () => {
     const dockerfile = readAgentFile("Dockerfile");
+    const finalRuntimeRoot = [
+      "FROM ${BASE_IMAGE}",
+      "",
+      "# The supplied base may end as a non-root runtime user. Reset the build user",
+      "# explicitly before installing the root-owned managed-startup handoff.",
+      "USER root",
+    ].join("\n");
+    const managedRuntimeDirectory = "&& install -d -o root -g root -m 0755 /run/nemoclaw";
+    const runtimeModeReplay = "&& chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts";
 
     expect(dockerfile).toContain("ARG BASE_IMAGE\n");
     expect(dockerfile).toContain("ARG NEMOCLAW_MODEL=nvidia/nemotron-3-ultra-550b-a55b");
     expect(dockerfile).not.toContain("langchain-deepagents-code-sandbox-base:latest");
+    expect(dockerfile).toContain(
+      'timeout 10 env -i /usr/local/lib/nemoclaw/dcode-wrapper.sh -n ""',
+    );
+    for (const probe of [
+      "/usr/local/lib/nemoclaw/dcode-managed-exec /usr/bin/true",
+      "/usr/local/bin/dcode --version",
+      "/usr/local/bin/dcode.real --version",
+      "/usr/local/bin/deepagents-code --version",
+    ]) {
+      expect(dockerfile).toContain(`env -i ${probe}`);
+    }
     expect(dockerfile).toContain("chown root:root /sandbox/.nemoclaw");
     expect(dockerfile).toContain("chmod 1755 /sandbox/.nemoclaw");
     expect(dockerfile).toContain("chown -R root:root /sandbox/.nemoclaw/blueprints");
     expect(dockerfile).toContain("chmod -R 755 /sandbox/.nemoclaw/blueprints");
+    expect(dockerfile).toContain("cp -r /opt/nemoclaw-blueprint/*");
+    expect(dockerfile).toContain("COPY --from=mcp-tool-discovery-runtime");
     expect(dockerfile.indexOf("cp -r /opt/nemoclaw-blueprint/*")).toBeLessThan(
       dockerfile.indexOf("chown -R root:root /sandbox/.nemoclaw/blueprints"),
     );
+    expect(dockerfile.split(managedRuntimeDirectory)).toHaveLength(2);
+    expect(dockerfile.indexOf("COPY --from=mcp-tool-discovery-runtime")).toBeLessThan(
+      dockerfile.indexOf(managedRuntimeDirectory),
+    );
+    expect(dockerfile).toContain(finalRuntimeRoot);
+    expectManagedBootstrapNativeImageContract(dockerfile);
+    expect(dockerfile.indexOf(finalRuntimeRoot)).toBeLessThan(
+      dockerfile.indexOf(managedRuntimeDirectory),
+    );
+    expect(dockerfile.indexOf(managedRuntimeDirectory)).toBeLessThan(
+      dockerfile.indexOf(runtimeModeReplay),
+    );
+    expect(dockerfile).toContain(
+      "COPY src/lib/onboard/managed-bootstrap/ ./src/lib/onboard/managed-bootstrap/",
+    );
+    expect(dockerfile).toContain("src/lib/onboard/managed-bootstrap/image-runtime.ts");
+    expect(dockerfile).toContain(
+      "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap",
+    );
+    expect(dockerfile).toContain(
+      "COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh",
+    );
+    expect(dockerfile).toContain(
+      "chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap",
+    );
+    expect(dockerfile).toContain("ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox");
+    expect(dockerfile).toContain("root|sandbox) ;; \\");
+    expect(dockerfile).toContain("&& command -v setpriv >/dev/null 2>&1");
     expect(dockerfile.trimEnd()).toMatch(
-      /USER sandbox\nENTRYPOINT \["\/usr\/local\/bin\/nemoclaw-start"\]\nCMD \["\/bin\/bash"\]$/,
+      /USER \$\{NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER\}\nENTRYPOINT \["\/usr\/local\/bin\/nemoclaw-start"\]\nCMD \["\/bin\/bash"\]$/,
     );
   });
 
@@ -182,6 +233,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(startScript).not.toContain("TELEGRAM_BOT_TOKEN");
     expect(startScript).not.toContain("DISCORD_BOT_TOKEN");
     expect(startScript).not.toContain("SLACK_BOT_TOKEN");
+    expect(startScript).not.toContain("GOOGLECHAT_SERVICE_ACCOUNT");
+    expect(startScript).not.toContain("GOOGLE_CHAT_SERVICE_ACCOUNT");
   });
 
   it("prints NemoClaw setup output before idling as a terminal runtime", () => {
@@ -355,7 +408,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "test ! -L /usr/local/lib/nemoclaw/dcode-managed-exec",
       `test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/dcode-managed-exec)" = "0:0:755"`,
       "cmp -s /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-managed-exec",
-      "unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
       "/usr/local/lib/nemoclaw/dcode-managed-exec /usr/bin/true",
       "/opt/venv/bin/pip3 install --no-index --no-cache-dir --no-deps --no-build-isolation /opt/nemoclaw-deepagents-profile-plugin",
       "find /opt/nemoclaw-deepagents-profile-plugin -type f -print | LC_ALL=C sort",
@@ -364,9 +416,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     ]) {
       expect(dockerfile).toContain(s);
     }
-    expect(dockerfile.indexOf("unset OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")).toBeLessThan(
-      dockerfile.indexOf('/usr/local/bin/dcode -n ""'),
-    );
     expect(
       dockerfile
         .split("\n")
@@ -1028,20 +1077,31 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "uv tool run --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off --disable-pip",
     );
     expect(review).toContain(
-      "Targeted audit result: `uv 0.11.33, MCP 1.28.1, Pillow 12.3.0, and pyasn1 0.6.4 have no known vulnerabilities`",
+      "Targeted audit result: `aiohttp 3.14.3, cryptography 50.0.0, uv 0.11.33, MCP 1.28.1, Pillow 12.3.0, and pyasn1 0.6.4 have no known vulnerabilities`",
     );
     expect(review).toContain(
       "Complete-lock audit result: `2 duplicate records in 1 unrelated package`",
     );
+    expect(review).toContain("`GHSA-cq5v-8q36-5273`");
+    expect(review).toContain("`GHSA-g6cj-pr64-35w5`");
     expect(review).toContain("Deep Agents Code `0.1.45` and later");
     expect(review).toContain("semantic migration to `>=0.1.45`");
     expect(requirementsLock).toContain("uv==0.11.33");
+    expect(requirementsLock).toContain("aiohttp==3.14.3");
+    expect(requirementsLock).toContain("cryptography==50.0.0");
+    expect(requirementsLock).not.toContain("aiohttp==3.14.1");
+    expect(requirementsLock).not.toContain("cryptography==49.0.0");
     expect(requirementsLock).toContain("mcp==1.28.1");
     expect(requirementsLock).toContain("pillow==12.3.0");
     expect(requirementsLock).toContain("pyasn1==0.6.4");
-    expect(readAgentFile("Dockerfile.base")).toContain(
-      "'mcp': '1.28.1', 'pillow': '12.3.0', 'pyasn1': '0.6.4', 'uv': '0.11.33'",
-    );
+    const dockerfileBase = readAgentFile("Dockerfile.base");
+    for (const [name, expectedVersion] of [
+      ["aiohttp", "3.14.3"],
+      ["cryptography", "50.0.0"],
+      ["deepagents-code", "0.1.34"],
+    ] as const) {
+      expect(dockerfileBase).toContain(`'${name}': '${expectedVersion}'`);
+    }
     expect(review).toContain(`Adapter module SHA-256: \`${sha256(adapterModule)}\``);
     expect(review).toContain(`Adapter project metadata SHA-256: \`${sha256(adapterMetadata)}\``);
     expect(review).toContain("Adapter dependency audit result: `No known vulnerabilities found`");

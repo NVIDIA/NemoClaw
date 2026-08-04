@@ -2,53 +2,86 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/NVIDIA/NemoClaw/managed-inference/schemas/recipe.schema.json",
   "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
-  "title": "NemoClaw managed inference serving recipe",
   "type": "object",
-  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
   "properties": {
-    "apiVersion": { "const": "nemoclaw.nvidia.com/managed-inference/v1" },
-    "kind": { "const": "ServingRecipe" },
-    "metadata": { "$ref": "#/$defs/metadata" },
+    "apiVersion": {
+      "const": "nemoclaw.nvidia.com/managed-inference/v1"
+    },
+    "kind": {
+      "const": "ServingRecipe"
+    },
+    "metadata": {
+      "$ref": "#/$defs/metadata"
+    },
     "spec": {
       "type": "object",
-      "required": ["backend", "model", "execution"],
+      "required": [
+        "backend",
+        "model",
+        "execution"
+      ],
       "properties": {
-        "backend": { "$ref": "#/$defs/backendId" },
-        "providerId": { "$ref": "#/$defs/backendId" },
-        "server": {
+        "backend": {
+          "$ref": "#/$defs/token"
+        },
+        "bindings": {
           "type": "object",
-          "required": ["technology", "source"],
-          "properties": {
-            "technology": { "const": "llama.cpp" },
-            "source": {
-              "type": "object",
-              "required": ["repository", "revision"],
-              "properties": {
-                "repository": { "$ref": "#/$defs/repositoryId" },
-                "revision": { "$ref": "#/$defs/sourceRevision" }
-              },
-              "additionalProperties": false
-            }
+          "minProperties": 1,
+          "maxProperties": 16,
+          "propertyNames": {
+            "$ref": "#/$defs/bindingName"
           },
-          "additionalProperties": false
+          "additionalProperties": {
+            "$ref": "#/$defs/topologyBinding"
+          }
         },
         "model": {
           "type": "object",
-          "required": ["id", "revision"],
+          "required": [
+            "id",
+            "revision"
+          ],
           "properties": {
-            "id": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$",
+              "maxLength": 256
+            },
             "revision": {
               "type": "string",
               "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64}|sha256:[0-9a-f]{64})$"
             },
-            "servedName": { "$ref": "#/$defs/stableId" },
+            "servedName": {
+              "$ref": "#/$defs/stableId"
+            },
+            "downloadSizeBytes": {
+              "$ref": "#/$defs/positiveSafeInteger"
+            },
+            "gated": {
+              "type": "boolean"
+            },
+            "installFastSafetensors": {
+              "type": "boolean"
+            },
+            "preparation": {
+              "$ref": "#/$defs/modelPreparation"
+            },
             "files": {
               "type": "array",
               "minItems": 1,
               "maxItems": 32,
               "items": {
                 "type": "object",
-                "required": ["path", "digest"],
+                "required": [
+                  "path",
+                  "digest"
+                ],
                 "properties": {
                   "path": {
                     "type": "string",
@@ -56,15 +89,23 @@
                     "maxLength": 512,
                     "pattern": "^(?!\\.{1,2}(?:/|$))(?!.*\\/\\.{1,2}(?:/|$))[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
                   },
-                  "digest": { "$ref": "#/$defs/sha256" },
+                  "digest": {
+                    "$ref": "#/$defs/sha256"
+                  },
                   "sizeBytes": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 9007199254740991
                   },
-                  "format": { "const": "gguf" },
-                  "quantization": { "$ref": "#/$defs/artifactLabel" },
-                  "license": { "$ref": "#/$defs/artifactLabel" }
+                  "format": {
+                    "const": "gguf"
+                  },
+                  "quantization": {
+                    "$ref": "#/$defs/artifactLabel"
+                  },
+                  "license": {
+                    "$ref": "#/$defs/artifactLabel"
+                  }
                 },
                 "additionalProperties": false
               }
@@ -79,43 +120,192 @@
               "type": "string",
               "pattern": "^(?:[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?/)?(?:[a-z0-9]+(?:[._-][a-z0-9]+)*/)*[a-z0-9]+(?:[._-][a-z0-9]+)*@sha256:[0-9a-f]{64}$"
             },
-            "architecture": { "enum": ["amd64", "arm64"] },
+            "imageDownloadSizeBytes": {
+              "$ref": "#/$defs/positiveSafeInteger"
+            },
+            "pullTimeoutSeconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 86400
+            },
+            "architecture": {
+              "enum": [
+                "amd64",
+                "arm64"
+              ]
+            },
+            "networkMode": {
+              "$ref": "#/$defs/token"
+            },
+            "ipcMode": {
+              "$ref": "#/$defs/token"
+            },
+            "sharedMemoryBytes": {
+              "$ref": "#/$defs/positiveSafeInteger"
+            },
+            "gpuRequest": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._,:=-]{0,255}$"
+            },
+            "devices": {
+              "type": "array",
+              "maxItems": 32,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/absolutePath"
+              }
+            },
+            "ulimits": {
+              "type": "object",
+              "required": [
+                "memlock",
+                "stackBytes"
+              ],
+              "properties": {
+                "memlock": {
+                  "oneOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -1,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "unlimited"
+                      ]
+                    }
+                  ]
+                },
+                "stackBytes": {
+                  "$ref": "#/$defs/positiveSafeInteger"
+                }
+              },
+              "additionalProperties": false
+            },
+            "modelCache": {
+              "type": "object",
+              "required": [
+                "source",
+                "target"
+              ],
+              "properties": {
+                "source": {
+                  "$ref": "#/$defs/stableId"
+                },
+                "target": {
+                  "$ref": "#/$defs/absolutePath"
+                }
+              },
+              "additionalProperties": false
+            },
+            "temporaryFilesystems": {
+              "type": "array",
+              "maxItems": 16,
+              "items": {
+                "$ref": "#/$defs/temporaryFilesystem"
+              }
+            },
+            "environment": {
+              "type": "object",
+              "maxProperties": 128,
+              "propertyNames": {
+                "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            },
+            "components": {
+              "type": "object",
+              "maxProperties": 32,
+              "propertyNames": {
+                "$ref": "#/$defs/stableId"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            },
             "platforms": {
               "type": "array",
               "minItems": 2,
               "maxItems": 2,
               "uniqueItems": true,
-              "items": { "enum": ["linux/amd64", "linux/arm64"] },
+              "items": {
+                "enum": [
+                  "linux/amd64",
+                  "linux/arm64"
+                ]
+              },
               "allOf": [
-                { "contains": { "const": "linux/amd64" } },
-                { "contains": { "const": "linux/arm64" } }
+                {
+                  "contains": {
+                    "const": "linux/amd64"
+                  }
+                },
+                {
+                  "contains": {
+                    "const": "linux/arm64"
+                  }
+                }
               ]
             },
-            "containerRuntime": { "const": "docker" },
-            "hosts": { "const": 1 },
+            "containerRuntime": {
+              "const": "docker"
+            },
+            "hosts": {
+              "const": 1
+            },
             "cuda": {
               "type": "object",
-              "required": ["baseImage", "minimumDriverVersion"],
+              "required": [
+                "baseImage",
+                "minimumDriverVersion"
+              ],
               "properties": {
-                "baseImage": { "$ref": "#/$defs/imageDigest" },
-                "minimumDriverVersion": { "$ref": "#/$defs/version" }
+                "baseImage": {
+                  "$ref": "#/$defs/imageDigest"
+                },
+                "minimumDriverVersion": {
+                  "$ref": "#/$defs/version"
+                }
               },
               "additionalProperties": false
             },
             "gpu": {
               "type": "object",
-              "required": ["vendor", "count", "offload", "cpuFallback"],
+              "required": [
+                "vendor",
+                "count",
+                "offload",
+                "cpuFallback"
+              ],
               "properties": {
-                "vendor": { "const": "nvidia" },
-                "count": { "const": 1 },
-                "offload": { "const": "full" },
-                "cpuFallback": { "const": "reject" }
+                "vendor": {
+                  "const": "nvidia"
+                },
+                "count": {
+                  "const": 1
+                },
+                "offload": {
+                  "const": "full"
+                },
+                "cpuFallback": {
+                  "const": "reject"
+                }
               },
               "additionalProperties": false
             },
             "resources": {
               "type": "object",
-              "required": ["memoryBytes", "writableStorageBytes", "pidsLimit"],
+              "required": [
+                "memoryBytes",
+                "writableStorageBytes",
+                "pidsLimit"
+              ],
               "properties": {
                 "memoryBytes": {
                   "type": "integer",
@@ -127,42 +317,118 @@
                   "minimum": 1,
                   "maximum": 9007199254740991
                 },
-                "pidsLimit": { "type": "integer", "minimum": 1, "maximum": 1048576 }
+                "pidsLimit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1048576
+                }
               },
               "additionalProperties": false
-            },
-            "components": {
-              "type": "object",
-              "maxProperties": 32,
-              "propertyNames": { "$ref": "#/$defs/stableId" },
-              "additionalProperties": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 128
-              }
             }
           },
           "additionalProperties": false
         },
         "execution": {
           "type": "object",
-          "required": ["materializerRef", "lifecycleRef"],
+          "required": [
+            "materializerRef",
+            "lifecycleRef"
+          ],
           "properties": {
-            "receiptRef": { "$ref": "#/$defs/adapterId" },
-            "materializerRef": { "$ref": "#/$defs/adapterId" },
-            "lifecycleRef": { "$ref": "#/$defs/adapterId" }
+            "materializerRef": {
+              "$ref": "#/$defs/adapterId"
+            },
+            "lifecycleRef": {
+              "$ref": "#/$defs/adapterId"
+            },
+            "topologyBinding": {
+              "$ref": "#/$defs/bindingName"
+            },
+            "nodeCount": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1024
+            },
+            "tensorParallelSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1024
+            },
+            "pipelineParallelSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1024
+            },
+            "distributedExecutorBackend": {
+              "$ref": "#/$defs/token"
+            },
+            "rendezvousPort": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "receiptRef": {
+              "$ref": "#/$defs/adapterId"
+            }
           },
           "additionalProperties": false
         },
         "serve": {
           "type": "object",
           "properties": {
-            "protocol": { "const": "openai-completions" },
-            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-            "chatTemplate": { "$ref": "#/$defs/artifactLabel" },
-            "contextSize": { "type": "integer", "minimum": 1, "maximum": 1048576 },
-            "slots": { "type": "integer", "minimum": 1, "maximum": 1024 },
-            "idleSleepSeconds": { "type": "integer", "minimum": -1, "maximum": 86400 },
+            "authentication": {
+              "$ref": "#/$defs/token"
+            },
+            "executable": {
+              "$ref": "#/$defs/absolutePath"
+            },
+            "arguments": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "pattern": "^--[a-z0-9][a-z0-9-]*$",
+                    "maxLength": 128
+                  },
+                  "value": {
+                    "$ref": "#/$defs/scalar"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "protocol": {
+              "const": "openai-completions"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "chatTemplate": {
+              "$ref": "#/$defs/artifactLabel"
+            },
+            "contextSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1048576
+            },
+            "slots": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1024
+            },
+            "idleSleepSeconds": {
+              "type": "integer",
+              "minimum": -1,
+              "maximum": 86400
+            },
             "limits": {
               "type": "object",
               "required": [
@@ -172,47 +438,103 @@
                 "requestTimeoutSeconds"
               ],
               "properties": {
-                "maxRequestBodyBytes": { "type": "integer", "minimum": 1, "maximum": 1073741824 },
-                "maxPromptTokens": { "type": "integer", "minimum": 1, "maximum": 1048576 },
-                "maxCompletionTokens": { "type": "integer", "minimum": 1, "maximum": 1048576 },
-                "requestTimeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 }
+                "maxRequestBodyBytes": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1073741824
+                },
+                "maxPromptTokens": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1048576
+                },
+                "maxCompletionTokens": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1048576
+                },
+                "requestTimeoutSeconds": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 86400
+                }
               },
               "additionalProperties": false
-            },
-            "arguments": {
-              "type": "array",
-              "maxItems": 128,
-              "items": {
-                "type": "object",
-                "required": ["name"],
-                "properties": {
-                  "name": {
-                    "type": "string",
-                    "pattern": "^--[a-z0-9][a-z0-9-]*$",
-                    "maxLength": 128
-                  },
-                  "value": { "$ref": "#/$defs/scalar" }
-                },
-                "additionalProperties": false
-              }
             }
           },
           "additionalProperties": false
         },
         "readiness": {
           "type": "object",
+          "required": [
+            "timeoutSeconds",
+            "expectedModel"
+          ],
           "properties": {
-            "contractRef": { "$ref": "#/$defs/adapterId" },
-            "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
-            "expectedModel": { "$ref": "#/$defs/stableId" },
+            "timeoutSeconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 86400
+            },
+            "expectedModel": {
+              "$ref": "#/$defs/stableId"
+            },
+            "contractRef": {
+              "$ref": "#/$defs/adapterId"
+            },
             "probes": {
               "type": "object",
-              "required": ["models", "health", "properties", "metrics"],
+              "required": [
+                "models",
+                "health",
+                "properties",
+                "metrics"
+              ],
               "properties": {
-                "models": { "const": true },
-                "health": { "const": true },
-                "properties": { "const": true },
-                "metrics": { "const": true }
+                "models": {
+                  "const": true
+                },
+                "health": {
+                  "const": true
+                },
+                "properties": {
+                  "const": true
+                },
+                "metrics": {
+                  "const": true
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "providerId": {
+          "$ref": "#/$defs/backendId"
+        },
+        "server": {
+          "type": "object",
+          "required": [
+            "technology",
+            "source"
+          ],
+          "properties": {
+            "technology": {
+              "const": "llama.cpp"
+            },
+            "source": {
+              "type": "object",
+              "required": [
+                "repository",
+                "revision"
+              ],
+              "properties": {
+                "repository": {
+                  "$ref": "#/$defs/repositoryId"
+                },
+                "revision": {
+                  "$ref": "#/$defs/sourceRevision"
+                }
               },
               "additionalProperties": false
             }
@@ -221,11 +543,21 @@
         },
         "policy": {
           "type": "object",
-          "required": ["egress", "modelSource", "modelDownloads"],
+          "required": [
+            "egress",
+            "modelSource",
+            "modelDownloads"
+          ],
           "properties": {
-            "egress": { "const": "disabled" },
-            "modelSource": { "const": "verified-local" },
-            "modelDownloads": { "const": "disabled" }
+            "egress": {
+              "const": "disabled"
+            },
+            "modelSource": {
+              "const": "verified-local"
+            },
+            "modelDownloads": {
+              "const": "disabled"
+            }
           },
           "additionalProperties": false
         },
@@ -241,13 +573,27 @@
             "multimodalProjection"
           ],
           "properties": {
-            "ui": { "const": "disabled" },
-            "slotInspection": { "const": "disabled" },
-            "router": { "const": "disabled" },
-            "mcpProxy": { "const": "disabled" },
-            "serverTools": { "const": "disabled" },
-            "agentMode": { "const": "disabled" },
-            "multimodalProjection": { "const": "disabled" }
+            "ui": {
+              "const": "disabled"
+            },
+            "slotInspection": {
+              "const": "disabled"
+            },
+            "router": {
+              "const": "disabled"
+            },
+            "mcpProxy": {
+              "const": "disabled"
+            },
+            "serverTools": {
+              "const": "disabled"
+            },
+            "agentMode": {
+              "const": "disabled"
+            },
+            "multimodalProjection": {
+              "const": "disabled"
+            }
           },
           "additionalProperties": false
         },
@@ -272,10 +618,17 @@
               "uniqueItems": true,
               "items": {
                 "type": "object",
-                "required": ["id", "qualificationRef"],
+                "required": [
+                  "id",
+                  "qualificationRef"
+                ],
                 "properties": {
-                  "id": { "$ref": "#/$defs/nonPathStableId" },
-                  "qualificationRef": { "$ref": "#/$defs/stableId" }
+                  "id": {
+                    "$ref": "#/$defs/nonPathStableId"
+                  },
+                  "qualificationRef": {
+                    "$ref": "#/$defs/stableId"
+                  }
                 },
                 "additionalProperties": false
               }
@@ -284,39 +637,229 @@
               "type": "array",
               "minItems": 1,
               "maxItems": 1,
-              "items": { "const": "openai-completions" }
+              "items": {
+                "const": "openai-completions"
+              }
             },
-            "streaming": { "type": "boolean" },
-            "toolCalls": { "type": "boolean" },
-            "structuredOutputs": { "type": "boolean" },
-            "parallelToolCalls": { "const": false },
-            "responsesApi": { "const": false },
-            "embeddings": { "const": false },
-            "reranking": { "const": false },
-            "multimodal": { "const": false }
+            "streaming": {
+              "type": "boolean"
+            },
+            "toolCalls": {
+              "type": "boolean"
+            },
+            "structuredOutputs": {
+              "type": "boolean"
+            },
+            "parallelToolCalls": {
+              "const": false
+            },
+            "responsesApi": {
+              "const": false
+            },
+            "embeddings": {
+              "const": false
+            },
+            "reranking": {
+              "const": false
+            },
+            "multimodal": {
+              "const": false
+            }
           },
           "additionalProperties": false
         }
       },
       "additionalProperties": false,
-      "allOf": [{ "$ref": "#/$defs/llamaCppRecipeSpec" }]
+      "allOf": [
+        {
+          "$ref": "#/$defs/llamaCppRecipeSpec"
+        }
+      ]
     }
   },
   "additionalProperties": false,
   "$defs": {
     "metadata": {
       "type": "object",
-      "required": ["id"],
+      "required": [
+        "id"
+      ],
       "properties": {
-        "id": { "$ref": "#/$defs/stableId" },
-        "displayName": { "type": "string", "minLength": 1, "maxLength": 256 }
+        "id": {
+          "$ref": "#/$defs/stableId"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
       },
       "additionalProperties": false
     },
     "stableId": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9]*(?:[._/-][a-z0-9]+)+$",
-      "maxLength": 160
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$"
+    },
+    "bindingName": {
+      "type": "string",
+      "pattern": "^[a-z][A-Za-z0-9]{0,63}$"
+    },
+    "token": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "positiveSafeInteger": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "absolutePath": {
+      "type": "string",
+      "pattern": "^/(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._+/-]+$",
+      "maxLength": 4096
+    },
+    "relativePath": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._+/-]+$",
+      "maxLength": 4096
+    },
+    "topologyBinding": {
+      "type": "object",
+      "required": [
+        "type",
+        "qualificationId",
+        "schemaVersion",
+        "outputSchema"
+      ],
+      "properties": {
+        "type": {
+          "const": "topologyQualificationOutput"
+        },
+        "qualificationId": {
+          "$ref": "#/$defs/stableId"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "outputSchema": {
+          "$ref": "#/$defs/stableId"
+        }
+      },
+      "additionalProperties": false
+    },
+    "modelPreparation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "ref"
+          ],
+          "properties": {
+            "ref": {
+              "const": "none/v1"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "ref",
+            "snapshotCopy",
+            "exactTextReplacement"
+          ],
+          "properties": {
+            "ref": {
+              "const": "snapshot-copy-and-exact-text-replacement/v1"
+            },
+            "snapshotCopy": {
+              "type": "object",
+              "required": [
+                "sourcePath",
+                "digest",
+                "targetPath"
+              ],
+              "properties": {
+                "sourcePath": {
+                  "$ref": "#/$defs/relativePath"
+                },
+                "digest": {
+                  "$ref": "#/$defs/sha256"
+                },
+                "targetPath": {
+                  "$ref": "#/$defs/absolutePath"
+                }
+              },
+              "additionalProperties": false
+            },
+            "exactTextReplacement": {
+              "type": "object",
+              "required": [
+                "targetPath",
+                "expectedText",
+                "replacementText"
+              ],
+              "properties": {
+                "targetPath": {
+                  "$ref": "#/$defs/absolutePath"
+                },
+                "expectedText": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 16384
+                },
+                "replacementText": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 16384
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "temporaryFilesystem": {
+      "type": "object",
+      "required": [
+        "target",
+        "sizeBytes",
+        "mode",
+        "options"
+      ],
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/absolutePath"
+        },
+        "sizeBytes": {
+          "$ref": "#/$defs/positiveSafeInteger"
+        },
+        "mode": {
+          "type": "string",
+          "pattern": "^[0-7]{4}$"
+        },
+        "options": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "rw",
+              "ro",
+              "nosuid",
+              "nodev",
+              "noexec",
+              "exec",
+              "noatime",
+              "relatime"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
     },
     "nonPathStableId": {
       "type": "string",
@@ -361,9 +904,16 @@
     },
     "scalar": {
       "oneOf": [
-        { "type": "string", "maxLength": 1024 },
-        { "type": "number" },
-        { "type": "boolean" }
+        {
+          "type": "string",
+          "maxLength": 1024
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        }
       ]
     },
     "llamaCppRecipeSpec": {
@@ -371,22 +921,42 @@
         "type": "object",
         "anyOf": [
           {
-            "properties": { "backend": { "const": "install-llama-cpp" } },
-            "required": ["backend"]
+            "properties": {
+              "backend": {
+                "const": "install-llama-cpp"
+              }
+            },
+            "required": [
+              "backend"
+            ]
           },
           {
-            "properties": { "providerId": { "const": "llama-cpp-local" } },
-            "required": ["providerId"]
+            "properties": {
+              "providerId": {
+                "const": "llama-cpp-local"
+              }
+            },
+            "required": [
+              "providerId"
+            ]
           },
           {
             "properties": {
               "server": {
                 "type": "object",
-                "properties": { "technology": { "const": "llama.cpp" } },
-                "required": ["technology"]
+                "properties": {
+                  "technology": {
+                    "const": "llama.cpp"
+                  }
+                },
+                "required": [
+                  "technology"
+                ]
               }
             },
-            "required": ["server"]
+            "required": [
+              "server"
+            ]
           }
         ]
       },
@@ -405,27 +975,55 @@
           "capabilities"
         ],
         "properties": {
-          "backend": { "const": "install-llama-cpp" },
-          "providerId": { "const": "llama-cpp-local" },
+          "backend": {
+            "const": "install-llama-cpp"
+          },
+          "providerId": {
+            "const": "llama-cpp-local"
+          },
           "server": {
             "type": "object",
-            "properties": { "technology": { "const": "llama.cpp" } },
-            "required": ["technology"]
+            "properties": {
+              "technology": {
+                "const": "llama.cpp"
+              }
+            },
+            "required": [
+              "technology"
+            ]
           },
           "model": {
             "type": "object",
-            "required": ["id", "revision", "servedName", "files"],
+            "required": [
+              "id",
+              "revision",
+              "servedName",
+              "files"
+            ],
             "properties": {
-              "id": { "$ref": "#/$defs/repositoryId" },
-              "revision": { "$ref": "#/$defs/sourceRevision" },
-              "servedName": { "$ref": "#/$defs/nonPathStableId" },
+              "id": {
+                "$ref": "#/$defs/repositoryId"
+              },
+              "revision": {
+                "$ref": "#/$defs/sourceRevision"
+              },
+              "servedName": {
+                "$ref": "#/$defs/nonPathStableId"
+              },
               "files": {
                 "type": "array",
                 "minItems": 1,
                 "maxItems": 1,
                 "items": {
                   "type": "object",
-                  "required": ["path", "digest", "sizeBytes", "format", "quantization", "license"],
+                  "required": [
+                    "path",
+                    "digest",
+                    "sizeBytes",
+                    "format",
+                    "quantization",
+                    "license"
+                  ],
                   "properties": {
                     "path": {
                       "type": "string",
@@ -466,21 +1064,37 @@
               "anyOf": [
                 {
                   "type": "object",
-                  "properties": { "architecture": {} },
-                  "required": ["architecture"]
+                  "properties": {
+                    "architecture": {}
+                  },
+                  "required": [
+                    "architecture"
+                  ]
                 },
                 {
                   "type": "object",
-                  "properties": { "components": {} },
-                  "required": ["components"]
+                  "properties": {
+                    "components": {}
+                  },
+                  "required": [
+                    "components"
+                  ]
                 }
               ]
             }
           },
           "execution": {
             "type": "object",
-            "required": ["receiptRef", "materializerRef", "lifecycleRef"],
-            "properties": { "receiptRef": {}, "materializerRef": {}, "lifecycleRef": {} }
+            "required": [
+              "receiptRef",
+              "materializerRef",
+              "lifecycleRef"
+            ],
+            "properties": {
+              "receiptRef": {},
+              "materializerRef": {},
+              "lifecycleRef": {}
+            }
           },
           "serve": {
             "type": "object",
@@ -495,22 +1109,37 @@
             ],
             "properties": {
               "protocol": {},
-              "port": { "const": 8081 },
+              "port": {
+                "const": 8081
+              },
               "chatTemplate": {},
               "contextSize": {},
-              "slots": { "const": 1 },
-              "idleSleepSeconds": { "const": -1 },
+              "slots": {
+                "const": 1
+              },
+              "idleSleepSeconds": {
+                "const": -1
+              },
               "limits": {}
             },
             "not": {
               "type": "object",
-              "properties": { "arguments": {} },
-              "required": ["arguments"]
+              "properties": {
+                "arguments": {}
+              },
+              "required": [
+                "arguments"
+              ]
             }
           },
           "readiness": {
             "type": "object",
-            "required": ["contractRef", "timeoutSeconds", "expectedModel", "probes"],
+            "required": [
+              "contractRef",
+              "timeoutSeconds",
+              "expectedModel",
+              "probes"
+            ],
             "properties": {
               "contractRef": {},
               "timeoutSeconds": {},
@@ -518,9 +1147,15 @@
               "probes": {}
             }
           },
-          "policy": { "type": "object" },
-          "surfaces": { "type": "object" },
-          "capabilities": { "type": "object" }
+          "policy": {
+            "type": "object"
+          },
+          "surfaces": {
+            "type": "object"
+          },
+          "capabilities": {
+            "type": "object"
+          }
         }
       },
       "else": {
@@ -529,19 +1164,44 @@
           "anyOf": [
             {
               "type": "object",
-              "properties": { "providerId": {} },
-              "required": ["providerId"]
+              "properties": {
+                "providerId": {}
+              },
+              "required": [
+                "providerId"
+              ]
             },
-            { "type": "object", "properties": { "policy": {} }, "required": ["policy"] },
-            { "type": "object", "properties": { "surfaces": {} }, "required": ["surfaces"] },
             {
               "type": "object",
-              "properties": { "capabilities": {} },
-              "required": ["capabilities"]
+              "properties": {
+                "policy": {}
+              },
+              "required": [
+                "policy"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "surfaces": {}
+              },
+              "required": [
+                "surfaces"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "capabilities": {}
+              },
+              "required": [
+                "capabilities"
+              ]
             }
           ]
         }
       }
     }
-  }
+  },
+  "title": "NemoClaw managed inference serving recipe"
 }

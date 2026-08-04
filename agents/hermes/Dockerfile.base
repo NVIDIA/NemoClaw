@@ -252,6 +252,7 @@ RUN arch="$(dpkg --print-architecture)" \
 
 COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
+COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 COPY scripts/upgrade-bundled-npm.mts /scripts/upgrade-bundled-npm.mts
 
@@ -271,6 +272,12 @@ RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts \
 # registry- and SRI-pinned 5.0.9 release.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts \
+    --npm-root /usr/local/lib/node_modules/npm
+
+# Replace npm 11.18.0's private ip-address 10.2.0 package with the
+# registry- and SRI-pinned 10.3.1 release.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
 # gosu for privilege separation (gateway vs sandbox user).
@@ -481,7 +488,7 @@ RUN set -eu; \
     uv sync --frozen --no-dev "$@" --no-cache \
     && uv pip check --python /opt/hermes/.venv/bin/python \
     && /opt/hermes/.venv/bin/python -I -c \
-        "from importlib.metadata import version; expected = {'cryptography': '48.0.1', 'mcp': '1.28.1', 'pillow': '12.3.0', 'starlette': '1.3.1', 'tornado': '6.5.7'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
+        "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0', 'mcp': '1.28.1', 'pillow': '12.3.0', 'starlette': '1.3.1', 'tornado': '6.5.7'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
     && npm ci --prefer-offline --no-audit --no-fund \
     && for ui_dir in ui-tui web; do \
         if [ -f "${ui_dir}/package-lock.json" ]; then \

@@ -36,6 +36,7 @@ function buildDeps(
     })),
     getWindowsHostOllamaDockerRequirement: vi.fn(() => SUPPORTED_WINDOWS_OLLAMA),
     detectVllmProfile: vi.fn(() => null),
+    getLocalProviderAvailabilityEndpoint: vi.fn(() => "http://127.0.0.1:8000/v1/models"),
     ...overrides,
   };
 }
@@ -158,6 +159,24 @@ describe("detectInferenceProviderHostState", () => {
     );
 
     expect(state.vllmRunning).toBe(false);
+  });
+
+  it("fails the vLLM running probe closed when managed endpoint resolution fails", () => {
+    const runCapture = vi.fn(() => "200");
+    const state = detectWithDeps(
+      buildDeps({
+        runCapture,
+        getLocalProviderAvailabilityEndpoint: () => {
+          throw new Error("managed state unavailable");
+        },
+      }),
+    );
+
+    expect(state.vllmRunning).toBe(false);
+    expect(runCapture).not.toHaveBeenCalledWith(
+      expect.arrayContaining([expect.stringContaining("8000")]),
+      expect.anything(),
+    );
   });
 
   it("detects a reachable Windows-host Ollama beside WSL-local Ollama and warns outside mirrored networking", () => {
