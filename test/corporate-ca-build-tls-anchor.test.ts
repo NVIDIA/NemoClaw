@@ -16,12 +16,20 @@ describe("corporate proxy CA build-time TLS anchor (#6839)", () => {
     expect(matches).toHaveLength(1);
   });
 
-  // source-shape-contract: security -- The build-time TLS trust anchor must precede the signature-verifying sigstore fetch
+  // source-shape-contract: security -- The build-time TLS trust anchor must precede registry and signature-verifying fetches
   it("decodes the CA and exports NODE_EXTRA_CA_CERTS before the reinstall audit-signatures step", () => {
     const argIndex = dockerfile.indexOf("ARG NEMOCLAW_CORPORATE_CA_B64=");
     const decodeIndex = dockerfile.indexOf('RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then');
     const anchorIndex = dockerfile.indexOf(
       "ENV NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem",
+    );
+    const curlAnchorIndex = dockerfile.indexOf(
+      "export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem",
+      anchorIndex,
+    );
+    const ipAddressPatchIndex = dockerfile.indexOf(
+      "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
+      curlAnchorIndex,
     );
     const auditSignaturesIndex = dockerfile.indexOf("mcporter-runtime audit signatures");
 
@@ -29,12 +37,16 @@ describe("corporate proxy CA build-time TLS anchor (#6839)", () => {
       argIndex,
       decodeIndex,
       anchorIndex,
+      curlAnchorIndex,
+      ipAddressPatchIndex,
       auditSignaturesIndex,
     })) {
       expect(index, name).toBeGreaterThan(-1);
     }
     expect(argIndex).toBeLessThan(decodeIndex);
     expect(decodeIndex).toBeLessThan(anchorIndex);
+    expect(anchorIndex).toBeLessThan(curlAnchorIndex);
+    expect(curlAnchorIndex).toBeLessThan(ipAddressPatchIndex);
     expect(anchorIndex).toBeLessThan(auditSignaturesIndex);
   });
 });
@@ -133,6 +145,14 @@ describe("DCode corporate proxy CA cold-build trust (#8119)", () => {
       "mcp-tool-discovery-runtime",
       finalDecodeIndex,
     );
+    const curlAnchorIndex = finalDockerfile.indexOf(
+      "export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem",
+      finalDecodeIndex,
+    );
+    const ipAddressPatchIndex = finalDockerfile.indexOf(
+      "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
+      curlAnchorIndex,
+    );
 
     for (const [name, index] of Object.entries({
       finalFromIndex,
@@ -140,6 +160,8 @@ describe("DCode corporate proxy CA cold-build trust (#8119)", () => {
       finalDecodeIndex,
       trustDirectoryIndex,
       runtimeProbeIndex,
+      curlAnchorIndex,
+      ipAddressPatchIndex,
     })) {
       expect(index, name).toBeGreaterThan(-1);
     }
@@ -147,5 +169,7 @@ describe("DCode corporate proxy CA cold-build trust (#8119)", () => {
     expect(finalArgIndex).toBeLessThan(finalDecodeIndex);
     expect(finalDecodeIndex).toBeLessThan(trustDirectoryIndex);
     expect(trustDirectoryIndex).toBeLessThan(runtimeProbeIndex);
+    expect(trustDirectoryIndex).toBeLessThan(curlAnchorIndex);
+    expect(curlAnchorIndex).toBeLessThan(ipAddressPatchIndex);
   });
 });

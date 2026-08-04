@@ -4482,7 +4482,6 @@ describe("setup_auth_profile_as_sandbox", () => {
     extractShellFunctionFromSource(src, "run_step_down_as_sandbox"),
   ].join("\n");
   const setup = extractShellFunctionFromSource(src, "setup_auth_profile_as_sandbox");
-
   it("runs the auth-profile setup under HOME=/sandbox even when the parent env has HOME=/root", () => {
     // setpriv preserves the parent shell's environment, so the root
     // entrypoint's HOME=/root would otherwise leak into the step-down
@@ -4500,6 +4499,7 @@ describe("setup_auth_profile_as_sandbox", () => {
         "set -euo pipefail",
         "export HOME=/root",
         "STEP_DOWN_PREFIX_SANDBOX=(env)",
+        "openclaw_config_dir_owner() { echo sandbox; }",
         `write_auth_profile() { printf '%s\\n' "$HOME" >${JSON.stringify(observedHome)}; }`,
         "harden_auth_profiles() { :; }",
         helper,

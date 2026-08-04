@@ -20,6 +20,6 @@ describe("sandbox base image layout", () => {
     const layerInstructions = finalStage.match(/^(?:ADD|COPY|RUN)\b/gmu) ?? [];
 
     expect(finalStage).toContain("FROM node:22-trixie-slim@");
-    expect(layerInstructions).toHaveLength(24);
+    expect(layerInstructions).toHaveLength(26);
   });
 });
