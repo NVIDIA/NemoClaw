@@ -25,7 +25,8 @@ FROM mcp-tool-discovery-runtime AS runtime-preload-builder
 WORKDIR /opt/nemoclaw-root
 COPY tsconfig.runtime-preloads.json /opt/nemoclaw-root/
 COPY src/lib/messaging/channels/ /opt/nemoclaw-root/src/lib/messaging/channels/
-RUN /opt/mcp-tool-discovery-runtime/node_modules/.bin/tsc -p tsconfig.runtime-preloads.json
+RUN ln -s /opt/mcp-tool-discovery-runtime/node_modules /opt/nemoclaw-root/node_modules \
+    && /opt/mcp-tool-discovery-runtime/node_modules/.bin/tsc -p tsconfig.runtime-preloads.json
 
 FROM mcp-tool-discovery-runtime AS managed-startup-runtime-builder
 WORKDIR /opt/nemoclaw-managed-startup-build

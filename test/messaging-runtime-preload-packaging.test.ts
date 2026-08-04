@@ -44,6 +44,9 @@ describe("messaging runtime preload packaging", () => {
       "COPY src/lib/messaging/channels/ /opt/nemoclaw-root/src/lib/messaging/channels/",
     );
     expect(hermesDockerfile).toContain(
+      "ln -s /opt/mcp-tool-discovery-runtime/node_modules /opt/nemoclaw-root/node_modules",
+    );
+    expect(hermesDockerfile).toContain(
       "/opt/mcp-tool-discovery-runtime/node_modules/.bin/tsc -p tsconfig.runtime-preloads.json",
     );
     expect(hermesDockerfile).toContain(
