@@ -165,7 +165,7 @@ function sessionWithCheckpoint(checkpoint: OnboardCheckpoint): Session {
 }
 
 describe("sandbox crash-recovery replay (#5961, #6228)", () => {
-  it("reuses a surviving sandbox instead of recreating it under a stale step-incomplete decision", async () => {
+  it("reuses a surviving sandbox with a legacy pre-reasoning fingerprint", async () => {
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
     const session = sessionWithCheckpoint(crashedCheckpoint());
 
@@ -573,6 +573,35 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     await expect(
       handleSandboxState({
         ...baseOptions(resumedRun.deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(resumedRun.calls.createSandbox).not.toHaveBeenCalled();
+    expect(resumedRun.calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
+  });
+
+  it("rejects reasoning capability drift before replaying a recorded sandbox create (#7570)", async () => {
+    const session = createSession({ sessionId: "sess-1", agent: "openclaw" });
+    const updateSession = vi.fn((mutator: (value: typeof session) => void) => {
+      mutator(session);
+      return session;
+    });
+    const firstRun = createDeps({ getSandboxReuseState: () => "missing", updateSession });
+
+    await handleSandboxState({
+      ...baseOptions(firstRun.deps, session),
+      compatibleEndpointReasoning: "true",
+      resume: false,
+      sandboxName: "my-assistant",
+    });
+
+    const resumedRun = createDeps({ getSandboxReuseState: () => "missing", updateSession });
+    await expect(
+      handleSandboxState({
+        ...baseOptions(resumedRun.deps, session),
+        compatibleEndpointReasoning: "false",
         resume: true,
         sandboxName: "my-assistant",
       }),
