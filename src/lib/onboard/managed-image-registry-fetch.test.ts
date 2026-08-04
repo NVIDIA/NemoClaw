@@ -56,9 +56,9 @@ describe("managed image registry transport", () => {
 
     try {
       await expect(
-        session.fetchImpl("http://registry.invalid/v2/", { signal: abortController.signal }),
+        session.fetchImpl("https://registry.invalid/v2/", { signal: abortController.signal }),
       ).rejects.toThrow();
-      expect(tunnels).toEqual(["registry.invalid:80"]);
+      expect(tunnels).toEqual(["registry.invalid:443"]);
     } finally {
       await session.close();
     }
