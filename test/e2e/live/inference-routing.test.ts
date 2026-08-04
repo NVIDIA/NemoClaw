@@ -38,6 +38,10 @@ import {
 } from "./inference-routing-helpers.ts";
 import { startPublicMcpHttpsTunnel } from "./mcp-bridge-servers.ts";
 import { startRuntimeIdentityOAuthServer } from "./runtime-identity-oauth-server.ts";
+import {
+  RUNTIME_IDENTITY_OBO_E2E_OPTIONS,
+  runRuntimeIdentityOboE2EScenario,
+} from "./runtime-identity-obo-scenario.ts";
 
 // This is the PR-required inference-routing lane. Credential-backed provider
 // smokes live in inference-routing-provider-smoke.test.ts and are never selected
@@ -989,6 +993,14 @@ test.for(RUNTIME_IDENTITY_E2E_SCENARIOS)(
       skip,
     });
   },
+);
+
+test(
+  "TC-INF-14 Okta OBO creates a ready sandbox and injects only an admitted delegated bearer",
+  {
+    ...RUNTIME_IDENTITY_OBO_E2E_OPTIONS,
+  },
+  runRuntimeIdentityOboE2EScenario,
 );
 
 test("TC-INF-09 Deep Agents Code uses a local compatible endpoint through inference.local (#5744)", {

@@ -32,8 +32,22 @@ export interface RuntimeIdentityResourceRequest {
   readonly accessTokenVersion: number | null;
 }
 
+export interface RuntimeIdentityTokenExchangeRequest {
+  readonly method: string;
+  readonly path: string;
+  readonly grantTypeOk: boolean;
+  readonly subjectTokenOk: boolean;
+  readonly subjectTokenTypeOk: boolean;
+  readonly requestedTokenTypeOk: boolean;
+  readonly audienceOk: boolean;
+  readonly scopeOk: boolean;
+  readonly clientAuthOk: boolean;
+  readonly issued: boolean;
+}
+
 export interface RuntimeIdentityOAuthServer extends StartedHttpServer {
   tokenRequests(): readonly RuntimeIdentityTokenRequest[];
+  tokenExchangeRequests(): readonly RuntimeIdentityTokenExchangeRequest[];
   resourceRequests(): readonly RuntimeIdentityResourceRequest[];
   secretValues(): readonly string[];
 }
@@ -111,19 +125,26 @@ function classifyBearer(
 export async function startRuntimeIdentityOAuthServer(options: {
   clientId: string;
   clientSecret: string;
-  initialRefreshToken: string;
+  initialRefreshToken?: string;
   resourcePath?: string;
   tokenPath?: string;
+  tokenExchange?: {
+    subjectToken: string;
+    audience: string;
+    scope: string;
+    accessToken: string;
+  };
 }): Promise<RuntimeIdentityOAuthServer> {
   const tls = generateEphemeralTlsMaterial();
   const tokenRequests: RuntimeIdentityTokenRequest[] = [];
+  const tokenExchangeRequests: RuntimeIdentityTokenExchangeRequest[] = [];
   const resourceRequests: RuntimeIdentityResourceRequest[] = [];
   const accessTokens = [
-    "e2e-runtime-identity-access-token-v1",
+    options.tokenExchange?.accessToken ?? "e2e-runtime-identity-access-token-v1",
     "e2e-runtime-identity-access-token-v2",
   ];
   const refreshTokens = [
-    options.initialRefreshToken,
+    options.initialRefreshToken ?? "e2e-runtime-identity-unused-refresh-token",
     "e2e-runtime-identity-rotated-refresh-token-v2",
     "e2e-runtime-identity-rotated-refresh-token-v3",
   ];
@@ -146,6 +167,53 @@ export async function startRuntimeIdentityOAuthServer(options: {
 
     if (req.method === "POST" && requestPath === tokenPath) {
       const body = new URLSearchParams(await readRequestBody(req));
+      if (body.get("grant_type") === "urn:ietf:params:oauth:grant-type:token-exchange") {
+        const tokenExchange = options.tokenExchange;
+        const grantTypeOk = tokenExchange !== undefined;
+        const subjectTokenOk = body.get("subject_token") === tokenExchange?.subjectToken;
+        const subjectTokenTypeOk =
+          body.get("subject_token_type") === "urn:ietf:params:oauth:token-type:access_token";
+        const requestedTokenTypeOk =
+          body.get("requested_token_type") === "urn:ietf:params:oauth:token-type:access_token";
+        const audienceOk = body.get("audience") === tokenExchange?.audience;
+        const scopeOk = body.get("scope") === tokenExchange?.scope;
+        const clientAuthOk =
+          req.headers.authorization ===
+          `Basic ${Buffer.from(`${options.clientId}:${options.clientSecret}`).toString("base64")}`;
+        const issued =
+          grantTypeOk &&
+          subjectTokenOk &&
+          subjectTokenTypeOk &&
+          requestedTokenTypeOk &&
+          audienceOk &&
+          scopeOk &&
+          clientAuthOk &&
+          issueCount === 0;
+        tokenExchangeRequests.push({
+          method: req.method,
+          path: requestPath,
+          grantTypeOk,
+          subjectTokenOk,
+          subjectTokenTypeOk,
+          requestedTokenTypeOk,
+          audienceOk,
+          scopeOk,
+          clientAuthOk,
+          issued,
+        });
+        if (!issued) {
+          writeJsonResponse(res, 400, { error: "invalid_grant" });
+          return;
+        }
+        currentAccessToken = accessTokens[0];
+        issueCount = 1;
+        writeJsonResponse(res, 200, {
+          access_token: currentAccessToken,
+          token_type: "Bearer",
+          expires_in: 600,
+        });
+        return;
+      }
       const grantTypeOk = body.get("grant_type") === "refresh_token";
       const clientIdOk = body.get("client_id") === options.clientId;
       const refreshTokenOk = body.get("refresh_token") === currentRefreshToken;
@@ -219,8 +287,17 @@ export async function startRuntimeIdentityOAuthServer(options: {
   return {
     port: requireTcpPort(server),
     tokenRequests: () => tokenRequests,
+    tokenExchangeRequests: () => tokenExchangeRequests,
     resourceRequests: () => resourceRequests,
-    secretValues: () => [options.clientId, options.clientSecret, ...accessTokens, ...refreshTokens],
+    secretValues: () => [
+      options.clientId,
+      options.clientSecret,
+      ...(options.tokenExchange
+        ? [options.tokenExchange.subjectToken, options.tokenExchange.accessToken]
+        : []),
+      ...accessTokens,
+      ...refreshTokens,
+    ],
     close: async () => {
       await closeServer(server);
       fs.rmSync(tls.dir, { recursive: true, force: true });
