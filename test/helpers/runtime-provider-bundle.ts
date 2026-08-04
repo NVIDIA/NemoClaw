@@ -156,6 +156,7 @@ export function createInMemoryRuntimeProviderBundle({
         "workload-cleanup",
       ],
     },
+    stateMutation: unsupported(providerId, futureReason),
     bootstrap: unsupported(providerId, futureReason),
     snapshot: unsupported(providerId, futureReason),
     recovery: unsupported(providerId, futureReason),

@@ -128,10 +128,17 @@ function providerHarness(agent: (typeof AGENTS)[number]) {
     name: sandboxName,
     openshellDriver: "podman",
   };
-  return { entry, lifecycle, providers, sandboxName };
+  return { bundle, entry, lifecycle, providers, sandboxName };
 }
 
 describe("dormant Podman runtime provider", () => {
+  it("keeps exact-runtime state mutation dormant until recovery qualification", () => {
+    expect(providerHarness("openclaw").bundle.stateMutation).toMatchObject({
+      providerId: "podman",
+      supported: false,
+    });
+  });
+
   it.each(
     AGENTS,
   )("runs basic CPU start and stop for %s through an injected bundle", async (agent) => {
