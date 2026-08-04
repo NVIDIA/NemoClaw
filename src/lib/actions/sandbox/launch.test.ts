@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentDefinition } from "../../agent/defs";
+import * as agentDefinitions from "../../agent/defs";
 import { loadAgent } from "../../agent/defs";
 import type { SandboxEntry } from "../../state/registry";
 
@@ -58,13 +59,28 @@ describe("launchSandbox", () => {
     mocks.prepareHermesLightTerminalSkin.mockImplementation(() => {
       mocks.calls.push("prepareHermesLightTerminalSkin");
     });
-    prepareSession("openclaw", loadAgent("openclaw"));
+    // Production keeps OpenClaw null in getSessionAgent so its recovery path
+    // continues to use the legacy defaults. The launch resolver must still
+    // load OpenClaw's trusted manifest before choosing the interactive command.
+    prepareSession("openclaw", null);
   });
 
   it("starts the OpenClaw TUI for an OpenClaw sandbox (#6006)", async () => {
     await launchSandbox("alpha");
 
     expect(launchedCommand()).toEqual(["bash", "-lc", "openclaw tui"]);
+  });
+
+  it("uses the OpenClaw manifest command when the session agent is null (#6006)", async () => {
+    const openclaw = loadAgent("openclaw");
+    vi.spyOn(agentDefinitions, "loadAgent").mockReturnValueOnce({
+      ...openclaw,
+      runtime: { ...openclaw.runtime!, interactive_command: "openclaw manifest-test-tui" },
+    });
+
+    await launchSandbox("alpha");
+
+    expect(launchedCommand()).toEqual(["bash", "-lc", "openclaw manifest-test-tui"]);
   });
 
   it("starts dcode for a Deep Agents Code sandbox (#6006)", async () => {

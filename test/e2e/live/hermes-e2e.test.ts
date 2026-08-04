@@ -1183,16 +1183,16 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     }
   }
 
-  if (process.platform === "linux") {
-    await runLaunchAgentTurn({
-      artifactName: "phase-5-hermes-launch-turn-after-recovery",
-      cliCommand: "nemoclaw",
-      env,
-      host,
-      redactionValues,
-      sandboxName: SANDBOX_NAME,
-    });
-  }
+  await (process.platform === "linux"
+    ? runLaunchAgentTurn({
+        artifactName: "phase-5-hermes-launch-turn-after-recovery",
+        cliCommand: "nemoclaw",
+        env,
+        host,
+        redactionValues,
+        sandboxName: SANDBOX_NAME,
+      })
+    : Promise.resolve());
 
   progress.phase("exercise hosted and inference.local routes");
   // Phase 6: live inference through both the external provider and the

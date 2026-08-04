@@ -106,6 +106,44 @@ async function waitForSandboxStatus(host: HostCliClient): Promise<ShellProbeResu
   return status.value;
 }
 
+async function runOpenClawLaunchTurnAfterRecovery(input: {
+  host: HostCliClient;
+  redactionValues: string[];
+  sandbox: SandboxClient;
+}): Promise<void> {
+  const stopGateway = await input.sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript("pkill -f 'openclaw.*gateway' 2>/dev/null || true"),
+    {
+      artifactName: "phase-4-stop-openclaw-gateway-before-launch",
+      env: env(),
+      redactionValues: input.redactionValues,
+      timeoutMs: 30_000,
+    },
+  );
+  expect(stopGateway.exitCode, resultText(stopGateway)).toBe(0);
+  await sleep(3_000);
+
+  const recovery = await repoNemoclaw(
+    input.host,
+    [SANDBOX_NAME, "status"],
+    "phase-4-status-recover-before-launch",
+    {},
+    120_000,
+  );
+  expect(recovery.exitCode, resultText(recovery)).toBe(0);
+
+  await runLaunchAgentTurn({
+    artifactName: "phase-4-openclaw-launch-turn",
+    cliCommand: USE_PREINSTALLED_LAUNCHABLE ? "nemoclaw" : process.execPath,
+    ...(!USE_PREINSTALLED_LAUNCHABLE ? { cliEntrypoint: CLI_ENTRYPOINT } : {}),
+    env: env(),
+    host: input.host,
+    redactionValues: input.redactionValues,
+    sandboxName: SANDBOX_NAME,
+  });
+}
+
 async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
   await repoNemoclaw(host, [SANDBOX_NAME, "destroy", "--yes"], "cleanup-nemoclaw-destroy").catch(
     () => undefined,
@@ -508,39 +546,9 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   expect(sandboxInference.exitCode, resultText(sandboxInference)).toBe(0);
   expect(containsInteger42Answer(sandboxInference.stdout), resultText(sandboxInference)).toBe(true);
 
-  if (process.platform === "linux") {
-    const stopGateway = await sandbox.execShell(
-      SANDBOX_NAME,
-      trustedSandboxShellScript("pkill -f 'openclaw.*gateway' 2>/dev/null || true"),
-      {
-        artifactName: "phase-4-stop-openclaw-gateway-before-launch",
-        env: env(),
-        redactionValues,
-        timeoutMs: 30_000,
-      },
-    );
-    expect(stopGateway.exitCode, resultText(stopGateway)).toBe(0);
-    await sleep(3_000);
-
-    const recovery = await repoNemoclaw(
-      host,
-      [SANDBOX_NAME, "status"],
-      "phase-4-status-recover-before-launch",
-      {},
-      120_000,
-    );
-    expect(recovery.exitCode, resultText(recovery)).toBe(0);
-
-    await runLaunchAgentTurn({
-      artifactName: "phase-4-openclaw-launch-turn",
-      cliCommand: USE_PREINSTALLED_LAUNCHABLE ? "nemoclaw" : process.execPath,
-      ...(!USE_PREINSTALLED_LAUNCHABLE ? { cliEntrypoint: CLI_ENTRYPOINT } : {}),
-      env: env(),
-      host,
-      redactionValues,
-      sandboxName: SANDBOX_NAME,
-    });
-  }
+  await (process.platform === "linux"
+    ? runOpenClawLaunchTurnAfterRecovery({ host, redactionValues, sandbox })
+    : Promise.resolve());
 
   progress.phase("inspect runtime logs and security posture");
   const logs = await repoNemoclaw(
