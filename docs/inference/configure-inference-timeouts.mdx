@@ -3,13 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "Configure Inference Timeouts"
 sidebar-title: "Configure Timeouts"
-description: "Configure NemoClaw inference request, provider-validation, and sandbox-readiness timeouts."
-description-agent: "Configures inference-related time budgets. Use when local validation, agent requests, or sandbox readiness exceeds the default timeout."
-keywords: ["nemoclaw inference timeout", "local inference timeout", "sandbox ready timeout"]
+description: "Configure NemoClaw inference request, provider-validation, sandbox-readiness, and recovery timeouts."
+description-agent: "Configures inference, sandbox-readiness, and recovery time budgets. Use when provider validation, agent requests, sandbox readiness, or recovery exceeds its default timeout."
+keywords: ["nemoclaw inference timeout", "local inference timeout", "sandbox ready timeout", "gateway recovery wait"]
 content:
   type: "how_to"
 ---
-NemoClaw uses separate time budgets for agent requests, local provider validation, and sandbox readiness.
+NemoClaw uses separate time budgets for agent requests, local provider validation, sandbox readiness, and recovery.
 Change the budget that matches the phase that times out.
 
 ## Choose the Timeout
@@ -20,12 +20,16 @@ Use the error location to select the correct setting.
 |---|---|---|
 | `NEMOCLAW_AGENT_TIMEOUT` | OpenClaw per-request inference | `600` seconds |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | Ollama, vLLM, NIM, and compatible-endpoint validation during onboarding | `180` seconds |
-| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | Image build, gateway upload, and in-sandbox boot after creation; OpenShell command re-registration after policy application or after OpenClaw or Hermes managed recovery recreates the sandbox | `180` seconds |
+| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | Image build, gateway upload, and in-sandbox boot after creation | `180` seconds |
+| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | OpenShell command re-registration after policy application, plus gateway health and re-registration during managed OpenClaw or Hermes recovery | `30`, `90`, or `120` seconds, depending on the recovery phase |
 
 The readiness timeout does not govern inference requests or provider validation.
 
-Set each value to a whole number of seconds; a fractional value is rounded.
-NemoClaw falls back to the default shown above for any value it cannot use, including a negative one — a negative budget is treated as an invalid setting rather than as a request to give up immediately.
+`NEMOCLAW_AGENT_TIMEOUT` requires a positive integer; onboarding rejects any other value.
+`NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` and `NEMOCLAW_SANDBOX_READY_TIMEOUT` accept finite, nonnegative seconds, round fractional values, and use their defaults for invalid or negative values.
+`NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` accepts finite, nonnegative seconds and preserves fractional values.
+A valid value overrides the internal budget for the current recovery phase.
+An unset, blank, invalid, or negative value uses 30 seconds for OpenClaw gateway health, 90 seconds for Hermes gateway health, and 120 seconds for recreated-sandbox OpenShell registration when the recovery path does not supply another budget.
 
 ## Increase the OpenClaw Request Timeout
 
@@ -50,6 +54,12 @@ Hermes does not consume the OpenClaw-only `NEMOCLAW_AGENT_TIMEOUT` setting.
 
 </AgentOnly>
 
+<AgentOnly variant="deepagents">
+
+Deep Agents does not consume the OpenClaw-only `NEMOCLAW_AGENT_TIMEOUT` setting.
+
+</AgentOnly>
+
 ## Increase the Local Validation Timeout
 
 Raise `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` when the inference-server validation probe needs more than 180 seconds.
@@ -67,22 +77,38 @@ This variable does not extend the later sandbox-readiness wait.
 
 Raise `NEMOCLAW_SANDBOX_READY_TIMEOUT` when onboarding creates the sandbox but image build, upload, or boot exceeds 180 seconds.
 This can occur during a first run with cold caches or on a remote VM over a slow link.
-Onboarding also uses this budget to confirm that the sandbox can execute commands again after applying policy presets.
-
-<AgentOnly variant="openclaw,hermes">
-
-The same budget applies when `start` or `recover` transactionally recreates a managed sandbox and waits for OpenShell to re-register it.
-
-</AgentOnly>
 
 ```bash
 export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
 $$nemoclaw onboard
 ```
 
+## Increase the Recovery Wait
+
+Set `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` when OpenShell needs more than 120 seconds to re-register the sandbox after onboarding applies policy presets.
+
+<AgentOnly variant="openclaw">
+
+Managed OpenClaw gateway health uses 30 seconds by default.
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
+Managed Hermes gateway health uses 90 seconds by default.
+
+</AgentOnly>
+
 <AgentOnly variant="openclaw,hermes">
 
-For an existing sandbox, export the variable before the `start` or `recover` command that performs the recreation.
+Set `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` before `start` or `recover` to extend the agent-specific gateway-health wait and, when recovery recreates the sandbox, the 120-second OpenShell re-registration wait.
+
+```bash
+export NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS=300
+$$nemoclaw <sandbox-name> recover
+```
+
+A valid finite, nonnegative recovery override takes precedence over internal per-agent and per-call-site budgets.
 
 </AgentOnly>
 

@@ -14,6 +14,7 @@ import { reportSandboxCreateFailure } from "./created-sandbox-failure";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { createDockerGpuSandboxCreatePatch } from "./docker-gpu-sandbox-create";
+import { enforceManagedBootstrapRecoveryForSandbox } from "./managed-bootstrap/adapter";
 import type { ManagedBootstrapRuntimeSnapshot } from "./managed-bootstrap/runtime-create";
 import {
   queryOpenShellDockerSandboxContainers,
@@ -143,6 +144,12 @@ export function createSandboxGpuCreateAttemptRunner(
         backend: input.sandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
         deps,
       });
+    const recovery = await managedLifecycle?.recoverUnfinished();
+    if (recovery) {
+      enforceManagedBootstrapRecoveryForSandbox(recovery, input.sandboxName, (message) =>
+        console.warn(`  ⚠ ${message}`),
+      );
+    }
     await managedLifecycle?.prepareNetwork();
     const [createExecutable, ...createExecutableArgs] = managedLifecycle?.launchArgv ?? attemptArgv;
     if (!createExecutable) throw new Error("Sandbox create executable is missing.");

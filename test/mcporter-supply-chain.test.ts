@@ -25,8 +25,10 @@ const expectedTarball = "https://registry.npmjs.org/mcporter/-/mcporter-0.7.3.tg
 const expectedHonoNodeServerVersion = "2.0.11";
 const expectedHonoNodeServerTarball =
   "https://registry.npmjs.org/@hono/node-server/-/node-server-2.0.11.tgz";
-const expectedFastUriVersion = "3.1.4";
-const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.4.tgz";
+const expectedFastUriVersion = "3.1.5";
+const expectedFastUriTarball = "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz";
+const expectedIpAddressVersion = "10.3.1";
+const expectedIpAddressTarball = "https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
 
 function extractIntegrityGate(contents: string): string {
@@ -80,9 +82,13 @@ describe("mcporter image supply-chain controls", () => {
     );
     expect(dependencyReview).toContain("any version other than exact `2.0.11`");
     expect(dependencyReview).toContain("the `/vercel` adapter");
-    expect(dependencyReview).toContain("`fast-uri@3.1.4`");
+    expect(dependencyReview).toContain("`fast-uri@3.1.5`");
     expect(dependencyReview).toContain("`GHSA-v2hh-gcrm-f6hx`");
-    expect(dependencyReview).toContain("exact `3.1.4`");
+    expect(dependencyReview).toContain("`GHSA-7p8r-x3mc-p8w7`");
+    expect(dependencyReview).toContain("exact `3.1.5`");
+    expect(dependencyReview).toContain("`ip-address@10.3.1`");
+    expect(dependencyReview).toContain("`GHSA-mwp4-54f8-5fhr`");
+    expect(dependencyReview).toContain("exact `10.3.1`");
   });
 
   it("resolves the committed production graph through npm's lockfile boundary", () => {
@@ -107,6 +113,13 @@ describe("mcporter image supply-chain controls", () => {
         overridden: true,
         resolved: expectedFastUriTarball,
         version: expectedFastUriVersion,
+      }),
+    );
+    expect(findDependency(graph, "ip-address")).toEqual(
+      expect.objectContaining({
+        overridden: true,
+        resolved: expectedIpAddressTarball,
+        version: expectedIpAddressVersion,
       }),
     );
   });
