@@ -33,6 +33,22 @@ const BASE_ENV: Record<string, string> = {
   NEMOCLAW_REASONING: "false",
   NEMOCLAW_AGENT_TIMEOUT: "600",
 };
+const EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES = [
+  { channelId: "telegram", pluginId: "telegram" },
+  { channelId: "discord", pluginId: "discord" },
+  { channelId: "openclaw-weixin", pluginId: "openclaw-weixin" },
+  { channelId: "slack", pluginId: "slack" },
+  { channelId: "whatsapp", pluginId: "whatsapp" },
+  { channelId: "msteams", pluginId: "msteams" },
+  { channelId: "googlechat", pluginId: "googlechat" },
+] as const;
+const EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES = [
+  { channelId: "imessage", pluginId: "imessage" },
+] as const;
+const EXPECTED_MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
+  ...EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
+  ...EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
+] as const;
 
 describe("generate-openclaw-config.mts: default plugin entries", () => {
   it("omits the stale acpx entry and disables bundled bonjour by default", () => {
@@ -54,18 +70,16 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
       NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
     });
 
-    const neutralCapabilities = [
-      ...MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
-      ...MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
-    ];
-    for (const { channelId, pluginId } of neutralCapabilities) {
+    expect(MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES).toEqual(
+      EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
+    );
+    expect(MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES).toEqual(
+      EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
+    );
+    for (const { channelId, pluginId } of EXPECTED_MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES) {
       expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
       expect(config.channels[channelId], channelId).toEqual({ enabled: false });
     }
-    expect(MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES).toContainEqual({
-      channelId: "imessage",
-      pluginId: "imessage",
-    });
     for (const pluginId of ["diagnostics-otel", "brave", "tavily"]) {
       expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
     }

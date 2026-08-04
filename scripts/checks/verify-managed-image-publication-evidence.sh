@@ -312,8 +312,7 @@ fi
 
 workload_sha256="${workload_digest#sha256:}"
 base_sha256="${base_reference##*@sha256:}"
-base_image="${base_reference%@*}"
-base_dependency_uri="pkg:docker/${base_image}?digest=sha256:${base_sha256}&platform=${platform//\//%2F}"
+base_dependency_uri="pkg:docker/${base_reference}?platform=${platform//\//%2F}"
 source_url="https://github.com/${repository}"
 builder_id="${source_url}/actions/runs/${run_id}/attempts/${run_attempt}"
 if ! jq -e \
@@ -375,7 +374,8 @@ if ! jq -e \
         )
     ] | length) == 1
     and (.predicate.runDetails | keys | sort) == ["builder", "metadata"]
-    and .predicate.runDetails.builder == {id: $builder_id}
+    and (.predicate.runDetails.builder | type) == "object"
+    and .predicate.runDetails.builder.id == $builder_id
     and (.predicate.runDetails.metadata | type) == "object"
   ' "$slsa_statement" >/dev/null; then
   echo "ERROR: SLSA v1 statement does not bind the exact managed image build identity." >&2

@@ -117,11 +117,7 @@ function runEvidence(options: FixtureOptions = {}, digestOverride?: string) {
         internalParameters: { buildConfig: {} },
         resolvedDependencies: [
           {
-            uri:
-              options.slsaDependencyUri ??
-              "pkg:docker/ghcr.io/nvidia/nemoclaw/sandbox-base" +
-                `?digest=sha256:${baseReference.split("@sha256:")[1]}` +
-                "&platform=linux%2Famd64",
+            uri: options.slsaDependencyUri ?? `pkg:docker/${baseReference}?platform=linux%2Famd64`,
             digest: { sha256: baseReference.split("@sha256:")[1] },
           },
         ],
@@ -131,6 +127,7 @@ function runEvidence(options: FixtureOptions = {}, digestOverride?: string) {
           id:
             options.slsaBuilderId ??
             `https://github.com/${repository}/actions/runs/${runId}/attempts/${runAttempt}`,
+          version: { buildkit: "v0.23.2" },
         },
         metadata: { invocationId: "fixture" },
       },
@@ -430,10 +427,7 @@ describe("managed image publication evidence verifier", () => {
     [
       "base dependency platform",
       {
-        slsaDependencyUri:
-          "pkg:docker/ghcr.io/nvidia/nemoclaw/sandbox-base" +
-          `?digest=sha256:${baseReference.split("@sha256:")[1]}` +
-          "&platform=linux%2Farm64",
+        slsaDependencyUri: `pkg:docker/${baseReference}?platform=linux%2Farm64`,
       },
     ],
     [
