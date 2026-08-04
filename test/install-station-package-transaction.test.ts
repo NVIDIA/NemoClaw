@@ -11,6 +11,8 @@ import { TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const STATION_PREPARE = path.join(REPO_ROOT, "scripts", "prepare-dgx-station-host.sh");
 const DRIVER_PIN_SPEC = "nvidia-driver-pinning-610=610-2ubuntu1";
+const APT_DRIVER_POLICY =
+  "-o Dir::Etc::Preferences=/run/nemoclaw-apt-transaction.TEST/driver-policy";
 const EXPECTED_PACKAGE_SPECS = [
   "dkms=1:3.4.0-1ubuntu1",
   DRIVER_PIN_SPEC,
@@ -222,11 +224,13 @@ check_dpkg_database_health() { printf 'DPKG_AUDIT_CLEAN\n'; }
 create_apt_transaction_guard() {
   APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
   APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
+  APT_TRANSACTION_DRIVER_POLICY="$APT_TRANSACTION_GUARD_DIR/driver-policy"
 }
 cleanup_apt_transaction_guard() {
   printf 'CLEANUP_GUARD\n'
   APT_TRANSACTION_GUARD_DIR=""
   APT_TRANSACTION_HOOK=""
+  APT_TRANSACTION_DRIVER_POLICY=""
 }
 sudo() {
   printf 'SUDO %s\n' "$*"
@@ -252,10 +256,10 @@ cat "$HOME/apt-cache-calls"
     expect(aptCommands).toEqual(
       [
         ...EXPECTED_PACKAGE_SPECS.map((spec) => `APT_CACHE show ${spec}`),
-        `APT_GET -s install --no-install-recommends --no-remove -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${DRIVER_PIN_SPEC}`,
-        `APT_GET -s install --no-install-recommends --no-remove -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`,
-        `SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y --no-install-recommends --no-remove -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${DRIVER_PIN_SPEC}`,
-        `SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y --no-install-recommends --no-remove -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`,
+        `APT_GET -s install --no-install-recommends --no-remove ${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${DRIVER_PIN_SPEC}`,
+        `APT_GET -s install --no-install-recommends --no-remove ${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`,
+        `SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y --no-install-recommends --no-remove ${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${DRIVER_PIN_SPEC}`,
+        `SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y --no-install-recommends --no-remove ${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`,
       ].sort(),
     );
     expect(output).toContain(
@@ -264,13 +268,13 @@ cat "$HOME/apt-cache-calls"
     const quiescenceMarker = "RECHECK_DOCKER_RESTART Station prerequisite package installation";
     const pinInstallMarker =
       "SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y " +
-      `--no-install-recommends --no-remove -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${DRIVER_PIN_SPEC}`;
+      `--no-install-recommends --no-remove ${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${DRIVER_PIN_SPEC}`;
     const remainingSimulationMarker =
       "APT_GET -s install --no-install-recommends --no-remove " +
-      `-o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`;
+      `${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`;
     const installMarker =
       "SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y " +
-      `--no-install-recommends --no-remove -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`;
+      `--no-install-recommends --no-remove ${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`;
     expect(output).toContain(quiescenceMarker);
     expect(output.indexOf(remainingSimulationMarker)).toBeGreaterThan(
       output.indexOf(pinInstallMarker),
@@ -324,10 +328,12 @@ check_dpkg_database_health() { :; }
 create_apt_transaction_guard() {
   APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
   APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
+  APT_TRANSACTION_DRIVER_POLICY="$APT_TRANSACTION_GUARD_DIR/driver-policy"
 }
 cleanup_apt_transaction_guard() {
   APT_TRANSACTION_GUARD_DIR=""
   APT_TRANSACTION_HOOK=""
+  APT_TRANSACTION_DRIVER_POLICY=""
 }
 sudo() {
   printf 'SUDO %s\n' "$*"
@@ -351,10 +357,10 @@ cat "$HOME/apt-cache-calls"
     expect(aptCommands).toEqual(
       [
         ...missingSpecs.map((spec) => `APT_CACHE show ${spec}`),
-        `APT_GET -s install --no-install-recommends --no-remove -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${DRIVER_PIN_SPEC}`,
-        `APT_GET -s install --no-install-recommends --no-remove -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`,
-        `SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y --no-install-recommends --no-remove -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${DRIVER_PIN_SPEC}`,
-        `SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y --no-install-recommends --no-remove -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`,
+        `APT_GET -s install --no-install-recommends --no-remove ${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${DRIVER_PIN_SPEC}`,
+        `APT_GET -s install --no-install-recommends --no-remove ${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`,
+        `SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y --no-install-recommends --no-remove ${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${DRIVER_PIN_SPEC}`,
+        `SUDO env DEBIAN_FRONTEND=noninteractive LC_ALL=C apt-get install -y --no-install-recommends --no-remove ${APT_DRIVER_POLICY} -o DPkg::Pre-Install-Pkgs::=/bin/bash /run/nemoclaw-apt-transaction.TEST/verify-plan -o DPkg::Tools::options::/bin/bash::Version=3 ${expectedTuple}`,
       ].sort(),
     );
     expect(aptCommands.join("\n")).not.toContain(retainedSpec);
@@ -382,6 +388,7 @@ check_dpkg_database_health() { :; }
 create_apt_transaction_guard() {
   APT_TRANSACTION_GUARD_DIR=/run/nemoclaw-apt-transaction.TEST
   APT_TRANSACTION_HOOK="/bin/bash $APT_TRANSACTION_GUARD_DIR/verify-plan"
+  APT_TRANSACTION_DRIVER_POLICY="$APT_TRANSACTION_GUARD_DIR/driver-policy"
 }
 sudo() {
   printf 'SUDO %s\n' "$*"
@@ -555,6 +562,8 @@ sudo() {
 create_apt_transaction_guard
 /bin/bash "$HOME/generated-guard/verify-plan" <<<"$APT_PLAN"
 printf 'APT_HOOK=%s\n' "$APT_TRANSACTION_HOOK"
+printf 'APT_DRIVER_POLICY=%s\n' "$APT_TRANSACTION_DRIVER_POLICY"
+cat "$HOME/generated-guard/driver-policy"
 printf 'GENERATED_HOOK_ACCEPTED\n'
 `,
       {
@@ -570,8 +579,15 @@ printf 'GENERATED_HOOK_ACCEPTED\n'
     expect(output).toContain(
       "APT_HOOK=/bin/bash /run/nemoclaw-apt-transaction.GENERATED/verify-plan",
     );
+    expect(output).toContain(
+      "APT_DRIVER_POLICY=/run/nemoclaw-apt-transaction.GENERATED/driver-policy",
+    );
+    expect(output).toContain("Pin: version 610.43.02-1ubuntu1");
+    expect(output).toContain("Pin-Priority: 1001");
     expect(output).toContain("SUDO chmod 0700 /run/nemoclaw-apt-transaction.GENERATED/verify-plan");
-    expect(output).toContain("SUDO chmod 0600 /run/nemoclaw-apt-transaction.GENERATED/targets");
+    expect(output).toContain(
+      "SUDO chmod 0600 /run/nemoclaw-apt-transaction.GENERATED/targets /run/nemoclaw-apt-transaction.GENERATED/driver-policy",
+    );
   });
 
   it("cleans the root-owned transaction guard when the caller exits", () => {

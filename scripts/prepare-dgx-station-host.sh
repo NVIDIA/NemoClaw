@@ -316,6 +316,7 @@ NETWORK_VALIDATED=0
 PACKAGE_TRANSACTION_SPECS=()
 APT_TRANSACTION_GUARD_DIR=""
 APT_TRANSACTION_HOOK=""
+APT_TRANSACTION_DRIVER_POLICY=""
 GPU_ROWS_ERROR=""
 
 info() {
@@ -1978,6 +1979,7 @@ cleanup_apt_transaction_guard() {
   local guard_dir=${APT_TRANSACTION_GUARD_DIR:-}
   APT_TRANSACTION_GUARD_DIR=""
   APT_TRANSACTION_HOOK=""
+  APT_TRANSACTION_DRIVER_POLICY=""
   [[ -n "$guard_dir" ]] || return 0
   if [[ ! "$guard_dir" =~ ^/run/nemoclaw-apt-transaction\.[A-Za-z0-9]+$ ]]; then
     warn "refusing to clean unexpected APT transaction guard path: ${guard_dir}"
@@ -2001,7 +2003,7 @@ cleanup_station_prepare() {
 }
 
 create_apt_transaction_guard() {
-  local spec state name expected allowed_old native_arch targets="" hook_path targets_path
+  local spec state name expected allowed_old native_arch targets="" hook_path targets_path policy_path
   native_arch="$(sudo dpkg --print-architecture)"
   [[ "$native_arch" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
     || fatal "Could not determine the native package architecture"
@@ -2023,6 +2025,7 @@ create_apt_transaction_guard() {
     || fatal "APT transaction guard returned an unexpected path: ${APT_TRANSACTION_GUARD_DIR}"
   hook_path="${APT_TRANSACTION_GUARD_DIR}/verify-plan"
   targets_path="${APT_TRANSACTION_GUARD_DIR}/targets"
+  policy_path="${APT_TRANSACTION_GUARD_DIR}/driver-policy"
   {
     printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail'
     declare -f apt_guard_fatal
@@ -2032,12 +2035,31 @@ create_apt_transaction_guard() {
     printf '%s\n' 'validate_apt_preinstall_plan "${0%/*}/targets"'
   } | sudo tee "$hook_path" >/dev/null
   printf '%s' "$targets" | sudo tee "$targets_path" >/dev/null
+  printf '%s\n' \
+    'Package: src:nvidia-graphics-drivers:any src:nvidia-kmod-open:any' \
+    "Pin: version ${DRIVER_VERSION}-1ubuntu1" \
+    'Pin-Priority: 1001' \
+    '' \
+    'Package: src:nvidia-modprobe src:nvidia-persistenced src:nvidia-settings src:nvidia-xconfig' \
+    "Pin: version ${DRIVER_VERSION}-1ubuntu1" \
+    'Pin-Priority: 1001' \
+    '' \
+    'Package: src:cuda-drivers:any src:nvidia-open:any' \
+    "Pin: version ${DRIVER_VERSION}-1ubuntu1" \
+    'Pin-Priority: 1001' \
+    '' \
+    'Package: src:libnvidia-nscq src:libnvsdm src:nvidia-fabricmanager src:nvidia-imex' \
+    "Pin: version ${DRIVER_VERSION}-1ubuntu1" \
+    'Pin-Priority: 1001' \
+    | sudo tee "$policy_path" >/dev/null
   sudo chmod 0700 "$hook_path"
-  sudo chmod 0600 "$targets_path"
+  sudo chmod 0600 "$targets_path" "$policy_path"
   assert_root_directory_safe "$APT_TRANSACTION_GUARD_DIR" "APT transaction guard directory"
   assert_root_regular_file_safe "$hook_path" 0700 "APT transaction guard"
   assert_root_regular_file_safe "$targets_path" 0600 "APT transaction target manifest"
+  assert_root_regular_file_safe "$policy_path" 0600 "APT qualified driver policy"
   APT_TRANSACTION_HOOK="/bin/bash ${hook_path}"
+  APT_TRANSACTION_DRIVER_POLICY="$policy_path"
 }
 
 validate_apt_simulation() {
@@ -2098,10 +2120,12 @@ validate_apt_simulation() {
 simulate_install() {
   local simulation
   [[ "$APT_TRANSACTION_GUARD_DIR" =~ ^/run/nemoclaw-apt-transaction\.[A-Za-z0-9]+$ &&
-    "$APT_TRANSACTION_HOOK" == "/bin/bash ${APT_TRANSACTION_GUARD_DIR}/verify-plan" ]] \
+    "$APT_TRANSACTION_HOOK" == "/bin/bash ${APT_TRANSACTION_GUARD_DIR}/verify-plan" &&
+    "$APT_TRANSACTION_DRIVER_POLICY" == "${APT_TRANSACTION_GUARD_DIR}/driver-policy" ]] \
     || fatal "APT transaction guard is not ready"
   simulation="$(sudo env DEBIAN_FRONTEND=noninteractive LC_ALL=C \
     apt-get -s install --no-install-recommends --no-remove \
+    -o "Dir::Etc::Preferences=${APT_TRANSACTION_DRIVER_POLICY}" \
     -o "DPkg::Pre-Install-Pkgs::=${APT_TRANSACTION_HOOK}" \
     -o "DPkg::Tools::options::/bin/bash::Version=3" "$@")" \
     || fatal "APT simulation failed"
@@ -2133,6 +2157,7 @@ activate_driver_package_pin() {
   info "Installing the pinned Station driver package policy"
   sudo env DEBIAN_FRONTEND=noninteractive LC_ALL=C \
     apt-get install -y --no-install-recommends --no-remove \
+    -o "Dir::Etc::Preferences=${APT_TRANSACTION_DRIVER_POLICY}" \
     -o "DPkg::Pre-Install-Pkgs::=${APT_TRANSACTION_HOOK}" \
     -o "DPkg::Tools::options::/bin/bash::Version=3" \
     "$DRIVER_PIN_PACKAGE_SPEC"
@@ -2162,6 +2187,7 @@ install_packages() {
     info "Installing missing pinned Station prerequisites"
     sudo env DEBIAN_FRONTEND=noninteractive LC_ALL=C \
       apt-get install -y --no-install-recommends --no-remove \
+      -o "Dir::Etc::Preferences=${APT_TRANSACTION_DRIVER_POLICY}" \
       -o "DPkg::Pre-Install-Pkgs::=${APT_TRANSACTION_HOOK}" \
       -o "DPkg::Tools::options::/bin/bash::Version=3" \
       "${PACKAGE_TRANSACTION_SPECS[@]}"
