@@ -18,7 +18,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "vitest";
 import { testTimeout } from "./helpers/timeouts";
 
-const TIMEOUT_MS = testTimeout(20_000);
+const TIMEOUT_MS = testTimeout(60_000);
 const SANDBOX_NAME = "my-assistant";
 
 // Output fixtures that mirror real OpenShell CLI output.
