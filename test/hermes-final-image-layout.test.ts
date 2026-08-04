@@ -224,6 +224,7 @@ describe("Hermes final image layout", () => {
         copies: [
           "COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts",
           "COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts",
+          "COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts",
           "COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts",
         ],
       },
@@ -390,6 +391,7 @@ describe("Hermes final image layout", () => {
     expect(modeNormalize).toBeLessThan(metadataCheck);
     for (const metadataContract of [
       "/scripts/patch-bundled-npm-brace-expansion.mts 'root:root 444'",
+      "/scripts/lib/patch-bundled-npm-ip-address.mts 'root:root 444'",
       "/scripts/patch-bundled-npm-tar.mts 'root:root 444'",
       "/opt/nemoclaw-hermes-config/generate-config.ts 'root:root 444'",
       "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py 'root:root 755'",
@@ -414,7 +416,7 @@ describe("Hermes final image layout", () => {
     );
     expect(doctorLayer).toContain('if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then');
     expect(doctorLayer).toContain('assert m.version("microsoft-teams-apps") == "2.0.13.4"');
-    expect(doctorLayer).toContain('assert m.version("aiohttp") == "3.14.1"');
+    expect(doctorLayer).toContain('assert m.version("aiohttp") == "3.14.3"');
     expect(doctorLayer).toContain("assert len(neutral) == 30");
     expect(doctorLayer).toContain("neutral-platform-inertness");
     expect(doctorLayer).toContain("GOOGLE_CHAT_SERVICE_ACCOUNT_JSON");
