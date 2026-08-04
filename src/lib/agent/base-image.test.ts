@@ -402,6 +402,37 @@ describe("agent base image provisioning", () => {
     });
   });
 
+  it("omits corporate CA build inputs when corporate CA import is disabled (#8119)", () => {
+    vi.stubEnv("NEMOCLAW_CORPORATE_CA_BUNDLE", writeCa(tmpDir()));
+    vi.stubEnv("NEMOCLAW_CORPORATE_CA_IMPORT", "0");
+    withMockedDocker(({ ensureAgentBaseImage, dockerBuildMock, resolveSandboxBaseImageMock }) => {
+      resolveSandboxBaseImageMock.mockReturnValue({
+        ref: "nemoclaw-dcode-sandbox-base-local:compatible",
+        digest: null,
+        source: "local",
+        glibcVersion: "2.41",
+      });
+
+      ensureAgentBaseImage(
+        makeAgent({
+          name: "langchain-deepagents-code",
+          displayName: "LangChain Deep Agents Code",
+          expectedVersion: "0.1.34",
+          dockerfileBasePath: "/test/root/agents/langchain-deepagents-code/Dockerfile.base",
+          dockerfilePath: "/test/root/agents/langchain-deepagents-code/Dockerfile",
+        }),
+        { forceBaseImageRebuild: true },
+      );
+
+      expect(resolveSandboxBaseImageMock).toHaveBeenCalledWith(
+        expect.objectContaining({ buildArgs: undefined }),
+      );
+      expect(dockerBuildMock.mock.calls[0]?.[3]).toEqual(
+        expect.objectContaining({ buildArgs: undefined }),
+      );
+    });
+  });
+
   it("fails closed when the Deep Agents Code manifest omits its base-image version", () => {
     withMockedDocker(({ ensureAgentBaseImage, resolveSandboxBaseImageMock }) => {
       expect(() =>
