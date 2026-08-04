@@ -8,21 +8,13 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  markStepCompleteLegacy,
-  markStepFailedLegacy,
-  markStepStartedLegacy,
-} from "../../../test/helpers/onboard-legacy-step-mutation";
-
 const require = createRequire(import.meta.url);
 const distPath = require.resolve("./onboard-session");
 const eventsDistPath = require.resolve("../onboard/machine/events");
-const stepMutationDistPath = require.resolve("./onboard-step-mutation");
 const originalHome = process.env.HOME;
 type OnboardSessionModule = typeof import("./onboard-session");
 type OnboardMachineEventsModule = typeof import("../onboard/machine/events");
 type OnboardMachineEvent = import("../onboard/machine/events").OnboardMachineEvent;
-type OnboardStepMutationModule = typeof import("./onboard-step-mutation");
 type LoadedSession = NonNullable<ReturnType<OnboardSessionModule["loadSession"]>>;
 type DebugSummary = NonNullable<ReturnType<OnboardSessionModule["summarizeForDebug"]>>;
 type NullableSessionUpdateKey = import("./onboard-session").NullableSessionUpdateKey;
@@ -30,7 +22,6 @@ type MessagingPlan = NonNullable<LoadedSession["messagingPlan"]>;
 type MessagingChannelId = MessagingPlan["channels"][number]["channelId"];
 let session: OnboardSessionModule;
 let machineEvents: OnboardMachineEventsModule;
-let stepMutation: OnboardStepMutationModule;
 let tmpDir: string;
 
 const _nullableSessionUpdateKeyAcceptsNullableFields: Record<
@@ -117,10 +108,8 @@ beforeEach(() => {
   process.env.HOME = tmpDir;
   delete require.cache[distPath];
   delete require.cache[eventsDistPath];
-  delete require.cache[stepMutationDistPath];
   session = require("./onboard-session");
   machineEvents = require("../onboard/machine/events");
-  stepMutation = require("./onboard-step-mutation");
   machineEvents.clearOnboardMachineEventListeners();
   session.clearSession();
   session.releaseOnboardLock();
@@ -198,7 +187,7 @@ describe("onboard session", () => {
 
   it("redacts credential-bearing endpoint URLs before persisting them", () => {
     session.saveSession(session.createSession());
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       endpointUrl:
         "https://alice:secret@example.com/v1/models?token=abc123&sig=def456&X-Amz-Signature=ghi789&keep=yes#token=frag",
     });
@@ -218,7 +207,7 @@ describe("onboard session", () => {
         stationExpressIntent: { version: 1, kind: "spark", sandboxName: "my-assistant" },
       }),
     );
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       provider: "vllm-local",
       model: "nvidia/Qwen3.6-35B-A3B-NVFP4",
       sandboxName: "my-assistant",
@@ -229,31 +218,28 @@ describe("onboard session", () => {
     expect(loaded.provider).toBe("vllm-local");
   });
 
-  it("marks steps started, completed, and failed", () => {
+  it("records step status without changing machine or terminal status", () => {
     session.saveSession(session.createSession());
-    markStepStartedLegacy(session, stepMutation, "gateway");
+    session.markStepStarted("gateway");
     let loaded = requireLoadedSession(session.loadSession());
     expect(loaded.steps.gateway.status).toBe("in_progress");
     expect(loaded.lastStepStarted).toBe("gateway");
     expect(loaded.steps.gateway.completedAt).toBeNull();
 
-    markStepCompleteLegacy(session, stepMutation, "gateway", { sandboxName: "my-assistant" });
+    session.markStepComplete("gateway", { sandboxName: "my-assistant" });
     loaded = requireLoadedSession(session.loadSession());
     expect(loaded.steps.gateway.status).toBe("complete");
     expect(loaded.sandboxName).toBe("my-assistant");
     expect(loaded.steps.gateway.completedAt).toBeTruthy();
 
-    markStepFailedLegacy(session, stepMutation, "sandbox", "Sandbox creation failed");
+    session.markStepFailed("sandbox", "Sandbox creation failed");
     loaded = requireLoadedSession(session.loadSession());
     expect(loaded.steps.sandbox.status).toBe("failed");
     expect(loaded.steps.sandbox.completedAt).toBeNull();
-    expect(loaded.failure).not.toBeNull();
-    if (!loaded.failure) {
-      throw new Error("Expected failure metadata after markStepFailed()");
-    }
-    expect(loaded.failure.step).toBe("sandbox");
-    expect(loaded.failure.message).toMatch(/Sandbox creation failed/);
-    expect(loaded.machine.state).toBe("failed");
+    expect(loaded.steps.sandbox.error).toBe("Sandbox creation failed");
+    expect(loaded.failure).toBeNull();
+    expect(loaded.status).toBe("in_progress");
+    expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
   });
 
   it("can record step boundaries without mutating the machine snapshot", () => {
@@ -261,53 +247,43 @@ describe("onboard session", () => {
     machineEvents.addOnboardMachineEventListener((event) => emitted.push(event));
     session.saveSession(session.createSession());
 
-    session.markStepStarted("preflight", { updateMachine: false });
+    session.markStepStarted("preflight");
     let loaded = requireLoadedSession(session.loadSession());
     expect(loaded.steps.preflight.status).toBe("in_progress");
     expect(loaded.status).toBe("in_progress");
     expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
 
-    session.markStepComplete(
-      "preflight",
-      { sandboxName: "my-assistant" },
-      { updateMachine: false },
-    );
+    session.markStepComplete("preflight", { sandboxName: "my-assistant" });
     loaded = requireLoadedSession(session.loadSession());
     expect(loaded.steps.preflight.status).toBe("complete");
     expect(loaded.sandboxName).toBe("my-assistant");
     expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
 
-    session.markStepFailed("gateway", "Gateway failed", { updateMachine: false });
+    session.markStepFailed("gateway", "Gateway failed");
     loaded = requireLoadedSession(session.loadSession());
     expect(loaded.steps.gateway.status).toBe("failed");
     expect(loaded.status).toBe("in_progress");
     expect(loaded.failure).toBeNull();
     expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
-    expect(emitted.map((event) => event.type)).toEqual(["context.updated"]);
+    expect(emitted).toEqual([]);
   });
 
-  it("persists a compact machine snapshot across step boundaries", () => {
+  it("leaves machine transition ownership outside step helpers", () => {
     session.saveSession(session.createSession());
     let loaded = requireLoadedSession(session.loadSession());
     expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
 
-    markStepStartedLegacy(session, stepMutation, "preflight");
+    session.markStepStarted("preflight");
     loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.machine).toMatchObject({ state: "preflight", revision: 1 });
-    expect(loaded.machine.stateEnteredAt).toBe(loaded.steps.preflight.startedAt);
+    expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
 
-    markStepCompleteLegacy(session, stepMutation, "preflight");
+    session.markStepComplete("preflight");
     loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.machine).toMatchObject({ state: "gateway", revision: 2 });
-    expect(loaded.machine.stateEnteredAt).toBe(loaded.steps.preflight.completedAt);
+    expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
 
-    markStepCompleteLegacy(session, stepMutation, "gateway");
+    session.markStepComplete("gateway");
     loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.machine).toMatchObject({ state: "provider_selection", revision: 3 });
-
-    session.completeSession();
-    loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.machine).toMatchObject({ state: "complete", revision: 4 });
+    expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
     expect(requireDebugSummary(session.summarizeForDebug()).machine).toEqual(loaded.machine);
   });
 
@@ -388,59 +364,22 @@ describe("onboard session", () => {
     });
   });
 
-  it("emits redacted structured machine events for session step mutations", () => {
+  it("does not emit machine events for direct step mutations", () => {
     const emitted: OnboardMachineEvent[] = [];
     machineEvents.addOnboardMachineEventListener((event) => emitted.push(event));
 
     session.saveSession(session.createSession({ sessionId: "session-1" }));
-    markStepStartedLegacy(session, stepMutation, "gateway");
-    markStepCompleteLegacy(session, stepMutation, "gateway", {
+    session.markStepStarted("gateway");
+    session.markStepComplete("gateway", {
       sandboxName: "my-assistant",
       endpointUrl:
         "https://alice:super-secret-token@example.com/v1?token=super-secret-token&keep=yes#token=super-secret-token",
       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     });
     session.markStepSkipped("openclaw");
-    markStepFailedLegacy(
-      session,
-      stepMutation,
-      "sandbox",
-      "NVIDIA_INFERENCE_API_KEY=super-secret-token",
-    );
-    session.completeSession({ provider: "ollama-local", credentialEnv: null });
+    session.markStepFailed("sandbox", "NVIDIA_INFERENCE_API_KEY=super-secret-token");
 
-    expect(emitted.map((event) => event.type)).toEqual([
-      "state.entered",
-      "context.updated",
-      "state.completed",
-      "state.skipped",
-      "state.failed",
-      "onboard.failed",
-      "context.updated",
-      "onboard.completed",
-    ]);
-    expect(emitted[0]).toMatchObject({
-      version: 1,
-      sessionId: "session-1",
-      state: "gateway",
-      step: "gateway",
-      error: null,
-    });
-    expect(emitted[1].context).toMatchObject({
-      sandboxName: "my-assistant",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-    });
-    expect(emitted[1].context.endpointOrigin).toBe("https://example.com");
-    expect(emitted[1].metadata.fields).toEqual(["sandboxName", "endpointUrl", "credentialEnv"]);
-    expect(emitted[4]).toMatchObject({
-      type: "state.failed",
-      state: "sandbox",
-      step: "sandbox",
-      error: "NVIDIA_INFERENCE_API_KEY=<REDACTED>",
-    });
-    expect(emitted[5]).toMatchObject({ type: "onboard.failed", state: "failed" });
-    expect(emitted.at(-1)).toMatchObject({ type: "onboard.completed", state: "complete" });
-    expect(JSON.stringify(emitted)).not.toContain("super-secret-token");
+    expect(emitted).toEqual([]);
 
     const persisted = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8"));
     expect(persisted.events).toBeUndefined();
@@ -452,7 +391,7 @@ describe("onboard session", () => {
     });
 
     session.saveSession(session.createSession());
-    expect(() => markStepStartedLegacy(session, stepMutation, "preflight")).not.toThrow();
+    expect(() => session.markStepStarted("preflight")).not.toThrow();
 
     const loaded = requireLoadedSession(session.loadSession());
     expect(loaded.steps.preflight.status).toBe("in_progress");
@@ -463,7 +402,7 @@ describe("onboard session", () => {
     machineEvents.addOnboardMachineEventListener((event) => emitted.push(event));
 
     session.saveSession(session.createSession());
-    markStepStartedLegacy(session, stepMutation, "not_a_real_step");
+    session.markStepStarted("not_a_real_step");
 
     expect(emitted).toEqual([]);
   });
@@ -478,8 +417,8 @@ describe("onboard session", () => {
     session.completeSession();
     session.completeSession();
 
-    expect(emitted.map((event) => event.type)).toEqual(["state.skipped", "onboard.completed"]);
-    expect(emitted).toHaveLength(2);
+    expect(emitted.map((event) => event.type)).toEqual(["onboard.completed"]);
+    expect(emitted).toHaveLength(1);
   });
 
   it("persists safe provider metadata without persisting secrets", () => {
@@ -503,7 +442,7 @@ describe("onboard session", () => {
         token: "secret",
       },
     };
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", unsafeProviderUpdate);
+    session.markStepComplete("provider_selection", unsafeProviderUpdate);
 
     const loaded = requireLoadedSession(session.loadSession());
     expect(loaded.provider).toBe("nvidia-nim");
@@ -535,7 +474,7 @@ describe("onboard session", () => {
   it("clears credentialEnv when a provider-selection update passes null (#2625)", () => {
     // Seed with a prior remote-provider onboard state.
     session.saveSession(session.createSession());
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       provider: "openai",
       model: "gpt-4o",
       endpointUrl: "https://api.openai.com/v1",
@@ -548,7 +487,7 @@ describe("onboard session", () => {
 
     // User re-runs onboard and picks local Ollama. The wizard emits
     // credentialEnv=null and nimContainer=null alongside the new provider.
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       provider: "ollama-local",
       model: "qwen3:14b",
       endpointUrl: "http://host.docker.internal:11434/v1",
@@ -568,12 +507,12 @@ describe("onboard session", () => {
     // Regression guard: undefined must mean "leave unchanged", distinct from
     // null ("clear"). Partial updates must not accidentally wipe fields.
     session.saveSession(session.createSession());
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       provider: "openai",
       model: "gpt-4o",
       credentialEnv: "OPENAI_API_KEY",
     });
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", { model: "gpt-4o-mini" });
+    session.markStepComplete("provider_selection", { model: "gpt-4o-mini" });
 
     const loaded = requireLoadedSession(session.loadSession());
     expect(loaded.model).toBe("gpt-4o-mini");
@@ -595,7 +534,7 @@ describe("onboard session", () => {
       JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8")).migratedLegacyValueHashes,
     ).toBeNull();
 
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       migratedLegacyValueHashes: {
         NVIDIA_API_KEY: digest,
         BROKEN_NUMERIC: 123,
@@ -617,10 +556,10 @@ describe("onboard session", () => {
     session.saveSession(session.createSession());
     const unset = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8")).credentialEnv;
 
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     });
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", { credentialEnv: null });
+    session.markStepComplete("provider_selection", { credentialEnv: null });
     const declined = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8")).credentialEnv;
 
     expect(unset).toBeNull();
@@ -633,20 +572,20 @@ describe("onboard session", () => {
 
   it("only persists known Hermes auth methods", () => {
     session.saveSession(session.createSession());
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       provider: "hermes-provider",
       hermesAuthMethod: "oauth",
     });
     let loaded = requireLoadedSession(session.loadSession());
     expect(loaded.hermesAuthMethod).toBe("oauth");
 
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       hermesAuthMethod: "not-a-real-method" as never,
     });
     loaded = requireLoadedSession(session.loadSession());
     expect(loaded.hermesAuthMethod).toBe("oauth");
 
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       hermesAuthMethod: null,
     });
     loaded = requireLoadedSession(session.loadSession());
@@ -701,7 +640,7 @@ describe("onboard session", () => {
     // support the null-clear contract. If any regresses to the old
     // string-only guard, the test below catches it.
     session.saveSession(session.createSession());
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       sandboxName: "stale-sandbox",
       provider: "openai",
       model: "gpt-4o",
@@ -712,7 +651,7 @@ describe("onboard session", () => {
       nimContainer: "nim-abc",
     });
 
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       sandboxName: null,
       provider: null,
       model: null,
@@ -739,7 +678,7 @@ describe("onboard session", () => {
     // finalizes the session for a successful run. A local-provider onboard
     // must not leave a stale credentialEnv on the "complete" record either.
     session.saveSession(session.createSession());
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       provider: "openai",
       credentialEnv: "OPENAI_API_KEY",
     });
@@ -870,13 +809,13 @@ describe("onboard session", () => {
   it("filterSafeUpdates passes through messagingPlan and accepts explicit null clear", () => {
     session.saveSession(session.createSession());
     const plan = makeMessagingPlan("my-assistant", ["discord"]);
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", { messagingPlan: plan });
+    session.markStepComplete("provider_selection", { messagingPlan: plan });
     expect(requireLoadedSession(session.loadSession()).messagingPlan).toMatchObject({
       sandboxName: "my-assistant",
       channels: [expect.objectContaining({ channelId: "discord", configured: true })],
     });
 
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", { messagingPlan: null });
+    session.markStepComplete("provider_selection", { messagingPlan: null });
     expect(requireLoadedSession(session.loadSession()).messagingPlan).toBeNull();
   });
 
@@ -973,7 +912,7 @@ describe("onboard session", () => {
 
   it("persists and clears web search config through safe session updates", () => {
     session.saveSession(session.createSession());
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       webSearchConfig: { fetchEnabled: true },
     });
 
@@ -1030,7 +969,7 @@ describe("onboard session", () => {
         token: "should-not-persist",
       },
     };
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", unsafeMetadataUpdate);
+    session.markStepComplete("provider_selection", unsafeMetadataUpdate);
 
     const loaded = requireLoadedSession(session.loadSession());
     expect(loaded.metadata.gatewayName).toBe("nemoclaw");
@@ -1284,9 +1223,7 @@ describe("onboard session", () => {
 
   it("redacts sensitive values from persisted failure messages", () => {
     session.saveSession(session.createSession());
-    markStepFailedLegacy(
-      session,
-      stepMutation,
+    session.markStepFailed(
       "inference",
       "provider auth failed with NVIDIA_INFERENCE_API_KEY=nvapi-secret Bearer topsecret sk-secret-value-that-is-long-enough ghp_1234567890123456789012345",
     );
@@ -1298,11 +1235,8 @@ describe("onboard session", () => {
     expect(loaded.steps.inference.error).not.toContain("topsecret");
     expect(loaded.steps.inference.error).not.toContain("sk-secret-value-that-is-long-enough");
     expect(loaded.steps.inference.error).not.toContain("ghp_1234567890123456789012345");
-    expect(loaded.failure).not.toBeNull();
-    if (!loaded.failure) {
-      throw new Error("Expected failure metadata after markStepFailed()");
-    }
-    expect(loaded.failure.message).toBe(loaded.steps.inference.error);
+    expect(loaded.failure).toBeNull();
+    expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
   });
 
   it("round-trips null messagingPlan through normalizeSession", () => {
@@ -1330,7 +1264,7 @@ describe("onboard session", () => {
   it("filterSafeUpdates preserves messagingPlan field", () => {
     session.saveSession(session.createSession());
     const plan = makeMessagingPlan("my-assistant", ["slack", "discord"]);
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       messagingPlan: plan,
     });
 
@@ -1346,7 +1280,7 @@ describe("onboard session", () => {
 
   it("filterSafeUpdates ignores malformed messagingPlan values", () => {
     session.saveSession(session.createSession());
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       messagingPlan: { sandboxName: "my-assistant" },
     } as unknown as Parameters<OnboardSessionModule["markStepComplete"]>[1]);
 
@@ -1356,7 +1290,7 @@ describe("onboard session", () => {
 
   it("routes telegramConfig through markStepComplete in filterSafeUpdates (#1737)", () => {
     session.saveSession(session.createSession());
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       telegramConfig: { requireMention: true },
     });
 
@@ -1364,7 +1298,7 @@ describe("onboard session", () => {
     expect(loaded.telegramConfig).toEqual({ requireMention: true });
 
     // Explicit null (clearing the field) should also round-trip.
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", { telegramConfig: null });
+    session.markStepComplete("provider_selection", { telegramConfig: null });
     const cleared = session.loadSession()!;
     expect(cleared.telegramConfig).toBeNull();
   });
@@ -1372,7 +1306,7 @@ describe("onboard session", () => {
   it("drops malformed telegramConfig values in filterSafeUpdates (#1737)", () => {
     session.saveSession(session.createSession());
     // Non-boolean requireMention — must not leak through.
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       telegramConfig: { requireMention: "yes" } as unknown as { requireMention: boolean },
     });
 
@@ -1382,7 +1316,7 @@ describe("onboard session", () => {
 
   it("filterSafeUpdates routes wechatConfig through markStepComplete", () => {
     session.saveSession(session.createSession());
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       wechatConfig: { accountId: "primary", baseUrl: "https://x", userId: "u" },
     });
 
@@ -1395,14 +1329,14 @@ describe("onboard session", () => {
 
     // Explicit null clears the field (used when WeChat is removed from the
     // enabled channels on a subsequent onboard).
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", { wechatConfig: null });
+    session.markStepComplete("provider_selection", { wechatConfig: null });
     const cleared = session.loadSession()!;
     expect(cleared.wechatConfig).toBeNull();
   });
 
   it("filterSafeUpdates drops malformed wechatConfig values", () => {
     session.saveSession(session.createSession());
-    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+    session.markStepComplete("provider_selection", {
       wechatConfig: { accountId: 9000 } as unknown as { accountId: string },
     });
 
@@ -1427,8 +1361,8 @@ describe("onboard session", () => {
 
   it("summarizes the session for debug output", () => {
     session.saveSession(session.createSession({ sandboxName: "my-assistant" }));
-    markStepStartedLegacy(session, stepMutation, "preflight");
-    markStepCompleteLegacy(session, stepMutation, "preflight");
+    session.markStepStarted("preflight");
+    session.markStepComplete("preflight");
     session.completeSession();
     const summary = requireDebugSummary(session.summarizeForDebug());
 
@@ -1440,12 +1374,15 @@ describe("onboard session", () => {
   });
 
   it("keeps debug summaries redacted when failures were sanitized", () => {
-    session.saveSession(session.createSession({ sandboxName: "my-assistant" }));
-    markStepFailedLegacy(
-      session,
-      stepMutation,
-      "provider_selection",
-      "Bearer abcdefghijklmnopqrstuvwxyz",
+    session.saveSession(
+      session.createSession({
+        sandboxName: "my-assistant",
+        failure: {
+          step: "provider_selection",
+          message: "Bearer abcdefghijklmnopqrstuvwxyz",
+          recordedAt: "2026-04-01T00:00:00.000Z",
+        },
+      }),
     );
     const summary = requireDebugSummary(session.summarizeForDebug());
 

@@ -19,6 +19,7 @@ import {
   getSandboxInferenceConfig,
   HERMES_PROVIDER_MODEL_OPTIONS,
   INFERENCE_ROUTE_URL,
+  LLAMA_CPP_LOCAL_CREDENTIAL_ENV,
   MANAGED_PROVIDER_ID,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
   parseGatewayInference,
@@ -158,6 +159,40 @@ describe("inference selection config", () => {
       providerLabel: "Local Ollama",
     });
     expect(OLLAMA_LOCAL_CREDENTIAL_ENV).not.toBe(DEFAULT_ROUTE_CREDENTIAL_ENV);
+  });
+
+  it("maps llama.cpp attachment to inference.local with Chat Completions (#8161)", () => {
+    expect(getProviderSelectionConfig("llama-cpp-local", "team/model-alias")).toEqual({
+      endpointType: "custom",
+      endpointUrl: INFERENCE_ROUTE_URL,
+      ncpPartner: null,
+      model: "team/model-alias",
+      profile: DEFAULT_ROUTE_PROFILE,
+      credentialEnv: LLAMA_CPP_LOCAL_CREDENTIAL_ENV,
+      provider: "llama-cpp-local",
+      providerLabel: "Local llama.cpp",
+    });
+    expect(
+      getSandboxInferenceConfig("team/model-alias", "llama-cpp-local", "openai-responses"),
+    ).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/team/model-alias`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: { supportsStore: false },
+    });
+  });
+
+  it.each([
+    undefined,
+    "",
+    "  ",
+    "/models/model.gguf",
+    "models/../secret",
+    "foo/./bar",
+    "a".repeat(257),
+  ])("refuses llama.cpp selection without a validated served alias: %s (#8161)", (model) => {
+    expect(getProviderSelectionConfig("llama-cpp-local", model)).toBeNull();
   });
 
   it("maps nvidia-nim to the sandbox inference route", () => {
