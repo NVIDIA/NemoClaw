@@ -154,7 +154,8 @@ The Colossus BaseOS path still blocks on `packagekitd`, while generic Ubuntu qui
 When that CDI device is missing, the AI Developer Tools path first confirms that no workloads are active, then enables the packaged `nvidia-cdi-refresh.path` and `nvidia-cdi-refresh.service` units, starts the path unit, restarts the refresh service, and checks the device again.
 It stops with service diagnostics if packaged refresh fails or omits the device.
 It never generates CDI directly, rewrites the Docker runtime, or restarts Docker or containerd.
-This compatibility repair is owned by the qualified May and June 2026 AI Developer Tools factory-image boundary, which can leave its packaged CDI units disabled; it can be removed after repeat clean-host qualification shows that the qualified images consistently advertise `nvidia.com/gpu=all` at boot.
+The qualified May and June 2026 AI Developer Tools factory-image boundary defines this compatibility repair because those images can leave their packaged CDI units disabled.
+NemoClaw maintainers can remove the repair after repeated clean-host qualification confirms that the qualified images consistently advertise `nvidia.com/gpu=all` at boot.
 The Colossus BaseOS path requires the exact reviewed package and failed-service fingerprints, preserves the factory kernel, driver, DKMS, Docker, and NVIDIA Container Toolkit packages, and prepares only Docker access and packaged CDI.
 Only the Colossus BaseOS path registers the NVIDIA Docker runtime when the launch probe proves that the runtime is missing, and it restores the prior daemon configuration if registration fails.
 The preparation helper writes a private audit log under `~/station-bootstrap-logs`.
