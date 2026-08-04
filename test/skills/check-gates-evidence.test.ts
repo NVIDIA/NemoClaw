@@ -905,7 +905,15 @@ describe("maintainer merge-gate contributor compliance", () => {
         ],
         {
           "400": {
-            ...exactDiffGateRun("success", [{ id: 40, name: "E2E / PR Gate" }]),
+            ...exactDiffGateRun("success", [
+              { id: 40, name: "E2E / PR Gate" },
+              {
+                id: 42,
+                name: "initialize",
+                startedAt: "2026-01-01T00:01:00Z",
+                completedAt: "2026-01-01T00:03:00Z",
+              },
+            ]),
             pullRequests: [],
             createdAt: "2026-01-01T00:01:00Z",
             updatedAt: "2026-01-01T00:03:00Z",
