@@ -1,0 +1,116 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingRecipe
+
+metadata:
+  id: llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1
+  displayName: NVIDIA Nemotron 3 Nano 30B-A3B with llama.cpp
+
+spec:
+  backend: install-llama-cpp
+  providerId: llama-cpp-local
+
+  server:
+    technology: llama.cpp
+    source:
+      repository: ggml-org/llama.cpp
+      revision: 22dc605c4ead20e36f447cc67b55ef87e523bd55
+
+  model:
+    id: unsloth/Nemotron-3-Nano-30B-A3B-GGUF
+    revision: 9ad8b366c308f931b2a96b9306f0b41aef9cd405
+    servedName: nvidia-nemotron-3-nano-30b-a3b
+    files:
+      - path: Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf
+        digest: sha256:627f5b04aedc97f967332f331bd75b7a4ed2f33ca83e6ee74b44235cc1887890
+        sizeBytes: 22833947424
+        format: gguf
+        quantization: UD-Q4_K_XL
+        license: NVIDIA-Open-Model-License
+
+  runtime:
+    image: ghcr.io/ggml-org/llama.cpp@sha256:866ad568474de9e835e487ae841ad6ace1a494b5eab4f292cbd45adb6180f711
+    imageDownloadSizeBytes: 2181958990
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    containerRuntime: docker
+    networkExposure: loopback
+    hosts: 1
+    cuda:
+      baseImage: docker.io/nvidia/cuda@sha256:789e629e49401647e22b7054ae9c6c4f6427dba68010ba428deb4cc6b063676e
+      minimumDriverVersion: 580.65.06
+    gpu:
+      vendor: nvidia
+      count: 1
+      offload: full
+      cpuFallback: reject
+    resources:
+      memoryBytes: 51539607552
+      writableStorageBytes: 42949672960
+      pidsLimit: 256
+
+  execution:
+    receiptRef: llama-cpp.host-local.receipt/v1
+    materializerRef: llama-cpp.host-local/v1
+    lifecycleRef: llama-cpp.host-local.lifecycle/v1
+
+  serve:
+    protocol: openai-completions
+    authentication: bearer
+    port: 8081
+    chatTemplate: nemotron-v3-embedded
+    contextSize: 262144
+    slots: 1
+    idleSleepSeconds: -1
+    batchSize: 2048
+    microBatchSize: 512
+    flashAttention: enabled
+    kvCache:
+      key: f16
+      value: f16
+    speculativeDecoding: disabled
+    limits:
+      maxRequestBodyBytes: 16777216
+      maxPromptTokens: 253952
+      maxCompletionTokens: 8192
+      requestTimeoutSeconds: 900
+
+  readiness:
+    contractRef: llama-cpp.server-readiness/v1
+    timeoutSeconds: 1800
+    expectedModel: nvidia-nemotron-3-nano-30b-a3b
+    probes:
+      models: true
+      health: true
+      properties: true
+      metrics: true
+
+  policy:
+    egress: disabled
+    modelSource: verified-local
+    modelDownloads: disabled
+
+  surfaces:
+    ui: disabled
+    slotInspection: disabled
+    router: disabled
+    mcpProxy: disabled
+    serverTools: disabled
+    agentMode: disabled
+    multimodalProjection: disabled
+
+  capabilities:
+    agents: []
+    protocols:
+      - openai-completions
+    streaming: true
+    toolCalls: true
+    structuredOutputs: true
+    parallelToolCalls: false
+    responsesApi: false
+    embeddings: false
+    reranking: false
+    multimodal: false

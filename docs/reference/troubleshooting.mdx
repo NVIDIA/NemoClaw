@@ -528,6 +528,27 @@ Upgrade NemoClaw to a version that supports your OpenShell release, or install a
 For fresh installs, NemoClaw passes the blueprint range to `install-openshell.sh` and resolves a compatible published OpenShell release before downloading.
 If GitHub release metadata is unavailable, the script uses its bundled fallback pin and the post-install gate still enforces the configured range.
 
+### Installer Reports an OpenShell Gateway Version Mismatch
+
+On Linux, an existing OpenShell package can provide a systemd user service that starts a different gateway version from the user-local version that NemoClaw installs.
+The installer stops before onboarding instead of using the two versions together.
+The error reports both gateway versions and binary paths.
+
+<Warning>
+Do not remove the existing OpenShell package if its gateway manages resources outside NemoClaw.
+Package removal can stop that gateway.
+Align the package with the version in the installer error, or plan the migration of those resources first.
+</Warning>
+
+If you no longer need the APT-installed OpenShell package, remove it and rerun the installer:
+
+```bash
+sudo apt remove openshell
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+The next installer run must continue past the OpenShell installation step without reporting a version mismatch.
+
 <AgentOnly variant="openclaw">
 
 ### Sandbox build fails during OpenClaw plugin install
