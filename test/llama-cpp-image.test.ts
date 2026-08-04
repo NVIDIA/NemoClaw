@@ -8,6 +8,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import { loadLlamaCppImageConfig } from "../scripts/checks/export-llama-cpp-image-config.mts";
+
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const imageRoot = path.join(repoRoot, "managed-inference", "images", "llama-cpp");
 const manifestPath = path.join(imageRoot, "image.yaml");
@@ -67,7 +69,8 @@ function parseOutput(value: string): Record<string, string> {
 }
 
 describe("declarative llama.cpp server image", () => {
-  const manifest = YAML.parse(fs.readFileSync(manifestPath, "utf8")) as ImageManifest;
+  const manifestSource = fs.readFileSync(manifestPath, "utf8");
+  const manifest = YAML.parse(manifestSource) as ImageManifest;
   const recipe = YAML.parse(fs.readFileSync(recipePath, "utf8")) as ServingRecipe;
   const dockerfile = fs.readFileSync(dockerfilePath, "utf8");
 
@@ -141,6 +144,37 @@ describe("declarative llama.cpp server image", () => {
         runner,
       })),
     });
+  });
+
+  it.each([
+    [
+      "a base image outside the allowed registries",
+      manifestSource.replace("docker.io/nvidia/cuda@", "registry.example.invalid/cuda@"),
+    ],
+    [
+      "a runner that does not match the platform",
+      manifestSource.replace("runner: ubuntu-24.04", "runner: ubuntu-latest"),
+    ],
+    [
+      "a malformed base image digest",
+      manifestSource.replace(
+        "sha256:ef2203909e80b8b976cfc672f7e2ae2b00bc0e25c404ee86d89e10a3802f1c52",
+        "sha256:invalid",
+      ),
+    ],
+    [
+      "a duplicate platform",
+      manifestSource.replace("platform: linux/arm64", "platform: linux/amd64"),
+    ],
+    [
+      "an unexpected fixed CMake field",
+      manifestSource.replace(
+        "      ggmlBackendDl: true",
+        "      ggmlBackendDl: true\n      ggmlWidgets: true",
+      ),
+    ],
+  ])("rejects %s before exporting image build inputs (#8231)", (_case, candidate) => {
+    expect(() => loadLlamaCppImageConfig(candidate)).toThrow();
   });
 
   it("builds only the pinned non-root llama-server runtime surfaces (#8231)", () => {
