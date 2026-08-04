@@ -6,9 +6,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadManagedInferenceCatalog } from "./serving/catalog-loader";
 import { managedInferenceDigest, managedInferenceHexDigest } from "./serving/catalog-integrity";
-import type { CompiledManagedInferenceCatalog } from "./serving/types";
+import { loadManagedInferenceCatalog } from "./serving/catalog-loader";
 import { fixtureManagedClusterSelection } from "./serving/managed-cluster-fixture.test-support";
 import {
   type ManagedClusterNodeSnapshot,
@@ -42,6 +41,7 @@ import {
   type ManagedVllmSshBindingFixture,
 } from "./serving/managed-cluster-ssh-binding.test-support";
 import { managedClusterTopologyOutputDigest } from "./serving/managed-cluster-topology";
+import type { CompiledManagedInferenceCatalog } from "./serving/types";
 
 const API_KEY = "a".repeat(64);
 const HEAD_ID = "b".repeat(64);
@@ -304,6 +304,8 @@ describe("managed cluster vLLM runtime receipt", () => {
       ({ metadata }) => metadata.id === source.plan.recipeId,
     );
 
+    expect(currentPreset).toBeDefined();
+    expect(currentRecipe).toBeDefined();
     expect(loaded?.plan.catalogDigest).toBe(currentCatalog.catalogDigest);
     expect(loaded?.plan.presetDigest).toBe(managedInferenceDigest(currentPreset));
     expect(loaded?.plan.recipeDigest).toBe(managedInferenceDigest(currentRecipe));
