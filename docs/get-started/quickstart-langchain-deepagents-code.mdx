@@ -50,9 +50,9 @@ Review the [Prerequisites](prerequisites) before you begin.
     Select **LangChain Deep Agents Code** when the installer prompts you to choose an agent.
 
     <Note>
-      On supported platforms, the installer can offer **Express** before the agent-selection prompt.
-      **Express** uses preselected settings for that platform and runs onboarding non-interactively.
-      Decline **Express** to continue with this interactive LangChain Deep Agents Code flow.
+      On supported platforms, the installer can display `Run express install with these settings? [Y/n]:` before the agent-selection prompt.
+      This express install mode uses preselected settings for that platform and runs onboarding non-interactively.
+      Enter `n` to continue with this interactive LangChain Deep Agents Code flow.
       Refer to [Use Docker and supported platforms](#use-docker-and-supported-platforms) for more information.
     </Note>
 
@@ -93,8 +93,8 @@ Use these details when you need more control during setup or after the first san
     Before you install from Windows, follow [Prepare a Windows Machine to Install NemoClaw](additional-setup/windows-preparation).
     Before you install on DGX Station, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation).
 
-    DGX Spark, qualifying DGX Station hosts, and Windows WSL can offer an interactive express path after the third-party software notice.
-    After you confirm the Express prompt, the installer switches the remaining onboarding to non-interactive mode and selects the managed local inference path for that platform.
+    DGX Spark, qualifying DGX Station hosts, and Windows WSL can offer an express install mode after the third-party software notice.
+    After you accept the express install prompt, the installer switches the remaining onboarding to non-interactive mode and selects the managed local inference path for that platform.
 
     Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles and headless setup.
     Refer to [Set Up vLLM on Two DGX Stations](../inference/local-inference/set-up-vllm-on-two-dgx-stations) for the Deferred paired workflow.
