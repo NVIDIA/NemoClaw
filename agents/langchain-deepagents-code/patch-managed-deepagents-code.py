@@ -802,10 +802,13 @@ import time as _nemoclaw_time
 # authorization failure. Order is most-specific first; the first match wins.
 _NEMOCLAW_PERSISTED_ERROR_CLASSIFIERS = (
     (
+        # `ResourceExhausted` is the provider's own status name, so the bare
+        # token is specific enough; #7415's longer "Worker local total request
+        # limit reached (n/m)" wording is one message under that status and must
+        # not be required, or a reworded capacity error falls back to unknown.
         _nemoclaw_re.compile(
-            r"""\bResourceExhausted\b
-                (?:.{0,200}?\b(?:limit\s+reached|quota|capacity|\(\d+/\d+\)))?""",
-            _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE | _nemoclaw_re.DOTALL,
+            r"\bResourceExhausted\b",
+            _nemoclaw_re.IGNORECASE,
         ),
         ("ResourceExhausted", "upstream_provider_capacity", "true"),
     ),
