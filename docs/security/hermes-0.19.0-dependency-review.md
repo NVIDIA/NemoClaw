@@ -7,6 +7,8 @@ Review date: 2026-07-30
 
 Issue `#8087` review date: August 2, 2026.
 
+Python security refresh date: August 3, 2026.
+
 ## Decision
 
 Pin the NemoClaw Hermes runtime to the published, non-draft, non-prerelease `v2026.7.20` release, whose package version is `0.19.0`.
@@ -19,7 +21,7 @@ Named-profile copies remain inside the raw `profiles` directory capture under th
 The gateway-runtime-metadata, session-preview, Langfuse-placeholder, managed-light-skin, provider-routing, and resumed-one-shot workarounds remain necessary against the target source and retain exact-shape guards.
 
 The selected Python graph is hardened before installation with a reviewed, exact-source patch that updates the published dependency metadata and frozen lock together.
-It selects `cryptography==48.0.1`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, and `tornado==6.5.7`, then verifies those installed versions and the complete environment with `uv pip check`.
+It selects `aiohttp==3.14.3`, `cryptography==50.0.0`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, and `tornado==6.5.7`, then verifies those installed versions and the complete environment with `uv pip check`.
 The final image also replaces the published `python-multipart==0.0.27` lock resolution with the hash-verified and attested `python-multipart==0.0.32`.
 The base image overlays checksum-pinned Node.js `24.18.1` archives for both supported architectures and installs exact uv `0.11.33`; build-time assertions reject version drift before Hermes is installed.
 
@@ -159,8 +161,9 @@ The wrapper recognizes the reviewed `--safe-mode` CLI flag without adding a new 
 
 ## Dependency closure, licenses, and advisories
 
-The selected `anthropic messaging web pty mcp` Python graph contains 88 third-party packages.
-Relative to `v2026.7.1`, the target lock changes only `slack-bolt` from `1.27.0` to `1.29.0` and `slack-sdk` from `3.40.1` to `3.43.0`.
+The selected `anthropic messaging web pty mcp` Python graph contains 94 third-party packages after the reviewed security constraints are applied.
+A frozen uv `0.11.33` export of those five extras confirms 94 unique third-party package names; the optional DingTalk compatibility changes remain outside that selected graph.
+In the unpatched upstream release transition from `v2026.7.1`, the selected graph changes only `slack-bolt` from `1.27.0` to `1.29.0` and `slack-sdk` from `3.40.1` to `3.43.0`; the downstream security selections are recorded below.
 Both changed packages remain MIT licensed.
 
 The final image also replaces `python-multipart==0.0.27` with `0.0.32`.
@@ -170,18 +173,24 @@ The override clears `GHSA-5rvq-cxj2-64vf`, `GHSA-6jv3-5f52-599m`, and `GHSA-v9pg
 A Python 3.13 FastAPI `TestClient` probe covered ordinary forms, file upload, and dense CRLF input with the replacement parser.
 
 The source patch changes the published constraints and `uv.lock` as one transaction rather than overlaying packages after `uv sync`.
-In addition to the five direct selections, the resolver necessarily moves `alibabacloud-tea-openapi` from `0.4.4` to `0.4.5`, `darabonba-core` from `1.0.5` to `1.0.8`, and adds `websocket-client==1.9.0`.
-The changed packages remain under Apache-2.0, BSD-3-Clause, MIT-CMU, or compatible dual-license terms; no restrictive license enters the selected graph.
+The August 3 refresh moves `aiohttp` from `3.14.1` to `3.14.3` and `cryptography` from `48.0.1` to `50.0.0`, clearing `GHSA-cq5v-8q36-5273` and `GHSA-g6cj-pr64-35w5`.
+Tornado `6.5.7` is the lowest version that clears all three recorded Tornado advisories: `6.5.6` clears `GHSA-3x9g-8vmp-wqvf` and `GHSA-mgf9-4vpg-hj56`, while `6.5.7` clears `GHSA-pw6j-qg29-8w7f`.
+The complete exact-source patch retains the previously reviewed MCP, Pillow, Starlette, and Tornado selections because it must apply the full downstream security delta to the unmodified Hermes release metadata.
+Hermes does not install the `azure` or `dingtalk` extras in its managed `anthropic messaging web pty mcp` runtime, but its published lock resolves every optional extra.
+`msal==1.36.0` and the `alibabacloud-dingtalk==2.2.42` dependency chain capped cryptography below 49, so a lock-consistent security refresh also selects `msal==1.37.0` and `alibabacloud-dingtalk==2.2.54`.
+The latter permits `alibabacloud-tea-openapi==0.3.16`, removes the obsolete `cryptography<49` constraint, adds `alibabacloud-tea-xml==0.0.3`, and no longer resolves `darabonba-core` or `websocket-client` through that optional chain.
+The two selected Alibaba Cloud Tea packages are source-distribution-only and their PyPI JSON metadata omits dependency declarations; uv `0.11.33` derives the dependency metadata from the source distributions and freezes their source hashes in `uv.lock`.
+The managed runtime does not build or install those packages because it does not select the DingTalk extra.
+These compatibility-only lock changes remain MIT or Apache-2.0 licensed and do not change the packages installed in the managed runtime extras.
 
-The 2026-07-30 point-in-time audit reports no advisory for `cryptography==48.0.1`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, or `tornado==6.5.7`.
-The exported patched lock still contains lower-severity records in unrelated packages and records for the published `python-multipart==0.0.27` resolution that the final image replaces with `0.0.32`.
-Those records are not introduced by this targeted Critical and High remediation and remain visible for a separate dependency-lifecycle review; this review does not describe the complete image as vulnerability-free.
+The August 3, 2026 point-in-time targeted audit reports no advisory for `aiohttp==3.14.3`, `cryptography==50.0.0`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, or `tornado==6.5.7`.
+The selected-runtime audit also reports unrelated records for `click==8.3.1`, `pydantic-settings==2.13.1`, `Pygments==2.19.2`, and `PyNaCl==1.5.0`, plus records for the published `python-multipart==0.0.27` resolution that the final image replaces with `0.0.32`.
+Those records are not introduced or resolved by this targeted advisory update and remain visible for a separate dependency-lifecycle review; this review does not describe the complete image as vulnerability-free.
 
 Compatibility evidence covers all 97 upstream image-routing tests with Pillow `12.3.0`, plus a real FastAPI `0.133.1`, Starlette `1.3.1`, and multipart `0.0.32` form and upload `TestClient` smoke.
 The image build additionally requires the frozen environment to remain consistent and asserts the exact installed versions before continuing.
 
-The remaining audit records do not meet the Critical or High remediation threshold.
-They stay recorded rather than being described as fixed or excluded.
+The remaining audit records stay recorded rather than being described as fixed or excluded.
 
 The final root JavaScript runtime graph remains `agent-browser@0.26.0` plus the existing Streamdown tree and reports zero production audit findings.
 The TUI and web workspaces retain unchanged high package-level findings in build-only dependencies whose `node_modules` directories are deleted after compilation.
@@ -222,7 +231,7 @@ Artifact scanning must therefore inspect the assembled image and record the down
 | `HERMES-7` | High | Test and runtime-proof | The target's `mcp__server__tool` names are compatible by source inspection, while managed-tool discovery and invocation remain a live E2E gate. |
 | `HERMES-8` | High | Guard and runtime-proof | Optional upstream secret sources stay disabled, `--safe-mode` does not broaden the generated environment allowlist, and the live environment boundary must reject raw credentials. |
 | `HERMES-9` | High | Pin and test | The selected Python delta adds no advisory regression, and the affected multipart parser is replaced with attested `0.0.32` plus hash and runtime probes. |
-| `HERMES-10` | High | Pin and test | The exact-source patch updates Hermes metadata and its frozen lock together, selects `cryptography==48.0.1`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, and `tornado==6.5.7`, and fails the image build on dependency inconsistency or installed-version drift. The base image separately checksum-pins Node.js `24.18.1` and asserts uv `0.11.33`. |
+| `HERMES-10` | High | Pin and test | The exact-source patch updates Hermes metadata and its frozen lock together, selects `aiohttp==3.14.3`, `cryptography==50.0.0`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, and `tornado==6.5.7`, and fails the image build on dependency inconsistency or installed-version drift. The base image separately checksum-pins Node.js `24.18.1` and asserts uv `0.11.33`. |
 | `HERMES-11` | High | Migrate, test, and runtime-proof | Root npm audit reports zero production findings and the WhatsApp bridge removes its current critical, high, and medium advisory entries, while both architectures still require native bridge and message-path evidence. |
 | `HERMES-12` | High | Pin and runtime-proof | Trusted workflow run `30779271312`, attempt 1, built source commit `340c47857596e7cc347541a0b32fe9e24f201bcd` and published amd64 digest `sha256:faf96b115049c2ae3e7c10be66ae4916cd05ff72900ef5b0642f9f90b6dd834d` plus arm64 digest `sha256:61a7356020832392692347d2510fe8817c8a9f3ff3d5c050fbcec6182787eb4d` under OCI index `sha256:956c3d0c812ee6caa56f3b6e307819925d920604adcf73c4a9e6229788967634`. The final Dockerfile pins that index. Both base-image builds passed the exact-source patch guard, locked bridge install, bridge-to-Baileys option assertions, and the controlled-proxy WebSocket `CONNECT` regression; live final-image WhatsApp evidence remains under `HERMES-22`. |
 | `HERMES-13` | Medium | Document bounded residual | Static `state_files` entries online-back up the default profile only. Cron or Discord ledgers created by a process launched under `profiles/<name>` remain in the raw `profiles` tar capture and can be inconsistent during a concurrent snapshot. Dynamic profile-local SQLite discovery is generic snapshot work outside this upgrade PR. |
