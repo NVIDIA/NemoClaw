@@ -310,7 +310,7 @@ describe("OpenAI-compatible inference probes", () => {
     expect(getChatCompletionsProbePayload("nvidia/nemotron-3-super-120b-a12b")).toEqual({
       model: "nvidia/nemotron-3-super-120b-a12b",
       messages: [{ role: "user", content: "Reply with exactly: OK" }],
-      max_tokens: 8,
+      max_tokens: 16,
     });
   });
 
@@ -318,7 +318,7 @@ describe("OpenAI-compatible inference probes", () => {
     expect(getChatCompletionsProbePayload("nvidia/nvidia/nemotron-3-ultra")).toEqual({
       model: "nvidia/nvidia/nemotron-3-ultra",
       messages: [{ role: "user", content: "Reply with exactly: OK" }],
-      max_tokens: 8,
+      max_tokens: 16,
     });
   });
 
@@ -327,8 +327,32 @@ describe("OpenAI-compatible inference probes", () => {
       expect(getChatCompletionsProbePayload(model)).toEqual({
         model,
         messages: [{ role: "user", content: "Reply with exactly: OK" }],
-        max_completion_tokens: 8,
+        max_completion_tokens: 16,
       });
+    }
+  });
+
+  // Some hosted endpoints reject a reply budget below 16 with HTTP 400 even
+  // though discovery succeeds and normal inference works, so a bounded probe
+  // that undershoots that floor fails a valid route. Whichever field a model
+  // uses, the budget must clear the floor (#7939).
+  it("requests a reply budget hosted endpoints accept, in whichever field the model uses (#7939)", () => {
+    const endpointMinimumReplyTokens = 16;
+
+    for (const model of [
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nvidia/nemotron-3-ultra",
+      "openai/openai/gpt-5.6-sol",
+      "moonshotai/kimi-k2.6",
+      "deepseek-ai/deepseek-v4-pro",
+      "gpt-5.4",
+      "o3-mini",
+    ]) {
+      const payload = getChatCompletionsProbePayload(model);
+      const budget = payload.max_completion_tokens ?? payload.max_tokens;
+
+      expect(typeof budget, `${model} states a reply budget`).toBe("number");
+      expect(budget, model).toBeGreaterThanOrEqual(endpointMinimumReplyTokens);
     }
   });
 
@@ -356,7 +380,7 @@ describe("OpenAI-compatible inference probes", () => {
     expect(getChatCompletionsProbePayload("moonshotai/kimi-k2.6")).toEqual({
       model: "moonshotai/kimi-k2.6",
       messages: [{ role: "user", content: "Reply with exactly: OK" }],
-      max_tokens: 8,
+      max_tokens: 16,
       chat_template_kwargs: { thinking: false },
     });
 
