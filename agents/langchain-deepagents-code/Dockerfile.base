@@ -317,7 +317,7 @@ RUN python3 -m venv --copies "$VIRTUAL_ENV" \
         -r /tmp/deepagents-code-requirements.lock \
     && "$VIRTUAL_ENV/bin/pip3" check \
     && "$VIRTUAL_ENV/bin/python3" -I -c \
-        "from importlib.metadata import version; expected = {'deepagents-code': '0.1.34', 'mcp': '1.28.1', 'pillow': '12.3.0', 'pyasn1': '0.6.4', 'uv': '0.11.33'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
+        "from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0', 'deepagents-code': '0.1.34', 'mcp': '1.28.1', 'pillow': '12.3.0', 'pyasn1': '0.6.4', 'uv': '0.11.33'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual" \
     && ln -sf "$VIRTUAL_ENV/bin/dcode" /usr/local/bin/dcode \
     && ln -sf "$VIRTUAL_ENV/bin/deepagents-code" /usr/local/bin/deepagents-code \
     && rm -f /tmp/deepagents-code-requirements.lock \
