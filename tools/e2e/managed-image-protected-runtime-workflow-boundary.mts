@@ -18,6 +18,12 @@ const LIVE_TEST_PATH = "test/e2e/live/managed-image-protected-runtime.test.ts";
 const REGISTRY_IMAGE =
   "docker.io/library/registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373";
 
+// Keep lane-specific trust assertions explicit: the multiarch lane executes
+// candidate code directly, while this GPU lane keeps secrets in trusted code
+// and isolates candidate source. The workflow-boundary aggregate runs both
+// validators, which fail closed on the common job invariants without weakening
+// either boundary into a generic lowest-common-denominator validator.
+
 function record(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as WorkflowRecord)

@@ -46,6 +46,11 @@ import {
   withManagedImageLocalInferenceProfile,
 } from "./managed-image-protected-runtime-contract.ts";
 
+// This executable owns one protected qualification transaction from sandbox
+// creation through exact cleanup. Keep its stateful orchestration and cleanup
+// together so no cross-module return path can bypass rollback; stateless route
+// and profile policy remains in managed-image-protected-runtime-contract.ts.
+
 const MANAGED_AGENTS = new Set<ManagedStartupAgent>([
   "openclaw",
   "hermes",

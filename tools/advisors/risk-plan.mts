@@ -68,6 +68,10 @@ const HERMES_MANAGED_POLICY_FILES = new Set([
 const MANAGED_IMAGE_PROTECTED_RUNTIME_ACTIVATION =
   "ci/protected-managed-image-runtime-activation-v1.json";
 const MANAGED_IMAGE_PROTECTED_RUNTIME_JOB_ID = "managed-image-protected-runtime" as const;
+// The activation-only phase is complete. Any input that can change bytes or
+// startup policy in a shipped managed image must requalify the exact all-agent
+// amd64/arm64 cohort; the positive and adjacent-path cases in
+// test/pr-risk-plan.test.ts keep this inventory intentional and bounded.
 const MANAGED_IMAGE_MULTIARCH_INPUTS = new Set([
   PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH,
   ".dockerignore",
