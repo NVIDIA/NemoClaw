@@ -177,6 +177,7 @@ export interface ChannelOpenClawRuntimeSpec extends ChannelRuntimeSpec {
 export interface ChannelRuntimeSpec {
   readonly visibility?: ChannelRuntimeVisibilitySpec;
   readonly nodePreloads?: readonly ChannelRuntimeNodePreloadSpec[];
+  readonly commandRoutes?: readonly ChannelRuntimeCommandRouteSpec[];
   readonly envAliases?: readonly ChannelRuntimeEnvAliasSpec[];
   readonly secretScans?: readonly ChannelRuntimeSecretScanSpec[];
 }
@@ -196,6 +197,13 @@ export interface ChannelRuntimeNodePreloadSpec {
   readonly optional?: boolean;
   readonly installMessage?: string;
   readonly installedMessage?: string;
+}
+
+/** Exact agent CLI invocation handled by a manifest-owned Node runtime module. */
+export interface ChannelRuntimeCommandRouteSpec {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly module: string;
 }
 
 export interface ChannelRuntimeEnvAliasSpec {
@@ -445,6 +453,7 @@ export interface SandboxMessagingPackageInstallStepPlan {
 
 export interface SandboxMessagingRuntimeSetupPlan {
   readonly nodePreloads: readonly SandboxMessagingRuntimeNodePreloadPlan[];
+  readonly commandRoutes: readonly SandboxMessagingRuntimeCommandRoutePlan[];
   readonly envAliases: readonly SandboxMessagingRuntimeEnvAliasPlan[];
   readonly secretScans: readonly SandboxMessagingRuntimeSecretScanPlan[];
 }
@@ -453,6 +462,11 @@ export interface SandboxMessagingRuntimeNodePreloadPlan extends ChannelRuntimeNo
   readonly channelId: MessagingChannelId;
   readonly source: string;
   readonly target: string;
+}
+
+export interface SandboxMessagingRuntimeCommandRoutePlan extends ChannelRuntimeCommandRouteSpec {
+  readonly channelId: MessagingChannelId;
+  readonly source: string;
 }
 
 export interface SandboxMessagingRuntimeEnvAliasPlan extends ChannelRuntimeEnvAliasSpec {

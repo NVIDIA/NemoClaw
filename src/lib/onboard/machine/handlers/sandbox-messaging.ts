@@ -8,14 +8,14 @@ import {
   tryGetMessagingAgentId,
 } from "../../../messaging";
 import type { MessagingAgentId, SandboxMessagingPlan } from "../../../messaging/manifest";
-import { hashCredential } from "../../../security/credential-hash";
-import { isDecisionSelected, isDecisionUnset } from "../../../state/onboard-checkpoint-decision";
-import type { Session } from "../../../state/onboard-session";
-import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
 import {
   type RegistryMessagingAuthority,
   resolveMessagingPlanAuthority,
 } from "../../../messaging/plan-authority";
+import { hashCredential } from "../../../security/credential-hash";
+import { isDecisionSelected, isDecisionUnset } from "../../../state/onboard-checkpoint-decision";
+import type { Session } from "../../../state/onboard-session";
+import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
 import { getActiveChannelsFromPlan, getChannelsFromPlan } from "../../messaging-plan-session";
 
 export { resolveMessagingPlanAuthority };
@@ -143,6 +143,7 @@ export function filterMessagingPlanForCurrentAgent(
     runtimeSetup: plan.runtimeSetup
       ? {
           nodePreloads: filterRuntimeSetup(plan.runtimeSetup.nodePreloads),
+          commandRoutes: filterRuntimeSetup(plan.runtimeSetup.commandRoutes),
           envAliases: filterRuntimeSetup(plan.runtimeSetup.envAliases),
           secretScans: filterRuntimeSetup(plan.runtimeSetup.secretScans),
         }

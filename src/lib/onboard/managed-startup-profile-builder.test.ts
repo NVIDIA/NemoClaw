@@ -166,7 +166,7 @@ describe("buildManagedStartupProfile", () => {
       networkPolicy: { presets: [], entries: [] },
       agentRender: [],
       buildSteps: [],
-      runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
+      runtimeSetup: { nodePreloads: [], commandRoutes: [], envAliases: [], secretScans: [] },
       stateUpdates: [],
       healthChecks: [],
     });

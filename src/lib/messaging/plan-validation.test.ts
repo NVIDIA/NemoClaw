@@ -66,6 +66,25 @@ describe("parseSandboxMessagingPlan", () => {
     expect(parsed).not.toBe(source);
   });
 
+  it("normalizes command routes missing from an older runtime setup plan", () => {
+    const source = makePlan();
+    const legacy = {
+      ...source,
+      runtimeSetup: {
+        nodePreloads: [],
+        envAliases: [],
+        secretScans: [],
+      },
+    };
+
+    expect(parseSandboxMessagingPlan(legacy)?.runtimeSetup).toEqual({
+      nodePreloads: [],
+      commandRoutes: [],
+      envAliases: [],
+      secretScans: [],
+    });
+  });
+
   it("accepts compact persisted plans without manifest-derived sections", () => {
     const source = makePlan({
       channels: [
@@ -182,6 +201,7 @@ describe("parseSandboxMessagingPlan", () => {
       ],
       runtimeSetup: {
         nodePreloads: [],
+        commandRoutes: [],
         envAliases: [],
         secretScans: [
           {

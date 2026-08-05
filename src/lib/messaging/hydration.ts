@@ -231,6 +231,7 @@ function runtimeSetupHasEntries(setup: SandboxMessagingRuntimeSetupPlan | undefi
   return Boolean(
     setup &&
       (setup.nodePreloads.length > 0 ||
+        setup.commandRoutes.length > 0 ||
         setup.envAliases.length > 0 ||
         setup.secretScans.length > 0),
   );

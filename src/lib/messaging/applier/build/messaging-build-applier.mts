@@ -40,7 +40,7 @@ type JsonObject = Record<string, any>;
 type MessagingAgentId = "openclaw" | "hermes";
 type MessagingHookPhase = "agent-install" | "post-agent-install";
 type MessagingBuildCliPhase = MessagingBuildPhase | "managed-image-capability-union";
-type MessagingRuntimeSetupKey = "nodePreloads" | "envAliases" | "secretScans";
+type MessagingRuntimeSetupKey = "nodePreloads" | "commandRoutes" | "envAliases" | "secretScans";
 type MessagingSerializableValue =
   | string
   | number
@@ -424,6 +424,13 @@ function sanitizeRuntimeSetup(
       "optional",
       "installMessage",
       "installedMessage",
+    ]),
+    commandRoutes: sanitizeRuntimeSetupEntries(setup?.commandRoutes, [
+      "channelId",
+      "command",
+      "args",
+      "module",
+      "source",
     ]),
     envAliases: sanitizeRuntimeSetupEntries(setup?.envAliases, [
       "channelId",

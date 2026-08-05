@@ -106,6 +106,13 @@ export const whatsappManifest = {
       ],
     },
     hermes: {
+      commandRoutes: [
+        {
+          command: "hermes",
+          args: ["whatsapp"],
+          module: "whatsapp-hermes-session",
+        },
+      ],
       nodePreloads: [
         {
           module: "whatsapp-hermes-session",

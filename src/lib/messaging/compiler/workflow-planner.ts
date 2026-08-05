@@ -435,6 +435,10 @@ function mergeRuntimeSetup(
       existing?.nodePreloads ?? [],
       incoming?.nodePreloads ?? [],
     ),
+    commandRoutes: mergePlanEntriesByChannel(
+      existing?.commandRoutes ?? [],
+      incoming?.commandRoutes ?? [],
+    ),
     envAliases: mergePlanEntriesByChannel(existing?.envAliases ?? [], incoming?.envAliases ?? []),
     secretScans: mergePlanEntriesByChannel(
       existing?.secretScans ?? [],
@@ -449,6 +453,7 @@ function filterRuntimeSetup(
 ): SandboxMessagingRuntimeSetupPlan {
   return {
     nodePreloads: (setup?.nodePreloads ?? []).filter(keepEntry),
+    commandRoutes: (setup?.commandRoutes ?? []).filter(keepEntry),
     envAliases: (setup?.envAliases ?? []).filter(keepEntry),
     secretScans: (setup?.secretScans ?? []).filter(keepEntry),
   };
