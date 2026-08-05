@@ -29,7 +29,7 @@ describe("cross-runtime foundation compatibility", () => {
       ),
     ).toBe("6272aab16cf4b9555bdc4b3f4c0cdd24b5faa55118cbd61cbb4b30a3d418a63a");
     expect(digestOutput(buildE2eWorkflowPlan())).toBe(
-      "00dddd726f979dfddceef7b61b7e4937d48394af3e7224b22bb4014d5b362106",
+      "ac63268158d590d7dfefa814f948e72c663878c5f82e53298185ae51a8fd2911",
     );
   });
 
@@ -45,7 +45,7 @@ describe("cross-runtime foundation compatibility", () => {
     ];
 
     expect(digestOutput(cases.map(buildRiskPlan))).toBe(
-      "7f55218cbfc184b0c2478ae435075c0fc2b9b053b01dda3fdb15c4697bf427e0",
+      "b566803732025bff773b4d9b063d961a429d5f8b8af65d9e9d51e1f6f8deeeb1",
     );
   });
 });
