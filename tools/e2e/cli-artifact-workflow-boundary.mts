@@ -40,7 +40,7 @@ const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
 const CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 =
   "3578a053cede863f7aa4814d8399b4ca21ea0b77cee712e6d549c684818f11dd";
 const CLI_ARTIFACT_WORKFLOW_CONTRACT_SHA256 =
-  "c6b0b73c61f6e79859dfb3711cbee7f8b2a6145f7e2f856a93bbe9288e81d98c";
+  "039b0e85aa53a2d54e6a5360f50a5f1c93e949aef2b39153b3b24e6382bdedf8";
 const CLI_ARTIFACT_CONSUMER_JOB_NAMES = [
   "agent-turn-latency",
   "bedrock-runtime-compatible-anthropic",
@@ -141,7 +141,7 @@ function isCliArtifactRestoreStep(step: WorkflowStep): boolean {
 function jobSettingsAndStepsThroughRestore(job: WorkflowRecord): WorkflowRecord {
   const jobSteps = steps(job.steps);
   const restoreIndex = jobSteps.findIndex(isCliArtifactRestoreStep);
-  const { steps: _steps, ...jobSettings } = job;
+  const { steps: _steps, "timeout-minutes": _timeoutMinutes, ...jobSettings } = job;
   return {
     jobSettings,
     stepsThroughRestore: restoreIndex >= 0 ? jobSteps.slice(0, restoreIndex + 1) : jobSteps,

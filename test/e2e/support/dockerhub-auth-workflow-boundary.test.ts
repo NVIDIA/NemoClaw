@@ -204,6 +204,46 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     ).toContain("docker-auth-cleanup script content must match the pinned commit");
   });
 
+  it("accepts only the pinned pre-restore cleanup action in the complete workflow", () => {
+    expect(validateE2eWorkflowBoundary()).toEqual([]);
+
+    const jobNames = [
+      "openclaw-plugin-runtime-exdev",
+      "openclaw-plugin-runtime-exdev-release",
+    ] as const;
+    const cleanupMutations: Array<(cleanup: WorkflowStep) => void> = [
+      (cleanup) => {
+        cleanup.uses = "NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@main";
+      },
+      (cleanup) => {
+        cleanup.uses = "./.github/actions/docker-auth-cleanup";
+      },
+      (cleanup) => {
+        delete cleanup.uses;
+        cleanup.shell = "bash";
+        cleanup.run = CLEANUP_HELPER_RUN;
+      },
+    ];
+    for (const mutateCleanup of cleanupMutations) {
+      const errors = validateMutation((workflow) => {
+        for (const jobName of jobNames) {
+          const cleanup = namedStep(
+            workflow.jobs[jobName],
+            "Remove Docker auth before release-pinned fixture",
+          );
+          expect(cleanup).toBeDefined();
+          mutateCleanup(cleanup!);
+        }
+      });
+
+      for (const jobName of jobNames) {
+        expect(errors).toContain(
+          `${jobName} must use the pinned Docker auth cleanup action before artifact restore`,
+        );
+      }
+    }
+  });
+
   it("rejects missing auth and cleanup coverage for every classified image job", () => {
     const workflow = loadWorkflow();
     const requiredJobs = imageJobNames(workflow);

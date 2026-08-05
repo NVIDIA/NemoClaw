@@ -776,6 +776,16 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     }
   });
 
+  it("leaves job timeouts to their dedicated workflow validators", () => {
+    const workflow = workflowFixture();
+    for (const jobName of ["hermes-e2e", "hermes-discord", "hermes-shields-config"]) {
+      const timeoutMinutes = workflow.jobs[jobName]["timeout-minutes"];
+      workflow.jobs[jobName]["timeout-minutes"] = Number(timeoutMinutes) + 1;
+    }
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toEqual([]);
+  });
+
   it("rejects incomplete consumer provenance and a mutable action reference", () => {
     const workflow = workflowFixture();
     const restore = requireStep(workflow, "sandbox-operations", CLI_ARTIFACT_RESTORE_STEP);
