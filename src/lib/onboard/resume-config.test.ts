@@ -85,6 +85,18 @@ describe("authoritative rebuild resume config", () => {
     ).toContainEqual({ field: "host mounts", requested: null, recorded: "invalid" });
   });
 
+  it("treats reordered distinct Unicode host paths as the same mount set", () => {
+    const first = { source: "/srv/ñ", target: "/sandbox/é", readOnly: true as const };
+    const second = { source: "/srv/ñ", target: "/sandbox/é", readOnly: true as const };
+
+    expect(
+      getResumeConfigConflicts(
+        { metadata: { fromDockerfile: null, hostMounts: [first, second] } },
+        { hostMounts: [second, first] },
+      ),
+    ).toEqual([]);
+  });
+
   it("allows explicit observability changes to reach sandbox drift reconciliation", () => {
     const session = {
       sandboxName: "demo",

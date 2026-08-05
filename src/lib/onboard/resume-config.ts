@@ -33,9 +33,11 @@ function canonicalHostMounts(mounts: readonly SandboxHostMount[] | undefined): s
   return JSON.stringify(
     (mounts ?? [])
       .map(({ source, target }) => ({ source, target, readOnly: true as const }))
-      .sort((left, right) =>
-        `${left.source}\0${left.target}`.localeCompare(`${right.source}\0${right.target}`),
-      ),
+      .sort((left, right) => {
+        const leftKey = `${left.source}\0${left.target}`;
+        const rightKey = `${right.source}\0${right.target}`;
+        return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+      }),
   );
 }
 
