@@ -127,13 +127,12 @@ The default Deep Agents sandbox name is `deepagents-code`.
 Use a distinct name, such as `my-deepagents`, when you run Deep Agents, Hermes, and OpenClaw sandboxes side by side.
 Refer to [Choose an Inference Provider](../inference/learn-and-choose/choose-inference-provider) for provider-specific prompts.
 
-The release managed image installs hash-locked Deep Agents Code `0.1.34` with NVIDIA provider support.
-Stock onboarding selects the exact Deep Agents Code image digest from the installed CLI release's complete all-agent catalog and creates the sandbox without staging or building a Dockerfile.
+The image installs hash-locked Deep Agents Code `0.1.34` with NVIDIA provider support.
 After the terminal smoke checks, onboarding runs `dcode --version` and compares the result with the version required by the agent manifest.
 Fresh and resumed onboarding exit nonzero instead of reporting the runtime ready when the installed version is too old, uses an incompatible version scheme, or cannot be verified.
 If the version check fails, review the reported version error and run `nemo-deepagents <sandbox-name> rebuild` before resuming onboarding.
 NemoClaw writes `/sandbox/.deepagents/config.toml` with an OpenAI-compatible provider pointed at `https://inference.local/v1`, uses a scoped placeholder API key for that managed route, and sets `use_responses_api = false` for Chat Completions compatibility.
-When onboarding records a reasoning effort on a `compatible-endpoint` route that uses `openai-completions`, the transactional startup profile writes that value to a root-owned file and Deep Agents Code model requests carry it as an `extra_body.reasoning_effort` request parameter.
+When onboarding records a reasoning effort on a `compatible-endpoint` route that uses `openai-completions`, the managed image bakes that value into a root-owned file and Deep Agents Code model requests carry it as an `extra_body.reasoning_effort` request parameter.
 Leave `NEMOCLAW_REASONING_EFFORT` unset to keep the endpoint's own default.
 Deep Agents Code has no runtime `inference set` path, so re-onboard the sandbox with `nemo-deepagents onboard --fresh --name <sandbox-name> --recreate-sandbox` to change the recorded effort.
 When you use NVIDIA Endpoints without selecting another model, new Deep Agents Code sandboxes default to `nvidia/nemotron-3-ultra-550b-a55b`.
@@ -176,9 +175,9 @@ The managed `.deepagents/.nemoclaw-mcp.json` projection is also excluded because
 Service credentials remain in OpenShell provider state.
 It also does not preserve `hooks.json`; executable Deep Agents Code hooks are disabled in the managed harness.
 If `.deepagents/.state/auth.json` contains upstream credentials, or `.deepagents/.state/chatgpt-auth.json` exists, the managed Deep Agents Code launch paths refuse to start until that credential state is removed.
-Before a managed Deep Agents Code rebuild changes the sandbox, NemoClaw selects its recorded OpenShell gateway, tests the recorded inference route through `https://inference.local`, verifies the provider-bound workload, and resolves the exact current-release image through the complete all-agent catalog.
+Before a managed Deep Agents Code rebuild changes the sandbox, NemoClaw selects its recorded OpenShell gateway, tests the recorded inference route through `https://inference.local`, and prepares the replacement from the recorded provider, model, policy, and build inputs with a pinned base and fingerprinted context.
 Initial failures stop before backup.
-After backup, NemoClaw rechecks the target, route, managed image, and startup profile before changing MCP state, then checks again after MCP preparation and before stopping inference or deleting the old sandbox.
+After backup, NemoClaw rechecks the target, route, and retained build inputs before changing MCP state, then checks again after MCP preparation and before stopping inference or deleting the old sandbox.
 If the final check fails, NemoClaw restores the previous MCP state and keeps the existing sandbox intact.
 Rebuild also preserves the standalone Deep Agents Code `tavily` preset, the recorded observability choice unless explicitly overridden, and recorded custom policies from their exact stored content.
 

@@ -85,6 +85,8 @@ export interface SandboxCreateIntent {
 }
 
 export type OnboardOptions = {
+  /** Hidden temporary opt-in for new managed-image runtime activation. */
+  tempManagedRuntime?: boolean;
   nonInteractive?: boolean;
   recreateSandbox?: boolean;
   /** Internal CLI composition for host-only Google Chat tunnel effects. */
