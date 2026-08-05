@@ -7,7 +7,6 @@ import path from "node:path";
 import { formatAgentAliasSuffix, resolveAgentNameAlias } from "../agent/aliases";
 import { NEMOCLAW_SERVING_PRESET_ENV } from "../inference/serving/managed-cluster-discovery";
 import {
-  listServingProfiles,
   resolveServingProfileSelection,
   ServingProfileSelectionError,
   type ServingProfileListEntry,
@@ -363,12 +362,17 @@ export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<vo
   // canonical source. No value is written for the default so resume/rebuild
   // can distinguish an explicit request from an unset environment.
   if (options.toolDisclosure) env[TOOL_DISCLOSURE_ENV] = options.toolDisclosure;
+  const previousAgentsManifest = env.NEMOCLAW_EXTRA_AGENTS_JSON;
   if (options.agentsManifest) applyAgentsManifestEnv(options.agentsManifest, env);
   try {
     await deps.runOnboard(options);
   } catch (error) {
     handleOnboardCommandError(error, deps);
   } finally {
+    if (options.agentsManifest) {
+      if (previousAgentsManifest === undefined) delete env.NEMOCLAW_EXTRA_AGENTS_JSON;
+      else env.NEMOCLAW_EXTRA_AGENTS_JSON = previousAgentsManifest;
+    }
     restoreServingProfileEnvironment();
     restorePortableEnvironment();
   }

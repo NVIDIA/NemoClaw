@@ -410,6 +410,36 @@ describe("onboard command options", () => {
     });
   });
 
+  it("scopes an agents manifest to one onboarding run", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agents-manifest-"));
+    const manifestPath = path.join(tmpDir, "agents.yaml");
+    fs.writeFileSync(manifestPath, "agents: []\n");
+    const env: NodeJS.ProcessEnv = { NEMOCLAW_EXTRA_AGENTS_JSON: "previous-manifest" };
+    let observed: string | undefined;
+
+    try {
+      await runOnboardCommand({
+        flags: { agents: manifestPath },
+        env,
+        runOnboard: async () => {
+          observed = env.NEMOCLAW_EXTRA_AGENTS_JSON;
+        },
+      });
+      expect(observed).toBe('{"agents":[]}');
+      expect(env.NEMOCLAW_EXTRA_AGENTS_JSON).toBe("previous-manifest");
+
+      const initiallyUnsetEnv: NodeJS.ProcessEnv = {};
+      await runOnboardCommand({
+        flags: { agents: manifestPath },
+        env: initiallyUnsetEnv,
+        runOnboard: async () => {},
+      });
+      expect(initiallyUnsetEnv.NEMOCLAW_EXTRA_AGENTS_JSON).toBeUndefined();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("treats a prompt EOF during onboarding as cancellation and exits non-zero (#5976)", async () => {
     const errors: string[] = [];
     await expect(
