@@ -58,6 +58,7 @@ jobs:
       checks: write
       contents: read
       pull-requests: read
+      statuses: write
     concurrency:
       group: pr-e2e-gate-${{ github.repository }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-${{ github.event.pull_request.base.sha }}
       queue: max
@@ -99,6 +100,7 @@ jobs:
       checks: write
       contents: read
       pull-requests: read
+      statuses: write
     steps:
       - name: Checkout controller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -136,6 +138,7 @@ jobs:
       checks: write
       contents: read
       pull-requests: read
+      statuses: write
     concurrency:
       group: pr-e2e-gate-${{ github.repository }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0].number || inputs.pr_number }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.expected_head_sha }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0].base.sha || inputs.expected_base_sha }}
       queue: max

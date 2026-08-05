@@ -437,10 +437,7 @@ function readSandboxIdentity(): { readonly uid: string; readonly gid: string } {
   return { uid: readId("-u"), gid: readId("-g") };
 }
 
-function sandboxPrefix(): readonly string[] {
-  if (trustedExecutable("/usr/local/bin/gosu")) {
-    return ["/usr/local/bin/gosu", "sandbox"];
-  }
+export function managedStartupSandboxPrefix(): readonly string[] {
   if (trustedExecutable("/usr/bin/setpriv")) {
     const identity = readSandboxIdentity();
     return [
@@ -451,7 +448,7 @@ function sandboxPrefix(): readonly string[] {
       "--",
     ];
   }
-  return fail("a trusted gosu or setpriv executable is required");
+  return fail("a trusted setpriv executable is required");
 }
 
 function commandEnvironment(
@@ -485,7 +482,7 @@ function execute(
   capture = false,
 ): CommandResult {
   if (argv.length === 0) fail("refusing an empty managed startup command");
-  const command = runAs === "sandbox" ? [...sandboxPrefix(), ...argv] : [...argv];
+  const command = runAs === "sandbox" ? [...managedStartupSandboxPrefix(), ...argv] : [...argv];
   const result = spawnSync(command[0] as string, command.slice(1), {
     encoding: "utf8",
     env: commandEnvironment(configurationEnvironment, applicationRuntime),

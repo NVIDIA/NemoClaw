@@ -870,6 +870,45 @@ $$nemoclaw use <name>
 $$nemoclaw use <name> --json
 ```
 
+### `$$nemoclaw launch <name>`
+
+Connect to a sandbox and start its agent in one host-side command.
+Use it instead of running `$$nemoclaw <name> connect` and then typing the agent command inside the sandbox.
+
+`launch` runs the same preflight as [`$$nemoclaw <name> connect`](#$$nemoclaw-name-connect), including the readiness wait, in-sandbox agent process recovery, and inference-route reconciliation.
+It runs every check in that shared preflight.
+After the preflight, `launch` starts the sandbox's agent in your terminal instead of opening a sandbox shell.
+
+The agent command comes from the sandbox's agent manifest.
+If the sandbox registry names a non-OpenClaw agent without a readable local agent manifest, `launch` exits before starting an in-sandbox command.
+
+| Agent | Command |
+|---|---|
+| OpenClaw | `openclaw tui` |
+| Hermes | `hermes` |
+| LangChain Deep Agents Code | `dcode` |
+
+```bash
+$$nemoclaw launch <name>
+```
+
+The sandbox name is required, and the command takes no flags.
+When the agent exits, you return to the host shell.
+
+<AgentOnly variant="openclaw">
+
+`launch` returns the agent's exit code when the post-command OpenClaw permission cleanup succeeds.
+If that cleanup cannot inspect, restore, or verify the mutable config permission contract, `launch` fails closed with exit `1` and prints `OpenClaw permission cleanup failed (...)` to `stderr`.
+
+</AgentOnly>
+<AgentOnly variant="hermes,deepagents">
+
+`launch` returns the agent's exit code.
+
+</AgentOnly>
+
+When you want a shell inside the sandbox rather than an agent session, use `$$nemoclaw <name> connect`.
+
 ### `$$nemoclaw deploy`
 
 <Warning>
@@ -930,6 +969,8 @@ $$nemoclaw connect
 The `--probe-only` flag waits for the sandbox to become ready, verifies or repairs its in-sandbox agent process and host-side forward, and exits without opening a shell.
 It rechecks the sandbox on its recorded OpenShell gateway after the readiness wait and never restarts the shared host gateway.
 Use it for health checks and scripted readiness probes.
+
+Use [`$$nemoclaw launch <name>`](#$$nemoclaw-launch-name) when you want the same preflight followed by the agent instead of a sandbox shell.
 
 ### `$$nemoclaw <name> exec`
 
@@ -1028,9 +1069,10 @@ $$nemoclaw dcode-sandbox agent -n "Summarize this repository"
 $$nemoclaw dcode-sandbox agent -n "Summarize this repository" --json
 ```
 
-When post-command permission cleanup succeeds, the wrapper inherits the remote command's exit code so host-side pipelines can branch on it.
-If cleanup fails closed, the wrapper prints the command and cleanup statuses to `stderr` and returns the cleanup failure.
-For normal turns, streaming forwards whatever the in-sandbox agent command emits on `stdout`; the wrapper adds no buffering.
+For non-JSON OpenClaw turns, the wrapper captures `stdout` and `stderr` and replays them only after the in-sandbox command exits.
+The combined capture limit is `64 MiB`; exceeding it reports an OpenShell invocation error and exits with status `1`.
+If the captured output contains an embedded-fallback marker, the wrapper suppresses both streams, prints `recover`, `rebuild --yes`, and `onboard --resume` guidance to `stderr`, and exits with status `1`.
+Otherwise, it writes the captured output to the corresponding host streams and returns the OpenShell command's exit status.
 The in-sandbox NemoClaw plugin writes its registration banner to `stderr`, so the banner does not prefix the agent reply on `stdout` in non-JSON mode.
 When the top-level OpenClaw `--json` output flag is present, the wrapper uses a captured no-TTY path with a `64 MiB` buffer so `stdout` stays parseable JSON.
 Raw `stderr` is forwarded, and failed-tool or untrusted-child provenance found in the stdout JSON is appended to `stderr`.
@@ -1173,6 +1215,10 @@ Follow [Deep Agents Config Lock Failure Recovery](troubleshooting#deep-agents-co
 </AgentOnly>
 
 Host-side config and inference writes, snapshot mutation, sandbox destruction, and shields transitions serialize per sandbox.
+Before `shields down` opens a new window, NemoClaw must revoke any stale auto-restore timer authority.
+If marker cleanup fails, the command reports `Cannot revoke stale auto-restore timer authority` and stops before policy capture, state writes, config unlock, replacement-timer startup, or audit writes.
+The sandbox retains its existing configuration and policy posture, and the stale timer authority remains.
+Resolve the reported timer-marker error on the trusted host, then retry `shields down`.
 When a timed shields-down window reaches its deadline, auto-restore closes the per-sandbox lifecycle deadline gate.
 The gate blocks new mutations and waits for the recorded live owner to release its exact lock generation before auto-restore restores lockdown.
 NemoClaw does not signal that process because portable process inspection cannot prove that all descendants stopped.
@@ -1190,6 +1236,14 @@ NemoClaw also records durable containment when an owner exits before it can prov
 Durable containment, retained exact gates, or the fail-closed state-directory error blocks new mutations until you complete exact-generation operator recovery.
 Stop all NemoClaw processes for the sandbox, then follow the paths, identities, tokens, and removal order in the reported error.
 Verify each recorded generation is unchanged, remove only the exact stale generations first, and remove the exact containment generation last.
+
+Before a manual Shields transition replaces a policy, NemoClaw requires exact agreement among the sandbox registry, generated-policy record, and live gateway policy.
+`shields down` carries the proven managed MCP policy entries into the relaxed policy.
+Restoration removes snapshot-time managed MCP entries before it overlays current exact entries.
+If exact agreement is absent, a manual Shields transition refuses the replacement policy.
+At an expired deadline, auto-restore omits unproven managed MCP policy entries, restores lockdown, and records the omission count in its audit entry.
+An MCP server removed during the shields-down window stays removed.
+A surviving server keeps its recorded endpoint and address pins while its policy ownership remains exact.
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -1696,7 +1750,8 @@ Use `nemohermes my-assistant status` to see both the dashboard and API endpoints
 <AgentOnly variant="deepagents">
 
 `dashboard-url` is not applicable to Deep Agents sandboxes because the managed harness is a terminal runtime without a dashboard port.
-Use `$$nemoclaw <name> connect` and run `dcode` inside the sandbox.
+Use `$$nemoclaw launch <name>` to start `dcode`.
+Use `$$nemoclaw <name> connect` instead when you want a sandbox shell.
 
 </AgentOnly>
 
@@ -2098,9 +2153,13 @@ $$nemoclaw my-assistant hosts-remove searxng.local
 
 ### `$$nemoclaw <name> channels list`
 
-List the messaging channels NemoClaw knows about (`telegram`, `discord`, `slack`, `wechat`, `whatsapp`) with a short description.
-The command is a static reference; it does not consult credentials or the running sandbox.
-WeChat and WhatsApp are experimental.
+List the messaging channels supported by the sandbox's agent runtime with a short description.
+Telegram, Discord, Slack, WeChat, WhatsApp, and Microsoft Teams are available for OpenClaw and Hermes.
+WeChat, WhatsApp, and Microsoft Teams are experimental.
+OpenClaw also supports experimental Google Chat.
+
+The command reads the sandbox registry to select agent-compatible channel manifests.
+It does not inspect messaging credentials or the live sandbox runtime.
 
 ```bash
 $$nemoclaw my-assistant channels list
@@ -2109,9 +2168,10 @@ $$nemoclaw my-assistant channels list
 ### `$$nemoclaw <name> channels add <channel>`
 
 Register a messaging channel with the sandbox and rebuild so the image picks up the new channel.
-Channels fall into three login modes:
+Channel enrollment uses these credential and pairing flows:
 
-- **Token paste** (`telegram`, `discord`, `slack`): the command prompts for any missing token and registers it with the OpenShell gateway.
+- **Token paste** (`telegram`, `discord`, `slack`, `teams`): the command prompts for required channel inputs.
+  It registers secret credentials with the OpenShell gateway and saves non-secret configuration for rebuilds.
 - **Host-side QR** (`wechat`, experimental): the command renders an iLink QR code on the host and you scan it from WeChat on your phone.
   On confirm, NemoClaw captures the bot token, registers it with the OpenShell gateway, and stores non-secret per-account metadata (`WECHAT_ACCOUNT_ID`, `WECHAT_BASE_URL`, `WECHAT_USER_ID`) for the in-sandbox bridge.
   NemoClaw automatically adds the scanning operator's WeChat user ID to `WECHAT_ALLOWED_IDS`.
@@ -2120,6 +2180,9 @@ Channels fall into three login modes:
 - **In-sandbox QR** (`whatsapp`, experimental): the command records the channel without a host-side token or OpenShell credential provider.
   NemoClaw advertises WhatsApp for OpenClaw and Hermes sandboxes; after rebuild, run `openclaw channels login --channel whatsapp` for OpenClaw or `hermes whatsapp` for Hermes.
   This intentionally leaves QR-created mutable session state in the sandbox until you unpair it or clear the durable agent state.
+
+The OpenClaw-only Google Chat channel uses an experimental token-paste flow for the service-account JSON.
+It also requires interactive public-webhook confirmation and prompts for optional app-principal configuration during enrollment.
 
 After registering the channel, NemoClaw asks whether to rebuild immediately.
 Running `add` for an already-configured channel overwrites the stored credentials where applicable.
@@ -2161,7 +2224,7 @@ If you omit the required `<channel>` argument, the CLI prints the `channels add 
 Clear the stored credentials for a messaging channel and rebuild the sandbox so the image drops the channel.
 Running `remove` for a channel that was never configured is a no-op against the credentials file and still triggers the rebuild prompt.
 When the bridge provider is attached to a live sandbox, NemoClaw detaches it before deleting the provider from the OpenShell gateway.
-If the matching built-in policy preset is applied, such as `telegram`, `discord`, `slack`, `wechat`, or `whatsapp`, NemoClaw also removes that preset so the upstream API is no longer allow-listed after the channel is gone.
+If the matching built-in policy preset is applied, NemoClaw also removes that preset so the upstream API is no longer allow-listed after the channel is gone.
 NemoClaw also strips the channel from `session.policyPresets` so a subsequent `onboard --resume` does not re-apply the preset on the next rebuild.
 
 For QR-paired channels (today: WhatsApp), NemoClaw destructively clears the in-sandbox session directory before the rebuild so the `state_dirs` backup does not restore the auth blob and let the channel reconnect:
@@ -2186,7 +2249,9 @@ Host-side removal is the supported path because agent channel config is baked in
 
 ### `$$nemoclaw <name> channels stop <channel>`
 
-Pause a single messaging bridge (`telegram`, `discord`, `slack`, `wechat`, or `whatsapp`) without clearing its credentials.
+Pause one configured messaging channel without clearing its credentials.
+The command verifies that the sandbox's agent runtime supports the channel before reading configured or disabled channel state.
+It then requires the channel to be configured for the sandbox.
 The channel is marked disabled in the per-sandbox registry, and the sandbox is rebuilt so the onboard step skips registering the bridge with the gateway.
 The provider stays registered with the OpenShell gateway, so a later `channels start` brings the bridge back without re-entering tokens.
 
@@ -2203,6 +2268,8 @@ Use `channels stop` instead of `channels remove` when you want to pause a bridge
 ### `$$nemoclaw <name> channels start <channel>`
 
 Re-enable a channel previously paused with `channels stop`. The channel is removed from the disabled list, the sandbox is rebuilt, and the bridge registers with the gateway again using the stored credentials.
+The command verifies that the sandbox's agent runtime supports the channel before reading configured or disabled channel state.
+It then requires the channel to be configured for the sandbox.
 Before the rebuild, NemoClaw reapplies the matching built-in network policy preset so the restored bridge has egress to its upstream API.
 Before updating the disabled list or applying the policy, NemoClaw prints the exact effective egress scope when the preset would open or replace access, or reports that no new egress would be opened when the preset is already effective.
 If policy restoration fails, NemoClaw rolls the channel back to disabled and exits without rebuilding into a partially active state.
@@ -3010,6 +3077,11 @@ Names must be 1 to 63 characters from `[A-Za-z0-9._-]`, start with an alphanumer
 $$nemoclaw my-assistant snapshot create --name before-upgrade
 ```
 
+When a directory or state file cannot be captured, the command reports the failed items, removes the incomplete snapshot, and exits nonzero.
+A removed snapshot does not appear in `snapshot list` and cannot be restored, so a later restore cannot select a capture that never completed.
+When removal fails, the command reports the listed snapshot path and exits nonzero.
+Remove that directory manually before you run `snapshot restore` because the incomplete capture remains selectable.
+
 ### `$$nemoclaw <name> snapshot list`
 
 List available snapshots for a sandbox as a table of version, name, timestamp, and path.
@@ -3033,6 +3105,19 @@ If ownership becomes ambiguous, NemoClaw attempts to record durable containment 
 If the containment commit fails, NemoClaw retains any exact lifecycle and deadline gates it already owns.
 A state-directory failure that prevented gate publication also prevents normal mutation-lock acquisition.
 Correct the reported state-directory write failure, then run `$$nemoclaw <name> shields status` to resume recovery or receive exact-generation recovery guidance.
+
+<Warning>
+Post-restore policy reconciliation is best-effort.
+NemoClaw warns and continues the remaining restore steps in these cases:
+
+- NemoClaw cannot verify whether a custom policy owns the live `observability-otlp-local` policy entry.
+- The built-in `observability-otlp-local` policy preset has drifted or cannot be inspected.
+- NemoClaw cannot add or remove a recorded policy preset.
+
+The live network policy can then retain unwanted egress or omit expected egress until you repair the named preset.
+After a warning, run `$$nemoclaw <name> policy list`.
+Confirm that the named preset is recorded in the sandbox registry and active on the gateway, or absent from both.
+</Warning>
 
 The selector accepts any of:
 
@@ -3773,6 +3858,7 @@ Set them before running `$$nemoclaw onboard`.
 | Variable | Format | Effect |
 |----------|--------|--------|
 | `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openrouter`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `routed`, `hermes-provider`, `llama-cpp`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. `llama-cpp` selects attachment of an authenticated, operator-managed llama.cpp server on loopback port `8081`. Set `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`; set `NEMOCLAW_MODEL` to the served alias when the server exposes multiple models. If the server does not provide consistent native llama.cpp evidence, select `custom`. Aliases: `cloud` → `build`, `open-router` / `openrouterai` → `openrouter`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
+| `NEMOCLAW_MODEL` | model ID | Selects an explicit model for a non-interactive onboarding run. NemoClaw preserves it across a detected provider switch, even when it matches the recorded provider's default. When this variable is unset during such a switch, NemoClaw ignores the `NEMOCLAW_PROVIDER_MODEL` compatibility fallback and uses normal provider model selection. |
 | `NEMOCLAW_TOOL_DISCLOSURE` | `progressive` or `direct` | Selects progressive tool discovery or the prior direct-exposure behavior. Defaults to `progressive`; `--tool-disclosure` takes precedence when both are set. |
 | `NEMOCLAW_ENDPOINT_URL` | URL | Custom endpoint URL. Used together with `NEMOCLAW_PROVIDER=custom` for OpenAI-compatible endpoints or `NEMOCLAW_PROVIDER=anthropicCompatible` for Anthropic-compatible endpoints. |
 | `NEMOCLAW_COMPATIBLE_AUTH_MODE` | `none` or unset | Explicitly selects no authentication for an HTTP OpenAI-compatible endpoint using `localhost`, `127.0.0.1`, or `[::1]` and port `8000`, `11434`, or `11435` during non-interactive onboarding. |

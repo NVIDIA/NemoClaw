@@ -62,6 +62,7 @@ const BROAD_FILES = [
 const BROAD_JOBS = [
   "cloud-inference",
   "cloud-onboard",
+  "managed-image-multiarch-startup",
   "security-posture",
   "channels-add-remove",
   "channels-stop-start",
@@ -133,6 +134,7 @@ function prGateMutationResponse(request: RecordedGitHubRequest, id = 17): Respon
   const body = (request.body ?? {}) as Record<string, unknown>;
   return githubResponse(exactPrGateCheck({ id, ...body }));
 }
+
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -1408,7 +1410,7 @@ describe("PR E2E controller", () => {
       expect(checkUpdates[1]?.body).toMatchObject({
         status: "in_progress",
         output: {
-          title: "Running 13 E2E checks",
+          title: "Running 14 E2E checks",
           summary: expect.stringContaining("rebuild-openclaw"),
         },
       });

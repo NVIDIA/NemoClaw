@@ -115,6 +115,9 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
   if (record(job.permissions).contents !== "read") {
     errors.push(`${JOB_ID} permissions must be contents: read`);
   }
+  if (job["continue-on-error"] !== undefined) {
+    errors.push(`${JOB_ID} must not weaken failures with continue-on-error`);
+  }
 
   const expectedStrategy = {
     "fail-fast": false,
