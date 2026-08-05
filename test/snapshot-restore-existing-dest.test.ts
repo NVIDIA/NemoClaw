@@ -17,13 +17,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { execTimeout } from "./helpers/timeouts";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
 
-type CliRunResult = { code: number; out: string };
+type CliRunResult = { code: number | null; out: string };
 
 function runCli(
   args: readonly string[],
@@ -43,13 +43,17 @@ function runCli(
     return { code: 0, out };
   } catch (err: unknown) {
     if (typeof err === "object" && err !== null && "status" in err) {
-      const e = err as { status?: number; stdout?: Buffer | string; stderr?: Buffer | string };
+      const e = err as {
+        status?: number | null;
+        stdout?: Buffer | string;
+        stderr?: Buffer | string;
+      };
       const out = [e.stdout, e.stderr]
         .map((b) => (typeof b === "string" ? b : b ? b.toString("utf-8") : ""))
         .join("");
-      return { code: typeof e.status === "number" ? e.status : 1, out };
+      return { code: typeof e.status === "number" ? e.status : null, out };
     }
-    return { code: 1, out: String(err) };
+    return { code: null, out: String(err) };
   }
 }
 
@@ -73,7 +77,8 @@ interface MakeEnvOptions {
  *  - registry containing `src` and `dst`
  *  - snapshot manifest for `src` at ~/.nemoclaw/rebuild-backups/src/<ts>/rebuild-manifest.json (unless withSnapshot=false)
  *  - fake openshell that:
- *    - `sandbox list` reports both `src` and `dst` as Ready
+ *    - `sandbox list` reports live sandboxes for the active gateway
+ *      and omits `dst` from later source-gateway listings after deletion
  *    - `status` reports the gateway as Connected
  *    - `sandbox delete dst` exits 0 (and logs the call)
  *    - `sandbox create` exits non-zero (intentional; the integration tests
@@ -150,12 +155,14 @@ function makeExistingDestEnv(
 
   const osLog = path.join(home, "openshell.log");
   const activeGateway = path.join(home, "active-gateway");
+  const deletedDestination = path.join(home, "destination-deleted");
   fs.writeFileSync(
     path.join(localBin, "openshell"),
     [
       "#!/bin/sh",
       `printf '%s\\n' "$*" >> ${JSON.stringify(osLog)}`,
       `ACTIVE_GATEWAY=${JSON.stringify(activeGateway)}`,
+      `DELETED_DESTINATION=${JSON.stringify(deletedDestination)}`,
       'if [ "$1" = "gateway" ] && [ "$2" = "select" ]; then',
       destinationGatewayName && opts.destinationGatewaySelectSucceeds === false
         ? `  if [ "$3" = ${JSON.stringify(destinationGatewayName)} ]; then echo "select failed" >&2; exit 17; fi`
@@ -166,7 +173,7 @@ function makeExistingDestEnv(
       'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
       destinationGatewayName
         ? `  active="$(cat "$ACTIVE_GATEWAY" 2>/dev/null || printf '%s' nemoclaw)"; if [ "$active" = ${JSON.stringify(destinationGatewayName)} ]; then printf "NAME STATUS\\ndst Ready\\n"; else ${opts.foreignActiveGatewayListsDestination ? 'printf "NAME STATUS\\nsrc Ready\\ndst Ready\\n"' : 'printf "NAME STATUS\\nsrc Ready\\n"'}; fi`
-        : '  printf "NAME STATUS\\nsrc Ready\\ndst Ready\\n"',
+        : '  if [ -e "$DELETED_DESTINATION" ]; then printf "NAME STATUS\nsrc Ready\n"; else printf "NAME STATUS\nsrc Ready\ndst Ready\n"; fi',
       "  exit 0",
       "fi",
       'if [ "$1" = "status" ]; then',
@@ -177,6 +184,7 @@ function makeExistingDestEnv(
       destinationGatewayName
         ? `  active="$(cat "$ACTIVE_GATEWAY" 2>/dev/null || printf '%s' nemoclaw)"; if [ "$active" != ${JSON.stringify(destinationGatewayName)} ]; then echo "delete on wrong gateway: $active" >&2; exit 42; fi`
         : "  :",
+      '  touch "$DELETED_DESTINATION"',
       "  exit 0",
       "fi",
       'if [ "$1" = "sandbox" ] && [ "$2" = "create" ]; then',
@@ -261,6 +269,7 @@ describe("snapshot restore --to existing destination (#3756)", () => {
     // Auto-create is intentionally mocked to fail end-to-end (the fake
     // openshell exits non-zero on `sandbox create`); the test only proves the
     // new --force branch ran through the delete step.
+    expect(r.code).toBe(1);
     expect(r.out).toMatch(/Deleting existing destination 'dst'/);
     const log = fs.existsSync(osLog) ? fs.readFileSync(osLog, "utf-8") : "";
     expect(log).toMatch(/sandbox delete dst/);
@@ -271,6 +280,7 @@ describe("snapshot restore --to existing destination (#3756)", () => {
       destinationGatewayPort: 8090,
     });
     const r = runCli(["src", "snapshot", "restore", "--to", "dst", "--force", "--yes"], env);
+    expect(r.code).toBe(1);
     expect(r.out).toMatch(/Deleting existing destination 'dst'/);
     const lines = fs.readFileSync(osLog, "utf-8").trim().split("\n");
     const deleteIndex = lines.indexOf("sandbox delete dst");
@@ -309,6 +319,7 @@ describe("snapshot restore --to existing destination (#3756)", () => {
     const base = makeExistingDestEnv("nemoclaw-snap-restore-noninteractive-");
     const env = { ...base.env, NEMOCLAW_NON_INTERACTIVE: "1" };
     const r = runCli(["src", "snapshot", "restore", "--to", "dst", "--force"], env);
+    expect(r.code).toBe(1);
     expect(r.out).toMatch(/Deleting existing destination 'dst'/);
     const log = fs.existsSync(base.osLog) ? fs.readFileSync(base.osLog, "utf-8") : "";
     expect(log).toMatch(/sandbox delete dst/);
