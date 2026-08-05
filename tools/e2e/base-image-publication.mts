@@ -23,6 +23,10 @@ const MAX_RETRY_DELAY_MS = 10_000;
 const SHA_PATTERN = /^[0-9a-f]{40}$/u;
 const SAFE_PATH_PATTERN = /^[A-Za-z0-9._/-]+$/u;
 const REVIEWED_PATH_GLOBS = new Map<string, RegExp>([
+  [
+    ".github/actions/ci-reviewed-npm-audit/**",
+    /^[.]github\/actions\/ci-reviewed-npm-audit\/.+$/u,
+  ],
   ["agents/**", /^agents\/.+$/u],
   ["nemoclaw/**", /^nemoclaw\/.+$/u],
   ["nemoclaw-blueprint/**", /^nemoclaw-blueprint\/.+$/u],
