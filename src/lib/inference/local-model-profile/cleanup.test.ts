@@ -102,18 +102,19 @@ describe("host-local model runtime cleanup", () => {
     const forceRm = vi.fn(() => result());
     const run = vi.fn((argv: readonly string[]) => result(argv[0] === "info" ? 0 : 0));
     const capture = vi.fn((argv: readonly string[]) => {
-      if (argv[0] === "container" && argv[2] === HOST_LOCAL_VLLM_CONTAINER_NAME) return "";
-      if (argv[0] === "container" && argv[2] === MANAGED_LLAMA_CPP_CONTAINER_NAME) {
-        return ownedContainer(MANAGED_LLAMA_CPP_CONTAINER_NAME, "a".repeat(64), {
-          [MANAGED_LLAMA_CPP_OWNER_LABEL]: MANAGED_LLAMA_CPP_OWNER_VALUE,
-          [MANAGED_LLAMA_CPP_GENERATION_LABEL]: generation,
-          [MANAGED_LLAMA_CPP_AUTH_LABEL]: createHash("sha256").update(apiKey).digest("hex"),
-        });
-      }
-      if (argv[0] === "network" && argv[2] === MANAGED_LLAMA_CPP_NETWORK_NAME) {
-        return ownedNetwork(MANAGED_LLAMA_CPP_NETWORK_NAME, "b".repeat(64), generation);
-      }
-      return "";
+      const llamaResult =
+        argv[0] === "container" && argv[2] === MANAGED_LLAMA_CPP_CONTAINER_NAME
+          ? ownedContainer(MANAGED_LLAMA_CPP_CONTAINER_NAME, "a".repeat(64), {
+              [MANAGED_LLAMA_CPP_OWNER_LABEL]: MANAGED_LLAMA_CPP_OWNER_VALUE,
+              [MANAGED_LLAMA_CPP_GENERATION_LABEL]: generation,
+              [MANAGED_LLAMA_CPP_AUTH_LABEL]: createHash("sha256").update(apiKey).digest("hex"),
+            })
+          : "";
+      const networkResult =
+        argv[0] === "network" && argv[2] === MANAGED_LLAMA_CPP_NETWORK_NAME
+          ? ownedNetwork(MANAGED_LLAMA_CPP_NETWORK_NAME, "b".repeat(64), generation)
+          : "";
+      return llamaResult || networkResult;
     });
 
     expect(
@@ -141,18 +142,17 @@ describe("host-local model runtime cleanup", () => {
     });
     const forceRm = vi.fn(() => result());
     const capture = vi.fn((argv: readonly string[]) => {
-      if (argv[0] === "container" && argv[2] === HOST_LOCAL_VLLM_CONTAINER_NAME) {
-        return ownedContainer(
-          HOST_LOCAL_VLLM_CONTAINER_NAME,
-          "d".repeat(64),
-          {
-            [HOST_LOCAL_VLLM_MANAGED_LABEL]: "true",
-            [HOST_LOCAL_VLLM_AUTH_LABEL]: createHash("sha256").update(apiKey).digest("hex"),
-          },
-          [`VLLM_API_KEY=${apiKey}`],
-        );
-      }
-      return "";
+      return argv[0] === "container" && argv[2] === HOST_LOCAL_VLLM_CONTAINER_NAME
+        ? ownedContainer(
+            HOST_LOCAL_VLLM_CONTAINER_NAME,
+            "d".repeat(64),
+            {
+              [HOST_LOCAL_VLLM_MANAGED_LABEL]: "true",
+              [HOST_LOCAL_VLLM_AUTH_LABEL]: createHash("sha256").update(apiKey).digest("hex"),
+            },
+            [`VLLM_API_KEY=${apiKey}`],
+          )
+        : "";
     });
     const options: LocalModelRuntimeCleanupOptions = {
       deleteModels: false,
@@ -175,10 +175,9 @@ describe("host-local model runtime cleanup", () => {
       mode: 0o600,
     });
     const capture = vi.fn((argv: readonly string[]) => {
-      if (argv[0] === "container" && argv[2] === HOST_LOCAL_VLLM_CONTAINER_NAME) {
-        return ownedContainer(HOST_LOCAL_VLLM_CONTAINER_NAME, "f".repeat(64), {});
-      }
-      return "";
+      return argv[0] === "container" && argv[2] === HOST_LOCAL_VLLM_CONTAINER_NAME
+        ? ownedContainer(HOST_LOCAL_VLLM_CONTAINER_NAME, "f".repeat(64), {})
+        : "";
     });
     const forceRm = vi.fn(() => result());
 

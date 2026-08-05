@@ -47,10 +47,11 @@ function okWithKnownGatewayList(command: string, args: readonly string[]): RunRe
 describe("uninstall local model profile cleanup", () => {
   it("fails before generic Docker cleanup when a reserved inference name remains", () => {
     const errors: string[] = [];
-    const runDocker = vi.fn((args: string[]) => {
-      if (args[0] === "ps") {
-        if (args.at(-1) === "{{.Names}}") return ok("nemoclaw-llama-cpp\n");
-        return ok(
+    const psResults = new Map([
+      ["{{.Names}}", ok("nemoclaw-llama-cpp\n")],
+      [
+        "{{.ID}} {{.Image}} {{.Names}}",
+        ok(
           [
             "id-head image nemoclaw-vllm",
             "id-worker image nemoclaw-vllm-worker",
@@ -58,9 +59,11 @@ describe("uninstall local model profile cleanup", () => {
             "id-llama image nemoclaw-llama-cpp",
             "id-other image nemoclaw-helper",
           ].join("\n"),
-        );
-      }
-      return ok();
+        ),
+      ],
+    ]);
+    const runDocker = vi.fn((args: string[]) => {
+      return psResults.get(args[0] === "ps" ? (args.at(-1) ?? "") : "") ?? ok();
     });
 
     const result = runUninstallPlan(

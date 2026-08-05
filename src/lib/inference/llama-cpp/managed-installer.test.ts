@@ -47,50 +47,56 @@ function dockerHarness() {
   let authFingerprint = "";
   const labelValue = (argv: readonly string[], name: string) =>
     argv.find((value) => value.startsWith(`${name}=`))?.slice(name.length + 1) ?? "";
-  const run = vi.fn((argv: readonly string[]) => {
-    if (argv[0] === "network" && argv[1] === "create") {
+  const runActions: Record<string, (argv: readonly string[]) => void> = {
+    "network create": (argv) => {
       networkPresent = true;
       generation = labelValue(argv, MANAGED_LLAMA_CPP_GENERATION_LABEL);
-    }
-    if (argv[0] === "run") {
+    },
+    run: (argv) => {
       containerPresent = true;
       generation = labelValue(argv, MANAGED_LLAMA_CPP_GENERATION_LABEL);
       authFingerprint = labelValue(argv, MANAGED_LLAMA_CPP_AUTH_LABEL);
-    }
+    },
+  };
+  const run = vi.fn((argv: readonly string[]) => {
+    const key = argv[0] === "network" ? argv.slice(0, 2).join(" ") : (argv[0] ?? "");
+    runActions[key]?.(argv);
     return { status: 0 } as never;
   });
   const capture = vi.fn((argv: readonly string[]) => {
-    if (argv[0] === "container" && containerPresent) {
-      return JSON.stringify([
-        {
-          Id: "a".repeat(64),
-          Name: `/${MANAGED_LLAMA_CPP_CONTAINER_NAME}`,
-          Config: {
-            Labels: {
-              [MANAGED_LLAMA_CPP_OWNER_LABEL]: MANAGED_LLAMA_CPP_OWNER_VALUE,
-              [MANAGED_LLAMA_CPP_GENERATION_LABEL]: generation,
-              [MANAGED_LLAMA_CPP_AUTH_LABEL]: authFingerprint,
+    const containerResult =
+      argv[0] === "container" && containerPresent
+        ? JSON.stringify([
+            {
+              Id: "a".repeat(64),
+              Name: `/${MANAGED_LLAMA_CPP_CONTAINER_NAME}`,
+              Config: {
+                Labels: {
+                  [MANAGED_LLAMA_CPP_OWNER_LABEL]: MANAGED_LLAMA_CPP_OWNER_VALUE,
+                  [MANAGED_LLAMA_CPP_GENERATION_LABEL]: generation,
+                  [MANAGED_LLAMA_CPP_AUTH_LABEL]: authFingerprint,
+                },
+              },
             },
-          },
-        },
-      ]);
-    }
-    if (argv[0] === "network" && networkPresent) {
-      return JSON.stringify([
-        {
-          Id: "b".repeat(64),
-          Name: MANAGED_LLAMA_CPP_NETWORK_NAME,
-          Internal: true,
-          Driver: "bridge",
-          Scope: "local",
-          Labels: {
-            [MANAGED_LLAMA_CPP_OWNER_LABEL]: MANAGED_LLAMA_CPP_OWNER_VALUE,
-            [MANAGED_LLAMA_CPP_GENERATION_LABEL]: generation,
-          },
-        },
-      ]);
-    }
-    return "";
+          ])
+        : "";
+    const networkResult =
+      argv[0] === "network" && networkPresent
+        ? JSON.stringify([
+            {
+              Id: "b".repeat(64),
+              Name: MANAGED_LLAMA_CPP_NETWORK_NAME,
+              Internal: true,
+              Driver: "bridge",
+              Scope: "local",
+              Labels: {
+                [MANAGED_LLAMA_CPP_OWNER_LABEL]: MANAGED_LLAMA_CPP_OWNER_VALUE,
+                [MANAGED_LLAMA_CPP_GENERATION_LABEL]: generation,
+              },
+            },
+          ])
+        : "";
+    return containerResult || networkResult;
   });
   return {
     capture,
@@ -208,14 +214,16 @@ describe("managed llama.cpp installer", () => {
     temporaryDirectories.push(homeDir);
     const body = Buffer.from("redirected-catalog-gguf");
     const docker = dockerHarness();
-    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      if (new URL(String(url)).hostname === "huggingface.co") {
-        return new Response(null, {
+    const responses = {
+      "huggingface.co": () =>
+        new Response(null, {
           status: 302,
           headers: { location: "https://cdn.example/model.gguf" },
-        });
-      }
-      return new Response(body, { status: 200 });
+        }),
+      "cdn.example": () => new Response(body, { status: 200 }),
+    } as const;
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      return responses[new URL(String(url)).hostname as keyof typeof responses]();
     });
 
     const result = await installManagedLlamaCpp(testRecipe(body), {
