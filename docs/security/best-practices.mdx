@@ -353,8 +353,8 @@ Historical Hermes images that have a bundled helper but no generated plan use th
 It locks `cron`, `hooks`, `platforms`, `plugins`, `profiles`, `skills`, `skins`, `weixin`, and `workspace` to `root:sandbox`, and locks the `pairing` confidentiality root to `root:sandbox 0710`.
 Hermes runtime directories without a Shields declaration remain mutable.
 
-When Shields locks the tree, the shared state-directory guard treats any present `credentials`, `identity`, or `pairing` directory as a confidentiality root.
-For Hermes, this normally applies to `pairing`.
+The shared state-directory guard applies the manifest declaration to `pairing` on current Hermes images.
+On historical images, the reviewed legacy inventory also treats present `credentials` and `identity` directories as confidentiality roots.
 The guard sets the root to `root:sandbox 710`, keeps it traversable but unlistable to the sandbox group, and sets every descendant to `root:root` with no group or world permission bits.
 As a result, a known-name probe for a missing direct child returns `ENOENT`, while directory listing, nested traversal, and protected-file reads return `EACCES`.
 
