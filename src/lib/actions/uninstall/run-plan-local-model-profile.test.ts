@@ -154,4 +154,27 @@ describe("uninstall local model profile cleanup", () => {
       fs.rmSync(tmpHome, { recursive: true, force: true });
     }
   });
+
+  it("stops before generic Docker cleanup when host-local cleanup fails", () => {
+    const errors: string[] = [];
+    const runDocker = vi.fn((_args: string[]) => ok());
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: true, keepOpenShell: true },
+      {
+        commandExists: (command) => command === "openshell" || command === "docker",
+        env: { HOME: "/tmp/nemoclaw-uninstall-local-cleanup-failure" } as NodeJS.ProcessEnv,
+        existsSync: (target) => String(target).endsWith("/.cache/nemoclaw/llama-cpp"),
+        error: (message) => errors.push(message),
+        isTty: false,
+        log: () => {},
+        run: vi.fn(okWithKnownGatewayList),
+        runDocker,
+        runLocalModelRuntimeCleanup: vi.fn(() => notFound()),
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(errors.join("\n")).toContain("Host-local model cleanup did not complete");
+    expect(runDocker.mock.calls.some(([args]) => args[0] === "rm")).toBe(false);
+  });
 });

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,6 +14,7 @@ import {
   MANAGED_LLAMA_CPP_OWNER_LABEL,
   MANAGED_LLAMA_CPP_OWNER_VALUE,
 } from "../llama-cpp/managed-installer";
+import { runtimeAuthFingerprint } from "../serving/runtime-auth-fingerprint";
 import {
   HOST_LOCAL_VLLM_AUTH_LABEL,
   HOST_LOCAL_VLLM_CONTAINER_NAME,
@@ -88,7 +88,7 @@ describe("host-local model runtime cleanup", () => {
         receiptRef: "llama-cpp.host-local.receipt/v1",
         owner: { id: "nemoclaw-local-model-profile", generation },
         authentication: {
-          fingerprint: createHash("sha256").update(apiKey).digest("hex"),
+          fingerprint: runtimeAuthFingerprint(apiKey),
         },
         container: { name: MANAGED_LLAMA_CPP_CONTAINER_NAME, id: "a".repeat(64) },
         network: { name: MANAGED_LLAMA_CPP_NETWORK_NAME, id: "b".repeat(64) },
@@ -100,14 +100,14 @@ describe("host-local model runtime cleanup", () => {
     const cache = path.join(homeDir, ".cache", "nemoclaw", "llama-cpp");
     fs.mkdirSync(cache, { mode: 0o700, recursive: true });
     const forceRm = vi.fn(() => result());
-    const run = vi.fn((argv: readonly string[]) => result(argv[0] === "info" ? 0 : 0));
+    const run = vi.fn(() => result());
     const capture = vi.fn((argv: readonly string[]) => {
       const llamaResult =
         argv[0] === "container" && argv[2] === MANAGED_LLAMA_CPP_CONTAINER_NAME
           ? ownedContainer(MANAGED_LLAMA_CPP_CONTAINER_NAME, "a".repeat(64), {
               [MANAGED_LLAMA_CPP_OWNER_LABEL]: MANAGED_LLAMA_CPP_OWNER_VALUE,
               [MANAGED_LLAMA_CPP_GENERATION_LABEL]: generation,
-              [MANAGED_LLAMA_CPP_AUTH_LABEL]: createHash("sha256").update(apiKey).digest("hex"),
+              [MANAGED_LLAMA_CPP_AUTH_LABEL]: runtimeAuthFingerprint(apiKey),
             })
           : "";
       const networkResult =
@@ -148,7 +148,7 @@ describe("host-local model runtime cleanup", () => {
             "d".repeat(64),
             {
               [HOST_LOCAL_VLLM_MANAGED_LABEL]: "true",
-              [HOST_LOCAL_VLLM_AUTH_LABEL]: createHash("sha256").update(apiKey).digest("hex"),
+              [HOST_LOCAL_VLLM_AUTH_LABEL]: runtimeAuthFingerprint(apiKey),
             },
             [`VLLM_API_KEY=${apiKey}`],
           )
@@ -198,13 +198,21 @@ describe("host-local model runtime cleanup", () => {
       mode: 0o700,
       recursive: true,
     });
+    const capture = vi.fn(() => "");
+    const forceRm = vi.fn(() => result());
     expect(
       cleanupLocalModelRuntimes({
         deleteModels: false,
         homeDir,
-        deps: { run: vi.fn(() => result(1)) },
+        deps: {
+          capture: capture as never,
+          forceRm: forceRm as never,
+          run: vi.fn(() => result(1)),
+        },
       }),
     ).toMatchObject({ ok: false, reason: expect.stringContaining("Docker is unavailable") });
+    expect(capture).not.toHaveBeenCalled();
+    expect(forceRm).not.toHaveBeenCalled();
   });
 
   it("deletes only a receipt-bound managed llama.cpp cache", () => {

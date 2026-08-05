@@ -117,6 +117,8 @@ export interface UninstallRunOutcome {
 
 const OPENSHELL_COMMAND_MISSING_ERROR =
   "openshell command not found. Restore it to PATH and re-run nemoclaw uninstall.";
+export const MANAGED_INFERENCE_CONTAINER_NAME_PATTERN =
+  /^(?:nemoclaw-vllm|nemoclaw-vllm-worker|nemoclaw-llama-cpp|nemoclaw-vllm-cluster-rank-[0-9]+)$/;
 
 function toRunResult(result: SpawnSyncReturns<string | Buffer>): RunResult {
   return {
@@ -1469,9 +1471,7 @@ function removeManagedModelRuntimes(
     return false;
   }
   const residual = splitNonEmptyLines(inventory.stdout).find((name) =>
-    /^(?:nemoclaw-vllm|nemoclaw-vllm-worker|nemoclaw-llama-cpp|nemoclaw-vllm-cluster-rank-[0-9]+)$/.test(
-      name,
-    ),
+    MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name),
   );
   if (!residual) return true;
   runtime.error(
@@ -1488,11 +1488,7 @@ function removeDockerContainers(runtime: UninstallRuntime, gatewayName?: string)
     .filter((line) => {
       const name = line.trim().split(/\s+/).at(-1) ?? "";
       if (!gatewayName) {
-        if (
-          /^(?:nemoclaw-vllm|nemoclaw-vllm-worker|nemoclaw-llama-cpp|nemoclaw-vllm-cluster-rank-[0-9]+)$/.test(
-            name,
-          )
-        ) {
+        if (MANAGED_INFERENCE_CONTAINER_NAME_PATTERN.test(name)) {
           return false;
         }
         return /openshell-cluster|openshell|openclaw|nemoclaw/i.test(line);

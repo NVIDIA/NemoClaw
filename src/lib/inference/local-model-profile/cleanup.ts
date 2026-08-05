@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,6 +21,7 @@ import {
   MANAGED_CLUSTER_VLLM_RUNTIME_RECEIPT_FILE,
   MANAGED_VLLM_API_KEY_FILE,
 } from "../serving/managed-runtime-receipts";
+import { runtimeAuthFingerprint } from "../serving/runtime-auth-fingerprint";
 import {
   HOST_LOCAL_VLLM_AUTH_LABEL,
   HOST_LOCAL_VLLM_CONTAINER_NAME,
@@ -31,6 +31,7 @@ import { loadManagedVllmApiKey } from "../vllm-api-key";
 
 interface CleanupDeps {
   capture: typeof dockerCapture;
+  currentUserId: number | null;
   forceRm: typeof dockerForceRm;
   run: typeof dockerRun;
 }
@@ -109,7 +110,11 @@ function inspectOwnedResource(
   return { kind: "owned", id, row };
 }
 
-function realOwnerDirectory(homeDir: string, directory: string): boolean {
+function realOwnerDirectory(
+  homeDir: string,
+  directory: string,
+  currentUserId: number | null,
+): boolean {
   const relative = path.relative(homeDir, directory);
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new Error("host-local model cleanup path is outside the selected home directory");
@@ -121,10 +126,13 @@ function realOwnerDirectory(homeDir: string, directory: string): boolean {
       const stat = fs.lstatSync(current);
       if (stat.isSymbolicLink()) throw new Error(`host-local model path is a symlink: ${current}`);
       if (current === directory) {
-        return (
-          stat.isDirectory() &&
-          (typeof process.getuid !== "function" || stat.uid === process.getuid())
-        );
+        if (!stat.isDirectory()) {
+          throw new Error(`host-local model path is not a directory: ${current}`);
+        }
+        if (currentUserId !== null && stat.uid !== currentUserId) {
+          throw new Error(`host-local model path is not owned by the current user: ${current}`);
+        }
+        return true;
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
@@ -307,7 +315,12 @@ function assertOwnedCacheReceipt(
   }
 }
 
-function removeOwnedLlamaCppCache(homeDir: string, cacheDir: string, removed: string[]): void {
+function removeOwnedLlamaCppCache(
+  homeDir: string,
+  cacheDir: string,
+  currentUserId: number | null,
+  removed: string[],
+): void {
   const owner = cacheOwner(cacheDir);
   const entries = fs.readdirSync(cacheDir, { withFileTypes: true });
   const ownedEntryDirs: string[] = [];
@@ -317,14 +330,14 @@ function removeOwnedLlamaCppCache(homeDir: string, cacheDir: string, removed: st
       throw new Error(`managed llama.cpp cache contains an unowned entry: ${entry.name}`);
     }
     const entryDir = path.join(cacheDir, entry.name);
-    if (!realOwnerDirectory(homeDir, entryDir)) {
+    if (!realOwnerDirectory(homeDir, entryDir, currentUserId)) {
       throw new Error(`managed llama.cpp cache entry is not an owner directory: ${entry.name}`);
     }
     assertOwnedCacheReceipt(entryDir, entry.name, owner);
     ownedEntryDirs.push(entryDir);
   }
   for (const entryDir of ownedEntryDirs) {
-    if (!realOwnerDirectory(homeDir, entryDir)) {
+    if (!realOwnerDirectory(homeDir, entryDir, currentUserId)) {
       throw new Error(`managed llama.cpp cache entry changed before deletion: ${entryDir}`);
     }
     fs.rmSync(entryDir, { recursive: true });
@@ -373,7 +386,7 @@ function cleanupHostLocalVllm(stateDir: string, deps: CleanupDeps, removed: stri
     !apiKey ||
     keys.length !== 1 ||
     keys[0] !== `VLLM_API_KEY=${apiKey}` ||
-    authFingerprint !== createHash("sha256").update(apiKey).digest("hex")
+    authFingerprint !== runtimeAuthFingerprint(apiKey)
   ) {
     throw new Error("host-local vLLM ownership or authentication does not match persisted state");
   }
@@ -389,14 +402,14 @@ function cleanupLlamaCpp(
   deps: CleanupDeps,
   removed: string[],
 ): void {
-  const hasState = realOwnerDirectory(homeDir, privateStateDir);
+  const hasState = realOwnerDirectory(homeDir, privateStateDir, deps.currentUserId);
   if (!hasState) return;
   const owner = cacheOwner(privateStateDir);
   const apiKey = readOwnerOnlyRegularFile(path.join(privateStateDir, "api-key")).trim();
   if (!/^[a-f0-9]{64}$/.test(apiKey)) {
     throw new Error("managed llama.cpp API-key state is invalid");
   }
-  const authFingerprint = createHash("sha256").update(apiKey).digest("hex");
+  const authFingerprint = runtimeAuthFingerprint(apiKey);
   const receipt = llamaCppRuntimeReceipt(privateStateDir, owner, authFingerprint);
   const container = inspectOwnedResource(
     "container",
@@ -455,6 +468,12 @@ export function cleanupLocalModelRuntimes(
   const cacheDir = path.join(homeDir, ".cache", "nemoclaw", "llama-cpp");
   const deps: CleanupDeps = {
     capture: options.deps?.capture ?? dockerCapture,
+    currentUserId:
+      options.deps?.currentUserId === undefined
+        ? typeof process.getuid === "function"
+          ? process.getuid()
+          : null
+        : options.deps.currentUserId,
     forceRm: options.deps?.forceRm ?? dockerForceRm,
     run: options.deps?.run ?? dockerRun,
   };
@@ -464,7 +483,7 @@ export function cleanupLocalModelRuntimes(
     const dockerReady =
       deps.run(["info"], { ignoreError: true, suppressOutput: true }).status === 0;
     const localStateRequiresDocker =
-      realOwnerDirectory(homeDir, llamaStateDir) ||
+      realOwnerDirectory(homeDir, llamaStateDir, deps.currentUserId) ||
       (fs.existsSync(path.join(stateDir, MANAGED_VLLM_API_KEY_FILE)) &&
         !distributedReceiptPresent(stateDir));
     if (!dockerReady && localStateRequiresDocker) {
@@ -474,9 +493,9 @@ export function cleanupLocalModelRuntimes(
       cleanupHostLocalVllm(stateDir, deps, removed);
       cleanupLlamaCpp(homeDir, llamaStateDir, deps, removed);
     }
-    if (options.deleteModels && realOwnerDirectory(homeDir, cacheDir)) {
-      removeOwnedLlamaCppCache(homeDir, cacheDir, removed);
-    } else if (realOwnerDirectory(homeDir, cacheDir)) {
+    if (options.deleteModels && realOwnerDirectory(homeDir, cacheDir, deps.currentUserId)) {
+      removeOwnedLlamaCppCache(homeDir, cacheDir, deps.currentUserId, removed);
+    } else if (realOwnerDirectory(homeDir, cacheDir, deps.currentUserId)) {
       preserved.push(cacheDir);
     }
     return { ok: true, removed, preserved };

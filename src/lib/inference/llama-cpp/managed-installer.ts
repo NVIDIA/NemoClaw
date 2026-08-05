@@ -14,6 +14,7 @@ import {
   dockerRun,
 } from "../../adapters/docker/local-model-runtime";
 import { ensureLocalAdapterStateDir, writeLocalAdapterJsonFile } from "../local-adapter-lifecycle";
+import { runtimeAuthFingerprint } from "../serving/runtime-auth-fingerprint";
 import type { LlamaCppServingRecipe } from "../serving/types";
 import { compileLlamaCppGgufCachePlan, type LlamaCppGgufCachePlan } from "./gguf-cache-plan";
 import {
@@ -560,7 +561,7 @@ export async function installManagedLlamaCpp(
     bindOwnerToRuntimeState(privateStateDir, owner);
     const apiKey = apiKeyForState(privateStateDir, randomBytes);
     readPrivateRegularFile(path.join(privateStateDir, MANAGED_LLAMA_CPP_RUNTIME_RECEIPT_FILE));
-    const authFingerprint = crypto.createHash("sha256").update(apiKey).digest("hex");
+    const authFingerprint = runtimeAuthFingerprint(apiKey);
     const containerState = ownedContainerId(
       MANAGED_LLAMA_CPP_CONTAINER_NAME,
       owner.generation,

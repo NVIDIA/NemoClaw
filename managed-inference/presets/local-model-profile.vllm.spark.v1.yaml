@@ -38,12 +38,27 @@ spec:
       - readiness:
           scope: everyNode
           kind: capability
+          id: host.docker.runtime_supported
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.docker.storage_compatible
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
           id: host.gpu.nvidia_available
           state: present
       - readiness:
           scope: everyNode
           kind: capability
           id: host.gpu.container_toolkit_available
+          state: present
+      - readiness:
+          scope: everyNode
+          kind: capability
+          id: host.gpu.cdi_healthy
           state: present
       - readiness:
           scope: everyNode
@@ -62,10 +77,24 @@ spec:
       - readiness:
           scope: everyNode
           kind: observation
+          id: host.docker.runtime
+          comparison:
+            operator: equals
+            value: docker
+      - readiness:
+          scope: everyNode
+          kind: observation
           id: host.gpu.count
           comparison:
             operator: at-least
             value: 1
+      - readiness:
+          scope: everyNode
+          kind: observation
+          id: host.gpu.driver_version
+          comparison:
+            operator: version-at-least
+            value: 580.65.06
 
   plan:
     backend: vllm

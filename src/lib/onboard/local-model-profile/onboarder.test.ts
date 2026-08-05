@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { loadServingCatalog } from "../../inference/serving/catalog-loader";
 import type { VllmProfile } from "../../inference/vllm";
@@ -40,8 +40,6 @@ function plan(runtime: "vllm" | "llama-cpp") {
     [LOCAL_MODEL_PROFILE_RUNTIME_ENV]: runtime,
   })!;
 }
-
-afterEach(() => vi.unstubAllEnvs());
 
 describe("dedicated local model profile onboarder", () => {
   it("installs the fixed vLLM recipe before attaching its authenticated provider", async () => {
@@ -112,10 +110,10 @@ describe("dedicated local model profile onboarder", () => {
   });
 
   it("rejects a vLLM port override before installation", async () => {
-    vi.stubEnv("NEMOCLAW_VLLM_PORT", "9000");
     const installVllm = vi.fn(async () => ({ ok: true }));
     const error = vi.fn();
     const onboard = createLocalModelProfileOnboarder({
+      env: { NEMOCLAW_VLLM_PORT: "9000" },
       installVllm,
       installLlamaCpp: vi.fn() as never,
       handleVllmSelection: vi.fn() as never,
@@ -138,5 +136,36 @@ describe("dedicated local model profile onboarder", () => {
     ).resolves.toBe("retry-selection");
     expect(installVllm).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("port"));
+  });
+
+  it("reports invalid vLLM materialization through the retry path", async () => {
+    const invalidPlan = structuredClone(plan("vllm"));
+    delete (invalidPlan.recipe.spec.model as { gated?: boolean }).gated;
+    const installVllm = vi.fn(async () => ({ ok: true }));
+    const error = vi.fn();
+    const onboard = createLocalModelProfileOnboarder({
+      env: {},
+      installVllm,
+      installLlamaCpp: vi.fn() as never,
+      handleVllmSelection: vi.fn() as never,
+      handleLlamaCppSelection: vi.fn() as never,
+      prompt: vi.fn(async () => ""),
+      error,
+    });
+
+    await expect(
+      onboard(
+        invalidPlan,
+        {
+          hasVllmImage: false,
+          sparkHost: true,
+          vllmProfile: { name: "DGX Spark", platform: "spark" } as VllmProfile,
+          vllmRunning: false,
+        },
+        state(),
+      ),
+    ).resolves.toBe("retry-selection");
+    expect(installVllm).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("materialization failed"));
   });
 });

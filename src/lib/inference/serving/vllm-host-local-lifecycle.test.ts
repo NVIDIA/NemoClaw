@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
-
 import { describe, expect, it, vi } from "vitest";
+
+import { runtimeAuthFingerprint } from "./runtime-auth-fingerprint";
 
 import {
   HOST_LOCAL_VLLM_AUTH_LABEL,
@@ -15,7 +15,7 @@ const API_KEY = "b".repeat(64);
 
 function inspect(
   key = API_KEY,
-  fingerprint = createHash("sha256").update(key).digest("hex"),
+  fingerprint = runtimeAuthFingerprint(key),
   labels: Record<string, string> = {},
 ) {
   return JSON.stringify([
@@ -63,7 +63,7 @@ describe("host-local managed vLLM recovery", () => {
     expect(
       recoverHostLocalManagedVllmEndpoint({
         dockerInspect: () =>
-          inspect(API_KEY, createHash("sha256").update(API_KEY).digest("hex"), {
+          inspect(API_KEY, runtimeAuthFingerprint(API_KEY), {
             "com.nvidia.nemoclaw.vllm-role": "head",
           }),
         loadApiKey: () => API_KEY,

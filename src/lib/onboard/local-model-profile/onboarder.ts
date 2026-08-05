@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { installManagedLlamaCpp } from "../../inference/llama-cpp/managed-installer";
+import type { installManagedLlamaCpp } from "../../inference/llama-cpp/managed-installer";
 import { materializeHostLocalVllmSelection } from "../../inference/serving/host-local-vllm-selection";
 import type { ResolvedHostLocalInferenceSelection } from "../../inference/serving/types";
 import type { VllmProfile } from "../../inference/vllm";
@@ -9,9 +9,8 @@ import { VLLM_EXTRA_ARGS_ENV } from "../../inference/vllm-models";
 import type { SetupNimSelectionResult, SetupNimSelectionState } from "../setup-nim-flow";
 import type { LocalModelProfilePlan } from "./plan";
 
-export type LocalModelVllmProfile = VllmProfile;
-
 export interface LocalModelProfileOnboarderDeps {
+  env?: NodeJS.ProcessEnv;
   installVllm(
     profile: VllmProfile,
     options: {
@@ -44,6 +43,7 @@ export interface LocalModelProfileHostState {
 
 /** One dedicated, non-interactive onboarder for both gated runtime combinations. */
 export function createLocalModelProfileOnboarder(deps: LocalModelProfileOnboarderDeps) {
+  const env = deps.env ?? process.env;
   return async function onboardLocalModelProfile(
     plan: LocalModelProfilePlan,
     host: LocalModelProfileHostState,
@@ -64,28 +64,35 @@ export function createLocalModelProfileOnboarder(deps: LocalModelProfileOnboarde
         return "retry-selection";
       }
       if (
-        String(process.env.NEMOCLAW_VLLM_MODEL ?? "").trim() ||
-        String(process.env[VLLM_EXTRA_ARGS_ENV] ?? "").trim() ||
-        String(process.env.NEMOCLAW_VLLM_PORT ?? "").trim()
+        String(env.NEMOCLAW_VLLM_MODEL ?? "").trim() ||
+        String(env[VLLM_EXTRA_ARGS_ENV] ?? "").trim() ||
+        String(env.NEMOCLAW_VLLM_PORT ?? "").trim()
       ) {
         deps.error(
           "  The local model profile does not accept vLLM model, port, or serve overrides.",
         );
         return "retry-selection";
       }
-      const materialized = materializeHostLocalVllmSelection(
-        {
-          outcome: "selected",
-          selection: "explicit",
-          catalogDigest: plan.catalogDigest,
-          presetDigest: plan.presetDigest,
-          recipeDigest: plan.recipeDigest,
-          preset: plan.preset,
-          recipe: plan.recipe,
-        } satisfies ResolvedHostLocalInferenceSelection,
-        host.vllmProfile,
-      );
-      const model = materialized.model;
+      let materialized: ReturnType<typeof materializeHostLocalVllmSelection>;
+      try {
+        materialized = materializeHostLocalVllmSelection(
+          {
+            outcome: "selected",
+            selection: "explicit",
+            catalogDigest: plan.catalogDigest,
+            presetDigest: plan.presetDigest,
+            recipeDigest: plan.recipeDigest,
+            preset: plan.preset,
+            recipe: plan.recipe,
+          } satisfies ResolvedHostLocalInferenceSelection,
+          host.vllmProfile,
+        );
+      } catch (error) {
+        deps.error(
+          `  Local model profile materialization failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return "retry-selection";
+      }
       const result = await deps.installVllm(materialized.profile, {
         hasImage: host.hasVllmImage,
         nonInteractive: true,

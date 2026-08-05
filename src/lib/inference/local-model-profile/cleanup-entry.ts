@@ -9,9 +9,9 @@ try {
     throw new Error("host-local model cleanup requires --delete-models or --keep-models");
   }
   const result = cleanupLocalModelRuntimes({ deleteModels: args[0] === "--delete-models" });
-  if (!result.ok) throw new Error(result.reason);
   for (const resource of result.removed) console.log(`Removed ${resource}`);
   for (const resource of result.preserved) console.log(`Preserved ${resource}`);
+  if (!result.ok) throw new Error(result.reason);
 } catch (error) {
   console.error(
     `Refusing uninstall before host-local model cleanup: ${

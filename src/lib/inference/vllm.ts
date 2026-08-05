@@ -5,7 +5,6 @@
 // offer vLLM at all" lives in onboard.ts; this module owns picking the
 // right profile per platform and running the install.
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -46,6 +45,7 @@ import {
   recoverInstalledManagedClusterVllmEndpoint,
   resolveHostLocalVllmSelection,
   resolveVllmInstallModel,
+  runtimeAuthFingerprint,
   tryInstallManagedClusterManagedVllm,
 } from "./serving/vllm-managed-support";
 import {
@@ -545,7 +545,7 @@ export function buildVllmRunArgs(
     ...(model.managedBearerAuth
       ? [
           "--label",
-          `${NEMOCLAW_VLLM_HOST_LOCAL_AUTH_LABEL}=${createHash("sha256").update(managedApiKey).digest("hex")}`,
+          `${NEMOCLAW_VLLM_HOST_LOCAL_AUTH_LABEL}=${runtimeAuthFingerprint(managedApiKey)}`,
           "--env",
           "VLLM_API_KEY",
         ]

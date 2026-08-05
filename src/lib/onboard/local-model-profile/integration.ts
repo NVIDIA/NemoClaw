@@ -6,10 +6,7 @@ import { loadServingCatalog } from "../../inference/serving/catalog-loader";
 import { createLocalModelProfileOnboarder, type LocalModelProfileOnboarderDeps } from "./onboarder";
 import { resolveLocalModelProfilePlan } from "./plan";
 
-export type {
-  LocalModelProfileHostState,
-  LocalModelVllmProfile,
-} from "./onboarder";
+export type { LocalModelProfileHostState } from "./onboarder";
 export type { LocalModelProfilePlan } from "./plan";
 
 type IntegrationDeps = Omit<LocalModelProfileOnboarderDeps, "installLlamaCpp">;

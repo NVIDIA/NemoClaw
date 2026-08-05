@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 
 import { dockerCapture } from "../../adapters/docker/local-model-runtime";
 import { loadManagedVllmApiKey } from "../vllm-api-key";
 import { buildVllmDockerEnv } from "../vllm-docker-env";
+import { runtimeAuthFingerprint } from "./runtime-auth-fingerprint";
 
 export const HOST_LOCAL_VLLM_CONTAINER_NAME = "nemoclaw-vllm" as const;
 export const HOST_LOCAL_VLLM_MANAGED_LABEL = "com.nvidia.nemoclaw.managed-vllm" as const;
@@ -25,10 +26,6 @@ export interface RecoverHostLocalManagedVllmOptions {
   dockerInspect?: () => string;
   loadApiKey?: () => string | null;
   onManagedContainerObserved?: () => void;
-}
-
-function fingerprint(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
 }
 
 function equalHex(left: string, right: string): boolean {
@@ -104,7 +101,7 @@ export function recoverHostLocalManagedVllmEndpoint(
     !apiKey ||
     !/^[a-f0-9]{64}$/.test(apiKey) ||
     configuredKey !== apiKey ||
-    !equalHex(authFingerprint, fingerprint(apiKey))
+    !equalHex(authFingerprint, runtimeAuthFingerprint(apiKey))
   ) {
     throw new Error("Managed host-local vLLM authentication is missing or mismatched.");
   }
