@@ -37,6 +37,7 @@ export interface GatewayTeardownTarget {
 }
 
 export interface GatewayTeardownAuthorityDeps {
+  allowMissingPackagedServiceTeardown?: boolean;
   env?: NodeJS.ProcessEnv;
   hasPackagedService?: () => boolean;
   loadDeclaration?: (env: NodeJS.ProcessEnv) => GatewayManagementLoadResult;
@@ -171,6 +172,13 @@ function resolveGatewayEffectAuthority(
   }
   if (sameGatewayOwner(recorded, resolved)) return recorded;
   if (effect === "rebuild" && isManagedPackagedServiceMigration(recorded, resolved)) {
+    return resolved;
+  }
+  if (
+    effect === "teardown" &&
+    deps.allowMissingPackagedServiceTeardown === true &&
+    isManagedPackagedServiceMigration(recorded, resolved)
+  ) {
     return resolved;
   }
   throw new GatewayAuthorityError(

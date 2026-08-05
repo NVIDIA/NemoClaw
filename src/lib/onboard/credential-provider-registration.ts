@@ -17,6 +17,7 @@ export interface StageSandboxCredentialProvidersInput<Agent> {
   enabledChannels: readonly string[];
   webSearchConfig: WebSearchConfig | null;
   agent: Agent;
+  requiredBindings: readonly CheckpointProviderBinding[];
 }
 
 type PreparedCredentialProviders = {
@@ -77,6 +78,54 @@ function setStagedCredentialProviderReceipts(
   });
 }
 
+const BINDING_PLAN_ERROR = "Credential provider plan does not match the required bindings.";
+const EXISTING_BINDING_ERROR =
+  "An existing credential provider does not match the required binding.";
+const MISSING_BINDING_ERROR =
+  "A required credential provider is missing and no credential is available to recreate it.";
+
+function isCanonicalBinding(binding: CheckpointProviderBinding): boolean {
+  return [binding.name, binding.type, binding.credentialEnv].every(
+    (field) => typeof field === "string" && field.length > 0 && field.trim() === field,
+  );
+}
+
+function validatePlannedCredentialProviderBindings(
+  tokenDefs: readonly MessagingTokenDef[],
+  requiredBindings: readonly CheckpointProviderBinding[],
+  hasPreparedCredential: (tokenDef: MessagingTokenDef) => boolean,
+): ReadonlyMap<string, CheckpointProviderBinding> {
+  const requiredByName = new Map<string, CheckpointProviderBinding>();
+  for (const binding of requiredBindings) {
+    if (!isCanonicalBinding(binding) || requiredByName.has(binding.name)) {
+      throw new Error(BINDING_PLAN_ERROR);
+    }
+    requiredByName.set(binding.name, binding);
+  }
+
+  const plannedByName = new Map<string, CheckpointProviderBinding>();
+  for (const tokenDef of tokenDefs) {
+    const binding = {
+      name: tokenDef.name,
+      type: tokenDef.providerType || "generic",
+      credentialEnv: tokenDef.envKey,
+    };
+    const required = requiredByName.get(binding.name);
+    if (!required && !hasPreparedCredential(tokenDef)) continue;
+    if (
+      !isCanonicalBinding(binding) ||
+      plannedByName.has(binding.name) ||
+      !required ||
+      binding.type !== required.type ||
+      binding.credentialEnv !== required.credentialEnv
+    ) {
+      throw new Error(BINDING_PLAN_ERROR);
+    }
+    plannedByName.set(binding.name, binding);
+  }
+  return plannedByName;
+}
+
 export function createCredentialProviderRegistration(deps: CredentialProviderRegistrationDeps) {
   const gatewayRunner = () =>
     createGatewayScopedOpenshellRunner(deps.runOpenshell, deps.getGatewayName());
@@ -117,19 +166,29 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     );
   }
 
-  function canRegisterCredential(
-    tokenDef: MessagingTokenDef,
+  function preflightRequiredCredentialProviderBindings(
+    requiredBindings: readonly CheckpointProviderBinding[],
+    plannedTokenDefs: ReadonlyMap<string, MessagingTokenDef>,
     runOpenshell: OpenshellCliHelpers["runOpenshell"],
-  ): boolean {
-    if (!providers.providerExistsInGateway(tokenDef.name, runOpenshell)) return true;
-    return gatewayProviderMetadata.matchesGatewayCredentialOnlyProviderBinding(
-      providers.readGatewayProviderMetadata(tokenDef.name, runOpenshell, deps.getGatewayName()),
-      {
-        name: tokenDef.name,
-        type: tokenDef.providerType || "generic",
-        credentialKey: tokenDef.envKey,
-      },
-    );
+  ): void {
+    for (const binding of requiredBindings) {
+      if (!providers.providerExistsInGateway(binding.name, runOpenshell)) {
+        const tokenDef = plannedTokenDefs.get(binding.name);
+        if (!tokenDef || !deps.normalizeCredentialValue(tokenDef.token)) {
+          throw new Error(MISSING_BINDING_ERROR);
+        }
+        continue;
+      }
+      const matches = gatewayProviderMetadata.matchesGatewayCredentialOnlyProviderBinding(
+        providers.readGatewayProviderMetadata(binding.name, runOpenshell, deps.getGatewayName()),
+        {
+          name: binding.name,
+          type: binding.type,
+          credentialKey: binding.credentialEnv,
+        },
+      );
+      if (!matches) throw new Error(EXISTING_BINDING_ERROR);
+    }
   }
 
   async function stageSandboxCredentialProviders<Agent>(
@@ -137,27 +196,35 @@ export function createCredentialProviderRegistration(deps: CredentialProviderReg
     prepareCredentialProviders: PrepareCredentialProviders<Agent>,
   ): Promise<readonly CheckpointProviderBinding[]> {
     const messaging = await prepareCredentialProviders(input);
+    const plannedBindings = validatePlannedCredentialProviderBindings(
+      messaging.messagingTokenDefs,
+      input.requiredBindings,
+      (tokenDef) => Boolean(deps.normalizeCredentialValue(tokenDef.token)),
+    );
+    const plannedTokenDefs = new Map(
+      messaging.messagingTokenDefs.map((tokenDef) => [tokenDef.name, tokenDef]),
+    );
     const tokenDefs = messaging.messagingTokenDefs.filter((tokenDef) =>
       deps.normalizeCredentialValue(tokenDef.token),
+    );
+    const runOpenshell = gatewayRunner();
+    preflightRequiredCredentialProviderBindings(
+      input.requiredBindings,
+      plannedTokenDefs,
+      runOpenshell,
     );
     setStagedCredentialProviderReceipts(
       tokenDefs.map((tokenDef) => tokenDef.name),
       false,
       deps,
     );
-    const runOpenshell = gatewayRunner();
-    const registered = upsertMessagingProviders(
-      tokenDefs.filter((tokenDef) => canRegisterCredential(tokenDef, runOpenshell)),
-      {},
-      runOpenshell,
-    );
+    const registered = upsertMessagingProviders(tokenDefs, {}, runOpenshell);
     setStagedCredentialProviderReceipts(registered, true, deps);
-    const registeredTokenDefs = new Map(tokenDefs.map((tokenDef) => [tokenDef.name, tokenDef]));
-    return registered.map((name) => ({
-      name,
-      type: registeredTokenDefs.get(name)?.providerType || "generic",
-      credentialEnv: registeredTokenDefs.get(name)?.envKey ?? "",
-    }));
+    return registered.map((name) => {
+      const binding = plannedBindings.get(name);
+      if (!binding) throw new Error(BINDING_PLAN_ERROR);
+      return binding;
+    });
   }
 
   return {

@@ -8,6 +8,10 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import YAML from "yaml";
+import {
+  createShieldsFlowHarness,
+  type ShieldsFlowHarnessOptions,
+} from "../../../test/helpers/shields-flow-harness";
 
 const requireSource = createRequire(import.meta.url);
 const SHIELDS_MODULE = "./index.js";
@@ -93,6 +97,184 @@ describe("shields policy transition", () => {
     const stateFiles = fs.readdirSync(path.join(homeDir, ".nemoclaw", "state"));
     expect(stateFiles.filter((name) => /^(policy-snapshot-|shields-openclaw)/.test(name))).toEqual(
       [],
+    );
+  });
+});
+
+describe("shields down policy rejection", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-policy-rejection-"));
+    vi.stubEnv("HOME", tmpDir);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function createRejectedPolicyHarness() {
+    return createShieldsFlowHarness(requireSource, tmpDir, {
+      run: (cmd) => ({
+        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
+      }),
+    });
+  }
+
+  it("keeps `shields status` at `UP` when OpenShell rejects the permissive policy (#8198)", () => {
+    const harness = createRejectedPolicyHarness();
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        reason: "verify",
+        skipTimer: true,
+        throwOnError: true,
+      }),
+    ).toThrow(/Could not apply/);
+    expect(harness.isShieldsDown("openclaw")).toBe(false);
+
+    const state = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, ".nemoclaw/state/shields-openclaw.json"), "utf-8"),
+    );
+    expect(state).toMatchObject({ shieldsDown: false, shieldsDownAt: null });
+  });
+
+  it("retains auto-restore authority when rejected policy state cleanup fails (#8198)", () => {
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const statePath = path.join(stateDir, "shields-openclaw.json");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        shieldsDown: false,
+        fileHashes: { "/sandbox/.openclaw/openclaw.json": "a".repeat(64) },
+        updatedAt: "2026-08-05T00:00:00.000Z",
+      }),
+    );
+    const timerKill = vi.fn(() => true);
+    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+      failPolicyRejectionStateClear: true,
+      initialOpenClawPosture: "locked",
+      processStartIdentity: "test-process-start-identity",
+      fork: () => ({
+        pid: 4242,
+        disconnect: vi.fn(),
+        unref: vi.fn(),
+        send: vi.fn(() => true),
+        kill: timerKill,
+      }),
+      run: (cmd) => ({
+        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
+      }),
+    });
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        reason: "verify recovery authority",
+        throwOnError: true,
+      }),
+    ).toThrow(/Could not apply/);
+
+    expect(JSON.parse(fs.readFileSync(statePath, "utf-8"))).toMatchObject({
+      shieldsDown: true,
+      shieldsDownReason: "verify recovery authority",
+    });
+    expect(fs.existsSync(path.join(stateDir, "shields-timer-openclaw.json"))).toBe(true);
+    expect(
+      fs.readdirSync(stateDir).some((name) => name.startsWith("shields-transition-openclaw-")),
+    ).toBe(true);
+    const transitionName = fs
+      .readdirSync(stateDir)
+      .find((name) => name.startsWith("shields-transition-openclaw-"));
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, transitionName!), "utf-8")),
+    ).toMatchObject({ phase: "policy_rejected" });
+    expect(timerKill).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "The scheduled auto-restore remains authoritative.",
+    );
+
+    harness.logSpy.mockClear();
+    harness.errorSpy.mockClear();
+    harness.shieldsStatus("openclaw", true, {
+      verifyLockState: () => ({ ok: true, issues: [] }),
+      resolveConfig: () => ({
+        agentName: "openclaw",
+        configPath: "/sandbox/.openclaw/openclaw.json",
+        configDir: "/sandbox/.openclaw",
+      }),
+    });
+
+    expect(harness.isShieldsDown("openclaw")).toBe(false);
+    expect(harness.logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
+    expect(harness.logSpy.mock.calls.flat().join("\n")).not.toMatch(/DOWN|permissive|unlocked/);
+  });
+
+  it("denies mutations when rejected policy state and transition updates both fail (#8198)", () => {
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const statePath = path.join(stateDir, "shields-openclaw.json");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        shieldsDown: false,
+        fileHashes: { "/sandbox/.openclaw/openclaw.json": "a".repeat(64) },
+        updatedAt: "2026-08-05T00:00:00.000Z",
+      }),
+    );
+    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+      failPolicyRejectionStateClear: true,
+      failPolicyRejectionTransitionWrite: true,
+      initialOpenClawPosture: "locked",
+      processStartIdentity: "test-process-start-identity",
+      fork: () => ({
+        pid: 4242,
+        disconnect: vi.fn(),
+        unref: vi.fn(),
+        send: vi.fn(() => true),
+        kill: vi.fn(() => true),
+      }),
+      run: (cmd) => ({
+        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
+      }),
+    });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        reason: "verify incomplete rejection",
+        throwOnError: true,
+      }),
+    ).toThrow(/Could not apply/);
+
+    const transitionName = fs
+      .readdirSync(stateDir)
+      .find((name) => name.startsWith("shields-transition-openclaw-"));
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, transitionName!), "utf-8")),
+    ).toMatchObject({ phase: "preparing" });
+    expect(harness.getShieldsPosture("openclaw", false)).toMatchObject({
+      locked: true,
+      mutable: false,
+    });
+    expect(harness.isShieldsDown("openclaw")).toBe(false);
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process exit ${String(code)}`);
+    }) as typeof process.exit);
+    expect(() =>
+      harness.shieldsStatus("openclaw", true, {
+        verifyLockState: () => ({ ok: true, issues: [] }),
+        resolveConfig: () => ({
+          agentName: "openclaw",
+          configPath: "/sandbox/.openclaw/openclaw.json",
+          configDir: "/sandbox/.openclaw",
+        }),
+      }),
+    ).toThrow("process exit 1");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "Shields: ERROR (Shields down transition incomplete)",
     );
   });
 });
@@ -813,5 +995,318 @@ describe("managed MCP policy deadline restoration (#7952)", () => {
     expect(YAML.parse(harness.policySetBodies.at(-1)!).network_policies).toEqual({
       restrictive_baseline: {},
     });
+  });
+});
+
+function removeWithInjectedStateRestoreFailure(
+  originalRmSync: typeof fs.rmSync,
+  statePath: string,
+): typeof fs.rmSync {
+  return ((target: fs.PathLike, options?: fs.RmDirOptions) => {
+    switch (String(target)) {
+      case statePath:
+        throw new Error("injected state restoration failure");
+      default:
+        return originalRmSync(target, options);
+    }
+  }) as typeof fs.rmSync;
+}
+
+describe("shields-down rollback flow", () => {
+  let tmpDir: string;
+
+  function createHarness(options: ShieldsFlowHarnessOptions = {}) {
+    return createShieldsFlowHarness(requireSource, tmpDir, options);
+  }
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-rollback-flow-"));
+    vi.stubEnv("HOME", tmpDir);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    delete require.cache[requireSource.resolve(SHIELDS_MODULE)];
+    delete require.cache[requireSource.resolve("./timer-bound-lock.js")];
+    delete require.cache[requireSource.resolve("./transition-lock.js")];
+    delete require.cache[requireSource.resolve("./permissive-runtime.js")];
+    delete require.cache[requireSource.resolve("../actions/sandbox/mcp-bridge-policy.js")];
+    delete require.cache[requireSource.resolve("../cli/branding.js")];
+  });
+
+  it("rejects shields-down before mutation when stale timer authority remains", () => {
+    const fork = vi.fn(() => ({
+      pid: 4242,
+      disconnect: vi.fn(),
+      unref: vi.fn(),
+      send: vi.fn(() => true),
+      kill: vi.fn(() => true),
+    }));
+    const harness = createHarness({
+      fork,
+      initialOpenClawPosture: "locked",
+      timerAuthorityRevokedSequence: [false],
+    });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "stale timer coverage",
+        throwOnError: true,
+      }),
+    ).toThrow("Cannot revoke stale auto-restore timer authority for openclaw");
+
+    expect(harness.getOpenClawPosture()).toBe("locked");
+    expect(harness.runCaptureSpy).not.toHaveBeenCalled();
+    expect(harness.runSpy).not.toHaveBeenCalled();
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+    expect(fork).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json"))).toBe(
+      false,
+    );
+    expect(harness.errorSpy.mock.calls.flat().map(String).join("\n")).toContain(
+      "Failed to remove shields timer marker: permission denied",
+    );
+  });
+
+  it("restores fresh mutable-default state when the timer handoff fails", () => {
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const harness = createHarness({
+      fork: () => ({
+        pid: 4242,
+        disconnect: vi.fn(),
+        unref: vi.fn(),
+        send: vi.fn(() => {
+          const transitionName = fs
+            .readdirSync(stateDir)
+            .find((entry) => entry.startsWith("shields-transition-openclaw-"));
+          const transitionPath = path.join(stateDir, transitionName!);
+          const transition = JSON.parse(fs.readFileSync(transitionPath, "utf-8"));
+          fs.writeFileSync(transitionPath, JSON.stringify({ ...transition, phase: "active" }));
+          return true;
+        }),
+        kill: vi.fn(() => true),
+      }),
+    });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "rollback coverage",
+        throwOnError: true,
+      }),
+    ).toThrow("Shields-down recovery ownership changed during the transition");
+
+    expect(fs.existsSync(path.join(stateDir, "shields-openclaw.json"))).toBe(false);
+    expect(harness.getOpenClawPosture()).toBe("mutable");
+    const output = harness.errorSpy.mock.calls.flat().map(String).join("\n");
+    expect(output).toContain("Original mutable-default posture restored");
+    expect(output).toContain(
+      "Auto-restore handoff failed; the original mutable-default posture was restored",
+    );
+    expect(output).not.toMatch(/lockdown (?:was )?restored/i);
+    expect(output).not.toContain("scheduled auto-restore remains authoritative");
+  });
+
+  it("fails closed when mutable-default rollback cannot revoke timer authority", () => {
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const harness = createHarness({
+      confirmOpenClawInodeFlags: true,
+      timerAuthorityRevokedSequence: [true, false],
+      fork: () => ({
+        pid: 4242,
+        disconnect: vi.fn(),
+        unref: vi.fn(),
+        send: vi.fn(() => {
+          const transitionName = fs
+            .readdirSync(stateDir)
+            .find((entry) => entry.startsWith("shields-transition-openclaw-"));
+          const transitionPath = path.join(stateDir, transitionName!);
+          const transition = JSON.parse(fs.readFileSync(transitionPath, "utf-8"));
+          fs.writeFileSync(transitionPath, JSON.stringify({ ...transition, phase: "active" }));
+          return true;
+        }),
+        kill: vi.fn(() => true),
+      }),
+    });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "timer authority coverage",
+        throwOnError: true,
+      }),
+    ).toThrow("Shields-down recovery ownership changed during the transition");
+
+    expect(harness.getOpenClawPosture()).toBe("locked");
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf-8")),
+    ).toMatchObject({ shieldsDown: false });
+    const output = harness.errorSpy.mock.calls.flat().map(String).join("\n");
+    expect(output).toContain("Cannot revoke auto-restore timer authority");
+    expect(output).toContain(
+      "Fail-closed lockdown applied; the original mutable-default posture was not restored",
+    );
+    expect(output).not.toContain("Original mutable-default posture restored");
+  });
+
+  it("reports revoked timer authority when state restoration falls back to lockdown (#7538)", () => {
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const statePath = path.join(stateDir, "shields-openclaw.json");
+    const originalRmSync = fs.rmSync.bind(fs);
+    const harness = createHarness({
+      confirmOpenClawInodeFlags: true,
+      fork: () => ({
+        pid: 4242,
+        disconnect: vi.fn(),
+        unref: vi.fn(),
+        send: vi.fn(() => {
+          const transitionName = fs
+            .readdirSync(stateDir)
+            .find((entry) => entry.startsWith("shields-transition-openclaw-"));
+          const transitionPath = path.join(stateDir, transitionName!);
+          const transition = JSON.parse(fs.readFileSync(transitionPath, "utf-8"));
+          fs.writeFileSync(transitionPath, JSON.stringify({ ...transition, phase: "active" }));
+          return true;
+        }),
+        kill: vi.fn(() => true),
+      }),
+    });
+    vi.spyOn(fs, "rmSync").mockImplementation(
+      removeWithInjectedStateRestoreFailure(originalRmSync, statePath),
+    );
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "state restoration coverage",
+        throwOnError: true,
+      }),
+    ).toThrow("Shields-down recovery ownership changed during the transition");
+
+    expect(harness.getOpenClawPosture()).toBe("locked");
+    expect(JSON.parse(fs.readFileSync(statePath, "utf-8"))).toMatchObject({ shieldsDown: false });
+    const output = harness.errorSpy.mock.calls.flat().map(String).join("\n");
+    expect(output).toContain(
+      "Auto-restore handoff failed; lockdown was restored. Auto-restore timer authority was revoked.",
+    );
+    expect(output).not.toContain("scheduled auto-restore remains authoritative");
+  });
+
+  it("requires manual recovery after state restoration and re-lock fail with timer revoked (#7538)", () => {
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const statePath = path.join(stateDir, "shields-openclaw.json");
+    const originalRmSync = fs.rmSync.bind(fs);
+    const harness = createHarness({
+      failOpenClawGuardActions: ["lock"],
+      fork: () => ({
+        pid: 4242,
+        disconnect: vi.fn(),
+        unref: vi.fn(),
+        send: vi.fn(() => {
+          const transitionName = fs
+            .readdirSync(stateDir)
+            .find((entry) => entry.startsWith("shields-transition-openclaw-"));
+          const transitionPath = path.join(stateDir, transitionName!);
+          const transition = JSON.parse(fs.readFileSync(transitionPath, "utf-8"));
+          fs.writeFileSync(transitionPath, JSON.stringify({ ...transition, phase: "active" }));
+          return true;
+        }),
+        kill: vi.fn(() => true),
+      }),
+    });
+    vi.spyOn(fs, "rmSync").mockImplementation(
+      removeWithInjectedStateRestoreFailure(originalRmSync, statePath),
+    );
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "manual recovery coverage",
+        throwOnError: true,
+      }),
+    ).toThrow("Shields-down recovery ownership changed during the transition");
+
+    expect(harness.getOpenClawPosture()).toBe("mutable");
+    expect(JSON.parse(fs.readFileSync(statePath, "utf-8"))).toMatchObject({ shieldsDown: true });
+    const output = harness.errorSpy.mock.calls.flat().map(String).join("\n");
+    expect(output).toContain(
+      "Auto-restore handoff failed; rollback is incomplete. Auto-restore timer authority was revoked. Manual intervention is required.",
+    );
+    expect(output).not.toContain("scheduled auto-restore remains authoritative");
+  });
+
+  it("rejects corrupt state before weakening an initially locked config", () => {
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const statePath = path.join(stateDir, "shields-openclaw.json");
+    const corruptState = Buffer.from([
+      0xff, 0xfe, 0x7b, 0x6e, 0x6f, 0x74, 0x2d, 0x6a, 0x73, 0x6f, 0x6e,
+    ]);
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(statePath, corruptState);
+    const harness = createHarness({ initialOpenClawPosture: "locked" });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "corrupt fail-closed coverage",
+        throwOnError: true,
+      }),
+    ).toThrow("Shields state is corrupt for openclaw");
+
+    expect(fs.readFileSync(statePath)).toEqual(corruptState);
+    expect(harness.getOpenClawPosture()).toBe("locked");
+    expect(harness.runCaptureSpy).not.toHaveBeenCalled();
+    expect(harness.runSpy).not.toHaveBeenCalled();
+    expect(harness.auditSpy).not.toHaveBeenCalled();
+  });
+
+  it("reports fail-closed lockdown when mutable-default rollback cannot be verified", () => {
+    const harness = createHarness({
+      failOpenClawGuardActions: ["unlock"],
+      dockerExecFileSync: (argv: unknown) => {
+        const args = Array.isArray(argv) ? argv.map(String) : [];
+        switch (true) {
+          case args.includes("sha256sum"):
+            return `${"a".repeat(64)}  ${String(args.at(-1))}\n`;
+          case args.includes("lsattr"):
+            return `----i---------e----- ${String(args.at(-1))}\n`;
+          case args.includes("stat"):
+            return args.at(-1) === "/sandbox"
+              ? "1775 root:sandbox\n"
+              : args.at(-1) === "/sandbox/.openclaw"
+                ? "755 root:root\n"
+                : "444 root:root\n";
+          default:
+            return "";
+        }
+      },
+    });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "containment coverage",
+        skipTimer: true,
+        throwOnError: true,
+      }),
+    ).toThrow(/startup-not-ready/);
+
+    const statePath = path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json");
+    expect(JSON.parse(fs.readFileSync(statePath, "utf-8"))).toMatchObject({
+      shieldsDown: false,
+    });
+    expect(harness.getOpenClawPosture()).toBe("locked");
+    const output = harness.errorSpy.mock.calls.flat().map(String).join("\n");
+    expect(output).toContain("applying fail-closed lockdown");
+    expect(output).toContain(
+      "Fail-closed lockdown applied; the original mutable-default posture was not restored",
+    );
+    expect(output).toContain(
+      "Config did not reach the mutable-default state; fail-closed lockdown was restored",
+    );
+    expect(output).not.toContain("scheduled auto-restore remains authoritative");
   });
 });
