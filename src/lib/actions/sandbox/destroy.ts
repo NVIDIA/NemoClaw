@@ -507,8 +507,13 @@ async function destroySandboxUnlocked(
     }
     process.exit(destructiveResult.exitCode);
   }
-  const { detachOutcome, deleteResult, alreadyGone, forcedLocalCleanup, deleteOutput } =
-    destructiveResult;
+  const {
+    detachOutcome,
+    alreadyGone,
+    deleteSucceededOrAlreadyGone,
+    forcedLocalCleanup,
+    deleteOutput,
+  } = destructiveResult;
 
   /**
    * SOURCE_OF_TRUTH
@@ -543,7 +548,6 @@ async function destroySandboxUnlocked(
   // gateway. Gate that teardown on the *confirmed* delete state only — never on
   // forcedLocalCleanup — so a forced cleanup of the last registered sandbox does
   // not shut down services for a sandbox we never confirmed deleted (#6046).
-  const deleteSucceededOrAlreadyGone = deleteResult.status === 0 || alreadyGone;
   const shouldStopHostServices = shouldStopHostServicesAfterDestroy({
     deleteSucceededOrAlreadyGone,
     registeredSandboxCount: registry.listSandboxes().sandboxes.length,

@@ -51,7 +51,7 @@ export type SandboxDestroyExecutionResult =
       ok: true;
       alreadyGone: boolean;
       deleteOutput: string;
-      deleteResult: ReturnType<DestroyRunOpenshell>;
+      deleteSucceededOrAlreadyGone: boolean;
       detachOutcome: DetachSandboxProvidersResult;
       forcedLocalCleanup: boolean;
     }
@@ -298,21 +298,28 @@ export async function executeSandboxDestroy({
       : runtimeProvider?.cleanup.supported === true && sandbox
         ? runtimeProvider.cleanup.prepareDestroy({ sandbox, sandboxName }, { detachProviders })
         : detachProviders();
-    const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    // Preflight already confirmed absence. A later delete could target a
+    // same-name sandbox created by another OpenShell client after that check.
+    const deleteResult = sandboxConfirmedAbsent
+      ? null
+      : runOpenshell(["sandbox", "delete", sandboxName], {
+          ignoreError: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
     const {
       output: deleteOutput,
       alreadyGone,
       gatewayUnreachable,
-    } = getSandboxDeleteOutcome(deleteResult);
+    } = deleteResult
+      ? getSandboxDeleteOutcome(deleteResult)
+      : { output: "", alreadyGone: true, gatewayUnreachable: false };
     // #7727: a failed pre-delete re-lock leaves the auto-restore timer as the
     // only authority that can lock the config again. Discarding the local
     // record here would revoke it for a sandbox the gateway never confirmed
     // deleting, so --force must not take the local-cleanup shortcut until the
     // gateway is back and deletion is confirmed.
     const forcedLocalCleanup =
+      deleteResult !== null &&
       deleteResult.status !== 0 &&
       !alreadyGone &&
       gatewayUnreachable &&
@@ -320,7 +327,7 @@ export async function executeSandboxDestroy({
       !hasMcpOwnership &&
       !hardened.hardeningFailed;
 
-    if (deleteResult.status !== 0 && !alreadyGone && !forcedLocalCleanup) {
+    if (deleteResult !== null && deleteResult.status !== 0 && !alreadyGone && !forcedLocalCleanup) {
       const mcpRecoveryFailure = sandboxConfirmedAbsent
         ? undefined
         : await restoreMcpAfterDeleteAbort(sandboxName, mcpPreparation, hardened);
@@ -360,7 +367,8 @@ export async function executeSandboxDestroy({
       ok: true as const,
       detachOutcome,
       deleteOutput,
-      deleteResult,
+      deleteSucceededOrAlreadyGone:
+        deleteResult === null || deleteResult.status === 0 || alreadyGone,
       alreadyGone,
       forcedLocalCleanup,
     };
