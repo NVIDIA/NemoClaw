@@ -200,7 +200,8 @@ the image-owned completion for OpenClaw, Hermes, or LangChain Deep Agents Code.
 The watcher stays stopped and the journal remains authoritative throughout.
 These provider-owned modules remain disconnected from production runtime
 selection; persisted post-commit recovery, GPU and local inference, installer
-qualification, and supported activation remain later gates in #7744.
+qualification, and supported activation remain later gates in
+[`#7744`](https://github.com/NVIDIA/NemoClaw/issues/7744).
 
 ## Agent-specific differences
 

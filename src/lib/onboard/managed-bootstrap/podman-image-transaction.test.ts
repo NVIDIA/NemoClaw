@@ -26,7 +26,10 @@ import {
   awaitPodmanBootstrapImageTransaction,
   startPodmanBootstrapImageTransaction,
 } from "./podman-image-transaction";
-import type { PodmanGatewayWatcherLease } from "./podman-watcher-lease";
+import {
+  PODMAN_WATCHER_LEASE_SCHEMA_VERSION,
+  type PodmanGatewayWatcherLease,
+} from "./podman-watcher-lease";
 
 const RUNTIME_ID = "1".repeat(64);
 const ORIGINAL_RUNTIME_ID = "0".repeat(64);
@@ -55,7 +58,8 @@ function result(
 function watcherLease(): PodmanGatewayWatcherLease {
   return {
     record: {
-      schemaVersion: 1,
+      schemaVersion: PODMAN_WATCHER_LEASE_SCHEMA_VERSION,
+      holder: { pid: 9_100, processStartIdentity: "holder-start-100" },
       leaseId: LEASE_ID,
       phase: "stopped",
       gatewayName: "gateway",
