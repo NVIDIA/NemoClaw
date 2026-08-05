@@ -194,6 +194,235 @@ describe("runUpdateAction", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("reinstalling anyway (--fresh)"));
   });
 
+  it("refuses --fresh when the maintained tag is older than the install, even with --yes (#8306)", async () => {
+    const spawnSyncImpl = vi.fn();
+    const error = vi.fn();
+    const log = vi.fn();
+
+    const result = await runUpdateAction(
+      { fresh: true, yes: true },
+      {
+        currentVersion: () => "0.0.102",
+        error,
+        getLatestVersion: () => "0.0.97",
+        isSourceCheckout: () => false,
+        log,
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.ranInstaller).toBe(false);
+    expect(result.status).toBe(1);
+    expect(spawnSyncImpl).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("downgrade"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("--allow-downgrade"));
+    // The old wording claimed the install was current while replacing it.
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("already up to date"));
+  });
+
+  it("reinstalls an older maintained tag once --allow-downgrade is passed (#8306)", async () => {
+    const spawnSyncImpl = vi.fn(
+      () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
+    );
+    const log = vi.fn();
+
+    const result = await runUpdateAction(
+      { allowDowngrade: true, fresh: true, yes: true },
+      {
+        currentVersion: () => "0.0.102",
+        getLatestVersion: () => "0.0.97",
+        isSourceCheckout: () => false,
+        log,
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.ranInstaller).toBe(true);
+    expect(result.status).toBe(0);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("may be a downgrade"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("--allow-downgrade"));
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("already up to date"));
+  });
+
+  it.each([
+    ["0.0.102-44-g1234abc", "git describe output"],
+    ["0.0.103-rc.1", "pre-release metadata"],
+    ["0.0.102+build5", "build metadata"],
+    ["0.0.97-3-gabc1234", "same release core, commits after the tag"],
+  ])("refuses --fresh for %s (%s) (#8306)", async (currentVersion) => {
+    const spawnSyncImpl = vi.fn();
+    const error = vi.fn();
+
+    const result = await runUpdateAction(
+      { fresh: true, yes: true },
+      {
+        currentVersion: () => currentVersion,
+        error,
+        getLatestVersion: () => "0.0.97",
+        isSourceCheckout: () => false,
+        log: vi.fn(),
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.ranInstaller).toBe(false);
+    expect(result.status).toBe(1);
+    expect(spawnSyncImpl).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("--allow-downgrade"));
+  });
+
+  it("fails closed on --fresh when the versions cannot be ordered (#8306)", async () => {
+    const spawnSyncImpl = vi.fn();
+    const error = vi.fn();
+
+    const result = await runUpdateAction(
+      { fresh: true, yes: true },
+      {
+        currentVersion: () => "dev",
+        error,
+        getLatestVersion: () => "0.0.97",
+        isSourceCheckout: () => false,
+        log: vi.fn(),
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.ranInstaller).toBe(false);
+    expect(result.status).toBe(1);
+    expect(result.updateAvailable).toBeNull();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Cannot order"));
+  });
+
+  it("fails closed on --fresh when the maintained tag cannot be resolved (#8306)", async () => {
+    const spawnSyncImpl = vi.fn();
+    const error = vi.fn();
+
+    const result = await runUpdateAction(
+      { fresh: true, yes: true },
+      {
+        currentVersion: () => "0.0.102",
+        error,
+        getLatestVersion: () => null,
+        isSourceCheckout: () => false,
+        log: vi.fn(),
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.ranInstaller).toBe(false);
+    expect(result.status).toBe(1);
+    expect(spawnSyncImpl).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Could not resolve"));
+  });
+
+  it("still upgrades when the maintained tag is unresolved and --fresh is absent (#8306)", async () => {
+    const spawnSyncImpl = vi.fn(
+      () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
+    );
+
+    const result = await runUpdateAction(
+      { yes: true },
+      {
+        currentVersion: () => "0.0.102",
+        getLatestVersion: () => null,
+        isSourceCheckout: () => false,
+        log: vi.fn(),
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.updateAvailable).toBeNull();
+    expect(result.ranInstaller).toBe(true);
+  });
+
+  it("still upgrades a pre-release that is behind the maintained tag (#8306)", async () => {
+    const spawnSyncImpl = vi.fn(
+      () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
+    );
+
+    const result = await runUpdateAction(
+      { fresh: true, yes: true },
+      {
+        currentVersion: () => "0.0.90-2-gdeadbee",
+        getLatestVersion: () => "0.0.97",
+        isSourceCheckout: () => false,
+        log: vi.fn(),
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.updateAvailable).toBe(true);
+    expect(result.ranInstaller).toBe(true);
+  });
+
+  it("upgrades a pre-release to the stable maintained version with the same release core (#8306)", async () => {
+    const spawnSyncImpl = vi.fn(
+      () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
+    );
+    const log = vi.fn();
+
+    const result = await runUpdateAction(
+      { yes: true },
+      {
+        currentVersion: () => "0.0.97-rc.1",
+        getLatestVersion: () => "0.0.97",
+        isSourceCheckout: () => false,
+        log,
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.updateAvailable).toBe(true);
+    expect(result.ranInstaller).toBe(true);
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("already up to date"));
+  });
+
+  it("fails closed when a numeric version prefix has an invalid suffix (#8306)", async () => {
+    const spawnSyncImpl = vi.fn();
+    const error = vi.fn();
+
+    const result = await runUpdateAction(
+      { fresh: true, yes: true },
+      {
+        currentVersion: () => "0.0.102invalid",
+        error,
+        getLatestVersion: () => "0.0.97",
+        isSourceCheckout: () => false,
+        log: vi.fn(),
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.updateAvailable).toBeNull();
+    expect(result.ranInstaller).toBe(false);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Cannot order"));
+  });
+
+  it("keeps the plain up-to-date exit when the install is newer and --fresh is absent (#8306)", async () => {
+    const spawnSyncImpl = vi.fn();
+    const error = vi.fn();
+    const log = vi.fn();
+
+    const result = await runUpdateAction(
+      { yes: true },
+      {
+        currentVersion: () => "0.0.102",
+        error,
+        getLatestVersion: () => "0.0.97",
+        isSourceCheckout: () => false,
+        log,
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.ranInstaller).toBe(false);
+    expect(result.status).toBe(0);
+    expect(result.updateAvailable).toBe(false);
+    expect(spawnSyncImpl).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("already up to date"));
+  });
+
   it("does not announce a --fresh reinstall when the user declines the prompt (#5960)", async () => {
     const spawnSyncImpl = vi.fn();
     const log = vi.fn();

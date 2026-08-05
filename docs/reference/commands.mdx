@@ -2980,17 +2980,22 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 ```bash
-$$nemoclaw update [--check] [--fresh] [--yes|-y]
+$$nemoclaw update [--check] [--fresh] [--allow-downgrade] [--yes|-y]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--check` | Show the current version, latest maintained version, install type, and maintained update command without changing anything. |
-| `--fresh` | Reinstall the maintained build even when already up to date (clean re-clone of `~/.nemoclaw/source`); useful to repair a broken-but-current install. Does not reset onboarding state. |
+| `--fresh` | Reinstall the maintained build for a clean re-clone of `~/.nemoclaw/source`; useful to repair a broken install. Does not reset onboarding state. Runs only when the reinstall is provably not a version regression. |
+| `--allow-downgrade` | Allow `--fresh` to reinstall the maintained build when NemoClaw cannot prove that doing so is not a downgrade. |
 | `--yes`, `-y` | Skip the confirmation prompt and run the maintained installer flow. |
 
 `$$nemoclaw update` updates the host-side NemoClaw installation.
 The maintained installer flow follows the admin-promoted `lkg` release tag by default, so it may trail the newest semver or `latest` tag while validation completes.
+Because of that, an install can be newer than the maintained tag.
+`--fresh` therefore runs only when NemoClaw can show the reinstall is not a version regression, which means the maintained build is either newer than the install or the same version.
+It reports the reason and exits non-zero in every other case: the install is newer than the maintained tag, the two versions cannot be ordered, or the maintained tag does not resolve to a version at all.
+Re-run with `--allow-downgrade` to reinstall regardless; `--yes` waives the confirmation prompt only and never accepts a downgrade on its own.
 It does not replace `$$nemoclaw upgrade-sandboxes`; use that command to inspect or rebuild existing sandboxes after the CLI has been updated.
 When the command is running from a source checkout, it reports that state and does not replace the checkout with a global package install.
 
