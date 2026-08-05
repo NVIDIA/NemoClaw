@@ -135,9 +135,10 @@ export interface HostLocalInferenceRuntime {
   prepareDestroy(receipt: HostLocalInferenceReceipt): HostLocalInferenceReceipt;
   /**
    * Retire only the exact provider-owned runtime; host processes remain
-   * externally owned. Managed cleanup must converge safely when repeated so a
-   * retained ownership journal can resume teardown after a process crash or
-   * provider failure.
+   * externally owned. Managed cleanup must remain idempotent across retries and
+   * revalidate exact runtime authority before each deletion so a retained
+   * ownership journal can resume teardown after a process crash or provider
+   * failure.
    */
   destroy(receipt: HostLocalInferenceReceipt): HostLocalInferenceDestroyResult;
 }
