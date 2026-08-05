@@ -3,16 +3,24 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { SandboxEntry } from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 import {
   applyNonInteractiveNotReadyDecision,
   decideNonInteractiveNotReadyAction,
   installerRestoreOnRecreateFromEnv,
   NotReadySandboxError,
+  type PreUpgradeBackupSelectInput,
   resolveNotReadyOutcome,
   selectPreUpgradeBackupForCreate,
   UnsafeCustomImagePluginBackupError,
 } from "./not-ready-recreate";
+import {
+  fingerprintSandboxRegistryEntry,
+  type SandboxRecreateObservation,
+  SandboxRecreateSourceMismatchError,
+  type SandboxRecreateSourceProof,
+} from "./sandbox-recreate-transaction";
 
 const BACKUP_PATH = "/home/user/.nemoclaw/rebuild-backups/my-assistant/2026-07-01T06-50-40-925Z";
 
@@ -77,67 +85,185 @@ describe("selectPreUpgradeBackupForCreate", () => {
     delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
   });
 
-  it("returns null when the sandbox still exists live in the gateway", () => {
+  const GATEWAY_NAME = "nemoclaw";
+  const GATEWAY_PORT = 8080;
+  const SOURCE_ENTRY: SandboxEntry = { name: "my-assistant", imageTag: "nemoclaw/my-assistant:1" };
+
+  function sourceProof(
+    overrides: Partial<SandboxRecreateSourceProof> = {},
+  ): SandboxRecreateSourceProof {
+    return {
+      transactionId: "0f2f0d3a-recreate",
+      sandboxName: "my-assistant",
+      gatewayName: GATEWAY_NAME,
+      gatewayPort: GATEWAY_PORT,
+      sourceRegistryFingerprint: fingerprintSandboxRegistryEntry(SOURCE_ENTRY),
+      sourceLiveIdentityFingerprint: null,
+      targetGeneration: "3c9a1b7e-target",
+      ...overrides,
+    };
+  }
+
+  type SelectOverrides = Partial<
+    Omit<PreUpgradeBackupSelectInput, "sourceProof" | "observation">
+  > & {
+    sourceProof?: SandboxRecreateSourceProof | null;
+    observation?: SandboxRecreateObservation;
+    onProofRequested?: () => void;
+  };
+
+  function select(overrides: SelectOverrides = {}): string | null {
+    const { onProofRequested, ...rest } = overrides;
+    return selectPreUpgradeBackupForCreate({
+      gatewayName: GATEWAY_NAME,
+      gatewayPort: GATEWAY_PORT,
+      registryEntry: SOURCE_ENTRY,
+      readRegistryEntry: () => SOURCE_ENTRY,
+      sandboxName: "my-assistant",
+      note,
+      ...rest,
+      sourceProof: () => {
+        onProofRequested?.();
+        return "sourceProof" in overrides ? (overrides.sourceProof ?? null) : sourceProof();
+      },
+      observation: () =>
+        overrides.observation ?? { state: "missing", liveIdentityFingerprint: null },
+    });
+  }
+
+  it("selects the backup when the observation matches the journaled source (#7736)", () => {
     process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
-    expect(
-      selectPreUpgradeBackupForCreate({
-        liveExists: true,
-        hasExistingRegistryEntry: true,
-        sandboxName: "my-assistant",
-        note,
-      }),
-    ).toBeNull();
-    expect(getLatestBackupSpy).not.toHaveBeenCalled();
-    expect(note).not.toHaveBeenCalled();
-    expect(debugSpy).toHaveBeenCalledWith(expect.stringMatching(/gateway reports sandbox live/));
-    expect(warnSpy).not.toHaveBeenCalled();
+    getLatestBackupSpy.mockReturnValue({
+      backupPath: BACKUP_PATH,
+    } as unknown as ReturnType<typeof sandboxState.getLatestBackup>);
+
+    expect(select()).toBe(BACKUP_PATH);
+    expect(note).toHaveBeenCalledWith(
+      expect.stringMatching(/Found pre-upgrade backup for 'my-assistant'/),
+    );
   });
 
-  it("returns null when there is no pre-existing registry entry", () => {
+  it("throws before backup access when no transaction proves the source (#7736)", () => {
     process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
-    expect(
-      selectPreUpgradeBackupForCreate({
-        liveExists: false,
-        hasExistingRegistryEntry: false,
-        sandboxName: "my-assistant",
-        note,
-      }),
-    ).toBeNull();
+
+    expect(() => select({ sourceProof: null })).toThrow(SandboxRecreateSourceMismatchError);
+    expect(() => select({ sourceProof: null })).toThrow(/no active recreate transaction/);
     expect(getLatestBackupSpy).not.toHaveBeenCalled();
-    expect(debugSpy).toHaveBeenCalledWith(expect.stringMatching(/No registry entry/));
+    expect(note).not.toHaveBeenCalled();
+  });
+
+  it("throws before backup access when the live identity is not the journaled source (#7736)", () => {
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+    const drifted = {
+      observation: { state: "ready", liveIdentityFingerprint: "a1b2c3" },
+    } as const;
+
+    expect(() => select(drifted)).toThrow(/is not the recorded source/);
+    expect(getLatestBackupSpy).not.toHaveBeenCalled();
+    expect(note).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "ready",
+    "not_ready",
+  ] as const)("throws before backup access when a %s same-name sandbox reports no OpenShell Id (#7736)", (state) => {
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+
+    expect(() => select({ observation: { state, liveIdentityFingerprint: null } })).toThrow(
+      /reports no OpenShell Id/,
+    );
+    expect(getLatestBackupSpy).not.toHaveBeenCalled();
+    expect(note).not.toHaveBeenCalled();
+  });
+
+  it("throws before backup access when the source registry row changed (#7736)", () => {
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+    const rotated: SandboxEntry = { ...SOURCE_ENTRY, imageTag: "nemoclaw/my-assistant:2" };
+
+    expect(() => select({ readRegistryEntry: () => rotated })).toThrow(
+      /source registry row changed after the transaction recorded it/,
+    );
+    expect(getLatestBackupSpy).not.toHaveBeenCalled();
+  });
+
+  it("throws before backup access when the selected gateway is not the journaled gateway (#7736)", () => {
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+
+    expect(() => select({ gatewayName: "other-gateway" })).toThrow(
+      /the active transaction records gateway 'nemoclaw:8080'/,
+    );
+    expect(() => select({ gatewayPort: 9090 })).toThrow(
+      /the active transaction records gateway 'nemoclaw:8080'/,
+    );
+    expect(getLatestBackupSpy).not.toHaveBeenCalled();
+  });
+
+  it("throws before backup access when the source registry row is absent (#7736)", () => {
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+
+    expect(() => select({ readRegistryEntry: () => null })).toThrow(
+      /source registry row is absent/,
+    );
+    expect(getLatestBackupSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      change: "changes",
+      currentEntry: { ...SOURCE_ENTRY, imageTag: "nemoclaw/my-assistant:2" },
+      error: /source registry row changed after the transaction recorded it/,
+    },
+    {
+      change: "is removed",
+      currentEntry: null,
+      error: /source registry row is absent/,
+    },
+  ] as const)("rejects a source registry row that $change after journal proof capture (#7736)", ({
+    currentEntry,
+    error,
+  }) => {
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+    const onProofRequested = vi.fn();
+    const readRegistryEntry = vi.fn(() => currentEntry);
+
+    expect(() => select({ onProofRequested, readRegistryEntry })).toThrow(error);
+    expect(onProofRequested).toHaveBeenCalledTimes(1);
+    expect(readRegistryEntry).toHaveBeenCalledTimes(1);
+    expect(onProofRequested.mock.invocationCallOrder[0]).toBeLessThan(
+      readRegistryEntry.mock.invocationCallOrder[0],
+    );
+    expect(getLatestBackupSpy).not.toHaveBeenCalled();
+    expect(note).not.toHaveBeenCalled();
+  });
+
+  it("throws before backup access when the transaction records another sandbox (#7736)", () => {
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+
+    expect(() => select({ sourceProof: sourceProof({ sandboxName: "other-assistant" }) })).toThrow(
+      /records sandbox 'other-assistant'/,
+    );
+    expect(getLatestBackupSpy).not.toHaveBeenCalled();
   });
 
   it("returns null and does not look up backups when installer restore intent is unset", () => {
-    expect(
-      selectPreUpgradeBackupForCreate({
-        liveExists: false,
-        hasExistingRegistryEntry: true,
-        sandboxName: "my-assistant",
-        note,
-      }),
-    ).toBeNull();
+    expect(select()).toBeNull();
     expect(getLatestBackupSpy).not.toHaveBeenCalled();
     expect(note).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/installer restore flag not set/));
   });
 
-  it("returns the latest backup path and notes it when installer restore intent finds a backup", () => {
-    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
-    getLatestBackupSpy.mockReturnValue({
-      backupPath: BACKUP_PATH,
-    } as unknown as ReturnType<typeof sandboxState.getLatestBackup>);
-    expect(
-      selectPreUpgradeBackupForCreate({
-        liveExists: false,
-        hasExistingRegistryEntry: true,
-        sandboxName: "my-assistant",
-        note,
-      }),
-    ).toBe(BACKUP_PATH);
-    expect(note).toHaveBeenCalledWith(
-      expect.stringMatching(/Found pre-upgrade backup for 'my-assistant'/),
-    );
+  it("does not ask for a source proof when installer restore intent is unset (#7736)", () => {
+    const onProofRequested = vi.fn();
+
+    expect(select({ onProofRequested, sourceProof: null })).toBeNull();
+    expect(onProofRequested).not.toHaveBeenCalled();
   });
+
+  const CUSTOM_IMAGE_ENTRY: SandboxEntry = {
+    name: "my-assistant",
+    agent: "openclaw",
+    fromDockerfile: "/tmp/Dockerfile.custom",
+  };
 
   it("blocks a legacy custom OpenClaw backup before installer recreation (#6108)", () => {
     process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
@@ -148,19 +274,9 @@ describe("selectPreUpgradeBackupForCreate", () => {
       openclawImagePluginInstalls: [],
     } as unknown as ReturnType<typeof sandboxState.getLatestBackup>);
 
-    expect(() =>
-      selectPreUpgradeBackupForCreate({
-        liveExists: false,
-        hasExistingRegistryEntry: true,
-        existingSandboxEntry: {
-          name: "my-assistant",
-          agent: "openclaw",
-          fromDockerfile: "/tmp/Dockerfile.custom",
-        },
-        sandboxName: "my-assistant",
-        note,
-      }),
-    ).toThrow(UnsafeCustomImagePluginBackupError);
+    expect(() => select({ existingSandboxEntry: CUSTOM_IMAGE_ENTRY })).toThrow(
+      UnsafeCustomImagePluginBackupError,
+    );
 
     expect(note).not.toHaveBeenCalled();
   });
@@ -175,38 +291,16 @@ describe("selectPreUpgradeBackupForCreate", () => {
       openclawImagePluginInstalls: [],
     } as unknown as ReturnType<typeof sandboxState.getLatestBackup>);
 
-    expect(
-      selectPreUpgradeBackupForCreate({
-        liveExists: false,
-        hasExistingRegistryEntry: true,
-        existingSandboxEntry: {
-          name: "my-assistant",
-          agent: "openclaw",
-          fromDockerfile: "/tmp/Dockerfile.custom",
-        },
-        sandboxName: "my-assistant",
-        note,
-      }),
-    ).toBe(BACKUP_PATH);
+    expect(select({ existingSandboxEntry: CUSTOM_IMAGE_ENTRY })).toBe(BACKUP_PATH);
   });
 
   it("blocks custom OpenClaw installer recreation when no valid backup is readable (#6108)", () => {
     process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
     getLatestBackupSpy.mockReturnValue(null);
 
-    expect(() =>
-      selectPreUpgradeBackupForCreate({
-        liveExists: false,
-        hasExistingRegistryEntry: true,
-        existingSandboxEntry: {
-          name: "my-assistant",
-          agent: "openclaw",
-          fromDockerfile: "/tmp/Dockerfile.custom",
-        },
-        sandboxName: "my-assistant",
-        note,
-      }),
-    ).toThrow(UnsafeCustomImagePluginBackupError);
+    expect(() => select({ existingSandboxEntry: CUSTOM_IMAGE_ENTRY })).toThrow(
+      UnsafeCustomImagePluginBackupError,
+    );
 
     expect(note).not.toHaveBeenCalled();
   });
@@ -214,14 +308,7 @@ describe("selectPreUpgradeBackupForCreate", () => {
   it("returns null and notes fresh-state recreate when installer restore intent finds no backup", () => {
     process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
     getLatestBackupSpy.mockReturnValue(null);
-    expect(
-      selectPreUpgradeBackupForCreate({
-        liveExists: false,
-        hasExistingRegistryEntry: true,
-        sandboxName: "preserve-oc",
-        note,
-      }),
-    ).toBeNull();
+    expect(select()).toBeNull();
     expect(note).toHaveBeenCalledWith(expect.stringMatching(/No pre-upgrade backup found/));
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringMatching(/installer requested restore but no pre-upgrade backup found/i),

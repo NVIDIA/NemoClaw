@@ -6,6 +6,32 @@ import { describe, expect, it } from "vitest";
 import { REQUIRED_CHECK_NAMES, runComparatorGate, runGate } from "./check-gates-test-fixtures.ts";
 
 describe("maintainer merge-gate contributor compliance", () => {
+  it("classifies the merge-gate checker as risky code with direct test coverage", () => {
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        files: [
+          {
+            path: ".agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts",
+            status: "modified",
+          },
+          {
+            path: "test/skills/check-gates-compliance.test.ts",
+            status: "modified",
+          },
+        ],
+      }).stdout,
+    );
+
+    expect(output.gates.riskyCodeTested).toMatchObject({
+      pass: true,
+      details: "1 risky file(s) changed; test files present in PR",
+      riskyFiles: [".agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts"],
+      hasTests: true,
+    });
+  });
+
   it("passes when the PR body has DCO and every commit is GitHub Verified", () => {
     const result = runGate({
       body: "## Summary\n\nPolicy alignment.\n\nSigned-off-by: Example User <user@example.com>",

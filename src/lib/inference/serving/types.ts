@@ -185,6 +185,25 @@ export interface LlamaCppServingRecipe extends ServingRecipeEnvelope {
         readonly quantization: string;
         readonly license: string;
       }[];
+      readonly acquisition: {
+        readonly ref: "hugging-face-exact-file/v1";
+        readonly authentication: {
+          readonly mode: "optional";
+          readonly environment: "HF_TOKEN";
+        };
+      };
+      readonly cache: {
+        readonly ref: "llama-cpp.gguf-content-addressed/v1";
+        readonly receiptRef: "llama-cpp.gguf-cache-entry.receipt/v1";
+        readonly root: "user-cache";
+        readonly quotaBytes: number;
+        readonly stagingHeadroomBytes: number;
+        readonly staging: "same-filesystem";
+        readonly publication: "atomic-no-clobber";
+        readonly reuse: "verified-only-offline";
+        readonly sharing: "owner-only";
+        readonly cleanup: "receipt-owner-only";
+      };
     };
     readonly runtime: {
       readonly image: string;
@@ -380,7 +399,7 @@ export interface ServingCatalogSourceProvenance {
 
 export interface CompiledServingCatalogPayload {
   readonly schemaVersion: "1.0.0";
-  readonly compilerVersion: "1.1.0";
+  readonly compilerVersion: "1.2.0";
   readonly sourceRevision: string;
   readonly readinessSchemaRef: "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json";
   readonly recipes: readonly ServingRecipe[];
