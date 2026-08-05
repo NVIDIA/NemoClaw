@@ -432,6 +432,64 @@ describe("P0-E cloud-experimental parity guardrails", () => {
   });
 
   it.each([
+    ["accepts a later passing status", "unhealthy-then-ready", 0, 2],
+    ["fails after three unsuccessful status attempts", "unhealthy-always", 1, 3],
+  ] as const)("%s for a fresh DCode re-onboard", (_label, mode, expectedStatus, expectedAttempts) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-status-readiness-"));
+    const mockCli = path.join(tempDir, "nemoclaw");
+    const counterFile = path.join(tempDir, "attempts");
+    try {
+      fs.writeFileSync(
+        mockCli,
+        [
+          "#!/bin/bash",
+          "set -euo pipefail",
+          "count=0",
+          'if [ -f "$MOCK_STATUS_COUNTER_FILE" ]; then',
+          '  read -r count <"$MOCK_STATUS_COUNTER_FILE"',
+          "fi",
+          "count=$((count + 1))",
+          `printf '%s\\n' "$count" >"$MOCK_STATUS_COUNTER_FILE"`,
+          'if [ "$MOCK_STATUS_MODE" = "unhealthy-always" ] || [ "$count" -eq 1 ]; then',
+          `  printf '%s\\n' '{"inferenceHealth":{"ok":false,"failureLabel":"unreachable"}}'`,
+          "  exit 1",
+          "fi",
+          `printf '%s\\n' '{"inferenceHealth":{"ok":true}}'`,
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const result = spawnSync(
+        "/bin/bash",
+        [
+          "-c",
+          'source "$1"; CLI="$2"; SANDBOX_NAME="deepagents-sandbox"; NEMOCLAW_E2E_DCODE_STATUS_ATTEMPTS=3; NEMOCLAW_E2E_DCODE_STATUS_DELAY_SECONDS=0; wait_for_status_after_reonboard',
+          "bash",
+          dcodeFreshReonboardCheck,
+          mockCli,
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            MOCK_STATUS_COUNTER_FILE: counterFile,
+            MOCK_STATUS_MODE: mode,
+          },
+        },
+      );
+
+      expect(result.status, result.stdout + "\n" + result.stderr).toBe(expectedStatus);
+      expect(Number(fs.readFileSync(counterFile, "utf8").trim())).toBe(expectedAttempts);
+      expect(result.stdout).toContain(
+        mode === "unhealthy-always" ? '"failureLabel":"unreachable"' : '"ok":true',
+      );
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  it.each([
     ["retries one fail-closed inference timeout", "timeout-then-success", 0, 2, 1],
     ["fails after the bounded inference timeout retry", "timeout-always", 1, 2, 1],
     ["does not retry a non-timeout inference failure", "http-401", 1, 1, 0],
