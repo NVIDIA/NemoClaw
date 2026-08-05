@@ -2570,6 +2570,20 @@ jobs:
   # PR-controlled workflow code. Its hosted amd64 prerequisite exports the
   # exact candidate build cache; this GPU lane imports it and rebuilds with
   # BuildKit networking disabled so a cache miss fails closed.
+  # invalidState: Cold managed-image builds on the protected GPU runner can
+  # stall in npm and terminate with "Exit handler never called!" before any
+  # GPU, Ollama, NIM, or vLLM assertion executes.
+  # sourceBoundary: The hosted amd64 lane builds the same exact candidate and
+  # exports only BuildKit cache records; the GPU lane verifies that complete
+  # all-agent cache and rebuilds with network access disabled.
+  # whyNotSourceFix: The failure is in the protected runner's external npm
+  # network path, outside candidate source and runner configuration owned here.
+  # regressionTest: The build-script behavior test proves complete-cache-only,
+  # symlink-free offline imports and exact --cache-from/--network none Docker
+  # arguments; workflow boundary tests pin the producer/consumer handoff.
+  # removalCondition: Remove the handoff after protected GPU cold builds of all
+  # three managed images complete reliably and the direct local-inference lane
+  # reaches its assertions without the hosted cache.
   managed-image-protected-runtime:
     name: Protected managed-image GPU and local inference
     needs: [generate-matrix, managed-image-multiarch-startup]

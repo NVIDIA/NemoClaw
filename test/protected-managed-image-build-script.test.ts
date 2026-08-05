@@ -190,4 +190,24 @@ describe("protected managed-image build-cache boundary", () => {
       `--cache-from type=local,src=${realpathSync(cacheRoot)}/openclaw --network none`,
     );
   });
+
+  it("rejects a nested symlink in a complete offline cache before invoking Docker", () => {
+    const cacheRoot = path.join(testRoot, "offline-cache");
+    for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
+      mkdirSync(path.join(cacheRoot, agent, "blobs", "sha256"), {
+        recursive: true,
+      });
+      writeFileSync(path.join(cacheRoot, agent, "index.json"), "{}\n", "utf8");
+    }
+    symlinkSync(
+      path.join(cacheRoot, "hermes", "index.json"),
+      path.join(cacheRoot, "openclaw", "blobs", "sha256", "nested-link"),
+    );
+
+    const result = runBuild(REPO_ROOT, ["--offline-cache", cacheRoot]);
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("offline cache contains a symlink");
+    expect(existsSync(dockerLog)).toBe(false);
+  });
 });
