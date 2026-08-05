@@ -35,7 +35,7 @@ export interface HostLocalInferenceStartupRoute {
   readonly gatewayProvider: "ollama-local" | "vllm-local";
   /** Provider registration target visible inside the OpenShell gateway. */
   readonly gatewayProviderBaseUrl: string;
-  /** Stable inference route shared by OpenClaw, Hermes, and Deep Agents Code. */
+  /** Stable inference route shared by OpenClaw, Hermes, and LangChain Deep Agents Code. */
   readonly applicationBaseUrl: typeof HOST_LOCAL_INFERENCE_APPLICATION_BASE_URL;
 }
 

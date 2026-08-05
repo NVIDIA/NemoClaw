@@ -189,7 +189,9 @@ function normalizedMounts(
       CONTROL_CHARACTERS.test(source) ||
       CONTROL_CHARACTERS.test(target)
     ) {
-      throw new Error("Inference mounts require safe absolute Linux paths.");
+      throw new Error(
+        "Inference mounts require trimmed absolute Linux paths without ':' or control characters.",
+      );
     }
     return Object.freeze({ source, target, readOnly: mount.readOnly ?? false });
   });
@@ -680,7 +682,7 @@ export function createPodmanHostLocalInferenceRuntime(
         if (!container.running) {
           if (!AT_REST_STATES.has(container.status)) {
             throw new Error(
-              `Podman inference container state '${container.status}' cannot be started safely.`,
+              `Podman inference container state '${container.status}' cannot be started; expected configured, created, dead, exited, or stopped.`,
             );
           }
           requireSuccess(
@@ -742,7 +744,7 @@ export function createPodmanHostLocalInferenceRuntime(
       if (!inspected.container.running) {
         if (!AT_REST_STATES.has(inspected.container.status)) {
           throw new Error(
-            `Podman inference container state '${inspected.container.status}' cannot be stopped safely.`,
+            `Podman inference container state '${inspected.container.status}' cannot be stopped; expected configured, created, dead, exited, or stopped.`,
           );
         }
         return Object.freeze({ running: false, receipt: inspected.receipt });
