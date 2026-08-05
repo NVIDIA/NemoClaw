@@ -2,13 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const HERMES_WHATSAPP_SESSION_PATH = "/sandbox/.hermes/platforms/whatsapp/session";
-const HERMES_WHATSAPP_BRIDGE_PATHS = new Set([
-  "/sandbox/.hermes/scripts/whatsapp-bridge/bridge.js",
-  "/sandbox/.hermes/dashboard-home/scripts/whatsapp-bridge/bridge.js",
-]);
+const HERMES_DASHBOARD_WHATSAPP_BRIDGE_PATH =
+  "/sandbox/.hermes/dashboard-home/scripts/whatsapp-bridge/bridge.js";
 
 function isHermesWhatsappBridge(scriptPath: string | undefined): boolean {
-  return scriptPath !== undefined && HERMES_WHATSAPP_BRIDGE_PATHS.has(scriptPath);
+  return scriptPath === HERMES_DASHBOARD_WHATSAPP_BRIDGE_PATH;
 }
 
 export function normalizeHermesWhatsappSessionArgv(argv: string[]): boolean {
@@ -26,13 +24,9 @@ export function normalizeHermesWhatsappSessionArgv(argv: string[]): boolean {
     );
   }
 
-  // Hermes currently launches its dashboard and gateway bridge from different homes with
-  // independent --session values. Both command-construction sites belong to the upstream
-  // Hermes distribution installed into the image rather than NemoClaw's manifest renderer,
-  // so the rendered manifest session_path cannot change those arguments here. The channel
-  // runtime preload is the shared boundary where both launchers can be reconciled. Keep the
-  // two owned paths and this regression together, and remove the preload once both upstream
-  // launchers honor one manifest-owned session path.
+  // The dashboard runs with an isolated HERMES_HOME, but its paired credentials must be
+  // available to the gateway under the primary Hermes home. Keep upstream CLI and gateway
+  // bridge arguments unchanged because Hermes already provides legacy-path compatibility.
   argv[sessionIndex + 1] = HERMES_WHATSAPP_SESSION_PATH;
   return true;
 }
@@ -42,8 +36,8 @@ export function applyHermesWhatsappSessionPatch(
   setUmask: (mode: number) => unknown = (mode) => process.umask(mode),
 ): boolean {
   if (!normalizeHermesWhatsappSessionArgv(argv)) return false;
-  // The dashboard and gateway run as separate users in the shared sandbox
-  // group. Keep pairing state read-write for that group without granting world access.
+  // The dashboard and gateway run as separate users in the shared sandbox group.
+  // Keep dashboard-paired credentials group-readable without granting world access.
   setUmask(0o007);
   return true;
 }

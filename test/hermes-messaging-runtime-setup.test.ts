@@ -70,7 +70,7 @@ function encodeRuntimePlan(nodePreloads: Array<Record<string, unknown>>): string
 }
 
 describe("Hermes messaging runtime setup", () => {
-  it("installs the active WhatsApp preload and rewrites the Hermes bridge session path (#8229)", () => {
+  it("rewrites only the dashboard bridge session path (#8184)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-whatsapp-plan-"));
     const sourceDir = path.join(tmpDir, "preloads");
     const sourcePrefix = `${sourceDir}${path.sep}`;
@@ -113,7 +113,8 @@ describe("Hermes messaging runtime setup", () => {
             }),
             "write_messaging_runtime_setup_plan",
             "install_messaging_runtime_preloads",
-            "node -e 'process.stdout.write(JSON.stringify(process.argv))' /sandbox/.hermes/scripts/whatsapp-bridge/bridge.js --session /tmp/split-session",
+            "node -e 'process.stdout.write(JSON.stringify(process.argv) + \"\\n\")' /sandbox/.hermes/dashboard-home/scripts/whatsapp-bridge/bridge.js --session /tmp/dashboard-session",
+            "node -e 'process.stdout.write(JSON.stringify(process.argv) + \"\\n\")' /sandbox/.hermes/scripts/whatsapp-bridge/bridge.js --session /tmp/cli-session",
           ].join("\n"),
         ],
         {
@@ -126,7 +127,7 @@ describe("Hermes messaging runtime setup", () => {
               {
                 source: sourcePath,
                 target: targetPath,
-                injectInto: ["boot", "connect"],
+                injectInto: ["boot"],
                 optional: false,
               },
             ]),
@@ -136,11 +137,24 @@ describe("Hermes messaging runtime setup", () => {
       );
 
       expect(result.status, result.stderr).toBe(0);
-      expect(JSON.parse(result.stdout)).toEqual([
-        process.execPath,
-        "/sandbox/.hermes/scripts/whatsapp-bridge/bridge.js",
-        "--session",
-        "/sandbox/.hermes/platforms/whatsapp/session",
+      expect(
+        result.stdout
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line)),
+      ).toEqual([
+        [
+          process.execPath,
+          "/sandbox/.hermes/dashboard-home/scripts/whatsapp-bridge/bridge.js",
+          "--session",
+          "/sandbox/.hermes/platforms/whatsapp/session",
+        ],
+        [
+          process.execPath,
+          "/sandbox/.hermes/scripts/whatsapp-bridge/bridge.js",
+          "--session",
+          "/tmp/cli-session",
+        ],
       ]);
       expect(fs.readFileSync(targetPath, "utf-8")).toBe(fs.readFileSync(sourcePath, "utf-8"));
     } finally {
@@ -148,7 +162,7 @@ describe("Hermes messaging runtime setup", () => {
     }
   });
 
-  it("rejects traversal-shaped preload targets before any destination write (#8229)", () => {
+  it("rejects traversal-shaped preload targets before any destination write", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preload-traversal-"));
     const victimPath = path.join(tmpDir, "victim.js");
     const planPath = path.join(tmpDir, "runtime-plan.json");

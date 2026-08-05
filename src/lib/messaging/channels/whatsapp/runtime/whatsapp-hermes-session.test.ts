@@ -11,18 +11,24 @@ import {
 } from "./whatsapp-hermes-session";
 
 describe("Hermes WhatsApp session runtime preload", () => {
-  it.each([
-    "/sandbox/.hermes/scripts/whatsapp-bridge/bridge.js",
-    "/sandbox/.hermes/dashboard-home/scripts/whatsapp-bridge/bridge.js",
-  ])("forces %s to the manifest-owned durable session path (#8184)", (bridgePath) => {
-    const argv = ["/usr/local/bin/node", bridgePath, "--session", "/split/session"];
+  it("moves dashboard pairing to the gateway session path (#8184)", () => {
+    const argv = [
+      "/usr/local/bin/node",
+      "/sandbox/.hermes/dashboard-home/scripts/whatsapp-bridge/bridge.js",
+      "--session",
+      "/sandbox/.hermes/dashboard-home/platforms/whatsapp/session",
+    ];
 
     expect(normalizeHermesWhatsappSessionArgv(argv)).toBe(true);
     expect(argv[3]).toBe(HERMES_WHATSAPP_SESSION_PATH);
   });
 
-  it("leaves unrelated Node processes unchanged (#8184)", () => {
-    const argv = ["/usr/local/bin/node", "/sandbox/tool.js", "--session", "/keep"];
+  it.each([
+    ["CLI and gateway", "/sandbox/.hermes/scripts/whatsapp-bridge/bridge.js"],
+    ["installed gateway", "/opt/hermes/scripts/whatsapp-bridge/bridge.js"],
+    ["unrelated Node process", "/sandbox/tool.js"],
+  ])("leaves the %s bridge session path unchanged (#8184)", (_case, bridgePath) => {
+    const argv = ["/usr/local/bin/node", bridgePath, "--session", "/keep"];
 
     expect(normalizeHermesWhatsappSessionArgv(argv)).toBe(false);
     expect(argv[3]).toBe("/keep");
@@ -46,7 +52,7 @@ describe("Hermes WhatsApp session runtime preload", () => {
     const modes: number[] = [];
     const argv = [
       "/usr/local/bin/node",
-      "/sandbox/.hermes/scripts/whatsapp-bridge/bridge.js",
+      "/sandbox/.hermes/dashboard-home/scripts/whatsapp-bridge/bridge.js",
       "--session",
       "/split/session",
     ];
@@ -56,12 +62,15 @@ describe("Hermes WhatsApp session runtime preload", () => {
   });
 
   it.each([
-    ["missing", ["/usr/local/bin/node", "/sandbox/.hermes/scripts/whatsapp-bridge/bridge.js"]],
+    [
+      "missing",
+      ["/usr/local/bin/node", "/sandbox/.hermes/dashboard-home/scripts/whatsapp-bridge/bridge.js"],
+    ],
     [
       "missing before another option",
       [
         "/usr/local/bin/node",
-        "/sandbox/.hermes/scripts/whatsapp-bridge/bridge.js",
+        "/sandbox/.hermes/dashboard-home/scripts/whatsapp-bridge/bridge.js",
         "--session",
         "--mode",
         "bot",
@@ -71,7 +80,7 @@ describe("Hermes WhatsApp session runtime preload", () => {
       "duplicate",
       [
         "/usr/local/bin/node",
-        "/sandbox/.hermes/scripts/whatsapp-bridge/bridge.js",
+        "/sandbox/.hermes/dashboard-home/scripts/whatsapp-bridge/bridge.js",
         "--session",
         "/one",
         "--session",
@@ -84,7 +93,7 @@ describe("Hermes WhatsApp session runtime preload", () => {
     );
   });
 
-  it("declares the mandatory preload for Hermes boot and connect (#8184)", () => {
+  it("declares the mandatory preload only for Hermes boot (#8184)", () => {
     const runtime = planRuntimeSetup([whatsappManifest], "hermes", [
       {
         channelId: "whatsapp",
@@ -104,7 +113,7 @@ describe("Hermes WhatsApp session runtime preload", () => {
         channelId: "whatsapp",
         source: "/usr/local/lib/nemoclaw/preloads/whatsapp-hermes-session.js",
         target: "/tmp/nemoclaw-whatsapp-hermes-session.js",
-        injectInto: ["boot", "connect"],
+        injectInto: ["boot"],
         optional: false,
       }),
     ]);

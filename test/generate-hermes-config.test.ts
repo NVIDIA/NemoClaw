@@ -1082,12 +1082,7 @@ describe("agents/hermes/generate-config.ts", () => {
     });
 
     expect(config.whatsapp).toBeUndefined();
-    expect(config.platforms.whatsapp).toEqual({
-      enabled: true,
-      extra: {
-        session_path: "/sandbox/.hermes/platforms/whatsapp/session",
-      },
-    });
+    expect(config.platforms.whatsapp).toEqual({ enabled: true });
     expectRemotePlatformToolsets(config.platform_toolsets.whatsapp);
     expect(envFile).toContain("WHATSAPP_ENABLED=true\n");
     expect(envFile).toContain("WHATSAPP_MODE=bot\n");

@@ -81,9 +81,6 @@ export const whatsappManifest = {
         path: "platforms.whatsapp",
         value: {
           enabled: true,
-          extra: {
-            session_path: "/sandbox/.hermes/platforms/whatsapp/session",
-          },
         },
       },
     },
@@ -109,12 +106,10 @@ export const whatsappManifest = {
       nodePreloads: [
         {
           module: "whatsapp-hermes-session",
-          injectInto: ["boot", "connect"],
+          injectInto: ["boot"],
           optional: false,
-          installMessage:
-            "[channels] Installing Hermes WhatsApp session path patch (durable pairing state)",
-          installedMessage:
-            "[channels] Hermes WhatsApp session path patch installed (NODE_OPTIONS updated)",
+          installMessage: "[channels] Installing Hermes dashboard WhatsApp session path patch",
+          installedMessage: "[channels] Hermes dashboard WhatsApp session path patch installed",
         },
       ],
     },
