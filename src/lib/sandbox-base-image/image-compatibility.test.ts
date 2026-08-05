@@ -57,7 +57,7 @@ describe("sandbox base-image glibc compatibility", () => {
         "run",
         "--rm",
         "--name",
-        expect.stringMatching(/^nemoclaw-glibc-probe-\d+-\d+$/),
+        expect.stringMatching(/^nemoclaw-glibc-probe-[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/),
         "--entrypoint",
         "/usr/bin/ldd",
         "nemoclaw:test",
@@ -79,10 +79,10 @@ describe("sandbox base-image glibc compatibility", () => {
     expect(probeCalls.map((call) => call[1]?.timeout)).toEqual([20_000, 120_000]);
     const containerNames = probeCalls.map((call) => call[0]?.[3]);
     expect(new Set(containerNames)).toHaveProperty("size", 2);
-    const cleanupNames = mocks.dockerCapture.mock.calls
-      .filter((call) => call[0]?.[0] === "rm")
-      .map((call) => call[0]?.[2]);
-    expect(cleanupNames).toEqual([containerNames[0]]);
+    const cleanupCalls = mocks.dockerCapture.mock.calls.filter((call) => call[0]?.[0] === "rm");
+    expect(cleanupCalls).toEqual([
+      [["rm", "-f", containerNames[0]], { ignoreError: true, timeout: 20_000 }],
+    ]);
   });
 
   it("does not retry non-empty incompatible output", () => {

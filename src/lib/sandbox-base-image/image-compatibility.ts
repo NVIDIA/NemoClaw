@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
 import { dockerCapture } from "../adapters/docker";
 import { OPENSHELL_SANDBOX_MIN_GLIBC } from "./types";
 
 const GLIBC_PROBE_TIMEOUTS_MS = [20_000, 120_000] as const;
-let glibcProbeSequence = 0;
 
 export function parseGlibcVersion(output: string | null | undefined): string | null {
   const text = String(output || "");
@@ -34,7 +34,7 @@ export function versionGte(left = "0.0.0", right = "0.0.0"): boolean {
 
 export function getImageGlibcVersion(imageRef: string): string | null {
   for (const timeout of GLIBC_PROBE_TIMEOUTS_MS) {
-    const containerName = `nemoclaw-glibc-probe-${process.pid}-${(glibcProbeSequence += 1)}`;
+    const containerName = `nemoclaw-glibc-probe-${randomUUID()}`;
     let output = "";
     try {
       output = dockerCapture(
