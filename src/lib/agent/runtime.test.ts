@@ -233,8 +233,7 @@ describe("buildRecoveryScript", () => {
       const script = buildRecoveryScript(minimalAgent, 19000);
       expect(script).not.toContain("chown gateway:gateway /tmp/gateway.log");
       expect(script).not.toContain("chown 'gateway:gateway' /tmp/gateway.log");
-      expect(script).not.toContain("gosu gateway");
-      expect(script).not.toContain("gosu 'gateway'");
+      expect(script).not.toContain("--reuid=gateway");
     });
   });
 });

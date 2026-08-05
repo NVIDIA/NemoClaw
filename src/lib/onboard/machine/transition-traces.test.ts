@@ -26,7 +26,7 @@ import {
 } from "../../state/onboard-session";
 import type { OnboardMachineEvent } from "./events";
 import { handleSandboxState } from "./handlers/sandbox";
-import { baseOptions, createDeps } from "./handlers/sandbox-test-fixtures";
+import { baseOptions, bindJournaledRecreate, createDeps } from "./handlers/sandbox-test-fixtures";
 import { advanceTo, branchTo, completeOnboardMachine, failOnboardMachine } from "./result";
 import { type OnboardStateHandlers, runOnboardMachine } from "./runner";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
@@ -214,8 +214,16 @@ describe("onboard machine lifecycle traces (#6225)", () => {
       steps: { sandbox: completedStep() },
     });
     const { runtime, events, updateSession } = createTracedRuntime(resumedSession);
+    await runtime.start({ resumed: true });
+    const session = await runtime.session();
+    const journal = bindJournaledRecreate(session, "my-assistant", "openclaw", updateSession);
+    updateSession((current) => {
+      current.checkpoint = session.checkpoint;
+    });
     const { calls, deps } = createDeps({
       getSandboxReuseState: () => "not_ready",
+      getSandboxRecreateObservation: journal.observe,
+      createSandbox: journal.completeCreate,
       updateSession,
       recordRepairEvent: (type, options) => runtime.emitRepairEvent(type, options),
       recordStepComplete: async (_stepName, updates) =>
@@ -223,8 +231,6 @@ describe("onboard machine lifecycle traces (#6225)", () => {
           Object.assign(current, filterSafeUpdates(updates));
         }),
     });
-    await runtime.start({ resumed: true });
-    const session = await runtime.session();
 
     const run = await runOnboardMachine({
       context: null,
@@ -243,8 +249,8 @@ describe("onboard machine lifecycle traces (#6225)", () => {
       stopStates: ["openclaw"],
     });
 
-    expect(calls.repairSandbox).toHaveBeenCalledWith("my-assistant");
-    expect(calls.createSandbox).toHaveBeenCalledOnce();
+    expect(calls.repairSandbox).not.toHaveBeenCalled();
+    expect(journal.completeCreate).toHaveBeenCalledOnce();
     expect(traceOf(events)).toEqual([
       "onboard.resumed:sandbox",
       "state.repair.started:sandbox",

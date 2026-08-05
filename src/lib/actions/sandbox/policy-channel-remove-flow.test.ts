@@ -42,17 +42,17 @@ describe("policy channel remove/enable flows", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("supports stop dry runs for configured channels", async () => {
-    vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha" });
-    vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
+  it("supports stop dry runs for configured Hermes channels", async () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha", agent: "hermes" });
+    vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["teams"]);
     vi.spyOn(registry, "getDisabledChannels").mockReturnValue([]);
 
     await expect(
-      stopSandboxChannel("alpha", { channel: "telegram", dryRun: true }),
+      stopSandboxChannel("alpha", { channel: "teams", dryRun: true }),
     ).resolves.toBeUndefined();
 
     expect(logSpy.mock.calls.flat().join("\n")).toContain(
-      "--dry-run: would stop channel 'telegram' for 'alpha'.",
+      "--dry-run: would stop channel 'teams' for 'alpha'.",
     );
     expect(exitSpy).not.toHaveBeenCalled();
   });

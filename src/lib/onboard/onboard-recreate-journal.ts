@@ -13,6 +13,7 @@ import {
   type SandboxRecreateTarget,
 } from "./sandbox-recreate-probe";
 import {
+  abandonSandboxRecreateTransaction,
   advanceSandboxRecreateTransaction,
   beginSandboxRecreateTransaction,
   clearCompletedSandboxRecreateTransaction,
@@ -68,7 +69,10 @@ export interface OpenOnboardRecreateJournalInput {
   readonly observe?: SandboxRecreateObserver;
 }
 
-export type OwnedSandboxRecreateRuntime = SandboxRecreateRuntime & { complete(): void };
+export type OwnedSandboxRecreateRuntime = SandboxRecreateRuntime & {
+  complete(): void;
+  abandon(): void;
+};
 
 export function openOnboardRecreateJournal(
   input: OpenOnboardRecreateJournalInput,
@@ -147,6 +151,12 @@ export function openOnboardRecreateJournal(
     ...runtime,
     get registrationFields() {
       return runtime.registrationFields;
+    },
+    abandon: () => {
+      onboardSession.updateSession((current) => {
+        abandonSandboxRecreateTransaction(current, transaction.id);
+        return current;
+      });
     },
     // This journal has no outer owner, so it retires its own transaction once
     // the replacement registry row commits.
