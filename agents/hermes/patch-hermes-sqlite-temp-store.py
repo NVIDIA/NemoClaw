@@ -53,7 +53,11 @@ def patch_file(path: Path) -> None:
     old_count = source.count(OLD)
     new_count = source.count('self._conn.execute("PRAGMA temp_store=MEMORY")')
     patched_count = source.count(NEW)
-    if old_count == 0 and patched_count == EXPECTED_OCCURRENCES:
+    if (
+        old_count == 0
+        and new_count == EXPECTED_OCCURRENCES
+        and patched_count == EXPECTED_OCCURRENCES
+    ):
         return
     if old_count != EXPECTED_OCCURRENCES or new_count != 0:
         raise SystemExit(
