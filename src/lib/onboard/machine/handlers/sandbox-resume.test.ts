@@ -133,12 +133,15 @@ describe("decideSandboxResume", () => {
     });
   });
 
-  it("continues an owned recreate after the outer transaction starts a replacement session", () => {
+  it.each([
+    "missing",
+    "not_ready",
+  ])("continues an owned recreate when the outer transaction leaves the source %s", (sandboxReuseState) => {
     expect(
       decideSandboxResume(
         resumeSignals({
           sandboxStepComplete: false,
-          sandboxReuseState: "not_ready",
+          sandboxReuseState,
           recreateSandboxRequested: true,
           recreateJournalHandoff: true,
         }),
@@ -148,6 +151,19 @@ describe("decideSandboxResume", () => {
       note: "  [resume] Continuing journaled sandbox recreation.",
       removeRegistryEntry: false,
     });
+  });
+
+  it("does not trust a journal handoff when the sandbox state is unknown", () => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxStepComplete: false,
+          sandboxReuseState: "unknown",
+          recreateSandboxRequested: true,
+          recreateJournalHandoff: true,
+        }),
+      ),
+    ).toEqual({ kind: "create" });
   });
 
   it.each([

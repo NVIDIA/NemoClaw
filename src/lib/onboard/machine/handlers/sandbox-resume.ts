@@ -273,7 +273,7 @@ function runtimeConfigurationResumeDecision(
 export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResumeDecision {
   if (
     signals.resume &&
-    signals.sandboxReuseState === "not_ready" &&
+    (signals.sandboxReuseState === "missing" || signals.sandboxReuseState === "not_ready") &&
     signals.recreateSandboxRequested &&
     signals.recreateJournalHandoff
   ) {

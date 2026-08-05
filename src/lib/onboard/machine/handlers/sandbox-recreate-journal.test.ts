@@ -246,7 +246,7 @@ it("continues an outer rebuild journal after the source sandbox was deleted", as
   });
   const { deps, calls } = createDeps(
     {
-      getSandboxReuseState: () => "not_ready",
+      getSandboxReuseState: () => observation.state,
       getSandboxRecreateObservation: () => observation,
       getSandboxRegistryEntry: () => currentEntry,
       createSandbox,
