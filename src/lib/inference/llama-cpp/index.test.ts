@@ -177,7 +177,7 @@ describe("probeLlamaCppAttachment", () => {
     ).toMatchObject({ ok: false, reason: "ambiguous-model" });
   });
 
-  it("accepts a real llama.cpp server with public /v1/models (#8302)", () => {
+  it("accepts a llama.cpp fingerprint with a public /v1/models endpoint (#8302)", () => {
     const responses: CurlProbeResult[] = [
       response(200, '{"data":[]}'),
       response(401, '{"error":"unauthorized"}'),
