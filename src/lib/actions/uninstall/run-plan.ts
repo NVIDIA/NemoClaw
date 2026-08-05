@@ -1165,6 +1165,10 @@ function removeOpenShellResources(
       removedSelectedResources =
         deleteSelectedGatewaySandbox(runtime, sandboxName) && removedSelectedResources;
     }
+    if (!removedSelectedResources) {
+      runtime.warn("Selected gateway cleanup was incomplete; preserving its state for retry.");
+      return false;
+    }
     removedSelectedResources =
       removeGatewayRegistration(runtime, gatewayLabel, !externallySupervised) &&
       removedSelectedResources;

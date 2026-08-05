@@ -145,12 +145,35 @@ describe("uninstall sandbox delete outcomes (#7906)", () => {
       expect(result.exitCode).toBe(expectedExitCode);
       expect(warnings.join("\n")).toContain(expectedWarning);
       expect(calls).toContainEqual(["sandbox", "delete", "selected-box"]);
-      expect(calls).toContainEqual(["gateway", "remove", `nemoclaw-${String(selectedPort)}`]);
+      expect(
+        calls.some(
+          (args) =>
+            args[0] === "gateway" &&
+            args[1] === "remove" &&
+            args[2] === `nemoclaw-${String(selectedPort)}`,
+        ),
+      ).toBe(!expectsPreservedState);
       expect(fs.existsSync(path.join(shared, "gateways", String(selectedPort)))).toBe(
         expectsPreservedState,
       );
       expect(warnings.join("\n").includes("Selected gateway cleanup was incomplete")).toBe(
         expectsPreservedState,
+      );
+      const selectedRegistryFile = path.join(
+        shared,
+        "gateways",
+        String(selectedPort),
+        "sandboxes.json",
+      );
+      const selectedSandboxes = readGatewayRegistryFile(tmpHome, selectedRegistryFile)?.sandboxes;
+      expect(selectedSandboxes?.["selected-box"]).toEqual(
+        expectsPreservedState
+          ? {
+              name: "selected-box",
+              gatewayName: `nemoclaw-${String(selectedPort)}`,
+              gatewayPort: selectedPort,
+            }
+          : undefined,
       );
       expect(readGatewayRegistryFile(tmpHome, sharedRegistryFile)?.sandboxes).toEqual({
         "sibling-box": {
