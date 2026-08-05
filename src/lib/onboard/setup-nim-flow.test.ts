@@ -8,6 +8,7 @@ import { MIN_HERMES_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-co
 import type { VllmProfile } from "../inference/vllm";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
 import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
+import type { LocalModelProfilePlan } from "./local-model-profile/integration";
 import type { InferenceProviderHostState } from "./provider-host-state";
 import { createSetupNim, type SetupNimFlowDeps } from "./setup-nim-flow";
 
@@ -122,8 +123,6 @@ function makeDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupNimFlowDeps {
     error: vi.fn(),
     exitProcess: (code) => unexpected(`exitProcess(${code})`),
     abortNonInteractive: (message) => unexpected(`abortNonInteractive(${message})`),
-    resolveLocalModelProfilePlan: () => null,
-    handleLocalModelProfile: async () => unexpected("local model profile"),
     handleLlamaCppSelection: async () => unexpected("llama.cpp selection"),
     handleRemoteProviderSelection: async () => unexpected("remote provider selection"),
     handleNimLocalSelection: async () => unexpected("local NIM selection"),
@@ -1297,10 +1296,8 @@ describe("createSetupNim", () => {
 
   it("routes a gated local model profile through its dedicated onboarder", async () => {
     const profile = { name: "DGX Spark", platform: "spark" } as VllmProfile;
-    const plan = { runtime: "vllm" } as ReturnType<
-      SetupNimFlowDeps["resolveLocalModelProfilePlan"]
-    >;
-    const handleLocalModelProfile = vi.fn<SetupNimFlowDeps["handleLocalModelProfile"]>(
+    const plan = { runtime: "vllm" } as LocalModelProfilePlan;
+    const onboard = vi.fn<NonNullable<SetupNimFlowDeps["localModelProfileIntegration"]>["onboard"]>(
       async (_plan, host, state) => {
         expect(host).toMatchObject({
           hasVllmImage: true,
@@ -1319,8 +1316,7 @@ describe("createSetupNim", () => {
     const setupNim = createSetupNim(
       makeDeps({
         isNonInteractive: () => true,
-        resolveLocalModelProfilePlan: () => plan,
-        handleLocalModelProfile,
+        localModelProfileIntegration: { resolvePlan: () => plan, onboard },
         detectInferenceProviderHostState: () =>
           makeHostState({ vllmProfile: profile, hasVllmImage: true }),
         selectFromNumberedMenu: () => unexpected("provider menu"),
@@ -1330,7 +1326,7 @@ describe("createSetupNim", () => {
     await expect(
       setupNim({ type: "nvidia", spark: true, platform: "spark" } as never),
     ).resolves.toMatchObject({ provider: "vllm-local", model: "catalog/model" });
-    expect(handleLocalModelProfile).toHaveBeenCalledOnce();
+    expect(onboard).toHaveBeenCalledOnce();
   });
 
   it("returns interactive occupied-port selection to the provider menu", async () => {

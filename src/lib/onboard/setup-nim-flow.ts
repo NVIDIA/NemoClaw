@@ -13,9 +13,9 @@ import type { VllmProfile } from "../inference/vllm";
 import { isBackToSelection } from "../navigation";
 import type { HermesAuthMethod } from "./hermes-auth";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
-import type {
-  LocalModelProfileHostState,
-  LocalModelProfilePlan,
+import {
+  createLocalModelProfileIntegration,
+  type LocalModelProfilePlan,
 } from "./local-model-profile/integration";
 import type { ProviderSelectionResult } from "./machine/handlers/provider-inference";
 import type { ProviderInferenceProbeRoute } from "./machine/handlers/provider-inference-route-containment";
@@ -121,12 +121,7 @@ export interface SetupNimFlowDeps {
   error(message: string): void;
   exitProcess(code: number): never;
   abortNonInteractive(message: string): never;
-  resolveLocalModelProfilePlan(): LocalModelProfilePlan | null;
-  handleLocalModelProfile(
-    plan: LocalModelProfilePlan,
-    host: LocalModelProfileHostState,
-    state: SetupNimSelectionState,
-  ): Promise<SetupNimSelectionResult>;
+  localModelProfileIntegration?: ReturnType<typeof createLocalModelProfileIntegration>;
   handleRemoteProviderSelection(
     args: SetupNimRemoteSelectionArgs,
     state: SetupNimSelectionState,
@@ -270,6 +265,7 @@ function isEndpointProviderSelection(deps: SetupNimFlowDeps, providerKey: string
 
 async function runDedicatedLocalModelProfile(input: {
   deps: SetupNimFlowDeps;
+  integration: ReturnType<typeof createLocalModelProfileIntegration>;
   gpu: SetupNimGpu;
   hasVllmImage: boolean;
   vllmProfile: VllmProfile | null;
@@ -279,7 +275,7 @@ async function runDedicatedLocalModelProfile(input: {
 }): Promise<{ state: SetupNimSelectionState | null; providerMenuOptionCount: number }> {
   let plan: LocalModelProfilePlan | null;
   try {
-    plan = input.deps.resolveLocalModelProfilePlan();
+    plan = input.integration.resolvePlan();
   } catch (error) {
     input.deps.abortNonInteractive((error as Error).message);
   }
@@ -288,7 +284,7 @@ async function runDedicatedLocalModelProfile(input: {
     input.deps.abortNonInteractive("The local model profile requires non-interactive onboarding.");
   }
   const state = input.createSelectionState();
-  const result = await input.deps.handleLocalModelProfile(
+  const result = await input.integration.onboard(
     plan,
     {
       hasVllmImage: input.hasVllmImage,
@@ -365,6 +361,8 @@ export function createSetupNim(
   overrides: Partial<SetupNimFlowDeps> = {},
 ): SetupNim {
   const deps: SetupNimFlowDeps = { ...defaults, ...overrides };
+  const localModelProfileIntegration =
+    deps.localModelProfileIntegration ?? createLocalModelProfileIntegration(deps);
 
   return async function setupNimWithDeps(
     gpu: SetupNimGpu,
@@ -526,6 +524,7 @@ export function createSetupNim(
     let recoveredFromSandbox = false;
     const localModelProfile = await runDedicatedLocalModelProfile({
       deps,
+      integration: localModelProfileIntegration,
       gpu,
       hasVllmImage,
       vllmProfile,
