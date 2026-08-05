@@ -58,6 +58,16 @@ describe("Hermes WhatsApp session runtime preload", () => {
   it.each([
     ["missing", ["/usr/local/bin/node", "/sandbox/.hermes/scripts/whatsapp-bridge/bridge.js"]],
     [
+      "missing before another option",
+      [
+        "/usr/local/bin/node",
+        "/sandbox/.hermes/scripts/whatsapp-bridge/bridge.js",
+        "--session",
+        "--mode",
+        "bot",
+      ],
+    ],
+    [
       "duplicate",
       [
         "/usr/local/bin/node",

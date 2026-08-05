@@ -18,7 +18,9 @@ export function normalizeHermesWhatsappSessionArgv(argv: string[]): boolean {
     if (value === "--session") indexes.push(index);
     return indexes;
   }, []);
-  if (sessionIndexes.length !== 1 || !argv[sessionIndexes[0] + 1]) {
+  const sessionIndex = sessionIndexes.length === 1 ? sessionIndexes[0] : undefined;
+  const sessionValue = sessionIndex === undefined ? undefined : argv[sessionIndex + 1];
+  if (sessionIndex === undefined || !sessionValue || sessionValue.startsWith("-")) {
     throw new Error(
       "Hermes WhatsApp bridge did not provide exactly one session path; refusing split session state",
     );
@@ -29,7 +31,7 @@ export function normalizeHermesWhatsappSessionArgv(argv: string[]): boolean {
   // both launchers can be reconciled; the rendered manifest session_path does not control
   // those launcher arguments. Keep the two owned paths and this regression together, and
   // remove the preload once both upstream launchers honor one manifest-owned session path.
-  argv[sessionIndexes[0] + 1] = HERMES_WHATSAPP_SESSION_PATH;
+  argv[sessionIndex + 1] = HERMES_WHATSAPP_SESSION_PATH;
   return true;
 }
 
