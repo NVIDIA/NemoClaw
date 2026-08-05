@@ -13,15 +13,21 @@ describe("live E2E workload source environment", () => {
     ["openclaw", "Dockerfile"],
     ["hermes", "agents/hermes/Dockerfile"],
     ["langchain-deepagents-code", "agents/langchain-deepagents-code/Dockerfile"],
-  ])("keeps legacy %s targets on their existing Dockerfile coverage", (agent, dockerfile) => {
+  ])("honors the explicit legacy-Dockerfile source for %s", (agent, dockerfile) => {
     expect(
       resolveLiveE2eWorkloadSourceEnv({
         E2E_TARGET_ID: "full-e2e",
+        E2E_WORKLOAD_SOURCE: "legacy-dockerfile",
         NEMOCLAW_AGENT: agent,
       }),
     ).toMatchObject({
       NEMOCLAW_FROM_DOCKERFILE: path.join(REPO_ROOT, dockerfile),
     });
+  });
+
+  it("leaves an unspecified source on the product's default workload path", () => {
+    const input = { E2E_TARGET_ID: "full-e2e", NEMOCLAW_AGENT: "openclaw" };
+    expect(resolveLiveE2eWorkloadSourceEnv(input)).toEqual(input);
   });
 
   it.each([
