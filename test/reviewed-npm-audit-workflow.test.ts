@@ -327,6 +327,76 @@ esac
     }
   });
 
+  it("installs a matching npm bootstrap archive offline (#8253)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reviewed-npm-bootstrap-"));
+    const bin = path.join(root, "bin");
+    const npmLog = path.join(root, "npm.log");
+    const npmStub = path.join(bin, "npm");
+    const archiveContents = "verified archive\n";
+    const bootstrap = path.join(
+      REPO_ROOT,
+      ".github",
+      "actions",
+      "ci-reviewed-npm-audit",
+      "verify-and-install-npm.sh",
+    );
+
+    try {
+      fs.mkdirSync(bin);
+      fs.writeFileSync(
+        npmStub,
+        `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$NEMOCLAW_TEST_NPM_LOG"
+case "$1" in
+  pack)
+    shift
+    download_dir=""
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = "--pack-destination" ]; then
+        download_dir="$2"
+        break
+      fi
+      shift
+    done
+    [ -n "$download_dir" ]
+    printf 'verified archive\\n' > "$download_dir/npm-10.9.4.tgz"
+    ;;
+  install)
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+`,
+        { mode: 0o755 },
+      );
+
+      const integrity = `sha512-${createHash("sha512").update(archiveContents).digest("base64")}`;
+      const result = spawnSync("bash", [bootstrap], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NEMOCLAW_REVIEWED_NPM_INTEGRITY: integrity,
+          NEMOCLAW_REVIEWED_NPM_VERSION: "10.9.4",
+          NEMOCLAW_TEST_NPM_LOG: npmLog,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          RUNNER_TEMP: root,
+        },
+      });
+
+      const npmInvocations = fs.readFileSync(npmLog, "utf8").trim().split("\n");
+      expect(result.status).toBe(0);
+      expect(npmInvocations).toHaveLength(2);
+      expect(npmInvocations[0]).toContain("pack npm@10.9.4 --pack-destination");
+      expect(npmInvocations[1]).toMatch(
+        /^install --global .*\/npm-10\.9\.4\.tgz --userconfig \/dev\/null --ignore-scripts --no-audit --no-fund --offline$/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("materializes the NemoClaw production graph without changing its lock (#8116)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-source-graph-"));
     const source = path.join(root, "source");
