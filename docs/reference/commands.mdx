@@ -1215,6 +1215,10 @@ Follow [Deep Agents Config Lock Failure Recovery](troubleshooting#deep-agents-co
 </AgentOnly>
 
 Host-side config and inference writes, snapshot mutation, sandbox destruction, and shields transitions serialize per sandbox.
+Before `shields down` opens a new window, NemoClaw must revoke any stale auto-restore timer authority.
+If marker cleanup fails, the command reports `Cannot revoke stale auto-restore timer authority` and stops before policy capture, state writes, config unlock, replacement-timer startup, or audit writes.
+The sandbox retains its existing configuration and policy posture, and the stale timer authority remains.
+Resolve the reported timer-marker error on the trusted host, then retry `shields down`.
 When a timed shields-down window reaches its deadline, auto-restore closes the per-sandbox lifecycle deadline gate.
 The gate blocks new mutations and waits for the recorded live owner to release its exact lock generation before auto-restore restores lockdown.
 NemoClaw does not signal that process because portable process inspection cannot prove that all descendants stopped.
