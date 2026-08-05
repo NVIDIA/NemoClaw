@@ -22,7 +22,7 @@ normal supervised Hermes gateway
 | --- | --- | --- | --- |
 | V1 | branch `codex/switchyard-relay-prototype-v1`, commit `d58276ab7` | Relay CLI launches a one-off Hermes chat using the superseded Relay #586 path | Behavioral feasibility inside a managed sandbox |
 | V2 | branch `codex/switchyard-relay-prototype-v2`, commit `3c6932bdd` | Supervised Hermes loads Relay and Switchyard natively for its process lifetime | Deterministic weak/strong selection, no sidecar, restart persistence |
-| V3 | branch `codex/switchyard-relay-prototype-v3` (this directory) | V2 runtime with final provider calls sent through `inference.local` | Provider endpoint mediation, credential isolation, caller-header replacement, and the current single-model limitation |
+| V3 | branch `codex/switchyard-relay-prototype-v3`, implementation commit `28749b8844` | V2 runtime with final provider calls sent through `inference.local` | Provider endpoint mediation, credential isolation, caller-header replacement, and the current single-model limitation |
 
 V3 layers only a new target configuration and verifier onto V2. It does not
 rewrite either earlier branch. It uses the exact unreleased upstream inputs and
