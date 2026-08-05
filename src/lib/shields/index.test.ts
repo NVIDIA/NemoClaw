@@ -616,6 +616,14 @@ describe("shields — unit logic", () => {
       const sandboxName = "openclaw";
       const processToken = "d".repeat(32);
       const snapshotPath = path.join(stateDir(), "policy-snapshot-no-managed-mcp.yaml");
+      const openshellArgvPath = path.join(tmpDir, "openshell-argv.txt");
+      fs.writeFileSync(
+        path.join(tmpDir, "openshell"),
+        '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$OPENSHELL_TEST_ARGV_PATH"\n',
+        { mode: 0o700 },
+      );
+      vi.stubEnv("PATH", `${tmpDir}${path.delimiter}${process.env.PATH ?? ""}`);
+      vi.stubEnv("OPENSHELL_TEST_ARGV_PATH", openshellArgvPath);
       fs.mkdirSync(stateDir(), { recursive: true });
       fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  restrictive_baseline: {}\n");
       writeState(sandboxName, {
@@ -632,7 +640,6 @@ describe("shields — unit logic", () => {
       });
       vi.spyOn(process, "kill").mockImplementation(routeProcessKill);
       const { applyShieldsPolicySnapshot } = await loadShieldsModule();
-      const { buildPolicySetCommand } = await import("../policy");
       const createTempDirectory = vi.spyOn(fs, "mkdtempSync").mockImplementation(() => {
         throw Object.assign(new Error("ENOSPC: simulated temporary storage full"), {
           code: "ENOSPC",
@@ -647,7 +654,14 @@ describe("shields — unit logic", () => {
 
       expect(result.status).toBe(0);
       expect(createTempDirectory).not.toHaveBeenCalled();
-      expect(buildPolicySetCommand).toHaveBeenCalledWith(snapshotPath, sandboxName);
+      expect(fs.readFileSync(openshellArgvPath, "utf-8").trim().split("\n")).toEqual([
+        "policy",
+        "set",
+        "--policy",
+        snapshotPath,
+        "--wait",
+        sandboxName,
+      ]);
     });
 
     it("shieldsStatus warns and stays DOWN when inline recovery fails", async () => {
