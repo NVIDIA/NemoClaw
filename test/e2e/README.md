@@ -684,6 +684,16 @@ independently of advisor output. A workflow-wired live test or owning helper
 selects one to three focused E2E journeys. A gateway-migration live test or
 owning helper selects `openshell-gateway-upgrade`.
 
+Changes to either shared journaled recreation handler select both
+`openshell-gateway-upgrade` and the
+`ubuntu-repo-cloud-langchain-deepagents-code` typed target:
+
+- `src/lib/onboard/machine/handlers/sandbox-resume.ts`.
+- `src/lib/onboard/machine/handlers/sandbox.ts`.
+
+These selections cover the installer-driven OpenShell gateway upgrade handoff
+and the LangChain Deep Agents Code sandbox recreation path.
+
 Changes only under `test/e2e/support/` select no credentialed live E2E job.
 The `e2e-support` Vitest project runs those support tests in PR CI. A new or
 renamed live test that does not match the trusted workflow inventory keeps the
