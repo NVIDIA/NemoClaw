@@ -213,7 +213,7 @@ describe("probeLlamaCppAttachment", () => {
     expect(result).toMatchObject({ ok: false, reason: "not-llama-cpp" });
   });
 
-  it("rejects a public-catalog server that leaves /props unprotected (#8302)", () => {
+  it("rejects a server with public /v1/models that leaves /props unprotected (#8302)", () => {
     const probe = scriptedProbe([
       response(200, '{"data":[]}'),
       response(
