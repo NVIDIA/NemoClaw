@@ -234,6 +234,19 @@ describe("probeLlamaCppAttachment", () => {
     expect(probe).toHaveBeenCalledTimes(2);
   });
 
+  it("classifies a missing protected /props endpoint as not llama.cpp (#8302)", () => {
+    const probe = scriptedProbe([
+      response(200, '{"data":[]}'),
+      response(404, '{"error":"not found"}'),
+    ]);
+
+    expect(probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: probe })).toMatchObject({
+      ok: false,
+      reason: "not-llama-cpp",
+    });
+    expect(probe).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects a vLLM model catalog (#8161)", () => {
     const result = probeLlamaCppAttachment("secret-token", {
       runCurlProbeImpl: scriptedProbe([

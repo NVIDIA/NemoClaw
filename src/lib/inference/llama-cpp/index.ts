@@ -250,9 +250,15 @@ export function probeLlamaCppAttachment(
       );
     }
     if (anonymousProps.httpStatus !== 401 && anonymousProps.httpStatus !== 403) {
+      if (anonymousProps.ok) {
+        return failure(
+          "authentication-required",
+          "The server did not require the API key for a protected llama.cpp endpoint.",
+        );
+      }
       return failure(
-        "authentication-required",
-        "The server did not require the API key for a protected llama.cpp endpoint.",
+        "not-llama-cpp",
+        "The protected llama.cpp endpoint did not provide authentication evidence.",
       );
     }
   }
