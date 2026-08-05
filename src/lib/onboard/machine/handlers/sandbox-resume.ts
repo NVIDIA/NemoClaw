@@ -271,6 +271,7 @@ function runtimeConfigurationResumeDecision(
 
 export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResumeDecision {
   if (!signals.resume || !signals.sandboxStepComplete) return { kind: "create" };
+  if (signals.sandboxReuseState === "not_ready") return { kind: "repair-and-recreate" };
   const compatibilityDecision = compatibilityResumeDecision(signals);
   if (compatibilityDecision) return compatibilityDecision;
   if (canReuseSandbox(signals)) return { kind: "reuse" };
@@ -278,7 +279,6 @@ export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResum
   if (configurationDecision) return configurationDecision;
   const toolDisclosureDecision = toolDisclosureResumeDecision(signals);
   if (toolDisclosureDecision) return toolDisclosureDecision;
-  if (signals.sandboxReuseState === "not_ready") return { kind: "repair-and-recreate" };
   return {
     kind: "recreate",
     note: "  [resume] Recorded sandbox state is unavailable; recreating it.",
