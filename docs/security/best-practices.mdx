@@ -291,7 +291,7 @@ Writable agent state such as plugins, skills, hooks, and workspace metadata live
 By default, this directory starts writable so the agent can manage its own config, install skills, and write to standard home-directory paths natively.
 For sensitive workloads, use a reviewed host-side immutability workflow after initial setup so the sandbox user cannot change config or high-risk state entry points.
 The immutability workflow derives its path plan from the selected agent manifest.
-For OpenClaw, it locks `agents`, `canvas`, `cron`, `devices`, `extensions`, `hooks`, `memory`, `plugins`, `skills`, `telegram`, `wechat`, `whatsapp`, `workspace`, and `workspace-*` directories to `root:sandbox` and removes group and world write access.
+For OpenClaw, it locks `agents`, `canvas`, `cron`, `devices`, `extensions`, `hooks`, `memory`, `plugins`, `profiles`, `skills`, `telegram`, `wechat`, `whatsapp`, `workspace`, and `workspace-*` directories to `root:sandbox` and removes group and world write access.
 The root-only helper traverses from opened directory descriptors with no-follow semantics instead of using recursive pathname `chown` or `chmod`.
 Read-only preflight and unlock operations reject unsafe external symlinks, hardlinks, special files, cross-device entries, and entries that race the traversal without modifying them.
 After the top-level config binding is frozen, lockdown makes containment monotonic.
@@ -350,7 +350,9 @@ Hermes also stores runtime state such as `state.db`, logs, and platform sessions
 Messaging sessions such as WhatsApp pairing can remain mutable by design so they survive rebuilds.
 For plan-aware current images, the Shields workflow derives the Hermes lock plan from its agent manifest.
 Historical Hermes images that have a bundled helper but no generated plan use the helper's reviewed legacy inventory until the sandbox is rebuilt.
-It locks `cron`, `hooks`, `platforms`, `plugins`, `profiles`, `skills`, `skins`, `weixin`, and `workspace` to `root:sandbox`, and locks the `pairing` confidentiality root to `root:sandbox 0710`.
+It locks `cron`, `hooks`, `platforms`, `plugins`, `profiles`, `skills`, `skins`, `weixin`, and `workspace` to `root:sandbox`.
+The `profiles/dashboard-home` carve-out remains `sandbox:sandbox 0700`, and the guard does not traverse or rewrite its descendants.
+It locks the `pairing` confidentiality root to `root:sandbox 0710`.
 Hermes runtime directories without a Shields declaration remain mutable.
 
 The shared state-directory guard applies the manifest declaration to `pairing` on current Hermes images.
