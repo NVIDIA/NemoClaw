@@ -7,12 +7,13 @@ Source-of-truth note for this localized Hermes runtime patch:
   - Invalid state: Hermes v0.19.0 SessionDB does not set PRAGMA temp_store=MEMORY,
     so SQLite falls back to file-based temp storage when processing FK constraints
     (for example, the ON DELETE CASCADE on session_model_usage -> sessions). When
-    `hermes sessions delete` is invoked via openshell exec — the code path used by
-    `nemohermes <sandbox> sessions delete <id>` — the process runs in a restricted
-    environment where SQLite's temp-file creation syscalls fail with
+    `hermes sessions delete` is invoked through OpenShell sandbox execution —
+    the code path used by `nemohermes <sandbox> sessions delete <id>` — the
+    process runs in a restricted environment where SQLite's temp-file creation
+    syscalls fail with
     SQLITE_CANTOPEN, causing every `DELETE FROM sessions` with FK enforcement
     enabled to raise `sqlite3.OperationalError: unable to open database file`
-    (#8301). The same command succeeds when run via `docker exec` because that
+    (#8301). The same command succeeds through Docker execution because that
     context allows the file-based temp store.
   - Value being patched: pinned/prebuilt `/opt/hermes/hermes_state.py`
     `SessionDB.__init__` connection setup block; specifically, the statement

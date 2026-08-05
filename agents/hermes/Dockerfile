@@ -550,15 +550,16 @@ RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-session-list-previe
         /opt/nemoclaw-hermes-config/image-build-probes.py session-preview
 
 # Hermes v0.19.0 SessionDB does not set PRAGMA temp_store=MEMORY, so SQLite
-# falls back to file-based temp storage for FK constraint processing (e.g. the
-# ON DELETE CASCADE on session_model_usage -> sessions). The openshell exec
-# context used by `nemohermes <sb> sessions delete` restricts the temp-file
-# creation syscalls that SQLite's FK engine relies on, causing every
+# falls back to file-based temp storage for FK constraint processing (for
+# example, the ON DELETE CASCADE on session_model_usage -> sessions). The
+# OpenShell sandbox execution context used by
+# `nemohermes <sandbox> sessions delete <id>` restricts the temp-file creation
+# syscalls that SQLite's FK engine relies on, causing every
 # `DELETE FROM sessions` with FK enforcement to raise
 # `sqlite3.OperationalError: unable to open database file` (#8301). Inserting
 # PRAGMA temp_store=MEMORY before PRAGMA foreign_keys=ON ensures FK processing
-# uses in-memory storage, matching the docker-exec behaviour where this works.
-ARG NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256=2b5df46a58d0849c4f05ef04cc7f85ef0f3c280082e415f6284be400d3951591
+# uses in-memory storage. Docker execution permits the file-based storage path.
+ARG NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256=2db46b6cd358f4d181999bbddbc0d35d035a67ee1092adb2e2c16a894c695e13
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_SQLITE_TEMP_STORE_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-sqlite-temp-store.py \
