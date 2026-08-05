@@ -20,6 +20,7 @@ const E2E_WORKFLOW_CONTRACTS = [
   "test/e2e/support/hermes-workflow-boundary.test.ts",
   "test/hosted-runner-recovery-workflow.test.ts",
   "test/e2e/support/inference-switch-workflow-boundary.test.ts",
+  "test/e2e/support/llama-cpp-dgx-spark-qualification-workflow.test.ts",
   "test/e2e/support/jetson-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-boundary.test.ts",
   "test/e2e/support/mcp-workflow-compatibility.test.ts",
@@ -90,6 +91,19 @@ export const vitestWatchTriggerPatterns: VitestWatchTriggerPattern[] = [
   {
     pattern: /(?:^|\/)scripts\/setup-jetson\.sh$/,
     testsToRun: runTests("test/setup-jetson.test.ts"),
+  },
+  {
+    pattern:
+      /(?:^|\/)(?:\.github\/workflows\/base-image\.yaml|scripts\/export-managed-base-image-contract\.sh)$/,
+    testsToRun: runTests(
+      "test/managed-base-image-contract.test.ts",
+      "test/managed-image-publication-workflow.test.ts",
+      "test/dcode-base-image-workflow.test.ts",
+    ),
+  },
+  {
+    pattern: /(?:^|\/)scripts\/checks\/validate-managed-base-index\.sh$/,
+    testsToRun: runTests("test/validate-managed-base-index.test.ts"),
   },
   {
     pattern: /(?:^|\/)scripts\/e2e\/sanitize-trace-timing\.py$/,
