@@ -121,6 +121,7 @@ describe("shared vLLM install setup", () => {
     mockSuccessfulVllmInstall(mocks, "nemoclaw-vllm", [() => "second-row"]);
     expect(mocks.dockerCapture(["container"])).toBe("");
     expect(mocks.dockerCapture(["container"])).toBe("second-row");
+    mocks.dockerCapture.mockReset();
   });
 });
 
