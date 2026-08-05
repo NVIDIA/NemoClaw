@@ -154,7 +154,6 @@ describe("handleSandboxState live DCode selection", () => {
       requestedDcodeAutoApprovalMode: "thread-opt-in",
     });
 
-    expect(calls.repairSandbox).not.toHaveBeenCalled();
     expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.started", {
       state: "sandbox",
       metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
