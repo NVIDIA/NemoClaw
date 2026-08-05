@@ -17,6 +17,7 @@ import {
 } from "../vllm-docker-env.js";
 import { withHostGlobalVllmLifecycleLock } from "../vllm-station-lifecycle-lock.js";
 import {
+  isManagedClusterInferenceServingRecipe,
   NO_PREPARATION_REF,
   SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
 } from "./adapter-registry.js";
@@ -385,6 +386,7 @@ export function assertManagedClusterVllmExecutorConfig(
   if (
     !compiledPreset ||
     !compiledRecipe ||
+    !isManagedClusterInferenceServingRecipe(compiledRecipe) ||
     managedInferenceDigest(compiledPreset) !== plan.presetDigest ||
     managedInferenceDigest(compiledRecipe) !== plan.recipeDigest ||
     compiledPreset.spec.plan.recipeRef !== compiledRecipe.metadata.id ||

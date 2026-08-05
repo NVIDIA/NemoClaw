@@ -12,6 +12,7 @@ import {
   semanticPhaseCoverageModules,
   validateCollectedSemanticPhaseModule,
   validateTestScopedPhaseCalls,
+  validateWindowsMxcControlBoundarySource,
 } from "../../../tools/e2e/check-semantic-phases.mts";
 import { REPO_ROOT } from "../fixtures/paths.ts";
 
@@ -31,6 +32,48 @@ const TEST_PROGRESS_SOURCE = path.join(REPO_ROOT, "test/e2e/fixtures/progress.ts
 const FAKE_OPENAI_SOURCE = path.join(REPO_ROOT, "test/e2e/fixtures/fake-openai-compatible.ts");
 
 describe("semantic E2E phase checker", () => {
+  test("accepts formatted OpenShell create-then-delete control flow for Windows MXC", () => {
+    const source = `
+      async function qualify(runOpenShellCommand, sandboxName) {
+        await runOpenShellCommand(["sandbox", "create", "--name", sandboxName], "create");
+        await runOpenShellCommand(
+          ["sandbox", "delete", sandboxName],
+          "delete",
+        );
+      }
+    `;
+
+    expect(validateWindowsMxcControlBoundarySource(source)).toEqual([]);
+  });
+
+  test("rejects direct wxc-exec control and delete-before-create for Windows MXC", () => {
+    const source = `
+      async function qualify(cli, env, progress, sandboxName, wxcExecPath) {
+        await runCommand(cli, ["sandbox", "delete", sandboxName], env, progress, "delete");
+        spawnObservedChild(wxcExecPath, ["run"], { progress });
+        await runCommand(cli, ["sandbox", "create"], env, progress, "create");
+      }
+    `;
+
+    expect(validateWindowsMxcControlBoundarySource(source)).toEqual([
+      "wxc-exec must not be invoked outside the OpenShell control boundary",
+      "OpenShell sandbox delete must not run before sandbox create",
+    ]);
+  });
+
+  test("rejects a Windows MXC control flow without sandbox lifecycle commands", () => {
+    const source = `
+      async function qualify(cli, env, progress) {
+        await runCommand(cli, ["gateway", "select", "name"], env, progress, "select");
+      }
+    `;
+
+    expect(validateWindowsMxcControlBoundarySource(source)).toEqual([
+      "OpenShell sandbox create command is missing",
+      "OpenShell sandbox delete command is missing",
+    ]);
+  });
+
   // source-shape-contract: compatibility -- Generated policy output must precede semantic collection and remain shared with the canonical CLI build
   test("builds the policy boundary before semantic collection and CLI compilation", () => {
     const scripts = (

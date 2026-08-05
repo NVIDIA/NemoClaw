@@ -36,7 +36,7 @@ const CURRENT_INSTALLED_DOCKERFILE = [
   "COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.85.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json",
   "RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix \\",
   "    && node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts",
-  "RUN mkdir -p /sandbox/.hermes/dashboard-home",
+  "RUN mkdir -p /sandbox/.hermes/profiles/dashboard-home",
   "",
 ].join("\n");
 
