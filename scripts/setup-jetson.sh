@@ -6,6 +6,7 @@ set -euo pipefail
 
 SUDO=()
 ((EUID != 0)) && SUDO=(sudo)
+JETSON_HOST_SUDO_READY=0
 
 NVMAP_DEVICE="/dev/nvmap"
 NVMAP_UDEV_RULE="/etc/udev/rules.d/99-zz-nemoclaw-nvmap.rules"
@@ -22,6 +23,16 @@ warn() {
 error() {
   printf "[ERROR] %s\n" "$*" >&2
   exit 1
+}
+
+ensure_jetson_host_sudo() {
+  if ((EUID == 0)) || [[ "$JETSON_HOST_SUDO_READY" == "1" ]]; then
+    return 0
+  fi
+
+  info "Jetson host configuration requires sudo. You may be prompted for your password."
+  "${SUDO[@]}" true >/dev/null || error "Sudo is required to apply Jetson host configuration."
+  JETSON_HOST_SUDO_READY=1
 }
 
 # Returns 0 only when both the live kernel state AND our persistent
@@ -64,7 +75,7 @@ configure_nvmap_group_access() {
   local device_state device_type verified_state verified_permissions
 
   if ! device_state="$(LC_ALL=C stat -c '%F|%A' "$NVMAP_DEVICE" 2>/dev/null)"; then
-    warn "JetPack 6 host setup could not find $NVMAP_DEVICE. Non-root sandbox CUDA can fail until this device exists."
+    warn "Jetson host setup could not find $NVMAP_DEVICE. Non-root sandbox CUDA can fail until this device exists."
     return 0
   fi
 
@@ -72,7 +83,8 @@ configure_nvmap_group_access() {
   [[ "$device_type" == "character special file" ]] \
     || error "$NVMAP_DEVICE must be a character device before NemoClaw changes its group permissions."
 
-  warn "JetPack 6 host setup grants every member of the existing $NVMAP_DEVICE owning group write access and persists mode 0660 when udev recreates the device."
+  ensure_jetson_host_sudo
+  warn "Jetson host setup grants every member of the existing $NVMAP_DEVICE owning group write access and persists mode 0660 when udev recreates the device."
   printf '%s\n' "$NVMAP_UDEV_RULE_CONTENT" | "${SUDO[@]}" tee "$NVMAP_UDEV_RULE" >/dev/null
   "${SUDO[@]}" udevadm control --reload-rules
   "${SUDO[@]}" chmod g+rw "$NVMAP_DEVICE"
@@ -94,10 +106,7 @@ warn_host_setup_skipped() {
 }
 
 get_jetpack_version() {
-  local release_line release revision l4t_version
-
-  release_line="$(head -n1 /etc/nv_tegra_release 2>/dev/null || true)"
-  [[ -n "$release_line" ]] || return 0
+  local release_line="$1" release revision l4t_version
 
   release="$(printf '%s\n' "$release_line" | sed -n 's/^# R\([0-9][0-9]*\) (release).*/\1/p')"
   revision="$(printf '%s\n' "$release_line" | sed -n 's/^.*REVISION: \([0-9][0-9]*\)\..*$/\1/p')"
@@ -155,10 +164,7 @@ get_jetpack_version() {
 configure_jetson_host() {
   local jetpack_version="$1"
 
-  if ((EUID != 0)); then
-    info "Jetson host configuration requires sudo. You may be prompted for your password."
-    "${SUDO[@]}" true >/dev/null || error "Sudo is required to apply Jetson host configuration."
-  fi
+  ensure_jetson_host_sudo
 
   case "$jetpack_version" in
     jp6)
@@ -218,9 +224,6 @@ except Exception:
     os.unlink(tmp)
     raise
 PYEOF
-      if [[ "${NEMOCLAW_AGENT:-openclaw}" == "openclaw" ]]; then
-        configure_nvmap_group_access
-      fi
       ;;
     jp7-r38)
       # JP7 R38 does not need iptables or Docker daemon.json changes.
@@ -238,8 +241,18 @@ PYEOF
 }
 
 main() {
-  local jetpack_version
-  jetpack_version="$(get_jetpack_version)"
+  local jetpack_version release_line
+
+  release_line="$(head -n1 /etc/nv_tegra_release 2>/dev/null || true)"
+  [[ -n "$release_line" ]] || exit 0
+
+  # nvmap permissions follow the detected device, not the L4T version parser.
+  # Version-specific networking changes remain gated below.
+  if [[ "${NEMOCLAW_AGENT:-openclaw}" == "openclaw" ]]; then
+    configure_nvmap_group_access
+  fi
+
+  jetpack_version="$(get_jetpack_version "$release_line")"
   [[ -n "$jetpack_version" ]] || exit 0
 
   info "Jetson detected ($jetpack_version) — applying required host configuration"

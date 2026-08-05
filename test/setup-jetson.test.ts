@@ -366,7 +366,7 @@ describe("setup-jetson host setup on an unrecognized L4T release (#7612)", () =>
   });
 });
 
-describe("setup-jetson JetPack 6 nvmap access", () => {
+describe("setup-jetson OpenClaw nvmap access", () => {
   it("grants the nvmap owning group read-write access and persists the mode on JetPack 6 (#7610)", () => {
     const result = withJetsonReleaseSandbox(
       ({ commandLogPath, headArgsPath, releasePath, stubDir }) => {
@@ -450,6 +450,35 @@ describe("setup-jetson JetPack 6 nvmap access", () => {
       "/dev/nvmap does not grant its owning group read-write access after host setup",
     );
     expect(result.commandLog).toContain("chmod g+rw /dev/nvmap");
+  });
+
+  it("configures nvmap before skipping version-specific setup for an unrecognized L4T release (#7610)", () => {
+    const result = withJetsonReleaseSandbox(
+      ({ commandLogPath, headArgsPath, releasePath, stubDir }) => {
+        writeFileSync(
+          releasePath,
+          "# R00 (release), REVISION: 0.0, GCID: 46579312, BOARD: generic\n",
+        );
+        return spawnSetupJetson(stubDir, headArgsPath, commandLogPath, {
+          NEMOCLAW_TEST_STAT_OUTPUT: "character special file|cr--r-----",
+          NEMOCLAW_TEST_STAT_OUTPUT_AFTER: "character special file|cr--rw----",
+        });
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.commandLog).toContain("tee /etc/udev/rules.d/99-zz-nemoclaw-nvmap.rules");
+    expect(result.commandLog).toContain('stdin KERNEL=="nvmap", MODE="0660"');
+    expect(result.commandLog).toContain("chmod g+rw /dev/nvmap");
+    expect(result.commandLog).not.toContain("update-alternatives");
+    expect(result.commandLog).not.toContain("modprobe br_netfilter");
+    expect(result.commandLog).not.toContain("systemctl restart docker");
+    expect(result.stdout).toContain("/dev/nvmap grants its owning group read-write access");
+    expect(result.stderr).toContain(
+      "Jetson detected (L4T 00.0) but this L4T release is not recognized.",
+    );
+    expect(result.stderr).toContain("Skipped Jetson host setup");
+    expect(result.stderr).toContain("Installation continues in an untested configuration.");
   });
 
   it.each([

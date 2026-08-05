@@ -211,7 +211,13 @@ Some R39 images already ship with `br_netfilter` configured and are left untouch
 On affected R39 hosts, the installer prints `loading br_netfilter (required by k3s inside the OpenShell gateway)`.
 Without this fix, sandbox pods fail DNS resolution against the in-cluster service and the onboard `Setting up OpenClaw inside sandbox` step times out.
 
-If the L4T version is not recognized, the setup step is skipped and the installer continues normally.
+If the L4T version is not recognized, the installer skips the version-specific iptables, Docker, and `br_netfilter` setup and continues in an untested configuration.
+
+<AgentOnly variant="openclaw">
+
+The OpenClaw installer still configures a real `/dev/nvmap` character device independently of the parsed L4T release.
+
+</AgentOnly>
 
 ### DNS resolution from inside docker fails (corporate firewall)
 
@@ -2736,8 +2742,10 @@ Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses t
 It also keeps eligible Jetson GPU device group memberships when OpenShell starts the nonroot sandbox user.
 The compatibility policy permits read-only access to the NVIDIA runtime library directory at `/opt/nvidia/l4t-gpu-libs` when that path is present.
 
-If CUDA reports `NvRmMemInitNvmap failed with Permission denied` and `cuInit(0)=999` on JetPack 6, rerun the NemoClaw installer to apply persistent group read-write access to `/dev/nvmap`:
+On an OpenClaw Jetson host, the installer applies persistent group read-write access when `/dev/nvmap` is a real character device.
 If the device is absent, setup warns and continues without installing the rule.
+This device permission setup runs even when the L4T release line is unrecognized, but it does not make that release tested or supported.
+If CUDA reports `NvRmMemInitNvmap failed with Permission denied` and `cuInit(0)=999`, rerun the NemoClaw installer to apply the permission setup:
 
 <Warning>
 The installer grants write access to every member of the existing `/dev/nvmap` owning group.
