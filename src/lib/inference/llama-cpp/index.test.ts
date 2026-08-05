@@ -180,6 +180,7 @@ describe("probeLlamaCppAttachment", () => {
   it("accepts a real llama.cpp server with public /v1/models (#8302)", () => {
     const responses: CurlProbeResult[] = [
       response(200, '{"data":[]}'),
+      response(401, '{"error":"unauthorized"}'),
       response(200, JSON.stringify({ data: [nativeModel()] })),
       response(200, '{"status":"ok"}'),
       response(
@@ -202,6 +203,7 @@ describe("probeLlamaCppAttachment", () => {
     const result = probeLlamaCppAttachment("secret-token", {
       runCurlProbeImpl: scriptedProbe([
         response(200, '{"data":[]}'),
+        response(401, '{"error":"unauthorized"}'),
         response(
           200,
           JSON.stringify({ data: [{ id: "model", object: "model", owned_by: "vllm" }] }),
@@ -209,6 +211,27 @@ describe("probeLlamaCppAttachment", () => {
       ]),
     });
     expect(result).toMatchObject({ ok: false, reason: "not-llama-cpp" });
+  });
+
+  it("rejects a public-catalog server that leaves /props unprotected (#8302)", () => {
+    const probe = scriptedProbe([
+      response(200, '{"data":[]}'),
+      response(
+        200,
+        JSON.stringify({
+          model_alias: "team/model-alias",
+          model_path: "/models/model.gguf",
+          total_slots: 2,
+          default_generation_settings: { params: {} },
+        }),
+      ),
+    ]);
+
+    expect(probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: probe })).toMatchObject({
+      ok: false,
+      reason: "authentication-required",
+    });
+    expect(probe).toHaveBeenCalledTimes(2);
   });
 
   it("rejects a vLLM model catalog (#8161)", () => {
