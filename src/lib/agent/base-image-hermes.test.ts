@@ -7,6 +7,7 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeAgent, withMockedDocker } from "../../../test/helpers/base-image-test-harness";
+import { dockerRunCommandBetween } from "../../../test/helpers/hermes-dockerfile-run";
 
 describe("agent base image provisioning", () => {
   beforeEach(() => {
@@ -39,7 +40,7 @@ describe("agent base image provisioning", () => {
     });
   });
 
-  // source-shape-contract: security -- Tracked immutable Hermes base digest must feed the production image resolver
+  // source-shape-contract: security -- The tracked patched Hermes base and final dependency guard must feed ordinary onboarding
   it("accepts only the tracked published Hermes base digest", () => {
     const dockerfilePath = path.resolve(import.meta.dirname, "../../../agents/hermes/Dockerfile");
     const dockerfile = fs.readFileSync(dockerfilePath, "utf8");
@@ -47,6 +48,23 @@ describe("agent base image provisioning", () => {
       /^ARG BASE_IMAGE=(ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@(sha256:[0-9a-f]{64}))$/m,
     );
     expect(trackedRef).not.toBeNull();
+    expect(trackedRef?.[1]).toBe(
+      "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96",
+    );
+
+    const installLayer = dockerRunCommandBetween(
+      dockerfile,
+      "RUN unset SSL_CERT_FILE REQUESTS_CA_BUNDLE",
+      "WORKDIR /sandbox",
+    ).replace(/\s+/gu, " ");
+    const versionGuard =
+      "/opt/hermes/.venv/bin/python -I -c \"from importlib.metadata import version; expected = {'aiohttp': '3.14.3', 'cryptography': '50.0.0'}; actual = {name: version(name) for name in expected}; assert actual == expected, actual\"";
+    const versionGuardIndex = installLayer.indexOf(versionGuard);
+    const finalConditionalEnd = [...installLayer.matchAll(/\bfi\b/gu)].at(-1)?.index ?? -1;
+
+    expect(versionGuardIndex).toBeGreaterThan(finalConditionalEnd);
+    expect(installLayer).not.toContain("'aiohttp': '3.14.1'");
+    expect(installLayer).not.toContain("'cryptography': '48.0.1'");
 
     withMockedDocker(({ ensureAgentBaseImage, resolveSandboxBaseImageMock }) => {
       resolveSandboxBaseImageMock.mockReturnValue({

@@ -21,12 +21,17 @@ Named-profile copies remain inside the raw `profiles` directory capture under th
 The gateway-runtime-metadata, session-preview, Langfuse-placeholder, managed-light-skin, provider-routing, and resumed-one-shot workarounds remain necessary against the target source and retain exact-shape guards.
 
 The selected Python graph is hardened before installation with a reviewed, exact-source patch that updates the published dependency metadata and frozen lock together.
-It selects `aiohttp==3.14.3`, `cryptography==50.0.0`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, and `tornado==6.5.7`, then verifies those installed versions and the complete environment with `uv pip check`.
+The patched base image selects `aiohttp==3.14.3`, `cryptography==50.0.0`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, and `tornado==6.5.7`.
+Its build verifies those installed versions and the complete environment with `uv pip check`.
+The final image also asserts `aiohttp==3.14.3` and `cryptography==50.0.0` after messaging package installation for every build configuration.
+Ordinary onboarding therefore fails closed if either runtime dependency remains stale after messaging package installation.
 The final image also replaces the published `python-multipart==0.0.27` lock resolution with the hash-verified and attested `python-multipart==0.0.32`.
 The base image overlays checksum-pinned Node.js `24.18.1` archives for both supported architectures and installs exact uv `0.11.33`; build-time assertions reject version drift before Hermes is installed.
 
-The source-pin commit must publish a fresh multi-platform Hermes base image before the final Dockerfile can name its immutable digest.
-The PR is not approval-ready until the pinned final image and required live E2E gates pass.
+The final Dockerfile pins patched multi-platform OCI index `sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96`.
+The labels on both platform manifests bind the supported architectures to source revision `bd668121e918e7b1dda13062bed728f18150360e`.
+That revision descends from dependency-fix commit `00c61114f`.
+The PR is not approval-ready until the final-image build uses that index and the required live end-to-end (E2E) gates pass.
 
 ## Reviewed identities
 
@@ -188,7 +193,8 @@ The selected-runtime audit also reports unrelated records for `click==8.3.1`, `p
 Those records are not introduced or resolved by this targeted advisory update and remain visible for a separate dependency-lifecycle review; this review does not describe the complete image as vulnerability-free.
 
 Compatibility evidence covers all 97 upstream image-routing tests with Pillow `12.3.0`, plus a real FastAPI `0.133.1`, Starlette `1.3.1`, and multipart `0.0.32` form and upload `TestClient` smoke.
-The image build additionally requires the frozen environment to remain consistent and asserts the exact installed versions before continuing.
+The base image build requires the frozen environment to remain consistent and asserts the exact installed versions before continuing.
+The final image repeats the `aiohttp==3.14.3` and `cryptography==50.0.0` assertions after messaging package installation, regardless of `NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION`.
 
 The remaining audit records stay recorded rather than being described as fixed or excluded.
 
@@ -231,9 +237,9 @@ Artifact scanning must therefore inspect the assembled image and record the down
 | `HERMES-7` | High | Test and runtime-proof | The target's `mcp__server__tool` names are compatible by source inspection, while managed-tool discovery and invocation remain a live E2E gate. |
 | `HERMES-8` | High | Guard and runtime-proof | Optional upstream secret sources stay disabled, `--safe-mode` does not broaden the generated environment allowlist, and the live environment boundary must reject raw credentials. |
 | `HERMES-9` | High | Pin and test | The selected Python delta adds no advisory regression, and the affected multipart parser is replaced with attested `0.0.32` plus hash and runtime probes. |
-| `HERMES-10` | High | Pin and test | The exact-source patch updates Hermes metadata and its frozen lock together, selects `aiohttp==3.14.3`, `cryptography==50.0.0`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, and `tornado==6.5.7`, and fails the image build on dependency inconsistency or installed-version drift. The base image separately checksum-pins Node.js `24.18.1` and asserts uv `0.11.33`. |
+| `HERMES-10` | High | Pin and test | The exact-source patch updates Hermes metadata and its frozen lock together, selects `aiohttp==3.14.3`, `cryptography==50.0.0`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, and `tornado==6.5.7`, and fails the base image build on dependency inconsistency or installed-version drift. The final image unconditionally asserts `aiohttp==3.14.3` and `cryptography==50.0.0` after messaging package installation, including during ordinary onboarding. The base image separately checksum-pins Node.js `24.18.1` and asserts uv `0.11.33`. |
 | `HERMES-11` | High | Migrate, test, and runtime-proof | Root npm audit reports zero production findings and the WhatsApp bridge removes its current critical, high, and medium advisory entries, while both architectures still require native bridge and message-path evidence. |
-| `HERMES-12` | High | Pin and runtime-proof | Trusted workflow run `30779271312`, attempt 1, built source commit `340c47857596e7cc347541a0b32fe9e24f201bcd` and published amd64 digest `sha256:faf96b115049c2ae3e7c10be66ae4916cd05ff72900ef5b0642f9f90b6dd834d` plus arm64 digest `sha256:61a7356020832392692347d2510fe8817c8a9f3ff3d5c050fbcec6182787eb4d` under OCI index `sha256:956c3d0c812ee6caa56f3b6e307819925d920604adcf73c4a9e6229788967634`. The final Dockerfile pins that index. Both base-image builds passed the exact-source patch guard, locked bridge install, bridge-to-Baileys option assertions, and the controlled-proxy WebSocket `CONNECT` regression; live final-image WhatsApp evidence remains under `HERMES-22`. |
+| `HERMES-12` | High | Pin and runtime-proof | The final Dockerfile pins patched OCI index `sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96`, which selects amd64 manifest `sha256:cf6e95640faac8e5099cc9d267a6eb9b1f9192abbfcc9552a81a8ae22b4a47bb` and arm64 manifest `sha256:92e7c982bc5106f4c3f551032418fb72375b4d37bff50e21baa3d0e861d7519e`. Registry labels bind both manifests to source revision `bd668121e918e7b1dda13062bed728f18150360e`, which descends from dependency-fix commit `00c61114f`. Both image histories contain exact installed-version assertions for `aiohttp==3.14.3` and `cryptography==50.0.0`. Live final-image WhatsApp evidence remains under `HERMES-22`. |
 | `HERMES-13` | Medium | Document bounded residual | Static `state_files` entries online-back up the default profile only. Cron or Discord ledgers created by a process launched under `profiles/<name>` remain in the raw `profiles` tar capture and can be inconsistent during a concurrent snapshot. Dynamic profile-local SQLite discovery is generic snapshot work outside this upgrade PR. |
 | `HERMES-14` | High | Migrate and test | The browser evaluation denylist changed from default-on to opt-in. Generated configuration explicitly writes `browser.restrict_evaluate: true`, including when managed browser-gateway settings are merged, so the upgrade does not broaden page-context access. |
 | `HERMES-15` | Medium | Migrate and test | The omitted gateway session-reset policy changed from bounded daily and idle expiry to no automatic reset. Generated configuration explicitly writes the complete outgoing reset and notification policy to preserve the retention bound without inheriting mutable dependency defaults. |
@@ -263,12 +269,11 @@ Completed local evidence:
 - Python 3.13 multipart compatibility probes;
 - a controlled-proxy regression proving the bridge-provided agent carries the pinned Baileys WebSocket `CONNECT` request;
 - a no-cache arm64 Hermes base-image build;
-- trusted amd64 and arm64 branch-image publication plus immutable OCI-index inspection; and
-- a 62-step arm64 final-image build from the pinned pre-relocation branch digest, including private wrapper-boundary and cross-identity SQLite probes.
+- amd64 and arm64 patched base-image publication plus immutable OCI-index, source-label, and build-history inspection.
 
 Before merge, these checks must pass:
 
-- the final-image build, including the cron ledger relocation and changed cross-identity probe;
+- the final-image build from the patched OCI index, including the unconditional runtime-dependency assertions, cron ledger relocation, and changed cross-identity probe;
 - managed MCP discovery and invocation;
 - messaging, environment-secret, restart, snapshot, rebuild, and rollback E2E paths;
 - normal repository checks with no unresolved actionable automated-review finding; and
