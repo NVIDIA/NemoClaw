@@ -320,6 +320,9 @@ jobs:
           gunzip -c /tmp/hermes-isolation-image.tar.gz | docker load
           docker image inspect nemoclaw-hermes-production >/dev/null
 
+      - name: Resolve Hermes base image
+        uses: ./.github/actions/resolve-hermes-base-image
+
       - name: Run Hermes sandbox secret boundary test
         id: hermes-secret-boundary
         timeout-minutes: 45
