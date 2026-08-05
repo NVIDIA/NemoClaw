@@ -136,7 +136,7 @@ const HERMES_CONFIG_GUARD_TIMEOUT_MS = 11 * 60 * 1000;
 
 type ShieldsDownTransition = {
   version: 1;
-  phase: "preparing" | "active";
+  phase: "preparing" | "active" | "policy_rejected";
   ownerPid: number;
   ownerStartIdentity: string;
   processToken: string;
@@ -183,7 +183,9 @@ function isShieldsDownTransition(value: unknown): value is ShieldsDownTransition
   if (!isObjectRecord(value)) return false;
   return (
     value.version === 1 &&
-    (value.phase === "preparing" || value.phase === "active") &&
+    (value.phase === "preparing" ||
+      value.phase === "active" ||
+      value.phase === "policy_rejected") &&
     typeof value.ownerPid === "number" &&
     Number.isInteger(value.ownerPid) &&
     value.ownerPid > 0 &&
@@ -218,6 +220,13 @@ function readShieldsDownTransition(
   } catch {
     return null;
   }
+}
+
+function readTimerBoundShieldsDownTransition(sandboxName: string): ShieldsDownTransition | null {
+  const marker = readTimerMarker(sandboxName);
+  if (!marker?.processToken || !/^[0-9a-f]{32}$/.test(marker.processToken)) return null;
+  const transition = readShieldsDownTransition(sandboxName, marker.processToken);
+  return transition?.snapshotPath === marker.snapshotPath ? transition : null;
 }
 
 function writeShieldsDownTransition(
@@ -931,8 +940,27 @@ function getShieldsPostureWithoutHostLock(
   allowInlineRecovery = false,
 ): ShieldsPosture {
   const state = recoverExpiredAutoRestoreGate(sandboxName, allowInlineRecovery);
-  const mode = state._isCorrupt ? "error" : deriveShieldsMode(state, state._hasStateFile);
-  return { ...describeShieldsMode(mode), state };
+  const timerBoundTransition =
+    !state._isCorrupt && state.shieldsDown === true
+      ? readTimerBoundShieldsDownTransition(sandboxName)
+      : null;
+  const transitionDeniesMutability =
+    timerBoundTransition?.phase === "policy_rejected" ||
+    timerBoundTransition?.phase === "preparing";
+  const effectiveState: LoadedShieldsState = transitionDeniesMutability
+    ? {
+        ...state,
+        shieldsDown: false,
+        shieldsDownAt: null,
+        shieldsDownTimeout: null,
+        shieldsDownReason: null,
+        shieldsDownPolicy: null,
+      }
+    : state;
+  const mode = effectiveState._isCorrupt
+    ? "error"
+    : deriveShieldsMode(effectiveState, effectiveState._hasStateFile);
+  return { ...describeShieldsMode(mode), state: effectiveState };
 }
 
 type ExpiredAutoRestoreTakeover = {
@@ -2963,6 +2991,8 @@ interface ShieldsPolicySnapshotRestoreOptions {
   transitionProcessToken?: string;
   deadlineAuthoritative?: boolean;
   expiredTimerRecovery?: boolean;
+  buildPolicySet?: typeof buildPolicySetCommand;
+  runPolicySet?: typeof run;
 }
 
 type ShieldsPolicySnapshotRestoreResult = ReturnType<typeof run> & {
@@ -2974,6 +3004,8 @@ function applyShieldsPolicySnapshot(
   snapshotPath: string,
   options: ShieldsPolicySnapshotRestoreOptions = {},
 ): ShieldsPolicySnapshotRestoreResult {
+  const buildPolicySet = options.buildPolicySet ?? buildPolicySetCommand;
+  const runPolicySet = options.runPolicySet ?? run;
   const state = loadShieldsState(sandboxName);
   let transition: ShieldsDownTransition | null = null;
   if (options.transitionProcessToken !== undefined) {
@@ -3062,7 +3094,7 @@ function applyShieldsPolicySnapshot(
         fs.readFileSync(snapshotPath, "utf-8"),
         hasManagedMcpPolicyClaims(sandboxName),
       );
-      return run(buildPolicySetCommand(snapshotPath, sandboxName), {
+      return runPolicySet(buildPolicySet(snapshotPath, sandboxName), {
         ignoreError: true,
       });
     }
@@ -3088,7 +3120,7 @@ function applyShieldsPolicySnapshot(
   }
   const runtimePolicyIsTemp = runtimePolicyPath !== snapshotPath;
   try {
-    const result = run(buildPolicySetCommand(runtimePolicyPath, sandboxName), {
+    const result = runPolicySet(buildPolicySet(runtimePolicyPath, sandboxName), {
       ignoreError: true,
     });
     return managedMcpOmissions.length > 0 ? { ...result, managedMcpOmissions } : result;
@@ -3659,10 +3691,65 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   }
 
   console.log(`  Applying ${policyName} policy...`);
+  let policySetResult: ReturnType<typeof run>;
   try {
-    run(buildPolicySetCommand(policyFile, sandboxName));
+    policySetResult = run(buildPolicySetCommand(policyFile, sandboxName), {
+      ignoreError: true,
+    });
   } finally {
     cleanupRuntimePolicyFile();
+  }
+  if (policySetResult.status !== 0) {
+    // The permissive policy was rejected before it applied — for example,
+    // OpenShell refuses a live Landlock change on a sandbox whose policy is
+    // sealed at startup (Deep Agents). Nothing was weakened: configuration is
+    // still locked and the restrictive policy is unchanged. The provisional
+    // Shields down record written above therefore conflicts with the actual
+    // posture. Clear it, cancel the now-pointless timer and transition, and
+    // fail closed. Otherwise `shields status` would report `DOWN`/permissive
+    // for an unlock that never happened.
+    // See #8198.
+    try {
+      saveShieldsState(sandboxName, {
+        shieldsDown: false,
+        shieldsDownAt: null,
+        shieldsDownTimeout: null,
+        shieldsDownReason: null,
+        shieldsDownPolicy: null,
+        shieldsPolicySnapshotPath: null,
+      });
+    } catch (stateErr) {
+      // Clearing the provisional Shields down record failed, so on disk the
+      // record still says `DOWN`. Mark the retained transition as rejected so
+      // status derives the restrictive posture instead of treating the
+      // provisional record as a completed unlock. The timer and transition
+      // remain the recovery authority and reclaim the restrictive snapshot.
+      if (transition) {
+        try {
+          transition = { ...transition, phase: "policy_rejected" };
+          writeShieldsDownTransition(transition, "preparing");
+        } catch (transitionErr) {
+          const transitionMessage =
+            transitionErr instanceof Error ? transitionErr.message : String(transitionErr);
+          console.error(
+            `  The rejected Shields down transition could not be recorded: ${transitionMessage}`,
+          );
+        }
+      }
+      const stateMessage = stateErr instanceof Error ? stateErr.message : String(stateErr);
+      console.error(
+        `  ERROR: Could not apply the ${policyName} policy, and clearing the provisional Shields down record failed: ${stateMessage}`,
+      );
+      console.error("  The scheduled auto-restore remains authoritative.");
+      return failShieldsCommand(`Could not apply ${policyName} policy`, opts.throwOnError);
+    }
+    if (transition) clearShieldsDownTransition(sandboxName, transition.processToken);
+    killTimer(sandboxName);
+    console.error(
+      `  ERROR: Could not apply the ${policyName} policy; the sandbox remains in the Shields up state.`,
+    );
+    console.error("  Shields down did not take effect. `shields status` continues to report `UP`.");
+    return failShieldsCommand(`Could not apply ${policyName} policy`, opts.throwOnError);
   }
 
   // 2b. Return config to default mutable state.
@@ -4123,6 +4210,13 @@ function shieldsStatusWithoutHostLock(
     throw new DeferredShieldsExit("Shields state is corrupt", 1);
   }
 
+  const transition = readTimerBoundShieldsDownTransition(sandboxName);
+  if (transition?.phase === "preparing") {
+    console.error("  Shields: ERROR (Shields down transition incomplete)");
+    console.error("  The scheduled auto-restore remains authoritative.");
+    throw new DeferredShieldsExit("Shields down transition is incomplete", 1);
+  }
+
   switch (posture.mode) {
     case "mutable_default":
       // NC-2227-02: Fresh sandbox with no shields history — do NOT claim locked
@@ -4261,12 +4355,8 @@ function shieldsStatus(
  * "not configured" instead of "down".
  */
 function isShieldsDown(sandboxName: string, allowInlineRecovery = false): boolean {
-  const state = allowInlineRecovery
-    ? getShieldsPosture(sandboxName, true).state
-    : recoverExpiredAutoRestoreGate(sandboxName, false);
-  if (state._isCorrupt) return false;
-  const mode = deriveShieldsMode(state, state._hasStateFile);
-  return mode !== "locked";
+  const posture = getShieldsPosture(sandboxName, allowInlineRecovery);
+  return posture.mode !== "error" && posture.mode !== "locked";
 }
 
 /**
