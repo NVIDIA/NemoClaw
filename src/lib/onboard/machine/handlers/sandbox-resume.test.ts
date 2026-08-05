@@ -133,10 +133,11 @@ describe("decideSandboxResume", () => {
     });
   });
 
-  it("continues an owned recreate when the outer transaction already deleted the sandbox", () => {
+  it("continues an owned recreate after the outer transaction starts a replacement session", () => {
     expect(
       decideSandboxResume(
         resumeSignals({
+          sandboxStepComplete: false,
           sandboxReuseState: "not_ready",
           recreateSandboxRequested: true,
           recreateJournalHandoff: true,

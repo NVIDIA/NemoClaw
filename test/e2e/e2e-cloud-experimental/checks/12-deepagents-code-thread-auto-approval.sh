@@ -109,9 +109,8 @@ assert_capability_projection() {
 assert_status_mode() {
   local expected_mode="$1"
   local status_json
-  if ! status_json="$("$CLI" "$SANDBOX_NAME" status --json 2>&1)"; then
-    fail "nemoclaw status failed while checking '$expected_mode': $status_json"
-  fi
+  status_json="$("$CLI" "$SANDBOX_NAME" status --json)" \
+    || fail "nemoclaw status failed while checking '$expected_mode'"
   STATUS_JSON="$status_json" EXPECTED_MODE="$expected_mode" SANDBOX_NAME="$SANDBOX_NAME" node -e '
 const status = JSON.parse(process.env.STATUS_JSON);
 if (status.name !== process.env.SANDBOX_NAME ||

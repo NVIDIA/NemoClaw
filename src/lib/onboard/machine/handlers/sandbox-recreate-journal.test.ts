@@ -209,6 +209,11 @@ it("continues an outer rebuild journal after the source sandbox was deleted", as
   });
   advanceSandboxRecreateTransaction(session, transaction.id, "deleting");
   advanceSandboxRecreateTransaction(session, transaction.id, "deleted");
+  // The outer rebuild replaces the retired onboarding session before it starts
+  // the inner onboarding run. The replacement session's sandbox step is
+  // incomplete even though the preserved recreate journal owns the deleted source.
+  session.steps.sandbox.status = "pending";
+  session.machine.state = "sandbox";
 
   let currentEntry = sourceEntry;
   let observation: SandboxRecreateObservation = {

@@ -271,8 +271,8 @@ function runtimeConfigurationResumeDecision(
 }
 
 export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResumeDecision {
-  if (!signals.resume || !signals.sandboxStepComplete) return { kind: "create" };
   if (
+    signals.resume &&
     signals.sandboxReuseState === "not_ready" &&
     signals.recreateSandboxRequested &&
     signals.recreateJournalHandoff
@@ -283,6 +283,7 @@ export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResum
       removeRegistryEntry: false,
     };
   }
+  if (!signals.resume || !signals.sandboxStepComplete) return { kind: "create" };
   if (signals.sandboxReuseState === "not_ready") return { kind: "repair-and-recreate" };
   const compatibilityDecision = compatibilityResumeDecision(signals);
   if (compatibilityDecision) return compatibilityDecision;
