@@ -243,7 +243,12 @@ export function checkRebuildGatewaySchemaPreflight(
       action: `rebuilding sandbox '${sandboxName}'`,
       command: `${CLI_NAME} ${sandboxName} rebuild`,
     });
-    bail("OpenShell gateway schema mismatch.");
+    printRebuildPreflightFailure(
+      "OpenShell gateway schema is incompatible with this rebuild.",
+      "Follow the gateway recovery guidance above, then rerun rebuild.",
+      "OpenShell gateway schema mismatch.",
+      bail,
+    );
     return false;
   }
   return true;
