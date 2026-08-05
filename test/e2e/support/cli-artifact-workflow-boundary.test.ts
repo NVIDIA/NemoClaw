@@ -632,9 +632,9 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     );
   });
 
-  it("rejects changed checkout settings and inserted, removed, reordered, or delayed pre-restore steps", () => {
-    const sequenceError =
-      "sandbox-operations steps before CLI artifact restore must match the required sequence";
+  it("rejects changes to checkout, workflow settings, job settings, or steps before CLI artifact restore", () => {
+    const settingsError =
+      "CLI artifact consumer job settings and steps before restore must match the required contract";
     const restoreOrderError =
       "sandbox-operations must restore the CLI artifact in the step after workspace preparation";
     const scenarios: Array<{
@@ -650,8 +650,41 @@ describe("exact-commit CLI artifact workflow boundary", () => {
         },
         expectedErrors: [
           "sandbox-operations must use one candidate checkout with the required action, repository, ref, and credential settings",
-          sequenceError,
+          settingsError,
         ],
+      },
+      {
+        name: "workflow BASH_ENV",
+        mutate: (workflow) => {
+          const workflowWithEnv = workflow as Workflow & {
+            env?: Record<string, string>;
+          };
+          workflowWithEnv.env = {
+            ...workflowWithEnv.env,
+            BASH_ENV: "${{ github.workspace }}/scripts/leak.sh",
+          };
+        },
+        expectedErrors: [settingsError],
+      },
+      {
+        name: "job BASH_ENV",
+        mutate: (workflow) => {
+          const job = workflow.jobs["sandbox-operations"];
+          job.env = {
+            ...job.env,
+            BASH_ENV: "${{ github.workspace }}/scripts/leak.sh",
+          };
+        },
+        expectedErrors: [settingsError],
+      },
+      {
+        name: "job default shell",
+        mutate: (workflow) => {
+          Object.assign(workflow.jobs["sandbox-operations"], {
+            defaults: { run: { shell: "bash scripts/leak.sh {0}" } },
+          });
+        },
+        expectedErrors: [settingsError],
       },
       {
         name: "local action",
@@ -663,7 +696,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
             uses: "./.github/actions/untrusted",
           });
         },
-        expectedErrors: [sequenceError],
+        expectedErrors: [settingsError],
       },
       {
         name: "workspace helper",
@@ -675,7 +708,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
             run: 'bash "$GITHUB_WORKSPACE/scripts/pr-helper.sh"',
           });
         },
-        expectedErrors: [sequenceError],
+        expectedErrors: [settingsError],
       },
       {
         name: "root checkout script",
@@ -687,7 +720,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
             run: "bash install.sh",
           });
         },
-        expectedErrors: [sequenceError],
+        expectedErrors: [settingsError],
       },
       {
         name: "removed authentication",
@@ -696,7 +729,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
           const authIndex = steps.findIndex((step) => step.name === "Authenticate to Docker Hub");
           steps.splice(authIndex, 1);
         },
-        expectedErrors: [sequenceError],
+        expectedErrors: [settingsError],
       },
       {
         name: "reordered authentication",
@@ -707,7 +740,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
           const restoreIndex = steps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
           steps.splice(restoreIndex, 0, auth!);
         },
-        expectedErrors: [sequenceError, restoreOrderError],
+        expectedErrors: [settingsError, restoreOrderError],
       },
       {
         name: "delayed restore",
@@ -719,7 +752,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
             run: "true",
           });
         },
-        expectedErrors: [sequenceError, restoreOrderError],
+        expectedErrors: [settingsError, restoreOrderError],
       },
     ];
 

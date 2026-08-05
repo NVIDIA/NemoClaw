@@ -39,104 +39,72 @@ const CLI_ARTIFACT_VERIFY_STEP = "Verify and restore exact-commit CLI artifact";
 const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
 const CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 =
   "3578a053cede863f7aa4814d8399b4ca21ea0b77cee712e6d549c684818f11dd";
-const PRE_RESTORE_SEQUENCE_CONTRACTS = [
-  [
-    "1fac2df5e6430b32c1a2e81b77518b926c88965938c9c796f1b34a728bd94a08",
-    ["retired-selector-compatibility", "shared-e2e"],
-  ],
-  ["b8c97e0db63418f63be0422863793da118ce19a6fbcca5722e1568e911ffcc83", ["live"]],
-  [
-    "acbb85218d608bb0bfe3c38663b1f1fbe36a21f226718cfd5a84823cb7b9167a",
-    [
-      "openshell-gateway-auth-contract",
-      "openshell-credential-generation-window",
-      "mcp-bridge-dev",
-      "skill-agent",
-      "openclaw-skill-cli",
-      "inference-routing",
-      "cloud-inference",
-      "gpu-e2e",
-      "kimi-inference-compat",
-      "brave-search",
-      "cron-preflight-inference-local",
-      "dashboard-remote-bind",
-      "sessions-agents-cli",
-      "hermes-slack",
-      "rebuild-openclaw",
-      "rebuild-hermes",
-      "rebuild-hermes-stale-base",
-      "overlayfs-autofix",
-      "state-backup-restore",
-      "double-onboard",
-      "concurrent-gateway-ports",
-      "onboard-resume",
-      "full-e2e",
-      "gpu-double-onboard",
-      "onboard-repair",
-      "issue-4462-scope-upgrade-approval",
-      "token-rotation",
-      "messaging-compatible-endpoint",
-      "openshell-gateway-upgrade",
-      "messaging-providers",
-      "model-router-provider-routed-inference",
-      "sandbox-operations",
-      "sandbox-survival",
-      "gateway-guard-recovery",
-      "openclaw-inference-switch",
-      "device-auth-health",
-      "channels-add-remove",
-      "telegram-injection",
-      "openclaw-slack-pairing",
-      "issue-2478-crash-loop-recovery",
-      "openclaw-discord-pairing",
-      "tunnel-lifecycle",
-    ],
-  ],
-  [
-    "3177a567702646812f9d59ded26130fbb387cbff02c044212045adabbd200181",
-    ["mcp-bridge", "bedrock-runtime-compatible-anthropic", "channels-stop-start"],
-  ],
-  [
-    "696be20eb1b8216289007991468eff5cb69aaeb029341fc040278d1b099e2533",
-    ["agent-turn-latency", "hermes-inference-switch", "hermes-discord", "hermes-shields-config"],
-  ],
-  [
-    "f77a5a2830b1ae59c98f695d47b0af1e74c4b56485fffa9e0b61581b1afafc11",
-    ["issue-4434-tui-unreachable-inference"],
-  ],
-  ["715a740435f7daa9a93a0626772b178d3f72e58dc55e89cb61dd6c8035edeadb", ["hermes-e2e"]],
-  [
-    "a65295651dc4f063a9426a5483db2a0dec4e5711cae5e1876ec6bbb46d9812e7",
-    ["hermes-gpu-startup"],
-  ],
-  ["a22b9e7cb4464fac3b11ab6fbf97f03206857986751caa3df8b43737636c0f83", ["network-policy"]],
-  [
-    "8192ec63e62d8054db87229b6cea1462e6f104d67aa1a8b2898a4a699abed2e4",
-    ["common-egress-agent"],
-  ],
-  ["4a495b13d05cc1662706dd54f72237d658a95fd6430a27f1d1657943f1709753", ["jetson-nvmap-gpu"]],
-  ["c680bef1c896cf5b015134906748f55ac15d5db1ce7cd456c10a93c474d05851", ["cloud-onboard"]],
-  [
-    "1da697a3cff57841a9cc719a4e9bebd63ce08aa6f185d677fd9084cce1db7a2b",
-    ["openclaw-plugin-runtime-exdev-release"],
-  ],
-  [
-    "68a1a448256f320d39db9482b20f23f21a86be29a877149c460bf43f303772fb",
-    ["openclaw-plugin-runtime-exdev"],
-  ],
-  [
-    "9775c9363d99f11f54c34baf98c701ed1147206b76239f3ef6e41c52bdf5833d",
-    ["openclaw-tui-chat-correlation"],
-  ],
+const CLI_ARTIFACT_WORKFLOW_CONTRACT_SHA256 =
+  "bb4c02a6f0b848896fb2593371e264563014b43733d48e634162ddbdc8e4a933";
+const CLI_ARTIFACT_CONSUMER_JOB_NAMES = [
+  "agent-turn-latency",
+  "bedrock-runtime-compatible-anthropic",
+  "brave-search",
+  "channels-add-remove",
+  "channels-stop-start",
+  "cloud-inference",
+  "cloud-onboard",
+  "common-egress-agent",
+  "concurrent-gateway-ports",
+  "cron-preflight-inference-local",
+  "dashboard-remote-bind",
+  "device-auth-health",
+  "double-onboard",
+  "full-e2e",
+  "gateway-guard-recovery",
+  "gpu-double-onboard",
+  "gpu-e2e",
+  "hermes-discord",
+  "hermes-e2e",
+  "hermes-gpu-startup",
+  "hermes-inference-switch",
+  "hermes-shields-config",
+  "hermes-slack",
+  "inference-routing",
+  "issue-2478-crash-loop-recovery",
+  "issue-4434-tui-unreachable-inference",
+  "issue-4462-scope-upgrade-approval",
+  "jetson-nvmap-gpu",
+  "kimi-inference-compat",
+  "live",
+  "mcp-bridge",
+  "mcp-bridge-dev",
+  "messaging-compatible-endpoint",
+  "messaging-providers",
+  "model-router-provider-routed-inference",
+  "network-policy",
+  "onboard-repair",
+  "onboard-resume",
+  "openclaw-discord-pairing",
+  "openclaw-inference-switch",
+  "openclaw-plugin-runtime-exdev",
+  "openclaw-plugin-runtime-exdev-release",
+  "openclaw-skill-cli",
+  "openclaw-slack-pairing",
+  "openclaw-tui-chat-correlation",
+  "openshell-credential-generation-window",
+  "openshell-gateway-auth-contract",
+  "openshell-gateway-upgrade",
+  "overlayfs-autofix",
+  "rebuild-hermes",
+  "rebuild-hermes-stale-base",
+  "rebuild-openclaw",
+  "retired-selector-compatibility",
+  "sandbox-operations",
+  "sandbox-survival",
+  "sessions-agents-cli",
+  "shared-e2e",
+  "skill-agent",
+  "state-backup-restore",
+  "telegram-injection",
+  "token-rotation",
+  "tunnel-lifecycle",
 ] as const;
-const PRE_RESTORE_SEQUENCE_JOB_NAMES = PRE_RESTORE_SEQUENCE_CONTRACTS.flatMap(
-  ([, jobNames]) => [...jobNames],
-);
-const PRE_RESTORE_SEQUENCE_SHA256_BY_JOB = new Map(
-  PRE_RESTORE_SEQUENCE_CONTRACTS.flatMap(([sha256, jobNames]) =>
-    jobNames.map((jobName) => [jobName, sha256] as const),
-  ),
-);
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -160,6 +128,34 @@ function steps(value: unknown): WorkflowStep[] {
 
 function workflowContentSha256(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value) ?? "").digest("hex");
+}
+
+function isCliArtifactRestoreStep(step: WorkflowStep): boolean {
+  return (
+    step.name === CLI_ARTIFACT_RESTORE_STEP ||
+    (typeof step.uses === "string" &&
+      step.uses.startsWith("NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@"))
+  );
+}
+
+function jobSettingsAndStepsBeforeRestore(job: WorkflowRecord): WorkflowRecord {
+  const jobSteps = steps(job.steps);
+  const restoreIndex = jobSteps.findIndex(isCliArtifactRestoreStep);
+  const { steps: _steps, ...jobSettings } = job;
+  return {
+    jobSettings,
+    stepsBeforeRestore: restoreIndex >= 0 ? jobSteps.slice(0, restoreIndex) : jobSteps,
+  };
+}
+
+function workflowSettings(workflow: WorkflowRecord): WorkflowRecord {
+  const {
+    jobs: _jobs,
+    name: _name,
+    "run-name": _runName,
+    ...settings
+  } = workflow;
+  return settings;
 }
 
 function requireFragments(
@@ -430,9 +426,7 @@ function validateConsumer(
     );
   }
   const prepareIndex = jobSteps.findIndex((step) => step.uses === PREPARE_E2E_ACTION);
-  const restoreSteps = jobSteps.filter(
-    (step) => step.name === CLI_ARTIFACT_RESTORE_STEP || step.uses === CLI_ARTIFACT_RESTORE_ACTION,
-  );
+  const restoreSteps = jobSteps.filter(isCliArtifactRestoreStep);
   if (restoreSteps.length !== 1) {
     errors.push(`${jobName} must verify and restore the exact CLI artifact exactly once`);
   }
@@ -451,13 +445,6 @@ function validateConsumer(
   const candidateCheckoutIndex = candidateCheckoutIndexes[0] ?? -1;
   if (candidateCheckoutIndex >= restoreIndex) {
     errors.push(`${jobName} must check out the candidate before CLI artifact restore`);
-  }
-  const expectedPreRestoreSequenceSha256 = PRE_RESTORE_SEQUENCE_SHA256_BY_JOB.get(jobName);
-  if (
-    !expectedPreRestoreSequenceSha256 ||
-    workflowContentSha256(jobSteps.slice(0, restoreIndex)) !== expectedPreRestoreSequenceSha256
-  ) {
-    errors.push(`${jobName} steps before CLI artifact restore must match the required sequence`);
   }
   if (!(prepareIndex >= 0 && prepareIndex < restoreIndex)) {
     errors.push(`${jobName} must prepare before restoring the CLI artifact`);
@@ -485,12 +472,7 @@ export function validateCliArtifactWorkflowBoundary(
     const job = record(value);
     const jobSteps = steps(job.steps);
     const usesPrepare = jobSteps.some((step) => step.uses === PREPARE_E2E_ACTION);
-    const artifactSteps = jobSteps.filter(
-      (step) =>
-        step.name === CLI_ARTIFACT_RESTORE_STEP ||
-        (typeof step.uses === "string" &&
-          step.uses.startsWith("NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@")),
-    );
+    const artifactSteps = jobSteps.filter(isCliArtifactRestoreStep);
     const shouldConsume =
       usesPrepare &&
       jobName !== CLI_ARTIFACT_PRODUCER_JOB &&
@@ -504,15 +486,25 @@ export function validateCliArtifactWorkflowBoundary(
     }
   }
 
-  if (PRE_RESTORE_SEQUENCE_SHA256_BY_JOB.size !== PRE_RESTORE_SEQUENCE_JOB_NAMES.length) {
-    errors.push("pre-restore sequence contracts must name each CLI artifact consumer once");
+  const actualConsumerJobNames = [...consumerJobNames].sort();
+  if (!isDeepStrictEqual(actualConsumerJobNames, CLI_ARTIFACT_CONSUMER_JOB_NAMES)) {
+    errors.push("CLI artifact consumer job names must match the required list");
   }
-  for (const contractJobName of PRE_RESTORE_SEQUENCE_SHA256_BY_JOB.keys()) {
-    if (!consumerJobNames.has(contractJobName)) {
-      errors.push(
-        `${contractJobName} pre-restore sequence contract must reference a current CLI artifact consumer`,
-      );
-    }
+  const consumers = Object.fromEntries(
+    CLI_ARTIFACT_CONSUMER_JOB_NAMES.map((jobName) => [
+      jobName,
+      jobSettingsAndStepsBeforeRestore(record(jobs[jobName])),
+    ]),
+  );
+  if (
+    workflowContentSha256({
+      workflowSettings: workflowSettings(workflow),
+      consumers,
+    }) !== CLI_ARTIFACT_WORKFLOW_CONTRACT_SHA256
+  ) {
+    errors.push(
+      "CLI artifact consumer job settings and steps before restore must match the required contract",
+    );
   }
 
   return errors;
