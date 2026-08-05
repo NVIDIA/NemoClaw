@@ -393,6 +393,7 @@ export interface ManagedInferenceServingPreset {
   readonly spec: {
     readonly selection: ServingSelectionPolicy;
     readonly priority: number;
+    readonly featureGate?: string;
     readonly requirements: { readonly all: readonly ServingPresetRequirement[] };
     readonly plan: {
       readonly backend: string;
@@ -409,6 +410,7 @@ export interface ServingPreset {
   readonly spec: {
     readonly selection: ServingSelectionPolicy;
     readonly priority: number;
+    readonly featureGate?: string;
     readonly requirements?: { readonly all: readonly ServingPresetRequirement[] };
     readonly plan: {
       readonly backend: string;

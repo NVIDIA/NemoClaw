@@ -39,6 +39,9 @@
           "minimum": -1000000,
           "maximum": 1000000
         },
+        "featureGate": {
+          "$ref": "#/$defs/stableId"
+        },
         "requirements": {
           "type": "object",
           "required": [

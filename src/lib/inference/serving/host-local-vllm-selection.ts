@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import os from "node:os";
+import path from "node:path";
 
 import { getBuildIdentity } from "../../core/version.js";
 import { createHostReadinessReport } from "../../readiness/host.js";
@@ -14,6 +15,7 @@ import {
 } from "./adapter-registry.js";
 import { resolveManagedInferenceServing } from "./resolver.js";
 import type { ResolvedHostLocalInferenceSelection } from "./types.js";
+import type { HostLocalInferenceServingRecipe } from "./types.js";
 
 const MATERIALIZER_OWNED_ARGUMENTS = new Set([
   "--host",
@@ -65,6 +67,30 @@ function modelArguments(selection: ResolvedHostLocalInferenceSelection): string[
   });
 }
 
+function dockerRunArguments(recipe: HostLocalInferenceServingRecipe): string[] {
+  const { devices, sharedMemoryBytes, temporaryFilesystems, ulimits } = recipe.spec.runtime;
+  const memlock = ulimits.memlock === "unlimited" ? -1 : ulimits.memlock;
+  return [
+    "--gpus",
+    recipe.spec.runtime.gpuRequest,
+    "--ipc",
+    recipe.spec.runtime.ipcMode,
+    "--mount",
+    `type=bind,source=${path.join(os.homedir(), ".cache", "huggingface")},target=${recipe.spec.runtime.modelCache.target}`,
+    "--shm-size",
+    `${String(sharedMemoryBytes)}b`,
+    "--ulimit",
+    `memlock=${String(memlock)}`,
+    "--ulimit",
+    `stack=${String(ulimits.stackBytes)}`,
+    ...devices.flatMap((device) => ["--device", device]),
+    ...temporaryFilesystems.flatMap(({ target, sizeBytes, mode, options }) => [
+      "--tmpfs",
+      `${target}:${[...options, `size=${String(sizeBytes)}`, `mode=${mode}`].join(",")}`,
+    ]),
+  ];
+}
+
 export function materializeHostLocalVllmSelection(
   selection: ResolvedHostLocalInferenceSelection,
   baseProfile: VllmProfile,
@@ -94,6 +120,7 @@ export function materializeHostLocalVllmSelection(
   ) {
     throw new Error("host-local vLLM recipe is missing required runtime or model fields");
   }
+  const serveEnvironment = { ...runtime.environment };
   const model: VllmModelDef = {
     id: recipe.spec.model.id,
     label: recipe.metadata.displayName ?? recipe.metadata.id,
@@ -105,8 +132,19 @@ export function materializeHostLocalVllmSelection(
     modelArgs: modelArguments(selection),
     gated: recipe.spec.model.gated,
     platforms: ["spark"],
-    serveEnv: { ...runtime.environment },
+    ...(Object.keys(serveEnvironment).length > 0 ? { serveEnv: serveEnvironment } : {}),
+    runtime: {
+      image: runtime.image,
+      imageDownloadSizeBytes: runtime.imageDownloadSizeBytes,
+      modelDownloadSizeBytes: recipe.spec.model.downloadSizeBytes,
+      loadTimeoutSec: recipe.spec.readiness.timeoutSeconds,
+      pullTimeoutSec: runtime.pullTimeoutSeconds,
+      dockerRunArgs: dockerRunArguments(recipe),
+      dockerRunArgsMode: "replace",
+    },
     installFastSafetensors: recipe.spec.model.installFastSafetensors,
+    managedBearerAuth: true,
+    fixedServeCommand: true,
   };
   return {
     presetId: preset.metadata.id,
