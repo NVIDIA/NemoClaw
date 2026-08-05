@@ -7,11 +7,6 @@ import { ensureManagedVllmApiKey } from "../vllm-api-key.js";
 import { assertGatedModelAccess, VLLM_EXTRA_ARGS_ENV, type VllmModelDef } from "../vllm-models.js";
 import { imageStorageRequirementBytes, modelStorageRequirementBytes } from "../vllm-storage.js";
 import {
-  type ManagedInferenceResolution,
-  type ManagedInferenceResolverInput,
-  type ManagedInferenceServingRecipe,
-} from "./types.js";
-import {
   claimManagedClusterManagedServingCapability,
   type ManagedClusterConfirmedManagedServingCapability,
   type ManagedClusterDetectedManagedServingCapability,
@@ -45,6 +40,11 @@ import { clearManagedVllmSshBinding } from "./managed-cluster-ssh-binding.js";
 import type { ManagedClusterTopologyOutput } from "./managed-cluster-topology.js";
 import { assertNoManagedDistributedVllmRuntimeReceipts } from "./managed-runtime-receipts.js";
 import { resolveManagedInferenceServing } from "./resolver.js";
+import {
+  type ManagedInferenceResolution,
+  type ManagedInferenceResolverInput,
+  type ManagedInferenceServingRecipe,
+} from "./types.js";
 
 export interface ManagedClusterInstallerOptions {
   readonly env?: NodeJS.ProcessEnv;
@@ -431,6 +431,9 @@ export async function tryInstallManagedClusterManagedVllm(
     if (previewResolution.outcome !== "selected") {
       return resolutionFailure(previewResolution, detected.selectionIntent, true, deps);
     }
+    if (!("topologyQualification" in previewResolution)) {
+      return { kind: "not-selected" };
+    }
     const previewAdmission = selectedRecipeAdmissionFailure(detected, previewResolution.recipe);
     if (previewAdmission) {
       return admissionFailure(previewAdmission, detected.selectionIntent, true, deps);
@@ -477,6 +480,10 @@ export async function tryInstallManagedClusterManagedVllm(
     });
     if (revalidatedResolution.outcome !== "selected") {
       return resolutionFailure(revalidatedResolution, revalidated.selectionIntent, false, deps);
+    }
+    if (!("topologyQualification" in revalidatedResolution)) {
+      deps.error("  Managed-cluster vLLM setup stopped: selected profile is host-local.");
+      return { kind: "handled", result: { ok: false } };
     }
     const revalidatedAdmission = selectedRecipeAdmissionFailure(
       revalidated,

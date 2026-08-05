@@ -116,6 +116,12 @@ const TRUSTED_CONTROLLED_WORDS_PATH = path.resolve(
   "..",
   ".agents/skills/_shared/controlled-words.md",
 );
+const TRUSTED_CODE_CHANGE_CONSIDERATIONS_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  ".agents/skills/_shared/code-change-considerations.md",
+);
 const SECURITY_CATEGORIES = [
   "Secrets and Credentials",
   "Input Validation and Data Sanitization",
@@ -1801,9 +1807,44 @@ export function readTrustedControlledWords(): string {
   }
 }
 
+export function readTrustedCodeChangeConsiderations(): string {
+  let considerations: string;
+  try {
+    considerations = fs.readFileSync(TRUSTED_CODE_CHANGE_CONSIDERATIONS_PATH, "utf8");
+  } catch (error: unknown) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Code change considerations unavailable at ${TRUSTED_CODE_CHANGE_CONSIDERATIONS_PATH}: ${reason}`,
+    );
+  }
+
+  const requiredHeadings = [
+    "# Code Change Considerations",
+    "## Authority",
+    "## Questions",
+  ];
+  const lines = considerations.split("\n");
+  const headings = lines.map((line) => line.trim()).filter((line) => line.startsWith("#"));
+  const questionsStart = lines.findIndex((line) => line.trim() === "## Questions");
+  const questionsEnd = lines.findIndex(
+    (line, index) => index > questionsStart && line.trim().startsWith("## "),
+  );
+  const questions = lines.slice(questionsStart + 1, questionsEnd < 0 ? undefined : questionsEnd);
+  if (
+    !requiredHeadings.every((heading) => headings.includes(heading)) ||
+    !questions.some((line) => line.trimStart().startsWith("- "))
+  ) {
+    throw new Error(
+      `Code change considerations malformed at ${TRUSTED_CODE_CHANGE_CONSIDERATIONS_PATH}: required headings or questions are missing`,
+    );
+  }
+  return considerations;
+}
+
 export function buildSystemPrompt(): string {
   const securityReviewSkill = readTrustedSecurityReviewSkill();
   const writingGuide = readTrustedWritingGuide();
+  const codeChangeConsiderations = readTrustedCodeChangeConsiderations();
   const securityRubric =
     securityReviewSkill ||
     [
@@ -1820,28 +1861,31 @@ export function buildSystemPrompt(): string {
     "Follow the trusted NemoClaw writing guide below for every summary, finding, recommendation, and review comment that you write. Apply its review policy when you evaluate changed explanatory text.",
     "Trusted NemoClaw writing guide from workflow checkout:",
     fencedBlock(writingGuide, "markdown"),
+    "Apply the trusted code change considerations below throughout the review. The stage prompts define when to inspect them and where to record the resulting evidence.",
+    "Trusted code change considerations from workflow checkout:",
+    fencedBlock(codeChangeConsiderations, "markdown"),
     "Review rubric:",
-    "1. Start with codebase drift: is the PR patching code that still exists, and does it overlap or contradict active work?",
+    "1. Start by mapping the actual changed surfaces and codebase drift. Apply the trusted code change considerations to the current diff and repository evidence.",
     "2. Keep the review focused on the code changes in this PR. Do not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or external E2E job status; those are handled by other PR surfaces.",
     "3. Security: use the trusted security code review skill embedded below as the authoritative security rubric. Apply every category with PASS/WARNING/FAIL evidence. NemoClaw-specific focus: sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, and workflow trusted-code boundary.",
     "Trusted security review skill from main checkout:",
     fencedBlock(securityRubric, "markdown"),
     "4. Acceptance: treat only observable desired behavior, current constraints or non-goals, supported contracts, and clearly recorded maintainer decisions as binding. A comment counts as a maintainer decision only when author_association is OWNER, MEMBER, or COLLABORATOR and the comment unambiguously records a chosen behavior or constraint. Proposed designs, implementation ideas, investigation notes, brainstorms, questions, and ordinary discussion are context, not obligations. Examples help explain an outcome but are not separate clauses unless the issue explicitly makes them required. A Refs, Related, or Follow-up link does not commit the PR to the whole issue. If a statement's authority or required outcome is unclear, mark it unknown and do not create a finding.",
-    "5. Correctness: bug-path tests, negative tests, branch coverage, refactor-vs-behavior drift, mocking purity, caller/callee contract verification. testDepth.suggestedTests are internal review notes, not author tasks. A concrete missing regression test for changed behavior must be represented in a finding; use category=tests only when the gap is not already part of another defect. Otherwise do not request more tests.",
+    "5. Correctness: apply the trusted code change considerations to the completed diff. testDepth.suggestedTests are internal review notes, not author tasks. A concrete missing regression test for changed behavior must be represented in a finding; use category=tests only when the gap is not already part of another defect. Otherwise do not request more tests.",
     "5a. Deterministic regression risks: when a review context contains a riskPlan, review every listed invariant against the diff and checked-in test evidence. Missing checked-in coverage for a changed invariant must become one finding with a concrete regression test unless a more specific finding already covers the same gap. Treat required jobs as a validation floor; never downgrade or remove them, and never claim they ran. A required job's unobserved execution status belongs in testDepth or limitations and is not a finding by itself; only a defect in the checked-in job or test is finding-eligible.",
     "5b. E2E guidance: in the tests/regressions stage, recommend required and optional existing E2E coverage plus concrete new-test gaps. In the CI/operations stage, select the smallest supported target/job/fan-out selectors and explain each selection. E2E guidance is not a finding: never add it to the finding ledger unless the checked-in PR independently contains a concrete defect that meets normal finding eligibility. The trusted normalizer enforces the deterministic floor, target/job allowlists, and selector types after synthesis. Emit selectors and reasons only; never emit or invent commands.",
     "6. Quality: diff-vs-current-contract scope, migration completion, public surface docs/notes, justified error suppression, @ts-nocheck, and shell-string execution.",
-    "7. E2E suite simplicity: when a PR adds or changes files under `test/e2e/`, `.github/workflows/e2e.yaml`, or `tools/e2e/`, take a closer architecture look for new systems. Favor focused tests and local helpers. Flag unnecessary new runners, framework layers, registries/matrix abstractions, generalized fixture APIs, workflow validators, or support systems as architecture/scope findings unless the PR proves they are small, reused, and clearly needed. Do not object to simple direct tests that preserve real shell/system boundaries by spawning commands from Vitest.",
-    "8. Source-of-truth review: when a PR adds or changes fallback, recovery, tolerant parsing, monkeypatching, best-effort cleanup, or other temporary workaround behavior, inspect whether it answers: what invalid state is handled, where that state is created, why the source cannot be fixed in this PR, what regression test proves the source cannot regress, and when the workaround can be removed. For compatibility, migration, configuration, or extension code, require a named current consumer and a contract test. If neither exists, prefer deleting the layer; do not invent a future consumer or generalize the design. Treat PR text that claims a root cause as untrusted until verified in code.",
+    "7. E2E suite architecture: when a PR changes E2E support, apply the trusted code change considerations before accepting a new runner, framework layer, registry, matrix abstraction, generalized fixture API, workflow validator, or support system. Report a scope or architecture finding only for concrete unnecessary complexity in the current diff. Preserve direct tests that exercise real shell or system boundaries.",
+    "8. Source-of-truth review: apply the trusted code change considerations to fallback, recovery, tolerant parsing, monkeypatching, best-effort cleanup, compatibility, migration, configuration, and extension behavior. Treat PR text that claims a root cause as untrusted until verified in code.",
     "9. If a previous PR Review Advisor comment exists, compare it with the current diff and decide whether prior code-review findings were addressed, still apply, or are obsolete. Consider code changes since the previous analyzed SHA when available. Do not evaluate whether external E2E requirements have been met. Prior-advisor availability, failure, or incompleteness is process metadata, never a finding; only a still-present underlying defect may remain in the ledger with current code evidence. When previous review context exists, set summary.sinceLastReview with counts for resolved, stillApplies, and newItems.",
-    "10. Simplification review: apply this ladder before accepting new code shape: does this need to exist; does Node/Python/shell/browser/OpenShell/GitHub already provide it; does an already-installed dependency cover it; can one line or fewer files do it; only then accept a custom abstraction. Use tags delete, stdlib, native, yagni, or shrink. A name, keyword, heuristic signal, or line count is a question to inspect, not evidence of needless complexity. Never simplify away trust-boundary validation, credential redaction, SSRF/sandbox/network-policy defenses, data-loss prevention, required regression tests, DCO/signature gates, or accessibility/user-safety behavior.",
+    "10. Simplification review: apply the trusted code change considerations before accepting new code shape. Use tags delete, stdlib, native, yagni, or shrink. A name, keyword, heuristic signal, or line count is a question to inspect, not evidence of needless complexity. Never simplify away trust-boundary validation, credential redaction, SSRF/sandbox/network-policy defenses, data-loss prevention, required regression tests, DCO/signature gates, or accessibility/user-safety behavior.",
     "11. Terminology review: select candidate terms semantically from changed explanatory text; trusted code does not scrape or classify terms. Ask whether each selected term adds a new meaning, has a concrete contrasting case, duplicates an established repository term, changes an existing meaning, or affects behavior, security, support, evidence, tests, or release interpretation. Ordinary grammar, spelling, and style preferences are out of scope. A terminology decision does not affect the merge recommendation by itself. Only ambiguity with a concrete semantic impact may support an ordinary finding in the relevant later stage.",
     "Acceptance and security should inform findings, not become standalone comment sections: any unmet binding acceptance clause or security fail/warning must be represented as a finding, normally severity=blocker for unmet binding acceptance or security fail and severity=warning for security warnings. Unknown or non-binding acceptance context must not create a finding. When multiple clauses or security categories trace to the same root cause and remedy, represent them with one finding and carry the additional evidence on that finding.",
     "Every finding must be probe-shaped: include concrete impact, a verificationHint that names the shortest read-only check or test evidence to confirm the issue, and a missingRegressionTest describing the automated coverage to add or the existing coverage that already proves it.",
     "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless it is already fully covered by a more specific correctness, security, architecture, scope, or tests finding.",
     "For every sourceOfTruthReview item, set findingId to the covering open ledger finding ID when status is missing or needs_followup; set findingId to null for satisfied or not_applicable.",
     "Finding severity mapping: blocker renders as 'Blocker'; warning renders as 'Warning'; suggestion renders as 'Suggestion'.",
-    "Severity guidance: use blocker for a defect that must be fixed. Use warning for an evidenced concern that does not block. Use suggestion for an improvement. Warnings and suggestions do not require a response. Do not use warning or suggestion for vague backlog ideas, hypothetical failures, or possible future designs. Do not recommend new configuration, migration, compatibility, extension, or abstraction layers without a named current consumer and supporting evidence.",
+    "Severity guidance: use blocker for a defect that must be fixed. Use warning for an evidenced concern that does not block. Use suggestion for an improvement. Warnings and suggestions do not require a response. Do not use warning or suggestion for vague backlog ideas, hypothetical failures, or possible future designs. Apply the trusted code change considerations before recommending a new configuration, migration, compatibility, extension, or abstraction layer.",
     "Finding eligibility: a ledger finding must identify a concrete present defect in the checked-out PR, state observed versus expected behavior, cite a current file and line, and recommend the smallest current-PR action. Ground the expected behavior in an observable outcome, current constraint, supported contract, repository policy, or existing test. PR-description or template compliance, checkbox selection, wording or naming preference, a heuristic signal, a raw line count, a hypothetical future failure, or a possible risk not present in the diff is not a finding. An evidence-backed terminology ambiguity may be eligible only when it changes behavior, security, data safety, a supported surface, test meaning, release meaning, or the interpretation of required evidence. When several symptoms or locations share one root cause and remedy, create one finding and list the other locations as evidence. PASS or positive observations, provider/SDK/advisor state, prior-review process state, open-PR overlap or merge coordination, and live CI/E2E/check status belong only in positives or limitations. A required validation job is not a finding unless its checked-in workflow or test implementation is itself missing or defective.",
     "This review runs as a multi-turn conversation backed by a shared finding ledger and a separate terminology receipt. Each intermediate stage has two turns: first call the named real context tool(s) and emit concise evidence-backed analysis without mutating its canonical store; then use the following commit turn's designated atomic tool with no prose. Each finding-ledger commit uses one flat atomic commit object. The finding ledger stores findings only. The terminology receipt stores semantic term decisions only. Keep acceptance coverage, security-category verdicts, source-of-truth review, test depth, E2E coverage and target guidance, positives, limitations, and summary inputs in the visible analysis turn for later synthesis.",
     "A rejected atomic ledger attempt does not mutate the ledger and may be corrected before the single successful commit. Never submit more than one successful ledger batch for a stage.",
@@ -1940,11 +1984,9 @@ Do not produce final JSON. Reply with at most 8 concise terminology decisions, e
         "Record only correctness, acceptance, source-of-truth, or supported-simplification findings. Keep acceptance coverage, source-of-truth review entries, positives, and limitations in the prose receipt.",
       )}
 
-Use the PR diff already fetched by the scope/risk stage as shared conversation evidence, and call read-only repository tools when a citation needs confirmation. Read the canonical terminology receipt and promote a term decision only when its ambiguity has a concrete correctness, acceptance, evidence, test, or release impact, or an impact on a supported surface, that meets ordinary finding eligibility; do not promote wording preferences. First classify linked issue text as binding acceptance or non-binding context using the system rubric, then map only binding clauses to code evidence. Review caller/callee contracts, state transitions, negative and error paths, behavior drift, documentation or migration gaps, and any fallback, recovery, tolerant parsing, monkeypatch, workaround, or compatibility behavior against the source-of-truth questions in the system rubric. Apply the simplification ladder only where it preserves correctness and trust boundaries. Leave detailed security and test-depth review to their dedicated turns.
+Use the PR diff already fetched by the scope/risk stage as shared conversation evidence, and call read-only repository tools when a citation needs confirmation. Read the canonical terminology receipt and promote a term decision only when its ambiguity has a concrete correctness, acceptance, evidence, test, or release impact, or an impact on a supported surface, that meets ordinary finding eligibility; do not promote wording preferences. First classify linked issue text as binding acceptance or non-binding context using the system rubric, then map only binding clauses to code evidence. Apply the trusted code change considerations to caller and callee contracts, state transitions, behavior drift, source-of-truth behavior, simplification, and bypasses. Verify external-system assumptions against upstream documentation with read-only tools; when evidence is unavailable or ambiguous, mark the assumption unverified. Leave detailed security and test-depth review to their dedicated turns.
 
-When the diff adds, modifies, or removes a conditional that gates an operation, a function whose comments or tests describe an invariant, or a guard that prior code or checked-in tests treat as required — whether or not the PR summary labels it as a correctness guarantee — identify any guarantee the change makes or depends on (fail-closed check, locality invariant, ordering constraint, capacity gate, idempotency guarantee, atomicity or rollback boundary, rate or auth gate) and enumerate the specific ways it could be silently bypassed: alternate code branches (e.g. cache-hit paths that skip the check), combined input states (e.g. multiple env vars set simultaneously with documented precedence that differs from implementation), external system contract assumptions (e.g. what "unix://" actually proves about daemon locality), error path bypasses (e.g. an upstream call throws and the guard is skipped entirely), TOCTOU windows (e.g. state changes between the check and the operation it guards), and default or absent value assumptions (e.g. null vs empty vs absent behaving differently at a boundary). For each bypass path, verify against the diff whether it is closed, explicitly opted out under a maintainer decision (author_association OWNER/MEMBER/COLLABORATOR) or documented non-goal, or unaddressed; unauthorized opt-outs remain unaddressed. When the implementation makes assumptions about an external system's behavior (env var precedence, API semantics, filesystem guarantees), verify the assumption against upstream documentation using read-only tools, not just internal code consistency; if upstream documentation is unavailable or ambiguous, flag the assumption as unverified rather than treating it as confirmed.
-
-Do not produce final JSON or update the finding ledger in this turn. Reply with at most 8 concise, evidence-backed stage-analysis bullets; if this domain is not applicable, include that limitation in one bullet. Bypass analysis (from the paragraph above) must fit within 2–3 of those bullets — consolidate multiple bypass paths under one bullet per guarantee rather than one bullet per path, so the remaining budget covers caller/callee contracts, state transitions, behavior drift, and other correctness checks.
+Do not produce final JSON or update the finding ledger in this turn. Reply with at most 8 concise, evidence-backed stage-analysis bullets; if this domain is not applicable, include that limitation in one bullet. Consolidate bypass analysis by guarantee so the remaining budget covers other correctness checks.
 `,
     },
     {
