@@ -123,6 +123,11 @@ function withDefaultNodeExecFileSync(
   return defaultNodeExecFileSync(file, argv) || fallback();
 }
 
+function throwErrno(message: string, code: string): never {
+  const error = new Error(message) as NodeJS.ErrnoException;
+  error.code = code;
+  throw error;
+}
 function throwRegistryPermissionDenied(): never {
   throw Object.assign(new Error("registry permission denied"), { code: "EACCES" });
 }
@@ -1339,6 +1344,7 @@ describe("NC-2227-05: shields timer marker behavior", () => {
     const result = killTimer("openclaw");
 
     expect(result).toEqual({
+      authorityRevoked: true,
       markerFound: true,
       markerPid: 7331,
       wasAlive: true,
@@ -1430,6 +1436,7 @@ describe("NC-2227-05: shields timer marker behavior", () => {
 
     const result = killTimer("openclaw");
     expect(result).toEqual({
+      authorityRevoked: true,
       markerFound: true,
       markerPid: 7331,
       wasAlive: false,
@@ -1438,6 +1445,44 @@ describe("NC-2227-05: shields timer marker behavior", () => {
     });
     expect(processKillSpy).toHaveBeenCalledWith(7331, 0);
     expect(fs.existsSync(markerPath)).toBe(false);
+  });
+
+  it("killTimer reports active authority when the marker cannot be cleared", async () => {
+    const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "timer-control.ts");
+    const { killTimer } = await import(sourceModulePath);
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+    const markerPath = path.join(stateDir, "shields-timer-openclaw.json");
+    fs.writeFileSync(
+      markerPath,
+      JSON.stringify({
+        pid: 7331,
+        sandboxName: "openclaw",
+        snapshotPath: "/tmp/snap.yaml",
+        restoreAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    );
+
+    const processKillSpy = vi
+      .spyOn(process, "kill")
+      .mockImplementation((pid: number, signal?: string | number) =>
+        pid === 7331 && signal === 0 ? throwErrno("gone", "ESRCH") : true,
+      );
+    const originalUnlinkSync = fs.unlinkSync.bind(fs);
+    vi.spyOn(fs, "unlinkSync").mockImplementation((filePath: fs.PathLike) =>
+      String(filePath) === markerPath
+        ? throwErrno("permission denied", "EACCES")
+        : originalUnlinkSync(filePath),
+    );
+
+    const result = killTimer("openclaw");
+
+    expect(result.authorityRevoked).toBe(false);
+    expect(result.warnings).toEqual([
+      expect.stringContaining("Failed to remove shields timer marker"),
+    ]);
+    expect(processKillSpy).toHaveBeenCalledWith(7331, 0);
+    expect(fs.existsSync(markerPath)).toBe(true);
   });
 
   it("isShieldsDown and shieldsDown fail closed when shields state is corrupt", async () => {

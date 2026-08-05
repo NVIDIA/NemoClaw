@@ -156,6 +156,13 @@ describe("legacy credential reconciliation", () => {
                 enabledChannels: [],
                 webSearchConfig: null,
                 agent: {},
+                requiredBindings: [
+                  {
+                    name: "legacy-openai",
+                    type: "generic",
+                    credentialEnv: "OPENAI_API_KEY",
+                  },
+                ],
               },
               async () => ({ messagingTokenDefs: tokenDefs }),
             ),
