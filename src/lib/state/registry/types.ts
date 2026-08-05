@@ -4,6 +4,7 @@
 import type { InferenceSelection } from "../../inference/selection";
 import type { WebSearchProvider } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
+import type { NativeArtifactWorkloadReceiptV1 } from "../../onboard/workload/native-artifact";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import type { OpenClawImagePluginInstall } from "../openclaw-plugin-restore";
 import type { SandboxMcpState } from "../registry-mcp";
@@ -181,7 +182,8 @@ export type SandboxWorkloadReceipt =
       readonly kind: "legacy-dockerfile";
       readonly reference: string | null;
       readonly shared: false;
-    };
+    }
+  | NativeArtifactWorkloadReceiptV1;
 
 export interface SandboxRegistry {
   sandboxes: Record<string, SandboxEntry>;
