@@ -108,6 +108,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     E2E_DEFAULT_ENABLED: "0",
     E2E_JOB: "1",
     E2E_TARGET_ID: JOB_ID,
+    E2E_WORKLOAD_SOURCE: "managed-image",
     RELEASE_E2E_ACTIVATION_PATH: ACTIVATION_PATH,
     NEMOCLAW_E2E_SHARD: "linux-amd64-gpu",
     NEMOCLAW_NON_INTERACTIVE: "1",

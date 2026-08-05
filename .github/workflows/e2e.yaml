@@ -2314,6 +2314,7 @@ jobs:
       E2E_DEFAULT_ENABLED: "0"
       E2E_JOB: "1"
       E2E_TARGET_ID: "managed-image-protected-runtime"
+      E2E_WORKLOAD_SOURCE: "managed-image"
       RELEASE_E2E_ACTIVATION_PATH: ci/protected-managed-image-runtime-activation-v1.json
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_E2E_SHARD: linux-amd64-gpu

@@ -10,7 +10,7 @@ import { resolveLiveE2eWorkloadSourceEnv } from "../fixtures/workload-source-env
 
 describe("live E2E workload source environment", () => {
   it.each([
-    ["openclaw", "agents/openclaw/Dockerfile"],
+    ["openclaw", "Dockerfile"],
     ["hermes", "agents/hermes/Dockerfile"],
     ["langchain-deepagents-code", "agents/langchain-deepagents-code/Dockerfile"],
   ])("keeps legacy %s targets on their existing Dockerfile coverage", (agent, dockerfile) => {
@@ -28,20 +28,14 @@ describe("live E2E workload source environment", () => {
     "managed-image-protected-runtime",
     "podman-native-cpu",
     "mxc-runtime-proof",
-  ])("leaves native managed-image target %s buildless", (targetId) => {
-    expect(resolveLiveE2eWorkloadSourceEnv({ E2E_TARGET_ID: targetId })).toEqual({
-      E2E_TARGET_ID: targetId,
-    });
-  });
-
-  it("honors an explicit managed-image source on a legacy-named target", () => {
+  ])("honors the provider-neutral managed-image source for %s", (targetId) => {
     expect(
       resolveLiveE2eWorkloadSourceEnv({
-        E2E_TARGET_ID: "full-e2e",
+        E2E_TARGET_ID: targetId,
         E2E_WORKLOAD_SOURCE: "managed-image",
       }),
     ).toEqual({
-      E2E_TARGET_ID: "full-e2e",
+      E2E_TARGET_ID: targetId,
       E2E_WORKLOAD_SOURCE: "managed-image",
     });
   });
