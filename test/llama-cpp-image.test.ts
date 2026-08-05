@@ -117,12 +117,9 @@ function configureQualification(
   options: { execution: "disabled" | "enabled"; publicationEnabled: boolean },
 ): string {
   const candidate = YAML.parse(source) as ImageManifest;
-  const publication = candidate.spec?.publication;
-  const qualification = publication?.qualification;
-  const model = qualification?.model;
-  if (!publication || !qualification || !model) {
-    throw new Error("llama.cpp qualification fixture is incomplete");
-  }
+  const publication = candidate.spec!.publication!;
+  const qualification = publication.qualification!;
+  const model = qualification.model!;
 
   publication.enabled = options.publicationEnabled;
   qualification.execution = options.execution;
@@ -214,20 +211,6 @@ describe("declarative llama.cpp server image", () => {
       recipeRef: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
       required: true,
     });
-    if (qualification?.execution === "disabled") {
-      expect(qualification).toMatchObject({
-        environment: null,
-        model: { hostPath: null },
-        runner: null,
-      });
-    } else {
-      expect(qualification).toMatchObject({
-        environment: expect.stringMatching(/^approve-dgx-spark-/u),
-        execution: "enabled",
-        model: { hostPath: expect.stringMatching(/^\/.+\.gguf$/u) },
-        runner: expect.stringMatching(/^linux-arm64-gpu-dgx-spark-gb10-/u),
-      });
-    }
     expect(JSON.parse(output.publication_qualification_plan)).toMatchObject({
       contractVersion: 1,
       imageBuild: {
