@@ -202,6 +202,81 @@ export interface SandboxRecreateObservation {
   readonly liveIdentityFingerprint: string | null;
 }
 
+export interface SandboxRecreateSourceProof {
+  readonly transactionId: string;
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly sourceRegistryFingerprint: string;
+  readonly sourceLiveIdentityFingerprint: string | null;
+  readonly targetGeneration: string;
+}
+
+export class SandboxRecreateSourceMismatchError extends Error {
+  readonly sandboxName: string;
+  readonly reason: string;
+
+  constructor(sandboxName: string, reason: string) {
+    super(`Cannot prove the source of sandbox '${sandboxName}' before recreation: ${reason}.`);
+    this.name = "SandboxRecreateSourceMismatchError";
+    this.sandboxName = sandboxName;
+    this.reason = reason;
+  }
+}
+
+export function sandboxRecreateSourceProof(
+  transaction: CheckpointSandboxRecreateTransaction,
+): SandboxRecreateSourceProof {
+  return {
+    transactionId: transaction.id,
+    sandboxName: transaction.sandboxName,
+    gatewayName: transaction.gatewayName,
+    gatewayPort: transaction.gatewayPort,
+    sourceRegistryFingerprint: transaction.sourceRegistryFingerprint,
+    sourceLiveIdentityFingerprint: transaction.sourceLiveIdentityFingerprint,
+    targetGeneration: transaction.targetGeneration,
+  };
+}
+
+export interface SandboxRecreateSourceCheck {
+  readonly sandboxName: string;
+  readonly gatewayName: string;
+  readonly gatewayPort: number;
+  readonly registryEntry: SandboxEntry | null;
+  readonly observation: SandboxRecreateObservation;
+}
+
+export function assertSandboxRecreateSourceProof(
+  proof: SandboxRecreateSourceProof | null,
+  check: SandboxRecreateSourceCheck,
+): SandboxRecreateSourceProof {
+  const fail = (reason: string): never => {
+    throw new SandboxRecreateSourceMismatchError(check.sandboxName, reason);
+  };
+  if (!proof) return fail("no active recreate transaction records the source sandbox");
+  if (proof.sandboxName !== check.sandboxName) {
+    return fail(`the active transaction records sandbox '${proof.sandboxName}'`);
+  }
+  if (proof.gatewayName !== check.gatewayName || proof.gatewayPort !== check.gatewayPort) {
+    return fail(
+      `the active transaction records gateway '${proof.gatewayName}:${String(proof.gatewayPort)}'`,
+    );
+  }
+  if (!check.registryEntry) return fail("the source registry row is absent");
+  if (fingerprintSandboxRegistryEntry(check.registryEntry) !== proof.sourceRegistryFingerprint) {
+    return fail("the source registry row changed after the transaction recorded it");
+  }
+  if (check.observation.state !== "missing" && !check.observation.liveIdentityFingerprint) {
+    return fail("the live same-name sandbox reports no OpenShell Id");
+  }
+  const observedIdentity =
+    check.observation.state === "missing" ? null : check.observation.liveIdentityFingerprint;
+  if (observedIdentity !== proof.sourceLiveIdentityFingerprint) {
+    return fail("the live same-name sandbox is not the recorded source");
+  }
+  return proof;
+}
+
 function baseCheckpoint(session: Session): OnboardCheckpoint {
   return session.checkpoint ?? deriveCheckpointFromSession(session);
 }
@@ -379,6 +454,26 @@ export function recordSandboxRecreateTargetCreated(
   return next;
 }
 
+export function abandonSandboxRecreateTransaction(session: Session, id: string): void {
+  const checkpoint = baseCheckpoint(session);
+  const current = checkpoint.sandboxRecreate;
+  if (!current || current.id !== id) {
+    throw new Error("Sandbox recreate transaction ownership changed and cannot be abandoned.");
+  }
+  if (current.revision !== 0 || current.targetLiveIdentityFingerprint) {
+    throw new Error(
+      `Sandbox '${current.sandboxName}' recreate transaction already recorded a lifecycle effect and cannot be abandoned.`,
+    );
+  }
+  const now = new Date().toISOString();
+  session.checkpoint = {
+    ...checkpoint,
+    machineState: session.machine.state,
+    updatedAt: now,
+    sandboxRecreate: null,
+  };
+}
+
 export function clearCompletedSandboxRecreateTransaction(session: Session, id: string): void {
   const checkpoint = baseCheckpoint(session);
   const current = checkpoint.sandboxRecreate;
@@ -501,6 +596,7 @@ export interface SandboxRecreateRuntime {
   readonly acceptedTarget: boolean;
   readonly targetGeneration: string | undefined;
   readonly journaledGatewayName: string | null;
+  readonly sourceProof: SandboxRecreateSourceProof | null;
   readonly registrationFields: Pick<
     SandboxEntry,
     "lifecycleGeneration" | "lifecycleLiveIdentityFingerprint"
@@ -515,9 +611,16 @@ const NO_SANDBOX_RECREATE: SandboxRecreateRuntime = {
   acceptedTarget: false,
   targetGeneration: undefined,
   journaledGatewayName: null,
+  sourceProof: null,
   registrationFields: {},
   advance: () => undefined,
-  beginDelete: () => "source",
+  // Every same-name replacement deletes through this boundary. Refusing here is
+  // what stops a new caller from removing a live sandbox it never journaled.
+  beginDelete: (): SandboxRecreateSourcePresence => {
+    throw new Error(
+      "Cannot delete a same-name sandbox: no recreate transaction proves ownership of the source sandbox. Open the recreate journal before deleting.",
+    );
+  },
   confirmDeleted: () => undefined,
   recordCreated: () => undefined,
 };
@@ -567,6 +670,7 @@ export function createSandboxRecreateRuntime(
     acceptedTarget: recovery.action === "accept_target",
     targetGeneration: transaction.targetGeneration,
     journaledGatewayName: transaction.gatewayName,
+    sourceProof: sandboxRecreateSourceProof(transaction),
     get registrationFields() {
       return {
         lifecycleGeneration: transaction.targetGeneration,

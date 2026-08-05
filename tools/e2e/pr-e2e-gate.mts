@@ -66,6 +66,10 @@ const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
 const PR_GATE_WORKFLOW = "pr-e2e-gate.yaml";
 const CHECK_NAME = "E2E / PR Gate";
+// GitHub does not reliably associate base-repository check runs for fork commits with the PR
+// rollup. Keep the required check authoritative and mirror its state under a distinct status
+// context. Remove the mirror and statuses permission when GitHub includes those checks directly.
+const ROLLUP_STATUS_CONTEXT = "E2E / PR Gate / Rollup";
 const WORKFLOW_NAME = "E2E / PR Gate Controller";
 const RESERVED_CHECK_TITLE = "Waiting for PR CI";
 const RESERVED_CHECK_SUMMARY =
@@ -79,6 +83,8 @@ const PRE_DISPATCH_CHECK_READ_TIMEOUT_MS = 5_000;
 const RECONCILED_CHILD_VALIDATION_TIMEOUT_MS = 10_000;
 const CHILD_AUTHORIZATION_PUBLISH_TIMEOUT_MS = 5_000;
 const CHILD_CANCELLATION_TIMEOUT_MS = 5_000;
+const ROLLUP_STATUS_PUBLISH_TIMEOUT_MS = 5_000;
+const ROLLUP_STATUS_PUBLISH_ATTEMPTS = 2;
 const CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v2";
 const LEGACY_CHECK_EXTERNAL_ID_PREFIX = "nemoclaw-pr-e2e:v1";
 const CHECK_EXTERNAL_ID_PATTERN =
@@ -215,6 +221,7 @@ export type ControllerCommand =
   | MaintainerApprovalCommand;
 
 type CheckConclusion = "success" | "failure" | "cancelled";
+type RollupStatusState = "pending" | "success" | "failure" | "error";
 
 export type PullRequest = {
   number: number;
@@ -255,6 +262,12 @@ type CheckRun = {
   app?: { id?: number } | null;
 };
 type CheckRunsResponse = { total_count: number; check_runs: CheckRun[] };
+type CommitStatus = {
+  state?: string;
+  context?: string;
+  description?: string | null;
+  target_url?: string | null;
+};
 type PrGateCheckContext = {
   repository: string;
   checkRunId: number;
@@ -1115,6 +1128,76 @@ function validatePrGateMutationResponse(
   return check;
 }
 
+function rollupStatusState(check: CheckRun): RollupStatusState {
+  if (check.status !== "completed") return "pending";
+  if (check.conclusion === "success") return "success";
+  if (check.conclusion === "failure") return "failure";
+  return "error";
+}
+
+function rollupStatusDescription(title: string): string {
+  return title
+    .replace(/[\r\n\t]+/gu, " ")
+    .replace(/\s{2,}/gu, " ")
+    .trim()
+    .slice(0, 140);
+}
+
+function rollupStatusPublishingEnabled(): boolean {
+  return process.env.GITHUB_ACTIONS === "true" && process.env.GITHUB_WORKFLOW === WORKFLOW_NAME;
+}
+
+async function publishPrGateRollupStatus(options: {
+  repository: string;
+  token: string;
+  headSha: string;
+  checkRunId: number;
+  state: RollupStatusState;
+  title: string;
+}): Promise<void> {
+  if (!rollupStatusPublishingEnabled()) return;
+
+  const description = rollupStatusDescription(options.title);
+  const targetUrl = `https://github.com/${options.repository}/runs/${options.checkRunId}`;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= ROLLUP_STATUS_PUBLISH_ATTEMPTS; attempt += 1) {
+    try {
+      const value = await boundedControllerOperation(
+        "PR gate rollup status publication",
+        ROLLUP_STATUS_PUBLISH_TIMEOUT_MS,
+        (signal) =>
+          githubApi<CommitStatus>(
+            `repos/${options.repository}/statuses/${options.headSha}`,
+            options.token,
+            {
+              method: "POST",
+              body: {
+                state: options.state,
+                context: ROLLUP_STATUS_CONTEXT,
+                description,
+                target_url: targetUrl,
+              },
+              userAgent: USER_AGENT,
+              signal,
+            },
+          ),
+      );
+      if (
+        value.state !== options.state ||
+        value.context !== ROLLUP_STATUS_CONTEXT ||
+        value.description !== description ||
+        value.target_url !== targetUrl
+      ) {
+        throw new Error("GitHub did not persist the expected PR gate rollup status");
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  console.warn(`Could not publish ${ROLLUP_STATUS_CONTEXT}: ${controllerErrorMessage(lastError)}`);
+}
+
 async function createPrGateCheck(options: {
   repository: string;
   token: string;
@@ -1174,9 +1257,25 @@ async function ensurePrGateCheck(options: {
     current &&
     !(options.replaceRetryableCompleted && retryableFailureReason(current) !== undefined)
   ) {
+    await publishPrGateRollupStatus({
+      repository: options.repository,
+      token: options.token,
+      headSha: options.headSha,
+      checkRunId: current.id,
+      state: rollupStatusState(current),
+      title: current.output?.title ?? CHECK_NAME,
+    });
     return current.id;
   }
   const check = await createPrGateCheck(options);
+  await publishPrGateRollupStatus({
+    repository: options.repository,
+    token: options.token,
+    headSha: options.headSha,
+    checkRunId: check.id,
+    state: "pending",
+    title: RESERVED_CHECK_TITLE,
+  });
   return check.id;
 }
 
@@ -1227,6 +1326,14 @@ async function markCheckInProgress(
     title,
     summary,
   });
+  await publishPrGateRollupStatus({
+    repository: context.repository,
+    token,
+    headSha: context.headSha,
+    checkRunId: context.checkRunId,
+    state: "pending",
+    title,
+  });
 }
 
 function assertCheckCanStart(check: CheckRun | undefined, ciConclusion: string): void {
@@ -1274,13 +1381,25 @@ async function completeCheck(
       userAgent: USER_AGENT,
     },
   );
-  validatePrGateMutationResponse(check, {
+  const validated = validatePrGateMutationResponse(check, {
     checkRunId: context.checkRunId,
     status: "completed",
     conclusion: verdict.conclusion,
     title: verdict.title,
     summary,
   });
+  if (validated.head_sha && SHA_PATTERN.test(validated.head_sha)) {
+    await publishPrGateRollupStatus({
+      repository: context.repository,
+      token,
+      headSha: validated.head_sha,
+      checkRunId: context.checkRunId,
+      state: rollupStatusState(validated),
+      title: verdict.title,
+    });
+  } else if (rollupStatusPublishingEnabled()) {
+    console.warn(`Could not publish ${ROLLUP_STATUS_CONTEXT}: check response omitted the head SHA`);
+  }
 }
 
 async function updateRunningCheck(
@@ -1338,6 +1457,14 @@ async function updateRunningCheck(
           ),
       ),
     );
+    await publishPrGateRollupStatus({
+      repository: context.repository,
+      token,
+      headSha: context.headSha,
+      checkRunId: context.checkRunId,
+      state: "pending",
+      title,
+    });
     return;
   } catch (publicationError) {
     try {
@@ -1353,6 +1480,14 @@ async function updateRunningCheck(
             ),
         ),
       );
+      await publishPrGateRollupStatus({
+        repository: context.repository,
+        token,
+        headSha: context.headSha,
+        checkRunId: context.checkRunId,
+        state: "pending",
+        title,
+      });
       return;
     } catch (confirmationError) {
       const revocationTitle = "Child authorization publication was not confirmed";
@@ -1391,6 +1526,14 @@ async function updateRunningCheck(
           baseSha: context.baseSha,
           title: revocationTitle,
           summary: revocationSummary,
+        });
+        await publishPrGateRollupStatus({
+          repository: context.repository,
+          token,
+          headSha: context.headSha,
+          checkRunId: context.checkRunId,
+          state: "failure",
+          title: revocationTitle,
         });
       } catch (revocationError) {
         throw new Error(
@@ -2802,6 +2945,14 @@ export async function retryRunnerLossPrGate(
       prNumber: state.prNumber,
     });
     retryCheckRunId = retryCheck.id;
+    await publishPrGateRollupStatus({
+      repository,
+      token,
+      headSha: state.commitSha,
+      checkRunId: retryCheckRunId,
+      state: "pending",
+      title: RESERVED_CHECK_TITLE,
+    });
     appendOutput("check_id", String(retryCheckRunId));
     const retryHistory = await matchingPrGateHistory({
       repository,
@@ -3690,6 +3841,17 @@ export async function abandonPrGate(checkRunId: number, childRunId?: number): Pr
     throw new Error("GitHub returned a mismatched PR gate check during abandonment");
   }
   if (existingCheck.status === "completed") {
+    const completed = existingCheck as CheckRun;
+    if (completed.head_sha && SHA_PATTERN.test(completed.head_sha)) {
+      await publishPrGateRollupStatus({
+        repository,
+        token,
+        headSha: completed.head_sha,
+        checkRunId,
+        state: rollupStatusState(completed),
+        title: completed.output?.title ?? CHECK_NAME,
+      });
+    }
     appendOutput("finalized", "true");
     return;
   }

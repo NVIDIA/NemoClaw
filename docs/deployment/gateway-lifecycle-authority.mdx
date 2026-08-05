@@ -151,11 +151,12 @@ Resume resolves the current authority again and compares the complete record wit
 If any value changes, including the per-port gateway binding, resume fails before gateway effects and directs you to start a fresh onboarding run.
 A completed gateway step does not bypass listener, supervisor, identity, health, registration, or checkpoint validation.
 
-### Migrate Managed Authority During Rebuild
+### Migrate Managed Authority During Rebuild and Full Uninstall
 
 A transactional sandbox rebuild can adopt one managed lifecycle change when the recorded package-managed service is no longer selected and NemoClaw selects its standalone gateway.
 NemoClaw records the standalone authority in the replacement journal before it changes managed MCP state, providers, or deletes the sandbox.
-This exception does not apply to credential mutation, ordinary gateway teardown, an authority declaration change, the reverse transition to a package-managed service, or other authority drift.
+Full uninstall can also complete gateway teardown when an earlier uninstall step already removed the package-managed service and the same NemoClaw-managed gateway resolves as standalone.
+These exceptions do not apply to credential mutation, ordinary gateway teardown outside full uninstall, an authority declaration change, the reverse transition to a package-managed service, or other authority drift.
 Those operations continue to fail closed before gateway effects.
 
 ## Inspect the selected authority
@@ -184,6 +185,8 @@ Stop, final-sandbox cleanup, and uninstall reload the declaration before gateway
 When a valid checkpoint exists, they compare the current authority with that checkpoint.
 The comparison uses the exact gateway name and port.
 If the authority changed, teardown stops before it scans listeners or changes gateway runtime resources.
+During full uninstall, a recorded package-managed default gateway can resolve as standalone after the service has already been removed.
+That narrow transition is allowed so uninstall can finish removing the remaining selected gateway registration and runtime resources.
 
 `$$nemoclaw stop` does not scan or signal the externally supervised gateway.
 Final-sandbox cleanup can stop local dashboard forwards and remove the modern local gateway registration.

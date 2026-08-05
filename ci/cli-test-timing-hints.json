@@ -81,7 +81,6 @@
     "test/pr-review-advisor-ledger-tools.test.ts": 6997,
     "test/pr-review-advisor-security-boundaries.test.ts": 6470,
     "test/pr-review-advisor-workflow-boundary.test.ts": 9110,
-    "test/pr-review-advisor.test.ts": 61855,
     "test/pr-workflow-contract.test.ts": 15130,
     "test/reboot-identity-drift.test.ts": 10286,
     "test/rebuild-credential-preflight.test.ts": 19588,

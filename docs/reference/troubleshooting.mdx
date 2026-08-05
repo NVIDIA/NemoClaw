@@ -2118,9 +2118,10 @@ When verifying gateway write access by hand, step down to the gateway UID with t
 
 ```bash
 setpriv --reuid=gateway --regid=gateway --init-groups -- sh -c 'echo ok >> /sandbox/.openclaw/openclaw.json'
-# or, where setpriv is unavailable:
-gosu gateway sh -c 'echo ok >> /sandbox/.openclaw/openclaw.json'
 ```
+
+If `setpriv` is unavailable, rebuild the sandbox from a NemoClaw-managed image that includes `util-linux`.
+When a root entrypoint must change identity, it fails closed if this required privilege-separation command is missing.
 
 Do not probe with `su -s /bin/sh gateway ...`: `su` does not initialize the gateway's supplementary groups the same way, so a group-write probe can spuriously report `EACCES` even when the mutable contract is intact.
 
@@ -2948,7 +2949,7 @@ For setup, refer to [Quickstart with Hermes](../../hermes/get-started/quickstart
 ### Hermes dashboard config did not converge
 
 `nemohermes inference set` updates the OpenShell route, registry, and `/sandbox/.hermes/config.yaml` before it refreshes the separate dashboard profile.
-If the dashboard profile exists but NemoClaw cannot confirm that `/sandbox/.hermes/dashboard-home/config.yaml` was updated, the command exits nonzero without printing `Inference route synced`.
+If the dashboard profile exists but NemoClaw cannot confirm that `/sandbox/.hermes/profiles/dashboard-home/config.yaml` was updated, the command exits nonzero without printing `Inference route synced`.
 The committed route and main Hermes config are not rolled back.
 
 Restart the sandbox so startup mirrors the committed model route into the dashboard profile:

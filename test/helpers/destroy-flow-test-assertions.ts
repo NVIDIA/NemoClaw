@@ -219,6 +219,36 @@ export function expectFailedMcpFinalizePreservesRegistry(harness: DestroyHarness
   expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
 }
 
+export function expectMcpPrepareBridgeErrorAborts(harness: DestroyHarness): void {
+  expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalled();
+  // No delete should happen when MCP prepare itself throws McpBridgeError.
+  expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+    expect.arrayContaining(["sandbox", "delete"]),
+    expect.anything(),
+  );
+  expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+}
+
+export function expectMcpFinalizeBridgeErrorReturnsFailure(
+  harness: DestroyHarness,
+  secretMarker: string,
+): void {
+  expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).toHaveBeenCalled();
+  const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
+    (call) => Array.isArray(call[0]) && call[0].join(" ") === "sandbox delete alpha",
+  );
+  expect(deleteCall).toBeGreaterThanOrEqual(0);
+  expect(
+    harness.finalizeMcpBridgesAfterSandboxDeleteSpy.mock.invocationCallOrder.at(-1),
+  ).toBeGreaterThan(harness.runOpenshellSpy.mock.invocationCallOrder[deleteCall]);
+  const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+  expect(errorOutput).not.toContain(secretMarker);
+  expect(errorOutput).toContain("<REDACTED>");
+  // Registry must not be cleaned up when post-delete MCP finalize throws McpBridgeError.
+  expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+  expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+}
+
 export function expectAbsentSandboxMcpFinalize(harness: DestroyHarness): void {
   expect(harness.prepareMcpBridgesForDestroySpy).not.toHaveBeenCalled();
   expect(harness.prepareMcpBridgesForAbsentSandboxDestroySpy).toHaveBeenCalledWith("alpha", {
