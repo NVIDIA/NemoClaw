@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  hermesCronJobIsDue,
   hermesCronJobRuntimeState,
   parseHermesCronBeginReceipt,
 } from "../live/rebuild-hermes-cron-restore.ts";
@@ -68,5 +69,22 @@ describe("Hermes rebuild cron restore evidence", () => {
       pid: 263,
       start_time: 47767,
     });
+  });
+
+  it("distinguishes naturally due cron work from future work", () => {
+    const job = {
+      last_run_at: null,
+      last_status: null,
+      next_run_at: "2026-08-06T19:41:01.000Z",
+      repeat: { completed: 0, times: null },
+      state: "scheduled",
+    };
+
+    expect(hermesCronJobIsDue(job, "cron job fixture", Date.parse("2026-08-06T19:41:00Z"))).toBe(
+      false,
+    );
+    expect(hermesCronJobIsDue(job, "cron job fixture", Date.parse("2026-08-06T19:41:01Z"))).toBe(
+      true,
+    );
   });
 });

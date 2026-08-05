@@ -46,6 +46,11 @@ interface SeededCronJob {
   scriptName: string;
 }
 
+interface SeedCronJobOptions {
+  minimumFutureMs?: number;
+  schedule?: string;
+}
+
 interface GatewayEvidence {
   active_agents: number;
   gateway_state: string;
@@ -158,7 +163,7 @@ export function parseHermesCronBeginReceipt(text: string): CronControlReceipt {
   return payload as unknown as CronControlReceipt;
 }
 
-function assertFutureCronJob(job: JsonObject, seed: SeededCronJob): void {
+function assertFutureCronJob(job: JsonObject, seed: SeededCronJob, minimumFutureMs: number): void {
   expect(job).toMatchObject({
     enabled: true,
     id: seed.id,
@@ -174,8 +179,13 @@ function assertFutureCronJob(job: JsonObject, seed: SeededCronJob): void {
   expect(runtime.completed).toBe(0);
   expect(
     normalizeTimestampMs(runtime.nextRunAt, `cron job ${seed.id} next run`),
-    "seeded recurring cron job must remain well in the future during rebuild",
-  ).toBeGreaterThan(Date.now() + 60 * 60_000);
+    "seeded recurring cron job must remain in the future",
+  ).toBeGreaterThan(Date.now() + minimumFutureMs);
+}
+
+export function hermesCronJobIsDue(job: JsonObject, label: string, nowMs = Date.now()): boolean {
+  const runtime = hermesCronJobRuntimeState(job, label);
+  return normalizeTimestampMs(runtime.nextRunAt, `${label} next run`) <= nowMs;
 }
 
 export function hermesRuntimeExecArgs(sandboxName: string, command: string[]): string[] {
@@ -254,7 +264,10 @@ export function createRebuildHermesCronRestoreFixture({
     return parseCronJob(result.stdout, jobId, artifactName);
   }
 
-  async function seedCronJob(label: string): Promise<SeededCronJob> {
+  async function seedCronJob(
+    label: string,
+    { minimumFutureMs = 60 * 60_000, schedule = "every 1d" }: SeedCronJobOptions = {},
+  ): Promise<SeededCronJob> {
     const pending = uniqueSeed(label);
     const scriptPath = `${CRON_SCRIPTS_ROOT}/${pending.scriptName}`;
     const writeScript = await dockerRoot(
@@ -279,7 +292,7 @@ export function createRebuildHermesCronRestoreFixture({
         "hermes",
         "cron",
         "create",
-        "every 1d",
+        schedule,
         "--no-agent",
         "--script",
         pending.scriptName,
@@ -296,7 +309,7 @@ export function createRebuildHermesCronRestoreFixture({
       evidence: await readCronJob(id, `phase-${label}-read-seeded-hermes-cron-job`),
       id,
     };
-    assertFutureCronJob(seed.evidence, seed);
+    assertFutureCronJob(seed.evidence, seed, minimumFutureMs);
     await assertExecutionMarkerAbsent(seed, `phase-${label}-verify-cron-not-yet-executed`);
     return seed;
   }
@@ -342,6 +355,32 @@ export function createRebuildHermesCronRestoreFixture({
       await sleep(POLL_INTERVAL_MS);
     }
     fail(`Hermes cron job ${seed.id} did not complete exactly once: ${lastEvidence}`);
+  }
+
+  async function waitUntilDueWhileBlocked(
+    seed: SeededCronJob,
+    artifactPrefix: string,
+  ): Promise<void> {
+    let lastEvidence = "no scheduler evidence";
+    for (let attempt = 1; attempt <= EXECUTION_POLL_ATTEMPTS; attempt += 1) {
+      const job = await readCronJob(seed.id, `${artifactPrefix}-job-attempt-${attempt}`);
+      const count = await executionCount(seed, `${artifactPrefix}-marker-attempt-${attempt}`);
+      const runtime = hermesCronJobRuntimeState(job, `cron job ${seed.id}`);
+      lastEvidence = JSON.stringify({
+        completed: runtime.completed,
+        count,
+        last_status: runtime.lastStatus,
+        next_run_at: runtime.nextRunAt,
+      });
+      if (runtime.completed !== 0 || count !== 0 || runtime.lastStatus !== null) {
+        fail(`Hermes cron job ${seed.id} executed while dispatch was drained: ${lastEvidence}`);
+      }
+      if (hermesCronJobIsDue(job, `cron job ${seed.id}`)) return;
+      await sleep(POLL_INTERVAL_MS);
+    }
+    fail(
+      `Hermes cron job ${seed.id} did not become due while dispatch was drained: ${lastEvidence}`,
+    );
   }
 
   async function assertControlMarker(present: boolean, artifactName: string): Promise<void> {
@@ -544,12 +583,13 @@ export function createRebuildHermesCronRestoreFixture({
       const receipt = parseHermesCronBeginReceipt(begin.stdout);
       await assertControlMarker(true, "phase-8-verify-cron-restore-marker-before-restart");
 
-      const recoverySeed = await seedCronJob("recovery");
-      await enqueueManualRun(recoverySeed, "phase-8-queue-due-hermes-cron-during-drain");
-      await sleep(POLL_INTERVAL_MS);
-      await assertExecutionMarkerAbsent(
+      const recoverySeed = await seedCronJob("recovery", {
+        minimumFutureMs: 15_000,
+        schedule: "every 1m",
+      });
+      await waitUntilDueWhileBlocked(
         recoverySeed,
-        "phase-8-verify-due-cron-blocked-before-restart",
+        "phase-8-wait-for-due-cron-blocked-before-restart",
       );
       const beforeRestart = await waitForGatewayState(
         "draining",
