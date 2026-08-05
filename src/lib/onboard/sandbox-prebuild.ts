@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -71,6 +72,25 @@ function createCredentialFreeDockerConfig(): string {
     mode: 0o600,
   });
   return directory;
+}
+
+function createHostImageCommand(
+  command: "docker" | "podman",
+): NonNullable<SandboxPrebuildInput["buildImage"]> {
+  return (args, options) =>
+    new Promise<number | null>((resolve, reject) => {
+      const spawnOptions = {
+        ...options,
+        stdio: redirectInheritedChildStdoutToStderr(options.stdio),
+        shell: false,
+      } as const;
+      const child =
+        command === "podman"
+          ? spawn(command, [...args], spawnOptions)
+          : dockerSpawn(args, spawnOptions);
+      child.once("error", reject);
+      child.once("close", resolve);
+    });
 }
 
 /**
@@ -168,9 +188,10 @@ export function sandboxLocalImageRef(
 }
 
 /**
- * Build a NemoClaw-generated staged context with BuildKit on the shared local
- * Docker daemon. User-supplied Dockerfiles stay on the OpenShell gateway
- * builder trust boundary, and any failure preserves that original build path.
+ * Build a NemoClaw-generated staged context with the shared local container
+ * runtime. Docker uses BuildKit; the portable profile uses native rootless
+ * Podman. User-supplied Dockerfiles stay on the OpenShell gateway builder trust
+ * boundary, and any failure preserves that original build path.
  * Remove this bridge once OpenShell uses BuildKit for this local-driver path;
  * extraction and observable retirement criteria are tracked by #6258.
  */
@@ -216,42 +237,38 @@ export async function prebuildSandboxImageIfEligible(
   }
 
   const imageRef = sandboxLocalImageRef(input.sandboxName, input.buildId, env);
-  const buildImage =
-    input.buildImage ??
-    ((args, options) =>
-      new Promise<number | null>((resolve, reject) => {
-        const child = dockerSpawn(args, {
-          ...options,
-          stdio: redirectInheritedChildStdoutToStderr(options.stdio),
-          shell: false,
-        });
-        child.once("error", reject);
-        child.once("close", resolve);
-      }));
-  log("  Building sandbox image with BuildKit (skips the slower in-gateway builder)...");
+  const portable = isPortableExperimentalProfile(env);
+  const builderName = portable ? "rootless Podman" : "BuildKit";
+  const buildImage = input.buildImage ?? createHostImageCommand(portable ? "podman" : "docker");
+  log(`  Building sandbox image with ${builderName} (skips the slower in-gateway builder)...`);
 
   let status: number | null;
   try {
     status = await buildImage(
       ["build", "-t", imageRef, "-f", trustedContext.dockerfile, trustedContext.buildCtx],
       {
-        env: { ...dockerBuildSubprocessEnv(), DOCKER_BUILDKIT: "1" },
+        env: {
+          ...dockerBuildSubprocessEnv(),
+          ...(portable ? {} : { DOCKER_BUILDKIT: "1" }),
+        },
         stdio: "inherit",
       },
     );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    log(`  Local BuildKit build could not start (${detail}); using the gateway builder instead.`);
+    log(
+      `  Local ${builderName} build could not start (${detail}); using the gateway builder instead.`,
+    );
     return { createArgs, imageRef: null, imageId: null };
   }
 
   if (status !== 0) {
     const detail = status === null ? " without an exit status" : ` (exit ${status})`;
-    log(`  Local BuildKit build failed${detail}; using the gateway builder instead.`);
+    log(`  Local ${builderName} build failed${detail}; using the gateway builder instead.`);
     return { createArgs, imageRef: null, imageId: null };
   }
 
-  if (isPortableExperimentalProfile(env)) {
+  if (portable) {
     const publishImage = input.publishImage ?? buildImage;
     log("  Publishing sandbox image to the managed local registry...");
     let publishStatus: number | null;
@@ -261,6 +278,7 @@ export async function prebuildSandboxImageIfEligible(
         env: {
           ...dockerBuildSubprocessEnv(),
           DOCKER_CONFIG: credentialFreeDockerConfig,
+          REGISTRY_AUTH_FILE: path.join(credentialFreeDockerConfig, "config.json"),
         },
         stdio: "inherit",
       });

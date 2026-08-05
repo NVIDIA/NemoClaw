@@ -373,6 +373,7 @@ describe("sandbox BuildKit prebuild", () => {
     const publishImage = vi.fn(async (_args, options) => {
       credentialConfig = String(options.env.DOCKER_CONFIG);
       expect(credentialConfig).toContain("nemoclaw-portable-docker-config-");
+      expect(options.env.REGISTRY_AUTH_FILE).toBe(path.join(credentialConfig, "config.json"));
       expect(fs.statSync(credentialConfig).mode & 0o777).toBe(0o700);
       expect(
         JSON.parse(fs.readFileSync(path.join(credentialConfig, "config.json"), "utf-8")),
@@ -397,6 +398,10 @@ describe("sandbox BuildKit prebuild", () => {
     expect(publishImage).toHaveBeenCalledWith(
       ["push", "localhost:5000/nemoclaw-sandbox-local:alpha-1234567890"],
       expect.objectContaining({ stdio: "inherit" }),
+    );
+    expect(buildImage).toHaveBeenCalledWith(
+      expect.arrayContaining(["build", "localhost:5000/nemoclaw-sandbox-local:alpha-1234567890"]),
+      expect.objectContaining({ env: expect.not.objectContaining({ DOCKER_BUILDKIT: "1" }) }),
     );
     expect(result.imageRef).toBe("localhost:5000/nemoclaw-sandbox-local:alpha-1234567890");
     expect(fs.existsSync(credentialConfig)).toBe(false);

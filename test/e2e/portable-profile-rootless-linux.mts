@@ -40,7 +40,7 @@ const { prebuildSandboxImageIfEligible } = sandboxPrebuildModule;
 const { SANDBOX_BUILD_CONTEXT_PREFIX } = buildContextModule;
 
 const BASE_IMAGE =
-  "docker.io/library/ubuntu@sha256:7f622ca8766bccb22f04242ecb6f19f770b2f08827dc4b8c707de5e78a6da7ab";
+  "docker.io/library/ubuntu@sha256:019e8eb29a85e74d64925745884f2ec79aa27e3feab36353d24656f4d6b89467";
 
 function run(command: string, args: readonly string[]): string {
   const result = spawnSync(command, [...args], {
@@ -232,12 +232,20 @@ async function main(): Promise<void> {
       env: process.env,
       stdio: "ignore",
     });
+    spawnSync("podman", ["system", "reset", "--force"], {
+      env: process.env,
+      stdio: "ignore",
+    });
     const pidFile = path.join(runtimeDir, "nemoclaw-podman-service.pid");
     if (fs.existsSync(pidFile)) {
       const pid = Number(fs.readFileSync(pidFile, "utf-8").trim());
       if (Number.isInteger(pid)) process.kill(pid, "SIGTERM");
     }
-    fs.rmSync(root, { recursive: true, force: true });
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(`Portable E2E temporary cleanup was incomplete: ${String(error)}`);
+    }
   }
 }
 
