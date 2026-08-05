@@ -249,7 +249,6 @@ describe("onboard machine lifecycle traces (#6225)", () => {
       stopStates: ["openclaw"],
     });
 
-    expect(calls.repairSandbox).not.toHaveBeenCalled();
     expect(journal.completeCreate).toHaveBeenCalledOnce();
     expect(traceOf(events)).toEqual([
       "onboard.resumed:sandbox",

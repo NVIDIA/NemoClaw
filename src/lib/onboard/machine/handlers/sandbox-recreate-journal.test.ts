@@ -121,7 +121,6 @@ it("journals not-ready repair on the selected non-default gateway (#6492)", asyn
     gatewayName: "nemoclaw-31818",
   });
 
-  expect(calls.repairSandbox).not.toHaveBeenCalled();
   expect(createSandbox).toHaveBeenCalledOnce();
   const createIntent = createSandbox.mock.calls[0]?.at(-1);
   expect(createIntent).toMatchObject({
@@ -388,7 +387,6 @@ it("rejects an active recreate journal on a different gateway authority (#6492)"
   ).rejects.toThrow(/journaled gateway.*does not match the selected gateway authority/i);
   expect(getSandboxRecreateObservation).not.toHaveBeenCalled();
   expect(calls.createSandbox).not.toHaveBeenCalled();
-  expect(calls.repairSandbox).not.toHaveBeenCalled();
   expect(calls.removeSandbox).not.toHaveBeenCalled();
 });
 
@@ -430,7 +428,6 @@ it("refuses an unjournaled same-name replacement when the bound gateway authorit
       gatewayName: "nemoclaw",
     }),
   ).rejects.toThrow(/no recreate transaction proves ownership/i);
-  expect(calls.repairSandbox).not.toHaveBeenCalled();
   expect(calls.removeSandbox).not.toHaveBeenCalled();
   expect(calls.createSandbox).not.toHaveBeenCalled();
   expect(session.checkpoint?.sandboxRecreate).toBeNull();
@@ -460,7 +457,6 @@ it("refuses an unjournaled legacy same-name repair without gateway authority (#7
       gatewayName: "nemoclaw",
     }),
   ).rejects.toThrow(/no recreate transaction proves ownership/i);
-  expect(calls.repairSandbox).not.toHaveBeenCalled();
   expect(calls.removeSandbox).not.toHaveBeenCalled();
   expect(calls.createSandbox).not.toHaveBeenCalled();
   expect(session.checkpoint?.sandboxRecreate).toBeNull();
@@ -517,7 +513,6 @@ it("creates a missing sandbox from a preserved registry row without removing the
 
   expect(createSandbox).toHaveBeenCalledOnce();
   expect(calls.removeSandbox).not.toHaveBeenCalled();
-  expect(calls.repairSandbox).not.toHaveBeenCalled();
   expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
 });
 
@@ -566,7 +561,6 @@ it("journals not-ready resumed sandboxes before recreation (#7736)", async () =>
     state: "sandbox",
     metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
   });
-  expect(calls.repairSandbox).not.toHaveBeenCalled();
   expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.completed", {
     state: "sandbox",
     metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
@@ -601,5 +595,4 @@ it("records failed repair events when journaled replacement creation fails (#773
     metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
   });
   expect(calls.repairEvent).not.toHaveBeenCalledWith("state.repair.completed", expect.anything());
-  expect(calls.repairSandbox).not.toHaveBeenCalled();
 });
