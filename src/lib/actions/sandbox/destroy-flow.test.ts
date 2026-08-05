@@ -385,7 +385,19 @@ describe("destroySandbox flow", () => {
     expectMcpPrepareBridgeErrorAborts(harness);
   });
 
-  it("exits with code 1 when MCP bridge finalize throws McpBridgeError after sandbox delete (#8103)", async () => {
+  it("redacts MCP bridge finalization errors after sandbox deletion (#8103)", async () => {
+    const secretMarker = "destroy-secret-marker";
+    const harness = createDestroyHarness({
+      mcpServers: ["github"],
+      finalizeMcpBridgeError: `Could not inspect OpenShell provider: OPENAI_API_KEY=${secretMarker}`,
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expectMcpFinalizeBridgeErrorReturnsFailure(harness, secretMarker);
+  });
+
+  it("retires retained MCP state when a destroy retry completes finalization (#8103)", async () => {
     const harness = createDestroyHarness({
       mcpServers: ["github"],
       finalizeMcpBridgeError: "Could not inspect OpenShell provider: gateway unreachable",
@@ -393,6 +405,20 @@ describe("destroySandbox flow", () => {
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
 
-    expectMcpFinalizeBridgeErrorReturnsFailure(harness);
+    harness.setSandboxPresent(false);
+    harness.finalizeMcpBridgesAfterSandboxDeleteSpy.mockResolvedValue(undefined);
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.prepareMcpBridgesForAbsentSandboxDestroySpy).toHaveBeenCalledWith("alpha", {
+      force: false,
+    });
+    expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).toHaveBeenCalledTimes(2);
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.updateSessionSpy).toHaveBeenCalledOnce();
+    expect(harness.cleanupGatewaySpy).toHaveBeenCalledWith(
+      "nemoclaw-19080",
+      harness.runOpenshellSpy,
+    );
   });
 });

@@ -229,9 +229,22 @@ export function expectMcpPrepareBridgeErrorAborts(harness: DestroyHarness): void
   expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
 }
 
-export function expectMcpFinalizeBridgeErrorReturnsFailure(harness: DestroyHarness): void {
+export function expectMcpFinalizeBridgeErrorReturnsFailure(
+  harness: DestroyHarness,
+  secretMarker: string,
+): void {
   expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).toHaveBeenCalled();
-  // Registry must not be cleaned up when post-delete MCP finalize throws McpBridgeError.
+  const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
+    (call) => Array.isArray(call[0]) && call[0].join(" ") === "sandbox delete alpha",
+  );
+  expect(deleteCall).toBeGreaterThanOrEqual(0);
+  expect(
+    harness.finalizeMcpBridgesAfterSandboxDeleteSpy.mock.invocationCallOrder.at(-1),
+  ).toBeGreaterThan(harness.runOpenshellSpy.mock.invocationCallOrder[deleteCall]);
+  const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+  expect(errorOutput).not.toContain(secretMarker);
+  expect(errorOutput).toContain("<REDACTED>");
+  // The sandbox registry must retain MCP ownership when provider finalization fails.
   expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
   expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
 }
