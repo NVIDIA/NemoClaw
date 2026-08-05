@@ -7,6 +7,9 @@ Use the current checkout as the source of truth. A skill defines process and pri
 not maintain an inventory of paths, identifiers, commands, registrations, versions, schemas, or
 test mappings that the checkout already defines.
 
+Apply the shared [Code Change Considerations](code-change-considerations.md) at the current
+lifecycle stage.
+
 ## Before implementation
 
 - Read the active `AGENTS.md` files for every area the task can change.
