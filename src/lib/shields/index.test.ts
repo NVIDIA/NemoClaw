@@ -611,23 +611,39 @@ describe("shields — unit logic", () => {
         processToken,
       });
       vi.spyOn(process, "kill").mockImplementation(routeProcessKill);
+      const runPolicyCommand = vi.fn(() => ({ status: 0 }) as never);
       const { applyShieldsPolicySnapshot } = await loadShieldsModule();
-      const { buildPolicySetCommand } = await import("../policy");
       const createTempDirectory = vi.spyOn(fs, "mkdtempSync").mockImplementation(() => {
         throw Object.assign(new Error("ENOSPC: simulated temporary storage full"), {
           code: "ENOSPC",
         });
       });
 
-      const result = applyShieldsPolicySnapshot(sandboxName, snapshotPath, {
-        transitionProcessToken: processToken,
-        deadlineAuthoritative: true,
-        expiredTimerRecovery: true,
-      });
+      const result = applyShieldsPolicySnapshot(
+        sandboxName,
+        snapshotPath,
+        {
+          transitionProcessToken: processToken,
+          deadlineAuthoritative: true,
+          expiredTimerRecovery: true,
+        },
+        { runPolicyCommand },
+      );
 
       expect(result.status).toBe(0);
       expect(createTempDirectory).not.toHaveBeenCalled();
-      expect(buildPolicySetCommand).toHaveBeenCalledWith(snapshotPath, sandboxName);
+      expect(runPolicyCommand).toHaveBeenCalledWith(
+        [
+          expect.stringMatching(/openshell(?:\.exe)?$/),
+          "policy",
+          "set",
+          "--policy",
+          snapshotPath,
+          "--wait",
+          sandboxName,
+        ],
+        { ignoreError: true },
+      );
     });
 
     it("shieldsStatus warns and stays DOWN when inline recovery fails", async () => {

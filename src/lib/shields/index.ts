@@ -2925,6 +2925,14 @@ interface ShieldsPolicySnapshotRestoreOptions {
   expiredTimerRecovery?: boolean;
 }
 
+interface ShieldsPolicySnapshotRestoreDependencies {
+  runPolicyCommand: typeof run;
+}
+
+const defaultShieldsPolicySnapshotRestoreDependencies: ShieldsPolicySnapshotRestoreDependencies = {
+  runPolicyCommand: run,
+};
+
 type ShieldsPolicySnapshotRestoreResult = ReturnType<typeof run> & {
   managedMcpOmissions?: ManagedMcpPolicyOmission[];
 };
@@ -2933,6 +2941,7 @@ function applyShieldsPolicySnapshot(
   sandboxName: string,
   snapshotPath: string,
   options: ShieldsPolicySnapshotRestoreOptions = {},
+  dependencies: ShieldsPolicySnapshotRestoreDependencies = defaultShieldsPolicySnapshotRestoreDependencies,
 ): ShieldsPolicySnapshotRestoreResult {
   const state = loadShieldsState(sandboxName);
   let transition: ShieldsDownTransition | null = null;
@@ -3022,7 +3031,7 @@ function applyShieldsPolicySnapshot(
         fs.readFileSync(snapshotPath, "utf-8"),
         hasManagedMcpPolicyClaims(sandboxName),
       );
-      return run(buildPolicySetCommand(snapshotPath, sandboxName), {
+      return dependencies.runPolicyCommand(buildPolicySetCommand(snapshotPath, sandboxName), {
         ignoreError: true,
       });
     }
@@ -3048,9 +3057,12 @@ function applyShieldsPolicySnapshot(
   }
   const runtimePolicyIsTemp = runtimePolicyPath !== snapshotPath;
   try {
-    const result = run(buildPolicySetCommand(runtimePolicyPath, sandboxName), {
-      ignoreError: true,
-    });
+    const result = dependencies.runPolicyCommand(
+      buildPolicySetCommand(runtimePolicyPath, sandboxName),
+      {
+        ignoreError: true,
+      },
+    );
     return managedMcpOmissions.length > 0 ? { ...result, managedMcpOmissions } : result;
   } finally {
     if (runtimePolicyIsTemp) {
