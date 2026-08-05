@@ -1,0 +1,93 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: E2E / Portable Profile
+
+run-name: "Portable profile rootless E2E for ${{ github.sha }}"
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - ".github/workflows/portable-profile-e2e.yaml"
+      - "src/lib/onboard/**"
+      - "src/lib/domain/sandbox/image-tag.ts"
+      - "src/lib/sandbox/build-context.ts"
+      - "test/e2e/live/portable-profile-rootless-linux.test.ts"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/portable-profile-e2e.yaml"
+      - "src/lib/onboard/**"
+      - "src/lib/domain/sandbox/image-tag.ts"
+      - "src/lib/sandbox/build-context.ts"
+      - "test/e2e/live/portable-profile-rootless-linux.test.ts"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portable-profile-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rootless-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build shared policy boundary
+        run: npm run build:policy-boundary
+
+      - name: Provision restricted rootless Linux runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes fuse-overlayfs passt podman slirp4netns uidmap
+          runtime_dir="/run/user/$(id -u)"
+          sudo install -d -m 700 -o "$(id -u)" -g "$(id -g)" "$runtime_dir"
+          if ! grep -q "^${USER}:" /etc/subuid; then
+            sudo usermod --add-subuids 100000-165535 "$USER"
+          fi
+          if ! grep -q "^${USER}:" /etc/subgid; then
+            sudo usermod --add-subgids 100000-165535 "$USER"
+          fi
+          podman --version
+          pasta --version
+          docker --version
+
+      - name: Exercise portable profile in the rootless environment
+        env:
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/portable-profile
+          E2E_TARGET_ID: portable-profile
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+        run: >-
+          npx vitest run --project e2e-live
+          test/e2e/live/portable-profile-rootless-linux.test.ts
+          --silent=false --reporter=default
+
+      - name: Upload portable profile E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: portable-profile-e2e-artifacts
+          path: e2e-artifacts/portable-profile/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
