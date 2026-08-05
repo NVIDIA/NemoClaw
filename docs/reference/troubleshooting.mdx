@@ -813,7 +813,7 @@ NVIDIA NIM and GPU-backed sandbox setup require a real NVIDIA GPU.
 If NemoClaw rejects the detected GPU name during preflight, select a CPU or remote inference provider, or move the setup to a host with a supported NVIDIA GPU and current drivers.
 
 Jetson/Tegra hosts support sandbox GPU passthrough through the compatibility route.
-Onboarding detects those hosts separately and propagates eligible host group IDs for selected `/dev/nvmap`, `/dev/nvhost-*`, and `/dev/nvgpu/igpu0/*` nodes plus real `/dev/dri/renderD*` character devices.
+Onboarding detects those hosts separately and prepares access to selected `/dev/nvmap`, `/dev/nvhost-*`, and `/dev/nvgpu/igpu0/*` nodes plus real `/dev/dri/renderD*` character devices.
 If that path fails, follow the Jetson/Tegra compatibility guidance below instead of treating a missing `nvidia-smi` result as a placeholder adapter.
 
 ### Colima socket not detected (macOS)
@@ -2739,8 +2739,10 @@ Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses t
 
 <AgentOnly variant="openclaw">
 
-It also keeps eligible Jetson GPU device group memberships when OpenShell starts the nonroot sandbox user.
-The compatibility policy permits read-only access to the NVIDIA runtime library directory at `/opt/nvidia/l4t-gpu-libs` when that path is present.
+The compatibility path keeps eligible Jetson GPU device group memberships when OpenShell starts the nonroot sandbox user.
+Group membership alone does not grant device access when the sandbox filesystem policy omits a required path.
+The route-specific policy grants read-write access only to selected paths that exist as character devices and are not symbolic links.
+It also permits read-only access to the NVIDIA runtime library directory at `/opt/nvidia/l4t-gpu-libs` when that path is present.
 
 Before each OpenClaw Jetson GPU sandbox creation, including `$$nemoclaw onboard --resume`, NemoClaw verifies that `/dev/nvmap` is a real character device whose owning group has read-write access.
 

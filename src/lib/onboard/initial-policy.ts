@@ -23,6 +23,7 @@ import {
   isStationGb300ProductName,
   type StationProfile,
 } from "../readiness/station-qualification";
+import { detectTegraGpuDevicePaths } from "./docker-gpu-jetson-groups";
 import {
   allMessagingChannelPolicyPresets,
   requiredMessagingChannelPolicyPresets,
@@ -79,6 +80,7 @@ type DirectGpuPolicyOptions = {
   procReadWrite?: boolean;
   sysfsReadOnlyPaths?: readonly string[];
   jetsonGpu?: boolean;
+  jetsonGpuDevicePaths?: readonly string[];
 };
 
 export { isStationGb300ProductName };
@@ -233,6 +235,22 @@ export function buildDirectGpuPolicyYaml(
     // OpenRM runtime injection places libcuda outside the base /usr and /lib
     // grants. CUDA cannot load the driver unless Landlock permits this path.
     fsPolicy.read_only.push(JETSON_GPU_LIBRARY_PATH);
+  }
+  if (options.jetsonGpu) {
+    // OpenShell v0.0.85 enriches Landlock for /dev/nvidia* and /dev/dxg but
+    // does not recognize Jetson /dev/nvmap or /dev/nvhost-* devices. The
+    // compatibility route therefore grants only measured host character
+    // devices; group membership alone cannot bypass Landlock. Remove this
+    // grant when the minimum supported OpenShell release enriches Jetson
+    // devices before applying the sandbox filesystem policy (#7610).
+    const jetsonGpuDevicePaths = [...new Set(options.jetsonGpuDevicePaths ?? [])];
+    const jetsonGpuDevicePathSet = new Set(jetsonGpuDevicePaths);
+    fsPolicy.read_only = fsPolicy.read_only.filter(
+      (entry: string) => !jetsonGpuDevicePathSet.has(entry),
+    );
+    for (const devicePath of jetsonGpuDevicePaths) {
+      if (!fsPolicy.read_write.includes(devicePath)) fsPolicy.read_write.push(devicePath);
+    }
   }
   if (options.procReadWrite && !fsPolicy.read_write.includes(PROC_PATH)) {
     // This exists only for the legacy post-create Docker GPU compatibility
@@ -393,6 +411,7 @@ export function prepareInitialSandboxCreatePolicy(
     directGpu?: boolean;
     dockerGpuPatch?: boolean;
     jetsonGpu?: boolean;
+    jetsonGpuDevicePaths?: readonly string[];
     hostGpuAvailable?: boolean;
     stationGb300SysfsReadOnlyPaths?: readonly string[];
     additionalPresets?: string[];
@@ -405,6 +424,9 @@ export function prepareInitialSandboxCreatePolicy(
     ? prepareDirectGpuSandboxPolicy(basePolicyPath, {
         procReadWrite: options.dockerGpuPatch === true,
         jetsonGpu: options.jetsonGpu === true,
+        jetsonGpuDevicePaths:
+          options.jetsonGpuDevicePaths ??
+          (options.jetsonGpu === true ? detectTegraGpuDevicePaths() : []),
         sysfsReadOnlyPaths:
           options.stationGb300SysfsReadOnlyPaths ??
           discoverHostStationGb300SysfsReadOnlyPaths({

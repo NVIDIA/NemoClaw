@@ -380,6 +380,42 @@ network_policies: {}
     expect(jetsonPolicy.filesystem_policy.read_write).not.toContain("/opt/nvidia/l4t-gpu-libs");
   });
 
+  it("grants exact detected Jetson character devices read-write for Landlock (#7610)", () => {
+    const gpuPolicy = buildDirectGpuPolicyYaml(
+      `
+version: 1
+filesystem_policy:
+  read_only:
+    - /usr
+    - /dev/nvmap
+  read_write:
+    - /tmp
+    - /dev/nvhost-gpu
+network_policies: {}
+`,
+      {
+        jetsonGpu: true,
+        jetsonGpuDevicePaths: ["/dev/nvmap", "/dev/nvhost-gpu", "/dev/nvmap"],
+      },
+    );
+    const gpuDoc = YAML.parse(gpuPolicy);
+
+    expect(gpuDoc.filesystem_policy.read_only).not.toContain("/dev/nvmap");
+    expectSingleOccurrence(gpuDoc.filesystem_policy.read_write, "/dev/nvmap");
+    expectSingleOccurrence(gpuDoc.filesystem_policy.read_write, "/dev/nvhost-gpu");
+  });
+
+  it("does not grant Jetson character devices to a generic GPU policy (#7610)", () => {
+    const gpuPolicy = YAML.parse(
+      buildDirectGpuPolicyYaml(BASE_POLICY_FIXTURE, {
+        jetsonGpuDevicePaths: ["/dev/nvmap", "/dev/nvhost-gpu"],
+      }),
+    );
+
+    expect(gpuPolicy.filesystem_policy.read_write).not.toContain("/dev/nvmap");
+    expect(gpuPolicy.filesystem_policy.read_write).not.toContain("/dev/nvhost-gpu");
+  });
+
   it("threads the OpenClaw Jetson library path through public policy preparation (#7610)", () => {
     const basePolicyPath = tmpPolicy(BASE_POLICY_FIXTURE);
     const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
@@ -390,6 +426,22 @@ network_policies: {}
     const preparedDoc = YAML.parse(fs.readFileSync(prepared.policyPath, "utf-8"));
 
     expect(preparedDoc.filesystem_policy.read_only).toContain("/opt/nvidia/l4t-gpu-libs");
+    expect(prepared.cleanup?.()).toBe(true);
+  });
+
+  it("threads detected Jetson character devices through public policy preparation (#7610)", () => {
+    const basePolicyPath = tmpPolicy(BASE_POLICY_FIXTURE);
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+      directGpu: true,
+      jetsonGpu: true,
+      jetsonGpuDevicePaths: ["/dev/nvmap", "/dev/nvhost-ctrl", "/dev/nvhost-gpu"],
+      stationGb300SysfsReadOnlyPaths: [],
+    });
+    const preparedDoc = YAML.parse(fs.readFileSync(prepared.policyPath, "utf-8"));
+
+    expect(preparedDoc.filesystem_policy.read_write).toEqual(
+      expect.arrayContaining(["/dev/nvmap", "/dev/nvhost-ctrl", "/dev/nvhost-gpu"]),
+    );
     expect(prepared.cleanup?.()).toBe(true);
   });
 

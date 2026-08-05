@@ -27,6 +27,11 @@ type DeviceGroupAccess = {
   mode: number;
 };
 
+type DevicePathAccess = {
+  isCharacterDevice: boolean;
+  isSymbolicLink: boolean;
+};
+
 type NvmapDeviceAccess = {
   isCharacterDevice: boolean;
   isSymbolicLink: boolean;
@@ -129,18 +134,51 @@ function listTegraGpuDevicePaths(): string[] {
 }
 
 /**
+ * Return only existing Jetson GPU character devices that can be granted at
+ * the OpenShell Landlock boundary. The fixed candidates keep the policy from
+ * widening to unrelated host devices, and lstat prevents symlink traversal.
+ */
+export function detectTegraGpuDevicePaths(
+  deps: {
+    statDevicePath?: (path: string) => DevicePathAccess | null;
+    listDevicePaths?: () => string[];
+  } = {},
+): string[] {
+  const devicePaths = deps.listDevicePaths?.() ?? listTegraGpuDevicePaths();
+  const statPath =
+    deps.statDevicePath ??
+    ((devicePath: string): DevicePathAccess | null => {
+      try {
+        const stat = fs.lstatSync(devicePath);
+        return {
+          isCharacterDevice: stat.isCharacterDevice(),
+          isSymbolicLink: stat.isSymbolicLink(),
+        };
+      } catch {
+        return null;
+      }
+    });
+  return devicePaths.filter((devicePath) => {
+    const access = statPath(devicePath);
+    return access?.isCharacterDevice === true && access.isSymbolicLink === false;
+  });
+}
+
+/**
  * Source-of-truth boundary for Jetson/Tegra supplementary device groups:
  *
- * - Invalid state: `/dev/nvmap` lacks owning-group read/write access, or the non-root sandbox user
- *   loses the matching host device GID when the OpenShell supervisor calls `initgroups()`.
- * - Source boundary: NemoClaw verifies and persists the host nvmap mode, carries each bounded
- *   numeric device GID into the Jetson recreation via `--group-add`, and records matching sandbox
- *   account membership before the supervisor starts.
+ * - Invalid state: `/dev/nvmap` lacks owning-group read/write access, Landlock omits an injected
+ *   Tegra character device, or the non-root sandbox user loses the matching host device GID.
+ * - Source boundary: NemoClaw verifies and persists the host nvmap mode, grants exact detected
+ *   character-device paths in the route policy, carries each bounded numeric device GID into the
+ *   Jetson recreation via `--group-add`, and records matching sandbox account membership before
+ *   the supervisor starts.
  * - Source-fix constraint: `--group-add` alone does not survive the supervisor's account-group
  *   initialization, and image-local group names can differ from the host's numeric device GIDs.
- * - Regression coverage: docker-gpu-jetson-groups.test.ts covers discovery and hostile numeric
- *   values; setup-jetson.test.ts covers the host mode; docker-gpu-patch-jetson.test.ts covers
- *   clone-envelope and sandbox-account propagation plus generic-host exclusion.
+ * - Regression coverage: docker-gpu-jetson-groups.test.ts covers path/GID discovery and hostile
+ *   numeric values; initial-policy.test.ts covers Landlock grants; setup-jetson.test.ts covers the
+ *   host mode; docker-gpu-patch-jetson.test.ts covers clone-envelope and sandbox-account
+ *   propagation plus generic-host exclusion.
  * - Removal condition: remove this probe when the minimum supported native OpenShell Jetson path
  *   propagates the host device groups without compatibility container recreation.
  */

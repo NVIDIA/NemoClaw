@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   detectTegraDeviceGroupGids,
+  detectTegraGpuDevicePaths,
   ensureJetsonNvmapGroupAccess,
 } from "./docker-gpu-jetson-groups";
 
@@ -16,6 +17,28 @@ const READ_ONLY_NVMAP = {
   mode: 0o440,
 };
 const READ_WRITE_NVMAP = { ...READ_ONLY_NVMAP, mode: 0o660 };
+
+describe("detectTegraGpuDevicePaths", () => {
+  it("returns only existing non-symlink character devices for Landlock (#7610)", () => {
+    const pathAccess = new Map([
+      ["/dev/nvmap", { isCharacterDevice: true, isSymbolicLink: false }],
+      ["/dev/nvhost-gpu", { isCharacterDevice: false, isSymbolicLink: false }],
+      ["/dev/dri/renderD128", { isCharacterDevice: true, isSymbolicLink: true }],
+    ]);
+
+    expect(
+      detectTegraGpuDevicePaths({
+        listDevicePaths: () => [
+          "/dev/nvmap",
+          "/dev/nvhost-gpu",
+          "/dev/dri/renderD128",
+          "/dev/missing",
+        ],
+        statDevicePath: (devicePath) => pathAccess.get(devicePath) ?? null,
+      }),
+    ).toEqual(["/dev/nvmap"]);
+  });
+});
 
 describe("detectTegraDeviceGroupGids", () => {
   afterEach(() => {

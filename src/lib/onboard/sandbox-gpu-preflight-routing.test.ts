@@ -33,8 +33,9 @@ describe("sandbox GPU preflight routing", () => {
     const remediation = jetsonGpuProofRemediationLines().join("\n");
 
     expect(remediation).toContain("owning-group read-write access");
-    expect(remediation).toContain("propagate the device GIDs through Docker");
-    expect(remediation).toContain("before OpenShell calls initgroups()");
+    expect(remediation).toContain("OpenShell Landlock policy");
+    expect(remediation).toContain("their GIDs through Docker");
+    expect(remediation).toContain("preserve sandbox-account membership");
     expect(remediation).not.toContain("add the host video/render groups via --group-add");
     expect(remediation).not.toContain("must be readable by the sandbox");
   });
