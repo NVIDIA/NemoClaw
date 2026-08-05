@@ -149,7 +149,12 @@ export async function runRebuildPreflightPhase(
   try {
     assertMcpDestroyNotPending(sandboxEntry);
   } catch (error) {
-    bail(error instanceof Error ? error.message : String(error));
+    printRebuildPreflightFailure(
+      "a pending MCP destroy transaction blocks rebuild.",
+      "Resolve the pending MCP state before retrying rebuild.",
+      error instanceof Error ? error.message : String(error),
+      bail,
+    );
     return null;
   }
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
@@ -241,6 +246,7 @@ export async function runRebuildPreflightPhase(
   let retainBaseImagePreflight = false;
   try {
     const releaseOnboardLock = acquireRebuildOnboardLock(sandboxName, bail);
+    if (!releaseOnboardLock) return null;
     let retainOnboardLock = false;
     try {
       assertRebuildEntryUnchanged(sandboxName, JSON.stringify(expectedSandboxEntry), bail);
