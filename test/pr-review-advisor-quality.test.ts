@@ -2,41 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
-import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { githubGraphql, upsertStickyComment } from "../tools/advisors/github.mts";
-import { buildRiskPlan } from "../tools/advisors/risk-plan.mts";
 import {
-  ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
-  DEFAULT_ADVISOR_MODEL,
-  DEFAULT_ADVISOR_PROVIDER,
-  NEMOTRON_ULTRA_ADVISOR_MODEL,
-  openAiAdvisorProviderConfig,
-} from "../tools/advisors/session.mts";
-import {
-  buildPromptTurns,
-  buildSystemPrompt,
-  classifyTestDepth,
-  collectStaticTestInventory,
-  collectTrustedPreviousAdvisorReview,
-  detectLocalizedPatchSignals,
-  detectSimplificationSignals,
-  extractIssueRefs,
-  extractPreviousAdvisorReview,
   normalizeReviewResult,
   readTrustedSecurityReviewSkill,
   recordSynthesisValidationFailureOnDraft,
   renderDetailedReview,
   renderSummary,
-  reviewLedgerConsistencyIssues,
   reviewQualityIssues,
-  writeDeterministicContextArtifacts,
 } from "../tools/pr-review-advisor/analyze.mts";
 import { buildComment } from "../tools/pr-review-advisor/comment.mts";
 import { metadata, ROOT, validResult } from "./helpers/pr-review-advisor-test-fixtures.ts";
-import { testTimeoutOptions } from "./helpers/timeouts";
 
 describe("PR review advisor", () => {
   afterEach(() => {

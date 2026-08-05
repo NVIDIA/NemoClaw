@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
 import type {
   ActionJobFixture,
   ActionRunFixture,
@@ -9,12 +8,10 @@ import type {
   CoordinatorRunPartitionFixture,
 } from "./check-gates-test-fixtures.ts";
 import {
-  BASE_SHA,
   coordinationCheck,
   e2eCoordinatorRun,
   e2eManualCoordinatorRun,
   exactDiffGateRun,
-  HEAD_SHA,
   prWorkflowRun,
   runGate,
   successfulRequiredChecks,

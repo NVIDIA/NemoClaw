@@ -10,23 +10,7 @@ import {
   paginatedRunIds,
   runGateWithCoordinator,
 } from "./check-gates-coordinator-test-fixtures.ts";
-import type {
-  ActionJobFixture,
-  ActionRunFixture,
-  ComplianceFixture,
-  CoordinatorRunPartitionFixture,
-} from "./check-gates-test-fixtures.ts";
-import {
-  BASE_SHA,
-  coordinationCheck,
-  e2eCoordinatorRun,
-  e2eManualCoordinatorRun,
-  exactDiffGateRun,
-  HEAD_SHA,
-  prWorkflowRun,
-  runGate,
-  successfulRequiredChecks,
-} from "./check-gates-test-fixtures.ts";
+import { BASE_SHA, e2eCoordinatorRun, HEAD_SHA } from "./check-gates-test-fixtures.ts";
 
 describe("maintainer merge-gate E2E coordinator evidence", () => {
   it("rejects a workflow-run inventory at the 1,000-result cap", () => {

@@ -2,12 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import type { ActionJobFixture, ActionRunFixture } from "./check-gates-test-fixtures.ts";
+import type { ActionJobFixture } from "./check-gates-test-fixtures.ts";
 import {
   BASE_SHA,
   CUSTOM_RUN_URL,
-  coordinationCheck,
-  E2E_COORDINATION_EXTERNAL_ID,
   e2eChecks,
   e2eGateCheck,
   e2eJobs,
@@ -15,9 +13,6 @@ import {
   exactDiffGateRun,
   HEAD_SHA,
   INCOMPLETE_E2E,
-  installerHashRun,
-  prWorkflowJobs,
-  prWorkflowRun,
   REQUIRED_CHECK_NAMES,
   runGate,
   successfulRequiredChecks,

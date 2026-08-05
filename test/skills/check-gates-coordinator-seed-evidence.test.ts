@@ -14,22 +14,14 @@ import {
   seedJobs,
   seedStatusChecks,
 } from "./check-gates-coordinator-test-fixtures.ts";
-import type {
-  ActionJobFixture,
-  ActionRunFixture,
-  ComplianceFixture,
-  CoordinatorRunPartitionFixture,
-} from "./check-gates-test-fixtures.ts";
+import type { ActionJobFixture } from "./check-gates-test-fixtures.ts";
 import {
   BASE_SHA,
   coordinationCheck,
   e2eCoordinatorRun,
   e2eManualCoordinatorRun,
   exactDiffGateRun,
-  HEAD_SHA,
   prWorkflowRun,
-  runGate,
-  successfulRequiredChecks,
 } from "./check-gates-test-fixtures.ts";
 
 describe("maintainer merge-gate E2E coordinator evidence", () => {
