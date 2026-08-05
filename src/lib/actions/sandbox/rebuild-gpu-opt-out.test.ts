@@ -212,7 +212,12 @@ describe("buildRebuildRecreateOnboardOpts", () => {
       sb: { ...dashboard, hostMounts },
     });
 
-    expect(opts.hostMounts).toEqual(hostMounts);
+    expect(opts.hostMounts).toEqual([
+      {
+        ...hostMounts[0],
+        sourceIdentity: { device: expect.any(String), inode: expect.any(String) },
+      },
+    ]);
     expect(opts.hostMounts).not.toBe(hostMounts);
   });
 
