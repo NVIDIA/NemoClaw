@@ -2583,6 +2583,7 @@ jobs:
   # regressionTest: The build-script behavior test proves complete-cache-only,
   # symlink-free offline imports and exact --cache-from/--network none Docker
   # arguments; workflow boundary tests pin the producer/consumer handoff.
+  # lifecycleDecision: PR #8366 records the observable removal condition.
   managed-image-protected-runtime:
     name: Protected managed-image GPU and local inference
     needs: [generate-matrix, managed-image-multiarch-startup]
