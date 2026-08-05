@@ -61,6 +61,10 @@ Before registration, configure an HTTPS endpoint that meets these requirements:
 - A host firewall limits the listener to the OpenShell gateway or the required deployment subnet.
 - The endpoint exposes only the required MCP path and methods.
 
+If the endpoint certificate chains to a private CA, provide that CA with `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding.
+Rebuild an existing sandbox after adding or changing the CA so both the OpenShell upstream proxy and sandbox clients receive the trust anchor.
+For source validation and custom-image requirements, refer to [Configure Corporate CA Trust](../../security/configure-corporate-ca-trust).
+
 For a host-local MCP process, keep the process bound to loopback when practical.
 Place an operator-managed HTTPS reverse proxy on one stable, routed private address.
 Bind the proxy to the exact private interface instead of every host interface.

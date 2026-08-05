@@ -193,6 +193,8 @@ A URL that the agent-native path accepts is therefore not registrable through ma
 For a host-local server, keep the MCP process on loopback when practical.
 Place an operator-managed HTTPS reverse proxy on a stable private address that the OpenShell gateway can route to.
 The certificate must match the original endpoint hostname and chain to a trust root available to the managed runtime.
+For a private CA, set `NEMOCLAW_CORPORATE_CA_BUNDLE` before onboarding, or rebuild the existing sandbox after setting it.
+The managed image installs that CA for both the OpenShell upstream proxy and sandbox TLS clients.
 Restrict the proxy listener to the OpenShell gateway or required deployment subnet with host firewall rules.
 
 Direct `127.0.0.1`, `::1`, and hostnames that resolve to loopback remain rejected.
