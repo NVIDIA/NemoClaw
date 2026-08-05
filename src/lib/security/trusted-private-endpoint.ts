@@ -352,7 +352,7 @@ export async function assertEndpointResolvesPublic(
     return {
       ok: false,
       reason:
-        `endpoint host "${hostname}" resolves to both trusted-private and public addresses` +
+        `endpoint host "${hostname}" resolves to mixed public and private addresses` +
         (offendingAddress ? `, including untrusted answer "${offendingAddress}"` : ""),
       reasonCode: "mixed-answer",
       offendingAddress,
