@@ -23,6 +23,11 @@ expected_version: "0.19.0"
 # could otherwise straddle both schemes (#6049).
 version_scheme: semver
 gateway_command: "hermes gateway run"
+# Interactive entry point a user types inside the sandbox. Hermes stays a
+# gateway agent (runtime.kind defaults to gateway); this only records the
+# command so NemoClaw stops hardcoding it.
+runtime:
+  interactive_command: "hermes"
 
 # ── Health probe ────────────────────────────────────────────────
 # The API server adapter listens on 8642 by default and exposes

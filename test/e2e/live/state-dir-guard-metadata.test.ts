@@ -58,6 +58,18 @@ interface InstalledStateLockPlan {
   writableSubpaths: string[];
 }
 
+interface ConfidentialityAccessEvidence {
+  processUid: number;
+  processGid: number;
+  rootUid: number;
+  rootGid: number;
+  rootMode: number;
+  missingDirectChildErrno: number;
+  rootListingErrno: number;
+  nestedTraversalErrno: number;
+  secretReadErrno: number;
+}
+
 interface GuardLimits {
   maxEntries: number;
   maxLogicalBytes: number;
@@ -490,6 +502,56 @@ async function expectNamedUserAccessState(
   expect(actual).toEqual(expected);
 }
 
+async function probeConfidentialityAccessContract(
+  host: HostCliClient,
+  agent: AgentCase,
+  fixtureRoot: string,
+  target: string,
+  identity: { uid: number; gid: number },
+): Promise<ConfidentialityAccessEvidence> {
+  const credentialsRoot = path.join(fixtureRoot, agent.stateRoots.confidential);
+  const containerRoot = containerTargetPath(agent, fixtureRoot, credentialsRoot);
+  const containerTarget = containerTargetPath(agent, fixtureRoot, target);
+  const script = [
+    "import json, os, stat, sys",
+    "root_path, secret_path = sys.argv[1:]",
+    "def errno_of(operation):",
+    "    try:",
+    "        operation()",
+    "    except OSError as exc:",
+    "        return exc.errno",
+    "    return 0",
+    "def read_secret():",
+    "    with open(secret_path, 'rb') as stream:",
+    "        stream.read(1)",
+    "root = os.lstat(root_path)",
+    "print(json.dumps({",
+    "    'processUid': os.getuid(),",
+    "    'processGid': os.getgid(),",
+    "    'rootUid': root.st_uid,",
+    "    'rootGid': root.st_gid,",
+    "    'rootMode': stat.S_IMODE(root.st_mode),",
+    "    'missingDirectChildErrno': errno_of(lambda: os.lstat(os.path.join(root_path, 'oauth.json'))),",
+    "    'rootListingErrno': errno_of(lambda: os.listdir(root_path)),",
+    "    'nestedTraversalErrno': errno_of(lambda: os.lstat(os.path.join(root_path, 'nemoclaw-e2e', 'missing.json'))),",
+    "    'secretReadErrno': errno_of(read_secret),",
+    "}))",
+  ].join("\n");
+  const result = await expectCommand(
+    host,
+    "docker",
+    [
+      ...mountArgs(agent, fixtureRoot, "python3", `${identity.uid}:${identity.gid}`),
+      "-c",
+      script,
+      containerRoot,
+      containerTarget,
+    ],
+    `${agent.id}-locked-confidentiality-access`,
+  );
+  return JSON.parse(result.stdout.trim()) as ConfidentialityAccessEvidence;
+}
+
 function assertBudgetEvidence(
   tree: TreeMeasurement,
   limits: GuardLimits,
@@ -641,6 +703,25 @@ async function runAgentProbe(
     readOnly: { read: true, write: false },
     confidential: { read: false, write: false },
   });
+  const confidentialityAccess = await probeConfidentialityAccessContract(
+    host,
+    agent,
+    fixtureRoot,
+    targets.confidential,
+    identity,
+  );
+  expect(confidentialityAccess).toMatchObject({
+    processUid: identity.uid,
+    processGid: identity.gid,
+    rootUid: 0,
+    rootGid: identity.gid,
+    rootMode: 0o710,
+    missingDirectChildErrno: os.constants.errno.ENOENT,
+    rootListingErrno: os.constants.errno.EACCES,
+    nestedTraversalErrno: os.constants.errno.EACCES,
+    secretReadErrno: os.constants.errno.EACCES,
+  });
+  expect(confidentialityAccess.processUid).not.toBe(confidentialityAccess.rootUid);
 
   const unlock = await runGuard(host, agent, fixtureRoot, "unlock");
   expect(unlock.summary).toMatchObject({
@@ -697,6 +778,7 @@ async function runAgentProbe(
       lock: lock.summary,
       unlock: unlock.summary,
     },
+    confidentialityAccess,
   });
 }
 
@@ -719,10 +801,11 @@ test(
       id: "state-dir-guard-metadata",
       boundary: "prebuilt-production-images-exact-bind-mount",
       contracts: [
-        "the installed root-owned guard loads each image's generated AgentDefinition state-lock plan",
+        "the installed root-owned guard loads each image's generated AgentDefinition state-lock plan for preflight, lock, and unlock",
         "one declared read-only root and one declared confidential root exercise each agent's lifecycle",
         "content and user xattrs survive fresh-inode locking for both declared policies",
         "numeric ownership, mode, raw ACL, mask, and effective named-user access match each declared policy",
+        "a distinct sandbox-group member sees ENOENT for a missing direct child while listing, nested traversal, and secret reads stay denied",
         "representative-tree entry, byte, depth, copy, and wall-time evidence stays within shipped limits",
       ],
     });
@@ -803,6 +886,7 @@ test(
         contentXattrAclPreserved: true,
         effectiveAclClamped: true,
         effectiveAclEnforcedByKernel: true,
+        confidentialityRootAccessContract: true,
         productionBudgetsRecorded: true,
       },
     });

@@ -114,12 +114,13 @@ Restore the latest snapshot:
 $$nemoclaw my-assistant snapshot restore
 ```
 
-Pass a version, name, or timestamp prefix to select a specific snapshot:
+Pass an exact version, name, or timestamp to select a specific snapshot.
+Use the exact timestamp from `snapshot list`; a timestamp prefix does not select a snapshot.
 
 ```bash
 $$nemoclaw my-assistant snapshot restore v3
 $$nemoclaw my-assistant snapshot restore before-upgrade
-$$nemoclaw my-assistant snapshot restore 2026-04-14T
+$$nemoclaw my-assistant snapshot restore 2026-04-14T09-40-09-760Z
 ```
 
 <AgentOnly variant="hermes">
