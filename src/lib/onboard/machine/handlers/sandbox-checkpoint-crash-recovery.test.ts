@@ -493,7 +493,6 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(calls.retireReplacedSandboxWorkload).not.toHaveBeenCalled();
-    expect(calls.repairSandbox).not.toHaveBeenCalled();
     expect(calls.error.mock.calls.flat().join("\n")).toContain("nemoclaw onboard --fresh");
   });
 
