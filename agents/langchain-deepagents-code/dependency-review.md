@@ -156,10 +156,10 @@ same argument from its language-local ID set because it never consumes the
 mutable `config.toml` params table (#7441). Fixing the serving template, model,
 or third-party client in this repository would require vendoring an upstream
 component and would violate the released-dependency boundary. The focused config
-tests prove both managed Ultra IDs receive the argument and unrelated models do
-not; the focused managed-model-params patch test proves the managed provider
-resolver supplies it for exactly those IDs; and the Deep Agents E2E verifies the
-installed request shape.
+tests verify that both managed Ultra IDs receive the argument and unrelated
+models do not. The focused managed-model-params patch test verifies that the
+managed provider resolver supplies it only for those IDs, and the Deep Agents
+E2E test verifies the installed request settings.
 Remove this argument only after a reviewed serving-template or client update
 produces nonempty assistant content for reasoning-plus-tool-call turns without
 it, and the live DCode Ultra E2E passes for both managed model IDs with both

@@ -4,12 +4,12 @@
 #
 # Case: the stock Deep Agents Code sandbox resolves the Nemotron 3 Ultra
 # harness profile, and the installed managed resolver supplies the reviewed
-# Ultra template argument, before later checks intentionally re-onboard to
-# another model.
+# Ultra template argument, before later checks intentionally rerun onboarding
+# with another model.
 #
-# This is a local runtime contract only. It builds the same pre-resolved
-# ChatOpenAI shape that DCode uses, then inspects the selected built-in profile;
-# it never invokes the model or makes a network request.
+# This runtime contract builds the same pre-resolved ChatOpenAI settings that
+# DCode uses, then inspects the selected built-in profile. It never invokes the
+# model or makes a network request.
 #
 # The config.toml assertions below describe the sandbox configuration, which is
 # not what #7441 broke: the hardened managed resolver never consumes the config
@@ -140,8 +140,8 @@ assert model_kwargs == {
 # Managed resolver contract (#7441). The assertions above cover the sandbox
 # configuration and upstream's config reader; the managed launcher builds its
 # model from the installed resolver below, which deliberately ignores that
-# params table. Only this block proves the installed patch, so it pins the whole
-# returned contract rather than the presence of one key.
+# params table. Only this block verifies the installed patch, so it checks all
+# returned settings rather than one key.
 from deepagents_code.config import (
     _NEMOCLAW_NEMOTRON_ULTRA_MODEL_IDS,
     _get_provider_kwargs,
@@ -158,8 +158,8 @@ assert set(_NEMOCLAW_NEMOTRON_ULTRA_MODEL_IDS) == set(MANAGED_MODEL_IDS)
 
 MANAGED_BASE_URL = managed_inference_base_url()
 assert MANAGED_BASE_URL == provider["base_url"], MANAGED_BASE_URL
-# The synthetic credential is fixed in the resolver; the real key never reaches
-# the constructor, so the shaped contract cannot smuggle one in.
+# The resolver supplies only the fixed synthetic credential. The provider
+# credential never reaches the constructor or appears in the returned settings.
 OPENAI_CONTRACT = {
     "api_key": "nemoclaw-managed-inference",
     "base_url": MANAGED_BASE_URL,
@@ -219,7 +219,7 @@ try:
         else:
             raise AssertionError(blocked_provider)
 
-    # Each call returns a fresh contract, so one caller cannot poison the next.
+    # Mutation of one result cannot change a later result.
     tampered = _get_provider_kwargs("openai", model_name=MANAGED_MODEL_IDS[0])
     tampered["api_key"] = "tampered"
     tampered["extra_body"]["chat_template_kwargs"]["force_nonempty_content"] = False
@@ -398,6 +398,6 @@ profile_output="$(
 printf '%s\n' "$profile_output" | grep -Fq "NEMOCLAW_NEMOTRON_ULTRA_PROFILE_OK:" || fail "profile verification marker is missing"
 pass "configured ChatOpenAI resolves the complete Nemotron Ultra profile without inference"
 printf '%s\n' "$profile_output" | grep -Fq "NEMOCLAW_MANAGED_RESOLVER_CONTRACT_OK:" || fail "managed resolver contract marker is missing"
-pass "installed managed resolver shapes both Ultra IDs and nothing else, without inference"
+pass "installed managed resolver matches the tested Ultra, non-Ultra, provider, and network contracts without inference"
 
 printf '%s: 2 passed, 0 failed\n' "$PREFIX"

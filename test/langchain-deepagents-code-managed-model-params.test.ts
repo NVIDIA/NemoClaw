@@ -74,7 +74,7 @@ for blocked_provider in ("anthropic", "fireworks", "ollama", "nvidia"):
     else:
         raise AssertionError(blocked_provider)
 
-# Each call returns a fresh contract, so one caller cannot poison the next.
+# Mutation of one result cannot change a later result.
 tampered = config._get_provider_kwargs("openai", model_name=ultra_models[0])
 tampered["api_key"] = "tampered"
 tampered["extra_body"]["chat_template_kwargs"]["force_nonempty_content"] = False
@@ -91,10 +91,10 @@ print("managed-ultra-template-argument-ok")
     expect(output).toContain("managed-ultra-template-argument-ok");
   });
 
-  it("binds the live Ultra check to the installed resolver, not the config round-trip (#7441)", () => {
-    // The managed resolver never consumes the config params table, so a
+  it("binds the live Ultra E2E test to the installed resolver, not the configuration round trip (#7441)", () => {
+    // The managed resolver never consumes the configuration params table, so a
     // ModelConfig.get_kwargs assertion passes with or without the fix. Keep the
-    // live check bound to the installed function it is meant to accept.
+    // live E2E test bound to the installed function it must verify.
     const e2eCheck = fs.readFileSync(e2eProfileCheckPath, "utf8");
 
     expect(e2eCheck).toContain("from deepagents_code.config import");
