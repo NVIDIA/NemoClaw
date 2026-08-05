@@ -6,9 +6,9 @@
 Source-of-truth note for this localized Hermes runtime patch:
   - Invalid state: Hermes v0.19.0 SessionDB does not set PRAGMA temp_store=MEMORY,
     so SQLite falls back to file-based temp storage when processing FK constraints
-    (e.g. the ON DELETE CASCADE on session_model_usage -> sessions). When
+    (for example, the ON DELETE CASCADE on session_model_usage -> sessions). When
     `hermes sessions delete` is invoked via openshell exec — the code path used by
-    `nemohermes <sb> sessions delete <id>` — the process runs in a restricted
+    `nemohermes <sandbox> sessions delete <id>` — the process runs in a restricted
     environment where SQLite's temp-file creation syscalls fail with
     SQLITE_CANTOPEN, causing every `DELETE FROM sessions` with FK enforcement
     enabled to raise `sqlite3.OperationalError: unable to open database file`
@@ -22,11 +22,14 @@ Source-of-truth note for this localized Hermes runtime patch:
   - Source-fix constraint: NemoClaw layers a sandbox image on top of the
     published Hermes runtime; the source fix belongs upstream in Hermes, not in
     NemoClaw's TypeScript or wrapper code.
-  - Regression proof: this patcher verifies the un-patched pattern exists exactly
-    once (fails closed on source drift); the Dockerfile greps for the inserted
-    PRAGMA after patching; the image-build `session-delete` probe creates a
-    SessionDB, inserts a session with messages, and calls `delete_session()` to
-    confirm no OperationalError is raised.
+  - Regression evidence: on first application, this patcher accepts exactly one
+    unpatched connection setup block and no temp-store statement. A later
+    application accepts exactly one complete patched block with one temp-store
+    statement. Every other source shape fails without writing. The Dockerfile
+    checks for the inserted PRAGMA after patching. The image-build
+    `session-delete` behavior test creates a SessionDB, inserts a session with
+    messages, and calls `delete_session()` to confirm that SQLite does not raise
+    OperationalError.
   - Removal condition: delete this patch when the pinned Hermes runtime natively
     sets `PRAGMA temp_store=MEMORY` (or equivalent) in `SessionDB.__init__`.
 """
@@ -62,8 +65,9 @@ def patch_file(path: Path) -> None:
     if old_count != EXPECTED_OCCURRENCES or new_count != 0:
         raise SystemExit(
             "ERROR: Hermes SessionDB.__init__ connection setup shape changed; "
-            f"expected {EXPECTED_OCCURRENCES} unpatched occurrences, found {old_count} "
-            f"(already patched occurrences: {new_count})"
+            f"expected {EXPECTED_OCCURRENCES} unpatched block and no temp-store "
+            f"statements; found {old_count} unpatched blocks, {new_count} temp-store "
+            f"statements, and {patched_count} complete patched blocks"
         )
     path.write_text(source.replace(OLD, NEW), encoding="utf-8")
 
