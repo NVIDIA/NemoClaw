@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -98,4 +100,104 @@ describe("MCP tool discovery image contract", () => {
     expect(dockerfile).toContain(`node ${runtimeRoot}/mcp-tool-discovery.mjs`);
     expect(dockerfile).not.toContain(`${runtimeRoot}/mcp-tool-discovery.ts`);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "retries npm's exact internal exit-handler failure once before the review gates",
+    () => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-install-retry-"));
+      const script = path.join(fixture, "install-reviewed-runtime.sh");
+      const mockBin = path.join(fixture, "bin");
+      const counter = path.join(fixture, "npm-counter");
+      const invocations = path.join(fixture, "npm-invocations");
+      fs.mkdirSync(mockBin);
+      fs.copyFileSync(
+        path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "install-reviewed-runtime.sh"),
+        script,
+      );
+      fs.writeFileSync(counter, "0\n");
+      fs.writeFileSync(
+        path.join(mockBin, "npm"),
+        `#!/bin/sh
+set -eu
+invocation=$(cat "$NEMOCLAW_TEST_NPM_COUNTER")
+invocation=$((invocation + 1))
+printf '%s\n' "$invocation" >"$NEMOCLAW_TEST_NPM_COUNTER"
+printf '%s\n' "$*" >>"$NEMOCLAW_TEST_NPM_INVOCATIONS"
+if [ "$invocation" -eq 1 ]; then
+  echo 'npm error Exit handler never called!' >&2
+  exit 1
+fi
+exit 0
+`,
+        { mode: 0o755 },
+      );
+
+      try {
+        const result = spawnSync("/bin/sh", [script], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            NEMOCLAW_TEST_NPM_COUNTER: counter,
+            NEMOCLAW_TEST_NPM_INVOCATIONS: invocations,
+            PATH: `${mockBin}:${process.env.PATH ?? ""}`,
+          },
+        });
+
+        expect(result.status).toBe(0);
+        expect(result.stderr).toContain("retrying the locked install once");
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("7");
+        expect(fs.readFileSync(invocations, "utf8").trim().split("\n").slice(0, 2)).toEqual([
+          "ci --ignore-scripts --no-audit --no-fund --no-progress",
+          "ci --ignore-scripts --no-audit --no-fund --no-progress",
+        ]);
+      } finally {
+        fs.rmSync(fixture, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "does not retry a non-internal locked-install failure",
+    () => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-install-failure-"));
+      const script = path.join(fixture, "install-reviewed-runtime.sh");
+      const mockBin = path.join(fixture, "bin");
+      const counter = path.join(fixture, "npm-counter");
+      fs.mkdirSync(mockBin);
+      fs.copyFileSync(
+        path.join(repoRoot, "tools", "mcp-tool-discovery-runtime", "install-reviewed-runtime.sh"),
+        script,
+      );
+      fs.writeFileSync(counter, "0\n");
+      fs.writeFileSync(
+        path.join(mockBin, "npm"),
+        `#!/bin/sh
+set -eu
+invocation=$(cat "$NEMOCLAW_TEST_NPM_COUNTER")
+invocation=$((invocation + 1))
+printf '%s\n' "$invocation" >"$NEMOCLAW_TEST_NPM_COUNTER"
+echo 'npm error lock verification failed' >&2
+exit 42
+`,
+        { mode: 0o755 },
+      );
+
+      try {
+        const result = spawnSync("/bin/sh", [script], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            NEMOCLAW_TEST_NPM_COUNTER: counter,
+            PATH: `${mockBin}:${process.env.PATH ?? ""}`,
+          },
+        });
+
+        expect(result.status).toBe(42);
+        expect(result.stderr).not.toContain("retrying the locked install once");
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("1");
+      } finally {
+        fs.rmSync(fixture, { force: true, recursive: true });
+      }
+    },
+  );
 });
