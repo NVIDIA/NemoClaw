@@ -2124,7 +2124,8 @@ $$nemoclaw my-assistant channels list
 Register a messaging channel with the sandbox and rebuild so the image picks up the new channel.
 Channel enrollment uses these credential and pairing flows:
 
-- **Token paste** (`telegram`, `discord`, `slack`, `teams`): the command prompts for each required credential and registers it with the OpenShell gateway.
+- **Token paste** (`telegram`, `discord`, `slack`, `teams`): the command prompts for required channel inputs.
+  It registers secret credentials with the OpenShell gateway and saves non-secret configuration for rebuilds.
 - **Host-side QR** (`wechat`, experimental): the command renders an iLink QR code on the host and you scan it from WeChat on your phone.
   On confirm, NemoClaw captures the bot token, registers it with the OpenShell gateway, and stores non-secret per-account metadata (`WECHAT_ACCOUNT_ID`, `WECHAT_BASE_URL`, `WECHAT_USER_ID`) for the in-sandbox bridge.
   NemoClaw automatically adds the scanning operator's WeChat user ID to `WECHAT_ALLOWED_IDS`.
@@ -2203,7 +2204,7 @@ Host-side removal is the supported path because agent channel config is baked in
 ### `$$nemoclaw <name> channels stop <channel>`
 
 Pause one configured messaging channel without clearing its credentials.
-The available channel names match `channels list` for the sandbox's agent runtime.
+The command checks the full built-in channel catalog, then requires the channel to be configured for the sandbox.
 The channel is marked disabled in the per-sandbox registry, and the sandbox is rebuilt so the onboard step skips registering the bridge with the gateway.
 The provider stays registered with the OpenShell gateway, so a later `channels start` brings the bridge back without re-entering tokens.
 
