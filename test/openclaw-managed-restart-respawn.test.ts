@@ -136,11 +136,19 @@ with tempfile.TemporaryDirectory() as root:
     os.environ["NEMOCLAW_MANAGED_CONTROL_PROC_ROOT"] = proc_root
 
     lease_path = os.path.join(system_root, "run/nemoclaw", control.EXPECTED_EXIT_MARKER_NAME)
-    observed = {"lease_live_during_terminate": False, "payload": None}
+    observed = {
+        "lease_live_during_terminate": False,
+        "payload": None,
+        "recovery_deadline_provided": False,
+    }
 
-    def fake_terminate(_reader, identity):
+    def fake_terminate(_reader, identity, recovery_deadline=None):
         # The entrypoint reads the lease while the controller waits, so it must
         # exist and name this exact gateway at signal time — not after the wait.
+        observed["recovery_deadline_provided"] = (
+            recovery_deadline is not None
+            and recovery_deadline > control.time.monotonic()
+        )
         observed["lease_live_during_terminate"] = os.path.exists(lease_path)
         if observed["lease_live_during_terminate"]:
             with open(lease_path, "r", encoding="ascii") as stream:
@@ -158,6 +166,7 @@ with tempfile.TemporaryDirectory() as root:
         "result": result,
         "old_pid": old_pid,
         "new_pid": new_pid,
+        "recovery_deadline_provided": observed["recovery_deadline_provided"],
         "lease_live_during_terminate": observed["lease_live_during_terminate"],
         "payload": observed["payload"],
         "controller_pid": controller_pid,
@@ -220,6 +229,7 @@ describe("openclaw managed restart respawn (#6868)", () => {
     // openclaw's SIGTERM exit read as an intentional stop and never respawned.
     expect(observed.lease_live_during_terminate).toBe(true);
     expect(observed.payload).toEqual(["v1", 41, "333", observed.controller_pid]);
+    expect(observed.recovery_deadline_provided).toBe(true);
     expect(observed.result).toBe("ok");
     expect(observed.old_pid).toBe(41);
     expect(observed.new_pid).toBe(43);
