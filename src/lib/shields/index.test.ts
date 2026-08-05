@@ -592,7 +592,7 @@ describe("shields — unit logic", () => {
       expect(appliedPolicy).not.toContain("mcp_bridge_alpha");
     });
 
-    it("reuses the snapshot without staging when the managed MCP policy set is unchanged (#7952)", async () => {
+    it("reuses the snapshot without staging when the snapshot and current policy have no managed MCP entries (#7952)", async () => {
       const snapshotPath = "/state/policy-snapshot-no-managed-mcp.yaml";
       const snapshotYaml = "version: 1\nnetwork_policies:\n  restrictive_baseline: {}\n";
       const writeTempPolicy = vi.fn(() => {
