@@ -21,19 +21,26 @@ describe("gpuPassthroughRecoveryLines", () => {
     }
   });
 
+  // OpenShell dropped `gateway destroy` before 0.0.44 and now rejects it as an
+  // unrecognized subcommand, so the command fails on every OpenShell version
+  // NemoClaw installs (#8139).
+  it("omits openshell gateway destroy for every registered-sandbox count (#8139)", () => {
+    for (const names of [null, [], ["alpha"], ["alpha", "beta"], ["alpha", "beta", "gamma"]]) {
+      expect(gpuPassthroughRecoveryLines(names).join("\n")).not.toContain("gateway destroy");
+    }
+  });
+
   it("suggests targeted gateway cleanup when no sandboxes are registered (null input)", () => {
     const lines = gpuPassthroughRecoveryLines(null);
     const joined = lines.join("\n");
     expect(joined).toContain("Existing gateway was started without GPU passthrough");
     expect(joined).toContain("attempted safe gateway replacement automatically");
     expect(joined).toContain("openshell gateway remove nemoclaw");
-    expect(joined).toContain("openshell gateway destroy -g nemoclaw");
     expect(joined).toContain("sudo pkill -f openshell-gateway");
     expect(joined).toContain("nemoclaw onboard --gpu");
     expect(joined).not.toContain("nemoclaw uninstall");
     // Must NOT suggest the per-sandbox `nemoclaw <name> destroy` form — there
-    // is nothing to destroy. (`openshell gateway destroy -g` is fine; it's
-    // the legacy gateway-lifecycle verb, not a sandbox destroy.)
+    // is nothing to destroy.
     expect(joined).not.toMatch(/nemoclaw [a-z-]+ destroy/);
   });
 

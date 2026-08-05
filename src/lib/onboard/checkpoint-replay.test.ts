@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { decisionSelected, decisionUnset } from "../state/onboard-checkpoint-decision";
 import {
   CHECKPOINT_SCHEMA_VERSION,
@@ -10,8 +11,11 @@ import {
 } from "../state/onboard-checkpoint-types";
 import {
   checkpointSandboxIdentityMatches,
+  observeProviderEffectFingerprint,
   planEffectGroupReplay,
   planSandboxCreateReplay,
+  requiredMessagingProviderBindings,
+  requiredWebSearchProviderType,
 } from "./checkpoint-replay";
 import { bindingRevalidationGuidance, revalidateCheckpointBindings } from "./checkpoint-revalidate";
 
@@ -91,14 +95,14 @@ describe("checkpointSandboxIdentityMatches", () => {
 
 describe("planEffectGroupReplay", () => {
   it("runs an unrecorded effect group", () => {
-    expect(planEffectGroupReplay(checkpoint(), "messaging_providers", true).action).toBe("run");
+    expect(planEffectGroupReplay(checkpoint(), "messaging_providers", "fp").action).toBe("run");
   });
 
   it("re-runs a recorded group whose postcondition no longer holds (never blind skip)", () => {
     const cp = checkpoint({
       effectGroups: { messaging_providers: { completedAt: ISO, fingerprint: "fp" } },
     });
-    const decision = planEffectGroupReplay(cp, "messaging_providers", false);
+    const decision = planEffectGroupReplay(cp, "messaging_providers", null);
     expect(decision).toEqual({
       group: "messaging_providers",
       action: "run",
@@ -110,7 +114,219 @@ describe("planEffectGroupReplay", () => {
     const cp = checkpoint({
       effectGroups: { messaging_providers: { completedAt: ISO, fingerprint: "fp" } },
     });
-    expect(planEffectGroupReplay(cp, "messaging_providers", true).action).toBe("skip");
+    expect(planEffectGroupReplay(cp, "messaging_providers", "fp").action).toBe("skip");
+  });
+
+  it("reruns a recorded effect group when the observed fingerprint differs", () => {
+    const cp = checkpoint({
+      effectGroups: { messaging_providers: { completedAt: ISO, fingerprint: "recorded" } },
+    });
+    expect(planEffectGroupReplay(cp, "messaging_providers", "observed")).toEqual({
+      group: "messaging_providers",
+      action: "run",
+      reason: "fingerprint_mismatch",
+    });
+  });
+});
+
+describe("observeProviderEffectFingerprint", () => {
+  it("revalidates only the providers named by the selected group receipt", () => {
+    const cp = checkpoint({
+      effectGroups: {
+        web_search_provider: { completedAt: ISO, fingerprint: "web" },
+        messaging_providers: { completedAt: ISO, fingerprint: "chat" },
+      },
+      bindings: {
+        credentialEnvs: ["WEB_KEY", "CHAT_KEY"],
+        registeredProviders: [
+          { name: "web", type: "brave", credentialEnv: "WEB_KEY" },
+          { name: "chat", type: "generic", credentialEnv: "CHAT_KEY" },
+        ],
+      },
+    });
+
+    expect(
+      observeProviderEffectFingerprint(
+        cp,
+        "web_search_provider",
+        [{ name: "web", type: "brave", credentialEnv: "WEB_KEY" }],
+        (binding) => binding.name === "web",
+      ),
+    ).toBe("web");
+  });
+
+  it("fails revalidation when a recorded provider binding is missing or does not match", () => {
+    const cp = checkpoint({
+      effectGroups: {
+        messaging_providers: { completedAt: ISO, fingerprint: "chat,missing" },
+      },
+      bindings: {
+        credentialEnvs: ["CHAT_KEY"],
+        registeredProviders: [{ name: "chat", type: "generic", credentialEnv: "CHAT_KEY" }],
+      },
+    });
+
+    expect(
+      observeProviderEffectFingerprint(
+        cp,
+        "messaging_providers",
+        [
+          { name: "chat", type: "generic", credentialEnv: "CHAT_KEY" },
+          { name: "missing", type: "generic", credentialEnv: "MISSING_KEY" },
+        ],
+        () => true,
+      ),
+    ).toBeNull();
+    expect(
+      observeProviderEffectFingerprint(
+        checkpoint({
+          effectGroups: { messaging_providers: { completedAt: ISO, fingerprint: "chat" } },
+          bindings: cp.bindings,
+        }),
+        "messaging_providers",
+        [{ name: "chat", type: "generic", credentialEnv: "CHAT_KEY" }],
+        () => false,
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects a live receipt when the current provider set has changed", () => {
+    const cp = checkpoint({
+      effectGroups: {
+        messaging_providers: { completedAt: ISO, fingerprint: "telegram" },
+      },
+      bindings: {
+        credentialEnvs: ["TELEGRAM_BOT_TOKEN"],
+        registeredProviders: [
+          { name: "telegram", type: "generic", credentialEnv: "TELEGRAM_BOT_TOKEN" },
+        ],
+      },
+    });
+
+    expect(
+      observeProviderEffectFingerprint(
+        cp,
+        "messaging_providers",
+        [
+          { name: "slack-bot", type: "generic", credentialEnv: "SLACK_BOT_TOKEN" },
+          { name: "slack-app", type: "generic", credentialEnv: "SLACK_APP_TOKEN" },
+        ],
+        () => true,
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects a same-name provider when its type or credential key changes", () => {
+    const cp = checkpoint({
+      effectGroups: {
+        web_search_provider: { completedAt: ISO, fingerprint: "search" },
+      },
+      bindings: {
+        credentialEnvs: ["BRAVE_API_KEY"],
+        registeredProviders: [{ name: "search", type: "brave", credentialEnv: "BRAVE_API_KEY" }],
+      },
+    });
+
+    expect(
+      observeProviderEffectFingerprint(
+        cp,
+        "web_search_provider",
+        [{ name: "search", type: "tavily", credentialEnv: "BRAVE_API_KEY" }],
+        () => true,
+      ),
+    ).toBeNull();
+    expect(
+      observeProviderEffectFingerprint(
+        cp,
+        "web_search_provider",
+        [{ name: "search", type: "brave", credentialEnv: "TAVILY_API_KEY" }],
+        () => true,
+      ),
+    ).toBeNull();
+  });
+
+  it("accepts current provider bindings in a different order", () => {
+    const cp = checkpoint({
+      effectGroups: {
+        messaging_providers: { completedAt: ISO, fingerprint: "slack-bot,slack-app" },
+      },
+      bindings: {
+        credentialEnvs: ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
+        registeredProviders: [
+          { name: "slack-bot", type: "generic", credentialEnv: "SLACK_BOT_TOKEN" },
+          { name: "slack-app", type: "generic", credentialEnv: "SLACK_APP_TOKEN" },
+        ],
+      },
+    });
+
+    expect(
+      observeProviderEffectFingerprint(
+        cp,
+        "messaging_providers",
+        [
+          { name: "slack-app", type: "generic", credentialEnv: "SLACK_APP_TOKEN" },
+          { name: "slack-bot", type: "generic", credentialEnv: "SLACK_BOT_TOKEN" },
+        ],
+        () => true,
+      ),
+    ).toBe("slack-bot,slack-app");
+  });
+});
+
+describe("requiredWebSearchProviderType", () => {
+  it("uses the Hermes Tavily profile only for Hermes Tavily selection", () => {
+    expect(requiredWebSearchProviderType("tavily", { name: "hermes" })).toBe("tavily-hermes-v1");
+    expect(requiredWebSearchProviderType("tavily", { name: "openclaw" })).toBe("tavily");
+    expect(requiredWebSearchProviderType("brave", { name: "hermes" })).toBe("brave");
+  });
+});
+
+describe("requiredMessagingProviderBindings", () => {
+  it("includes the Google Chat bridge profile binding", () => {
+    const plan: SandboxMessagingPlan = {
+      schemaVersion: 1,
+      sandboxName: "my-assistant",
+      agent: "openclaw",
+      workflow: "onboard",
+      channels: [
+        {
+          channelId: "googlechat",
+          displayName: "Google Chat",
+          authMode: "token-paste",
+          active: true,
+          selected: true,
+          configured: true,
+          disabled: false,
+          inputs: [],
+          hooks: [],
+        },
+      ],
+      disabledChannels: [],
+      credentialBindings: [],
+      networkPolicy: { presets: [], entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    };
+
+    expect(requiredMessagingProviderBindings("my-assistant", plan)).toContainEqual({
+      name: "my-assistant-googlechat-bridge",
+      type: "google-chat-bridge",
+      credentialEnv: "GOOGLE_CHAT_ACCESS_TOKEN",
+    });
+
+    const disabledPlan: SandboxMessagingPlan = {
+      ...plan,
+      channels: plan.channels.map((channel) => ({
+        ...channel,
+        active: false,
+        disabled: true,
+      })),
+      disabledChannels: ["googlechat"],
+    };
+
+    expect(requiredMessagingProviderBindings("my-assistant", disabledPlan)).toEqual([]);
   });
 });
 

@@ -93,6 +93,10 @@ If validation, runtime cleanup, or temporary-claim retirement fails, uninstall e
 Resolve the reported SSH, Docker, peer-host, or claim error before you retry.
 Runtime cleanup can partially complete before an error, so inspect every cluster node before retrying.
 When sibling gateways remain, it removes only the selected gateway's resources and port-scoped state and preserves those shared host resources.
+A recorded sandbox that OpenShell reports as already removed leaves nothing to delete, so the scoped path reports it, finishes the remaining gateway cleanup, and exits `0`.
+A sandbox that OpenShell cannot reach or refuses to delete still leaves state behind.
+Uninstall exits nonzero and preserves the selected gateway registration, port-scoped state, and selected sandbox registry entry for a retry.
+This failure preservation also applies when you pass `--destroy-user-data`.
 This gateway-scoped path leaves a managed distributed runtime running.
 It preserves the cleanup receipt, copied SSH bindings, temporary discovery claims, and host-global API key.
 This preservation also applies when you pass `--destroy-user-data`.
@@ -105,7 +109,7 @@ Interactive runs prompt before they remove the preserved entries, and the defaul
 For non-interactive runs using `--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell, pass `--destroy-user-data` or set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries.
 
 `--yes` stays non-destructive by design and never purges preserved user data on its own.
-Preserving `sandboxes.json` does not preserve the selected sandbox or gateway registration.
+After a successful or already-absent sandbox deletion, preserving other `sandboxes.json` entries does not preserve the selected sandbox entry or its gateway registration.
 After uninstall confirms that no sibling gateways remain, it also removes the provider registrations and Docker image that the recorded sandboxes depend on.
 
 Uninstall warns that those records cannot be recovered automatically on reinstall, and the remediation is `$$nemoclaw <name> destroy` followed by `$$nemoclaw onboard`.
