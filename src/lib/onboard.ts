@@ -482,8 +482,9 @@ const {
 const { createCoreOnboardFlowPhases, prepareCoreOnboardFlowContext, prepareFinalOnboardFlowContext, runCoreOnboardFlowSlice }: typeof import("./onboard/machine/core-flow-composition") = require("./onboard/machine/core-flow-composition");
 const {
   createFinalOnboardFlowPhases,
+  finalizationHandlerDeps,
   runFinalOnboardFlowSlice,
-}: typeof import("./onboard/machine/final-flow-phases") = require("./onboard/machine/final-flow-phases");
+}: typeof import("./onboard/machine/final-flow-composition") = require("./onboard/machine/final-flow-composition");
 const {
   createInitialOnboardFlowPhases,
   runInitialOnboardFlowSlice,
@@ -581,7 +582,6 @@ import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
 } from "./messaging-channel-config";
-import { finalizationHandlerDeps } from "./onboard/finalization-deps";
 import { streamGatewayStart } from "./onboard/gateway";
 import { bindGatewayAuthorityToCheckpoint } from "./onboard/gateway-authority-checkpoint";
 import { createGatewayHostRuntime } from "./onboard/gateway-host-runtime";
@@ -4501,7 +4501,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         removeLegacyCredentialsFile,
         cleanupStaleHostFiles,
-        ...finalizationHandlerDeps,
         getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
         buildVerifyChain: (chatUiUrl) =>
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
