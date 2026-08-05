@@ -176,6 +176,33 @@ rebind, durable interrupted-restore recovery, ordinary recreate integration, and
 runtime activation are separately reviewable units tracked by that epic.
 If provider proof fails after filesystem restoration, NemoClaw reports that state changed and requires the operator to retry the exact snapshot after the runtime stabilizes.
 
+## Dormant Podman managed bootstrap authority
+
+The Podman candidate owns a separate `managed-bootstrap` command scope bound
+to one exact rootless engine authority. Before a bootstrap mutation, it
+discovers and stably inspects exactly one held OpenShell workload and acquires a
+durable lease over the exact watcher process and lifecycle owner. Ambiguous
+workloads, watcher ownership, PID reuse, endpoint drift, or a competing lease
+fail closed.
+
+Preparation creates a private managed state volume and a stopped,
+final-labelled replacement while retaining the exact original. Its monotonic
+journal records the engine authority, watcher lease, immutable original and
+replacement identities, image and specification fingerprints, state volume,
+and rollback decision before each external effect. Pre-commit rollback removes
+only the proven stopped replacement and owned volume, restores the exact
+original, and leaves the watcher lease with the caller until a healthy exact
+owner is independently requalified.
+
+The image transaction accepts only that prepared authority. It stages one
+protected root-apply request, starts the exact replacement, and authenticates
+the image-owned completion for OpenClaw, Hermes, or LangChain Deep Agents Code.
+The watcher stays stopped and the journal remains authoritative throughout.
+These provider-owned modules remain disconnected from production runtime
+selection; persisted post-commit recovery, GPU and local inference, installer
+qualification, and supported activation remain later gates in
+[`#7744`](https://github.com/NVIDIA/NemoClaw/issues/7744).
+
 ## Agent-specific differences
 
 | Agent | Lifecycle difference |

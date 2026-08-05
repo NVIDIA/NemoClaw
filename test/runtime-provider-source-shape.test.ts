@@ -148,6 +148,11 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/managed-bootstrap/image-runtime.ts",
       "src/lib/onboard/managed-bootstrap/index.ts",
       "src/lib/onboard/managed-bootstrap/managed-bootstrap-test-fixture.ts",
+      "src/lib/onboard/managed-bootstrap/podman-bootstrap-journal.ts",
+      "src/lib/onboard/managed-bootstrap/podman-bootstrap-replacement.ts",
+      "src/lib/onboard/managed-bootstrap/podman-held-workload.ts",
+      "src/lib/onboard/managed-bootstrap/podman-image-transaction.ts",
+      "src/lib/onboard/managed-bootstrap/podman-watcher-lease.ts",
       "src/lib/onboard/managed-bootstrap/runtime-create.ts",
     ]);
   });

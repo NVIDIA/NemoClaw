@@ -7,6 +7,7 @@ import path from "node:path";
 export type ContainerEngineOperationScope =
   | "host-doctor"
   | "gateway-inspection"
+  | "managed-bootstrap"
   | "sandbox-lifecycle"
   | "workload-cleanup";
 

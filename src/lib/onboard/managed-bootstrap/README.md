@@ -100,6 +100,25 @@ restored original quiescent and preserves the journal without a terminal
 receipt until the owning sandbox service removes the exact runtime and the
 provider proves its absence. Unknown runtime presence is a retryable durable
 cleanup failure, never evidence of absence.
+
+The dormant Podman candidate keeps the same provider-neutral coordinator
+boundary but owns its engine-specific authority internally. It binds one
+operation-scoped Podman command adapter to the exact rootless endpoint, captures
+one held OpenShell workload twice, and durably leases the watcher owner before
+any cutover. Preparation creates and proves a stopped, final-labelled
+replacement and its private managed state volume while retaining the exact
+original. The journal records every mutation boundary before the next external
+effect and preserves enough immutable identity to roll back without deleting by
+name.
+
+Image bootstrap accepts only that prepared authority. It stages one protected
+root-apply envelope, starts the exact replacement, and authenticates the
+image-owned completion for OpenClaw, Hermes, or LangChain Deep Agents Code.
+The watcher remains stopped and the journal remains authoritative throughout.
+These modules are intentionally absent from the production provider registry;
+the hidden experimental runtime boundary can qualify them before later slices
+add persisted engine recovery, GPU and local inference, installer coverage,
+and supported activation.
 The image-owned shared-state transaction uses the same identity-bound model: a
 commit atomically moves its pending manifest and backups into a durable receipt
 namespace, compacts that state to an exact commit receipt, and rejects rollback
