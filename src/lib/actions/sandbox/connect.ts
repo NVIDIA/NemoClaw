@@ -13,6 +13,7 @@ import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
+import type { AgentDefinition } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
@@ -1054,9 +1055,14 @@ function waitForSandboxReadyOrExit(
   for (const line of successLogs) console.log(line);
 }
 
-export async function connectSandbox(
+/**
+ * Shared prefix of every connect-style entry point: registry/route validation,
+ * the express-vLLM model preflight, the owning-gateway pin, and the Docker
+ * outage fast-fail. Runs before any probe or interactive work.
+ */
+async function runConnectEntryPreflight(
   sandboxName: string,
-  { probeOnly = false }: SandboxConnectOptions = {},
+  { probeOnly }: { probeOnly: boolean },
 ): Promise<void> {
   try {
     assertNoOpenShellGatewayEndpointOverride();
@@ -1100,18 +1106,20 @@ export async function connectSandbox(
   ) {
     failConnectReadinessDockerRuntimeDown(sandboxName);
   }
+}
 
-  if (probeOnly) {
-    waitForSandboxReadyOrExit(sandboxName, {
-      defaultTimeoutSec: 300,
-      retryCommand: "connect --probe-only",
-    });
-    // Re-pin and re-observe the owning gateway after a potentially long wait
-    // before any in-sandbox process or host-forward mutation. The readiness
-    // polls are already owner-scoped; this also catches registry changes.
-    await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
-    return await runSandboxConnectProbe(sandboxName);
-  }
+/**
+ * Everything an interactive sandbox session needs before SSH is spawned:
+ * the shared connect entry preflight plus process recovery, readiness wait,
+ * inference-route reconcile, and the auto-pair approval pass. Shared by
+ * `connect` and `launch`; both are always non-probe-only. Any
+ * `process.exit(...)` reached here ends the process exactly as it does on the
+ * connect path.
+ */
+export async function prepareInteractiveSession(
+  sandboxName: string,
+): Promise<{ agent: AgentDefinition | null; sb: SandboxEntry | null }> {
+  await runConnectEntryPreflight(sandboxName, { probeOnly: false });
 
   // Version staleness check — warn but don't block
   try {
@@ -1177,6 +1185,28 @@ export async function connectSandbox(
   // (#4616). Uses the tight connect budget (#4504).
   runConnectAutoPairApprovalPass(sandboxName);
 
+  return { agent, sb };
+}
+
+export async function connectSandbox(
+  sandboxName: string,
+  { probeOnly = false }: SandboxConnectOptions = {},
+): Promise<void> {
+  if (probeOnly) {
+    await runConnectEntryPreflight(sandboxName, { probeOnly: true });
+    waitForSandboxReadyOrExit(sandboxName, {
+      defaultTimeoutSec: 300,
+      retryCommand: "connect --probe-only",
+    });
+    // Re-pin and re-observe the owning gateway after a potentially long wait
+    // before any in-sandbox process or host-forward mutation. The readiness
+    // polls are already owner-scoped; this also catches registry changes.
+    await ensureLiveSandboxOrExit(sandboxName, { gatewayRecovery: "observe" });
+    return await runSandboxConnectProbe(sandboxName);
+  }
+
+  const { agent, sb } = await prepareInteractiveSession(sandboxName);
+
   // Print a one-shot hint before dropping the user into the sandbox
   // shell so a fresh user knows the first thing to type. Without this,
   // `nemoclaw <name> connect` lands on a bare bash prompt and users
@@ -1187,9 +1217,9 @@ export async function connectSandbox(
     !["1", "true"].includes(String(process.env.NEMOCLAW_NO_CONNECT_HINT || ""))
   ) {
     console.log("");
-    const agentName = sb?.agent || "openclaw";
-    const terminalCommand = agentRuntime.getTerminalCommand(agent, "interactive");
-    const agentCmd = terminalCommand ?? (agentName === "openclaw" ? "openclaw tui" : agentName);
+    // Same resolver `launch` uses, so the hint cannot drift from the command
+    // that `nemoclaw launch <name>` actually runs (#6006).
+    const agentCmd = agentRuntime.getInteractiveAgentCommand(agent, sb?.agent);
     console.log(`  ${G}✓${R} Connecting to sandbox '${sandboxName}'`);
     console.log(
       `  ${D}Inside the sandbox, run \`${agentCmd}\` to start chatting with the agent.${R}`,
