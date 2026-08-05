@@ -5,10 +5,6 @@ import { EventEmitter } from "node:events";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({
-  dockerSpawn: vi.fn(),
-}));
-
 import {
   acquireHuggingFaceModel,
   buildHfTokenDockerArgs,
@@ -18,6 +14,8 @@ import {
   type HuggingFaceModelAcquisitionRequest,
   hfDownloadAuthentication,
 } from "./hugging-face";
+
+const dockerSpawn = vi.fn();
 
 interface MockProcess extends EventEmitter {
   readonly stderr: EventEmitter;
@@ -43,7 +41,7 @@ function request(
     hostCacheDir: "/home/nvidia/.cache/huggingface",
     repository: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-GGUF",
     revision: "0123456789abcdef0123456789abcdef01234567",
-    spawnDocker: mocks.dockerSpawn,
+    spawnDocker: dockerSpawn,
     userIdentity: "1001:1001",
     ...overrides,
   };
@@ -132,6 +130,18 @@ describe("Hugging Face model acquisition", () => {
     );
   });
 
+  it.each([
+    "",
+    "--revision",
+    " nvidia/model",
+    "nvidia/model ",
+    "nvidia/bad model",
+  ])("rejects a repository that is not one positional argument %j (#8279)", (repository) => {
+    expect(() => buildHuggingFaceModelDownloadArgv(request({ repository }))).toThrow(
+      "Hugging Face repository must be one non-empty positional argument",
+    );
+  });
+
   it("rejects a cache path that is not normalized before starting Docker (#8279)", () => {
     expect(() =>
       buildHuggingFaceModelDownloadArgv(request({ hostCacheDir: "/cache/../foreign" })),
@@ -146,14 +156,14 @@ describe("Hugging Face model acquisition", () => {
 
   it("forwards the token by key outside argv and reports completion (#8279)", async () => {
     const proc = mockProcess();
-    mocks.dockerSpawn.mockReturnValue(proc);
+    dockerSpawn.mockReturnValue(proc);
     const input = request();
     const events = observer();
     const resultPromise = acquireHuggingFaceModel(input, events);
     proc.emit("exit", 0);
 
     await expect(resultPromise).resolves.toEqual({ ok: true });
-    const [argv, options] = mocks.dockerSpawn.mock.calls[0] as [
+    const [argv, options] = dockerSpawn.mock.calls[0] as [
       string[],
       { env: Record<string, string>; stdio: string[] },
     ];
@@ -176,7 +186,7 @@ describe("Hugging Face model acquisition", () => {
   it("redacts a token split across UTF-8 output chunks and detects rate limiting (#8279)", async () => {
     const token = `hf_${"r".repeat(32)}`;
     const proc = mockProcess();
-    mocks.dockerSpawn.mockReturnValue(proc);
+    dockerSpawn.mockReturnValue(proc);
     const events = observer();
     const resultPromise = acquireHuggingFaceModel(
       request({ credentialEnv: { HF_TOKEN: token } }),
@@ -211,10 +221,38 @@ describe("Hugging Face model acquisition", () => {
     expect(events.onRateLimit).toHaveBeenCalledOnce();
   });
 
+  it("redacts a contextual bearer credential split across same-stream chunks (#8279)", async () => {
+    const secret = "opaque-bearer-value";
+    const proc = mockProcess();
+    dockerSpawn.mockReturnValue(proc);
+    const resultPromise = acquireHuggingFaceModel(request({ credentialEnv: {} }), observer());
+    proc.stdout.emit("data", Buffer.from("Authorization: Bearer "));
+    proc.stdout.emit("data", Buffer.from(`${secret} request failed\n`));
+    proc.emit("exit", 1);
+
+    await expect(resultPromise).resolves.toEqual({
+      ok: false,
+      reason: "hf download failed (exit 1)",
+    });
+    const output = stdoutWrite.mock.calls.map((call: unknown[]) => String(call[0])).join("");
+    expect(output).toContain("Authorization: Bearer <REDACTED> request failed");
+    expect(output).not.toContain(secret);
+  });
+
+  it("returns validation failures without spawning Docker (#8279)", async () => {
+    await expect(
+      acquireHuggingFaceModel(request({ hostCacheDir: "/cache/../foreign" }), observer()),
+    ).resolves.toEqual({
+      ok: false,
+      reason: "Hugging Face cache must be a normalized absolute path without ':'",
+    });
+    expect(dockerSpawn).not.toHaveBeenCalled();
+  });
+
   it("returns one spawn error and clears the download heartbeat (#8279)", async () => {
     vi.useFakeTimers();
     const proc = mockProcess();
-    mocks.dockerSpawn.mockReturnValue(proc);
+    dockerSpawn.mockReturnValue(proc);
     const events = observer();
     const resultPromise = acquireHuggingFaceModel(request(), events);
     proc.emit("error", new Error("docker unavailable"));
@@ -226,6 +264,8 @@ describe("Hugging Face model acquisition", () => {
     });
     await vi.advanceTimersByTimeAsync(60_000);
     expect(events.logLine).toHaveBeenCalledTimes(1);
+    expect(events.onRateLimit).not.toHaveBeenCalled();
+    expect(stderrWrite.mock.calls.flat().join("\n")).not.toContain("hf output lines");
   });
 
   it("keeps token selection and metadata behavior independent of the serving provider (#8279)", () => {

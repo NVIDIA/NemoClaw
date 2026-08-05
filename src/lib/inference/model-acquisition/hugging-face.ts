@@ -115,6 +115,18 @@ function exactFilenameArgs(filename: string | undefined): string[] {
   return [filename];
 }
 
+function repositoryArg(repository: string): string {
+  if (
+    repository.length === 0 ||
+    repository.includes("\0") ||
+    repository.startsWith("-") ||
+    /\s/.test(repository)
+  ) {
+    throw new Error("Hugging Face repository must be one non-empty positional argument");
+  }
+  return repository;
+}
+
 export function buildHuggingFaceModelDownloadArgv(
   request: HuggingFaceModelAcquisitionRequest,
 ): string[] {
@@ -134,7 +146,7 @@ export function buildHuggingFaceModelDownloadArgv(
     ...buildHfTokenDockerArgs(credentialEnv),
     request.downloaderImage,
     "download",
-    request.repository,
+    repositoryArg(request.repository),
     ...exactFilenameArgs(request.filename),
     ...(request.revision ? ["--revision", request.revision] : []),
   ];
@@ -170,7 +182,7 @@ function redactHfDownloadOutputChunks(
   }
 
   let chunkStart = 0;
-  return chunks.map((chunk) => {
+  const tokenRedactedChunks = chunks.map((chunk) => {
     const chunkEnd = chunkStart + chunk.text.length;
     let cursor = chunkStart;
     let safeText = "";
@@ -182,8 +194,30 @@ function redactHfDownloadOutputChunks(
     }
     safeText += joined.slice(cursor, chunkEnd);
     chunkStart = chunkEnd;
-    return redactHfDownloadOutput(safeText, null);
+    return { text: safeText, stream: chunk.stream };
   });
+
+  const redactedChunks = tokenRedactedChunks.map(() => "");
+  let groupStart = 0;
+  while (groupStart < tokenRedactedChunks.length) {
+    const stream = tokenRedactedChunks[groupStart].stream;
+    let groupEnd = groupStart + 1;
+    while (
+      groupEnd < tokenRedactedChunks.length &&
+      tokenRedactedChunks[groupEnd].stream === stream
+    ) {
+      groupEnd += 1;
+    }
+    redactedChunks[groupStart] = redactHfDownloadOutput(
+      tokenRedactedChunks
+        .slice(groupStart, groupEnd)
+        .map((chunk) => chunk.text)
+        .join(""),
+      null,
+    );
+    groupStart = groupEnd;
+  }
+  return redactedChunks;
 }
 
 /**
@@ -194,14 +228,34 @@ export function acquireHuggingFaceModel(
   request: HuggingFaceModelAcquisitionRequest,
   observer: HuggingFaceModelAcquisitionObserver,
 ): Promise<HuggingFaceModelAcquisitionResult> {
-  observer.logLine(`Pre-downloading model with hf: ${request.repository}`);
   return new Promise((resolve) => {
     const credentialEnv = request.credentialEnv ?? process.env;
     const tokenValue = pickHfTokenEntry(credentialEnv)?.value ?? null;
-    const proc = request.spawnDocker(buildHuggingFaceModelDownloadArgv(request), {
-      env: { ...request.dockerEnv, ...buildHfTokenForwardEnv(credentialEnv) },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    let argv: string[];
+    try {
+      argv = buildHuggingFaceModelDownloadArgv(request);
+    } catch (err) {
+      resolve({
+        ok: false,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+    observer.logLine(`Pre-downloading model with hf: ${request.repository}`);
+
+    let proc: ReturnType<typeof spawn>;
+    try {
+      proc = request.spawnDocker(argv, {
+        env: { ...request.dockerEnv, ...buildHfTokenForwardEnv(credentialEnv) },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err) {
+      resolve({
+        ok: false,
+        reason: `spawn error: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      return;
+    }
 
     const tail: string[] = [];
     const outputDecoders = [
@@ -302,6 +356,7 @@ export function acquireHuggingFaceModel(
     });
 
     proc.on("exit", (code: number | null) => {
+      if (resolved) return;
       finalizeOutputDecoders();
       if (code === 0) {
         if (!lastOutputEndedCleanly) process.stdout.write("\n");

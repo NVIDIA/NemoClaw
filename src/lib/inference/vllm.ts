@@ -91,12 +91,6 @@ import {
   type StorageProbeResult,
 } from "./vllm-storage";
 
-export {
-  buildHfTokenDockerArgs,
-  buildHfTokenForwardEnv,
-  hfDownloadAuthentication,
-} from "./model-acquisition/hugging-face";
-
 // Per-platform install recipe. Add new platforms by appending an entry to
 // the profile table at the bottom of this file. The menu key in onboard.ts
 // stays "install-vllm" regardless of platform.
