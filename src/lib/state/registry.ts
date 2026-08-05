@@ -63,6 +63,7 @@ export {
   withLock,
 } from "./registry/lock";
 export { load, REGISTRY_FILE, save } from "./registry/persistence";
+export { cloneSandboxHostLocalInferenceReceipt } from "./registry/host-local-inference";
 export type {
   BaselineExclusionEntry,
   BaselineExclusionTransition,

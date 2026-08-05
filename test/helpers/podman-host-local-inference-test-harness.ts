@@ -152,7 +152,18 @@ function engineHarness(authorityId = AUTHORITY_ID) {
         };
       }
       case "container": {
-        assert.equal(args[1], "inspect", "unexpected container operation");
+        switch (args[1]) {
+          case "exists":
+            return {
+              status: containers.has(String(args[2])) ? 0 : 1,
+              stdout: "",
+              stderr: "",
+            };
+          case "inspect":
+            break;
+          default:
+            assert.fail("unexpected container operation");
+        }
         const container = requireContainer(containers, String(args[2]));
         return {
           status: 0,

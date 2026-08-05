@@ -10,6 +10,11 @@ import {
   requireRuntimeProviderDestructiveCleanupAuthority,
 } from "../../onboard/runtime-provider/access";
 import {
+  type PreparedHostLocalInferenceAuthority,
+  prepareSandboxHostLocalInferenceDestroyAuthority,
+  retirePreparedHostLocalInferenceAuthority,
+} from "../../onboard/runtime-provider/host-local-inference-lifecycle";
+import {
   type DetachSandboxProvidersResult,
   runSandboxProviderPreDeleteCleanup,
 } from "../../onboard/sandbox-provider-cleanup";
@@ -34,6 +39,8 @@ export function redactDestroyError(error: unknown): string {
 type SandboxDestroyExecutionInput = {
   cleanupShieldsArtifacts: (sandboxName: string) => void;
   force: boolean;
+  getSandbox: (sandboxName: string) => SandboxEntry | null;
+  listSandboxes: () => { sandboxes: SandboxEntry[] };
   runOpenshell: DestroyRunOpenshell;
   sandbox: SandboxEntry | null;
   sandboxConfirmedAbsent: boolean;
@@ -62,6 +69,8 @@ export type SandboxDestroyExecutionResult =
       mcpOwnershipRequiresGateway: boolean;
       mcpRecoveryFailure?: string;
       shieldsRelockRequiresGateway: boolean;
+      hostLocalInferenceCleanupFailure?: string;
+      deleteConfirmed?: boolean;
     };
 
 type HardenedDeleteState = {
@@ -242,6 +251,8 @@ async function finalizeMcpDestroy(
 export async function executeSandboxDestroy({
   cleanupShieldsArtifacts,
   force,
+  getSandbox,
+  listSandboxes,
   runOpenshell,
   sandbox,
   sandboxConfirmedAbsent,
@@ -251,6 +262,7 @@ export async function executeSandboxDestroy({
 }: SandboxDestroyExecutionInput): Promise<SandboxDestroyExecutionResult> {
   return withTimerBoundShieldsMutationLockAsync(sandboxName, "destroy sandbox", async () => {
     let runtimeProvider: RuntimeProviderBundle | null = null;
+    let hostLocalInferenceAuthority: PreparedHostLocalInferenceAuthority | null = null;
     if (sandbox) {
       try {
         runtimeProvider = requireRuntimeProviderDestructiveCleanupAuthority(
@@ -258,6 +270,10 @@ export async function executeSandboxDestroy({
           sandbox,
           runtimeProviders,
         ).provider;
+        hostLocalInferenceAuthority = prepareSandboxHostLocalInferenceDestroyAuthority(
+          runtimeProvider,
+          sandbox,
+        );
       } catch (error) {
         return {
           ok: false as const,
@@ -330,6 +346,35 @@ export async function executeSandboxDestroy({
     cleanupShieldsArtifacts(sandboxName);
     if (!forcedLocalCleanup) {
       await finalizeMcpDestroy(sandboxName, mcpPreparation, force);
+    }
+    if (!forcedLocalCleanup && runtimeProvider && sandbox && hostLocalInferenceAuthority) {
+      // Keep retirement after confirmed sandbox deletion: retiring first could
+      // leave a still-live sandbox without inference when its delete fails.
+      // The registry row is the durable cleanup journal. A retirement failure
+      // returns before that row is removed, and a retry takes the already-gone
+      // path to converge the provider's idempotent exact-runtime teardown.
+      try {
+        const current = getSandbox(sandboxName);
+        if (!current) {
+          throw new Error(`sandbox '${sandboxName}' is no longer registered`);
+        }
+        retirePreparedHostLocalInferenceAuthority(
+          runtimeProvider,
+          current,
+          hostLocalInferenceAuthority,
+          listSandboxes().sandboxes,
+        );
+      } catch (error) {
+        return {
+          ok: false as const,
+          deleteOutput,
+          exitCode: 1,
+          gatewayUnreachable: false,
+          mcpOwnershipRequiresGateway: false,
+          hostLocalInferenceCleanupFailure: redactDestroyError(error),
+          deleteConfirmed: true,
+        };
+      }
     }
     return {
       ok: true as const,

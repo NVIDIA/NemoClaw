@@ -68,6 +68,25 @@ describe("Podman host-local inference runtime", () => {
     ]);
   });
 
+  it("retains externally owned Ollama while proving the exact route during destroy", () => {
+    const host = runtimeHarness();
+    const receipt = host.runtime.qualifyOllama({
+      networkName: "openshell",
+      hostPort: 11434,
+      probeImageRef: PROBE_IMAGE_REF,
+    });
+    host.setProbeFailure("host process is temporarily unavailable");
+
+    expect(host.runtime.destroy(receipt)).toEqual({
+      status: "retained",
+      reason: "host-process",
+      receipt,
+    });
+    expect(
+      host.capture.mock.calls.map(([args]) => args).some(([operation]) => operation === "rm"),
+    ).toBe(false);
+  });
+
   it.each([
     "nim",
     "vllm",
@@ -112,6 +131,25 @@ describe("Podman host-local inference runtime", () => {
     expect(host.capture.mock.calls.map(([args]) => args)).toContainEqual([
       "start",
       receipt.runtime.kind === "container" ? receipt.runtime.runtimeId : "unreachable",
+    ]);
+  });
+
+  it.each([
+    "nim",
+    "vllm",
+  ] as const)("removes exact managed %s authority and makes destroy idempotent", (service) => {
+    const host = runtimeHarness();
+    const receipt = host.runtime.startManaged(managedInput(service));
+    const runtimeId =
+      receipt.runtime.kind === "container" ? receipt.runtime.runtimeId : "unreachable";
+
+    expect(host.runtime.destroy(receipt)).toEqual({ status: "removed", receipt });
+    expect(host.containers.has(runtimeId)).toBe(false);
+    expect(host.runtime.destroy(receipt)).toEqual({ status: "already-absent", receipt });
+    expect(host.capture.mock.calls.map(([args]) => args)).toContainEqual([
+      "rm",
+      "--force",
+      runtimeId,
     ]);
   });
 
