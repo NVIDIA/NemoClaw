@@ -262,7 +262,7 @@ describe("Hermes doctor and config hash boundary", () => {
       expect([mode(configPath), mode(envPath)]).toEqual(["640", "640"]);
 
       const hash = runDockerShell(hashCommand, sandboxRoot);
-      expect(hash.result.status).toBe(0);
+      expect(hash.result.status, hash.result.stderr).toBe(0);
       expect(hash.result.stderr).toBe("");
       expect(mode(path.join(etcDir, "hermes.config-hash"))).toBe("444");
       const verifyHash = spawnSync("sha256sum", ["-c", path.join(etcDir, "hermes.config-hash")], {
