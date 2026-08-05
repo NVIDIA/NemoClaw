@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
   env?: WorkflowRecord;
@@ -12,7 +14,7 @@ type WorkflowStep = WorkflowRecord & {
 
 const JOB_ID = "managed-image-protected-runtime";
 const SELECTOR =
-  "${{ contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,') }}";
+  "${{ always() && needs['generate-matrix'].result == 'success' && needs['managed-image-multiarch-startup'].result == 'success' && (contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,')) }}";
 const ACTIVATION_PATH = "ci/protected-managed-image-runtime-activation-v1.json";
 const LIVE_TEST_PATH = "test/e2e/live/managed-image-protected-runtime.test.ts";
 const REGISTRY_IMAGE =
@@ -89,7 +91,9 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   const job = record(record(workflow.jobs)[JOB_ID]);
   if (Object.keys(job).length === 0) return [`workflow missing ${JOB_ID} job`];
 
-  if (job.needs !== "generate-matrix") errors.push(`${JOB_ID} must depend on generate-matrix`);
+  if (!isDeepStrictEqual(job.needs, ["generate-matrix", "managed-image-multiarch-startup"])) {
+    errors.push(`${JOB_ID} must depend on generate-matrix and managed-image-multiarch-startup`);
+  }
   if (job.if !== SELECTOR) errors.push(`${JOB_ID} must remain explicit-only and selector-bound`);
   if (job["runs-on"] !== "linux-amd64-gpu-rtxpro6000-latest-1") {
     errors.push(`${JOB_ID} must run on the protected amd64 GPU runner`);
@@ -97,6 +101,9 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
   if (job["timeout-minutes"] !== 300) errors.push(`${JOB_ID} must keep the 300 minute timeout`);
   if (record(job.permissions).contents !== "read") {
     errors.push(`${JOB_ID} permissions must be contents: read`);
+  }
+  if (record(job.permissions).actions !== "read") {
+    errors.push(`${JOB_ID} permissions must be actions: read`);
   }
   if (job["continue-on-error"] !== undefined) {
     errors.push(`${JOB_ID} must not weaken failures with continue-on-error`);
@@ -113,6 +120,10 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     NEMOCLAW_E2E_SHARD: "linux-amd64-gpu",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: "${{ inputs.base_sha }}",
+    NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE:
+      "${{ github.workspace }}/.protected-managed-image-build-cache/linux-amd64",
+    NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT:
+      "protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT:
       "protected-${{ github.run_id }}-${{ github.run_attempt }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT:
@@ -186,6 +197,21 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "persist-credentials": false,
   });
 
+  const cacheDownload = requireStep(
+    errors,
+    workflowSteps,
+    "Download exact protected runtime build cache",
+  );
+  if (
+    cacheDownload?.uses !== "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
+  ) {
+    errors.push(`${JOB_ID} must pin the reviewed build cache download action`);
+  }
+  requireValues(errors, `${JOB_ID} build cache download`, record(cacheDownload?.with), {
+    name: "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT }}",
+    path: "${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}",
+  });
+
   const buildx = requireStep(errors, workflowSteps, "Set up protected runtime Buildx");
   if (buildx?.uses !== "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c") {
     errors.push(`${JOB_ID} must pin the reviewed Buildx setup action`);
@@ -253,6 +279,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     '--cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT"',
     "--platform linux/amd64",
     '--source-root "$GITHUB_WORKSPACE/.candidate-runtime"',
+    '--offline-cache "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE"',
     '--openclaw-base "$BASE_OPENCLAW"',
     '--hermes-base "$BASE_HERMES"',
     '--dcode-base "$BASE_DCODE"',
@@ -314,6 +341,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     "Validate protected runtime exact-head dispatch",
     "Checkout trusted protected runtime qualification",
     "Checkout exact protected runtime candidate source",
+    "Download exact protected runtime build cache",
     "Prepare E2E workspace",
     "Validate protected runtime activation contract",
     "Resolve exact amd64 runtime base images",
