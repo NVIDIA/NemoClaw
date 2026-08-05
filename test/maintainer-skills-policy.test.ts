@@ -43,6 +43,63 @@ describe("maintainer skills follow canonical workflow policy", () => {
     ).toBe(false);
   });
 
+  it("keeps N1X routing canonical across maintainer policy sources (#8095)", () => {
+    const taxonomy = JSON.parse(
+      read(".agents/skills/nemoclaw-maintainer-policies/references/label-taxonomy.json"),
+    ) as {
+      label_families: {
+        platform: {
+          entries: Array<{
+            description: string;
+            name: string;
+            negative_signals: string[];
+            positive_signals: string[];
+          }>;
+          values: string[];
+        };
+      };
+    };
+    const markdown = read(
+      ".agents/skills/nemoclaw-maintainer-policies/references/label-taxonomy.md",
+    );
+    const instructions = read(
+      ".agents/skills/nemoclaw-maintainer-policies/references/triage-instructions.md",
+    );
+    const examples = read(".agents/skills/nemoclaw-maintainer-policies/references/examples.md");
+    const staleCandidateSelection = read(
+      ".agents/skills/nemoclaw-maintainer-verify-stale/reference/candidate-selection.md",
+    );
+    const n1xExample = examples.match(
+      /### N1X Linux Install Failure[\s\S]*?(?=\n### |\n## |$)/,
+    )?.[0];
+    const n1x = taxonomy.label_families.platform.entries.find(
+      (entry) => entry.name === "platform: n1x",
+    );
+
+    expect(taxonomy.label_families.platform.values).toContain("platform: n1x");
+    expect(n1x).toEqual(
+      expect.objectContaining({
+        name: "platform: n1x",
+        description: "Affects N1X hardware or workflows.",
+        positive_signals: expect.arrayContaining(["N1x Linux Laptop", "NVIDIA RTX Spark N1X"]),
+        negative_signals: expect.arrayContaining([
+          "ARM64 issue without N1X evidence",
+          "NVIDIA hardware mentioned without N1X relevance",
+        ]),
+      }),
+    );
+    expect(markdown).toContain("| `platform: n1x` | Affects N1X hardware or workflows. |");
+    expect(instructions).toContain(
+      "Map N1X, N1x Linux Laptop, and NVIDIA RTX Spark N1X evidence to `platform: n1x`",
+    );
+    expect(n1xExample).toContain('"labels_to_add": ["area: install", "platform: n1x"]');
+    expect(n1xExample).not.toContain('"platform: ubuntu"');
+    expect(n1xExample).not.toContain('"platform: arm64"');
+    expect(staleCandidateSelection).toContain(
+      "`platform: jetson`, and `platform: n1x`. Brev has no equivalent hardware",
+    );
+  });
+
   it("reads priority from Project 199 instead of a priority label", () => {
     const finder = read(".agents/skills/nemoclaw-maintainer-find-review-pr/SKILL.md");
     const triage = read(".agents/skills/nemoclaw-maintainer-day/scripts/triage.ts");

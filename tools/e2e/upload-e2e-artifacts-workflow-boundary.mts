@@ -158,6 +158,13 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "llama-cpp-dgx-spark-qualification",
+    {
+      name: "e2e-llama-cpp-dgx-spark-qualification",
+      path: "e2e-artifacts/live/llama-cpp-dgx-spark-qualification/",
+    },
+  ],
+  [
     "network-policy",
     {
       name: "e2e-network-policy-${{ matrix.scenario }}",
