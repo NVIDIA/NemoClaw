@@ -18,7 +18,7 @@ export function createPackageFixture(options: {
 
   // npm runs `prepare` when it packs a local directory, even with
   // `--ignore-scripts`. Remove package scripts so parallel package-contract
-  // workers only read `dist`.
+  // workers only read the copied package inputs.
   packageJson.scripts = {};
   writeFileSync(
     path.join(fixtureRoot, "package.json"),
