@@ -219,13 +219,19 @@ export function expectFailedMcpFinalizePreservesRegistry(harness: DestroyHarness
   expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
 }
 
-export function expectMcpPrepareBridgeErrorAborts(harness: DestroyHarness): void {
+export function expectMcpPrepareBridgeErrorAborts(
+  harness: DestroyHarness,
+  secretMarker: string,
+): void {
   expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalled();
   // MCP preparation must succeed before NemoClaw asks OpenShell to delete the sandbox.
   expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
     expect.arrayContaining(["sandbox", "delete"]),
     expect.anything(),
   );
+  const errorOutput = harness.errorSpy.mock.calls.flat().map(String).join("\n");
+  expect(errorOutput).not.toContain(secretMarker);
+  expect(errorOutput).toContain("<REDACTED>");
   expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
 }
 

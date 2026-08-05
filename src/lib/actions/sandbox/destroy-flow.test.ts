@@ -374,15 +374,16 @@ describe("destroySandbox flow", () => {
     expectAbsentSandboxMcpFinalize(harness);
   });
 
-  it("does not delete the sandbox when MCP preparation cannot reach the OpenShell gateway (#8103)", async () => {
+  it("redacts MCP bridge preparation errors and does not delete the sandbox (#8103)", async () => {
+    const secretMarker = "destroy-prepare-secret-marker";
     const harness = createDestroyHarness({
       mcpServers: ["github"],
-      prepareMcpBridgeError: "Could not inspect OpenShell provider: gateway unreachable",
+      prepareMcpBridgeError: `Could not inspect OpenShell provider: OPENAI_API_KEY=${secretMarker}`,
     });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
 
-    expectMcpPrepareBridgeErrorAborts(harness);
+    expectMcpPrepareBridgeErrorAborts(harness, secretMarker);
   });
 
   it("redacts MCP bridge finalization errors after sandbox deletion (#8103)", async () => {
@@ -415,6 +416,11 @@ describe("destroySandbox flow", () => {
     expect(harness.prepareMcpBridgesForAbsentSandboxDestroySpy).toHaveBeenCalledWith("alpha", {
       force: false,
     });
+    expect(
+      harness.runOpenshellSpy.mock.calls.filter(
+        (call) => Array.isArray(call[0]) && call[0].join(" ") === "sandbox delete alpha",
+      ),
+    ).toHaveLength(1);
     expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).toHaveBeenCalledTimes(2);
     expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
     expect(harness.updateSessionSpy).toHaveBeenCalledOnce();
