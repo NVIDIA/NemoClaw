@@ -282,7 +282,7 @@ describe("OpenClaw gateway daemon dial-back patch", () => {
     );
   });
 
-  it("provides an auditable command-line contract", () => {
+  it("reports apply and audit results through its command-line interface (#7215)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-dialback-cli-"));
     try {
       fs.writeFileSync(path.join(tmp, "call.js"), CALL_CONTEXT_SOURCE);

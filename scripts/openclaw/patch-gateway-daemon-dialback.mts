@@ -11,8 +11,8 @@
  * OpenClaw treats the proxy-reoriginated connection as a remote device and
  * requires pairing. OpenClaw marks only the daemon process with the
  * "openclaw-gateway" title, so ignore the inherited URL only in that process
- * and only under OpenShell. Explicit URL overrides and configured remote mode
- * remain unchanged.
+ * and only when OPENSHELL_SANDBOX is exactly "1". Explicit URL overrides and
+ * configured remote mode remain unchanged.
  *
  * Remove this patch when upstream distinguishes gateway self-dialback from
  * descendant agent routing without changing the daemon environment.

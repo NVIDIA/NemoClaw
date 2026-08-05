@@ -988,7 +988,7 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-devic
 # preserving OPENCLAW_GATEWAY_URL for agent processes that OpenShell requires
 # to use the private sandbox interface. This avoids pairing failures when the
 # transparent proxy re-originates daemon self-dialback as a private-IP peer
-# without regressing sessions_spawn routing (#7215).
+# while preserving sessions_spawn routing (#7215).
 #
 # Removal criteria: drop when upstream OpenClaw distinguishes gateway daemon
 # self-dialback from descendant agent routing without changing the inherited
