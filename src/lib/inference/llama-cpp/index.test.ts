@@ -247,6 +247,26 @@ describe("probeLlamaCppAttachment", () => {
     expect(probe).toHaveBeenCalledTimes(2);
   });
 
+  it("reports a timeout when anonymous /props does not respond (#8302)", () => {
+    const probe = scriptedProbe([response(200, '{"data":[]}'), curlFailure(28)]);
+
+    expect(probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: probe })).toMatchObject({
+      ok: false,
+      reason: "probe-timeout",
+    });
+    expect(probe).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects an oversized anonymous /props response (#8302)", () => {
+    const probe = scriptedProbe([response(200, '{"data":[]}'), curlFailure(63)]);
+
+    expect(probeLlamaCppAttachment("secret-token", { runCurlProbeImpl: probe })).toMatchObject({
+      ok: false,
+      reason: "oversized-response",
+    });
+    expect(probe).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects a vLLM model catalog (#8161)", () => {
     const result = probeLlamaCppAttachment("secret-token", {
       runCurlProbeImpl: scriptedProbe([
