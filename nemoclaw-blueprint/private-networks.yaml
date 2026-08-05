@@ -62,9 +62,21 @@ ipv4:
   - address: 192.0.2.0
     prefix: 24
     purpose: TEST-NET-1 documentation
+  - address: 192.31.196.0
+    prefix: 24
+    purpose: AS112 DNS anycast (RFC 7535)
+  - address: 192.52.193.0
+    prefix: 24
+    purpose: AMT relay anycast (RFC 7450)
+  - address: 192.88.99.0
+    prefix: 24
+    purpose: Deprecated 6to4 relay anycast (RFC 7526)
   - address: 192.168.0.0
     prefix: 16
     purpose: Private /16 (home/small-network default)
+  - address: 192.175.48.0
+    prefix: 24
+    purpose: AS112 direct delegation anycast (RFC 7534)
   - address: 198.18.0.0
     prefix: 15
     purpose: Benchmark testing
@@ -87,6 +99,9 @@ ipv6:
   - address: "::1"
     prefix: 128
     purpose: Loopback
+  - address: "::"
+    prefix: 96
+    purpose: Deprecated IPv4-compatible encodings that can hide private IPv4 targets
   - address: "64:ff9b::"
     prefix: 96
     purpose: NAT64 well-known prefix
@@ -96,21 +111,36 @@ ipv6:
   - address: "100::"
     prefix: 64
     purpose: Discard prefix
+  - address: "100:0:0:1::"
+    prefix: 64
+    purpose: Dummy IPv6 Prefix (IANA non-forwardable)
   - address: "2001::"
-    prefix: 32
-    purpose: Teredo tunneling
+    prefix: 23
+    purpose: IETF protocol assignments (Teredo, benchmarking, ORCHID, and related special-purpose space)
   - address: "2001:db8::"
     prefix: 32
     purpose: Documentation
   - address: "2002::"
     prefix: 16
     purpose: 6to4
+  - address: "2620:4f:8000::"
+    prefix: 48
+    purpose: AS112 IPv6 anycast (RFC 7534)
+  - address: "3fff::"
+    prefix: 20
+    purpose: Documentation (RFC 9637)
+  - address: "5f00::"
+    prefix: 16
+    purpose: IPv6 Segment Routing (SRv6) SIDs (RFC 9602)
   - address: "fc00::"
     prefix: 7
     purpose: Unique local addresses
   - address: "fe80::"
     prefix: 10
     purpose: Link-local
+  - address: "fec0::"
+    prefix: 10
+    purpose: Deprecated site-local addresses
   - address: "ff00::"
     prefix: 8
     purpose: Multicast
@@ -121,3 +151,5 @@ names:
     purpose: RFC 6762 mDNS link-local names (Bonjour / Avahi / zeroconf)
   - name: internal
     purpose: ICANN-reserved private-use TLD (2024-02-11 Board Resolution)
+  - name: metadata
+    purpose: Cloud instance metadata service hostname alias
