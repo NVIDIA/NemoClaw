@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSystemPrompt,
+  readTrustedCodeChangeConsiderations,
   readTrustedControlledWords,
   readTrustedSecurityReviewSkill,
   readTrustedWritingGuide,
@@ -14,6 +15,7 @@ describe("PR review advisor writing guides", () => {
     const skill = readTrustedSecurityReviewSkill();
     const writingGuide = readTrustedWritingGuide();
     const controlledWords = readTrustedControlledWords();
+    const considerations = readTrustedCodeChangeConsiderations();
     const prompt = buildSystemPrompt();
 
     expect(skill).toContain("# Security Code Review");
@@ -22,7 +24,9 @@ describe("PR review advisor writing guides", () => {
     expect(writingGuide).toContain("Use one term for one concept");
     expect(writingGuide).toContain("## Scope and Review Policy");
     expect(controlledWords).toContain("| `commit SHA` | Technical noun |");
+    expect(considerations).toContain("# Code Change Considerations");
     expect(prompt).toContain("Trusted security review skill from main checkout");
+    expect(prompt).toContain("Trusted code change considerations from workflow checkout");
     expect(prompt).toContain("Trusted NemoClaw writing guide from workflow checkout");
     expect(prompt).toContain("# Security Code Review");
     expect(prompt).toContain("Category 1: Secrets and Credentials");
@@ -60,7 +64,7 @@ describe("PR review advisor writing guides", () => {
       "any unmet binding acceptance clause or security fail/warning must be represented as a finding",
     );
     expect(prompt).toContain("Source-of-truth review");
-    expect(prompt).toContain("E2E suite simplicity");
+    expect(prompt).toContain("E2E suite architecture");
     expect(prompt).toContain(
       "testDepth.suggestedTests are internal review notes, not author tasks",
     );
@@ -77,9 +81,9 @@ describe("PR review advisor writing guides", () => {
     expect(prompt).toContain("one flat atomic commit object");
     expect(prompt).toContain("delete, stdlib, native, yagni, or shrink");
     expect(prompt).not.toContain("Consider writing more tests for");
-    expect(prompt).toContain("take a closer architecture look for new systems");
-    expect(prompt).toContain("Favor focused tests and local helpers");
-    expect(prompt).toContain("what invalid state is handled");
+    expect(prompt).toContain("E2E suite architecture");
+    expect(prompt).toContain("shortest stable test");
+    expect(prompt).toContain("defaults, retries, recovery, and cleanup");
     expect(prompt).toContain(
       "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding",
     );
