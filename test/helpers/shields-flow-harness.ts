@@ -16,6 +16,7 @@ export type ShieldsFlowHarness = {
   auditSpy: MockInstance;
   cleanupTempDirSpy: MockInstance;
   errorSpy: MockInstance;
+  getShieldsPosture: typeof import("../../src/lib/shields/index.js").getShieldsPosture;
   getOpenClawPosture: () => "locked" | "mutable";
   logSpy: MockInstance;
   policySetBodies: string[];
@@ -34,6 +35,8 @@ export type ShieldsFlowHarnessOptions = {
   directSandboxUnavailable?: boolean;
   dockerExecFileSync?: (argv: unknown) => string;
   failOpenClawGuardActions?: Array<"lock" | "unlock">;
+  failPolicyRejectionStateClear?: boolean;
+  failPolicyRejectionTransitionWrite?: boolean;
   failStateSave?: boolean;
   initialOpenClawPosture?: "locked" | "mutable";
   invokedAs?: "nemoclaw" | "nemohermes";
@@ -47,6 +50,7 @@ export type ShieldsFlowHarnessOptions = {
     path: string;
     detail: string;
   }>;
+  processStartIdentity?: string;
   fork?: (...args: unknown[]) => {
     pid: number;
     disconnect: () => void;
@@ -124,6 +128,14 @@ export function createShieldsFlowHarness(
   delete require.cache[requireDist.resolve("../actions/sandbox/mcp-bridge-policy.js")];
   delete require.cache[requireDist.resolve("../sandbox/privileged-exec.js")];
   delete require.cache[requireDist.resolve("../cli/branding.js")];
+  const timerControl = requireDist(
+    "./timer-control.js",
+  ) as typeof import("../../src/lib/shields/timer-control.js");
+  if (options.processStartIdentity !== undefined) {
+    vi.spyOn(timerControl, "readProcessStartIdentity").mockReturnValue(
+      options.processStartIdentity,
+    );
+  }
   const lifecycleLock = requireDist(
     "../state/mcp-lifecycle-lock.js",
   ) as typeof import("../../src/lib/state/mcp-lifecycle-lock.js");
@@ -143,7 +155,6 @@ export function createShieldsFlowHarness(
   const privilegedExec = requireDist("../sandbox/privileged-exec.js");
   const dockerExec = requireDist("../adapters/docker/exec.js");
   const audit = requireDist("./audit.js");
-  const timerControl = requireDist("./timer-control.js");
   const tempFiles = requireDist("../onboard/temp-files.js");
   const childProcess = requireDist("node:child_process");
   const policySetBodies: string[] = [];
@@ -311,6 +322,35 @@ export function createShieldsFlowHarness(
     },
   );
 
+  if (options.failPolicyRejectionStateClear) {
+    const statePath = path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json");
+    const originalWriteFileSync = fs.writeFileSync.bind(fs);
+    let stateWrites = 0;
+    vi.spyOn(fs, "writeFileSync").mockImplementation(((file, data, writeOptions) => {
+      if (String(file) === statePath && ++stateWrites === 2) {
+        throw new Error("state cleanup denied");
+      }
+      return originalWriteFileSync(file, data, writeOptions);
+    }) as typeof fs.writeFileSync);
+  }
+
+  if (options.failPolicyRejectionTransitionWrite) {
+    const transitionPrefix = path.join(
+      tmpDir,
+      ".nemoclaw",
+      "state",
+      "shields-transition-openclaw-",
+    );
+    const originalRenameSync = fs.renameSync.bind(fs);
+    let transitionWrites = 0;
+    vi.spyOn(fs, "renameSync").mockImplementation((oldPath, newPath) => {
+      if (String(newPath).startsWith(transitionPrefix) && ++transitionWrites === 2) {
+        throw new Error("transition update denied");
+      }
+      return originalRenameSync(oldPath, newPath);
+    });
+  }
+
   const shields = requireDist(shieldsModulePath);
   logSpy.mockClear();
   errorSpy.mockClear();
@@ -321,6 +361,7 @@ export function createShieldsFlowHarness(
     auditSpy,
     cleanupTempDirSpy,
     errorSpy,
+    getShieldsPosture: shields.getShieldsPosture,
     getOpenClawPosture: () => openClawPosture,
     logSpy,
     policySetBodies,

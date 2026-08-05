@@ -46,7 +46,8 @@ export const HIGH_RISK_STATE_DIRS = [
 ];
 
 export const CONFIDENTIALITY_STATE_DIRS = ["credentials", "identity", "pairing"];
-export const WRITABLE_RUNTIME_SUBPATHS = ["agents/*/sessions"];
+// The dashboard profile entry applies only to the Hermes configuration root.
+export const WRITABLE_RUNTIME_SUBPATHS = ["agents/*/sessions", "profiles/dashboard-home"];
 
 const CONTAINER_HELPER = "/usr/local/lib/nemoclaw/state-dir-guard.py";
 const HOST_HELPER = path.resolve(__dirname, "../../../scripts/state-dir-guard.py");

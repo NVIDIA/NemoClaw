@@ -929,7 +929,7 @@ describe("state-dir-guard", () => {
     });
   });
 
-  it("applies distinct confidentiality, workspace, mutable, and session-carveout modes", () => {
+  it("applies distinct confidentiality, workspace, and writable runtime modes", () => {
     const { configDir } = fixture();
     const secretDir = path.join(configDir, "credentials");
     const secretPath = path.join(secretDir, "token.json");
@@ -984,6 +984,59 @@ describe("state-dir-guard", () => {
     expect(mode(executablePath)).toBe(0o770);
     expect(mode(path.join(configDir, "agents"))).toBe(0o2770);
     expect(mode(agentDir)).toBe(0o2770);
+  });
+
+  it("keeps the Hermes dashboard profile writable and private while Shields are up (#7200)", () => {
+    const { configDir } = fixture(".hermes");
+    const dashboardHome = path.join(configDir, "profiles", "dashboard-home");
+    const dashboardMemory = path.join(dashboardHome, "MEMORY.md");
+    fs.mkdirSync(dashboardHome, { recursive: true, mode: 0o700 });
+    fs.chmodSync(dashboardHome, 0o700);
+    fs.writeFileSync(dashboardMemory, "dashboard runtime\n", { mode: 0o600 });
+    const dashboardFd = fs.openSync(dashboardMemory, "a+");
+    const oldMemoryInode = fs.fstatSync(dashboardFd).ino;
+
+    try {
+      const locked = runGuard("lock", configDir);
+
+      expect(locked.status, locked.stderr).toBe(0);
+      expect(mode(path.join(configDir, "profiles"))).toBe(0o755);
+      expect(mode(dashboardHome)).toBe(0o700);
+      expect(mode(dashboardMemory)).toBe(0o600);
+      expect(fs.fstatSync(dashboardFd).ino).toBe(oldMemoryInode);
+      fs.writeSync(dashboardFd, "updated\n");
+
+      const relocked = runGuard("lock", configDir);
+
+      expect(relocked.status, relocked.stderr).toBe(0);
+      expect(mode(dashboardHome)).toBe(0o700);
+      expect(fs.fstatSync(dashboardFd).ino).toBe(oldMemoryInode);
+
+      const unlocked = runGuard("unlock", configDir);
+
+      expect(unlocked.status, unlocked.stderr).toBe(0);
+      expect(mode(dashboardHome)).toBe(0o700);
+      const contents = Buffer.alloc(fs.fstatSync(dashboardFd).size);
+      fs.readSync(dashboardFd, contents, 0, contents.length, 0);
+      expect(contents.toString("utf-8")).toBe("dashboard runtime\nupdated\n");
+    } finally {
+      fs.closeSync(dashboardFd);
+    }
+  });
+
+  it("keeps a dashboard-named OpenClaw profile inside the Shields boundary", () => {
+    const { configDir } = fixture(".openclaw");
+    const dashboardHome = path.join(configDir, "profiles", "dashboard-home");
+    const dashboardMemory = path.join(dashboardHome, "MEMORY.md");
+    fs.mkdirSync(dashboardHome, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(dashboardMemory, "protected\n", { mode: 0o600 });
+    const oldMemoryInode = fs.statSync(dashboardMemory).ino;
+
+    const locked = runGuard("lock", configDir);
+
+    expect(locked.status, locked.stderr).toBe(0);
+    expect(mode(dashboardHome)).toBe(0o755);
+    expect(fs.statSync(dashboardMemory).ino).not.toBe(oldMemoryInode);
   });
 
   it.skipIf(SUPPLEMENTARY_GID < 0)(
