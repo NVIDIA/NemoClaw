@@ -23,10 +23,16 @@ normal supervised Hermes gateway
 | V1 | branch `codex/switchyard-relay-prototype-v1`, commit `d58276ab7` | Relay CLI launches a one-off Hermes chat using the superseded Relay #586 path | Behavioral feasibility inside a managed sandbox |
 | V2 | branch `codex/switchyard-relay-prototype-v2`, commit `3c6932bdd` | Supervised Hermes loads Relay and Switchyard natively for its process lifetime | Deterministic weak/strong selection, no sidecar, restart persistence |
 | V3 | branch `codex/switchyard-relay-prototype-v3`, implementation commit `28749b8844` | V2 runtime with final provider calls sent through `inference.local` | Provider endpoint mediation, credential isolation, caller-header replacement, and the current single-model limitation |
+| V3.1 | branch `codex/switchyard-relay-prototype-v3`, repair commit `34d1b06706` | V3 with one fake caller marker shared coherently by the probe, host verifier, and focused test | Reproducibility repair only; no architecture or security-boundary change |
 
 V3 layers only a new target configuration and verifier onto V2. It does not
 rewrite either earlier branch. It uses the exact unreleased upstream inputs and
 security exceptions documented in the V2 README.
+
+V3.1 fixes a source/test mismatch found during the final documentation audit.
+It constructs the deliberate fake caller marker in scanner-safe pieces while
+the host verifier checks the resulting complete value. The V3 runtime result
+and proof boundary are unchanged.
 
 ## What V3 proves
 
