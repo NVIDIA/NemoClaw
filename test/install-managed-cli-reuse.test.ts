@@ -60,6 +60,7 @@ function writeManagedSource(root: string, revision: string) {
 function runManagedCliInstallTwice(
   initialRevision = INSTALL_REUSE_REVISION,
   forceCliReinstall = false,
+  separateInstallerRuns = false,
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-reuse-"));
   const home = path.join(tmp, "home");
@@ -92,7 +93,13 @@ case "\${1:-}" in
       printf '%s\n' "$EXPECTED_REVISION"
     fi
     ;;
-  diff) exit 0 ;;
+  diff)
+    if [ -n "$repo" ] && [ -f "$repo/.fixture-lockfile-dirty" ]; then exit 1; fi
+    exit 0
+    ;;
+  checkout)
+    if [ -n "$repo" ]; then rm -f "$repo/.fixture-lockfile-dirty"; fi
+    ;;
   init)
     target="\${@: -1}"
     mkdir -p "$target/.git" "$target/bin" "$target/dist/lib/onboard" "$target/node_modules" \
@@ -100,6 +107,7 @@ case "\${1:-}" in
     printf '%s' "$EXPECTED_REVISION" > "$target/.fixture-revision"
     printf '%s\n' '{"name":"nemoclaw","dependencies":{"openclaw":"2026.7.1"}}' > "$target/package.json"
     printf '%s\n' '{"name":"nemoclaw-plugin"}' > "$target/nemoclaw/package.json"
+    printf '%s\n' '{"lockfileVersion":3}' > "$target/package-lock.json"
     ;;
   describe) printf '%s\n' 'v0.0.99' ;;
 esac
@@ -117,6 +125,21 @@ if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "get" ] && [ "\${3:-}" = "prefix" ]
   exit 0
 fi
 if [ "\${1:-}" = "pack" ]; then exit 1; fi
+if [ "\${1:-}" = "install" ]; then : > "$PWD/.fixture-lockfile-dirty"; fi
+if [ "\${1:-}" = "run" ]; then
+  case "$*" in
+    *build:cli*)
+      mkdir -p "$PWD/dist/lib/onboard"
+      printf '%s\n' 'module.exports = {};' > "$PWD/dist/lib/onboard/preflight.js"
+      printf '{\n  "nemoclawVersion": "0.0.99",\n  "sourceRevision": "%s"\n}\n' "$EXPECTED_REVISION" \
+        > "$PWD/dist/build-identity.json"
+      ;;
+    *build*)
+      mkdir -p "$PWD/dist"
+      printf '%s\n' 'module.exports = {};' > "$PWD/dist/index.js"
+      ;;
+  esac
+fi
 if [ "\${1:-}" = "link" ]; then
   mkdir -p "$PWD/bin" "$NPM_PREFIX/bin"
   cat > "$PWD/bin/nemoclaw.js" <<'CLI'
@@ -140,6 +163,7 @@ SCRIPT_DIR="$PAYLOAD_SCRIPTS"
 NEMOCLAW_BOOTSTRAP_PAYLOAD=1
 NEMOCLAW_DEFER_OPENSHELL_INSTALL=1
 install_nemoclaw
+${separateInstallerRuns ? "_NEMOCLAW_CLI_INSTALL_PREPARED=false" : ""}
 install_nemoclaw
 printf 'PREPARED=%s MODE=%s SOURCE=%s\n' \
   "$_NEMOCLAW_CLI_INSTALL_PREPARED" "$_NEMOCLAW_CLI_INSTALL_MODE" "$NEMOCLAW_SOURCE_ROOT"`,
@@ -193,6 +217,16 @@ describe("installer-managed CLI reuse", () => {
     expect(npmLog.match(/\|run --if-present build:cli$/gm)).toHaveLength(1);
     expect(npmLog.match(/\|ci --ignore-scripts$/gm)).toHaveLength(1);
     expect(npmLog.match(/\|run build$/gm)).toHaveLength(1);
+    expect(npmLog.match(/\|link$/gm)).toHaveLength(1);
+  });
+
+  it("reuses the managed checkout on a later installer run after its own dependency install (#8305)", () => {
+    const { result, gitLog, npmLog } = runManagedCliInstallTwice("b".repeat(40), false, true);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain("Reusing the installed NemoClaw CLI at the selected revision");
+    expect(gitLog.match(/^init\b/gm)).toHaveLength(1);
+    expect(npmLog.match(/\|install --ignore-scripts$/gm)).toHaveLength(1);
     expect(npmLog.match(/\|link$/gm)).toHaveLength(1);
   });
 
