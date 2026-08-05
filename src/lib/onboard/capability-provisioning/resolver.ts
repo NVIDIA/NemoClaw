@@ -76,13 +76,13 @@ export function resolveCapabilityBillOfMaterials({
   };
 
   for (const request of [...manifest.capabilities].sort((left, right) =>
-    left.id.localeCompare(right.id),
+    compareCapabilityIds(left.id, right.id),
   )) {
     visit(request.id);
   }
 
   const capabilities = Object.freeze(
-    [...resolved.values()].sort((left, right) => left.id.localeCompare(right.id)),
+    [...resolved.values()].sort((left, right) => compareCapabilityIds(left.id, right.id)),
   );
   const unsigned = {
     schemaVersion: CAPABILITY_BOM_SCHEMA_VERSION,
@@ -91,6 +91,12 @@ export function resolveCapabilityBillOfMaterials({
     capabilities,
   } as const;
   return Object.freeze({ ...unsigned, fingerprint: capabilityBomFingerprint(unsigned) });
+}
+
+function compareCapabilityIds(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }
 
 function toBomItem(

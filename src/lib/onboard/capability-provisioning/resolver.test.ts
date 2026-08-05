@@ -92,6 +92,44 @@ describe("capability bill of materials resolution", () => {
     expect(JSON.stringify(first)).not.toMatch(/docker|podman|command|credential|secret/iu);
   });
 
+  it("orders punctuation-bearing capability IDs by code units across equivalent inputs", () => {
+    const capabilityIds = ["tool-1", "tool.1", "tool_1"];
+    const capabilities = capabilityIds.map((id) => ({
+      id,
+      displayName: id,
+      kind: "tool",
+      version: "1.0.0",
+      agents: ["hermes"],
+      requires: [],
+      policyPresets: [],
+      artifacts: [
+        {
+          platform: "linux/amd64",
+          reference: `oci://ghcr.io/nvidia/nemoclaw-capabilities/${id}@sha256:${TOOL_DIGEST}`,
+          installPrefix: `/opt/nemoclaw/capabilities/${id}`,
+          pathEntries: ["bin"],
+        },
+      ],
+    }));
+    const first = resolveCapabilityBillOfMaterials({
+      manifest: manifest(capabilityIds.map((id) => ({ id, version: null }))),
+      catalog: { schemaVersion: CAPABILITY_CATALOG_SCHEMA_VERSION, capabilities },
+      platform: "linux/amd64",
+    });
+    const second = resolveCapabilityBillOfMaterials({
+      manifest: manifest([...capabilityIds].reverse().map((id) => ({ id, version: null }))),
+      catalog: {
+        schemaVersion: CAPABILITY_CATALOG_SCHEMA_VERSION,
+        capabilities: [...capabilities].reverse(),
+      },
+      platform: "linux/amd64",
+    });
+
+    expect(first).toEqual(second);
+    expect(first.fingerprint).toBe(second.fingerprint);
+    expect(first.capabilities.map(({ id }) => id)).toEqual(["tool-1", "tool.1", "tool_1"]);
+  });
+
   it("rejects unknown and version-incompatible requests", () => {
     expect(() =>
       resolveCapabilityBillOfMaterials({
