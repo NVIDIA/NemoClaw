@@ -15,6 +15,7 @@ import { githubApi, githubApiWithResponse, githubRestPaginated } from "../adviso
 import { parseArgs } from "../advisors/io.mts";
 import {
   buildRiskPlan,
+  isPrE2ePlanningJob,
   isPrE2eTypedTargetId,
   RISK_PLAN_VERSION,
   type RiskPlan,
@@ -64,7 +65,7 @@ export { validateWorkflowDispatchDetails } from "./pr-e2e-dispatch-reconciliatio
 const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
 const PR_GATE_WORKFLOW = "pr-e2e-gate.yaml";
-const CHECK_NAME = "E2E / PR Gate Coordination";
+const CHECK_NAME = "E2E / PR Gate";
 const WORKFLOW_NAME = "E2E / PR Gate Controller";
 const RESERVED_CHECK_TITLE = "Waiting for PR CI";
 const RESERVED_CHECK_SUMMARY =
@@ -73,6 +74,7 @@ const FORK_E2E_AUTHORIZATION_TITLE = "Maintainer approval required to run fork E
 const EVALUATING_PR_COMMIT_TITLE = "Evaluating PR commit";
 const RUNNER_LOSS_RETRY_PREPARATION_TITLE = "Preparing one-time hosted-runner-loss retry";
 const AUTHORIZED_EXECUTION_TITLE_PREFIX = "E2E execution authorized by @";
+const RUNNING_E2E_TITLE_PATTERN = /^Running [1-9][0-9]* E2E checks?$/u;
 const PRE_DISPATCH_CHECK_READ_TIMEOUT_MS = 5_000;
 const RECONCILED_CHILD_VALIDATION_TIMEOUT_MS = 10_000;
 const CHILD_AUTHORIZATION_PUBLISH_TIMEOUT_MS = 5_000;
@@ -689,7 +691,7 @@ export function validateRiskPlan(value: unknown, allowedJobs: ReadonlySet<string
   const rebuilt = buildRiskPlan({
     headSha: value.headSha,
     changedFiles: value.changedFiles as string[],
-    focusedE2eJobs: focusedE2eJobsForChangedFiles(value.changedFiles as string[]),
+    focusedE2eJobs: focusedPrGateE2eJobsForChangedFiles(value.changedFiles as string[]),
   });
   if (JSON.stringify(value) !== JSON.stringify(rebuilt)) {
     throw new Error("risk plan does not match its hash and inputs");
@@ -714,6 +716,15 @@ export function validateRiskPlan(value: unknown, allowedJobs: ReadonlySet<string
     }
   }
   return rebuilt;
+}
+
+export function focusedPrGateE2eJobsForChangedFiles(
+  changedFiles: readonly string[],
+  inventory = readFreeStandingJobsInventory(),
+): ReturnType<typeof focusedE2eJobsForChangedFiles> {
+  return focusedE2eJobsForChangedFiles(changedFiles, inventory).filter((selection) =>
+    isPrE2ePlanningJob(selection.id),
+  );
 }
 
 function riskPlanSelectionIds(plan: RiskPlan): string[] {
@@ -1864,7 +1875,8 @@ export function expectedSignalShards(
   workflowPath = ".github/workflows/e2e.yaml",
   targetIds: readonly string[] = [],
 ): Record<string, string[]> {
-  const selections = [...jobIds, ...targetIds];
+  const expandedJobIds = expandPrGateJobSelections(jobIds);
+  const selections = [...expandedJobIds, ...targetIds];
   if (new Set(selections).size !== selections.length) {
     throw new Error("E2E evidence jobs and targets must be unique");
   }
@@ -1877,7 +1889,7 @@ export function expectedSignalShards(
   const jobs = isObjectRecord(workflow) && isObjectRecord(workflow.jobs) ? workflow.jobs : {};
   const inventory = readFreeStandingJobsInventory(workflowPath);
   const jobShards = Object.fromEntries(
-    jobIds.map((jobId) => {
+    expandedJobIds.map((jobId) => {
       const executionJobId = inventory.targetToJob.get(jobId) ?? jobId;
       if (!isObjectRecord(jobs[executionJobId])) {
         throw new Error(`E2E workflow does not define ${executionJobId} for ${jobId}`);
@@ -1943,6 +1955,14 @@ export function expectedSignalShards(
   };
 }
 
+export function expandPrGateJobSelections(jobIds: readonly string[]): string[] {
+  const jobs = [...jobIds];
+  if (jobs.includes("mcp-bridge") && !jobs.includes("openshell-credential-generation-window")) {
+    jobs.push("openshell-credential-generation-window");
+  }
+  return jobs;
+}
+
 function validateMainReference(value: unknown): string {
   if (
     !isObjectRecord(value) ||
@@ -1968,12 +1988,15 @@ function validateCompatibleMainComparison(
     !Number.isSafeInteger(value.ahead_by) ||
     (value.ahead_by as number) < 1 ||
     value.behind_by !== 0 ||
+    value.total_commits !== value.ahead_by ||
     !isObjectRecord(value.base_commit) ||
     value.base_commit.sha !== workflowSha ||
     !isObjectRecord(value.merge_base_commit) ||
     value.merge_base_commit.sha !== workflowSha ||
-    !isObjectRecord(value.head_commit) ||
-    value.head_commit.sha !== mainSha ||
+    !Array.isArray(value.commits) ||
+    value.commits.length !== value.ahead_by ||
+    !isObjectRecord(value.commits.at(-1)) ||
+    value.commits.at(-1)?.sha !== mainSha ||
     !Array.isArray(value.files)
   ) {
     throw new Error(`main is not a validated descendant of workflow commit ${workflowSha}`);
@@ -2104,6 +2127,43 @@ function isValidExpectedPreDispatchTitle(title: string): boolean {
 
 function authorizedExecutionTitle(maintainer: string): string {
   return `${AUTHORIZED_EXECUTION_TITLE_PREFIX}${maintainer}`;
+}
+
+function maintainerApprovalStateError(check: CheckRun, expectedTitle: string): Error {
+  const title = check.output?.title;
+  const expected = `Wait for the required-check title "${expectedTitle}", then launch a fresh first-attempt approve-e2e run for the same exact revision.`;
+
+  if (
+    check.status === "completed" ||
+    (check.conclusion !== undefined && check.conclusion !== null)
+  ) {
+    return new Error(
+      `PR gate is not ready for maintainer approval: the required check is terminal. Update the PR or rerun eligible CI to create a fresh pending authorization state; do not reuse this approval. Expected title: "${expectedTitle}".`,
+    );
+  }
+  if (
+    check.status === "queued" ||
+    (check.status === "in_progress" &&
+      (title === RESERVED_CHECK_TITLE ||
+        title === EVALUATING_PR_COMMIT_TITLE ||
+        title === RUNNER_LOSS_RETRY_PREPARATION_TITLE))
+  ) {
+    return new Error(
+      `PR gate is not ready for maintainer approval: the required check is still preparing. ${expected}`,
+    );
+  }
+  if (
+    check.status === "in_progress" &&
+    typeof title === "string" &&
+    (title.startsWith(AUTHORIZED_EXECUTION_TITLE_PREFIX) || RUNNING_E2E_TITLE_PATTERN.test(title))
+  ) {
+    return new Error(
+      `PR gate is not ready for maintainer approval: E2E is already executing. Follow the existing controller and child run; do not launch another approval. Expected title: "${expectedTitle}".`,
+    );
+  }
+  return new Error(
+    `PR gate is not ready for maintainer approval: the required check is malformed or unknown. Inspect the required check and do not retry until the state is understood. Expected title: "${expectedTitle}".`,
+  );
 }
 
 function assertCurrentPreDispatchCheck(
@@ -2550,7 +2610,7 @@ async function dispatchSelectedPrGate(options: {
   expectedCheckTitle: string;
   paths: ControllerPaths;
 }): Promise<void> {
-  const jobs = riskPlanRequiredJobIds(options.plan);
+  const jobs = expandPrGateJobSelections(riskPlanRequiredJobIds(options.plan));
   const targets = riskPlanRequiredTargetIds(options.plan);
   const expectedShards = expectedSignalShards(jobs, E2E_WORKFLOW_PATH, targets);
   const correlationId = randomUUID();
@@ -2992,6 +3052,32 @@ export async function startPrGate(
   ) {
     throw new Error("PR repository or branch does not match the triggering CI run");
   }
+  const existingCheck = existingChecks[0];
+  if (
+    command.ciConclusion === "success" &&
+    existingCheck?.status === "completed" &&
+    existingCheck.conclusion === "success"
+  ) {
+    const title = existingCheck.output?.title;
+    const summary = existingCheck.output?.summary;
+    if (!title || !summary) {
+      throw new Error("Successful PR gate check is missing its title or summary");
+    }
+    appendOutput("check_id", String(existingCheck.id));
+    await completeCheck(
+      { repository, checkRunId: existingCheck.id },
+      token,
+      { conclusion: "success", title, summary },
+      existingCheck.details_url ?? undefined,
+    );
+    appendOutput("dispatched", "false");
+    appendOutput("finalized", "true");
+    console.log(
+      `Updated successful PR gate after CI rerun: pr=${ciIdentity.prNumber} head=${ciIdentity.headSha} base=${ciIdentity.baseSha} attempt=${command.ciRunAttempt}`,
+    );
+    return;
+  }
+
   assertCheckCanStart(existingChecks[0], command.ciConclusion);
   if (retryableFailureReason(existingChecks[0] ?? {}) === "dispatch-not-observed") {
     const summary = existingChecks[0]?.output?.summary;
@@ -3085,7 +3171,7 @@ export async function startPrGate(
       buildRiskPlan({
         headSha: command.headSha,
         changedFiles,
-        focusedE2eJobs: focusedE2eJobsForChangedFiles(changedFiles, inventory),
+        focusedE2eJobs: focusedPrGateE2eJobsForChangedFiles(changedFiles, inventory),
       }),
       allowedJobs,
     );
@@ -3207,7 +3293,7 @@ async function startAuthorizedPrGate(command: AuthorizedE2ECommand): Promise<voi
       buildRiskPlan({
         headSha: command.headSha,
         changedFiles,
-        focusedE2eJobs: focusedE2eJobsForChangedFiles(changedFiles, inventory),
+        focusedE2eJobs: focusedPrGateE2eJobsForChangedFiles(changedFiles, inventory),
       }),
       new Set(inventory.allowedJobs),
     );
@@ -3241,7 +3327,7 @@ async function startAuthorizedPrGate(command: AuthorizedE2ECommand): Promise<voi
     const check = matchingChecks[0]!;
     const pendingAuthorization = check.status === "in_progress" && check.conclusion === null;
     if (!pendingAuthorization || check.output?.title !== pendingTitle) {
-      throw new Error("PR gate must have the matching pending E2E authorization state");
+      throw maintainerApprovalStateError(check, pendingTitle);
     }
     checkRunId = check.id;
     appendOutput("check_id", String(checkRunId));

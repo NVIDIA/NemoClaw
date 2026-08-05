@@ -24,6 +24,9 @@ const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
 );
 const canonicalSandboxName = path.resolve("nemoclaw/src/shared/sandbox-name.cts");
+const canonicalSnapshotSanitizerBoundary = path.resolve(
+  "nemoclaw/src/shared/snapshot-sanitizer-boundary.cts",
+);
 // Map the generated shared .cjs specifiers back to their .cts source so
 // source-mode test projects exercise the single source of truth rather than a
 // possibly-stale build artifact.
@@ -35,6 +38,10 @@ const canonicalSourceAliases = [
   {
     find: /^.*sandbox-name\.cjs$/,
     replacement: canonicalSandboxName,
+  },
+  {
+    find: /^.*snapshot-sanitizer-boundary\.cjs$/,
+    replacement: canonicalSnapshotSanitizerBoundary,
   },
 ];
 const e2ePhaseCollectionAlias =
@@ -67,6 +74,7 @@ const controlledNonLiveEnv = {
 // intentionally excluded below and keep their own stricter umask handling. See
 // test/helpers/normalize-fixture-umask.ts (#6448).
 const fixtureUmaskSetup = "test/helpers/normalize-fixture-umask.ts";
+const isolatedTestStateSetup = "test/helpers/isolate-test-state.ts";
 const pluginVitestProject = defineProject(pluginVitestProjectOptions);
 const integrationProjectScheduling = resolveIntegrationProjectScheduling({
   isCi,
@@ -100,7 +108,11 @@ export default defineConfig({
           alias: canonicalSourceAliases,
           env: controlledNonLiveEnv,
           testTimeout: testTimeout(),
-          setupFiles: [fixtureUmaskSetup, "test/helpers/onboard-script-mocks.cjs"],
+          setupFiles: [
+            fixtureUmaskSetup,
+            isolatedTestStateSetup,
+            "test/helpers/onboard-script-mocks.cjs",
+          ],
           include: ["src/**/*.test.ts"],
           exclude: ["**/node_modules/**", "**/.claude/**"],
         },
@@ -114,7 +126,11 @@ export default defineConfig({
           // Source-backed process fixtures can exceed the unit-test budget
           // when several coverage shards transpile and spawn them concurrently.
           testTimeout: testTimeout(15_000),
-          setupFiles: [fixtureUmaskSetup, "test/helpers/onboard-script-mocks.cjs"],
+          setupFiles: [
+            fixtureUmaskSetup,
+            isolatedTestStateSetup,
+            "test/helpers/onboard-script-mocks.cjs",
+          ],
           // Integration fixtures often spawn short Node programs. Coverage
           // stays serial because concurrent source-loader forks exhaust the
           // 7 GiB CI runner. The canonical local full suite instead runs this
@@ -142,6 +158,7 @@ export default defineConfig({
             "test/install-station-vllm-continuation.test.ts",
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",
+            "test/install-managed-cli-reuse.test.ts",
             "test/install-preflight.test.ts",
             "test/install-preflight-docker-bootstrap.test.ts",
             "test/install-station-controller-binding.test.ts",
@@ -164,13 +181,14 @@ export default defineConfig({
           name: "installer-integration",
           alias: canonicalSourceAliases,
           env: controlledNonLiveEnv,
-          setupFiles: [fixtureUmaskSetup],
+          setupFiles: [fixtureUmaskSetup, isolatedTestStateSetup],
           include: [
             "test/install-express-prompt.test.ts",
             "test/install-express-wsl-ollama.test.ts",
             "test/install-station-vllm-continuation.test.ts",
             "test/install-build-dependency-preflight.test.ts",
             "test/install-clone-ref.test.ts",
+            "test/install-managed-cli-reuse.test.ts",
             "test/install-preflight.test.ts",
             "test/install-preflight-docker-bootstrap.test.ts",
             "test/install-station-controller-binding.test.ts",
@@ -195,7 +213,7 @@ export default defineConfig({
           name: "package-contract",
           alias: canonicalSourceAliases,
           env: controlledNonLiveEnv,
-          setupFiles: [fixtureUmaskSetup],
+          setupFiles: [fixtureUmaskSetup, isolatedTestStateSetup],
           include: ["test/package-contract/**/*.test.ts"],
         },
       },
@@ -210,7 +228,11 @@ export default defineConfig({
           alias: canonicalSourceAliases,
           env: controlledNonLiveEnv,
           testTimeout: testTimeout(),
-          setupFiles: [fixtureUmaskSetup, "test/helpers/onboard-script-mocks.cjs"],
+          setupFiles: [
+            fixtureUmaskSetup,
+            isolatedTestStateSetup,
+            "test/helpers/onboard-script-mocks.cjs",
+          ],
           include: ["test/e2e/support/**/*.test.ts"],
         },
       },

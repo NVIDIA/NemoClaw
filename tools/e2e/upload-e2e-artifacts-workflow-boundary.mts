@@ -43,7 +43,7 @@ const TARGET_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 const SCORECARD_RUNTIME_UPLOAD_CONTRACT: WorkflowStep = {
   name: "Upload E2E runtime summary",
-  if: "${{ always() && github.event_name == 'schedule' && steps.scorecard.outcome == 'success' }}",
+  if: "${{ always() && github.event_name == 'schedule' }}",
   uses: UPLOAD_E2E_ARTIFACTS_ACTION,
   with: {
     name: "e2e-runtime-summary",
@@ -141,6 +141,27 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     {
       name: "e2e-hermes-inference-switch-${{ matrix.mode }}",
       path: "e2e-artifacts/live/hermes-inference-switch/${{ matrix.mode }}/",
+    },
+  ],
+  [
+    "managed-image-multiarch-startup",
+    {
+      name: "e2e-managed-image-multiarch-startup-${{ matrix.shard }}",
+      path: "e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}/",
+    },
+  ],
+  [
+    "managed-image-protected-runtime",
+    {
+      name: "e2e-managed-image-protected-runtime",
+      path: "e2e-artifacts/live/managed-image-protected-runtime/",
+    },
+  ],
+  [
+    "llama-cpp-dgx-spark-qualification",
+    {
+      name: "e2e-llama-cpp-dgx-spark-qualification",
+      path: "e2e-artifacts/live/llama-cpp-dgx-spark-qualification/",
     },
   ],
   [

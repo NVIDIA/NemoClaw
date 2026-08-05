@@ -17,56 +17,6 @@ import {
 } from "./helpers/onboard-split-context";
 
 describe("onboard helpers", () => {
-  it("drops stale local sandbox registry entries when the live sandbox is gone", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-stale-sandbox-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "stale-sandbox-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
-
-    const script = String.raw`
-const registry = require(${registryPath});
-const runner = require(${runnerPath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-runner.runCapture = (command) => (_n(command).includes("sandbox get my-assistant") ? "" : "");
-
-registry.registerSandbox({ name: "my-assistant" });
-
-const { pruneStaleSandboxEntry } = require(${onboardPath});
-
-const liveExists = pruneStaleSandboxEntry("my-assistant");
-console.log(JSON.stringify({ liveExists, sandbox: registry.getSandbox("my-assistant") }));
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
-    });
-
-    assert.equal(result.status, 0, result.stderr);
-    const payloadLine = result.stdout
-      .trim()
-      .split("\n")
-      .slice()
-      .reverse()
-      .find((line) => line.startsWith("{") && line.endsWith("}"));
-    assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(payloadLine);
-    assert.equal(payload.liveExists, false);
-    assert.equal(payload.sandbox, null);
-  });
-
   it("builds the sandbox without uploading an external OpenClaw config file", {
     timeout: 90_000,
   }, async () => {
@@ -105,7 +55,7 @@ runner.run = (command, opts = {}) => {
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
@@ -215,6 +165,15 @@ const { createSandbox } = require(${onboardPath});
           entry.command.includes("forward start --background 0.0.0.0:18789 my-assistant"),
       ),
       "expected dashboard forward (loopback or WSL 0.0.0.0)",
+    );
+    assert.ok(
+      payload.commands.some(
+        (entry: CommandEntry) =>
+          entry.command.includes("docker run -d") &&
+          entry.command.includes("OPENSHELL_SANDBOX_COMMAND=") &&
+          entry.command.includes("nemoclaw-start"),
+      ),
+      "expected the default OpenClaw startup command to be persisted in the recreated container",
     );
   });
 
@@ -517,7 +476,7 @@ runner.runFile = (file, args = [], opts = {}) => {
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
@@ -619,7 +578,7 @@ runner.run = (command, opts = {}) => {
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   {
     const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
@@ -721,7 +680,7 @@ runner.runFile = (file, args = [], opts = {}) => {
   return { status: 0 };
 };
 runner.runCapture = (command) => {
-  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox get") && _n(command).includes("my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   // Custom port: dashboard readiness curl uses 19000 (DASHBOARD_PORT from env)
   {

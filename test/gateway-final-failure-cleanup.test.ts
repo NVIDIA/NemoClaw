@@ -64,7 +64,9 @@ describe("final gateway startup failure cleanup", () => {
     expect(errors).toContain("    gateway log line");
     expect(errors).toContain("  Cleanup attempted.");
     expect(errors).toContain("    openshell gateway remove nemoclaw");
-    expect(errors).toContain("    openshell gateway destroy -g nemoclaw");
+    // OpenShell rejects the pre-0.0.44 `gateway destroy` verb, so the command
+    // fails on every OpenShell version NemoClaw installs (#8139).
+    expect(errors.join("\n")).not.toContain("gateway destroy");
     if (process.platform === "linux") {
       expect(errors).toContain(
         "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",

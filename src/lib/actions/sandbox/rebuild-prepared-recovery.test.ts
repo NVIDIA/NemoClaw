@@ -260,9 +260,11 @@ describe("prepared rebuild recovery", () => {
     ).rejects.toThrow("Recreate failed");
 
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    // The journaled source row survives the delete, so no default-sandbox
+    // transition happened and none has to be reversed (#7734).
     expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
       expect.objectContaining({ name: "alpha", agentVersion: "0.1.0" }),
-      { defaultTransition: { from: null, to: "alpha", expectedRevision: 1 } },
+      {},
     );
     expect(harness.restoreSandboxStateSpy).not.toHaveBeenCalled();
   });

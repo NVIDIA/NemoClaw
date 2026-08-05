@@ -54,8 +54,6 @@ export function gpuPassthroughRecoveryLines(
       "  No sandboxes are registered, so onboard attempted safe gateway replacement automatically.",
       "  If the retry still fails, clear the stale gateway state and re-onboard with GPU enabled:",
       "    openshell gateway remove nemoclaw",
-      "    # For OpenShell releases that still expose lifecycle commands:",
-      "    openshell gateway destroy -g nemoclaw",
       "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
       "    nemoclaw onboard --gpu",
     ];

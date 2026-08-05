@@ -45,10 +45,16 @@ describe("parseTerminalRuntimeOomProbeOutput", () => {
 });
 
 describe("probeTerminalRuntimeCgroupOom", () => {
-  it("checks cgroup OOM counters through a bounded sandbox exec", () => {
-    const calls: Array<{ args: readonly string[]; binary: string }> = [];
-    const run = vi.fn((binary: string, args: readonly string[]) => {
-      calls.push({ args, binary });
+  const dockerSandbox = {
+    getSandboxDriver: () => "docker",
+    listLabeledContainerNames: () => ["openshell-alpha"],
+    listSandboxNames: () => ["alpha"],
+  };
+
+  it("reads cgroup OOM counters from the host rather than inside the sandbox (#5796)", () => {
+    const calls: Array<readonly string[]> = [];
+    const run = vi.fn((args: readonly string[]) => {
+      calls.push(args);
       return {
         status: 0,
         stdout: "oom_kill=1\nsource=/sys/fs/cgroup/memory.events\n",
@@ -56,10 +62,7 @@ describe("probeTerminalRuntimeCgroupOom", () => {
       };
     });
 
-    const result = probeTerminalRuntimeCgroupOom("alpha", {
-      openshellBinary: "/usr/bin/openshell",
-      run,
-    });
+    const result = probeTerminalRuntimeCgroupOom("alpha", { ...dockerSandbox, run });
 
     expect(result).toEqual({
       kind: "degraded",
@@ -67,27 +70,91 @@ describe("probeTerminalRuntimeCgroupOom", () => {
       source: "/sys/fs/cgroup/memory.events",
     });
     expect(run).toHaveBeenCalledTimes(1);
-    const firstCall = calls[0];
-    expect(firstCall).toBeDefined();
-    const { args, binary } = firstCall as { args: readonly string[]; binary: string };
-    expect(binary).toBe("/usr/bin/openshell");
-    expect(args).toEqual(
-      expect.arrayContaining(["sandbox", "exec", "--name", "alpha", "--no-tty", "--timeout", "5"]),
-    );
-    const separator = args.indexOf("--");
-    expect(args.slice(separator + 1, separator + 3)).toEqual(["sh", "-lc"]);
-    expect(args[separator + 3]).toContain("/sys/fs/cgroup/memory.events");
-    expect(args[separator + 3]).toContain("/sys/fs/cgroup/memory.oom_control");
-    expect(args[separator + 3]).toContain("/sys/fs/cgroup/memory/memory.oom_control");
-    expect(args[separator + 3]).toContain("oom_kill");
+    const args = calls[0] ?? [];
+    // The sandbox exec transport runs the probe under the sandbox policy, which
+    // denies /sys/fs/cgroup and hid every real OOM behind unavailable.
+    expect(args.slice(0, 4)).toEqual(["exec", "openshell-alpha", "sh", "-lc"]);
+    expect(args[4]).toContain("/sys/fs/cgroup/memory.events");
+    expect(args[4]).toContain("/sys/fs/cgroup/memory.oom_control");
+    expect(args[4]).toContain("/sys/fs/cgroup/memory/memory.oom_control");
+    expect(args[4]).toContain("oom_kill");
   });
 
-  it("treats sandbox exec failures as unavailable", () => {
+  it("reports a surviving-supervisor OOM as degraded so status can escalate", () => {
+    expect(
+      probeTerminalRuntimeCgroupOom("alpha", {
+        ...dockerSandbox,
+        run: () => ({ status: 0, stdout: "oom_kill=1\nsource=/sys/fs/cgroup/memory.events\n" }),
+      }),
+    ).toEqual({ kind: "degraded", oomKillCount: 1, source: "/sys/fs/cgroup/memory.events" });
+  });
+
+  it("treats container exec failures as unavailable", () => {
     const result = probeTerminalRuntimeCgroupOom("alpha", {
-      openshellBinary: "/usr/bin/openshell",
+      ...dockerSandbox,
       run: () => ({ status: 2, stdout: "", stderr: "no cgroup file" }),
     });
 
     expect(result).toEqual({ kind: "unavailable", detail: "no cgroup file" });
+  });
+
+  it("returns unavailable for a sandbox that is not on the docker driver", () => {
+    const run = vi.fn(() => ({ status: 0, stdout: "oom_kill=1\n" }));
+
+    expect(
+      probeTerminalRuntimeCgroupOom("alpha", {
+        ...dockerSandbox,
+        getSandboxDriver: () => "podman",
+        run,
+      }),
+    ).toEqual({ kind: "unavailable", detail: "cgroup OOM probe requires the docker driver" });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("returns unavailable when no labeled container is found", () => {
+    expect(
+      probeTerminalRuntimeCgroupOom("alpha", {
+        ...dockerSandbox,
+        listLabeledContainerNames: () => [],
+        run: () => ({ status: 0, stdout: "oom_kill=1\n" }),
+      }),
+    ).toEqual({ kind: "unavailable", detail: "no labeled container found for sandbox" });
+  });
+
+  it("refuses to read a counter when sandbox container ownership is ambiguous", () => {
+    const run = vi.fn(() => ({ status: 0, stdout: "oom_kill=1\n" }));
+
+    expect(
+      probeTerminalRuntimeCgroupOom("alpha", {
+        ...dockerSandbox,
+        listLabeledContainerNames: () => ["openshell-alpha", "openshell-alpha-2"],
+        run,
+      }),
+    ).toEqual({ kind: "unavailable", detail: "ambiguous sandbox container ownership" });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("returns unavailable when the labeled container belongs to a longer-named sandbox", () => {
+    expect(
+      probeTerminalRuntimeCgroupOom("alpha", {
+        ...dockerSandbox,
+        listLabeledContainerNames: () => ["openshell-alpha-prod"],
+        listSandboxNames: () => ["alpha", "alpha-prod"],
+        run: () => ({ status: 0, stdout: "oom_kill=1\n" }),
+      }),
+    ).toEqual({ kind: "unavailable", detail: "sandbox container owner unresolved" });
+  });
+
+  it("returns unavailable when sandbox ownership registry lookup fails", () => {
+    const run = vi.fn(() => ({ status: 0, stdout: "oom_kill=1\n" }));
+
+    expect(
+      probeTerminalRuntimeCgroupOom("alpha", {
+        ...dockerSandbox,
+        listSandboxNames: () => undefined,
+        run,
+      }),
+    ).toEqual({ kind: "unavailable", detail: "sandbox ownership registry unavailable" });
+    expect(run).not.toHaveBeenCalled();
   });
 });

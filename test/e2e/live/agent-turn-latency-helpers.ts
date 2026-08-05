@@ -229,6 +229,60 @@ export function extractOpenClawAgentPayloadText(output: string): string {
   return "";
 }
 
+export type OpenClawAgentDurationEvidence =
+  | { durationMs: number; status: "available" }
+  | { reason: "malformed" | "missing"; status: "unavailable" };
+
+export interface OpenClawFirstTurnLatencyEvidence {
+  firstTurnAgentDuration: OpenClawAgentDurationEvidence;
+  firstTurnCommandMs: number;
+}
+
+/**
+ * Extract OpenClaw's internal agent duration without fabricating a value when
+ * older or malformed output omits the metadata contract.
+ */
+export function extractOpenClawAgentDurationEvidence(
+  output: string,
+): OpenClawAgentDurationEvidence {
+  let malformed = false;
+  for (let start = output.indexOf("{"); start >= 0; start = output.indexOf("{", start + 1)) {
+    const parsed = parseJsonObjectAt(output, start);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+    const result = (parsed as Record<string, unknown>).result;
+    if (!result || typeof result !== "object" || Array.isArray(result)) continue;
+    const meta = (result as Record<string, unknown>).meta;
+    if (meta === undefined) continue;
+    if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+      malformed = true;
+      continue;
+    }
+    const durationMs = (meta as Record<string, unknown>).durationMs;
+    if (typeof durationMs === "number" && Number.isFinite(durationMs) && durationMs >= 0) {
+      return { durationMs, status: "available" };
+    }
+    if (durationMs !== undefined) malformed = true;
+  }
+  return { reason: malformed ? "malformed" : "missing", status: "unavailable" };
+}
+
+export function buildOpenClawFirstTurnLatencyEvidence(
+  output: string,
+  firstTurnCommandMs: number,
+): OpenClawFirstTurnLatencyEvidence {
+  if (
+    typeof firstTurnCommandMs !== "number" ||
+    !Number.isFinite(firstTurnCommandMs) ||
+    firstTurnCommandMs < 0
+  ) {
+    throw new Error("first-turn command duration is invalid");
+  }
+  return {
+    firstTurnAgentDuration: extractOpenClawAgentDurationEvidence(output),
+    firstTurnCommandMs,
+  };
+}
+
 export function responseBodyAndStatus(raw: string): { body: string; status: string } {
   const match = raw.match(/\n__NEMOCLAW_HTTP_STATUS__=(\d{3})\s*$/u);
   return { body: match ? raw.slice(0, match.index).trim() : raw, status: match?.[1] ?? "000" };

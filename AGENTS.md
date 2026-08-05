@@ -297,46 +297,28 @@ If the command trace contains no reviewer-request write, report the event as an 
 
 ### NVIDIA DORI Routing
 
-Use the ignored `.dori_user_status` file at the repository root to select the
-documentation path. The file can contain only one line: `authorized` or
-`external`.
+Select the documentation path from current host capabilities.
+Do not ask the user to classify themselves or store repository-scoped identity
+state during a normal documentation task.
 
-1. Read `.dori_user_status` before checking for DORI.
-   - If the value is `external`, use the
-     [Writing Style Guide](docs/AGENTS.md#writing-style-guide) without checking
-     DORI.
-   - If the value is `authorized`, continue to step 2.
-   - If the file is absent or invalid, ask the user to select one of these
-     options. Use selectable options when the host supports them. Otherwise,
-     present the numbered list:
+1. Check whether the current agent exposes `dori_handle` or `dori_route` and
+   `dori_collections`.
+   If the user explicitly asks not to use DORI, use the
+   [Writing Style Guide](docs/AGENTS.md#writing-style-guide) instead.
+2. When those tools are available, list the installed collections.
+   - If a collection source contains `tech-docs/skill-library`, use DORI for
+     task routing.
+   - If the collection is missing, inaccessible, or cannot be verified,
+     continue with the
+     [Writing Style Guide](docs/AGENTS.md#writing-style-guide).
+3. When the DORI tools are unavailable, continue with the Writing Style Guide.
+   Do not inspect a shell-visible CLI, install software, or configure the host
+   during a normal documentation task.
+4. Use [NVIDIA DORI Setup](docs/DORI_SETUP.md) only when the user explicitly
+   asks to install or configure DORI.
 
-     1. Select `authorized` if you are an NVIDIA employee or authorized
-        contractor with access to `gitlab-master.nvidia.com`.
-     2. Select `external` for all other contributors.
-
-   - Normalize an unambiguous response and write only the corresponding
-     lowercase value to `.dori_user_status`.
-     - Store `authorized` for option 1, `1`, `authorized`, or a response that
-       clearly selects `authorized`, such as `yes, authorized`.
-     - Store `external` for option 2, `2`, `external`, or a response that
-       clearly selects `external`.
-     - If the response is ambiguous, selects both options, or does not select
-       either option, ask again and do not write the file.
-   - If the user declines to answer or store a value, do not create the file.
-     Use the [Writing Style Guide](docs/AGENTS.md#writing-style-guide).
-   - Tell the user that deleting `.dori_user_status` resets the choice.
-2. Only after an `authorized` value, check whether the current agent exposes
-   `dori_handle` or `dori_route`.
-   - If DORI is available, use it for task routing. When `dori_collections` is
-     available, verify that a collection source contains
-     `tech-docs/skill-library`.
-   - If DORI is unavailable or the Skill Library is missing, follow
-     [NVIDIA DORI Setup](docs/DORI_SETUP.md).
-
-The stored value does not prove access or approve installation or host
-configuration. Use the
-[Writing Style Guide](docs/AGENTS.md#writing-style-guide) if setup is declined
-or fails.
+Capability detection does not approve installation or host configuration.
+DORI unavailability must not block documentation work.
 
 ## PR Requirements
 

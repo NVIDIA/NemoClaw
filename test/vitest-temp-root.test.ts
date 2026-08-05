@@ -13,6 +13,7 @@ import { setupVitestTempRoot } from "./helpers/vitest-temp-root";
 
 const TEMP_ENV_KEYS = ["TMPDIR", "TMP", "TEMP"] as const;
 const ROOT_SETUP = "test/helpers/vitest-temp-root.ts";
+const STATE_SETUP = "test/helpers/isolate-test-state.ts";
 
 type TempEnv = Record<(typeof TEMP_ENV_KEYS)[number], string | undefined>;
 
@@ -49,6 +50,17 @@ describe("Vitest temp root", () => {
     expect(path.isAbsolute(root)).toBe(true);
     expect(path.basename(root)).toMatch(/^nemoclaw-vitest-/);
     expect(fs.statSync(root).isDirectory()).toBe(true);
+  });
+
+  it("isolates each test file's NemoClaw state inside the run root", () => {
+    const root = process.env.TMPDIR as string;
+    const stateDir = process.env.NEMOCLAW_TEST_STATE_DIR as string;
+    const relativeStateDir = path.relative(root, stateDir);
+
+    expect(relativeStateDir).toMatch(/^state-\d+-/);
+    expect(relativeStateDir.startsWith(`..${path.sep}`)).toBe(false);
+    expect(path.isAbsolute(stateDir)).toBe(true);
+    expect(fs.statSync(stateDir).mode & 0o777).toBe(0o700);
   });
 
   it("removes run artifacts and restores the caller temp environment", () => {
@@ -208,5 +220,27 @@ describe("Vitest temp root", () => {
     expect(pluginVitestConfig.test?.globalSetup).toBe(
       path.resolve(import.meta.dirname, "..", ROOT_SETUP),
     );
+  });
+
+  // source-shape-contract: security -- Non-live state isolation must never redirect credential-bearing live E2E state
+  it("isolates stateful non-live projects without redirecting live E2E state", () => {
+    const projects = (rootVitestConfig.test?.projects ?? []) as Array<{
+      test?: { name?: string; setupFiles?: string[] };
+    }>;
+    const setupFilesByProject = new Map(
+      projects.map((project) => [project.test?.name, project.test?.setupFiles ?? []]),
+    );
+
+    for (const name of [
+      "cli",
+      "integration",
+      "installer-integration",
+      "package-contract",
+      "e2e-support",
+    ]) {
+      expect(setupFilesByProject.get(name), name).toContain(STATE_SETUP);
+    }
+    expect(setupFilesByProject.get("plugin")).not.toContain(STATE_SETUP);
+    expect(setupFilesByProject.get("e2e-live")).not.toContain(STATE_SETUP);
   });
 });

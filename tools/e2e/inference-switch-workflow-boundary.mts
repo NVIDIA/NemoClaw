@@ -103,6 +103,11 @@ function validateJob(errors: string[], spec: JobSpec, job: WorkflowJob): void {
     errors.push(`${spec.job} must not enable hosted inference for its Anthropic-compatible mode`);
   }
   for (const step of job.steps ?? []) {
+    if (step.env?.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== undefined) {
+      errors.push(
+        `${spec.job} must not define NEMOCLAW_E2E_USE_HOSTED_INFERENCE at step scope for its Anthropic-compatible mode`,
+      );
+    }
     if (step.env?.NVIDIA_INFERENCE_API_KEY !== undefined) {
       errors.push(
         `${spec.job} must not expose NVIDIA_INFERENCE_API_KEY in its Anthropic-compatible mode`,

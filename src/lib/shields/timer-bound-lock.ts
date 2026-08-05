@@ -2,7 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { readAutoRestoreTakeoverToken } from "./timer-control";
-import { withShieldsTransitionLock, withShieldsTransitionLockAsync } from "./transition-lock";
+import {
+  type ShieldsTransitionLockOptions,
+  withShieldsTransitionLock,
+  withShieldsTransitionLockAsync,
+} from "./transition-lock";
+
+export {
+  beginCommittedMcpLifecycleContainmentSync,
+  durableMcpLifecycleContainmentFailure,
+  getMcpLifecycleLockPath,
+  isMcpLifecycleLockHeld,
+  readMcpLockProcessIdentity,
+  withMcpLifecycleDeadlineFenceSync,
+  withMcpLifecycleLockSync,
+} from "../state/mcp-lifecycle-lock";
 
 const MAX_TIMER_GENERATION_RETRIES = 3;
 
@@ -20,6 +34,32 @@ const defaultDeps: TimerBoundLockDeps = {
 
 type Attempt<T> = { retry: true } | { retry: false; value: T };
 
+function withTimerBoundShieldsMutationLockOptions<T>(
+  sandboxName: string,
+  command: string,
+  fn: () => T,
+  lockOptions: ShieldsTransitionLockOptions,
+  deps: TimerBoundLockDeps,
+): T {
+  for (let attempt = 0; attempt < MAX_TIMER_GENERATION_RETRIES; attempt += 1) {
+    const token = deps.readToken(sandboxName);
+    const result = deps.withLock<Attempt<T>>(
+      sandboxName,
+      command,
+      () => {
+        if (deps.readToken(sandboxName) !== token) return { retry: true };
+        return { retry: false, value: fn() };
+      },
+      {
+        ...lockOptions,
+        ...(token ? { takeoverToken: token } : {}),
+      },
+    );
+    if (!result.retry) return result.value;
+  }
+  throw new Error(`Auto-restore timer generation kept changing while acquiring '${command}'`);
+}
+
 /**
  * Serialize a mutation and bind its lock owner to the exact active restore
  * timer generation. If a timer is replaced while this operation waits for the
@@ -33,20 +73,27 @@ export function withTimerBoundShieldsMutationLock<T>(
   fn: () => T,
   deps: TimerBoundLockDeps = defaultDeps,
 ): T {
-  for (let attempt = 0; attempt < MAX_TIMER_GENERATION_RETRIES; attempt += 1) {
-    const token = deps.readToken(sandboxName);
-    const result = deps.withLock<Attempt<T>>(
-      sandboxName,
-      command,
-      () => {
-        if (deps.readToken(sandboxName) !== token) return { retry: true };
-        return { retry: false, value: fn() };
-      },
-      token ? { takeoverToken: token } : {},
-    );
-    if (!result.retry) return result.value;
-  }
-  throw new Error(`Auto-restore timer generation kept changing while acquiring '${command}'`);
+  return withTimerBoundShieldsMutationLockOptions(sandboxName, command, fn, {}, deps);
+}
+
+/**
+ * Auto-restore uses a stronger stale-owner protocol than ordinary commands.
+ * A stale transition owner is preserved so the recovery coordinator can
+ * publish durable containment instead of deleting a generation whose
+ * descendants cannot be ruled out.
+ */
+export function withTimerBoundAutoRestoreLock<T>(
+  sandboxName: string,
+  command: string,
+  fn: () => T,
+): T {
+  return withTimerBoundShieldsMutationLockOptions(
+    sandboxName,
+    command,
+    fn,
+    { recoverStaleOwner: false, waitTimeoutMs: 0 },
+    defaultDeps,
+  );
 }
 
 export async function withTimerBoundShieldsMutationLockAsync<T>(

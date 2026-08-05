@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { listMessagingProviderNamesForChannel } from "../messaging/channels";
+import type { RegistryMessagingAuthority } from "../messaging/plan-authority";
+import { getChannelsFromPlan, getDisabledChannelsFromPlan } from "./messaging-plan-session";
 
 type MessagingChannel = { name: string; envKey?: string };
 
@@ -27,8 +29,7 @@ export function getNonInteractiveStoredMessagingChannels(
   sandboxName: string | null,
   messagingChannels: readonly MessagingChannel[],
   hasMessagingToken: (envKey: string) => boolean,
-  getConfiguredChannels: (sandboxName: string) => string[],
-  getDisabledChannels: (sandboxName: string) => string[],
+  getRegistryMessagingAuthority: (sandboxName: string) => RegistryMessagingAuthority,
   providerExists: (providerName: string) => boolean,
   nonInteractive: boolean,
 ): string[] | null {
@@ -45,11 +46,13 @@ export function getNonInteractiveStoredMessagingChannels(
     return null;
   }
 
+  const registryAuthority = getRegistryMessagingAuthority(sandboxName);
+  if (!registryAuthority.authoritative) return null;
   const configuredChannels = getKnownMessagingChannels(
-    getConfiguredChannels(sandboxName),
+    getChannelsFromPlan(registryAuthority.plan),
     messagingChannels,
   );
-  const disabledChannels = new Set(getDisabledChannels(sandboxName));
+  const disabledChannels = new Set(getDisabledChannelsFromPlan(registryAuthority.plan));
   const reusableChannels = configuredChannels.filter((channel) => {
     if (disabledChannels.has(channel)) return false;
     const providers = getMessagingProviderNamesForChannel(sandboxName, channel);

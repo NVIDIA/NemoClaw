@@ -102,6 +102,38 @@ async function expectShieldsStatus(
   expect(resultText(status)).toContain(`Shields: ${expected}`);
 }
 
+async function expectStopStartRecovery(
+  host: HostCliClient,
+  posture: "DOWN" | "UP",
+  artifactPrefix: string,
+): Promise<void> {
+  const stop = await host.nemoclaw([SANDBOX_NAME, "stop"], {
+    artifactName: `${artifactPrefix}-stop`,
+    env: commandEnv(),
+    redactionValues: [COMPATIBLE_API_KEY],
+    timeoutMs: 5 * 60_000,
+  });
+  assertExitZero(stop, `stop Hermes with shields ${posture.toLowerCase()}`);
+
+  const start = await host.nemoclaw([SANDBOX_NAME, "start"], {
+    artifactName: `${artifactPrefix}-start`,
+    env: commandEnv(),
+    redactionValues: [COMPATIBLE_API_KEY],
+    timeoutMs: 5 * 60_000,
+  });
+  assertExitZero(start, `start Hermes with shields ${posture.toLowerCase()}`);
+
+  const status = await host.nemoclaw([SANDBOX_NAME, "status"], {
+    artifactName: `${artifactPrefix}-status`,
+    env: commandEnv(),
+    redactionValues: [COMPATIBLE_API_KEY],
+    timeoutMs: 5 * 60_000,
+  });
+  assertExitZero(status, `read Hermes status with shields ${posture.toLowerCase()}`);
+  expect(stripAnsi(resultText(status))).toMatch(/Phase:\s*Ready/i);
+  await expectShieldsStatus(host, posture, `${artifactPrefix}-shields-status`);
+}
+
 async function expectMutablePosture(sandbox: SandboxClient, cycle: number): Promise<void> {
   const result = await sandboxShell(
     sandbox,
@@ -152,7 +184,7 @@ async function completeShieldsCycle(
   await expectLockedPosture(sandbox, cycle);
 }
 
-test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields cycles (#6381)", {
+test("hermes-shields-config: stopped Hermes restores under both Shields postures (#6381, #8112)", {
   timeout: HERMES_SHIELDS_CONFIG_TEST_TIMEOUT_MS,
   meta: {
     e2ePhases: [
@@ -160,6 +192,8 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
       "onboard non-root Hermes sandbox",
       "verify fresh Hermes runtime state",
       "complete first shields cycle",
+      "restart Hermes with shields up",
+      "unlock shields and restart Hermes",
       "complete second shields cycle",
       "verify preserved config and ready state",
     ],
@@ -167,11 +201,14 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
 }, async ({ artifacts, cleanup: cleanupRegistry, host, progress, sandbox }) => {
   await artifacts.target.declare({
     id: "hermes-shields-config",
-    boundary: "fresh CPU-only Hermes onboard plus two real shields down/up transitions",
+    boundary:
+      "fresh CPU-only Hermes onboard plus two real shields down/up transitions and stopped-sandbox recovery",
     contracts: [
       "fresh OpenShell-managed non-root Hermes startup mints its API key",
       "the first shields-down reconciles the startup hash anchor",
       "shields-up establishes the root-owned locked posture",
+      "start restores a stopped Hermes sandbox while shields are up",
+      "start restores a stopped Hermes sandbox while shields are down",
       "a second down/up cycle completes without corrupting config state",
     ],
     issue: "#6381",
@@ -289,8 +326,28 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
 
   progress.phase("complete first shields cycle");
   await completeShieldsCycle(host, sandbox, 1);
+
+  progress.phase("restart Hermes with shields up");
+  await expectStopStartRecovery(host, "UP", "cycle-1-shields-up-start-recovery");
+  await expectLockedPosture(sandbox, 1);
+
+  progress.phase("unlock shields and restart Hermes");
+  const down = await runShields(
+    host,
+    ["down", "--timeout", "15m", "--reason", "Hermes live E2E cycle 2"],
+    "cycle-2-shields-down",
+  );
+  assertExitZero(down, "unlock fresh Hermes config in cycle 2");
+  await expectShieldsStatus(host, "DOWN", "cycle-2-status-down");
+  await expectMutablePosture(sandbox, 2);
+  await expectStopStartRecovery(host, "DOWN", "cycle-2-shields-down-start-recovery");
+  await expectMutablePosture(sandbox, 2);
+
   progress.phase("complete second shields cycle");
-  await completeShieldsCycle(host, sandbox, 2);
+  const up = await runShields(host, ["up"], "cycle-2-shields-up");
+  assertExitZero(up, "lock fresh Hermes config in cycle 2");
+  await expectShieldsStatus(host, "UP", "cycle-2-status-up");
+  await expectLockedPosture(sandbox, 2);
 
   progress.phase("verify preserved config and ready state");
   const configHashAfter = await sandboxShell(
@@ -317,6 +374,8 @@ test("hermes-shields-config: fresh non-root Hermes sandbox completes two shields
       configPreserved: true,
       freshNonrootTrigger: true,
       firstCycle: true,
+      shieldsDownStartRecovery: true,
+      shieldsUpStartRecovery: true,
       secondCycle: true,
     },
   });

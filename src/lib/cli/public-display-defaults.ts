@@ -390,16 +390,18 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Policy Presets",
       order: 21,
+      usage: "nemoclaw <name> policy exclude <key>",
       description: "Exclude a baseline policy entry (persisted, replayed on rebuild)",
-      flags: "(--force, -f, --yes, -y, --dry-run)",
+      flags: "(--force, --yes, -y, --dry-run)",
     },
   ],
   "sandbox:policy:restore": [
     {
       group: "Policy Presets",
       order: 22,
+      usage: "nemoclaw <name> policy restore <key>",
       description: "Restore a previously excluded baseline entry",
-      flags: "(--dry-run)",
+      flags: "(--force, --yes, -y, --dry-run)",
     },
   ],
   "sandbox:rebuild": [
@@ -582,6 +584,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       order: 2.5,
       usage: "nemoclaw use <name>",
       flags: "[--json]",
+    },
+  ],
+  launch: [
+    {
+      group: "Sandbox Management",
+      order: 2.6,
+      usage: "nemoclaw launch <name>",
     },
   ],
   update: [

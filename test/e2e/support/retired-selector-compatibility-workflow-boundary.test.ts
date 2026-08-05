@@ -37,15 +37,6 @@ function compatibilitySteps(): {
   return { steps, workflow };
 }
 
-function jobSteps(workflow: MutableWorkflow, jobName: string): WorkflowStep[] {
-  return (
-    workflow.jobs[jobName]?.steps ??
-    (() => {
-      throw new Error(`${jobName} steps are required`);
-    })()
-  );
-}
-
 const DRIFT_CASES = [
   {
     name: "target selector gate",
@@ -105,33 +96,6 @@ const DRIFT_CASES = [
       step.uses = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
     },
     error: "retired-selector-compatibility job must upload compatibility evidence",
-  },
-  {
-    name: "sandbox rebuild candidate classifier",
-    mutate: (_steps: WorkflowStep[], workflow: MutableWorkflow) => {
-      const steps = jobSteps(workflow, "sandbox-rebuild");
-      const classifier = requiredStep(
-        steps,
-        (candidate) => candidate.name === "Classify sandbox-rebuild candidate selector",
-        "sandbox rebuild candidate classifier",
-      );
-      steps.splice(steps.indexOf(classifier), 1);
-    },
-    error: "sandbox-rebuild job must classify candidate selector retirement",
-  },
-  {
-    name: "upgrade stale sandbox candidate guard",
-    mutate: (_steps: WorkflowStep[], workflow: MutableWorkflow) => {
-      const steps = jobSteps(workflow, "upgrade-stale-sandbox");
-      const run = requiredStep(
-        steps,
-        (candidate) => candidate.name === "Run upgrade stale sandbox live Vitest test",
-        "upgrade stale sandbox live test",
-      );
-      run.if = "always()";
-    },
-    error:
-      "upgrade-stale-sandbox step 'Run upgrade stale sandbox live Vitest test' must skip a retired candidate selector",
   },
 ] as const;
 
