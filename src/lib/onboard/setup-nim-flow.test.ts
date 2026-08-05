@@ -483,6 +483,52 @@ describe("createSetupNim", () => {
     expect(handleRunningOllamaSelection).toHaveBeenCalledTimes(1);
   });
 
+  it("reuses the running daemon when mirrored networking exposes the Windows host on WSL loopback (#7472)", async () => {
+    const model = "qwen3.6:35b";
+    const handleRunningOllamaSelection = vi.fn<SetupNimFlowDeps["handleRunningOllamaSelection"]>(
+      async (_gpu, requestedModel, _recoveredModel, ollamaRunning, state) => {
+        expect(requestedModel).toBe(model);
+        expect(ollamaRunning).toBe(true);
+        state.model = model;
+        state.provider = "ollama-local";
+        state.endpointUrl = "http://127.0.0.1:11434/v1";
+        state.credentialEnv = null;
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const handleWindowsHostOllamaSelection = vi.fn<
+      SetupNimFlowDeps["handleWindowsHostOllamaSelection"]
+    >(async () => unexpected("Windows-host Ollama selection"));
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "install-windows-ollama",
+        getNonInteractiveModel: () => model,
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            // Mirrored networking puts the Windows daemon on the distro's own
+            // loopback, so the first probe candidate answers and the host reads
+            // as local even though the daemon is the Windows one.
+            ollamaHost: "127.0.0.1",
+            ollamaRunning: true,
+            isWindowsHostOllama: false,
+            isWsl: true,
+            hasWindowsOllama: false,
+            windowsHostOllamaDockerRequirement:
+              getWindowsHostOllamaDockerRequirement("docker-desktop"),
+          }),
+        handleRunningOllamaSelection,
+        handleWindowsHostOllamaSelection,
+      }),
+    );
+
+    await setupNim(null, null);
+
+    expect(handleRunningOllamaSelection).toHaveBeenCalledTimes(1);
+    expect(handleWindowsHostOllamaSelection).not.toHaveBeenCalled();
+  });
+
   it("applies same-gateway discovery constraints before a provider probe (#6315)", async () => {
     const providerProbe = vi.fn();
     const routeGuard = vi.fn(
@@ -676,6 +722,90 @@ describe("createSetupNim", () => {
       endpointUrl: "https://integrate.api.nvidia.com/v1",
       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       preferredInferenceApi: "openai-completions",
+    });
+  });
+
+  it("does not carry the provider-model fallback across a provider switch (#8135)", async () => {
+    const note = vi.fn();
+    const readRecordedProvider = vi.fn(() => "nvidia-prod");
+    const readRecordedNimContainer = vi.fn(() => null);
+    const readRecordedModel = vi.fn(() => "nvidia/nemotron-3-super-120b-a12b");
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (args, state) => {
+        expect(args).toMatchObject({
+          selected: { key: "openai", label: "OpenAI" },
+          requestedModel: null,
+          recoveredFromSandbox: false,
+          recoveredModel: null,
+          sandboxName: "drift-sandbox",
+        });
+        state.model = "gpt-5.4";
+        state.provider = "openai-api";
+        state.endpointUrl = "https://api.openai.com/v1";
+        state.credentialEnv = "OPENAI_API_KEY";
+        state.preferredInferenceApi = "openai-responses";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "openai",
+        getNonInteractiveModel: (_providerKey, options) =>
+          options?.allowProviderModelFallback === false
+            ? null
+            : "nvidia/nemotron-3-super-120b-a12b",
+        note,
+        readRecordedProvider,
+        readRecordedNimContainer,
+        readRecordedModel,
+        handleRemoteProviderSelection,
+      }),
+    );
+
+    const result = await setupNim(null, "drift-sandbox", null, true);
+
+    expect(handleRemoteProviderSelection).toHaveBeenCalledOnce();
+    expect(note).toHaveBeenCalledWith("  [non-interactive] Provider: openai");
+    expect(result).toMatchObject({
+      model: "gpt-5.4",
+      provider: "openai-api",
+    });
+  });
+
+  it("preserves an explicit model that matches the recorded provider default after a provider switch (#8135)", async () => {
+    const readRecordedProvider = vi.fn(() => "nvidia-prod");
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (args, state) => {
+        expect(args).toMatchObject({
+          selected: { key: "openai", label: "OpenAI" },
+          requestedModel: "nvidia/nemotron-3-super-120b-a12b",
+          sandboxName: "drift-sandbox",
+        });
+        state.model = args.requestedModel;
+        state.provider = "openai-api";
+        state.endpointUrl = "https://api.openai.com/v1";
+        state.credentialEnv = "OPENAI_API_KEY";
+        state.preferredInferenceApi = "openai-responses";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "openai",
+        getNonInteractiveModel: () => "nvidia/nemotron-3-super-120b-a12b",
+        readRecordedProvider,
+        handleRemoteProviderSelection,
+      }),
+    );
+
+    const result = await setupNim(null, "drift-sandbox", null, true);
+
+    expect(handleRemoteProviderSelection).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      provider: "openai-api",
     });
   });
 

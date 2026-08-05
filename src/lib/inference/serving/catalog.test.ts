@@ -141,12 +141,30 @@ spec:
         format: gguf
         quantization: Q4_K_M
         license: Apache-2.0
+    acquisition:
+      ref: hugging-face-exact-file/v1
+      authentication:
+        mode: optional
+        environment: HF_TOKEN
+    cache:
+      ref: llama-cpp.gguf-content-addressed/v1
+      receiptRef: llama-cpp.gguf-cache-entry.receipt/v1
+      root: user-cache
+      quotaBytes: 6442450944
+      stagingHeadroomBytes: 1073741824
+      staging: same-filesystem
+      publication: atomic-no-clobber
+      reuse: verified-only-offline
+      sharing: owner-only
+      cleanup: receipt-owner-only
   runtime:
     image: registry.example/test/llama-server@sha256:${"2".repeat(64)}
+    imageDownloadSizeBytes: 1073741824
     platforms:
       - linux/amd64
       - linux/arm64
     containerRuntime: docker
+    networkExposure: loopback
     hosts: 1
     cuda:
       baseImage: registry.example/nvidia/cuda@sha256:${"3".repeat(64)}
@@ -166,11 +184,19 @@ spec:
     lifecycleRef: test.lifecycle/v1
   serve:
     protocol: openai-completions
+    authentication: bearer
     port: 8081
     chatTemplate: test-chat
     contextSize: 32768
     slots: 1
     idleSleepSeconds: -1
+    batchSize: 2048
+    microBatchSize: 512
+    flashAttention: enabled
+    kvCache:
+      key: f16
+      value: f16
+    speculativeDecoding: disabled
     limits:
       maxRequestBodyBytes: 1048576
       maxPromptTokens: 24576
@@ -305,7 +331,7 @@ describe("managed inference serving catalog compiler", () => {
     expect(first.readinessSchemaRef).toBe(
       "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json",
     );
-    expect(first.compilerVersion).toBe("1.1.0");
+    expect(first.compilerVersion).toBe("1.2.0");
     expect(first.recipes.map((definition) => definition.metadata.id)).toEqual(["test.recipe.v1"]);
     expect(first.presets.map((definition) => definition.metadata.id)).toEqual(["test.preset.auto"]);
     expect(first.sources.map((source) => source.path)).toEqual([
@@ -326,10 +352,22 @@ describe("managed inference serving catalog compiler", () => {
       providerId: "llama-cpp-local",
       server: { technology: "llama.cpp" },
       runtime: {
+        imageDownloadSizeBytes: 1073741824,
         platforms: ["linux/amd64", "linux/arm64"],
+        networkExposure: "loopback",
         gpu: { count: 1, cpuFallback: "reject" },
       },
-      serve: { protocol: "openai-completions", port: 8081, slots: 1 },
+      serve: {
+        protocol: "openai-completions",
+        authentication: "bearer",
+        port: 8081,
+        slots: 1,
+        batchSize: 2048,
+        microBatchSize: 512,
+        flashAttention: "enabled",
+        kvCache: { key: "f16", value: "f16" },
+        speculativeDecoding: "disabled",
+      },
       capabilities: { agents: [], protocols: ["openai-completions"] },
     });
     expect(first.presets[0]?.spec.selection).toBe("explicit-only");
@@ -345,7 +383,37 @@ describe("managed inference serving catalog compiler", () => {
       "      revision: main",
     ],
     ["a mutable model revision", `    revision: ${"f".repeat(40)}`, "    revision: latest"],
+    ["a missing GGUF digest", `        digest: sha256:${"1".repeat(64)}\n`, ""],
     ["a missing GGUF byte size", "        sizeBytes: 4294967296\n", ""],
+    ["a non-GGUF file", "      - path: test-model.Q4_K_M.gguf", "      - path: model.bin"],
+    [
+      "an unsupported acquisition transport",
+      "      ref: hugging-face-exact-file/v1",
+      "      ref: arbitrary-url/v1",
+    ],
+    ["a required acquisition credential", "        mode: optional", "        mode: required"],
+    [
+      "an arbitrary acquisition endpoint",
+      "      ref: hugging-face-exact-file/v1",
+      "      ref: hugging-face-exact-file/v1\n      endpoint: https://example.test/model.gguf",
+    ],
+    [
+      "an embedded acquisition credential",
+      "        environment: HF_TOKEN",
+      "        environment: HF_TOKEN\n        token: test-secret",
+    ],
+    ["a shared cache owner", "      sharing: owner-only", "      sharing: host-user"],
+    [
+      "cross-filesystem staging",
+      "      staging: same-filesystem",
+      "      staging: system-temporary",
+    ],
+    [
+      "clobbering cache publication",
+      "      publication: atomic-no-clobber",
+      "      publication: replace-existing",
+    ],
+    ["unverified cache reuse", "      reuse: verified-only-offline", "      reuse: trust-existing"],
     [
       "a mutable server image",
       `    image: registry.example/test/llama-server@sha256:${"2".repeat(64)}`,
@@ -357,6 +425,7 @@ describe("managed inference serving catalog compiler", () => {
       "      baseImage: registry.example/nvidia/cuda:12.8",
     ],
     ["incomplete platform coverage", "      - linux/arm64\n", ""],
+    ["a missing image byte size", "    imageDownloadSizeBytes: 1073741824\n", ""],
     ["missing process limits", "      pidsLimit: 256\n", ""],
     [
       "an embedded credential",
@@ -372,6 +441,15 @@ describe("managed inference serving catalog compiler", () => {
       "    protocol: openai-responses",
     ],
     ["CPU fallback", "      cpuFallback: reject", "      cpuFallback: allow"],
+    ["external network exposure", "    networkExposure: loopback", "    networkExposure: lan"],
+    ["missing authentication", "    authentication: bearer\n", ""],
+    ["an unsafe KV cache type", "      key: f16", "      key: q4_0"],
+    ["disabled flash attention", "    flashAttention: enabled", "    flashAttention: disabled"],
+    [
+      "enabled speculative decoding",
+      "    speculativeDecoding: disabled",
+      "    speculativeDecoding: enabled",
+    ],
     ["server egress", "    egress: disabled", "    egress: enabled"],
     ["a remote model source", "    modelSource: verified-local", "    modelSource: remote"],
     [
@@ -384,6 +462,82 @@ describe("managed inference serving catalog compiler", () => {
     ["a path-based served model name", "    servedName: test-model", "    servedName: test/model"],
   ])("rejects %s in a llama.cpp recipe (#8181)", (_case, expected, replacement) => {
     const recipe = replaceSource(llamaCppRecipeSource(), expected, replacement);
+
+    expect(() => compile([recipe])).toThrow("does not satisfy the ServingRecipe schema");
+  });
+
+  it.each([
+    [
+      "top-level topology bindings",
+      "  backend: install-llama-cpp",
+      `  backend: install-llama-cpp
+  bindings:
+    cluster:
+      type: topologyQualificationOutput
+      qualificationId: test.qualification
+      schemaVersion: 1
+      outputSchema: test.output`,
+    ],
+    [
+      "managed model preparation",
+      "    servedName: test-model",
+      `    servedName: test-model
+    preparation:
+      ref: none/v1`,
+    ],
+    [
+      "managed runtime networking",
+      "    networkExposure: loopback",
+      `    networkExposure: loopback
+    networkMode: host`,
+    ],
+    [
+      "managed cluster execution sizing",
+      "    receiptRef: test.receipt/v1",
+      `    receiptRef: test.receipt/v1
+    nodeCount: 1`,
+    ],
+    [
+      "an executable override",
+      "    authentication: bearer",
+      `    authentication: bearer
+    executable: /usr/local/bin/llama-server`,
+    ],
+  ])("rejects generic-only %s in a llama.cpp recipe (#8173)", (_case, expected, replacement) => {
+    const recipe = replaceSource(llamaCppRecipeSource(), expected, replacement);
+
+    expect(() => compile([recipe])).toThrow("does not satisfy the ServingRecipe schema");
+  });
+
+  it.each([
+    [
+      "acquisition",
+      `    revision: ${MODEL_REVISION}`,
+      `    revision: ${MODEL_REVISION}
+    acquisition:
+      ref: hugging-face-exact-file/v1
+      authentication:
+        mode: optional
+        environment: HF_TOKEN`,
+    ],
+    [
+      "cache",
+      `    revision: ${MODEL_REVISION}`,
+      `    revision: ${MODEL_REVISION}
+    cache:
+      ref: llama-cpp.gguf-content-addressed/v1
+      receiptRef: llama-cpp.gguf-cache-entry.receipt/v1
+      root: user-cache
+      quotaBytes: 2048
+      stagingHeadroomBytes: 1024
+      staging: same-filesystem
+      publication: atomic-no-clobber
+      reuse: verified-only-offline
+      sharing: owner-only
+      cleanup: receipt-owner-only`,
+    ],
+  ])("rejects llama.cpp model %s on a generic recipe (#8279)", (_field, expected, replacement) => {
+    const recipe = replaceSource(recipeSource(), expected, replacement);
 
     expect(() => compile([recipe])).toThrow("does not satisfy the ServingRecipe schema");
   });
@@ -409,6 +563,30 @@ describe("managed inference serving catalog compiler", () => {
 
     expect(() => compile([excessiveTokenLimits])).toThrow(
       "request token limits exceed serve.contextSize",
+    );
+  });
+
+  it("rejects a llama.cpp micro-batch larger than its batch (#8173)", () => {
+    const invalidBatching = replaceSource(
+      llamaCppRecipeSource(),
+      "    microBatchSize: 512",
+      "    microBatchSize: 4096",
+    );
+
+    expect(() => compile([invalidBatching])).toThrow(
+      "serve.microBatchSize cannot exceed serve.batchSize",
+    );
+  });
+
+  it("rejects a llama.cpp cache quota below the file size and staging headroom (#8279)", () => {
+    const insufficientQuota = replaceSource(
+      llamaCppRecipeSource(),
+      "      quotaBytes: 6442450944",
+      "      quotaBytes: 5368709119",
+    );
+
+    expect(() => compile([insufficientQuota])).toThrow(
+      "cache quota must be at least 5368709120 bytes",
     );
   });
 
@@ -481,6 +659,16 @@ describe("managed inference serving catalog compiler", () => {
     expect(() => compile([llamaCppRecipeSource(), presetWithoutReadiness])).toThrow(
       "must declare readiness requirements for llama.cpp recipe",
     );
+  });
+
+  it("allows an explicit llama.cpp preset to narrow a multiarch image to arm64 (#8173)", () => {
+    const arm64Preset = replaceSource(
+      llamaCppPresetSource(),
+      "            operator: one-of\n            values:\n              - amd64\n              - arm64",
+      "            operator: equals\n            value: arm64",
+    );
+
+    expect(() => compile([llamaCppRecipeSource(), arm64Preset])).not.toThrow();
   });
 
   it.each([

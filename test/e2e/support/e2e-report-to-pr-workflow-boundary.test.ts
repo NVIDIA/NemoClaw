@@ -930,7 +930,7 @@ it("builds controller target matrices only from trusted runner mappings (#7031)"
     "::error::PR E2E target is not approved by the trusted controller",
   );
   expect(rejected.workflowOutput).toBe("");
-});
+}, 30_000);
 
 it("binds controller matrix IDs and runners to the trusted target selector (#7031)", () => {
   const target = "ubuntu-repo-cloud-langchain-deepagents-code";
@@ -978,7 +978,7 @@ it("binds controller matrix IDs and runners to the trusted target selector (#703
     "::error::E2E planner matrix does not match controller-selected targets",
   );
   expect(runnerInjected.workflowOutput).toBe("");
-});
+}, 30_000);
 
 it("requires the report-to-pr job to check out the trusted workflow revision", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));

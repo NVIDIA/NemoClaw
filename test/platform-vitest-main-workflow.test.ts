@@ -32,6 +32,12 @@ function step(jobName: string, name: string): WorkflowStep {
 }
 
 describe("platform Vitest main workflow", () => {
+  it("marks the container checkout safe before generating build identity", () => {
+    const run = step("ubuntu-2604-contract", "Build CLI").run ?? "";
+    expect(run).toContain('git config --global --add safe.directory "$GITHUB_WORKSPACE"');
+    expect(run).toContain('test "$(git rev-parse --verify HEAD)" = "$GITHUB_SHA"');
+    expect(run.indexOf("safe.directory")).toBeLessThan(run.indexOf("npm run build:cli"));
+  });
   // source-shape-contract: security -- The trusted helper installs only checksum-verified official Node.js archives
   it("pins and verifies the Node.js archive in the trusted WSL helper", () => {
     const installSteps = [{ run: wslHelperSource }];

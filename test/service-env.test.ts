@@ -24,6 +24,10 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { resolveOpenshell } from "../src/lib/adapters/openshell/resolve";
 
 const NEMOCLAW_START_SCRIPT = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
+const ENTRYPOINT_ENV_WRAPPER = join(
+  import.meta.dirname,
+  "../scripts/lib/entrypoint-env-wrapper.sh",
+);
 const RC_CLEAN_SCRIPT = join(import.meta.dirname, "../scripts/lib/clean_runtime_shell_env_shim.py");
 
 function rcShimWrapperHeader(): string {
@@ -45,14 +49,25 @@ function extractRuntimeShellEnvSnippet() {
 
 function extractOpenClawBootstrapEnvSnippet() {
   const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
-  const start = src.indexOf("# Normalize the sandbox-create bootstrap wrapper");
-  const end = src.indexOf("# Marker file the Docker HEALTHCHECK reads", start);
+  const entrypointStart = src.indexOf("# managed-entrypoint-env-wrapper begin");
+  const entrypointEndMarker = "# managed-entrypoint-env-wrapper end";
+  const entrypointEnd = src.indexOf(entrypointEndMarker, entrypointStart);
+  const environmentStart = src.indexOf('NEMOCLAW_CMD=("$@")');
+  const environmentEnd = src.indexOf(
+    "# Marker file the Docker HEALTHCHECK reads",
+    environmentStart,
+  );
   const extractionFailure =
     "Failed to extract OpenClaw bootstrap environment normalization from " +
     "scripts/nemoclaw-start.sh";
-  expect(start, extractionFailure).not.toBe(-1);
-  expect(end, extractionFailure).toBeGreaterThan(start);
-  return src.slice(start, end).trimEnd();
+  expect(entrypointStart, extractionFailure).not.toBe(-1);
+  expect(entrypointEnd, extractionFailure).toBeGreaterThan(entrypointStart);
+  expect(environmentStart, extractionFailure).not.toBe(-1);
+  expect(environmentEnd, extractionFailure).toBeGreaterThan(environmentStart);
+  const entrypoint = src
+    .slice(entrypointStart, entrypointEnd + entrypointEndMarker.length)
+    .replace("/usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh", ENTRYPOINT_ENV_WRAPPER);
+  return `${entrypoint}\n${src.slice(environmentStart, environmentEnd).trimEnd()}`;
 }
 
 function extractRuntimeShellEnvShimSnippet() {

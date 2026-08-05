@@ -89,7 +89,7 @@ FS_APPEND_FL = 0x00000020
 FS_IOC_GETFLAGS = 0x80086601
 FS_IOC_SETFLAGS = 0x40086602
 
-Action = Literal["preflight", "lock", "unlock"]
+Action = Literal["preflight", "lock", "unlock", "startup"]
 Policy = Literal["high-risk", "confidentiality"]
 
 
@@ -879,19 +879,33 @@ def _preflight(
 
 
 def _expected_ids(
-    policy: Policy, action: Action, identity: Identity
+    policy: Policy,
+    action: Action,
+    identity: Identity,
+    is_confidentiality_root: bool = False,
 ) -> tuple[int, int]:
     if action == "unlock":
         return identity.sandbox_uid, identity.sandbox_gid
     if policy == "confidentiality":
+        if is_confidentiality_root:
+            return identity.root_uid, identity.sandbox_gid
         return identity.root_uid, identity.root_gid
     return identity.root_uid, identity.sandbox_gid
 
 
-def _expected_dir_mode(policy: Policy, action: Action) -> int:
+def _expected_dir_mode(
+    policy: Policy, action: Action, is_confidentiality_root: bool = False
+) -> int:
     if action == "unlock":
         return 0o2770
-    return 0o700 if policy == "confidentiality" else 0o755
+    if policy == "confidentiality":
+        # The confidentiality root stays traversable (group execute, no read)
+        # so a sandbox probe for a missing name directly under the root, such
+        # as the legacy credentials/oauth.json, resolves as ENOENT instead of
+        # EACCES.  Nested directories and every file keep the sealed posture,
+        # so contents and the subtree shape stay unreadable.
+        return 0o710 if is_confidentiality_root else 0o700
+    return 0o755
 
 
 def _expected_file_mode(policy: Policy, action: Action, old_mode: int) -> int:
@@ -915,10 +929,37 @@ def _set_dir_metadata(
     policy: Policy,
     action: Action,
     identity: Identity,
+    is_confidentiality_root: bool = False,
 ) -> None:
-    uid, gid = _expected_ids(policy, action, identity)
+    uid, gid = _expected_ids(policy, action, identity, is_confidentiality_root)
     os.fchown(dir_fd, uid, gid)
-    os.fchmod(dir_fd, _expected_dir_mode(policy, action))
+    os.fchmod(dir_fd, _expected_dir_mode(policy, action, is_confidentiality_root))
+
+
+def _set_empty_credentials_startup_metadata(
+    dir_fd: int,
+    identity: Identity,
+) -> None:
+    """Allow the sandbox group to probe names in an empty sealed credentials dir."""
+
+    os.fchown(dir_fd, identity.root_uid, identity.sandbox_gid)
+    os.fchmod(dir_fd, 0o710)
+
+
+def _is_empty_credentials_root(
+    relative_dir: str,
+    policy: Policy,
+    action: Action,
+    is_root: bool,
+    names: list[str],
+) -> bool:
+    return (
+        action == "lock"
+        and policy == "confidentiality"
+        and is_root
+        and relative_dir == "credentials"
+        and not names
+    )
 
 
 def _copy_extent(
@@ -1328,7 +1369,9 @@ def _mutate_dir(
             # mutation through directory descriptors opened by the sandbox
             # before shields-up, and it happens before visiting descendants.
             _freeze_dir_for_lock(dir_fd)
-            _set_dir_metadata(dir_fd, policy, action, identity)
+            _set_dir_metadata(
+                dir_fd, policy, action, identity, is_root and policy == "confidentiality"
+            )
         elif is_root:
             # Keep the subtree inaccessible while descendants are restored.
             os.fchmod(dir_fd, 0o700)
@@ -1337,6 +1380,14 @@ def _mutate_dir(
         names = _bounded_directory_names(
             dir_fd, context.display(relative_dir), context.budget
         )
+        if _is_empty_credentials_root(
+            relative_dir, policy, action, is_root, names
+        ):
+            # The confidentiality-root contract already grants the sandbox
+            # group execute-only access (root:sandbox 0710).  Keep this
+            # explicit empty-root case for compatibility with the startup
+            # recovery path; nested entries remain root-only.
+            _set_empty_credentials_startup_metadata(dir_fd, identity)
     except OSError as exc:
         raise GuardOperationError(
             _os_issue(
@@ -1510,8 +1561,11 @@ def _verify_metadata(
     policy: Policy,
     action: Action,
     identity: Identity,
+    is_confidentiality_root: bool = False,
 ) -> Issue | None:
-    expected_uid, expected_gid = _expected_ids(policy, action, identity)
+    expected_uid, expected_gid = _expected_ids(
+        policy, action, identity, is_confidentiality_root
+    )
     if st.st_uid != expected_uid or st.st_gid != expected_gid:
         return Issue(
             "verification-owner-mismatch",
@@ -1522,7 +1576,7 @@ def _verify_metadata(
         return None
     mode = stat.S_IMODE(st.st_mode)
     if entry_type == "directory":
-        expected_mode = _expected_dir_mode(policy, action)
+        expected_mode = _expected_dir_mode(policy, action, is_confidentiality_root)
         if mode != expected_mode:
             return Issue(
                 "verification-mode-mismatch",
@@ -1569,6 +1623,7 @@ def _verify_dir(
     replaced_inodes: dict[str, int],
     issues: list[Issue],
     depth: int,
+    is_root: bool = False,
 ) -> None:
     if depth > MAX_TRAVERSAL_DEPTH:
         issues.append(
@@ -1579,16 +1634,6 @@ def _verify_dir(
             )
         )
         return
-    dir_issue = _verify_metadata(
-        context.display(relative_dir),
-        os.fstat(dir_fd),
-        "directory",
-        policy,
-        action,
-        identity,
-    )
-    if dir_issue is not None:
-        issues.append(dir_issue)
     try:
         names = _bounded_directory_names(
             dir_fd, context.display(relative_dir), context.budget
@@ -1600,6 +1645,17 @@ def _verify_dir(
             )
         )
         return
+    dir_issue = _verify_metadata(
+        context.display(relative_dir),
+        os.fstat(dir_fd),
+        "directory",
+        policy,
+        action,
+        identity,
+        is_root and policy == "confidentiality",
+    )
+    if dir_issue is not None:
+        issues.append(dir_issue)
     for name in names:
         relative_path = posixpath.join(relative_dir, name)
         path = context.display(relative_path)
@@ -1697,6 +1753,120 @@ def _verify_dir(
             )
 
 
+def _restore_empty_credentials_startup_access(
+    config_dir: str,
+    identity: Identity,
+    deadline: float,
+) -> GuardResult:
+    """Restore only the empty credentials traversal needed during startup."""
+
+    result = GuardResult(action="startup")
+    config_fd = -1
+    credentials_fd = -1
+    path = _display_path(config_dir, "credentials")
+    try:
+        config_fd = _open_absolute_dir_nofollow(config_dir)
+        config_st = os.fstat(config_fd)
+        config_mode = stat.S_IMODE(config_st.st_mode)
+        if config_st.st_uid != identity.root_uid or config_mode & 0o022:
+            result.issues.append(
+                Issue(
+                    "startup-posture-mismatch",
+                    config_dir,
+                    "sealed config directory must be root-owned and not group/world writable",
+                )
+            )
+            return result
+        try:
+            credentials_st = os.stat(
+                "credentials", dir_fd=config_fd, follow_symlinks=False
+            )
+        except FileNotFoundError:
+            return result
+        if (
+            not stat.S_ISDIR(credentials_st.st_mode)
+            or credentials_st.st_dev != config_st.st_dev
+        ):
+            result.issues.append(
+                Issue(
+                    "unsafe-startup-credentials-root",
+                    path,
+                    "credentials root must be a directory on the config filesystem",
+                )
+            )
+            return result
+        credentials_fd = _open_child_dir(config_fd, "credentials", credentials_st)
+        names = _bounded_directory_names(
+            credentials_fd, path, WorkBudget(deadline)
+        )
+        current = os.fstat(credentials_fd)
+        mode = stat.S_IMODE(current.st_mode)
+        root_only = (
+            current.st_uid == identity.root_uid
+            and current.st_gid == identity.root_gid
+            and mode == 0o700
+        )
+        startup_traversable = (
+            current.st_uid == identity.root_uid
+            and current.st_gid == identity.sandbox_gid
+            and mode == 0o710
+        )
+        if not root_only and not startup_traversable:
+            result.issues.append(
+                Issue(
+                    "startup-posture-mismatch",
+                    path,
+                    f"credentials root has unexpected owner or mode {mode:04o}",
+                )
+            )
+            return result
+        # All confidentiality roots are execute-only for the sandbox group,
+        # whether or not they currently contain credentials.  This preserves
+        # known-name ENOENT probes without exposing names or descendants.
+        _set_dir_metadata(
+            credentials_fd,
+            "confidentiality",
+            "lock",
+            identity,
+            is_confidentiality_root=True,
+        )
+        after = os.fstat(credentials_fd)
+        if (
+            after.st_uid != identity.root_uid
+            or after.st_gid != identity.sandbox_gid
+            or stat.S_IMODE(after.st_mode) != 0o710
+        ):
+            result.issues.append(
+                Issue(
+                    "startup-verification-failed",
+                    path,
+                    "empty credentials root did not reach root:sandbox 0710",
+                )
+            )
+            return result
+        os.fsync(credentials_fd)
+        result.roots = 1
+        result.directories = 1
+        return result
+    except (OSError, GuardOperationError) as exc:
+        result.issues.append(
+            exc.issue
+            if isinstance(exc, GuardOperationError)
+            else _os_issue(
+                "startup-restore-failed",
+                path,
+                "restore empty credentials startup access",
+                exc,
+            )
+        )
+        return result
+    finally:
+        if credentials_fd >= 0:
+            os.close(credentials_fd)
+        if config_fd >= 0:
+            os.close(config_fd)
+
+
 def _run_guard_unserialized(
     action: Action,
     config_dir: str,
@@ -1707,6 +1877,10 @@ def _run_guard_unserialized(
     result = GuardResult(action=action)
     deadline = time.monotonic() + MAX_GUARD_SECONDS
     normalized_config = posixpath.normpath(config_dir)
+    if action == "startup":
+        return _restore_empty_credentials_startup_access(
+            normalized_config, identity, deadline
+        )
     fail_closed_config_root = action == "lock" and (
         normalized_config in PRODUCTION_FAIL_CLOSED_CONFIG_DIRS
         or os.environ.get("NEMOCLAW_TEST_OPENCLAW_FAIL_CLOSED") == "1"
@@ -1862,6 +2036,7 @@ def _run_guard_unserialized(
                     replaced_inodes,
                     result.issues,
                     1,
+                    is_root=True,
                 )
             finally:
                 os.close(root_fd)
@@ -2003,9 +2178,9 @@ def _production_identity() -> Identity:
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Safely preflight, lock, or unlock recursive agent state directories"
+        description="Safely manage recursive agent state directories"
     )
-    parser.add_argument("action", choices=("preflight", "lock", "unlock"))
+    parser.add_argument("action", choices=("preflight", "lock", "unlock", "startup"))
     parser.add_argument("--config-dir", required=True)
     return parser.parse_args(argv)
 
