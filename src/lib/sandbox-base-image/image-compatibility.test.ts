@@ -68,12 +68,10 @@ describe("sandbox base-image glibc compatibility", () => {
   });
 
   it("retries a probe with missing output and removes its retained container (#8375)", () => {
-    let probeAttempts = 0;
-    mocks.dockerCapture.mockImplementation((args: readonly string[]) => {
-      if (args[0] !== "run") return "";
-      probeAttempts += 1;
-      return probeAttempts === 1 ? "" : "ldd (Debian GLIBC 2.41-12+deb13u3) 2.41";
-    });
+    mocks.dockerCapture
+      .mockReturnValueOnce("")
+      .mockReturnValueOnce("")
+      .mockReturnValueOnce("ldd (Debian GLIBC 2.41-12+deb13u3) 2.41");
 
     expect(getImageGlibcVersion("nemoclaw:cold")).toBe("2.41");
 
