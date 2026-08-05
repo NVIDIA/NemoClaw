@@ -221,7 +221,7 @@ export function expectFailedMcpFinalizePreservesRegistry(harness: DestroyHarness
 
 export function expectMcpPrepareBridgeErrorAborts(harness: DestroyHarness): void {
   expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalled();
-  // MCP preparation must succeed before sandbox deletion begins.
+  // MCP preparation must succeed before NemoClaw asks OpenShell to delete the sandbox.
   expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
     expect.arrayContaining(["sandbox", "delete"]),
     expect.anything(),
@@ -244,7 +244,7 @@ export function expectMcpFinalizeBridgeErrorReturnsFailure(
   const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
   expect(errorOutput).not.toContain(secretMarker);
   expect(errorOutput).toContain("<REDACTED>");
-  // Registry must not be cleaned up when post-delete MCP finalize throws McpBridgeError.
+  // The sandbox registry must retain MCP ownership when provider finalization fails.
   expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
   expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
 }
