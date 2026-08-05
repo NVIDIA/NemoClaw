@@ -8,17 +8,20 @@ import path from "node:path";
 import { dockerImageInspectFormat } from "../adapters/docker";
 import { dockerSpawn } from "../adapters/docker/exec";
 import { redirectInheritedChildStdoutToStderr } from "../cli/stdout-guard";
-import { LOCAL_SANDBOX_IMAGE_REPO } from "../domain/sandbox/image-tag";
+import {
+  LOCAL_SANDBOX_IMAGE_REPO,
+  PORTABLE_LOCAL_SANDBOX_IMAGE_REPO,
+} from "../domain/sandbox/image-tag";
 import {
   SANDBOX_BUILD_CONTEXT_PREFIX,
   type SandboxBuildContextOrigin,
 } from "../sandbox/build-context";
 import { buildSubprocessEnv } from "../subprocess-env";
+import { isPortableExperimentalProfile } from "./docker-driver-platform";
 import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers";
 
 const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSY_FLAG_VALUES = new Set(["0", "false", "no", "off"]);
-const LOCAL_IMAGE_REPO = LOCAL_SANDBOX_IMAGE_REPO;
 const DOCKER_ENV_NAMES = [
   "DOCKER_API_VERSION",
   "DOCKER_CERT_PATH",
@@ -36,6 +39,10 @@ export interface SandboxPrebuildInput {
   origin: SandboxBuildContextOrigin;
   env?: NodeJS.ProcessEnv;
   buildImage?: (
+    args: readonly string[],
+    options: { env: NodeJS.ProcessEnv; stdio: "inherit" },
+  ) => Promise<number | null>;
+  publishImage?: (
     args: readonly string[],
     options: { env: NodeJS.ProcessEnv; stdio: "inherit" },
   ) => Promise<number | null>;
@@ -131,7 +138,11 @@ export function resolveSandboxPrebuildEnabled(
   return !env.VITEST && env.NODE_ENV !== "test";
 }
 
-export function sandboxLocalImageRef(sandboxName: string, buildId: string): string {
+export function sandboxLocalImageRef(
+  sandboxName: string,
+  buildId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   const sanitize = (value: string) =>
     value
       .toLowerCase()
@@ -139,7 +150,10 @@ export function sandboxLocalImageRef(sandboxName: string, buildId: string): stri
       .replace(/^[-.]+/, "");
   const buildPart = sanitize(buildId).slice(-32) || "build";
   const namePart = sanitize(sandboxName).slice(0, 127 - buildPart.length) || "sandbox";
-  return `${LOCAL_IMAGE_REPO}:${namePart}-${buildPart}`;
+  const repository = isPortableExperimentalProfile(env)
+    ? PORTABLE_LOCAL_SANDBOX_IMAGE_REPO
+    : LOCAL_SANDBOX_IMAGE_REPO;
+  return `${repository}:${namePart}-${buildPart}`;
 }
 
 /**
@@ -190,7 +204,7 @@ export async function prebuildSandboxImageIfEligible(
     return { createArgs, imageRef: null, imageId: null };
   }
 
-  const imageRef = sandboxLocalImageRef(input.sandboxName, input.buildId);
+  const imageRef = sandboxLocalImageRef(input.sandboxName, input.buildId, env);
   const buildImage =
     input.buildImage ??
     ((args, options) =>
@@ -224,6 +238,26 @@ export async function prebuildSandboxImageIfEligible(
     const detail = status === null ? " without an exit status" : ` (exit ${status})`;
     log(`  Local BuildKit build failed${detail}; using the gateway builder instead.`);
     return { createArgs, imageRef: null, imageId: null };
+  }
+
+  if (isPortableExperimentalProfile(env)) {
+    const publishImage = input.publishImage ?? buildImage;
+    log("  Publishing sandbox image to the managed local registry...");
+    let publishStatus: number | null;
+    try {
+      publishStatus = await publishImage(["push", imageRef], {
+        env: dockerBuildSubprocessEnv(),
+        stdio: "inherit",
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`Managed local registry publish could not start: ${detail}`);
+    }
+    if (publishStatus !== 0) {
+      const detail =
+        publishStatus === null ? " without an exit status" : ` (exit ${publishStatus})`;
+      throw new Error(`Managed local registry publish failed${detail}`);
+    }
   }
 
   createArgs[fromIndex + 1] = imageRef;

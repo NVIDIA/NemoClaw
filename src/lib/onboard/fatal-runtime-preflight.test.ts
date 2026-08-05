@@ -51,4 +51,15 @@ describe("rejectUnsupportedContainerRuntime (#7320)", () => {
     rejectUnsupportedContainerRuntime(hostWithRuntime("docker"), exit as never);
     expect(exit).not.toHaveBeenCalled();
   });
+
+  it.skipIf(!isLinuxDockerDriverGatewayEnabled())(
+    "allows Podman only when the portable profile is explicit",
+    () => {
+      vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+      const exit = vi.fn();
+      rejectUnsupportedContainerRuntime(hostWithRuntime("podman"), exit as never);
+      expect(exit).not.toHaveBeenCalled();
+      vi.unstubAllEnvs();
+    },
+  );
 });

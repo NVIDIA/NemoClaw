@@ -366,6 +366,31 @@ describe("sandbox BuildKit prebuild", () => {
     });
   });
 
+  it("publishes portable-profile builds to the managed loopback registry", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const buildImage = vi.fn(async () => 0);
+    const publishImage = vi.fn(async () => 0);
+    const result = await prebuildSandboxImageIfEligible({
+      buildCtx,
+      buildId: BUILD_ID,
+      origin: "generated",
+      createArgs,
+      sandboxName: "alpha",
+      dockerDriverGateway: true,
+      env: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+      buildImage,
+      publishImage,
+      inspectImageId: () => IMAGE_ID,
+      log: () => {},
+    });
+
+    expect(publishImage).toHaveBeenCalledWith(
+      ["push", "localhost:5000/nemoclaw-sandbox-local:alpha-1234567890"],
+      expect.objectContaining({ stdio: "inherit" }),
+    );
+    expect(result.imageRef).toBe("localhost:5000/nemoclaw-sandbox-local:alpha-1234567890");
+  });
+
   it("routes default Docker build stdout only while JSONL owns stdout (#6403)", async () => {
     const { buildCtx, createArgs } = createBuildContext();
     mocks.dockerSpawn.mockImplementation(() => {
