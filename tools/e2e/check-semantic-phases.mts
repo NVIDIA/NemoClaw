@@ -129,6 +129,7 @@ export function validateWindowsMxcControlBoundarySource(source: string): string[
     "spawnSync",
   ]);
   let createPosition: number | null = null;
+  let createRequestsExec = false;
   const deletePositions: number[] = [];
 
   function containsWxcExecPath(node: ts.Node): boolean {
@@ -161,7 +162,13 @@ export function validateWindowsMxcControlBoundarySource(source: string): string[
     const [scope, action, target] = args.elements;
     if (!ts.isStringLiteralLike(scope) || scope.text !== "sandbox") return null;
     if (!ts.isStringLiteralLike(action)) return null;
-    if (action.text === "create") return "create";
+    if (action.text === "create") {
+      const separatorIndex = args.elements.findIndex(
+        (element) => ts.isStringLiteralLike(element) && element.text === "--",
+      );
+      createRequestsExec ||= separatorIndex >= 0 && separatorIndex < args.elements.length - 1;
+      return "create";
+    }
     if (
       action.text === "delete" &&
       target !== undefined &&
@@ -191,6 +198,9 @@ export function validateWindowsMxcControlBoundarySource(source: string): string[
   inspect(sourceFile);
 
   if (createPosition === null) failures.push("OpenShell sandbox create command is missing");
+  if (createRequestsExec) {
+    failures.push("OpenShell process_container create must not request in-sandbox exec");
+  }
   if (deletePositions.length === 0) failures.push("OpenShell sandbox delete command is missing");
   const observedCreatePosition = createPosition;
   if (
