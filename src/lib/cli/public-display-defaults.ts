@@ -360,7 +360,8 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Policy Presets",
       order: 17,
-      flags: "(--yes, -y, --dry-run, --from-file <path>, --from-dir <path>)",
+      flags:
+        "(--yes, -y, --dry-run, --from-file <path>, --from-dir <path>, --trusted-private-host <host>)",
     },
   ],
   "sandbox:policy:explain": [

@@ -4,6 +4,7 @@
 import type { InferenceSelection } from "../../inference/selection";
 import type { WebSearchProvider } from "../../inference/web-search";
 import type { DcodeAutoApprovalMode } from "../../onboard/dcode-auto-approval";
+import type { TrustedPrivatePolicyPinReceipt } from "../../policy/trusted-private-endpoints";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import type { OpenClawImagePluginInstall } from "../openclaw-plugin-restore";
 import type { SandboxMcpState } from "../registry-mcp";
@@ -16,6 +17,8 @@ export interface CustomPolicyEntry {
   pendingContent?: string;
   sourcePath?: string;
   appliedAt?: string;
+  /** Content-bound authority for generated exact destination pins. */
+  trustedPrivatePins?: TrustedPrivatePolicyPinReceipt;
 }
 
 export interface BaselineExclusionEntry {

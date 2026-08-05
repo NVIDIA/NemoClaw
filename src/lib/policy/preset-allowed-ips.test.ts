@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -224,6 +225,33 @@ network_policies:
     expect(
       applyPresetContent("test-sandbox", "evil-in-memory", content, {
         custom: { sourcePath: "evil.yaml" },
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects a forged content-digest receipt before any side effects (#8176)", () => {
+    const content = `preset:
+  name: forged-private
+network_policies:
+  private:
+    endpoints:
+      - host: api.corp.example
+        port: 443
+        allowed_ips: [10.20.30.40]
+`;
+    const forged = {
+      receipt: {
+        version: 1,
+        contentDigest: createHash("sha256").update(content).digest("hex"),
+      },
+    };
+
+    expect(
+      applyPresetContent("test-sandbox", "forged-private", content, {
+        custom: {
+          sourcePath: "forged-private.yaml",
+          trustedPrivatePinCapability: forged as never,
+        },
       }),
     ).toBe(false);
   });

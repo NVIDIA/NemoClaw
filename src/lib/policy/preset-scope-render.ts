@@ -14,6 +14,7 @@ type RuleScope = {
 
 type EndpointScope = {
   host: string;
+  allowedIps: string[];
   port?: number | string;
   protocol?: string;
   access?: string;
@@ -128,6 +129,7 @@ function extractPresetScope(content: string): PresetScope | null {
         if (!host) continue;
         endpoints.push({
           host,
+          allowedIps: stringArray(rawEndpoint.allowed_ips),
           port: toPortOrUndefined(rawEndpoint.port),
           protocol: toStringOrUndefined(rawEndpoint.protocol as PolicyValue | undefined),
           access: toStringOrUndefined(rawEndpoint.access as PolicyValue | undefined),
@@ -153,13 +155,17 @@ function formatEndpoint(endpoint: EndpointScope): string[] {
   }
   const modeSuffix = modeBits.length > 0 ? ` (${modeBits.join(", ")})` : "";
   const header = `      - ${renderTerminalText(endpoint.host)}:${port}${modeSuffix}`;
-  if (endpoint.rules.length === 0) return [header];
+  const pinLines =
+    endpoint.allowedIps.length > 0
+      ? [`          allowed IPs: ${endpoint.allowedIps.map(renderTerminalText).join(", ")}`]
+      : [];
+  if (endpoint.rules.length === 0) return [header, ...pinLines];
   const ruleLines = endpoint.rules.map((rule) => {
     const methods = rule.methods.map(renderTerminalText).join(", ");
     const paths = rule.paths.map(renderTerminalText).join(", ");
     return `          ${rule.action}: ${methods}  ${paths}`;
   });
-  return [header, ...ruleLines];
+  return [header, ...pinLines, ...ruleLines];
 }
 
 export function renderPresetScope(

@@ -2,12 +2,64 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isObjectRecord } from "../core/json-types";
-import type { BaselineExclusionEntry, BaselineExclusionTransition, SandboxEntry } from "./registry";
+import { normalizeTrustedPrivatePolicyPinReceipt } from "../policy/trusted-private-endpoints";
+import type {
+  BaselineExclusionEntry,
+  BaselineExclusionTransition,
+  CustomPolicyEntry,
+  SandboxEntry,
+} from "./registry";
 
 const BASELINE_TRANSITION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BASELINE_TRANSITION_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const SHA256_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
+
+/** Normalize persisted custom policy content and its generated-pin authority. */
+export function normalizeCustomPolicyEntries(value: unknown): CustomPolicyEntry[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error(
+      "Sandbox registry customPolicies must be an array; repair the registry before rebuilding",
+    );
+  }
+  const entries: CustomPolicyEntry[] = [];
+  for (const item of value) {
+    if (
+      !isObjectRecord(item) ||
+      typeof item.name !== "string" ||
+      item.name.trim().length === 0 ||
+      typeof item.content !== "string" ||
+      (item.pendingContent !== undefined && typeof item.pendingContent !== "string") ||
+      (item.sourcePath !== undefined && typeof item.sourcePath !== "string") ||
+      (item.appliedAt !== undefined && typeof item.appliedAt !== "string")
+    ) {
+      throw new Error(
+        "Sandbox registry contains a malformed custom policy; repair the registry before rebuilding",
+      );
+    }
+    let trustedPrivatePins;
+    try {
+      trustedPrivatePins = normalizeTrustedPrivatePolicyPinReceipt(
+        item.content,
+        item.trustedPrivatePins,
+      );
+    } catch {
+      throw new Error(
+        `Sandbox registry custom policy '${item.name}' has invalid trusted-private pin authority; repair the registry before rebuilding`,
+      );
+    }
+    entries.push({
+      name: item.name,
+      content: item.content,
+      ...(item.pendingContent !== undefined ? { pendingContent: item.pendingContent } : {}),
+      ...(item.sourcePath !== undefined ? { sourcePath: item.sourcePath } : {}),
+      ...(item.appliedAt !== undefined ? { appliedAt: item.appliedAt } : {}),
+      ...(trustedPrivatePins ? { trustedPrivatePins } : {}),
+    });
+  }
+  return entries.length > 0 ? entries : undefined;
+}
 
 function isCanonicalIsoTimestamp(value: string): boolean {
   const parsed = new Date(value);

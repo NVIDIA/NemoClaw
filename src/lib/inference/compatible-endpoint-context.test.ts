@@ -205,7 +205,7 @@ describe("compatible-endpoint context window", () => {
   it("probes an exactly allowlisted private endpoint with its address capability (#6861)", async () => {
     const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }));
     const env: NodeJS.ProcessEnv = {
-      NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: "llm.corp.example",
+      NEMOCLAW_TRUSTED_PRIVATE_HOSTS: "llm.corp.example",
     };
     await applyCompatibleEndpointContextWindow("https://llm.corp.example/v1", "model-a", {
       env,

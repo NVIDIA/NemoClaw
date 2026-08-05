@@ -11,6 +11,7 @@ import {
   isOpenShellManagedHost,
   isTrustedPrivateEndpointCapability,
   parseTrustedPrivateInferenceHosts,
+  parseTrustedPrivateInferenceHostsFromEnv,
 } from "./endpoint-ssrf-preflight";
 
 const resolverTo = (address: string): EndpointDnsLookupFn =>
@@ -165,6 +166,15 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     expect(
       parseTrustedPrivateInferenceHosts(" LLM.CORP.EXAMPLE.,10.0.0.8,llm.corp.example "),
     ).toEqual(["llm.corp.example", "10.0.0.8"]);
+  });
+
+  it("unions generic and legacy inference trust sources (#8176)", () => {
+    expect(
+      parseTrustedPrivateInferenceHostsFromEnv({
+        NEMOCLAW_TRUSTED_PRIVATE_HOSTS: "mcp.corp.example,llm.corp.example",
+        NEMOCLAW_TRUSTED_PRIVATE_INFERENCE_HOSTS: "LLM.CORP.EXAMPLE.,10.0.0.8",
+      }),
+    ).toEqual(["mcp.corp.example", "llm.corp.example", "10.0.0.8"]);
   });
 
   it.each([

@@ -23,6 +23,7 @@ export interface ParsedMcpAddArgs {
   server: string;
   url: string;
   env: ParsedEnvReference[];
+  trustedPrivateHosts?: string[];
 }
 
 export interface McpBridgeAddOptions extends ParsedMcpAddArgs {}
@@ -38,6 +39,13 @@ export interface McpBridgeStatus {
     reason?: string;
   };
   url?: string;
+  trustedPrivateTarget?: {
+    host: string;
+    recordedPins: string[];
+    currentPins?: string[];
+    state: "match" | "drift" | "unresolved";
+    detail?: string;
+  };
   env: {
     names: string[];
     missing: string[];

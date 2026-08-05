@@ -14,6 +14,7 @@ import {
 import {
   normalizeBaselineExclusions,
   normalizeBaselineExclusionTransition,
+  normalizeCustomPolicyEntries,
   parseSandboxRegistryEntries,
   retainedDefaultSandbox,
 } from "../registry-normalization";
@@ -101,12 +102,14 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const baselineExclusionTransition = normalizeBaselineExclusionTransition(
     entry.baselineExclusionTransition,
   );
+  const customPolicies = normalizeCustomPolicyEntries(entry.customPolicies);
   const {
     messaging: _messaging,
     workload: _workload,
     mcp: _mcp,
     baselineExclusions: _baselineExclusions,
     baselineExclusionTransition: _baselineExclusionTransition,
+    customPolicies: _customPolicies,
     ...rest
   } = entry;
   return {
@@ -116,6 +119,7 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
     ...(mcp ? { mcp } : {}),
     ...(baselineExclusions ? { baselineExclusions } : {}),
     ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
+    ...(customPolicies ? { customPolicies } : {}),
   };
 }
 
@@ -146,12 +150,14 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   const baselineExclusionTransition = normalizeBaselineExclusionTransition(
     durable.baselineExclusionTransition,
   );
+  const customPolicies = normalizeCustomPolicyEntries(durable.customPolicies);
   const {
     messaging: _messaging,
     workload: _workload,
     mcp: _mcp,
     baselineExclusions: _baselineExclusions,
     baselineExclusionTransition: _baselineExclusionTransition,
+    customPolicies: _customPolicies,
     ...rest
   } = durable;
   return {
@@ -162,5 +168,6 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     ...(mcp ? { mcp } : {}),
     ...(baselineExclusions ? { baselineExclusions } : {}),
     ...(baselineExclusionTransition ? { baselineExclusionTransition } : {}),
+    ...(customPolicies ? { customPolicies } : {}),
   };
 }
