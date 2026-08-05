@@ -1731,10 +1731,10 @@ async function sandboxChannelsSetEnabled(
     process.exit(1);
   }
 
-  const channel = getChannelDef(channelArg);
-  if (!channel) {
+  const manifest = resolveChannelManifest(channelArg);
+  if (!manifest) {
     console.error(`  Unknown channel '${channelArg}'.`);
-    console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
+    console.error(`  Valid channels: ${knownManifestChannelNames().join(", ")}`);
     process.exit(1);
   }
 
@@ -1744,30 +1744,45 @@ async function sandboxChannelsSetEnabled(
     process.exit(1);
   }
 
-  const normalized = channelArg.trim().toLowerCase();
-  const configuredChannels = registry.getConfiguredMessagingChannelsFromEntry(registryEntry);
-  if (!configuredChannels.includes(normalized)) {
-    console.error(`  Channel '${normalized}' is not configured for '${sandboxName}'.`);
+  const canonical = manifest.id;
+  const agent = resolveAgentForSandbox(sandboxName);
+  const availableChannels = availableManifestChannelsForAgent(agent);
+  if (!availableChannels.some((candidate) => candidate.id === canonical)) {
+    console.error(
+      `  Channel '${canonical}' does not support agent '${agent.name}' for sandbox '${sandboxName}'.`,
+    );
+    console.error(
+      `  Channel-supported agents: ${formatSupportedMessagingAgentIds(manifest.supportedAgents)}.`,
+    );
+    console.error(
+      `  Channels supported by agent '${agent.name}': ${formatAvailableChannelsForAgent(agent)}.`,
+    );
     process.exit(1);
   }
-  const alreadyDisabled = registry.getDisabledChannels(sandboxName).includes(normalized);
+
+  const configuredChannels = registry.getConfiguredMessagingChannelsFromEntry(registryEntry);
+  if (!configuredChannels.includes(canonical)) {
+    console.error(`  Channel '${canonical}' is not configured for '${sandboxName}'.`);
+    process.exit(1);
+  }
+  const alreadyDisabled = registry.getDisabledChannels(sandboxName).includes(canonical);
   if (alreadyDisabled === disabled) {
     console.log(
-      `  Channel '${normalized}' is already ${disabled ? "disabled" : "enabled"} for '${sandboxName}'. Nothing to do.`,
+      `  Channel '${canonical}' is already ${disabled ? "disabled" : "enabled"} for '${sandboxName}'. Nothing to do.`,
     );
     return;
   }
 
   const disclosedPresetState = disabled
     ? undefined
-    : loadValidateAndDiscloseChannelPreset(sandboxName, normalized, "start");
+    : loadValidateAndDiscloseChannelPreset(sandboxName, canonical, "start");
 
   if (dryRun) {
-    console.log(`  --dry-run: would ${verb} channel '${normalized}' for '${sandboxName}'.`);
+    console.log(`  --dry-run: would ${verb} channel '${canonical}' for '${sandboxName}'.`);
     return;
   }
 
-  const plan = await persistManifestChannelDisabledPlan(sandboxName, normalized, disabled);
+  const plan = await persistManifestChannelDisabledPlan(sandboxName, canonical, disabled);
   if (!plan) {
     console.error(`  Could not persist messaging plan for '${sandboxName}'.`);
     process.exit(1);
@@ -1779,22 +1794,22 @@ async function sandboxChannelsSetEnabled(
   // runtime configuration cannot later be rebuilt without the required egress.
   if (
     !disabled &&
-    !applyChannelPresetIfAvailable(sandboxName, normalized, "start", {
+    !applyChannelPresetIfAvailable(sandboxName, canonical, "start", {
       disclosedPresetState,
     })
   ) {
-    const rolledBack = await persistManifestChannelDisabledPlan(sandboxName, normalized, true);
+    const rolledBack = await persistManifestChannelDisabledPlan(sandboxName, canonical, true);
     if (!rolledBack) {
       console.error(
-        `  ${YW}⚠${R} Could not restore '${normalized}' to disabled state after its policy preset failed to apply.`,
+        `  ${YW}⚠${R} Could not restore '${canonical}' to disabled state after its policy preset failed to apply.`,
       );
-      console.error(`    Re-run: ${CLI_NAME} ${sandboxName} channels stop ${normalized}`);
+      console.error(`    Re-run: ${CLI_NAME} ${sandboxName} channels stop ${canonical}`);
     }
     process.exit(1);
   }
   const state = disabled ? "disabled" : "enabled";
-  console.log(`  ${G}✓${R} Marked ${normalized} ${state} for '${sandboxName}'.`);
-  const rebuilt = await promptAndRebuild(sandboxName, `${verb} '${normalized}'`);
+  console.log(`  ${G}✓${R} Marked ${canonical} ${state} for '${sandboxName}'.`);
+  const rebuilt = await promptAndRebuild(sandboxName, `${verb} '${canonical}'`);
   if (rebuilt && !disabled) {
     ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
   }

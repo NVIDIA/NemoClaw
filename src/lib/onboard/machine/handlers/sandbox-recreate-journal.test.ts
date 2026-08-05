@@ -3,7 +3,7 @@
 
 import { expect, it, vi } from "vitest";
 
-import { decisionSelected } from "../../../state/onboard-checkpoint-decision";
+import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../../../state/onboard-checkpoint-migrate";
 import { createSession, type Session } from "../../../state/onboard-session";
 import {
@@ -13,7 +13,7 @@ import {
   recordSandboxRecreateTargetCreated,
 } from "../../sandbox-recreate-transaction";
 import { handleSandboxState } from "./sandbox";
-import { baseOptions, createDeps } from "./sandbox-test-fixtures";
+import { baseOptions, bindJournaledRecreate, createDeps } from "./sandbox-test-fixtures";
 
 it("journals not-ready repair on the selected non-default gateway (#6492)", async () => {
   const session = createSession({ sandboxName: "saved", agent: "openclaw" });
@@ -390,4 +390,216 @@ it("rejects an active recreate journal on a different gateway authority (#6492)"
   expect(calls.createSandbox).not.toHaveBeenCalled();
   expect(calls.repairSandbox).not.toHaveBeenCalled();
   expect(calls.removeSandbox).not.toHaveBeenCalled();
+});
+
+it("refuses an unjournaled same-name replacement when the bound gateway authority does not match the requested gateway (#7736)", async () => {
+  const session = createSession({ sandboxName: "saved", agent: "openclaw" });
+  session.steps.sandbox.status = "complete";
+  session.machine.state = "agent_setup";
+  session.checkpoint = {
+    ...deriveCheckpointFromSession(session),
+    sandboxIdentity: decisionSelected({ name: "saved", agent: "openclaw" }),
+    gatewayAuthority: decisionSelected({
+      gatewayName: "nemoclaw-31818",
+      gatewayPort: 31818,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  };
+  const getSandboxRecreateObservation = vi.fn(() => ({
+    state: "not_ready" as const,
+    liveIdentityFingerprint: fingerprintSandboxRecreateValue("openshell-source-id"),
+  }));
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => "not_ready",
+      getSandboxRecreateObservation,
+    },
+    session,
+  );
+
+  await expect(
+    handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+      gatewayName: "nemoclaw",
+    }),
+  ).rejects.toThrow(/no recreate transaction proves ownership/i);
+  expect(calls.repairSandbox).not.toHaveBeenCalled();
+  expect(calls.removeSandbox).not.toHaveBeenCalled();
+  expect(calls.createSandbox).not.toHaveBeenCalled();
+  expect(session.checkpoint?.sandboxRecreate).toBeNull();
+});
+
+it("refuses an unjournaled legacy same-name repair without gateway authority (#7736)", async () => {
+  const session = createSession({ sandboxName: "saved", agent: "openclaw" });
+  session.steps.sandbox.status = "complete";
+  session.machine.state = "agent_setup";
+  session.checkpoint = {
+    ...deriveCheckpointFromSession(session),
+    sandboxIdentity: decisionSelected({ name: "saved", agent: "openclaw" }),
+    gatewayAuthority: decisionUnset(),
+  };
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => "not_ready",
+    },
+    session,
+  );
+
+  await expect(
+    handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+      gatewayName: "nemoclaw",
+    }),
+  ).rejects.toThrow(/no recreate transaction proves ownership/i);
+  expect(calls.repairSandbox).not.toHaveBeenCalled();
+  expect(calls.removeSandbox).not.toHaveBeenCalled();
+  expect(calls.createSandbox).not.toHaveBeenCalled();
+  expect(session.checkpoint?.sandboxRecreate).toBeNull();
+});
+
+it("creates a missing sandbox from a preserved registry row without removing the row (#7736)", async () => {
+  const session = createSession({ sandboxName: "saved", agent: "openclaw" });
+  session.steps.sandbox.status = "complete";
+  session.machine.state = "agent_setup";
+  session.checkpoint = {
+    ...deriveCheckpointFromSession(session),
+    sandboxIdentity: decisionSelected({ name: "saved", agent: "openclaw" }),
+    gatewayAuthority: decisionSelected({
+      gatewayName: "nemoclaw-31818",
+      gatewayPort: 31818,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }),
+  };
+  const reservedEntry = {
+    name: "saved",
+    provider: "provider",
+    model: "model",
+    endpointUrl: null,
+    preferredInferenceApi: "openai-completions" as const,
+    webSearchEnabled: false,
+    toolDisclosure: "progressive" as const,
+    fromDockerfile: null,
+    hermesAuthMethod: null,
+    gatewayName: "nemoclaw-31818",
+    gatewayPort: 31818,
+    imageTag: "openshell/sandbox-from:new",
+  };
+  const createSandbox = vi.fn(async () => "saved");
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => "missing",
+      getSandboxRegistryEntry: () => reservedEntry,
+      createSandbox,
+    },
+    session,
+  );
+
+  await handleSandboxState({
+    ...baseOptions(deps, session),
+    resume: true,
+    sandboxName: "saved",
+    gatewayName: "nemoclaw-31818",
+  });
+
+  expect(createSandbox).toHaveBeenCalledOnce();
+  expect(calls.removeSandbox).not.toHaveBeenCalled();
+  expect(calls.repairSandbox).not.toHaveBeenCalled();
+  expect(session.checkpoint?.sandboxRecreate ?? null).toBeNull();
+});
+
+it("preserves registry state until journaled messaging recreation commits (#7736)", async () => {
+  const session = createSession();
+  const journal = bindJournaledRecreate(session);
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => "ready",
+      getSandboxRecreateObservation: journal.observe,
+      getStoredMessagingChannelConfig: () => ({ TELEGRAM_REQUIRE_MENTION: "1" }),
+      hydrateMessagingChannelConfig: () => ({ TELEGRAM_REQUIRE_MENTION: "0" }),
+      messagingChannelConfigsEqual: () => false,
+      createSandbox: journal.completeCreate,
+    },
+    session,
+  );
+
+  await handleSandboxState({
+    ...baseOptions(deps, session),
+    resume: true,
+    sandboxName: "saved",
+  });
+
+  expect(calls.note).toHaveBeenCalledWith(
+    "  [resume] Messaging channel configuration changed; recreating sandbox.",
+  );
+  expect(calls.removeSandbox).not.toHaveBeenCalled();
+});
+
+it("journals not-ready resumed sandboxes before recreation (#7736)", async () => {
+  const session = createSession({ sandboxName: "saved" });
+  const journal = bindJournaledRecreate(session);
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => "not_ready",
+      getSandboxRecreateObservation: journal.observe,
+      createSandbox: journal.completeCreate,
+    },
+    session,
+  );
+
+  await handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "saved" });
+
+  expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.started", {
+    state: "sandbox",
+    metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
+  });
+  expect(calls.repairSandbox).not.toHaveBeenCalled();
+  expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.completed", {
+    state: "sandbox",
+    metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
+  });
+});
+
+it("records failed repair events when journaled replacement creation fails (#7736)", async () => {
+  const session = createSession({ sandboxName: "saved" });
+  const journal = bindJournaledRecreate(session);
+  const { deps, calls } = createDeps(
+    {
+      getSandboxReuseState: () => "not_ready",
+      getSandboxRecreateObservation: journal.observe,
+      createSandbox: vi.fn(async () => {
+        throw new Error("cleanup failed");
+      }),
+    },
+    session,
+  );
+
+  await expect(
+    handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "saved" }),
+  ).rejects.toThrow("cleanup failed");
+
+  expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.started", {
+    state: "sandbox",
+    metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
+  });
+  expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.failed", {
+    state: "sandbox",
+    error: "cleanup failed",
+    metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
+  });
+  expect(calls.repairEvent).not.toHaveBeenCalledWith("state.repair.completed", expect.anything());
+  expect(calls.repairSandbox).not.toHaveBeenCalled();
 });
