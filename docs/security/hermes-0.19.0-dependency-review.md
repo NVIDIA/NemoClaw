@@ -28,9 +28,11 @@ Ordinary onboarding therefore fails closed if either runtime dependency remains 
 The final image also replaces the published `python-multipart==0.0.27` lock resolution with the hash-verified and attested `python-multipart==0.0.32`.
 The base image overlays checksum-pinned Node.js `24.18.1` archives for both supported architectures and installs exact uv `0.11.33`; build-time assertions reject version drift before Hermes is installed.
 
-The final Dockerfile pins patched multi-platform OCI index `sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96`.
-The labels on both platform manifests bind the supported architectures to source revision `bd668121e918e7b1dda13062bed728f18150360e`.
-That revision descends from dependency-fix commit `00c61114f`.
+The final Dockerfile pins patched multi-platform Open Container Initiative (OCI) index `sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96`.
+GitHub Actions run `31006872948`, attempt 1, built that index from source commit `bd668121e918e7b1dda13062bed728f18150360e` on a push to `main` and completed successfully.
+The amd64 and arm64 child manifests point to image configurations whose `org.opencontainers.image.source` labels identify repository `NVIDIA/NemoClaw` and whose `org.opencontainers.image.revision` labels identify that commit.
+Each platform image has Supply-chain Levels for Software Artifacts (SLSA) provenance tied to the same producer run and source commit.
+The OCI index has no software bill of materials (SBOM) attestation.
 The PR is not approval-ready until the final-image build uses that index and the required live end-to-end (E2E) gates pass.
 
 ## Reviewed identities
@@ -224,6 +226,61 @@ The GPL-3.0 libsignal package, Apache-2.0 sharp package, and LGPL libvips artifa
 The target source archive does not publish a complete SBOM, and a lock-derived SBOM alone would be inaccurate because the final image intentionally replaces the multipart resolution.
 Artifact scanning must therefore inspect the assembled image and record the downstream override.
 
+## Patched Base Image Provenance
+
+The final Dockerfile consumes the following published multi-platform base image:
+
+| Evidence | Value |
+| --- | --- |
+| Repository | `NVIDIA/NemoClaw` |
+| Workflow | `Images / Base Images` |
+| Workflow path | `.github/workflows/base-image.yaml` |
+| Trigger | Push to `main` |
+| Producer run | `31006872948`, attempt 1, completed successfully |
+| Source commit | `bd668121e918e7b1dda13062bed728f18150360e` |
+| OCI index | `sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96` |
+
+| Architecture | Child manifest |
+| --- | --- |
+| amd64 | `sha256:cf6e95640faac8e5099cc9d267a6eb9b1f9192abbfcc9552a81a8ae22b4a47bb` |
+| arm64 | `sha256:92e7c982bc5106f4c3f551032418fb72375b4d37bff50e21baa3d0e861d7519e` |
+
+Each child manifest points to an image configuration whose `org.opencontainers.image.source` label identifies repository `NVIDIA/NemoClaw` and whose `org.opencontainers.image.revision` label identifies source commit `bd668121e918e7b1dda13062bed728f18150360e`.
+Each platform image also has SLSA provenance whose builder ID is `https://github.com/NVIDIA/NemoClaw/actions/runs/31006872948/attempts/1` and whose source is that repository and commit.
+Both image histories contain installed-version assertions for `aiohttp==3.14.3` and `cryptography==50.0.0`.
+The OCI index has no SBOM attestation; this is separate from the incomplete SBOM in the Hermes source archive.
+
+The previously consumed image had the following identity:
+
+| Evidence | Value |
+| --- | --- |
+| Producer run | `30779271312`, attempt 1 |
+| Source commit | `340c47857596e7cc347541a0b32fe9e24f201bcd` |
+| OCI index | `sha256:956c3d0c812ee6caa56f3b6e307819925d920604adcf73c4a9e6229788967634` |
+| amd64 platform index | `sha256:faf96b115049c2ae3e7c10be66ae4916cd05ff72900ef5b0642f9f90b6dd834d` |
+| amd64 image manifest | `sha256:f4c707f180210cfc1457d923f05058203314d3303caf818b1cf4b67d6c0f32c3` |
+| arm64 platform index | `sha256:61a7356020832392692347d2510fe8817c8a9f3ff3d5c050fbcec6182787eb4d` |
+| arm64 image manifest | `sha256:36b4e5c9fdd506ca5823091465d9303043a12cad7a552fce7e426c79cb7d722c` |
+
+The previous and current source commits diverge after merge base `eaa6ec4`.
+The current source preserves the reviewed WhatsApp inputs through verified squash commit `3f3eb6139e089c24397d6a499a10fcde4bdc84da`, which is an ancestor of `bd668121e918e7b1dda13062bed728f18150360e`.
+The following blobs match between the previous source commit and the preserved squash commit:
+
+| Path | Blob |
+| --- | --- |
+| `agents/hermes/Dockerfile.base` | `b9962e7` |
+| `agents/hermes/whatsapp-proxy.patch` | `c154223` |
+| `test/hermes-share-mount-deps.test.ts` | `09e4c48` |
+
+The current source also contains these reviewed base-image inputs, all as verified ancestors:
+
+| Commit | Input |
+| --- | --- |
+| `265c18f856263c20cd4a3e89ca189fc102dbc95b` | Trusted root npm audit |
+| `15069f9262d52b74d8916b7a0d7969a9ae4d3ee1` | Managed-runtime audit coverage |
+| `efc34999dd185c2e14ff5dc6997d75db26537f3a` | Private npm `ip-address` remediation |
+| `b6df720eebf5a01928dbed2f588691ba8de794f8` | Migration from `gosu` to `setpriv` |
+
 ## Concern ledger
 
 | ID | Severity | Disposition | Evidence and remaining gate |
@@ -239,7 +296,7 @@ Artifact scanning must therefore inspect the assembled image and record the down
 | `HERMES-9` | High | Pin and test | The selected Python delta adds no advisory regression, and the affected multipart parser is replaced with attested `0.0.32` plus hash and runtime probes. |
 | `HERMES-10` | High | Pin and test | The exact-source patch updates Hermes metadata and its frozen lock together, selects `aiohttp==3.14.3`, `cryptography==50.0.0`, `mcp==1.28.1`, `Pillow==12.3.0`, `starlette==1.3.1`, and `tornado==6.5.7`, and fails the base image build on dependency inconsistency or installed-version drift. The final image unconditionally asserts `aiohttp==3.14.3` and `cryptography==50.0.0` after messaging package installation, including during ordinary onboarding. The base image separately checksum-pins Node.js `24.18.1` and asserts uv `0.11.33`. |
 | `HERMES-11` | High | Migrate, test, and runtime-proof | Root npm audit reports zero production findings and the WhatsApp bridge removes its current critical, high, and medium advisory entries, while both architectures still require native bridge and message-path evidence. |
-| `HERMES-12` | High | Pin and runtime-proof | The final Dockerfile pins patched OCI index `sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96`, which selects amd64 manifest `sha256:cf6e95640faac8e5099cc9d267a6eb9b1f9192abbfcc9552a81a8ae22b4a47bb` and arm64 manifest `sha256:92e7c982bc5106f4c3f551032418fb72375b4d37bff50e21baa3d0e861d7519e`. Registry labels bind both manifests to source revision `bd668121e918e7b1dda13062bed728f18150360e`, which descends from dependency-fix commit `00c61114f`. Both image histories contain exact installed-version assertions for `aiohttp==3.14.3` and `cryptography==50.0.0`. Live final-image WhatsApp evidence remains under `HERMES-22`. |
+| `HERMES-12` | High | Pin and runtime-proof | The final Dockerfile pins patched OCI index `sha256:57c091ab9b31c924eac0050e66c834c37df875154a254964302a31b119b50b96`, produced successfully by `Images / Base Images` run `31006872948`, attempt 1, from source commit `bd668121e918e7b1dda13062bed728f18150360e` on `main`. Its amd64 and arm64 child manifests point to image configurations whose `org.opencontainers.image.source` labels identify repository `NVIDIA/NemoClaw` and whose `org.opencontainers.image.revision` labels identify that commit. Both platform images have SLSA provenance tied to the same producer and source. Both image histories assert `aiohttp==3.14.3` and `cryptography==50.0.0`; the OCI index has no SBOM attestation. The transition preserves the reviewed WhatsApp inputs and the four additional base-image inputs recorded above. Live final-image WhatsApp evidence remains under `HERMES-22`. |
 | `HERMES-13` | Medium | Document bounded residual | Static `state_files` entries online-back up the default profile only. Cron or Discord ledgers created by a process launched under `profiles/<name>` remain in the raw `profiles` tar capture and can be inconsistent during a concurrent snapshot. Dynamic profile-local SQLite discovery is generic snapshot work outside this upgrade PR. |
 | `HERMES-14` | High | Migrate and test | The browser evaluation denylist changed from default-on to opt-in. Generated configuration explicitly writes `browser.restrict_evaluate: true`, including when managed browser-gateway settings are merged, so the upgrade does not broaden page-context access. |
 | `HERMES-15` | Medium | Migrate and test | The omitted gateway session-reset policy changed from bounded daily and idle expiry to no automatic reset. Generated configuration explicitly writes the complete outgoing reset and notification policy to preserve the retention bound without inheriting mutable dependency defaults. |
@@ -249,7 +306,7 @@ Artifact scanning must therefore inspect the assembled image and record the down
 | `HERMES-19` | High | Migrate and test | The dashboard has an isolated `HERMES_HOME`, so its allowlisted routing and policy mirror is a startup security boundary. A missing gateway config remains a benign cold-start no-op, while malformed, non-mapping, unreadable, or routing-free source config and invalid existing dashboard config fail startup without changing stale dashboard bytes. Sanitized errors never include raw PyYAML parser context or credential-bearing source lines. |
 | `HERMES-20` | High | Retarget, guard, test, and runtime-proof | Base SHA `fa96c91f` adds a Hermes 0.18 gateway-runtime-metadata patch whose central helper shape does not match Hermes 0.19. The retargeted exact-source guard preserves `_get_process_hermes_home()` while moving the managed default gateway's central PID, lock, and status helpers below `runtime`, hash-binds the patcher, and adds unit and final-image probes. The managed-gateway restart E2E remains the PR SHA runtime gate. |
 | `HERMES-21` | Medium | Document inherited bounded residual | The base workaround does not retarget direct upstream `--replace` cleanup, planned-stop/takeover markers, named-profile and multiplexer readers, service/boot/web/Windows consumers, or upstream backup and Docker paths. With Shields up, those direct paths can fail or observe stale state, but the same limitation exists on base SHA `fa96c91f`; the 0.19 selector retarget adds no regression to NemoClaw's supported host-managed default-gateway lifecycle. A complete relocation needs separate exact-source patches and runtime proof for every explicit consumer. |
-| `HERMES-22` | High | Patch, pin, test, and runtime-proof | Issue `#8087` showed that the Hermes WhatsApp WebSocket ignored the injected `HTTPS_PROXY`, attempted direct DNS resolution, and failed before OpenShell produced an Open Cybersecurity Schema Framework (OCSF) record. NemoClaw exact-source patches both Baileys proxy fields, locks the added proxy dependency graph, and fails the base-image build when the patch drifts, a bridge-level `makeWASocket` mock does not receive the same proxy agent as `agent` and `fetchAgent`, or the pinned Baileys WebSocket transport does not send a `CONNECT web.whatsapp.com:443` request to a controlled HTTPS proxy. The mock also proves that both options remain unset without `HTTPS_PROXY`. The exact PR head still requires live Hermes WhatsApp E2E evidence for QR pairing, connected status, and audited WebSocket traffic through the OpenShell proxy. |
+| `HERMES-22` | High | Patch, pin, test, and runtime-proof | Issue `#8087` showed that the Hermes WhatsApp WebSocket ignored the injected `HTTPS_PROXY`, attempted direct DNS resolution, and failed before OpenShell produced an Open Cybersecurity Schema Framework (OCSF) record. NemoClaw exact-source patches both Baileys proxy fields, locks the added proxy dependency graph, and fails the base-image build when the patch drifts, a bridge-level `makeWASocket` mock does not receive the same proxy agent as `agent` and `fetchAgent`, or the pinned Baileys WebSocket transport does not send a `CONNECT web.whatsapp.com:443` request to a controlled HTTPS proxy. The mock also proves that both options remain unset without `HTTPS_PROXY`. The current PR commit still requires live Hermes WhatsApp E2E evidence for QR pairing, connected status, and audited WebSocket traffic through the OpenShell proxy. |
 
 Unresolved upgrade-created high-impact concerns: `0`.
 One Medium upgrade-created instance of the pre-existing named-profile raw-capture limitation and one inherited Medium direct-runtime-consumer limitation remain explicitly accepted for this upgrade scope.
@@ -259,17 +316,24 @@ The exact-source dependency patch and its residual audit record require security
 
 ## Verification and remaining gates
 
-Completed local evidence:
+### Completed Source and Local Evidence
 
-- authoritative stable-release, tag, source-commit, producer-run, PyPI-attestation, and registry-integrity checks;
+- authoritative stable-release, tag, and source-commit checks;
 - three adjacent stable ranges and 2,399 source commits reviewed;
 - current and target Python closures, JavaScript locks, licenses, and point-in-time advisories compared;
 - target source comparison for configuration, wrapper, patches, state, MCP, messaging, and secret boundaries;
 - focused generated-config, wrapper, patch, default-profile state-manifest, and skill contract tests;
 - Python 3.13 multipart compatibility probes;
 - a controlled-proxy regression proving the bridge-provided agent carries the pinned Baileys WebSocket `CONNECT` request;
-- a no-cache arm64 Hermes base-image build;
-- amd64 and arm64 patched base-image publication plus immutable OCI-index, source-label, and build-history inspection.
+- a no-cache arm64 Hermes base-image build.
+
+### Completed Publication and Registry Evidence
+
+- successful source-release, PyPI, Docker, and patched base-image producer runs;
+- PyPI Trusted Publisher attestations and the independent npm registry-integrity cross-check;
+- amd64 and arm64 patched base-image publication;
+- immutable OCI index, image-configuration source and revision labels, SLSA provenance, and build-history inspection; and
+- confirmation that the OCI index has no SBOM attestation.
 
 Before merge, these checks must pass:
 
