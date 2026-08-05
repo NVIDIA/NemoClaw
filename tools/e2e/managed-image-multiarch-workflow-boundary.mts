@@ -151,7 +151,7 @@ export function validateManagedImageMultiarchWorkflow(workflow: WorkflowRecord):
     NEMOCLAW_E2E_SHARD: "${{ matrix.shard }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: "${{ inputs.base_sha }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE:
-      "${{ runner.temp }}/nemoclaw-protected-managed-image-build-cache/${{ matrix.shard }}",
+      "${{ github.workspace }}/.protected-managed-image-build-cache/${{ matrix.shard }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT:
       "protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT:

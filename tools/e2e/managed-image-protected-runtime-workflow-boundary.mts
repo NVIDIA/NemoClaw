@@ -120,7 +120,7 @@ export function validateManagedImageProtectedRuntimeWorkflow(workflow: WorkflowR
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: "${{ inputs.base_sha }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE:
-      "${{ runner.temp }}/nemoclaw-protected-managed-image-build-cache/linux-amd64",
+      "${{ github.workspace }}/.protected-managed-image-build-cache/linux-amd64",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT:
       "protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha }}",
     NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT:
