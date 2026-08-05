@@ -1034,7 +1034,9 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
     PROTECTED_CREDENTIALS_DIR,
     "phase-11-protected-credentials-dir-before-backup",
   );
-  expect(protectedDirBeforeBackup).toEqual({ mode: "700", owner: "root:root" });
+  // Confidentiality roots remain search-only for the sandbox group; every
+  // descendant stays root-only and unreadable to the sandbox.
+  expect(protectedDirBeforeBackup).toEqual({ mode: "710", owner: "root:sandbox" });
   const protectedFileBeforeBackup = await rootSandboxPathMetadata(
     host,
     rebuiltContainerId,
@@ -1115,7 +1117,7 @@ test ! -e ${JSON.stringify(MARKER_FILE)}`,
       PROTECTED_CREDENTIALS_DIR,
       "phase-11-protected-credentials-dir-after-backup",
     ),
-  ).toEqual({ mode: "700", owner: "root:root" });
+  ).toEqual({ mode: "710", owner: "root:sandbox" });
   expect(
     await rootSandboxPathMetadata(
       host,
