@@ -7,6 +7,7 @@ import {
   type WindowsMxcHostFacts,
 } from "../windows-mxc/host-qualification";
 import {
+  MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
   NATIVE_ARTIFACT_WORKLOAD_AGENT,
   NATIVE_ARTIFACT_WORKLOAD_CONTRACT_VERSION,
   NATIVE_ARTIFACT_WORKLOAD_PLATFORM,
@@ -24,7 +25,6 @@ export interface MxcRuntimeProviderOptions {
 }
 
 const MXC_PROVIDER_ID = "mxc";
-const STARTUP_PROFILE_CONTRACT_VERSION = 1;
 
 const MXC_NATIVE_ARTIFACT_PROFILE = {
   support: null,
@@ -33,7 +33,7 @@ const MXC_NATIVE_ARTIFACT_PROFILE = {
     platforms: [NATIVE_ARTIFACT_WORKLOAD_PLATFORM],
     agents: [NATIVE_ARTIFACT_WORKLOAD_AGENT],
     contractVersions: [NATIVE_ARTIFACT_WORKLOAD_CONTRACT_VERSION],
-    startupProfileContractVersions: [STARTUP_PROFILE_CONTRACT_VERSION],
+    startupProfileContractVersions: [MANAGED_STARTUP_PROFILE_SCHEMA_VERSION],
   },
   hostArchitectures: ["x64"],
   managedImageSelectionPolicy: "require-managed",

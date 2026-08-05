@@ -174,6 +174,38 @@ describe("sandbox recreate journal", () => {
     expect(removeImage).not.toHaveBeenCalled();
   });
 
+  it("removes the owned source image when a native-artifact replacement retains a stale imageTag (#8178)", () => {
+    const removeImage = vi.fn(() => ({ status: 0 }));
+    const runtimeProviders = createRuntimeProviderBundleRegistry([
+      ["docker", createDockerRuntimeProviderBundle({ removeImage })],
+    ]);
+    const replacement: SandboxEntry = {
+      ...SOURCE_ENTRY,
+      workload: { kind: "native-artifact", shared: true } as SandboxEntry["workload"],
+      lifecycleGeneration: TARGET_GENERATION,
+      lifecycleLiveIdentityFingerprint: TARGET_ID,
+    };
+
+    expect(
+      retireReplacedSandboxWorkload(
+        "alpha",
+        TARGET_GENERATION,
+        TARGET_ID,
+        SOURCE_ENTRY,
+        replacement,
+        { runtimeProviders },
+      ),
+    ).toEqual({
+      status: "removed",
+      engineDisplayName: "Docker",
+      reference: SOURCE_ENTRY.imageTag,
+    });
+    expect(removeImage).toHaveBeenCalledExactlyOnceWith(SOURCE_ENTRY.imageTag, {
+      ignoreError: true,
+      timeout: 30_000,
+    });
+  });
+
   it("starts at deleted when the source is already absent", () => {
     const session = createSession({ sandboxName: "alpha" });
 

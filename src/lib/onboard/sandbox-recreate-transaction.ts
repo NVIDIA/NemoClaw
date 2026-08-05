@@ -107,7 +107,7 @@ export function retireReplacedSandboxWorkload(
     return { status: "skipped", reason: "authority-unproven" };
   }
   if (
-    replacement.imageTag === plan.reference ||
+    (replacement.workload?.kind !== "native-artifact" && replacement.imageTag === plan.reference) ||
     workloadReference(replacement.workload) === plan.reference
   ) {
     return { status: "skipped", reason: "image-reused" };
