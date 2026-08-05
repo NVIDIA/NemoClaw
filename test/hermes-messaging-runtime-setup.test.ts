@@ -24,30 +24,29 @@ function runtimeShellEnvFunction(source: string): string {
 function messagingRuntimeSetupSection(
   source: string,
   planPath: string,
-  preloadPaths?: { sourcePrefix: string; targetPrefix: string },
+  preloadPaths: { sourcePrefix: string; targetPrefix: string } = {
+    sourcePrefix: "/usr/local/lib/nemoclaw/preloads/",
+    targetPrefix: "/tmp/nemoclaw-",
+  },
 ): string {
   const start = source.indexOf("# ── Messaging runtime setup from manifest metadata");
   const end = source.indexOf("# ── End messaging runtime setup", start);
   expect(start).toBeGreaterThanOrEqual(0);
   expect(end).toBeGreaterThan(start);
-  let section = source
+  return source
     .slice(start, end)
     .replace(
       '_MESSAGING_RUNTIME_SETUP_PLAN="/tmp/nemoclaw-messaging-runtime-setup.json"',
       `_MESSAGING_RUNTIME_SETUP_PLAN=${JSON.stringify(planPath)}`,
+    )
+    .replace(
+      'PRELOAD_SOURCE_PREFIX = "/usr/local/lib/nemoclaw/preloads/"',
+      `PRELOAD_SOURCE_PREFIX = ${JSON.stringify(preloadPaths.sourcePrefix)}`,
+    )
+    .replace(
+      'PRELOAD_TARGET_PREFIX = "/tmp/nemoclaw-"',
+      `PRELOAD_TARGET_PREFIX = ${JSON.stringify(preloadPaths.targetPrefix)}`,
     );
-  if (preloadPaths) {
-    section = section
-      .replace(
-        'PRELOAD_SOURCE_PREFIX = "/usr/local/lib/nemoclaw/preloads/"',
-        `PRELOAD_SOURCE_PREFIX = ${JSON.stringify(preloadPaths.sourcePrefix)}`,
-      )
-      .replace(
-        'PRELOAD_TARGET_PREFIX = "/tmp/nemoclaw-"',
-        `PRELOAD_TARGET_PREFIX = ${JSON.stringify(preloadPaths.targetPrefix)}`,
-      );
-  }
-  return section;
 }
 
 function encodeRuntimePlan(nodePreloads: Array<Record<string, unknown>>): string {
