@@ -151,6 +151,7 @@ COPY scripts/patch-openclaw-chat-send.mts /usr/local/lib/nemoclaw/patch-openclaw
 COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
 COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts
 COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts
+COPY scripts/patch-openclaw-managed-transport-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts
 COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts
 COPY scripts/extract-semver.sh /usr/local/lib/nemoclaw/extract-semver
 COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts
@@ -390,6 +391,7 @@ RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts \
+        /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
         /usr/local/lib/nemoclaw/extract-semver \
         /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
@@ -1017,6 +1019,20 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-n
 # negative-catalog invalidation, and temporary-transport failure attribution.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \
+    /usr/local/lib/node_modules/openclaw/dist
+
+# Emit a redacted managed-transport diagnostic when a remote Streamable HTTP MCP
+# request fails. OpenClaw 2026.7.1 surfaces only the transport error text, which
+# does not say whether policy, CONNECT, TLS, the upstream connection, the
+# request, or response headers failed. The fetch-boundary wrapper is
+# failure-only, never retries, never alters the request, and never reads a 2xx
+# body, so streaming responses stay behaviorally unchanged. It is inert unless
+# OPENSHELL_SANDBOX=1.
+#
+# Removal criterion: drop when upstream OpenClaw emits phase-classified,
+# redacted transport diagnostics for remote MCP fetch failures.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Run the compact tool catalog shim for OpenClaw selection runtimes that still
