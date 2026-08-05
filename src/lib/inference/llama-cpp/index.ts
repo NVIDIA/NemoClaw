@@ -228,10 +228,14 @@ export function probeLlamaCppAttachment(
   if (anonymousModels.curlStatus !== 0 || anonymousModels.httpStatus === 0) {
     return failure("unreachable", `No llama.cpp server responded on fixed port ${LLAMA_CPP_PORT}.`);
   }
-  if (anonymousModels.httpStatus !== 401 && anonymousModels.httpStatus !== 403) {
+  if (
+    anonymousModels.httpStatus !== 200 &&
+    anonymousModels.httpStatus !== 401 &&
+    anonymousModels.httpStatus !== 403
+  ) {
     return failure(
-      "authentication-required",
-      "The server exposes its model catalog without native API-key authentication.",
+      "not-llama-cpp",
+      "The server did not return a recognizable status from the model catalog endpoint.",
     );
   }
 
