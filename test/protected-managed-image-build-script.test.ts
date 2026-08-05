@@ -8,6 +8,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -33,7 +34,15 @@ function writeExecutable(name: string, source: string): void {
   chmodSync(target, 0o755);
 }
 
-function runBuild(sourceRoot: string) {
+function stubBuildInvocation(): void {
+  writeExecutable(
+    "docker",
+    '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$NEMOCLAW_TEST_DOCKER_LOG"\ncase "$*" in\n  "buildx imagetools inspect "*) printf "{}\\n"; exit 0 ;;\n  "buildx build "*) exit 88 ;;\nesac\nexit 91\n',
+  );
+  writeExecutable("sha256sum", `#!/usr/bin/env bash\nprintf '%s  %s\\n' '${DIGEST}' "$1"\n`);
+}
+
+function runBuild(sourceRoot: string, extraArgs: readonly string[] = []) {
   const output = path.join(testRoot, "contracts.json");
   return spawnSync(
     "bash",
@@ -55,6 +64,7 @@ function runBuild(sourceRoot: string) {
       `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:${DIGEST}`,
       "--source-root",
       sourceRoot,
+      ...extraArgs,
     ],
     {
       cwd: REPO_ROOT,
@@ -116,5 +126,68 @@ describe("protected managed-image source-root boundary", () => {
 
     expect(result.status, result.stderr).toBe(2);
     expect(existsSync(dockerLog)).toBe(false);
+  });
+});
+
+describe("protected managed-image build-cache boundary", () => {
+  it("accepts one empty absolute cache export root before invoking Docker", () => {
+    const cacheRoot = path.join(testRoot, "export-cache");
+    stubBuildInvocation();
+
+    const result = runBuild(REPO_ROOT, ["--cache-to", cacheRoot]);
+
+    expect(result.status, result.stderr).toBe(88);
+    expect(existsSync(cacheRoot)).toBe(true);
+    expect(readFileSync(dockerLog, "utf8")).toContain(
+      `--cache-to type=local,dest=${realpathSync(cacheRoot)}/openclaw,mode=max`,
+    );
+  });
+
+  it.each([
+    ["relative", () => "export-cache"],
+    [
+      "symlink",
+      () => {
+        const target = path.join(testRoot, "cache-target");
+        const link = path.join(testRoot, "cache-link");
+        mkdirSync(target);
+        symlinkSync(target, link, "dir");
+        return link;
+      },
+    ],
+  ])("rejects a %s cache export root before invoking Docker", (_case, cacheRoot) => {
+    const result = runBuild(REPO_ROOT, ["--cache-to", cacheRoot()]);
+
+    expect(result.status, result.stderr).toBe(2);
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
+  it("rejects an incomplete offline cache before invoking Docker", () => {
+    const cacheRoot = path.join(testRoot, "offline-cache");
+    mkdirSync(cacheRoot);
+
+    const result = runBuild(REPO_ROOT, ["--offline-cache", cacheRoot]);
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("offline cache is incomplete for openclaw");
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
+  it("accepts complete all-agent offline cache metadata before invoking Docker", () => {
+    const cacheRoot = path.join(testRoot, "offline-cache");
+    for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
+      mkdirSync(path.join(cacheRoot, agent, "blobs", "sha256"), {
+        recursive: true,
+      });
+      writeFileSync(path.join(cacheRoot, agent, "index.json"), "{}\n", "utf8");
+    }
+    stubBuildInvocation();
+
+    const result = runBuild(REPO_ROOT, ["--offline-cache", cacheRoot]);
+
+    expect(result.status, result.stderr).toBe(88);
+    expect(readFileSync(dockerLog, "utf8")).toContain(
+      `--cache-from type=local,src=${realpathSync(cacheRoot)}/openclaw --network none`,
+    );
   });
 });

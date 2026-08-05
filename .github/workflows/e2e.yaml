@@ -1958,7 +1958,7 @@ jobs:
   managed-image-multiarch-startup:
     name: Protected managed-image startup (${{ matrix.platform }})
     needs: generate-matrix
-    if: ${{ contains(format(',{0},', inputs.jobs), ',managed-image-multiarch-startup,') || contains(format(',{0},', inputs.targets), ',managed-image-multiarch-startup,') }}
+    if: ${{ contains(format(',{0},', inputs.jobs), ',managed-image-multiarch-startup,') || contains(format(',{0},', inputs.targets), ',managed-image-multiarch-startup,') || contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 210
     permissions:
@@ -1982,6 +1982,8 @@ jobs:
       NEMOCLAW_E2E_EXPECTED_SHA: ${{ inputs.checkout_sha }}
       NEMOCLAW_E2E_SHARD: ${{ matrix.shard }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.base_sha }}
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE: ${{ runner.temp }}/nemoclaw-protected-managed-image-build-cache/${{ matrix.shard }}
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT: protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT: protected-${{ github.run_id }}-${{ github.run_attempt }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT: ${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}/contracts.json
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_EVIDENCE: ${{ github.workspace }}/e2e-artifacts/live/managed-image-multiarch-startup/${{ matrix.shard }}/evidence.json
@@ -2169,6 +2171,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cache_args=()
+          if [[ "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM" == "linux/amd64" ]]; then
+            cache_args=(--cache-to "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE")
+          fi
           scripts/checks/build-protected-managed-images.sh \
             --output "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT" \
             --revision "$CHECKOUT_SHA" \
@@ -2176,7 +2182,8 @@ jobs:
             --platform "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM" \
             --openclaw-base "$BASE_OPENCLAW" \
             --hermes-base "$BASE_HERMES" \
-            --dcode-base "$BASE_DCODE"
+            --dcode-base "$BASE_DCODE" \
+            "${cache_args[@]}"
 
       - name: Run every exact managed-image contract directly
         env:
@@ -2269,6 +2276,17 @@ jobs:
         run: >-
           npx tsx tools/e2e/live-vitest-invocation.mts run
           --test-path test/e2e/live/managed-image-multiarch-startup.test.ts
+
+      - name: Publish exact amd64 protected runtime build cache
+        if: ${{ matrix.platform == 'linux/amd64' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT }}
+          path: ${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          overwrite: true
 
       - name: Upload protected managed-image evidence
         if: always()
@@ -2549,14 +2567,17 @@ jobs:
   # This explicit-only lane runs only when the exact candidate includes
   # ci/protected-managed-image-runtime-activation-v1.json. The trusted
   # controller can then qualify that candidate's exact head without executing
-  # PR-controlled workflow code.
+  # PR-controlled workflow code. Its hosted amd64 prerequisite exports the
+  # exact candidate build cache; this GPU lane imports it and rebuilds with
+  # BuildKit networking disabled so a cache miss fails closed.
   managed-image-protected-runtime:
     name: Protected managed-image GPU and local inference
-    needs: generate-matrix
-    if: ${{ contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,') }}
+    needs: [generate-matrix, managed-image-multiarch-startup]
+    if: ${{ always() && needs.generate-matrix.result == 'success' && needs.managed-image-multiarch-startup.result == 'success' && (contains(format(',{0},', inputs.jobs), ',managed-image-protected-runtime,') || contains(format(',{0},', inputs.targets), ',managed-image-protected-runtime,')) }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
     timeout-minutes: 300
     permissions:
+      actions: read
       contents: read
     env:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime
@@ -2568,6 +2589,8 @@ jobs:
       NEMOCLAW_E2E_SHARD: linux-amd64-gpu
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_BASE_SHA: ${{ inputs.base_sha }}
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE: ${{ runner.temp }}/nemoclaw-protected-managed-image-build-cache/linux-amd64
+      NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT: protected-managed-image-build-cache-${{ github.run_id }}-${{ inputs.checkout_sha }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT: protected-${{ github.run_id }}-${{ github.run_attempt }}
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_CONTRACT: ${{ github.workspace }}/e2e-artifacts/live/managed-image-protected-runtime/contracts.json
       NEMOCLAW_PROTECTED_MANAGED_IMAGE_PLATFORM: linux/amd64
@@ -2627,6 +2650,12 @@ jobs:
           path: .candidate-runtime
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Download exact protected runtime build cache
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE_ARTIFACT }}
+          path: ${{ env.NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE }}
 
       - *dockerhub-auth
 
@@ -2764,6 +2793,7 @@ jobs:
             --cohort "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_COHORT" \
             --platform linux/amd64 \
             --source-root "$GITHUB_WORKSPACE/.candidate-runtime" \
+            --offline-cache "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE" \
             --openclaw-base "$BASE_OPENCLAW" \
             --hermes-base "$BASE_HERMES" \
             --dcode-base "$BASE_DCODE"

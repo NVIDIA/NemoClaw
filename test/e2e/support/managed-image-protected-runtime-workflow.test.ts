@@ -7,6 +7,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import { validateManagedImageMultiarchWorkflow } from "../../../tools/e2e/managed-image-multiarch-workflow-boundary.mts";
 import { validateManagedImageProtectedRuntimeWorkflow } from "../../../tools/e2e/managed-image-protected-runtime-workflow-boundary.mts";
 
 type WorkflowRecord = Record<string, unknown>;
@@ -24,6 +25,10 @@ function runtimeJob(value: WorkflowRecord): Record<string, unknown> {
   return (value.jobs as Record<string, Record<string, unknown>>)["managed-image-protected-runtime"];
 }
 
+function multiarchJob(value: WorkflowRecord): Record<string, unknown> {
+  return (value.jobs as Record<string, Record<string, unknown>>)["managed-image-multiarch-startup"];
+}
+
 function namedStep(value: WorkflowRecord, name: string): Record<string, unknown> {
   const step = (runtimeJob(value).steps as Array<Record<string, unknown>>).find(
     (step) => step.name === name,
@@ -35,6 +40,13 @@ function namedStep(value: WorkflowRecord, name: string): Record<string, unknown>
 describe("protected managed-image runtime workflow boundary", () => {
   it("accepts the exact activated trusted runtime lane", () => {
     expect(validateManagedImageProtectedRuntimeWorkflow(workflow())).toEqual([]);
+  });
+
+  it("accepts the exact hosted-build to protected-runtime cache handoff", () => {
+    const value = workflow();
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toEqual([]);
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toEqual([]);
   });
 
   it("ships the exact activation contract consumed by the trusted lane (#7744)", () => {
@@ -128,6 +140,62 @@ describe("protected managed-image runtime workflow boundary", () => {
 
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
       "managed-image-protected-runtime protected qualification and cleanup steps drifted",
+    );
+  });
+
+  it("rejects protected runtime execution without the hosted cache producer", () => {
+    const value = workflow();
+    runtimeJob(value).needs = ["generate-matrix"];
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime must depend on generate-matrix and managed-image-multiarch-startup",
+    );
+  });
+
+  it("rejects removing the exact protected runtime cache download", () => {
+    const value = workflow();
+    const job = runtimeJob(value);
+    job.steps = (job.steps as Array<Record<string, unknown>>).filter(
+      (step) => step.name !== "Download exact protected runtime build cache",
+    );
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime must define exactly one 'Download exact protected runtime build cache' step",
+    );
+  });
+
+  it("rejects a GPU rebuild that can reach the network on a cache miss", () => {
+    const value = workflow();
+    const build = namedStep(value, "Build exact all-agent protected runtime images");
+    build.run = String(build.run).replace(
+      '--offline-cache "$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE"',
+      "",
+    );
+
+    expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
+      "managed-image-protected-runtime step 'Build exact all-agent protected runtime images' must include --offline-cache \"$NEMOCLAW_PROTECTED_MANAGED_IMAGE_BUILD_CACHE\"",
+    );
+  });
+
+  it("rejects a hosted producer that is not selected with protected runtime", () => {
+    const value = workflow();
+    multiarchJob(value).if =
+      "${{ contains(format(',{0},', inputs.jobs), ',managed-image-multiarch-startup,') || contains(format(',{0},', inputs.targets), ',managed-image-multiarch-startup,') }}";
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup must remain explicit-only and selector-bound",
+    );
+  });
+
+  it("rejects removing the exact amd64 build cache publication", () => {
+    const value = workflow();
+    const job = multiarchJob(value);
+    job.steps = (job.steps as Array<Record<string, unknown>>).filter(
+      (step) => step.name !== "Publish exact amd64 protected runtime build cache",
+    );
+
+    expect(validateManagedImageMultiarchWorkflow(value)).toContain(
+      "managed-image-multiarch-startup must define exactly one 'Publish exact amd64 protected runtime build cache' step",
     );
   });
 });
