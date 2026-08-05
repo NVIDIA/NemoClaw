@@ -6,11 +6,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { requireSingleReviewedDockerfileRunCommand } from "./helpers/dockerfile-run-commands";
 import { dockerRunCommandBetween, runDockerShell } from "./helpers/hermes-dockerfile-run";
 import { expectManagedBootstrapNativeImageContract } from "./support/managed-bootstrap-image-contract";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
+const NPM_ROOT_ARGUMENTS = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
 const HERMES_INTEGRITY_FILES = [
   {
     arg: "NEMOCLAW_HERMES_IMAGE_BUILD_PROBES_SHA256",
@@ -317,10 +319,11 @@ describe("Hermes final image layout", () => {
     const runtime = indexOfRequired(finalStage, runtimeCopy);
     const wrapper = indexOfRequired(finalStage, wrapperCopy);
     const scan = indexOfRequired(finalStage, scanCopy);
-    const tarPatch = indexOfRequired(
+    const tarPatch = requireSingleReviewedDockerfileRunCommand(
       finalStage,
-      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
-    );
+      "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+      NPM_ROOT_ARGUMENTS,
+    ).commandStart;
     const certifiInstall = indexOfRequired(finalStage, "RUN _hermes_certifi=");
     const agentChmod = indexOfRequired(
       finalStage,
