@@ -75,7 +75,14 @@ Review the [Prerequisites](prerequisites) before you begin.
     nemoclaw my-assistant dashboard-url --quiet
     ```
 
-    Open the printed URL in your browser, or connect from the terminal and start the OpenClaw TUI.
+    Open the printed URL in your browser, or start the OpenClaw TUI from the terminal.
+
+    ```bash
+    nemoclaw launch my-assistant
+    ```
+
+    `nemoclaw launch` runs the same preflight as `connect`, then starts `openclaw tui` in your terminal.
+    To open a sandbox shell first and start the TUI yourself, run these commands instead.
 
     ```bash
     nemoclaw my-assistant connect
@@ -356,8 +363,11 @@ Use these details when your first-run path needs more control.
         http://127.0.0.1:18789/
 
       Terminal:
-        nemoclaw my-gpt-claw connect
-        then run: openclaw tui
+        nemoclaw launch my-gpt-claw
+
+        Or open a sandbox shell first:
+          nemoclaw my-gpt-claw connect
+          then run: openclaw tui
 
     Authenticated dashboard URL, if needed:
       nemoclaw my-gpt-claw dashboard-url --quiet
@@ -383,7 +393,7 @@ Use these details when your first-run path needs more control.
     nemoclaw onboard
     ```
 
-    Do not run `nemoclaw <sandbox-name> connect` or `openclaw tui` until onboarding has created the sandbox.
+    Do not run `nemoclaw launch <sandbox-name>`, `nemoclaw <sandbox-name> connect`, or `openclaw tui` until onboarding has created the sandbox.
 
     The wizard starts a background dashboard port forward and prints its URL in the ready summary.
     The default host port is `18789`.
@@ -408,7 +418,7 @@ Use these details when your first-run path needs more control.
 
 ## Troubleshooting
 
-If onboarding does not finish with a ready summary, do not run `connect` yet.
+If onboarding does not finish with a ready summary, do not run `launch` or `connect` yet.
 Run `nemoclaw onboard`, then use [Troubleshooting](../reference/troubleshooting) for preflight, Docker, credential, provider, and network-policy errors.
 
 ## Next Steps
