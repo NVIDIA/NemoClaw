@@ -37,7 +37,7 @@ describe("createCoreOnboardFlowPhases", () => {
     mocks.createSandboxPhase.mockReturnValue({ state: "sandbox" });
   });
 
-  it("injects provider recovery and stale dashboard cleanup into the core phases (#7695)", () => {
+  it("preserves provider recovery and stale dashboard listener cleanup in the composed core phases (#7695)", () => {
     const existingProviderDependency = vi.fn();
     const existingSandboxDependency = vi.fn();
     const resumeProvider = {

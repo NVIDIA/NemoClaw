@@ -317,6 +317,7 @@ describe("finalization handlers", () => {
     expect(calls.log).toHaveBeenCalledWith(
       "  ✓ LangChain Deep Agents Code terminal runtime is ready",
     );
+    expect(calls.log).toHaveBeenCalledWith("  Launch: nemoclaw launch my-assistant");
     expect(calls.log).toHaveBeenCalledWith("  Connect: nemoclaw my-assistant connect");
     expect(calls.log).toHaveBeenCalledWith("  Interactive: dcode");
     expect(calls.log).toHaveBeenCalledWith('  Headless: dcode -n "<task>"');

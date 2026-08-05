@@ -56,7 +56,13 @@ const { resolveNemoclawStateDir } = require("../state/paths");
 const { appendAuditEntry } = require("./audit");
 const { resolveAgentConfig } = require("../sandbox/agent-config");
 const {
+  assertLegacyMcpPolicyRestoreSafe,
+  buildDeadlineRuntimeManagedMcpPolicy,
+  buildRuntimeManagedMcpPolicy,
   buildRuntimePermissivePolicy,
+  hasManagedMcpPolicyClaims,
+  inspectExactManagedMcpPolicies,
+  inspectProvableManagedMcpPoliciesForDeadline,
 }: typeof import("./permissive-runtime") = require("./permissive-runtime");
 const { cleanupTempDir } = require("../onboard/temp-files");
 const { verifyShieldsLockState }: typeof import("./verify-lock") = require("./verify-lock");
@@ -105,6 +111,7 @@ const {
 }: typeof import("./mutable-config-repair") = require("./mutable-config-repair");
 type MutableConfigPermsInspection = import("./mutable-config-perms").MutableConfigPermsInspection;
 type MutableConfigRepairResult = import("./mutable-config-perms").MutableConfigRepairResult;
+type ManagedMcpPolicyOmission = import("./permissive-runtime").ManagedMcpPolicyOmission;
 type TimerMarker = import("./timer-control").TimerMarker;
 const STATE_DIR = resolveNemoclawStateDir();
 const SHIELDS_TRANSITION_POLL_MS = 50;
@@ -134,6 +141,8 @@ type ShieldsDownTransition = {
   processToken: string;
   sandboxName: string;
   snapshotPath: string;
+  /** Exact generated MCP keys owned when snapshotPath was captured. */
+  managedMcpPolicyKeys?: string[];
 };
 
 const transitionPollBuffer = new Int32Array(new SharedArrayBuffer(4));
@@ -182,8 +191,17 @@ function isShieldsDownTransition(value: unknown): value is ShieldsDownTransition
     typeof value.processToken === "string" &&
     /^[0-9a-f]{32}$/.test(value.processToken) &&
     typeof value.sandboxName === "string" &&
-    typeof value.snapshotPath === "string"
+    typeof value.snapshotPath === "string" &&
+    isOptionalManagedMcpPolicyKeys(value.managedMcpPolicyKeys)
   );
+}
+
+function sameManagedMcpPolicyKeys(
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.length === right.length && left.every((key, index) => key === right[index]);
 }
 
 function readShieldsDownTransition(
@@ -213,7 +231,8 @@ function writeShieldsDownTransition(
       !current ||
       current.phase !== expectedPhase ||
       current.ownerPid !== transition.ownerPid ||
-      current.snapshotPath !== transition.snapshotPath
+      current.snapshotPath !== transition.snapshotPath ||
+      !sameManagedMcpPolicyKeys(current.managedMcpPolicyKeys, transition.managedMcpPolicyKeys)
     ) {
       throw new Error("Shields-down recovery ownership changed during the transition");
     }
@@ -327,7 +346,8 @@ function waitForShieldsDownForwardCommit(
       next.ownerPid !== observed.ownerPid ||
       next.ownerStartIdentity !== observed.ownerStartIdentity ||
       next.snapshotPath !== observed.snapshotPath ||
-      next.processToken !== observed.processToken
+      next.processToken !== observed.processToken ||
+      !sameManagedMcpPolicyKeys(next.managedMcpPolicyKeys, observed.managedMcpPolicyKeys)
     ) {
       throw new Error("Shields-down recovery ownership changed while waiting for forward commit");
     }
@@ -689,6 +709,8 @@ interface ShieldsState {
   shieldsDownReason?: string | null;
   shieldsDownPolicy?: string | null;
   shieldsPolicySnapshotPath?: string | null;
+  /** Exact generated MCP keys owned in the restrictive snapshot. */
+  shieldsManagedMcpPolicyKeys?: string[];
   chattrApplied?: boolean;
   // SHA-256 seal of each locked file, captured by `shields up` after the
   // lock verification passes. `shields status` re-hashes the same files
@@ -882,7 +904,8 @@ function loadShieldsState(sandboxName: string): LoadedShieldsState {
   const filePath = stateFilePath(sandboxName);
   if (!fs.existsSync(filePath)) return { _hasStateFile: false };
   try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    const contents = fs.readFileSync(filePath, "utf-8");
+    const parsed = JSON.parse(contents);
     if (!isShieldsState(parsed)) {
       return {
         _hasStateFile: true,
@@ -1198,6 +1221,25 @@ function saveShieldsState(sandboxName: string, patch: ShieldsState): ShieldsStat
   return updated;
 }
 
+function restoreShieldsStateSnapshot(sandboxName: string, state: LoadedShieldsState): void {
+  const {
+    _hasStateFile: hasStateFile,
+    _isCorrupt: isCorrupt,
+    _corruptError: _corruptError,
+    ...persisted
+  } = state;
+  const filePath = stateFilePath(sandboxName);
+  if (!hasStateFile) {
+    fs.rmSync(filePath, { force: true });
+    return;
+  }
+  fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+  if (isCorrupt) {
+    throw new Error("Cannot restore a corrupt shields state snapshot");
+  }
+  fs.writeFileSync(filePath, JSON.stringify(persisted, null, 2), { mode: 0o600 });
+}
+
 function isOptionalBoolean(value: unknown): value is boolean | undefined {
   return value === undefined || typeof value === "boolean";
 }
@@ -1231,6 +1273,14 @@ function isOptionalHashMap(value: unknown): value is { [path: string]: string } 
   return true;
 }
 
+function isOptionalManagedMcpPolicyKeys(value: unknown): value is string[] | undefined {
+  if (value === undefined) return true;
+  // Preserve string entries exactly so deadline recovery can strip and audit
+  // malformed or duplicate ownership without delaying restrictive lockdown.
+  // Manual restoration validates the same entries strictly during composition.
+  return Array.isArray(value) && value.every((key) => typeof key === "string");
+}
+
 function isShieldsState(value: unknown): value is ShieldsState {
   return (
     isObjectRecord(value) &&
@@ -1240,6 +1290,7 @@ function isShieldsState(value: unknown): value is ShieldsState {
     isOptionalNullableString(value.shieldsDownReason) &&
     isOptionalNullableString(value.shieldsDownPolicy) &&
     isOptionalNullableString(value.shieldsPolicySnapshotPath) &&
+    isOptionalManagedMcpPolicyKeys(value.shieldsManagedMcpPolicyKeys) &&
     isOptionalBoolean(value.chattrApplied) &&
     isOptionalHashMap(value.fileHashes) &&
     isOptionalString(value.updatedAt)
@@ -2663,6 +2714,7 @@ function synchronizeAutoRestoreTransition(
   processToken: string,
   snapshotPath: string,
   options: {
+    expiredTimerRecovery?: boolean;
     retainTransition?: boolean;
     assertTakeoverAuthority?: () => void;
   } = {},
@@ -2683,8 +2735,16 @@ function synchronizeAutoRestoreTransition(
   // above waits until the forward path has either committed its last weakening
   // mutation or its owner has died; restore the restrictive snapshot again at
   // that stable boundary before locking config.
-  const restoreResult = run(buildPolicySetCommand(transition.snapshotPath, sandboxName), {
-    ignoreError: true,
+  const marker = readTimerMarker(sandboxName);
+  const timerOwnsRecovery =
+    marker?.pid === process.pid &&
+    marker.processToken === processToken &&
+    marker.snapshotPath === transition.snapshotPath;
+  const deadlineAuthoritative = timerOwnsRecovery || options.expiredTimerRecovery === true;
+  const restoreResult = applyShieldsPolicySnapshot(sandboxName, transition.snapshotPath, {
+    transitionProcessToken: processToken,
+    ...(deadlineAuthoritative ? { deadlineAuthoritative: true } : {}),
+    ...(options.expiredTimerRecovery ? { expiredTimerRecovery: true } : {}),
   });
   const status = typeof restoreResult.status === "number" ? restoreResult.status : 1;
   if (status !== 0) {
@@ -2826,20 +2886,259 @@ function lockAgentConfig(
   });
 }
 
+type ShieldsDownRollbackOutcome =
+  | "mutable_default_restored"
+  | "lockdown_restored"
+  | "manual_intervention_required";
+
+type ShieldsDownRollbackResult = {
+  outcome: ShieldsDownRollbackOutcome;
+  timerAuthorityRevoked: boolean;
+};
+
+function describeRollbackTimerAuthority(
+  hadScheduledTimer: boolean,
+  timerAuthorityRevoked: boolean,
+): string {
+  if (!hadScheduledTimer) return "";
+  return timerAuthorityRevoked
+    ? " Auto-restore timer authority was revoked."
+    : " The scheduled auto-restore remains authoritative.";
+}
+function resolveExactManagedMcpPolicies(
+  sandboxName: string,
+  livePolicyYaml?: string,
+): ReturnType<typeof inspectExactManagedMcpPolicies> {
+  let effectiveLivePolicy = livePolicyYaml;
+  if (!effectiveLivePolicy) {
+    let rawPolicy: string;
+    try {
+      rawPolicy = runCapture(buildPolicyGetCommand(sandboxName));
+    } catch (error) {
+      throw new Error("Cannot read the live gateway policy for managed MCP reconciliation", {
+        cause: error,
+      });
+    }
+    effectiveLivePolicy = parseCurrentPolicy(rawPolicy);
+  }
+  if (!effectiveLivePolicy) {
+    throw new Error("Cannot parse the live gateway policy for managed MCP reconciliation");
+  }
+  return inspectExactManagedMcpPolicies(sandboxName, effectiveLivePolicy);
+}
+
+function resolveProvableManagedMcpPoliciesForDeadline(
+  sandboxName: string,
+): ReturnType<typeof inspectProvableManagedMcpPoliciesForDeadline> {
+  try {
+    let effectiveLivePolicy = "";
+    try {
+      effectiveLivePolicy = parseCurrentPolicy(runCapture(buildPolicyGetCommand(sandboxName)));
+    } catch {
+      // The tolerant deadline inspector records exact omissions for every claim
+      // when the live policy cannot be parsed or read.
+    }
+    return inspectProvableManagedMcpPoliciesForDeadline(sandboxName, effectiveLivePolicy);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      policies: [],
+      omissions: [
+        {
+          reason: `Managed MCP registry inspection failed at the auto-restore deadline: ${message}`,
+        },
+      ],
+    };
+  }
+}
+
+/**
+ * Restore a saved complete policy while reconciling only exact generated MCP
+ * entries. Snapshot-time keys are removed before currently owned entries are
+ * overlaid, so changes made during the shields-down window survive both manual
+ * and timer restoration.
+ */
+interface ShieldsPolicySnapshotRestoreOptions {
+  transitionProcessToken?: string;
+  deadlineAuthoritative?: boolean;
+  expiredTimerRecovery?: boolean;
+}
+
+type ShieldsPolicySnapshotRestoreResult = ReturnType<typeof run> & {
+  managedMcpOmissions?: ManagedMcpPolicyOmission[];
+};
+
+function applyShieldsPolicySnapshot(
+  sandboxName: string,
+  snapshotPath: string,
+  options: ShieldsPolicySnapshotRestoreOptions = {},
+): ShieldsPolicySnapshotRestoreResult {
+  const state = loadShieldsState(sandboxName);
+  let transition: ShieldsDownTransition | null = null;
+  if (options.transitionProcessToken !== undefined) {
+    if (!/^[0-9a-f]{32}$/.test(options.transitionProcessToken)) {
+      throw new Error("Invalid Shields transition recovery token");
+    }
+    transition = readShieldsDownTransition(sandboxName, options.transitionProcessToken);
+    if (
+      !transition &&
+      fs.existsSync(shieldsDownTransitionPath(sandboxName, options.transitionProcessToken))
+    ) {
+      throw new Error("Shields transition recovery authority is invalid");
+    }
+    if (transition && transition.snapshotPath !== snapshotPath) {
+      throw new Error("Shields transition does not authorize the policy snapshot being restored");
+    }
+  }
+  if (options.deadlineAuthoritative) {
+    const marker = readTimerMarker(sandboxName);
+    const markerMatchesRecovery =
+      marker?.sandboxName === sandboxName &&
+      marker.snapshotPath === snapshotPath &&
+      marker.processToken === options.transitionProcessToken;
+    const restoreAtMs = marker ? new Date(marker.restoreAt).getTime() : Number.NaN;
+    const expiredTimerIsInactive =
+      options.expiredTimerRecovery === true &&
+      markerMatchesRecovery &&
+      Number.isFinite(restoreAtMs) &&
+      restoreAtMs <= Date.now() &&
+      (!isProcessAlive(marker!.pid) || !verifyTimerMarkerIdentity(marker!).verified);
+    if (
+      options.transitionProcessToken === undefined ||
+      !markerMatchesRecovery ||
+      (marker!.pid !== process.pid && !expiredTimerIsInactive)
+    ) {
+      throw new Error("The active auto-restore timer does not authorize deadline restoration");
+    }
+  }
+
+  if (state._isCorrupt && !transition) {
+    throw new Error(
+      `Cannot restore a Shields policy while persisted state is corrupt: ${
+        state._corruptError ?? "invalid state"
+      }`,
+    );
+  }
+  // A preparing transition can outlive its owner before Shields state is
+  // committed; its token-bound marker is then the recovery authority.
+  // Every ordinary restore remains bound to the exact persisted snapshot.
+  if (!transition && state.shieldsPolicySnapshotPath !== snapshotPath) {
+    throw new Error("Shields state does not match the policy snapshot being restored");
+  }
+  const persistedSnapshotMatches = state.shieldsPolicySnapshotPath === snapshotPath;
+  const ownershipOmissions: ManagedMcpPolicyOmission[] = [];
+  if (
+    transition?.managedMcpPolicyKeys !== undefined &&
+    persistedSnapshotMatches &&
+    state.shieldsManagedMcpPolicyKeys !== undefined &&
+    !sameManagedMcpPolicyKeys(transition.managedMcpPolicyKeys, state.shieldsManagedMcpPolicyKeys)
+  ) {
+    if (!options.deadlineAuthoritative) {
+      throw new Error("Shields transition ownership does not match persisted policy ownership");
+    }
+    ownershipOmissions.push({
+      reason:
+        "Shields transition ownership did not match persisted policy ownership at the auto-restore deadline",
+    });
+  }
+  let snapshotManagedPolicyKeys =
+    transition?.managedMcpPolicyKeys ??
+    (persistedSnapshotMatches ? state.shieldsManagedMcpPolicyKeys : undefined);
+  // Older Shields state has no exact snapshot-time ownership manifest.
+  // A manual restore preserves raw-snapshot behavior only when neither current
+  // state nor the snapshot can involve managed MCP. Deadline restoration
+  // instead strips every reserved key and overlays only independently proven
+  // current entries so legacy metadata cannot delay restrictive lockdown.
+  if (snapshotManagedPolicyKeys === undefined) {
+    if (options.deadlineAuthoritative) {
+      snapshotManagedPolicyKeys = [];
+      ownershipOmissions.push({
+        reason:
+          "Legacy Shields state had no managed MCP ownership manifest at the auto-restore deadline",
+      });
+    } else {
+      assertLegacyMcpPolicyRestoreSafe(
+        fs.readFileSync(snapshotPath, "utf-8"),
+        hasManagedMcpPolicyClaims(sandboxName),
+      );
+      return run(buildPolicySetCommand(snapshotPath, sandboxName), {
+        ignoreError: true,
+      });
+    }
+  }
+  let managedMcpOmissions: ManagedMcpPolicyOmission[] = [];
+  let runtimePolicyPath: string;
+  if (options.deadlineAuthoritative) {
+    const inspection = resolveProvableManagedMcpPoliciesForDeadline(sandboxName);
+    const runtime = buildDeadlineRuntimeManagedMcpPolicy(snapshotPath, {
+      managedMcpPolicies: inspection.policies,
+      snapshotManagedPolicyKeys,
+      readBasePolicy: () => fs.readFileSync(snapshotPath, "utf-8"),
+    });
+    runtimePolicyPath = runtime.path;
+    managedMcpOmissions = [...ownershipOmissions, ...inspection.omissions, ...runtime.omissions];
+  } else {
+    const managedMcpPolicies = resolveExactManagedMcpPolicies(sandboxName);
+    runtimePolicyPath = buildRuntimeManagedMcpPolicy(snapshotPath, {
+      managedMcpPolicies,
+      snapshotManagedPolicyKeys,
+      readBasePolicy: () => fs.readFileSync(snapshotPath, "utf-8"),
+    });
+  }
+  const runtimePolicyIsTemp = runtimePolicyPath !== snapshotPath;
+  try {
+    const result = run(buildPolicySetCommand(runtimePolicyPath, sandboxName), {
+      ignoreError: true,
+    });
+    return managedMcpOmissions.length > 0 ? { ...result, managedMcpOmissions } : result;
+  } finally {
+    if (runtimePolicyIsTemp) {
+      cleanupTempDir(runtimePolicyPath, "nemoclaw-permissive-runtime");
+    }
+  }
+}
+
 function rollbackShieldsDown(
   sandboxName: string,
   target: AgentConfigTarget,
   snapshotPath: string,
+  initialMode: ShieldsMode,
+  initialState: LoadedShieldsState,
   allowLegacyHermesProtocol = false,
   cachedProtocol?: HermesShieldsProtocol,
-): void {
+): ShieldsDownRollbackResult {
   console.error("  Rolling back — restoring policy from snapshot...");
-  const rollbackResult = run(buildPolicySetCommand(snapshotPath, sandboxName), {
-    ignoreError: true,
-  });
+  let rollbackResult: ReturnType<typeof run> | null = null;
+  try {
+    rollbackResult = applyShieldsPolicySnapshot(sandboxName, snapshotPath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`  Warning: Policy restore preparation failed during rollback: ${message}`);
+  }
+  let timerAuthorityRevoked = false;
   let rollbackChattrApplied: boolean | null = null;
   let rollbackFileHashes: { [path: string]: string } | null = null;
-  if (rollbackResult.status === 0) {
+  if (rollbackResult?.status === 0) {
+    if (initialMode === "mutable_default" && target.agentName === "openclaw") {
+      try {
+        unlockAgentConfig(sandboxName, target, false, allowLegacyHermesProtocol, cachedProtocol);
+        const timerCancellation = killTimer(sandboxName);
+        timerAuthorityRevoked = timerCancellation.authorityRevoked;
+        if (!timerCancellation.authorityRevoked) {
+          throw new Error(
+            `Cannot revoke auto-restore timer authority: ${timerCancellation.warnings.join("; ")}`,
+          );
+        }
+        restoreShieldsStateSnapshot(sandboxName, initialState);
+        console.error("  Original mutable-default posture restored.");
+        return { outcome: "mutable_default_restored", timerAuthorityRevoked };
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(
+          `  Warning: Could not verify the original mutable-default posture; applying fail-closed lockdown. ${detail}`,
+        );
+      }
+    }
     // Re-confirm after the settle window so a reconciler revert cannot leave
     // the rolled-back config DRIFTED — same fail-closed treatment as the
     // auto-restore path. Leaves the hashes null (→ "manual intervention"
@@ -2852,7 +3151,7 @@ function rollbackShieldsDown(
       rollbackFileHashes = relock.lastResult.fileHashes;
     } else {
       console.error(
-        "  Warning: Rollback re-lock could not be re-confirmed. Check config manually.",
+        `  Warning: Rollback re-lock could not be re-confirmed. Check config manually. ${relock.error ?? ""}`.trimEnd(),
       );
     }
   } else {
@@ -2868,11 +3167,16 @@ function rollbackShieldsDown(
       chattrApplied: rollbackChattrApplied,
       fileHashes: rollbackFileHashes,
     });
-    console.error("  Lockdown restored. Config was never left unguarded.");
-  } else {
-    console.error("  Config remains unlocked — manual intervention required.");
-    printManualRelockRecoveryHint(sandboxName);
+    console.error(
+      initialMode === "mutable_default"
+        ? "  Fail-closed lockdown applied; the original mutable-default posture was not restored."
+        : "  Lockdown restored. Config was never left unguarded.",
+    );
+    return { outcome: "lockdown_restored", timerAuthorityRevoked };
   }
+  console.error("  Config remains unlocked — manual intervention required.");
+  printManualRelockRecoveryHint(sandboxName);
+  return { outcome: "manual_intervention_required", timerAuthorityRevoked };
 }
 
 interface LockdownActivationResult {
@@ -2880,6 +3184,7 @@ interface LockdownActivationResult {
   error?: string;
   chattrApplied?: boolean;
   fileHashes?: { [path: string]: string };
+  managedMcpOmissions?: ManagedMcpPolicyOmission[];
 }
 
 function activateLockdownFromSnapshot(
@@ -2888,14 +3193,23 @@ function activateLockdownFromSnapshot(
   allowLegacyHermesProtocol = false,
   cachedTarget?: AgentConfigTarget,
   cachedProtocol?: HermesShieldsProtocol,
+  restoreOptions: ShieldsPolicySnapshotRestoreOptions = {},
 ): LockdownActivationResult {
   if (!snapshotPath || !fs.existsSync(snapshotPath)) {
     return { ok: false, error: "saved snapshot is missing" };
   }
 
-  const restoreResult = run(buildPolicySetCommand(snapshotPath, sandboxName), {
-    ignoreError: true,
-  });
+  let restoreResult: ShieldsPolicySnapshotRestoreResult;
+  try {
+    restoreResult = applyShieldsPolicySnapshot(sandboxName, snapshotPath, restoreOptions);
+  } catch (error) {
+    return {
+      ok: false,
+      error: `policy restore preparation failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
   const restoreStatus = typeof restoreResult.status === "number" ? restoreResult.status : 1;
   if (restoreStatus !== 0) {
     return {
@@ -2937,6 +3251,9 @@ function activateLockdownFromSnapshot(
     ok: true,
     chattrApplied: relock.lastResult.chattrApplied,
     fileHashes: relock.lastResult.fileHashes,
+    ...(restoreResult.managedMcpOmissions
+      ? { managedMcpOmissions: restoreResult.managedMcpOmissions }
+      : {}),
   };
 }
 
@@ -2976,6 +3293,7 @@ function recoverExpiredAutoRestoreInline(
   if (marker.processToken && /^[0-9a-f]{32}$/.test(marker.processToken)) {
     try {
       synchronizeAutoRestoreTransition(sandboxName, marker.processToken, marker.snapshotPath, {
+        expiredTimerRecovery: true,
         retainTransition: true,
         assertTakeoverAuthority: () => assertTimerMarkerGeneration(sandboxName, marker),
       });
@@ -3001,6 +3319,14 @@ function recoverExpiredAutoRestoreInline(
     marker.snapshotPath,
     marker.allowLegacyHermesProtocol === true,
     cachedTarget,
+    undefined,
+    marker.processToken && /^[0-9a-f]{32}$/.test(marker.processToken)
+      ? {
+          transitionProcessToken: marker.processToken,
+          deadlineAuthoritative: true,
+          expiredTimerRecovery: true,
+        }
+      : {},
   );
   const nowIso = new Date().toISOString();
   if (!activation.ok) {
@@ -3041,6 +3367,13 @@ function recoverExpiredAutoRestoreInline(
     restored_by: "auto_timer",
     policy_snapshot: marker.snapshotPath,
     restored_at: nowIso,
+    ...(activation.managedMcpOmissions?.length
+      ? {
+          warning: `Inline auto-restore omitted ${String(
+            activation.managedMcpOmissions.length,
+          )} unproven managed MCP policy entries`,
+        }
+      : {}),
   });
   return { attempted: true, restored: true };
 }
@@ -3092,6 +3425,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     );
     return failShieldsCommand(`Shields state is corrupt for ${sandboxName}`, opts.throwOnError);
   }
+  const initialMode = deriveShieldsMode(state, state._hasStateFile);
   if (state.shieldsDown) {
     console.error(
       `  Config is already unlocked for ${sandboxName} (since ${state.shieldsDownAt}).`,
@@ -3115,7 +3449,15 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   // Kill stale auto-restore markers only when this command will actually
   // transition into shields-down. A repeated shields-down must not cancel the
   // active timer and leave the sandbox unlocked indefinitely.
-  killTimer(sandboxName);
+  const timerCancellation = killTimer(sandboxName);
+  if (!timerCancellation.authorityRevoked) {
+    const detail = timerCancellation.warnings.join("; ");
+    console.error(`  Cannot revoke stale auto-restore timer authority: ${detail}`);
+    return failShieldsCommand(
+      `Cannot revoke stale auto-restore timer authority for ${sandboxName}`,
+      opts.throwOnError,
+    );
+  }
 
   const timeoutSeconds = parseDuration(opts.timeout || `${DEFAULT_TIMEOUT_SECONDS}`);
   const reason = opts.reason || null;
@@ -3136,6 +3478,19 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     return failShieldsCommand("Cannot capture current policy", opts.throwOnError);
   }
 
+  let managedMcpPolicies: ReturnType<typeof inspectExactManagedMcpPolicies>;
+  try {
+    managedMcpPolicies = resolveExactManagedMcpPolicies(sandboxName, policyYaml);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`  Cannot preserve managed MCP policy state: ${message}`);
+    return failShieldsCommand(
+      `Cannot preserve managed MCP policy state: ${message}`,
+      opts.throwOnError,
+    );
+  }
+  const snapshotManagedMcpPolicyKeys = managedMcpPolicies.map((policy) => policy.key);
+
   const ts = Date.now();
   const snapshotPath = path.join(STATE_DIR, `policy-snapshot-${ts}.yaml`);
   fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
@@ -3145,25 +3500,40 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   // 2. Determine and apply relaxed policy
   let policyFile: string;
   let policyFileIsTemp = false;
-  if (policyName === "permissive") {
-    const basePath = resolvePermissivePolicyPath(sandboxName);
-    // Union the live sandbox's filesystem_policy.read_only/read_write into
-    // the static permissive baseline. OpenShell rejects removal of those
-    // paths on a live sandbox, and runtime-injected entries (/proc on
-    // GPU, /opt/hermes on Hermes, /home/linuxbrew on post-#3913 OpenClaw,
-    // etc.) are not present in the static YAML. See #3942, #3957, #3168.
-    // policyYaml is the pre-parsed body we already captured for the
-    // snapshot above — reuse it instead of re-fetching.
-    policyFile = buildRuntimePermissivePolicy(basePath, {
-      livePolicyYaml: policyYaml,
-      readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
-    });
-    policyFileIsTemp = policyFile !== basePath;
-  } else if (fs.existsSync(policyName)) {
-    policyFile = path.resolve(policyName);
-  } else {
-    console.error(`  Unknown policy "${policyName}". Use "permissive" or a path to a YAML file.`);
-    return failShieldsCommand(`Unknown policy "${policyName}"`, opts.throwOnError);
+  try {
+    if (policyName === "permissive") {
+      const basePath = resolvePermissivePolicyPath(sandboxName);
+      // Union the live sandbox's filesystem_policy.read_only/read_write into
+      // the static permissive baseline. OpenShell rejects removal of those
+      // paths on a live sandbox, and runtime-injected entries (/proc on
+      // GPU, /opt/hermes on Hermes, /home/linuxbrew on post-#3913 OpenClaw,
+      // etc.) are not present in the static YAML. See #3942, #3957, #3168.
+      // policyYaml is the pre-parsed body we already captured for the
+      // snapshot above — reuse it instead of re-fetching. Exact generated MCP
+      // entries are overlaid without copying any unrelated live egress.
+      policyFile = buildRuntimePermissivePolicy(basePath, {
+        livePolicyYaml: policyYaml,
+        managedMcpPolicies,
+        readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
+      });
+      policyFileIsTemp = policyFile !== basePath;
+    } else if (fs.existsSync(policyName)) {
+      const basePath = path.resolve(policyName);
+      policyFile = buildRuntimeManagedMcpPolicy(basePath, {
+        managedMcpPolicies,
+        readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
+      });
+      policyFileIsTemp = policyFile !== basePath;
+    } else {
+      console.error(`  Unknown policy "${policyName}". Use "permissive" or a path to a YAML file.`);
+      fs.rmSync(snapshotPath, { force: true });
+      return failShieldsCommand(`Unknown policy "${policyName}"`, opts.throwOnError);
+    }
+  } catch (error) {
+    fs.rmSync(snapshotPath, { force: true });
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`  Cannot compose Shields-down policy: ${message}`);
+    return failShieldsCommand(`Cannot compose Shields-down policy: ${message}`, opts.throwOnError);
   }
 
   // Every exit after the permissive merge builds a temp policy directory must
@@ -3205,6 +3575,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       processToken,
       sandboxName,
       snapshotPath,
+      managedMcpPolicyKeys: snapshotManagedMcpPolicyKeys,
     };
     const leaseOwnerPid = opts.deferAutoRestoreWhileOwnerAlive ? transition.ownerPid : null;
     const leaseOwnerStartIdentity = opts.deferAutoRestoreWhileOwnerAlive
@@ -3275,6 +3646,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       shieldsDownReason: reason,
       shieldsDownPolicy: policyName,
       shieldsPolicySnapshotPath: snapshotPath,
+      shieldsManagedMcpPolicyKeys: snapshotManagedMcpPolicyKeys,
     });
   } catch (error) {
     if (transition) {
@@ -3300,24 +3672,40 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     unlockAgentConfig(
       sandboxName,
       target,
-      deriveShieldsMode(state, state._hasStateFile) === "locked",
+      initialMode === "locked",
       opts.allowLegacyHermesProtocol === true,
       protocol,
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    rollbackShieldsDown(
+    const rollback = rollbackShieldsDown(
       sandboxName,
       target,
       snapshotPath,
+      initialMode,
+      state,
       opts.allowLegacyHermesProtocol === true,
       protocol,
     );
     if (transition) clearShieldsDownTransition(sandboxName, transition.processToken);
     console.error(`  ERROR: ${message}`);
-    console.error(
-      "  Config did not reach the mutable-default state; the scheduled auto-restore remains authoritative.",
+    const timerAuthority = describeRollbackTimerAuthority(
+      transition !== null,
+      rollback.timerAuthorityRevoked,
     );
+    if (rollback.outcome === "mutable_default_restored") {
+      console.error(
+        `  Config mutation failed; the original mutable-default posture was restored.${timerAuthority}`,
+      );
+    } else if (rollback.outcome === "lockdown_restored") {
+      console.error(
+        `  Config did not reach the mutable-default state; fail-closed lockdown was restored.${timerAuthority}`,
+      );
+    } else {
+      console.error(
+        `  Config rollback is incomplete.${timerAuthority} Manual intervention is required.`,
+      );
+    }
     console.error(
       `  Re-run \`nemoclaw ${sandboxName} shields down\` after correcting file ownership.`,
     );
@@ -3330,16 +3718,29 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       writeShieldsDownTransition(transition, "preparing");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      rollbackShieldsDown(
+      const rollback = rollbackShieldsDown(
         sandboxName,
         target,
         snapshotPath,
+        initialMode,
+        state,
         opts.allowLegacyHermesProtocol === true,
         protocol,
       );
       clearShieldsDownTransition(sandboxName, transition.processToken);
       console.error(`  ERROR: ${message}`);
-      console.error("  Auto-restore handoff failed; lockdown was restored.");
+      const timerAuthority = describeRollbackTimerAuthority(true, rollback.timerAuthorityRevoked);
+      if (rollback.outcome === "mutable_default_restored") {
+        console.error(
+          `  Auto-restore handoff failed; the original mutable-default posture was restored.${timerAuthority}`,
+        );
+      } else if (rollback.outcome === "lockdown_restored") {
+        console.error(`  Auto-restore handoff failed; lockdown was restored.${timerAuthority}`);
+      } else {
+        console.error(
+          `  Auto-restore handoff failed; rollback is incomplete.${timerAuthority} Manual intervention is required.`,
+        );
+      }
       return failShieldsCommand(message, opts.throwOnError);
     }
   }
@@ -3901,6 +4302,7 @@ function clearShieldsState(sandboxName: string): void {
 // ---------------------------------------------------------------------------
 
 export {
+  applyShieldsPolicySnapshot,
   clearShieldsState,
   completeAutoRestoreTransition,
   DEFAULT_TIMEOUT_SECONDS,
@@ -3914,8 +4316,8 @@ export {
   parseDuration,
   prepareAutoRestoreTransitionTakeover,
   repairMutableConfigPerms,
-  restoreLockedStateDirStartupAccess,
   resolvePersistedAutoRestoreTarget,
+  restoreLockedStateDirStartupAccess,
   shieldsDown,
   shieldsStatus,
   shieldsUp,
