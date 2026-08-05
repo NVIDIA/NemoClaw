@@ -1,5 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
+//
+// Connects provider recovery to the core onboarding flow.
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { D, R } from "../../cli/terminal-style";

@@ -486,9 +486,12 @@ const {
   runFinalOnboardFlowSlice,
 }: typeof import("./onboard/machine/final-flow-composition") = require("./onboard/machine/final-flow-composition");
 const {
+  applyHealthyPortReuse,
   createInitialOnboardFlowPhases,
+  destroyGatewayForReuse,
   runInitialOnboardFlowSlice,
-}: typeof import("./onboard/machine/initial-flow-phases") = require("./onboard/machine/initial-flow-phases");
+  verifyGatewayContainerRunning,
+}: typeof import("./onboard/machine/initial-flow-composition") = require("./onboard/machine/initial-flow-composition");
 const { skippedStepMessage }: typeof import("./onboard/skipped-step-message") =
   require("./onboard/skipped-step-message");
 const policies: typeof import("./policy") = require("./policy");
@@ -511,14 +514,8 @@ const { printPortConflictReport } =
   require("./onboard/port-conflict-report") as typeof import("./onboard/port-conflict-report");
 const { tryCleanupOrphanedDashboardForward } =
   require("./onboard/orphaned-dashboard-forward") as typeof import("./onboard/orphaned-dashboard-forward");
-const { destroyGatewayForReuse } =
-  require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
 const { runPreflightGatewaySequence } =
   require("./onboard/preflight-gateway-sequence") as typeof import("./onboard/preflight-gateway-sequence");
-const { verifyGatewayContainerRunning } =
-  require("./onboard/gateway-container-running") as typeof import("./onboard/gateway-container-running");
-const { applyHealthyPortReuse } =
-  require("./onboard/gateway-stale-port-reuse") as typeof import("./onboard/gateway-stale-port-reuse");
 const { destroyGatewayWithVolumeCleanup } =
   require("./onboard/gateway-destroy") as typeof import("./onboard/gateway-destroy");
 const { gatewayCliSupportsLifecycleCommands } =
@@ -4138,7 +4135,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     const explicitSandboxGpuFlag = resolveSandboxGpuFlagFromOptions(opts);
     const recordedGpuPassthroughBeforePreflight = session?.gpuPassthrough === true;
     type InitialOnboardFlowContext =
-      import("./onboard/machine/initial-flow-phases").InitialOnboardFlowContext<
+      import("./onboard/machine/initial-flow-composition").InitialOnboardFlowContext<
         typeof agent,
         ReturnType<typeof nim.detectGpu>,
         ReturnType<typeof resolveSandboxGpuConfig>
@@ -4210,13 +4207,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         refreshDockerDriverGatewayReuseState,
         gatewayCliSupportsLifecycleCommands: () =>
           gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
-        verifyGatewayContainerRunning,
         waitForGatewayHttpReady,
         recoverGatewayRuntime,
         getGatewayLocalEndpoint,
         stopDashboardForward: () => bestEffortForwardStop(runOpenshell, getOnboardDashboardPort()),
         destroyGateway,
-        destroyGatewayForReuse,
         getGatewayClusterImageDrift,
         stopAllDashboardForwards,
         reconcileGatewayGpuReuseForGpuIntent,
