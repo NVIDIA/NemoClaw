@@ -86,8 +86,8 @@ import {
   mockDockerSpawnFailure,
   mockSuccessfulVllmInstall,
   resetVllmInstallEnv,
-  vllmContainerRow,
   type VllmInstallSpies,
+  vllmContainerRow,
 } from "./vllm-install.test-support";
 import { buildVllmServeCommand, VLLM_MODELS } from "./vllm-models";
 
@@ -102,6 +102,27 @@ function currentHostIdentity(): string | null {
   const gid = process.getgid?.();
   return uid === undefined || gid === undefined ? null : `${String(uid)}:${String(gid)}`;
 }
+
+describe("shared vLLM install setup", () => {
+  it("replaces mutated probe results and ownership queues on reuse (#8351)", () => {
+    applyVllmInstallProbeDefaults(mocks);
+    mocks.probeHostStorage().capacity.availableBytes = 0n;
+    applyVllmInstallProbeDefaults(mocks);
+    expect(mocks.probeHostStorage().capacity.availableBytes).toBe(1_000_000_000_000n);
+
+    mockSuccessfulVllmInstall(mocks, "nemoclaw-vllm", [() => "first-row"]);
+    expect(mocks.dockerCapture(["container"])).toBe("");
+    expect(mocks.dockerCapture(["container"])).toBe("first-row");
+    expect(mocks.dockerCapture(["container"])).toBe("");
+    expect(() => mocks.dockerCapture(["container"])).toThrow(
+      "Unexpected extra ambient vLLM ownership inspection",
+    );
+
+    mockSuccessfulVllmInstall(mocks, "nemoclaw-vllm", [() => "second-row"]);
+    expect(mocks.dockerCapture(["container"])).toBe("");
+    expect(mocks.dockerCapture(["container"])).toBe("second-row");
+  });
+});
 
 describe("vLLM served route identity", () => {
   it("uses one safe served-model override and rejects ambiguous aliases (#6315)", () => {
