@@ -74,7 +74,14 @@ Review the [Prerequisites](prerequisites) before you begin.
   </Step>
 
   <Step title="Run Your First Prompt">
-    Connect to the sandbox and launch the Deep Agents terminal UI.
+    Start the Deep Agents terminal UI from the host.
+
+    ```bash
+    nemo-deepagents launch my-deepagents
+    ```
+
+    `nemo-deepagents launch` runs the same preflight as `connect`, then starts `dcode` in your terminal.
+    To open a sandbox shell first and start `dcode` yourself, run these commands instead.
 
     ```bash
     nemo-deepagents my-deepagents connect
