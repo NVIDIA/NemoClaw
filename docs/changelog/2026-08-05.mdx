@@ -32,7 +32,7 @@ It also strengthens endpoint validation, sandbox privilege separation, and the m
   For more information, refer to [Understand Runtime Changes](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-runtime-changes), [Manage MCP Servers](/user-guide/openclaw/manage-sandboxes/mcp-servers/manage-mcp-servers), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
 - Hermes now stores dashboard state in the canonical `~/.hermes/profiles/dashboard-home` profile and safely migrates an existing legacy dashboard home when the destination is empty.
   Rebuild restore keeps script-backed cron jobs undispatchable until restored state and scripts validate against the same gateway, and successful gateway recovery resets the consecutive health-failure budget.
-  Hermes build stages also apply configured corporate certificate authority trust before supported npm, uv, and Python dependency downloads.
+  Hermes build stages also apply configured corporate certificate authority trust before supported `npm`, `uv`, and Python dependency downloads.
   For more information, refer to [Create and Restore Snapshots](/user-guide/hermes/manage-sandboxes/state-and-backups/create-and-restore-snapshots), [Understand Runtime Changes](/user-guide/hermes/manage-sandboxes/configure-sandboxes/understand-runtime-changes), and [Configure Corporate CA Trust](/user-guide/hermes/security/configure-corporate-ca-trust).
 - Managed LangChain Deep Agents Code non-interactive failures now use a bounded error classification instead of exposing exception messages or reporting every failure as unknown.
   Rebuilds reuse the published Deep Agents Code base image, while the documented recovery guidance reflects the classified failure and managed-image path.
