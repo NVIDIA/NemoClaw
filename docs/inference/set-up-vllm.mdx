@@ -134,22 +134,22 @@ Gated models still require license acceptance and a token before NemoClaw starts
 
 ### Check GPU Compute Capability
 
-A quantized checkpoint refuses to load on a GPU older than the compute capability it was built for.
-Before the image pull and the model download, NemoClaw reads the compute capability of each GPU that `nvidia-smi` reports and compares the lowest one against the selected model's minimum.
+A quantized checkpoint does not load on a GPU whose compute capability is lower than the capability the checkpoint was built for.
+Before the image pull and the model download, NemoClaw reads the compute capability of each GPU that `nvidia-smi` reports.
+It compares the lowest reported capability against the selected model's minimum.
 
-On a mismatch, onboarding stops within seconds and names both values:
+On a mismatch, the managed install stops before those downloads and the error names both values:
 
 ```text
-vLLM install failed: NVIDIA Nemotron-3 Nano 4B FP8 requires GPU compute capability 8.9 or newer, but this host reports 8.0. Serve this model on a newer GPU, or select a compatible model with NEMOCLAW_VLLM_MODEL.
+  vLLM install failed: NVIDIA Nemotron-3 Nano 4B FP8 requires GPU compute capability 8.9 or newer, but this host reports 8.0. Serve this model on a newer GPU, or select a compatible model with NEMOCLAW_VLLM_MODEL.
 ```
 
-[Select a Managed Model](#select-a-managed-model) lists the minimum for each registry entry.
-Models that serve in the image's default precision have no minimum and skip this check.
-When `nvidia-smi` reports no compute capability, NemoClaw continues and leaves the decision to vLLM.
+Interactive onboarding returns to the inference-provider list so you can select another provider or model.
+Non-interactive onboarding exits.
 
-The managed container uses Docker's `--restart unless-stopped` policy, so a container that cannot serve its model restarts instead of exiting.
-While NemoClaw waits for the API, it also watches the container's restart count and stops the install once the container has restarted repeatedly, rather than waiting out the full load timeout.
-The failure prints the container log tail.
+[Select a Managed Model](#select-a-managed-model) lists the minimum for each registry entry.
+A registry entry with no declared minimum, such as an unquantized checkpoint, skips this check.
+When `nvidia-smi` reports no compute capability, NemoClaw continues and leaves the decision to vLLM.
 
 ### Check Storage Before Downloads
 
@@ -205,6 +205,9 @@ A legacy root-owned or otherwise unwritable required model-cache path stops befo
 </Note>
 If image pull output stops making progress, a watchdog stops the stalled pull without imposing a fixed wall-clock limit on slow but active downloads.
 If vLLM does not become ready, NemoClaw prints a short tail of the container logs before exiting.
+Because the single-host managed container carries the `--restart unless-stopped` policy described above, a container that cannot serve its model restarts instead of exiting.
+While NemoClaw waits for the API, it also reads that container's restart count.
+After the container restarts three times, the install stops instead of waiting out the full load timeout.
 
 When you start managed vLLM outside the installer express flow, NemoClaw uses these profile defaults:
 
