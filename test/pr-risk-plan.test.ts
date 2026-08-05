@@ -422,6 +422,29 @@ describe("deterministic PR risk plan", () => {
     ).toBe(false);
   });
 
+  it("keeps protected llama.cpp DGX Spark qualification activation-only until trusted (#8260)", () => {
+    const activation = "ci/llama-cpp-dgx-spark-qualification-v1.yaml";
+    const result = plan(activation);
+    const dormantImplementation = plan(
+      "scripts/checks/run-llama-cpp-dgx-spark-qualification.mts",
+      "test/e2e/live/llama-cpp-dgx-spark-qualification.test.ts",
+    );
+
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "llama-cpp-dgx-spark-qualification",
+        matchedFiles: [activation],
+        requiredJobs: ["llama-cpp-dgx-spark-qualification"],
+      }),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(["llama-cpp-dgx-spark-qualification"]);
+    expect(
+      dormantImplementation.families.some(
+        (family) => family.id === "llama-cpp-dgx-spark-qualification",
+      ),
+    ).toBe(false);
+  });
+
   it("loads protected multiarch identifiers through the workflow node loader (#7744)", () => {
     const source = [
       'const risk = await import("./tools/advisors/risk-plan.mts");',

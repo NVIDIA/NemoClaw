@@ -29,7 +29,7 @@ describe("cross-runtime foundation compatibility", () => {
       ),
     ).toBe("6272aab16cf4b9555bdc4b3f4c0cdd24b5faa55118cbd61cbb4b30a3d418a63a");
     expect(digestOutput(buildE2eWorkflowPlan())).toBe(
-      "62f257401be28fccd47415701e28e2cc1447faad1f11f2504dda85766aed1c0e",
+      "ac63268158d590d7dfefa814f948e72c663878c5f82e53298185ae51a8fd2911",
     );
   });
 

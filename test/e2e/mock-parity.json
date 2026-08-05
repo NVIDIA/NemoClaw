@@ -3,6 +3,17 @@
   "version": 1,
   "entries": [
     {
+      "live": "test/e2e/live/llama-cpp-dgx-spark-qualification.test.ts",
+      "fast": [
+        "test/e2e/support/llama-cpp-dgx-spark-qualification-workflow.test.ts",
+        "test/llama-cpp-dgx-spark-qualification-contract.test.ts",
+        "test/llama-cpp-dgx-spark-qualification-plan.test.ts",
+        "test/llama-cpp-dgx-spark-qualification-runner.test.ts",
+        "test/llama-cpp-image.test.ts",
+        "test/pr-risk-plan.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/managed-image-multiarch-startup.test.ts",
       "fast": [
         "test/e2e/support/base-image-publication.test.ts",
