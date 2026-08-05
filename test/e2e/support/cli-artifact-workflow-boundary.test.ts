@@ -33,29 +33,33 @@ function runIdentityValidation(overrides: Record<string, unknown> = {}) {
   const action = readYaml<CompositeAction>(".github/actions/restore-e2e-cli-artifact/action.yaml");
   const workflowSha = "d".repeat(40);
   const outputDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-identity-"));
-  return spawnSync("bash", ["-c", action.runs.steps[0]!.run!], {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      CALLER_WORKFLOW_SHA: workflowSha,
-      GITHUB_OUTPUT: path.join(outputDirectory, "github-output"),
-      GITHUB_RUN_ATTEMPT: "1",
-      GITHUB_RUN_ID: "98765",
-      PROVENANCE_JSON: JSON.stringify({
-        kind: "nemoclaw-e2e-cli-provenance-v1",
-        artifactDigest: "c".repeat(64),
-        artifactId: "12345",
-        artifactName: `nemoclaw-cli-${CANDIDATE_SHA}-${PAYLOAD_SHA256}`,
-        candidateRepository: "NVIDIA/NemoClaw",
-        candidateSha: CANDIDATE_SHA,
-        payloadSha256: PAYLOAD_SHA256,
-        runAttempt: "1",
-        runId: "98765",
-        workflowSha,
-        ...overrides,
-      }),
-    },
-  });
+  try {
+    return spawnSync("bash", ["-c", action.runs.steps[0]!.run!], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CALLER_WORKFLOW_SHA: workflowSha,
+        GITHUB_OUTPUT: path.join(outputDirectory, "github-output"),
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_RUN_ID: "98765",
+        PROVENANCE_JSON: JSON.stringify({
+          kind: "nemoclaw-e2e-cli-provenance-v1",
+          artifactDigest: "c".repeat(64),
+          artifactId: "12345",
+          artifactName: `nemoclaw-cli-${CANDIDATE_SHA}-${PAYLOAD_SHA256}`,
+          candidateRepository: "NVIDIA/NemoClaw",
+          candidateSha: CANDIDATE_SHA,
+          payloadSha256: PAYLOAD_SHA256,
+          runAttempt: "1",
+          runId: "98765",
+          workflowSha,
+          ...overrides,
+        }),
+      },
+    });
+  } finally {
+    fs.rmSync(outputDirectory, { force: true, recursive: true });
+  }
 }
 
 function workflowFixture(): Workflow {
@@ -67,7 +71,7 @@ type RestoreFixtureOptions = {
   buildIdentitySha?: string;
   expectedPayloadSha256?: string;
   manifestCandidateSha?: string;
-  preexistingDist?: boolean;
+  preexistingDist?: "dangling-symlink" | "directory";
 };
 
 type ArchiveFixtureContext = {
@@ -135,8 +139,16 @@ const ARCHIVE_FIXTURE_WRITERS = {
   (context: ArchiveFixtureContext) => void
 >;
 
-function createPreexistingDist(workspace: string): void {
-  fs.mkdirSync(path.join(workspace, "dist"));
+function createPreexistingDist(
+  workspace: string,
+  preexistingDist: NonNullable<RestoreFixtureOptions["preexistingDist"]>,
+): void {
+  const dist = path.join(workspace, "dist");
+  if (preexistingDist === "dangling-symlink") {
+    fs.symlinkSync("missing-dist", dist);
+    return;
+  }
+  fs.mkdirSync(dist);
   fs.writeFileSync(path.join(workspace, "dist", "existing.txt"), "preserve\n");
 }
 
@@ -224,10 +236,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
     `#!/usr/bin/env bash\nset -euo pipefail\nif [[ "$#" -eq 1 && "$1" == "--version" ]]; then\n  echo v22.23.1\n  exit 0\nfi\nexec ${JSON.stringify(process.execPath)} "$@"\n`,
     { mode: 0o755 },
   );
-  const prepareWorkspace = options.preexistingDist
-    ? createPreexistingDist
-    : (_workspace: string) => undefined;
-  prepareWorkspace(workspace);
+  if (options.preexistingDist) createPreexistingDist(workspace, options.preexistingDist);
 
   const action = readYaml<CompositeAction>(".github/actions/restore-e2e-cli-artifact/action.yaml");
   const result = spawnSync("bash", ["-c", action.runs.steps[2]!.run!], {
@@ -279,22 +288,69 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     expect(validateCliArtifactWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
+  it("reports both an unreadable action and a missing producer", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-missing-action-"));
+    try {
+      const workflow = workflowFixture();
+      delete workflow.jobs["generate-matrix"];
+
+      expect(
+        validateCliArtifactWorkflowBoundary(workflow, path.join(directory, "missing-action.yaml")),
+      ).toEqual([
+        "CLI artifact restore action file is missing or unreadable",
+        "workflow is missing CLI artifact producer generate-matrix",
+      ]);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("accepts an exact producer and consumer identity", () => {
     const result = runIdentityValidation();
     expect(result.status, result.stderr).toBe(0);
   });
 
   it.each([
-    ["empty artifact ID", { artifactId: "" }],
-    ["prefixed upload digest", { artifactDigest: `sha256:${"c".repeat(64)}` }],
-    ["malformed candidate SHA", { candidateSha: "abc" }],
-    ["different candidate SHA", { candidateSha: "e".repeat(40) }],
-    ["unbound artifact name", { artifactName: `nemoclaw-cli-${CANDIDATE_SHA}` }],
-    ["malformed payload digest", { payloadSha256: "abc" }],
-    ["malformed workflow SHA", { workflowSha: "abc" }],
-    ["unknown provenance field", { unexpected: "value" }],
-  ])("fails closed for %s", (_case, overrides) => {
-    expect(runIdentityValidation(overrides).status).not.toBe(0);
+    ["empty artifact ID", { artifactId: "" }, "producer CLI artifact provenance is invalid"],
+    [
+      "prefixed upload digest",
+      { artifactDigest: `sha256:${"c".repeat(64)}` },
+      "producer CLI artifact provenance is invalid",
+    ],
+    [
+      "malformed candidate SHA",
+      { candidateSha: "abc" },
+      "producer CLI artifact provenance is invalid",
+    ],
+    [
+      "different candidate SHA",
+      { candidateSha: "e".repeat(40) },
+      "consumer checkout does not match the producer candidate SHA",
+    ],
+    [
+      "unbound artifact name",
+      { artifactName: `nemoclaw-cli-${CANDIDATE_SHA}` },
+      "producer CLI artifact provenance is invalid",
+    ],
+    [
+      "malformed payload digest",
+      { payloadSha256: "abc" },
+      "producer CLI artifact provenance is invalid",
+    ],
+    [
+      "malformed workflow SHA",
+      { workflowSha: "abc" },
+      "producer CLI artifact provenance is invalid",
+    ],
+    [
+      "unknown provenance field",
+      { unexpected: "value" },
+      "producer CLI artifact provenance is invalid",
+    ],
+  ])("fails closed for %s", (_case, overrides, expectedError) => {
+    const result = runIdentityValidation(overrides);
+    expect(result.status, `${result.stdout}${result.stderr}`).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain(expectedError);
   });
 
   it.each([
@@ -361,13 +417,25 @@ describe("exact-commit CLI artifact workflow boundary", () => {
   });
 
   it("does not overwrite a preexisting dist directory (#7915)", () => {
-    const fixture = runRestoreValidation({ preexistingDist: true });
+    const fixture = runRestoreValidation({ preexistingDist: "directory" });
     try {
       expect(fixture.result.status, fixture.output).not.toBe(0);
       expect(fixture.output).toContain("consumer unexpectedly built dist before artifact restore");
       expect(fs.readFileSync(path.join(fixture.workspace, "dist", "existing.txt"), "utf8")).toBe(
         "preserve\n",
       );
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("does not overwrite a dangling dist symlink (#7915)", () => {
+    const fixture = runRestoreValidation({ preexistingDist: "dangling-symlink" });
+    try {
+      expect(fixture.result.status, fixture.output).not.toBe(0);
+      expect(fixture.output).toContain("consumer unexpectedly built dist before artifact restore");
+      expect(fs.lstatSync(path.join(fixture.workspace, "dist")).isSymbolicLink()).toBe(true);
+      expect(fs.readlinkSync(path.join(fixture.workspace, "dist"))).toBe("missing-dist");
     } finally {
       fixture.cleanup();
     }
@@ -417,19 +485,23 @@ describe("exact-commit CLI artifact workflow boundary", () => {
 
   it("rejects action implementation drift that weakens extraction or payload verification", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-action-"));
-    const actionPath = path.join(directory, "action.yaml");
-    const source = readRepoText(".github/actions/restore-e2e-cli-artifact/action.yaml")
-      .replace("tar --no-same-owner --no-same-permissions", "tar")
-      .replace('[[ "$actual_payload_sha256" == "$PAYLOAD_SHA256" ]]', '[[ -s "$payload" ]]');
-    fs.writeFileSync(actionPath, source);
+    try {
+      const actionPath = path.join(directory, "action.yaml");
+      const source = readRepoText(".github/actions/restore-e2e-cli-artifact/action.yaml")
+        .replace("tar --no-same-owner --no-same-permissions", "tar")
+        .replace('[[ "$actual_payload_sha256" == "$PAYLOAD_SHA256" ]]', '[[ -s "$payload" ]]');
+      fs.writeFileSync(actionPath, source);
 
-    expect(validateCliArtifactRestoreAction(actionPath)).toEqual(
-      expect.arrayContaining([
-        "CLI artifact restore action must match its immutable workflow pin",
-        'CLI artifact payload verification must contain tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"',
-        'CLI artifact payload verification must contain [[ "$actual_payload_sha256" == "$PAYLOAD_SHA256" ]]',
-      ]),
-    );
+      expect(validateCliArtifactRestoreAction(actionPath)).toEqual(
+        expect.arrayContaining([
+          "CLI artifact restore action must match its immutable workflow pin",
+          'CLI artifact payload verification must contain tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"',
+          'CLI artifact payload verification must contain [[ "$actual_payload_sha256" == "$PAYLOAD_SHA256" ]]',
+        ]),
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
   });
 
   it("rejects missing consumer restoration", () => {

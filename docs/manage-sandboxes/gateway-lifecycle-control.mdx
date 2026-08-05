@@ -39,7 +39,7 @@ For built-in OpenClaw and Hermes controllers, a successful `recover` or `gateway
 After the settle window, NemoClaw sends one read-only authenticated `probe` through the same controller before it declares success.
 
 The controller rechecks the exact managed child, listener, HTTP health, and required auxiliary processes from inside the gateway network namespace without restarting the gateway.
-A failed managed probe is authoritative and cannot be overridden by an outer-namespace HTTP response.
+A failed managed probe cannot be overridden by an outer-namespace HTTP response.
 
 Custom agents that recover through an SSH script do not use this controller probe and continue to poll ordinary gateway health.
 

@@ -156,7 +156,7 @@ runs:
         tar -tvf "$payload" |
           awk 'substr($1, 1, 1) != "-" && substr($1, 1, 1) != "d" { exit 1 }' ||
           { echo "::error::CLI artifact contains a link or special file"; exit 1; }
-        [[ ! -e "$GITHUB_WORKSPACE/dist" ]] ||
+        [[ ! -e "$GITHUB_WORKSPACE/dist" && ! -L "$GITHUB_WORKSPACE/dist" ]] ||
           { echo "::error::consumer unexpectedly built dist before artifact restore"; exit 1; }
         restore_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-cli-restore.XXXXXX")"
         trap 'rm -rf -- "$restore_dir"' EXIT

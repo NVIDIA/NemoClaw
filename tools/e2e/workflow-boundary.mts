@@ -8,10 +8,6 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
 import {
-  CLI_ARTIFACT_RESTORE_STEP,
-  validateCliArtifactWorkflowBoundary,
-} from "./cli-artifact-workflow-boundary.mts";
-import {
   CREDENTIAL_FREE_TEST_TAG,
   discoverCredentialFreeTests,
   SHARED_E2E_JOB_ID,
@@ -30,6 +26,9 @@ import {
   type InferenceSwitchWorkflow,
   validateInferenceSwitchWorkflow,
 } from "./inference-switch-workflow-boundary.mts";
+import { validateLlamaCppDgxSparkQualificationWorkflow } from "./llama-cpp-dgx-spark-qualification-workflow-boundary.mts";
+import { validateManagedImageMultiarchWorkflow } from "./managed-image-multiarch-workflow-boundary.mts";
+import { validateManagedImageProtectedRuntimeWorkflow } from "./managed-image-protected-runtime-workflow-boundary.mts";
 import {
   type OpenClawPluginRuntimeExdevWorkflow,
   validateOpenClawPluginRuntimeExdevWorkflow,
@@ -43,12 +42,11 @@ import {
   type OperationsWorkflow,
   validateE2eOperationsWorkflow,
 } from "./operations-workflow-boundary.mts";
-import { validatePrepareE2eWorkflowBoundary } from "./prepare-e2e-workflow-boundary.mts";
 import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-workflow-boundary.mts";
 import { validateRunnerPressureWorkflow } from "./runner-pressure-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
 import { validateSecurityPostureWorkflow } from "./security-posture-workflow-boundary.mts";
-import { normalizeE2eSelectorIds } from "./selector-aliases.mts";
+import { normalizeE2eSelectorIds, selectorsForCanonicalE2eId } from "./selector-aliases.mts";
 import {
   validateTrustedHermesSwapHelperSource,
   validateTrustedHermesSwapWorkflow,
@@ -57,6 +55,10 @@ import {
   UPLOAD_E2E_ARTIFACTS_ACTION,
   validateUploadE2eArtifactsWorkflowBoundary,
 } from "./upload-e2e-artifacts-workflow-boundary.mts";
+import {
+  CLI_ARTIFACT_RESTORE_STEP,
+  validateE2eWorkspaceBootstrapBoundary,
+} from "./workspace-bootstrap-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_E2E_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -159,6 +161,7 @@ const COMMON_SECRET_ENV_NAMES = [
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e",
   "hermes-gpu-startup",
+  "llama-cpp-dgx-spark-qualification",
   "openshell-credential-generation-window",
   "staging-brev-launchable",
 ]);
@@ -1040,10 +1043,16 @@ function requireNoDispatchInputInterpolation(
 }
 
 function freeStandingJobIf(jobName: string, targetName?: string): string {
-  const targetSelector = targetName
-    ? ` || contains(format(',{0},', inputs.targets), ',${targetName},')`
-    : "";
-  return `\${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',${jobName},')${targetSelector} }}`;
+  const jobSelectors = selectorsForCanonicalE2eId(jobName).map(
+    (selector) => `contains(format(',{0},', inputs.jobs), ',${selector},')`,
+  );
+  const targetSelectors = targetName
+    ? selectorsForCanonicalE2eId(targetName).map(
+        (selector) => `contains(format(',{0},', inputs.targets), ',${selector},')`,
+      )
+    : [];
+  const selectors = [...jobSelectors, ...targetSelectors].join(" || ");
+  return `\${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || ${selectors} }}`;
 }
 
 function explicitOnlyFreeStandingJobIf(jobName: string, targetName?: string): string {
@@ -2494,9 +2503,15 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
     }
     requireCanonicalDockerHubCleanupRun(errors, jobName, cleanup);
 
-    const checkoutIndex = steps.findIndex((step) =>
-      stringValue(step.uses).startsWith("actions/checkout@"),
-    );
+    const checkoutIndex = steps.findIndex((step) => {
+      if (jobName === "managed-image-protected-runtime") {
+        return step.name === "Checkout exact protected runtime candidate source";
+      }
+      if (jobName === "llama-cpp-dgx-spark-qualification") {
+        return step.name === "Checkout exact llama.cpp qualification candidate";
+      }
+      return stringValue(step.uses).startsWith("actions/checkout@");
+    });
     const authIndex = steps.indexOf(auth);
     const cleanupIndex = steps.indexOf(cleanup);
     const expectedAuthIndex =
@@ -3735,8 +3750,8 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
     errors.push("bedrock-runtime-compatible-anthropic strategy.fail-fast must be false");
   }
   const matrix = asRecord(strategy.matrix);
-  if (!Array.isArray(matrix.agent) || matrix.agent.join(",") !== "openclaw") {
-    errors.push("bedrock-runtime-compatible-anthropic matrix.agent must be openclaw");
+  if (!Array.isArray(matrix.agent) || matrix.agent.join(",") !== "openclaw,hermes") {
+    errors.push("bedrock-runtime-compatible-anthropic matrix.agent must be openclaw,hermes");
   }
 
   const jobEnv = asRecord(job.env);
@@ -3925,54 +3940,6 @@ export function validateJetsonRunnerDispatchBoundary(workflow: unknown): string[
   validateAllowJetsonRunnerQueueInput(errors, asRecord(workflowDispatch.inputs));
   validateJetsonRunnerDispatchGuard(errors, asRecord(workflowRecord.jobs));
   return errors;
-}
-
-function validateSandboxRlimitConnectJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "sandbox-rlimits-connect";
-  const job = asRecord(jobs[jobName]);
-  if (job.needs !== "generate-matrix") {
-    errors.push(`${jobName} job must depend on generate-matrix`);
-  }
-  if (job.if !== explicitOnlyFreeStandingJobIf(jobName, jobName)) {
-    errors.push(`${jobName} job must run only when explicitly selected`);
-  }
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push(`${jobName} job must run on ubuntu-latest`);
-  }
-  if (job["timeout-minutes"] !== 60) {
-    errors.push(`${jobName} job must retain its 60 minute connect budget`);
-  }
-
-  const env = asRecord(job.env);
-  if (env.E2E_DEFAULT_ENABLED !== "0") {
-    errors.push(`${jobName} job must remain explicit-only`);
-  }
-  if (env.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push(`${jobName} job must set NEMOCLAW_RUN_LIVE_E2E=1`);
-  }
-  if (env.NEMOCLAW_E2E_CONNECT_RLIMITS !== "1") {
-    errors.push(`${jobName} job must opt in with NEMOCLAW_E2E_CONNECT_RLIMITS=1`);
-  }
-  if (env.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
-    errors.push(`${jobName} job must use the repo CLI launcher`);
-  }
-  if (
-    env.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/sandbox-rlimits-connect"
-  ) {
-    errors.push(`${jobName} job must write artifacts under e2e-artifacts/live/${jobName}`);
-  }
-
-  const run = namedStep(asSteps(job.steps), "Run sandbox rlimit connect live test");
-  if (!run) {
-    errors.push(`${jobName} job missing step: Run sandbox rlimit connect live test`);
-    return;
-  }
-  if (!stringValue(run.run).includes("test/e2e/live/sandbox-rlimits-connect.test.ts")) {
-    errors.push(`${jobName} job must run sandbox-rlimits-connect.test.ts`);
-  }
-  if (asRecord(run.env).NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
-    errors.push(`${jobName} step must receive NVIDIA_API_KEY from secrets`);
-  }
 }
 
 function validateInferenceModeInput(
@@ -4283,12 +4250,14 @@ function validateTrustedE2eDispatchReceipt(
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const workflow = asRecord(workflowValue);
   const errors: string[] = [];
-  errors.push(...validatePrepareE2eWorkflowBoundary(workflow));
-  errors.push(...validateCliArtifactWorkflowBoundary(workflow));
+  errors.push(...validateE2eWorkspaceBootstrapBoundary(workflow));
   errors.push(...validateUploadE2eArtifactsWorkflowBoundary(workflow));
   errors.push(...validateHermesDashboardWorkflow(workflow as unknown as HermesDashboardWorkflow));
   errors.push(...validateHermesGpuStartupWorkflow(workflow));
   errors.push(...validateInferenceSwitchWorkflow(workflow as unknown as InferenceSwitchWorkflow));
+  errors.push(...validateLlamaCppDgxSparkQualificationWorkflow(workflow));
+  errors.push(...validateManagedImageMultiarchWorkflow(workflow));
+  errors.push(...validateManagedImageProtectedRuntimeWorkflow(workflow));
   errors.push(
     ...validateOpenClawPluginRuntimeExdevWorkflow(
       workflow as unknown as OpenClawPluginRuntimeExdevWorkflow,
@@ -4869,8 +4838,6 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   validateIssue2478CrashLoopRecoveryJob(errors, jobs);
 
   validateTunnelLifecycleJob(errors, jobs);
-
-  validateSandboxRlimitConnectJob(errors, jobs);
 
   validateFreeStandingJobSelector(
     errors,

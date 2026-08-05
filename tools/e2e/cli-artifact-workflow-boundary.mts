@@ -73,7 +73,12 @@ export function validateCliArtifactRestoreAction(
   actionPath = DEFAULT_RESTORE_ACTION_PATH,
 ): string[] {
   const errors: string[] = [];
-  const actionSource = readFileSync(actionPath, "utf8");
+  let actionSource: string;
+  try {
+    actionSource = readFileSync(actionPath, "utf8");
+  } catch {
+    return ["CLI artifact restore action file is missing or unreadable"];
+  }
   if (createHash("sha256").update(actionSource).digest("hex") !== RESTORE_ACTION_CONTENT_SHA256) {
     errors.push("CLI artifact restore action must match its immutable workflow pin");
   }
@@ -94,8 +99,8 @@ export function validateCliArtifactRestoreAction(
   const [identity, download, restore] = actionSteps;
   if (
     identity?.name !== "Validate exact-commit CLI artifact identity" ||
-    identity.id !== "identity" ||
-    identity.shell !== "bash" ||
+    identity?.id !== "identity" ||
+    identity?.shell !== "bash" ||
     !isDeepStrictEqual(record(identity.env), {
       CALLER_WORKFLOW_SHA: "${{ github.workflow_sha }}",
       PROVENANCE_JSON: "${{ inputs.provenance-json }}",
@@ -120,7 +125,7 @@ export function validateCliArtifactRestoreAction(
   ]);
   if (
     download?.name !== CLI_ARTIFACT_DOWNLOAD_STEP ||
-    download.uses !== CLI_ARTIFACT_DOWNLOAD_ACTION ||
+    download?.uses !== CLI_ARTIFACT_DOWNLOAD_ACTION ||
     !isDeepStrictEqual(record(download.with), {
       "artifact-ids": "${{ steps.identity.outputs.artifact_id }}",
       path: "${{ runner.temp }}/nemoclaw-cli-artifact",
@@ -129,7 +134,7 @@ export function validateCliArtifactRestoreAction(
   ) {
     errors.push("CLI artifact restore action must download by immutable ID and reject mismatch");
   }
-  if (restore?.name !== CLI_ARTIFACT_VERIFY_STEP || restore.shell !== "bash") {
+  if (restore?.name !== CLI_ARTIFACT_VERIFY_STEP || restore?.shell !== "bash") {
     errors.push("CLI artifact restore action must verify the downloaded payload in bash");
   }
   if (
@@ -157,7 +162,7 @@ export function validateCliArtifactRestoreAction(
     '[[ "$actual_payload_sha256" == "$PAYLOAD_SHA256" ]]',
     '*) echo "::error::CLI artifact contains an unsafe member',
     "CLI artifact contains a link or special file",
-    '[[ ! -e "$GITHUB_WORKSPACE/dist" ]]',
+    '[[ ! -e "$GITHUB_WORKSPACE/dist" && ! -L "$GITHUB_WORKSPACE/dist" ]]',
     'restore_dir="$(mktemp -d',
     'tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"',
     ".sourceRevision == $candidateSha",
@@ -330,7 +335,8 @@ export function validateCliArtifactWorkflowBoundary(
   const jobs = record(workflow.jobs);
   const producer = record(jobs[CLI_ARTIFACT_PRODUCER_JOB]);
   if (Object.keys(producer).length === 0) {
-    return [`workflow is missing CLI artifact producer ${CLI_ARTIFACT_PRODUCER_JOB}`];
+    errors.push(`workflow is missing CLI artifact producer ${CLI_ARTIFACT_PRODUCER_JOB}`);
+    return errors;
   }
   validateProducer(errors, producer);
 

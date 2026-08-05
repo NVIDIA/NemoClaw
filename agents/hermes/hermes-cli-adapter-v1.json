@@ -1,0 +1,151 @@
+{
+  "adapter_version": 1,
+  "upstream_cli_version": "0.19.0",
+  "managed_commands": ["chat"],
+  "session_name_coalescer": {
+    "module": "hermes_cli.main",
+    "function": "_coalesce_session_name_args",
+    "boundary_set": "_SUBCOMMANDS"
+  },
+  "options": [
+    {
+      "id": "profile",
+      "names": ["-p", "--profile"],
+      "canonical": "--profile",
+      "arity": "required",
+      "surfaces": ["preparse"]
+    },
+    {
+      "id": "oneshot",
+      "names": ["-z", "--oneshot"],
+      "canonical": "--oneshot",
+      "arity": "required",
+      "surfaces": ["top"]
+    },
+    {
+      "id": "usage_file",
+      "names": ["--usage-file"],
+      "canonical": "--usage-file",
+      "arity": "required",
+      "surfaces": ["top"]
+    },
+    {
+      "id": "model",
+      "names": ["-m", "--model"],
+      "canonical": "--model",
+      "arity": "required",
+      "surfaces": ["top", "chat"]
+    },
+    {
+      "id": "provider",
+      "names": ["--provider"],
+      "canonical": "--provider",
+      "arity": "required",
+      "surfaces": ["top", "chat"]
+    },
+    {
+      "id": "toolsets",
+      "names": ["-t", "--toolsets"],
+      "canonical": "--toolsets",
+      "arity": "required",
+      "surfaces": ["top", "chat"]
+    },
+    {
+      "id": "skills",
+      "names": ["-s", "--skills"],
+      "canonical": "--skills",
+      "arity": "required",
+      "repeatable": true,
+      "surfaces": ["top", "chat"]
+    },
+    {
+      "id": "resume",
+      "names": ["-r", "--resume"],
+      "canonical": "--resume",
+      "arity": "session",
+      "surfaces": ["top", "chat"]
+    },
+    {
+      "id": "continue",
+      "names": ["-c", "--continue"],
+      "canonical": "--continue",
+      "arity": "optional_session",
+      "surfaces": ["top", "chat"]
+    },
+    {
+      "id": "worktree",
+      "names": ["-w", "--worktree"],
+      "arity": "boolean",
+      "surfaces": ["top", "chat"]
+    },
+    {
+      "id": "accept_hooks",
+      "names": ["--accept-hooks"],
+      "arity": "boolean",
+      "surfaces": ["top", "chat"]
+    },
+    {
+      "id": "yolo",
+      "names": ["--yolo"],
+      "arity": "boolean",
+      "surfaces": ["top", "chat"]
+    },
+    {
+      "id": "pass_session_id",
+      "names": ["--pass-session-id"],
+      "arity": "boolean",
+      "surfaces": ["top", "chat"]
+    },
+    {
+      "id": "ignore_user_config",
+      "names": ["--ignore-user-config"],
+      "arity": "boolean",
+      "surfaces": ["top", "chat"]
+    },
+    {
+      "id": "ignore_rules",
+      "names": ["--ignore-rules"],
+      "arity": "boolean",
+      "surfaces": ["top", "chat"]
+    },
+    {
+      "id": "no_restore_cwd",
+      "names": ["--no-restore-cwd"],
+      "arity": "boolean",
+      "surfaces": ["top", "chat"]
+    },
+    {
+      "id": "safe_mode",
+      "names": ["--safe-mode"],
+      "arity": "boolean",
+      "surfaces": ["top", "chat"]
+    }
+  ],
+  "translations": {
+    "resumed_oneshot": {
+      "issue": 5254,
+      "forms": [
+        "hermes [(-p|--profile) PROFILE] ((-r|--resume) SESSION|(-c|--continue) [SESSION]) (-z|--oneshot) PROMPT [CHAT_OPTION ...]",
+        "hermes [--profile=PROFILE] (--resume=SESSION|--continue[=SESSION]) --oneshot=PROMPT [CHAT_OPTION ...]"
+      ],
+      "reason": "Hermes 0.19 stores a top-level resumed or continued one-shot turn in a new session instead of the selected or most recent session.",
+      "source_fix_constraint": "The affected session persistence implementation belongs to Hermes. The durable source fix must land in Hermes before NemoClaw removes this translation.",
+      "removal_condition": "Hermes appends top-level resumed and continued one-shot turns to the selected or most recent session."
+    },
+    "provider_model_composition": {
+      "issue": 7361,
+      "forms": [
+        "PROVIDER_OPTION := --provider PROVIDER | --provider=PROVIDER",
+        "MODEL_OPTION := -m MODEL | --model MODEL | --model=MODEL",
+        "hermes [TOP_LEVEL_OPTION ...] PROVIDER_OPTION [TOP_LEVEL_OPTION ...] MODEL_OPTION [TOP_LEVEL_OPTION ...]",
+        "hermes [TOP_LEVEL_OPTION ...] MODEL_OPTION [TOP_LEVEL_OPTION ...] PROVIDER_OPTION [TOP_LEVEL_OPTION ...]",
+        "hermes [TOP_LEVEL_OPTION ...] chat [CHAT_OPTION ...] PROVIDER_OPTION [CHAT_OPTION ...] MODEL_OPTION [CHAT_OPTION ...]",
+        "hermes [TOP_LEVEL_OPTION ...] chat [CHAT_OPTION ...] MODEL_OPTION [CHAT_OPTION ...] PROVIDER_OPTION [CHAT_OPTION ...]"
+      ],
+      "ambiguity_rule": "A top-level session name must be one argv value. The adapter rejects separate provider and model flags after an unquoted multi-word session name because a later positional can be an upstream command.",
+      "reason": "Hermes 0.19 does not resolve the OpenShell credential placeholder when provider and model are separate.",
+      "source_fix_constraint": "The affected credential-resolution implementation belongs to Hermes. The durable source fix must land in Hermes before NemoClaw removes this translation.",
+      "removal_condition": "Hermes resolves OpenShell credential placeholders for separate provider and model flags."
+    }
+  }
+}

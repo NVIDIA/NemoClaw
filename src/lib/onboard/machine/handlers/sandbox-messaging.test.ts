@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
+import type { RegistryMessagingAuthority } from "../../../messaging/plan-authority";
 import { hashCredential } from "../../../security/credential-hash";
 import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
 import {
@@ -146,6 +147,25 @@ function telegramPlan(credentialHash: string): SandboxMessagingPlan {
   };
 }
 
+function slackPlan(credentialHash: string): SandboxMessagingPlan {
+  const plan = telegramPlan(credentialHash);
+  return {
+    ...plan,
+    channels: plan.channels.map((channel) => ({
+      ...channel,
+      channelId: "slack",
+      displayName: "Slack",
+    })),
+    credentialBindings: plan.credentialBindings.map((binding) => ({
+      ...binding,
+      channelId: "slack",
+      providerName: "alpha-slack-bridge",
+      providerEnvKey: "SLACK_BOT_TOKEN",
+      placeholder: "openshell:resolve:env:SLACK_BOT_TOKEN",
+    })),
+  };
+}
+
 function completedCheckpointSession(
   plan: SandboxMessagingPlan,
   stagedCredentialProviders: string[] = [],
@@ -186,7 +206,7 @@ function reconcileDeps(plans: readonly (SandboxMessagingPlan | null)[]) {
   return {
     note: vi.fn(),
     showMessagingStage: vi.fn(),
-    getRecordedMessagingChannelsForResume: vi.fn(() => null),
+    getRecordedMessagingChannelsForResume: vi.fn((): string[] | null => null),
     setupMessagingChannels: vi.fn(
       async (
         _agent: unknown,
@@ -201,7 +221,12 @@ function reconcileDeps(plans: readonly (SandboxMessagingPlan | null)[]) {
       .mockReturnValue(plans[1] ?? plans[0] ?? null),
     writePlanToEnv: vi.fn(),
     clearPlanEnv: vi.fn(),
-    getRegistrySandboxMessagingPlan: vi.fn(() => null),
+    getRegistrySandboxMessagingAuthority: vi.fn(
+      (): RegistryMessagingAuthority => ({
+        authoritative: false,
+        plan: null,
+      }),
+    ),
     providerMatchesGatewayCredential: vi.fn(() => false),
   };
 }
@@ -255,6 +280,127 @@ describe("reconcileReusedSandboxMessaging", () => {
       stateUpdates: ["telegram"],
       healthChecks: ["telegram"],
     });
+  });
+});
+
+describe("reconcileSandboxMessaging plan authority", () => {
+  it("uses the registry plan before a staged plan for an existing sandbox", async () => {
+    const registryPlan = telegramPlan(hashCredential("123456:registry-token") ?? "");
+    const deps = reconcileDeps([mixedChannelPlan()]);
+    deps.getRegistrySandboxMessagingAuthority.mockReturnValueOnce({
+      authoritative: true,
+      plan: registryPlan,
+    });
+
+    const result = await reconcileSandboxMessaging({
+      resume: false,
+      session: null,
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(result).toEqual({ plan: registryPlan, selectedChannels: ["telegram"] });
+  });
+
+  it("uses the registry plan without reading an invalid environment plan", async () => {
+    const registryPlan = telegramPlan(hashCredential("123456:registry-token") ?? "");
+    const deps = reconcileDeps([]);
+    deps.readMessagingPlanFromEnv.mockImplementation(() => {
+      throw new Error("invalid environment plan");
+    });
+    deps.getRegistrySandboxMessagingAuthority.mockReturnValue({
+      authoritative: true,
+      plan: registryPlan,
+    });
+
+    const result = await reconcileSandboxMessaging({
+      resume: false,
+      session: null,
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.readMessagingPlanFromEnv).not.toHaveBeenCalled();
+    expect(deps.getRecordedMessagingChannelsForResume).not.toHaveBeenCalled();
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(result).toEqual({ plan: registryPlan, selectedChannels: ["telegram"] });
+  });
+
+  it("uses the staged plan before a matching session plan during resume for a pending target", async () => {
+    const sessionPlan = telegramPlan(hashCredential("123456:session-token") ?? "");
+    const stagedPlan = slackPlan(hashCredential("staged-slack-token") ?? "");
+    const deps = reconcileDeps([stagedPlan]);
+    deps.providerMatchesGatewayCredential.mockReturnValueOnce(true);
+    const session = withMessagingCheckpoint(
+      completedCheckpointSession(sessionPlan, ["alpha-slack-bridge"]),
+      ["telegram"],
+    );
+    vi.stubEnv("SLACK_BOT_TOKEN", "");
+
+    const result = await reconcileSandboxMessaging({
+      resume: true,
+      session,
+      sandboxName: "alpha",
+      agent: { name: "openclaw" },
+      deps,
+    });
+
+    expect(deps.providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "alpha-slack-bridge",
+      "generic",
+      "SLACK_BOT_TOKEN",
+    );
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(result).toEqual({ plan: stagedPlan, selectedChannels: ["slack"] });
+  });
+
+  it("rejects a staged plan that targets another sandbox", async () => {
+    const mismatchedPlan = {
+      ...slackPlan(hashCredential("staged-slack-token") ?? ""),
+      sandboxName: "beta",
+    };
+    const deps = reconcileDeps([mismatchedPlan]);
+    deps.getRecordedMessagingChannelsForResume.mockReturnValueOnce(["telegram"]);
+
+    await expect(
+      reconcileSandboxMessaging({
+        resume: true,
+        session: null,
+        sandboxName: "alpha",
+        agent: { name: "openclaw" },
+        deps,
+      }),
+    ).rejects.toThrow("Staged messaging plan targets 'beta', not 'alpha'.");
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+  });
+
+  it("rejects a completed resume session plan that targets another sandbox before messaging effects (#7701)", async () => {
+    const mismatchedPlan = {
+      ...telegramPlan(hashCredential("123456:session-token") ?? ""),
+      sandboxName: "beta",
+    };
+    const session = completedCheckpointSession(mismatchedPlan, ["beta-telegram-bridge"]);
+    session.sandboxName = "alpha";
+    const deps = reconcileDeps([null]);
+    deps.providerMatchesGatewayCredential.mockReturnValueOnce(true);
+
+    await expect(
+      reconcileSandboxMessaging({
+        resume: true,
+        session,
+        sandboxName: "alpha",
+        agent: { name: "openclaw" },
+        deps,
+      }),
+    ).rejects.toThrow("Session messaging plan targets 'beta', not 'alpha'.");
+
+    expect(deps.providerMatchesGatewayCredential).not.toHaveBeenCalled();
+    expect(deps.setupMessagingChannels).not.toHaveBeenCalled();
+    expect(deps.writePlanToEnv).not.toHaveBeenCalled();
+    expect(deps.clearPlanEnv).not.toHaveBeenCalled();
   });
 });
 

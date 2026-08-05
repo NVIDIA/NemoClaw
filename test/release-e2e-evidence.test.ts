@@ -13,9 +13,15 @@ import {
 
 const candidateSha = "a".repeat(40);
 
-function preflight(input: { jetsonRunnerOnline?: "true" | "unknown" } = {}) {
+function preflight(
+  input: {
+    candidatePathExists?: (candidateSha: string, candidatePath: string) => boolean;
+    jetsonRunnerOnline?: "true" | "unknown";
+  } = {},
+) {
   return buildReleaseE2ePreflight({
     candidateSha,
+    candidatePathExists: input.candidatePathExists ?? (() => false),
     jetsonRunnerOnline: input.jetsonRunnerOnline ?? "true",
   });
 }
@@ -94,20 +100,38 @@ describe("release E2E evidence", () => {
       targets: "",
     });
     const parallelExplicitJobs = plan.dispatches.parallelExplicit.jobs.split(",");
-    expect(parallelExplicitJobs).toHaveLength(4);
+    expect(parallelExplicitJobs).toHaveLength(3);
     expect(new Set(parallelExplicitJobs)).toEqual(
-      new Set([
-        "openshell-gateway-auth-contract",
-        "mcp-bridge-dev",
-        "hermes-gpu-startup",
-        "sandbox-rlimits-connect",
-      ]),
+      new Set(["openshell-gateway-auth-contract", "mcp-bridge-dev", "hermes-gpu-startup"]),
     );
     expect(plan.dispatches.conditional).toEqual([
       expect.objectContaining({ allowJetsonRunnerQueue: false, jobs: "jetson-nvmap-gpu" }),
     ]);
     expect(plan.launchableE2eJobId).toBe("staging-brev-launchable");
     expect(plan.exceptionsRequired).toEqual(["jetson-nvmap-gpu"]);
+  });
+
+  it("includes an activation-gated explicit lane only when its candidate marker exists", () => {
+    const plan = preflight({
+      candidatePathExists: (_sha, candidatePath) =>
+        candidatePath === "ci/protected-managed-image-multiarch-activation-v1.json",
+    });
+
+    expect(plan.dispatches.parallelExplicit.jobs.split(",")).toContain(
+      "managed-image-multiarch-startup",
+    );
+    expect(
+      plan.executions.filter((execution) => execution.jobId === "managed-image-multiarch-startup"),
+    ).toHaveLength(2);
+  });
+
+  it("fails when the candidate commit cannot be inspected for activation paths", () => {
+    expect(() =>
+      buildReleaseE2ePreflight({
+        candidateSha: "0".repeat(40),
+        jetsonRunnerOnline: "true",
+      }),
+    ).toThrow("could not inspect release E2E activation path");
   });
 
   it("keeps every static and dynamic matrix row as a distinct execution", () => {

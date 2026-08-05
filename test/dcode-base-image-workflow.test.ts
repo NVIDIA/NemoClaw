@@ -421,7 +421,9 @@ describe("base-image publication behavior", () => {
       expect(digestExport?.env?.ARCH).toBe("${{ matrix.arch }}");
       expect(digestExport?.run).toContain("^sha256:[0-9a-f]{64}$");
       expect(digestExport?.run).toContain('touch "$RUNNER_TEMP/digests/${ARCH}-${DIGEST#sha256:}"');
-      expect(digestUpload?.with?.name).toBe("openclaw-base-digest-${{ matrix.arch }}");
+      expect(digestUpload?.with?.name).toBe(
+        "openclaw-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}",
+      );
       for (const step of steps.filter((step) => step.uses)) {
         expect(step.uses, `${matrix.arch}: ${step.name}`).toMatch(FULL_SHA_ACTION);
       }
@@ -439,13 +441,14 @@ describe("base-image publication behavior", () => {
       (step) => step.name === "Create and verify multi-platform manifest",
     );
     expect(download?.with).toMatchObject({
-      pattern: "openclaw-base-digest-*",
+      pattern: "openclaw-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-*",
       "merge-multiple": true,
     });
     expect(metadata?.with?.images).toBe("${{ env.REGISTRY }}/nvidia/nemoclaw/sandbox-base");
     expect(metadata?.with?.tags).toContain("type=raw,value=latest");
     expect(metadata?.with?.tags).toContain("type=ref,event=tag");
     expect(metadata?.with?.tags).toContain("type=sha,prefix=,format=short");
+    expect(createManifest?.env?.AGENT).toBe("openclaw");
     const openClawManifestScript = createManifest?.run ?? "";
     expect(openClawManifestScript).toContain('"${#digest_files[@]}" -ne 2');
     expect(openClawManifestScript).toContain("^(amd64|arm64)-([0-9a-f]{64})$");
@@ -454,13 +457,36 @@ describe("base-image publication behavior", () => {
       'if [ "$source_platform" != "linux/$expected_arch" ]; then',
     );
     expect(openClawManifestScript).toContain("duplicate platform digest");
+    expect(openClawManifestScript).toContain("declare -A source_digests=()");
+    expect(openClawManifestScript).toContain(
+      'source_digests["linux/$expected_arch"]="sha256:$digest"',
+    );
     expect(openClawManifestScript.indexOf("source_platform=")).toBeLessThan(
       openClawManifestScript.indexOf("docker buildx imagetools create"),
     );
-    expect(openClawManifestScript).toContain(
-      'docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"',
-    );
+    expect(openClawManifestScript).toContain('--tag "$candidate_tag"');
+    expect(openClawManifestScript).toContain('--metadata-file "$candidate_metadata"');
+    expect(openClawManifestScript).toContain('"${sources[@]}"');
     expect(openClawManifestScript).toContain('"amd64,arm64"');
+    expect(openClawManifestScript).toContain('"${source_digests[linux/amd64]}"');
+    expect(openClawManifestScript).toContain('"${source_digests[linux/arm64]}"');
+    expect(openClawManifestScript).toContain("platform_digests_json=");
+    expect(openClawManifestScript).toContain("declare -A platform_digests=()");
+    expect(openClawManifestScript).toContain("scripts/export-managed-base-image-contract.sh");
+    expect(openClawManifestScript).not.toContain("first_tag=");
+    expect(openClawManifestScript).not.toContain(
+      'imagetools create "${tag_args[@]}" "${sources[@]}"',
+    );
+    const openClawValidationIndex = openClawManifestScript.indexOf(
+      "scripts/checks/validate-managed-base-index.sh",
+    );
+    const openClawPromotionIndex = openClawManifestScript.indexOf("publication_metadata=");
+    expect(openClawManifestScript.indexOf("candidate_tag=")).toBeLessThan(openClawValidationIndex);
+    expect(openClawValidationIndex).toBeLessThan(openClawPromotionIndex);
+    expect(openClawManifestScript.slice(openClawPromotionIndex)).toContain('"${tag_args[@]}"');
+    expect(openClawManifestScript.slice(openClawPromotionIndex)).toContain('"$reference"');
+    expect(openClawManifestScript).toContain("published_digest=");
+    expect(openClawManifestScript).toContain('if [ "$published_digest" != "$digest" ]; then');
     for (const step of (manifestJob?.steps ?? []).filter((step) => step.uses)) {
       expect(step.uses, step.name).toMatch(FULL_SHA_ACTION);
     }
@@ -470,17 +496,20 @@ describe("base-image publication behavior", () => {
     const publishers = publisherJobs(workflow);
     const imagePublishers = [
       {
+        agent: "hermes",
         platformJobName: "build-hermes-platforms",
         manifestJobName: "build-and-push-hermes",
         manifestName: "Build and push Hermes base image",
-        artifactPattern: "hermes-base-digest-*",
+        artifactPattern: "hermes-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-*",
         image: "${{ env.REGISTRY }}/nvidia/nemoclaw/hermes-sandbox-base",
       },
       {
+        agent: "langchain-deepagents-code",
         platformJobName: "build-dcode-platforms",
         manifestJobName: "build-and-push-dcode",
         manifestName: "Build and push Deep Agents Code base image",
-        artifactPattern: "langchain-deepagents-code-base-digest-*",
+        artifactPattern:
+          "langchain-deepagents-code-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-*",
         image: "${{ env.REGISTRY }}/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base",
       },
     ];
@@ -535,9 +564,13 @@ describe("base-image publication behavior", () => {
       expect(build.with?.outputs).toBe(PLATFORM_DIGEST_OUTPUT);
       expect(digestExport?.env?.ARCH).toBe("${{ matrix.arch }}");
       expect(digestExport?.run).toContain('touch "$RUNNER_TEMP/digests/${ARCH}-${DIGEST#sha256:}"');
-      expect(digestUpload?.with?.name).toBe("${{ matrix.agent }}-base-digest-${{ matrix.arch }}");
+      expect(digestUpload?.with?.name).toBe(
+        "${{ matrix.agent }}-base-digest-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}",
+      );
       expect(renderMatrixValue(digestUpload?.with?.name, matrix)).toBe(
-        `${matrix.agent}-base-digest-${matrix.arch}`,
+        `${matrix.agent}-base-digest-` +
+          "${{ github.run_id }}-${{ github.run_attempt }}-" +
+          matrix.arch,
       );
     }
 
@@ -564,6 +597,7 @@ describe("base-image publication behavior", () => {
       expect(metadata?.with?.tags).toContain("type=raw,value=latest");
       expect(metadata?.with?.tags).toContain("type=ref,event=tag");
       expect(metadata?.with?.tags).toContain("type=sha,prefix=,format=short");
+      expect(createManifest?.env?.AGENT).toBe(imagePublisher.agent);
       expect(createManifest?.env?.IMAGE).toBe(imagePublisher.image);
       const manifestScript = createManifest?.run ?? "";
       expect(manifestScript).toContain('"${#digest_files[@]}" -ne 2');
@@ -571,13 +605,33 @@ describe("base-image publication behavior", () => {
       expect(manifestScript).toContain("--format '{{.Image.OS}}/{{.Image.Architecture}}'");
       expect(manifestScript).toContain('if [ "$source_platform" != "linux/$expected_arch" ]; then');
       expect(manifestScript).toContain("duplicate platform digest");
+      expect(manifestScript).toContain("declare -A source_digests=()");
+      expect(manifestScript).toContain('source_digests["linux/$expected_arch"]="sha256:$digest"');
       expect(manifestScript.indexOf("source_platform=")).toBeLessThan(
         manifestScript.indexOf("docker buildx imagetools create"),
       );
-      expect(manifestScript).toContain(
-        'docker buildx imagetools create "${tag_args[@]}" "${sources[@]}"',
-      );
+      expect(manifestScript).toContain('--tag "$candidate_tag"');
+      expect(manifestScript).toContain('--metadata-file "$candidate_metadata"');
+      expect(manifestScript).toContain('"${sources[@]}"');
       expect(manifestScript).toContain('"amd64,arm64"');
+      expect(manifestScript).toContain("scripts/checks/validate-managed-base-index.sh");
+      expect(manifestScript).toContain('"${source_digests[linux/amd64]}"');
+      expect(manifestScript).toContain('"${source_digests[linux/arm64]}"');
+      expect(manifestScript).toContain("platform_digests_json=");
+      expect(manifestScript).toContain("declare -A platform_digests=()");
+      expect(manifestScript).toContain("scripts/export-managed-base-image-contract.sh");
+      expect(manifestScript).not.toContain("first_tag=");
+      expect(manifestScript).not.toContain('imagetools create "${tag_args[@]}" "${sources[@]}"');
+      const validationIndex = manifestScript.indexOf(
+        "scripts/checks/validate-managed-base-index.sh",
+      );
+      const promotionIndex = manifestScript.indexOf("publication_metadata=");
+      expect(manifestScript.indexOf("candidate_tag=")).toBeLessThan(validationIndex);
+      expect(validationIndex).toBeLessThan(promotionIndex);
+      expect(manifestScript.slice(promotionIndex)).toContain('"${tag_args[@]}"');
+      expect(manifestScript.slice(promotionIndex)).toContain('"$reference"');
+      expect(manifestScript).toContain("published_digest=");
+      expect(manifestScript).toContain('if [ "$published_digest" != "$digest" ]; then');
       for (const step of (manifestJob?.steps ?? []).filter((step) => step.uses)) {
         expect(step.uses, step.name).toMatch(FULL_SHA_ACTION);
       }

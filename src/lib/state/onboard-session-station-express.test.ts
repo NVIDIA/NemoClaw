@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { testTimeoutOptions } from "../../../test/helpers/timeouts";
 
 import type { OnboardSessionBootstrapDeps } from "../onboard/session-bootstrap";
 
@@ -465,228 +466,232 @@ describe("Station Express onboarding session state (#7048)", () => {
     expect(fs.existsSync(receipt)).toBe(false);
   });
 
-  it("resumes a provider failure and persists its route-validated arbitrary alias", async () => {
-    const { prepareOnboardSession } = await import("../onboard/session-bootstrap");
-    const { wrapOnboard } = await import("../onboard/station-express-resume");
-    const { handleProviderInferenceState } = await import(
-      "../onboard/machine/handlers/provider-inference"
-    );
-    const { baseOptions, createDeps } = await import(
-      "../onboard/machine/handlers/provider-inference.test-support"
-    );
-    const { runOnboardMachine } = await import("../onboard/machine/runner");
-    const { OnboardRuntime } = await import("../onboard/machine/runtime");
-    const { completeOnboardMachine } = await import("../onboard/machine/result");
-    const { addOnboardMachineEventListener } = await import("../onboard/machine/events");
-    const { registerIncompleteOnboardExitHandlerForSession } = await import(
-      "../onboard/onboard-exit-handler"
-    );
-    const bootstrapDeps = await realBootstrapDeps();
-    const intent = {
-      version: 1 as const,
-      model: "nemotron-3-ultra-550b-a55b",
-      sandboxName: "my-assistant",
-      receiptGeneration,
-    };
-    const receipt = path.join(session.SESSION_DIR, "station-express-resume");
-    await prepareOnboardSession(
-      {
-        resume: false,
-        fresh: false,
-        requestedFromDockerfile: null,
-        requestedSandboxName: "my-assistant",
-        cannotPrompt: true,
-        nonInteractive: true,
-        stationExpressIntent: intent,
-      },
-      bootstrapDeps,
-    );
-    fs.writeFileSync(receipt, receiptText(), { mode: 0o600 });
-    expect(requireLoadedSession(session.loadSession()).stationExpressIntent).toEqual(intent);
-
-    const failingRuntime = new OnboardRuntime();
-    await failingRuntime.transition("preflight");
-    await failingRuntime.transition("gateway");
-    await failingRuntime.transition("provider_selection");
-    const exitListeners: Array<(code: number) => void> = [];
-    registerIncompleteOnboardExitHandlerForSession(session, () => false, {
-      once: (_event, listener) => exitListeners.push(listener),
-    });
-    const injectedFailure = new Error("injected managed vLLM download failure");
-    const failing = createDeps({
-      setupNim: vi.fn(async () => {
-        throw injectedFailure;
-      }),
-      startRecordedStep: vi.fn(async (stepName: string) => {
-        await failingRuntime.markStepStarted(stepName);
-      }),
-      recordStepComplete: vi.fn(async (stepName, updates) =>
-        failingRuntime.markStepComplete(stepName, updates),
-      ),
-    });
-    await expect(
-      runOnboardMachine({
-        context: {},
-        runtime: failingRuntime,
-        handlers: {
-          provider_selection: async () => {
-            const result = await handleProviderInferenceState({
-              ...baseOptions(failing.deps, requireLoadedSession(session.loadSession())),
-              sandboxName: "my-assistant",
-            });
-            return result.stateResults;
-          },
-        },
-        stopStates: ["sandbox"],
-      }),
-    ).rejects.toThrow(injectedFailure.message);
-    expect(exitListeners).toHaveLength(1);
-    exitListeners[0]!(1);
-
-    const failedSession = requireLoadedSession(session.loadSession());
-    expect(failedSession).toMatchObject({
-      status: "failed",
-      provider: null,
-      model: null,
-      stationExpressIntent: intent,
-      steps: { provider_selection: { status: "failed" } },
-    });
-
-    for (const name of [
-      "NEMOCLAW_STATION_EXPRESS",
-      "NEMOCLAW_NON_INTERACTIVE",
-      "NEMOCLAW_YES",
-      "NEMOCLAW_POLICY_MODE",
-      "NEMOCLAW_SANDBOX_NAME",
-      "NEMOCLAW_PROVIDER",
-      "NEMOCLAW_VLLM_MODEL",
-      "NEMOCLAW_MODEL",
-      "NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION",
-    ]) {
-      vi.stubEnv(name, "");
-    }
-
-    const resumedSetup = vi.fn(async () => {
-      expect(process.env).toMatchObject({
-        NEMOCLAW_STATION_EXPRESS: "1",
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "install-vllm",
-        NEMOCLAW_VLLM_MODEL: "nemotron-3-ultra-550b-a55b",
-        NEMOCLAW_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
-        NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION: receiptGeneration,
-      });
-      return {
-        model: "nemotron-ultra",
-        provider: "vllm-local",
-        endpointUrl: null,
-        credentialEnv: null,
-        hermesAuthMethod: null,
-        hermesToolGateways: [],
-        preferredInferenceApi: "openai-responses",
-        compatibleEndpointReasoning: null,
-        compatibleEndpointReasoningEffort: null,
-        nimContainer: null,
-        vllmModelIdentity: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
+  it(
+    "resumes a provider failure and persists its route-validated arbitrary alias",
+    testTimeoutOptions(15_000),
+    async () => {
+      const { prepareOnboardSession } = await import("../onboard/session-bootstrap");
+      const { wrapOnboard } = await import("../onboard/station-express-resume");
+      const { handleProviderInferenceState } = await import(
+        "../onboard/machine/handlers/provider-inference"
+      );
+      const { baseOptions, createDeps } = await import(
+        "../onboard/machine/handlers/provider-inference.test-support"
+      );
+      const { runOnboardMachine } = await import("../onboard/machine/runner");
+      const { OnboardRuntime } = await import("../onboard/machine/runtime");
+      const { completeOnboardMachine } = await import("../onboard/machine/result");
+      const { addOnboardMachineEventListener } = await import("../onboard/machine/events");
+      const { registerIncompleteOnboardExitHandlerForSession } = await import(
+        "../onboard/onboard-exit-handler"
+      );
+      const bootstrapDeps = await realBootstrapDeps();
+      const intent = {
+        version: 1 as const,
+        model: "nemotron-3-ultra-550b-a55b",
+        sandboxName: "my-assistant",
+        receiptGeneration,
       };
-    });
-    const resumedRuntime = new OnboardRuntime();
-    const resumed = createDeps({
-      setupNim: resumedSetup,
-      startRecordedStep: vi.fn(async (stepName: string) => {
-        await resumedRuntime.markStepStarted(stepName);
-      }),
-      recordStepComplete: vi.fn(async (stepName, updates) =>
-        resumedRuntime.markStepComplete(stepName, updates),
-      ),
-    });
-    const wrapped = wrapOnboard(
-      async () => {
-        const resumedBootstrap = await prepareOnboardSession(
-          {
-            resume: true,
-            fresh: false,
-            requestedFromDockerfile: null,
-            requestedSandboxName: process.env.NEMOCLAW_SANDBOX_NAME || null,
-            cannotPrompt: true,
-            nonInteractive: true,
-          },
-          bootstrapDeps,
-        );
-        const result = await runOnboardMachine({
+      const receipt = path.join(session.SESSION_DIR, "station-express-resume");
+      await prepareOnboardSession(
+        {
+          resume: false,
+          fresh: false,
+          requestedFromDockerfile: null,
+          requestedSandboxName: "my-assistant",
+          cannotPrompt: true,
+          nonInteractive: true,
+          stationExpressIntent: intent,
+        },
+        bootstrapDeps,
+      );
+      fs.writeFileSync(receipt, receiptText(), { mode: 0o600 });
+      expect(requireLoadedSession(session.loadSession()).stationExpressIntent).toEqual(intent);
+
+      const failingRuntime = new OnboardRuntime();
+      await failingRuntime.transition("preflight");
+      await failingRuntime.transition("gateway");
+      await failingRuntime.transition("provider_selection");
+      const exitListeners: Array<(code: number) => void> = [];
+      registerIncompleteOnboardExitHandlerForSession(session, () => false, {
+        once: (_event, listener) => exitListeners.push(listener),
+      });
+      const injectedFailure = new Error("injected managed vLLM download failure");
+      const failing = createDeps({
+        setupNim: vi.fn(async () => {
+          throw injectedFailure;
+        }),
+        startRecordedStep: vi.fn(async (stepName: string) => {
+          await failingRuntime.markStepStarted(stepName);
+        }),
+        recordStepComplete: vi.fn(async (stepName, updates) =>
+          failingRuntime.markStepComplete(stepName, updates),
+        ),
+      });
+      await expect(
+        runOnboardMachine({
           context: {},
-          runtime: resumedRuntime,
+          runtime: failingRuntime,
           handlers: {
             provider_selection: async () => {
-              const providerResult = await handleProviderInferenceState({
-                ...baseOptions(resumed.deps, resumedBootstrap.session),
-                resume: true,
-                sandboxName: process.env.NEMOCLAW_SANDBOX_NAME || null,
-                env: process.env,
+              const result = await handleProviderInferenceState({
+                ...baseOptions(failing.deps, requireLoadedSession(session.loadSession())),
+                sandboxName: "my-assistant",
               });
-              return providerResult.stateResults;
+              return result.stateResults;
             },
           },
           stopStates: ["sandbox"],
-        });
-        expect(result.session).toMatchObject({
-          provider: "vllm-local",
-          model: "nemotron-ultra",
-          machine: { state: "sandbox" },
-        });
-      },
-      session.loadSession,
-      session.reconcileStationExpressReceiptRetirement,
-    );
-
-    await wrapped({ resume: true });
-
-    expect(resumedSetup).toHaveBeenCalledTimes(1);
-    expect(resumed.calls.promptName).not.toHaveBeenCalled();
-    expect(requireLoadedSession(session.loadSession())).toMatchObject({
-      provider: "vllm-local",
-      model: "nemotron-ultra",
-      stationExpressIntent: {
-        ...intent,
-        servedModel: "nemotron-ultra",
-        checkpointModel: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
-      },
-    });
-    expect(fs.existsSync(receipt)).toBe(true);
-
-    await resumedRuntime.transition("agent_setup");
-    await resumedRuntime.transition("policies");
-    await resumedRuntime.transition("finalizing");
-    await resumedRuntime.transition("post_verify");
-    const completionEvents: string[] = [];
-    const removeCompletionListener = addOnboardMachineEventListener((event) =>
-      completionEvents.push(event.type),
-    );
-    try {
-      await resumedRuntime.applyResult(
-        completeOnboardMachine({
-          sandboxName: "my-assistant",
-          provider: "vllm-local",
-          model: "nemotron-ultra",
         }),
-      );
-    } finally {
-      removeCompletionListener();
-    }
+      ).rejects.toThrow(injectedFailure.message);
+      expect(exitListeners).toHaveLength(1);
+      exitListeners[0]!(1);
 
-    expect(requireLoadedSession(session.loadSession())).toMatchObject({
-      status: "complete",
-      resumable: false,
-      stationExpressIntent: null,
-      stationExpressReceiptRetirement: null,
-    });
-    expect(fs.existsSync(receipt)).toBe(false);
-    expect(completionEvents).toEqual([
-      "context.updated",
-      "state.completed",
-      "state.entered",
-      "onboard.completed",
-    ]);
-  });
+      const failedSession = requireLoadedSession(session.loadSession());
+      expect(failedSession).toMatchObject({
+        status: "failed",
+        provider: null,
+        model: null,
+        stationExpressIntent: intent,
+        steps: { provider_selection: { status: "failed" } },
+      });
+
+      for (const name of [
+        "NEMOCLAW_STATION_EXPRESS",
+        "NEMOCLAW_NON_INTERACTIVE",
+        "NEMOCLAW_YES",
+        "NEMOCLAW_POLICY_MODE",
+        "NEMOCLAW_SANDBOX_NAME",
+        "NEMOCLAW_PROVIDER",
+        "NEMOCLAW_VLLM_MODEL",
+        "NEMOCLAW_MODEL",
+        "NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION",
+      ]) {
+        vi.stubEnv(name, "");
+      }
+
+      const resumedSetup = vi.fn(async () => {
+        expect(process.env).toMatchObject({
+          NEMOCLAW_STATION_EXPRESS: "1",
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_PROVIDER: "install-vllm",
+          NEMOCLAW_VLLM_MODEL: "nemotron-3-ultra-550b-a55b",
+          NEMOCLAW_MODEL: "nvidia/nemotron-3-ultra-550b-a55b",
+          NEMOCLAW_STATION_EXPRESS_RECEIPT_GENERATION: receiptGeneration,
+        });
+        return {
+          model: "nemotron-ultra",
+          provider: "vllm-local",
+          endpointUrl: null,
+          credentialEnv: null,
+          hermesAuthMethod: null,
+          hermesToolGateways: [],
+          preferredInferenceApi: "openai-responses",
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+          vllmModelIdentity: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
+        };
+      });
+      const resumedRuntime = new OnboardRuntime();
+      const resumed = createDeps({
+        setupNim: resumedSetup,
+        startRecordedStep: vi.fn(async (stepName: string) => {
+          await resumedRuntime.markStepStarted(stepName);
+        }),
+        recordStepComplete: vi.fn(async (stepName, updates) =>
+          resumedRuntime.markStepComplete(stepName, updates),
+        ),
+      });
+      const wrapped = wrapOnboard(
+        async () => {
+          const resumedBootstrap = await prepareOnboardSession(
+            {
+              resume: true,
+              fresh: false,
+              requestedFromDockerfile: null,
+              requestedSandboxName: process.env.NEMOCLAW_SANDBOX_NAME || null,
+              cannotPrompt: true,
+              nonInteractive: true,
+            },
+            bootstrapDeps,
+          );
+          const result = await runOnboardMachine({
+            context: {},
+            runtime: resumedRuntime,
+            handlers: {
+              provider_selection: async () => {
+                const providerResult = await handleProviderInferenceState({
+                  ...baseOptions(resumed.deps, resumedBootstrap.session),
+                  resume: true,
+                  sandboxName: process.env.NEMOCLAW_SANDBOX_NAME || null,
+                  env: process.env,
+                });
+                return providerResult.stateResults;
+              },
+            },
+            stopStates: ["sandbox"],
+          });
+          expect(result.session).toMatchObject({
+            provider: "vllm-local",
+            model: "nemotron-ultra",
+            machine: { state: "sandbox" },
+          });
+        },
+        session.loadSession,
+        session.reconcileStationExpressReceiptRetirement,
+      );
+
+      await wrapped({ resume: true });
+
+      expect(resumedSetup).toHaveBeenCalledTimes(1);
+      expect(resumed.calls.promptName).not.toHaveBeenCalled();
+      expect(requireLoadedSession(session.loadSession())).toMatchObject({
+        provider: "vllm-local",
+        model: "nemotron-ultra",
+        stationExpressIntent: {
+          ...intent,
+          servedModel: "nemotron-ultra",
+          checkpointModel: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
+        },
+      });
+      expect(fs.existsSync(receipt)).toBe(true);
+
+      await resumedRuntime.transition("agent_setup");
+      await resumedRuntime.transition("policies");
+      await resumedRuntime.transition("finalizing");
+      await resumedRuntime.transition("post_verify");
+      const completionEvents: string[] = [];
+      const removeCompletionListener = addOnboardMachineEventListener((event) =>
+        completionEvents.push(event.type),
+      );
+      try {
+        await resumedRuntime.applyResult(
+          completeOnboardMachine({
+            sandboxName: "my-assistant",
+            provider: "vllm-local",
+            model: "nemotron-ultra",
+          }),
+        );
+      } finally {
+        removeCompletionListener();
+      }
+
+      expect(requireLoadedSession(session.loadSession())).toMatchObject({
+        status: "complete",
+        resumable: false,
+        stationExpressIntent: null,
+        stationExpressReceiptRetirement: null,
+      });
+      expect(fs.existsSync(receipt)).toBe(false);
+      expect(completionEvents).toEqual([
+        "context.updated",
+        "state.completed",
+        "state.entered",
+        "onboard.completed",
+      ]);
+    },
+  );
 
   it("atomically binds a route-validated arbitrary alias when provider selection completes", () => {
     const servedAlias = "nemotron-ultra";

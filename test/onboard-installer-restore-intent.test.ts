@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it } from "vitest";
+import { afterEach, describe, it } from "vitest";
 
 import { writeOkOpenshell } from "./helpers/onboard-openshell-fixture";
 
@@ -14,12 +14,25 @@ const repoRoot = path.join(import.meta.dirname, "..");
 const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
+const createdTmpDirs: string[] = [];
+
+function makeTmpDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  createdTmpDirs.push(dir);
+  return dir;
+}
 
 describe("createSandbox installer restore intent", () => {
+  afterEach(() => {
+    for (const dir of createdTmpDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("non-interactive not-ready sandbox with installer restore intent skips the fresh backup, restores the pre-upgrade backup, and stays exec-usable for a workspace marker (#6114)", {
     timeout: 60_000,
   }, async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-installer-restore-"));
+    const tmpDir = makeTmpDir("nemoclaw-onboard-installer-restore-");
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "installer-restore.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
@@ -230,10 +243,136 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
     assert.equal(payload.execCode, 0, "nemoclaw exec of the workspace marker should succeed");
   });
 
+  it.each([
+    { change: "changes", race: "changed", error: /source registry row changed/u },
+    { change: "is removed", race: "removed", error: /source registry row is absent/u },
+  ])("rejects installer restore when the source registry row $change after journal capture (#7736)", async ({
+    race,
+    error,
+  }) => {
+    const tmpDir = makeTmpDir("nemoclaw-onboard-registry-race-");
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "registry-race.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+    const sandboxStatePath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "state", "sandbox.ts"),
+    );
+    const onboardSessionPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeOkOpenshell(fakeBin);
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+require(${onboardScriptMocksPath}).mockStandaloneGatewayTeardownAuthority();
+const normalize = (command) =>
+  (Array.isArray(command) ? command.join(" ") : String(command)).replace(/'/g, "");
+const registry = require(${registryPath});
+const sandboxState = require(${sandboxStatePath});
+const onboardSession = require(${onboardSessionPath});
+const childProcess = require("node:child_process");
+
+const mutations = [];
+const sourceEntry = {
+  name: "my-assistant",
+  agent: "openclaw",
+  gpuEnabled: false,
+  imageTag: "nemoclaw/my-assistant:1",
+  toolDisclosure: "progressive",
+};
+const racedEntry =
+  process.env.NEMOCLAW_TEST_REGISTRY_RACE === "removed"
+    ? null
+    : { ...sourceEntry, imageTag: "nemoclaw/my-assistant:2" };
+const journalExists = () =>
+  onboardSession.loadSession()?.checkpoint?.sandboxRecreate !== undefined;
+const recordMutation = (kind) => {
+  mutations.push(kind);
+  return true;
+};
+
+runner.run = (command) => {
+  mutations.push("run " + normalize(command));
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  const normalized = normalize(command);
+  if (normalized.includes("sandbox get") && normalized.includes("my-assistant")) return "";
+  if (normalized.includes("sandbox list")) return "";
+  if (normalized.includes("forward list")) {
+    return "my-assistant 127.0.0.1 18789 12345 running";
+  }
+  const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
+    defaultCurlOutput: "ok",
+  });
+  return mockedCapture ?? "";
+};
+registry.getSandbox = () => (journalExists() ? racedEntry : sourceEntry);
+registry.registerSandbox = () => recordMutation("registry register");
+registry.updateSandbox = () => recordMutation("registry update");
+registry.setDefault = () => recordMutation("registry default");
+registry.removeSandbox = () => recordMutation("registry remove");
+sandboxState.getLatestBackup = () => {
+  mutations.push("backup lookup");
+  return { backupPath: "/tmp/pre-upgrade-backup", timestamp: "2026-08-04T00:00:00Z" };
+};
+sandboxState.backupSandboxState = () => recordMutation("sandbox backup");
+sandboxState.restoreRecreatedSandboxState = () => recordMutation("sandbox restore");
+childProcess.spawn = () => recordMutation("sandbox create");
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+  try {
+    await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+    console.log(JSON.stringify({ error: null, mutations }));
+  } catch (caught) {
+    const message = caught instanceof Error ? caught.message : String(caught);
+    console.log(JSON.stringify({ error: message, mutations }));
+  }
+})();
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1",
+        NEMOCLAW_TEST_REGISTRY_RACE: race,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payloadLine = result.stdout
+      .trim()
+      .split("\n")
+      .reverse()
+      .find((line) => line.startsWith("{") && line.endsWith("}"));
+    assert.ok(payloadLine, "expected the registry-race fixture to report its result");
+    const payload = JSON.parse(payloadLine) as { error: string | null; mutations: string[] };
+    assert.match(payload.error ?? "", error);
+    assert.deepEqual(
+      payload.mutations,
+      [],
+      "registry drift must stop before backup lookup or an external mutation",
+    );
+  });
+
   it("non-interactive not-ready sandbox without installer restore intent exits before any sandbox delete (#6114)", {
     timeout: 60_000,
   }, async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-no-restore-intent-"));
+    const tmpDir = makeTmpDir("nemoclaw-onboard-no-restore-intent-");
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "no-restore-intent.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));

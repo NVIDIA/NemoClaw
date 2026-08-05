@@ -227,7 +227,7 @@ resolve_nemoclaw_gateway_port() {
     error "NEMOCLAW_GATEWAY_PORT must not overlap the 18789-18799 dashboard port range."
   fi
   case "$port" in
-    8000 | 11434 | 11435 | 11436 | 11437)
+    8000 | 8081 | 11434 | 11435 | 11436 | 11437)
       error "NEMOCLAW_GATEWAY_PORT must not overlap a reserved inference or runtime-adapter port ($port)."
       ;;
   esac
@@ -238,6 +238,7 @@ resolve_nemoclaw_gateway_port() {
     NEMOCLAW_OLLAMA_PROXY_PORT
     NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT
     NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT
+    NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT
   )
   local -a configured_ports=(
     "${NEMOCLAW_DASHBOARD_PORT:-18789}"
@@ -246,12 +247,16 @@ resolve_nemoclaw_gateway_port() {
     "${NEMOCLAW_OLLAMA_PROXY_PORT:-11435}"
     "${NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT:-11436}"
     "${NEMOCLAW_OPENROUTER_RUNTIME_ADAPTER_PORT:-11437}"
+    "${NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT:-11438}"
   )
   local i configured_port
   for i in "${!configured_ports[@]}"; do
     configured_port="${configured_ports[$i]}"
     configured_port="${configured_port#"${configured_port%%[![:space:]]*}"}"
     configured_port="${configured_port%"${configured_port##*[![:space:]]}"}"
+    if [[ "$configured_port" =~ ^0*8081$ ]]; then
+      error "${configured_names[$i]} must not overlap the fixed llama.cpp inference port (8081)."
+    fi
     if [[ "$configured_port" =~ ^[0-9]+$ ]] && [ "$port" -eq "$configured_port" ]; then
       error "NEMOCLAW_GATEWAY_PORT conflicts with ${configured_names[$i]} ($configured_port)."
     fi
@@ -817,7 +822,7 @@ usage() {
   printf "    NEMOCLAW_INSTALL_REF          Exact Git ref/SHA to install\n"
   printf "    NEMOCLAW_PROVIDER             build | openrouter | openai | anthropic | anthropicCompatible\n"
   printf "                                  | gemini | ollama | custom | nim-local | vllm | routed\n"
-  printf "                                  | hermes-provider\n"
+  printf "                                  | hermes-provider | llama-cpp\n"
   printf "                                  (aliases: cloud -> build, nim -> nim-local)\n"
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
@@ -1124,6 +1129,8 @@ ONBOARD_RAN=false
 # invoke the CLI directly so a stale PATH cache does not silently skip
 # auto-onboarding (#3276).
 _CLI_PATH=""
+_NEMOCLAW_CLI_INSTALL_PREPARED=false
+_NEMOCLAW_CLI_INSTALL_MODE=""
 _PREEXISTING_SANDBOX_COUNT=0
 _PREEXISTING_SANDBOX_RECOVERY_RAN=false
 # #6520: set when the automatic recovery pass exited 0 but skipped recorded
@@ -1313,6 +1320,50 @@ upstream_openshell_gateway_user_service_installed() {
     || [[ -f /lib/systemd/user/openshell-gateway.service ]]
 }
 
+resolve_upstream_openshell_gateway_bin_for_service() {
+  local exec_start gateway_bin
+  local -a gateway_bins=()
+  exec_start="$(systemctl --user show openshell-gateway.service --property=ExecStart --value 2>/dev/null)" \
+    || return 1
+  while IFS= read -r gateway_bin; do
+    gateway_bins+=("$gateway_bin")
+  done < <(
+    printf '%s\n' "$exec_start" \
+      | grep -oE 'path=[^ ;}]+' \
+      | sed 's/^path=//' \
+      | sort -u
+  )
+  [[ "${#gateway_bins[@]}" -eq 1 ]] || return 1
+  gateway_bin="${gateway_bins[0]}"
+  [[ "$gateway_bin" == /*/openshell-gateway && -x "$gateway_bin" ]] || return 1
+  printf '%s\n' "$gateway_bin"
+}
+
+openshell_binary_version() {
+  local binary="${1:-}" version_output
+  [[ -x "$binary" ]] || return 1
+  version_output="$("$binary" --version 2>/dev/null)" || return 1
+  printf '%s\n' "$version_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+require_compatible_upstream_openshell_gateway_service() {
+  local nemoclaw_gateway_bin upstream_gateway_bin nemoclaw_version upstream_version
+  nemoclaw_gateway_bin="$(resolve_openshell_gateway_bin_for_service)" \
+    || error "Could not locate the NemoClaw OpenShell gateway binary before checking the existing upstream service."
+  if ! trusted_openshell_gateway_bin_for_service "$nemoclaw_gateway_bin"; then
+    error "OpenShell gateway user service binary path is not a trusted install path: $nemoclaw_gateway_bin"
+  fi
+  upstream_gateway_bin="$(resolve_upstream_openshell_gateway_bin_for_service)" \
+    || error "Could not locate the gateway binary used by the existing upstream OpenShell user service. Remove or repair that OpenShell installation, then rerun the installer."
+  nemoclaw_version="$(openshell_binary_version "$nemoclaw_gateway_bin")" \
+    || error "Could not determine the NemoClaw OpenShell gateway version at $nemoclaw_gateway_bin."
+  upstream_version="$(openshell_binary_version "$upstream_gateway_bin")" \
+    || error "Could not determine the existing upstream OpenShell gateway version at $upstream_gateway_bin."
+  if [[ "$nemoclaw_version" != "$upstream_version" ]]; then
+    error "OpenShell gateway version mismatch: NemoClaw installed ${nemoclaw_version} at ${nemoclaw_gateway_bin}, but the existing upstream user service uses ${upstream_version} at ${upstream_gateway_bin}. Align or remove the upstream OpenShell package (for apt installs: sudo apt remove openshell), then rerun the installer."
+  fi
+}
+
 macos_openshell_homebrew_gateway_service_installed() {
   [[ "$(uname -s)" == "Darwin" ]] || return 1
   command -v brew >/dev/null 2>&1 || return 1
@@ -1381,6 +1432,7 @@ install_nemoclaw_openshell_gateway_user_service() {
     if [[ -f "$service_path" ]] && ! is_nemoclaw_openshell_gateway_user_service "$service_path"; then
       error "Refusing to replace non-NemoClaw OpenShell gateway user service: $service_path"
     fi
+    require_compatible_upstream_openshell_gateway_service
     info "OpenShell upstream gateway user service is staged; onboarding will select and start it."
     return 0
   fi
@@ -1930,6 +1982,95 @@ is_source_checkout() {
   return 1
 }
 
+installer_payload_revision() {
+  local revision=""
+  revision="$(git -C "${SCRIPT_DIR}/.." rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" || return 1
+  [[ "$revision" =~ ^[0-9a-f]{40,64}$ ]] || return 1
+  printf '%s' "$revision"
+}
+
+path_resolves_within() {
+  local parent="$1" candidate="$2"
+  node -e '
+    const fs = require("fs");
+    const path = require("path");
+    try {
+      const parent = fs.realpathSync(process.argv[1]);
+      const candidate = fs.realpathSync(process.argv[2]);
+      const relative = path.relative(parent, candidate);
+      process.exit(
+        relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative)) ? 0 : 1,
+      );
+    } catch {
+      process.exit(1);
+    }
+  ' "$parent" "$candidate"
+}
+
+resolve_cli_runner_within_source() {
+  local source_root="$1" candidate="" npm_bin=""
+  if command_exists "$_CLI_BIN"; then
+    candidate="$(command -v "$_CLI_BIN")"
+    if is_real_nemoclaw_cli "$candidate" "$_CLI_BIN" \
+      && path_resolves_within "$source_root" "$candidate"; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  fi
+
+  npm_bin="$(resolve_npm_bin)" || true
+  candidate="${npm_bin:+${npm_bin}/${_CLI_BIN}}"
+  if [[ -n "$candidate" && -x "$candidate" ]] \
+    && is_real_nemoclaw_cli "$candidate" "$_CLI_BIN" \
+    && path_resolves_within "$source_root" "$candidate"; then
+    printf '%s' "$candidate"
+    return 0
+  fi
+  return 1
+}
+
+is_reusable_managed_nemoclaw_install() {
+  local source_root="$1" expected_revision current_revision identity_file identity_revision
+  local identity_version cli_runner version_output
+
+  [[ "${NEMOCLAW_BOOTSTRAP_PAYLOAD:-}" == "1" ]] || return 1
+  ! truthy_env "${NEMOCLAW_REINSTALL_CLI:-}" || return 1
+  [[ -d "$source_root" && ! -L "$source_root" && -O "$source_root" ]] || return 1
+  [[ -d "${source_root}/.git" && ! -L "${source_root}/.git" ]] || return 1
+  grep -q '"name"[[:space:]]*:[[:space:]]*"nemoclaw"' "${source_root}/package.json" 2>/dev/null || return 1
+
+  expected_revision="$(installer_payload_revision)" || return 1
+  current_revision="$(git -C "$source_root" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" || return 1
+  [[ "$current_revision" == "$expected_revision" ]] || return 1
+  git -C "$source_root" diff --quiet --ignore-submodules -- || return 1
+  git -C "$source_root" diff --cached --quiet --ignore-submodules -- || return 1
+  [[ -d "${source_root}/node_modules" && -d "${source_root}/nemoclaw/node_modules" ]] || return 1
+
+  identity_file="${source_root}/dist/build-identity.json"
+  [[ -f "$identity_file" && -s "${source_root}/dist/lib/onboard/preflight.js" ]] || return 1
+  [[ -s "${source_root}/nemoclaw/dist/index.js" ]] || return 1
+  identity_revision="$(json_string_field "$identity_file" sourceRevision)"
+  identity_version="$(json_string_field "$identity_file" nemoclawVersion)"
+  [[ "$identity_revision" == "$expected_revision" ]] || return 1
+  [[ "$identity_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?$ ]] || return 1
+
+  cli_runner="$(resolve_cli_runner_within_source "$source_root")" || return 1
+  version_output="$("$cli_runner" --version 2>/dev/null)" || return 1
+  [[ "$version_output" == "${_CLI_BIN} v${identity_version}" ]]
+}
+
+finish_nemoclaw_install() {
+  # A backup-preparation pass defers OpenShell but still prepares the CLI. The
+  # later install pass completes only the OpenShell policy for that source mode.
+  case "${_NEMOCLAW_CLI_INSTALL_MODE:-}" in
+    source) maybe_install_openshell_during_install if-missing ;;
+    managed) maybe_install_openshell_during_install force ;;
+    *) error "The prepared ${_CLI_DISPLAY} CLI has no installation mode." ;;
+  esac
+  refresh_path
+  ensure_nemoclaw_shim || true
+}
+
 install_nemoclaw() {
   command_exists git || error "git was not found on PATH."
   local repo_root package_json
@@ -1937,6 +2078,13 @@ install_nemoclaw() {
   package_json="${repo_root}/package.json"
   # Tell prepare not to run npm link — the installer handles linking explicitly.
   export NEMOCLAW_INSTALLING=1
+
+  if [[ "${_NEMOCLAW_CLI_INSTALL_PREPARED:-false}" == true ]]; then
+    info "${_CLI_DISPLAY} CLI was already prepared during this installer run — reusing it."
+    unset NEMOCLAW_REINSTALL_CLI
+    finish_nemoclaw_install
+    return 0
+  fi
 
   if is_source_checkout "$repo_root"; then
     info "${_CLI_DISPLAY} package.json found in the selected source checkout — installing from source…"
@@ -1950,15 +2098,7 @@ install_nemoclaw() {
     spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\"/nemoclaw && npm ci --ignore-scripts && npm run build"
     spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm link"
 
-    # Bootstrap OpenShell when the source checkout is being used as a fresh
-    # install entrypoint (e.g. `git clone … && bash install.sh`) and the host
-    # has no openshell on PATH. Skipping here previously left the user at a
-    # circular preflight error ("Run the NemoClaw installer or
-    # scripts/install-openshell.sh") even though they were running the
-    # installer. A developer who already has a managed openshell on PATH
-    # keeps their existing binary — install-openshell.sh is only invoked
-    # when openshell is genuinely missing. See #3989.
-    maybe_install_openshell_during_install if-missing
+    _NEMOCLAW_CLI_INSTALL_MODE=source
   else
     if [[ -f "$package_json" ]]; then
       info "Installer payload is not a persistent source checkout — installing from GitHub…"
@@ -1972,46 +2112,42 @@ install_nemoclaw() {
     # npm install -g git+https://... does this internally but we can't hook
     # into its extraction pipeline, so we do it ourselves.
     local nemoclaw_src="${HOME}/.nemoclaw/source"
-    rm -rf "$nemoclaw_src"
-    mkdir -p "$(dirname "$nemoclaw_src")"
     NEMOCLAW_SOURCE_ROOT="$nemoclaw_src"
-    spin "Cloning ${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"
-    # Fetch version tags into the shallow clone so `git describe --tags
-    # --match "v*"` works at runtime (the shallow clone only has the
-    # single ref we asked for).
-    git -C "$nemoclaw_src" fetch --depth=1 origin 'refs/tags/v*:refs/tags/v*' 2>/dev/null || true
-    # Stamp .version from the requested ref so the recorded version matches the
-    # installed tag, even when a shallow clone cannot name it via describe.
-    local stamped_version
-    stamped_version="$(resolve_stamped_version "$release_ref")"
-    if [[ -n "$stamped_version" ]]; then
-      printf '%s' "$stamped_version" >"$nemoclaw_src/.version"
+    if is_reusable_managed_nemoclaw_install "$nemoclaw_src"; then
+      info "Reusing the installed ${_CLI_DISPLAY} CLI at the selected revision."
     else
-      git -C "$nemoclaw_src" describe --tags --match 'v*' 2>/dev/null \
-        | sed 's/^v//' >"$nemoclaw_src/.version" || true
+      rm -rf "$nemoclaw_src"
+      mkdir -p "$(dirname "$nemoclaw_src")"
+      spin "Cloning ${_CLI_DISPLAY} source" clone_nemoclaw_ref "$release_ref" "$nemoclaw_src"
+      # Fetch version tags into the shallow clone so `git describe --tags
+      # --match "v*"` works at runtime (the shallow clone only has the
+      # single ref we asked for).
+      git -C "$nemoclaw_src" fetch --depth=1 origin 'refs/tags/v*:refs/tags/v*' 2>/dev/null || true
+      # Stamp .version from the requested ref so the recorded version matches the
+      # installed tag, even when a shallow clone cannot name it via describe.
+      local stamped_version
+      stamped_version="$(resolve_stamped_version "$release_ref")"
+      if [[ -n "$stamped_version" ]]; then
+        printf '%s' "$stamped_version" >"$nemoclaw_src/.version"
+      else
+        git -C "$nemoclaw_src" describe --tags --match 'v*' 2>/dev/null \
+          | sed 's/^v//' >"$nemoclaw_src/.version" || true
+      fi
+      if [[ -z "${NEMOCLAW_AGENT:-}" || "${NEMOCLAW_AGENT}" == "openclaw" ]]; then
+        spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$nemoclaw_src" \
+          || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
+      fi
+      spin "Installing ${_CLI_DISPLAY} dependencies" bash -c "cd \"$nemoclaw_src\" && npm install --ignore-scripts"
+      spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
+      spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm ci --ignore-scripts && npm run build"
+      spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$nemoclaw_src\" && npm link"
     fi
-    if [[ -z "${NEMOCLAW_AGENT:-}" || "${NEMOCLAW_AGENT}" == "openclaw" ]]; then
-      spin "Preparing OpenClaw package" bash -c "$(declare -f info warn resolve_openclaw_version pre_extract_openclaw); pre_extract_openclaw \"\$1\"" _ "$nemoclaw_src" \
-        || warn "Pre-extraction failed — npm install may fail if openclaw tarball is broken"
-    fi
-    spin "Installing ${_CLI_DISPLAY} dependencies" bash -c "cd \"$nemoclaw_src\" && npm install --ignore-scripts"
-    spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
-    spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm ci --ignore-scripts && npm run build"
-    spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$nemoclaw_src\" && npm link"
-
-    # Install/upgrade the OpenShell CLI on the GitHub-clone path (curl|bash).
-    # Without this, install.sh defers the openshell version gate entirely to
-    # onboard, so any later skip of onboard (preflight blocking,
-    # interrupted session) leaves openshell stale below blueprint's
-    # min_openshell_version even though the new NemoClaw declared a higher
-    # floor. The source-checkout branch invokes the same helper in
-    # `if-missing` mode so developers keep autonomy when openshell is already
-    # on PATH. The script is idempotent on the happy path. See #2272, #3989.
-    maybe_install_openshell_during_install force
+    _NEMOCLAW_CLI_INSTALL_MODE=managed
   fi
 
-  refresh_path
-  ensure_nemoclaw_shim || true
+  _NEMOCLAW_CLI_INSTALL_PREPARED=true
+  unset NEMOCLAW_REINSTALL_CLI
+  finish_nemoclaw_install
 }
 
 # ---------------------------------------------------------------------------
@@ -3376,6 +3512,7 @@ STATION_ULTRA_LEGACY_VLLM_IMAGE="vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899
 STATION_DEEPSEEK_VLLM_MODEL="deepseek-v4-flash"
 STATION_DEEPSEEK_SERVED_MODEL="deepseek-ai/DeepSeek-V4-Flash"
 _SELECTED_EXPRESS_PLATFORM=""
+_EXPRESS_WSL_PROVIDER_PENDING=""
 _STATION_EXPRESS_RESUME_REVISION=""
 _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
 _STATION_EXPRESS_DEFERRED_MANAGED_PAIR=0
@@ -4054,6 +4191,48 @@ express_wsl_can_use_windows_host_ollama() {
   express_wsl_docker_operating_system | grep -qi 'docker desktop'
 }
 
+# True when a readable Docker configuration decides the context but no Node.js can
+# parse it yet. The express prompt runs before install_nodejs, so treating that
+# window as non-local pinned WSL-local Ollama on hosts whose Docker Desktop
+# topology supports Windows-host Ollama, and onboarding then rejected the
+# preselected provider (#8199). Selection waits for the runtime instead.
+express_wsl_docker_context_needs_node() {
+  [ -z "${DOCKER_HOST:-}" ] || return 1
+  [ -z "${DOCKER_CONTEXT:-}" ] || return 1
+  local cfg="${DOCKER_CONFIG:-${HOME:-}/.docker}/config.json"
+  [ -e "$cfg" ] && [ -r "$cfg" ] || return 1
+  ! command_exists node
+}
+
+# Choose between Windows-host and WSL-local Ollama, or defer when only the
+# missing Node.js runtime blocks the decision.
+select_express_wsl_ollama_provider() {
+  _EXPRESS_WSL_PROVIDER_PENDING=""
+  if express_wsl_can_use_windows_host_ollama; then
+    export NEMOCLAW_PROVIDER=install-windows-ollama
+    return 0
+  fi
+  if express_wsl_docker_context_needs_node; then
+    _EXPRESS_WSL_PROVIDER_PENDING=1
+    return 0
+  fi
+  export NEMOCLAW_PROVIDER=install-ollama
+}
+
+# Finish a deferred Windows WSL selection once install_nodejs has provided the
+# runtime that reads the Docker configuration.
+resolve_pending_express_wsl_provider() {
+  [ "${_EXPRESS_WSL_PROVIDER_PENDING:-}" = "1" ] || return 0
+  _EXPRESS_WSL_PROVIDER_PENDING=""
+  if express_wsl_can_use_windows_host_ollama; then
+    export NEMOCLAW_PROVIDER=install-windows-ollama
+    info "Express install will configure Windows-host Ollama through host.docker.internal."
+  else
+    export NEMOCLAW_PROVIDER=install-ollama
+    info "Express install will configure WSL-local Ollama."
+  fi
+}
+
 activate_express_install() {
   local platform="$1"
   _SELECTED_EXPRESS_PLATFORM="$platform"
@@ -4086,11 +4265,7 @@ activate_express_install() {
       configure_station_express_model
       ;;
     "Windows WSL")
-      if express_wsl_can_use_windows_host_ollama; then
-        export NEMOCLAW_PROVIDER=install-windows-ollama
-      else
-        export NEMOCLAW_PROVIDER=install-ollama
-      fi
+      select_express_wsl_ollama_provider
       ;;
   esac
 }
@@ -4512,10 +4687,11 @@ describe_express_install() {
     "DGX Spark")
       if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
         inference_summary="managed local vLLM with model ${NEMOCLAW_VLLM_MODEL}"
+        inference_disclosure="The explicit model remains authoritative, so this run keeps the existing single-host DGX Spark profile. Managed vLLM pulls the configured image/model and runs only its dedicated container."
       else
-        inference_summary="managed local vLLM using the DGX Spark profile default model"
+        inference_summary="managed vLLM with automatic DGX Spark serving-profile selection"
+        inference_disclosure="With no explicit inference intent or related runtime, one exactly qualified pretrusted managed cluster topology selects a matching pinned distributed profile. An ordinary no-match keeps the existing single-host DGX Spark profile; any related or ambiguous setup remains untouched and stops installation. Managed vLLM pulls the selected image/model and runs only its dedicated containers. The selected distributed profile is experimental pending physical end-to-end validation."
       fi
-      inference_disclosure="Managed vLLM pulls the configured vLLM image/model and runs a local vLLM inference container."
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "DGX Station")
@@ -4561,6 +4737,8 @@ describe_express_install() {
     "Windows WSL")
       if express_wsl_can_use_windows_host_ollama; then
         inference_summary="Windows-host Ollama through host.docker.internal"
+      elif express_wsl_docker_context_needs_node; then
+        inference_summary="local Ollama, selected once the installed Node.js runtime reads the Docker configuration"
       else
         inference_summary="WSL-local Ollama, with a sandbox auth proxy when containers cannot reach host loopback"
       fi
@@ -4842,6 +5020,7 @@ main() {
   step 1 "Node.js"
   install_nodejs
   ensure_supported_runtime
+  resolve_pending_express_wsl_provider
   ensure_station_express_pair
 
   step 2 "${_CLI_DISPLAY} CLI"

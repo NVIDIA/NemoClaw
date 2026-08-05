@@ -55,6 +55,18 @@ describe("Hermes rebuild bootstrap workflow boundary", () => {
   it.each([
     "rebuild-hermes",
     "rebuild-hermes-stale-base",
+  ] as const)("%s requires the exact-commit CLI restore step (#7144)", (jobName) => {
+    const job = bootstrapJob(jobName);
+    job.steps = job.steps.filter((step) => step.name !== "Restore exact-commit CLI artifact");
+
+    expect(validateRebuildHermesBootstrapBoundary(jobName, job)).toContain(
+      `${jobName} job missing step: Restore exact-commit CLI artifact`,
+    );
+  });
+
+  it.each([
+    "rebuild-hermes",
+    "rebuild-hermes-stale-base",
   ] as const)("%s rejects bootstrap trust-boundary drift (#7144)", (jobName) => {
     const job = bootstrapJob(jobName);
     const [prepare, restore, install, run] = job.steps;

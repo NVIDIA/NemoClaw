@@ -17,6 +17,7 @@ import {
   MANAGED_IMAGE_REPOSITORIES,
   MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
 } from "../managed-image/contract";
+import { queryOpenShellDockerSandboxRuntimeSnapshot } from "../openshell-docker-sandbox-containers";
 import {
   RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION,
   type RuntimeProviderBundle,
@@ -31,6 +32,7 @@ import {
   type RuntimeProviderWorkloadCleanupResult,
   type RuntimeProviderWorkloadProfile,
 } from "./contract";
+import { createDockerRuntimeProviderSnapshotSurface } from "./snapshot";
 
 type DockerOpResult = { status?: number | null };
 type DockerStop = (name: string, options?: Record<string, unknown>) => DockerOpResult;
@@ -50,6 +52,7 @@ export interface DockerRuntimeProviderDependencies {
   readonly isRuntimeDown: typeof isDockerRuntimeDown;
   readonly printRuntimeDownGuidance: typeof printDockerRuntimeDownGuidance;
   readonly recoverSandbox: typeof recoverDockerDriverSandbox;
+  readonly queryRuntimeSnapshot: typeof queryOpenShellDockerSandboxRuntimeSnapshot;
   readonly removeImage: DockerRemoveImage;
   readonly stopContainer: DockerStop;
   readonly unpauseContainer: DockerUnpause;
@@ -82,6 +85,8 @@ function resolveDependencies(
     isRuntimeDown: overrides.isRuntimeDown ?? isDockerRuntimeDown,
     printRuntimeDownGuidance: overrides.printRuntimeDownGuidance ?? printDockerRuntimeDownGuidance,
     recoverSandbox: overrides.recoverSandbox ?? recoverDockerDriverSandbox,
+    queryRuntimeSnapshot:
+      overrides.queryRuntimeSnapshot ?? queryOpenShellDockerSandboxRuntimeSnapshot,
     removeImage:
       overrides.removeImage ??
       ((reference, options) => loadDockerRemoveImage()(reference, options)),
@@ -153,7 +158,13 @@ function startDockerSandbox(
     return { exitCode: 0 };
   }
 
-  const recovery = deps.recoverSandbox(input.sandboxName);
+  // Docker health is an image-level signal, not the lifecycle authority for
+  // `start`. Once the container is running, verifyStarted performs the
+  // provider-owned OpenShell, managed gateway, and host-forward recovery.
+  // Waiting for Docker health here can prevent that repair from running.
+  const recovery = deps.recoverSandbox(input.sandboxName, {
+    readiness: "runtime-running",
+  });
   if (!recovery.recovered) {
     return {
       exitCode: 1,
@@ -273,6 +284,7 @@ function acceptsReceipt(
 ): boolean {
   if (!receipt) return true;
   if (receipt.kind === "legacy-dockerfile") return profile.legacyDockerfileBuilds;
+  if (receipt.kind === "native-artifact") return false;
   if (receipt.platform === undefined) return false;
   return (
     profile.support !== null &&
@@ -342,13 +354,17 @@ export function createDockerRuntimeProviderBundle(
         "stop",
         "inference-set",
         "rebuild",
+        "clone",
         "provider-cleanup",
         "destroy",
         "workload-cleanup",
       ],
     },
     bootstrap: unsupported(providerId, futureReason),
-    snapshot: unsupported(providerId, futureReason),
+    snapshot: createDockerRuntimeProviderSnapshotSurface(providerId, {
+      captureHostCommand: deps.captureHostCommand,
+      queryRuntimeSnapshot: deps.queryRuntimeSnapshot,
+    }),
     recovery: unsupported(providerId, futureReason),
     cleanup: {
       providerId,

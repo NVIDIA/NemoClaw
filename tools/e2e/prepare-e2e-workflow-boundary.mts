@@ -27,6 +27,8 @@ const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
 
 export const PREPARE_E2E_NO_BUILD_JOBS = new Set([
   "bootstrap-install-smoke",
+  "llama-cpp-dgx-spark-qualification",
+  "managed-image-multiarch-startup",
   "ollama-auth-proxy",
   "security-posture",
   "shields-config",

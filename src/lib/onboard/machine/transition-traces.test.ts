@@ -8,8 +8,8 @@
  * `runtime.test.ts` pins per-operation event shapes, `runner.test.ts` pins
  * handler sequencing without observing events). Descriptive, not
  * aspirational: update a pin in the same PR that changes the ordering.
- * Recovery-path semantics (edges leaving terminal `failed`, the legacy
- * step-mutation bridge) stay out of scope and are owned by #6227.
+ * Recovery-path semantics (edges leaving terminal `failed`) stay out of scope
+ * and are owned by #6227.
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -23,11 +23,10 @@ import {
   type Session,
   type SessionUpdates,
   type StepState,
-  sanitizeFailure,
 } from "../../state/onboard-session";
 import type { OnboardMachineEvent } from "./events";
 import { handleSandboxState } from "./handlers/sandbox";
-import { baseOptions, createDeps } from "./handlers/sandbox-test-fixtures";
+import { baseOptions, bindJournaledRecreate, createDeps } from "./handlers/sandbox-test-fixtures";
 import { advanceTo, branchTo, completeOnboardMachine, failOnboardMachine } from "./result";
 import { type OnboardStateHandlers, runOnboardMachine } from "./runner";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
@@ -72,14 +71,12 @@ function createTracedRuntime(initialSession: Session = createSession()) {
     updateSession,
     markStepStarted: () => cloneSession(session),
     markStepComplete: (_stepName, updates) => applySafeUpdates(updates),
-    markStepCompleteRecordOnly: (_stepName, updates) => applySafeUpdates(updates),
     markStepSkipped: () => cloneSession(session),
     markStepFailed: (stepName, message) =>
       updateSession((current) => {
-        current.status = "failed";
-        current.failure = sanitizeFailure({ step: stepName, message, recordedAt: NOW });
+        current.steps[stepName].status = "failed";
+        current.steps[stepName].error = message ?? null;
       }),
-    markStepFailedRecordOnly: () => cloneSession(session),
     completeSession: (updates: SessionUpdates = {}) =>
       updateSession((current) => {
         Object.assign(current, filterSafeUpdates(updates));
@@ -217,8 +214,16 @@ describe("onboard machine lifecycle traces (#6225)", () => {
       steps: { sandbox: completedStep() },
     });
     const { runtime, events, updateSession } = createTracedRuntime(resumedSession);
+    await runtime.start({ resumed: true });
+    const session = await runtime.session();
+    const journal = bindJournaledRecreate(session, "my-assistant", "openclaw", updateSession);
+    updateSession((current) => {
+      current.checkpoint = session.checkpoint;
+    });
     const { calls, deps } = createDeps({
       getSandboxReuseState: () => "not_ready",
+      getSandboxRecreateObservation: journal.observe,
+      createSandbox: journal.completeCreate,
       updateSession,
       recordRepairEvent: (type, options) => runtime.emitRepairEvent(type, options),
       recordStepComplete: async (_stepName, updates) =>
@@ -226,8 +231,6 @@ describe("onboard machine lifecycle traces (#6225)", () => {
           Object.assign(current, filterSafeUpdates(updates));
         }),
     });
-    await runtime.start({ resumed: true });
-    const session = await runtime.session();
 
     const run = await runOnboardMachine({
       context: null,
@@ -246,8 +249,8 @@ describe("onboard machine lifecycle traces (#6225)", () => {
       stopStates: ["openclaw"],
     });
 
-    expect(calls.repairSandbox).toHaveBeenCalledWith("my-assistant");
-    expect(calls.createSandbox).toHaveBeenCalledOnce();
+    expect(calls.repairSandbox).not.toHaveBeenCalled();
+    expect(journal.completeCreate).toHaveBeenCalledOnce();
     expect(traceOf(events)).toEqual([
       "onboard.resumed:sandbox",
       "state.repair.started:sandbox",

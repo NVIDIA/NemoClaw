@@ -19,6 +19,10 @@ The target shape is a machine-driven onboarding runner:
 
 In that final shape, `src/lib/onboard.ts` should be a thin entrypoint. State handlers should own state-specific prompts, resume validation, repair decisions, and side effects.
 
+`flow-handoff.ts` validates required data and constructs context at the initial-to-core and core-to-final boundaries. The entrypoint supplies process-bound dependencies and reserved-name output.
+
+The strict runner owns exact `init`, `preflight`, `provider_selection`, `inference`, and `sandbox` entry. If the durable state is later than a slice entry, earlier phases run as evented prerequisite repairs. A repair must return a legal, update-free transition chain and must not change the durable entry state.
+
 ## State ownership
 
 Machine states are coarse user-visible onboarding phases, not every subprocess or probe inside a phase. The current vocabulary is intentionally limited to major boundaries:
@@ -39,15 +43,12 @@ A state handler may perform many smaller operations, but it should expose only s
 
 ## Session steps versus machine state
 
-The persisted onboarding session still tracks step-level progress for resumability. Step recording is older than the FSM and is currently used as a compatibility bridge.
+The persisted onboarding session tracks step-level progress for resumability.
 
-Long term:
-
-- `OnboardRuntime` should own machine transitions and machine revision increments.
-- Session step helpers should record only step status (`pending`, `in_progress`, `complete`, `failed`, `skipped`).
-- State handlers should return explicit results instead of implicitly moving the machine by calling step helpers.
-
-Until that migration completes, step helpers may still infer machine snapshots for compatibility with older sessions and tests.
+- `OnboardRuntime` owns normal machine transitions, revision increments, terminal state, and machine events.
+- Session step helpers record step-progress bookkeeping and context updates accepted by `filterSafeUpdates`. They cannot change the machine snapshot.
+- State handlers return explicit results. They do not move the machine through step helpers.
+- Explicit session recovery and the process-exit failure backstop are narrow exceptions.
 
 ## Handler contract
 
@@ -85,15 +86,15 @@ without a state transition so a later process can resume the same non-terminal s
 
 ## Runtime responsibilities
 
-`OnboardRuntime` is the intended authority for:
+`OnboardRuntime` is the authority for:
 
-- validating transitions against `transitions.ts`;
+- validating result source, target, kind, and graph transitions;
 - applying safe session context updates;
 - marking terminal states;
 - emitting redacted lifecycle, state, repair, resume-conflict, and hook events;
-- preserving compatibility with normalized older sessions.
+- normalizing older sessions before strict execution.
 
-The runtime should reject invalid transitions before they can be persisted.
+Step helpers record step-progress bookkeeping and context updates accepted by `filterSafeUpdates`. They cannot change the machine snapshot or emit machine events. Explicit session recovery and the process-exit failure backstop are separate recovery boundaries. They validate their snapshot changes and run before or outside handler execution.
 
 ## Event semantics
 

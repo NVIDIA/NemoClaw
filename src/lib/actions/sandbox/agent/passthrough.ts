@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:child_process";
+
 // Source-of-truth boundary for the `nemoclaw <name> agent` passthrough.
 //
 // The wrapper enforces three host-side mirrors of upstream contracts, one
@@ -106,10 +108,19 @@ import { CLI_NAME } from "../../../cli/branding";
 import type { ShieldsAutoRestoreReadResult } from "../../../shields/audit";
 import { parseSandboxPhase } from "../../../state/gateway";
 import * as registry from "../../../state/registry";
-import { execSandbox } from "../exec";
+import {
+  buildOpenshellExecArgs,
+  computeExitCode,
+  execSandbox,
+  wrapExecCommandWithRuntimeEnv,
+} from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
-import { type AgentJsonPassthroughProcess, runAgentJsonPassthrough } from "./passthrough-json";
+import {
+  defaultGetOpenshellBinary,
+  type AgentJsonPassthroughProcess,
+  runAgentJsonPassthrough,
+} from "./passthrough-json";
 import { OLLAMA_LOCAL_PROVIDER, runOllamaRestartRecovery } from "./passthrough-ollama-recovery";
 import { maybeEmitShieldsRelockWarning } from "./passthrough-shields-warning";
 
@@ -135,6 +146,78 @@ const OPENCLAW_AGENT_VALUE_FLAGS = new Set([
 
 const OPENCLAW_AGENT_BOOLEAN_FLAGS = new Set(["--deliver"]);
 
+// OpenClaw can exit zero after running in embedded-fallback mode and does not
+// expose a stable machine-readable transport discriminator. These patterns mirror
+// the gateway-auth live tests in restore-gateway-pairing.ts and extend them with
+// the reporter-observed `[agent/embedded]` line prefix (#8100). Removal condition:
+// OpenClaw provides a supported machine-readable gateway-only result or removes
+// embedded-fallback mode.
+const OPENCLAW_EMBEDDED_FALLBACK_PATTERN =
+  /EMBEDDED FALLBACK|\[agent\/embedded\]|fallbackFrom[": ]+gateway|transport[": ]+embedded/i;
+
+const AGENT_NON_JSON_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+
+function nonJsonAsText(value: string | Buffer | null | undefined): string {
+  if (Buffer.isBuffer(value)) return value.toString("utf-8");
+  return typeof value === "string" ? value : "";
+}
+
+export type AgentNonJsonPassthroughDeps = {
+  getOpenshellBinary?: () => string;
+  spawnSync?: (
+    command: string,
+    args: readonly string[],
+    options: SpawnSyncOptions,
+  ) => SpawnSyncReturns<string | Buffer>;
+};
+
+export function runAgentNonJsonPassthrough(
+  sandboxName: string,
+  command: readonly string[],
+  proc: NonNullable<AgentPassthroughDeps["process"]>,
+  deps: AgentNonJsonPassthroughDeps = {},
+): never {
+  const binary = (deps.getOpenshellBinary ?? defaultGetOpenshellBinary)();
+  const spawnSyncImpl = deps.spawnSync ?? spawnSync;
+  const result = spawnSyncImpl(
+    binary,
+    buildOpenshellExecArgs(sandboxName, wrapExecCommandWithRuntimeEnv(command), { tty: false }),
+    {
+      encoding: "utf-8",
+      maxBuffer: AGENT_NON_JSON_MAX_BUFFER_BYTES,
+      stdio: ["inherit", "pipe", "pipe"],
+    },
+  );
+  const stdout = nonJsonAsText(result.stdout);
+  const stderr = nonJsonAsText(result.stderr);
+
+  if (OPENCLAW_EMBEDDED_FALLBACK_PATTERN.test(`${stdout}\n${stderr}`)) {
+    proc.stderr.write(
+      `  OpenClaw is running in embedded-fallback mode in sandbox '${sandboxName}': gateway pairing is broken or missing.\n`,
+    );
+    proc.stderr.write("  Documented recovery paths:\n");
+    proc.stderr.write(
+      `    ${CLI_NAME} ${sandboxName} recover         — re-pair the gateway without recreating the sandbox\n`,
+    );
+    proc.stderr.write(
+      `    ${CLI_NAME} ${sandboxName} rebuild --yes   — recreate container, workspace preserved\n`,
+    );
+    proc.stderr.write(
+      `    ${CLI_NAME} onboard --resume               — restore sandbox registration\n`,
+    );
+    return proc.exit(1);
+  }
+
+  if (stdout) (proc.stdout ?? process.stdout).write(stdout);
+  if (stderr) proc.stderr.write(stderr);
+  const { code, errorMessage } = computeExitCode(result);
+  if (errorMessage) {
+    proc.stderr.write(`  Failed to invoke openshell: ${errorMessage}\n`);
+    proc.stderr.write("  Ensure 'openshell' is installed and on PATH.\n");
+  }
+  return proc.exit(code);
+}
+
 export interface AgentPassthroughOptions {
   extraArgs?: readonly string[];
 }
@@ -144,6 +227,7 @@ export interface AgentPassthroughDeps {
   ensureLive?: typeof ensureLiveSandboxOrExit;
   exec?: typeof execSandbox;
   execJson?: typeof runAgentJsonPassthrough;
+  execNonJson?: typeof runAgentNonJsonPassthrough;
   runOllamaRestartRecovery?: typeof runOllamaRestartRecovery;
   getRecentShieldsAutoRestore?: (sandboxName: string) => ShieldsAutoRestoreReadResult;
   process?: {
@@ -461,6 +545,11 @@ export async function runAgentPassthrough(
       stdout: proc.stdout ?? process.stdout,
       stderr: proc.stderr,
     } satisfies AgentJsonPassthroughProcess);
+    return;
+  }
+  if (isOpenClawPassthroughCommand(command)) {
+    const execNonJson = deps.execNonJson ?? runAgentNonJsonPassthrough;
+    execNonJson(sandboxName, command, proc);
     return;
   }
   const exec = deps.exec ?? execSandbox;

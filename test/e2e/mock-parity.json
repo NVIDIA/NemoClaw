@@ -3,6 +3,38 @@
   "version": 1,
   "entries": [
     {
+      "live": "test/e2e/live/llama-cpp-dgx-spark-qualification.test.ts",
+      "fast": [
+        "test/e2e/support/llama-cpp-dgx-spark-qualification-workflow.test.ts",
+        "test/llama-cpp-dgx-spark-qualification-contract.test.ts",
+        "test/llama-cpp-dgx-spark-qualification-plan.test.ts",
+        "test/llama-cpp-dgx-spark-qualification-runner.test.ts",
+        "test/llama-cpp-image.test.ts",
+        "test/pr-risk-plan.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/managed-image-multiarch-startup.test.ts",
+      "fast": [
+        "test/e2e/support/base-image-publication.test.ts",
+        "test/e2e/support/e2e-workflow.test.ts",
+        "test/e2e/support/managed-image-multiarch-startup-helpers.test.ts",
+        "test/managed-image-publication-workflow.test.ts",
+        "test/pr-risk-plan.test.ts",
+        "test/protected-managed-image-contract.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/managed-image-protected-runtime.test.ts",
+      "fast": [
+        "src/lib/inference/nim.test.ts",
+        "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
+        "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+        "test/managed-image-protected-runtime-contract.test.ts",
+        "test/pr-risk-plan.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/hermes-gpu-startup.test.ts",
       "fast": [
         "test/e2e/support/hermes-gpu-startup-fallback.test.ts",
@@ -30,6 +62,7 @@
     {
       "live": "test/e2e/live/full-e2e.test.ts",
       "fast": [
+        "test/e2e/support/full-e2e-inference-probe.test.ts",
         "test/e2e/support/onboard-performance.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
@@ -110,8 +143,14 @@
       "liveOnlyReason": "Requires a real OpenShell dashboard forward on a remote Brev host to prove all-interface bind behavior after background connect."
     },
     {
+      "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
+      "fast": [
+        "test/e2e/support/workflow-plan.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/sandbox-operations.test.ts",
-      "liveOnlyReason": "The final-destroy gateway release contract needs two real Docker/OpenShell sandboxes plus host 127.0.0.1 port binding; a fast mock cannot prove the shared-gateway ownership boundary."
+      "liveOnlyReason": "The resource-limit and final-destroy contracts require real Docker and OpenShell sandboxes, the repository CLI, and host port binding; fast mocks cannot verify these runtime boundaries."
     },
     {
       "live": "test/e2e/live/onboard-repair.test.ts",
@@ -136,16 +175,6 @@
         "src/lib/onboard/machine/handlers/sandbox-resume.test.ts",
         "src/lib/onboard/sandbox-create-plan-extra-providers.test.ts",
         "test/onboard-extra-provider-reconciliation.test.ts",
-        "test/e2e/support/e2e-cleanup-resources.test.ts",
-        "test/e2e/support/e2e-clients.test.ts"
-      ]
-    },
-    {
-      "live": "test/e2e/live/sandbox-rlimits-connect.test.ts",
-      "fast": [
-        "test/cli/dispatch-basics.test.ts",
-        "test/e2e/support/e2e-workflow.test.ts",
-        "test/sandbox-rlimit-hooks.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"
       ]
@@ -476,6 +505,7 @@
     {
       "live": "test/e2e/live/channels-stop-start.test.ts",
       "fast": [
+        "test/e2e/support/channels-stop-start-googlechat-entry.test.ts",
         "test/e2e/support/e2e-progress-fixture.test.ts",
         "test/e2e/support/e2e-progress-outcome.test.ts",
         "test/e2e/support/e2e-semantic-phase-check.test.ts",

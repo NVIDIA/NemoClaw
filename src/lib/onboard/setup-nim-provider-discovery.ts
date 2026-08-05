@@ -10,7 +10,10 @@ interface ProviderDiscoveryDeps {
   remoteProviderConfig: Record<string, { providerName: string }>;
   isNonInteractive(): boolean;
   getNonInteractiveProvider(): string | null;
-  getNonInteractiveModel(providerKey: string): string | null;
+  getNonInteractiveModel(
+    providerKey: string,
+    options?: { allowProviderModelFallback?: boolean },
+  ): string | null;
   readRecordedProvider(
     sandboxName: string | null | undefined,
     recoverySessionId?: string | null,
@@ -104,11 +107,6 @@ export function prepareProviderDiscovery(options: {
     canProbeRoute,
     recoverySessionId,
   } = options;
-  const nonInteractive = deps.isNonInteractive();
-  const requestedProvider = deps.getNonInteractiveProvider();
-  const requestedModel = nonInteractive
-    ? deps.getNonInteractiveModel(requestedProvider || "build")
-    : null;
   const recoveredRegistryRoute =
     rebuildRegistryInferenceRoute?.sandboxName === sandboxName &&
     rebuildRegistryInferenceRoute.route.source === "registry"
@@ -120,6 +118,29 @@ export function prepareProviderDiscovery(options: {
     recoveredRegistryRoute,
     recoverySessionId,
   );
+  const nonInteractive = deps.isNonInteractive();
+  const requestedProvider = deps.getNonInteractiveProvider();
+  let providerChanged = false;
+  if (nonInteractive && requestedProvider && recoverProvider) {
+    const recordedProviderName = recordedProviderReaders.readRecordedProvider(sandboxName);
+    const hasRecordedNimContainer =
+      recordedProviderName === "vllm-local" &&
+      Boolean(recordedProviderReaders.readRecordedNimContainer(sandboxName));
+    const recordedProviderKey = providerNameToOptionKey(
+      deps.remoteProviderConfig,
+      recordedProviderName,
+      { hasNimContainer: hasRecordedNimContainer },
+    );
+    providerChanged = Boolean(recordedProviderKey && recordedProviderKey !== requestedProvider);
+  }
+  // NEMOCLAW_PROVIDER_MODEL is a provider-specific compatibility fallback.
+  // Do not carry it across a provider switch. NEMOCLAW_MODEL remains explicit
+  // input for the current run and keeps precedence in getNonInteractiveModel.
+  const requestedModel = nonInteractive
+    ? deps.getNonInteractiveModel(requestedProvider || "build", {
+        allowProviderModelFallback: !providerChanged,
+      })
+    : null;
   const recoveredProbeProvider =
     nonInteractive && !requestedProvider
       ? recordedProviderReaders.readRecordedProvider(sandboxName)

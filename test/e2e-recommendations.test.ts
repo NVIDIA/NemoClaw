@@ -75,6 +75,7 @@ describe("E2E recommendation normalizer", () => {
         "tools/advisors/e2e-text.mts",
         "tools/advisors/json.mts",
         "tools/advisors/risk-plan.mts",
+        "scripts/checks/protected-managed-image-contract.ts",
         "tools/e2e/module-tags.mts",
         ".github/workflows/e2e.yaml",
         "test/vllm-docker-storage.test.ts",

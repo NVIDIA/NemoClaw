@@ -19,6 +19,7 @@ import { renderBox } from "../cli/banner";
 import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
 import { isObjectRecord } from "../core/json-types";
 import { DASHBOARD_PORT } from "../core/ports";
+import { unloadOllamaModels as unloadDefaultOllamaModels } from "../inference/ollama/proxy";
 import { buildSubprocessEnv } from "../subprocess-env";
 import * as agentForwardStop from "./agent-forward-stop";
 import { registerTunnelOrigin } from "./allowed-origins";
@@ -43,6 +44,8 @@ export interface ServiceOptions {
   pidDir?: string;
   /** Injectable process operations (identity + signalling) for tests. */
   processControl?: ProcessControl;
+  /** Injectable Ollama model cleanup for tests. */
+  unloadOllamaModels?: () => void;
   /** Cloudflare named tunnel token. Falls back to CLOUDFLARE_TUNNEL_TOKEN. */
   cloudflareTunnelToken?: string;
   /** Also release the managed host gateway port (legacy full-stop only). */
@@ -520,7 +523,7 @@ export function stopAll(opts: ServiceOptions = {}): void {
   }
 
   try {
-    const { unloadOllamaModels } = require("../inference/ollama/proxy");
+    const unloadOllamaModels = opts.unloadOllamaModels ?? unloadDefaultOllamaModels;
     unloadOllamaModels();
   } catch {
     /* best-effort */
@@ -541,6 +544,28 @@ export function stopAll(opts: ServiceOptions = {}): void {
   }
 
   info("All services stopped.");
+}
+
+/**
+ * Resolve the PID directory for host-side services without starting or stopping
+ * anything. Callers can derive an adjacent purpose-specific state directory
+ * while preserving the same validated sandbox-name and environment precedence
+ * used by `start`, `stop`, and `status`.
+ */
+export function resolveServicePidDir(opts: ServiceOptions = {}): string {
+  return resolvePidDir(opts);
+}
+
+/**
+ * Stop only the host-side cloudflared tunnel, leaving the in-sandbox gateway and
+ * Ollama untouched. `stopAll` is intentionally broader (it also stops the gateway
+ * and unloads Ollama); enrollment that auto-started a tunnel needs a tunnel-only
+ * stop to clean up without tearing down other services.
+ */
+export function stopCloudflared(opts: ServiceOptions = {}): void {
+  const pidDir = resolvePidDir(opts);
+  ensurePidDir(pidDir);
+  stopService(pidDir, "cloudflared");
 }
 
 /**
