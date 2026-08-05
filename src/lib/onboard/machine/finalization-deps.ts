@@ -1,18 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Lazy-require runtime dependencies for the onboarding finalization handler.
-// Kept in a focused module under src/lib/onboard/ so the top-level onboard
-// entrypoint stays lean (codebase-growth-guardrails). The lazy `require` calls
-// avoid an import cycle: connect.ts and process-recovery.ts both pull in
-// onboard helpers, so they must not be statically imported here.
+// The lazy `require` calls avoid an import cycle because connect.ts and
+// process-recovery.ts both import onboarding helpers.
 type ProcessRecoveryDeps = Pick<
-  typeof import("../actions/sandbox/process-recovery"),
+  typeof import("../../actions/sandbox/process-recovery"),
   "checkAndRecoverSandboxProcesses" | "waitForRecreatedSandboxOpenShellReady"
 >;
 
 export const finalizationHandlerRuntime = {
-  loadProcessRecovery: () => require("../actions/sandbox/process-recovery") as ProcessRecoveryDeps,
+  loadProcessRecovery: () =>
+    require("../../actions/sandbox/process-recovery") as ProcessRecoveryDeps,
 };
 
 export const finalizationHandlerDeps = {
@@ -31,8 +29,7 @@ export const finalizationHandlerDeps = {
   autoPairScopeApproval(name: string): void {
     const {
       runConnectAutoPairApprovalPass,
-    }: typeof import("../actions/sandbox/auto-pair-approval") =
-      require("../actions/sandbox/auto-pair-approval");
+    }: typeof import("../../actions/sandbox/auto-pair-approval") = require("../../actions/sandbox/auto-pair-approval");
     runConnectAutoPairApprovalPass(name);
   },
   // Provoke the operator.write scope upgrade with a throwaway in-sandbox agent
@@ -40,11 +37,10 @@ export const finalizationHandlerDeps = {
   // letting the user's first real run connect without an embedded fallback
   // (#4504-v2). Best-effort; never throws.
   warmupScopeUpgrade(name: string): void {
-    const warmup: typeof import("../actions/sandbox/auto-pair-warmup") =
-      require("../actions/sandbox/auto-pair-warmup");
+    const warmup: typeof import("../../actions/sandbox/auto-pair-warmup") = require("../../actions/sandbox/auto-pair-warmup");
     warmup.runSandboxScopeWarmupRun(name);
   },
-  isDeploymentHealthy(result: import("../verify-deployment").VerifyDeploymentResult): boolean {
+  isDeploymentHealthy(result: import("../../verify-deployment").VerifyDeploymentResult): boolean {
     return result.healthy;
   },
   reportDeploymentReadiness(healthy: boolean): void {

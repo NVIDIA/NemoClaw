@@ -482,12 +482,16 @@ const {
 const { createCoreOnboardFlowPhases, prepareCoreOnboardFlowContext, prepareFinalOnboardFlowContext, runCoreOnboardFlowSlice }: typeof import("./onboard/machine/core-flow-composition") = require("./onboard/machine/core-flow-composition");
 const {
   createFinalOnboardFlowPhases,
+  finalizationHandlerDeps,
   runFinalOnboardFlowSlice,
-}: typeof import("./onboard/machine/final-flow-phases") = require("./onboard/machine/final-flow-phases");
+}: typeof import("./onboard/machine/final-flow-composition") = require("./onboard/machine/final-flow-composition");
 const {
+  applyHealthyPortReuse,
   createInitialOnboardFlowPhases,
+  destroyGatewayForReuse,
   runInitialOnboardFlowSlice,
-}: typeof import("./onboard/machine/initial-flow-phases") = require("./onboard/machine/initial-flow-phases");
+  verifyGatewayContainerRunning,
+}: typeof import("./onboard/machine/initial-flow-composition") = require("./onboard/machine/initial-flow-composition");
 const { skippedStepMessage }: typeof import("./onboard/skipped-step-message") =
   require("./onboard/skipped-step-message");
 const policies: typeof import("./policy") = require("./policy");
@@ -510,14 +514,8 @@ const { printPortConflictReport } =
   require("./onboard/port-conflict-report") as typeof import("./onboard/port-conflict-report");
 const { tryCleanupOrphanedDashboardForward } =
   require("./onboard/orphaned-dashboard-forward") as typeof import("./onboard/orphaned-dashboard-forward");
-const { destroyGatewayForReuse } =
-  require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
 const { runPreflightGatewaySequence } =
   require("./onboard/preflight-gateway-sequence") as typeof import("./onboard/preflight-gateway-sequence");
-const { verifyGatewayContainerRunning } =
-  require("./onboard/gateway-container-running") as typeof import("./onboard/gateway-container-running");
-const { applyHealthyPortReuse } =
-  require("./onboard/gateway-stale-port-reuse") as typeof import("./onboard/gateway-stale-port-reuse");
 const { destroyGatewayWithVolumeCleanup } =
   require("./onboard/gateway-destroy") as typeof import("./onboard/gateway-destroy");
 const { gatewayCliSupportsLifecycleCommands } =
@@ -581,7 +579,6 @@ import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
 } from "./messaging-channel-config";
-import { finalizationHandlerDeps } from "./onboard/finalization-deps";
 import { streamGatewayStart } from "./onboard/gateway";
 import { bindGatewayAuthorityToCheckpoint } from "./onboard/gateway-authority-checkpoint";
 import { createGatewayHostRuntime } from "./onboard/gateway-host-runtime";
@@ -787,7 +784,7 @@ const { getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded } =
   });
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-const { getSandboxReuseState, getSandboxRecreateObservation, repairRecordedSandbox } = sandboxReuse.createSandboxReuseHelpers({ runCaptureOpenshell, runOpenshell, getSandboxStateFromOutputs, note, getGatewayName: () => GATEWAY_NAME });
+const { getSandboxReuseState, getSandboxRecreateObservation } = sandboxReuse.createSandboxReuseHelpers({ runCaptureOpenshell, getSandboxStateFromOutputs, getGatewayName: () => GATEWAY_NAME });
 
 const {
   executeSandboxCommandForVerification,
@@ -986,19 +983,15 @@ const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAM
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const { verifyInferenceRoute, isInferenceRouteReady, checkGatewayRouteCompatibility, preflightGatewayRouteDiscovery } = inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
-const {
-  inspectSandboxForCreate,
-  pruneStaleSandboxEntry,
-  confirmRecreateForSelectionDrift,
-  isOpenclawReady,
-} = sandboxLifecycle.createSandboxLifecycleHelpers({
-  runCaptureOpenshell,
-  fetchGatewayAuthTokenFromSandbox: (sandboxName: string) =>
-    fetchGatewayAuthTokenFromSandbox(sandboxName),
-  agentProductName,
-  prompt,
-  isAffirmativeAnswer,
-});
+const { inspectSandboxForCreate, confirmRecreateForSelectionDrift, isOpenclawReady } =
+  sandboxLifecycle.createSandboxLifecycleHelpers({
+    runCaptureOpenshell,
+    fetchGatewayAuthTokenFromSandbox: (sandboxName: string) =>
+      fetchGatewayAuthTokenFromSandbox(sandboxName),
+    agentProductName,
+    prompt,
+    isAffirmativeAnswer,
+  });
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const { ensureValidatedWebSearchCredential, ensureValidatedBraveSearchCredential, configureWebSearch, verifyWebSearchInsideSandbox } = createWebSearchFlowHelpers({ prompt, note, isNonInteractive, cliName, runCaptureOpenshell });
@@ -2308,7 +2301,6 @@ async function createSandboxWithBaseImageResolution(
   const observabilityDrift = observabilityPolicy.hasRegisteredDcodeObservabilityDrift(liveExists, isManagedDcodeAgent, existingEntry, createIntent?.observabilityEnabled);
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const dcodeAutoApprovalPlan = dcodeAutoApprovalFlow.prepareDcodeAutoApprovalCreatePlan({ sandboxName, liveExists, managedDcodeAgent: isManagedDcodeAgent, registryEntry: existingEntry, requestedMode: createIntent?.dcodeAutoApprovalMode }, { error: console.error, exitProcess: (code) => process.exit(code) });
-  // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
   let pendingStateRestore: BackupResult | null = null;
@@ -2321,7 +2313,11 @@ async function createSandboxWithBaseImageResolution(
     customOpenClawImage,
     note,
   });
-  let pendingStateRestoreBackupPath = recreateProtection.selectPreUpgradeBackup(liveExists);
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const openRecreateJournal = (): recreateJournal.OwnedSandboxRecreateRuntime => recreateJournal.openOnboardRecreateJournal({ target: { sandboxName, gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT }, agentName: getRequestedSandboxAgentName(agent) || "openclaw", note, observe: (probeTarget) => getSandboxRecreateObservation(probeTarget.sandboxName, probeTarget.gatewayName), intent: { agent: getRequestedSandboxAgentName(agent) || null, fromDockerfile: fromDockerfile ?? null, provider: provider ?? null, model: model ?? null, preferredInferenceApi: preferredInferenceApi ?? null, sandboxGpuConfig: effectiveSandboxGpuConfig ?? null, gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT, toolDisclosure: effectiveToolDisclosure, dcodeAutoApprovalMode: createIntent?.dcodeAutoApprovalMode ?? null, observabilityEnabled: createIntent?.observabilityEnabled === true, policyTier: createIntent?.policyTier ?? null } });
+  let pendingStateRestoreBackupPath: string | null = null;
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  if (!liveExists && existingEntry) ({ runtime: recreateRuntime, backupPath: pendingStateRestoreBackupPath } = recreateProtection.selectJournalBoundPreUpgradeBackup({ runtime: recreateRuntime, openJournal: createIntent?.recreateTransaction ? null : openRecreateJournal, gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT, readRegistryEntry: () => registry.getSandbox(sandboxName), observe: () => getSandboxRecreateObservation(sandboxName, GATEWAY_NAME) }));
 
   if (liveExists) {
     const existingSandboxState = getSandboxReuseState(sandboxName);
@@ -2546,8 +2542,7 @@ async function createSandboxWithBaseImageResolution(
       for (const hint of recreateJournal.managedMcpRecreateRefusalHints({ sandboxName, cliName: cliName(), toolDisclosure: effectiveToolDisclosure, rebuildFlag: dcodeAutoApprovalPlan.rebuildFlag, observabilityFlag: observabilityCommandFlag.explicitObservabilityFlag(createIntent?.observabilityEnabled === true, createIntent?.observabilityRequestedExplicitly === true) })) console.error(hint);
       process.exit(1);
     }
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    if (!createIntent?.recreateTransaction) recreateRuntime = recreateJournal.openOnboardRecreateJournal({ target: { sandboxName, gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT }, agentName: getRequestedSandboxAgentName(agent) || "openclaw", note, observe: (probeTarget) => getSandboxRecreateObservation(probeTarget.sandboxName, probeTarget.gatewayName), intent: { agent: getRequestedSandboxAgentName(agent) || null, fromDockerfile: fromDockerfile ?? null, provider: provider ?? null, model: model ?? null, preferredInferenceApi: preferredInferenceApi ?? null, sandboxGpuConfig: effectiveSandboxGpuConfig ?? null, gatewayName: GATEWAY_NAME, gatewayPort: GATEWAY_PORT, toolDisclosure: effectiveToolDisclosure, dcodeAutoApprovalMode: createIntent?.dcodeAutoApprovalMode ?? null, observabilityEnabled: createIntent?.observabilityEnabled === true, policyTier: createIntent?.policyTier ?? null } });
+    if (!createIntent?.recreateTransaction) recreateRuntime = openRecreateJournal();
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     if (recreateRuntime.acceptedTarget) { if ("complete" in recreateRuntime) recreateRuntime.complete(); restoreReusedSandboxDashboard(true); return sandboxName; }
     const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
@@ -4140,7 +4135,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     const explicitSandboxGpuFlag = resolveSandboxGpuFlagFromOptions(opts);
     const recordedGpuPassthroughBeforePreflight = session?.gpuPassthrough === true;
     type InitialOnboardFlowContext =
-      import("./onboard/machine/initial-flow-phases").InitialOnboardFlowContext<
+      import("./onboard/machine/initial-flow-composition").InitialOnboardFlowContext<
         typeof agent,
         ReturnType<typeof nim.detectGpu>,
         ReturnType<typeof resolveSandboxGpuConfig>
@@ -4212,13 +4207,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         refreshDockerDriverGatewayReuseState,
         gatewayCliSupportsLifecycleCommands: () =>
           gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
-        verifyGatewayContainerRunning,
         waitForGatewayHttpReady,
         recoverGatewayRuntime,
         getGatewayLocalEndpoint,
         stopDashboardForward: () => bestEffortForwardStop(runOpenshell, getOnboardDashboardPort()),
         destroyGateway,
-        destroyGatewayForReuse,
         getGatewayClusterImageDrift,
         stopAllDashboardForwards,
         reconcileGatewayGpuReuseForGpuIntent,
@@ -4379,7 +4372,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           removeSandboxFromRegistry: registry.removeSandboxWithReceipt.bind(registry),
           restoreSandboxRegistryEntryIfMissing:
             registry.restoreSandboxEntryIfMissing.bind(registry),
-          repairRecordedSandbox,
           ensureValidatedWebSearchCredential,
           isBackToSelection,
           configureWebSearch,
@@ -4503,7 +4495,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         removeLegacyCredentialsFile,
         cleanupStaleHostFiles,
-        ...finalizationHandlerDeps,
         getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
         buildVerifyChain: (chatUiUrl) =>
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -4651,8 +4642,6 @@ module.exports = {
   parsePolicyPresetEnv,
   parseSandboxStatus,
   preflightAuthoritativeRebuildTarget,
-  pruneStaleSandboxEntry,
-  repairRecordedSandbox,
   recoverGatewayRuntime,
   buildChain,
   buildControlUiUrls,

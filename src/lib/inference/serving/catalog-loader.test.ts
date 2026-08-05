@@ -17,7 +17,7 @@ import type { CompiledServingCatalog, ServingPreset, ServingRecipe } from "./typ
 
 const EMPTY_CATALOG: CompiledServingCatalog = {
   schemaVersion: "1.0.0",
-  compilerVersion: "1.1.0",
+  compilerVersion: "1.2.0",
   sourceRevision: "a".repeat(40),
   readinessSchemaRef: "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json",
   recipes: [],
