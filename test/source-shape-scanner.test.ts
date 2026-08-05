@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   contractExceptionAllowlistErrors,
@@ -13,6 +13,7 @@ import {
   renderSourceShapeHuman,
   renderSourceShapeJson,
   renderSourceShapeMetrics,
+  runSourceShapeCommand,
   scanTextForTest,
   scanTextForTestReport,
   sourceShapeSummary,
@@ -722,6 +723,32 @@ describe("source-shape scanner output", () => {
 
     expect(output).toContain("METRIC source_shape_cases=1");
     expect(output).not.toContain("Detected");
+  });
+
+  it("dispatches JSON output without running the budget check", () => {
+    const writeOutput = vi.fn();
+    const checkBudget = vi.fn();
+
+    runSourceShapeCommand(["--json"], reportFor(source), { writeOutput, checkBudget });
+
+    expect(writeOutput).toHaveBeenCalledOnce();
+    expect(JSON.parse(writeOutput.mock.calls[0]![0])).toEqual(reportFor(source));
+    expect(checkBudget).not.toHaveBeenCalled();
+  });
+
+  it("writes the human report before checking the budget", () => {
+    const writeOutput = vi.fn();
+    const checkBudget = vi.fn();
+
+    runSourceShapeCommand(["--check"], reportFor(source), { writeOutput, checkBudget });
+
+    expect(writeOutput).toHaveBeenCalledWith(
+      expect.stringContaining("METRIC source_shape_cases=1"),
+    );
+    expect(checkBudget).toHaveBeenCalledOnce();
+    expect(writeOutput.mock.invocationCallOrder[0]).toBeLessThan(
+      checkBudget.mock.invocationCallOrder[0]!,
+    );
   });
 
   it("does not run the CLI when imported", () => {

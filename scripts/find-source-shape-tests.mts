@@ -2087,20 +2087,34 @@ function checkBudget(report: Report): void {
   }
 }
 
-function main(): void {
-  const args = new Set(process.argv.slice(2));
-  const report = scan();
+type SourceShapeCommandDependencies = {
+  readonly writeOutput: (output: string) => void;
+  readonly checkBudget: (report: Report) => void;
+};
 
-  const output = args.has("--json")
+export function runSourceShapeCommand(
+  args: readonly string[],
+  report: Report,
+  dependencies: SourceShapeCommandDependencies,
+): void {
+  const options = new Set(args);
+  const output = options.has("--json")
     ? renderSourceShapeJson(report)
-    : args.has("--metrics")
+    : options.has("--metrics")
       ? renderSourceShapeMetrics(report)
       : renderSourceShapeHuman(report);
-  console.log(output);
+  dependencies.writeOutput(output);
 
-  if (args.has("--check")) {
-    checkBudget(report);
+  if (options.has("--check")) {
+    dependencies.checkBudget(report);
   }
+}
+
+function main(): void {
+  runSourceShapeCommand(process.argv.slice(2), scan(), {
+    writeOutput: (output) => console.log(output),
+    checkBudget,
+  });
 }
 
 export function scanTextForTest(relPath: string, text: string): SourceShapeCase[] {
