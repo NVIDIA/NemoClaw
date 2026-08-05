@@ -230,7 +230,7 @@ describe("OpenShell policy boundary package contract", () => {
 
     const fixtureRoot = createPackageFixture({
       prefix: "nemoclaw-policy-pack-",
-      entries: ["dist", "schemas", "nemoclaw/dist"],
+      entries: ["dist", "nemoclaw/dist", "schemas"],
     });
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-package-"));
     try {
