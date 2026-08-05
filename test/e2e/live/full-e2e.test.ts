@@ -4,7 +4,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
@@ -36,6 +35,11 @@ import {
   buildOpenClawFirstTurnLatencyEvidence,
   extractOpenClawAgentPayloadText,
 } from "./agent-turn-latency-helpers.ts";
+import {
+  FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
+  fullE2eInferenceProbeEvidence,
+  runFullE2eInferenceProbe,
+} from "./full-e2e-inference-probe.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
 const SETUP_MODE = process.env.NEMOCLAW_E2E_SETUP_MODE ?? "source-install";
@@ -122,23 +126,6 @@ async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<voi
       timeoutMs: 60_000,
     })
     .catch(() => undefined);
-}
-
-function chatRequest(model: string): string {
-  return JSON.stringify({
-    model,
-    messages: [
-      {
-        role: "user",
-        content: "What is 6 multiplied by 7? Reply with only the integer, no extra words.",
-      },
-    ],
-    max_tokens: 100,
-  });
-}
-
-function parseReplyCommand(): string {
-  return String.raw`python3 -c 'import json,sys; d=json.load(sys.stdin); m=d["choices"][0]["message"]; print((m.get("content") or m.get("reasoning_content") or "").strip())'`;
 }
 
 function readAndDeleteTraceWindow(traceFile: string, traceDirectory: string): OnboardTraceWindow {
@@ -486,22 +473,38 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
   expect(direct.exitCode, resultText(direct)).toBe(0);
   expect(resultText(direct)).toContain("data");
 
-  const sandboxInference = await sandbox.exec(
-    SANDBOX_NAME,
-    [
-      "sh",
-      "-lc",
-      `curl -fsS --max-time 90 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' --data '${chatRequest(hosted.model)}' | ${parseReplyCommand()}`,
-    ],
-    {
-      artifactName: "phase-4-sandbox-inference-local",
-      env: env(),
-      redactionValues,
-      timeoutMs: 120_000,
-    },
+  const sandboxInference = await runFullE2eInferenceProbe(hosted.model, async (attempt) =>
+    sandbox.exec(
+      SANDBOX_NAME,
+      [
+        "curl",
+        "-fsS",
+        "--max-time",
+        "90",
+        "https://inference.local/v1/chat/completions",
+        "-H",
+        "Content-Type: application/json",
+        "--data-raw",
+        attempt.requestBody,
+      ],
+      {
+        artifactName: attempt.artifactName,
+        captureLimitBytes: FULL_E2E_INFERENCE_CAPTURE_LIMIT_BYTES,
+        env: env(),
+        redactionValues,
+        timeoutMs: 120_000,
+      },
+    ),
   );
-  expect(sandboxInference.exitCode, resultText(sandboxInference)).toBe(0);
-  expect(containsInteger42Answer(sandboxInference.stdout), resultText(sandboxInference)).toBe(true);
+  const sandboxInferenceEvidence = fullE2eInferenceProbeEvidence(sandboxInference);
+  await artifacts.writeJson(
+    "phase-4-sandbox-inference-local-attempts.json",
+    sandboxInferenceEvidence,
+  );
+  const finalInferenceAttempt = sandboxInference.attempts.at(-1)!;
+  const sandboxInferenceDiagnostic = `${resultText(finalInferenceAttempt.result)}\n${JSON.stringify(sandboxInferenceEvidence, null, 2)}`;
+  expect(finalInferenceAttempt.result.exitCode, sandboxInferenceDiagnostic).toBe(0);
+  expect(sandboxInference.outcome, sandboxInferenceDiagnostic).toBe("passed");
 
   progress.phase("inspect runtime logs and security posture");
   const logs = await repoNemoclaw(
