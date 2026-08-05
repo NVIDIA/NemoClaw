@@ -9,7 +9,12 @@ import { listServingProfiles, renderServingProfiles } from "./profile-list";
 describe("serving profile discovery", () => {
   it("lists every compiled preset with stable selection metadata (#8384)", () => {
     const catalog = loadServingCatalog();
-    const entries = listServingProfiles(catalog);
+    const entries = listServingProfiles(catalog, {
+      evaluateCompatibility: (_catalog, preset) =>
+        preset.metadata.id === catalog.presets[0]?.metadata.id
+          ? { compatible: true, incompatibilityReason: null }
+          : { compatible: false, incompatibilityReason: "Test host requirement is not met." },
+    });
 
     expect(entries.map(({ id }) => id)).toEqual(
       [...catalog.presets].map(({ metadata }) => metadata.id).sort(),
@@ -29,6 +34,8 @@ describe("serving profile discovery", () => {
         entry.compatible ? entry.incompatibilityReason : typeof entry.incompatibilityReason,
       ).toBe(entry.compatible ? null : "string");
     }
+    expect(entries.some(({ compatible }) => compatible)).toBe(true);
+    expect(entries.some(({ compatible }) => !compatible)).toBe(true);
   });
 
   it("renders IDs, selection state, support state, and compatibility (#8384)", () => {

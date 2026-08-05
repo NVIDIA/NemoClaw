@@ -5,13 +5,13 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { formatAgentAliasSuffix, resolveAgentNameAlias } from "../agent/aliases";
-import { loadServingCatalog } from "../inference/serving/catalog-loader";
 import { NEMOCLAW_SERVING_PRESET_ENV } from "../inference/serving/managed-cluster-discovery";
 import {
   listServingProfiles,
+  resolveServingProfileSelection,
+  ServingProfileSelectionError,
   type ServingProfileListEntry,
 } from "../inference/serving/profile-list";
-import type { ServingPreset } from "../inference/serving/types";
 import { VLLM_EXTRA_ARGS_ENV } from "../inference/vllm-models";
 import {
   resolveToolDisclosureRequest,
@@ -177,32 +177,15 @@ const PROFILE_CONFLICT_ENV = [
   "NEMOCLAW_MANAGED_CLUSTER_PEERS",
 ] as const;
 
-function selectedServingPreset(candidate: string, deps: ResolveOnboardOptionsDeps): ServingPreset {
-  const matches = loadServingCatalog().presets.filter(
-    ({ metadata }) => metadata.id === candidate || metadata.displayName === candidate,
-  );
-  if (matches.length === 0) {
-    fail(deps, `  Unknown serving profile '${candidate}'. Run 'nemoclaw profiles list'.`);
-  }
-  if (matches.length > 1) {
-    fail(deps, `  Serving profile name '${candidate}' is ambiguous; select a stable profile ID.`);
-  }
-  const selected = matches[0]!;
-  if (selected.spec.selection === "disabled" || selected.metadata.supportState === "disabled") {
-    fail(deps, `  Serving profile '${selected.metadata.id}' is disabled.`);
-  }
-  return selected;
-}
-
 function validateServingProfileConflicts(
-  selected: ServingPreset,
+  selectedProfileId: string,
   deps: ResolveOnboardOptionsDeps,
 ): void {
   const existingPreset = String(deps.env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
-  if (existingPreset && existingPreset !== selected.metadata.id) {
+  if (existingPreset && existingPreset !== selectedProfileId) {
     fail(
       deps,
-      `  --profile ${selected.metadata.id} conflicts with ${NEMOCLAW_SERVING_PRESET_ENV}=${existingPreset}.`,
+      `  --profile ${selectedProfileId} conflicts with ${NEMOCLAW_SERVING_PRESET_ENV}=${existingPreset}.`,
     );
   }
   const conflicts = PROFILE_CONFLICT_ENV.filter((name) => String(deps.env[name] ?? "").trim());
@@ -211,30 +194,22 @@ function validateServingProfileConflicts(
   }
 }
 
-function validateServingProfileCompatibility(
-  selected: ServingPreset,
-  deps: ResolveOnboardOptionsDeps,
-): void {
-  const profile = (deps.listServingProfiles ?? listServingProfiles)().find(
-    ({ id }) => id === selected.metadata.id,
-  );
-  if (!profile?.compatible) {
-    fail(
-      deps,
-      `  Serving profile '${selected.metadata.id}' is incompatible: ${profile?.incompatibilityReason ?? "compatibility could not be evaluated"}.`,
-    );
-  }
-}
-
 function resolveServingProfile(
   requested: string | undefined,
   deps: ResolveOnboardOptionsDeps,
 ): string | null {
   if (requested === undefined) return null;
-  const selected = selectedServingPreset(requested.trim(), deps);
-  validateServingProfileConflicts(selected, deps);
-  validateServingProfileCompatibility(selected, deps);
-  return selected.metadata.id;
+  let selectedProfileId: string;
+  try {
+    selectedProfileId = resolveServingProfileSelection(requested.trim(), {
+      listProfiles: deps.listServingProfiles ? () => deps.listServingProfiles!() : undefined,
+    });
+  } catch (error) {
+    if (error instanceof ServingProfileSelectionError) fail(deps, `  ${error.message}`);
+    throw error;
+  }
+  validateServingProfileConflicts(selectedProfileId, deps);
+  return selectedProfileId;
 }
 
 function validateExperimentalProfileLifecycle(
@@ -335,7 +310,10 @@ function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps):
   fail(deps, "  Installation cancelled");
 }
 
-function applyPortableEnvironment(options: OnboardCommandOptions): () => void {
+function applyPortableEnvironment(
+  options: OnboardCommandOptions,
+  env: NodeJS.ProcessEnv,
+): () => void {
   if (!options.experimentalProfile) return () => {};
   const portableEnvDefaults = {
     [EXPERIMENTAL_PROFILE_ENV]: options.experimentalProfile ?? undefined,
@@ -346,14 +324,14 @@ function applyPortableEnvironment(options: OnboardCommandOptions): () => void {
   const previousPortableEnv = new Map<string, string | undefined>();
   const restore = () => {
     for (const [key, value] of previousPortableEnv) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
+      if (value === undefined) delete env[key];
+      else env[key] = value;
     }
   };
   try {
     for (const [key, value] of Object.entries(portableEnvDefaults)) {
-      previousPortableEnv.set(key, process.env[key]);
-      if (value !== undefined) process.env[key] = value;
+      previousPortableEnv.set(key, env[key]);
+      if (value !== undefined) env[key] = value;
     }
   } catch (error) {
     restore();
@@ -362,26 +340,30 @@ function applyPortableEnvironment(options: OnboardCommandOptions): () => void {
   return restore;
 }
 
-function applyServingProfileEnvironment(options: OnboardCommandOptions): () => void {
+function applyServingProfileEnvironment(
+  options: OnboardCommandOptions,
+  env: NodeJS.ProcessEnv,
+): () => void {
   if (!options.servingProfile) return () => {};
-  const previous = process.env[NEMOCLAW_SERVING_PRESET_ENV];
-  process.env[NEMOCLAW_SERVING_PRESET_ENV] = options.servingProfile;
+  const previous = env[NEMOCLAW_SERVING_PRESET_ENV];
+  env[NEMOCLAW_SERVING_PRESET_ENV] = options.servingProfile;
   return () => {
-    if (previous === undefined) delete process.env[NEMOCLAW_SERVING_PRESET_ENV];
-    else process.env[NEMOCLAW_SERVING_PRESET_ENV] = previous;
+    if (previous === undefined) delete env[NEMOCLAW_SERVING_PRESET_ENV];
+    else env[NEMOCLAW_SERVING_PRESET_ENV] = previous;
   };
 }
 
 export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<void> {
   const options = resolveOnboardOptions(deps.flags, deps);
-  const restorePortableEnvironment = applyPortableEnvironment(options);
-  const restoreServingProfileEnvironment = applyServingProfileEnvironment(options);
-  if (options.noOllamaAutostart) process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
+  const env = deps.env ?? process.env;
+  const restorePortableEnvironment = applyPortableEnvironment(options, env);
+  const restoreServingProfileEnvironment = applyServingProfileEnvironment(options, env);
+  if (options.noOllamaAutostart) env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
   // Keep direct callers and the legacy monolithic onboard path on the same
   // canonical source. No value is written for the default so resume/rebuild
   // can distinguish an explicit request from an unset environment.
-  if (options.toolDisclosure) process.env[TOOL_DISCLOSURE_ENV] = options.toolDisclosure;
-  if (options.agentsManifest) applyAgentsManifestEnv(options.agentsManifest);
+  if (options.toolDisclosure) env[TOOL_DISCLOSURE_ENV] = options.toolDisclosure;
+  if (options.agentsManifest) applyAgentsManifestEnv(options.agentsManifest, env);
   try {
     await deps.runOnboard(options);
   } catch (error) {

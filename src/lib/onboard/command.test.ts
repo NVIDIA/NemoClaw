@@ -357,31 +357,33 @@ describe("onboard command options", () => {
   });
 
   it("scopes the selected catalog preset to one onboarding run (#8384)", async () => {
-    vi.stubEnv("NEMOCLAW_SERVING_PRESET", "previous-profile");
+    const env: NodeJS.ProcessEnv = {};
     let observed: string | undefined;
     await runOnboardCommand({
       flags: { profile: COMPATIBLE_NANO_PROFILE.id },
-      env: {},
+      env,
       listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
       runOnboard: async (options) => {
-        observed = process.env.NEMOCLAW_SERVING_PRESET;
+        observed = env.NEMOCLAW_SERVING_PRESET;
         expect(options.servingProfile).toBe(COMPATIBLE_NANO_PROFILE.id);
       },
     });
 
     expect(observed).toBe(COMPATIBLE_NANO_PROFILE.id);
-    expect(process.env.NEMOCLAW_SERVING_PRESET).toBe("previous-profile");
+    expect(env.NEMOCLAW_SERVING_PRESET).toBeUndefined();
   });
 
   it("prepares and scopes portable profile defaults around onboarding", async () => {
-    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "previous-profile");
-    vi.stubEnv("NEMOCLAW_PROVIDER", "previous-provider");
-    vi.stubEnv("NEMOCLAW_MODEL", "previous-model");
-    vi.stubEnv("NEMOCLAW_OLLAMA_NO_AUTOSTART", "0");
+    const env: NodeJS.ProcessEnv = {
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "previous-profile",
+      NEMOCLAW_PROVIDER: "previous-provider",
+      NEMOCLAW_MODEL: "previous-model",
+      NEMOCLAW_OLLAMA_NO_AUTOSTART: "0",
+    };
     const observed: Record<string, string | undefined> = {};
     await runOnboardCommand({
       flags: { "experimental-profile": "portable" },
-      env: {},
+      env,
       runOnboard: async () => {
         for (const key of [
           "NEMOCLAW_EXPERIMENTAL_PROFILE",
@@ -389,7 +391,7 @@ describe("onboard command options", () => {
           "NEMOCLAW_MODEL",
           "NEMOCLAW_OLLAMA_NO_AUTOSTART",
         ]) {
-          observed[key] = process.env[key];
+          observed[key] = env[key];
         }
       },
     });
@@ -400,7 +402,7 @@ describe("onboard command options", () => {
       NEMOCLAW_MODEL: "qwen3-vl:4b",
       NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
     });
-    expect(process.env).toMatchObject({
+    expect(env).toMatchObject({
       NEMOCLAW_EXPERIMENTAL_PROFILE: "previous-profile",
       NEMOCLAW_PROVIDER: "previous-provider",
       NEMOCLAW_MODEL: "previous-model",
@@ -545,26 +547,15 @@ describe("onboard command options", () => {
   });
 
   it("sets the Ollama autostart override before onboarding", async () => {
-    const previous = process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART;
-    delete process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART;
-    const restoreEnvironment =
-      previous === undefined
-        ? () => delete process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART
-        : () => {
-            process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART = previous;
-          };
+    const env: NodeJS.ProcessEnv = {};
     let observed: string | undefined;
-    try {
-      await runOnboardCommand({
-        flags: { "no-ollama-autostart": true },
-        env: {},
-        runOnboard: async () => {
-          observed = process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART;
-        },
-      });
-      expect(observed).toBe("1");
-    } finally {
-      restoreEnvironment();
-    }
+    await runOnboardCommand({
+      flags: { "no-ollama-autostart": true },
+      env,
+      runOnboard: async () => {
+        observed = env.NEMOCLAW_OLLAMA_NO_AUTOSTART;
+      },
+    });
+    expect(observed).toBe("1");
   });
 });

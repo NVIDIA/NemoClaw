@@ -96,8 +96,55 @@ function compatibility(
     : { compatible: false, incompatibilityReason: resolution.message };
 }
 
+export interface ListServingProfilesOptions {
+  readonly evaluateCompatibility?: typeof compatibility;
+}
+
+export interface ResolveServingProfileOptions {
+  readonly catalog?: CompiledServingCatalog;
+  readonly listProfiles?: (catalog: CompiledServingCatalog) => ServingProfileListEntry[];
+}
+
+export class ServingProfileSelectionError extends Error {}
+
+export function resolveServingProfileSelection(
+  candidate: string,
+  options: ResolveServingProfileOptions = {},
+): string {
+  const catalog = options.catalog ?? loadServingCatalog();
+  const matches = catalog.presets.filter(
+    ({ metadata }) => metadata.id === candidate || metadata.displayName === candidate,
+  );
+  if (matches.length === 0) {
+    throw new ServingProfileSelectionError(
+      `Unknown serving profile '${candidate}'. Run 'nemoclaw profiles list'.`,
+    );
+  }
+  if (matches.length > 1) {
+    throw new ServingProfileSelectionError(
+      `Serving profile name '${candidate}' is ambiguous; select a stable profile ID.`,
+    );
+  }
+  const selected = matches[0]!;
+  if (selected.spec.selection === "disabled" || selected.metadata.supportState === "disabled") {
+    throw new ServingProfileSelectionError(
+      `Serving profile '${selected.metadata.id}' is disabled.`,
+    );
+  }
+  const profile = (options.listProfiles ?? listServingProfiles)(catalog).find(
+    ({ id }) => id === selected.metadata.id,
+  );
+  if (!profile?.compatible) {
+    throw new ServingProfileSelectionError(
+      `Serving profile '${selected.metadata.id}' is incompatible: ${profile?.incompatibilityReason ?? "compatibility could not be evaluated"}.`,
+    );
+  }
+  return selected.metadata.id;
+}
+
 export function listServingProfiles(
   catalog: CompiledServingCatalog = loadServingCatalog(),
+  options: ListServingProfilesOptions = {},
 ): ServingProfileListEntry[] {
   return [...catalog.presets]
     .sort((left, right) => left.metadata.id.localeCompare(right.metadata.id))
@@ -133,7 +180,7 @@ export function listServingProfiles(
         supportState: supportState(preset),
         estimatedImageDownloadBytes: imageDownloadBytes,
         estimatedModelDownloadBytes: modelDownloadBytes(recipe),
-        ...compatibility(catalog, preset, recipe),
+        ...(options.evaluateCompatibility ?? compatibility)(catalog, preset, recipe),
       };
     });
 }
