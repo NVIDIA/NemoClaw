@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { hermesCronJobRuntimeState } from "../live/rebuild-hermes-cron-restore.ts";
+import {
+  hermesCronJobRuntimeState,
+  parseHermesCronBeginReceipt,
+} from "../live/rebuild-hermes-cron-restore.ts";
 
 describe("Hermes rebuild cron restore evidence", () => {
   it("reads the flat runtime state emitted by Hermes", () => {
@@ -53,5 +56,17 @@ describe("Hermes rebuild cron restore evidence", () => {
         "cron job fixture",
       ),
     ).toThrow("cron job fixture completed run count is unavailable");
+  });
+
+  it("accepts the redacted cron drain receipt returned by shell probes", () => {
+    expect(
+      parseHermesCronBeginReceipt(
+        'NEMOCLAW_HERMES_CRON_RESTORE_V1:{"action":"begin","active_agents":0,"disposition":"drain-acquired","drain_acquired":true,"drain_token":"<REDACTED>","operator_drain_active":false,"pid":263,"start_time":47767,"version":1}\n',
+      ),
+    ).toMatchObject({
+      drain_token: "<REDACTED>",
+      pid: 263,
+      start_time: 47767,
+    });
   });
 });

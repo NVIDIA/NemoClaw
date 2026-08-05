@@ -54,7 +54,7 @@ interface GatewayEvidence {
   start_time: number;
 }
 
-interface CronControlReceipt {
+export interface CronControlReceipt {
   action: "begin";
   active_agents: number;
   disposition: string;
@@ -137,6 +137,25 @@ export function hermesCronJobRuntimeState(job: JsonObject, label: string) {
     nextRunAt: job.next_run_at,
     state,
   };
+}
+
+export function parseHermesCronBeginReceipt(text: string): CronControlReceipt {
+  const lines = text.split(/\r?\n/u).filter((line) => line.startsWith(RECEIPT_PREFIX));
+  if (lines.length !== 1) fail(`Hermes cron begin returned ${lines.length} receipts`);
+  const payload = parseJsonObject(lines[0].slice(RECEIPT_PREFIX.length), "cron begin receipt");
+  expect(payload).toMatchObject({
+    action: "begin",
+    active_agents: 0,
+    disposition: "drain-acquired",
+    drain_acquired: true,
+    drain_token: "<REDACTED>",
+    operator_drain_active: false,
+    version: 1,
+  });
+  if (!Number.isSafeInteger(payload.pid) || !Number.isSafeInteger(payload.start_time)) {
+    fail("Hermes cron begin receipt identity is invalid");
+  }
+  return payload as unknown as CronControlReceipt;
 }
 
 function assertFutureCronJob(job: JsonObject, seed: SeededCronJob): void {
@@ -397,29 +416,6 @@ export function createRebuildHermesCronRestoreFixture({
     fail(`Hermes gateway did not reach ${state}: ${lastEvidence}`);
   }
 
-  function parseBeginReceipt(text: string): CronControlReceipt {
-    const lines = text.split(/\r?\n/u).filter((line) => line.startsWith(RECEIPT_PREFIX));
-    if (lines.length !== 1) fail(`Hermes cron begin returned ${lines.length} receipts`);
-    const payload = parseJsonObject(lines[0].slice(RECEIPT_PREFIX.length), "cron begin receipt");
-    expect(payload).toMatchObject({
-      action: "begin",
-      active_agents: 0,
-      disposition: "drain-acquired",
-      drain_acquired: true,
-      operator_drain_active: false,
-      version: 1,
-    });
-    if (
-      !Number.isSafeInteger(payload.pid) ||
-      !Number.isSafeInteger(payload.start_time) ||
-      typeof payload.drain_token !== "string" ||
-      payload.drain_token.length !== 32
-    ) {
-      fail("Hermes cron begin receipt identity is invalid");
-    }
-    return payload as unknown as CronControlReceipt;
-  }
-
   async function exerciseStateRootSubstitutionAttack(
     seed: SeededCronJob,
     expectedGateway: Pick<GatewayEvidence, "pid" | "start_time">,
@@ -545,7 +541,7 @@ export function createRebuildHermesCronRestoreFixture({
         "phase-8-acquire-stranded-hermes-cron-restore-gate",
       );
       expectExitZero(begin, "acquire stranded Hermes cron restore gate");
-      const receipt = parseBeginReceipt(begin.stdout);
+      const receipt = parseHermesCronBeginReceipt(begin.stdout);
       await assertControlMarker(true, "phase-8-verify-cron-restore-marker-before-restart");
 
       const recoverySeed = await seedCronJob("recovery");
