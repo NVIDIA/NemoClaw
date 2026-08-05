@@ -5,7 +5,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import Ajv2020 from "ajv/dist/2020.js";
 import YAML from "yaml";
+
+import {
+  llamaCppDgxSparkExecutionPlanSha256,
+  parseLlamaCppDgxSparkExecutionPlan,
+} from "./llama-cpp-dgx-spark-qualification-contract.mts";
 
 type ServerImageManifest = {
   apiVersion?: unknown;
@@ -40,11 +46,13 @@ type ServerImageManifest = {
       platforms?: unknown;
       qualification?: {
         environment?: unknown;
+        execution?: unknown;
         gpu?: unknown;
         model?: unknown;
         platform?: unknown;
         probes?: unknown;
         profile?: unknown;
+        recipeRef?: unknown;
         required?: unknown;
         runner?: unknown;
       };
@@ -70,9 +78,84 @@ type ServerImageManifest = {
   };
 };
 
+type LlamaCppQualificationRecipe = {
+  apiVersion: string;
+  kind: string;
+  metadata: { id: string };
+  spec: {
+    backend: string;
+    providerId: string;
+    server: {
+      technology: string;
+      source: { repository: string; revision: string };
+    };
+    model: {
+      id: string;
+      revision: string;
+      servedName: string;
+      files: Array<{
+        path: string;
+        digest: string;
+        sizeBytes: number;
+        format: string;
+        quantization: string;
+        license: string;
+      }>;
+    };
+    runtime: {
+      image: string;
+      imageDownloadSizeBytes: number;
+      platforms: string[];
+      containerRuntime: string;
+      networkExposure: string;
+      hosts: number;
+      cuda: { baseImage: string; minimumDriverVersion: string };
+      gpu: { vendor: string; count: number; offload: string; cpuFallback: string };
+      resources: { memoryBytes: number; writableStorageBytes: number; pidsLimit: number };
+    };
+    execution: { receiptRef: string; materializerRef: string; lifecycleRef: string };
+    serve: {
+      protocol: string;
+      authentication: string;
+      port: number;
+      chatTemplate: string;
+      contextSize: number;
+      slots: number;
+      idleSleepSeconds: number;
+      batchSize: number;
+      microBatchSize: number;
+      flashAttention: string;
+      kvCache: { key: string; value: string };
+      speculativeDecoding: string;
+      limits: {
+        maxRequestBodyBytes: number;
+        maxPromptTokens: number;
+        maxCompletionTokens: number;
+        requestTimeoutSeconds: number;
+      };
+    };
+    readiness: {
+      contractRef: string;
+      timeoutSeconds: number;
+      expectedModel: string;
+      probes: { models: boolean; health: boolean; properties: boolean; metrics: boolean };
+    };
+    policy: { egress: string; modelSource: string; modelDownloads: string };
+    surfaces: Record<string, string>;
+    capabilities: Record<string, unknown>;
+  };
+};
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "../..");
 const manifestPath = path.join(repoRoot, "managed-inference", "images", "llama-cpp", "image.yaml");
+const recipePath = path.join(
+  repoRoot,
+  "managed-inference",
+  "recipes",
+  "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml",
+);
+const recipeSchemaPath = path.join(repoRoot, "managed-inference", "schemas", "recipe.schema.json");
 
 const nvidiaCudaDigestReference = /^docker\.io\/nvidia\/cuda@sha256:[0-9a-f]{64}$/u;
 const fullRevision = /^[0-9a-f]{40}$/u;
@@ -136,8 +219,43 @@ function assertExactKeys(value: unknown, name: string, expected: string[]): void
   }
 }
 
-export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "utf8")) {
-  const manifest = YAML.parse(source) as ServerImageManifest;
+function parseQualificationRecipe(
+  source: string,
+  schemaSource: string,
+): LlamaCppQualificationRecipe {
+  const document = YAML.parseDocument(source, { strict: true, uniqueKeys: true });
+  const issues = [...document.errors, ...document.warnings];
+  if (issues.length > 0) {
+    throw new Error(`invalid llama.cpp qualification recipe YAML: ${issues.join("; ")}`);
+  }
+  const value = document.toJS({ maxAliasCount: 0 }) as unknown;
+  const schema = JSON.parse(schemaSource) as object;
+  const validate = new Ajv2020({ allErrors: true, strict: true }).compile(schema);
+  if (!validate(value)) {
+    const details = (validate.errors ?? [])
+      .map((error) => `${error.instancePath || "/"} ${error.message ?? "is invalid"}`)
+      .join("; ");
+    throw new Error(`invalid llama.cpp qualification recipe: ${details}`);
+  }
+  return value as LlamaCppQualificationRecipe;
+}
+
+function parseImageManifest(source: string): ServerImageManifest {
+  const document = YAML.parseDocument(source, { strict: true, uniqueKeys: true });
+  const issues = [...document.errors, ...document.warnings];
+  if (issues.length > 0) {
+    throw new Error(`invalid llama.cpp image manifest YAML: ${issues.join("; ")}`);
+  }
+  return document.toJS({ maxAliasCount: 0 }) as ServerImageManifest;
+}
+
+export function loadLlamaCppImageConfig(
+  source = fs.readFileSync(manifestPath, "utf8"),
+  recipeSource = fs.readFileSync(recipePath, "utf8"),
+  recipeSchemaSource = fs.readFileSync(recipeSchemaPath, "utf8"),
+) {
+  const manifest = parseImageManifest(source);
+  const recipe = parseQualificationRecipe(recipeSource, recipeSchemaSource);
   assertExactKeys(manifest, "manifest", ["apiVersion", "kind", "metadata", "spec"]);
   assertExactKeys(manifest.metadata, "metadata", ["id"]);
   assertExactKeys(manifest.spec, "spec", [
@@ -210,11 +328,13 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
   ]);
   assertExactKeys(manifest.spec?.publication?.qualification, "publication qualification", [
     "environment",
+    "execution",
     "gpu",
     "model",
     "platform",
     "probes",
     "profile",
+    "recipeRef",
     "required",
     "runner",
   ]);
@@ -249,6 +369,16 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
   const publicationPlatforms = publication?.platforms;
   const qualificationRunner = qualification?.runner;
   const qualificationEnvironment = qualification?.environment;
+  const qualificationExecution = requiredString(
+    qualification?.execution,
+    "qualification execution",
+    /^(?:disabled|enabled)$/u,
+  );
+  const qualificationRecipeRef = requiredString(
+    qualification?.recipeRef,
+    "qualification recipe reference",
+    /^llama-cpp\.nemotron-3-nano-30b-a3b\.spark-single\.v1$/u,
+  );
   const qualificationModel = qualification?.model as
     | { digest?: unknown; hostPath?: unknown; id?: unknown }
     | undefined;
@@ -256,6 +386,16 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
     | { cpuFallback?: unknown; fullOffload?: unknown; vendor?: unknown }
     | undefined;
   const qualificationHostPath = qualificationModel?.hostPath;
+  const recipeModelFile = recipe.spec.model.files[0];
+  const expectedSurfaces = {
+    agentMode: "disabled",
+    mcpProxy: "disabled",
+    multimodalProjection: "disabled",
+    router: "disabled",
+    serverTools: "disabled",
+    slotInspection: "disabled",
+    ui: "disabled",
+  };
   if (
     publication?.trigger !== "workflow_dispatch" ||
     publication?.allowedRef !== "refs/heads/main" ||
@@ -290,10 +430,10 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
     }) ||
     qualification?.required !== true ||
     qualification?.profile !== "dgx-spark-gb10-single" ||
+    qualificationRecipeRef !== recipe.metadata.id ||
     qualification?.platform !== "linux/arm64" ||
-    qualificationModel?.id !== "unsloth/Nemotron-3-Nano-30B-A3B-GGUF" ||
-    qualificationModel?.digest !==
-      "sha256:627f5b04aedc97f967332f331bd75b7a4ed2f33ca83e6ee74b44235cc1887890" ||
+    qualificationModel?.id !== recipe.spec.model.id ||
+    qualificationModel?.digest !== recipeModelFile?.digest ||
     !matchesExactRecord(qualification?.gpu, {
       cpuFallback: "reject",
       fullOffload: true,
@@ -305,6 +445,59 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
   }
   if (publicationRepository !== spec?.repository) {
     throw new Error("publication repository must match the image repository");
+  }
+  if (
+    recipe.apiVersion !== "nemoclaw.nvidia.com/managed-inference/v1" ||
+    recipe.kind !== "ServingRecipe" ||
+    recipe.spec.backend !== "install-llama-cpp" ||
+    recipe.spec.providerId !== "llama-cpp-local" ||
+    recipe.spec.server.technology !== "llama.cpp" ||
+    recipe.spec.server.source.repository !== "ggml-org/llama.cpp" ||
+    recipe.spec.server.source.revision !== spec?.source?.revision ||
+    recipe.spec.model.files.length !== 1 ||
+    recipeModelFile?.format !== "gguf" ||
+    recipe.spec.runtime.containerRuntime !== "docker" ||
+    recipe.spec.runtime.networkExposure !== "loopback" ||
+    recipe.spec.runtime.hosts !== 1 ||
+    !recipe.spec.runtime.platforms.includes("linux/arm64") ||
+    recipe.spec.runtime.cuda.baseImage !== spec?.cuda?.runtimeBase ||
+    !matchesExactRecord(recipe.spec.runtime.gpu, {
+      count: 1,
+      cpuFallback: "reject",
+      offload: "full",
+      vendor: "nvidia",
+    }) ||
+    !matchesExactRecord(recipe.spec.execution, {
+      lifecycleRef: "llama-cpp.host-local.lifecycle/v1",
+      materializerRef: "llama-cpp.host-local/v1",
+      receiptRef: "llama-cpp.host-local.receipt/v1",
+    }) ||
+    recipe.spec.serve.protocol !== "openai-completions" ||
+    recipe.spec.serve.authentication !== "bearer" ||
+    recipe.spec.serve.port !== spec?.runtime?.port ||
+    recipe.spec.serve.slots !== 1 ||
+    recipe.spec.serve.idleSleepSeconds !== -1 ||
+    recipe.spec.serve.flashAttention !== "enabled" ||
+    recipe.spec.serve.speculativeDecoding !== "disabled" ||
+    recipe.spec.serve.microBatchSize > recipe.spec.serve.batchSize ||
+    recipe.spec.serve.limits.maxPromptTokens + recipe.spec.serve.limits.maxCompletionTokens >
+      recipe.spec.serve.contextSize ||
+    recipe.spec.readiness.contractRef !== "llama-cpp.server-readiness/v1" ||
+    recipe.spec.readiness.expectedModel !== recipe.spec.model.servedName ||
+    !matchesExactRecord(recipe.spec.readiness.probes, {
+      health: true,
+      metrics: true,
+      models: true,
+      properties: true,
+    }) ||
+    !matchesExactRecord(recipe.spec.policy, {
+      egress: "disabled",
+      modelDownloads: "disabled",
+      modelSource: "verified-local",
+    }) ||
+    !matchesExactRecord(recipe.spec.surfaces, expectedSurfaces)
+  ) {
+    throw new Error("invalid llama.cpp DGX Spark qualification recipe contract");
   }
   const infrastructureComplete =
     typeof qualificationRunner === "string" &&
@@ -322,11 +515,18 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
   if (publicationEnabled && !infrastructureComplete) {
     throw new Error("publication qualification infrastructure is incomplete");
   }
+  if (publicationEnabled && qualificationExecution !== "enabled") {
+    throw new Error("publication requires enabled DGX Spark qualification execution");
+  }
+  if (qualificationExecution === "enabled" && !infrastructureComplete) {
+    throw new Error("enabled DGX Spark qualification infrastructure is incomplete");
+  }
   if (!publicationEnabled && !infrastructureUnset && !infrastructureComplete) {
     throw new Error("disabled publication must not bind partial infrastructure");
   }
   const normalizedQualification = {
     environment: qualificationEnvironment,
+    execution: qualificationExecution,
     gpu: {
       cpuFallback: qualificationGpu?.cpuFallback,
       fullOffload: qualificationGpu?.fullOffload,
@@ -340,6 +540,7 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
     platform: qualification?.platform,
     probes: qualification?.probes,
     profile: qualification?.profile,
+    recipeRef: qualificationRecipeRef,
     required: qualification?.required,
     runner: qualificationRunner,
   };
@@ -441,6 +642,58 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
   if (new Set(include.map(({ platform }) => platform)).size !== 2) {
     throw new Error("llama.cpp server image platforms must be unique");
   }
+  const arm64 = include.find(({ platform }) => platform === "linux/arm64");
+  if (!arm64) {
+    throw new Error("llama.cpp qualification requires one native linux/arm64 build");
+  }
+  const qualificationPlan = {
+    contractVersion: 1,
+    imageBuild: {
+      backendDirectory: "/opt/llama.cpp/lib",
+      compiler: expectedCompiler,
+      cuda: {
+        developmentBase: spec?.cuda?.developmentBase,
+        runtimeBase: spec?.cuda?.runtimeBase,
+      },
+      platform: {
+        cudaArchitectures: arm64.cuda_architectures,
+        platform: arm64.platform,
+      },
+      repository: publicationRepository,
+      runtime: {
+        gid: spec?.runtime?.gid,
+        port: spec?.runtime?.port,
+        uid: spec?.runtime?.uid,
+      },
+      source: {
+        archiveSha256: spec?.source?.archiveSha256,
+        repository: spec?.source?.repository,
+        revision: spec?.source?.revision,
+      },
+    },
+    recipe: {
+      id: recipe.metadata.id,
+      model: {
+        file: recipeModelFile,
+        id: recipe.spec.model.id,
+        revision: recipe.spec.model.revision,
+        servedName: recipe.spec.model.servedName,
+      },
+      policy: recipe.spec.policy,
+      readiness: recipe.spec.readiness,
+      runtime: {
+        cuda: recipe.spec.runtime.cuda,
+        gpu: recipe.spec.runtime.gpu,
+        resources: recipe.spec.runtime.resources,
+      },
+      serve: recipe.spec.serve,
+      server: recipe.spec.server,
+      surfaces: recipe.spec.surfaces,
+    },
+  };
+  const canonicalQualificationPlan = parseLlamaCppDgxSparkExecutionPlan(qualificationPlan);
+  const qualificationPlanJson = JSON.stringify(canonicalQualificationPlan);
+  const qualificationPlanSha256 = llamaCppDgxSparkExecutionPlanSha256(canonicalQualificationPlan);
 
   return {
     backend_directory: "/opt/llama.cpp/lib",
@@ -550,6 +803,14 @@ export function loadLlamaCppImageConfig(source = fs.readFileSync(manifestPath, "
       ),
     ),
     publication_qualification: JSON.stringify(normalizedQualification),
+    publication_qualification_plan: qualificationPlanJson,
+    publication_qualification_plan_sha256: qualificationPlanSha256,
+    qualification_environment:
+      typeof qualificationEnvironment === "string" ? qualificationEnvironment : "",
+    qualification_execution: qualificationExecution,
+    qualification_model_host_path:
+      typeof qualificationHostPath === "string" ? qualificationHostPath : "",
+    qualification_runner: typeof qualificationRunner === "string" ? qualificationRunner : "",
     runtime_gid: requiredRuntimeId(spec?.runtime?.gid, "runtime gid"),
     runtime_forbidden_paths: JSON.stringify(expectedForbiddenPaths),
     runtime_required_paths: JSON.stringify(expectedRequiredPaths),
@@ -569,8 +830,46 @@ export function githubOutput(config: Record<string, string>): string {
     .join("\n")}\n`;
 }
 
+function readBoundedRegularFile(root: string, relativePath: string): string {
+  const file = path.resolve(root, relativePath);
+  const relative = path.relative(root, file);
+  if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`invalid qualification source path: ${relativePath}`);
+  }
+  const descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const status = fs.fstatSync(descriptor);
+    if (!status.isFile() || status.size < 1 || status.size > 1024 * 1024) {
+      throw new Error(`qualification source must be a bounded regular file: ${relativePath}`);
+    }
+    return fs.readFileSync(descriptor, "utf8");
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+export function loadLlamaCppImageConfigFromRoot(sourceRoot: string) {
+  const root = fs.realpathSync(sourceRoot);
+  return loadLlamaCppImageConfig(
+    readBoundedRegularFile(root, "managed-inference/images/llama-cpp/image.yaml"),
+    readBoundedRegularFile(
+      root,
+      "managed-inference/recipes/llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1.yaml",
+    ),
+    fs.readFileSync(recipeSchemaPath, "utf8"),
+  );
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const output = githubOutput(loadLlamaCppImageConfig());
+  const args = process.argv.slice(2);
+  let sourceRoot = repoRoot;
+  if (args.length > 0) {
+    if (args.length !== 2 || args[0] !== "--source-root" || !args[1]) {
+      throw new Error("usage: export-llama-cpp-image-config.mts [--source-root PATH]");
+    }
+    sourceRoot = args[1];
+  }
+  const output = githubOutput(loadLlamaCppImageConfigFromRoot(sourceRoot));
   const githubOutputPath = process.env.GITHUB_OUTPUT;
   if (githubOutputPath) {
     fs.appendFileSync(githubOutputPath, output, {
