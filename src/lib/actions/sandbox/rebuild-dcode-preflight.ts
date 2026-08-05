@@ -4,10 +4,12 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { dockerImageInspectFormat, dockerRmi } from "../../adapters/docker";
+import type { TrustedRemoteBaseImageOverride } from "../../agent/base-image";
 import { loadAgent } from "../../agent/defs";
 import {
   ensureAgentBaseImage,
   pinTrustedAgentBaseImageOverrideForOperation,
+  pinTrustedAgentRemoteBaseImageOverrideForOperation,
 } from "../../agent/onboard";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
@@ -19,8 +21,8 @@ import {
   getResumeSandboxGpuOverrides,
   resolveSandboxGpuConfig,
 } from "../../onboard/sandbox-gpu-mode";
-import { redact } from "../../security/redact";
 import type { TrustedLocalBaseImageOverride } from "../../sandbox-base-image";
+import { redact } from "../../security/redact";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
@@ -44,7 +46,8 @@ export type DcodeRebuildPreflightBail = (message: string, code?: number) => neve
 
 type PinnedDcodeBaseImage = {
   readonly imageRef: string;
-  readonly trustedLocalOverride: TrustedLocalBaseImageOverride;
+  readonly trustedLocalOverride?: TrustedLocalBaseImageOverride;
+  readonly trustedRemoteOverride?: TrustedRemoteBaseImageOverride;
   dispose(): boolean;
   verify(): boolean;
 };
@@ -270,43 +273,77 @@ function inspectLocalImageId(imageRef: string): string {
   }
 }
 
-function buildPinnedDcodeBaseImage(bail: DcodeRebuildPreflightBail): PinnedDcodeBaseImage {
+function isImmutableRemoteImageRef(imageRef: string): boolean {
+  return /^[^\s@]+@sha256:[0-9a-f]{64}$/i.test(imageRef);
+}
+
+function resolvePinnedDcodeBaseImage(bail: DcodeRebuildPreflightBail): PinnedDcodeBaseImage {
   const agent = loadAgent(DCODE_AGENT_NAME);
   if (!agent.dockerfileBasePath) {
     fail("DCode is missing its sandbox base Dockerfile", bail);
   }
   let result: ReturnType<typeof ensureAgentBaseImage>;
   try {
-    result = ensureAgentBaseImage(agent, { forceBaseImageRebuild: true });
+    result = ensureAgentBaseImage(agent, { forceBaseImageRefresh: true });
   } catch (error) {
-    fail(
-      `DCode base image could not be built: ${error instanceof Error ? error.message : String(error)}`,
-      bail,
-    );
+    try {
+      result = ensureAgentBaseImage(agent, { forceBaseImageRebuild: true });
+    } catch (buildError) {
+      fail(
+        `DCode base image could not be resolved or built: ${buildError instanceof Error ? buildError.message : String(buildError)}`,
+        bail,
+      );
+    }
+  }
+  if (
+    result.imageTag &&
+    !result.trustedLocalOverride &&
+    !isImmutableRemoteImageRef(result.imageTag)
+  ) {
+    try {
+      result = ensureAgentBaseImage(agent, { forceBaseImageRebuild: true });
+    } catch (error) {
+      fail(
+        `DCode base image could not be built: ${error instanceof Error ? error.message : String(error)}`,
+        bail,
+      );
+    }
   }
   const imageRef = result.imageTag;
   const trustedLocalOverride = result.trustedLocalOverride;
-  if (!imageRef || !trustedLocalOverride || trustedLocalOverride.ref !== imageRef) {
-    fail("DCode base image did not retain its current build-operation proof", bail);
+  const trustedRemoteOverride =
+    imageRef &&
+    isImmutableRemoteImageRef(imageRef) &&
+    result.resolutionMetadata?.ref === imageRef &&
+    result.resolutionMetadata.source !== "local"
+      ? { ref: imageRef, resolutionMetadata: result.resolutionMetadata }
+      : undefined;
+  if (
+    !imageRef ||
+    (trustedLocalOverride?.ref !== imageRef && trustedRemoteOverride?.ref !== imageRef)
+  ) {
+    fail("DCode base image did not retain its current resolution proof", bail);
   }
   const imageId = inspectLocalImageId(imageRef);
   if (!imageId) {
-    try {
-      dockerRmi(imageRef, { ignoreError: true, suppressOutput: true });
-    } catch {
-      // The identity failure is the actionable error.
+    if (trustedLocalOverride) {
+      try {
+        dockerRmi(imageRef, { ignoreError: true, suppressOutput: true });
+      } catch {
+        // The identity failure is the actionable error.
+      }
     }
     fail("DCode base image identity could not be verified", bail);
   }
 
-  let removed = false;
+  let disposed = trustedRemoteOverride !== undefined;
   let warned = false;
   const dispose = (): boolean => {
-    if (removed) return true;
+    if (disposed) return true;
     try {
       const removal = dockerRmi(imageRef, { ignoreError: true, suppressOutput: true });
       if (removal.status === 0) {
-        removed = true;
+        disposed = true;
         process.removeListener("exit", dispose);
         return true;
       }
@@ -319,10 +356,11 @@ function buildPinnedDcodeBaseImage(bail: DcodeRebuildPreflightBail): PinnedDcode
     }
     return false;
   };
-  process.on("exit", dispose);
+  if (trustedLocalOverride) process.on("exit", dispose);
   return {
     imageRef,
     trustedLocalOverride,
+    trustedRemoteOverride,
     dispose,
     verify: () => inspectLocalImageId(imageRef) === imageId,
   };
@@ -335,15 +373,18 @@ async function withPinnedBaseImage<T>(
   const envName = "NEMOCLAW_LANGCHAIN_DEEPAGENTS_CODE_SANDBOX_BASE_IMAGE_REF";
   const hadPrevious = Object.hasOwn(process.env, envName);
   const previous = process.env[envName];
-  const restoreTrustedOverride = pinTrustedAgentBaseImageOverrideForOperation(
-    envName,
-    pinned.trustedLocalOverride,
-  );
+  const restoreTrustedLocalOverride = pinned.trustedLocalOverride
+    ? pinTrustedAgentBaseImageOverrideForOperation(envName, pinned.trustedLocalOverride)
+    : () => undefined;
+  const restoreTrustedRemoteOverride = pinned.trustedRemoteOverride
+    ? pinTrustedAgentRemoteBaseImageOverrideForOperation(envName, pinned.trustedRemoteOverride)
+    : () => undefined;
   process.env[envName] = pinned.imageRef;
   try {
     return await action();
   } finally {
-    restoreTrustedOverride();
+    restoreTrustedRemoteOverride();
+    restoreTrustedLocalOverride();
     if (hadPrevious && previous !== undefined) process.env[envName] = previous;
     else delete process.env[envName];
   }
@@ -389,7 +430,7 @@ export async function prepareDcodeReplacementBeforeMutation(
     const target = resolveTarget(entry, resumeConfig, bail, gatewayPort);
     if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail);
 
-    pinnedBase = buildPinnedDcodeBaseImage(bail);
+    pinnedBase = resolvePinnedDcodeBaseImage(bail);
     const sandboxGpuConfig = getRecordedGpuConfig(sandboxName, entry, session);
     if (sandboxGpuConfig.errors.length > 0) fail(sandboxGpuConfig.errors.join(" "), bail);
     const imageResult = await withPinnedBaseImage(pinnedBase, () =>

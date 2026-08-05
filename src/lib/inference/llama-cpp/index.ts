@@ -14,6 +14,8 @@ import {
 } from "./contract";
 
 export * from "./contract";
+export * from "./gguf-cache-plan";
+export * from "./gguf-cache-receipt";
 
 type LlamaCppModelEntry = {
   id?: unknown;

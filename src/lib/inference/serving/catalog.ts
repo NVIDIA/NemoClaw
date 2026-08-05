@@ -7,6 +7,7 @@ import { posix } from "node:path";
 import Ajv2020, { type AnySchema, type ValidateFunction } from "ajv/dist/2020.js";
 import { parseDocument } from "yaml";
 
+import { compileLlamaCppGgufCachePlan } from "../llama-cpp/gguf-cache-plan";
 import type {
   CompiledServingCatalog,
   CompiledServingCatalogPayload,
@@ -20,14 +21,14 @@ import type {
   ServingReadinessComparison,
   ServingReadinessObservationRole,
   ServingReadinessRegistryEntry,
-  ServingReadinessRequirement,
   ServingReadinessRegistryValue,
+  ServingReadinessRequirement,
   ServingRecipe,
 } from "./types";
 
 const API_VERSION = "nemoclaw.nvidia.com/managed-inference/v1" as const;
 const CATALOG_SCHEMA_VERSION = "1.0.0" as const;
-const COMPILER_VERSION = "1.1.0" as const;
+const COMPILER_VERSION = "1.2.0" as const;
 const READINESS_SCHEMA_REF =
   "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json" as const;
 const RECIPE_SCHEMA_ID =
@@ -235,6 +236,13 @@ function validateRecipeSemantics(
   }
 
   if (isLlamaCppServingRecipe(recipe)) {
+    try {
+      compileLlamaCppGgufCachePlan(recipe);
+    } catch (error) {
+      throw new ServingCatalogValidationError(
+        `Recipe ${recipe.metadata.id}: ${error instanceof Error ? error.message : "GGUF cache plan compilation failed."}`,
+      );
+    }
     const servedName = recipe.spec.model.servedName;
     if (recipe.spec.readiness.expectedModel !== servedName) {
       throw new ServingCatalogValidationError(
