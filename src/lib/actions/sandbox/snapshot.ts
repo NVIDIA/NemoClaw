@@ -102,7 +102,7 @@ const R = useColor ? "\x1b[0m" : "";
 
 export type SnapshotRequest =
   | { kind: "help" }
-  | { kind: "create"; name?: string; keepFailed?: boolean }
+  | { kind: "create"; name?: string }
   | { kind: "list" }
   | {
       kind: "restore";
@@ -659,26 +659,7 @@ function isSnapshotCreationAllowedByDcodeActivity(sandboxName: string): boolean 
   return false;
 }
 
-const KEEP_FAILED_SNAPSHOT_ENV = "NEMOCLAW_KEEP_FAILED_SNAPSHOT";
-
-function keepFailedSnapshotRequested(
-  request: Extract<SnapshotRequest, { kind: "create" }>,
-): boolean {
-  return request.keepFailed === true || process.env[KEEP_FAILED_SNAPSHOT_ENV] === "1";
-}
-
-function reportIncompleteSnapshot(
-  sandboxName: string,
-  backupPath: string,
-  keepFailed: boolean,
-): void {
-  if (keepFailed) {
-    console.error(`  Kept the incomplete snapshot at ${backupPath}.`);
-    console.error(
-      `  It is listed by \`${CLI_NAME} ${sandboxName} snapshot list\` and can be restored even though its capture did not complete.`,
-    );
-    return;
-  }
+function removeIncompleteSnapshot(sandboxName: string, backupPath: string): void {
   const removal = sandboxState.removeIncompleteSnapshot(backupPath);
   if (removal.removed) {
     console.error("  Removed the incomplete snapshot.");
@@ -757,7 +738,7 @@ function runSnapshotCreate(
     }
     const incompletePath = result.manifest?.backupPath;
     if (incompletePath) {
-      reportIncompleteSnapshot(sandboxName, incompletePath, keepFailedSnapshotRequested(request));
+      removeIncompleteSnapshot(sandboxName, incompletePath);
     }
     snapshotExit(1);
   });

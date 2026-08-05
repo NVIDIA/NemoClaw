@@ -15,32 +15,22 @@ export default class SnapshotCreateCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Create a snapshot of sandbox state";
   static description = "Create an auto-versioned snapshot of sandbox workspace state.";
-  static usage = ["<name> [--name <label>] [--keep-failed]"];
+  static usage = ["<name> [--name <label>]"];
   static examples = [
     "<%= config.bin %> sandbox snapshot create alpha",
     "<%= config.bin %> sandbox snapshot create alpha --name before-upgrade",
-    "<%= config.bin %> sandbox snapshot create alpha --keep-failed",
   ];
   static args = {
     sandboxName: sandboxNameArg,
   };
   static flags = {
     name: Flags.string({ description: "Optional snapshot label" }),
-    "keep-failed": Flags.boolean({
-      description:
-        "Keep an incomplete snapshot on disk when creation fails, instead of removing it",
-      default: false,
-    }),
   };
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(SnapshotCreateCommand);
     try {
-      await runSandboxSnapshot(args.sandboxName, {
-        kind: "create",
-        name: flags.name,
-        keepFailed: flags["keep-failed"],
-      });
+      await runSandboxSnapshot(args.sandboxName, { kind: "create", name: flags.name });
     } catch (error) {
       const snapshotError = snapshotCommandError(error);
       if (snapshotError) {

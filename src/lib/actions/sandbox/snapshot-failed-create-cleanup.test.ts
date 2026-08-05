@@ -78,14 +78,13 @@ describe("snapshot create cleanup after a failed capture", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    vi.unstubAllEnvs();
   });
 
-  async function createSnapshot(request: Record<string, unknown> = {}): Promise<string> {
+  async function createSnapshot(): Promise<string> {
     const { runSandboxSnapshot } = await import("./snapshot");
-    await expect(runSandboxSnapshot("alpha", { kind: "create", ...request })).rejects.toMatchObject(
-      { exitCode: 1 },
-    );
+    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
     return vi.mocked(console.error).mock.calls.flat().join("\n");
   }
 
@@ -111,39 +110,6 @@ describe("snapshot create cleanup after a failed capture", () => {
 
     expect(mocks.removeIncompleteSnapshot).toHaveBeenCalledWith(INCOMPLETE_PATH);
     expect(errors).toContain("Removed the incomplete snapshot.");
-  });
-
-  it("keeps the snapshot when --keep-failed is passed", async () => {
-    mocks.backupSandboxState.mockReturnValue(failedCaptureWithPublishedSnapshot());
-
-    const errors = await createSnapshot({ keepFailed: true });
-
-    expect(mocks.removeIncompleteSnapshot).not.toHaveBeenCalled();
-    expect(errors).toContain(`Kept the incomplete snapshot at ${INCOMPLETE_PATH}.`);
-    expect(errors).toContain("can be restored even though its capture did not complete");
-  });
-
-  it("keeps the snapshot when NEMOCLAW_KEEP_FAILED_SNAPSHOT is exactly 1", async () => {
-    vi.stubEnv("NEMOCLAW_KEEP_FAILED_SNAPSHOT", "1");
-    mocks.backupSandboxState.mockReturnValue(failedCaptureWithPublishedSnapshot());
-
-    await createSnapshot();
-
-    expect(mocks.removeIncompleteSnapshot).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    "true",
-    "yes",
-    "0",
-    "",
-  ])("removes the snapshot when NEMOCLAW_KEEP_FAILED_SNAPSHOT is %j", async (value) => {
-    vi.stubEnv("NEMOCLAW_KEEP_FAILED_SNAPSHOT", value);
-    mocks.backupSandboxState.mockReturnValue(failedCaptureWithPublishedSnapshot());
-
-    await createSnapshot();
-
-    expect(mocks.removeIncompleteSnapshot).toHaveBeenCalledWith(INCOMPLETE_PATH);
   });
 
   it("names the snapshot that is still listed when removal fails", async () => {
@@ -188,7 +154,7 @@ describe("snapshot create cleanup after a failed capture", () => {
     });
     const { runSandboxSnapshot } = await import("./snapshot");
 
-    await runSandboxSnapshot("alpha", { kind: "create", keepFailed: true });
+    await runSandboxSnapshot("alpha", { kind: "create" });
 
     expect(mocks.removeIncompleteSnapshot).not.toHaveBeenCalled();
   });

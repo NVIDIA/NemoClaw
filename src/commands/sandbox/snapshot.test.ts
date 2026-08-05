@@ -69,17 +69,6 @@ describe("snapshot oclif commands", () => {
     expect(runSandboxSnapshot).toHaveBeenCalledWith("alpha", {
       kind: "create",
       name: "before-upgrade",
-      keepFailed: false,
-    });
-  });
-
-  it("runs snapshot create asking to keep an incomplete snapshot", async () => {
-    await SnapshotCreateCommand.run(["alpha", "--keep-failed"], rootDir);
-
-    expect(runSandboxSnapshot).toHaveBeenCalledWith("alpha", {
-      kind: "create",
-      name: undefined,
-      keepFailed: true,
     });
   });
 });
