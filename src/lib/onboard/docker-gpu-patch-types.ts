@@ -42,9 +42,10 @@ export type DockerGpuPatchDeps = {
   /**
    * Resolve the host group ID(s) that own the Jetson/Tegra GPU device nodes
    * (`/dev/nvmap`, `/dev/nvhost-*`, and `/dev/dri/renderD*`). Used by the
-   * Jetson recreate to grant the sandbox user matching `--group-add`
-   * membership so CUDA can open them (#4231, #7610). Injectable so the Jetson
-   * permission path is testable without Tegra hardware.
+   * Jetson recreate for Docker `--group-add` and matching sandbox-account
+   * membership before the OpenShell supervisor calls `initgroups()`, so CUDA
+   * can open them (#4231, #7610). Injectable so the Jetson permission path is
+   * testable without Tegra hardware.
    */
   detectTegraDeviceGroupGids?: () => string[];
   /** Injectable directory lister for unit testing CDI spec discovery. */

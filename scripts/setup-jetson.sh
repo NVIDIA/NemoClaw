@@ -241,7 +241,18 @@ PYEOF
 }
 
 main() {
-  local jetpack_version release_line
+  local jetpack_version release_line mode="${1:-}"
+
+  if [[ "$#" -gt 1 || (-n "$mode" && "$mode" != "--nvmap-only") ]]; then
+    error "Usage: setup-jetson.sh [--nvmap-only]"
+  fi
+
+  if [[ "$mode" == "--nvmap-only" ]]; then
+    [[ "${NEMOCLAW_AGENT:-openclaw}" == "openclaw" ]] \
+      || error "Jetson nvmap-only setup is available only for OpenClaw."
+    configure_nvmap_group_access
+    return 0
+  fi
 
   release_line="$(head -n1 /etc/nv_tegra_release 2>/dev/null || true)"
   [[ -n "$release_line" ]] || exit 0

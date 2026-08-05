@@ -58,6 +58,7 @@ function withJetsonReleaseSandbox<T>(
     const statCountPath = path.join(tempDir, "stat-count");
     mkdirSync(stubDir);
     writeFileSync(commandLogPath, "");
+    writeFileSync(headArgsPath, "");
     for (const command of HOST_MUTATION_COMMANDS) {
       const stubPath = path.join(stubDir, command);
       writeFileSync(
@@ -115,8 +116,9 @@ function spawnSetupJetson(
   headArgsPath: string,
   commandLogPath: string,
   extraEnv: NodeJS.ProcessEnv = {},
+  scriptArgs: string[] = [],
 ): SetupJetsonRun {
-  const result = spawnSync("bash", [SCRIPT_PATH], {
+  const result = spawnSync("bash", [SCRIPT_PATH, ...scriptArgs], {
     encoding: "utf-8",
     env: {
       ...process.env,
@@ -367,6 +369,26 @@ describe("setup-jetson host setup on an unrecognized L4T release (#7612)", () =>
 });
 
 describe("setup-jetson OpenClaw nvmap access", () => {
+  it("repairs nvmap without requiring an L4T release in nvmap-only mode (#7610)", () => {
+    const result = withJetsonReleaseSandbox(({ commandLogPath, headArgsPath, stubDir }) =>
+      spawnSetupJetson(
+        stubDir,
+        headArgsPath,
+        commandLogPath,
+        {
+          NEMOCLAW_TEST_STAT_OUTPUT: "character special file|cr--r-----",
+          NEMOCLAW_TEST_STAT_OUTPUT_AFTER: "character special file|cr--rw----",
+        },
+        ["--nvmap-only"],
+      ),
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.headArgs).toBe("");
+    expect(result.commandLog).toContain("chmod g+rw /dev/nvmap");
+    expect(result.stdout).toContain("/dev/nvmap grants its owning group read-write access");
+  });
+
   it("grants the nvmap owning group read-write access and persists the mode on JetPack 6 (#7610)", () => {
     const result = withJetsonReleaseSandbox(
       ({ commandLogPath, headArgsPath, releasePath, stubDir }) => {

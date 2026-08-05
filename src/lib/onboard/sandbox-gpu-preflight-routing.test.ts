@@ -11,6 +11,7 @@ import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
   dockerNvidiaRuntimeAvailable,
   formatSandboxGpuPassthroughNote,
+  jetsonGpuProofRemediationLines,
   parseDockerRuntimeNames,
   sandboxGpuRemediationLines,
   validateSandboxGpuPreflight,
@@ -28,6 +29,16 @@ function sandboxGpuConfig(overrides: Partial<SandboxGpuConfig> = {}): SandboxGpu
   };
 }
 describe("sandbox GPU preflight routing", () => {
+  it("describes every Jetson device-access boundary after CUDA proof failure (#7610)", () => {
+    const remediation = jetsonGpuProofRemediationLines().join("\n");
+
+    expect(remediation).toContain("owning-group read-write access");
+    expect(remediation).toContain("propagate the device GIDs through Docker");
+    expect(remediation).toContain("before OpenShell calls initgroups()");
+    expect(remediation).not.toContain("add the host video/render groups via --group-add");
+    expect(remediation).not.toContain("must be readable by the sandbox");
+  });
+
   it("formats Jetson sandbox GPU notes around the NVIDIA runtime backend", () => {
     expect(formatSandboxGpuPassthroughNote({ hostGpuPlatform: "jetson" })).toContain(
       "Docker NVIDIA runtime",

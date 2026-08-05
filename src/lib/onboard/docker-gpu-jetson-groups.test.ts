@@ -5,7 +5,17 @@ import fs from "node:fs";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { detectTegraDeviceGroupGids } from "./docker-gpu-jetson-groups";
+import {
+  detectTegraDeviceGroupGids,
+  ensureJetsonNvmapGroupAccess,
+} from "./docker-gpu-jetson-groups";
+
+const READ_ONLY_NVMAP = {
+  isCharacterDevice: true,
+  isSymbolicLink: false,
+  mode: 0o440,
+};
+const READ_WRITE_NVMAP = { ...READ_ONLY_NVMAP, mode: 0o660 };
 
 describe("detectTegraDeviceGroupGids", () => {
   afterEach(() => {
@@ -140,5 +150,59 @@ describe("detectTegraDeviceGroupGids", () => {
       lstat.mockRestore();
       readdir.mockRestore();
     }
+  });
+});
+
+describe("ensureJetsonNvmapGroupAccess", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("keeps verified group read-write access without running host setup (#7610)", () => {
+    const runSetup = vi.fn();
+
+    ensureJetsonNvmapGroupAccess({ statDevice: () => READ_WRITE_NVMAP, runSetup });
+
+    expect(runSetup).not.toHaveBeenCalled();
+  });
+
+  it("repairs group-read-only nvmap access and verifies the result (#7610)", () => {
+    const statDevice = vi
+      .fn()
+      .mockReturnValueOnce(READ_ONLY_NVMAP)
+      .mockReturnValueOnce(READ_WRITE_NVMAP);
+    const runSetup = vi.fn(() => ({ status: 0 }));
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    ensureJetsonNvmapGroupAccess({
+      statDevice,
+      runSetup,
+      setupScriptPath: "/package/scripts/setup-jetson.sh",
+    });
+
+    expect(runSetup).toHaveBeenCalledWith("/package/scripts/setup-jetson.sh");
+    expect(statDevice).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops before sandbox creation when host setup fails (#7610)", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(() =>
+      ensureJetsonNvmapGroupAccess({
+        statDevice: () => READ_ONLY_NVMAP,
+        runSetup: () => ({ status: 1 }),
+      }),
+    ).toThrow("Jetson /dev/nvmap group setup failed before sandbox creation (exit status 1)");
+  });
+
+  it("rejects an unverified post-setup device state (#7610)", () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    expect(() =>
+      ensureJetsonNvmapGroupAccess({
+        statDevice: () => READ_ONLY_NVMAP,
+        runSetup: () => ({ status: 0 }),
+      }),
+    ).toThrow("still does not grant its owning group read-write access");
   });
 });

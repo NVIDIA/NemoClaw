@@ -2742,18 +2742,16 @@ Use `NEMOCLAW_DOCKER_GPU_PATCH=0` only for troubleshooting because it bypasses t
 It also keeps eligible Jetson GPU device group memberships when OpenShell starts the nonroot sandbox user.
 The compatibility policy permits read-only access to the NVIDIA runtime library directory at `/opt/nvidia/l4t-gpu-libs` when that path is present.
 
-On an OpenClaw Jetson host, the installer applies persistent group read-write access when `/dev/nvmap` is a real character device.
-If the device is absent, setup warns and continues without installing the rule.
-This device permission setup runs even when the L4T release line is unrecognized, but it does not make that release tested or supported.
-If CUDA reports `NvRmMemInitNvmap failed with Permission denied` and `cuInit(0)=999`, rerun the NemoClaw installer to apply the permission setup:
+Before each OpenClaw Jetson GPU sandbox creation, including `$$nemoclaw onboard --resume`, NemoClaw verifies that `/dev/nvmap` is a real character device whose owning group has read-write access.
 
 <Warning>
-The installer grants write access to every member of the existing `/dev/nvmap` owning group.
+When repair is required, NemoClaw grants write access to every member of the existing `/dev/nvmap` owning group.
 </Warning>
 
-```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
-```
+If the initial verification fails, NemoClaw runs the same host permission setup as the installer.
+After setup exits successfully, NemoClaw verifies the device again.
+If setup fails or the device still lacks verified group read-write access, onboarding stops before sandbox creation.
+This device permission setup runs even when the L4T release line is unrecognized, but it does not make that release tested or supported.
 
 Verify the persistent rule and the live device permissions:
 

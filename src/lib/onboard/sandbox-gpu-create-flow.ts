@@ -4,6 +4,7 @@
 import type { StreamSandboxCreateResult } from "../sandbox/create-stream";
 import { redactFull } from "../security/redact";
 import type { SandboxGpuProofResult } from "../state/registry";
+import { ensureJetsonNvmapGroupAccess } from "./docker-gpu-jetson-groups";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
 import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch";
 import type { DockerGpuPatchDeps, DockerUlimit } from "./docker-gpu-patch-types";
@@ -105,6 +106,7 @@ export interface SandboxGpuCreateFlowDeps {
   sleep: Sleep;
   openshellArgv(args: string[]): string[];
   verifyDirectSandboxGpu(sandboxName: string): SandboxGpuProofResult;
+  ensureJetsonNvmapGroupAccess?: () => void;
   /** Production callers omit this factory and use the runtime provider's adapter. */
   createManagedBootstrapAdapter?: () => ManagedBootstrapAdapter;
 }
@@ -135,6 +137,13 @@ export async function runSandboxGpuCreateFlow(
   deps: SandboxGpuCreateFlowDeps,
 ): Promise<SandboxGpuCreateFlowResult> {
   let registryImageRef: string | null = input.prebuild.imageRef;
+  if (
+    input.sandboxGpuConfig.sandboxGpuEnabled &&
+    input.sandboxGpuConfig.hostGpuPlatform === "jetson" &&
+    (input.agentName ?? "openclaw") === "openclaw"
+  ) {
+    (deps.ensureJetsonNvmapGroupAccess ?? ensureJetsonNvmapGroupAccess)();
+  }
   const attemptRunner = createSandboxGpuCreateAttemptRunner(input, deps);
   const gpuCreateOutcome = await sandboxGpuCreateAttempt
     .executeSandboxGpuCreatePlan(input.gpuRoutePlan, {
