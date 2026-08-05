@@ -3,7 +3,6 @@
 
 import { destroyGatewayForReuse } from "../gateway-cleanup";
 import { verifyGatewayContainerRunning } from "../gateway-container-running";
-import { applyHealthyPortReuse } from "./gateway-stale-port-reuse";
 import {
   createInitialOnboardFlowPhases as createInitialFlowPhases,
   type InitialOnboardFlowContext,
