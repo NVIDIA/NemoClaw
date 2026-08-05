@@ -43,6 +43,18 @@ describe.skipIf(process.platform === "win32")("Hermes mutable restart input seal
     }
   });
 
+  it("accepts exactly 16 MiB at the size guard before validating filesystem state", () => {
+    const fixture = createRestartFixture();
+    const configAtLimit = "a".repeat(16 * 1024 * 1024);
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+
+    const updated = runWriteConfig(fixture, "0".repeat(64), configAtLimit);
+
+    expect(updated.status).not.toBe(0);
+    expect(updated.stderr).not.toContain("refusing oversized Hermes config input");
+    expect(updated.stderr).toContain("No such file or directory");
+  });
+
   it("rejects Hermes configuration input larger than 16 MiB without creating restart state", () => {
     const fixture = createRestartFixture();
     const expectedDigest = createHash("sha256").update(fixture.trustedConfig).digest("hex");
