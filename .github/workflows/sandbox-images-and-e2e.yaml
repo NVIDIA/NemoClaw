@@ -218,6 +218,30 @@ jobs:
           cache-from: type=gha,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}
           cache-to: type=gha,mode=max,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}
 
+      # The production build intentionally omits NEMOCLAW_CORPORATE_CA_B64. A
+      # successful final stage therefore proves its registry remediations and
+      # Hermes agent-install phase complete with the base image's default trust.
+      - name: Verify Hermes default-trust final image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --network none \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --pids-limit 64 \
+            --memory 256m \
+            --entrypoint /bin/sh \
+            nemoclaw-hermes-production -eu -c '
+              test "$NODE_EXTRA_CA_CERTS" = /usr/local/share/nemoclaw/corporate-ca.pem
+              test ! -e /usr/local/share/nemoclaw/corporate-ca.pem
+              test ! -L /usr/local/share/nemoclaw/corporate-ca.pem
+              test -x /usr/local/bin/hermes
+              node -e "const tls = require(\"node:tls\"); if (tls.rootCertificates.length === 0) process.exit(1); tls.createSecureContext()"
+              /opt/hermes/.venv/bin/python -I -c "import ssl; assert ssl.create_default_context().get_ca_certs()"
+            '
+
       - name: Scan completed Hermes image for node-tar
         id: node-tar-scan
         shell: bash
@@ -416,14 +440,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # curl and Python replace their default roots with this build argument.
+          compact_ca_bundle="$(mktemp)"
+          trap 'rm -f "$compact_ca_bundle"' EXIT
+          node --experimental-strip-types scripts/checks/select-ci-endpoint-ca-roots.mts \
+            --output "$compact_ca_bundle"
+          corporate_ca_b64="$(base64 -w 0 "$compact_ca_bundle")"
+          corporate_ca_sha256="$(sha256sum "$compact_ca_bundle" | cut -d ' ' -f 1)"
           messaging_plan_b64="$(node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts plan hermes)"
           build_args=(
             -f agents/hermes/Dockerfile
             --build-arg "BASE_IMAGE=${HERMES_BASE_IMAGE}"
+            --build-arg "NEMOCLAW_CORPORATE_CA_B64=${corporate_ca_b64}"
             --build-arg "NEMOCLAW_MESSAGING_PLAN_B64=${messaging_plan_b64}"
           )
           scripts/check-production-build-args.sh "${build_args[@]}"
           docker build "${build_args[@]}" -t nemoclaw-hermes-plan-boundary .
+          installed_ca_sha256="$(
+            docker run --rm --network none --entrypoint sha256sum \
+              nemoclaw-hermes-plan-boundary \
+              /usr/local/share/nemoclaw/corporate-ca.pem |
+              cut -d ' ' -f 1
+          )"
+          test "$installed_ca_sha256" = "$corporate_ca_sha256"
+          docker run --rm --network none --entrypoint openssl \
+            nemoclaw-hermes-plan-boundary crl2pkcs7 -nocrl \
+            -certfile /usr/local/share/nemoclaw/corporate-ca.pem -out /dev/null
           node --experimental-strip-types scripts/check-messaging-plan-image-boundary.mts verify \
             nemoclaw-hermes-plan-boundary hermes
 
