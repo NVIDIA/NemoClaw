@@ -146,6 +146,10 @@ function prGateMutationResponse(request: RecordedGitHubRequest, id = 17): Respon
   );
 }
 
+function commitStatusMutationResponse(request: RecordedGitHubRequest): Response {
+  return githubResponse(request.body);
+}
+
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -1370,6 +1374,7 @@ describe("PR E2E controller lifecycle", () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    vi.stubEnv("GITHUB_ACTIONS", "true");
     const requests: RecordedGitHubRequest[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
@@ -1386,6 +1391,10 @@ describe("PR E2E controller lifecycle", () => {
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
             (request) => prGateMutationResponse(request),
           ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith(`/statuses/${HEAD_SHA}`) && method === "POST",
+            commitStatusMutationResponse,
+          ),
         ],
         requests,
       ),
@@ -1397,6 +1406,7 @@ describe("PR E2E controller lifecycle", () => {
         "https://api.github.com/repos/NVIDIA/NemoClaw/check-runs/17",
         "https://api.github.com/repos/NVIDIA/NemoClaw/actions/runs/23/cancel",
         "https://api.github.com/repos/NVIDIA/NemoClaw/check-runs/17",
+        `https://api.github.com/repos/NVIDIA/NemoClaw/statuses/${HEAD_SHA}`,
       ]);
       expect(requests[2]?.body).toMatchObject({
         status: "completed",
@@ -1405,6 +1415,12 @@ describe("PR E2E controller lifecycle", () => {
           title: "Controller stopped early",
           summary: "The controller stopped before it could complete the check.",
         },
+      });
+      expect(requests[3]?.body).toEqual({
+        state: "failure",
+        context: "E2E / PR Gate / Rollup",
+        description: "Controller stopped early",
+        target_url: "https://github.com/NVIDIA/NemoClaw/runs/17",
       });
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
     } finally {
