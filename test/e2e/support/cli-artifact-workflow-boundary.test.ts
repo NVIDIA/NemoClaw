@@ -84,10 +84,9 @@ function sha256File(file: string): string {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
-function writeDistArchive(
+function writeDistTree(
   context: ArchiveFixtureContext,
   customizeDist: (dist: string) => void,
-  includeShared = true,
 ): void {
   const dist = path.join(context.payloadRoot, "dist");
   fs.mkdirSync(dist);
@@ -100,28 +99,40 @@ function writeDistArchive(
     })}\n`,
   );
   customizeDist(dist);
-  const archiveMembers = ["dist"];
-  if (includeShared) {
-    const shared = path.join(context.payloadRoot, "nemoclaw", "dist", "shared");
-    fs.mkdirSync(shared, { recursive: true });
-    fs.writeFileSync(path.join(shared, "sandbox-name.cjs"), "module.exports = {};\n");
-    archiveMembers.push("nemoclaw/dist");
-  }
-  execFileSync("tar", ["-cf", context.payload, "-C", context.payloadRoot, ...archiveMembers]);
+}
+
+function writeSharedTree(context: ArchiveFixtureContext): void {
+  const shared = path.join(context.payloadRoot, "nemoclaw", "dist", "shared");
+  fs.mkdirSync(shared, { recursive: true });
+  fs.writeFileSync(path.join(shared, "sandbox-name.cjs"), "module.exports = {};\n");
+}
+
+function writeArchive(context: ArchiveFixtureContext, members: string[]): void {
+  execFileSync("tar", ["-cf", context.payload, "-C", context.payloadRoot, ...members]);
+}
+
+function writeCompleteArchive(
+  context: ArchiveFixtureContext,
+  customizeDist: (dist: string) => void,
+): void {
+  writeDistTree(context, customizeDist);
+  writeSharedTree(context);
+  writeArchive(context, ["dist", "nemoclaw/dist"]);
 }
 
 function writeValidArchive(context: ArchiveFixtureContext): void {
-  writeDistArchive(context, () => undefined);
+  writeCompleteArchive(context, () => undefined);
 }
 
 function writeLinkArchive(context: ArchiveFixtureContext): void {
-  writeDistArchive(context, (dist) => {
+  writeCompleteArchive(context, (dist) => {
     fs.symlinkSync("nemoclaw.js", path.join(dist, "linked-cli.js"));
   });
 }
 
 function writeMissingSharedArchive(context: ArchiveFixtureContext): void {
-  writeDistArchive(context, () => undefined, false);
+  writeDistTree(context, () => undefined);
+  writeArchive(context, ["dist"]);
 }
 
 function writeNonDistArchive(context: ArchiveFixtureContext): void {
@@ -494,10 +505,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
         "consumer unexpectedly built nemoclaw/dist before artifact restore",
       );
       expect(
-        fs.readFileSync(
-          path.join(fixture.workspace, "nemoclaw", "dist", "existing.txt"),
-          "utf8",
-        ),
+        fs.readFileSync(path.join(fixture.workspace, "nemoclaw", "dist", "existing.txt"), "utf8"),
       ).toBe("preserve\n");
       expect(fs.existsSync(path.join(fixture.workspace, "dist"))).toBe(false);
     } finally {
