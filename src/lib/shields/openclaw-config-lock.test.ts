@@ -56,7 +56,7 @@ function createExec(
           case "test":
             return { status: installed ? 0 : 1, signal: null, stdout: "", stderr: "" };
         }
-        return cmd.includes("gosu") ? validationResult : guardResult(cmd);
+        return cmd.includes("/usr/bin/setpriv") ? validationResult : guardResult(cmd);
       },
     },
   };
@@ -120,8 +120,11 @@ describe("OpenClaw top-config guard host wiring", () => {
       "--signal=TERM",
       "--kill-after=5s",
       "30s",
-      "gosu",
-      "gateway",
+      "/usr/bin/setpriv",
+      "--reuid=gateway",
+      "--regid=gateway",
+      "--init-groups",
+      "--",
       "sh",
       "-c",
       expect.stringContaining("openclaw config validate --json"),

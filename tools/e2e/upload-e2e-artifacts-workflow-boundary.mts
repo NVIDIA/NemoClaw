@@ -151,6 +151,20 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     },
   ],
   [
+    "managed-image-protected-runtime",
+    {
+      name: "e2e-managed-image-protected-runtime",
+      path: "e2e-artifacts/live/managed-image-protected-runtime/",
+    },
+  ],
+  [
+    "llama-cpp-dgx-spark-qualification",
+    {
+      name: "e2e-llama-cpp-dgx-spark-qualification",
+      path: "e2e-artifacts/live/llama-cpp-dgx-spark-qualification/",
+    },
+  ],
+  [
     "network-policy",
     {
       name: "e2e-network-policy-${{ matrix.scenario }}",

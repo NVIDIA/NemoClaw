@@ -3,6 +3,17 @@
   "version": 1,
   "entries": [
     {
+      "live": "test/e2e/live/llama-cpp-dgx-spark-qualification.test.ts",
+      "fast": [
+        "test/e2e/support/llama-cpp-dgx-spark-qualification-workflow.test.ts",
+        "test/llama-cpp-dgx-spark-qualification-contract.test.ts",
+        "test/llama-cpp-dgx-spark-qualification-plan.test.ts",
+        "test/llama-cpp-dgx-spark-qualification-runner.test.ts",
+        "test/llama-cpp-image.test.ts",
+        "test/pr-risk-plan.test.ts"
+      ]
+    },
+    {
       "live": "test/e2e/live/managed-image-multiarch-startup.test.ts",
       "fast": [
         "test/e2e/support/base-image-publication.test.ts",
@@ -11,6 +22,16 @@
         "test/managed-image-publication-workflow.test.ts",
         "test/pr-risk-plan.test.ts",
         "test/protected-managed-image-contract.test.ts"
+      ]
+    },
+    {
+      "live": "test/e2e/live/managed-image-protected-runtime.test.ts",
+      "fast": [
+        "src/lib/inference/nim.test.ts",
+        "src/lib/onboard/sandbox-gpu-create-flow.test.ts",
+        "test/e2e/support/managed-image-protected-runtime-workflow.test.ts",
+        "test/managed-image-protected-runtime-contract.test.ts",
+        "test/pr-risk-plan.test.ts"
       ]
     },
     {
@@ -41,6 +62,7 @@
     {
       "live": "test/e2e/live/full-e2e.test.ts",
       "fast": [
+        "test/e2e/support/full-e2e-inference-probe.test.ts",
         "test/e2e/support/onboard-performance.test.ts",
         "test/e2e/support/e2e-cleanup-resources.test.ts",
         "test/e2e/support/e2e-clients.test.ts"

@@ -284,6 +284,7 @@ function acceptsReceipt(
 ): boolean {
   if (!receipt) return true;
   if (receipt.kind === "legacy-dockerfile") return profile.legacyDockerfileBuilds;
+  if (receipt.kind === "native-artifact") return false;
   if (receipt.platform === undefined) return false;
   return (
     profile.support !== null &&

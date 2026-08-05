@@ -208,4 +208,16 @@ describe("recordCheckpointProviderEffectGroup", () => {
     ).toThrow("provider effect group receipt contains invalid or duplicate provider names");
     expect(session.checkpoint).toBe(previousCheckpoint);
   });
+
+  it("rejects a provider name owned by the other group without changing the checkpoint", () => {
+    const session = sessionWithProviderReceipts();
+    const previousCheckpoint = session.checkpoint;
+
+    expect(() =>
+      recordCheckpointProviderEffectGroup(session, "web_search_provider", [
+        { name: "old-chat", type: "tavily", credentialEnv: "CURRENT_WEB_KEY" },
+      ]),
+    ).toThrow("provider effect group conflicts with another group's provider ownership");
+    expect(session.checkpoint).toBe(previousCheckpoint);
+  });
 });
