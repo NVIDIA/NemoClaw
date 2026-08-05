@@ -20,6 +20,7 @@ import {
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { assertHermesCliAdapterLiveContract, stripAnsi } from "./hermes-cli-adapter-live.ts";
 import { HERMES_E2E_PHASES } from "./hermes-e2e-phases.ts";
+import { runLaunchAgentTurn } from "./launch-agent-turn.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes";
 validateSandboxName(SANDBOX_NAME);
@@ -554,7 +555,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
     expect(httpStatusOk(dashboardInternal.stdout)).toBe(true);
   }
 
-  progress.phase("restart Hermes gateway and validate supervision");
+  progress.phase("restart Hermes gateway, validate supervision, and launch a turn");
   // Phase 5: host-mediated Hermes gateway restart. This validates the
   // runtime contract behind #2426 against a real OpenShell/Hermes sandbox:
   // The installed supervision tree controls the gateway process, direct
@@ -1181,6 +1182,17 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
       ).toBe(true);
     }
   }
+
+  await (process.platform === "linux"
+    ? runLaunchAgentTurn({
+        artifactName: "phase-5-hermes-launch-turn-after-recovery",
+        cliCommand: "nemoclaw",
+        env,
+        host,
+        redactionValues,
+        sandboxName: SANDBOX_NAME,
+      })
+    : Promise.resolve());
 
   progress.phase("exercise hosted and inference.local routes");
   // Phase 6: live inference through both the external provider and the
