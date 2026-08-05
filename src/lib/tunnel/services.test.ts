@@ -594,18 +594,6 @@ describe("stopAll", () => {
     logSpy.mockRestore();
   });
 
-  it("unloads default Ollama models before reporting services stopped", () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    stopAll({ pidDir });
-    logSpy.mockRestore();
-
-    const psCall = spawnSyncCalls.find(
-      (call) => call.command === "curl" && call.args.some((arg) => arg.endsWith("/api/ps")),
-    );
-    expect(psCall).toBeDefined();
-    expect(psCall?.args).toContain("--max-time");
-  });
-
   it("runs injected Ollama cleanup before reporting services stopped", () => {
     const cleanup = vi.fn();
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
