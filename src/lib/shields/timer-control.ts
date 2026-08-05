@@ -209,6 +209,7 @@ function verifyTimerMarkerIdentity(marker: ShieldsTimerMarker): {
 }
 
 interface KillTimerResult {
+  authorityRevoked: boolean;
   markerFound: boolean;
   markerPid: number | null;
   wasAlive: boolean;
@@ -244,6 +245,7 @@ function killTimer(sandboxName: string): KillTimerResult {
   }
 
   return {
+    authorityRevoked: markerClear.warning === undefined,
     markerFound: marker !== null,
     markerPid: marker?.pid ?? null,
     wasAlive,

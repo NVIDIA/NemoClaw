@@ -146,7 +146,17 @@ export function validateOpenClawConfigCandidate(
     ];
   }
   const result = privileged.run(
-    [...SCHEMA_VALIDATION_TIMEOUT, "gosu", "gateway", "sh", "-c", SCHEMA_VALIDATION_SCRIPT],
+    [
+      ...SCHEMA_VALIDATION_TIMEOUT,
+      "/usr/bin/setpriv",
+      "--reuid=gateway",
+      "--regid=gateway",
+      "--init-groups",
+      "--",
+      "sh",
+      "-c",
+      SCHEMA_VALIDATION_SCRIPT,
+    ],
     input,
   );
   let payload: unknown;

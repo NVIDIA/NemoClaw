@@ -28,6 +28,12 @@ const HERMES_SANDBOX_BOUNDARY_JOBS = [
   "security-posture",
 ];
 const HERMES_CLI_ADAPTER_JOBS = ["channels-stop-start", "mcp-bridge"];
+const HERMES_CRON_RESTORE_FILES = [
+  "agents/hermes/cron-restore-control.py",
+  "agents/hermes/patch-cron-restore-drain.py",
+  "src/lib/actions/sandbox/rebuild-hermes-post-restore.ts",
+  "src/lib/actions/sandbox/runtime/hermes-cron-restore-recovery.ts",
+];
 const HERMES_MANAGED_POLICY_JOBS = [
   "bedrock-runtime-compatible-anthropic",
   "channels-stop-start",
@@ -190,6 +196,37 @@ describe("deterministic PR risk plan", () => {
       }),
     );
     expect(riskPlanRequiredJobIds(result)).toEqual(expectedRequiredJobs);
+  });
+
+  it.each(
+    HERMES_CRON_RESTORE_FILES,
+  )("selects Hermes rebuild E2E for cron restore and drain changes in %s (#7806)", (changedFile) => {
+    const result = plan(changedFile);
+    const expectedRequiredJobs = changedFile.startsWith("agents/hermes/")
+      ? [...HERMES_SANDBOX_BOUNDARY_JOBS, "rebuild-hermes"]
+      : [
+          "onboard-repair",
+          "onboard-resume",
+          "rebuild-hermes",
+          "rebuild-openclaw",
+          "state-backup-restore",
+        ];
+
+    expect(result.families).toContainEqual(
+      expect.objectContaining({
+        id: "focused-e2e",
+        matchedFiles: [changedFile],
+        requiredJobs: ["rebuild-hermes"],
+      }),
+    );
+    expect(riskPlanRequiredJobIds(result)).toEqual(expectedRequiredJobs);
+  });
+
+  it("does not select Hermes rebuild E2E for the generic recovery command (#7806)", () => {
+    const result = plan("src/commands/sandbox/recover.ts");
+
+    expect(result.families).not.toContainEqual(expect.objectContaining({ id: "focused-e2e" }));
+    expect(riskPlanRequiredJobIds(result)).not.toContain("rebuild-hermes");
   });
 
   it.each(

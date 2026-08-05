@@ -68,6 +68,7 @@ MAX_GUARD_SECONDS = 10 * 60
 PRODUCTION_FAIL_CLOSED_CONFIG_DIRS = frozenset(
     {"/sandbox/.openclaw", "/sandbox/.hermes", "/sandbox/.deepagents"}
 )
+DASHBOARD_PROFILE_RUNTIME_CARVEOUT = "profiles/dashboard-home"
 OPENCLAW_MUTATION_MUTEX_PATH = "/run/nemoclaw/openclaw-config-mutation.lock"
 # Keep this exact source/target contract aligned with
 # src/lib/state/openclaw-managed-extensions.ts.
@@ -221,9 +222,14 @@ class WorkBudget:
             )
 
 
-def _is_runtime_carveout(relative_path: str) -> bool:
-    """Return whether this is OpenClaw's intentional writable sessions root."""
+def _is_runtime_carveout(config_path: str, relative_path: str) -> bool:
+    """Return whether this agent path is a writable runtime-state root."""
 
+    if (
+        posixpath.basename(config_path) == ".hermes"
+        and relative_path == DASHBOARD_PROFILE_RUNTIME_CARVEOUT
+    ):
+        return True
     parts = relative_path.split("/")
     return (
         len(parts) == 3
@@ -233,7 +239,12 @@ def _is_runtime_carveout(relative_path: str) -> bool:
     )
 
 
-def _is_under_runtime_carveout(relative_path: str) -> bool:
+def _is_under_runtime_carveout(config_path: str, relative_path: str) -> bool:
+    if posixpath.basename(config_path) == ".hermes" and (
+        relative_path == DASHBOARD_PROFILE_RUNTIME_CARVEOUT
+        or relative_path.startswith(f"{DASHBOARD_PROFILE_RUNTIME_CARVEOUT}/")
+    ):
+        return True
     parts = relative_path.split("/")
     return (
         len(parts) >= 3
@@ -597,14 +608,14 @@ def _resolve_internal_symlink(
     relative = _normalize_link_target(
         context, posixpath.dirname(link_relative_path), target
     )
-    if _is_under_runtime_carveout(link_relative_path) or _is_under_runtime_carveout(
-        relative
-    ):
+    if _is_under_runtime_carveout(
+        context.config_path, link_relative_path
+    ) or _is_under_runtime_carveout(context.config_path, relative):
         raise GuardOperationError(
             Issue(
                 "symlink-crosses-runtime-carveout",
                 context.display(link_relative_path),
-                "symlinks may not enter or originate in the writable sessions carveout",
+                "symlinks may not enter or originate in a writable runtime carveout",
             )
         )
     seen: set[str] = set()
@@ -679,12 +690,12 @@ def _resolve_internal_symlink(
                                 "expanded symlink target leaves protected roots",
                             )
                         )
-                    if _is_under_runtime_carveout(relative):
+                    if _is_under_runtime_carveout(context.config_path, relative):
                         raise GuardOperationError(
                             Issue(
                                 "symlink-crosses-runtime-carveout",
                                 context.display(link_relative_path),
-                                "symlink chain enters the writable sessions carveout",
+                                "symlink chain enters a writable runtime carveout",
                             )
                         )
                     restart = True
@@ -799,11 +810,10 @@ def _scan_dir(
             )
             continue
         if stat.S_ISDIR(st.st_mode):
-            # Session contents are intentionally outside the shields integrity
-            # boundary and remain live while shields are up.  Validate that the
-            # carve-out itself is a real in-tree directory, but do not traverse
-            # a subtree the gateway may be appending to concurrently.
-            if _is_runtime_carveout(relative_path):
+            # Runtime carve-out contents are intentionally outside the shields
+            # integrity boundary and remain live while shields are up. Validate
+            # the root as an in-tree directory, but do not traverse mutable state.
+            if _is_runtime_carveout(context.config_path, relative_path):
                 continue
             try:
                 child_fd = _open_child_dir(dir_fd, name, st)
@@ -879,19 +889,33 @@ def _preflight(
 
 
 def _expected_ids(
-    policy: Policy, action: Action, identity: Identity
+    policy: Policy,
+    action: Action,
+    identity: Identity,
+    is_confidentiality_root: bool = False,
 ) -> tuple[int, int]:
     if action == "unlock":
         return identity.sandbox_uid, identity.sandbox_gid
     if policy == "confidentiality":
+        if is_confidentiality_root:
+            return identity.root_uid, identity.sandbox_gid
         return identity.root_uid, identity.root_gid
     return identity.root_uid, identity.sandbox_gid
 
 
-def _expected_dir_mode(policy: Policy, action: Action) -> int:
+def _expected_dir_mode(
+    policy: Policy, action: Action, is_confidentiality_root: bool = False
+) -> int:
     if action == "unlock":
         return 0o2770
-    return 0o700 if policy == "confidentiality" else 0o755
+    if policy == "confidentiality":
+        # The confidentiality root stays traversable (group execute, no read)
+        # so a sandbox probe for a missing name directly under the root, such
+        # as the legacy credentials/oauth.json, resolves as ENOENT instead of
+        # EACCES.  Nested directories and every file keep the sealed posture,
+        # so contents and the subtree shape stay unreadable.
+        return 0o710 if is_confidentiality_root else 0o700
+    return 0o755
 
 
 def _expected_file_mode(policy: Policy, action: Action, old_mode: int) -> int:
@@ -915,12 +939,21 @@ def _set_dir_metadata(
     policy: Policy,
     action: Action,
     identity: Identity,
+    is_confidentiality_root: bool = False,
 ) -> None:
-    uid, gid = _expected_ids(policy, action, identity)
+    uid, gid = _expected_ids(policy, action, identity, is_confidentiality_root)
     os.fchown(dir_fd, uid, gid)
-    os.fchmod(dir_fd, _expected_dir_mode(policy, action))
+    os.fchmod(dir_fd, _expected_dir_mode(policy, action, is_confidentiality_root))
 
 
+def _set_runtime_carveout_metadata(
+    dir_fd: int, relative_path: str, policy: Policy, identity: Identity
+) -> None:
+    if relative_path == DASHBOARD_PROFILE_RUNTIME_CARVEOUT:
+        os.fchown(dir_fd, identity.sandbox_uid, identity.sandbox_gid)
+        os.fchmod(dir_fd, 0o700)
+        return
+    _set_dir_metadata(dir_fd, policy, "unlock", identity)
 def _set_empty_credentials_startup_metadata(
     dir_fd: int,
     identity: Identity,
@@ -1354,7 +1387,9 @@ def _mutate_dir(
             # mutation through directory descriptors opened by the sandbox
             # before shields-up, and it happens before visiting descendants.
             _freeze_dir_for_lock(dir_fd)
-            _set_dir_metadata(dir_fd, policy, action, identity)
+            _set_dir_metadata(
+                dir_fd, policy, action, identity, is_root and policy == "confidentiality"
+            )
         elif is_root:
             # Keep the subtree inaccessible while descendants are restored.
             os.fchmod(dir_fd, 0o700)
@@ -1366,10 +1401,10 @@ def _mutate_dir(
         if _is_empty_credentials_root(
             relative_dir, policy, action, is_root, names
         ):
-            # OpenClaw probes optional credential paths while starting.  An
-            # empty directory contains no secret metadata to expose, so allow
-            # the sandbox group to traverse it without granting list, read, or
-            # write access.  Non-empty confidentiality roots remain root-only.
+            # The confidentiality-root contract already grants the sandbox
+            # group execute-only access (root:sandbox 0710).  Keep this
+            # explicit empty-root case for compatibility with the startup
+            # recovery path; nested entries remain root-only.
             _set_empty_credentials_startup_metadata(dir_fd, identity)
     except OSError as exc:
         raise GuardOperationError(
@@ -1406,12 +1441,14 @@ def _mutate_dir(
                     )
                 ) from exc
             try:
-                if _is_runtime_carveout(relative_path):
+                if _is_runtime_carveout(context.config_path, relative_path):
                     # Only the carve-out root has a shields contract.  Its
                     # contents remain runtime-owned and may change while this
                     # helper runs, so never chmod/chown/copy descendants.
                     _clear_mutation_flags(child_fd)
-                    _set_dir_metadata(child_fd, policy, "unlock", identity)
+                    _set_runtime_carveout_metadata(
+                        child_fd, relative_path, policy, identity
+                    )
                     result.directories += 1
                 else:
                     _mutate_dir(
@@ -1544,12 +1581,11 @@ def _verify_metadata(
     policy: Policy,
     action: Action,
     identity: Identity,
-    empty_credentials_root: bool = False,
+    is_confidentiality_root: bool = False,
 ) -> Issue | None:
-    if empty_credentials_root:
-        expected_uid, expected_gid = identity.root_uid, identity.sandbox_gid
-    else:
-        expected_uid, expected_gid = _expected_ids(policy, action, identity)
+    expected_uid, expected_gid = _expected_ids(
+        policy, action, identity, is_confidentiality_root
+    )
     if st.st_uid != expected_uid or st.st_gid != expected_gid:
         return Issue(
             "verification-owner-mismatch",
@@ -1560,7 +1596,7 @@ def _verify_metadata(
         return None
     mode = stat.S_IMODE(st.st_mode)
     if entry_type == "directory":
-        expected_mode = 0o710 if empty_credentials_root else _expected_dir_mode(policy, action)
+        expected_mode = _expected_dir_mode(policy, action, is_confidentiality_root)
         if mode != expected_mode:
             return Issue(
                 "verification-mode-mismatch",
@@ -1597,6 +1633,34 @@ def _verify_metadata(
     return None
 
 
+def _verify_runtime_carveout_metadata(
+    path: str,
+    relative_path: str,
+    st: os.stat_result,
+    policy: Policy,
+    identity: Identity,
+) -> Issue | None:
+    """Verify a writable runtime root without traversing its live contents."""
+
+    if relative_path != DASHBOARD_PROFILE_RUNTIME_CARVEOUT:
+        return _verify_metadata(path, st, "directory", policy, "unlock", identity)
+    if st.st_uid != identity.sandbox_uid or st.st_gid != identity.sandbox_gid:
+        return Issue(
+            "verification-owner-mismatch",
+            path,
+            f"owner is {st.st_uid}:{st.st_gid}, "
+            f"expected {identity.sandbox_uid}:{identity.sandbox_gid}",
+        )
+    mode = stat.S_IMODE(st.st_mode)
+    if mode != 0o700:
+        return Issue(
+            "verification-mode-mismatch",
+            path,
+            f"directory mode is {mode:04o}, expected 0700",
+        )
+    return None
+
+
 def _verify_dir(
     context: TraversalContext,
     dir_fd: int,
@@ -1607,6 +1671,7 @@ def _verify_dir(
     replaced_inodes: dict[str, int],
     issues: list[Issue],
     depth: int,
+    is_root: bool = False,
 ) -> None:
     if depth > MAX_TRAVERSAL_DEPTH:
         issues.append(
@@ -1635,9 +1700,7 @@ def _verify_dir(
         policy,
         action,
         identity,
-        _is_empty_credentials_root(
-            relative_dir, policy, action, relative_dir == "credentials", names
-        ),
+        is_root and policy == "confidentiality",
     )
     if dir_issue is not None:
         issues.append(dir_issue)
@@ -1671,13 +1734,12 @@ def _verify_dir(
                     )
                 continue
             try:
-                if _is_runtime_carveout(relative_path):
-                    carveout_issue = _verify_metadata(
+                if _is_runtime_carveout(context.config_path, relative_path):
+                    carveout_issue = _verify_runtime_carveout_metadata(
                         path,
+                        relative_path,
                         os.fstat(child_fd),
-                        "directory",
                         policy,
-                        "unlock",
                         identity,
                     )
                     if carveout_issue is not None:
@@ -1805,14 +1867,16 @@ def _restore_empty_credentials_startup_access(
                 )
             )
             return result
-        if names:
-            if startup_traversable:
-                _set_dir_metadata(
-                    credentials_fd, "confidentiality", "lock", identity
-                )
-                os.fsync(credentials_fd)
-            return result
-        _set_empty_credentials_startup_metadata(credentials_fd, identity)
+        # All confidentiality roots are execute-only for the sandbox group,
+        # whether or not they currently contain credentials.  This preserves
+        # known-name ENOENT probes without exposing names or descendants.
+        _set_dir_metadata(
+            credentials_fd,
+            "confidentiality",
+            "lock",
+            identity,
+            is_confidentiality_root=True,
+        )
         after = os.fstat(credentials_fd)
         if (
             after.st_uid != identity.root_uid
@@ -2019,6 +2083,7 @@ def _run_guard_unserialized(
                     replaced_inodes,
                     result.issues,
                     1,
+                    is_root=True,
                 )
             finally:
                 os.close(root_fd)
