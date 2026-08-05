@@ -220,6 +220,29 @@ describe("runUpdateAction", () => {
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining("already up to date"));
   });
 
+  it("preserves hyphens within prerelease identifiers when guarding downgrades (#8306)", async () => {
+    const spawnSyncImpl = vi.fn();
+    const error = vi.fn();
+
+    const result = await runUpdateAction(
+      { fresh: true, yes: true },
+      {
+        currentVersion: () => "1.0.0-rc-1",
+        error,
+        getLatestVersion: () => "1.0.0-rc.1",
+        isSourceCheckout: () => false,
+        log: vi.fn(),
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.ranInstaller).toBe(false);
+    expect(result.status).toBe(1);
+    expect(spawnSyncImpl).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("downgrade"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("--allow-downgrade"));
+  });
+
   it("reinstalls an older maintained tag once --allow-downgrade is passed (#8306)", async () => {
     const spawnSyncImpl = vi.fn(
       () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,

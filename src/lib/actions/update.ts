@@ -209,7 +209,7 @@ function parsePublicVersion(version: string): ParsedPublicVersion | null {
   return {
     describedAfterTag: DESCRIBED_AFTER_TAG.test(normalized),
     normalized,
-    prerelease: match[4] ? match[4].split(/[.-]/) : [],
+    prerelease: match[4] ? match[4].split(".") : [],
     release,
   };
 }
