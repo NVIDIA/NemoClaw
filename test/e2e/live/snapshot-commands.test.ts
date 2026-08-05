@@ -41,8 +41,11 @@ const BACKUP_DIR = path.resolve(BACKUP_ROOT, SANDBOX_NAME);
 if (!BACKUP_DIR.startsWith(`${path.resolve(BACKUP_ROOT)}${path.sep}`)) {
   throw new Error(`snapshot backup directory escaped rebuild-backups root: ${BACKUP_DIR}`);
 }
-const MARKER_FILE = "/sandbox/.openclaw/workspace/snapshot-marker.txt";
-const SECOND_MARKER = "/sandbox/.openclaw/workspace/snapshot-marker-2.txt";
+const OPENCLAW_WORKSPACE_PATH = "/sandbox/.openclaw/workspace";
+const MARKER_FILE = `${OPENCLAW_WORKSPACE_PATH}/snapshot-marker.txt`;
+const SECOND_MARKER = `${OPENCLAW_WORKSPACE_PATH}/snapshot-marker-2.txt`;
+const USER_FILE = `${OPENCLAW_WORKSPACE_PATH}/USER.md`;
+const SOUL_FILE = `${OPENCLAW_WORKSPACE_PATH}/SOUL.md`;
 const BASELINE_EXCLUSION_KEY = "openclaw_docs";
 const LIVE_TIMEOUT_MS = 36 * 60_000;
 const INFERENCE_API_KEY = "nvapi-snapshot-commands-fixture-credential";
@@ -317,6 +320,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       "confirm Docker and start hermetic inference",
       "onboard the snapshot sandbox",
       "create and list the first snapshot",
+      "destroy, freshly onboard, and restore canonical OpenClaw workspace files",
       "restore the first snapshot into a clone",
       "verify the restored clone state and gateway pairing",
       "create a second snapshot from changed workspace",
@@ -338,6 +342,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       "onboard authenticates to a hermetic compatible inference endpoint",
       "snapshot create reports Snapshot v<N> created",
       "snapshot list shows versioned snapshots and parseable timestamps",
+      "snapshot restore recovers canonical OpenClaw USER.md and SOUL.md after destroy and fresh same-name onboarding",
       "baseline exclusions remain active in registry and live policy across rebuild",
       "snapshot restore --to carries baseline exclusions into clone registry and live policy",
       "snapshot restore --to returns only after restored gateway pairing is authenticated",
@@ -491,13 +496,20 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
 
   const markerContent = `SNAPSHOT_E2E_${Date.now()}`;
   const secondContent = `SNAPSHOT_E2E_SECOND_${Date.now()}`;
+  const userContent = `SNAPSHOT_E2E_USER_${Date.now()}`;
+  const soulContent = `SNAPSHOT_E2E_SOUL_${Date.now()}`;
 
   const writeMarker = await sandbox.exec(
     SANDBOX_NAME,
     [
       "sh",
       "-lc",
-      `mkdir -p /sandbox/.openclaw/workspace && printf '%s' '${markerContent}' > ${MARKER_FILE}`,
+      `set -eu
+test "$OPENCLAW_WORKSPACE_DIR" = ${JSON.stringify(OPENCLAW_WORKSPACE_PATH)}
+mkdir -p "$OPENCLAW_WORKSPACE_DIR"
+printf '%s' ${JSON.stringify(markerContent)} > ${JSON.stringify(MARKER_FILE)}
+printf '%s' ${JSON.stringify(userContent)} > "$OPENCLAW_WORKSPACE_DIR/USER.md"
+printf '%s' ${JSON.stringify(soulContent)} > "$OPENCLAW_WORKSPACE_DIR/SOUL.md"`,
     ],
     {
       artifactName: "phase-2-write-marker",
@@ -512,6 +524,20 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     MARKER_FILE,
     markerContent,
     "phase-2-read-marker",
+  );
+  await expectSandboxFileContent(
+    sandbox,
+    SANDBOX_NAME,
+    USER_FILE,
+    userContent,
+    "phase-2-read-user-file",
+  );
+  await expectSandboxFileContent(
+    sandbox,
+    SANDBOX_NAME,
+    SOUL_FILE,
+    soulContent,
+    "phase-2-read-soul-file",
   );
 
   progress.phase("create and list the first snapshot");
@@ -533,6 +559,102 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
   expect(resultText(list)).toContain("snapshot(s)");
   const timestamp = firstSnapshotTimestamp(resultText(list));
   await artifacts.writeJson("phase-4-first-snapshot.json", { timestamp });
+
+  progress.phase("destroy, freshly onboard, and restore canonical OpenClaw workspace files");
+  const destroySource = await host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
+    artifactName: "phase-4-destroy-source",
+    env: commandEnv(),
+    timeoutMs: 120_000,
+  });
+  expect(destroySource.exitCode, resultText(destroySource)).toBe(0);
+
+  const freshOnboard = await host.command(
+    "nemoclaw",
+    ["onboard", "--fresh", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
+    {
+      artifactName: "phase-4-fresh-onboard-source",
+      env: commandEnv(inferenceConfig),
+      redactionValues: [INFERENCE_API_KEY],
+      timeoutMs: 20 * 60_000,
+    },
+  );
+  expect(freshOnboard.exitCode, resultText(freshOnboard)).toBe(0);
+
+  const reapplyBaselineExclusion = await host.command(
+    "nemoclaw",
+    [SANDBOX_NAME, "policy", "exclude", BASELINE_EXCLUSION_KEY, "--force"],
+    {
+      artifactName: "phase-4-reapply-baseline-exclusion",
+      env: commandEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  expect(reapplyBaselineExclusion.exitCode, resultText(reapplyBaselineExclusion)).toBe(0);
+  await expectBaselineExclusionAgreement(
+    host,
+    sandbox,
+    SANDBOX_NAME,
+    "phase-4-after-reapplying-baseline-exclusion",
+  );
+
+  const replacementHasNoSnapshotMarkers = await sandbox.exec(
+    SANDBOX_NAME,
+    [
+      "sh",
+      "-lc",
+      `set -eu
+! grep -F ${JSON.stringify(userContent)} ${JSON.stringify(USER_FILE)}
+! grep -F ${JSON.stringify(soulContent)} ${JSON.stringify(SOUL_FILE)}
+test ! -e ${JSON.stringify(MARKER_FILE)}`,
+    ],
+    {
+      artifactName: "phase-4-verify-fresh-workspace",
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(
+    replacementHasNoSnapshotMarkers.exitCode,
+    resultText(replacementHasNoSnapshotMarkers),
+  ).toBe(0);
+
+  const replacementRestore = await host.command(
+    "nemoclaw",
+    [SANDBOX_NAME, "snapshot", "restore", timestamp],
+    {
+      artifactName: "phase-4-restore-source-after-fresh-onboard",
+      env: commandEnv(),
+      timeoutMs: 120_000,
+    },
+  );
+  expect(classifySnapshotRestoreResult(replacementRestore)).toBe("restored");
+  await expectSandboxFileContent(
+    sandbox,
+    SANDBOX_NAME,
+    MARKER_FILE,
+    markerContent,
+    "phase-4-read-restored-source-marker",
+  );
+  await expectSandboxFileContent(
+    sandbox,
+    SANDBOX_NAME,
+    USER_FILE,
+    userContent,
+    "phase-4-read-restored-user-file",
+  );
+  await expectSandboxFileContent(
+    sandbox,
+    SANDBOX_NAME,
+    SOUL_FILE,
+    soulContent,
+    "phase-4-read-restored-soul-file",
+  );
+  await expectBaselineExclusionAgreement(
+    host,
+    sandbox,
+    SANDBOX_NAME,
+    "phase-4-restored-source-baseline-exclusion",
+  );
 
   progress.phase("restore the first snapshot into a clone");
   const cloneRestore = await host.command(
@@ -912,7 +1034,9 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
     PROTECTED_CREDENTIALS_DIR,
     "phase-11-protected-credentials-dir-before-backup",
   );
-  expect(protectedDirBeforeBackup).toEqual({ mode: "700", owner: "root:root" });
+  // Confidentiality roots remain search-only for the sandbox group; every
+  // descendant stays root-only and unreadable to the sandbox.
+  expect(protectedDirBeforeBackup).toEqual({ mode: "710", owner: "root:sandbox" });
   const protectedFileBeforeBackup = await rootSandboxPathMetadata(
     host,
     rebuiltContainerId,
@@ -993,7 +1117,7 @@ test("snapshot commands preserve create/list/latest restore/targeted restore/no-
       PROTECTED_CREDENTIALS_DIR,
       "phase-11-protected-credentials-dir-after-backup",
     ),
-  ).toEqual({ mode: "700", owner: "root:root" });
+  ).toEqual({ mode: "710", owner: "root:sandbox" });
   expect(
     await rootSandboxPathMetadata(
       host,
