@@ -70,6 +70,24 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     expect(lookup).toHaveBeenCalledWith("llm.corp.example", { all: true });
   });
 
+  it("rejects mixed public and trusted-private answers for an exact trusted hostname (#8176)", async () => {
+    const result = await assertEndpointResolvesPublic(
+      "https://llm.corp.example/v1",
+      async () => [
+        { address: "10.0.0.8", family: 4 },
+        { address: "93.184.216.34", family: 4 },
+      ],
+      { trustedPrivateHosts: ["llm.corp.example"] },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      reasonCode: "mixed-answer",
+      offendingAddress: "93.184.216.34",
+    });
+    expect(result.trustedPrivateCapability).toBeUndefined();
+  });
+
   it("does not treat a trusted hostname as a suffix or wildcard allowlist (#6861)", async () => {
     const result = await assertEndpointResolvesPublic(
       "https://attacker.llm.corp.example/v1",

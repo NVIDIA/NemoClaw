@@ -94,8 +94,8 @@ export interface EndpointSsrfPreflightResult {
   /** Human-readable reason, present only when `ok === false`. */
   reason?: string;
   /** Stable failure classification for callers that must not parse `reason`. */
-  reasonCode?: "private-answer" | "rejected" | "unresolved";
-  /** Exact rejected DNS answer when `reasonCode === "private-answer"`. */
+  reasonCode?: "mixed-answer" | "private-answer" | "rejected" | "unresolved";
+  /** Exact rejected DNS answer when `reasonCode` identifies an address failure. */
   offendingAddress?: string;
   /**
    * Validated public addresses the endpoint host resolved to, for connection
@@ -341,6 +341,23 @@ export async function assertEndpointResolvesPublic(
   }
   const resolvedAddresses = addresses.map(({ address }) => address);
   const trustedPrivateAddresses = resolvedAddresses.filter((address) => isPrivateIp(address));
+  if (
+    trustedPrivateHost &&
+    trustedPrivateAddresses.length > 0 &&
+    trustedPrivateAddresses.length !== resolvedAddresses.length
+  ) {
+    const offendingAddress = resolvedAddresses.find(
+      (address) => !isOperatorTrustablePrivateIp(address),
+    );
+    return {
+      ok: false,
+      reason:
+        `endpoint host "${hostname}" resolves to both trusted-private and public addresses` +
+        (offendingAddress ? `, including untrusted answer "${offendingAddress}"` : ""),
+      reasonCode: "mixed-answer",
+      offendingAddress,
+    };
+  }
   return trustedPrivateHost && trustedPrivateAddresses.length > 0
     ? {
         ok: true,
