@@ -67,11 +67,11 @@ vi.mock("./serving/vllm-managed-support", async (importOriginal) => {
 });
 
 import { currentPhaseActivityLabel } from "../core/phase-activity";
+import { hfDownloadAuthentication } from "./model-acquisition/hugging-face";
 import {
   assertVllmRegistryDigestRef,
   buildVllmRunArgs,
   detectVllmProfile,
-  hfDownloadAuthentication,
   installVllm,
   isNemoClawManagedVllmRunning,
   NEMOCLAW_VLLM_CONTAINER_NAME,
