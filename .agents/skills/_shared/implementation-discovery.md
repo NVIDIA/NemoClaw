@@ -14,9 +14,10 @@ lifecycle stage.
 
 - Read the active `AGENTS.md` files for every area the task can change.
 - Apply the product scope gate before adding a supported surface.
-- Identify affected trust boundaries. When one may change, load
-  `nemoclaw-maintainer-security-code-review` and apply its relevant categories to the plan and
-  tests.
+- Identify affected trust boundaries. Apply the [Security Rubric](security-rubric.md) to the plan:
+  name applicable risks, intended controls, and the positive and negative evidence the change needs.
+- During implementation and self-review, record the controls changed and negative evidence for each
+  changed control that proves forbidden behavior remains denied.
 - Verify behavior claims in current source and tests. Use history, issues, PRs, and documentation
   for rationale, not as behavior authority.
 
