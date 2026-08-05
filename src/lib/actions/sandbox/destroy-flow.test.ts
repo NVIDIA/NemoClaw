@@ -12,7 +12,9 @@ import {
   expectFailedHardeningStillDeletes,
   expectFailedMcpFinalizePreservesRegistry,
   expectFailedMcpRestorePreservesDestroyFailure,
+  expectMcpFinalizeBridgeErrorReturnsFailure,
   expectMcpFinalizeAfterDelete,
+  expectMcpPrepareBridgeErrorAborts,
   expectMcpRestoreAfterDeleteFailure,
   expectShieldsUpRefusalBeforeMutation,
   expectStrictSandboxPresenceClassification,
@@ -370,5 +372,27 @@ describe("destroySandbox flow", () => {
     await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
 
     expectAbsentSandboxMcpFinalize(harness);
+  });
+
+  it("exits with code 1 when MCP bridge prepare throws McpBridgeError, gateway down (#8103)", async () => {
+    const harness = createDestroyHarness({
+      mcpServers: ["github"],
+      prepareMcpBridgeError: "Could not inspect OpenShell provider: gateway unreachable",
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expectMcpPrepareBridgeErrorAborts(harness);
+  });
+
+  it("exits with code 1 when MCP bridge finalize throws McpBridgeError after sandbox delete (#8103)", async () => {
+    const harness = createDestroyHarness({
+      mcpServers: ["github"],
+      finalizeMcpBridgeError: "Could not inspect OpenShell provider: gateway unreachable",
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(1)");
+
+    expectMcpFinalizeBridgeErrorReturnsFailure(harness);
   });
 });
