@@ -415,7 +415,7 @@ describe("whatsapp.statusHealth openclaw CLI probe", () => {
     );
     expect(command).toContain("/sandbox/.hermes/platforms/whatsapp/session/creds.json");
     expect(command).toContain(
-      "/sandbox/.hermes/dashboard-home/platforms/whatsapp/session/creds.json",
+      "/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session/creds.json",
     );
     expect(command).not.toMatch(/(^|[;&|]\s*)(cat|grep|find|ls)\b/);
   });

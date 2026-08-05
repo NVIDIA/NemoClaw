@@ -56,7 +56,7 @@ describe("policy channel remove/enable flows", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("clears Hermes WhatsApp default and dashboard-home sessions before removal", async () => {
+  it("clears Hermes WhatsApp default, profile, and legacy sessions before removal", async () => {
     const plan = await new MessagingWorkflowPlanner(
       createBuiltInChannelManifestRegistry(),
       undefined,
@@ -81,7 +81,7 @@ describe("policy channel remove/enable flows", () => {
       name: "hermes",
       displayName: "Hermes",
       configPaths: { dir: "/sandbox/.hermes" },
-      stateDirs: ["platforms", "dashboard-home"],
+      stateDirs: ["platforms", "profiles", "dashboard-home"],
     } as unknown as defs.AgentDefinition);
     vi.spyOn(registry, "getSandbox").mockReturnValue(current);
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["whatsapp"]);
@@ -111,6 +111,9 @@ describe("policy channel remove/enable flows", () => {
     );
     expect(clearCommand).toContain("rm -rf --");
     expect(clearCommand).toContain("/sandbox/.hermes/platforms/whatsapp");
+    expect(clearCommand).toContain(
+      "/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session",
+    );
     expect(clearCommand).toContain("/sandbox/.hermes/dashboard-home/platforms/whatsapp/session");
     expect(updateSandbox).toHaveBeenCalled();
     expect(

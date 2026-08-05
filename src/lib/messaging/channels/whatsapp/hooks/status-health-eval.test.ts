@@ -95,7 +95,7 @@ describe("evaluateWhatsappDiagnostics", () => {
     expect(session?.hint).toContain("platforms.whatsapp.extra.session_path");
     expect(session?.hint).toContain("--config-accept-new-path");
     expect(report.hints.join(" ")).toContain(
-      "/sandbox/.hermes/dashboard-home/platforms/whatsapp/session",
+      "/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session",
     );
     expect(report.hints.join(" ")).toContain("--config-accept-new-path");
   });

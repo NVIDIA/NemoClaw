@@ -195,7 +195,7 @@ function sessionLocationSignal(input: WhatsappProbeInput): DiagnosticSignal | nu
       severity: "warn",
       detail:
         "dashboard-home has WhatsApp credentials, but the Hermes gateway session path is empty",
-      hint: "run `nemoclaw <sandbox> config set --key platforms.whatsapp.extra.session_path --value /sandbox/.hermes/dashboard-home/platforms/whatsapp/session --restart --config-accept-new-path`",
+      hint: "run `nemoclaw <sandbox> config set --key platforms.whatsapp.extra.session_path --value /sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session --restart --config-accept-new-path`",
     };
   }
   if (gateway === true && dashboard === false) {
@@ -473,7 +473,7 @@ function buildHints(verdict: WhatsappVerdict, input: WhatsappProbeInput): string
       if (hermesDashboardOnlySession(input)) {
         hints.push(
           "Hermes dashboard pairing wrote credentials under dashboard-home, but the gateway reads the default platforms path.",
-          "Use `nemoclaw <sandbox> config set --key platforms.whatsapp.extra.session_path --value /sandbox/.hermes/dashboard-home/platforms/whatsapp/session --restart --config-accept-new-path` to point the gateway at that session.",
+          "Use `nemoclaw <sandbox> config set --key platforms.whatsapp.extra.session_path --value /sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session --restart --config-accept-new-path` to point the gateway at that session.",
         );
         break;
       }

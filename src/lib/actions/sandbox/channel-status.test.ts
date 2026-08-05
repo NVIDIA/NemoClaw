@@ -255,7 +255,7 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     expect(commands).not.toContain("openclaw channels status");
     expect(commands).toContain("/sandbox/.hermes/platforms/whatsapp/session/creds.json");
     expect(commands).toContain(
-      "/sandbox/.hermes/dashboard-home/platforms/whatsapp/session/creds.json",
+      "/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session/creds.json",
     );
   });
 

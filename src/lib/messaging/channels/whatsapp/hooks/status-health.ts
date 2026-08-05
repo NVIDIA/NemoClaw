@@ -12,14 +12,15 @@
  * WhatsApp session paths:
  *
  *   /sandbox/.hermes/platforms/whatsapp/session/creds.json
- *   /sandbox/.hermes/dashboard-home/platforms/whatsapp/session/creds.json
+ *   /sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session/creds.json
  *
  * It never reads credential file contents or lists session directories.
  *
  * This is a bounded compatibility probe for Hermes dashboard pairing that can
- * write credentials under dashboard-home while the gateway reads the default
- * session path. Remove the dashboard-home branch after Hermes uses one shared
- * WhatsApp session path for both dashboard pairing and gateway startup.
+ * write credentials under profiles/dashboard-home while the gateway reads the
+ * default session path. Remove the dashboard profile branch after Hermes uses
+ * one shared WhatsApp session path for both dashboard pairing and gateway
+ * startup.
  *
  * The probe reads OpenClaw's authoritative live status JSON:
  *
@@ -251,7 +252,7 @@ function runHermesSessionProbe(
 function hermesSessionProbeCommand(): string {
   return [
     'gateway="/sandbox/.hermes/platforms/whatsapp/session/creds.json"',
-    'dashboard="/sandbox/.hermes/dashboard-home/platforms/whatsapp/session/creds.json"',
+    'dashboard="/sandbox/.hermes/profiles/dashboard-home/platforms/whatsapp/session/creds.json"',
     `printf '%s\\n' '${HERMES_SESSION_PROBE_SENTINEL}'`,
     'if [ -f "$gateway" ]; then printf "%s\\n" "GATEWAY_SESSION=present"; else printf "%s\\n" "GATEWAY_SESSION=missing"; fi',
     'if [ -f "$dashboard" ]; then printf "%s\\n" "DASHBOARD_SESSION=present"; else printf "%s\\n" "DASHBOARD_SESSION=missing"; fi',
