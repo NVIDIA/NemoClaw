@@ -155,6 +155,21 @@ describe("decideSandboxResume", () => {
     ).toEqual({ kind: "repair-and-recreate" });
   });
 
+  it.each([
+    ["live DCode inference selection", { inferenceSelectionChanged: true }],
+    ["agent selection", { resumeAgentChanged: true }],
+    ["Hermes inference route", { inferenceRouteConfigChanged: true }],
+  ] as const)("repairs a not-ready sandbox before recreating for %s drift", (_label, drift) => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxReuseState: "not_ready",
+          ...drift,
+        }),
+      ),
+    ).toEqual({ kind: "repair-and-recreate" });
+  });
+
   it("creates without resume-specific cleanup when the step is incomplete", () => {
     expect(
       decideSandboxResume(

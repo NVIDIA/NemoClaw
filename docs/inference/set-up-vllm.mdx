@@ -132,6 +132,25 @@ $$nemoclaw onboard --resume
 Authentication reduces anonymous rate-limit exposure but does not guarantee that a download cannot receive HTTP `429`.
 Gated models still require license acceptance and a token before NemoClaw starts image or model downloads.
 
+### Check GPU Compute Capability
+
+A quantized checkpoint does not load on a GPU whose compute capability is lower than the capability the checkpoint was built for.
+Before the image pull and the model download, NemoClaw reads the compute capability of each GPU that `nvidia-smi` reports.
+It compares the lowest reported capability against the selected model's minimum.
+
+On a mismatch, the managed install stops before those downloads and the error names both values.
+
+```text
+  vLLM install failed: NVIDIA Nemotron-3 Nano 4B FP8 requires GPU compute capability 8.9 or newer, but this host reports 8.0. Serve this model on a newer GPU, or select a compatible model with NEMOCLAW_VLLM_MODEL.
+```
+
+Interactive onboarding returns to the inference-provider list so you can select another provider or model.
+Non-interactive onboarding exits.
+
+[Select a Managed Model](#select-a-managed-model) lists the minimum for each registry entry.
+A registry entry with no declared minimum, such as an unquantized checkpoint, skips this check.
+When `nvidia-smi` reports no compute capability, NemoClaw continues and leaves the decision to vLLM.
+
 ### Check Storage Before Downloads
 
 For a cold managed-vLLM install, NemoClaw estimates local storage before the watched image pull starts.
@@ -186,6 +205,9 @@ A legacy root-owned or otherwise unwritable required model-cache path stops befo
 </Note>
 If image pull output stops making progress, a watchdog stops the stalled pull without imposing a fixed wall-clock limit on slow but active downloads.
 If vLLM does not become ready, NemoClaw prints a short tail of the container logs before exiting.
+Because the single-host managed container carries the `--restart unless-stopped` policy described above, a container that cannot serve its model restarts instead of exiting.
+While NemoClaw waits for the API, it also reads that container's restart count.
+After the container restarts three times, NemoClaw stops the container and the install instead of waiting out the full load timeout.
 
 When you start managed vLLM outside the installer express flow, NemoClaw uses these profile defaults:
 
@@ -292,19 +314,21 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
 Set `NEMOCLAW_VLLM_MODEL=<slug>` before onboarding to select a model without prompting.
 NemoClaw applies the registered `vllm serve` arguments, including the reasoning parser, tool-call parser, and `--max-model-len`.
 
-| Slug | Hugging Face model | Supported host profiles | Notes |
-|---|---|---|---|
-| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | Supported override. |
-| `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | DGX Spark | DGX Spark default. |
-| `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | Generic Linux NVIDIA GPU default. |
-| `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | DGX Station | DGX Station profile default outside express install. |
-| `nemotron-3-ultra-550b-a55b` | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` | DGX Station | DGX Station express-install selection with a pinned model revision and model-specific vLLM image. |
-| `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | Gated and requires license acceptance. |
+| Slug | Hugging Face model | Supported host profiles | Minimum compute capability | Notes |
+|---|---|---|---|---|
+| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | `8.9` | Supported override. |
+| `qwen3.6-35b-a3b-nvfp4` | `nvidia/Qwen3.6-35B-A3B-NVFP4` | DGX Spark | `12.1` | DGX Spark default. |
+| `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | `8.9` | Generic Linux NVIDIA GPU default. |
+| `deepseek-v4-flash` | `deepseek-ai/DeepSeek-V4-Flash` | DGX Station | `10.0` | DGX Station profile default outside express install. |
+| `nemotron-3-ultra-550b-a55b` | `nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4` | DGX Station | `10.0` | DGX Station express-install selection with a pinned model revision and model-specific vLLM image. |
+| `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | DGX Spark, DGX Station, Linux with an NVIDIA GPU | None | Gated and requires license acceptance. |
 
 Slugs are case-insensitive, and NemoClaw also accepts the full Hugging Face model ID.
 An unrecognized value fails before image or model downloads and prints the valid slugs.
 A recognized override that does not support the detected host also fails before image or model downloads.
 The error names the selected model and detected host profile.
+A model whose quantized checkpoint needs a newer GPU than the host provides also fails before those downloads.
+Follow [Check GPU Compute Capability](#check-gpu-compute-capability) for that check.
 
 Gated models require a Hugging Face token and license acceptance.
 Follow [Authenticate Hugging Face Downloads](#authenticate-hugging-face-downloads) before onboarding so NemoClaw can forward the token temporarily to the one-shot model downloader.

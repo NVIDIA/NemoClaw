@@ -157,6 +157,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
+      cli_artifact_provenance: ${{ steps.record_cli_artifact.outputs.provenance }}
       matrix: ${{ steps.controller_matrix.outputs.matrix || steps.matrix.outputs.matrix }}
       test_matrix: ${{ steps.matrix.outputs.test_matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
@@ -369,8 +370,169 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+
+      - id: package_cli_artifact
+        name: Package exact-commit CLI
+        env:
+          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
+          CANDIDATE_SHA: ${{ inputs.checkout_sha || github.sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
+            { echo "::error::candidate repository is invalid"; exit 1; }
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]] ||
+            { echo "::error::candidate SHA must be a lowercase 40-character SHA"; exit 1; }
+          [[ "$WORKFLOW_SHA" =~ ^[a-f0-9]{40}$ ]] ||
+            { echo "::error::workflow SHA must be a lowercase 40-character SHA"; exit 1; }
+          [[ "$(git rev-parse --verify HEAD)" == "$CANDIDATE_SHA" ]] ||
+            { echo "::error::checked-out commit does not match the artifact candidate SHA"; exit 1; }
+          [[ "$RUN_ATTEMPT" =~ ^[1-9][0-9]*$ && "$RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
+            { echo "::error::workflow run identity is invalid"; exit 1; }
+          test -s dist/nemoclaw.js ||
+            { echo "::error::candidate CLI build did not produce dist/nemoclaw.js"; exit 1; }
+          test -s dist/build-identity.json ||
+            { echo "::error::candidate CLI build did not produce dist/build-identity.json"; exit 1; }
+          jq -e --arg candidateSha "$CANDIDATE_SHA" '
+            type == "object" and
+            (keys | sort) == ["nemoclawVersion", "sourceRevision"] and
+            (.nemoclawVersion | strings | length > 0) and
+            .sourceRevision == $candidateSha
+          ' dist/build-identity.json >/dev/null ||
+            { echo "::error::candidate CLI build identity does not match the candidate commit SHA"; exit 1; }
+
+          artifact_dir="${RUNNER_TEMP}/nemoclaw-cli-artifact"
+          install -d -m 0700 "$artifact_dir"
+          payload="$artifact_dir/nemoclaw-cli.tar"
+          manifest="$artifact_dir/manifest.json"
+          tar \
+            --sort=name \
+            --mtime=@0 \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            -cf "$payload" \
+            dist
+          payload_sha256="$(sha256sum "$payload" | awk '{print $1}')"
+          source_tree="$(git rev-parse 'HEAD^{tree}')"
+          lockfile_sha256="$(sha256sum package-lock.json | awk '{print $1}')"
+          node_version="$(node --version)"
+          npm_version="$(npm --version)"
+          artifact_name="nemoclaw-cli-${CANDIDATE_SHA}-${payload_sha256}"
+
+          jq -n \
+            --arg artifactName "$artifact_name" \
+            --arg buildCommand "npm run build:cli" \
+            --arg candidateRepository "$CANDIDATE_REPOSITORY" \
+            --arg candidateSha "$CANDIDATE_SHA" \
+            --arg lockfileSha256 "$lockfile_sha256" \
+            --arg nodeVersion "$node_version" \
+            --arg npmVersion "$npm_version" \
+            --arg payloadFile "nemoclaw-cli.tar" \
+            --arg payloadSha256 "$payload_sha256" \
+            --arg runAttempt "$RUN_ATTEMPT" \
+            --arg runId "$RUN_ID" \
+            --arg runnerArch "$RUNNER_ARCH" \
+            --arg runnerOs "$RUNNER_OS" \
+            --arg sourceTree "$source_tree" \
+            --arg workflowSha "$WORKFLOW_SHA" \
+            '{
+              kind: "nemoclaw-e2e-cli-artifact-v1",
+              artifactName: $artifactName,
+              candidate: {
+                repository: $candidateRepository,
+                sha: $candidateSha,
+                sourceTree: $sourceTree,
+                lockfileSha256: $lockfileSha256
+              },
+              workflow: {
+                sha: $workflowSha,
+                runId: $runId,
+                runAttempt: $runAttempt
+              },
+              toolchain: {
+                node: $nodeVersion,
+                npm: $npmVersion,
+                runnerOs: $runnerOs,
+                runnerArch: $runnerArch
+              },
+              build: {
+                command: $buildCommand,
+                sourceRevision: $candidateSha
+              },
+              payload: {
+                file: $payloadFile,
+                sha256: $payloadSha256
+              }
+            }' >"$manifest"
+          chmod 0600 "$manifest" "$payload"
+          printf 'artifact_name=%s\n' "$artifact_name" >>"$GITHUB_OUTPUT"
+          printf 'candidate_sha=%s\n' "$CANDIDATE_SHA" >>"$GITHUB_OUTPUT"
+          printf 'payload_sha256=%s\n' "$payload_sha256" >>"$GITHUB_OUTPUT"
+
+      - id: upload_cli_artifact
+        name: Publish content-addressed CLI artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          build-cli: "false"
+          name: ${{ steps.package_cli_artifact.outputs.artifact_name }}
+          path: ${{ runner.temp }}/nemoclaw-cli-artifact/
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
+      - id: record_cli_artifact
+        name: Record CLI artifact provenance
+        env:
+          ARTIFACT_DIGEST: ${{ steps.upload_cli_artifact.outputs.artifact-digest }}
+          ARTIFACT_ID: ${{ steps.upload_cli_artifact.outputs.artifact-id }}
+          ARTIFACT_NAME: ${{ steps.package_cli_artifact.outputs.artifact_name }}
+          CANDIDATE_REPOSITORY: ${{ inputs.checkout_repository || github.repository }}
+          CANDIDATE_SHA: ${{ steps.package_cli_artifact.outputs.candidate_sha }}
+          PAYLOAD_SHA256: ${{ steps.package_cli_artifact.outputs.payload_sha256 }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_ID: ${{ github.run_id }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]] ||
+            { echo "::error::artifact upload did not return an immutable artifact ID"; exit 1; }
+          [[ "$ARTIFACT_DIGEST" =~ ^[a-f0-9]{64}$ ]] ||
+            { echo "::error::artifact upload did not return a SHA-256 digest"; exit 1; }
+          provenance="$(jq -cn \
+            --arg artifactDigest "$ARTIFACT_DIGEST" \
+            --arg artifactId "$ARTIFACT_ID" \
+            --arg artifactName "$ARTIFACT_NAME" \
+            --arg candidateRepository "$CANDIDATE_REPOSITORY" \
+            --arg candidateSha "$CANDIDATE_SHA" \
+            --arg payloadSha256 "$PAYLOAD_SHA256" \
+            --arg runAttempt "$RUN_ATTEMPT" \
+            --arg runId "$RUN_ID" \
+            --arg workflowSha "$WORKFLOW_SHA" \
+            '{
+              kind: "nemoclaw-e2e-cli-provenance-v1",
+              artifactDigest: $artifactDigest,
+              artifactId: $artifactId,
+              artifactName: $artifactName,
+              candidateRepository: $candidateRepository,
+              candidateSha: $candidateSha,
+              payloadSha256: $payloadSha256,
+              workflowSha: $workflowSha,
+              runId: $runId,
+              runAttempt: $runAttempt
+            }')"
+          printf 'provenance=%s\n' "$provenance" >>"$GITHUB_OUTPUT"
+          {
+            echo "## Exact-commit CLI artifact"
+            echo
+            echo "- Candidate: \`${CANDIDATE_SHA}\`"
+            echo "- Artifact: \`${ARTIFACT_NAME}\` (ID \`${ARTIFACT_ID}\`)"
+            echo "- GitHub archive digest: \`${ARTIFACT_DIGEST}\`"
+            echo "- Payload digest: \`${PAYLOAD_SHA256}\`"
+          } >>"$GITHUB_STEP_SUMMARY"
 
       - id: matrix
         name: Generate E2E target matrix
@@ -454,6 +616,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Verify retired selector replacements
         env:
@@ -625,6 +794,13 @@ jobs:
       # command writes raw traces under runner temp, never under upload roots.
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       # invalidState: a profile plugin installed with --no-deps can import even
       # when an incomplete base image omitted its required upstream packages.
@@ -781,6 +957,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Run tagged credential-free test
         env:
@@ -825,6 +1008,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
@@ -1092,6 +1282,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && (matrix.agent == 'hermes' || matrix.agent == 'deepagents') }}
@@ -1217,6 +1414,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install and verify cloudflared prerequisite
         env:
@@ -1332,6 +1536,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install and verify cloudflared prerequisite
         # Update posture: keep this dev compatibility lane on the same reviewed
@@ -1437,6 +1648,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         # The migrated skill-agent lane invokes helper scripts that call
@@ -1513,6 +1731,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Run OpenClaw skill CLI live test
         env:
@@ -1551,6 +1776,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install and verify cloudflared prerequisite
         # Keep the public HTTPS routing fixture on the same reviewed binary as
@@ -1623,6 +1855,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Run cloud inference live test
         # The Vitest test
@@ -1674,6 +1913,13 @@ jobs:
       - *dockerhub-auth
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
       - name: Run GPU Ollama live Vitest test
@@ -2626,6 +2872,13 @@ jobs:
       - *dockerhub-auth
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
         continue-on-error: true
@@ -2693,6 +2946,13 @@ jobs:
       - *dockerhub-auth
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
       - name: Run Kimi compatibility live Vitest test
@@ -2773,6 +3033,13 @@ jobs:
       - *dockerhub-auth
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
         continue-on-error: true
@@ -2830,6 +3097,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -2930,6 +3204,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3000,6 +3281,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -3059,6 +3347,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Run dashboard remote-bind live test
         env:
@@ -3101,6 +3396,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         run: |
@@ -3159,6 +3461,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Run Hermes Slack live test
         # Preserves the
@@ -3234,6 +3543,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
@@ -3372,6 +3688,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Reassert trusted Node runtime
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -3573,6 +3896,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
@@ -3656,6 +3986,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell
         # Runs without workflow tokens, Docker credentials, or NVIDIA_INFERENCE_API_KEY.
@@ -3748,6 +4085,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
@@ -3905,6 +4249,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' }}
@@ -3957,6 +4308,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell
         # Direct Vitest execution uses bin/nemoclaw.js instead of install.sh,
@@ -4028,6 +4386,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Add swap for Hermes image rebuild
         shell: bash
@@ -4143,6 +4508,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Add swap for Hermes image rebuild
         shell: bash
@@ -4252,6 +4624,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Run overlayfs autofix live test
         env:
@@ -4296,6 +4675,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell
         env:
@@ -4356,6 +4742,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -4434,6 +4827,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Verify Jetson GPU availability
         run: |
@@ -4489,6 +4889,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -4545,6 +4952,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u COMPATIBLE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
@@ -4600,6 +5014,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -4787,6 +5208,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -4878,6 +5306,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -4932,6 +5367,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -4987,6 +5429,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -5040,6 +5489,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Run token rotation live test
         # Preserve the original runner class: ubuntu-latest with Docker/OpenShell
@@ -5092,6 +5548,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Run messaging compatible endpoint live test
         # Preserves the fake OpenAI-compatible endpoint, Telegram messaging
@@ -5201,6 +5664,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Run OpenShell gateway upgrade live Vitest test
         # Keep the original v0.0.36 fixture on x86_64 and validate the exact
@@ -5252,6 +5722,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Run messaging providers live Vitest test
         # The test keeps
@@ -5357,6 +5834,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Run Model Router provider-routed inference live test
         # Preserves the real provider-routed onboard, host model-router health, and
@@ -5453,6 +5937,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Verify CLI launcher
         run: |
@@ -5512,6 +6003,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Run sandbox survival live test
         # This intentionally
@@ -5577,6 +6075,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Run OpenClaw custom-plugin release baseline live test
         run: |
@@ -5645,6 +6150,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Run OpenClaw custom-plugin lifecycle and runtime-deps EXDEV live test
         run: |
@@ -5717,6 +6229,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Run OpenClaw TUI chat correlation live test
         env:
@@ -5779,6 +6298,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         # This target invokes `bin/nemoclaw.js onboard` directly, so install
@@ -5868,6 +6394,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Run OpenClaw inference switch live test
         # Preserves the real install.sh/OpenShell/Docker/managed-proxy boundary while
@@ -5943,6 +6476,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Run Bedrock Runtime compatible Anthropic live test
         # Preserves the fake Bedrock Runtime endpoint, /etc/hosts mapping,
@@ -5991,6 +6531,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -6047,6 +6594,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell
         env:
@@ -6117,6 +6671,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell
         env:
@@ -6210,6 +6771,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Initialize runner comparison telemetry
         if: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && inputs.checkout_sha == '' && matrix.agent == 'hermes' }}
@@ -6296,6 +6864,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         run: |
@@ -6361,6 +6936,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
@@ -6419,6 +7001,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install OpenShell CLI
         run: |
@@ -6484,6 +7073,13 @@ jobs:
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
+        with:
+          build-cli: "false"
+
+      - name: Restore exact-commit CLI artifact
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f
+        with:
+          provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
       - name: Install and verify cloudflared prerequisite
         env:
