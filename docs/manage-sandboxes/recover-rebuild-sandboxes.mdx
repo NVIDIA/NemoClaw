@@ -150,6 +150,21 @@ Back up those paths outside the sandbox before you approve legacy recovery.
 $$nemoclaw <sandbox-name> rebuild
 ```
 
+### Resolve Rebuild Preflight Stops
+
+Before it backs up or deletes the existing sandbox, `rebuild` validates the recorded sandbox, gateway, policy, MCP, agent, and operation-lock state.
+When one of these checks fails, NemoClaw prints `Rebuild preflight failed`, explains how to recover, and ends with `Aborting rebuild`.
+At this boundary, the existing sandbox is unchanged and no sandbox data has been removed.
+
+Use the recovery guidance that matches the reported check:
+
+- Verify the sandbox name when its registry entry is missing.
+- Follow the printed OpenShell gateway recovery steps when the gateway schema is incompatible.
+- Repair the named pending baseline policy transition, then rerun `rebuild`.
+- Resolve an incomplete MCP destroy transaction before retrying.
+- Back up the sandbox state and recreate it with `$$nemoclaw onboard` when the record contains multiple agents. Transactional multi-agent rebuild is not supported.
+- Wait for another onboarding or rebuild operation to finish before retrying. If verified stale-lock cleanup is still in progress, wait briefly and rerun the command. Do not delete the lock manually.
+
 <AgentOnly variant="openclaw">
 The rebuild command preserves the mounted workspace and registered policies while recreating the container.
 When no host web-search key is staged, rebuild preflight reuses an existing Brave or Tavily credential only when the provider name, type, and credential key match the sandbox's binding on its recorded OpenShell gateway.
