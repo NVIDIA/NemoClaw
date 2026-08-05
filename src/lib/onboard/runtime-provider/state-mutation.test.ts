@@ -89,10 +89,12 @@ describe("runtime provider state-mutation plan", () => {
           /canonical plan exceeds its bounded transport/u.test(error.message);
       }
     } finally {
-      if (objectToJson) Object.defineProperty(Object.prototype, "toJSON", objectToJson);
-      else Reflect.deleteProperty(Object.prototype, "toJSON");
-      if (arrayToJson) Object.defineProperty(Array.prototype, "toJSON", arrayToJson);
-      else Reflect.deleteProperty(Array.prototype, "toJSON");
+      objectToJson === undefined
+        ? Reflect.deleteProperty(Object.prototype, "toJSON")
+        : Object.defineProperty(Object.prototype, "toJSON", objectToJson);
+      arrayToJson === undefined
+        ? Reflect.deleteProperty(Array.prototype, "toJSON")
+        : Object.defineProperty(Array.prototype, "toJSON", arrayToJson);
     }
 
     expect(pollutedDigest).toBe(baseline.planSha256);
