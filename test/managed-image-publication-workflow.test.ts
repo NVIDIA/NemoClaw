@@ -422,6 +422,7 @@ describe("complete managed-image publication workflow", () => {
         baseWorkflow.jobs?.[expectedPublisher.platformsJob],
         `base-image workflow is missing native ${expectedPublisher.agent} platforms`,
       );
+      expect(nativePlatforms.needs).toEqual(["reviewed-npm-audit"]);
       expect(nativePlatforms.strategy?.matrix?.include).toEqual(
         expect.arrayContaining([
           expect.objectContaining({

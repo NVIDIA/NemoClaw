@@ -114,6 +114,8 @@ jobs:
   build-openclaw-platforms:
     name: Build OpenClaw base image (${{ matrix.arch }})
     if: github.repository == 'NVIDIA/NemoClaw'
+    needs:
+      - reviewed-npm-audit
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -232,6 +234,8 @@ jobs:
   build-hermes-platforms:
     name: Build ${{ matrix.display_name }} base image (${{ matrix.arch }})
     if: github.repository == 'NVIDIA/NemoClaw'
+    needs:
+      - reviewed-npm-audit
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -345,6 +349,8 @@ jobs:
   build-dcode-platforms:
     name: Build ${{ matrix.display_name }} base image (${{ matrix.arch }})
     if: github.repository == 'NVIDIA/NemoClaw'
+    needs:
+      - reviewed-npm-audit
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:

@@ -372,6 +372,7 @@ describe("base-image publication behavior", () => {
     const platformJob = workflow.jobs?.["build-openclaw-platforms"];
     const manifestJob = workflow.jobs?.["build-and-push-openclaw"];
 
+    expect(platformJob?.needs).toEqual(["reviewed-npm-audit"]);
     expect(platformJob?.["timeout-minutes"]).toBe(60);
     expect(platformJob?.strategy?.["fail-fast"]).toBe(false);
     expect(
@@ -516,6 +517,7 @@ describe("base-image publication behavior", () => {
 
     for (const { platformJobName } of imagePublishers) {
       const platformJob = workflow.jobs?.[platformJobName];
+      expect(platformJob?.needs).toEqual(["reviewed-npm-audit"]);
       expect(platformJob?.["timeout-minutes"]).toBe(60);
       expect(platformJob?.["runs-on"]).toBe("${{ matrix.runner }}");
       expect(platformJob?.strategy?.["fail-fast"]).toBe(false);
