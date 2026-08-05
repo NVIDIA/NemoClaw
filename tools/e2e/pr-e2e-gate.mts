@@ -3052,6 +3052,32 @@ export async function startPrGate(
   ) {
     throw new Error("PR repository or branch does not match the triggering CI run");
   }
+  const existingCheck = existingChecks[0];
+  if (
+    command.ciConclusion === "success" &&
+    existingCheck?.status === "completed" &&
+    existingCheck.conclusion === "success"
+  ) {
+    const title = existingCheck.output?.title;
+    const summary = existingCheck.output?.summary;
+    if (!title || !summary) {
+      throw new Error("Successful PR gate check is missing its title or summary");
+    }
+    appendOutput("check_id", String(existingCheck.id));
+    await completeCheck(
+      { repository, checkRunId: existingCheck.id },
+      token,
+      { conclusion: "success", title, summary },
+      existingCheck.details_url ?? undefined,
+    );
+    appendOutput("dispatched", "false");
+    appendOutput("finalized", "true");
+    console.log(
+      `Updated successful PR gate after CI rerun: pr=${ciIdentity.prNumber} head=${ciIdentity.headSha} base=${ciIdentity.baseSha} attempt=${command.ciRunAttempt}`,
+    );
+    return;
+  }
+
   assertCheckCanStart(existingChecks[0], command.ciConclusion);
   if (retryableFailureReason(existingChecks[0] ?? {}) === "dispatch-not-observed") {
     const summary = existingChecks[0]?.output?.summary;
