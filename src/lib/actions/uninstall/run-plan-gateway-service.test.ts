@@ -244,7 +244,7 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(fs.existsSync(servicePath)).toBe(false);
   });
 
-  it("keeps the marked Linux unit when scoped OpenShell cleanup fails (#8220)", () => {
+  it("preserves the marked Linux unit when scoped sandbox deletion fails (#8220)", () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
     writeSelectedSandboxRegistry(test, "my-assistant");
@@ -265,10 +265,8 @@ describe("uninstall OpenShell gateway user service", () => {
       [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
     );
 
-    // The sandbox delete failed, so uninstall returns before it disables the
-    // unit and a rerun still finds the OpenShell gateway service running.
-    // `openshell gateway remove` still runs ahead of that return; that is the
-    // pre-existing absent-resource behavior #7906 tracks, not this change.
+    // Sandbox deletion failed, so uninstall returns before it removes the gateway registration.
+    // It preserves the marked Linux unit and the running OpenShell gateway service for a retry.
     expect(result.exitCode).toBe(1);
     expect(fs.existsSync(servicePath)).toBe(true);
     expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
