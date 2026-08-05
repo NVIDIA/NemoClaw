@@ -213,6 +213,8 @@ describe("shields down policy rejection", () => {
         agentName: "openclaw",
         configPath: "/sandbox/.openclaw/openclaw.json",
         configDir: "/sandbox/.openclaw",
+        configFile: "openclaw.json",
+        format: "json",
         stateLockPlanInImage: true,
       }),
     });
@@ -280,6 +282,8 @@ describe("shields down policy rejection", () => {
           agentName: "openclaw",
           configPath: "/sandbox/.openclaw/openclaw.json",
           configDir: "/sandbox/.openclaw",
+          configFile: "openclaw.json",
+          format: "json",
           stateLockPlanInImage: true,
         }),
       }),
