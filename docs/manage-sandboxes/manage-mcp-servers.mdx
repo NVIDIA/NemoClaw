@@ -194,7 +194,20 @@ While either marker remains, rebuild refuses before backup or deletion and print
 
 ## Respect the Lifecycle Lock
 
-If a mutating command times out waiting for the per-sandbox lifecycle lock, confirm that no MCP, rebuild, or destroy command for that sandbox is still running, then retry.
+If a mutating command times out waiting for the per-sandbox lifecycle lock, confirm that no `mcp`, `rebuild`, or `destroy` command for that sandbox is still running, then retry.
+
+<AgentOnly variant="openclaw,hermes">
+
+`recover` also owns this lock while it repairs the gateway and forwards.
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
+`recover` keeps the lock while it validates and releases any Hermes cron restore gate.
+
+</AgentOnly>
+
 Every mutating command recovers a lock whose local process is provably dead or whose PID now has a different process-start identity.
 
 NemoClaw does not expose a force-unlock flag.
