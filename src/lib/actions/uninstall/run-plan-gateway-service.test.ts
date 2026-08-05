@@ -213,6 +213,31 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(calls).toContainEqual(["systemctl", "--user", "daemon-reload"]);
   });
 
+  it("opts full uninstall gateway teardown into missing packaged-service recovery (#8215)", () => {
+    const test = fixture(true);
+    const resolveGatewayTeardownAuthority = vi.fn(({ gatewayName, gatewayPort }) => ({
+      gatewayName,
+      gatewayPort,
+      mode: "nemoclaw-managed" as const,
+      source: "standalone" as const,
+      endpoint: null,
+      stateDir: null,
+      supervisor: null,
+      requiredCapabilities: [],
+    }));
+
+    const result = uninstall(test, false, {
+      commandExists: () => true,
+      resolveGatewayTeardownAuthority,
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(resolveGatewayTeardownAuthority).toHaveBeenCalledWith(
+      { gatewayName: "nemoclaw", gatewayPort: 8080 },
+      expect.objectContaining({ allowMissingPackagedServiceTeardown: true }),
+    );
+  });
+
   it("reports an incomplete uninstall when the marked service cannot be disabled (#6903)", () => {
     const test = fixture();
     const servicePath = writeManagedService(test);
