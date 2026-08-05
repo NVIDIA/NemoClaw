@@ -85,10 +85,10 @@ if [[ "${#sandbox_container_ids[@]}" != "1" ]]; then
 fi
 
 readonly sandbox_container_id="${sandbox_container_ids[0]}"
-readonly sandbox_image_id
 sandbox_image_id="$(docker inspect --format '{{.Image}}' "$sandbox_container_id")"
-readonly script_path
+readonly sandbox_image_id
 script_path="$(readlink -f "$0")"
+readonly script_path
 
 printf 'sandbox=%s\ncontainer=%s\nimage=%s\n' \
   "$sandbox_name" "$sandbox_container_id" "$sandbox_image_id"
@@ -139,11 +139,11 @@ mapfile -t tegra_group_gids < <(
     fi
   done | sort -nu
 )
-readonly tegra_gids_csv
 tegra_gids_csv="$(
   IFS=,
   echo "${tegra_group_gids[*]}"
 )"
+readonly tegra_gids_csv
 echo "detected_tegra_group_gids=${tegra_gids_csv:-none}"
 
 probe_command="$(declare -f run_sandbox_probe); CUDA_PROBE=$(printf '%q' "$CUDA_PROBE"); run_sandbox_probe"
