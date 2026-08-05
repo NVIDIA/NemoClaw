@@ -48,10 +48,11 @@ Enforce both limits at the container runtime when that residual risk matters to 
 
 The NemoClaw entrypoint drops dangerous capabilities from the process bounding set before it starts agent services.
 It removes `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE`, `CAP_NET_RAW`, `CAP_DAC_OVERRIDE`, `CAP_SYS_CHROOT`, `CAP_FSETID`, `CAP_SETFCAP`, `CAP_MKNOD`, `CAP_AUDIT_WRITE`, and `CAP_NET_BIND_SERVICE`.
-When `setpriv` is available, the entrypoint also removes the remaining privilege-separation capabilities during the switch from root to the `sandbox` and `gateway` users.
+The managed images install `setpriv` from `util-linux` and require it for the switch from root to the `sandbox` and `gateway` users.
+When `CAP_SETPCAP` is available, the same `setpriv` operation also removes the remaining privilege-separation capabilities from the child process bounding set.
 
-The bounding-set drop is best effort: if `capsh` or `CAP_SETPCAP` is unavailable the entrypoint logs a warning and continues with the runtime-provided capability set.
-If `setpriv` is unavailable, the entrypoint falls back to `gosu`.
+The bounding-set drop is best effort: if `capsh` or `CAP_SETPCAP` is unavailable, the entrypoint logs a warning and still uses `setpriv` to change the user, group, and supplementary groups.
+When a root entrypoint must change identity, it fails closed if `setpriv` is missing instead of starting an agent service as root.
 
 To make the drop fail-closed instead, set `NEMOCLAW_REQUIRE_CAP_DROP=1` in the entrypoint environment: the agent then refuses to start unless the agent process tree's bounding set is verified free of the dangerous capabilities.
 This is opt-in because many hosts cannot drop capabilities, including cloud VMs, Docker Desktop, and WSL environments without `CAP_SETPCAP`.

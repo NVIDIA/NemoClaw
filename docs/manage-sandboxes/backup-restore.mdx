@@ -38,6 +38,14 @@ Snapshots capture all workspace state directories defined in the agent manifest 
 Agent manifests can also declare durable top-level state files.
 Treat snapshot directories as private local data.
 
+<AgentOnly variant="openclaw">
+<Warning>
+Inside an OpenClaw sandbox, `~` expands to `/sandbox`, not to the OpenClaw workspace.
+Files such as `~/USER.md` and `~/SOUL.md` are therefore outside OpenClaw's managed state and are not included in snapshots.
+Store them as `$OPENCLAW_WORKSPACE_DIR/USER.md` and `$OPENCLAW_WORKSPACE_DIR/SOUL.md` so snapshot and restore operations preserve them.
+</Warning>
+</AgentOnly>
+
 Before NemoClaw marks a snapshot complete, it strips recognized credential values from copied JSON, YAML, and `.env` files.
 It preserves OpenShell credential placeholders so rebuild can reattach the host-side provider.
 If NemoClaw cannot sanitize a copied configuration or environment file, it omits that file from the snapshot.
@@ -110,6 +118,11 @@ Tag a snapshot with a human-readable label:
 $$nemoclaw my-assistant snapshot create --name before-upgrade
 ```
 
+When a directory or state file cannot be captured, `snapshot create` reports the failed items, removes the incomplete snapshot, and exits nonzero.
+`snapshot list` shows no new entry, so a later restore cannot select a capture that never completed.
+If removal fails, the command reports the listed snapshot path.
+Remove that directory manually before you run `snapshot restore` because the incomplete capture remains selectable.
+
 ## Restore a Snapshot
 
 Restore the latest snapshot:
@@ -131,6 +144,19 @@ For restore paths that replace state directories as whole units, NemoClaw stages
 If publication fails before the transaction commits, NemoClaw restores the original directories.
 If rollback or cleanup cannot finish, NemoClaw preserves `.nemoclaw-restore-rollback` under the agent state directory and refuses another restore so it does not overwrite the recovery copy.
 Preserve the reported recovery path and verify its contents before you retry or remove it.
+
+<Warning>
+Post-restore policy reconciliation is best-effort.
+NemoClaw warns and continues the remaining restore steps in these cases:
+
+- NemoClaw cannot verify whether a custom policy owns the live `observability-otlp-local` policy entry.
+- The built-in `observability-otlp-local` policy preset has drifted or cannot be inspected.
+- NemoClaw cannot add or remove a recorded policy preset.
+
+The live network policy can then retain unwanted egress or omit expected egress until you repair the named preset.
+After a warning, run `$$nemoclaw <name> policy list`.
+Confirm that the named preset is recorded in the sandbox registry and active on the gateway, or absent from both.
+</Warning>
 
 <AgentOnly variant="hermes">
 A running Hermes gateway keeps serving its pre-restore state databases until it reopens them.

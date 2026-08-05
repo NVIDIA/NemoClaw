@@ -187,6 +187,7 @@ const HF_TOKEN_SETTINGS_URL = "https://huggingface.co/settings/tokens";
 const HF_RATE_LIMIT_PATTERN = /\b429\b|too many requests|rate[\s_-]*limit/i;
 const MODEL_DOWNLOAD_HEARTBEAT_MS = 30_000;
 const VLLM_LAUNCH_HEARTBEAT_MS = 30_000;
+const VLLM_MAX_STARTUP_RESTARTS = 3;
 const HF_CACHE_CONTAINER_DIR = "/root/.cache/huggingface";
 const HF_DOWNLOAD_CACHE_CONTAINER_DIR = "/tmp/nemoclaw-huggingface";
 const HF_CACHE_COMPONENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -491,6 +492,45 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
     return { ok: false, reason: "curl not found on PATH — vLLM readiness checks require curl" };
   }
   return { ok: true };
+}
+
+export function readGpuComputeCapabilities(): number[] {
+  const out = runCapture(
+    ["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader,nounits"],
+    { ignoreError: true },
+  );
+  if (!out) return [];
+  const capabilities: number[] = [];
+  for (const line of out.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const match = /^(\d+)\.(\d+)$/.exec(trimmed);
+    if (!match) continue;
+    capabilities.push(Number(match[1]) * 10 + Number(match[2]));
+  }
+  return capabilities;
+}
+
+export function formatComputeCapability(capability: number): string {
+  return `${String(Math.floor(capability / 10))}.${String(capability % 10)}`;
+}
+
+export function computeCapabilityPreflight(
+  model: VllmModelDef,
+  capabilities: number[] = readGpuComputeCapabilities(),
+): { ok: true } | { ok: false; reason: string } {
+  const required = model.minComputeCapability;
+  if (required === undefined) return { ok: true };
+  if (capabilities.length === 0) return { ok: true };
+  const lowest = Math.min(...capabilities);
+  if (lowest >= required) return { ok: true };
+  return {
+    ok: false,
+    reason:
+      `${model.label} requires GPU compute capability ${formatComputeCapability(required)} or newer, ` +
+      `but this host reports ${formatComputeCapability(lowest)}. ` +
+      "Serve this model on a newer GPU, or select a compatible model with NEMOCLAW_VLLM_MODEL.",
+  };
 }
 
 export async function pullImage(
@@ -1186,6 +1226,14 @@ function waitForVllmReady(
         done({ ok: false, reason: "vLLM container exited before readiness" });
         return;
       }
+      const restarts = containerRestartCount(profile, dockerEnv);
+      if (restarts >= VLLM_MAX_STARTUP_RESTARTS) {
+        done({
+          ok: false,
+          reason: `vLLM container restarted ${String(restarts)} times before readiness`,
+        });
+        return;
+      }
       if (now - lastHeartbeatAt >= VLLM_LAUNCH_HEARTBEAT_MS) {
         lastHeartbeatAt = now;
         emit(`Still waiting for vLLM (${formatElapsed(now - start)} elapsed; API not ready)`);
@@ -1195,6 +1243,18 @@ function waitForVllmReady(
     tick = setInterval(poll, 5000);
     poll();
   });
+}
+
+function containerRestartCount(
+  profile: VllmProfile,
+  dockerEnv: Record<string, string> = buildVllmDockerEnv(),
+): number {
+  const out = dockerCapture(["inspect", "--format", "{{.RestartCount}}", profile.containerName], {
+    env: dockerEnv,
+    ignoreError: true,
+  }).trim();
+  const restarts = Number(out);
+  return Number.isInteger(restarts) && restarts > 0 ? restarts : 0;
 }
 
 function containerStillRunning(
@@ -1778,6 +1838,12 @@ async function runVllmInstall(
   const prereqs = dockerPrereqsOk();
   if (!prereqs.ok) {
     console.error(`  vLLM install failed: ${String(prereqs.reason)}`);
+    return { ok: false };
+  }
+
+  const capability = computeCapabilityPreflight(model);
+  if (!capability.ok) {
+    console.error(`  vLLM install failed: ${capability.reason}`);
     return { ok: false };
   }
 
