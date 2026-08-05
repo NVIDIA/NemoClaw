@@ -65,6 +65,34 @@ describe("buildDockerDriverGatewayEnv", () => {
     expect(env.OPENSHELL_VM_DRIVER_STATE_DIR).toBeUndefined();
     expect(env.OPENSHELL_DRIVER_DIR).toBeUndefined();
   });
+
+  it("builds the exact rootless gateway network contract for the portable profile", () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    vi.stubEnv("CONTAINERS_CONF", "/tmp/nemoclaw-portable/containers.conf");
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-gateway-"));
+    try {
+      const env = buildDockerDriverGatewayEnv({
+        platform: "linux",
+        stateDir,
+        getDockerSupervisorImage: () => "supervisor:test",
+        resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
+      });
+      expect(env).toMatchObject({
+        OPENSHELL_DRIVERS: "podman",
+        CONTAINERS_CONF: "/tmp/nemoclaw-portable/containers.conf",
+        OPENSHELL_BIND_ADDRESS: "0.0.0.0",
+        OPENSHELL_GRPC_ENDPOINT: "https://169.254.1.2:8080",
+        NETAVARK_FW: "iptables",
+      });
+      const toml = fs.readFileSync(env.OPENSHELL_GATEWAY_CONFIG, "utf-8");
+      expect(toml).toContain('compute_drivers = ["podman"]');
+      expect(toml).toContain("[openshell.drivers.podman]");
+      expect(toml).toContain('host_gateway_ip = "169.254.1.2"');
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(stateDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("buildDockerGatewayDebEnvFile", () => {
