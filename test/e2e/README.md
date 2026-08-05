@@ -264,9 +264,10 @@ npx vitest run --project e2e-live test/e2e/live/windows-mxc-openclaw-process-con
 
 The target verifies OpenClaw startup and in-sandbox health, read-write and denied
 filesystem behavior, registry cleanup, and termination of the recorded
-OpenClaw process on sandbox delete. It writes a secret-free failure receipt and
-records whether sensitive runtime artifacts were removed. When that cleanup
-succeeds, a failed run retains only non-sensitive probe files for diagnosis.
+OpenClaw process on sandbox delete. After preflight and local setup succeed, it
+writes a secret-free receipt for either verdict and records whether sensitive
+runtime artifacts were removed. When that cleanup succeeds, a failed run retains
+only non-sensitive probe files for diagnosis.
 Gateway mTLS, governed egress, managed inference, gateway-restart recovery, and
 production activation remain outside this target.
 
