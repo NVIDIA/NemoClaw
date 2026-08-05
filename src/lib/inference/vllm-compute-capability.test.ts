@@ -1,10 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { EventEmitter } from "node:events";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -60,6 +56,13 @@ import {
   installVllm,
   readGpuComputeCapabilities,
 } from "./vllm";
+import {
+  applyVllmInstallProbeDefaults,
+  createVllmInstallSpies,
+  mockDockerSpawnSuccess,
+  resetVllmInstallEnv,
+  type VllmInstallSpies,
+} from "./vllm-install.test-support";
 import { VLLM_MODELS } from "./vllm-models";
 
 const READY_MODELS_RESPONSE = '{"data":[]}';
@@ -77,20 +80,6 @@ function mockHostCommands(options: { computeCap: string; curl?: string }): void 
         return "";
     }
   });
-}
-
-function mockDockerSpawnSuccess(): EventEmitter & {
-  stdout: EventEmitter;
-  stderr: EventEmitter;
-} {
-  const proc = new EventEmitter() as EventEmitter & {
-    stdout: EventEmitter;
-    stderr: EventEmitter;
-  };
-  proc.stdout = new EventEmitter();
-  proc.stderr = new EventEmitter();
-  process.nextTick(() => proc.emit("exit", 0));
-  return proc;
 }
 
 function mockDockerDaemon(containerName: string, restartCount = "0"): void {
@@ -116,54 +105,21 @@ function mockDockerDaemon(containerName: string, restartCount = "0"): void {
 }
 
 describe("managed vLLM GPU compute capability preflight", () => {
-  let logSpy: ReturnType<typeof vi.spyOn>;
-  let errSpy: ReturnType<typeof vi.spyOn>;
-  let mkdirSpy: ReturnType<typeof vi.spyOn>;
-  let stdoutWrite: ReturnType<typeof vi.spyOn>;
-  let stderrWrite: ReturnType<typeof vi.spyOn>;
+  let errSpy: VllmInstallSpies["errSpy"];
+  let restoreSpies: VllmInstallSpies["restore"];
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.dockerImageInspectFormat.mockReturnValue("");
-    mocks.findUnwritableModelCachePath.mockReturnValue(null);
-    mocks.measureDirectorySizeBytes.mockReturnValue(0n);
+    applyVllmInstallProbeDefaults(mocks);
     mocks.getGpuIndicesByName.mockReturnValue([0]);
-    mocks.probeDockerStorage.mockReturnValue({
-      ok: true,
-      capacity: {
-        availableBytes: 1_000_000_000_000n,
-        filesystemId: "docker-fs",
-        path: "/docker",
-        source: "Docker",
-      },
-    });
-    mocks.probeHostStorage.mockReturnValue({
-      ok: true,
-      capacity: {
-        availableBytes: 1_000_000_000_000n,
-        filesystemId: "model-fs",
-        path: path.join(os.homedir(), ".cache", "huggingface"),
-        source: "Hugging Face cache",
-      },
-    });
-    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
-    stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-    stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    delete process.env.NEMOCLAW_VLLM_MODEL;
-    delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;
+    ({ errSpy, restore: restoreSpies } = createVllmInstallSpies());
+    resetVllmInstallEnv();
     process.env.HF_TOKEN = "hf_test";
-    delete process.env.HUGGING_FACE_HUB_TOKEN;
   });
 
   afterEach(() => {
-    logSpy.mockRestore();
-    errSpy.mockRestore();
-    mkdirSpy.mockRestore();
-    stdoutWrite.mockRestore();
-    stderrWrite.mockRestore();
+    restoreSpies();
     process.env = { ...originalEnv };
   });
 
@@ -250,53 +206,22 @@ describe("managed vLLM GPU compute capability preflight", () => {
 });
 
 describe("managed vLLM crash-loop watchdog", () => {
-  let logSpy: ReturnType<typeof vi.spyOn>;
-  let errSpy: ReturnType<typeof vi.spyOn>;
-  let mkdirSpy: ReturnType<typeof vi.spyOn>;
-  let stdoutWrite: ReturnType<typeof vi.spyOn>;
-  let stderrWrite: ReturnType<typeof vi.spyOn>;
+  let errSpy: VllmInstallSpies["errSpy"];
+  let restoreSpies: VllmInstallSpies["restore"];
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
     vi.clearAllMocks();
+    applyVllmInstallProbeDefaults(mocks);
     mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
-    mocks.findUnwritableModelCachePath.mockReturnValue(null);
-    mocks.measureDirectorySizeBytes.mockReturnValue(0n);
     mocks.getGpuIndicesByName.mockReturnValue([0]);
-    mocks.probeHostStorage.mockReturnValue({
-      ok: true,
-      capacity: {
-        availableBytes: 1_000_000_000_000n,
-        filesystemId: "model-fs",
-        path: path.join(os.homedir(), ".cache", "huggingface"),
-        source: "Hugging Face cache",
-      },
-    });
-    mocks.probeDockerStorage.mockReturnValue({
-      ok: true,
-      capacity: {
-        availableBytes: 1_000_000_000_000n,
-        filesystemId: "docker-fs",
-        path: "/docker",
-        source: "Docker",
-      },
-    });
-    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
-    stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-    stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    delete process.env.NEMOCLAW_VLLM_MODEL;
-    delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;
+    ({ errSpy, restore: restoreSpies } = createVllmInstallSpies());
+    resetVllmInstallEnv();
     process.env.HF_TOKEN = "hf_test";
   });
 
   afterEach(() => {
-    logSpy.mockRestore();
-    errSpy.mockRestore();
-    mkdirSpy.mockRestore();
-    stdoutWrite.mockRestore();
-    stderrWrite.mockRestore();
+    restoreSpies();
     process.env = { ...originalEnv };
   });
 
