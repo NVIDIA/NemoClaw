@@ -54,3 +54,11 @@ export function buildMcpBridgeOnboardEnv(options: {
     NEMOCLAW_RECREATE_SANDBOX: "1",
   };
 }
+
+export function requireMcpBridgeTlsCaCert(env: NodeJS.ProcessEnv = process.env): string {
+  const corporateCaBundle = env.NEMOCLAW_MCP_TLS_CA_CERT;
+  if (!corporateCaBundle) {
+    throw new Error("NEMOCLAW_MCP_TLS_CA_CERT is required for routed-private MCP validation");
+  }
+  return corporateCaBundle;
+}

@@ -28,7 +28,11 @@ import {
   assertHermesReloadRollback,
   assertHermesRemovalSurvivesGatewayRestart,
 } from "./mcp-bridge-hermes-lifecycle.ts";
-import { buildMcpBridgeExactMainEnv, buildMcpBridgeOnboardEnv } from "./mcp-bridge-onboard-env.ts";
+import {
+  buildMcpBridgeExactMainEnv,
+  buildMcpBridgeOnboardEnv,
+  requireMcpBridgeTlsCaCert,
+} from "./mcp-bridge-onboard-env.ts";
 import { MCP_BRIDGE_PHASES } from "./mcp-bridge-phases.ts";
 import { retryAfterHermesRestartTransportFailure } from "./mcp-bridge-reliability.ts";
 import {
@@ -108,10 +112,7 @@ async function onboardAgent(
     envOverlay?: NodeJS.ProcessEnv;
   },
 ): Promise<void> {
-  const corporateCaBundle = process.env.NEMOCLAW_MCP_TLS_CA_CERT;
-  if (!corporateCaBundle) {
-    throw new Error("NEMOCLAW_MCP_TLS_CA_CERT is required for routed-private MCP validation");
-  }
+  const corporateCaBundle = requireMcpBridgeTlsCaCert();
   cleanup.trackSandbox(host, options.sandboxName, {
     artifactName: "cleanup-destroy-sandbox",
     timeoutMs: 15 * 60_000,
