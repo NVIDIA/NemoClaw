@@ -43,6 +43,8 @@ export interface ServiceOptions {
   pidDir?: string;
   /** Injectable process operations (identity + signalling) for tests. */
   processControl?: ProcessControl;
+  /** Injectable Ollama model cleanup for tests. */
+  unloadOllamaModels?: () => void;
   /** Cloudflare named tunnel token. Falls back to CLOUDFLARE_TUNNEL_TOKEN. */
   cloudflareTunnelToken?: string;
   /** Also release the managed host gateway port (legacy full-stop only). */
@@ -520,7 +522,8 @@ export function stopAll(opts: ServiceOptions = {}): void {
   }
 
   try {
-    const { unloadOllamaModels } = require("../inference/ollama/proxy");
+    const unloadOllamaModels =
+      opts.unloadOllamaModels ?? require("../inference/ollama/proxy").unloadOllamaModels;
     unloadOllamaModels();
   } catch {
     /* best-effort */
