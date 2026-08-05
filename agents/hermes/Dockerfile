@@ -9,6 +9,7 @@
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:956c3d0c812ee6caa56f3b6e307819925d920604adcf73c4a9e6229788967634
 ARG NEMOCLAW_CORPORATE_CA_B64=
 ARG NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE=0
+ARG NEMOCLAW_HERMES_SWITCHYARD_INFERENCE_LOCAL_PROTOTYPE=0
 
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS mcp-tool-discovery-runtime
 ARG NEMOCLAW_CORPORATE_CA_B64
@@ -153,6 +154,27 @@ COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 ARG NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE
+ARG NEMOCLAW_HERMES_SWITCHYARD_INFERENCE_LOCAL_PROTOTYPE
+
+# NemoClaw #7937 V3 keeps the V2 image and activation path intact, but swaps
+# only the prototype target configuration and verifier. V3 is selected solely
+# by its internal build sentinel; the normal image and frozen V2 branch do not
+# consume these files.
+COPY scripts/hermes-switchyard-inference-local-prototype/plugins.toml /usr/local/share/nemoclaw/switchyard-inference-local-plugins.toml
+COPY scripts/hermes-switchyard-inference-local-prototype/run-in-sandbox.sh /usr/local/share/nemoclaw/switchyard-inference-local-run-in-sandbox.sh
+RUN if [ "${NEMOCLAW_HERMES_SWITCHYARD_INFERENCE_LOCAL_PROTOTYPE}" = "1" ]; then \
+        test "${NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE}" = "1"; \
+        test -s /usr/local/lib/nemoclaw/switchyard-relay-plugin/relay-plugin.toml; \
+        install -o root -g root -m 0444 \
+            /usr/local/share/nemoclaw/switchyard-inference-local-plugins.toml \
+            /usr/local/lib/nemoclaw/switchyard-relay-plugin/plugins.toml; \
+        install -o root -g root -m 0555 \
+            /usr/local/share/nemoclaw/switchyard-inference-local-run-in-sandbox.sh \
+            /usr/local/lib/nemoclaw/switchyard-inference-local-run-in-sandbox.sh; \
+    fi \
+    && rm -f \
+        /usr/local/share/nemoclaw/switchyard-inference-local-plugins.toml \
+        /usr/local/share/nemoclaw/switchyard-inference-local-run-in-sandbox.sh
 
 # Cross-stage root copies are accepted by Docker's legacy builder and create
 # one final-image layer while preserving metadata on existing parent paths.

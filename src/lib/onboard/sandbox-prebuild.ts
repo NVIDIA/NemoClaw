@@ -207,9 +207,17 @@ export async function prebuildSandboxImageIfEligible(
 
   let status: number | null;
   try {
+    const inferenceLocalPrototype =
+      process.env.NEMOCLAW_HERMES_SWITCHYARD_INFERENCE_LOCAL_PROTOTYPE === "1";
     const prototypeBuildArgs =
-      process.env.NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE === "1"
-        ? ["--build-arg", "NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE=1"]
+      inferenceLocalPrototype || process.env.NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE === "1"
+        ? [
+            "--build-arg",
+            "NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE=1",
+            ...(inferenceLocalPrototype
+              ? ["--build-arg", "NEMOCLAW_HERMES_SWITCHYARD_INFERENCE_LOCAL_PROTOTYPE=1"]
+              : []),
+          ]
         : [];
     status = await buildImage(
       [

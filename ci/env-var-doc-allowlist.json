@@ -16,6 +16,10 @@
     "reason": "Internal NemoClaw #7937 V2 build sentinel that selects unreleased Hermes, Relay, and Switchyard prototype inputs. It must be removed when the upstream releases establish a supported compatibility contract and must never be user-set in production."
   },
   {
+    "name": "NEMOCLAW_HERMES_SWITCHYARD_INFERENCE_LOCAL_PROTOTYPE",
+    "reason": "Internal NemoClaw #7937 V3 build sentinel that layers an inference.local credential-boundary proof over the frozen V2 native runtime. It is prototype-only and must never be user-set in production."
+  },
+  {
     "name": "NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT",
     "reason": "Internal Vitest-only sentinel that prevents hermetic CLI tests with fake OpenShell binaries from reading the host's real Docker gateway image. Production users should not set it."
   },

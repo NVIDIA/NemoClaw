@@ -52,10 +52,15 @@ function corporateCaBuildArgs(
     : undefined;
 }
 
-function hermesSwitchyardNativePrototypeBuildArgs(
+function hermesSwitchyardPrototypeBuildArgs(
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> | undefined {
-  if (env.NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE !== "1") return undefined;
+  if (
+    env.NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE !== "1" &&
+    env.NEMOCLAW_HERMES_SWITCHYARD_INFERENCE_LOCAL_PROTOTYPE !== "1"
+  ) {
+    return undefined;
+  }
   return {
     HERMES_NPM_INTEGRITY: "unpublished-prototype-only",
     HERMES_NPM_UNPUBLISHED_PROTOTYPE: "1",
@@ -63,6 +68,30 @@ function hermesSwitchyardNativePrototypeBuildArgs(
     HERMES_TARBALL_SHA256: "370542c7219faba6300905c3b419e14e6508a31ac698a1a5174e0386990834be",
     HERMES_VERSION: "v2026.8.3",
   };
+}
+
+function activateHermesSwitchyardPrototypeDockerfile(
+  dockerfile: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const inferenceLocalPrototype = env.NEMOCLAW_HERMES_SWITCHYARD_INFERENCE_LOCAL_PROTOTYPE === "1";
+  const nativePrototype =
+    inferenceLocalPrototype || env.NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE === "1";
+  if (!nativePrototype) return dockerfile;
+
+  const replacements = new Map([
+    ["NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE", "1"],
+    ["NEMOCLAW_HERMES_SWITCHYARD_INFERENCE_LOCAL_PROTOTYPE", inferenceLocalPrototype ? "1" : "0"],
+  ]);
+  let activated = dockerfile;
+  for (const [name, value] of replacements) {
+    const declaration = new RegExp(`^ARG ${name}(?:=.*)?$`, "m");
+    if (!declaration.test(activated)) {
+      throw new Error(`Hermes Switchyard prototype Dockerfile is missing ${name}`);
+    }
+    activated = activated.replace(declaration, `ARG ${name}=${value}`);
+  }
+  return activated;
 }
 
 const HERMES_MCP_RUNTIME_PROBE_OK = "nemoclaw-hermes-mcp-runtime-ok";
@@ -276,7 +305,7 @@ function createAgentBaseImageResolutionOptions(
 ): ResolveBaseImageOptions {
   const imageName = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base`;
   const prototypeBuildArgs =
-    agent.name === "hermes" ? hermesSwitchyardNativePrototypeBuildArgs() : undefined;
+    agent.name === "hermes" ? hermesSwitchyardPrototypeBuildArgs() : undefined;
   const validationOptions =
     agent.name === "hermes"
       ? {
@@ -698,13 +727,14 @@ export function createAgentSandbox(
   });
   const stagedDockerfile = path.join(buildCtx, "Dockerfile");
   fs.copyFileSync(agentDockerfile, stagedDockerfile);
+  let dockerfile = fs.readFileSync(stagedDockerfile, "utf8");
   if (baseImageRef) {
-    const dockerfile = fs.readFileSync(stagedDockerfile, "utf8");
-    fs.writeFileSync(
-      stagedDockerfile,
-      dockerfile.replace(/^ARG BASE_IMAGE(?:=.*)?$/m, `ARG BASE_IMAGE=${baseImageRef}`),
-    );
+    dockerfile = dockerfile.replace(/^ARG BASE_IMAGE(?:=.*)?$/m, `ARG BASE_IMAGE=${baseImageRef}`);
   }
+  if (agent.name === "hermes") {
+    dockerfile = activateHermesSwitchyardPrototypeDockerfile(dockerfile);
+  }
+  fs.writeFileSync(stagedDockerfile, dockerfile);
   console.log(`  Using ${agent.displayName} Dockerfile: ${agentDockerfile}`);
 
   return {
