@@ -186,7 +186,7 @@ import json
 import os
 import sys
 
-guard_path, config_dir, sandbox_gid = sys.argv[1:4]
+guard_path, config_dir, sandbox_gid, plan_json = sys.argv[1:5]
 spec = importlib.util.spec_from_file_location("nemoclaw_state_dir_guard_gid", guard_path)
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
@@ -195,7 +195,8 @@ identity = module.Identity(
     root_uid=os.getuid(), root_gid=os.getgid(),
     sandbox_uid=os.getuid(), sandbox_gid=int(sandbox_gid),
 )
-result = module.run_guard("lock", config_dir, identity)
+plan = module.parse_agent_state_lock_plan(plan_json)
+result = module.run_guard("lock", config_dir, identity, plan)
 
 
 def group_of(path):
@@ -1260,6 +1261,7 @@ describe("state-dir-guard", () => {
           GUARD_PATH,
           configDir,
           String(SUPPLEMENTARY_GID),
+          PLAN_JSON,
         ],
         { encoding: "utf-8", timeout: 15_000 },
       );

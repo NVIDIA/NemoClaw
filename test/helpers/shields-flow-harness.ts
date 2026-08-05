@@ -279,18 +279,18 @@ export function createShieldsFlowHarness(
         : args.includes("lsattr") && options.confirmOpenClawInodeFlags
           ? `${openClawPosture === "locked" ? "----i---------e-----" : "----------------------"} ${String(args.at(-1))}\n`
           : args.includes("stat")
-          ? args.at(-1) === "/sandbox"
-            ? openClawPosture === "locked"
-              ? "1775 root:sandbox\n"
-              : "755 sandbox:sandbox\n"
-            : args.at(-1) === "/sandbox/.openclaw"
+            ? args.at(-1) === "/sandbox"
               ? openClawPosture === "locked"
-                ? "755 root:root\n"
-                : "2770 sandbox:sandbox\n"
-              : openClawPosture === "locked"
-                ? "444 root:root\n"
-                : "660 sandbox:sandbox\n"
-          : "";
+                ? "1775 root:sandbox\n"
+                : "755 sandbox:sandbox\n"
+              : args.at(-1) === "/sandbox/.openclaw"
+                ? openClawPosture === "locked"
+                  ? "755 root:root\n"
+                  : "2770 sandbox:sandbox\n"
+                : openClawPosture === "locked"
+                  ? "444 root:root\n"
+                  : "660 sandbox:sandbox\n"
+            : "";
   });
   const auditSpy = vi.spyOn(audit, "appendAuditEntry").mockImplementation(() => undefined);
   if (options.timerAuthorityRevokedSequence) {

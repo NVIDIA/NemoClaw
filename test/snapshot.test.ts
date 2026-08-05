@@ -15,6 +15,7 @@ import { pathToFileURL } from "node:url";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { managedStartupE2eProfile } from "../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { encodeManagedStartupProfile } from "../src/lib/onboard/managed-startup/profile";
+import { stateDirectoryDiscoverySshSource } from "./helpers/snapshot-state-discovery-fixture";
 
 // Override HOME BEFORE importing sandbox-state — it reads process.env.HOME
 // at module-load time to compute REBUILD_BACKUPS_DIR. Captured original is
@@ -618,50 +619,13 @@ describe("sandbox directory backup semantics", () => {
       const openshell = writeFakeOpenshell(binDir);
       writeExecutable(
         path.join(binDir, "ssh"),
-        `#!/usr/bin/env node
-const { spawnSync } = require("node:child_process");
-const fs = require("node:fs");
-const cmd = process.argv[process.argv.length - 1] || "";
-const existingDirs = ${JSON.stringify(existingDirs)};
-fs.appendFileSync(${JSON.stringify(sshLog)}, JSON.stringify({ cmd }) + "\\n");
-if (cmd.includes("[ -d ")) {
-  if (fs.existsSync(${JSON.stringify(unsafeDiscoveryMarker)})) {
-    process.stdout.write("workspace-research\\nidentity\\n");
-    process.exit(0);
-  }
-  process.stdout.write(existingDirs.join("\\n") + "\\n");
-  process.exit(0);
-}
-if (cmd.includes("openclaw.json") && cmd.includes("cat --")) {
-  process.exit(2);
-}
-if (cmd.includes("find ")) {
-  process.exit(0);
-}
-if (cmd.includes("tar -cf -")) {
-  const stagingDirs = fs.readdirSync(${JSON.stringify(stagingRoot)});
-  const archivePaths = stagingDirs
-    .map((entry) => require("node:path").join(${JSON.stringify(stagingRoot)}, entry, "archive.tar"))
-    .filter((candidate) => fs.existsSync(candidate));
-  const archivePath = archivePaths.length === 1 ? archivePaths[0] : "";
-  if (
-    !fs.fstatSync(1).isFile() ||
-    !archivePath ||
-    !fs.existsSync(archivePath) ||
-    fs.statSync(archivePath).ino !== fs.fstatSync(1).ino
-  ) {
-    process.stderr.write("backup tar stdout must stream to a file\\n");
-    process.exit(64);
-  }
-  const r = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(openclawDir)}, ...existingDirs], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (r.stdout) fs.writeSync(1, r.stdout);
-  if (r.stderr) fs.writeSync(2, r.stderr);
-  process.exit(r.status || 0);
-}
-process.exit(0);
-`,
+        stateDirectoryDiscoverySshSource({
+          existingDirs,
+          openclawDir,
+          sshLog,
+          stagingRoot,
+          unsafeDiscoveryMarker,
+        }),
       );
 
       writeOpenClawRegistry("alpha", {
