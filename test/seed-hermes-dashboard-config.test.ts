@@ -97,9 +97,16 @@ function runSeed(
   envSrcPath?: string,
   envDstPath?: string,
   env: Record<string, string | undefined> = {},
+  mergeLegacy = false,
 ) {
   const envArgs = envSrcPath && envDstPath ? [envSrcPath, envDstPath] : [];
-  const args = [SCRIPT_PATH, srcPath, dstPath, ...envArgs];
+  const args = [
+    SCRIPT_PATH,
+    ...(mergeLegacy ? ["--merge-legacy"] : []),
+    srcPath,
+    dstPath,
+    ...envArgs,
+  ];
   return spawnSync("python3", args, {
     encoding: "utf-8",
     env: { ...process.env, ...env },
@@ -148,6 +155,242 @@ describe.skipIf(!PY_YAML_AVAILABLE)("seed-dashboard-config.py", () => {
     expect(dash.session_reset).toEqual(REVIEWED_POLICY.session_reset);
     expect(dash.display).toEqual(REVIEWED_POLICY.display);
     expect(dash.updates).toEqual(REVIEWED_POLICY.updates);
+  });
+
+  it("moves the legacy dashboard home into the Hermes profiles directory (#7200)", () => {
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const hermesHome = path.join(tmpDir, ".hermes");
+    const legacyHome = path.join(hermesHome, "dashboard-home");
+    const dashboardHome = path.join(hermesHome, "profiles", "dashboard-home");
+    fs.mkdirSync(legacyHome, { recursive: true });
+    fs.chmodSync(legacyHome, 0o770);
+    fs.writeFileSync(path.join(legacyHome, "MEMORY.md"), "keep me\n");
+
+    const res = runSeed(src, path.join(dashboardHome, "config.yaml"));
+
+    expect(res.status).toBe(0);
+    expect(res.stderr).toContain("migrated legacy dashboard profile");
+    expect(fs.existsSync(legacyHome)).toBe(false);
+    expect(fs.statSync(path.dirname(dashboardHome)).isDirectory()).toBe(true);
+    expect(fs.statSync(dashboardHome).mode & 0o777).toBe(0o700);
+    expect(fs.readFileSync(path.join(dashboardHome, "MEMORY.md"), "utf-8")).toBe("keep me\n");
+    expect(readYaml(path.join(dashboardHome, "config.yaml")).model).toEqual(GATEWAY_CONFIG.model);
+  });
+
+  it("keeps seeding anchored when profiles is swapped after migration (#7200)", () => {
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const hermesHome = path.join(tmpDir, ".hermes");
+    const legacyHome = path.join(hermesHome, "dashboard-home");
+    const profilesDir = path.join(hermesHome, "profiles");
+    const heldProfiles = path.join(hermesHome, "profiles-before-swap");
+    const outsideProfiles = path.join(tmpDir, "outside-profiles");
+    const dashboardHome = path.join(profilesDir, "dashboard-home");
+    fs.mkdirSync(legacyHome, { recursive: true });
+    fs.mkdirSync(path.join(outsideProfiles, "dashboard-home"), { recursive: true });
+    fs.writeFileSync(path.join(legacyHome, "MEMORY.md"), "keep me\n");
+
+    const harness = `
+import importlib.util
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("seed_dashboard_config", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+ok, dashboard_fd = module._prepare_dashboard_destination(sys.argv[3])
+if not ok or dashboard_fd is None:
+    raise SystemExit(2)
+try:
+    os.rename(sys.argv[4], sys.argv[5])
+    os.symlink(sys.argv[6], sys.argv[4])
+    raise SystemExit(module._seed_dashboard([sys.argv[1], sys.argv[2], sys.argv[3]], dashboard_fd))
+finally:
+    os.close(dashboard_fd)
+`;
+    const res = spawnSync(
+      "python3",
+      [
+        "-c",
+        harness,
+        SCRIPT_PATH,
+        src,
+        path.join(dashboardHome, "config.yaml"),
+        profilesDir,
+        heldProfiles,
+        outsideProfiles,
+      ],
+      {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 10_000,
+      },
+    );
+
+    expect(res.status).toBe(0);
+    expect(fs.lstatSync(profilesDir).isSymbolicLink()).toBe(true);
+    expect(fs.existsSync(path.join(outsideProfiles, "dashboard-home", "config.yaml"))).toBe(false);
+    expect(readYaml(path.join(heldProfiles, "dashboard-home", "config.yaml")).model).toEqual(
+      GATEWAY_CONFIG.model,
+    );
+    expect(fs.readFileSync(path.join(heldProfiles, "dashboard-home", "MEMORY.md"), "utf-8")).toBe(
+      "keep me\n",
+    );
+  });
+
+  it("refuses to merge two populated dashboard profiles (#7200)", () => {
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const hermesHome = path.join(tmpDir, ".hermes");
+    const legacyHome = path.join(hermesHome, "dashboard-home");
+    const dashboardHome = path.join(hermesHome, "profiles", "dashboard-home");
+    fs.mkdirSync(legacyHome, { recursive: true });
+    fs.mkdirSync(dashboardHome, { recursive: true });
+    fs.writeFileSync(path.join(legacyHome, "MEMORY.md"), "legacy\n");
+    fs.writeFileSync(path.join(dashboardHome, "MEMORY.md"), "current\n");
+
+    const res = runSeed(src, path.join(dashboardHome, "config.yaml"));
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("Refusing to merge legacy and current dashboard profiles");
+    expect(fs.readFileSync(path.join(legacyHome, "MEMORY.md"), "utf-8")).toBe("legacy\n");
+    expect(fs.readFileSync(path.join(dashboardHome, "MEMORY.md"), "utf-8")).toBe("current\n");
+  });
+
+  it("merges disjoint restored dashboard profile entries without clobbering (#7200)", () => {
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const hermesHome = path.join(tmpDir, ".hermes");
+    const legacyHome = path.join(hermesHome, "dashboard-home");
+    const dashboardHome = path.join(hermesHome, "profiles", "dashboard-home");
+    fs.mkdirSync(legacyHome, { recursive: true });
+    fs.mkdirSync(dashboardHome, { recursive: true });
+    fs.writeFileSync(path.join(legacyHome, "MEMORY.md"), "legacy memory\n");
+    fs.writeFileSync(path.join(dashboardHome, "CURRENT.md"), "current memory\n");
+
+    const res = runSeed(
+      src,
+      path.join(dashboardHome, "config.yaml"),
+      undefined,
+      undefined,
+      {},
+      true,
+    );
+
+    expect(res.status).toBe(0);
+    expect(res.stderr).toContain("merged restored legacy dashboard profile");
+    expect(fs.existsSync(legacyHome)).toBe(false);
+    expect(fs.readFileSync(path.join(dashboardHome, "MEMORY.md"), "utf-8")).toBe("legacy memory\n");
+    expect(fs.readFileSync(path.join(dashboardHome, "CURRENT.md"), "utf-8")).toBe(
+      "current memory\n",
+    );
+  });
+
+  it("refuses a colliding restored dashboard profile merge without clobbering (#7200)", () => {
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const hermesHome = path.join(tmpDir, ".hermes");
+    const legacyHome = path.join(hermesHome, "dashboard-home");
+    const dashboardHome = path.join(hermesHome, "profiles", "dashboard-home");
+    fs.mkdirSync(legacyHome, { recursive: true });
+    fs.mkdirSync(dashboardHome, { recursive: true });
+    fs.writeFileSync(path.join(legacyHome, "MEMORY.md"), "legacy\n");
+    fs.writeFileSync(path.join(dashboardHome, "MEMORY.md"), "current\n");
+
+    const res = runSeed(
+      src,
+      path.join(dashboardHome, "config.yaml"),
+      undefined,
+      undefined,
+      {},
+      true,
+    );
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("because an entry collides");
+    expect(fs.readFileSync(path.join(legacyHome, "MEMORY.md"), "utf-8")).toBe("legacy\n");
+    expect(fs.readFileSync(path.join(dashboardHome, "MEMORY.md"), "utf-8")).toBe("current\n");
+  });
+
+  it("fails closed if the empty destination changes before removal (#7200)", () => {
+    const hermesHome = path.join(tmpDir, ".hermes");
+    const legacyHome = path.join(hermesHome, "dashboard-home");
+    const dashboardHome = path.join(hermesHome, "profiles", "dashboard-home");
+    fs.mkdirSync(legacyHome, { recursive: true });
+    fs.mkdirSync(dashboardHome, { recursive: true });
+    fs.writeFileSync(path.join(legacyHome, "MEMORY.md"), "legacy\n");
+
+    const harness = `
+import errno
+import importlib.util
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("seed_dashboard_config", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+original_rmdir = module.os.rmdir
+def fail_dashboard_removal(name, *args, **kwargs):
+    if name == "dashboard-home":
+        raise OSError(errno.ENOTEMPTY, "directory changed")
+    return original_rmdir(name, *args, **kwargs)
+
+module.os.rmdir = fail_dashboard_removal
+ok, dashboard_fd = module._prepare_dashboard_destination(sys.argv[2])
+if dashboard_fd is not None:
+    os.close(dashboard_fd)
+raise SystemExit(0 if not ok and dashboard_fd is None else 2)
+`;
+    const res = spawnSync(
+      "python3",
+      ["-c", harness, SCRIPT_PATH, path.join(dashboardHome, "config.yaml")],
+      {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 10_000,
+      },
+    );
+
+    expect(res.status).toBe(0);
+    expect(res.stderr).toContain("changed unexpectedly");
+    expect(res.stderr).not.toContain("Traceback");
+    expect(fs.readFileSync(path.join(legacyHome, "MEMORY.md"), "utf-8")).toBe("legacy\n");
+  });
+
+  it("refuses to migrate a symlinked legacy dashboard profile (#7200)", () => {
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const hermesHome = path.join(tmpDir, ".hermes");
+    const legacyHome = path.join(hermesHome, "dashboard-home");
+    const dashboardHome = path.join(hermesHome, "profiles", "dashboard-home");
+    const outsideHome = path.join(tmpDir, "outside-dashboard-home");
+    fs.mkdirSync(dashboardHome, { recursive: true });
+    fs.mkdirSync(outsideHome);
+    fs.writeFileSync(path.join(outsideHome, "MEMORY.md"), "outside\n");
+    fs.symlinkSync(outsideHome, legacyHome);
+
+    const res = runSeed(src, path.join(dashboardHome, "config.yaml"));
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("is not a safe directory");
+    expect(fs.lstatSync(legacyHome).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(path.join(outsideHome, "MEMORY.md"), "utf-8")).toBe("outside\n");
+  });
+
+  it("refuses to migrate through a symlinked profiles directory (#7200)", () => {
+    const src = writeYaml("gw.yaml", GATEWAY_CONFIG);
+    const hermesHome = path.join(tmpDir, ".hermes");
+    const legacyHome = path.join(hermesHome, "dashboard-home");
+    const profilesDir = path.join(hermesHome, "profiles");
+    const outsideProfiles = path.join(tmpDir, "outside-profiles");
+    fs.mkdirSync(legacyHome, { recursive: true });
+    fs.mkdirSync(outsideProfiles);
+    fs.writeFileSync(path.join(legacyHome, "MEMORY.md"), "legacy\n");
+    fs.symlinkSync(outsideProfiles, profilesDir);
+
+    const res = runSeed(src, path.join(profilesDir, "dashboard-home", "config.yaml"));
+
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain("is not a safe directory");
+    expect(fs.existsSync(legacyHome)).toBe(true);
+    expect(fs.readdirSync(outsideProfiles)).toEqual([]);
   });
 
   it("mirrors only the exact native Tavily backend into dashboard config", () => {

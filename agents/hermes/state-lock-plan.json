@@ -17,5 +17,7 @@
   ],
   "readOnlyPrefixes": [],
   "confidentialPrefixes": [],
-  "writableSubpaths": []
+  "writableSubpaths": [
+    "profiles/dashboard-home"
+  ]
 }

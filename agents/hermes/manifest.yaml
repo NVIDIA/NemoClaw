@@ -92,9 +92,15 @@ state_dirs:
     shields: read-only
   - path: profiles
     shields: read-only
+    # The dashboard profile contains live gateway runtime state, so it remains
+    # writable while the rest of the profile hierarchy is sealed.
+    writable_subpaths:
+      - dashboard-home
   - cache
   - path: pairing
     shields: confidential
+  # Legacy pre-#7200 dashboard profile location. Keep it in snapshots while
+  # startup migrates existing state into profiles/dashboard-home.
   # Hermes' Web dashboard uses a separate profile home for its config,
   # memories, and user identity. Preserve it so rebuilds do not reset the
   # dashboard profile independently of the main Hermes runtime.
