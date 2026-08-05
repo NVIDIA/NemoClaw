@@ -216,6 +216,28 @@ function executeLocalDockerSandboxCommand(
   }
 }
 
+/** Run one root controller argv against the registry-pinned direct container. */
+export function executePrivilegedSandboxCommand(
+  sandboxName: string,
+  command: readonly string[],
+  timeout: number,
+): SandboxCommandResult | null {
+  const argv = privilegedSandboxExecArgv(sandboxName, [...command], false, true);
+  const result = dockerSpawnSync(argv, {
+    cwd: ROOT,
+    encoding: "utf-8",
+    env: buildSubprocessEnv(),
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout,
+  });
+  if (result.error) return null;
+  return {
+    status: result.status ?? 1,
+    stdout: String(result.stdout || ""),
+    stderr: String(result.stderr || ""),
+  };
+}
+
 export function executeSandboxExecCommand(
   sandboxName: string,
   command: string,

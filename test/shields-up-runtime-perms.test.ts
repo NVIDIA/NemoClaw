@@ -204,7 +204,7 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
       expect.arrayContaining(["skills", "agent", "hooks", "agents", "extensions", "workspace"]),
     );
     expect(CONFIDENTIALITY_STATE_DIRS).toEqual(["credentials", "identity", "pairing"]);
-    expect(WRITABLE_RUNTIME_SUBPATHS).toEqual(["agents/*/sessions"]);
+    expect(WRITABLE_RUNTIME_SUBPATHS).toEqual(["agents/*/sessions", "profiles/dashboard-home"]);
   });
 
   it.each([
