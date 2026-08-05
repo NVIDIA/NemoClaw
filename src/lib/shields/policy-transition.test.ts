@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import YAML from "yaml";
 
 const requireSource = createRequire(import.meta.url);
 const SHIELDS_MODULE = "./index.js";
@@ -606,5 +607,211 @@ describe("shields config lock without a shipped config hash", () => {
 
     expect(entries.get("/sandbox")).toEqual({ mode: "755", owner: "sandbox:sandbox" });
     expect(entries.get(CONFIG_DIR)).toEqual({ mode: "2770", owner: "sandbox:sandbox" });
+  });
+});
+
+describe("managed MCP policy deadline restoration (#7952)", () => {
+  let homeDir: string;
+
+  function createRestoreHarness() {
+    delete require.cache[requireSource.resolve(SHIELDS_MODULE)];
+    delete require.cache[requireSource.resolve("./permissive-runtime.js")];
+    delete require.cache[requireSource.resolve("../actions/sandbox/mcp-bridge-policy.js")];
+
+    const runner = requireSource("../runner.js") as typeof import("../runner.js");
+    const policy = requireSource("../policy/index.js") as typeof import("../policy/index.js");
+    const registry = requireSource("../state/registry.js") as typeof import("../state/registry.js");
+    const policySetBodies: string[] = [];
+
+    vi.spyOn(runner, "runCapture").mockReturnValue(
+      "version: 1\nnetwork_policies:\n  live_baseline: {}\n",
+    );
+    vi.spyOn(runner, "run").mockReturnValue({ status: 0 } as never);
+    vi.spyOn(policy, "buildPolicyGetCommand").mockReturnValue(["openshell", "policy", "get"]);
+    vi.spyOn(policy, "buildPolicySetCommand").mockImplementation((file: unknown) => {
+      policySetBodies.push(fs.readFileSync(String(file), "utf-8"));
+      return ["openshell", "policy", "set"];
+    });
+    vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw));
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "openclaw",
+      openshellDriver: "docker",
+    });
+
+    const shields = requireSource(SHIELDS_MODULE) as typeof import("./index.js");
+    return { applyShieldsPolicySnapshot: shields.applyShieldsPolicySnapshot, policySetBodies };
+  }
+
+  function writeCurrentProcessTimerMarker(snapshotPath: string, processToken: string): void {
+    fs.writeFileSync(
+      path.join(homeDir, ".nemoclaw", "state", "shields-timer-openclaw.json"),
+      JSON.stringify({
+        pid: process.pid,
+        sandboxName: "openclaw",
+        snapshotPath,
+        restoreAt: new Date(Date.now() + 60_000).toISOString(),
+        processToken,
+      }),
+      { mode: 0o600 },
+    );
+  }
+
+  beforeEach(() => {
+    homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-mcp-deadline-flow-"));
+    vi.stubEnv("HOME", homeDir);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    fs.rmSync(homeDir, { recursive: true, force: true });
+    delete require.cache[requireSource.resolve(SHIELDS_MODULE)];
+    delete require.cache[requireSource.resolve("./permissive-runtime.js")];
+    delete require.cache[requireSource.resolve("../actions/sandbox/mcp-bridge-policy.js")];
+  });
+
+  it("restores lockdown with malformed and duplicate ownership", () => {
+    const stateDir = path.join(homeDir, ".nemoclaw", "state");
+    const processToken = "a".repeat(32);
+    const snapshotPath = path.join(stateDir, "policy-snapshot-malformed-deadline.yaml");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      snapshotPath,
+      YAML.stringify({
+        version: 1,
+        network_policies: {
+          restrictive_baseline: {},
+          mcp_bridge_: {},
+          mcp_bridge_alpha: {},
+        },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(stateDir, "shields-openclaw.json"),
+      JSON.stringify({
+        shieldsDown: true,
+        shieldsPolicySnapshotPath: snapshotPath,
+        shieldsManagedMcpPolicyKeys: ["mcp_bridge_", "mcp_bridge_alpha", "mcp_bridge_alpha"],
+      }),
+    );
+    writeCurrentProcessTimerMarker(snapshotPath, processToken);
+    const harness = createRestoreHarness();
+
+    const result = harness.applyShieldsPolicySnapshot("openclaw", snapshotPath, {
+      transitionProcessToken: processToken,
+      deadlineAuthoritative: true,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.managedMcpOmissions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "mcp_bridge_",
+          reason: expect.stringMatching(/ownership key.*invalid/),
+        }),
+        expect.objectContaining({
+          key: "mcp_bridge_alpha",
+          reason: expect.stringMatching(/more than once/),
+        }),
+      ]),
+    );
+    expect(YAML.parse(harness.policySetBodies.at(-1)!).network_policies).toEqual({
+      restrictive_baseline: {},
+    });
+  });
+
+  it("restores lockdown when transition and persisted ownership differ", () => {
+    const stateDir = path.join(homeDir, ".nemoclaw", "state");
+    const processToken = "b".repeat(32);
+    const snapshotPath = path.join(stateDir, "policy-snapshot-mismatched-deadline.yaml");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      snapshotPath,
+      YAML.stringify({
+        version: 1,
+        network_policies: {
+          restrictive_baseline: {},
+          mcp_bridge_alpha: {},
+          mcp_bridge_beta: {},
+        },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(stateDir, "shields-openclaw.json"),
+      JSON.stringify({
+        shieldsDown: true,
+        shieldsPolicySnapshotPath: snapshotPath,
+        shieldsManagedMcpPolicyKeys: ["mcp_bridge_alpha"],
+      }),
+    );
+    fs.writeFileSync(
+      path.join(stateDir, `shields-transition-openclaw-${processToken}.json`),
+      JSON.stringify({
+        version: 1,
+        phase: "active",
+        ownerPid: process.pid,
+        ownerStartIdentity: "test-owner",
+        processToken,
+        sandboxName: "openclaw",
+        snapshotPath,
+        managedMcpPolicyKeys: ["mcp_bridge_beta"],
+      }),
+      { mode: 0o600 },
+    );
+    writeCurrentProcessTimerMarker(snapshotPath, processToken);
+    const harness = createRestoreHarness();
+
+    const result = harness.applyShieldsPolicySnapshot("openclaw", snapshotPath, {
+      transitionProcessToken: processToken,
+      deadlineAuthoritative: true,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.managedMcpOmissions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          reason: expect.stringMatching(/did not match persisted policy ownership/),
+        }),
+      ]),
+    );
+    expect(YAML.parse(harness.policySetBodies.at(-1)!).network_policies).toEqual({
+      restrictive_baseline: {},
+    });
+  });
+
+  it("restores lockdown from a legacy snapshot without ownership metadata", () => {
+    const stateDir = path.join(homeDir, ".nemoclaw", "state");
+    const processToken = "c".repeat(32);
+    const snapshotPath = path.join(stateDir, "policy-snapshot-legacy-deadline.yaml");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      snapshotPath,
+      YAML.stringify({
+        version: 1,
+        network_policies: { restrictive_baseline: {}, mcp_bridge_alpha: {} },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(stateDir, "shields-openclaw.json"),
+      JSON.stringify({ shieldsDown: true, shieldsPolicySnapshotPath: snapshotPath }),
+    );
+    writeCurrentProcessTimerMarker(snapshotPath, processToken);
+    const harness = createRestoreHarness();
+
+    const result = harness.applyShieldsPolicySnapshot("openclaw", snapshotPath, {
+      transitionProcessToken: processToken,
+      deadlineAuthoritative: true,
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.managedMcpOmissions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ reason: expect.stringMatching(/no managed MCP ownership/) }),
+        expect.objectContaining({ key: "mcp_bridge_alpha" }),
+      ]),
+    );
+    expect(YAML.parse(harness.policySetBodies.at(-1)!).network_policies).toEqual({
+      restrictive_baseline: {},
+    });
   });
 });
