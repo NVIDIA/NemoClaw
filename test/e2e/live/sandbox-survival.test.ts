@@ -420,8 +420,8 @@ test(
     });
 
     progress.phase("recheck state and inference after restart");
-    await sandbox.expectListed(SANDBOX_NAME, {
-      artifactName: "post-restart-openshell-sandbox-list",
+    await lifecycle.assertSandboxReadyAfterGatewayRestart(instance, {
+      artifactNamePrefix: "post-restart-openshell-sandbox-ready",
     });
     stateValidation.expectLocalRegistryContains(SANDBOX_NAME);
     await host.expectListed(SANDBOX_NAME, {
