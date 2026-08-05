@@ -298,7 +298,7 @@ After the top-level config binding is frozen, lockdown makes containment monoton
 It removes unsafe symlinks, special entries, and protected-root names that are not directories through descriptor-relative operations without following their targets.
 For protected regular files, lockdown publishes a fresh inode, severing hardlinks while preserving file content, read/execute mode, timestamps, and supported extended attributes; this also revokes write authority held through a descriptor opened before `shields up`.
 The OpenClaw gateway (a member of the `sandbox` group) keeps read access to plugin and agent code; the sandbox user can no longer write them.
-The same workflow locks `identity`, `pairing`, and a non-empty `credentials` directory to `root:root 0700`.
+The same workflow locks `identity` and a non-empty `credentials` directory to `root:root 0700`.
 An empty `credentials` directory uses `root:sandbox 0710` so OpenClaw can confirm that optional credential files are absent during startup.
 The sandbox group cannot list, create, or remove entries, and it cannot read credential files.
 Neither the sandbox user nor the gateway can read stored secrets while the lock is active.
