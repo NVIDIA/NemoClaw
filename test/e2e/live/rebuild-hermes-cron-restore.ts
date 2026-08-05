@@ -9,6 +9,10 @@ import { resolveDirectSandboxContainer } from "../../../src/lib/sandbox/privileg
 import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
 import { type HostCliClient, resultText } from "../fixtures/clients/index.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import {
+  type HermesCronBeginIdentity,
+  hermesCronBeginIdentity,
+} from "./rebuild-hermes-cron-receipt.ts";
 import { hermesCronRuntimeFields } from "./rebuild-hermes-cron-state.ts";
 import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
 
@@ -53,18 +57,6 @@ interface GatewayEvidence {
   pid: number;
   running_pid: number;
   start_time: number;
-}
-
-interface CronControlReceipt {
-  action: "begin";
-  active_agents: number;
-  disposition: string;
-  drain_acquired: boolean;
-  drain_token: string;
-  operator_drain_active: boolean;
-  pid: number;
-  start_time: number;
-  version: number;
 }
 
 function fail(message: string): never {
@@ -387,7 +379,7 @@ export function createRebuildHermesCronRestoreFixture({
     fail(`Hermes gateway did not reach ${state}: ${lastEvidence}`);
   }
 
-  function parseBeginReceipt(text: string): CronControlReceipt {
+  function parseBeginReceipt(text: string): HermesCronBeginIdentity {
     const lines = text.split(/\r?\n/u).filter((line) => line.startsWith(RECEIPT_PREFIX));
     if (lines.length !== 1) fail(`Hermes cron begin returned ${lines.length} receipts`);
     const payload = parseJsonObject(lines[0].slice(RECEIPT_PREFIX.length), "cron begin receipt");
@@ -399,15 +391,7 @@ export function createRebuildHermesCronRestoreFixture({
       operator_drain_active: false,
       version: 1,
     });
-    if (
-      !Number.isSafeInteger(payload.pid) ||
-      !Number.isSafeInteger(payload.start_time) ||
-      typeof payload.drain_token !== "string" ||
-      payload.drain_token.length !== 32
-    ) {
-      fail("Hermes cron begin receipt identity is invalid");
-    }
-    return payload as unknown as CronControlReceipt;
+    return hermesCronBeginIdentity(payload);
   }
 
   async function exerciseStateRootSubstitutionAttack(
