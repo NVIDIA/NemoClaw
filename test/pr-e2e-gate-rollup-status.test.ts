@@ -80,6 +80,7 @@ function controllerRoutes(statusResponse: (request: RecordedGitHubRequest) => Re
 describe("PR E2E gate rollup status", () => {
   it("publishes a pending PR rollup status for a fork gate", async () => {
     vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("GITHUB_WORKFLOW", "E2E / PR Gate Controller");
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const requests: RecordedGitHubRequest[] = [];
@@ -104,6 +105,7 @@ describe("PR E2E gate rollup status", () => {
 
   it("keeps the authoritative gate usable when rollup publication fails", async () => {
     vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("GITHUB_WORKFLOW", "E2E / PR Gate Controller");
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);

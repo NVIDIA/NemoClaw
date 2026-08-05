@@ -1142,6 +1142,10 @@ function rollupStatusDescription(title: string): string {
     .slice(0, 140);
 }
 
+function rollupStatusPublishingEnabled(): boolean {
+  return process.env.GITHUB_ACTIONS === "true" && process.env.GITHUB_WORKFLOW === WORKFLOW_NAME;
+}
+
 async function publishPrGateRollupStatus(options: {
   repository: string;
   token: string;
@@ -1150,7 +1154,7 @@ async function publishPrGateRollupStatus(options: {
   state: RollupStatusState;
   title: string;
 }): Promise<void> {
-  if (process.env.GITHUB_ACTIONS !== "true") return;
+  if (!rollupStatusPublishingEnabled()) return;
 
   const description = rollupStatusDescription(options.title);
   const targetUrl = `https://github.com/${options.repository}/runs/${options.checkRunId}`;
@@ -1392,7 +1396,7 @@ async function completeCheck(
       state: rollupStatusState(validated),
       title: verdict.title,
     });
-  } else if (process.env.GITHUB_ACTIONS === "true") {
+  } else if (rollupStatusPublishingEnabled()) {
     console.warn(`Could not publish ${ROLLUP_STATUS_CONTEXT}: check response omitted the head SHA`);
   }
 }

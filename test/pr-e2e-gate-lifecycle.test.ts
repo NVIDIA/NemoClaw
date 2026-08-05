@@ -1375,6 +1375,7 @@ describe("PR E2E controller lifecycle", () => {
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
     vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("GITHUB_WORKFLOW", "E2E / PR Gate Controller");
     const requests: RecordedGitHubRequest[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
