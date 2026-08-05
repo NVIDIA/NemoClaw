@@ -151,7 +151,12 @@ def _resolve_trusted_python3() -> str | None:
 
 
 def _load_dashboard_api_server_key() -> bool:
-    """Load the dashboard bearer token into process env without a config mirror."""
+    """Load a managed dashboard token when startup supplies its source path.
+
+    Direct, unmanaged ``hermes dashboard`` invocations preserve the upstream optional API
+    authentication behavior. Managed startup always supplies the gateway dotenv path
+    and fails closed when its generated token is absent or invalid.
+    """
     source_path = os.environ.pop(_DASHBOARD_API_SERVER_ENV_PATH, "")
     if not source_path:
         return True

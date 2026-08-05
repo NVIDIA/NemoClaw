@@ -12,6 +12,7 @@ from pathlib import Path
 
 MANAGED_POLICY_PATH = Path("/usr/local/share/nemoclaw/hermes-managed-policy.json")
 MANAGED_POLICY_SCHEMA_VERSION = 1
+HERMES_PROXY_REWRITE_SENTINEL = "sk-OPENSHELL-PROXY-REWRITE"
 
 
 class ManagedPolicyError(Exception):
@@ -88,6 +89,10 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
         "managed policy managed_paths",
     )
     config = document["config"]
+    if policy_value(config, "model.api_key") != HERMES_PROXY_REWRITE_SENTINEL:
+        raise ManagedPolicyError(
+            "managed policy model.api_key must use the Hermes proxy rewrite sentinel"
+        )
     for managed_path in managed_paths:
         policy_value(config, managed_path)
     for key in dashboard["routing_keys"]:

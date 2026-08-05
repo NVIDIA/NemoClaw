@@ -78,6 +78,14 @@ describe.skipIf(!PYTHON_AVAILABLE)("Hermes dashboard credential launch", () => {
     expect(result.stderr).not.toContain(GENERATED_KEY);
   });
 
+  it("preserves upstream optional authentication for a direct unmanaged dashboard launch", () => {
+    const { result, capturePath, markerPath } = runDashboard("");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(fs.existsSync(markerPath)).toBe(true);
+    expect(fs.readFileSync(capturePath, "utf8")).toBe("");
+  });
+
   it.each([
     ["weak", "API_SERVER_KEY=weak\n"],
     ["duplicate", `API_SERVER_KEY=${GENERATED_KEY}\nAPI_SERVER_KEY=${"b".repeat(64)}\n`],

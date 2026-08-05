@@ -114,6 +114,18 @@ describe("Hermes managed policy", () => {
     expect(result.stderr).toContain("has no migration to 1");
   });
 
+  it("rejects a raw model credential without echoing it (#8008)", () => {
+    const rawCredential = "sk-raw-policy-credential";
+    const policy = structuredClone(buildHermesManagedPolicy(SETTINGS, {}));
+    policy.config.model.api_key = rawCredential;
+
+    const result = loadWithPython(policy);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("must use the Hermes proxy rewrite sentinel");
+    expect(result.stderr).not.toContain(rawCredential);
+  });
+
   it("loads the shared reader under the image's isolated Python mode (#8008)", () => {
     const patcher = spawnSync("python3", ["-I", PROFILE_PATCHER_PATH, "--help"], {
       encoding: "utf8",
