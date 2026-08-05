@@ -164,8 +164,9 @@ that enforces the control.
 ### Expected evidence
 
 - Positive evidence exercises authorized behavior at the narrowest boundary that includes the enforcing component.
-- Negative evidence exercises representative attacks and forbidden actions against the real control; use runtime or E2E
-  evidence when process, sandbox, container, filesystem, workflow, or network enforcement is the behavior under test.
+- Negative evidence exercises representative attacks and forbidden actions against the component that enforces the
+  control. Use runtime or E2E evidence when process, sandbox, container, filesystem, workflow, or network enforcement
+  is the behavior under test.
 
 ## Category 9: System Security
 
