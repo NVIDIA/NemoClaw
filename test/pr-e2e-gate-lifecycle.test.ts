@@ -146,10 +146,6 @@ function prGateMutationResponse(request: RecordedGitHubRequest, id = 17): Respon
   );
 }
 
-function commitStatusMutationResponse(request: RecordedGitHubRequest): Response {
-  return githubResponse(request.body);
-}
-
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -328,6 +324,8 @@ describe("PR E2E controller lifecycle", () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("GITHUB_WORKFLOW", "E2E / PR Gate Controller");
     const requests: RecordedGitHubRequest[] = [];
     const prior = exactPrGateCheck({
       id: 16,
@@ -359,6 +357,10 @@ describe("PR E2E controller lifecycle", () => {
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
             (request) => prGateMutationResponse(request),
           ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith(`/statuses/${HEAD_SHA}`) && method === "POST",
+            (request) => githubResponse(request.body),
+          ),
         ],
         requests,
       ),
@@ -386,6 +388,15 @@ describe("PR E2E controller lifecycle", () => {
             "[attempt 1](https://github.com/NVIDIA/NemoClaw/actions/runs/22) → [attempt 2](https://github.com/NVIDIA/NemoClaw/actions/runs/23)",
           ),
         },
+      });
+      const rollupStatus = requests.find((request) =>
+        request.url.endsWith(`/statuses/${HEAD_SHA}`),
+      );
+      expect(rollupStatus?.body).toEqual({
+        state: "success",
+        context: "E2E / PR Gate / Rollup",
+        description: "All selected E2E checks passed",
+        target_url: "https://github.com/NVIDIA/NemoClaw/runs/17",
       });
     } finally {
       fs.rmSync(workDir, { recursive: true, force: true });
@@ -1394,7 +1405,7 @@ describe("PR E2E controller lifecycle", () => {
           ),
           githubFetchRoute(
             ({ url, method }) => url.endsWith(`/statuses/${HEAD_SHA}`) && method === "POST",
-            commitStatusMutationResponse,
+            (request) => githubResponse(request.body),
           ),
         ],
         requests,

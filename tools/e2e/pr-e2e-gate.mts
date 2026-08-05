@@ -66,8 +66,9 @@ const E2E_WORKFLOW = "e2e.yaml";
 const E2E_WORKFLOW_PATH = `.github/workflows/${E2E_WORKFLOW}`;
 const PR_GATE_WORKFLOW = "pr-e2e-gate.yaml";
 const CHECK_NAME = "E2E / PR Gate";
-// Fork-head check runs do not reliably influence GitHub's visible PR rollup.
-// Keep the required check authoritative and mirror its state under a distinct status context.
+// GitHub does not reliably associate base-repository check runs for fork commits with the PR
+// rollup. Keep the required check authoritative and mirror its state under a distinct status
+// context. Remove the mirror and statuses permission when GitHub includes those checks directly.
 const ROLLUP_STATUS_CONTEXT = "E2E / PR Gate / Rollup";
 const WORKFLOW_NAME = "E2E / PR Gate Controller";
 const RESERVED_CHECK_TITLE = "Waiting for PR CI";
