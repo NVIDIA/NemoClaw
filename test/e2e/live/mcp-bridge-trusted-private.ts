@@ -192,14 +192,16 @@ export async function assertTrustedPrivateMcpRebindingDenied(
     },
   );
   expectExitZero(driftStatus, `${options.artifactPrefix} reports trusted-private pin drift`);
-  expect(JSON.parse(driftStatus.stdout)).toMatchObject({
+  const driftInspection = JSON.parse(driftStatus.stdout);
+  expect(driftInspection).toMatchObject({
     trustedPrivateTarget: {
       host: REBIND_HOSTNAME,
       recordedPins: [trustedPrivateAddress],
-      currentPins: [REBIND_PUBLIC_IP],
       state: "drift",
+      detail: expect.stringContaining("did not resolve to supported routed private addresses"),
     },
   });
+  expect(driftInspection.trustedPrivateTarget.currentPins).toBeUndefined();
   const denial = await sandbox.execShell(
     options.sandboxName,
     trustedSandboxShellScript(
