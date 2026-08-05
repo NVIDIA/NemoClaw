@@ -616,13 +616,15 @@ describe("shields — unit logic", () => {
       const sandboxName = "openclaw";
       const processToken = "d".repeat(32);
       const snapshotPath = path.join(stateDir(), "policy-snapshot-no-managed-mcp.yaml");
+      const openshellPath = path.join(tmpDir, "openshell");
       const openshellArgvPath = path.join(tmpDir, "openshell-argv.txt");
       fs.writeFileSync(
-        path.join(tmpDir, "openshell"),
+        openshellPath,
         '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$OPENSHELL_TEST_ARGV_PATH"\n',
         { mode: 0o700 },
       );
       vi.stubEnv("PATH", `${tmpDir}${path.delimiter}${process.env.PATH ?? ""}`);
+      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", openshellPath);
       vi.stubEnv("OPENSHELL_TEST_ARGV_PATH", openshellArgvPath);
       fs.mkdirSync(stateDir(), { recursive: true });
       fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  restrictive_baseline: {}\n");
