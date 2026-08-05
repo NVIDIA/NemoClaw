@@ -56,9 +56,6 @@ export interface LlamaCppHostLocalLaunchContract {
       readonly value: "f16" | "q8_0" | "q4_0";
     };
     readonly limits: {
-      readonly maxCompletionTokens: number;
-      readonly maxPromptTokens: number;
-      readonly maxRequestBodyBytes: number;
       readonly requestTimeoutSeconds: number;
     };
     readonly microBatchSize: number;
@@ -148,9 +145,6 @@ function validateContract(contract: LlamaCppHostLocalLaunchContract): void {
   positiveInteger(contract.serve.contextSize, "llama.cpp context size");
   positiveInteger(contract.serve.batchSize, "llama.cpp batch size");
   positiveInteger(contract.serve.microBatchSize, "llama.cpp micro-batch size");
-  positiveInteger(contract.serve.limits.maxCompletionTokens, "llama.cpp completion limit");
-  positiveInteger(contract.serve.limits.maxPromptTokens, "llama.cpp prompt limit");
-  positiveInteger(contract.serve.limits.maxRequestBodyBytes, "llama.cpp request-body limit");
   positiveInteger(contract.serve.limits.requestTimeoutSeconds, "llama.cpp request timeout", 86_400);
   if (contract.serve.microBatchSize > contract.serve.batchSize) {
     throw new Error("llama.cpp micro-batch size exceeds the batch size");

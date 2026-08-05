@@ -43,9 +43,6 @@ function contract(): LlamaCppHostLocalLaunchContract {
       idleSleepSeconds: -1,
       kvCache: { key: "f16", value: "f16" },
       limits: {
-        maxCompletionTokens: 8_192,
-        maxPromptTokens: 253_952,
-        maxRequestBodyBytes: 16_777_216,
         requestTimeoutSeconds: 900,
       },
       microBatchSize: 512,
