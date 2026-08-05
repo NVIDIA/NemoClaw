@@ -419,11 +419,29 @@ function validatePrGateDispatch(errors: string[], workflow: OperationsWorkflow):
         step.name === "Check out trusted E2E workflow" &&
         step.if === PUBLICATION_REQUIRED_CONDITION &&
         step.with?.ref === "${{ github.sha }}";
+      const trustedManagedImageRuntimeCheckout =
+        jobName === "managed-image-protected-runtime" &&
+        step.name === "Checkout trusted protected runtime qualification" &&
+        step.with?.repository === "${{ github.repository }}" &&
+        step.with?.ref === "${{ inputs.workflow_sha }}";
+      const trustedLlamaCppPlanCheckout =
+        jobName === "llama-cpp-dgx-spark-plan" &&
+        step.name === "Checkout trusted llama.cpp plan compiler" &&
+        step.with?.repository === "${{ github.repository }}" &&
+        step.with?.ref === "${{ inputs.workflow_sha }}";
+      const trustedLlamaCppQualificationCheckout =
+        jobName === "llama-cpp-dgx-spark-qualification" &&
+        step.name === "Checkout trusted llama.cpp qualification" &&
+        step.with?.repository === "${{ github.repository }}" &&
+        step.with?.ref === "${{ inputs.workflow_sha }}";
       const trustedCheckout =
         trustedHermesFixtureCheckout ||
         trustedReportHelperCheckout ||
         trustedLaunchableLaneCheckout ||
-        trustedPublicationCheckout;
+        trustedPublicationCheckout ||
+        trustedManagedImageRuntimeCheckout ||
+        trustedLlamaCppPlanCheckout ||
+        trustedLlamaCppQualificationCheckout;
       if (
         step.uses?.startsWith("actions/checkout@") &&
         step.with?.ref !== "${{ inputs.checkout_sha || github.sha }}" &&
