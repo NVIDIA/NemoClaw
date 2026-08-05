@@ -39,6 +39,7 @@ import {
   extractOpenClawAgentPayloadText,
 } from "./agent-turn-latency-helpers.ts";
 import { runLaunchAgentTurn } from "./launch-agent-turn.ts";
+import { bindApprovedPrBaseForBaseImageComparison } from "./pr-base-comparison.ts";
 
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
 const SETUP_MODE = process.env.NEMOCLAW_E2E_SETUP_MODE ?? "source-install";
@@ -422,6 +423,9 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
     timeoutMs: 120_000,
   });
   await cleanup(host, sandbox);
+  if (MEASURE_COLD_ONBOARD) {
+    await bindApprovedPrBaseForBaseImageComparison(host);
+  }
 
   const coldOnboard = createColdOnboardCapture();
   coldOnboard &&
