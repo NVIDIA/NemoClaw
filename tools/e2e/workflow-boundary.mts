@@ -371,17 +371,13 @@ export function validateDockerHubCleanupAction(
     createHash("sha256").update(actionSource).digest("hex") !==
     DOCKER_HUB_CLEANUP_PROVENANCE.actionSha256
   ) {
-    errors.push(
-      "docker-auth-cleanup action content must match the action reviewed at its immutable commit pin",
-    );
+    errors.push("docker-auth-cleanup action content must match the pinned commit");
   }
   if (
     createHash("sha256").update(scriptSource).digest("hex") !==
     DOCKER_HUB_CLEANUP_PROVENANCE.scriptSha256
   ) {
-    errors.push(
-      "docker-auth-cleanup script content must match the helper reviewed at its immutable commit pin",
-    );
+    errors.push("docker-auth-cleanup script content must match the pinned commit");
   }
 
   const expectedAction = {
@@ -399,7 +395,7 @@ export function validateDockerHubCleanupAction(
     },
   };
   if (!isDeepStrictEqual(asRecord(YAML.parse(actionSource)), expectedAction)) {
-    errors.push("docker-auth-cleanup action must preserve its pinned helper invocation");
+    errors.push("docker-auth-cleanup action must invoke the helper through github.action_path");
   }
 
   return errors;

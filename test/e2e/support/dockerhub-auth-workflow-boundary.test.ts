@@ -180,8 +180,8 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
     );
   });
 
-  // source-shape-contract: security -- Immutable cleanup action bytes must stay bound to the reviewed helper and commit provenance.
-  it("binds the cleanup action and helper to their immutable reviewed revision", () => {
+  // source-shape-contract: security -- The cleanup action and helper content must remain bound to the pinned commit.
+  it("binds the cleanup action and helper content to the pinned commit", () => {
     expect(validateDockerHubCleanupAction()).toEqual([]);
 
     const actionErrors = validateCleanupArtifactMutation({
@@ -191,19 +191,17 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
       },
     });
     expect(actionErrors).toContain(
-      "docker-auth-cleanup action content must match the action reviewed at its immutable commit pin",
+      "docker-auth-cleanup action content must match the pinned commit",
     );
     expect(actionErrors).toContain(
-      "docker-auth-cleanup action must preserve its pinned helper invocation",
+      "docker-auth-cleanup action must invoke the helper through github.action_path",
     );
 
     expect(
       validateCleanupArtifactMutation({
         mutateScript: (source) => `${source}# unreviewed drift\n`,
       }),
-    ).toContain(
-      "docker-auth-cleanup script content must match the helper reviewed at its immutable commit pin",
-    );
+    ).toContain("docker-auth-cleanup script content must match the pinned commit");
   });
 
   it("rejects missing auth and cleanup coverage for every classified image job", () => {

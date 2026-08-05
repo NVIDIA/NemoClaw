@@ -632,26 +632,104 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     );
   });
 
-  it("rejects PR checkout execution and delays before artifact restore", () => {
-    const workflow = workflowFixture();
-    const steps = workflow.jobs["sandbox-operations"].steps!;
-    const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
-    steps.splice(prepareIndex, 0, {
-      name: "Run PR checkout helper",
-      run: "bash scripts/pr-helper.sh",
-    });
-    const restoreIndex = steps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
-    steps.splice(restoreIndex, 0, {
-      name: "Delay CLI artifact restore",
-      run: "true",
-    });
+  it("rejects changed checkout settings and inserted, removed, reordered, or delayed pre-restore steps", () => {
+    const sequenceError =
+      "sandbox-operations steps before CLI artifact restore must match the required sequence";
+    const restoreOrderError =
+      "sandbox-operations must restore the CLI artifact in the step after workspace preparation";
+    const scenarios: Array<{
+      expectedErrors: string[];
+      mutate: (workflow: Workflow) => void;
+      name: string;
+    }> = [
+      {
+        name: "changed candidate checkout",
+        mutate: (workflow) => {
+          const checkout = workflow.jobs["sandbox-operations"].steps![0]!;
+          checkout.with = { ...checkout.with, repository: "NVIDIA/NemoClaw" };
+        },
+        expectedErrors: [
+          "sandbox-operations must use one candidate checkout with the required action, repository, ref, and credential settings",
+          sequenceError,
+        ],
+      },
+      {
+        name: "local action",
+        mutate: (workflow) => {
+          const steps = workflow.jobs["sandbox-operations"].steps!;
+          const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+          steps.splice(prepareIndex, 0, {
+            name: "Run local action",
+            uses: "./.github/actions/untrusted",
+          });
+        },
+        expectedErrors: [sequenceError],
+      },
+      {
+        name: "workspace helper",
+        mutate: (workflow) => {
+          const steps = workflow.jobs["sandbox-operations"].steps!;
+          const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+          steps.splice(prepareIndex, 0, {
+            name: "Run workspace helper",
+            run: 'bash "$GITHUB_WORKSPACE/scripts/pr-helper.sh"',
+          });
+        },
+        expectedErrors: [sequenceError],
+      },
+      {
+        name: "root checkout script",
+        mutate: (workflow) => {
+          const steps = workflow.jobs["sandbox-operations"].steps!;
+          const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+          steps.splice(prepareIndex, 0, {
+            name: "Run root checkout script",
+            run: "bash install.sh",
+          });
+        },
+        expectedErrors: [sequenceError],
+      },
+      {
+        name: "removed authentication",
+        mutate: (workflow) => {
+          const steps = workflow.jobs["sandbox-operations"].steps!;
+          const authIndex = steps.findIndex((step) => step.name === "Authenticate to Docker Hub");
+          steps.splice(authIndex, 1);
+        },
+        expectedErrors: [sequenceError],
+      },
+      {
+        name: "reordered authentication",
+        mutate: (workflow) => {
+          const steps = workflow.jobs["sandbox-operations"].steps!;
+          const authIndex = steps.findIndex((step) => step.name === "Authenticate to Docker Hub");
+          const [auth] = steps.splice(authIndex, 1);
+          const restoreIndex = steps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
+          steps.splice(restoreIndex, 0, auth!);
+        },
+        expectedErrors: [sequenceError, restoreOrderError],
+      },
+      {
+        name: "delayed restore",
+        mutate: (workflow) => {
+          const steps = workflow.jobs["sandbox-operations"].steps!;
+          const restoreIndex = steps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
+          steps.splice(restoreIndex, 0, {
+            name: "Delay CLI artifact restore",
+            run: "true",
+          });
+        },
+        expectedErrors: [sequenceError, restoreOrderError],
+      },
+    ];
 
-    expect(validateCliArtifactWorkflowBoundary(workflow)).toEqual(
-      expect.arrayContaining([
-        "sandbox-operations must not execute PR checkout files before restoring the CLI artifact",
-        "sandbox-operations must restore the CLI artifact immediately after workspace preparation",
-      ]),
-    );
+    for (const scenario of scenarios) {
+      const workflow = workflowFixture();
+      scenario.mutate(workflow);
+      expect(validateCliArtifactWorkflowBoundary(workflow), scenario.name).toEqual(
+        expect.arrayContaining(scenario.expectedErrors),
+      );
+    }
   });
 
   it("rejects incomplete consumer provenance and a mutable action reference", () => {

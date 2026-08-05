@@ -143,7 +143,7 @@
     },
     {
       "file": "test/e2e/support/dockerhub-auth-workflow-boundary.test.ts",
-      "test": "binds the cleanup action and helper to their immutable reviewed revision",
+      "test": "binds the cleanup action and helper content to the pinned commit",
       "category": "security"
     },
     {
