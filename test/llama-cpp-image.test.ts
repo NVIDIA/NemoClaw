@@ -64,11 +64,13 @@ type ImageManifest = {
       platforms?: string[];
       qualification?: {
         environment?: string | null;
+        execution?: string;
         gpu?: { cpuFallback?: string; fullOffload?: boolean; vendor?: string };
         model?: { digest?: string; hostPath?: string | null; id?: string };
         platform?: string;
         probes?: string[];
         profile?: string;
+        recipeRef?: string;
         required?: boolean;
         runner?: string | null;
       };
@@ -110,15 +112,30 @@ function parseOutput(value: string): Record<string, string> {
   );
 }
 
+function configureQualification(
+  source: string,
+  options: { execution: "disabled" | "enabled"; publicationEnabled: boolean },
+): string {
+  const candidate = YAML.parse(source) as ImageManifest;
+  const publication = candidate.spec!.publication!;
+  const qualification = publication.qualification!;
+  const model = qualification.model!;
+
+  publication.enabled = options.publicationEnabled;
+  qualification.execution = options.execution;
+  qualification.runner =
+    options.execution === "enabled" ? "linux-arm64-gpu-dgx-spark-gb10-protected-1" : null;
+  qualification.environment =
+    options.execution === "enabled" ? "approve-dgx-spark-image-qualification" : null;
+  model.hostPath =
+    options.execution === "enabled"
+      ? "/var/lib/nemoclaw/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf"
+      : null;
+  return YAML.stringify(candidate);
+}
+
 function enablePublication(source: string): string {
-  return source
-    .replace("    enabled: false", "    enabled: true")
-    .replace("      runner: null", "      runner: linux-arm64-gpu-dgx-spark-gb10-protected-1")
-    .replace("      environment: null", "      environment: approve-dgx-spark-image-qualification")
-    .replace(
-      "        hostPath: null",
-      "        hostPath: /var/lib/nemoclaw/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",
-    );
+  return configureQualification(source, { execution: "enabled", publicationEnabled: true });
 }
 
 describe("declarative llama.cpp server image", () => {
@@ -175,23 +192,42 @@ describe("declarative llama.cpp server image", () => {
     ]);
   });
 
-  it("keeps publication manual and disabled while protected DGX Spark inputs are unset (#8250)", () => {
+  it("compiles the repository-declared publication and qualification state (#8260)", () => {
     const output = loadLlamaCppImageConfig(manifestSource);
+    const qualification = JSON.parse(output.publication_qualification) as NonNullable<
+      NonNullable<ImageManifest["spec"]>["publication"]
+    >["qualification"];
 
     expect(output).toMatchObject({
       publication_allowed_ref: "refs/heads/main",
       publication_candidate_tag_template: "llama-cpp-candidate-{runId}-{runAttempt}",
-      publication_enabled: "false",
+      publication_enabled: String(manifest.spec?.publication?.enabled),
       publication_platforms: '["linux/amd64","linux/arm64"]',
       publication_repository: "ghcr.io/nvidia/nemoclaw/llama-cpp-server",
       publication_trigger: "workflow_dispatch",
     });
-    expect(JSON.parse(output.publication_qualification)).toMatchObject({
-      environment: null,
-      model: { hostPath: null },
+    expect(qualification).toEqual(manifest.spec?.publication?.qualification);
+    expect(qualification).toMatchObject({
+      recipeRef: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
       required: true,
-      runner: null,
     });
+    expect(JSON.parse(output.publication_qualification_plan)).toMatchObject({
+      contractVersion: 1,
+      imageBuild: {
+        platform: { cudaArchitectures: "121a-real", platform: "linux/arm64" },
+        source: { revision: manifest.spec?.source?.revision },
+      },
+      recipe: {
+        id: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
+        model: {
+          id: "unsloth/Nemotron-3-Nano-30B-A3B-GGUF",
+          servedName: "nvidia-nemotron-3-nano-30b-a3b",
+        },
+        runtime: { gpu: { count: 1, cpuFallback: "reject", offload: "full" } },
+      },
+    });
+    expect(output.publication_qualification_plan_sha256).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    expect(output.qualification_execution).toBe(qualification?.execution);
   });
 
   it("compiles the fail-closed workflow inputs from YAML (#8231)", () => {
@@ -309,6 +345,7 @@ describe("declarative llama.cpp server image", () => {
     expect(output.publication_enabled).toBe("true");
     expect(JSON.parse(output.publication_qualification)).toMatchObject({
       environment: "approve-dgx-spark-image-qualification",
+      execution: "enabled",
       model: {
         hostPath: "/var/lib/nemoclaw/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",
       },
@@ -317,9 +354,71 @@ describe("declarative llama.cpp server image", () => {
   });
 
   it("keeps publication disabled when complete DGX Spark infrastructure is configured (#8250)", () => {
-    const candidate = enablePublication(manifestSource).replace("enabled: true", "enabled: false");
+    const candidate = configureQualification(manifestSource, {
+      execution: "enabled",
+      publicationEnabled: false,
+    });
 
     expect(loadLlamaCppImageConfig(candidate).publication_enabled).toBe("false");
+  });
+
+  it("rejects serving-recipe drift before compiling the protected DGX Spark plan (#8260)", () => {
+    const recipeSource = fs.readFileSync(recipePath, "utf8");
+
+    expect(() =>
+      loadLlamaCppImageConfig(
+        manifestSource,
+        recipeSource.replace("offload: full", "offload: partial"),
+      ),
+    ).toThrow();
+    expect(() =>
+      loadLlamaCppImageConfig(
+        manifestSource,
+        recipeSource.replace("batchSize: 2048", "batchSize: 1024"),
+      ),
+    ).not.toThrow();
+    expect(
+      JSON.parse(
+        loadLlamaCppImageConfig(
+          manifestSource,
+          recipeSource.replace("batchSize: 2048", "batchSize: 1024"),
+        ).publication_qualification_plan,
+      ).recipe.serve.batchSize,
+    ).toBe(1024);
+  });
+
+  it("canonicalizes the protected plan independently of YAML key order (#8260)", () => {
+    const recipeSource = fs.readFileSync(recipePath, "utf8");
+    const reorderedRecipe = YAML.parse(recipeSource) as {
+      spec: { serve: Record<string, unknown> };
+    };
+    reorderedRecipe.spec.serve = Object.fromEntries(
+      Object.entries(reorderedRecipe.spec.serve).reverse(),
+    );
+    const baseline = loadLlamaCppImageConfig(manifestSource, recipeSource);
+    const reordered = loadLlamaCppImageConfig(manifestSource, YAML.stringify(reorderedRecipe));
+
+    expect(reordered.publication_qualification_plan).toBe(baseline.publication_qualification_plan);
+    expect(reordered.publication_qualification_plan_sha256).toBe(
+      baseline.publication_qualification_plan_sha256,
+    );
+  });
+
+  it("rejects YAML parser warnings in image and recipe inputs (#8260)", () => {
+    const recipeSource = fs.readFileSync(recipePath, "utf8");
+
+    expect(() =>
+      loadLlamaCppImageConfig(
+        manifestSource.replace("kind: ServerImageBuild", "kind: !unknown ServerImageBuild"),
+        recipeSource,
+      ),
+    ).toThrow(/Unresolved tag/u);
+    expect(() =>
+      loadLlamaCppImageConfig(
+        manifestSource,
+        recipeSource.replace("kind: ServingRecipe", "kind: !unknown ServingRecipe"),
+      ),
+    ).toThrow(/Unresolved tag/u);
   });
 
   it.each([
@@ -391,15 +490,45 @@ describe("declarative llama.cpp server image", () => {
       "optional DGX Spark qualification",
       manifestSource.replace("required: true", "required: false"),
     ],
+    [
+      "unknown DGX Spark qualification execution",
+      configureQualification(manifestSource, {
+        execution: "disabled",
+        publicationEnabled: false,
+      }).replace("execution: disabled", "execution: automatic"),
+    ],
+    [
+      "duplicate DGX Spark qualification keys",
+      configureQualification(manifestSource, {
+        execution: "disabled",
+        publicationEnabled: false,
+      }).replace(
+        "      execution: disabled",
+        "      execution: disabled\n      execution: disabled",
+      ),
+    ],
+    [
+      "an unbound qualification recipe",
+      manifestSource.replace(
+        "recipeRef: llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
+        "recipeRef: llama-cpp.untrusted.v1",
+      ),
+    ],
     ["CPU fallback", manifestSource.replace("cpuFallback: reject", "cpuFallback: allow")],
     ["partial GPU offload", manifestSource.replace("fullOffload: true", "fullOffload: false")],
     [
       "partial disabled infrastructure",
-      manifestSource.replace("runner: null", "runner: linux-arm64-gpu-dgx-spark-gb10-protected-1"),
+      configureQualification(manifestSource, {
+        execution: "disabled",
+        publicationEnabled: false,
+      }).replace("runner: null", "runner: linux-arm64-gpu-dgx-spark-gb10-protected-1"),
     ],
     [
       "enablement without infrastructure",
-      manifestSource.replace("enabled: false", "enabled: true"),
+      configureQualification(manifestSource, {
+        execution: "disabled",
+        publicationEnabled: true,
+      }),
     ],
     [
       "enablement on a generic runner",
