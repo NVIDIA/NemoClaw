@@ -592,6 +592,25 @@ describe("shields — unit logic", () => {
       expect(appliedPolicy).not.toContain("mcp_bridge_alpha");
     });
 
+    it("reuses the snapshot without staging when the snapshot and current policy have no managed MCP entries (#7952)", async () => {
+      const snapshotPath = "/state/policy-snapshot-no-managed-mcp.yaml";
+      const snapshotYaml = "version: 1\nnetwork_policies:\n  restrictive_baseline: {}\n";
+      const writeTempPolicy = vi.fn(() => {
+        throw new Error("policy staging is unavailable");
+      });
+      const { buildDeadlineRuntimeManagedMcpPolicy } = await import("./permissive-runtime");
+
+      const result = buildDeadlineRuntimeManagedMcpPolicy(snapshotPath, {
+        managedMcpPolicies: [],
+        snapshotManagedPolicyKeys: [],
+        readBasePolicy: () => snapshotYaml,
+        writeTempPolicy,
+      });
+
+      expect(result).toEqual({ path: snapshotPath, omissions: [] });
+      expect(writeTempPolicy).not.toHaveBeenCalled();
+    });
+
     it("deadline restore reuses an unchanged snapshot without temporary storage when no managed MCP entries exist (#7952)", async () => {
       const snapshotPath = path.join(stateDir(), "policy-snapshot-no-managed-mcp.yaml");
       fs.mkdirSync(stateDir(), { recursive: true });

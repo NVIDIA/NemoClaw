@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import childProcess, { type SpawnSyncReturns } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -12,11 +13,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import { join, resolve } from "node:path";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Import source directly so tests cannot pass against a stale build.
-import { unloadOllamaModels as defaultUnloadOllamaModels } from "../inference/ollama/proxy";
 import { registerTunnelOrigin } from "./allowed-origins";
 import { resolveDefaultSandboxName } from "./service-command";
 import {
@@ -24,7 +24,6 @@ import {
   getTunnelUrl,
   type ProcessControl,
   readCloudflaredState,
-  type ServiceOptions,
   showStatus,
   startAll,
   stopAll,
@@ -34,7 +33,6 @@ import {
 // writes; stub it so these tests exercise only the wiring (tunnel-URL and
 // sandbox-name discovery plus the skip/guard branches), never openshell/docker.
 vi.mock("./allowed-origins", () => ({ registerTunnelOrigin: vi.fn() }));
-vi.mock("../inference/ollama/proxy", () => ({ unloadOllamaModels: vi.fn() }));
 
 const INTEGRATION_ENV_SANDBOX = "nc1077-env-sandbox";
 const INTEGRATION_REGISTRY_SANDBOX = "nc1077-registry-sandbox";
@@ -51,6 +49,8 @@ function seedAliveCloudflaredPid(pidDir: string): void {
   mkdirSync(pidDir, { recursive: true, mode: 0o700 });
   writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid), { mode: 0o600 });
 }
+
+const ollamaProxySourcePath = resolve(import.meta.dirname, "..", "inference", "ollama", "proxy.ts");
 
 describe("getTunnelUrl", () => {
   let pidDir: string;
@@ -442,21 +442,49 @@ describe("readCloudflaredState", () => {
 
 describe("stopAll", () => {
   let pidDir: string;
-  let unloadOllamaModels: Mock<() => void>;
+  let spawnSyncCalls: Array<{ command: string; args: readonly string[] }>;
+  let originalSpawnSync: typeof childProcess.spawnSync;
+
+  beforeAll(() => {
+    originalSpawnSync = childProcess.spawnSync;
+    // @ts-expect-error — partial mock signature is intentional.
+    childProcess.spawnSync = (command: string, args: readonly string[]) => {
+      spawnSyncCalls.push({ command, args });
+      const reply: SpawnSyncReturns<string> = {
+        pid: 0,
+        output: ["", "", ""],
+        stdout: "",
+        stderr: "",
+        status: 0,
+        signal: null,
+      };
+      // Return an empty model list so the unload's for-loop is a no-op.
+      if (command === "curl" && args.some((a) => a.endsWith("/api/ps"))) {
+        reply.stdout = JSON.stringify({ models: [] });
+        reply.output = ["", reply.stdout, ""];
+      }
+      return reply;
+    };
+    // The Ollama proxy source module destructures `spawnSync` at
+    // require time. Load it once with the stable suite-level mock instead of
+    // re-evaluating the large module under coverage for every stopAll test.
+    delete require.cache[require.resolve(ollamaProxySourcePath)];
+    require(ollamaProxySourcePath);
+  });
 
   beforeEach(() => {
     pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-svc-test-"));
-    unloadOllamaModels = vi.fn();
-    vi.mocked(defaultUnloadOllamaModels).mockClear();
+    spawnSyncCalls = [];
   });
 
   afterEach(() => {
     rmSync(pidDir, { recursive: true, force: true });
   });
 
-  function stopAllForTest(opts: ServiceOptions = {}): void {
-    stopAll({ ...opts, unloadOllamaModels });
-  }
+  afterAll(() => {
+    childProcess.spawnSync = originalSpawnSync;
+    delete require.cache[require.resolve(ollamaProxySourcePath)];
+  });
 
   // A scripted ProcessControl models PID identity/liveness/signalling without
   // touching the host, so the recycled-PID paths are deterministic and portable
@@ -488,7 +516,7 @@ describe("stopAll", () => {
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
-      stopAllForTest({ pidDir, processControl: control });
+      stopAll({ pidDir, processControl: control });
     } finally {
       logSpy.mockRestore();
     }
@@ -509,7 +537,7 @@ describe("stopAll", () => {
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
-      stopAllForTest({ pidDir, processControl: control });
+      stopAll({ pidDir, processControl: control });
     } finally {
       logSpy.mockRestore();
     }
@@ -528,7 +556,7 @@ describe("stopAll", () => {
     const nowSpy = vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValue(3000);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
-      stopAllForTest({ pidDir, processControl: control });
+      stopAll({ pidDir, processControl: control });
     } finally {
       nowSpy.mockRestore();
       logSpy.mockRestore();
@@ -545,7 +573,7 @@ describe("stopAll", () => {
     writeFileSync(join(pidDir, "cloudflared.pid"), "999999999");
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    stopAllForTest({ pidDir });
+    stopAll({ pidDir });
     logSpy.mockRestore();
 
     expect(existsSync(join(pidDir, "cloudflared.pid"))).toBe(false);
@@ -553,41 +581,43 @@ describe("stopAll", () => {
 
   it("is idempotent — calling twice does not throw", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    stopAllForTest({ pidDir });
-    stopAllForTest({ pidDir });
+    stopAll({ pidDir });
+    stopAll({ pidDir });
     logSpy.mockRestore();
   });
 
   it("logs stop messages", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    stopAllForTest({ pidDir });
+    stopAll({ pidDir });
     const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
     expect(output).toContain("All services stopped");
     logSpy.mockRestore();
   });
 
-  it("unloads Ollama models before reporting services stopped", () => {
+  it("unloads default Ollama models before reporting services stopped", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    stopAllForTest({ pidDir });
+    stopAll({ pidDir });
+    logSpy.mockRestore();
+
+    const psCall = spawnSyncCalls.find(
+      (call) => call.command === "curl" && call.args.some((arg) => arg.endsWith("/api/ps")),
+    );
+    expect(psCall).toBeDefined();
+    expect(psCall?.args).toContain("--max-time");
+  });
+
+  it("runs injected Ollama cleanup before reporting services stopped", () => {
+    const cleanup = vi.fn();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    stopAll({ pidDir, unloadOllamaModels: cleanup });
     const stoppedCallIndex = logSpy.mock.calls.findIndex(([message]) =>
       String(message).includes("All services stopped"),
     );
     const stoppedCallOrder = logSpy.mock.invocationCallOrder[stoppedCallIndex];
     logSpy.mockRestore();
 
-    expect(unloadOllamaModels).toHaveBeenCalledOnce();
-    expect(unloadOllamaModels.mock.invocationCallOrder[0]).toBeLessThan(stoppedCallOrder ?? 0);
-  });
-
-  it("uses the default Ollama cleanup through the public stop path (#8199)", () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      stopAll({ pidDir });
-    } finally {
-      logSpy.mockRestore();
-    }
-
-    expect(defaultUnloadOllamaModels).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(cleanup.mock.invocationCallOrder[0]).toBeLessThan(stoppedCallOrder ?? 0);
   });
 });
 
