@@ -8,6 +8,7 @@ import type { Session } from "../state/onboard-session";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import { recordCheckpointSandboxIdentity } from "./checkpoint-record";
 import { checkpointProvesSandboxStepComplete } from "./checkpoint-replay";
+import { requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import type { ResumeConfigConflict } from "./resume-config";
 import type { StationExpressResumeIntent } from "./station-express-resume";
 
@@ -17,6 +18,7 @@ export {
   reportReadOnlyHostMounts,
   verifyReadOnlyHostMountSources,
 } from "./host-mount";
+export { requireReadOnlyHostMountRuntimeSupport };
 
 export interface OnboardSessionBootstrapInput {
   resume: boolean;
@@ -60,6 +62,9 @@ export interface OnboardSessionBootstrapDeps {
   cliName(): string;
   error(message: string): void;
   exitProcess(code: number): never;
+  requireHostMountRuntimeSupport(
+    mounts: readonly import("../state/registry/types").SandboxHostMount[] | undefined,
+  ): void;
   resolveResumeCheckpoint(): CheckpointLoadResult;
 }
 
@@ -244,6 +249,9 @@ async function prepareResumeSession(
   deps: OnboardSessionBootstrapDeps,
 ): Promise<OnboardSessionBootstrapResult> {
   let session = deps.loadSession();
+  deps.requireHostMountRuntimeSupport(
+    input.requestedHostMounts?.length ? input.requestedHostMounts : session?.metadata?.hostMounts,
+  );
   deps.setOnboardBrandingAgent(input.agentFlag || session?.agent || input.envAgent || null);
   if (!session || session.resumable === false) {
     reportMissingResumeSession(deps);
@@ -290,6 +298,7 @@ function prepareFreshSession(
   input: OnboardSessionBootstrapInput,
   deps: OnboardSessionBootstrapDeps,
 ): OnboardSessionBootstrapResult {
+  deps.requireHostMountRuntimeSupport(input.requestedHostMounts);
   if (input.fresh) {
     deps.clearSession();
   }
@@ -324,10 +333,14 @@ export async function prepareOnboardSession(
 
 export function prepareOnboardSessionValidated(
   input: OnboardSessionBootstrapInput,
-  deps: Omit<OnboardSessionBootstrapDeps, "resolveResumeCheckpoint">,
+  deps: Omit<
+    OnboardSessionBootstrapDeps,
+    "requireHostMountRuntimeSupport" | "resolveResumeCheckpoint"
+  >,
 ): Promise<OnboardSessionBootstrapResult> {
   return prepareOnboardSession(input, {
     ...deps,
+    requireHostMountRuntimeSupport: requireReadOnlyHostMountRuntimeSupport,
     resolveResumeCheckpoint: defaultResolveResumeCheckpoint,
   });
 }

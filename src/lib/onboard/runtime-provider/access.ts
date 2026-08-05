@@ -23,6 +23,7 @@ export {
   requireRuntimeProviderBundleForSandbox,
   requireRuntimeProviderDestructiveCleanupAuthority,
   requireRuntimeProviderMutationAuthority,
+  requireRuntimeProviderReadOnlyHostMounts,
   resolveRuntimeProviderBundle,
   runtimeProviderContainerEngineIdentity,
 } from "./registry";

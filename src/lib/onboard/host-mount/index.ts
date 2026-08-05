@@ -8,6 +8,12 @@ import {
   verifyReadOnlyHostMountSources,
 } from "../../state/registry/host-mount";
 import type { SandboxHostMount } from "../../state/registry/types";
+import {
+  CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  type RuntimeProviderBundleRegistry,
+  requireRuntimeProviderReadOnlyHostMounts,
+  resolveCurrentRuntimeProviderBundle,
+} from "../runtime-provider/access";
 
 export {
   normalizePersistedSandboxHostMounts,
@@ -15,6 +21,26 @@ export {
   parseReadOnlyHostMounts,
   verifyReadOnlyHostMountSources,
 };
+
+export interface ReadOnlyHostMountRuntimeSupportDeps {
+  readonly platform?: NodeJS.Platform;
+  readonly arch?: NodeJS.Architecture;
+  readonly runtimeProviders?: RuntimeProviderBundleRegistry;
+}
+
+export function requireReadOnlyHostMountRuntimeSupport(
+  mounts: readonly SandboxHostMount[] | undefined,
+  deps: ReadOnlyHostMountRuntimeSupportDeps = {},
+): void {
+  if (!mounts || mounts.length === 0) return;
+  const platform = deps.platform ?? process.platform;
+  const provider = resolveCurrentRuntimeProviderBundle(
+    platform,
+    deps.arch ?? process.arch,
+    deps.runtimeProviders ?? CURRENT_RUNTIME_PROVIDER_BUNDLES,
+  );
+  requireRuntimeProviderReadOnlyHostMounts(provider, platform);
+}
 
 let dockerBindMountsEnabled = false;
 

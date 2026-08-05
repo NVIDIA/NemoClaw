@@ -38,6 +38,7 @@ import {
   normalizeRuntimeProviderSnapshotRestoreReceipt,
   normalizeRuntimeProviderSnapshotRestoreSource,
   RuntimeProviderRegistrationError,
+  requireRuntimeProviderReadOnlyHostMounts,
   resolveRuntimeProviderBundle,
 } from "./registry";
 
@@ -146,6 +147,29 @@ describe("RuntimeProviderBundle registry contract", () => {
     }
   });
 
+  it("declares and enforces read-only host-mount support per runtime provider", () => {
+    const docker = CURRENT_RUNTIME_PROVIDER_BUNDLES.docker!;
+    const kubernetes = CURRENT_RUNTIME_PROVIDER_BUNDLES.kubernetes!;
+
+    expect(docker.capabilities.readOnlyHostMounts).toEqual({
+      supported: true,
+      hostPlatforms: ["linux"],
+    });
+    expect(kubernetes.capabilities.readOnlyHostMounts).toMatchObject({
+      supported: false,
+      reason: expect.stringMatching(/Kubernetes hostPath semantics/u),
+    });
+    expect(requireRuntimeProviderReadOnlyHostMounts(docker, "linux")).toBe(
+      docker.capabilities.readOnlyHostMounts,
+    );
+    expect(() => requireRuntimeProviderReadOnlyHostMounts(docker, "darwin")).toThrow(
+      /provider 'docker'.*not qualified.*'darwin'/u,
+    );
+    expect(() => requireRuntimeProviderReadOnlyHostMounts(kubernetes, "linux")).toThrow(
+      /provider 'kubernetes'.*Kubernetes hostPath semantics/u,
+    );
+  });
+
   it("validates the dormant Docker bootstrap candidate through the same bundle registry", () => {
     const docker = createDockerRuntimeProviderBundle();
     const providers = createRuntimeProviderBundleRegistry([
@@ -191,6 +215,14 @@ describe("RuntimeProviderBundle registry contract", () => {
     expect(() => {
       (registered.capabilities as { directLifecycle: boolean }).directLifecycle = false;
     }).toThrow(TypeError);
+    expect(
+      Object.isFrozen(CURRENT_RUNTIME_PROVIDER_BUNDLES.docker!.capabilities.readOnlyHostMounts),
+    ).toBe(true);
+    const dockerHostMounts =
+      CURRENT_RUNTIME_PROVIDER_BUNDLES.docker!.capabilities.readOnlyHostMounts;
+    if (dockerHostMounts.supported) {
+      expect(Object.isFrozen(dockerHostMounts.hostPlatforms)).toBe(true);
+    }
   });
 
   it("registers an MXC-style managed-bootstrap provider through the bundle surface", () => {
@@ -420,6 +452,27 @@ describe("RuntimeProviderBundle registry contract", () => {
         ["mxc", replaceSurface(bundle, surface, mutate(bundle))],
       ]),
     ).toThrow(RuntimeProviderRegistrationError);
+  });
+
+  it.each([
+    [undefined, /missing readOnlyHostMounts surface/u],
+    [{ supported: false, reason: "" }, /reason must be a non-empty string/u],
+    [{ supported: true, hostPlatforms: [] }, /hostPlatforms must list unique/u],
+    [{ supported: true, hostPlatforms: ["linux", "linux"] }, /hostPlatforms must list unique/u],
+    [{ supported: true, hostPlatforms: ["plan9"] }, /hostPlatforms must list unique/u],
+  ])("rejects an invalid read-only host-mount capability %#", (readOnlyHostMounts, message) => {
+    const bundle = mxcBundle();
+    expect(() =>
+      createRuntimeProviderBundleRegistry([
+        [
+          "mxc",
+          replaceSurface(bundle, "capabilities", {
+            ...bundle.capabilities,
+            readOnlyHostMounts,
+          }),
+        ],
+      ]),
+    ).toThrow(message);
   });
 
   it("rejects a lifecycle surface without provider-owned post-start verification", () => {

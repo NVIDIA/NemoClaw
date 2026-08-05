@@ -14,8 +14,8 @@ import { applyAgentsManifestEnv } from "./agents-manifest";
 import type { OnboardFlags } from "./command-support";
 import { GatewayManagementDeclarationError } from "./gateway-management";
 import { GatewayAuthorityError, gatewayAuthorityFailureLines } from "./gateway-teardown-authority";
+import { parseReadOnlyHostMounts, requireReadOnlyHostMountRuntimeSupport } from "./host-mount";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
-import { parseReadOnlyHostMounts } from "./host-mount";
 import { DCODE_OBSERVABILITY_FEATURE } from "./observability-policy-presets";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
 import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
@@ -45,6 +45,8 @@ export interface OnboardCommandOptions {
 export interface ResolveOnboardOptionsDeps {
   env: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
+  arch?: NodeJS.Architecture;
+  runtimeProviders?: import("./runtime-provider/access").RuntimeProviderBundleRegistry;
   listAgents?: () => string[];
   error?: (message?: string) => void;
   exit?: (code: number) => never;
@@ -146,8 +148,10 @@ function resolveHostMounts(
   } catch (error) {
     return fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
   }
-  if (mounts.length > 0 && (deps.platform ?? process.platform) !== "linux") {
-    fail(deps, "  --host-mount is currently supported only on Linux and WSL2 hosts.");
+  try {
+    requireReadOnlyHostMountRuntimeSupport(mounts, deps);
+  } catch (error) {
+    fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
   }
   return mounts;
 }

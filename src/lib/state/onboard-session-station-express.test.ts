@@ -56,6 +56,7 @@ async function realBootstrapDeps(): Promise<OnboardSessionBootstrapDeps> {
     exitProcess: vi.fn((code: number): never => {
       throw new Error(`exit ${String(code)}`);
     }),
+    requireHostMountRuntimeSupport: vi.fn(),
   };
 }
 

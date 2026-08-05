@@ -318,6 +318,7 @@ export function createDockerRuntimeProviderBundle(
       directLifecycle: true,
       legacyGatewayContainerInspection: false,
       workloadImageCleanup: true,
+      readOnlyHostMounts: { supported: true, hostPlatforms: ["linux"] },
     },
     preflightDoctor: {
       providerId,
@@ -412,6 +413,11 @@ export function createKubernetesRuntimeProviderBundle(
       directLifecycle: false,
       legacyGatewayContainerInspection: true,
       workloadImageCleanup: true,
+      readOnlyHostMounts: {
+        supported: false,
+        reason:
+          "Kubernetes hostPath semantics have not passed NemoClaw security and lifecycle qualification.",
+      },
     },
     preflightDoctor: {
       providerId,

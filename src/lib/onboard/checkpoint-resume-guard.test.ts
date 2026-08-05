@@ -63,6 +63,7 @@ function makeDeps(overrides: Partial<OnboardSessionBootstrapDeps>): OnboardSessi
     exitProcess: (code) => {
       throw new ExitError(code);
     },
+    requireHostMountRuntimeSupport: () => {},
     resolveResumeCheckpoint: (): CheckpointLoadResult => ({ status: "none" }),
     ...overrides,
   };
