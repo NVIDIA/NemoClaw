@@ -5577,7 +5577,7 @@ fi
 
 # ── Non-root fallback ──────────────────────────────────────────
 # OpenShell runs containers with --security-opt=no-new-privileges, which
-# blocks gosu's setuid syscall. When we're not root, skip privilege
+# blocks setpriv's setuid syscall. When we're not root, skip privilege
 # separation and run everything as the current user (sandbox).
 # Gateway process isolation is not available in this mode.
 if [ "$(id -u)" -ne 0 ]; then
@@ -5766,7 +5766,7 @@ ensure_runtime_shell_env_shim
 lock_rc_files "$_SANDBOX_HOME"
 # Apply manifest-declared runtime env aliases before any child (the one-shot
 # "${NEMOCLAW_CMD[@]}" exec or the stepped-down gateway) inherits the env.
-# gosu/setpriv preserve the environment, so the export reaches the gateway user.
+# setpriv preserves the environment, so the export reaches the gateway user.
 apply_messaging_runtime_env_aliases
 
 # Messaging channel config was announced before placeholder refresh so the
