@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as policies from "../../policy";
+import * as sandboxConfig from "../../sandbox/config";
 import * as sandboxState from "../../state/sandbox";
 import { MCP_BRIDGE_POLICY_SOURCE } from "./mcp-bridge-contracts";
 import {
@@ -39,6 +40,117 @@ describe("rebuild policy restore fidelity", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("migrates restored legacy Hermes dashboard state into its profile", () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockReturnValue({
+      success: true,
+      restoredDirs: ["profiles", "dashboard-home"],
+      restoredFiles: [],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    const target = {
+      agentName: "hermes",
+      configDir: "/sandbox/.hermes",
+      configPath: "/sandbox/.hermes/config.yaml",
+      configFile: "config.yaml",
+      format: "yaml",
+    } as const;
+    vi.spyOn(sandboxConfig, "resolveAgentConfig").mockReturnValue(target);
+    const seedDashboard = vi
+      .spyOn(sandboxConfig, "restoreHermesDashboardConfig")
+      .mockReturnValue("converged");
+    const log = vi.fn();
+
+    const result = runRebuildRestorePhase({
+      sandboxName: "hermes",
+      targetAgentType: "hermes",
+      targetImageIsCustom: false,
+      backupManifest: { agentType: "hermes", backupPath: "/tmp/rebuild-backup" } as never,
+      policyPresets: [],
+      customPolicies: [],
+      reconcileManagedDcodeObservability: false,
+      log,
+    });
+
+    expect(seedDashboard).toHaveBeenCalledWith("hermes", target);
+    expect(log).toHaveBeenCalledWith("Hermes dashboard state after restore: converged");
+    expect(result.restoreSucceeded).toBe(true);
+  });
+
+  it("reports a failed Hermes dashboard migration as an incomplete restore", () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockReturnValue({
+      success: true,
+      restoredDirs: ["dashboard-home"],
+      restoredFiles: [],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    vi.spyOn(sandboxConfig, "resolveAgentConfig").mockReturnValue({
+      agentName: "hermes",
+      configDir: "/sandbox/.hermes",
+      configPath: "/sandbox/.hermes/config.yaml",
+      configFile: "config.yaml",
+      format: "yaml",
+    });
+    vi.spyOn(sandboxConfig, "restoreHermesDashboardConfig").mockReturnValue("failed");
+
+    const result = runRebuildRestorePhase({
+      sandboxName: "hermes",
+      targetAgentType: "hermes",
+      targetImageIsCustom: false,
+      backupManifest: { agentType: "hermes", backupPath: "/tmp/rebuild-backup" } as never,
+      policyPresets: [],
+      customPolicies: [],
+      reconcileManagedDcodeObservability: false,
+      log: vi.fn(),
+    });
+
+    expect(result.restoreSucceeded).toBe(false);
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining("Could not migrate restored Hermes dashboard state into its profile"),
+    );
+  });
+
+  it("reports an unresolved Hermes target as an incomplete restore", () => {
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(snapshotRestore, "restoreRecreatedSandboxStateWithManagedAuthority").mockReturnValue({
+      success: true,
+      restoredDirs: ["dashboard-home"],
+      restoredFiles: [],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    vi.spyOn(sandboxConfig, "resolveAgentConfig").mockReturnValue({
+      agentName: "openclaw",
+      configDir: "/sandbox/.openclaw",
+      configPath: "/sandbox/.openclaw/openclaw.json",
+      configFile: "openclaw.json",
+      format: "json",
+    });
+    const seedDashboard = vi.spyOn(sandboxConfig, "restoreHermesDashboardConfig");
+
+    const result = runRebuildRestorePhase({
+      sandboxName: "hermes",
+      targetAgentType: "hermes",
+      targetImageIsCustom: false,
+      backupManifest: { agentType: "hermes", backupPath: "/tmp/rebuild-backup" } as never,
+      policyPresets: [],
+      customPolicies: [],
+      reconcileManagedDcodeObservability: false,
+      log: vi.fn(),
+    });
+
+    expect(seedDashboard).not.toHaveBeenCalled();
+    expect(result.restoreSucceeded).toBe(false);
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining("Could not migrate restored Hermes dashboard state into its profile"),
+    );
   });
 
   it("surfaces a fresh OpenClaw plugin registry precondition failure", () => {

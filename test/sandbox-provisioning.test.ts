@@ -1115,6 +1115,7 @@ describe("Hermes sandbox provisioning", () => {
     const mcpManifest = path.join(localLib, "openshell-child-visible-credentials.v0.0.85.json");
     const stateDirGuardPath = path.join(localLib, "state-dir-guard.py");
     const managedGatewayControlPath = path.join(localLib, "managed-gateway-control.py");
+    const hermesCronRestoreControlPath = path.join(localLib, "hermes-cron-restore-control.py");
     const files = [
       path.join(localBin, "nemoclaw-start"),
       path.join(localBin, "nemoclaw-managed-startup-hold"),
@@ -1136,6 +1137,7 @@ describe("Hermes sandbox provisioning", () => {
       gatewaySupervisorPath,
       stateDirGuardPath,
       managedGatewayControlPath,
+      hermesCronRestoreControlPath,
       path.join(localLib, "sandbox-rlimits.sh"),
     ];
     const command = dockerRunCommandBetween(
@@ -1159,9 +1161,10 @@ describe("Hermes sandbox provisioning", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(calls).toContain(
-        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${managedGatewayControlPath} ${buildMcpDigestPath} ${mcpManifest}`,
+        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${managedGatewayControlPath} ${buildMcpDigestPath} ${hermesCronRestoreControlPath} ${mcpManifest}`,
       );
       expect((fs.statSync(gatewayControlPath).mode & 0o777).toString(8)).toBe("700");
+      expect((fs.statSync(hermesCronRestoreControlPath).mode & 0o777).toString(8)).toBe("700");
       expect((fs.statSync(mcpConfigTransactionPath).mode & 0o777).toString(8)).toBe("755");
       expect((fs.statSync(langfuseCredentialPatcherPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(mcpManifest).mode & 0o777).toString(8)).toBe("444");

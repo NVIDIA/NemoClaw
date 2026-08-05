@@ -146,7 +146,7 @@ runs:
           { echo "::error::exact-commit CLI artifact payload digest mismatch"; exit 1; }
         while IFS= read -r member; do
           case "$member" in
-            dist | dist/*) ;;
+            dist | dist/* | nemoclaw | nemoclaw/dist | nemoclaw/dist/*) ;;
             *) echo "::error::CLI artifact contains an unsafe member: $member"; exit 1 ;;
           esac
           case "/$member/" in
@@ -158,11 +158,15 @@ runs:
           { echo "::error::CLI artifact contains a link or special file"; exit 1; }
         [[ ! -e "$GITHUB_WORKSPACE/dist" && ! -L "$GITHUB_WORKSPACE/dist" ]] ||
           { echo "::error::consumer unexpectedly built dist before artifact restore"; exit 1; }
+        [[ ! -e "$GITHUB_WORKSPACE/nemoclaw/dist" && ! -L "$GITHUB_WORKSPACE/nemoclaw/dist" ]] ||
+          { echo "::error::consumer unexpectedly built nemoclaw/dist before artifact restore"; exit 1; }
         restore_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-cli-restore.XXXXXX")"
         trap 'rm -rf -- "$restore_dir"' EXIT
         tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"
         test -s "$restore_dir/dist/nemoclaw.js" ||
           { echo "::error::restored CLI artifact is missing dist/nemoclaw.js"; exit 1; }
+        test -s "$restore_dir/nemoclaw/dist/shared/sandbox-name.cjs" ||
+          { echo "::error::restored CLI artifact is missing nemoclaw/dist/shared/sandbox-name.cjs"; exit 1; }
         jq -e --arg candidateSha "$CANDIDATE_SHA" '
           type == "object" and
           (keys | sort) == ["nemoclawVersion", "sourceRevision"] and
@@ -170,5 +174,6 @@ runs:
           .sourceRevision == $candidateSha
         ' "$restore_dir/dist/build-identity.json" >/dev/null ||
           { echo "::error::restored CLI build identity does not match the candidate SHA"; exit 1; }
+        mv "$restore_dir/nemoclaw/dist" "$GITHUB_WORKSPACE/nemoclaw/dist"
         mv "$restore_dir/dist" "$GITHUB_WORKSPACE/dist"
         node "$GITHUB_WORKSPACE/bin/nemoclaw.js" --version >/dev/null
