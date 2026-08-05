@@ -499,7 +499,7 @@ describe("managed inference resolver", () => {
     ).toMatchObject({ outcome: "no-match", code: "requirements-not-met" });
   });
 
-  it("matches typed readiness observation comparisons (#8246)", () => {
+  it("selects a preset only when readiness observation comparisons match (#8246)", () => {
     const catalog = hostLocalFixtureCatalog();
     const preset = catalog.presets[0]!;
     const comparedPreset = {
@@ -572,27 +572,35 @@ describe("managed inference resolver", () => {
       ),
     ).toMatchObject({ outcome: "selected" });
 
-    reports[1] = {
-      nodeId: reports[1]!.nodeId,
-      report: readinessReport({
-        ...reports[1]!.report,
-        observations: reports[1]!.report.observations.map((observation) =>
-          observation.id === "host.gpu.driver_version"
-            ? { ...observation, value: "579.99.0" }
-            : observation,
-        ),
-      }),
-    };
-    expect(
-      resolveManagedInferenceServing(
-        resolverInput({
-          readinessReports: reports,
-          topologyQualifications: [],
-          intent: { preset: preset.metadata.id },
+    const nonmatchingObservations = [
+      ["equals", "host.os.platform", "windows"],
+      ["one-of", "host.os.architecture", "riscv64"],
+      ["at-least", "host.gpu.count", 0],
+      ["version-at-least", "host.gpu.driver_version", "579.99.0"],
+      ["malformed version-at-least", "host.gpu.driver_version", "580.65.x"],
+    ] as const;
+    for (const [caseName, id, value] of nonmatchingObservations) {
+      const rejectedReports = reports.map(({ nodeId, report }, index) => ({
+        nodeId,
+        report: readinessReport({
+          ...report,
+          observations: report.observations.map((observation) =>
+            index === 1 && observation.id === id ? { ...observation, value } : observation,
+          ),
         }),
-        comparedCatalog,
-      ),
-    ).toMatchObject({ outcome: "rejected", code: "requirements-not-met" });
+      }));
+      expect(
+        resolveManagedInferenceServing(
+          resolverInput({
+            readinessReports: rejectedReports,
+            topologyQualifications: [],
+            intent: { preset: preset.metadata.id },
+          }),
+          comparedCatalog,
+        ),
+        `${caseName} must reject a nonmatching observation`,
+      ).toMatchObject({ outcome: "rejected", code: "requirements-not-met" });
+    }
   });
 
   it("applies any-node readiness requirements as an existential match", () => {
