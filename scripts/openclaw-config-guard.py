@@ -3529,6 +3529,12 @@ def _transition(
         # and treat the transition as a no-op instead of failing.
         pair = _snapshot_raw_pair(opened)
         _verify_mutable_posture(opened, pair, identity)
+        _validate_runtime_config_json5(
+            pair[0].data,
+            posixpath.join(opened.config_path, "openclaw.json"),
+            identity,
+        )
+        _assert_config_binding(opened)
         return
     pair = _snapshot_pair(opened)
     _verify_locked_posture(opened, pair, identity, allow_blocking_flags=True)
