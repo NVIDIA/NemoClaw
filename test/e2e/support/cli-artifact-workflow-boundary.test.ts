@@ -143,18 +143,25 @@ const ARCHIVE_FIXTURE_WRITERS = {
   (context: ArchiveFixtureContext) => void
 >;
 
-function createPreexistingDist(
-  workspace: string,
-  preexistingDist: NonNullable<RestoreFixtureOptions["preexistingDist"]>,
-): void {
+function writeDanglingDistSymlink(workspace: string): void {
   const dist = path.join(workspace, "dist");
-  if (preexistingDist === "dangling-symlink") {
-    fs.symlinkSync("missing-dist", dist);
-    return;
-  }
+  fs.symlinkSync("missing-dist", dist);
+}
+
+function writePreexistingDistDirectory(workspace: string): void {
+  const dist = path.join(workspace, "dist");
   fs.mkdirSync(dist);
   fs.writeFileSync(path.join(workspace, "dist", "existing.txt"), "preserve\n");
 }
+
+const PREEXISTING_DIST_WRITERS = {
+  "dangling-symlink": writeDanglingDistSymlink,
+  directory: writePreexistingDistDirectory,
+  none: () => undefined,
+} satisfies Record<
+  NonNullable<RestoreFixtureOptions["preexistingDist"]> | "none",
+  (workspace: string) => void
+>;
 
 function runRestoreValidation(options: RestoreFixtureOptions = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cli-artifact-restore-"));
@@ -240,7 +247,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
     `#!/usr/bin/env bash\nset -euo pipefail\nif [[ "$#" -eq 1 && "$1" == "--version" ]]; then\n  echo v22.23.1\n  exit 0\nfi\nexec ${JSON.stringify(process.execPath)} "$@"\n`,
     { mode: 0o755 },
   );
-  if (options.preexistingDist) createPreexistingDist(workspace, options.preexistingDist);
+  PREEXISTING_DIST_WRITERS[options.preexistingDist ?? "none"](workspace);
 
   const action = readYaml<CompositeAction>(".github/actions/restore-e2e-cli-artifact/action.yaml");
   const result = spawnSync("bash", ["-c", action.runs.steps[2]!.run!], {
