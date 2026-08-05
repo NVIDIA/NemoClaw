@@ -438,9 +438,6 @@ function readSandboxIdentity(): { readonly uid: string; readonly gid: string } {
 }
 
 function sandboxPrefix(): readonly string[] {
-  if (trustedExecutable("/usr/local/bin/gosu")) {
-    return ["/usr/local/bin/gosu", "sandbox"];
-  }
   if (trustedExecutable("/usr/bin/setpriv")) {
     const identity = readSandboxIdentity();
     return [
@@ -451,7 +448,7 @@ function sandboxPrefix(): readonly string[] {
       "--",
     ];
   }
-  return fail("a trusted gosu or setpriv executable is required");
+  return fail("a trusted setpriv executable is required");
 }
 
 function commandEnvironment(
