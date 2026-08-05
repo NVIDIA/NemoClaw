@@ -191,6 +191,18 @@ describe("protected managed-image build-cache boundary", () => {
     expect(existsSync(dockerLog)).toBe(false);
   });
 
+  it("rejects a populated cache export root before invoking Docker", () => {
+    const cacheRoot = path.join(testRoot, "export-cache");
+    mkdirSync(cacheRoot);
+    writeFileSync(path.join(cacheRoot, "foreign-record"), "untrusted\n", "utf8");
+
+    const result = runBuild(REPO_ROOT, ["--cache-to", cacheRoot]);
+
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stderr).toContain("protected managed-image cache destination must be empty");
+    expect(existsSync(dockerLog)).toBe(false);
+  });
+
   it("rejects an incomplete offline cache before invoking Docker", () => {
     const cacheRoot = path.join(testRoot, "offline-cache");
     mkdirSync(cacheRoot);
