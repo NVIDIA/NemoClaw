@@ -224,7 +224,16 @@ describe("trusted reviewed npm audit workflow (#5896)", () => {
     );
 
     expect(action).toContain('node-version: "22.23.1"');
-    expect(action).toContain("npm install --global npm@10.9.4");
+    expect(action).toContain("npm pack npm@10.9.4");
+    expect(action).toContain("NPM_ARCHIVE_INTEGRITY: >-");
+    expect(action).toContain(
+      "sha512-OnUG836FwboQIbqtefDNlyR0gTHzIfwRfE3DuiNewBvnMnWEpB0VEXwBlFVgqpNzIgYo/MHh3d2Hel/pszapAA==",
+    );
+    expect(action).toContain('crypto.createHash("sha512")');
+    expect(action).toContain('if [ "$actual_integrity" != "$NPM_ARCHIVE_INTEGRITY" ]');
+    expect(action).toContain('npm install --global "$archive"');
+    expect(action).toContain("--ignore-scripts --no-audit --no-fund --offline");
+    expect(action).not.toContain("npm install --global npm@10.9.4");
     expect(action).toContain("NEMOCLAW_REVIEWED_NPM_AUDIT_TARGET_ROOT");
     expect(action).toContain("NEMOCLAW_REVIEWED_NPM_AUDIT_REPORT_DIR");
     expect(action).toContain(

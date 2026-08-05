@@ -48,7 +48,7 @@ Concern ledger:
 
 Issue #8253 showed that the image-build audit made sandbox creation depend on npm's current advisory data instead of only the committed build inputs. The shared installer no longer runs the live production advisory query. It still installs the exact lock with lifecycle scripts disabled, verifies registry signatures, runs the runtime tests and typecheck, and verifies the exact bundle inputs.
 
-The reviewed npm audit CI check now owns production advisory enforcement for this lock. It verifies the lock SHA-256 and SDK package integrity, installs the production graph with lifecycle scripts disabled, records audit provenance and policy results, verifies registry signatures, and fails on unaccepted findings at the repository's configured threshold.
+The reviewed npm audit CI check now owns production advisory enforcement for this lock. Its trusted action verifies the downloaded `npm@10.9.4` archive against the reviewed SHA-512 before installing it. The check verifies the lock SHA-256 and SDK package integrity, installs the production graph with lifecycle scripts disabled, records audit provenance and policy results, verifies registry signatures, and fails on unaccepted findings at the repository's configured threshold.
 
 ## 1.29.0 to 1.30.0 migration review
 

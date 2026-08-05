@@ -20,14 +20,35 @@ runs:
       with:
         node-version: "22.23.1"
 
-    - name: Pin production npm
+    - name: Download and verify production npm
       shell: bash
-      run: >-
-        cd "$RUNNER_TEMP" &&
-        npm install --global npm@10.9.4
-        --userconfig /dev/null
-        --registry https://registry.npmjs.org/
-        --ignore-scripts --no-audit --no-fund
+      env:
+        NPM_ARCHIVE_INTEGRITY: >-
+          sha512-OnUG836FwboQIbqtefDNlyR0gTHzIfwRfE3DuiNewBvnMnWEpB0VEXwBlFVgqpNzIgYo/MHh3d2Hel/pszapAA==
+      run: |
+        set -euo pipefail
+        download_dir="$(mktemp -d "$RUNNER_TEMP/reviewed-npm.XXXXXX")"
+        npm pack npm@10.9.4 \
+          --pack-destination "$download_dir" \
+          --userconfig /dev/null \
+          --registry https://registry.npmjs.org/ \
+          --ignore-scripts --no-audit --no-fund >/dev/null
+        archive="$download_dir/npm-10.9.4.tgz"
+        actual_sha512="$(
+          node -e '
+            const fs = require("node:fs");
+            const crypto = require("node:crypto");
+            process.stdout.write(crypto.createHash("sha512").update(fs.readFileSync(process.argv[1])).digest("base64"));
+          ' "$archive"
+        )"
+        actual_integrity="sha512-$actual_sha512"
+        if [ "$actual_integrity" != "$NPM_ARCHIVE_INTEGRITY" ]; then
+          echo "ERROR: npm@10.9.4 archive integrity mismatch." >&2
+          exit 1
+        fi
+        npm install --global "$archive" \
+          --userconfig /dev/null \
+          --ignore-scripts --no-audit --no-fund --offline
 
     - name: Materialize and audit reviewed npm graphs
       shell: bash
