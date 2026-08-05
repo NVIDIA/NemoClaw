@@ -69,7 +69,7 @@ export interface GatewayEvidence {
   start_time: number;
 }
 
-export interface CronControlReceipt {
+interface CronControlReceipt {
   action: "begin";
   active_agents: number;
   disposition: string;
