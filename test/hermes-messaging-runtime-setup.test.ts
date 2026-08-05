@@ -47,10 +47,11 @@ function messagingRuntimeSetupSection(
       'PRELOAD_TARGET_PREFIX = "/tmp/nemoclaw-"',
       `PRELOAD_TARGET_PREFIX = ${JSON.stringify(preloadPaths.targetPrefix)}`,
     );
-  if (preloadPaths.sourcePrefix === "/usr/local/lib/nemoclaw/preloads/") return section;
-  return section
-    .replaceAll("/usr/local/lib/nemoclaw/preloads/", preloadPaths.sourcePrefix)
-    .replace("source_stat.st_uid != 0", "source_stat.st_uid != os.getuid()");
+  return preloadPaths.sourcePrefix === "/usr/local/lib/nemoclaw/preloads/"
+    ? section
+    : section
+        .replaceAll("/usr/local/lib/nemoclaw/preloads/", preloadPaths.sourcePrefix)
+        .replace("source_stat.st_uid != 0", "source_stat.st_uid != os.getuid()");
 }
 
 function encodeRuntimePlan(
