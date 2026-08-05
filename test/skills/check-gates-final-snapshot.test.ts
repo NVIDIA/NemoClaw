@@ -48,7 +48,7 @@ describe("maintainer merge-gate final PR snapshot", () => {
     expect(output.allPass).toBe(false);
   });
 
-  it("accepts a multi-commit PR when the final snapshot returns its last commit", () => {
+  it("accepts a multi-commit PR when the final snapshot returns the PR commit SHA", () => {
     const output = JSON.parse(
       runGate({
         body: "Signed-off-by: Example User <user@example.com>",

@@ -424,7 +424,9 @@ function ghJsonPages(args: string[]): unknown[] | null {
   try {
     return output.split("\n").map((page) => JSON.parse(page));
   } catch {
-    process.stderr.write(`[check-gates] gh JSON page parse failed for: gh ${args.join(" ")}\n`);
+    process.stderr.write(
+      `[check-gates] The gate checker could not parse a JSON page from this command: gh ${args.join(" ")}\n`,
+    );
     return null;
   }
 }
@@ -2409,7 +2411,7 @@ function checkConflicts(
   if (!currentBaseSha) {
     return {
       pass: false,
-      details: "Unable to verify the current base branch revision",
+      details: "The gate checker could not verify the base SHA",
       mergeable: conflictStatus,
       mergeStateStatus: status,
       baseSha,
@@ -3285,7 +3287,7 @@ function main(): void {
     stableCurrentBaseSha !== null
       ? {
           pass: true,
-          details: "Base branch revision remained stable during gate evaluation",
+          details: "The base SHA did not change during gate evaluation",
           mergeable: capturedRevision.mergeable,
           mergeStateStatus: capturedRevision.mergeStateStatus,
           baseSha: capturedRevision.baseRefOid,
@@ -3295,8 +3297,8 @@ function main(): void {
           pass: false,
           details:
             currentBaseSha && finalCurrentBaseSha
-              ? "Base branch revision changed during gate evaluation; rerun the gate checker"
-              : "Unable to verify the current base branch revision",
+              ? "The base SHA changed during gate evaluation. Rerun the gate checker."
+              : "The gate checker could not verify the base SHA",
           mergeable: capturedRevision.mergeable,
           mergeStateStatus: capturedRevision.mergeStateStatus,
           baseSha: capturedRevision.baseRefOid,

@@ -92,7 +92,7 @@ describe("maintainer merge-gate contributor compliance", () => {
 
     expect(output.gates.conflicts).toMatchObject({
       pass: false,
-      details: "Base branch revision changed during gate evaluation; rerun the gate checker",
+      details: "The base SHA changed during gate evaluation. Rerun the gate checker.",
       baseSha: BASE_SHA,
       currentBaseSha: finalCurrentBaseSha,
     });
@@ -158,7 +158,7 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output.allPass).toBe(false);
   });
 
-  it("makes the final PR revision snapshot the final remote read", () => {
+  it("performs no remote read after the final PR snapshot", () => {
     const output = JSON.parse(
       runGate({
         body: "Signed-off-by: Example User <user@example.com>",
@@ -1056,7 +1056,7 @@ describe("maintainer merge-gate contributor compliance", () => {
       failingChecks: INCOMPLETE_E2E,
     });
   });
-  it("keeps substantive PR CI ahead of a later canceled metadata-only edit run", () => {
+  it("retains failing CI from a code-changing PR run after a later metadata-only run is canceled", () => {
     const checkRun = (
       name: string,
       runId: number,

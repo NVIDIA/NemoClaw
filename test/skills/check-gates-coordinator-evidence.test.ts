@@ -531,7 +531,7 @@ describe("maintainer merge-gate E2E coordinator evidence", () => {
     );
   });
 
-  it("accepts the exact coordinator from a later complete workflow-runs page", () => {
+  it("accepts a matching coordinator from a later page of a complete workflow-run inventory", () => {
     const unrelatedRun = {
       ...e2eCoordinatorRun(),
       displayTitle: "E2E Gate coordinate from unrelated CI",
@@ -776,7 +776,7 @@ describe("maintainer merge-gate E2E coordinator evidence", () => {
     });
   });
 
-  it("accepts more than 1,000 workflow runs across complete partitions", () => {
+  it("accepts more than 1,000 workflow runs when each partition returns its reported total", () => {
     const firstPartitionIds = Array.from({ length: 600 }, (_value, index) => 10_000 + index);
     const secondPartitionIds = Array.from({ length: 600 }, (_value, index) => 20_000 + index);
     const result = runGateWithCoordinator({
@@ -985,7 +985,7 @@ describe("maintainer merge-gate E2E coordinator evidence", () => {
     );
   });
 
-  it("rejects an extreme custom-check timestamp span before inventory traversal", () => {
+  it("rejects a custom-check timestamp span beyond the 14-day inventory limit", () => {
     const result = runGateWithCoordinator({
       customCheck: {
         started_at: "2000-01-01T00:00:00Z",
@@ -1361,7 +1361,7 @@ describe("maintainer merge-gate E2E coordinator evidence", () => {
       coordinator: { headSha: "not-a-sha" },
     },
     {
-      condition: "the coordinator uses another trusted workflow revision",
+      condition: "the coordinator commit SHA does not match the captured base SHA",
       coordinator: { headSha: "d".repeat(40) },
     },
     {
