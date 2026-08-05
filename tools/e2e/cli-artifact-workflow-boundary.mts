@@ -503,7 +503,7 @@ export function validateCliArtifactWorkflowBoundary(
     }) !== CLI_ARTIFACT_WORKFLOW_CONTRACT_SHA256
   ) {
     errors.push(
-      "CLI artifact consumer job settings and steps through restore must match the required contract",
+      "CLI artifact workflow settings, consumer job settings, and steps up to and including CLI artifact restore must match the required contract",
     );
   }
 

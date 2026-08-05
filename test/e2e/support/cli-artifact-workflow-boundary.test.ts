@@ -634,7 +634,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
 
   it("rejects changes to checkout, workflow settings, job settings, or steps through CLI artifact restore", () => {
     const settingsError =
-      "CLI artifact consumer job settings and steps through restore must match the required contract";
+      "CLI artifact workflow settings, consumer job settings, and steps up to and including CLI artifact restore must match the required contract";
     const restoreOrderError =
       "sandbox-operations must restore the CLI artifact in the step after workspace preparation";
     const scenarios: Array<{
