@@ -2,7 +2,7 @@
 #
 # Layers PR-specific code (plugin, blueprint, config, startup script) on top
 # of the pre-built base image from GHCR. The base image contains all the
-# expensive, rarely-changing layers (apt, gosu, users, openclaw CLI).
+# expensive, rarely-changing layers (apt, setpriv, users, openclaw CLI).
 #
 # For local builds without GHCR access, build the base first:
 #   docker build -f Dockerfile.base -t ghcr.io/nvidia/nemoclaw/sandbox-base:latest .
@@ -135,6 +135,7 @@ COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
+COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 
 FROM scratch AS openclaw-plugin-payload
@@ -150,6 +151,7 @@ COPY scripts/patch-openclaw-chat-send.mts /usr/local/lib/nemoclaw/patch-openclaw
 COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
 COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts
 COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts
+COPY scripts/patch-openclaw-managed-transport-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts
 COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts
 COPY scripts/extract-semver.sh /usr/local/lib/nemoclaw/extract-semver
 COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts
@@ -277,6 +279,15 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
 # nemoclaw-start overrides it with the merged OpenShell + corporate bundle.
 ENV NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem
 
+# Reassert the npm-private ip-address fix for the exact final filesystem. When
+# onboarding supplied a corporate CA, use it for the registry-backed download.
+# hadolint ignore=DL3059
+RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
+      export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
+    fi; \
+    node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
+      --npm-root /usr/local/lib/node_modules/npm
+
 # Harden: remove unnecessary build tools and network probes from base image (#830)
 # Protect runtime tools before autoremove — the GHCR base may predate the
 # procps/e2fsprogs/tmux additions, leaving ps/chattr/tmux absent or auto-marked.
@@ -380,6 +391,7 @@ RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts \
+        /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
         /usr/local/lib/nemoclaw/extract-semver \
         /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
@@ -1007,6 +1019,20 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-n
 # negative-catalog invalidation, and temporary-transport failure attribution.
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \
+    /usr/local/lib/node_modules/openclaw/dist
+
+# Emit a redacted managed-transport diagnostic when a remote Streamable HTTP MCP
+# request fails. OpenClaw 2026.7.1 surfaces only the transport error text, which
+# does not say whether policy, CONNECT, TLS, the upstream connection, the
+# request, or response headers failed. The fetch-boundary wrapper is
+# failure-only, never retries, never alters the request, and never reads a 2xx
+# body, so streaming responses stay behaviorally unchanged. It is inert unless
+# OPENSHELL_SANDBOX=1.
+#
+# Removal criterion: drop when upstream OpenClaw emits phase-classified,
+# redacted transport diagnostics for remote MCP fetch failures.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Run the compact tool catalog shim for OpenClaw selection runtimes that still
@@ -1794,6 +1820,7 @@ RUN check_metadata() { \
       fi; \
     } \
     && check_metadata /scripts/patch-bundled-npm-brace-expansion.mts 'root:root:755' \
+    && check_metadata /scripts/lib/patch-bundled-npm-ip-address.mts 'root:root:755' \
     && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root:755' \
     && check_metadata /opt/nemoclaw/openclaw.plugin.json 'root:root:644' \
     && check_metadata /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts 'root:root:755' \

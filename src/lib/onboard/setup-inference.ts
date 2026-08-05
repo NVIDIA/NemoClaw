@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import { canonicalEndpoint } from "../core/url-utils";
+import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
   assertEndpointResolvesPublic,
   type EndpointDnsLookupFn,
@@ -15,7 +15,7 @@ import {
   isAdvisoryGatewayRouteConflict,
 } from "../inference/gateway-route-compatibility";
 import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
-import { getManagedDualStationVllmProviderBinding } from "../inference/local";
+import { getManagedVllmProviderBinding } from "../inference/local";
 import {
   assertNoExplicitOpenShellGatewayEndpoint,
   assertNoOpenShellGatewayEndpointOverride,
@@ -37,6 +37,7 @@ function matchesOnboardEndpoint(
   const selected = canonicalEndpoint(endpointUrl, flavor);
   return selected !== null && selected === canonicalEndpoint(onboardEndpointUrl, flavor);
 }
+
 import type {
   CommonDeps,
   HermesDeps,
@@ -442,7 +443,7 @@ export function createSetupInference(
               run: deps.run,
               VLLM_LOCAL_CREDENTIAL_ENV: deps.vllmLocalCredentialEnv,
               getManagedVllmProviderBinding:
-                deps.getManagedVllmProviderBinding ?? getManagedDualStationVllmProviderBinding,
+                deps.getManagedVllmProviderBinding ?? getManagedVllmProviderBinding,
             },
           );
           if (outcome.done) return outcome.result;

@@ -740,32 +740,6 @@ function exactCompletionReceipt(value: unknown): ManagedBootstrapCompletionRecei
   });
 }
 
-export function sameDockerManagedBootstrapReceipt(
-  kind: "preparation",
-  left: ManagedBootstrapDurablePreparationReceipt,
-  right: ManagedBootstrapDurablePreparationReceipt,
-): boolean;
-export function sameDockerManagedBootstrapReceipt(
-  kind: "completion",
-  left: ManagedBootstrapCompletionReceipt,
-  right: ManagedBootstrapCompletionReceipt,
-): boolean;
-export function sameDockerManagedBootstrapReceipt(
-  kind: "preparation" | "completion",
-  left: ManagedBootstrapDurablePreparationReceipt | ManagedBootstrapCompletionReceipt,
-  right: ManagedBootstrapDurablePreparationReceipt | ManagedBootstrapCompletionReceipt,
-): boolean {
-  if (kind === "preparation") {
-    return (
-      JSON.stringify(exactPreparationReceipt(left)) ===
-      JSON.stringify(exactPreparationReceipt(right))
-    );
-  }
-  return (
-    JSON.stringify(exactCompletionReceipt(left)) === JSON.stringify(exactCompletionReceipt(right))
-  );
-}
-
 function exactCleanupReceipt(value: unknown): ManagedBootstrapFinalizationReceipt {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     fail("cleanup receipt must be an object");

@@ -74,6 +74,27 @@ function makeMessagingPlan(
   };
 }
 
+function makeTelegramConfigPlan(requireMention: "0" | "1"): SandboxMessagingPlan {
+  const plan = makeMessagingPlan("test-sb", ["telegram"]);
+  return {
+    ...plan,
+    channels: plan.channels.map((channel) => ({
+      ...channel,
+      inputs: [
+        {
+          channelId: "telegram",
+          inputId: "requireMention",
+          kind: "config",
+          required: false,
+          sourceEnv: "TELEGRAM_REQUIRE_MENTION",
+          statePath: "telegramConfig.requireMention",
+          value: requireMention,
+        },
+      ],
+    })),
+  };
+}
+
 function makeRegistryEntry(
   channelIds: string[] = [],
   disabledChannels: string[] = [],
@@ -369,6 +390,32 @@ describe("channels add applies a matching policy preset (#3437)", () => {
       ],
       credentialAvailability: expect.any(Object),
     });
+  });
+
+  it("hydrates channel mutation config from the registry instead of the session", async () => {
+    const registryPlan = makeTelegramConfigPlan("0");
+    registryEntry = {
+      ...makeRegistryEntry(),
+      messaging: { schemaVersion: 1, plan: registryPlan },
+    };
+    sessionState = {
+      ...sessionState,
+      sandboxName: "test-sb",
+      messagingPlan: makeTelegramConfigPlan("1"),
+    } as onboardSession.Session;
+
+    await addSandboxChannel("test-sb", { channel: "slack" });
+
+    const messagingUpdate = updateSandboxSpy.mock.calls.find(
+      (call) => (call[1] as { messaging?: unknown }).messaging,
+    );
+    expect(messagingUpdate).toBeDefined();
+    const plan = (messagingUpdate?.[1] as { messaging: { plan: SandboxMessagingPlan } }).messaging
+      .plan;
+    const telegram = plan.channels.find((channel) => channel.channelId === "telegram");
+    expect(telegram?.inputs).toContainEqual(
+      expect.objectContaining({ sourceEnv: "TELEGRAM_REQUIRE_MENTION", value: "0" }),
+    );
   });
 
   for (const channel of ["telegram", "slack", "discord"]) {

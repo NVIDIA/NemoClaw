@@ -3,10 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createSession, type Session } from "../../../state/onboard-session";
+import { createSession } from "../../../state/onboard-session";
+import type { SandboxEntry } from "../../../state/registry";
 import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
+import { fingerprintSandboxRegistryEntry } from "../../sandbox-recreate-transaction";
 import { handleSandboxState } from "./sandbox";
-import { baseOptions, createDeps } from "./sandbox-test-fixtures";
+import { baseOptions, bindJournaledRecreate, createDeps } from "./sandbox-test-fixtures";
 
 vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
@@ -14,8 +16,8 @@ vi.mock("../../messaging-channel-setup", () => ({
 
 vi.mocked(detectMessagingChannelsFromEnv).mockReturnValue([]);
 
-describe("handleSandboxState destructive resume rollback (#7194)", () => {
-  it("restores the removed registry row, including baseline exclusions, when replacement creation fails", async () => {
+describe("handleSandboxState journaled replacement failure", () => {
+  it("keeps the registry row unchanged when replacement creation fails (#7194)", async () => {
     const session = createSession({
       sandboxName: "saved",
       webSearchConfig: { fetchEnabled: true },
@@ -26,27 +28,32 @@ describe("handleSandboxState destructive resume rollback (#7194)", () => {
         resourceProfile: false,
       },
     });
-    session.steps.sandbox.status = "complete";
-    const { deps, calls } = createDeps({
-      agentSupportsWebSearch: () => false,
-      getSandboxReuseState: () => "ready",
-      updateSession: vi.fn(
-        (mutator: (value: Session) => Session | void) => mutator(session) ?? session,
-      ),
+    const sourceEntry = {
+      name: "saved",
+      provider: "provider",
+      model: "model",
+      preferredInferenceApi: "openai-completions",
+      toolDisclosure: "progressive",
+      webSearchEnabled: true,
+      baselineExclusions: [
+        { version: 1 as const, agent: "openclaw", key: "nous_research", digest: "abc" },
+      ],
+    } satisfies SandboxEntry;
+    const journal = bindJournaledRecreate(session);
+    const getSandboxRegistryEntry = vi.fn(() => sourceEntry);
+    const createSandbox = vi.fn(async () => {
+      throw new Error("openshell create failed");
     });
-    const removalReceipt = {
-      entry: {
-        name: "saved",
-        baselineExclusions: [
-          { version: 1 as const, agent: "openclaw", key: "nous_research", digest: "abc" },
-        ],
+    const { deps, calls } = createDeps(
+      {
+        agentSupportsWebSearch: () => false,
+        getSandboxReuseState: () => "ready",
+        getSandboxRecreateObservation: journal.observe,
+        getSandboxRegistryEntry,
+        createSandbox,
       },
-      wasDefault: false,
-      fallbackDefault: null,
-      postRemovalDefaultSelectionRevision: 1,
-    };
-    calls.removeSandbox.mockReturnValue(removalReceipt);
-    calls.createSandbox.mockRejectedValueOnce(new Error("openshell create failed"));
+      session,
+    );
 
     await expect(
       handleSandboxState({
@@ -57,70 +64,16 @@ describe("handleSandboxState destructive resume rollback (#7194)", () => {
       }),
     ).rejects.toThrow("openshell create failed");
 
-    expect(calls.removeSandbox).toHaveBeenCalledWith("saved");
-    expect(calls.restoreSandboxRegistryEntryIfMissing).toHaveBeenCalledWith(removalReceipt);
-  });
-
-  it("restores the removed row from the exit hook before process termination", async () => {
-    const session = createSession({
+    expect(createSandbox).toHaveBeenCalledOnce();
+    expect(getSandboxRegistryEntry).toHaveBeenCalledWith("saved");
+    expect(deps.getSandboxRegistryEntry("saved")).toBe(sourceEntry);
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
+    expect(calls.restoreSandboxRegistryEntryIfMissing).not.toHaveBeenCalled();
+    expect(calls.updateSandbox).not.toHaveBeenCalled();
+    expect(session.checkpoint?.sandboxRecreate).toMatchObject({
       sandboxName: "saved",
-      webSearchConfig: { fetchEnabled: true },
-      sandboxPromptProgress: {
-        sandboxName: true,
-        webSearch: true,
-        messaging: false,
-        resourceProfile: false,
-      },
+      phase: "planned",
+      sourceRegistryFingerprint: fingerprintSandboxRegistryEntry(sourceEntry),
     });
-    session.steps.sandbox.status = "complete";
-    const { deps, calls } = createDeps({
-      agentSupportsWebSearch: () => false,
-      getSandboxReuseState: () => "ready",
-      updateSession: vi.fn(
-        (mutator: (value: Session) => Session | void) => mutator(session) ?? session,
-      ),
-    });
-    const removalReceipt = {
-      entry: {
-        name: "saved",
-        baselineExclusions: [
-          { version: 1 as const, agent: "openclaw", key: "nous_research", digest: "abc" },
-        ],
-      },
-      wasDefault: false,
-      fallbackDefault: null,
-      postRemovalDefaultSelectionRevision: 1,
-    };
-    let exitListener: ((code: number) => void) | null = null;
-    const processOnce = vi.spyOn(process, "once").mockImplementation(((
-      event: string | symbol,
-      listener: (...args: unknown[]) => void,
-    ) => {
-      expect(event).toBe("exit");
-      exitListener = listener as (code: number) => void;
-      return process;
-    }) as typeof process.once);
-    const processRemoveListener = vi
-      .spyOn(process, "removeListener")
-      .mockImplementation(() => process);
-    calls.removeSandbox.mockReturnValue(removalReceipt);
-    calls.createSandbox.mockImplementationOnce(async () => {
-      exitListener?.(1);
-      throw new Error("simulated process exit");
-    });
-
-    await expect(
-      handleSandboxState({
-        ...baseOptions(deps, session),
-        resume: true,
-        sandboxName: "saved",
-        webSearchConfig: { fetchEnabled: true },
-      }),
-    ).rejects.toThrow("simulated process exit");
-
-    expect(processOnce).toHaveBeenCalledWith("exit", expect.any(Function));
-    expect(calls.restoreSandboxRegistryEntryIfMissing).toHaveBeenCalledTimes(1);
-    expect(calls.restoreSandboxRegistryEntryIfMissing).toHaveBeenCalledWith(removalReceipt);
-    expect(processRemoveListener).toHaveBeenCalledWith("exit", expect.any(Function));
   });
 });

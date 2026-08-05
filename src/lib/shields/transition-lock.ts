@@ -40,6 +40,8 @@ export interface ShieldsTransitionLockOptions {
   pollIntervalMs?: number;
   malformedStaleMs?: number;
   takeoverToken?: string;
+  /** Preserve stale owners for a caller that applies a stronger containment protocol. */
+  recoverStaleOwner?: boolean;
 }
 
 export interface ShieldsTransitionLockDependencies {
@@ -237,22 +239,9 @@ function unsafeLockPathError(lockPath: string, reason: string): Error {
 }
 
 function readExistingLock(lockPath: string, sandboxName: string): ExistingLockSnapshot | null {
-  let pathStat: fs.BigIntStats;
-  try {
-    pathStat = fs.lstatSync(lockPath, { bigint: true });
-  } catch (error) {
-    if (isErrnoException(error) && error.code === "ENOENT") return null;
-    throw error;
-  }
-  if (pathStat.isSymbolicLink()) {
-    throw unsafeLockPathError(lockPath, "symbolic links are not allowed");
-  }
-  if (!pathStat.isFile()) {
-    throw unsafeLockPathError(lockPath, "path is not a regular file");
-  }
-
   let fd: number;
   try {
+    // Open first so every subsequent decision is anchored to one no-follow descriptor.
     fd = fs.openSync(
       lockPath,
       fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
@@ -268,6 +257,23 @@ function readExistingLock(lockPath: string, sandboxName: string): ExistingLockSn
   try {
     const fdStat = fs.fstatSync(fd, { bigint: true });
     if (!fdStat.isFile()) {
+      throw unsafeLockPathError(lockPath, "path is not a regular file");
+    }
+
+    let pathStat: fs.BigIntStats;
+    try {
+      pathStat = fs.lstatSync(lockPath, { bigint: true });
+    } catch (error) {
+      if (isErrnoException(error) && error.code === "ENOENT") {
+        fs.closeSync(fd);
+        return null;
+      }
+      throw error;
+    }
+    if (pathStat.isSymbolicLink()) {
+      throw unsafeLockPathError(lockPath, "symbolic links are not allowed");
+    }
+    if (!pathStat.isFile()) {
       throw unsafeLockPathError(lockPath, "path is not a regular file");
     }
     if (!sameInode(inodeIdentity(pathStat), inodeIdentity(fdStat))) {
@@ -539,6 +545,26 @@ export class ShieldsTransitionLockManager {
     try {
       const owner = snapshot.owner;
       if (!owner || owner.takeoverToken !== validToken) return null;
+      return {
+        pid: owner.pid,
+        processStartIdentity: owner.processStartIdentity,
+        command: owner.command,
+      };
+    } finally {
+      closeSnapshot(snapshot);
+    }
+  }
+
+  inspectAnyShieldsTransitionLockOwner(
+    sandboxName: string,
+  ): InspectedShieldsTransitionOwner | null {
+    const validName = validateSandboxName(sandboxName);
+    const lockPath = shieldsTransitionLockPath(validName, this.stateDir);
+    const snapshot = readExistingLock(lockPath, validName);
+    if (!snapshot) return null;
+    try {
+      const owner = snapshot.owner;
+      if (!owner) return null;
       return {
         pid: owner.pid,
         processStartIdentity: owner.processStartIdentity,
@@ -877,7 +903,12 @@ export class ShieldsTransitionLockManager {
         );
         if (!observed) continue;
         lastWaitReason = observed;
-        if (this.recoveredObservedStaleOwner(sandboxName, observed)) continue;
+        if (
+          options.recoverStaleOwner !== false &&
+          this.recoveredObservedStaleOwner(sandboxName, observed)
+        ) {
+          continue;
+        }
         this.failFastOnUnrecoverableOwner(state, observed);
       }
       this.sleep(this.waitDuration(state, lastWaitReason));
@@ -909,7 +940,12 @@ export class ShieldsTransitionLockManager {
         );
         if (!observed) continue;
         lastWaitReason = observed;
-        if (this.recoveredObservedStaleOwner(sandboxName, observed)) continue;
+        if (
+          options.recoverStaleOwner !== false &&
+          this.recoveredObservedStaleOwner(sandboxName, observed)
+        ) {
+          continue;
+        }
         this.failFastOnUnrecoverableOwner(state, observed);
       }
       await this.sleepAsync(this.waitDuration(state, lastWaitReason));
@@ -1214,6 +1250,12 @@ export function inspectShieldsTransitionLockOwner(
   takeoverToken: string,
 ): InspectedShieldsTransitionOwner | null {
   return defaultManager.inspectShieldsTransitionLockOwner(sandboxName, takeoverToken);
+}
+
+export function inspectAnyShieldsTransitionLockOwner(
+  sandboxName: string,
+): InspectedShieldsTransitionOwner | null {
+  return defaultManager.inspectAnyShieldsTransitionLockOwner(sandboxName);
 }
 
 export function takeoverShieldsTransitionLock(

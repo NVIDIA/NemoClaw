@@ -5,6 +5,7 @@ import { normalizeCredentialValue } from "../credentials/store";
 import { getMessagingChannelForCredentialEnvKey } from "../messaging/channels";
 import { hashCredential } from "../security/credential-hash";
 import * as registry from "../state/registry";
+import { getRegistrySandboxMessagingAuthority } from "./messaging-channel-setup";
 
 export interface MessagingTokenDefinition {
   name: string;
@@ -38,8 +39,7 @@ export function getRecordedMessagingChannelsForResume({
     channels,
     (envKey: string) =>
       Boolean(normalizeCredentialValue(process.env[envKey]) || getCredential(envKey)),
-    registry.getConfiguredMessagingChannels.bind(registry),
-    registry.getDisabledChannels.bind(registry),
+    getRegistrySandboxMessagingAuthority,
     providerExistsInGateway,
     isNonInteractive(),
   );

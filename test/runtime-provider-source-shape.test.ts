@@ -143,6 +143,7 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/managed-bootstrap/envelope.ts",
       "src/lib/onboard/managed-bootstrap/image-runtime.ts",
       "src/lib/onboard/managed-bootstrap/index.ts",
+      "src/lib/onboard/managed-bootstrap/managed-bootstrap-test-fixture.ts",
       "src/lib/onboard/managed-bootstrap/runtime-create.ts",
     ]);
   });
@@ -153,6 +154,7 @@ describe("runtime provider central source boundary", () => {
       "src/lib/onboard/runtime-provider/contract.ts",
       "src/lib/onboard/runtime-provider/current.ts",
       "src/lib/onboard/runtime-provider/docker.ts",
+      "src/lib/onboard/runtime-provider/mxc.ts",
       "src/lib/onboard/runtime-provider/registry.ts",
       "src/lib/onboard/runtime-provider/snapshot.ts",
     ]);

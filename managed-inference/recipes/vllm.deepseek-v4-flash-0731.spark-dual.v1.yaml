@@ -1,0 +1,156 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: nemoclaw.nvidia.com/managed-inference/v1
+kind: ServingRecipe
+
+metadata:
+  id: vllm.deepseek-v4-flash-0731.spark-dual.v1
+  displayName: DeepSeek V4 Flash 0731 on two DGX Sparks
+
+spec:
+  backend: vllm
+
+  bindings:
+    sparkTopology:
+      type: topologyQualificationOutput
+      qualificationId: host-cluster.direct-cx7
+      schemaVersion: 1
+      outputSchema: nemoclaw.nvidia.com/managed-cluster-topology/v1
+
+  model:
+    id: deepseek-ai/DeepSeek-V4-Flash-0731
+    revision: 9e165c30e2704aec5d9d593cce3eebd58bbef1cb
+    servedName: deepseek-v4-flash-0731
+    downloadSizeBytes: 166898661074
+    gated: false
+    installFastSafetensors: false
+    preparation:
+      ref: snapshot-copy-and-exact-text-replacement/v1
+      snapshotCopy:
+        sourcePath: encoding/encoding_dsv4.py
+        digest: sha256:abc0d26120250dda0ae077dc64aa28836026e61e970854aaeb792445e6a0dde6
+        targetPath: /usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4_encoding.py
+      exactTextReplacement:
+        targetPath: /usr/local/lib/python3.12/dist-packages/vllm/tokenizers/deepseek_v4.py
+        expectedText: |-
+          elif reasoning_effort in ("max", "xhigh"):
+                          reasoning_effort = "max"
+                      else:
+                          reasoning_effort = "high"
+        replacementText: |-
+          elif reasoning_effort in ("max", "xhigh"):
+                          reasoning_effort = "max"
+                      elif reasoning_effort == "high":
+                          reasoning_effort = "high"
+                      else:
+                          reasoning_effort = "low"
+
+  runtime:
+    image: ghcr.io/anemll/dspark-vllm-gx10@sha256:a83948492cf13df455170fb42885f5ef4db54fefe0feff0f841ecbff464ac9d8
+    imageDownloadSizeBytes: 9787537825
+    architecture: arm64
+    networkMode: host
+    ipcMode: host
+    gpuRequest: all
+    sharedMemoryBytes: 68719476736
+    pullTimeoutSeconds: 43200
+    devices:
+      - /dev/infiniband
+    ulimits:
+      memlock: -1
+      stackBytes: 67108864
+    modelCache:
+      source: huggingface-cache
+      target: /cache/huggingface
+    temporaryFilesystems:
+      - target: /tmp
+        sizeBytes: 17179869184
+        mode: "1777"
+        options: [rw, nosuid, nodev, exec]
+    environment:
+      CUTE_DSL_ARCH: sm_121a
+      DG_JIT_NVCC_COMPILER: /usr/local/cuda/bin/nvcc
+      DG_JIT_USE_NVRTC: "0"
+      FLASHINFER_CUDA_ARCH_LIST: 12.1a
+      FLASHINFER_DISABLE_VERSION_CHECK: "1"
+      FLASHINFER_WORKSPACE_BASE: /cache/huggingface/flashinfer
+      HF_HUB_DISABLE_XET: "1"
+      HF_HUB_OFFLINE: "1"
+      NCCL_CROSS_NIC: "1"
+      NCCL_CUMEM_ENABLE: "0"
+      NCCL_DEBUG: WARN
+      NCCL_IB_DISABLE: "0"
+      NCCL_IGNORE_CPU_AFFINITY: "1"
+      NCCL_NET: IB
+      NCCL_NVLS_ENABLE: "0"
+      PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+      TILELANG_CLEANUP_TEMP_FILES: "1"
+      TORCH_CUDA_ARCH_LIST: 12.1a
+      TRANSFORMERS_OFFLINE: "1"
+      VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
+      VLLM_B12X_W4A16_FORCE_BLOCKS_MAX_M: "16"
+      VLLM_B12X_W4A16_FORCE_BLOCKS_PER_SM: "0"
+      VLLM_CACHE_ROOT: /cache/huggingface/vllm-cache
+      VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: "0"
+      VLLM_SPARSE_INDEXER_MAX_LOGITS_MB: "256"
+      VLLM_USE_B12X_MOE: "1"
+      VLLM_USE_BREAKABLE_CUDAGRAPH: "0"
+      VLLM_USE_FLASHINFER_SAMPLER: "1"
+
+  execution:
+    materializerRef: vllm.managed-cluster/v1
+    lifecycleRef: vllm.managed-cluster.lifecycle/v1
+    topologyBinding: sparkTopology
+    nodeCount: 2
+    tensorParallelSize: 2
+    pipelineParallelSize: 1
+    distributedExecutorBackend: mp
+    rendezvousPort: 25000
+
+  serve:
+    authentication: bearer
+    executable: /usr/local/bin/vllm
+    arguments:
+      - name: --port
+        value: 8000
+      - name: --kv-cache-dtype
+        value: nvfp4_ds_mla
+      - name: --block-size
+        value: 256
+      - name: --max-model-len
+        value: 1048576
+      - name: --max-num-seqs
+        value: 6
+      - name: --max-num-batched-tokens
+        value: 8192
+      - name: --max-cudagraph-capture-size
+        value: 36
+      - name: --gpu-memory-utilization
+        value: 0.8
+      - name: --enable-prefix-caching
+      - name: --enable-prompt-tokens-details
+      - name: --async-scheduling
+      - name: --enable-chunked-prefill
+      - name: --speculative-config
+        value: '{"method":"dspark","num_speculative_tokens":5,"draft_sample_method":"probabilistic"}'
+      - name: --tokenizer-mode
+        value: deepseek_v4
+      - name: --moe-backend
+        value: flashinfer_b12x
+      - name: --tool-call-parser
+        value: deepseek_v4
+      - name: --enable-auto-tool-choice
+      - name: --reasoning-parser
+        value: deepseek_v4
+      - name: --reasoning-config
+        value: '{"reasoning_parser":"deepseek_v4","reasoning_start_str":"<think>","reasoning_end_str":"</think>"}'
+      - name: --default-chat-template-kwargs
+        value: '{"thinking":true,"reasoning_effort":"low"}'
+      - name: --generation-config
+        value: vllm
+      - name: --enable-flashinfer-autotune
+
+  readiness:
+    timeoutSeconds: 3600
+    expectedModel: deepseek-v4-flash-0731
