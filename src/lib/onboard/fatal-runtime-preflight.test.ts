@@ -2,8 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({ preparePortableExperimentalHost: vi.fn() }));
+
+vi.mock("./experimental/portable-host-preparation", () => ({
+  preparePortableExperimentalHost: mocks.preparePortableExperimentalHost,
+}));
+
 import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
-import { rejectUnsupportedContainerRuntime } from "./fatal-runtime-preflight";
+import {
+  rejectUnsupportedContainerRuntime,
+  runFatalOnboardRuntimePreflight,
+} from "./fatal-runtime-preflight";
 import type { HostAssessment } from "./preflight";
 
 function hostWithRuntime(runtime: HostAssessment["runtime"]): HostAssessment {
@@ -62,4 +72,17 @@ describe("rejectUnsupportedContainerRuntime (#7320)", () => {
       vi.unstubAllEnvs();
     },
   );
+});
+
+describe("runFatalOnboardRuntimePreflight", () => {
+  it("prepares the portable host before probing the container runtime", () => {
+    mocks.preparePortableExperimentalHost.mockImplementationOnce(() => {
+      throw new Error("portable host prepared");
+    });
+
+    expect(() => runFatalOnboardRuntimePreflight({}, { nonInteractive: true })).toThrow(
+      "portable host prepared",
+    );
+    expect(mocks.preparePortableExperimentalHost).toHaveBeenCalledWith(process.env);
+  });
 });

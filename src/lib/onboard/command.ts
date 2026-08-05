@@ -159,6 +159,16 @@ function resolveExperimentalProfile(flags: OnboardFlags): ExperimentalOnboardPro
     : null;
 }
 
+function validateExperimentalProfileLifecycle(
+  flags: OnboardFlags,
+  profile: ExperimentalOnboardProfile | null,
+  deps: ResolveOnboardOptionsDeps,
+): void {
+  if (profile && flags.resume === true) {
+    fail(deps, "  --resume cannot be combined with --experimental-profile portable.");
+  }
+}
+
 function withPortableDefault(
   requested: boolean | undefined,
   profile: ExperimentalOnboardProfile | null,
@@ -171,6 +181,7 @@ export function resolveOnboardOptions(
   deps: ResolveOnboardOptionsDeps,
 ): OnboardCommandOptions {
   const experimentalProfile = resolveExperimentalProfile(flags);
+  validateExperimentalProfileLifecycle(flags, experimentalProfile, deps);
   const agent = resolveAgent(flags.agent, deps);
   validateObservabilityAgent(flags.observability, agent, deps);
   let toolDisclosure: ToolDisclosure | null;

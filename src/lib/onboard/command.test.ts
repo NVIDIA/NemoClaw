@@ -126,6 +126,17 @@ describe("onboard command options", () => {
     });
   });
 
+  it("rejects resume when the portable profile requires a deterministic fresh install", () => {
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        { "experimental-profile": "portable", resume: true },
+        { error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors).toContain("  --resume cannot be combined with --experimental-profile portable.");
+  });
+
   it("maps --no-observability to an explicit disabled request", () => {
     expect(
       resolve(

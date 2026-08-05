@@ -7,6 +7,7 @@ import {
   isLinuxDockerDriverGatewayEnabled,
   isPortableExperimentalProfile,
 } from "./docker-driver-platform";
+import { preparePortableExperimentalHost } from "./experimental/portable-host-preparation";
 import { warnIfHostProxyMissesLoopback } from "./http-proxy-preflight";
 import {
   assertCdiNvidiaGpuSpecPresent,
@@ -22,8 +23,6 @@ import {
   validateSandboxGpuPreflight,
 } from "./sandbox-gpu-preflight";
 import type { OnboardOptions } from "./types";
-
-export { preparePortableExperimentalHost } from "./experimental/portable-host-preparation";
 
 export type FatalRuntimePreflightOptions = Pick<
   OnboardOptions,
@@ -57,12 +56,13 @@ export function rejectUnsupportedContainerRuntime(
   }
 }
 
-/** Run the non-mutating runtime gates shared by fresh, resume, and rebuild onboarding. */
+/** Prepare and run the runtime gates shared by fresh, resume, and rebuild onboarding. */
 export function runFatalOnboardRuntimePreflight(
   options: FatalRuntimePreflightOptions,
   context: FatalRuntimePreflightContext,
 ): FatalRuntimePreflightResult {
   const exitProcess = context.exitProcess ?? exitProcessByDefault;
+  preparePortableExperimentalHost(process.env);
   const host = assessHost();
   if (!host.dockerReachable) {
     printDockerNotReachableError();

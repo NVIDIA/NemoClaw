@@ -1,0 +1,218 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import http from "node:http";
+import os from "node:os";
+import path from "node:path";
+
+import { buildDockerDriverGatewayEnv } from "../../src/lib/onboard/docker-driver-gateway-env";
+import { preparePortableExperimentalHost } from "../../src/lib/onboard/experimental/portable-host-preparation";
+import { prebuildSandboxImageIfEligible } from "../../src/lib/onboard/sandbox-prebuild";
+import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../../src/lib/sandbox/build-context";
+
+const BASE_IMAGE =
+  "docker.io/library/ubuntu@sha256:7f622ca8766bccb22f04242ecb6f19f770b2f08827dc4b8c707de5e78a6da7ab";
+
+function run(command: string, args: readonly string[]): string {
+  const result = spawnSync(command, [...args], {
+    encoding: "utf-8",
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  assert.equal(
+    result.status,
+    0,
+    `${command} ${args.join(" ")} failed:\n${String(result.stderr || result.stdout)}`,
+  );
+  return String(result.stdout).trim();
+}
+
+async function waitForRegistry(): Promise<void> {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const ready = await new Promise<boolean>((resolve) => {
+      const request = http.get("http://127.0.0.1:5000/v2/", (response) => {
+        response.resume();
+        response.once("end", () => resolve(response.statusCode === 200));
+      });
+      request.once("error", () => resolve(false));
+      request.setTimeout(500, () => {
+        request.destroy();
+        resolve(false);
+      });
+    });
+    if (ready) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("The managed local registry did not become ready.");
+}
+
+function writeSystemctlShim(binDir: string): void {
+  const shim = path.join(binDir, "systemctl");
+  fs.writeFileSync(
+    shim,
+    `#!/usr/bin/env bash
+set -euo pipefail
+runtime_dir="\${XDG_RUNTIME_DIR:?}"
+service_dir="\${runtime_dir}/podman"
+socket_path="\${service_dir}/podman.sock"
+pid_file="\${runtime_dir}/nemoclaw-podman-service.pid"
+log_file="\${runtime_dir}/nemoclaw-podman-service.log"
+
+case "$*" in
+  "--user set-environment NETAVARK_FW=iptables")
+    exit 0
+    ;;
+  "--user try-restart podman.service")
+    if [[ -f "\${pid_file}" ]]; then
+      kill "$(<"\${pid_file}")" 2>/dev/null || true
+      rm -f "\${pid_file}" "\${socket_path}"
+    fi
+    exit 0
+    ;;
+  "--user enable --now podman.socket")
+    mkdir -p "\${service_dir}"
+    nohup podman system service --time=0 "unix://\${socket_path}" >"\${log_file}" 2>&1 &
+    echo $! >"\${pid_file}"
+    for _ in $(seq 1 100); do
+      [[ -S "\${socket_path}" ]] && exit 0
+      sleep 0.1
+    done
+    cat "\${log_file}" >&2 || true
+    exit 1
+    ;;
+  *)
+    echo "unexpected user-service command: $*" >&2
+    exit 64
+    ;;
+esac
+`,
+    { encoding: "utf-8", mode: 0o700 },
+  );
+}
+
+async function main(): Promise<void> {
+  assert.equal(process.platform, "linux", "portable profile E2E requires Linux");
+  assert.notEqual(process.getuid?.(), 0, "portable profile E2E must run without root privileges");
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-e2e-"));
+  const home = path.join(root, "home");
+  const binDir = path.join(root, "bin");
+  const stateDir = path.join(root, "gateway-state");
+  const configHome = path.join(home, ".config");
+  const runtimeDir = `/run/user/${String(process.getuid?.())}`;
+  fs.mkdirSync(path.join(configHome, "containers"), { recursive: true, mode: 0o700 });
+  fs.mkdirSync(binDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(
+    path.join(configHome, "containers", "containers.conf"),
+    '[network]\ndefault_rootless_network_cmd = "pasta"\n',
+    { encoding: "utf-8", mode: 0o600 },
+  );
+  writeSystemctlShim(binDir);
+
+  Object.assign(process.env, {
+    HOME: home,
+    PATH: `${binDir}:${process.env.PATH ?? ""}`,
+    XDG_CONFIG_HOME: configHome,
+    XDG_DATA_HOME: path.join(home, ".local", "share"),
+    XDG_RUNTIME_DIR: runtimeDir,
+    NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+    NEMOCLAW_SANDBOX_PREBUILD: "1",
+  });
+
+  let server: http.Server | undefined;
+  try {
+    preparePortableExperimentalHost(process.env);
+    assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`);
+
+    const podmanInfo = JSON.parse(run("podman", ["info", "--format", "json"]));
+    assert.equal(podmanInfo.host?.security?.rootless, true, "Podman must be rootless");
+    run("docker", ["version"]);
+    await waitForRegistry();
+
+    const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
+    fs.chmodSync(buildCtx, 0o700);
+    const dockerfile = path.join(buildCtx, "Dockerfile");
+    fs.writeFileSync(
+      dockerfile,
+      `FROM ${BASE_IMAGE}\nRUN printf 'portable-profile-image\\n' >/etc/nemoclaw-profile\n`,
+      { encoding: "utf-8", mode: 0o600 },
+    );
+    const prebuild = await prebuildSandboxImageIfEligible({
+      buildCtx,
+      buildId: "rootless-e2e",
+      createArgs: ["--from", dockerfile, "--name", "portable-e2e"],
+      sandboxName: "portable-e2e",
+      dockerDriverGateway: true,
+      env: process.env,
+      origin: "generated",
+      log: console.log,
+    });
+    assert.equal(
+      prebuild.imageRef,
+      "localhost:5000/nemoclaw-sandbox-local:portable-e2e-rootless-e2e",
+    );
+
+    run("podman", ["image", "rm", "--force", prebuild.imageRef]);
+    run("podman", ["pull", prebuild.imageRef]);
+    assert.match(
+      run("podman", ["image", "inspect", "--format", "{{.Id}}", prebuild.imageRef]),
+      /^sha256:/,
+    );
+
+    server = http.createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "text/plain" });
+      response.end("portable-profile-ok\n");
+    });
+    await new Promise<void>((resolve, reject) => {
+      server?.once("error", reject);
+      server?.listen(0, "0.0.0.0", resolve);
+    });
+    const address = server.address();
+    assert(address && typeof address === "object");
+
+    const gatewayEnv = buildDockerDriverGatewayEnv({
+      platform: "linux",
+      gatewayPort: address.port,
+      stateDir,
+      getDockerSupervisorImage: () => "supervisor:e2e-not-launched",
+      resolveSandboxBin: () => null,
+    });
+    assert.equal(gatewayEnv.OPENSHELL_DRIVERS, "podman");
+    assert.equal(gatewayEnv.OPENSHELL_BIND_ADDRESS, "0.0.0.0");
+    assert.equal(gatewayEnv.OPENSHELL_GRPC_ENDPOINT, `https://169.254.1.2:${address.port}`);
+    assert.match(
+      fs.readFileSync(gatewayEnv.OPENSHELL_GATEWAY_CONFIG, "utf-8"),
+      /host_gateway_ip = "169\.254\.1\.2"/,
+    );
+
+    const routeProof = [
+      `exec 3<>/dev/tcp/169.254.1.2/${address.port}`,
+      "printf 'GET / HTTP/1.1\\r\\nHost: portable-profile\\r\\nConnection: close\\r\\n\\r\\n' >&3",
+      "response=$(cat <&3)",
+      'grep -F portable-profile-ok <<<"$response"',
+    ].join("; ");
+    assert.equal(
+      run("podman", ["run", "--rm", prebuild.imageRef, "bash", "-lc", routeProof]),
+      "portable-profile-ok",
+    );
+
+    console.log("Portable profile rootless environment E2E passed.");
+  } finally {
+    server?.close();
+    spawnSync("podman", ["rm", "--force", "nemoclaw-portable-registry"], {
+      env: process.env,
+      stdio: "ignore",
+    });
+    const pidFile = path.join(runtimeDir, "nemoclaw-podman-service.pid");
+    if (fs.existsSync(pidFile)) {
+      const pid = Number(fs.readFileSync(pidFile, "utf-8").trim());
+      if (Number.isInteger(pid)) process.kill(pid, "SIGTERM");
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+await main();

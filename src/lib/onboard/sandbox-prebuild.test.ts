@@ -369,7 +369,17 @@ describe("sandbox BuildKit prebuild", () => {
   it("publishes portable-profile builds to the managed loopback registry", async () => {
     const { buildCtx, createArgs } = createBuildContext();
     const buildImage = vi.fn(async () => 0);
-    const publishImage = vi.fn(async () => 0);
+    let credentialConfig = "";
+    const publishImage = vi.fn(async (_args, options) => {
+      credentialConfig = String(options.env.DOCKER_CONFIG);
+      expect(credentialConfig).toContain("nemoclaw-portable-docker-config-");
+      expect(fs.statSync(credentialConfig).mode & 0o777).toBe(0o700);
+      expect(
+        JSON.parse(fs.readFileSync(path.join(credentialConfig, "config.json"), "utf-8")),
+      ).toEqual({ auths: {} });
+      expect(fs.statSync(path.join(credentialConfig, "config.json")).mode & 0o777).toBe(0o600);
+      return 0;
+    });
     const result = await prebuildSandboxImageIfEligible({
       buildCtx,
       buildId: BUILD_ID,
@@ -389,6 +399,7 @@ describe("sandbox BuildKit prebuild", () => {
       expect.objectContaining({ stdio: "inherit" }),
     );
     expect(result.imageRef).toBe("localhost:5000/nemoclaw-sandbox-local:alpha-1234567890");
+    expect(fs.existsSync(credentialConfig)).toBe(false);
   });
 
   it("routes default Docker build stdout only while JSONL owns stdout (#6403)", async () => {

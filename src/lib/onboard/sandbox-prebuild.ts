@@ -62,6 +62,17 @@ interface TrustedStagedBuildContext {
   dockerfile: string;
 }
 
+function createCredentialFreeDockerConfig(): string {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-docker-config-"));
+  fs.chmodSync(directory, 0o700);
+  fs.writeFileSync(path.join(directory, "config.json"), '{"auths":{}}\n', {
+    encoding: "utf-8",
+    flag: "wx",
+    mode: 0o600,
+  });
+  return directory;
+}
+
 /**
  * Resolve the private staged context before handing it to the host Docker daemon.
  * The context stagers create direct children of the OS temp directory with this
@@ -244,14 +255,20 @@ export async function prebuildSandboxImageIfEligible(
     const publishImage = input.publishImage ?? buildImage;
     log("  Publishing sandbox image to the managed local registry...");
     let publishStatus: number | null;
+    const credentialFreeDockerConfig = createCredentialFreeDockerConfig();
     try {
       publishStatus = await publishImage(["push", imageRef], {
-        env: dockerBuildSubprocessEnv(),
+        env: {
+          ...dockerBuildSubprocessEnv(),
+          DOCKER_CONFIG: credentialFreeDockerConfig,
+        },
         stdio: "inherit",
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       throw new Error(`Managed local registry publish could not start: ${detail}`);
+    } finally {
+      fs.rmSync(credentialFreeDockerConfig, { recursive: true, force: true });
     }
     if (publishStatus !== 0) {
       const detail =
