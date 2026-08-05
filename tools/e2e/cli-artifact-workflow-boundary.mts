@@ -231,7 +231,7 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
   }
   requireFragments(errors, "CLI artifact package step", packageStep.run, [
     'git rev-parse --verify HEAD)" == "$CANDIDATE_SHA"',
-    'for required_file in dist/nemoclaw.js dist/build-identity.json; do',
+    "for required_file in dist/nemoclaw.js dist/build-identity.json; do",
     '[[ -f "$required_file" && ! -L "$required_file" && -s "$required_file" ]]',
     '[[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]]',
 
