@@ -206,9 +206,7 @@ describe("createSandboxReuseHelpers", () => {
     const getSandboxStateFromOutputs = vi.fn(() => "ready");
     const helpers = createSandboxReuseHelpers({
       runCaptureOpenshell,
-      runOpenshell: vi.fn(),
       getSandboxStateFromOutputs,
-      note: vi.fn(),
     });
 
     expect(helpers.getSandboxRecreateObservation("alpha")).toEqual({
@@ -231,9 +229,7 @@ describe("createSandboxReuseHelpers", () => {
     );
     const helpers = createSandboxReuseHelpers({
       runCaptureOpenshell,
-      runOpenshell: vi.fn(),
       getSandboxStateFromOutputs: vi.fn(() => "ready"),
-      note: vi.fn(),
       getGatewayName: () => "nemoclaw",
     });
 
@@ -254,9 +250,7 @@ describe("createSandboxReuseHelpers", () => {
   it("preserves an unknown reuse state but rejects it for recreate recovery", () => {
     const helpers = createSandboxReuseHelpers({
       runCaptureOpenshell: vi.fn(() => ""),
-      runOpenshell: vi.fn(),
       getSandboxStateFromOutputs: vi.fn(() => "unknown"),
-      note: vi.fn(),
     });
 
     expect(helpers.getSandboxReuseState("alpha")).toBe("unknown");
