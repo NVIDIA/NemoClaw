@@ -41,7 +41,7 @@ describe("runSandboxSnapshot restore: observability policy reconciliation", () =
       "alpha",
       customPolicy.name,
       customPolicy.content,
-      { custom: { sourcePath: customPolicy.sourcePath } },
+      { custom: { sourcePath: customPolicy.sourcePath }, nonFatal: true },
     );
     expect(consoleWarn.mock.calls.flat().join("\n")).toContain("private-api (apply failed)");
   });
