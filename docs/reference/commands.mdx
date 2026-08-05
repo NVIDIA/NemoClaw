@@ -1202,6 +1202,12 @@ $$nemoclaw my-assistant shields down --timeout 5m --reason "maintenance"
 | `shields up` | Lock the sandbox config and restore the saved restrictive policy |
 | `shields down` | Temporarily unlock the sandbox config. Supports `--timeout`, `--reason`, and `--policy` |
 
+If OpenShell rejects the permissive policy before it is applied, `shields down` returns an error and keeps the sandbox in the Shields up state.
+The command clears the provisional Shields down record and timer, and `shields status` remains `UP`.
+If that record cannot be cleared and NemoClaw writes the rejection marker, `shields status` derives `UP` from that marker.
+The auto-restore timer and transition remain the recovery authority.
+If the rejection marker also cannot be written, `shields status` reports the incomplete transition as an error.
+
 If `shields up` reports that the config remains unlocked or drifted, confirm that the sandbox is running and ready, then retry `$$nemoclaw <name> shields up`.
 If the retry still fails, rebuild a known-good baseline with `$$nemoclaw <name> rebuild --yes`.
 
