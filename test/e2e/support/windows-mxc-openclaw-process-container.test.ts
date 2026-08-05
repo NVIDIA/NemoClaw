@@ -24,6 +24,7 @@ import {
   sandboxListContainsExactName,
   sha256File,
   shouldRetrySandboxDelete,
+  withoutOpenShellGatewaySelection,
 } from "../live/windows-mxc-openclaw-process-container-helpers.ts";
 
 const roots: string[] = [];
@@ -136,7 +137,9 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
       }),
     ).toThrow(/does not match/u);
     expect(normalizeReportedVersion("OpenClaw 2026.7.1\n")).toBe("2026.7.1");
+    expect(normalizeReportedVersion("OpenClaw 2026.7.1 (2d2ddc4)\n")).toBe("2026.7.1");
     expect(normalizeReportedVersion("2026.7.10\n")).toBe("2026.7.10");
+    expect(normalizeReportedVersion("OpenClaw 2026.7.1 (local)\n")).toBeNull();
     expect(normalizeReportedVersion("OpenClaw version 2026.7.1 extra\n")).toBeNull();
   });
 
@@ -291,6 +294,15 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     });
 
     expect(allowed).toEqual({ Path: "C:\\Windows\\System32", SystemRoot: "C:\\Windows" });
+  });
+
+  it("does not override the gateway selected in the isolated CLI state (#8178)", () => {
+    expect(
+      withoutOpenShellGatewaySelection({
+        OPENSHELL_GATEWAY: "",
+        OPENSHELL_GATEWAY_CONFIG: "C:\\probe\\gateway.toml",
+      }),
+    ).toEqual({ OPENSHELL_GATEWAY_CONFIG: "C:\\probe\\gateway.toml" });
   });
 
   it("fails closed when a Windows process query fails without output (#8178)", () => {
