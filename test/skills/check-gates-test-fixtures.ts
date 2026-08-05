@@ -389,7 +389,7 @@ function runGate(fixture: ComplianceFixture) {
 
   const headRepository = fixture.headRepository ?? "NVIDIA/NemoClaw";
   const [headRepositoryOwner, headRepositoryName] = headRepository.split("/");
-  const defaultStatusChecks =
+  const defaultStatusChecks: NonNullable<ComplianceFixture["statusChecks"]> =
     fixture.checkNames === undefined
       ? successfulRequiredChecks().map((check) => {
           const conclusion = fixture.checkConclusions?.[check.name];

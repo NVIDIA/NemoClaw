@@ -25,7 +25,7 @@ function gateOutput(checkRuns: unknown[]) {
   const orderedCheckIds = checkRuns
     .map((check) => (check as { id: number }).id)
     .sort((left, right) => left - right);
-  const timingWindowStart = Date.parse("2026-01-01T00:01:30Z");
+  const timingWindowStart = Date.parse("2026-01-01T00:01:31Z");
   const slotDuration = 60_000 / orderedCheckIds.length;
   const checkRunsWithTiming = checkRuns.map((check) => {
     const record = check as Record<string, unknown> & { id: number };
