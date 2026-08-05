@@ -282,6 +282,14 @@ const OBSERVED_CHILD_PROGRESS_POLICIES = new Map<string, ObservedChildProgressPo
     { kind: "path", path: "options.progress" },
   ],
   ["test/e2e/live/ollama-auth-proxy.test.ts#spawnLogged", { kind: "path", path: "progress" }],
+  [
+    "test/e2e/live/windows-mxc-openclaw-process-container-helpers.ts#runCommand",
+    { kind: "path", path: "progress" },
+  ],
+  [
+    "test/e2e/live/windows-mxc-openclaw-process-container-helpers.ts#runWindowsMxcOpenClawProcessContainerQualification",
+    { kind: "path", path: "progress" },
+  ],
 ]);
 
 interface DirectChildProcessBindings {
