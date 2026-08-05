@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { auditOpenShellPolicyBoundaryDependencies } from "../../scripts/checks/verify-openshell-policy-boundary-dependencies.mts";
+import { createPackageFixture } from "./helpers/package-fixture";
 
 const repoRoot = path.join(import.meta.dirname, "..", "..");
 const require = createRequire(import.meta.url);
@@ -227,13 +228,17 @@ describe("OpenShell policy boundary package contract", () => {
     };
     expect(productionDependencies.dependencies?.ajv?.version).toMatch(/^8\./u);
 
+    const fixtureRoot = createPackageFixture({
+      prefix: "nemoclaw-policy-pack-",
+      entries: ["dist", "schemas"],
+    });
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-package-"));
     try {
       const packed = spawnSync(
         "npm",
         ["pack", "--ignore-scripts", "--silent", "--pack-destination", tempDir],
         {
-          cwd: repoRoot,
+          cwd: fixtureRoot,
           encoding: "utf8",
           env: { ...process.env, npm_config_cache: path.join(tempDir, "npm-cache") },
         },
@@ -319,6 +324,7 @@ process.stdout.write("validated");
       expect(probe.status, `${probe.stdout}${probe.stderr}`).toBe(0);
       expect(probe.stdout).toBe("validated");
     } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
