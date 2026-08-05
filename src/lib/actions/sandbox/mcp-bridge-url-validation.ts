@@ -59,6 +59,22 @@ function rejectUnsupportedOpenShellMcpHostAlias(hostname: string): void {
   );
 }
 
+function rejectUnsupportedOpenShellMcpIpv6Literal(hostname: string): void {
+  if (!(hostname.startsWith("[") && hostname.endsWith("]"))) return;
+  // invalidState: an IPv6 literal reaches an OpenShell parser that cannot
+  // represent and enforce its exact proxy target safely.
+  // sourceBoundary: the pinned OpenShell proxy parser owns literal support.
+  // whyNotSourceFix: v0.0.85 does not support this target form.
+  // regressionTest: URL normalization and resolved-target preflight both reject
+  // private and public IPv6 literals with this capability-specific result.
+  // removalCondition: remove only with reviewed parser support and parity proof;
+  // never infer the capability from semver alone.
+  throw new McpBridgeError(
+    "IPv6-literal MCP server URLs are not supported by the current OpenShell proxy target parser. Use a DNS hostname with public A/AAAA records.",
+    2,
+  );
+}
+
 function validateMcpServerUrlTarget(
   parsed: URL,
   trustedPrivateHosts: readonly string[] = [],
@@ -127,19 +143,7 @@ export function normalizeMcpServerUrl(
       2,
     );
   }
-  if (parsed.hostname.startsWith("[") && parsed.hostname.endsWith("]")) {
-    // invalidState: an IPv6 literal reaches an OpenShell parser that cannot
-    // represent and enforce its exact proxy target safely.
-    // sourceBoundary: the pinned OpenShell proxy parser owns literal support.
-    // whyNotSourceFix: v0.0.85 does not support this target form.
-    // regressionTest: host/Hermes parity rejects private and public IPv6 literals.
-    // removalCondition: remove only with reviewed parser support and parity proof;
-    // never infer the capability from semver alone.
-    throw new McpBridgeError(
-      "IPv6-literal MCP server URLs are not supported by the current OpenShell proxy target parser. Use a DNS hostname with public A/AAAA records.",
-      2,
-    );
-  }
+  rejectUnsupportedOpenShellMcpIpv6Literal(parsed.hostname);
   if (parsed.username || parsed.password) {
     throw new McpBridgeError(
       "MCP server URL must not embed credentials. Use --env KEY so OpenShell resolves host-only credentials.",
@@ -226,6 +230,7 @@ export async function preflightMcpServerUrlResolvedTarget(
   // a 403 plus zero upstream requests for all three adapters.
   // removalCondition: revisit only when the pinned OpenShell implementation or
   // its allowed_ips resolve-validate-connect contract changes.
+  rejectUnsupportedOpenShellMcpIpv6Literal(parsed.hostname);
   rejectUnsupportedOpenShellMcpHostAlias(parsed.hostname);
   const normalizedTrustedHosts = (options.trustedPrivateHosts ?? []).map((host) =>
     normalizeTrustedPrivateHost(host),

@@ -57,7 +57,7 @@ function issueTrustedPrivateEndpointCapability(
   addresses: readonly string[],
 ): TrustedPrivateEndpointCapability {
   const capability = Object.freeze({
-    addresses: Object.freeze([...new Set(addresses)]),
+    addresses: Object.freeze([...new Set(addresses.map(normalizeIpLiteral))].sort()),
   }) as unknown as TrustedPrivateEndpointCapability;
   TRUSTED_PRIVATE_ENDPOINT_CAPABILITIES.add(capability);
   return capability;
