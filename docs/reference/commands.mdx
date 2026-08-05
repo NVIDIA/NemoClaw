@@ -2204,7 +2204,8 @@ Host-side removal is the supported path because agent channel config is baked in
 ### `$$nemoclaw <name> channels stop <channel>`
 
 Pause one configured messaging channel without clearing its credentials.
-The command checks the full built-in channel catalog, then requires the channel to be configured for the sandbox.
+The command verifies that the sandbox's agent runtime supports the channel before reading configured or disabled channel state.
+It then requires the channel to be configured for the sandbox.
 The channel is marked disabled in the per-sandbox registry, and the sandbox is rebuilt so the onboard step skips registering the bridge with the gateway.
 The provider stays registered with the OpenShell gateway, so a later `channels start` brings the bridge back without re-entering tokens.
 
@@ -2221,7 +2222,8 @@ Use `channels stop` instead of `channels remove` when you want to pause a bridge
 ### `$$nemoclaw <name> channels start <channel>`
 
 Re-enable a channel previously paused with `channels stop`. The channel is removed from the disabled list, the sandbox is rebuilt, and the bridge registers with the gateway again using the stored credentials.
-The available channel names match `channels list` for the sandbox's agent runtime.
+The command verifies that the sandbox's agent runtime supports the channel before reading configured or disabled channel state.
+It then requires the channel to be configured for the sandbox.
 Before the rebuild, NemoClaw reapplies the matching built-in network policy preset so the restored bridge has egress to its upstream API.
 Before updating the disabled list or applying the policy, NemoClaw prints the exact effective egress scope when the preset would open or replace access, or reports that no new egress would be opened when the preset is already effective.
 If policy restoration fails, NemoClaw rolls the channel back to disabled and exits without rebuilding into a partially active state.
