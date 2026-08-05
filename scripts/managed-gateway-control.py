@@ -1139,11 +1139,26 @@ def _gateway_matches(
     return _is_openclaw_gateway(identity, spec.port)
 
 
+def _recovery_deadline_reached(recovery_deadline: float | None) -> bool:
+    return bool(
+        recovery_deadline is not None
+        and time.monotonic() >= recovery_deadline
+    )
+
+
 def _gateway_candidates(
-    reader: ProcReader, supervisor: ProcessIdentity, spec: AgentSpec
+    reader: ProcReader,
+    supervisor: ProcessIdentity,
+    spec: AgentSpec,
+    recovery_deadline: float | None = None,
 ) -> list[ProcessIdentity]:
+    if _recovery_deadline_reached(recovery_deadline):
+        raise ControlError("GATEWAY_HEALTH_TIMEOUT")
     matches: list[ProcessIdentity] = []
-    for pid in reader.pids():
+    pids = reader.pids()
+    for pid in pids:
+        if _recovery_deadline_reached(recovery_deadline):
+            raise ControlError("GATEWAY_HEALTH_TIMEOUT")
         if pid in (1, supervisor.pid):
             continue
         try:
@@ -1154,7 +1169,15 @@ def _gateway_candidates(
             matches.append(identity)
             if len(matches) > 1:
                 break
-    _recapture_exact_identity(reader, supervisor)
+    if _recovery_deadline_reached(recovery_deadline):
+        raise ControlError("GATEWAY_HEALTH_TIMEOUT")
+    _recapture_exact_identity(
+        reader,
+        supervisor,
+        deadline=recovery_deadline,
+    )
+    if _recovery_deadline_reached(recovery_deadline):
+        raise ControlError("GATEWAY_HEALTH_TIMEOUT")
     if len(matches) > 1:
         raise ControlError("SUPERVISOR_UNAVAILABLE")
     return matches
@@ -1237,13 +1260,27 @@ def _owns_listener(
     return False
 
 
-def _http_healthy(port: int, path: str) -> bool:
-    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+def _http_healthy(
+    port: int,
+    path: str,
+    recovery_deadline: float | None = None,
+) -> bool:
+    timeout_seconds = _remaining_recovery_time(recovery_deadline, 2.0)
+    if timeout_seconds <= 0:
+        return False
+    connection = http.client.HTTPConnection(
+        "127.0.0.1",
+        port,
+        timeout=timeout_seconds,
+    )
     try:
         connection.request("GET", path)
         response = connection.getresponse()
         response.read(4096)
-        return response.status in (200, 401)
+        return bool(
+            response.status in (200, 401)
+            and not _recovery_deadline_reached(recovery_deadline)
+        )
     except OSError:
         return False
     finally:
@@ -1255,9 +1292,12 @@ def _http_healthy_in_gateway_namespace(
     identity: ProcessIdentity,
     port: int,
     path: str,
+    recovery_deadline: float | None = None,
 ) -> bool:
     """Probe loopback from the gateway's network namespace, then restore ours."""
 
+    if _recovery_deadline_reached(recovery_deadline):
+        return False
     setns = getattr(os, "setns", None)
     if setns is None:
         raise ControlError("PRIVILEGED_CONTROL_UNAVAILABLE")
@@ -1266,6 +1306,7 @@ def _http_healthy_in_gateway_namespace(
     pid_fd = -1
     target_namespace = -1
     switched = False
+    healthy = False
     try:
         pid_fd = _open_pid(reader.fd, identity.pid)
         pinned = os.fstat(pid_fd)
@@ -1277,9 +1318,11 @@ def _http_healthy_in_gateway_namespace(
         target_namespace = os.open("ns/net", flags, dir_fd=pid_fd)
         if reader.capture(identity.pid).stable_key() != identity.stable_key():
             return False
+        if _recovery_deadline_reached(recovery_deadline):
+            return False
         setns(target_namespace, getattr(os, "CLONE_NEWNET", 0x40000000))
         switched = True
-        return _http_healthy(port, path)
+        healthy = _http_healthy(port, path, recovery_deadline)
     except OSError as exc:
         if exc.errno in (errno.ENOENT, errno.ENOTDIR, errno.ESRCH):
             return False
@@ -1295,32 +1338,66 @@ def _http_healthy_in_gateway_namespace(
         if pid_fd >= 0:
             os.close(pid_fd)
         os.close(current_namespace)
+    return bool(
+        healthy
+        and not _recovery_deadline_reached(recovery_deadline)
+    )
 
 
 def _gateway_healthy(
-    reader: ProcReader, identity: ProcessIdentity, spec: AgentSpec
+    reader: ProcReader,
+    identity: ProcessIdentity,
+    spec: AgentSpec,
+    recovery_deadline: float | None = None,
 ) -> bool:
     return bool(
-        _owns_listener(reader, identity, spec.port)
-        and _http_healthy_in_gateway_namespace(
-            reader, identity, spec.port, spec.health_path
-        )
+        not _recovery_deadline_reached(recovery_deadline)
         and _owns_listener(reader, identity, spec.port)
+        and not _recovery_deadline_reached(recovery_deadline)
+        and _http_healthy_in_gateway_namespace(
+            reader,
+            identity,
+            spec.port,
+            spec.health_path,
+            recovery_deadline,
+        )
+        and not _recovery_deadline_reached(recovery_deadline)
+        and _owns_listener(reader, identity, spec.port)
+        and not _recovery_deadline_reached(recovery_deadline)
     )
 
 
 def _gateway_auxiliaries_healthy(
-    reader: ProcReader, identity: ProcessIdentity, spec: AgentSpec
+    reader: ProcReader,
+    identity: ProcessIdentity,
+    spec: AgentSpec,
+    recovery_deadline: float | None = None,
 ) -> bool:
     """Prove the public API relay the host probes before completing control."""
 
     for port, path in spec.readiness_checks:
-        if not _http_healthy_in_gateway_namespace(reader, identity, port, path):
+        if _recovery_deadline_reached(recovery_deadline):
+            return False
+        if not _http_healthy_in_gateway_namespace(
+            reader,
+            identity,
+            port,
+            path,
+            recovery_deadline,
+        ):
             return False
     # The public probes can take several seconds. Re-prove the exact gateway
     # after them so a replacement that exited during auxiliary repair is never
     # reported as the completed child.
-    return _gateway_healthy(reader, identity, spec)
+    return bool(
+        not _recovery_deadline_reached(recovery_deadline)
+        and _gateway_healthy(
+            reader,
+            identity,
+            spec,
+            recovery_deadline,
+        )
+    )
 
 
 def _run_fixed_validator(script: str, arguments: list[str]) -> None:
@@ -1559,10 +1636,7 @@ def _terminate_gateway(
             if _pidfd_exited(pidfd, 0):
                 return
             raise
-        if (
-            recovery_deadline is not None
-            and time.monotonic() >= recovery_deadline
-        ):
+        if _recovery_deadline_reached(recovery_deadline):
             raise ControlError("GATEWAY_FAILED")
         if not _send_pidfd(pidfd, signal.SIGTERM):
             return
@@ -1574,10 +1648,9 @@ def _terminate_gateway(
             ),
         ):
             return
-        if (
-            recovery_deadline is not None
-            and time.monotonic() >= recovery_deadline
-        ):
+        if _recovery_deadline_reached(recovery_deadline):
+            if _pidfd_exited(pidfd, 0):
+                return
             raise ControlError("GATEWAY_FAILED")
         # The pidfd already pins the proven gateway across exit and PID reuse.
         # Re-reading /proc here races with the normal live-to-zombie transition
@@ -1603,11 +1676,19 @@ def _wait_for_healthy_gateway(
     old_identity: ProcessIdentity | None,
     timeout_seconds: float = RECOVERY_TIMEOUT_SECONDS,
     require_auxiliary_health: bool = False,
+    recovery_deadline: float | None = None,
 ) -> ProcessIdentity:
     deadline = time.monotonic() + timeout_seconds
+    if recovery_deadline is not None:
+        deadline = min(deadline, recovery_deadline)
     while time.monotonic() < deadline:
         try:
-            candidates = _gateway_candidates(reader, supervisor, spec)
+            candidates = _gateway_candidates(
+                reader,
+                supervisor,
+                spec,
+                deadline,
+            )
         except (FileNotFoundError, ProcessLookupError, PermissionError):
             raise ControlError("SUPERVISOR_UNAVAILABLE")
         for candidate in candidates:
@@ -1617,17 +1698,31 @@ def _wait_for_healthy_gateway(
             ) == (old_identity.pid, old_identity.start_time):
                 continue
             try:
-                if _gateway_healthy(reader, candidate, spec) and (
+                if _gateway_healthy(
+                    reader,
+                    candidate,
+                    spec,
+                    deadline,
+                ) and (
                     not require_auxiliary_health
-                    or _gateway_auxiliaries_healthy(reader, candidate, spec)
+                    or _gateway_auxiliaries_healthy(
+                        reader,
+                        candidate,
+                        spec,
+                        deadline,
+                    )
                 ):
-                    return candidate
+                    if time.monotonic() < deadline:
+                        return candidate
             except (FileNotFoundError, ProcessLookupError):
                 continue
             except ControlError as error:
                 if error.code != "SUPERVISOR_UNAVAILABLE":
                     raise
-        time.sleep(POLL_SECONDS)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(POLL_SECONDS, remaining))
     raise ControlError("GATEWAY_HEALTH_TIMEOUT")
 
 
@@ -1652,13 +1747,19 @@ def _wait_for_recovery_candidate(
                     recovery_deadline,
                     RECOVER_EXISTING_GRACE_SECONDS,
                 ),
+                recovery_deadline=recovery_deadline,
             )
             return healthy, None
         except ControlError as error:
             if error.code != "GATEWAY_HEALTH_TIMEOUT":
                 raise
 
-        candidates = _gateway_candidates(reader, supervisor, spec)
+        candidates = _gateway_candidates(
+            reader,
+            supervisor,
+            spec,
+            recovery_deadline,
+        )
         current = candidates[0] if candidates else None
         if current is None:
             return None, None
@@ -1691,7 +1792,12 @@ def _control(action: str, nonce: str) -> tuple[str, int, int]:
                 supervisor = _discover_supervisor(reader)
             with _control_stage("initial-gateway-proof"):
                 spec = _agent_spec(agent, reader, supervisor)
-                candidates = _gateway_candidates(reader, supervisor, spec)
+                candidates = _gateway_candidates(
+                    reader,
+                    supervisor,
+                    spec,
+                    recovery_deadline,
+                )
                 old_identity = candidates[0] if candidates else None
 
             with _control_stage("preflight"):
@@ -1744,6 +1850,7 @@ def _control(action: str, nonce: str) -> tuple[str, int, int]:
                                 RECOVERY_TIMEOUT_SECONDS,
                             ),
                             True,
+                            recovery_deadline=recovery_deadline,
                         )
                     return (
                         "already-running",
@@ -1789,6 +1896,7 @@ def _control(action: str, nonce: str) -> tuple[str, int, int]:
                         RECOVERY_TIMEOUT_SECONDS,
                     ),
                     True,
+                    recovery_deadline=recovery_deadline,
                 )
             return "ok", old_identity.pid if old_identity else 0, replacement.pid
     finally:

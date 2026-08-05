@@ -302,6 +302,32 @@ with tempfile.TemporaryDirectory() as root:
                 deadline_waits,
                 deadline_signals,
             ]
+
+        accounted_clock = [0.0]
+        accounted_waits = []
+        accounted_signals = []
+        control.time.monotonic = lambda: accounted_clock[0]
+        control._send_pidfd = lambda _pidfd, signum: (
+            accounted_signals.append(int(signum)) or True
+        )
+        def record_accounted_exit(_pidfd, timeout_seconds):
+            accounted_waits.append(timeout_seconds)
+            accounted_clock[0] = 3.0
+            return len(accounted_waits) > 1
+        control._pidfd_exited = record_accounted_exit
+        try:
+            control._terminate_gateway(object(), gateway_41, 3.0)
+            termination_accounted = [
+                "accounted",
+                accounted_waits,
+                accounted_signals,
+            ]
+        except control.ControlError as error:
+            termination_accounted = [
+                error.code,
+                accounted_waits,
+                accounted_signals,
+            ]
     finally:
         os.close(read_fd)
         os.close(write_fd)
@@ -316,6 +342,7 @@ with tempfile.TemporaryDirectory() as root:
         "constructor_cleanup": constructor_cleanup,
         "contended_restart": contended_restart,
         "termination_deadline": termination_deadline,
+        "termination_accounted": termination_accounted,
     }))
 `;
 
@@ -338,7 +365,8 @@ describe("managed gateway lifecycle locking", () => {
       restrictive_umask_modes: [0o444, 0o600],
       constructor_cleanup: [202, 101],
       contended_restart: [["ok", 43, 44], ["v1", "43", "555", "999", "777"], true],
-      termination_deadline: ["GATEWAY_FAILED", [3], [15]],
+      termination_deadline: ["GATEWAY_FAILED", [3, 0], [15]],
+      termination_accounted: ["accounted", [3, 0], [15]],
     });
   });
 });

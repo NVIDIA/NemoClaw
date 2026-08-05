@@ -130,7 +130,9 @@ with tempfile.TemporaryDirectory() as root:
     control._detect_agent = lambda: "openclaw"
     control._openclaw_preflight = lambda: None
     control._sandbox_uid = lambda: 1000
-    control._http_healthy_in_gateway_namespace = lambda _reader, _identity, port, path: True
+    control._http_healthy_in_gateway_namespace = (
+        lambda _reader, _identity, port, path, _recovery_deadline=None: True
+    )
     os.environ["NEMOCLAW_MANAGED_CONTROL_ALLOW_NONROOT_TEST"] = "1"
     os.environ["NEMOCLAW_MANAGED_CONTROL_SYSTEM_ROOT"] = system_root
     os.environ["NEMOCLAW_MANAGED_CONTROL_PROC_ROOT"] = proc_root
@@ -155,7 +157,7 @@ with tempfile.TemporaryDirectory() as root:
                 version, pid, start_time, controller, _controller_start = stream.read().split()
             observed["payload"] = [version, int(pid), start_time, int(controller)]
 
-    def fake_wait(_reader, _supervisor, _spec, old, _timeout=0, _aux=False):
+    def fake_wait(_reader, _supervisor, _spec, old, *_args, **_kwargs):
         return replace(old, pid=43, start_time="555", namespace_pid=43)
 
     control._terminate_gateway = fake_terminate

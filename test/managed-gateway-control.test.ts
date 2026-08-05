@@ -181,7 +181,7 @@ with tempfile.TemporaryDirectory() as root:
 
     control._sandbox_uid = lambda: 1000
     control._http_healthy_in_gateway_namespace = (
-        lambda _reader, _identity, port, path: (port, path) in {
+        lambda _reader, _identity, port, path, *_args: (port, path) in {
             (18642, "/health"),
             (8642, "/health"),
         }
@@ -756,6 +756,7 @@ with tempfile.TemporaryDirectory() as root:
             old_identity,
             timeout_seconds=control.RECOVERY_TIMEOUT_SECONDS,
             require_auxiliary_health=False,
+            **_kwargs,
         ):
             timeout_refresh_waits.append([
                 old_identity.pid if old_identity else 0,
@@ -850,7 +851,13 @@ with tempfile.TemporaryDirectory() as root:
 
         real_http_health = control._http_healthy_in_gateway_namespace
         public_health_attempts = []
-        def delayed_public_health(_reader, _identity, port, path):
+        def delayed_public_health(
+            _reader,
+            _identity,
+            port,
+            path,
+            _recovery_deadline=None,
+        ):
             if (port, path) == (8642, "/health"):
                 public_health_attempts.append("attempt")
                 return len(public_health_attempts) >= 2
@@ -872,9 +879,61 @@ with tempfile.TemporaryDirectory() as root:
         finally:
             control._http_healthy_in_gateway_namespace = real_http_health
 
+        deadline_clock = [0.0]
+        deadline_health_calls = []
+        real_monotonic = control.time.monotonic
+        real_owns_listener = control._owns_listener
+        real_http_health = control._http_healthy_in_gateway_namespace
+        control.time.monotonic = lambda: deadline_clock[0]
+        control._owns_listener = lambda *_args: True
+        def health_finishes_after_deadline(
+            _reader,
+            _identity,
+            port,
+            path,
+            recovery_deadline=None,
+        ):
+            deadline_health_calls.append([port, path, recovery_deadline])
+            if (port, path) == (8642, "/health"):
+                deadline_clock[0] = 1.1
+            return True
+        control._http_healthy_in_gateway_namespace = health_finishes_after_deadline
+        try:
+            with control.ProcReader(proc_root) as deadline_reader:
+                try:
+                    control._wait_for_healthy_gateway(
+                        deadline_reader,
+                        supervisor,
+                        control.AgentSpec(
+                            "hermes",
+                            18642,
+                            readiness_checks=((8642, "/health"),),
+                        ),
+                        None,
+                        1.0,
+                        True,
+                        1.0,
+                    )
+                    deadline_health = "accepted"
+                except control.ControlError as error:
+                    deadline_health = [
+                        error.code,
+                        deadline_clock[0],
+                        deadline_health_calls,
+                    ]
+        finally:
+            control.time.monotonic = real_monotonic
+            control._owns_listener = real_owns_listener
+            control._http_healthy_in_gateway_namespace = real_http_health
+
         auxiliary_attempts = []
         real_auxiliary_health = control._gateway_auxiliaries_healthy
-        def replace_during_auxiliary_check(_reader, identity, _spec):
+        def replace_during_auxiliary_check(
+            _reader,
+            identity,
+            _spec,
+            _recovery_deadline=None,
+        ):
             auxiliary_attempts.append(identity.pid)
             if identity.pid == 43:
                 remove_process(proc_root, 43)
@@ -1181,6 +1240,7 @@ with tempfile.TemporaryDirectory() as root:
         "inflight_recovery": [inflight_recovery, len(inflight_health_attempts)],
         "transient_retry": [retried_pid, len(health_attempts)],
         "public_readiness_retry": [readiness_pid, len(public_health_attempts)],
+        "deadline_health": deadline_health,
         "auxiliary_replacement": [auxiliary_replacement, auxiliary_attempts],
         "source_seams": [source_proc, source_system],
         "disabled_source_seams": [disabled_source_proc, disabled_source_system],
@@ -1322,6 +1382,14 @@ describe("managed gateway root control", () => {
       inflight_recovery: [["already-running", 43, 43], 4],
       transient_retry: [43, 2],
       public_readiness_retry: [43, 2],
+      deadline_health: [
+        "GATEWAY_HEALTH_TIMEOUT",
+        1.1,
+        [
+          [18642, "/health", 1],
+          [8642, "/health", 1],
+        ],
+      ],
       auxiliary_replacement: [44, [43, 44]],
       source_seams: ["/attacker/proc", "/attacker/root"],
       disabled_source_seams: ["/proc", "/"],
