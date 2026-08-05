@@ -288,9 +288,11 @@ jobs:
             exit 1
           fi
           if ! jq -e '
-            (keys | sort) == ["environment", "gpu", "model", "platform", "probes", "profile", "required", "runner"]
+            (keys | sort) == ["environment", "execution", "gpu", "model", "platform", "probes", "profile", "recipeRef", "required", "runner"]
             and .required == true
+            and .execution == "enabled"
             and .profile == "dgx-spark-gb10-single"
+            and .recipeRef == "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1"
             and .platform == "linux/arm64"
             and (.runner | type) == "string" and (.runner | length) > 0
             and (.environment | type) == "string" and (.environment | length) > 0
