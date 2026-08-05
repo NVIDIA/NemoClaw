@@ -162,7 +162,7 @@ runs:
           { echo "::error::consumer nemoclaw directory must be a non-symlink directory"; exit 1; }
 
         [[ ! -e "$GITHUB_WORKSPACE/nemoclaw/dist" && ! -L "$GITHUB_WORKSPACE/nemoclaw/dist" ]] ||
-          { echo "::error::consumer unexpectedly built shared boundaries before artifact restore"; exit 1; }
+          { echo "::error::consumer unexpectedly built nemoclaw/dist before artifact restore"; exit 1; }
         restore_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-cli-restore.XXXXXX")"
         trap 'rm -rf -- "$restore_dir"' EXIT
         tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"

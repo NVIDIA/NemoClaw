@@ -504,7 +504,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     );
   });
 
-  it("rejects a payload missing a compiled shared boundary before activation (#7915)", () => {
+  it("rejects a payload missing a compiled shared module before activation (#7915)", () => {
     expectRestoreFailure(
       { archive: "missing-shared" },
       "restored CLI artifact shared module is missing or is not a nonempty regular file: sandbox-name.cjs",
@@ -553,12 +553,12 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     }
   });
 
-  it("does not overwrite preexisting shared boundaries (#7915)", () => {
+  it("does not overwrite a preexisting nemoclaw/dist directory (#7915)", () => {
     const fixture = runRestoreValidation({ preexistingDist: "plugin-directory" });
     try {
       expect(fixture.result.status, fixture.output).not.toBe(0);
       expect(fixture.output).toContain(
-        "consumer unexpectedly built shared boundaries before artifact restore",
+        "consumer unexpectedly built nemoclaw/dist before artifact restore",
       );
       expect(
         fs.readFileSync(
@@ -572,7 +572,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     }
   });
 
-  it("rejects a symlinked shared-boundary parent without escaping the workspace (#7915)", () => {
+  it("rejects a symlinked nemoclaw directory without writing outside the workspace (#7915)", () => {
     const fixture = runRestoreValidation({ preexistingDist: "symlinked-plugin-parent" });
     try {
       expect(fixture.result.status, fixture.output).not.toBe(0);
