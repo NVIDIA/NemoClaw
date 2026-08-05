@@ -107,6 +107,59 @@ describe("rebuildSandbox DCode flow: base-image trust lease", () => {
     expect(leaseActive).toBe(false);
   });
 
+  it("forces a trusted local build when refresh returns a mutable reference (#8120)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+    });
+    configureDcodeSession(harness);
+    harness.ensureAgentBaseImageSpy
+      .mockReturnValueOnce({
+        imageTag: "ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base:latest",
+        built: false,
+      })
+      .mockReturnValueOnce({
+        imageTag: trustedLocalOverride.ref,
+        built: true,
+        trustedLocalOverride,
+      });
+    let leaseActive = false;
+    harness.restoreTrustedAgentBaseImageOverrideSpy.mockImplementation(() => {
+      leaseActive = false;
+    });
+    harness.pinTrustedAgentBaseImageOverrideForOperationSpy.mockImplementation(() => {
+      leaseActive = true;
+      return harness.restoreTrustedAgentBaseImageOverrideSpy;
+    });
+    harness.prepareManagedDcodeRebuildImageSpy.mockImplementation(async () => {
+      expect(leaseActive).toBe(true);
+      expect(process.env[overrideEnvName]).toBe(trustedLocalOverride.ref);
+      return { ok: true, prepared: harness.preparedDcodeBuildContext };
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.ensureAgentBaseImageSpy).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ name: "langchain-deepagents-code" }),
+      { forceBaseImageRefresh: true },
+    );
+    expect(harness.ensureAgentBaseImageSpy).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ name: "langchain-deepagents-code" }),
+      { forceBaseImageRebuild: true },
+    );
+    expect(harness.pinTrustedAgentBaseImageOverrideForOperationSpy).toHaveBeenCalledWith(
+      overrideEnvName,
+      trustedLocalOverride,
+    );
+    expect(harness.pinTrustedAgentRemoteBaseImageOverrideForOperationSpy).not.toHaveBeenCalled();
+    expect(harness.restoreTrustedAgentBaseImageOverrideSpy).toHaveBeenCalledOnce();
+    expect(leaseActive).toBe(false);
+  });
+
   it("restores the published base-image trust lease when replacement preparation throws (#8120)", async () => {
     const restoreEnv = snapshotEnv([overrideEnvName]);
     process.env[overrideEnvName] = "caller-selected-base:current";
