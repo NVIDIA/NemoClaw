@@ -13,10 +13,18 @@ import type {
 } from "./managed-cluster-executor.js";
 import { fixtureManagedClusterSelection } from "./managed-cluster-fixture.test-support.js";
 import {
+  HOST_LOCAL_VLLM_LIFECYCLE_REF,
+  HOST_LOCAL_VLLM_MATERIALIZER_REF,
+} from "./adapter-registry.js";
+import {
   type ManagedClusterInstallerEffects,
   tryInstallManagedClusterManagedVllm,
 } from "./managed-cluster-installer.js";
 import type { ManagedClusterVllmLifecycleDeps } from "./managed-cluster-lifecycle.js";
+import type {
+  HostLocalInferenceServingRecipe,
+  ResolvedHostLocalInferenceSelection,
+} from "./types.js";
 
 const API_KEY = "a".repeat(64);
 const HEAD_ID = "b".repeat(64);
@@ -126,6 +134,51 @@ describe("managed-cluster vLLM installer selection", () => {
       ),
     ).resolves.toEqual({ kind: "not-selected" });
     expect(probeCapability).toHaveBeenCalledOnce();
+  });
+
+  it("defers an explicit host-local preset to the single-host installer", async () => {
+    const capability = readyCapability();
+    const managed = fixtureManagedClusterSelection();
+    const { topologyQualification: _topology, ...selection } = managed;
+    const { bindings: _bindings, ...spec } = managed.recipe.spec;
+    const hostLocalRecipe = {
+      ...managed.recipe,
+      spec: {
+        ...spec,
+        backend: "vllm",
+        execution: {
+          materializerRef: HOST_LOCAL_VLLM_MATERIALIZER_REF,
+          lifecycleRef: HOST_LOCAL_VLLM_LIFECYCLE_REF,
+        },
+      },
+    } satisfies HostLocalInferenceServingRecipe;
+    const hostLocalSelection: ResolvedHostLocalInferenceSelection = {
+      ...selection,
+      selection: "explicit",
+      recipe: hostLocalRecipe,
+    };
+    const installEffects = effects();
+    const revalidateCapability = vi.fn();
+    const claimCapability = vi.fn();
+
+    const result = await tryInstallManagedClusterManagedVllm(
+      { platform: "spark", env: {}, nonInteractive: true, promptFn: vi.fn() },
+      installEffects,
+      {
+        probeCapability: () => capability,
+        resolveSelection: () => hostLocalSelection,
+        revalidateCapability,
+        claimCapability,
+        assertNoRuntimeReceipts: vi.fn(),
+        log: vi.fn(),
+        error: vi.fn(),
+      },
+    );
+
+    expect(result).toEqual({ kind: "not-selected" });
+    expect(revalidateCapability).not.toHaveBeenCalled();
+    expect(claimCapability).not.toHaveBeenCalled();
+    expect(installEffects.pullImage).not.toHaveBeenCalled();
   });
 
   it("does not let explicit legacy intent bypass a related-runtime conflict", async () => {
