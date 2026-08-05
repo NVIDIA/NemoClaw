@@ -16,6 +16,7 @@ export type ShieldsFlowHarness = {
   auditSpy: MockInstance;
   cleanupTempDirSpy: MockInstance;
   errorSpy: MockInstance;
+  getShieldsPosture: typeof import("../../src/lib/shields/index.js").getShieldsPosture;
   getOpenClawPosture: () => "locked" | "mutable";
   logSpy: MockInstance;
   policySetBodies: string[];
@@ -35,6 +36,7 @@ export type ShieldsFlowHarnessOptions = {
   dockerExecFileSync?: (argv: unknown) => string;
   failOpenClawGuardActions?: Array<"lock" | "unlock">;
   failPolicyRejectionStateClear?: boolean;
+  failPolicyRejectionTransitionWrite?: boolean;
   failStateSave?: boolean;
   initialOpenClawPosture?: "locked" | "mutable";
   invokedAs?: "nemoclaw" | "nemohermes";
@@ -332,6 +334,23 @@ export function createShieldsFlowHarness(
     }) as typeof fs.writeFileSync);
   }
 
+  if (options.failPolicyRejectionTransitionWrite) {
+    const transitionPrefix = path.join(
+      tmpDir,
+      ".nemoclaw",
+      "state",
+      "shields-transition-openclaw-",
+    );
+    const originalRenameSync = fs.renameSync.bind(fs);
+    let transitionWrites = 0;
+    vi.spyOn(fs, "renameSync").mockImplementation((oldPath, newPath) => {
+      if (String(newPath).startsWith(transitionPrefix) && ++transitionWrites === 2) {
+        throw new Error("transition update denied");
+      }
+      return originalRenameSync(oldPath, newPath);
+    });
+  }
+
   const shields = requireDist(shieldsModulePath);
   logSpy.mockClear();
   errorSpy.mockClear();
@@ -342,6 +361,7 @@ export function createShieldsFlowHarness(
     auditSpy,
     cleanupTempDirSpy,
     errorSpy,
+    getShieldsPosture: shields.getShieldsPosture,
     getOpenClawPosture: () => openClawPosture,
     logSpy,
     policySetBodies,

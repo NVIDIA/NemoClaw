@@ -210,6 +210,73 @@ describe("shields down policy rejection", () => {
     expect(harness.logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
     expect(harness.logSpy.mock.calls.flat().join("\n")).not.toMatch(/DOWN|permissive|unlocked/);
   });
+
+  it("denies mutations when rejected policy state and transition updates both fail (#8198)", () => {
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const statePath = path.join(stateDir, "shields-openclaw.json");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        shieldsDown: false,
+        fileHashes: { "/sandbox/.openclaw/openclaw.json": "a".repeat(64) },
+        updatedAt: "2026-08-05T00:00:00.000Z",
+      }),
+    );
+    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+      failPolicyRejectionStateClear: true,
+      failPolicyRejectionTransitionWrite: true,
+      initialOpenClawPosture: "locked",
+      processStartIdentity: "test-process-start-identity",
+      fork: () => ({
+        pid: 4242,
+        disconnect: vi.fn(),
+        unref: vi.fn(),
+        send: vi.fn(() => true),
+        kill: vi.fn(() => true),
+      }),
+      run: (cmd) => ({
+        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
+      }),
+    });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        reason: "verify incomplete rejection",
+        throwOnError: true,
+      }),
+    ).toThrow(/Could not apply/);
+
+    const transitionName = fs
+      .readdirSync(stateDir)
+      .find((name) => name.startsWith("shields-transition-openclaw-"));
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, transitionName!), "utf-8")),
+    ).toMatchObject({ phase: "preparing" });
+    expect(harness.getShieldsPosture("openclaw", false)).toMatchObject({
+      locked: true,
+      mutable: false,
+    });
+    expect(harness.isShieldsDown("openclaw")).toBe(false);
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process exit ${String(code)}`);
+    }) as typeof process.exit);
+    expect(() =>
+      harness.shieldsStatus("openclaw", true, {
+        verifyLockState: () => ({ ok: true, issues: [] }),
+        resolveConfig: () => ({
+          agentName: "openclaw",
+          configPath: "/sandbox/.openclaw/openclaw.json",
+          configDir: "/sandbox/.openclaw",
+        }),
+      }),
+    ).toThrow("process exit 1");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "Shields: ERROR (Shields down transition incomplete)",
+    );
+  });
 });
 
 describe("shields config lock without a shipped config hash", () => {

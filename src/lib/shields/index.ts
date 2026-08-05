@@ -939,12 +939,14 @@ function getShieldsPostureWithoutHostLock(
   allowInlineRecovery = false,
 ): ShieldsPosture {
   const state = recoverExpiredAutoRestoreGate(sandboxName, allowInlineRecovery);
-  const rejectedTransition =
+  const timerBoundTransition =
     !state._isCorrupt && state.shieldsDown === true
       ? readTimerBoundShieldsDownTransition(sandboxName)
       : null;
-  const policyWasRejected = rejectedTransition?.phase === "policy_rejected";
-  const effectiveState: LoadedShieldsState = policyWasRejected
+  const transitionDeniesMutability =
+    timerBoundTransition?.phase === "policy_rejected" ||
+    timerBoundTransition?.phase === "preparing";
+  const effectiveState: LoadedShieldsState = transitionDeniesMutability
     ? {
         ...state,
         shieldsDown: false,
@@ -4208,7 +4210,7 @@ function shieldsStatusWithoutHostLock(
   }
 
   const transition = readTimerBoundShieldsDownTransition(sandboxName);
-  if (posture.mode === "temporarily_unlocked" && transition?.phase === "preparing") {
+  if (transition?.phase === "preparing") {
     console.error("  Shields: ERROR (Shields down transition incomplete)");
     console.error("  The scheduled auto-restore remains authoritative.");
     throw new DeferredShieldsExit("Shields down transition is incomplete", 1);
