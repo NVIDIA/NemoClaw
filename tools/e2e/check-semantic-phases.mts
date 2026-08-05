@@ -166,7 +166,7 @@ export function validateWindowsMxcControlBoundarySource(source: string): string[
       const separatorIndex = args.elements.findIndex(
         (element) => ts.isStringLiteralLike(element) && element.text === "--",
       );
-      createRequestsExec = separatorIndex >= 0 && separatorIndex < args.elements.length - 1;
+      createRequestsExec ||= separatorIndex >= 0 && separatorIndex < args.elements.length - 1;
       return "create";
     }
     if (
