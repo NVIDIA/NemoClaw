@@ -55,6 +55,111 @@ export function createPackageFixture(version = "0.1.34"): string {
   const packageDir = path.join(tempDir, "deepagents_code");
   writeFixtureFile(packageDir, "__init__.py", '"""Test package."""');
   writeFixtureFile(
+    tempDir,
+    "httpx/__init__.py",
+    `
+class HTTPError(Exception):
+    pass
+
+
+class RequestError(HTTPError):
+    pass
+
+
+class TransportError(RequestError):
+    pass
+
+
+class TimeoutException(TransportError):
+    pass
+
+
+class ConnectTimeout(TimeoutException):
+    pass
+
+
+class ReadTimeout(TimeoutException):
+    pass
+
+
+class WriteTimeout(TimeoutException):
+    pass
+
+
+class PoolTimeout(TimeoutException):
+    pass
+
+
+class NetworkError(TransportError):
+    pass
+
+
+class ConnectError(NetworkError):
+    pass
+
+
+class ReadError(NetworkError):
+    pass
+
+
+class WriteError(NetworkError):
+    pass
+
+
+class CloseError(NetworkError):
+    pass
+
+
+class ProxyError(TransportError):
+    pass
+`,
+  );
+  writeFixtureFile(tempDir, "langgraph_sdk/__init__.py", '"""Test package."""');
+  writeFixtureFile(
+    tempDir,
+    "langgraph_sdk/errors.py",
+    `
+class LangGraphError(Exception):
+    pass
+
+
+class APIError(LangGraphError):
+    pass
+
+
+class APIStatusError(APIError):
+    pass
+
+
+class APIConnectionError(APIError):
+    pass
+
+
+class APITimeoutError(APIConnectionError):
+    pass
+
+
+class AuthenticationError(APIStatusError):
+    pass
+
+
+class PermissionDeniedError(APIStatusError):
+    pass
+
+
+class NotFoundError(APIStatusError):
+    pass
+
+
+class RateLimitError(APIStatusError):
+    pass
+
+
+class InternalServerError(APIStatusError):
+    pass
+`,
+  );
+  writeFixtureFile(
     packageDir,
     "__main__.py",
     `
@@ -357,6 +462,22 @@ from __future__ import annotations
 
 
 class ModelConfigError(RuntimeError):
+    pass
+
+
+class NoCredentialsConfiguredError(ModelConfigError):
+    pass
+
+
+class UnknownProviderError(ModelConfigError):
+    pass
+
+
+class MissingCredentialsError(ModelConfigError):
+    pass
+
+
+class MissingProviderPackageError(ModelConfigError):
     pass
 
 

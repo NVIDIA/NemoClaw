@@ -112,16 +112,30 @@ function parseOutput(value: string): Record<string, string> {
   );
 }
 
+function configureQualification(
+  source: string,
+  options: { execution: "disabled" | "enabled"; publicationEnabled: boolean },
+): string {
+  const candidate = YAML.parse(source) as ImageManifest;
+  const publication = candidate.spec!.publication!;
+  const qualification = publication.qualification!;
+  const model = qualification.model!;
+
+  publication.enabled = options.publicationEnabled;
+  qualification.execution = options.execution;
+  qualification.runner =
+    options.execution === "enabled" ? "linux-arm64-gpu-dgx-spark-gb10-protected-1" : null;
+  qualification.environment =
+    options.execution === "enabled" ? "approve-dgx-spark-image-qualification" : null;
+  model.hostPath =
+    options.execution === "enabled"
+      ? "/var/lib/nemoclaw/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf"
+      : null;
+  return YAML.stringify(candidate);
+}
+
 function enablePublication(source: string): string {
-  return source
-    .replace("    enabled: false", "    enabled: true")
-    .replace("      execution: disabled", "      execution: enabled")
-    .replace("      runner: null", "      runner: linux-arm64-gpu-dgx-spark-gb10-protected-1")
-    .replace("      environment: null", "      environment: approve-dgx-spark-image-qualification")
-    .replace(
-      "        hostPath: null",
-      "        hostPath: /var/lib/nemoclaw/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",
-    );
+  return configureQualification(source, { execution: "enabled", publicationEnabled: true });
 }
 
 describe("declarative llama.cpp server image", () => {
@@ -178,24 +192,24 @@ describe("declarative llama.cpp server image", () => {
     ]);
   });
 
-  it("keeps publication manual and disabled while protected DGX Spark inputs are unset (#8250)", () => {
+  it("compiles the repository-declared publication and qualification state (#8260)", () => {
     const output = loadLlamaCppImageConfig(manifestSource);
+    const qualification = JSON.parse(output.publication_qualification) as NonNullable<
+      NonNullable<ImageManifest["spec"]>["publication"]
+    >["qualification"];
 
     expect(output).toMatchObject({
       publication_allowed_ref: "refs/heads/main",
       publication_candidate_tag_template: "llama-cpp-candidate-{runId}-{runAttempt}",
-      publication_enabled: "false",
+      publication_enabled: String(manifest.spec?.publication?.enabled),
       publication_platforms: '["linux/amd64","linux/arm64"]',
       publication_repository: "ghcr.io/nvidia/nemoclaw/llama-cpp-server",
       publication_trigger: "workflow_dispatch",
     });
-    expect(JSON.parse(output.publication_qualification)).toMatchObject({
-      environment: null,
-      execution: "disabled",
-      model: { hostPath: null },
+    expect(qualification).toEqual(manifest.spec?.publication?.qualification);
+    expect(qualification).toMatchObject({
       recipeRef: "llama-cpp.nemotron-3-nano-30b-a3b.spark-single.v1",
       required: true,
-      runner: null,
     });
     expect(JSON.parse(output.publication_qualification_plan)).toMatchObject({
       contractVersion: 1,
@@ -213,7 +227,7 @@ describe("declarative llama.cpp server image", () => {
       },
     });
     expect(output.publication_qualification_plan_sha256).toMatch(/^sha256:[0-9a-f]{64}$/u);
-    expect(output.qualification_execution).toBe("disabled");
+    expect(output.qualification_execution).toBe(qualification?.execution);
   });
 
   it("compiles the fail-closed workflow inputs from YAML (#8231)", () => {
@@ -340,7 +354,10 @@ describe("declarative llama.cpp server image", () => {
   });
 
   it("keeps publication disabled when complete DGX Spark infrastructure is configured (#8250)", () => {
-    const candidate = enablePublication(manifestSource).replace("enabled: true", "enabled: false");
+    const candidate = configureQualification(manifestSource, {
+      execution: "enabled",
+      publicationEnabled: false,
+    });
 
     expect(loadLlamaCppImageConfig(candidate).publication_enabled).toBe("false");
   });
@@ -475,11 +492,17 @@ describe("declarative llama.cpp server image", () => {
     ],
     [
       "unknown DGX Spark qualification execution",
-      manifestSource.replace("execution: disabled", "execution: automatic"),
+      configureQualification(manifestSource, {
+        execution: "disabled",
+        publicationEnabled: false,
+      }).replace("execution: disabled", "execution: automatic"),
     ],
     [
       "duplicate DGX Spark qualification keys",
-      manifestSource.replace(
+      configureQualification(manifestSource, {
+        execution: "disabled",
+        publicationEnabled: false,
+      }).replace(
         "      execution: disabled",
         "      execution: disabled\n      execution: disabled",
       ),
@@ -495,11 +518,17 @@ describe("declarative llama.cpp server image", () => {
     ["partial GPU offload", manifestSource.replace("fullOffload: true", "fullOffload: false")],
     [
       "partial disabled infrastructure",
-      manifestSource.replace("runner: null", "runner: linux-arm64-gpu-dgx-spark-gb10-protected-1"),
+      configureQualification(manifestSource, {
+        execution: "disabled",
+        publicationEnabled: false,
+      }).replace("runner: null", "runner: linux-arm64-gpu-dgx-spark-gb10-protected-1"),
     ],
     [
       "enablement without infrastructure",
-      manifestSource.replace("enabled: false", "enabled: true"),
+      configureQualification(manifestSource, {
+        execution: "disabled",
+        publicationEnabled: true,
+      }),
     ],
     [
       "enablement on a generic runner",
