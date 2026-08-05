@@ -128,6 +128,31 @@ describe("agent base image provisioning", () => {
     });
   });
 
+  it("resolves the native Switchyard prototype from current local base inputs", () => {
+    vi.stubEnv("NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE", "1");
+    try {
+      withMockedDocker(({ ensureAgentBaseImage, resolveSandboxBaseImageMock }) => {
+        ensureAgentBaseImage(makeAgent());
+
+        expect(resolveSandboxBaseImageMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            buildArgs: {
+              HERMES_NPM_INTEGRITY: "unpublished-prototype-only",
+              HERMES_NPM_UNPUBLISHED_PROTOTYPE: "1",
+              HERMES_SEMVER: "0.20.0",
+              HERMES_TARBALL_SHA256:
+                "370542c7219faba6300905c3b419e14e6508a31ac698a1a5174e0386990834be",
+              HERMES_VERSION: "v2026.8.3",
+            },
+            preferPinnedRemoteRef: false,
+          }),
+        );
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("fails before candidate resolution when the Hermes final Dockerfile is unreadable", () => {
     withMockedDocker(({ ensureAgentBaseImage, resolveSandboxBaseImageMock }) => {
       expect(() =>

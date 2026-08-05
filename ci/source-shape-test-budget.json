@@ -762,6 +762,11 @@
       "category": "security"
     },
     {
+      "file": "test/hermes-switchyard-native-prototype.test.ts",
+      "test": "pins the upstream archives, Relay wheel, and external plugin bundle (#7937)",
+      "category": "security"
+    },
+    {
       "file": "test/wechat-runtime-audit-workflow.test.ts",
       "test": "makes the trusted audit required in PR and main workflows",
       "category": "security"

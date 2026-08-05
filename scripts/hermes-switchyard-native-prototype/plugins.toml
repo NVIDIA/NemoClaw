@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+version = 1
+
+[[plugins.dynamic]]
+manifest = "/usr/local/lib/nemoclaw/switchyard-relay-plugin/relay-plugin.toml"
+
+[plugins.dynamic.config]
+version = 2
+priority = 0
+max_retries = 0
+
+[plugins.dynamic.config.algorithm]
+kind = "llm_classifier"
+classifier_target = "classifier"
+weak_target = "fast"
+strong_target = "quality"
+base_threshold = 0.5
+min_confidence = 0.5
+max_output_tokens = 512
+session_affinity = false
+message_hash_fallback = false
+
+[plugins.dynamic.config.default_targets]
+openai_chat = "quality"
+
+[plugins.dynamic.config.targets.classifier]
+model = "provider/classifier"
+protocol = "openai_chat"
+endpoint = "/v1/chat/completions"
+base_url = "http://127.0.0.1:4101"
+weight = 0
+
+[plugins.dynamic.config.targets.fast]
+model = "provider/fast"
+protocol = "openai_chat"
+endpoint = "/v1/chat/completions"
+base_url = "http://127.0.0.1:4101"
+weight = 1
+
+[plugins.dynamic.config.targets.quality]
+model = "provider/quality"
+protocol = "openai_chat"
+endpoint = "/v1/chat/completions"
+base_url = "http://127.0.0.1:4101"
+weight = 1

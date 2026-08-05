@@ -8,6 +8,7 @@
 
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:956c3d0c812ee6caa56f3b6e307819925d920604adcf73c4a9e6229788967634
 ARG NEMOCLAW_CORPORATE_CA_B64=
+ARG NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE=0
 
 FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS mcp-tool-discovery-runtime
 ARG NEMOCLAW_CORPORATE_CA_B64
@@ -125,6 +126,7 @@ COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
 COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
 COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
 COPY agents/hermes/patch-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py
+COPY agents/hermes/patch-session-list-preview-v2026.8.3.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview-v2026.8.3.py
 COPY agents/hermes/patch-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py
 COPY agents/hermes/patch-profile-policy-defaults.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py
 COPY agents/hermes/patch-langfuse-credentials.mts /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts
@@ -142,6 +144,7 @@ FROM scratch AS hermes-wrapper-payload
 COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py
 COPY agents/hermes/validate-cli-adapter.py /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py
 COPY agents/hermes/hermes-cli-adapter-v1.json /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json
+COPY agents/hermes/hermes-cli-adapter-v1-v2026.8.3.json /usr/local/share/nemoclaw/hermes-cli-adapter-v1-v2026.8.3.json
 
 FROM scratch AS hermes-scan-payload
 
@@ -149,6 +152,7 @@ COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.
 
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
+ARG NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE
 
 # Cross-stage root copies are accepted by Docker's legacy builder and create
 # one final-image layer while preserving metadata on existing parent paths.
@@ -310,7 +314,7 @@ RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 # profile hook, bashrc hook, or root-owned helper mode. Remove it once the
 # minimum supported Hermes sandbox base tag guarantees those artifacts and
 # test/sandbox-rlimit-hooks.test.ts covers that base.
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-startup-hold /usr/local/bin/nemoclaw-managed-bootstrap /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py /usr/local/lib/nemoclaw/patch-hermes-session-list-preview-v2026.8.3.py /usr/local/lib/nemoclaw/patch-hermes-discord-recovery-permissions.py /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/finalize-tirith-marker.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
     && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json \
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
     && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py \
@@ -357,7 +361,11 @@ RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256" /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py \
     | sha256sum -c - \
     || { echo "ERROR: patch-hermes-profile-policy-defaults.py hash mismatch (update NEMOCLAW_HERMES_PROFILE_POLICY_PATCHER_SHA256)" >&2; exit 1; }
-RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py
+RUN if [ "${NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE}" = "1" ]; then \
+        echo "Skipping the v0.19 named-profile defaults patch in NemoClaw #7937 V2"; \
+    else \
+        /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defaults.py; \
+    fi
 
 # Hermes v0.19.0 has several built-in environment override paths that can
 # re-enable an explicitly disabled platform when ambient credentials exist.
@@ -367,36 +375,50 @@ RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-profile-policy-defa
 ARG NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256=29769d0ae10646dd0a66b32dbefd5f85540544172d57cac96bb4f0941e260948
 ARG NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256=2084c652a07614761d85703787f8697fc29560fe447f23362aa0bda5179dffa7
 ARG NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256=5a1375664d1451b2fe9c3f2325f673149a90b9035588dfd4eb6618f785ecd6a2
-# hadolint ignore=DL4006
-RUN printf '%s  %s\n' \
+ARG NEMOCLAW_HERMES_V020_GATEWAY_CONFIG_SHA256=c5138c0dce57ee148399b01fc4ec56f6cf1d8d0229b16c338b01254b59816e7f
+ARG NEMOCLAW_HERMES_V020_NEUTRAL_PLATFORM_OUTPUT_SHA256=903b7082d0c8fbd3b4d2baa71ada4acb5548acf3af80ae77964c39127b7c6733
+# hadolint ignore=DL4006,SC2015
+RUN gateway_config_sha256="$NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256" \
+    && if [ "${NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE}" = "1" ]; then \
+        gateway_config_sha256="$NEMOCLAW_HERMES_V020_GATEWAY_CONFIG_SHA256"; \
+    fi \
+    && printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_NEUTRAL_PLATFORM_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
-        "$NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256" /opt/hermes/gateway/config.py \
+        "$gateway_config_sha256" /opt/hermes/gateway/config.py \
     | sha256sum -c - \
     || { echo "ERROR: Hermes neutral platform environment source identity mismatch" >&2; exit 1; }
 # hadolint ignore=DL4006
 RUN /usr/bin/python3 -I \
         /opt/nemoclaw-hermes-config/patch-neutral-platform-env-activation.py \
         /opt/hermes/gateway/config.py \
+    && neutral_output_sha256="$NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256" \
+    && if [ "${NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE}" = "1" ]; then \
+        neutral_output_sha256="$NEMOCLAW_HERMES_V020_NEUTRAL_PLATFORM_OUTPUT_SHA256"; \
+    fi \
     && printf '%s  %s\n' \
-        "$NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256" /opt/hermes/gateway/config.py \
+        "$neutral_output_sha256" /opt/hermes/gateway/config.py \
     | sha256sum -c -
 
 # Prove the source-level fallback on the real installed runtime through the
 # user-facing profile creation path. The new home must remain config-less while
 # all security, privacy, update, browser, and session defaults fail safe.
 RUN set -eu; \
-    profile_probe_root="$(mktemp -d)"; \
-    trap 'rm -rf "$profile_probe_root"' EXIT; \
-    profile_probe_default="$profile_probe_root/.hermes"; \
-    HOME="$profile_probe_root" HERMES_HOME="$profile_probe_default" \
-        /usr/local/bin/hermes profile create nemoclaw-policy-probe \
-        --no-alias --no-skills; \
-    profile_probe_home="$profile_probe_default/profiles/nemoclaw-policy-probe"; \
-    test -d "$profile_probe_home"; \
-    test ! -e "$profile_probe_home/config.yaml"; \
-    HOME="$profile_probe_root" HERMES_HOME="$profile_probe_home" \
-        /opt/hermes/.venv/bin/python -I \
-        /opt/nemoclaw-hermes-config/image-build-probes.py profile-policy
+    if [ "${NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE}" = "1" ]; then \
+        echo "Skipping the v0.19 named-profile probe in NemoClaw #7937 V2"; \
+    else \
+        profile_probe_root="$(mktemp -d)"; \
+        trap 'rm -rf "$profile_probe_root"' EXIT; \
+        profile_probe_default="$profile_probe_root/.hermes"; \
+        HOME="$profile_probe_root" HERMES_HOME="$profile_probe_default" \
+            /usr/local/bin/hermes profile create nemoclaw-policy-probe \
+            --no-alias --no-skills; \
+        profile_probe_home="$profile_probe_default/profiles/nemoclaw-policy-probe"; \
+        test -d "$profile_probe_home"; \
+        test ! -e "$profile_probe_home/config.yaml"; \
+        HOME="$profile_probe_root" HERMES_HOME="$profile_probe_home" \
+            /opt/hermes/.venv/bin/python -I \
+            /opt/nemoclaw-hermes-config/image-build-probes.py profile-policy; \
+    fi
 
 # Hermes v0.19.0 writes gateway lifecycle metadata directly below HERMES_HOME.
 # Shields-up deliberately makes that config root root-owned and non-writable,
@@ -445,11 +467,19 @@ RUN /usr/bin/python3 -I \
 ARG NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256=2f0d3eacc02ee72608cd96d521a457ef57425bdddc00291ed90ae553f7a36039
 ARG NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256=b37215a27a453191420622f78dc8962fa44feac2521a6f51d71b18831e7cacb7
 ARG NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256=1bcef6f736f1d52055837789f24becdba4a670f0a1abb5ac9973b1a1a7306f35
-# hadolint ignore=DL4006
-RUN printf '%s  %s\n' \
+ARG NEMOCLAW_HERMES_V020_CRON_EXECUTIONS_SOURCE_SHA256=2c468565879e6e7e7d7dd2b496064a917231eee313297b5c13cdbad7239f8d1f
+ARG NEMOCLAW_HERMES_V020_BACKUP_SOURCE_SHA256=b572bdf36d2724cbe703519e2b7c3ecee6c8e587b1082c092692fa38e0eba47a
+# hadolint ignore=DL4006,SC2015
+RUN cron_executions_sha256="$NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256" \
+    && backup_sha256="$NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256" \
+    && if [ "${NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE}" = "1" ]; then \
+        cron_executions_sha256="$NEMOCLAW_HERMES_V020_CRON_EXECUTIONS_SOURCE_SHA256"; \
+        backup_sha256="$NEMOCLAW_HERMES_V020_BACKUP_SOURCE_SHA256"; \
+    fi \
+    && printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_CRON_RUNTIME_PATCHER_SHA256" /opt/nemoclaw-hermes-config/patch-cron-execution-runtime.py \
-        "$NEMOCLAW_HERMES_CRON_EXECUTIONS_SOURCE_SHA256" /opt/hermes/cron/executions.py \
-        "$NEMOCLAW_HERMES_BACKUP_SOURCE_SHA256" /opt/hermes/hermes_cli/backup.py \
+        "$cron_executions_sha256" /opt/hermes/cron/executions.py \
+        "$backup_sha256" /opt/hermes/hermes_cli/backup.py \
     | sha256sum -c - \
     || { echo "ERROR: Hermes cron execution runtime source identity mismatch" >&2; exit 1; }
 RUN /usr/bin/python3 -I \
@@ -467,7 +497,11 @@ RUN set -eu; \
 # latest resumed/continued one-shot turn. Patch only the pinned query shape and
 # prove the SessionDB list contract at build time so a Hermes update cannot
 # silently drift.
-RUN /usr/bin/python3 -I /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py \
+RUN session_preview_patcher=/usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py \
+    && if [ "${NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE}" = "1" ]; then \
+        session_preview_patcher=/usr/local/lib/nemoclaw/patch-hermes-session-list-preview-v2026.8.3.py; \
+    fi \
+    && /usr/bin/python3 -I "$session_preview_patcher" \
     && grep -q 'ORDER BY m.timestamp DESC, m.id DESC LIMIT 1' /opt/hermes/hermes_state.py \
     && HERMES_HOME="$(mktemp -d)" /opt/hermes/.venv/bin/python -I \
         /opt/nemoclaw-hermes-config/image-build-probes.py session-preview
@@ -514,6 +548,7 @@ RUN node --experimental-strip-types \
 # Regenerate with `sha256sum agents/hermes/{hermes-wrapper.py,hermes-cli-adapter-v1.json,validate-cli-adapter.py,validate-env-secret-boundary.py,finalize-tirith-marker.py}`.
 ARG NEMOCLAW_HERMES_WRAPPER_SHA256=a841a3673cd2543dd53559e513741dd66929361b8ca94b9196b72badf7827d3c
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_SHA256=989edf54a8c09c6efb348600a8aa2f264c0b71408eb9d7bcd579b92cbeccf9b1
+ARG NEMOCLAW_HERMES_V020_CLI_ADAPTER_SHA256=d0646ab927162dcbcd1b29ddd75d99ee2b54d5b207eebb0fc07f4a2c1f917de1
 ARG NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256=db4046e79e513eab67b069a8eda20167b8b65529cf26842531d2ad673c670330
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=822c7e63d068c5d09f3291350771c1a42c9686f51bfa9bc9a1f41fbe15d163b1
 ARG NEMOCLAW_HERMES_TIRITH_FINALIZER_SHA256=a1e6b1c53ab297569abb87c29d15c294d729e46005bfd022136b4c447a791819
@@ -541,6 +576,13 @@ RUN printf '%s  %s\n' \
 # upgrade that drops it cannot ship a wrapper that ENOEXECs at runtime.
 COPY --from=hermes-wrapper-payload / /
 
+RUN if [ "${NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE}" = "1" ]; then \
+        install -o root -g root -m 0444 \
+            /usr/local/share/nemoclaw/hermes-cli-adapter-v1-v2026.8.3.json \
+            /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json; \
+    fi \
+    && rm -f /usr/local/share/nemoclaw/hermes-cli-adapter-v1-v2026.8.3.json
+
 RUN test -x /usr/bin/python3 \
     || { echo "ERROR: /usr/bin/python3 missing or not executable; hermes-wrapper shebang would ENOEXEC" >&2; exit 1; }
 # hadolint ignore=DL4006
@@ -550,16 +592,23 @@ RUN hermes_version_output="$(/usr/local/bin/hermes --version)" \
         echo "ERROR: could not parse Hermes semver from: $hermes_version_output" >&2; \
         exit 1; \
     fi \
-    && if [ "$hermes_semver" != "0.19.0" ] \
+    && if [ "${NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE}" = "1" ]; then \
+        test "$hermes_semver" = "0.20.0" \
+        || { echo "ERROR: NemoClaw #7937 V2 requires Hermes 0.20.0" >&2; exit 1; }; \
+    elif [ "$hermes_semver" != "0.19.0" ] \
         && { grep -q '"resumed_oneshot"' /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json \
           || grep -q 'EXPECTED_OCCURRENCES' /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py; }; then \
         echo "ERROR: installed Hermes ${hermes_semver} but Hermes v0.19.0 compatibility workarounds are still installed; re-review #5254 workaround removal before upgrading Hermes" >&2; \
         exit 1; \
     fi
-# hadolint ignore=DL4006
-RUN printf '%s  %s\n' \
+# hadolint ignore=DL4006,SC2015
+RUN cli_adapter_sha256="$NEMOCLAW_HERMES_CLI_ADAPTER_SHA256" \
+    && if [ "${NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE}" = "1" ]; then \
+        cli_adapter_sha256="$NEMOCLAW_HERMES_V020_CLI_ADAPTER_SHA256"; \
+    fi \
+    && printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_WRAPPER_SHA256" /usr/local/lib/nemoclaw/hermes-wrapper.py \
-        "$NEMOCLAW_HERMES_CLI_ADAPTER_SHA256" /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json \
+        "$cli_adapter_sha256" /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json \
         "$NEMOCLAW_HERMES_CLI_ADAPTER_VALIDATOR_SHA256" /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py \
     | sha256sum -c - \
     || { echo "ERROR: Hermes CLI adapter integrity mismatch" >&2; exit 1; }

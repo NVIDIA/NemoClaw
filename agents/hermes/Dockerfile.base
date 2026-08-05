@@ -57,6 +57,66 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN bash /scripts/security/build-perl-security-packages.sh \
     /out "${PERL_VERSION}" "${PERL_SHA256}" "${PERL_PACKAGE_REVISION}"
 
+FROM node:24-trixie-slim@sha256:05c08ce4291e9a58f59456a7985176defb12cdd42271f35ff81a3e167ea61d4c AS hermes-relay-native-overlay
+
+ARG HERMES_RELAY_NATIVE_REVISION=08c76bb6baaa77d37821d4777b97f1026c46d5d2
+ARG HERMES_RELAY_NATIVE_SHA256=5c0923c8ec1a072b5b749085872f473d3e9c015c3fa2a2a8619d93f8af9fa5c1
+
+# hadolint ignore=DL4006
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates=20250419 \
+        curl=8.14.1-2+deb13u4 \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /src \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 300 \
+        -o /tmp/hermes-relay-native.tar.gz \
+        "https://github.com/NousResearch/hermes-agent/archive/${HERMES_RELAY_NATIVE_REVISION}.tar.gz" \
+    && printf '%s  %s\n' \
+        "${HERMES_RELAY_NATIVE_SHA256}" /tmp/hermes-relay-native.tar.gz \
+        | sha256sum -c - \
+    && tar -xzf /tmp/hermes-relay-native.tar.gz -C /src --strip-components=1 \
+    && rm -f /tmp/hermes-relay-native.tar.gz \
+    && test -s /src/agent/relay_runtime.py \
+    && test -s /src/agent/relay_llm.py \
+    && test -s /src/agent/chat_completion_helpers.py \
+    && test -s /src/agent/transports/chat_completions.py
+
+FROM rust:1.96.1-trixie@sha256:1f0dbad1df66647807e6952d1db85d0b2bda7606cb2139d82517e4f009967376 AS switchyard-native-plugin-builder
+
+ARG SWITCHYARD_NATIVE_REVISION=c69a8b68f7c85e4b610c077690f90db6de9053ed
+ARG SWITCHYARD_NATIVE_SHA256=31866653db66435772c081350d6930898b15a8baea054bacdd9c43686287f2f2
+
+# hadolint ignore=DL4006
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates=20250419 \
+        curl=8.14.1-2+deb13u4 \
+        python3=3.13.5-1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /src \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 300 \
+        -o /tmp/switchyard-native.tar.gz \
+        "https://github.com/NVIDIA-NeMo/Switchyard/archive/${SWITCHYARD_NATIVE_REVISION}.tar.gz" \
+    && printf '%s  %s\n' \
+        "${SWITCHYARD_NATIVE_SHA256}" /tmp/switchyard-native.tar.gz \
+        | sha256sum -c - \
+    && tar -xzf /tmp/switchyard-native.tar.gz -C /src --strip-components=1 \
+    && rm -f /tmp/switchyard-native.tar.gz
+
+WORKDIR /src
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/src/target,sharing=locked \
+    cargo build --locked --release -p switchyard-nemo-relay-plugin \
+    && python3 crates/switchyard-nemo-relay-plugin/scripts/package_bundle.py \
+        --library target/release/libswitchyard_nemo_relay_plugin.so \
+        --output /out/switchyard-relay-plugin \
+    && test -s /out/switchyard-relay-plugin/libswitchyard_nemo_relay_plugin.so \
+    && test -s /out/switchyard-relay-plugin/relay-plugin.toml \
+    && test -s /out/switchyard-relay-plugin/config.schema.json
+
 FROM node:24-trixie-slim@sha256:05c08ce4291e9a58f59456a7985176defb12cdd42271f35ff81a3e167ea61d4c
 
 COPY --from=perl-builder /out /tmp/nemoclaw-native-security
@@ -74,6 +134,7 @@ ARG HERMES_VERSION=v2026.7.20
 ARG HERMES_SEMVER=0.19.0
 ARG HERMES_TARBALL_SHA256=285f3fc134ff466a90065e1517801a68993733b807158ee8f32aa01613786990
 ARG HERMES_NPM_INTEGRITY=sha512-+oVKG3lXbk2kEP+J6BXZjtmSBSaFfczIdOWQ9CUSTdTqq2uyHbk4p+kPyZ6MeGs56JU5qXzMNbqGKRVOQRGC1A==
+ARG HERMES_NPM_UNPUBLISHED_PROTOTYPE=0
 ARG HERMES_UV_EXTRAS="anthropic messaging web pty mcp"
 ARG NODE_VERSION=24.18.1
 ARG UV_VERSION=0.11.33
@@ -426,19 +487,32 @@ RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}" \
 # intentionally hostile security-test fixtures. Remove them in the extraction
 # RUN so their bytes never enter a published image layer.
 COPY agents/hermes/security-dependencies.patch /tmp/hermes-security-dependencies.patch
+COPY agents/hermes/security-dependencies-v2026.8.3.patch /tmp/hermes-security-dependencies-v2026.8.3.patch
 COPY agents/hermes/whatsapp-proxy.patch /tmp/hermes-whatsapp-proxy.patch
+COPY agents/hermes/whatsapp-proxy-v2026.8.3.patch /tmp/hermes-whatsapp-proxy-v2026.8.3.patch
 RUN mkdir -p /opt/hermes \
     && curl -fsSL "https://github.com/NousResearch/hermes-agent/archive/refs/tags/${HERMES_VERSION}.tar.gz" -o /tmp/hermes.tar.gz \
     && printf '%s  /tmp/hermes.tar.gz\n' "${HERMES_TARBALL_SHA256}" > /tmp/hermes.tar.gz.sha256 \
     && sha256sum -c /tmp/hermes.tar.gz.sha256 \
     && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 \
     && rm -rf /opt/hermes/tests \
-    && git -C /opt/hermes apply --check /tmp/hermes-security-dependencies.patch \
-    && git -C /opt/hermes apply /tmp/hermes-security-dependencies.patch \
-    && git -C /opt/hermes apply --check /tmp/hermes-whatsapp-proxy.patch \
-    && git -C /opt/hermes apply /tmp/hermes-whatsapp-proxy.patch \
+    && security_patch=/tmp/hermes-security-dependencies.patch \
+    && if [ "${HERMES_NPM_UNPUBLISHED_PROTOTYPE}" = "1" ]; then \
+        security_patch=/tmp/hermes-security-dependencies-v2026.8.3.patch; \
+    fi \
+    && whatsapp_patch=/tmp/hermes-whatsapp-proxy.patch \
+    && if [ "${HERMES_NPM_UNPUBLISHED_PROTOTYPE}" = "1" ]; then \
+        whatsapp_patch=/tmp/hermes-whatsapp-proxy-v2026.8.3.patch; \
+    fi \
+    && git -C /opt/hermes apply --check "${security_patch}" \
+    && git -C /opt/hermes apply "${security_patch}" \
+    && git -C /opt/hermes apply --check "${whatsapp_patch}" \
+    && git -C /opt/hermes apply "${whatsapp_patch}" \
     && rm /tmp/hermes.tar.gz /tmp/hermes.tar.gz.sha256 \
-        /tmp/hermes-security-dependencies.patch /tmp/hermes-whatsapp-proxy.patch
+        /tmp/hermes-security-dependencies.patch \
+        /tmp/hermes-security-dependencies-v2026.8.3.patch \
+        /tmp/hermes-whatsapp-proxy.patch \
+        /tmp/hermes-whatsapp-proxy-v2026.8.3.patch
 
 # Cross-check the pinned release against two independent sources before
 # installing anything from it: the extracted tarball must declare
@@ -453,15 +527,30 @@ RUN set -eu; \
         echo "Error: Hermes ${HERMES_VERSION} tarball declares version ${tarball_semver}, expected ${HERMES_SEMVER}" >&2; \
         exit 1; \
     fi; \
-    npm_integrity_cache=/tmp/hermes-npm-integrity-cache; \
-    registry_integrity=$(npm_config_cache="$npm_integrity_cache" npm view "hermes-agent@${HERMES_SEMVER}" dist.integrity); \
-    rm -rf "$npm_integrity_cache"; \
-    if [ "$registry_integrity" != "${HERMES_NPM_INTEGRITY}" ]; then \
-        echo "Error: hermes-agent ${HERMES_SEMVER} npm integrity mismatch" >&2; \
-        echo "Expected: ${HERMES_NPM_INTEGRITY}" >&2; \
-        echo "Actual:   ${registry_integrity}" >&2; \
-        exit 1; \
-    fi
+    case "${HERMES_NPM_UNPUBLISHED_PROTOTYPE}" in \
+        0) \
+            npm_integrity_cache=/tmp/hermes-npm-integrity-cache; \
+            registry_integrity=$(npm_config_cache="$npm_integrity_cache" npm view "hermes-agent@${HERMES_SEMVER}" dist.integrity); \
+            rm -rf "$npm_integrity_cache"; \
+            if [ "$registry_integrity" != "${HERMES_NPM_INTEGRITY}" ]; then \
+                echo "Error: hermes-agent ${HERMES_SEMVER} npm integrity mismatch" >&2; \
+                echo "Expected: ${HERMES_NPM_INTEGRITY}" >&2; \
+                echo "Actual:   ${registry_integrity}" >&2; \
+                exit 1; \
+            fi \
+            ;; \
+        1) \
+            test "${HERMES_VERSION}" = "v2026.8.3" \
+            && test "${HERMES_SEMVER}" = "0.20.0" \
+            && test "${HERMES_TARBALL_SHA256}" = "370542c7219faba6300905c3b419e14e6508a31ac698a1a5174e0386990834be" \
+            && test "${HERMES_NPM_INTEGRITY}" = "unpublished-prototype-only" \
+            || { echo "Error: unpublished Hermes npm exception is restricted to NemoClaw #7937 V2" >&2; exit 1; } \
+            ;; \
+        *) \
+            echo "Error: HERMES_NPM_UNPUBLISHED_PROTOTYPE must be 0 or 1" >&2; \
+            exit 1 \
+            ;; \
+    esac
 WORKDIR /opt/hermes
 # ui-tui and web are part of the checksum-pinned Hermes release tarball.
 # Releases up to v0.14 ship per-directory package-lock.json files; v0.16+
@@ -485,6 +574,9 @@ RUN set -eu; \
     for extra in ${HERMES_UV_EXTRAS}; do \
         set -- "$@" --extra "$extra"; \
     done; \
+    if [ "${HERMES_NPM_UNPUBLISHED_PROTOTYPE}" = "1" ]; then \
+        set -- "$@" --python /usr/bin/python3; \
+    fi; \
     uv sync --frozen --no-dev "$@" --no-cache \
     && uv pip check --python /opt/hermes/.venv/bin/python \
     && /opt/hermes/.venv/bin/python -I -c \
@@ -550,9 +642,46 @@ RUN printf '%s\n' \
         "import multipart; assert multipart.__version__ == '0.0.32', multipart.__version__" \
     && rm -rf /root/.cache/uv
 
+# Prototype-only overlay for NemoClaw #7937 V2. The released Hermes source,
+# lockfile, security patches, and dashboard build remain authoritative; only
+# the four files changed by Hermes #77915 replace their 0.19.0 counterparts.
+COPY --from=hermes-relay-native-overlay /src/agent/chat_completion_helpers.py /opt/hermes/agent/chat_completion_helpers.py
+COPY --from=hermes-relay-native-overlay /src/agent/relay_llm.py /opt/hermes/agent/relay_llm.py
+COPY --from=hermes-relay-native-overlay /src/agent/relay_runtime.py /opt/hermes/agent/relay_runtime.py
+COPY --from=hermes-relay-native-overlay /src/agent/transports/chat_completions.py /opt/hermes/agent/transports/chat_completions.py
+COPY --from=switchyard-native-plugin-builder /out/switchyard-relay-plugin/ /usr/local/lib/nemoclaw/switchyard-relay-plugin/
+COPY scripts/hermes-switchyard-native-prototype/plugins.toml /usr/local/lib/nemoclaw/switchyard-relay-plugin/plugins.toml
+COPY scripts/hermes-switchyard-native-prototype/fake-provider.py /usr/local/lib/nemoclaw/switchyard-native-fake-provider.py
+COPY scripts/hermes-switchyard-native-prototype/run-in-sandbox.sh /usr/local/lib/nemoclaw/switchyard-native-run-in-sandbox.sh
+
+# Relay 0.7.0rc6 is the exact published binding consumed by Hermes #77915.
+# Both Linux wheel hashes are accepted so the prototype can build on the two
+# NemoClaw base-image architectures without resolving a mutable artifact.
+RUN printf '%s\n' \
+        "nemo-relay==0.7.0rc6 \\" \
+        "    --hash=sha256:5e65c4a5272efc2c1ecb6e1e70f402c8a4e30dc3929c191ceb0aa44aaa9a5f12 \\" \
+        "    --hash=sha256:09c03befd27ea88f50177fe1d6eb2c12160f95b0012b1f43a53727e246b544f5" \
+        > /tmp/nemo-relay-native-req.txt \
+    && uv pip install --python /opt/hermes/.venv/bin/python \
+        --no-deps --no-cache --require-hashes -r /tmp/nemo-relay-native-req.txt \
+    && rm -f /tmp/nemo-relay-native-req.txt \
+    && /opt/hermes/.venv/bin/python -c \
+        'from importlib.metadata import version; import nemo_relay; assert version("nemo-relay") == "0.7.0rc6"; assert hasattr(nemo_relay.plugin, "load_dynamic_plugin_activation_specs")' \
+    && grep -Fq 'id = "nvidia.switchyard"' /usr/local/lib/nemoclaw/switchyard-relay-plugin/relay-plugin.toml \
+    && grep -Fq 'native_api = "1"' /usr/local/lib/nemoclaw/switchyard-relay-plugin/relay-plugin.toml \
+    && chown -R root:root /usr/local/lib/nemoclaw/switchyard-relay-plugin \
+        /usr/local/lib/nemoclaw/switchyard-native-fake-provider.py \
+        /usr/local/lib/nemoclaw/switchyard-native-run-in-sandbox.sh \
+    && chmod -R a=rX /usr/local/lib/nemoclaw/switchyard-relay-plugin \
+    && chmod 0555 /usr/local/lib/nemoclaw/switchyard-native-fake-provider.py \
+        /usr/local/lib/nemoclaw/switchyard-native-run-in-sandbox.sh \
+    && rm -rf /root/.cache/uv
+
 ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
+    HERMES_NEMO_RELAY_PLUGINS_TOML="/usr/local/lib/nemoclaw/switchyard-relay-plugin/plugins.toml" \
     HERMES_TUI_DIR="/opt/hermes/ui-tui" \
-    HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
+    HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist" \
+    TOKIO_WORKER_THREADS="8"
 RUN /usr/local/bin/hermes --version \
     && test -x /opt/hermes/node_modules/.bin/agent-browser \
     && /opt/hermes/node_modules/.bin/agent-browser --version \

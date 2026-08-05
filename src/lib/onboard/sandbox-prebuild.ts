@@ -207,8 +207,20 @@ export async function prebuildSandboxImageIfEligible(
 
   let status: number | null;
   try {
+    const prototypeBuildArgs =
+      process.env.NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE === "1"
+        ? ["--build-arg", "NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE=1"]
+        : [];
     status = await buildImage(
-      ["build", "-t", imageRef, "-f", trustedContext.dockerfile, trustedContext.buildCtx],
+      [
+        "build",
+        ...prototypeBuildArgs,
+        "-t",
+        imageRef,
+        "-f",
+        trustedContext.dockerfile,
+        trustedContext.buildCtx,
+      ],
       {
         env: { ...dockerBuildSubprocessEnv(), DOCKER_BUILDKIT: "1" },
         stdio: "inherit",

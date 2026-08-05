@@ -14,9 +14,8 @@ import {
   dockerRmi,
   dockerTag,
 } from "../adapters/docker";
-import { createCustomBuildContextFilter } from "../onboard/custom-build-context";
-
 import { encodeCorporateCaArg, resolveCorporateCa } from "../onboard/corporate-ca";
+import { createCustomBuildContextFilter } from "../onboard/custom-build-context";
 import { ROOT } from "../runner";
 import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
 import {
@@ -51,6 +50,19 @@ function corporateCaBuildArgs(
   return corporateCa
     ? { NEMOCLAW_CORPORATE_CA_B64: encodeCorporateCaArg(corporateCa.pem) }
     : undefined;
+}
+
+function hermesSwitchyardNativePrototypeBuildArgs(
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> | undefined {
+  if (env.NEMOCLAW_HERMES_SWITCHYARD_NATIVE_PROTOTYPE !== "1") return undefined;
+  return {
+    HERMES_NPM_INTEGRITY: "unpublished-prototype-only",
+    HERMES_NPM_UNPUBLISHED_PROTOTYPE: "1",
+    HERMES_SEMVER: "0.20.0",
+    HERMES_TARBALL_SHA256: "370542c7219faba6300905c3b419e14e6508a31ac698a1a5174e0386990834be",
+    HERMES_VERSION: "v2026.8.3",
+  };
 }
 
 const HERMES_MCP_RUNTIME_PROBE_OK = "nemoclaw-hermes-mcp-runtime-ok";
@@ -263,6 +275,8 @@ function createAgentBaseImageResolutionOptions(
   options: EnsureAgentBaseImageOptions,
 ): ResolveBaseImageOptions {
   const imageName = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base`;
+  const prototypeBuildArgs =
+    agent.name === "hermes" ? hermesSwitchyardNativePrototypeBuildArgs() : undefined;
   const validationOptions =
     agent.name === "hermes"
       ? {
@@ -274,7 +288,12 @@ function createAgentBaseImageResolutionOptions(
   return {
     imageName,
     dockerfilePath,
-    buildArgs: agent.name === "langchain-deepagents-code" ? corporateCaBuildArgs() : undefined,
+    buildArgs:
+      agent.name === "langchain-deepagents-code"
+        ? corporateCaBuildArgs()
+        : agent.name === "hermes"
+          ? prototypeBuildArgs
+          : undefined,
     localTag: buildLocalBaseTag(`nemoclaw-${agent.name}-sandbox-base-local`, ROOT),
     envVar: getAgentSandboxBaseImageEnvVar(agent.name),
     label: `${agent.displayName} sandbox base image`,
@@ -283,7 +302,8 @@ function createAgentBaseImageResolutionOptions(
     forceRefresh: options.forceBaseImageRefresh,
     rootDir: ROOT,
     pinnedRemoteRef,
-    preferPinnedRemoteRef: agent.name === "hermes" && pinnedRemoteRef !== undefined,
+    preferPinnedRemoteRef:
+      agent.name === "hermes" && pinnedRemoteRef !== undefined && prototypeBuildArgs === undefined,
     ...validationOptions,
   };
 }
