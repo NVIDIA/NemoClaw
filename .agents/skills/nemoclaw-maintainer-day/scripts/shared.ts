@@ -24,6 +24,7 @@ export const RISKY_PATTERNS: RegExp[] = [
   /^nemoclaw\/src\/blueprint\//,
   /^nemoclaw-blueprint\//,
   /^\.github\/workflows\//,
+  /^\.agents\/skills\/nemoclaw-maintainer-day\/scripts\/check-gates\.ts$/,
   /\.prek\./,
   /policy/i,
   /ssrf/i,

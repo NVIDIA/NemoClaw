@@ -9,6 +9,8 @@ import {
   MANAGED_STARTUP_PROFILE_SCHEMA_VERSION,
 } from "../managed-startup/profile";
 
+export { MANAGED_STARTUP_PROFILE_SCHEMA_VERSION };
+
 export const NATIVE_ARTIFACT_WORKLOAD_CONTRACT_VERSION = 1 as const;
 export const NATIVE_ARTIFACT_WORKLOAD_RECEIPT_SCHEMA_VERSION = 1 as const;
 export const NATIVE_ARTIFACT_WORKLOAD_PLATFORM = "windows/x64" as const;

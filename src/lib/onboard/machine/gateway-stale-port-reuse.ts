@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { GatewayReuseState } from "../state/gateway";
-import { destroyGatewayForReuse } from "./gateway-cleanup";
-import type { GatewayContainerState } from "./gateway-container-running";
-import type { CheckPortOpts, PortProbeResult } from "./preflight";
-import type { PreflightPortKind } from "./preflight-ports";
+import type { GatewayReuseState } from "../../state/gateway";
+import { destroyGatewayForReuse } from "../gateway-cleanup";
+import type { GatewayContainerState } from "../gateway-container-running";
+import type { CheckPortOpts, PortProbeResult } from "../preflight";
+import type { PreflightPortKind } from "../preflight-ports";
 
 export type GatewayPortReuseDecision = "stale" | "reuse" | "skip";
 

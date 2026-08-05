@@ -600,9 +600,9 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
           "set -eu",
           `marker=${shellQuote(envMarker)}`,
           `backup=${shellQuote(envBackup)}`,
-          "command -v gosu >/dev/null 2>&1",
-          'gosu sandbox cp /sandbox/.hermes/.env "$backup"',
-          'gosu sandbox sh -lc \'printf "\\nNEMOCLAW_E2E_RESTART_MARKER=%s\\n" "$1" >> /sandbox/.hermes/.env\' sh "$marker"',
+          "test -x /usr/bin/setpriv",
+          '/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- cp /sandbox/.hermes/.env "$backup"',
+          '/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -lc \'printf "\\nNEMOCLAW_E2E_RESTART_MARKER=%s\\n" "$1" >> /sandbox/.hermes/.env\' sh "$marker"',
         ].join("; "),
       ),
       {
@@ -641,7 +641,7 @@ test("hermes-e2e: install.sh onboards Hermes and proves health plus live inferen
         [
           "set -eu",
           `backup=${shellQuote(envBackup)}`,
-          'gosu sandbox sh -c \'cat "$1" > /sandbox/.hermes/.env && rm -f "$1"\' sh "$backup"',
+          '/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c \'cat "$1" > /sandbox/.hermes/.env && rm -f "$1"\' sh "$backup"',
           "sha256sum -c /etc/nemoclaw/hermes.config-hash --status",
           "echo ENV_RESTORED",
         ].join("; "),

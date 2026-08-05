@@ -55,9 +55,11 @@ Messaging channel presets are scoped to the sandbox's active agent; if an agent 
 | Discord messaging | `discord` | OpenClaw and Hermes |
 | GitHub and GitHub API | `github` | OpenClaw and Hermes |
 | Gmail IMAP and SMTP | `gmail` | OpenClaw and Hermes |
+| Google Chat messaging (experimental) | `googlechat` | OpenClaw |
 | Hugging Face Hub and Inference API | `huggingface` | OpenClaw and Hermes |
 | Jira and Atlassian Cloud | `jira` | OpenClaw and Hermes |
 | Local Ollama or vLLM through the host gateway | `local-inference` | OpenClaw and Hermes |
+| Microsoft Teams messaging (experimental) | `teams` | OpenClaw and Hermes |
 | OpenClaw model-pricing reference fetch | `openclaw-pricing` | OpenClaw |
 | npm and Yarn packages | `npm` | OpenClaw and Hermes |
 | Microsoft 365, Outlook, and Graph API | `outlook` | OpenClaw and Hermes |
@@ -138,7 +140,8 @@ If delivery fails, open the TUI and send a test message to the bot:
 openshell term
 ```
 
-The matching preset for each supported messaging channel is the channel name (`telegram`, `discord`, `slack`, `wechat`, or `whatsapp`).
+The matching preset uses the channel name: `telegram`, `discord`, `slack`, `wechat`, `whatsapp`, or `teams`.
+OpenClaw also uses the `googlechat` preset.
 
 ## Slack or Discord Messaging
 
@@ -421,5 +424,5 @@ Use [Apply Policy Presets](configure-policies/apply-policy-presets) to merge mai
 - [Approve or Deny Agent Network Requests](approve-network-requests) for the interactive OpenShell TUI flow.
 - [Customize the Sandbox Network Policy](customize-network-policy) to choose the correct policy workflow.
 - [Set Up Gmail With an App Password](set-up-gmail-with-an-app-password) for the full Gmail IMAP and SMTP workflow.
-- [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) for Telegram, Discord, Slack, WeChat, WhatsApp, and Microsoft Teams configuration.
+- [Choose Messaging Channels](../manage-sandboxes/messaging-channels/choose-messaging-channels) for Telegram, Discord, Slack, WeChat, WhatsApp, Microsoft Teams, and Google Chat configuration.
 - [Commands](../reference/commands) for the full `policy get`, `policy add`, `policy list`, `policy remove`, and `channels` command reference.

@@ -312,26 +312,31 @@ describe("host shields transition lock", () => {
     });
   });
 
-  it("returns no inspected owner when the canonical path changes identity before open", () => {
+  it("returns no inspected owner when the canonical path changes identity after open", () => {
     const locker = manager();
     const original = owner("alpha", 202, "proc:original", "original", TAKEOVER_TOKEN);
     const replacement = owner("alpha", 303, "proc:replacement", "replacement", TAKEOVER_TOKEN);
     const lockPath = writeOwner("alpha", original);
     const displacedPath = `${lockPath}.displaced`;
-    const originalOpenSync = fs.openSync;
+    const originalFstatSync = fs.fstatSync;
     let swapped = false;
-    vi.spyOn(fs, "openSync").mockImplementation(((file, flags, mode) => {
-      runWhen(String(file) === lockPath && !swapped, () => {
+    const fstatSpy = vi.spyOn(fs, "fstatSync").mockImplementation(((fd, options) => {
+      const stat = originalFstatSync(fd, options as { bigint: true });
+      runWhen(!swapped, () => {
         swapped = true;
         fs.renameSync(lockPath, displacedPath);
         fs.writeFileSync(lockPath, JSON.stringify(replacement), { mode: 0o600 });
       });
-      return originalOpenSync(file, flags, mode);
-    }) as typeof fs.openSync);
+      return stat;
+    }) as typeof fs.fstatSync);
 
-    expect(locker.inspectShieldsTransitionLockOwner("alpha", TAKEOVER_TOKEN)).toBeNull();
-    expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toEqual(replacement);
-    expect(JSON.parse(fs.readFileSync(displacedPath, "utf8"))).toEqual(original);
+    try {
+      expect(locker.inspectShieldsTransitionLockOwner("alpha", TAKEOVER_TOKEN)).toBeNull();
+      expect(JSON.parse(fs.readFileSync(lockPath, "utf8"))).toEqual(replacement);
+      expect(JSON.parse(fs.readFileSync(displacedPath, "utf8"))).toEqual(original);
+    } finally {
+      fstatSpy.mockRestore();
+    }
   });
 
   it("rejects takeover with the wrong token without moving the owner", () => {
