@@ -336,8 +336,9 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "qwen3_coder",
       "--reasoning-parser",
       "qwen3",
-      "--speculative-config",
-      `'{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'`,
+      // Keep MTP speculative decoding opt-in on DGX Spark. It increases the
+      // managed profile's cold-start memory pressure and long-context risk
+      // without being required for correct model or tool-call behavior (#7127).
       "--load-format",
       "fastsafetensors",
     ],
