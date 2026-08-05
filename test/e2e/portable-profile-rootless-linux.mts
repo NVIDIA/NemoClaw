@@ -8,10 +8,36 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
-import { buildDockerDriverGatewayEnv } from "../../src/lib/onboard/docker-driver-gateway-env";
-import { preparePortableExperimentalHost } from "../../src/lib/onboard/experimental/portable-host-preparation";
-import { prebuildSandboxImageIfEligible } from "../../src/lib/onboard/sandbox-prebuild";
-import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../../src/lib/sandbox/build-context";
+import * as importedGatewayEnv from "../../src/lib/onboard/docker-driver-gateway-env.ts";
+import * as importedPortableHostPreparation from "../../src/lib/onboard/experimental/portable-host-preparation.ts";
+import * as importedSandboxPrebuild from "../../src/lib/onboard/sandbox-prebuild.ts";
+import * as importedBuildContext from "../../src/lib/sandbox/build-context.ts";
+
+const gatewayEnvModule = (
+  "default" in importedGatewayEnv && importedGatewayEnv.default
+    ? importedGatewayEnv.default
+    : importedGatewayEnv
+) as typeof import("../../src/lib/onboard/docker-driver-gateway-env.ts");
+const portableHostPreparationModule = (
+  "default" in importedPortableHostPreparation && importedPortableHostPreparation.default
+    ? importedPortableHostPreparation.default
+    : importedPortableHostPreparation
+) as typeof import("../../src/lib/onboard/experimental/portable-host-preparation.ts");
+const sandboxPrebuildModule = (
+  "default" in importedSandboxPrebuild && importedSandboxPrebuild.default
+    ? importedSandboxPrebuild.default
+    : importedSandboxPrebuild
+) as typeof import("../../src/lib/onboard/sandbox-prebuild.ts");
+const buildContextModule = (
+  "default" in importedBuildContext && importedBuildContext.default
+    ? importedBuildContext.default
+    : importedBuildContext
+) as typeof import("../../src/lib/sandbox/build-context.ts");
+
+const { buildDockerDriverGatewayEnv } = gatewayEnvModule;
+const { preparePortableExperimentalHost } = portableHostPreparationModule;
+const { prebuildSandboxImageIfEligible } = sandboxPrebuildModule;
+const { SANDBOX_BUILD_CONTEXT_PREFIX } = buildContextModule;
 
 const BASE_IMAGE =
   "docker.io/library/ubuntu@sha256:7f622ca8766bccb22f04242ecb6f19f770b2f08827dc4b8c707de5e78a6da7ab";
