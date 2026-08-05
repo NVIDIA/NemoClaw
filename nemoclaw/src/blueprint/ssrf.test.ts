@@ -443,4 +443,36 @@ describe("validateEndpointUrl – URL parsing edge cases", () => {
     }
     expect(mockLookup).not.toHaveBeenCalled();
   });
+
+  it("does not expose credentials from malformed endpoint URLs", async () => {
+    mockLookup.mockClear();
+    const cases = [
+      {
+        url: "https://alice:s3cret-token@",
+        secrets: ["alice", "s3cret-token", "alice:s3cret-token"],
+      },
+      {
+        url: "https://alice:s3cret-token@/",
+        secrets: ["alice", "s3cret-token", "alice:s3cret-token"],
+      },
+      { url: "https://:only-s3cret@", secrets: ["only-s3cret"] },
+      { url: "https://only-alice@", secrets: ["only-alice"] },
+    ] as const;
+
+    for (const { url, secrets } of cases) {
+      let thrown: unknown;
+      try {
+        await validateEndpointUrl(url);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      const message = thrown instanceof Error ? thrown.message : String(thrown);
+      expect(message).toMatch(/No hostname found in URL/);
+      for (const secret of secrets) {
+        expect(message).not.toContain(secret);
+      }
+    }
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
 });

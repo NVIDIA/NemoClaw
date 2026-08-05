@@ -46,7 +46,7 @@ export async function validateEndpointUrl(url: string): Promise<ValidatedEndpoin
   try {
     parsed = new URL(url);
   } catch {
-    throw new Error(`No hostname found in URL: ${url}`);
+    throw new Error("No hostname found in URL.");
   }
 
   if (!ALLOWED_SCHEMES.has(parsed.protocol)) {
