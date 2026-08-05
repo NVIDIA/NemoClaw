@@ -166,14 +166,16 @@ runs:
         restore_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-cli-restore.XXXXXX")"
         trap 'rm -rf -- "$restore_dir"' EXIT
         tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"
-        test -s "$restore_dir/dist/nemoclaw.js" ||
-          { echo "::error::restored CLI artifact is missing dist/nemoclaw.js"; exit 1; }
+        cli_entrypoint="$restore_dir/dist/nemoclaw.js"
+        [[ -f "$cli_entrypoint" && ! -L "$cli_entrypoint" && -s "$cli_entrypoint" ]] ||
+          { echo "::error::restored CLI artifact entry point is missing or is not a nonempty regular file"; exit 1; }
         for boundary in \
           openshell-policy-boundary.cjs \
           sandbox-name.cjs \
           snapshot-sanitizer-boundary.cjs; do
-          test -s "$restore_dir/nemoclaw/dist/shared/$boundary" ||
-            { echo "::error::restored CLI artifact is missing shared boundary $boundary"; exit 1; }
+          boundary_path="$restore_dir/nemoclaw/dist/shared/$boundary"
+          [[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]] ||
+            { echo "::error::restored CLI artifact shared module is missing or is not a nonempty regular file: $boundary"; exit 1; }
         done
         jq -e --arg candidateSha "$CANDIDATE_SHA" '
           type == "object" and

@@ -33,7 +33,7 @@ const DEFAULT_RESTORE_ACTION_PATH = join(
   "action.yaml",
 );
 const RESTORE_ACTION_CONTENT_SHA256 =
-  "9c463207f5d69db9f8e5b380c9ede2541d00bd6f5484de955f4593bca0069f14";
+  "0d03759f9b069c20a2d9fd5c6136a2845c1f5d6c0c5539578f4dfd168163a4eb";
 const CLI_ARTIFACT_DOWNLOAD_STEP = "Download exact-commit CLI artifact";
 const CLI_ARTIFACT_VERIFY_STEP = "Verify and restore exact-commit CLI artifact";
 const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
@@ -170,7 +170,8 @@ export function validateCliArtifactRestoreAction(
 
     'restore_dir="$(mktemp -d',
     'tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"',
-    'test -s "$restore_dir/nemoclaw/dist/shared/$boundary"',
+    '[[ -f "$cli_entrypoint" && ! -L "$cli_entrypoint" && -s "$cli_entrypoint" ]]',
+    '[[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]]',
 
     ".sourceRevision == $candidateSha",
     'mv "$restore_dir/nemoclaw/dist" "$GITHUB_WORKSPACE/nemoclaw/dist"',
@@ -230,11 +231,9 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
   }
   requireFragments(errors, "CLI artifact package step", packageStep.run, [
     'git rev-parse --verify HEAD)" == "$CANDIDATE_SHA"',
-    "test -s dist/nemoclaw.js",
-    "test -s dist/build-identity.json",
-    "test -s nemoclaw/dist/shared/openshell-policy-boundary.cjs",
-    "test -s nemoclaw/dist/shared/sandbox-name.cjs",
-    "test -s nemoclaw/dist/shared/snapshot-sanitizer-boundary.cjs",
+    'for required_file in dist/nemoclaw.js dist/build-identity.json; do',
+    '[[ -f "$required_file" && ! -L "$required_file" && -s "$required_file" ]]',
+    '[[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]]',
 
     ".sourceRevision == $candidateSha",
     "candidate CLI build identity does not match the candidate commit SHA",

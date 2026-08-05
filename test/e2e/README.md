@@ -67,6 +67,7 @@ Before the action restores root `dist/` and `nemoclaw/dist/shared/` into the wor
 - The archive contains no path traversal, links, special files, or files outside root `dist/` and `nemoclaw/dist/shared/`.
 - Neither root `dist/` nor `nemoclaw/dist/` already exists, including as a dangling symbolic link.
 - The candidate checkout's `nemoclaw/` path is a directory and is not a symbolic link.
+- The CLI entry point and required shared modules are nonempty regular files.
 - The staged `dist/build-identity.json` names the candidate commit SHA.
 
 If a pre-restore check fails, the action stops before it adds either directory to the workspace.

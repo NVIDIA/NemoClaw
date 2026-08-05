@@ -67,7 +67,14 @@ function workflowFixture(): Workflow {
 }
 
 type RestoreFixtureOptions = {
-  archive?: "valid" | "missing-shared" | "non-dist" | "link" | "traversal";
+  archive?:
+    | "valid"
+    | "cli-directory"
+    | "missing-shared"
+    | "non-dist"
+    | "link"
+    | "shared-module-directory"
+    | "traversal";
   buildIdentitySha?: string;
   expectedPayloadSha256?: string;
   manifestCandidateSha?: string;
@@ -138,11 +145,33 @@ function writeLinkArchive(context: ArchiveFixtureContext): void {
   });
 }
 
+function writeCliDirectoryArchive(context: ArchiveFixtureContext): void {
+  writeCliArchive(context, (dist) => {
+    const entrypoint = path.join(dist, "nemoclaw.js");
+    fs.rmSync(entrypoint);
+    fs.mkdirSync(entrypoint);
+    fs.writeFileSync(path.join(entrypoint, "index.js"), 'console.log("nemoclaw v0.0.0");\n');
+  });
+}
+
 function writeMissingSharedArchive(context: ArchiveFixtureContext): void {
   writeCliArchive(
     context,
     () => undefined,
     (shared) => fs.rmSync(path.join(shared, "sandbox-name.cjs")),
+  );
+}
+
+function writeSharedModuleDirectoryArchive(context: ArchiveFixtureContext): void {
+  writeCliArchive(
+    context,
+    () => undefined,
+    (shared) => {
+      const modulePath = path.join(shared, "sandbox-name.cjs");
+      fs.rmSync(modulePath);
+      fs.mkdirSync(modulePath);
+      fs.writeFileSync(path.join(modulePath, "index.js"), "module.exports = {};\n");
+    },
   );
 }
 
@@ -168,10 +197,12 @@ function writeTraversalArchive(context: ArchiveFixtureContext): void {
 }
 
 const ARCHIVE_FIXTURE_WRITERS = {
+  "cli-directory": writeCliDirectoryArchive,
   link: writeLinkArchive,
   "missing-shared": writeMissingSharedArchive,
 
   "non-dist": writeNonDistArchive,
+  "shared-module-directory": writeSharedModuleDirectoryArchive,
   traversal: writeTraversalArchive,
   valid: writeValidArchive,
 } satisfies Record<
@@ -475,7 +506,21 @@ describe("exact-commit CLI artifact workflow boundary", () => {
   it("rejects a payload missing a compiled shared boundary before activation (#7915)", () => {
     expectRestoreFailure(
       { archive: "missing-shared" },
-      "restored CLI artifact is missing shared boundary sandbox-name.cjs",
+      "restored CLI artifact shared module is missing or is not a nonempty regular file: sandbox-name.cjs",
+    );
+  });
+
+  it("rejects a directory in place of the CLI entry point before activation (#7915)", () => {
+    expectRestoreFailure(
+      { archive: "cli-directory" },
+      "restored CLI artifact entry point is missing or is not a nonempty regular file",
+    );
+  });
+
+  it("rejects a directory in place of a shared module before activation (#7915)", () => {
+    expectRestoreFailure(
+      { archive: "shared-module-directory" },
+      "restored CLI artifact shared module is missing or is not a nonempty regular file: sandbox-name.cjs",
     );
   });
 

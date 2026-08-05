@@ -392,16 +392,18 @@ jobs:
             { echo "::error::checked-out commit does not match the artifact candidate SHA"; exit 1; }
           [[ "$RUN_ATTEMPT" =~ ^[1-9][0-9]*$ && "$RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
             { echo "::error::workflow run identity is invalid"; exit 1; }
-          test -s dist/nemoclaw.js ||
-            { echo "::error::candidate CLI build did not produce dist/nemoclaw.js"; exit 1; }
-          test -s dist/build-identity.json ||
-            { echo "::error::candidate CLI build did not produce dist/build-identity.json"; exit 1; }
-          test -s nemoclaw/dist/shared/openshell-policy-boundary.cjs ||
-            { echo "::error::candidate CLI build did not produce the shared policy boundary"; exit 1; }
-          test -s nemoclaw/dist/shared/sandbox-name.cjs ||
-            { echo "::error::candidate CLI build did not produce the shared sandbox-name boundary"; exit 1; }
-          test -s nemoclaw/dist/shared/snapshot-sanitizer-boundary.cjs ||
-            { echo "::error::candidate CLI build did not produce the shared snapshot boundary"; exit 1; }
+          for required_file in dist/nemoclaw.js dist/build-identity.json; do
+            [[ -f "$required_file" && ! -L "$required_file" && -s "$required_file" ]] ||
+              { echo "::error::candidate CLI build output is missing or is not a nonempty regular file: $required_file"; exit 1; }
+          done
+          for boundary in \
+            openshell-policy-boundary.cjs \
+            sandbox-name.cjs \
+            snapshot-sanitizer-boundary.cjs; do
+            boundary_path="nemoclaw/dist/shared/$boundary"
+            [[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]] ||
+              { echo "::error::candidate CLI build shared module is missing or is not a nonempty regular file: $boundary"; exit 1; }
+          done
 
           jq -e --arg candidateSha "$CANDIDATE_SHA" '
             type == "object" and
