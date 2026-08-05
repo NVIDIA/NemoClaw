@@ -405,6 +405,9 @@ export function recreateOpenShellDockerSandboxContainer(
     );
     if (!reconcile.execReady) {
       context.rolledBack = reconcile.rolledBack;
+      context.replacementStopConfirmed = reconcile.replacementStopConfirmed;
+      context.replacementRemovalConfirmed = reconcile.replacementRemovalConfirmed;
+      context.replacementPresence = reconcile.replacementPresence;
       throw reconcile.error;
     }
     return result(reconcile.backupRemoved);

@@ -5,7 +5,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createSession } from "../../../state/onboard-session";
 import { handleSandboxState } from "./sandbox";
-import { baseOptions, createDeps, makeMinimalPlan } from "./sandbox-test-fixtures";
+import {
+  baseOptions,
+  bindJournaledRecreate,
+  createDeps,
+  makeMinimalPlan,
+} from "./sandbox-test-fixtures";
 
 vi.mock("../../messaging-channel-setup", () => ({
   detectMessagingChannelsFromEnv: vi.fn(() => []),
@@ -15,19 +20,25 @@ describe("handleSandboxState resume recreation", () => {
   it("recreates a ready sandbox when its baked reasoning capability drifted (#7570)", async () => {
     const session = createSession({ sandboxName: "saved" });
     session.steps.sandbox.status = "complete";
-    const { deps, calls } = createDeps({
-      getSandboxReuseState: () => "ready",
-      getSandboxRegistryEntry: () => ({
-        name: "saved",
-        provider: "compatible-endpoint",
-        model: "model",
-        endpointUrl: "https://chat.example",
-        credentialEnv: "COMPATIBLE_API_KEY",
-        preferredInferenceApi: "openai-completions",
-        compatibleEndpointReasoning: "false",
-        toolDisclosure: "progressive",
-      }),
-    });
+    const journal = bindJournaledRecreate(session);
+    const { deps, calls } = createDeps(
+      {
+        getSandboxReuseState: () => "ready",
+        getSandboxRecreateObservation: journal.observe,
+        getSandboxRegistryEntry: () => ({
+          name: "saved",
+          provider: "compatible-endpoint",
+          model: "model",
+          endpointUrl: "https://chat.example",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          preferredInferenceApi: "openai-completions",
+          compatibleEndpointReasoning: "false",
+          toolDisclosure: "progressive",
+        }),
+        createSandbox: journal.completeCreate,
+      },
+      session,
+    );
 
     await handleSandboxState({
       ...baseOptions(deps, session),
@@ -43,7 +54,7 @@ describe("handleSandboxState resume recreation", () => {
       "  [resume] Compatible endpoint reasoning capability changed; recreating sandbox.",
     );
     expect(calls.recordSkip).not.toHaveBeenCalled();
-    expect(calls.createSandbox).toHaveBeenCalledWith(
+    expect(journal.completeCreate).toHaveBeenCalledWith(
       expect.anything(),
       "model",
       "compatible-endpoint",
@@ -68,24 +79,29 @@ describe("handleSandboxState resume recreation", () => {
       messagingPlan: makeMinimalPlan("saved", "openclaw", ["slack"]),
     });
     session.steps.sandbox.status = "complete";
-    const { deps, calls } = createDeps({
-      getSandboxReuseState: () => "ready",
-      planRegisteredExtraProviders: vi.fn(() => ({
-        extraProviders: ["healthy-extra-provider"],
-        staleExtraProviders: [],
-      })),
-      getSandboxRegistryEntry: () => ({
-        name: "saved",
-        provider: "provider",
-        model: "model",
-        endpointUrl: null,
-        preferredInferenceApi: "openai-completions",
-        toolDisclosure: "progressive",
-        fromDockerfile: null,
-        hermesAuthMethod: null,
-      }),
-    });
-    calls.createSandbox.mockResolvedValue("saved");
+    const journal = bindJournaledRecreate(session);
+    const { deps, calls } = createDeps(
+      {
+        getSandboxReuseState: () => "ready",
+        getSandboxRecreateObservation: journal.observe,
+        planRegisteredExtraProviders: vi.fn(() => ({
+          extraProviders: ["healthy-extra-provider"],
+          staleExtraProviders: [],
+        })),
+        getSandboxRegistryEntry: () => ({
+          name: "saved",
+          provider: "provider",
+          model: "model",
+          endpointUrl: null,
+          preferredInferenceApi: "openai-completions",
+          toolDisclosure: "progressive",
+          fromDockerfile: null,
+          hermesAuthMethod: null,
+        }),
+        createSandbox: journal.completeCreate,
+      },
+      session,
+    );
 
     const result = await handleSandboxState({
       ...baseOptions(deps, session),
@@ -100,8 +116,8 @@ describe("handleSandboxState resume recreation", () => {
     );
     expect(deps.planRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw");
     expect(calls.removeSandbox).not.toHaveBeenCalled();
-    expect(calls.createSandbox).toHaveBeenCalledTimes(1);
-    const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
+    expect(journal.completeCreate).toHaveBeenCalledTimes(1);
+    const createSandboxCall = journal.completeCreate.mock.calls[0] as unknown[];
     expect(createSandboxCall[4]).toBe("saved");
     expect(createSandboxCall[14]).toMatchObject({
       extraProviders: ["healthy-extra-provider"],
@@ -116,14 +132,19 @@ describe("handleSandboxState resume recreation", () => {
       messagingPlan: makeMinimalPlan("saved", "openclaw", ["slack"]),
     });
     session.steps.sandbox.status = "complete";
-    const { deps, calls } = createDeps({
-      getSandboxReuseState: () => "missing",
-      planRegisteredExtraProviders: vi.fn(() => ({
-        extraProviders: [],
-        staleExtraProviders: ["stale-extra-provider"],
-      })),
-    });
-    calls.createSandbox.mockResolvedValue("saved");
+    const journal = bindJournaledRecreate(session);
+    const { deps } = createDeps(
+      {
+        getSandboxReuseState: () => "missing",
+        getSandboxRecreateObservation: journal.observe,
+        planRegisteredExtraProviders: vi.fn(() => ({
+          extraProviders: [],
+          staleExtraProviders: ["stale-extra-provider"],
+        })),
+        createSandbox: journal.completeCreate,
+      },
+      session,
+    );
 
     await handleSandboxState({
       ...baseOptions(deps, session),
@@ -132,8 +153,8 @@ describe("handleSandboxState resume recreation", () => {
     });
 
     expect(deps.planRegisteredExtraProviders).toHaveBeenCalledWith("nemoclaw");
-    expect(calls.createSandbox).toHaveBeenCalledTimes(1);
-    const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
+    expect(journal.completeCreate).toHaveBeenCalledTimes(1);
+    const createSandboxCall = journal.completeCreate.mock.calls[0] as unknown[];
     expect(createSandboxCall[14]).toMatchObject({
       extraProviders: [],
       recreate: true,

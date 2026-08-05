@@ -203,7 +203,7 @@ function runSliceProbe(options: ProbeOptions) {
     path.join(repoRoot, "src", "lib", "dashboard-url-command.ts"),
   );
   const finalizationDepsPath = JSON.stringify(
-    path.join(repoRoot, "src", "lib", "onboard", "finalization-deps.ts"),
+    path.join(repoRoot, "src", "lib", "onboard", "machine", "finalization-deps.ts"),
   );
 
   fs.writeFileSync(

@@ -3,7 +3,7 @@
 #
 # Hermes sandbox base image — expensive, rarely-changing layers.
 #
-# Contains: node:24-trixie-slim (OpenShell needs Node), apt packages, gosu,
+# Contains: node:24-trixie-slim (OpenShell needs Node), apt packages, setpriv,
 # user/group setup, .hermes directory structure, Hermes CLI, and the
 # dependencies for NemoClaw-supported Hermes integrations.
 #
@@ -13,7 +13,7 @@
 # ── When to rebuild ─────────────────────────────────────────────
 #   1. Hermes version bump      — run scripts/update-hermes-agent.sh
 #   2. New apt package needed   — add it to the apt-get install list
-#   3. gosu upgrade             — update URL, checksum, and version
+#   3. util-linux upgrade       — update the pinned apt package version
 #   4. node:24-trixie-slim digest rot — update-docker-pin.sh updates all
 #   5. npm upgrade              — update upgrade-bundled-npm.mts
 #   6. New .hermes subdirectory — add mkdir/chmod below
@@ -97,6 +97,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iptables=1.8.11-2 \
         nftables=1.1.3-1 \
         libcap2-bin=1:2.75-10+deb13u1+b1 \
+        util-linux=2.41-5 \
         procps=2:4.0.4-9 \
         e2fsprogs=1.47.2-3+b11 \
         openssh-sftp-server=1:10.0p1-7+deb13u4 \
@@ -280,19 +281,9 @@ RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.m
 RUN node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
     --npm-root /usr/local/lib/node_modules/npm
 
-# gosu for privilege separation (gateway vs sandbox user).
-# Identical to OpenClaw base — pinned to 1.19 with checksum.
-# hadolint ignore=DL4006
-RUN arch="$(dpkg --print-architecture)" \
-    && case "$arch" in \
-        amd64) gosu_asset="gosu-amd64"; gosu_sha256="52c8749d0142edd234e9d6bd5237dff2d81e71f43537e2f4f66f75dd4b243dd0" ;; \
-        arm64) gosu_asset="gosu-arm64"; gosu_sha256="3a8ef022d82c0bc4a98bcb144e77da714c25fcfa64dccc57f6aba7ae47ff1a44" ;; \
-        *) echo "Unsupported architecture for gosu: $arch" >&2; exit 1 ;; \
-    esac \
-    && curl -fsSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/${gosu_asset}" \
-    && echo "${gosu_sha256}  /usr/local/bin/gosu" | sha256sum -c - \
-    && chmod +x /usr/local/bin/gosu \
-    && gosu --version
+# setpriv runtime contract for gateway and sandbox privilege separation.
+RUN test -x /usr/bin/setpriv \
+    && /usr/bin/setpriv --version
 
 # Create sandbox user (matches OpenShell convention) and gateway user.
 # gateway is a member of the sandbox group so it can read Hermes config files
