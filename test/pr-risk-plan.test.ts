@@ -204,13 +204,23 @@ describe("deterministic PR risk plan", () => {
     const result = plan(changedFile);
     const expectedRequiredJobs = changedFile.startsWith("agents/hermes/")
       ? [...HERMES_SANDBOX_BOUNDARY_JOBS, "rebuild-hermes"]
-      : [
-          "onboard-repair",
-          "onboard-resume",
-          "rebuild-hermes",
-          "rebuild-openclaw",
-          "state-backup-restore",
-        ];
+      : changedFile === "src/lib/actions/sandbox/rebuild-hermes-post-restore.ts"
+        ? [
+            "managed-image-multiarch-startup",
+            "managed-image-protected-runtime",
+            "onboard-repair",
+            "onboard-resume",
+            "rebuild-hermes",
+            "rebuild-openclaw",
+            "state-backup-restore",
+          ]
+        : [
+            "onboard-repair",
+            "onboard-resume",
+            "rebuild-hermes",
+            "rebuild-openclaw",
+            "state-backup-restore",
+          ];
 
     expect(result.families).toContainEqual(
       expect.objectContaining({
