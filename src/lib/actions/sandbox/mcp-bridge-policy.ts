@@ -98,9 +98,9 @@ function reconcileGeneratedPolicyRegistration(
 export function applyGeneratedPolicy(
   sandboxName: string,
   entry: McpBridgeEntry,
-  target: McpBridgeTargetValidation | readonly string[],
+  target: McpBridgeTargetValidation,
 ): void {
-  const resolvedAddresses = assertMcpBridgePolicyTarget(entry, asMcpBridgePolicyTarget(target));
+  const resolvedAddresses = assertMcpBridgePolicyTarget(entry, target);
   if (resolvedAddresses.length === 0) {
     throw new McpBridgeError(
       `Refusing to apply generated MCP policy '${entry.policyName}' without exact public address pins.`,
@@ -202,12 +202,6 @@ export function applyGeneratedPolicy(
   );
 }
 
-function asMcpBridgePolicyTarget(
-  value: McpBridgeTargetValidation | readonly string[],
-): McpBridgeTargetValidation {
-  return Array.isArray(value) ? { addresses: [...value] } : (value as McpBridgeTargetValidation);
-}
-
 export function assertMcpBridgePolicyTarget(
   entry: McpBridgeEntry,
   target: McpBridgeTargetValidation,
@@ -303,9 +297,9 @@ export function assertGeneratedPolicyExactReadOnly(
   sandboxName: string,
   entry: McpBridgeEntry,
   adapter: AgentMcpAdapter,
-  target: McpBridgeTargetValidation | readonly string[],
+  target: McpBridgeTargetValidation,
 ): registry.CustomPolicyEntry {
-  const resolvedAddresses = assertMcpBridgePolicyTarget(entry, asMcpBridgePolicyTarget(target));
+  const resolvedAddresses = assertMcpBridgePolicyTarget(entry, target);
   const canonicalOwnershipError = (): McpBridgeError =>
     new McpBridgeError(
       "Generated MCP policy ownership is not canonical for its recorded bridge definition. Refusing host-side rebuild recovery.",

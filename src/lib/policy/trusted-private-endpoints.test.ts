@@ -110,6 +110,23 @@ network_policies:
     );
   });
 
+  it("rejects durable replay receipts that pin only public addresses (#8176)", () => {
+    const content = `network_policies:
+  private:
+    endpoints:
+      - host: api.corp.example
+        allowed_ips: [93.184.216.34]
+`;
+    const receipt = {
+      version: 1,
+      contentDigest: createHash("sha256").update(content).digest("hex"),
+    };
+
+    expect(() => replayTrustedPrivatePolicyPinCapability(content, receipt)).toThrow(
+      /non-canonical private pins/,
+    );
+  });
+
   it("preserves the reviewed host-gateway exception beside generated private pins (#8176)", async () => {
     const input = preset(`preset:
   name: private

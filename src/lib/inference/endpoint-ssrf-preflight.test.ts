@@ -40,7 +40,11 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
   ])("refuses a public hostname that resolves to the private/reserved address %s (#6293)", async (privateAddress) => {
     const lookup = resolverTo(privateAddress);
     const result = await assertEndpointResolvesPublic("https://public-name.example/v1", lookup);
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({
+      ok: false,
+      reasonCode: "private-answer",
+      offendingAddress: privateAddress,
+    });
     expect(result.reason).toContain(privateAddress);
   });
 
@@ -211,7 +215,7 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
       throw new Error("ENOTFOUND");
     });
     const result = await assertEndpointResolvesPublic("https://unresolvable.example/v1", lookup);
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false, reasonCode: "unresolved" });
     expect(result.reason).toContain("cannot resolve");
   });
 
@@ -223,6 +227,7 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     expect(result).toEqual({
       ok: false,
       reason: 'cannot resolve endpoint host "unresolvable.example": EAI_AGAIN',
+      reasonCode: "unresolved",
     });
   });
 
@@ -242,6 +247,15 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
   it("refuses a malformed endpoint URL (#6293)", async () => {
     const result = await assertEndpointResolvesPublic("not a url", resolverTo("93.184.216.34"));
     expect(result.ok).toBe(false);
+  });
+
+  it("returns a rejected result when URL parsing accepts a non-canonical hostname (#8176)", async () => {
+    const lookup = vi.fn<EndpointDnsLookupFn>();
+
+    await expect(
+      assertEndpointResolvesPublic("https://my_host.corp.example/v1", lookup),
+    ).resolves.toMatchObject({ ok: false, reasonCode: "rejected" });
+    expect(lookup).not.toHaveBeenCalled();
   });
 
   it.each([

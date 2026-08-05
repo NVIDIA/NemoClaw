@@ -10,7 +10,6 @@ import {
   inspectMcpRecordedTargetPins,
   preflightMcpServerUrlResolvedTarget,
 } from "./mcp-bridge-url-validation";
-import { validateMcpServerUrlResolvedTarget } from "./mcp-bridge-validation";
 
 describe("MCP URL target validation", () => {
   it("sorts and deduplicates public DNS pins deterministically", async () => {
@@ -21,8 +20,8 @@ describe("MCP URL target validation", () => {
     ] as never);
     try {
       await expect(
-        validateMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp")),
-      ).resolves.toEqual(["2606:4700:4700::1111", "8.8.8.8"]);
+        preflightMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp")),
+      ).resolves.toMatchObject({ addresses: ["2606:4700:4700::1111", "8.8.8.8"] });
     } finally {
       lookup.mockRestore();
     }
@@ -34,10 +33,10 @@ describe("MCP URL target validation", () => {
       .mockResolvedValueOnce([{ address: "127.0.0.1", family: 4 }] as never);
     try {
       await expect(
-        validateMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp")),
+        preflightMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp")),
       ).rejects.toThrow(/resolves to private, local, or special-use address '127\.0\.0\.1'/);
       await expect(
-        validateMcpServerUrlResolvedTarget(new URL("https://host.openshell.internal:31337/mcp")),
+        preflightMcpServerUrlResolvedTarget(new URL("https://host.openshell.internal:31337/mcp")),
       ).rejects.toThrow(/does not expose an attested driver gateway address/);
       expect(lookup).toHaveBeenCalledOnce();
     } finally {

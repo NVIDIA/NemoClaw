@@ -239,21 +239,20 @@ export async function preflightMcpServerUrlResolvedTarget(
     { trustedPrivateHosts: normalizedTrustedHosts },
   );
   if (!result.ok) {
-    const privateAnswer = result.reason?.match(
-      /endpoint host "[^"]+" resolves to private\/internal address "([^"]+)"/,
-    )?.[1];
-    if (privateAnswer) {
-      const guidance = isLoopbackHostname(privateAnswer)
+    if (result.reasonCode === "private-answer" && result.offendingAddress) {
+      const guidance = isLoopbackHostname(result.offendingAddress)
         ? " Sandbox loopback is not the host MCP service. Use an HTTPS reverse proxy on a stable routed private address."
         : ` Use a routed private HTTPS endpoint and pass --trusted-private-host ${parsed.hostname}.`;
       throw new McpBridgeError(
-        `MCP server URL host '${parsed.hostname}' resolves to private, local, or special-use address '${privateAnswer}'.${guidance}`,
+        `MCP server URL host '${parsed.hostname}' resolves to private, local, or special-use address '${result.offendingAddress}'.${guidance}`,
         2,
+        "rejected",
       );
     }
     throw new McpBridgeError(
       `MCP server URL target validation failed: ${result.reason ?? "the endpoint was rejected"}.`,
       2,
+      result.reasonCode === "unresolved" ? "unresolved" : "rejected",
     );
   }
   const literalAddress = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(parsed.hostname)
@@ -267,6 +266,7 @@ export async function preflightMcpServerUrlResolvedTarget(
     throw new McpBridgeError(
       `MCP server URL host '${parsed.hostname}' resolved without any addresses before policy registration.`,
       2,
+      "unresolved",
     );
   }
   const normalizedHostname = normalizeTrustedPrivateHost(parsed.hostname);
@@ -305,10 +305,6 @@ export async function preflightMcpServerUrlResolvedTarget(
   return { addresses };
 }
 
-export async function validateMcpServerUrlResolvedTarget(parsed: URL): Promise<string[]> {
-  return (await preflightMcpServerUrlResolvedTarget(parsed)).addresses;
-}
-
 export async function inspectMcpRecordedTargetPins(
   parsed: URL,
   trustedPrivateHost: string,
@@ -331,8 +327,7 @@ export async function inspectMcpRecordedTargetPins(
     };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    const unresolved =
-      /cannot resolve|could not be resolved|did not resolve|without any addresses/i.test(detail);
+    const unresolved = error instanceof McpBridgeError && error.reasonCode === "unresolved";
     return { state: unresolved ? "unresolved" : "drift", detail };
   }
 }

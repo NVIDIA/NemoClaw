@@ -29,7 +29,6 @@ export {
   normalizeMcpServerUrl,
   parseMcpUrl,
   preflightMcpServerUrlResolvedTarget,
-  validateMcpServerUrlResolvedTarget,
 } from "./mcp-bridge-url-validation";
 
 const VALID_SERVER_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;

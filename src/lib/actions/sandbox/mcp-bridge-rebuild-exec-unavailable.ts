@@ -149,7 +149,14 @@ async function inspectReadOnlyRecoveryState(
   const targetsByServer = new Map<string, string>();
   for (const entry of entries) {
     const target = resolvedTargets.get(entry.server);
-    const policy = assertGeneratedPolicyExactReadOnly(sandboxName, entry, adapter, target ?? []);
+    const policy = assertGeneratedPolicyExactReadOnly(
+      sandboxName,
+      entry,
+      adapter,
+      target ?? {
+        addresses: [],
+      },
+    );
     policyByServer.set(entry.server, policyFingerprint(policy));
     const provider = inspectExactMcpDestroyProvider(entry, { allowMissing: false });
     providerByServer.set(entry.server, providerFingerprint(provider));

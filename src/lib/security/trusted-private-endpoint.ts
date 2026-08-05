@@ -93,6 +93,10 @@ export interface EndpointSsrfPreflightResult {
   ok: boolean;
   /** Human-readable reason, present only when `ok === false`. */
   reason?: string;
+  /** Stable failure classification for callers that must not parse `reason`. */
+  reasonCode?: "private-answer" | "rejected" | "unresolved";
+  /** Exact rejected DNS answer when `reasonCode === "private-answer"`. */
+  offendingAddress?: string;
   /**
    * Validated public addresses the endpoint host resolved to, for connection
    * pinning (curl `--resolve`) so a subsequent probe cannot re-resolve the name
@@ -243,7 +247,11 @@ export async function assertEndpointResolvesPublic(
   try {
     hostname = new URL(String(endpointUrl)).hostname;
   } catch {
-    return { ok: false, reason: `"${String(endpointUrl)}" is not a valid URL` };
+    return {
+      ok: false,
+      reason: `"${String(endpointUrl)}" is not a valid URL`,
+      reasonCode: "rejected",
+    };
   }
 
   // Keep the capability and range helpers import-light for generic curl
@@ -252,13 +260,14 @@ export async function assertEndpointResolvesPublic(
   const { isLoopbackHostname, isPrivateHostname, isPrivateIp } =
     require("../private-networks") as typeof import("../private-networks");
 
-  const normalizedHostname = normalizeTrustedPrivateHost(hostname);
+  let normalizedHostname: string;
   let trustedPrivateHosts: string[];
   try {
+    normalizedHostname = normalizeTrustedPrivateHost(hostname);
     trustedPrivateHosts = (options.trustedPrivateHosts ?? []).map(normalizeTrustedPrivateHost);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, reason: message };
+    return { ok: false, reason: message, reasonCode: "rejected" };
   }
   const trustedPrivateHost = trustedPrivateHosts.includes(normalizedHostname);
 
@@ -274,7 +283,11 @@ export async function assertEndpointResolvesPublic(
 
   // A literal private IP or reserved private name is refused without resolving.
   if (isPrivateHostname(hostname) && !trustedPrivateHost) {
-    return { ok: false, reason: `endpoint host "${hostname}" is a private/internal address` };
+    return {
+      ok: false,
+      reason: `endpoint host "${hostname}" is a private/internal address`,
+      reasonCode: "rejected",
+    };
   }
 
   // A public IP literal needs neither DNS resolution nor connection pinning:
@@ -289,7 +302,11 @@ export async function assertEndpointResolvesPublic(
           trustedPrivateCapability: issueTrustedPrivateEndpointCapability([bare]),
           trustedPrivateEndpoint: true,
         }
-      : { ok: false, reason: `endpoint host "${hostname}" is a private/internal address` };
+      : {
+          ok: false,
+          reason: `endpoint host "${hostname}" is a private/internal address`,
+          reasonCode: "rejected",
+        };
   }
 
   let addresses: Array<{ address: string; family?: number }>;
@@ -297,10 +314,18 @@ export async function assertEndpointResolvesPublic(
     addresses = await lookup(bare, { all: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { ok: false, reason: `cannot resolve endpoint host "${hostname}": ${message}` };
+    return {
+      ok: false,
+      reason: `cannot resolve endpoint host "${hostname}": ${message}`,
+      reasonCode: "unresolved",
+    };
   }
   if (!Array.isArray(addresses) || addresses.length === 0) {
-    return { ok: false, reason: `endpoint host "${hostname}" did not resolve to any address` };
+    return {
+      ok: false,
+      reason: `endpoint host "${hostname}" did not resolve to any address`,
+      reasonCode: "unresolved",
+    };
   }
   for (const { address } of addresses) {
     // A resolved private address — including loopback reached via a public name
@@ -309,6 +334,8 @@ export async function assertEndpointResolvesPublic(
       return {
         ok: false,
         reason: `endpoint host "${hostname}" resolves to private/internal address "${address}"`,
+        reasonCode: "private-answer",
+        offendingAddress: address,
       };
     }
   }
