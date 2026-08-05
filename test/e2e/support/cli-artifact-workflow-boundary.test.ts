@@ -632,9 +632,9 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     );
   });
 
-  it("rejects changes to checkout, workflow settings, job settings, or steps before CLI artifact restore", () => {
+  it("rejects changes to checkout, workflow settings, job settings, or steps through CLI artifact restore", () => {
     const settingsError =
-      "CLI artifact consumer job settings and steps before restore must match the required contract";
+      "CLI artifact consumer job settings and steps through restore must match the required contract";
     const restoreOrderError =
       "sandbox-operations must restore the CLI artifact in the step after workspace preparation";
     const scenarios: Array<{
@@ -683,6 +683,17 @@ describe("exact-commit CLI artifact workflow boundary", () => {
           Object.assign(workflow.jobs["sandbox-operations"], {
             defaults: { run: { shell: "bash scripts/leak.sh {0}" } },
           });
+        },
+        expectedErrors: [settingsError],
+      },
+      {
+        name: "restore step BASH_ENV",
+        mutate: (workflow) => {
+          const restore = requireStep(workflow, "sandbox-operations", CLI_ARTIFACT_RESTORE_STEP);
+          restore.env = {
+            ...restore.env,
+            BASH_ENV: "${{ github.workspace }}/scripts/leak.sh",
+          };
         },
         expectedErrors: [settingsError],
       },

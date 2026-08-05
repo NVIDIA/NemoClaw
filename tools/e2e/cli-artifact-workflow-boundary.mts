@@ -40,7 +40,7 @@ const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
 const CANDIDATE_CHECKOUT_STEP_CONTENT_SHA256 =
   "3578a053cede863f7aa4814d8399b4ca21ea0b77cee712e6d549c684818f11dd";
 const CLI_ARTIFACT_WORKFLOW_CONTRACT_SHA256 =
-  "bb4c02a6f0b848896fb2593371e264563014b43733d48e634162ddbdc8e4a933";
+  "c6b0b73c61f6e79859dfb3711cbee7f8b2a6145f7e2f856a93bbe9288e81d98c";
 const CLI_ARTIFACT_CONSUMER_JOB_NAMES = [
   "agent-turn-latency",
   "bedrock-runtime-compatible-anthropic",
@@ -138,13 +138,13 @@ function isCliArtifactRestoreStep(step: WorkflowStep): boolean {
   );
 }
 
-function jobSettingsAndStepsBeforeRestore(job: WorkflowRecord): WorkflowRecord {
+function jobSettingsAndStepsThroughRestore(job: WorkflowRecord): WorkflowRecord {
   const jobSteps = steps(job.steps);
   const restoreIndex = jobSteps.findIndex(isCliArtifactRestoreStep);
   const { steps: _steps, ...jobSettings } = job;
   return {
     jobSettings,
-    stepsBeforeRestore: restoreIndex >= 0 ? jobSteps.slice(0, restoreIndex) : jobSteps,
+    stepsThroughRestore: restoreIndex >= 0 ? jobSteps.slice(0, restoreIndex + 1) : jobSteps,
   };
 }
 
@@ -493,7 +493,7 @@ export function validateCliArtifactWorkflowBoundary(
   const consumers = Object.fromEntries(
     CLI_ARTIFACT_CONSUMER_JOB_NAMES.map((jobName) => [
       jobName,
-      jobSettingsAndStepsBeforeRestore(record(jobs[jobName])),
+      jobSettingsAndStepsThroughRestore(record(jobs[jobName])),
     ]),
   );
   if (
@@ -503,7 +503,7 @@ export function validateCliArtifactWorkflowBoundary(
     }) !== CLI_ARTIFACT_WORKFLOW_CONTRACT_SHA256
   ) {
     errors.push(
-      "CLI artifact consumer job settings and steps before restore must match the required contract",
+      "CLI artifact consumer job settings and steps through restore must match the required contract",
     );
   }
 
