@@ -23,6 +23,9 @@ describe("canonical security rubric", () => {
     expect(rubric).toContain("Planning names the applicable risks");
     expect(rubric).toContain("Implementation records the controls that changed");
     expect(rubric).toContain("focused negative evidence");
+    expect(rubric).toContain(
+      "Does the test include the component that enforces the control, or does mocking bypass that component?",
+    );
     expect(rubric.match(/^### Expected evidence$/gmu)).toHaveLength(9);
   });
 

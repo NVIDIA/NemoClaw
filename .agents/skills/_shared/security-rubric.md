@@ -158,7 +158,7 @@ that enforces the control.
 ### Questions
 
 - Does coverage include malicious input, boundary values, unauthorized actions, bypass attempts, and prior regressions?
-- Is the test below the security control, or does mocking bypass the mechanism it claims to verify?
+- Does the test include the component that enforces the control, or does mocking bypass that component?
 - Does the change remove, weaken, skip, or make nondeterministic existing security evidence?
 
 ### Expected evidence
