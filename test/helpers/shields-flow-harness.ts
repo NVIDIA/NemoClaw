@@ -31,6 +31,7 @@ export type ShieldsFlowHarnessOptions = {
   directSandboxUnavailable?: boolean;
   dockerExecFileSync?: (argv: unknown) => string;
   failOpenClawGuardActions?: Array<"lock" | "unlock">;
+  failPolicyRejectionStateClear?: boolean;
   failStateSave?: boolean;
   invokedAs?: "nemoclaw" | "nemohermes";
   openClawGuardFailure?: {
@@ -294,6 +295,18 @@ export function createShieldsFlowHarness(
       return runtimePolicy;
     },
   );
+
+  if (options.failPolicyRejectionStateClear) {
+    const statePath = path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json");
+    const originalWriteFileSync = fs.writeFileSync.bind(fs);
+    let stateWrites = 0;
+    vi.spyOn(fs, "writeFileSync").mockImplementation(((file, data, writeOptions) => {
+      if (String(file) === statePath && ++stateWrites === 2) {
+        throw new Error("state cleanup denied");
+      }
+      return originalWriteFileSync(file, data, writeOptions);
+    }) as typeof fs.writeFileSync);
+  }
 
   const shields = requireDist(shieldsModulePath);
   logSpy.mockClear();

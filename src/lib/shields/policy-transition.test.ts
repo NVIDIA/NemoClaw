@@ -141,6 +141,7 @@ describe("shields down policy rejection", () => {
   it("retains auto-restore authority when rejected policy state cleanup fails (#8198)", () => {
     const timerKill = vi.fn(() => true);
     const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+      failPolicyRejectionStateClear: true,
       processStartIdentity: "test-process-start-identity",
       fork: () => ({
         pid: 4242,
@@ -155,14 +156,6 @@ describe("shields down policy rejection", () => {
     });
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     const statePath = path.join(stateDir, "shields-openclaw.json");
-    const originalWriteFileSync = fs.writeFileSync.bind(fs);
-    let stateWrites = 0;
-    vi.spyOn(fs, "writeFileSync").mockImplementation(((file, data, options) => {
-      if (String(file) === statePath && ++stateWrites === 2) {
-        throw new Error("state cleanup denied");
-      }
-      return originalWriteFileSync(file, data, options);
-    }) as typeof fs.writeFileSync);
 
     expect(() =>
       harness.shieldsDown("openclaw", {
