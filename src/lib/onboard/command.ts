@@ -12,6 +12,11 @@ import {
 } from "../tool-disclosure";
 import { applyAgentsManifestEnv } from "./agents-manifest";
 import type { OnboardFlags } from "./command-support";
+import {
+  EXPERIMENTAL_PROFILE_ENV,
+  type ExperimentalOnboardProfile,
+  PORTABLE_EXPERIMENTAL_PROFILE,
+} from "./docker-driver-platform";
 import { GatewayManagementDeclarationError } from "./gateway-management";
 import { GatewayAuthorityError, gatewayAuthorityFailureLines } from "./gateway-teardown-authority";
 import { managedSandboxFeatureIssue } from "./managed-sandbox-feature";
@@ -38,6 +43,7 @@ export interface OnboardCommandOptions {
   noGpu: boolean;
   autoYes: boolean;
   noOllamaAutostart: boolean;
+  experimentalProfile: ExperimentalOnboardProfile | null;
 }
 
 export interface ResolveOnboardOptionsDeps {
@@ -147,10 +153,35 @@ function validateObservabilityAgent(
   }
 }
 
+function resolveExperimentalProfile(flags: OnboardFlags): ExperimentalOnboardProfile | null {
+  return flags["experimental-profile"] === PORTABLE_EXPERIMENTAL_PROFILE
+    ? PORTABLE_EXPERIMENTAL_PROFILE
+    : null;
+}
+
+function validateExperimentalProfileLifecycle(
+  flags: OnboardFlags,
+  profile: ExperimentalOnboardProfile | null,
+  deps: ResolveOnboardOptionsDeps,
+): void {
+  if (profile && flags.resume === true) {
+    fail(deps, "  --resume cannot be combined with --experimental-profile portable.");
+  }
+}
+
+function withPortableDefault(
+  requested: boolean | undefined,
+  profile: ExperimentalOnboardProfile | null,
+): boolean {
+  return requested === true || profile !== null;
+}
+
 export function resolveOnboardOptions(
   flags: OnboardFlags,
   deps: ResolveOnboardOptionsDeps,
 ): OnboardCommandOptions {
+  const experimentalProfile = resolveExperimentalProfile(flags);
+  validateExperimentalProfileLifecycle(flags, experimentalProfile, deps);
   const agent = resolveAgent(flags.agent, deps);
   validateObservabilityAgent(flags.observability, agent, deps);
   let toolDisclosure: ToolDisclosure | null;
@@ -160,9 +191,9 @@ export function resolveOnboardOptions(
     fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
   }
   return {
-    nonInteractive: flags["non-interactive"] === true,
+    nonInteractive: withPortableDefault(flags["non-interactive"], experimentalProfile),
     resume: flags.resume === true,
-    fresh: flags.fresh === true,
+    fresh: withPortableDefault(flags.fresh, experimentalProfile),
     recreateSandbox: flags["recreate-sandbox"] === true,
     fromDockerfile: resolveFileOption("--from", flags.from, deps, true),
     sandboxName: flags.name ?? null,
@@ -177,8 +208,9 @@ export function resolveOnboardOptions(
     controlUiPort: flags["control-ui-port"] ?? null,
     gpu: flags.gpu === true,
     noGpu: flags["no-gpu"] === true,
-    autoYes: flags.yes === true,
-    noOllamaAutostart: flags["no-ollama-autostart"] === true,
+    autoYes: withPortableDefault(flags.yes, experimentalProfile),
+    noOllamaAutostart: withPortableDefault(flags["no-ollama-autostart"], experimentalProfile),
+    experimentalProfile,
   };
 }
 
@@ -224,8 +256,36 @@ function handleOnboardCommandError(error: unknown, deps: RunOnboardCommandDeps):
   fail(deps, "  Installation cancelled");
 }
 
+function applyPortableEnvironment(options: OnboardCommandOptions): () => void {
+  if (!options.experimentalProfile) return () => {};
+  const portableEnvDefaults = {
+    [EXPERIMENTAL_PROFILE_ENV]: options.experimentalProfile ?? undefined,
+    NEMOCLAW_PROVIDER: "ollama",
+    NEMOCLAW_MODEL: "qwen3-vl:4b",
+    NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
+  } as const;
+  const previousPortableEnv = new Map<string, string | undefined>();
+  const restore = () => {
+    for (const [key, value] of previousPortableEnv) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+  try {
+    for (const [key, value] of Object.entries(portableEnvDefaults)) {
+      previousPortableEnv.set(key, process.env[key]);
+      if (value !== undefined) process.env[key] = value;
+    }
+  } catch (error) {
+    restore();
+    throw error;
+  }
+  return restore;
+}
+
 export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<void> {
   const options = resolveOnboardOptions(deps.flags, deps);
+  const restorePortableEnvironment = applyPortableEnvironment(options);
   if (options.noOllamaAutostart) process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
   // Keep direct callers and the legacy monolithic onboard path on the same
   // canonical source. No value is written for the default so resume/rebuild
@@ -236,5 +296,7 @@ export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<vo
     await deps.runOnboard(options);
   } catch (error) {
     handleOnboardCommandError(error, deps);
+  } finally {
+    restorePortableEnvironment();
   }
 }

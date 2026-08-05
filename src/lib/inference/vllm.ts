@@ -8,7 +8,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { StringDecoder } from "node:string_decoder";
 import { isDeepStrictEqual } from "node:util";
 import {
   dockerCapture,
@@ -29,8 +28,11 @@ import { VLLM_PORT } from "../core/ports";
 import { shellQuote } from "../core/shell-quote";
 import { isAffirmativeAnswer } from "../onboard/prompt-helpers";
 import { runCapture } from "../runner";
-import { redactFull } from "../security/redact";
 import { isSafeModelId } from "../validation";
+import {
+  acquireHuggingFaceModel,
+  hfDownloadAuthentication,
+} from "./model-acquisition/hugging-face";
 import { getGpuIndicesByName } from "./nim";
 import {
   buildLocalDualStationDockerEnv,
@@ -191,14 +193,10 @@ function qwen35bNvfp4Model(): VllmModelDef {
   return match;
 }
 
-const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 const HF_TOKEN_SETTINGS_URL = "https://huggingface.co/settings/tokens";
-const HF_RATE_LIMIT_PATTERN = /\b429\b|too many requests|rate[\s_-]*limit/i;
-const MODEL_DOWNLOAD_HEARTBEAT_MS = 30_000;
 const VLLM_LAUNCH_HEARTBEAT_MS = 30_000;
 const VLLM_MAX_STARTUP_RESTARTS = 3;
 const HF_CACHE_CONTAINER_DIR = "/root/.cache/huggingface";
-const HF_DOWNLOAD_CACHE_CONTAINER_DIR = "/tmp/nemoclaw-huggingface";
 const HF_CACHE_COMPONENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export const NEMOCLAW_VLLM_CONTAINER_NAME = "nemoclaw-vllm";
 export const NEMOCLAW_VLLM_MANAGED_LABEL = "com.nvidia.nemoclaw.managed-vllm";
@@ -210,18 +208,6 @@ function hostHfCacheDir(): string {
 
 function hfCacheMount(): string {
   return `${hostHfCacheDir()}:${HF_CACHE_CONTAINER_DIR}`;
-}
-
-function hfDownloadCacheMount(hostCacheDir = hostHfCacheDir()): string {
-  const normalized = path.posix.normalize(hostCacheDir);
-  if (
-    !path.posix.isAbsolute(hostCacheDir) ||
-    normalized !== hostCacheDir ||
-    hostCacheDir.includes(":")
-  ) {
-    throw new Error("vLLM model cache must be a normalized absolute path without ':'");
-  }
-  return `${normalized}:${HF_DOWNLOAD_CACHE_CONTAINER_DIR}`;
 }
 
 function hfModelCacheKey(model: VllmModelDef): string | null {
@@ -252,13 +238,6 @@ function hostUserIdentity(): string | null {
   return `${String(process.getuid())}:${String(process.getgid())}`;
 }
 
-function hostUserDockerArgs(identity = hostUserIdentity()): string[] {
-  if (identity !== null && !/^[1-9][0-9]*:(?:0|[1-9][0-9]*)$/.test(identity)) {
-    throw new Error("vLLM model download user must be one non-root numeric uid and numeric gid");
-  }
-  return identity ? ["--user", identity] : [];
-}
-
 function vllmDockerRunFlags(gpuFlag = "all"): string[] {
   return [
     "--gpus",
@@ -269,28 +248,6 @@ function vllmDockerRunFlags(gpuFlag = "all"): string[] {
     "-e",
     `HF_HOME=${HF_CACHE_CONTAINER_DIR}`,
   ];
-}
-
-function pickHfTokenEntry(
-  env: NodeJS.ProcessEnv = process.env,
-): { key: (typeof HF_TOKEN_ENV_KEYS)[number]; value: string } | null {
-  for (const key of HF_TOKEN_ENV_KEYS) {
-    const value = String(env[key] ?? "").trim();
-    if (value) return { key, value };
-  }
-  return null;
-}
-
-export type HfDownloadAuthentication =
-  | { authenticated: false }
-  | { authenticated: true; source: (typeof HF_TOKEN_ENV_KEYS)[number] };
-
-/** Return only the presence and source of Hugging Face authentication, never its value. */
-export function hfDownloadAuthentication(
-  env: NodeJS.ProcessEnv = process.env,
-): HfDownloadAuthentication {
-  const entry = pickHfTokenEntry(env);
-  return entry ? { authenticated: true, source: entry.key } : { authenticated: false };
 }
 
 function printHfDownloadAuthentication(nonInteractive: boolean): void {
@@ -320,44 +277,6 @@ function printHfDownloadAuthentication(nonInteractive: boolean): void {
   console.log("    The token is passed only to the temporary model downloader.");
 }
 
-function redactHfDownloadOutput(text: string, tokenValue: string | null): string {
-  const withoutKnownToken = tokenValue ? text.split(tokenValue).join("<REDACTED>") : text;
-  return redactFull(withoutKnownToken);
-}
-
-function redactHfDownloadOutputChunks(
-  chunks: readonly { text: string; stream: NodeJS.WriteStream }[],
-  tokenValue: string | null,
-): string[] {
-  const joined = chunks.map((chunk) => chunk.text).join("");
-  const tokenSpans: { start: number; end: number }[] = [];
-  if (tokenValue) {
-    let searchFrom = 0;
-    while (searchFrom < joined.length) {
-      const start = joined.indexOf(tokenValue, searchFrom);
-      if (start < 0) break;
-      tokenSpans.push({ start, end: start + tokenValue.length });
-      searchFrom = start + tokenValue.length;
-    }
-  }
-
-  let chunkStart = 0;
-  return chunks.map((chunk) => {
-    const chunkEnd = chunkStart + chunk.text.length;
-    let cursor = chunkStart;
-    let safeText = "";
-    for (const span of tokenSpans) {
-      if (span.end <= chunkStart || span.start >= chunkEnd) continue;
-      safeText += joined.slice(cursor, Math.max(cursor, span.start));
-      if (span.start >= chunkStart) safeText += "<REDACTED>";
-      cursor = Math.max(cursor, Math.min(chunkEnd, span.end));
-    }
-    safeText += joined.slice(cursor, chunkEnd);
-    chunkStart = chunkEnd;
-    return redactHfDownloadOutput(safeText, null);
-  });
-}
-
 function printHfRateLimitRecovery(): void {
   process.stderr.write("  Hugging Face rate limiting was detected.\n");
   process.stderr.write(`  Create a read token at ${HF_TOKEN_SETTINGS_URL}.\n`);
@@ -366,36 +285,6 @@ function printHfRateLimitRecovery(): void {
   process.stderr.write(
     "  Existing files in ~/.cache/huggingface are reused when the download resumes.\n",
   );
-}
-
-/**
- * Forward a Hugging Face token from the host into the one-shot `hf download`
- * container so gated model weights can be fetched.
- *
- * Returns the bare `-e KEY` form (no `=value`) so the token never lands in
- * the host process list. Docker reads the actual value from its own
- * environment, which the caller is responsible for populating via
- * `buildHfTokenForwardEnv` when spawning through the runner allowlist.
- * The download container can live for several minutes during a cold pull;
- * argv-embedded secrets would be visible via `ps` for that whole window.
- */
-export function buildHfTokenDockerArgs(env: NodeJS.ProcessEnv = process.env): string[] {
-  const entry = pickHfTokenEntry(env);
-  return entry ? ["-e", entry.key] : [];
-}
-
-/**
- * Companion to `buildHfTokenDockerArgs`: returns the `{ KEY: value }` map
- * that has to be merged into the subprocess env so docker can see the
- * token when `-e KEY` (key-only) tells it to forward by name. The CLI runner
- * strips non-allowlisted env names by default (see subprocess-env.ts), so
- * Docker callers must pass this map via the runner's `env` option.
- */
-export function buildHfTokenForwardEnv(
-  env: NodeJS.ProcessEnv = process.env,
-): Record<string, string> {
-  const entry = pickHfTokenEntry(env);
-  return entry ? { [entry.key]: entry.value } : {};
 }
 
 const SPARK_PROFILE: VllmProfile = {
@@ -575,156 +464,25 @@ export async function pullImage(
   return { ok: true };
 }
 
-// Run `hf download <model>` inside a one-shot container of the same image.
+// Preserve the vLLM downloadModel API while acquireHuggingFaceModel runs `hf download`.
 export function downloadModel(
   profile: VllmProfile,
   model: VllmModelDef,
   dockerEnv: Record<string, string> = buildVllmDockerEnv(),
   target: { hostCacheDir?: string; userIdentity?: string } = {},
 ): Promise<{ ok: boolean; reason?: string }> {
-  emit(`Pre-downloading model with hf: ${model.id}`);
-  return new Promise((resolve) => {
-    const tokenValue = pickHfTokenEntry()?.value ?? null;
-    const proc = dockerSpawn(
-      [
-        "run",
-        "-t",
-        "--rm",
-        "--pull=never",
-        ...hostUserDockerArgs(target.userIdentity),
-        "--entrypoint",
-        "hf",
-        "-v",
-        hfDownloadCacheMount(target.hostCacheDir),
-        "-e",
-        `HF_HOME=${HF_DOWNLOAD_CACHE_CONTAINER_DIR}`,
-        ...buildHfTokenDockerArgs(),
-        profile.image,
-        "download",
-        model.id,
-        ...(model.revision ? ["--revision", model.revision] : []),
-      ],
-      {
-        env: { ...dockerEnv, ...buildHfTokenForwardEnv() },
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-
-    const tail: string[] = [];
-    const outputDecoders = [
-      { decoder: new StringDecoder("utf8"), stream: process.stdout },
-      { decoder: new StringDecoder("utf8"), stream: process.stderr },
-    ];
-    let pendingOutput: { text: string; stream: NodeJS.WriteStream }[] = [];
-    const TAIL_MAX = 50;
-    let resolved = false;
-    let decodersFinalized = false;
-    const start = Date.now();
-    let lastOutputAt = start;
-    let lastOutputEndedCleanly = true;
-    const heartbeat = setInterval(() => {
-      const now = Date.now();
-      if (now - lastOutputAt >= MODEL_DOWNLOAD_HEARTBEAT_MS) {
-        if (!lastOutputEndedCleanly) process.stdout.write("\n");
-        emit(`Model download still running (${formatElapsed(now - start)} elapsed; no new output)`);
-        lastOutputAt = now;
-        lastOutputEndedCleanly = true;
-      }
-    }, MODEL_DOWNLOAD_HEARTBEAT_MS);
-    heartbeat.unref?.();
-
-    function done(result: { ok: boolean; reason?: string }): void {
-      if (resolved) return;
-      resolved = true;
-      clearInterval(heartbeat);
-      resolve(result);
-    }
-
-    function rememberTail(text: string): void {
-      for (const segment of text.split(/[\r\n]+/)) {
-        if (!segment) continue;
-        tail.push(segment);
-        if (tail.length > TAIL_MAX) tail.shift();
-      }
-    }
-
-    function takePendingOutput(end: number): { text: string; stream: NodeJS.WriteStream }[] {
-      const selected: { text: string; stream: NodeJS.WriteStream }[] = [];
-      let remaining = end;
-      while (remaining > 0 && pendingOutput.length > 0) {
-        const chunk = pendingOutput[0];
-        if (chunk.text.length <= remaining) {
-          selected.push(chunk);
-          pendingOutput.shift();
-          remaining -= chunk.text.length;
-          continue;
-        }
-        selected.push({ text: chunk.text.slice(0, remaining), stream: chunk.stream });
-        pendingOutput[0] = { text: chunk.text.slice(remaining), stream: chunk.stream };
-        remaining = 0;
-      }
-      return selected;
-    }
-
-    function flushOutput(flushAll = false): void {
-      const pendingText = pendingOutput.map((chunk) => chunk.text).join("");
-      const end = flushAll
-        ? pendingText.length
-        : Math.max(pendingText.lastIndexOf("\n"), pendingText.lastIndexOf("\r")) + 1;
-      if (end <= 0) return;
-      const selected = takePendingOutput(end);
-      const safeChunks = redactHfDownloadOutputChunks(selected, tokenValue);
-      for (const [index, safeText] of safeChunks.entries()) {
-        if (!safeText) continue;
-        selected[index].stream.write(safeText);
-        lastOutputEndedCleanly = /[\r\n]$/.test(safeText);
-        rememberTail(safeText);
-      }
-    }
-
-    function finalizeOutputDecoders(): void {
-      if (decodersFinalized) return;
-      decodersFinalized = true;
-      for (const state of outputDecoders) {
-        const text = state.decoder.end();
-        if (text) pendingOutput.push({ text, stream: state.stream });
-      }
-      flushOutput(true);
-    }
-
-    function onChunk(buf: Buffer, state: (typeof outputDecoders)[number]): void {
-      lastOutputAt = Date.now();
-      const text = state.decoder.write(buf);
-      if (text) pendingOutput.push({ text, stream: state.stream });
-      flushOutput();
-    }
-
-    proc.stdout?.on("data", (buf: Buffer) => onChunk(buf, outputDecoders[0]));
-    proc.stderr?.on("data", (buf: Buffer) => onChunk(buf, outputDecoders[1]));
-
-    proc.on("error", (err: Error) => {
-      finalizeOutputDecoders();
-      done({ ok: false, reason: `spawn error: ${err.message}` });
-    });
-
-    proc.on("exit", (code: number | null) => {
-      finalizeOutputDecoders();
-      if (code === 0) {
-        if (!lastOutputEndedCleanly) process.stdout.write("\n");
-        emit("Model download complete");
-        done({ ok: true });
-        return;
-      }
-      // Surface the last few sanitized lines so a failure has actionable context.
-      if (tail.length > 0) {
-        process.stderr.write(`  --- Last ${String(tail.length)} hf output lines: ---\n`);
-        for (const line of tail) process.stderr.write(`    ${line}\n`);
-        process.stderr.write("  ---\n");
-      }
-      if (HF_RATE_LIMIT_PATTERN.test(tail.join("\n"))) printHfRateLimitRecovery();
-      done({ ok: false, reason: `hf download failed (exit ${String(code)})` });
-    });
-  });
+  return acquireHuggingFaceModel(
+    {
+      dockerEnv,
+      downloaderImage: profile.image,
+      hostCacheDir: target.hostCacheDir ?? hostHfCacheDir(),
+      repository: model.id,
+      revision: model.revision,
+      spawnDocker: dockerSpawn,
+      userIdentity: target.userIdentity ?? hostUserIdentity(),
+    },
+    { logLine: emit, onRateLimit: printHfRateLimitRecovery },
+  );
 }
 
 function validateDockerArg(value: string, label: string): string {
