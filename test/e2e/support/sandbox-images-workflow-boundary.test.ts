@@ -235,6 +235,44 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
+  it("rejects a conditional trailing-separator alias of the Hermes base-image resolver", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];
+    const resolver = consumer.steps!.find((step) => step.name === "Resolve Hermes base image")!;
+    consumer.steps!.push({
+      ...resolver,
+      name: "Resolve Hermes base image through trailing separator",
+      uses: `${resolver.uses}/`,
+      if: "${{ false }}",
+    });
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "Hermes image tests must resolve the Hermes base image exactly once with the canonical action before the secret-boundary probe",
+        "Hermes base-image resolver must run unconditionally",
+      ]),
+    );
+  });
+
+  it("rejects a failure-tolerant dot-segment alias of the Hermes base-image resolver", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];
+    const resolver = consumer.steps!.find((step) => step.name === "Resolve Hermes base image")!;
+    consumer.steps!.push({
+      ...resolver,
+      name: "Resolve Hermes base image through dot segment",
+      uses: `${resolver.uses}/.`,
+      "continue-on-error": true,
+    });
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "Hermes image tests must resolve the Hermes base image exactly once with the canonical action before the secret-boundary probe",
+        "Hermes base-image resolver must fail closed",
+      ]),
+    );
+  });
+
   it("rejects resolving the Hermes base image after the secret-boundary probe", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const consumer = imageWorkflow.jobs["test-hermes-sandbox-image"];

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
@@ -70,6 +70,13 @@ const REGISTRY_WRITE =
 
 function normalizeShellContinuations(run: string): string {
   return run.replace(/\\\r?\n[ \t]*/gu, " ");
+}
+
+function normalizeLocalActionPath(uses: string | undefined): string | undefined {
+  if (!uses?.startsWith("./")) {
+    return uses;
+  }
+  return posix.normalize(uses).replace(/\/+$/u, "");
 }
 
 type GuardedProductionBuildContract = {
@@ -904,12 +911,14 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
     testJob,
     "Run Hermes sandbox secret boundary test",
   );
+  const resolverActionPath = normalizeLocalActionPath(HERMES_BASE_IMAGE_RESOLVER_ACTION);
   const resolverSteps = steps(testJob).filter(
     (step) =>
-      step.name === "Resolve Hermes base image" || step.uses === HERMES_BASE_IMAGE_RESOLVER_ACTION,
+      step.name === "Resolve Hermes base image" ||
+      normalizeLocalActionPath(step.uses) === resolverActionPath,
   );
   const baseImageResolver = resolverSteps.find(
-    (step) => step.uses === HERMES_BASE_IMAGE_RESOLVER_ACTION,
+    (step) => normalizeLocalActionPath(step.uses) === resolverActionPath,
   );
   if (
     resolverSteps.length !== 1 ||
@@ -921,10 +930,10 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
       "Hermes image tests must resolve the Hermes base image exactly once with the canonical action before the secret-boundary probe",
     );
   }
-  if (baseImageResolver?.if !== undefined) {
+  if (resolverSteps.some((step) => step.if !== undefined)) {
     errors.push("Hermes base-image resolver must run unconditionally");
   }
-  if (baseImageResolver?.["continue-on-error"] !== undefined) {
+  if (resolverSteps.some((step) => step["continue-on-error"] !== undefined)) {
     errors.push("Hermes base-image resolver must fail closed");
   }
   const rootEntrypoint = requireStep(
