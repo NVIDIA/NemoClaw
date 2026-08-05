@@ -263,7 +263,8 @@ The previously consumed image had the following identity:
 | arm64 image manifest | `sha256:36b4e5c9fdd506ca5823091465d9303043a12cad7a552fce7e426c79cb7d722c` |
 
 The previous and current source commits diverge after merge base `eaa6ec4`.
-The current source preserves the reviewed WhatsApp inputs through verified squash commit `3f3eb6139e089c24397d6a499a10fcde4bdc84da`, which is an ancestor of `bd668121e918e7b1dda13062bed728f18150360e`.
+The current source preserves the reviewed WhatsApp inputs introduced by squash commit `3f3eb6139e089c24397d6a499a10fcde4bdc84da`.
+GitHub reports that commit as `Verified`, and it is an ancestor of `bd668121e918e7b1dda13062bed728f18150360e`.
 The following blobs match between the previous source commit and the preserved squash commit:
 
 | Path | Blob |
@@ -272,7 +273,7 @@ The following blobs match between the previous source commit and the preserved s
 | `agents/hermes/whatsapp-proxy.patch` | `c154223` |
 | `test/hermes-share-mount-deps.test.ts` | `09e4c48` |
 
-The current source also contains these reviewed base-image inputs, all as verified ancestors:
+Each reviewed commit in the following table is an ancestor of `bd668121e918e7b1dda13062bed728f18150360e` and appears as `Verified` in GitHub:
 
 | Commit | Input |
 | --- | --- |
@@ -318,6 +319,8 @@ The exact-source dependency patch and its residual audit record require security
 
 ### Completed Source and Local Evidence
 
+The following source and local evidence is complete.
+
 - authoritative stable-release, tag, and source-commit checks;
 - three adjacent stable ranges and 2,399 source commits reviewed;
 - current and target Python closures, JavaScript locks, licenses, and point-in-time advisories compared;
@@ -328,6 +331,8 @@ The exact-source dependency patch and its residual audit record require security
 - a no-cache arm64 Hermes base-image build.
 
 ### Completed Publication and Registry Evidence
+
+The following publication and registry evidence is complete.
 
 - successful source-release, PyPI, Docker, and patched base-image producer runs;
 - PyPI Trusted Publisher attestations and the independent npm registry-integrity cross-check;
