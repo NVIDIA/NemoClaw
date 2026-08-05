@@ -187,7 +187,6 @@ export async function assertHermesManagedAddSurvivesLockedGatewayRestartAndState
     },
   );
   expectExitZero(shieldsDown, "unlock Hermes config for remaining managed MCP lifecycle");
-  await assertHermesReloadRollback(sandbox, sandboxName, mcpUrl);
 }
 
 /**

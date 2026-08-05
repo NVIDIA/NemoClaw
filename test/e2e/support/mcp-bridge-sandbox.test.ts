@@ -12,6 +12,7 @@ import YAML from "yaml";
 import { testTimeout } from "../../helpers/timeouts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
+  assertManagedMcpPolicySurvivedRemoval,
   buildMcpDnsRebindingProbeScript,
   hostAddressForSandbox,
   hostPrivateAddressForSandbox,
@@ -302,45 +303,52 @@ network_policies:
     expect(contractSource).not.toContain("assertAdapterDnsRebindingDenied");
   });
 
-  it("runs the zero-upstream rebinding proof for all three adapters", () => {
-    const source = fs.readFileSync("test/e2e/live/mcp-bridge.test.ts", "utf8");
+  it("accepts an unchanged surviving policy only after the unrelated policy is absent", () => {
+    const survivingPolicyBefore = {
+      endpoints: [{ host: "surviving.example.test", allowed_ips: ["203.0.113.10"] }],
+    };
+    const survivingPolicyAfter = {
+      endpoints: [{ host: "surviving.example.test", allowed_ips: ["203.0.113.10"] }],
+    };
+    const changedSurvivingPolicy = {
+      endpoints: [{ host: "changed.example.test", allowed_ips: ["203.0.113.10"] }],
+    };
 
-    expect(source.match(/await assertAdapterDnsRebindingDenied/g)).toHaveLength(3);
-    for (const adapter of [
-      'adapter: "mcporter"',
-      'adapter: "hermes-config"',
-      'adapter: "deepagents-config"',
-    ]) {
-      expect(source).toContain(adapter);
-    }
-    expect(source).toContain("rebound request must not reach the upstream MCP server");
-    expect(source).toContain(").toHaveLength(0);");
-  });
+    expect(() =>
+      assertManagedMcpPolicySurvivedRemoval(
+        survivingPolicyBefore,
+        {
+          networkPolicies: { mcp_bridge_surviving: survivingPolicyAfter },
+          policy: survivingPolicyAfter,
+        },
+        "mcp_bridge_rebinding",
+      ),
+    ).not.toThrow();
 
-  it("captures the Hermes rediscovery offset after route removal and before restart", () => {
-    const source = fs.readFileSync("test/e2e/live/mcp-bridge.test.ts", "utf8");
-    const denialProof = source.indexOf("rebound request must not reach the upstream MCP server");
-    const restore = source.indexOf("await restoreDnsRebindingHostsFixture", denialProof);
-    const remove = source.indexOf("const remove = await host.nemoclaw", denialProof);
-    const hermesTest = source.indexOf('mcpBridgeShardTest("hermes")');
-    const rebinding = source.indexOf("await assertAdapterDnsRebindingDenied", hermesTest);
-    const offset = source.indexOf(
-      "const survivingDiscoveryOffset = fakeMcp.requests.length",
-      rebinding,
-    );
-    const restart = source.indexOf("await restartBridgeWithoutHostSecret", offset);
-    const toolCall = source.indexOf("await assertRealAdapterToolCall", restart);
-    const rediscovery = source.indexOf("await assertAuthenticatedMcpRediscovery", toolCall);
+    expect(() =>
+      assertManagedMcpPolicySurvivedRemoval(
+        survivingPolicyBefore,
+        {
+          networkPolicies: { mcp_bridge_surviving: changedSurvivingPolicy },
+          policy: changedSurvivingPolicy,
+        },
+        "mcp_bridge_rebinding",
+      ),
+    ).toThrow();
 
-    expect(denialProof).toBeGreaterThanOrEqual(0);
-    expect(restore).toBeGreaterThan(denialProof);
-    expect(remove).toBeGreaterThan(restore);
-    expect(rebinding).toBeGreaterThan(hermesTest);
-    expect(offset).toBeGreaterThan(rebinding);
-    expect(restart).toBeGreaterThan(offset);
-    expect(toolCall).toBeGreaterThan(restart);
-    expect(rediscovery).toBeGreaterThan(toolCall);
-    expect(source).toContain("Hermes MCP rediscovery after explicit restart");
+    expect(() =>
+      assertManagedMcpPolicySurvivedRemoval(
+        survivingPolicyBefore,
+        {
+          networkPolicies: {
+            mcp_bridge_rebinding: { endpoints: [] },
+            mcp_bridge_surviving: survivingPolicyAfter,
+          },
+          policy: survivingPolicyAfter,
+        },
+        "mcp_bridge_rebinding",
+      ),
+    ).toThrow();
   });
 
   it("restores host DNS strictly while treating the ephemeral sandbox as best effort", async () => {

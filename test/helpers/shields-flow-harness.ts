@@ -1,0 +1,307 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import path from "node:path";
+
+import { expect, type MockInstance, vi } from "vitest";
+import YAML from "yaml";
+import { buildMcpBridgePolicyYaml } from "../../src/lib/actions/sandbox/mcp-bridge-policy-render";
+import type { SandboxEntry } from "../../src/lib/state/registry";
+
+const shieldsModulePath = "./index.js";
+
+export type ShieldsFlowHarness = {
+  applyShieldsPolicySnapshot: typeof import("../../src/lib/shields/index.js").applyShieldsPolicySnapshot;
+  auditSpy: MockInstance;
+  cleanupTempDirSpy: MockInstance;
+  errorSpy: MockInstance;
+  logSpy: MockInstance;
+  policySetBodies: string[];
+  runSpy: MockInstance;
+  shieldsDown: typeof import("../../src/lib/shields/index.js").shieldsDown;
+  shieldsStatus: typeof import("../../src/lib/shields/index.js").shieldsStatus;
+  shieldsUp: typeof import("../../src/lib/shields/index.js").shieldsUp;
+  isShieldsDown: typeof import("../../src/lib/shields/index.js").isShieldsDown;
+  synchronizeAutoRestoreWithShieldsDown: typeof import("../../src/lib/shields/index.js").synchronizeAutoRestoreWithShieldsDown;
+};
+
+export type ShieldsFlowHarnessOptions = {
+  beginContainment?: typeof import("../../src/lib/state/mcp-lifecycle-lock.js").beginCommittedMcpLifecycleContainmentSync;
+  directSandboxUnavailable?: boolean;
+  dockerExecFileSync?: (argv: unknown) => string;
+  failOpenClawGuardActions?: Array<"lock" | "unlock">;
+  failStateSave?: boolean;
+  invokedAs?: "nemoclaw" | "nemohermes";
+  openClawGuardFailure?: {
+    code: string;
+    path: string;
+    detail: string;
+  };
+  openClawGuardFailures?: Array<{
+    code: string;
+    path: string;
+    detail: string;
+  }>;
+  fork?: (...args: unknown[]) => {
+    pid: number;
+    disconnect: () => void;
+    unref: () => void;
+    send: () => boolean;
+    kill: () => boolean;
+  };
+  livePolicyYaml?: string;
+  run?: (cmd: unknown) => { status: number };
+  sandboxEntry?: SandboxEntry;
+};
+
+export function managedMcpPolicy(server: string, address = "8.8.8.8") {
+  const content = buildMcpBridgePolicyYaml(
+    server,
+    `https://${server}.example.com/mcp`,
+    "hermes-config",
+    [address],
+  );
+  const entries = Object.entries(YAML.parse(content).network_policies as Record<string, unknown>);
+  expect(entries, `rendered MCP policies for ${server}`).toHaveLength(1);
+  const [key, networkPolicy] = entries[0]!;
+  return { content, key, networkPolicy, server };
+}
+
+export function managedMcpSandbox(
+  policies: Array<ReturnType<typeof managedMcpPolicy>>,
+): SandboxEntry {
+  return {
+    name: "openclaw",
+    openshellDriver: "docker",
+    customPolicies: policies.map(({ content, server }) => ({
+      name: `mcp-bridge-${server}`,
+      content,
+      sourcePath: "generated:nemoclaw-mcp-bridge",
+    })),
+    mcp: {
+      bridges: Object.fromEntries(
+        policies.map(({ server }) => [
+          server,
+          {
+            server,
+            agent: "hermes",
+            adapter: "hermes-config",
+            url: `https://${server}.example.com/mcp`,
+            env: ["MCP_SECRET"],
+            policyName: `mcp-bridge-${server}`,
+            addedAt: "2026-07-30T00:00:00.000Z",
+          },
+        ]),
+      ),
+    },
+  };
+}
+
+function throwHarnessError(error: Error): never {
+  throw error;
+}
+
+function recordPolicySetBody(policySetBodies: string[], file: unknown): void {
+  policySetBodies.push(fs.readFileSync(String(file), "utf-8"));
+}
+
+export function createShieldsFlowHarness(
+  requireDist: NodeRequire,
+  tmpDir: string,
+  options: ShieldsFlowHarnessOptions = {},
+): ShieldsFlowHarness {
+  vi.stubEnv("NEMOCLAW_INVOKED_AS", options.invokedAs ?? "nemoclaw");
+  delete require.cache[requireDist.resolve(shieldsModulePath)];
+  delete require.cache[requireDist.resolve("./timer-bound-lock.js")];
+  delete require.cache[requireDist.resolve("./transition-lock.js")];
+  delete require.cache[requireDist.resolve("./permissive-runtime.js")];
+  delete require.cache[requireDist.resolve("../actions/sandbox/mcp-bridge-policy.js")];
+  delete require.cache[requireDist.resolve("../sandbox/privileged-exec.js")];
+  delete require.cache[requireDist.resolve("../cli/branding.js")];
+  const lifecycleLock = requireDist(
+    "../state/mcp-lifecycle-lock.js",
+  ) as typeof import("../../src/lib/state/mcp-lifecycle-lock.js");
+  const beginContainment =
+    options.beginContainment ?? lifecycleLock.beginCommittedMcpLifecycleContainmentSync;
+  vi.spyOn(lifecycleLock, "beginCommittedMcpLifecycleContainmentSync").mockImplementation(
+    beginContainment,
+  );
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+  const runner = requireDist("../runner.js");
+  const policy = requireDist("../policy/index.js");
+  const agentConfig = requireDist("../sandbox/agent-config.js");
+  const registry = requireDist("../state/registry.js");
+  const privilegedExec = requireDist("../sandbox/privileged-exec.js");
+  const dockerExec = requireDist("../adapters/docker/exec.js");
+  const audit = requireDist("./audit.js");
+  const tempFiles = requireDist("../onboard/temp-files.js");
+  const childProcess = requireDist("node:child_process");
+  const policySetBodies: string[] = [];
+  let openClawPosture: "locked" | "mutable" = "mutable";
+
+  vi.spyOn(runner, "validateName").mockImplementation((name: unknown) => String(name));
+  vi.spyOn(runner, "runCapture").mockReturnValue(
+    options.livePolicyYaml ?? "version: 1\nnetwork_policies:\n  test: {}\n",
+  );
+  const runSpy = vi.spyOn(runner, "run").mockImplementation((cmd: unknown) => {
+    return options.run ? options.run(cmd) : { status: 0 };
+  });
+  options.fork && vi.spyOn(childProcess, "fork").mockImplementation(options.fork);
+  vi.spyOn(policy, "buildPolicyGetCommand").mockReturnValue(["openshell", "policy", "get"]);
+  vi.spyOn(policy, "buildPolicySetCommand").mockImplementation((file: unknown) => {
+    recordPolicySetBody(policySetBodies, file);
+    return ["openshell", "policy", "set"];
+  });
+  vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw));
+  vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue(
+    path.join(tmpDir, "permissive.yaml"),
+  );
+  fs.writeFileSync(path.join(tmpDir, "permissive.yaml"), "version: 1\nnetwork_policies: {}\n");
+  vi.spyOn(agentConfig, "resolveAgentConfig").mockReturnValue({
+    agentName: "openclaw",
+    configDir: "/sandbox/.openclaw",
+    configFile: "openclaw.json",
+    configPath: "/sandbox/.openclaw/openclaw.json",
+    format: "json",
+  });
+  vi.spyOn(registry, "getSandbox").mockReturnValue(
+    options.sandboxEntry ?? { name: "openclaw", openshellDriver: "docker" },
+  );
+  vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [{ name: "openclaw" }] });
+  const permissiveRuntime = requireDist(
+    "./permissive-runtime.js",
+  ) as typeof import("../../src/lib/shields/permissive-runtime.js");
+  const directSandboxUnavailableError = new Error(
+    "No running direct OpenShell sandbox container found for 'openclaw' (driver: docker). Expected a running container named openshell-openclaw or openshell-openclaw-*. Is the sandbox running?",
+  );
+  vi.spyOn(privilegedExec, "isDirectSandboxFallbackUnavailableError").mockReturnValue(
+    Boolean(options.directSandboxUnavailable),
+  );
+  vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(
+    (_sandboxName: unknown, cmd: unknown) =>
+      options.directSandboxUnavailable
+        ? throwHarnessError(directSandboxUnavailableError)
+        : [
+            "exec",
+            "--user",
+            "root",
+            "openshell-openclaw",
+            ...(Array.isArray(cmd) ? cmd.map(String) : []),
+          ],
+  );
+  vi.spyOn(dockerExec, "dockerSpawnSync").mockImplementation((argv: unknown) => {
+    const args = Array.isArray(argv) ? argv.map(String) : [];
+    const action = ["preflight", "lock", "unlock"].find((candidate) => args.includes(candidate));
+    const openClawGuard = args.some((arg) => arg.endsWith("openclaw-config-guard.py"));
+    const shouldFailOpenClawGuard = Boolean(
+      openClawGuard &&
+        (action === "lock" || action === "unlock") &&
+        options.failOpenClawGuardActions?.includes(action),
+    );
+    const failures = options.openClawGuardFailures ?? [
+      options.openClawGuardFailure ?? {
+        code: "startup-not-ready",
+        path: "/run/nemoclaw/openclaw-config-ready.json",
+        detail: "OpenClaw startup is not ready for host config mutations",
+      },
+    ];
+    const failureResult = {
+      status: 1,
+      signal: null,
+      stdout: `${failures
+        .map((failure) => JSON.stringify({ type: "issue", ...failure }))
+        .join("\n")}\n${JSON.stringify({ type: "result", action, status: "failed" })}\n`,
+      stderr: "",
+      pid: 0,
+      output: [],
+    };
+    openClawPosture = shouldFailOpenClawGuard
+      ? openClawPosture
+      : openClawGuard && action === "lock"
+        ? "locked"
+        : openClawGuard && action === "unlock"
+          ? "mutable"
+          : openClawPosture;
+    const successResult = {
+      status: 0,
+      signal: null,
+      stdout: action
+        ? `${JSON.stringify({
+            type: "result",
+            action,
+            status: "ok",
+            ...(openClawGuard
+              ? {
+                  configDir: "/sandbox/.openclaw",
+                  files: ["openclaw.json", ".config-hash"],
+                  chattrApplied: action === "lock",
+                }
+              : { issueCount: 0 }),
+          })}\n`
+        : "",
+      stderr: "",
+      pid: 0,
+      output: [],
+    };
+    return (shouldFailOpenClawGuard ? failureResult : successResult) as never;
+  });
+  vi.spyOn(dockerExec, "dockerExecFileSync").mockImplementation((argv: unknown) => {
+    const args = Array.isArray(argv) ? argv.map(String) : [];
+    return options.dockerExecFileSync
+      ? options.dockerExecFileSync(argv)
+      : args.includes("sha256sum")
+        ? "a".repeat(64) + "  /sandbox/.openclaw/openclaw.json\n"
+        : args.includes("stat")
+          ? args.at(-1) === "/sandbox"
+            ? openClawPosture === "locked"
+              ? "1775 root:sandbox\n"
+              : "755 sandbox:sandbox\n"
+            : args.at(-1) === "/sandbox/.openclaw"
+              ? openClawPosture === "locked"
+                ? "755 root:root\n"
+                : "2770 sandbox:sandbox\n"
+              : openClawPosture === "locked"
+                ? "444 root:root\n"
+                : "660 sandbox:sandbox\n"
+          : "";
+  });
+  const auditSpy = vi.spyOn(audit, "appendAuditEntry").mockImplementation(() => undefined);
+  const cleanupTempDirSpy = vi.spyOn(tempFiles, "cleanupTempDir");
+  const prepareStateSaveFailure = options.failStateSave
+    ? () =>
+        fs.mkdirSync(path.join(tmpDir, ".nemoclaw", "state", "shields-openclaw.json"), {
+          recursive: true,
+        })
+    : () => undefined;
+  const buildRuntimePermissivePolicy = permissiveRuntime.buildRuntimePermissivePolicy;
+  vi.spyOn(permissiveRuntime, "buildRuntimePermissivePolicy").mockImplementation(
+    (basePath, deps) => {
+      const runtimePolicy = buildRuntimePermissivePolicy(basePath, deps);
+      prepareStateSaveFailure();
+      return runtimePolicy;
+    },
+  );
+
+  const shields = requireDist(shieldsModulePath);
+  logSpy.mockClear();
+  errorSpy.mockClear();
+  auditSpy.mockClear();
+  return {
+    applyShieldsPolicySnapshot: shields.applyShieldsPolicySnapshot,
+    auditSpy,
+    cleanupTempDirSpy,
+    errorSpy,
+    logSpy,
+    policySetBodies,
+    runSpy,
+    shieldsDown: shields.shieldsDown,
+    shieldsStatus: shields.shieldsStatus,
+    shieldsUp: shields.shieldsUp,
+    isShieldsDown: shields.isShieldsDown,
+    synchronizeAutoRestoreWithShieldsDown: shields.synchronizeAutoRestoreWithShieldsDown,
+  };
+}
