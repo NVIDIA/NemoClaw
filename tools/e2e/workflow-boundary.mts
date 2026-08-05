@@ -26,6 +26,7 @@ import {
   type InferenceSwitchWorkflow,
   validateInferenceSwitchWorkflow,
 } from "./inference-switch-workflow-boundary.mts";
+import { validateLlamaCppDgxSparkQualificationWorkflow } from "./llama-cpp-dgx-spark-qualification-workflow-boundary.mts";
 import { validateManagedImageMultiarchWorkflow } from "./managed-image-multiarch-workflow-boundary.mts";
 import { validateManagedImageProtectedRuntimeWorkflow } from "./managed-image-protected-runtime-workflow-boundary.mts";
 import {
@@ -157,6 +158,7 @@ const COMMON_SECRET_ENV_NAMES = [
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e",
   "hermes-gpu-startup",
+  "llama-cpp-dgx-spark-qualification",
   "openshell-credential-generation-window",
   "staging-brev-launchable",
 ]);
@@ -2493,11 +2495,15 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
     }
     requireCanonicalDockerHubCleanupRun(errors, jobName, cleanup);
 
-    const checkoutIndex = steps.findIndex((step) =>
-      jobName === "managed-image-protected-runtime"
-        ? step.name === "Checkout exact protected runtime candidate source"
-        : stringValue(step.uses).startsWith("actions/checkout@"),
-    );
+    const checkoutIndex = steps.findIndex((step) => {
+      if (jobName === "managed-image-protected-runtime") {
+        return step.name === "Checkout exact protected runtime candidate source";
+      }
+      if (jobName === "llama-cpp-dgx-spark-qualification") {
+        return step.name === "Checkout exact llama.cpp qualification candidate";
+      }
+      return stringValue(step.uses).startsWith("actions/checkout@");
+    });
     const authIndex = steps.indexOf(auth);
     const cleanupIndex = steps.indexOf(cleanup);
     const expectedAuthIndex =
@@ -4241,6 +4247,7 @@ export function validateE2eWorkflow(workflowValue: unknown): string[] {
   errors.push(...validateHermesDashboardWorkflow(workflow as unknown as HermesDashboardWorkflow));
   errors.push(...validateHermesGpuStartupWorkflow(workflow));
   errors.push(...validateInferenceSwitchWorkflow(workflow as unknown as InferenceSwitchWorkflow));
+  errors.push(...validateLlamaCppDgxSparkQualificationWorkflow(workflow));
   errors.push(...validateManagedImageMultiarchWorkflow(workflow));
   errors.push(...validateManagedImageProtectedRuntimeWorkflow(workflow));
   errors.push(
