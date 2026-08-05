@@ -43,7 +43,6 @@
  * #2701 guard-chain assertion.
  */
 
-import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
@@ -51,6 +50,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { pollUntil } from "../fixtures/polling.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
 
 // Reuses the standard ubuntu-repo-docker environment with the
@@ -150,22 +150,18 @@ async function waitForSandboxExecAfterContainerRestart(
   host: HostCliClient,
   sandboxName: string,
 ): Promise<void> {
-  let lastResult = "no OpenShell exec attempt completed";
-  for (let attempt = 1; attempt <= 12; attempt += 1) {
-    const result = await host.command(
-      "openshell",
-      ["sandbox", "exec", "-n", sandboxName, "--", "true"],
-      {
-        artifactName: `legacy-restart-openshell-ready-${attempt}`,
+  await pollUntil({
+    artifactPrefix: "legacy-restart-openshell-ready",
+    attempts: 12,
+    delayMs: 3_000,
+    probe: async (_attempt, artifactName) =>
+      await host.command("openshell", ["sandbox", "exec", "-n", sandboxName, "--", "true"], {
+        artifactName,
         env: buildAvailabilityProbeEnv(),
         timeoutMs: 30_000,
-      },
-    );
-    if (result.exitCode === 0) return;
-    lastResult = resultText(result);
-    await sleep(3_000);
-  }
-  throw new Error(`OpenShell did not accept the restarted legacy sandbox:\n${lastResult}`);
+      }),
+    accept: (result) => result.exitCode === 0,
+  });
 }
 
 test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)", {
