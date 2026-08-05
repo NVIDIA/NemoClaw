@@ -279,6 +279,31 @@ describe("vllm model registry", () => {
     expect(cmd).toContain(`--served-model-name 'operator'"'"'s model'`);
   });
 
+  it("quotes registry arguments and serving environment values as shell literals (#8246)", () => {
+    const qwen = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
+    const cmd = buildVllmServeCommand({
+      ...qwen!,
+      id: "example/model; touch /tmp/model-injection",
+      modelArgs: ["--served-model-name", "$(touch /tmp/argument-injection)"],
+      serveEnv: { SAFE_VALUE: "literal; $(touch /tmp/environment-injection)" },
+    });
+
+    expect(cmd).toContain("export SAFE_VALUE='literal; $(touch /tmp/environment-injection)'");
+    expect(cmd).toContain("vllm serve 'example/model; touch /tmp/model-injection'");
+    expect(cmd).toContain("--served-model-name '$(touch /tmp/argument-injection)'");
+  });
+
+  it("rejects invalid serving environment variable names", () => {
+    const qwen = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
+
+    expect(() =>
+      buildVllmServeCommand({
+        ...qwen!,
+        serveEnv: { "UNSAFE; touch /tmp/environment-name-injection": "1" },
+      }),
+    ).toThrow("Invalid vLLM serving environment variable name");
+  });
+
   it("uses model-specific max-model-len when building the command", () => {
     const deepseek = VLLM_MODELS.find((m) => m.envValue === "deepseek-r1-distill-70b");
     const cmd = buildVllmServeCommand(deepseek!);

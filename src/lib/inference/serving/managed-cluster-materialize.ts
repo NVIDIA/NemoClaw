@@ -9,22 +9,16 @@ import {
   getManagedInferenceMaterializerDescriptor,
   getManagedInferenceRecipeRegistrationError,
   getManagedInferenceTopologyQualificationDescriptor,
+  isManagedClusterInferenceServingRecipe,
   isManagedClusterMaterializerOwnedEnvironment,
   MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
 } from "./adapter-registry.js";
-import { loadManagedInferenceCatalog } from "./catalog-loader.js";
 import {
   immutableManagedInferenceCopy,
   managedInferenceDigest,
   managedInferenceHexDigest,
 } from "./catalog-integrity.js";
-import {
-  type CompiledManagedInferenceCatalog,
-  isManagedInferenceMaterializerOwnedArgument,
-  type ManagedInferenceServingPreset,
-  type ManagedInferenceServingRecipe,
-  type ResolvedManagedInferenceSelection,
-} from "./types.js";
+import { loadManagedInferenceCatalog } from "./catalog-loader.js";
 import {
   type ManagedClusterVllmPreparationPlan,
   materializeManagedClusterVllmPreparation,
@@ -35,6 +29,13 @@ import {
   type ManagedClusterTopologyOutput,
   type ManagedClusterTopologyRailEndpoint,
 } from "./managed-cluster-topology.js";
+import {
+  type CompiledManagedInferenceCatalog,
+  isManagedInferenceMaterializerOwnedArgument,
+  type ManagedInferenceServingPreset,
+  type ManagedInferenceServingRecipe,
+  type ResolvedManagedInferenceSelection,
+} from "./types.js";
 
 /** Stable adapter identity; profile identities and values come from the selected catalog entries. */
 export const MANAGED_CLUSTER_VLLM_ADAPTER_ID = MANAGED_CLUSTER_VLLM_MATERIALIZER_REF;
@@ -242,9 +243,12 @@ function assertCatalogSelection(
     selection.recipeDigest,
     "recipe",
   );
+  if (!isManagedClusterInferenceServingRecipe(recipe)) {
+    fail(`recipe selects unsupported materializer ${recipe.spec.execution.materializerRef}`);
+  }
   const bindingName = recipe.spec.execution.topologyBinding;
   const recipeBinding = recipe.spec.bindings[bindingName];
-  const presetBinding = preset.spec.plan.bindings[bindingName]?.valueFromTopologyQualification;
+  const presetBinding = preset.spec.plan.bindings?.[bindingName]?.valueFromTopologyQualification;
   const topologyDescriptor = recipeBinding
     ? getManagedInferenceTopologyQualificationDescriptor(
         recipeBinding.qualificationId,
@@ -272,7 +276,11 @@ function assertCatalogSelection(
   const materializer = getManagedInferenceMaterializerDescriptor(
     recipe.spec.execution.materializerRef,
   );
-  if (!materializer || materializer.ref !== MANAGED_CLUSTER_VLLM_MATERIALIZER_REF) {
+  if (
+    !materializer ||
+    materializer.ref !== MANAGED_CLUSTER_VLLM_MATERIALIZER_REF ||
+    !materializer.topology
+  ) {
     fail(`recipe selects unsupported materializer ${recipe.spec.execution.materializerRef}`);
   }
   const lifecycle = getManagedInferenceLifecycleDescriptor(recipe.spec.execution.lifecycleRef);
