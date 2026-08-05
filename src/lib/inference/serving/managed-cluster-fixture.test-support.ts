@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { MANAGED_CLUSTER_VLLM_MATERIALIZER_REF } from "./adapter-registry.js";
+import {
+  isManagedClusterInferenceServingRecipe,
+  MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
+} from "./adapter-registry.js";
 import { loadManagedInferenceCatalog } from "./catalog-loader.js";
 import { managedInferenceDigest } from "./catalog-integrity.js";
 import type { ResolvedManagedInferenceSelection } from "./types.js";
@@ -23,7 +26,11 @@ function fixtureCatalogDefinitions() {
     const compiledRecipe = catalog.recipes.find(
       ({ metadata }) => metadata.id === compiledPreset.spec.plan.recipeRef,
     );
-    if (compiledRecipe?.spec.execution.materializerRef === MANAGED_CLUSTER_VLLM_MATERIALIZER_REF) {
+    if (
+      compiledRecipe &&
+      isManagedClusterInferenceServingRecipe(compiledRecipe) &&
+      compiledRecipe.spec.execution.materializerRef === MANAGED_CLUSTER_VLLM_MATERIALIZER_REF
+    ) {
       return { catalog, compiledPreset, compiledRecipe };
     }
   }

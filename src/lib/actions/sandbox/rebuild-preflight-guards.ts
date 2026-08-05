@@ -243,7 +243,12 @@ export function checkRebuildGatewaySchemaPreflight(
       action: `rebuilding sandbox '${sandboxName}'`,
       command: `${CLI_NAME} ${sandboxName} rebuild`,
     });
-    bail("OpenShell gateway schema mismatch.");
+    printRebuildPreflightFailure(
+      "OpenShell gateway schema is incompatible with this rebuild.",
+      "Follow the gateway recovery guidance above, then rerun rebuild.",
+      "OpenShell gateway schema mismatch.",
+      bail,
+    );
     return false;
   }
   return true;
@@ -263,8 +268,12 @@ export function getRebuildSandboxEntryOrBail(
 ): RebuildSandboxEntry | null {
   const sb = registry.getSandbox(sandboxName) as RebuildSandboxEntry | null;
   if (!sb) {
-    console.error(`  Sandbox '${sandboxName}' not found in registry.`);
-    bail(`Sandbox '${sandboxName}' not found in registry.`);
+    printRebuildPreflightFailure(
+      `sandbox '${sandboxName}' not found in registry.`,
+      "Verify the sandbox name and rerun rebuild.",
+      `Sandbox '${sandboxName}' not found in registry.`,
+      bail,
+    );
     return null;
   }
   return sb;
@@ -280,12 +289,13 @@ export function blockRebuildOnPendingBaselineTransition(
   if (!transition) return false;
 
   const key = transition.exclusion.key;
-  console.error("");
-  console.error(
-    `  Baseline policy ${transition.operation} for '${key}' needs repair before rebuild.`,
+  printRebuildPreflightFailure(
+    `baseline policy ${transition.operation} for '${key}' needs repair before rebuild.`,
+    `Re-run: ${CLI_NAME} ${sandboxName} policy ${transition.operation} ${key}`,
+    `Pending baseline policy ${transition.operation} for '${key}' blocks rebuild.`,
+    bail,
+    1,
   );
-  console.error(`  Re-run: ${CLI_NAME} ${sandboxName} policy ${transition.operation} ${key}`);
-  bail(`Pending baseline policy ${transition.operation} for '${key}' blocks rebuild.`, 1);
   return true;
 }
 
@@ -294,23 +304,36 @@ export function isSingleAgentRebuildSupported(
   bail: RebuildBail,
 ): boolean {
   if (sb.agents && sb.agents.length > 1) {
-    console.error("  Multi-agent sandbox rebuild is not yet supported.");
-    console.error(`  Back up state manually and recreate with \`${CLI_NAME} onboard\`.`);
-    bail("Multi-agent sandbox rebuild is not yet supported.");
+    printRebuildPreflightFailure(
+      "multi-agent sandbox rebuild is not yet supported.",
+      `Back up state manually and recreate with \`${CLI_NAME} onboard\`.`,
+      "Multi-agent sandbox rebuild is not yet supported.",
+      bail,
+    );
     return false;
   }
   return true;
 }
 
-export function acquireRebuildOnboardLock(sandboxName: string, bail: RebuildBail): () => void {
+export function acquireRebuildOnboardLock(
+  sandboxName: string,
+  bail: RebuildBail,
+): (() => void) | null {
   const lock = onboardSession.acquireOnboardLock(
     `${CLI_NAME} ${sandboxName} rebuild --authoritative-resume`,
   );
   if (!lock.acquired) {
-    console.error(`  Another ${CLI_NAME} onboarding run is already in progress.`);
-    if (lock.holderPid) console.error(`  Lock holder PID: ${lock.holderPid}`);
-    console.error("  Sandbox is untouched — no data was lost.");
-    bail("Could not acquire onboard lock before rebuild");
+    const pidDetail = lock.holderPid ? ` Lock holder PID: ${lock.holderPid}.` : "";
+    const remediation = lock.stale
+      ? "Wait briefly, then rerun rebuild so verified stale-lock cleanup can finish."
+      : `Wait for the other run to finish, then rerun rebuild.${pidDetail}`;
+    printRebuildPreflightFailure(
+      `another ${CLI_NAME} onboarding run is already in progress.`,
+      remediation,
+      "Could not acquire onboard lock before rebuild",
+      bail,
+    );
+    return null;
   }
   let released = false;
   const release = () => {
