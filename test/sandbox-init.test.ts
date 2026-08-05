@@ -416,7 +416,7 @@ EOF
     it("function is defined and callable", () => {
       // We can't test actual capsh on macOS, but verify the function exists
       // and handles the no-capsh case gracefully. Capture stderr via redirect.
-      const { stdout, stderr } = runWithLib(
+      const { stdout } = runWithLib(
         `
         # Hide capsh from PATH so the function falls through
         drop_capabilities /usr/local/bin/fake-entrypoint 2>&1
