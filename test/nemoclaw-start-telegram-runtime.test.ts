@@ -9,7 +9,6 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
-const SANDBOX_INIT = path.join(import.meta.dirname, "..", "scripts", "lib", "sandbox-init.sh");
 const TELEGRAM_RUNTIME_PRELOAD = path.join(
   import.meta.dirname,
   "..",
@@ -26,7 +25,7 @@ function messagingRuntimeSetupSection(
   },
 ): string {
   const start = src.indexOf("# ── Messaging runtime setup from manifest metadata");
-  const end = src.indexOf("# ── End messaging runtime setup", start);
+  const end = src.indexOf("_read_gateway_token()", start);
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
   return src
@@ -96,7 +95,7 @@ function encodeRuntimeSetupPlan(
 }
 
 describe("Telegram runtime preload installation", () => {
-  const src = `${fs.readFileSync(SANDBOX_INIT, "utf-8")}\n${fs.readFileSync(START_SCRIPT, "utf-8")}`;
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
   it("installs Telegram diagnostics only when Telegram is configured", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-install-"));

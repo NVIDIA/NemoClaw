@@ -9,7 +9,6 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
-const SANDBOX_INIT = path.join(import.meta.dirname, "..", "scripts", "lib", "sandbox-init.sh");
 const NEMOTRON_FIX_SOURCE = path.join(
   import.meta.dirname,
   "..",
@@ -36,7 +35,7 @@ function extractShellFunction(source, name) {
 }
 
 describe("NVIDIA endpoint inference fix preload (#1193, #2051, #4063)", () => {
-  const src = `${fs.readFileSync(SANDBOX_INIT, "utf-8")}\n${fs.readFileSync(START_SCRIPT, "utf-8")}`;
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
   it("entrypoint writes the preload and registers it in NODE_OPTIONS", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-nemotron-entrypoint-"));

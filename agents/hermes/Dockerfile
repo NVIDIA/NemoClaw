@@ -21,13 +21,6 @@ RUN ./install-reviewed-runtime.sh \
 RUN chown -R root:root /opt/mcp-tool-discovery-runtime \
     && chmod -R a=rX /opt/mcp-tool-discovery-runtime
 
-FROM mcp-tool-discovery-runtime AS runtime-preload-builder
-WORKDIR /opt/nemoclaw-root
-COPY tsconfig.runtime-preloads.json /opt/nemoclaw-root/
-COPY src/lib/messaging/channels/ /opt/nemoclaw-root/src/lib/messaging/channels/
-RUN ln -s /opt/mcp-tool-discovery-runtime/node_modules /opt/nemoclaw-root/node_modules \
-    && /opt/mcp-tool-discovery-runtime/node_modules/.bin/tsc -p tsconfig.runtime-preloads.json
-
 FROM mcp-tool-discovery-runtime AS managed-startup-runtime-builder
 WORKDIR /opt/nemoclaw-managed-startup-build
 COPY src/lib/core/json-types.ts src/lib/core/ports.ts ./src/lib/core/
@@ -143,7 +136,6 @@ COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-
 COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.85.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json
 COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
-COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/
 
 FROM scratch AS hermes-wrapper-payload
 
@@ -371,12 +363,6 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-managed-star
     && chmod 444 /usr/local/lib/nemoclaw/entrypoint-env-wrapper.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py \
     && chmod 444 /usr/local/lib/nemoclaw/patch-hermes-langfuse-credentials.mts \
     && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.85.json \
-    && test -d /usr/local/lib/nemoclaw/preloads-compiled-channels \
-    && runtime_preload_found="$(find /usr/local/lib/nemoclaw/preloads-compiled-channels -path '*/runtime/*.js' -type f -print -quit)" \
-    && test -n "$runtime_preload_found" \
-    && find /usr/local/lib/nemoclaw/preloads-compiled-channels -path '*/runtime/*.js' -type f \
-        -exec sh -c 'for file do target="/usr/local/lib/nemoclaw/preloads/$(basename "$file")"; [ ! -e "$target" ] || { echo "ERROR: duplicate messaging runtime preload basename: $target" >&2; exit 1; }; cp "$file" "$target"; done' sh {} + \
-    && rm -rf /usr/local/lib/nemoclaw/preloads-compiled-channels \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then \
         chown -R 0:0 /usr/local/lib/nemoclaw/preloads \
         && find /usr/local/lib/nemoclaw/preloads -type f -exec chmod 444 {} + \
@@ -1122,7 +1108,6 @@ RUN check_metadata() { \
     && check_metadata /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh 'root:root 444' \
     && check_metadata /usr/local/bin/nemoclaw-gateway-control 'root:root 700' \
     && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root 444' \
-    && check_metadata /usr/local/lib/nemoclaw/preloads/whatsapp-hermes-session.js 'root:root 444' \
     && check_metadata /usr/local/lib/nemoclaw/hermes-wrapper.py 'root:root 755' \
     && check_metadata /usr/local/lib/nemoclaw/validate-hermes-cli-adapter.py 'root:root 755' \
     && check_metadata /usr/local/share/nemoclaw/hermes-cli-adapter-v1.json 'root:root 444' \

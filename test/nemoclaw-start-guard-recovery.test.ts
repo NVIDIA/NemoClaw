@@ -8,7 +8,6 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
-const SANDBOX_INIT = path.join(import.meta.dirname, "..", "scripts", "lib", "sandbox-init.sh");
 
 function extractShellFunction(source: string, name: string): string {
   const header = `${name}() {`;
@@ -70,7 +69,7 @@ function runRecoveryHarness({
   gatewayLogKind = "regular",
   missingCiaoSource = false,
 }: RecoveryHarnessOptions = {}): Harness {
-  const source = `${fs.readFileSync(SANDBOX_INIT, "utf8")}\n${fs.readFileSync(START_SCRIPT, "utf8")}`;
+  const source = fs.readFileSync(START_SCRIPT, "utf8");
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-guard-recovery-"));
   const eventLog = path.join(tmpDir, "events.log");
   const gatewayLog = path.join(tmpDir, "gateway.log");

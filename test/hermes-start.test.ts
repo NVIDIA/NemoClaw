@@ -341,7 +341,7 @@ function runHermesRootStartupMutableRootPreflight() {
       "validate_hermes_runtime_env_secret_boundary() { :; }",
       "refresh_hermes_provider_placeholders() { :; }",
       "refresh_hermes_runtime_config_hashes() { :; }",
-      "configure_messaging_channels() { :; }; prepare_hermes_messaging_runtime() { :; }",
+      "configure_messaging_channels() { :; }",
       'retry_tirith_marker_if_needed() { printf "tirith-state=%s\\n" "$TIRITH_RETRY_MARKER_CLEARED"; }',
       "prepare_tirith_marker_retry() { TIRITH_RETRY_MARKER_CLEARED=0; retry_tirith_marker_if_needed; }",
       extractShellFunctionFromSource(src, "prepare_hermes_root_runtime"),
@@ -1047,7 +1047,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
           "validate_hermes_runtime_env_secret_boundary() { trace runtime-boundary; }",
           "refresh_hermes_provider_placeholders() { trace placeholders; }",
           "refresh_hermes_runtime_config_hashes() { trace hashes; }",
-          "configure_messaging_channels() { trace channels; }; prepare_hermes_messaging_runtime() { trace messaging-runtime; }",
+          "configure_messaging_channels() { trace channels; }",
           "retry_tirith_marker_if_needed() { trace tirith; }",
           extractShellFunctionFromSource(source, "prepare_tirith_marker_retry"),
           extractShellFunctionFromSource(source, "prepare_hermes_nonroot_runtime"),
@@ -1069,7 +1069,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
       "placeholders",
       "hashes",
       "mcp-integrity",
-      ...["channels", "messaging-runtime"],
+      "channels",
       "tirith",
     ]);
   });

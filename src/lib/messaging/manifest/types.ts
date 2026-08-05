@@ -189,7 +189,7 @@ export interface ChannelRuntimeVisibilitySpec {
 
 export type ChannelRuntimeNodePreloadScope = "boot" | "connect";
 
-/** Node preload module to inject inside the selected agent runtime process. */
+/** Node preload module to inject inside the OpenClaw runtime process. */
 export interface ChannelRuntimeNodePreloadSpec {
   readonly module: string;
   readonly injectInto?: readonly ChannelRuntimeNodePreloadScope[];

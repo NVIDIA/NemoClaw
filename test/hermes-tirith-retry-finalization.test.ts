@@ -177,7 +177,6 @@ describe("agents/hermes/start.sh Tirith retry finalization", () => {
       "validate_hermes_runtime_env_secret_boundary() { :; }",
       "refresh_hermes_provider_placeholders() { :; }",
       "configure_messaging_channels() { :; }",
-      "prepare_hermes_messaging_runtime() { :; }",
       "TIRITH_RETRY_MARKER_CLEARED=1",
       'rm -f "$MARKER"',
       "prepare_hermes_root_runtime",

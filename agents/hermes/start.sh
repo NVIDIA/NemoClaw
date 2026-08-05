@@ -359,14 +359,6 @@ verify_hermes_config_integrity() {
 
 # configure_messaging_channels is provided by sandbox-init.sh (shared).
 
-prepare_hermes_messaging_runtime() {
-  write_messaging_runtime_setup_plan || return 1
-  apply_messaging_runtime_env_aliases || return 1
-  install_messaging_runtime_preloads || return 1
-  verify_messaging_runtime_secret_scans || return 1
-  write_runtime_shell_env
-}
-
 print_dashboard_urls() {
   local api_url dashboard_url
   api_url="http://127.0.0.1:${PUBLIC_PORT}/v1"
@@ -1778,9 +1770,6 @@ if [ -f /opt/hermes/ui-tui/dist/entry.js ]; then
   export HERMES_TUI_DIR="/opt/hermes/ui-tui"
 fi
 TUIENVEOF
-    if type emit_messaging_connect_runtime_preload_exports >/dev/null 2>&1; then
-      emit_messaging_connect_runtime_preload_exports
-    fi
     for _ca_env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS; do
       _ca_env_value="${!_ca_env_name:-}"
       if [ -n "$_ca_env_value" ]; then
@@ -2172,7 +2161,7 @@ validate_running_hermes_boundary() {
   validate_hermes_runtime_env_secret_boundary || return 1
   HERMES_RESTART_FAILURE_CODE=preload-missing
   # shellcheck disable=SC2119
-  validate_messaging_runtime_tmp_permissions || return 1
+  validate_tmp_permissions || return 1
 }
 
 prepare_hermes_gateway_restart() {
@@ -2886,7 +2875,6 @@ prepare_hermes_nonroot_runtime() {
   refresh_hermes_runtime_config_hashes compat || return 1
   inspect_hermes_mcp_integrity "${HERMES_DIR}/.config-hash" || return 1
   configure_messaging_channels || return 1
-  prepare_hermes_messaging_runtime || return 1
   prepare_tirith_marker_retry || return 1
 }
 
@@ -2899,7 +2887,6 @@ prepare_hermes_root_runtime() {
   validate_hermes_runtime_env_secret_boundary || return 1
   refresh_hermes_provider_placeholders both || return 1
   configure_messaging_channels || return 1
-  prepare_hermes_messaging_runtime || return 1
   prepare_tirith_marker_retry || return 1
 }
 
@@ -3254,7 +3241,7 @@ if [ "$(id -u)" -ne 0 ]; then
 
   # Defence-in-depth: verify /tmp file permissions before launching services.
   # shellcheck disable=SC2119
-  validate_messaging_runtime_tmp_permissions
+  validate_tmp_permissions
 
   # Start Hermes gateway. Messaging egress goes directly through OpenShell.
   umask 0007
@@ -3297,7 +3284,7 @@ prepare_restricted_log /tmp/gateway.log gateway:gateway 600
 
 # Defence-in-depth: verify /tmp file permissions before launching services.
 # shellcheck disable=SC2119
-validate_messaging_runtime_tmp_permissions
+validate_tmp_permissions
 
 # Start Hermes gateway. Messaging egress goes directly through OpenShell.
 launch_hermes_gateway

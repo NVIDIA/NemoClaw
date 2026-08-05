@@ -102,17 +102,6 @@ export const whatsappManifest = {
         },
       ],
     },
-    hermes: {
-      nodePreloads: [
-        {
-          module: "whatsapp-hermes-session",
-          injectInto: ["boot"],
-          optional: false,
-          installMessage: "[channels] Installing Hermes dashboard WhatsApp session path patch",
-          installedMessage: "[channels] Hermes dashboard WhatsApp session path patch installed",
-        },
-      ],
-    },
   },
   agentPackages: [
     {

@@ -570,13 +570,6 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       "openshell-child-visible-credentials.v0.0.85.json",
     );
     const preloadDir = path.join(localLib, "preloads");
-    const compiledRuntimePreload = path.join(
-      localLib,
-      "preloads-compiled-channels",
-      "whatsapp",
-      "runtime",
-      "whatsapp-hermes-session.js",
-    );
     const safetyNet = path.join(preloadDir, "sandbox-safety-net.js");
     const ciaoGuard = path.join(preloadDir, "ciao-network-guard.js");
     const gatewaySupervisor = path.join(localLib, "gateway-supervisor.sh");
@@ -606,10 +599,6 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(buildMcpDigest, "# build MCP digest fixture\n");
       fs.writeFileSync(mcpTransaction, "# MCP transaction fixture\n");
       fs.writeFileSync(mcpCredentialBoundary, "{}\n");
-      fs.mkdirSync(path.dirname(compiledRuntimePreload), { recursive: true });
-      fs.writeFileSync(compiledRuntimePreload, "module.exports = 'runtime preload fixture';\n", {
-        mode: 0o666,
-      });
       fs.mkdirSync(preloadDir, { mode: 0o777 });
       fs.writeFileSync(safetyNet, "module.exports = 'safety net fixture';\n", { mode: 0o666 });
       fs.writeFileSync(ciaoGuard, "module.exports = 'ciao guard fixture';\n", { mode: 0o666 });
@@ -687,13 +676,9 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       const hardenedDir = fs.statSync(preloadDir);
       const hardenedSafetyNet = fs.statSync(safetyNet);
       const hardenedCiaoGuard = fs.statSync(ciaoGuard);
-      const hardenedRuntimePreload = fs.statSync(
-        path.join(preloadDir, "whatsapp-hermes-session.js"),
-      );
       expect(hardenedDir.mode & 0o777).toBe(0o755);
       expect(hardenedSafetyNet.mode & 0o777).toBe(0o444);
       expect(hardenedCiaoGuard.mode & 0o777).toBe(0o444);
-      expect(hardenedRuntimePreload.mode & 0o777).toBe(0o444);
       expect(fs.statSync(discordRecoveryPatcher).mode & 0o777).toBe(0o755);
       expect(fs.statSync(profilePolicyPatcher).mode & 0o777).toBe(0o755);
       expect(fs.statSync(langfuseCredentialPatcher).mode & 0o777).toBe(0o444);
@@ -705,8 +690,6 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expect(hardenedSafetyNet.gid).toBe(fixtureOwner.gid);
       expect(hardenedCiaoGuard.uid).toBe(fixtureOwner.uid);
       expect(hardenedCiaoGuard.gid).toBe(fixtureOwner.gid);
-      expect(hardenedRuntimePreload.uid).toBe(fixtureOwner.uid);
-      expect(hardenedRuntimePreload.gid).toBe(fixtureOwner.gid);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
