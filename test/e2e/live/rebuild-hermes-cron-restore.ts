@@ -61,11 +61,11 @@ interface SeededCronJob {
   scriptName: string;
 }
 
-interface GatewayEvidence {
+export interface GatewayEvidence {
   active_agents: number;
   gateway_state: string;
   pid: number;
-  running_pid: number;
+  running_pid: number | null;
   start_time: number;
 }
 
@@ -128,6 +128,18 @@ export function parseCronTickerTimestamp(text: string, label: string): number {
     fail(`${label} is invalid`);
   }
   return timestamp;
+}
+
+export function parseGatewayEvidence(text: string): GatewayEvidence {
+  const payload = parseJsonObject(text, "Hermes gateway status");
+  for (const field of ["active_agents", "pid", "start_time"] as const) {
+    if (!Number.isSafeInteger(payload[field])) fail(`Hermes gateway ${field} is invalid`);
+  }
+  if (payload.running_pid !== null && !Number.isSafeInteger(payload.running_pid)) {
+    fail("Hermes gateway running_pid is invalid");
+  }
+  if (typeof payload.gateway_state !== "string") fail("Hermes gateway state is invalid");
+  return payload as unknown as GatewayEvidence;
 }
 
 function normalizeTimestampMs(value: unknown, label: string): number {
@@ -410,15 +422,6 @@ export function createRebuildHermesCronRestoreFixture({
     const result = await dockerRoot(command, artifactName);
     expectExitZero(result, `verify cron restore marker is ${present ? "present" : "absent"}`);
     if (present) expect(result.stdout.trim()).toMatch(/^0:0 400 [1-9]\d*$/u);
-  }
-
-  function parseGatewayEvidence(text: string): GatewayEvidence {
-    const payload = parseJsonObject(text, "Hermes gateway status");
-    for (const field of ["active_agents", "pid", "running_pid", "start_time"] as const) {
-      if (!Number.isSafeInteger(payload[field])) fail(`Hermes gateway ${field} is invalid`);
-    }
-    if (typeof payload.gateway_state !== "string") fail("Hermes gateway state is invalid");
-    return payload as unknown as GatewayEvidence;
   }
 
   async function gatewayEvidence(artifactName: string): Promise<GatewayEvidence | null> {

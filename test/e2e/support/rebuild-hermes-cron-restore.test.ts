@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   cronJobState,
   parseCronTickerTimestamp,
+  parseGatewayEvidence,
   parseHermesCronBeginReceipt,
 } from "../live/rebuild-hermes-cron-restore.ts";
 
@@ -89,5 +90,35 @@ describe("Hermes rebuild cron ticker timestamp", () => {
     expect(() => parseCronTickerTimestamp(evidence, "ticker timestamp")).toThrow(
       "ticker timestamp is invalid",
     );
+  });
+});
+
+describe("Hermes rebuild gateway evidence", () => {
+  it("accepts a transient missing running process during restart", () => {
+    expect(
+      parseGatewayEvidence(
+        JSON.stringify({
+          active_agents: 0,
+          gateway_state: "draining",
+          pid: 263,
+          running_pid: null,
+          start_time: 29_607,
+        }),
+      ),
+    ).toMatchObject({ pid: 263, running_pid: null });
+  });
+
+  it("rejects malformed running process evidence", () => {
+    expect(() =>
+      parseGatewayEvidence(
+        JSON.stringify({
+          active_agents: 0,
+          gateway_state: "draining",
+          pid: 263,
+          running_pid: "263",
+          start_time: 29_607,
+        }),
+      ),
+    ).toThrow("Hermes gateway running_pid is invalid");
   });
 });
