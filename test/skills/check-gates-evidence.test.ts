@@ -80,6 +80,25 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output.allPass).toBe(false);
   });
 
+  it("fails closed when the base branch changes during gate evaluation", () => {
+    const finalCurrentBaseSha = "c".repeat(40);
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        finalCurrentBaseSha,
+      }).stdout,
+    );
+
+    expect(output.gates.conflicts).toMatchObject({
+      pass: false,
+      details: "The base SHA changed during gate evaluation. Rerun the gate checker.",
+      baseSha: BASE_SHA,
+      currentBaseSha: finalCurrentBaseSha,
+    });
+    expect(output.allPass).toBe(false);
+  });
+
   it("fails closed while GitHub has not determined mergeability", () => {
     const result = runGate({
       body: "Signed-off-by: Example User <user@example.com>",
@@ -139,12 +158,12 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output.allPass).toBe(false);
   });
 
-  it("makes the PR revision snapshot the final remote read", () => {
+  it("performs no remote read after the final PR snapshot", () => {
     const output = JSON.parse(
       runGate({
         body: "Signed-off-by: Example User <user@example.com>",
         verified: true,
-        finalPrAfterCurrentBase: { headRefOid: "c".repeat(40) },
+        finalPrAfterFinalCi: { headRefOid: "c".repeat(40) },
       }).stdout,
     );
 
@@ -542,7 +561,10 @@ describe("maintainer merge-gate contributor compliance", () => {
 
     expect(output.gates.ci).toMatchObject({
       pass: false,
-      failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
+      failingChecks: [
+        "E2E / PR Gate: latest attempt evidence incomplete",
+        "initialize: latest attempt evidence incomplete",
+      ],
     });
   });
 
@@ -897,31 +919,41 @@ describe("maintainer merge-gate contributor compliance", () => {
     });
   });
   it("uses an envelope-bound E2E run when a later association-less label run is skipped", () => {
-    const result = runGate(
-      e2eRunFixture(
-        [
-          [400, 40, "SUCCESS"],
-          [401, 41, "SKIPPED"],
-        ],
-        {
-          "400": {
-            ...exactDiffGateRun("success", [{ id: 40, name: "E2E / PR Gate" }]),
-            pullRequests: [],
-            createdAt: "2026-01-01T00:01:00Z",
-            updatedAt: "2026-01-01T00:03:00Z",
-          },
-          "401": {
-            ...exactDiffGateRun("skipped", [
-              { id: 41, name: "E2E / PR Gate", conclusion: "skipped" },
-            ]),
-            pullRequests: [],
-            createdAt: "2026-01-01T00:04:00Z",
-            updatedAt: "2026-01-01T00:05:00Z",
-            displayTitle: `E2E Gate PR #42 head ${HEAD_SHA} base ${BASE_SHA} gate false`,
-          },
+    const fixture = e2eRunFixture(
+      [
+        [400, 40, "SUCCESS"],
+        [401, 41, "SKIPPED"],
+      ],
+      {
+        "400": {
+          ...exactDiffGateRun("success", [
+            { id: 40, name: "E2E / PR Gate" },
+            {
+              id: 42,
+              name: "initialize",
+              startedAt: "2026-01-01T00:01:00Z",
+              completedAt: "2026-01-01T00:03:00Z",
+            },
+          ]),
+          pullRequests: [],
+          createdAt: "2026-01-01T00:01:00Z",
+          updatedAt: "2026-01-01T00:03:00Z",
         },
-      ),
+        "401": {
+          ...exactDiffGateRun("skipped", [
+            { id: 41, name: "E2E / PR Gate", conclusion: "skipped" },
+          ]),
+          pullRequests: [],
+          createdAt: "2026-01-01T00:04:00Z",
+          updatedAt: "2026-01-01T00:05:00Z",
+          displayTitle: `E2E Gate PR #42 head ${HEAD_SHA} base ${BASE_SHA} gate false`,
+        },
+      },
     );
+    const result = runGate({
+      ...fixture,
+      statusChecks: fixture.statusChecks?.filter((check) => check.name !== "initialize"),
+    });
 
     expect(JSON.parse(result.stdout)).toMatchObject({
       allPass: true,
@@ -1024,7 +1056,7 @@ describe("maintainer merge-gate contributor compliance", () => {
       failingChecks: INCOMPLETE_E2E,
     });
   });
-  it("keeps substantive PR CI ahead of a later metadata-only edit run", () => {
+  it("retains failing CI from a code-changing PR run after a later metadata-only run is canceled", () => {
     const checkRun = (
       name: string,
       runId: number,
@@ -1061,7 +1093,7 @@ describe("maintainer merge-gate contributor compliance", () => {
           true,
         ),
         "801": prWorkflowRun(
-          "success",
+          "cancelled",
           prWorkflowJobs("skipped", {
             checks: { conclusion: "success" },
             changes: { conclusion: "skipped" },
