@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,6 +14,7 @@ import {
   buildServerContainerArgv,
   expectedRegistryName,
   expectedRegistryOwner,
+  hashModelFile,
   parseNvidiaSmi,
   parseQualificationInvocation,
   type QualificationInvocation,
@@ -97,6 +99,23 @@ function mutatedPlan(mutate: (value: Record<string, any>) => void): [string, str
 
 function valuesAfter(argv: string[], option: string): string[] {
   return argv.flatMap((value, index) => (argv[index - 1] === option ? [value] : []));
+}
+
+function qualificationPlanForModel(content: Buffer): QualificationPlan {
+  return {
+    ...plan,
+    recipe: {
+      ...plan.recipe,
+      model: {
+        ...plan.recipe.model,
+        file: {
+          ...plan.recipe.model.file,
+          digest: `sha256:${createHash("sha256").update(content).digest("hex")}`,
+          sizeBytes: content.length,
+        },
+      },
+    },
+  } as unknown as QualificationPlan;
 }
 
 describe("trusted llama.cpp DGX Spark qualification runner", () => {
@@ -248,86 +267,98 @@ describe("trusted llama.cpp DGX Spark qualification runner", () => {
   });
 
   it("constructs a read-only bounded one-GPU server without putting the key on argv (#8260)", () => {
-    const argv = buildServerContainerArgv(plan, {
-      apiKeyHostPath: "/work/tmp/api-key",
-      containerName: "qualified-server",
-      imageReference: `localhost:5000/repo@sha256:${"d".repeat(64)}`,
-      model: {
-        digest: plan.recipe.model.file.digest,
-        hostPath: MODEL_PATH,
-        sizeBytes: plan.recipe.model.file.sizeBytes,
-      },
-      networkName: "qualified-internal",
-      registryOwner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
-      runtimeGid: 1001,
-      runtimeUid: 1001,
-    });
-    expect(argv).toEqual(
-      expect.arrayContaining([
-        "--read-only",
-        "--cap-drop",
-        "ALL",
-        "no-new-privileges=true",
-        "--gpus",
-        "1",
-        "--gpu-layers",
-        "all",
-        "--ctx-size",
-        String(plan.recipe.serve.contextSize),
-        "--batch-size",
-        String(plan.recipe.serve.batchSize),
-        "--ubatch-size",
-        String(plan.recipe.serve.microBatchSize),
-        "--cache-type-k",
-        plan.recipe.serve.kvCache.key,
-        "--cache-type-v",
-        plan.recipe.serve.kvCache.value,
-        "--flash-attn",
-        "on",
-        "--metrics",
-        "--no-ui",
-        "--no-slots",
-        "--no-mmproj",
-        "--no-agent",
-      ]),
+    const content = Buffer.from("qualification model fixture\n", "utf8");
+    const testPlan = qualificationPlanForModel(content);
+    const modelRoot = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-qualification-model-")),
     );
-    expect(valuesAfter(argv, "--publish")).toEqual(["127.0.0.1::8081"]);
-    expect(valuesAfter(argv, "--network")).toEqual(["qualified-internal"]);
-    expect(valuesAfter(argv, "--user")).toEqual(["1001:1001"]);
-    expect(valuesAfter(argv, "--api-key-file")).toEqual(["/run/secrets/llama-cpp-api-key"]);
-    expect(argv).not.toContain("--api-key");
-    expect(valuesAfter(argv, "--mount")).toEqual([
-      `type=bind,source=${MODEL_PATH},target=/models/Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf,readonly`,
-      "type=bind,source=/work/tmp/api-key,target=/run/secrets/llama-cpp-api-key,readonly",
-    ]);
-    expect(valuesAfter(argv, "--memory")).toEqual([
-      `${plan.recipe.runtime.resources.memoryBytes}b`,
-    ]);
-    expect(valuesAfter(argv, "--memory-swap")).toEqual([
-      `${plan.recipe.runtime.resources.memoryBytes}b`,
-    ]);
-    expect(valuesAfter(argv, "--pids-limit")).toEqual([
-      String(plan.recipe.runtime.resources.pidsLimit),
-    ]);
-    expect(valuesAfter(argv, "--tmpfs")).toEqual([
-      `/tmp:rw,noexec,nosuid,nodev,size=${plan.recipe.runtime.resources.writableStorageBytes},uid=1001,gid=1001,mode=1777`,
-    ]);
-    expect(() =>
-      buildServerContainerArgv(plan, {
+    const modelHostPath = path.join(modelRoot, testPlan.recipe.model.file.path);
+    fs.writeFileSync(modelHostPath, content);
+    try {
+      const model = hashModelFile(modelHostPath, testPlan);
+      const modelStatus = fs.lstatSync(modelHostPath, { bigint: true });
+      expect(model.filesystemIdentity).toEqual({
+        ctimeNs: modelStatus.ctimeNs,
+        dev: modelStatus.dev,
+        ino: modelStatus.ino,
+        mtimeNs: modelStatus.mtimeNs,
+        size: modelStatus.size,
+      });
+      const argv = buildServerContainerArgv(testPlan, {
         apiKeyHostPath: "/work/tmp/api-key",
         containerName: "qualified-server",
         imageReference: `localhost:5000/repo@sha256:${"d".repeat(64)}`,
-        model: {
-          digest: plan.recipe.model.file.digest,
-          hostPath: MODEL_PATH,
-          sizeBytes: plan.recipe.model.file.sizeBytes,
-        },
+        model,
         networkName: "qualified-internal",
         registryOwner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
         runtimeGid: 1001,
-        runtimeUid: 0,
-      }),
-    ).toThrow(/runtime uid/u);
+        runtimeUid: 1001,
+      });
+      expect(argv).toEqual(
+        expect.arrayContaining([
+          "--read-only",
+          "--cap-drop",
+          "ALL",
+          "no-new-privileges=true",
+          "--gpus",
+          "1",
+          "--gpu-layers",
+          "all",
+          "--ctx-size",
+          String(testPlan.recipe.serve.contextSize),
+          "--batch-size",
+          String(testPlan.recipe.serve.batchSize),
+          "--ubatch-size",
+          String(testPlan.recipe.serve.microBatchSize),
+          "--cache-type-k",
+          testPlan.recipe.serve.kvCache.key,
+          "--cache-type-v",
+          testPlan.recipe.serve.kvCache.value,
+          "--flash-attn",
+          "on",
+          "--metrics",
+          "--no-ui",
+          "--no-slots",
+          "--no-mmproj",
+          "--no-agent",
+        ]),
+      );
+      expect(valuesAfter(argv, "--publish")).toEqual(["127.0.0.1::8081"]);
+      expect(valuesAfter(argv, "--network")).toEqual(["qualified-internal"]);
+      expect(valuesAfter(argv, "--user")).toEqual(["1001:1001"]);
+      expect(valuesAfter(argv, "--api-key-file")).toEqual(["/run/secrets/llama-cpp-api-key"]);
+      expect(argv).not.toContain("--api-key");
+      expect(valuesAfter(argv, "--mount")).toEqual([
+        `type=bind,source=${modelHostPath},target=/models/${testPlan.recipe.model.file.path},readonly`,
+        "type=bind,source=/work/tmp/api-key,target=/run/secrets/llama-cpp-api-key,readonly",
+      ]);
+      expect(valuesAfter(argv, "--memory")).toEqual([
+        `${testPlan.recipe.runtime.resources.memoryBytes}b`,
+      ]);
+      expect(valuesAfter(argv, "--memory-swap")).toEqual([
+        `${testPlan.recipe.runtime.resources.memoryBytes}b`,
+      ]);
+      expect(valuesAfter(argv, "--pids-limit")).toEqual([
+        String(testPlan.recipe.runtime.resources.pidsLimit),
+      ]);
+      expect(valuesAfter(argv, "--tmpfs")).toEqual([
+        `/tmp:rw,noexec,nosuid,nodev,size=${testPlan.recipe.runtime.resources.writableStorageBytes},uid=1001,gid=1001,mode=1777`,
+      ]);
+      expect(() =>
+        buildServerContainerArgv(testPlan, {
+          apiKeyHostPath: "/work/tmp/api-key",
+          containerName: "qualified-server",
+          imageReference: `localhost:5000/repo@sha256:${"d".repeat(64)}`,
+          model,
+          networkName: "qualified-internal",
+          registryOwner: expectedRegistryOwner(RUN_ID, RUN_ATTEMPT),
+          runtimeGid: 1001,
+          runtimeUid: 0,
+        }),
+      ).toThrow(/runtime uid/u);
+    } finally {
+      fs.rmSync(modelRoot, { force: true, recursive: true });
+    }
   });
 
   it("requires unambiguous full GPU offload and rejects CPU fallback warnings (#8260)", () => {
