@@ -52,9 +52,10 @@ def patch_file(path: Path) -> None:
     source = path.read_text(encoding="utf-8")
     old_count = source.count(OLD)
     new_count = source.count('self._conn.execute("PRAGMA temp_store=MEMORY")')
-    if old_count == 0 and new_count >= EXPECTED_OCCURRENCES:
+    patched_count = source.count(NEW)
+    if old_count == 0 and patched_count == EXPECTED_OCCURRENCES:
         return
-    if old_count != EXPECTED_OCCURRENCES:
+    if old_count != EXPECTED_OCCURRENCES or new_count != 0:
         raise SystemExit(
             "ERROR: Hermes SessionDB.__init__ connection setup shape changed; "
             f"expected {EXPECTED_OCCURRENCES} unpatched occurrences, found {old_count} "
