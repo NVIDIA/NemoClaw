@@ -57,7 +57,7 @@ Supervisor quarantine happens after repeated relaunch failures or other integrit
 The sandbox stores mutable session credentials in durable `whatsapp` state.
 </AgentOnly>
 <AgentOnly variant="hermes">
-The sandbox stores mutable session credentials in durable `platforms/whatsapp` state.
+The sandbox stores mutable session credentials in durable `platforms/whatsapp` state for the gateway and `profiles/dashboard-home/platforms/whatsapp` state for Dashboard pairing.
 </AgentOnly>
 The credentials survive rebuilds without re-pairing.
 This is the runtime tradeoff of enabling WhatsApp without a host bridge: a paired sandbox can use that WhatsApp account until you unpair it or clear the durable state.
