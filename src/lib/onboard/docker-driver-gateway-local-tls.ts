@@ -6,6 +6,8 @@ import { createPrivateKey, createPublicKey, type KeyObject, X509Certificate } fr
 import fs from "node:fs";
 import path from "node:path";
 
+import { isPortableExperimentalProfile, PORTABLE_HOST_GATEWAY_IP } from "./docker-driver-platform";
+
 // See docs/security/openshell-0.0.72-compatibility-review.mdx for the source-of-truth review.
 export const DOCKER_DRIVER_GATEWAY_LOCAL_TLS_DIR_NAME = "tls";
 
@@ -47,7 +49,10 @@ export function getDockerDriverGatewayLocalTlsBundle(
   };
 }
 
-export function dockerDriverGatewayLocalTlsBundleIsComplete(stateDir: string): boolean {
+export function dockerDriverGatewayLocalTlsBundleIsComplete(
+  stateDir: string,
+  requiredServerIpSans: readonly string[] = REQUIRED_SERVER_IP_SANS,
+): boolean {
   const bundle = getDockerDriverGatewayLocalTlsBundle(stateDir);
   const expectedFiles = [
     bundle.caPath,
@@ -74,7 +79,7 @@ export function dockerDriverGatewayLocalTlsBundleIsComplete(stateDir: string): b
     certificateMatchesPrivateKey(clientCert, clientKey) &&
     certificateVerifiesAgainstCa(serverCert, ca) &&
     certificateVerifiesAgainstCa(clientCert, ca) &&
-    certificateHasRequiredServerSubjectAltNames(serverCert)
+    certificateHasRequiredServerSubjectAltNames(serverCert, requiredServerIpSans)
   );
 }
 
@@ -156,7 +161,10 @@ function certificateVerifiesAgainstCa(certificate: X509Certificate, ca: X509Cert
   }
 }
 
-function certificateHasRequiredServerSubjectAltNames(certificate: X509Certificate): boolean {
+function certificateHasRequiredServerSubjectAltNames(
+  certificate: X509Certificate,
+  requiredServerIpSans: readonly string[],
+): boolean {
   const subjectAltNames = new Set(
     (certificate.subjectAltName ?? "")
       .split(",")
@@ -165,7 +173,7 @@ function certificateHasRequiredServerSubjectAltNames(certificate: X509Certificat
   );
   return (
     REQUIRED_SERVER_DNS_SANS.every((dnsName) => subjectAltNames.has(`dns:${dnsName}`)) &&
-    REQUIRED_SERVER_IP_SANS.every(
+    requiredServerIpSans.every(
       (ipAddress) =>
         subjectAltNames.has(`ip address:${ipAddress}`) || subjectAltNames.has(`ip:${ipAddress}`),
     )
@@ -186,9 +194,12 @@ export function ensureDockerDriverGatewayLocalTlsBundle({
   stateDir,
 }: EnsureDockerDriverGatewayLocalTlsBundleOptions): DockerDriverGatewayLocalTlsBundle {
   const bundle = getDockerDriverGatewayLocalTlsBundle(stateDir);
+  const requiredServerIpSans = isPortableExperimentalProfile(env)
+    ? [...REQUIRED_SERVER_IP_SANS, PORTABLE_HOST_GATEWAY_IP]
+    : REQUIRED_SERVER_IP_SANS;
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   fs.chmodSync(stateDir, 0o700);
-  if (dockerDriverGatewayLocalTlsBundleIsComplete(stateDir)) {
+  if (dockerDriverGatewayLocalTlsBundleIsComplete(stateDir, requiredServerIpSans)) {
     normalizeDockerDriverGatewayLocalTlsBundlePermissions(bundle);
     return bundle;
   }
@@ -205,6 +216,7 @@ export function ensureDockerDriverGatewayLocalTlsBundle({
       "localhost",
       "--server-san",
       "127.0.0.1",
+      ...(isPortableExperimentalProfile(env) ? ["--server-san", PORTABLE_HOST_GATEWAY_IP] : []),
     ],
     {
       encoding: "utf-8",
@@ -229,7 +241,7 @@ export function ensureDockerDriverGatewayLocalTlsBundle({
     const detail = sanitizeDockerDriverGatewayLocalTlsErrorDetail(rawDetail, bundle, stateDir);
     throw new Error(`OpenShell gateway certificate generation failed: ${detail}`);
   }
-  if (!dockerDriverGatewayLocalTlsBundleIsComplete(stateDir)) {
+  if (!dockerDriverGatewayLocalTlsBundleIsComplete(stateDir, requiredServerIpSans)) {
     const detail = sanitizeDockerDriverGatewayLocalTlsErrorDetail(
       `incomplete mTLS bundle in ${bundle.localTlsDir}`,
       bundle,

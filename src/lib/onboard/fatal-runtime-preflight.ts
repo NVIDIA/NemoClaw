@@ -3,7 +3,10 @@
 
 import { detectGpu, type GpuDetection } from "../inference/nim";
 import { assertDockerBridgeAndContainerDnsHealthy } from "./bridge-dns-preflight";
-import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
+import {
+  isLinuxDockerDriverGatewayEnabled,
+  isPortableExperimentalProfile,
+} from "./docker-driver-platform";
 import { warnIfHostProxyMissesLoopback } from "./http-proxy-preflight";
 import {
   assertCdiNvidiaGpuSpecPresent,
@@ -19,6 +22,8 @@ import {
   validateSandboxGpuPreflight,
 } from "./sandbox-gpu-preflight";
 import type { OnboardOptions } from "./types";
+
+export { preparePortableExperimentalHost } from "./experimental/portable-host-preparation";
 
 export type FatalRuntimePreflightOptions = Pick<
   OnboardOptions,
@@ -46,6 +51,7 @@ export function rejectUnsupportedContainerRuntime(
   exitProcess: (code: number) => never = exitProcessByDefault,
 ): void {
   if (isLinuxDockerDriverGatewayEnabled() && host.runtime === "podman") {
+    if (isPortableExperimentalProfile()) return;
     printUnsupportedRuntimeError();
     exitProcess(1);
   }

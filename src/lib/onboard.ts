@@ -1462,6 +1462,7 @@ async function preflight(
 ): Promise<ReturnType<typeof nim.detectGpu>> {
   step(1, 8, "Preflight checks");
 
+  fatalRuntimePreflight.preparePortableExperimentalHost(process.env);
   const { gpu, host, sandboxGpuConfig } = fatalRuntimePreflight.runFatalOnboardRuntimePreflight(
     preflightOpts,
     {
