@@ -65,6 +65,8 @@ import {
   type ManagedBootstrapReplacementOptions,
   type ManagedBootstrapSandboxIdentity,
   renderManagedBootstrapHeldCommand,
+  sameManagedBootstrapCompletionReceipt,
+  sameManagedBootstrapDurablePreparationReceipt,
 } from "./adapter";
 import {
   createFileDockerManagedBootstrapJournalStore,
@@ -77,7 +79,6 @@ import {
   type DockerManagedBootstrapJournalStore,
   DockerManagedBootstrapLegacyRecordRequiresAgentError,
   parseDockerManagedBootstrapJournal,
-  sameDockerManagedBootstrapReceipt,
   serializeDockerManagedBootstrapFinalizationRecord,
   serializeDockerManagedBootstrapJournal,
 } from "./docker-journal";
@@ -1629,8 +1630,7 @@ function assertDockerBootstrapTransactionAuthority(
     (durablePreparation !== undefined &&
       durablePreparation !== null &&
       (transaction.preparationReceipt === null ||
-        !sameDockerManagedBootstrapReceipt(
-          "preparation",
+        !sameManagedBootstrapDurablePreparationReceipt(
           transaction.preparationReceipt,
           durablePreparation,
         ))) ||
@@ -2042,11 +2042,7 @@ export function createDockerManagedBootstrapAdapter(
         journal.phase === "shared-state-committed" &&
         finalization.commitReceipt !== null &&
         journal.commitReceipt !== null &&
-        sameDockerManagedBootstrapReceipt(
-          "completion",
-          finalization.commitReceipt,
-          journal.commitReceipt,
-        )) ||
+        sameManagedBootstrapCompletionReceipt(finalization.commitReceipt, journal.commitReceipt)) ||
       (finalization.phase === "rolled-back" &&
         (journal.phase === "staged" ||
           journal.phase === "rollback-authorized" ||
@@ -2800,7 +2796,7 @@ export function createDockerManagedBootstrapAdapter(
       if (
         finalized.phase !== "committed" ||
         !finalized.commitReceipt ||
-        !sameDockerManagedBootstrapReceipt("completion", finalized.commitReceipt, completion)
+        !sameManagedBootstrapCompletionReceipt(finalized.commitReceipt, completion)
       ) {
         throw new ManagedBootstrapCommitStateIndeterminateError({
           bootstrapIdentity: handle.bootstrapIdentity,
@@ -2880,7 +2876,7 @@ export function createDockerManagedBootstrapAdapter(
     );
     if (
       journal.commitReceipt === null ||
-      !sameDockerManagedBootstrapReceipt("completion", journal.commitReceipt, completion)
+      !sameManagedBootstrapCompletionReceipt(journal.commitReceipt, completion)
     ) {
       throw new ManagedBootstrapCommitStateIndeterminateError({
         bootstrapIdentity: journal.bootstrapIdentity,
@@ -3154,6 +3150,14 @@ export function createDockerManagedBootstrapAdapter(
         request.profileFingerprint !== handle.plan.profile.fingerprint
       ) {
         throw new Error("Managed bootstrap Docker replacement identities do not match.");
+      }
+      if (
+        snapshot.image.repository !== handle.plan.image.repository ||
+        snapshot.image.manifestDigest !== handle.plan.image.manifestDigest
+      ) {
+        throw new Error(
+          "Managed bootstrap Docker replacement snapshot image does not match its plan.",
+        );
       }
       const parsed = parseDockerManagedBootstrapLaunchSpec(snapshot.specCanonicalJson);
       const normalizedOriginal = normalizeDockerManagedBootstrapLaunchSpec(parsed.inspect);

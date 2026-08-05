@@ -329,6 +329,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "patch-openclaw-issue-4434-diagnostics.mts"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-managed-transport-diagnostics.mts"),
+    path.join(stagedScriptsDir, "patch-openclaw-managed-transport-diagnostics.mts"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-device-self-approval.mts"),
     path.join(stagedScriptsDir, "patch-openclaw-device-self-approval.mts"),
   );
@@ -357,6 +361,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "verify-wechat-runtime-lock.mts"),
   );
   fs.mkdirSync(path.join(stagedScriptsDir, "lib"), { recursive: true });
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "patch-bundled-npm-ip-address.mts"),
+    path.join(stagedScriptsDir, "lib", "patch-bundled-npm-ip-address.mts"),
+  );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "reviewed-npm-archive.mts"),
     path.join(stagedScriptsDir, "lib", "reviewed-npm-archive.mts"),
