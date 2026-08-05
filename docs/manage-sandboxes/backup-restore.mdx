@@ -108,7 +108,8 @@ $$nemoclaw my-assistant snapshot create --name before-upgrade
 
 When a directory or state file cannot be captured, `snapshot create` reports the failed items, removes the incomplete snapshot, and exits nonzero.
 `snapshot list` shows no new entry, so a later restore cannot select a capture that never completed.
-If the removal itself fails, the command names the path that is still listed and asks you to remove it before the next restore.
+If removal fails, the command reports the listed snapshot path.
+Remove that directory manually before you run `snapshot restore` because the incomplete capture remains selectable.
 
 ## Restore a Snapshot
 
