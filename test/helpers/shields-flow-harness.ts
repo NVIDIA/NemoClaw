@@ -153,7 +153,6 @@ export function createShieldsFlowHarness(
   const privilegedExec = requireDist("../sandbox/privileged-exec.js");
   const dockerExec = requireDist("../adapters/docker/exec.js");
   const audit = requireDist("./audit.js");
-  const timerControl = requireDist("./timer-control.js");
   const tempFiles = requireDist("../onboard/temp-files.js");
   const childProcess = requireDist("node:child_process");
   const policySetBodies: string[] = [];
