@@ -142,4 +142,5 @@ export type OnboardOptions = {
   gpu?: boolean;
   noGpu?: boolean;
   autoYes?: boolean;
+  experimentalProfile?: import("./docker-driver-platform").ExperimentalOnboardProfile | null;
 };
