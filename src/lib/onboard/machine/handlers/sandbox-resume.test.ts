@@ -149,6 +149,26 @@ describe("decideSandboxResume", () => {
     });
   });
 
+  it.each([
+    [
+      "only explicit recreation is requested",
+      { recreateSandboxRequested: true, recreateJournalHandoff: false },
+    ],
+    [
+      "only a journal handoff is present",
+      { recreateSandboxRequested: false, recreateJournalHandoff: true },
+    ],
+  ])("repairs a not-ready sandbox when %s", (_scenario, overrides) => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxReuseState: "not_ready",
+          ...overrides,
+        }),
+      ),
+    ).toEqual({ kind: "repair-and-recreate" });
+  });
+
   it("repairs a not-ready sandbox before recreating for DCode auto-approval drift", () => {
     expect(
       decideSandboxResume(
