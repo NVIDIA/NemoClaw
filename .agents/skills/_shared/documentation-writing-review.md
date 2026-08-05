@@ -18,6 +18,8 @@ documentation, changelog entries, Announcements, or maintainer guidance.
   applying the public-facing documentation rules.
 - The repository [Documentation instructions](../../../AGENTS.md#documentation) own agent workflow
   for documentation impact, authoring, independent review, and final handoff.
+- The repository [PR requirements](../../../AGENTS.md#pr-requirements) own fallback validation when
+  normal repository hooks do not run.
 - The contributor guide's
   [Documentation Writer Review Receipt](../../../CONTRIBUTING.md#documentation-writer-review-receipt)
   and the [PR template](../../../.github/PULL_REQUEST_TEMPLATE.md) own receipt requirements and
