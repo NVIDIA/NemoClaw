@@ -182,11 +182,11 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected DGX Spark/);
     expect(output).toMatch(
-      /Express install will configure managed local vLLM using the DGX Spark profile default model/,
+      /Express install will configure managed vLLM with automatic DGX Spark serving-profile selection/,
     );
-    expect(output).toMatch(
-      /Managed vLLM pulls the configured vLLM image\/model and runs a local vLLM inference container/,
-    );
+    expect(output).toMatch(/one exactly qualified pretrusted managed cluster topology/);
+    expect(output).toMatch(/related or ambiguous setup remains untouched and stops installation/);
+    expect(output).toMatch(/experimental pending physical end-to-end validation/);
     expect(output).toMatch(/Sandbox name: my-assistant/);
     expect(output).toMatch(/Sandbox policy: suggested mode, tier 'balanced'/);
     expect(output).toMatch(/Run express install/);
@@ -207,9 +207,8 @@ DGX_COMMIT_ID="d0e99cc"\nDGX_PLATFORM="DGX Server for GALAXY-GB300"
     expect(output).toMatch(
       /Express install will configure managed local vLLM with model custom-qwen3\.6/,
     );
-    expect(output).toMatch(
-      /Managed vLLM pulls the configured vLLM image\/model and runs a local vLLM inference container/,
-    );
+    expect(output).toMatch(/The explicit model remains authoritative/);
+    expect(output).toMatch(/keeps the existing single-host DGX Spark profile/);
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-vllm MODEL= VLLM_MODEL=custom-qwen3\.6 POLICY=suggested YES=1 SANDBOX=my-assistant/,
     );

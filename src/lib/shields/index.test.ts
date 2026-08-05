@@ -103,6 +103,52 @@ function withDefaultNodeExecFileSync(
   return defaultNodeExecFileSync(file, argv) || fallback();
 }
 
+function throwRegistryPermissionDenied(): never {
+  throw Object.assign(new Error("registry permission denied"), { code: "EACCES" });
+}
+
+function readFileWithUnreadableRegistry(
+  originalReadFileSync: typeof fs.readFileSync,
+  file: fs.PathOrFileDescriptor,
+  options?: unknown,
+): unknown {
+  const readers = new Map<boolean, () => unknown>([
+    [true, throwRegistryPermissionDenied],
+    [false, () => originalReadFileSync(file, options as never)],
+  ]);
+  return readers.get(String(file).endsWith(`${path.sep}sandboxes.json`))!();
+}
+
+function throwProcessNotRunning(): never {
+  throw Object.assign(new Error("not running"), { code: "ESRCH" });
+}
+
+function reportProcessRunning(): true {
+  return true;
+}
+
+function routeProcessKill(pid: number, signal?: string | number): true {
+  const processActions = new Map<string, () => true>([["2147483647:0", throwProcessNotRunning]]);
+  return (processActions.get(`${pid}:${signal}`) ?? reportProcessRunning)();
+}
+
+function readRuntimePolicyBeforeCleanup(
+  cleanupDir: string,
+  readFile: typeof fs.readFileSync,
+): string | null {
+  switch (
+    path.basename(cleanupDir).startsWith("nemoclaw-permissive-runtime-") &&
+    fs.existsSync(cleanupDir)
+  ) {
+    case false:
+      return null;
+    case true: {
+      const policyFile = fs.readdirSync(cleanupDir).find((name) => name.endsWith(".yaml"));
+      return policyFile ? readFile(path.join(cleanupDir, policyFile), "utf-8") : null;
+    }
+  }
+}
+
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-test-"));
   vi.stubEnv("HOME", tmpDir);
@@ -483,6 +529,107 @@ describe("shields — unit logic", () => {
       expect(logSpy).toHaveBeenCalledWith("  Shields: DOWN (temporarily unlocked)");
     });
 
+    it("deadline composition removes an unproven MCP add from the restrictive policy", async () => {
+      const snapshot =
+        "version: 1\nnetwork_policies:\n  restrictive_baseline: {}\n  mcp_bridge_beta: {}\n";
+      const { composeDeadlineManagedMcpPolicies } = await import("./mcp-policy-transition");
+      const composition = composeDeadlineManagedMcpPolicies(snapshot, [], ["mcp_bridge_beta"]);
+
+      expect(composition.yaml).toContain("restrictive_baseline");
+      expect(composition.yaml).not.toContain("mcp_bridge_beta");
+    });
+
+    it("deadline restore removes saved MCP keys when the registry cannot be read", async () => {
+      const sandboxName = "openclaw";
+      const processToken = "b".repeat(32);
+      const snapshotPath = path.join(stateDir(), "policy-snapshot-unreadable-registry.yaml");
+      fs.mkdirSync(stateDir(), { recursive: true });
+      fs.writeFileSync(
+        snapshotPath,
+        "version: 1\nnetwork_policies:\n  restrictive_baseline: {}\n  mcp_bridge_alpha: {}\n",
+      );
+      writeState(sandboxName, {
+        shieldsDown: true,
+        shieldsPolicySnapshotPath: snapshotPath,
+        shieldsManagedMcpPolicyKeys: ["mcp_bridge_alpha"],
+      });
+      writeMarker(sandboxName, {
+        pid: 2_147_483_647,
+        sandboxName,
+        snapshotPath,
+        restoreAt: new Date(Date.now() - 1_000).toISOString(),
+        processToken,
+      });
+      const originalReadFileSync = fs.readFileSync.bind(fs);
+      vi.spyOn(fs, "readFileSync").mockImplementation((file, options) => {
+        return readFileWithUnreadableRegistry(originalReadFileSync, file, options) as never;
+      });
+      vi.spyOn(process, "kill").mockImplementation(routeProcessKill);
+      const originalRmSync = fs.rmSync.bind(fs);
+      let appliedPolicy = "";
+      vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
+        const cleanupDir = String(target);
+        appliedPolicy =
+          readRuntimePolicyBeforeCleanup(cleanupDir, originalReadFileSync) ?? appliedPolicy;
+        originalRmSync(target, options);
+      });
+      const { applyShieldsPolicySnapshot } = await loadShieldsModule();
+
+      const result = applyShieldsPolicySnapshot(sandboxName, snapshotPath, {
+        transitionProcessToken: processToken,
+        deadlineAuthoritative: true,
+        expiredTimerRecovery: true,
+      });
+
+      expect(result.managedMcpOmissions).toEqual([
+        expect.objectContaining({
+          reason: expect.stringMatching(
+            /Managed MCP registry inspection failed at the auto-restore deadline/,
+          ),
+        }),
+      ]);
+      expect(appliedPolicy).toContain("restrictive_baseline");
+      expect(appliedPolicy).not.toContain("mcp_bridge_alpha");
+    });
+
+    it("auto-restore applies a snapshot with no managed MCP entries when policy staging is unavailable (#7952)", async () => {
+      const sandboxName = "openclaw";
+      const processToken = "d".repeat(32);
+      const snapshotPath = path.join(stateDir(), "policy-snapshot-no-managed-mcp.yaml");
+      fs.mkdirSync(stateDir(), { recursive: true });
+      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  restrictive_baseline: {}\n");
+      writeState(sandboxName, {
+        shieldsDown: true,
+        shieldsPolicySnapshotPath: snapshotPath,
+        shieldsManagedMcpPolicyKeys: [],
+      });
+      writeMarker(sandboxName, {
+        pid: 2_147_483_647,
+        sandboxName,
+        snapshotPath,
+        restoreAt: new Date(Date.now() - 1_000).toISOString(),
+        processToken,
+      });
+      vi.spyOn(process, "kill").mockImplementation(routeProcessKill);
+      const { applyShieldsPolicySnapshot } = await loadShieldsModule();
+      const { buildPolicySetCommand } = await import("../policy");
+      const createTempDirectory = vi.spyOn(fs, "mkdtempSync").mockImplementation(() => {
+        throw Object.assign(new Error("ENOSPC: simulated temporary storage full"), {
+          code: "ENOSPC",
+        });
+      });
+
+      const result = applyShieldsPolicySnapshot(sandboxName, snapshotPath, {
+        transitionProcessToken: processToken,
+        deadlineAuthoritative: true,
+        expiredTimerRecovery: true,
+      });
+
+      expect(result.status).toBe(0);
+      expect(createTempDirectory).not.toHaveBeenCalled();
+      expect(buildPolicySetCommand).toHaveBeenCalledWith(snapshotPath, sandboxName);
+    });
+
     it("shieldsStatus warns and stays DOWN when inline recovery fails", async () => {
       const sandboxName = "openclaw";
       const missingSnapshotPath = path.join(stateDir(), "missing-snapshot.yaml");
@@ -523,6 +670,40 @@ describe("shields — unit logic", () => {
       );
       expect(errorSpy).toHaveBeenCalledWith(
         `  Recovery warning: run \`nemoclaw ${sandboxName} shields up\` manually.`,
+      );
+      expect(fs.existsSync(path.join(stateDir(), `shields-timer-${sandboxName}.json`))).toBe(true);
+    });
+
+    it("bounds current-generation inline recovery when the snapshot is missing (#7952)", async () => {
+      const sandboxName = "openclaw";
+      const processToken = "c".repeat(32);
+      const missingSnapshotPath = path.join(stateDir(), "missing-current-snapshot.yaml");
+      writeState(sandboxName, {
+        shieldsDown: true,
+        shieldsDownAt: new Date(Date.now() - 60_000).toISOString(),
+        shieldsDownTimeout: 300,
+        shieldsDownReason: "testing",
+        shieldsDownPolicy: "permissive",
+        shieldsPolicySnapshotPath: missingSnapshotPath,
+        updatedAt: new Date().toISOString(),
+      });
+      writeMarker(sandboxName, {
+        pid: 2_147_483_647,
+        sandboxName,
+        snapshotPath: missingSnapshotPath,
+        restoreAt: new Date(Date.now() - 30_000).toISOString(),
+        processToken,
+      });
+      vi.spyOn(process, "kill").mockImplementation(routeProcessKill);
+      vi.spyOn(Atomics, "wait").mockReturnValue("timed-out");
+      vi.spyOn(console, "log").mockImplementation(() => undefined);
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const { shieldsStatus } = await loadShieldsModule();
+
+      expect(() => shieldsStatus(sandboxName)).toThrow("Inline auto-restore exhausted 7 attempts");
+      const { getMcpLifecycleLockPath } = await import("../state/mcp-lifecycle-lock");
+      expect(fs.existsSync(`${getMcpLifecycleLockPath(sandboxName, stateDir())}.containment`)).toBe(
+        true,
       );
       expect(fs.existsSync(path.join(stateDir(), `shields-timer-${sandboxName}.json`))).toBe(true);
     });
@@ -958,7 +1139,7 @@ describe("NC-2227-05: shields timer marker behavior", () => {
     expect(readTimerMarker("openclaw")).toBeNull();
   });
 
-  it("killTimer terminates verified live timer process and clears marker", async () => {
+  it("killTimer cooperatively revokes a verified live timer without signaling it", async () => {
     const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "timer-control.ts");
     const { killTimer } = await import(sourceModulePath);
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
@@ -1004,11 +1185,11 @@ describe("NC-2227-05: shields timer marker behavior", () => {
       markerFound: true,
       markerPid: 7331,
       wasAlive: true,
-      terminated: true,
+      terminated: false,
       warnings: [],
     });
     expect(processKillSpy).toHaveBeenCalledWith(7331, 0);
-    expect(processKillSpy).toHaveBeenCalledWith(7331, "SIGTERM");
+    expect(processKillSpy).toHaveBeenCalledTimes(1);
     expect(fs.existsSync(path.join(stateDir, "shields-timer-openclaw.json"))).toBe(false);
   });
 

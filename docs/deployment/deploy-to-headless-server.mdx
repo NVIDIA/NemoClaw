@@ -303,8 +303,9 @@ Model traffic uses the OpenShell-managed `inference.local` route.
 
 <AgentOnly variant="openclaw">
 
-OpenClaw generates a new gateway token each time the sandbox container starts.
-Retrieve the dashboard URL or token again after the container restarts or a replacement sandbox is created.
+OpenClaw generates a new gateway token when the sandbox container starts with mutable configuration.
+If Shields are up, a non-root start preserves the sealed token because the sandbox user cannot replace the protected configuration.
+Retrieve the dashboard URL or token again after the container starts or a replacement sandbox is created.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -389,7 +390,7 @@ Use `$$nemoclaw headless-agent rebuild` when you need the current agent image wh
 | Manually installed system or global packages | Usually remain in the same writable layer | Not preserved | Not preserved |
 | Direct edits to generated profile, config, or environment files | May remain until regeneration | Agent-specific and usually excluded or filtered | Regenerated or filtered by the current manifest |
 <AgentOnly variant="openclaw">
-| OpenClaw gateway token | Rotated when the container starts | Not captured; a replacement sandbox generates a new token | Rotated for the replacement sandbox |
+| OpenClaw gateway token | Rotated when the container starts with mutable configuration; preserved for a non-root start while Shields are up | Not captured; a replacement sandbox generates a new token | Rotated for the replacement sandbox |
 </AgentOnly>
 <AgentOnly variant="hermes">
 | Hermes `API_SERVER_KEY` | Preserved | Not captured; a replacement sandbox generates a new token | Rotated for the replacement sandbox |
