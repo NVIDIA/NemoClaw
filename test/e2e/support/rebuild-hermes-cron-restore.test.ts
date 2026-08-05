@@ -3,43 +3,63 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  cronJobState,
+  hermesCronJobRuntimeState,
   parseCronTickerTimestamp,
   parseGatewayEvidence,
   parseHermesCronBeginReceipt,
 } from "../live/rebuild-hermes-cron-restore.ts";
 
-describe("Hermes rebuild cron state compatibility", () => {
-  it("reads the historical nested cron state (#7806)", () => {
-    const state = {
-      last_run_at: null,
-      next_run_at: "2026-08-06T16:48:44.080564+00:00",
-      repeat: { completed: 0 },
-    };
-
-    expect(cronJobState({ id: "job-1", state }, "cron job job-1")).toBe(state);
-  });
-
-  it("reads flattened cron state from the current Hermes runtime (#7806)", () => {
-    const job = {
-      id: "job-1",
-      last_run_at: null,
-      next_run_at: "2026-08-06T16:48:44.080564+00:00",
-      repeat: { completed: 0 },
+describe("Hermes rebuild cron restore evidence", () => {
+  it("reads the flat runtime state emitted by Hermes", () => {
+    expect(
+      hermesCronJobRuntimeState(
+        {
+          last_run_at: null,
+          last_status: null,
+          next_run_at: "2026-08-06T19:41:01.000Z",
+          repeat: { completed: 0, times: null },
+          state: "scheduled",
+        },
+        "cron job fixture",
+      ),
+    ).toEqual({
+      completed: 0,
+      lastRunAt: null,
+      lastStatus: null,
+      nextRunAt: "2026-08-06T19:41:01.000Z",
       state: "scheduled",
-    };
-
-    expect(cronJobState(job, "cron job job-1")).toBe(job);
+    });
   });
 
-  it("rejects cron state without either supported shape (#7806)", () => {
-    expect(() => cronJobState({ id: "job-1", state: null }, "cron job job-1")).toThrow(
-      "cron job job-1 state is not an object",
-    );
+  it("rejects the nested state shape that hid the live rebuild contract", () => {
+    expect(() =>
+      hermesCronJobRuntimeState(
+        {
+          state: {
+            last_run_at: null,
+            last_status: null,
+            next_run_at: "2026-08-06T19:41:01.000Z",
+            repeat: { completed: 0, times: null },
+          },
+        },
+        "cron job fixture",
+      ),
+    ).toThrow("cron job fixture repeat state is not an object");
   });
-});
 
-describe("Hermes rebuild cron begin receipt", () => {
+  it.each([-1, 0.5])("rejects invalid completed run count %s", (completed) => {
+    expect(() =>
+      hermesCronJobRuntimeState(
+        {
+          next_run_at: "2026-08-06T19:41:01.000Z",
+          repeat: { completed, times: null },
+          state: "scheduled",
+        },
+        "cron job fixture",
+      ),
+    ).toThrow("cron job fixture completed run count is unavailable");
+  });
+
   const receipt = {
     action: "begin",
     active_agents: 0,
@@ -55,7 +75,7 @@ describe("Hermes rebuild cron begin receipt", () => {
   it("accepts the canonically redacted ShellProbe receipt", () => {
     expect(
       parseHermesCronBeginReceipt(`NEMOCLAW_HERMES_CRON_RESTORE_V1:${JSON.stringify(receipt)}\n`),
-    ).toMatchObject({ pid: 263, start_time: 29_607 });
+    ).toMatchObject({ drain_token: "<REDACTED>", pid: 263, start_time: 29_607 });
   });
 
   it("rejects an unredacted drain token crossing the ShellProbe boundary", () => {
@@ -66,7 +86,7 @@ describe("Hermes rebuild cron begin receipt", () => {
           drain_token: "a".repeat(32),
         })}\n`,
       ),
-    ).toThrow("Hermes cron begin receipt identity is invalid");
+    ).toThrow();
   });
 });
 
