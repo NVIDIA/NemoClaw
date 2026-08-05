@@ -33,7 +33,7 @@ const CALL_CONTEXT_SOURCE = [
   "function resolveGatewayCallContext(opts) {",
   "\tconst cliUrlOverride = trimToUndefined(opts.url);",
   "\tconst envUrlOverride = cliUrlOverride || opts.localPortOverride !== void 0 ? void 0 : trimToUndefined(process.env.OPENCLAW_GATEWAY_URL);",
-  "\treturn cliUrlOverride ?? envUrlOverride ?? 'ws://127.0.0.1:18789';",
+  "\treturn cliUrlOverride ?? envUrlOverride ?? `ws://127.0.0.1:${opts.localPortOverride ?? 18789}`;",
   "}",
   "export { resolveGatewayCallContext };",
   "",
@@ -44,7 +44,7 @@ const CONNECTION_DETAILS_SOURCE = [
   "function buildGatewayConnectionDetails(options) {",
   "\tconst cliUrlOverride = normalizeOptionalString(options.url);",
   "\tconst envUrlOverride = cliUrlOverride || options.ignoreEnvUrlOverride || options.localPortOverride !== void 0 ? void 0 : normalizeOptionalString(process.env.OPENCLAW_GATEWAY_URL);",
-  "\treturn cliUrlOverride ?? envUrlOverride ?? 'ws://127.0.0.1:18789';",
+  "\treturn cliUrlOverride ?? envUrlOverride ?? `ws://127.0.0.1:${options.localPortOverride ?? 18789}`;",
   "}",
   "export { buildGatewayConnectionDetails };",
   "",
@@ -214,6 +214,58 @@ describe("OpenClaw gateway daemon dial-back patch", () => {
         expect(runtime.resolveGatewayCallContext({ url: "wss://gateway.example.test" })).toBe(
           "wss://gateway.example.test",
         );
+      });
+    } finally {
+      fs.rmSync(tmp, { force: true, recursive: true });
+    }
+  });
+
+  it("preserves explicit URL, local port, and configured remote precedence for the OpenShell gateway daemon (#7230)", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-dialback-precedence-"));
+    try {
+      const callRuntime = await importFixture<{
+        resolveGatewayCallContext(opts: { localPortOverride?: number; url?: string }): string;
+      }>(tmp, "call.mjs", patchGatewayCallContextText(CALL_CONTEXT_SOURCE).text);
+      const detailsRuntime = await importFixture<{
+        buildGatewayConnectionDetails(options: {
+          ignoreEnvUrlOverride?: boolean;
+          localPortOverride?: number;
+          url?: string;
+        }): string;
+      }>(
+        tmp,
+        "connection-details.mjs",
+        patchGatewayConnectionDetailsText(CONNECTION_DETAILS_SOURCE).text,
+      );
+      const targetRuntime = await importFixture<{
+        resolveDefaultGatewayTarget(params: {
+          envGatewayUrl?: string;
+          remoteUrl?: string;
+        }): "local" | "remote";
+      }>(tmp, "gateway-tools.mjs", patchGatewayToolTargetText(TOOL_TARGET_SOURCE).text);
+      const privateUrl = "ws://10.200.0.2:18789";
+      const explicitUrl = "wss://gateway.example.test";
+
+      withGatewayEnvironment({ openshell: "1", title: "openclaw-gateway", url: privateUrl }, () => {
+        expect(callRuntime.resolveGatewayCallContext({ url: explicitUrl })).toBe(explicitUrl);
+        expect(callRuntime.resolveGatewayCallContext({ localPortOverride: 19001 })).toBe(
+          "ws://127.0.0.1:19001",
+        );
+        expect(detailsRuntime.buildGatewayConnectionDetails({ url: explicitUrl })).toBe(
+          explicitUrl,
+        );
+        expect(detailsRuntime.buildGatewayConnectionDetails({ ignoreEnvUrlOverride: true })).toBe(
+          "ws://127.0.0.1:18789",
+        );
+        expect(detailsRuntime.buildGatewayConnectionDetails({ localPortOverride: 19001 })).toBe(
+          "ws://127.0.0.1:19001",
+        );
+        expect(
+          targetRuntime.resolveDefaultGatewayTarget({
+            envGatewayUrl: privateUrl,
+            remoteUrl: explicitUrl,
+          }),
+        ).toBe("remote");
       });
     } finally {
       fs.rmSync(tmp, { force: true, recursive: true });
