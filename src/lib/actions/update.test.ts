@@ -15,6 +15,12 @@ import {
   runUpdateAction,
 } from "./update";
 
+const MAINTAINED_REVISION = "a".repeat(40);
+const maintainedTarget = (version: string | null) => ({
+  revision: MAINTAINED_REVISION,
+  version,
+});
+
 describe("runUpdateAction", () => {
   it("reports update availability without running the installer for --check", async () => {
     const spawnSyncImpl = vi.fn();
@@ -24,7 +30,7 @@ describe("runUpdateAction", () => {
       { check: true },
       {
         currentVersion: () => "0.1.0",
-        getLatestVersion: () => "0.2.0",
+        getMaintainedTarget: () => maintainedTarget("0.2.0"),
         isSourceCheckout: () => false,
         log,
         spawnSyncImpl,
@@ -51,7 +57,7 @@ describe("runUpdateAction", () => {
       {
         currentVersion: () => "0.1.0",
         env: { ...process.env, NEMOCLAW_AGENT: "hermes" },
-        getLatestVersion: () => "0.2.0",
+        getMaintainedTarget: () => maintainedTarget("0.2.0"),
         isSourceCheckout: () => false,
         log,
         spawnSyncImpl: vi.fn(),
@@ -75,7 +81,7 @@ describe("runUpdateAction", () => {
       {
         currentVersion: () => "0.1.0",
         env: { ...process.env, NEMOCLAW_AGENT: "dcode" },
-        getLatestVersion: () => "0.2.0",
+        getMaintainedTarget: () => maintainedTarget("0.2.0"),
         isSourceCheckout: () => false,
         log,
         spawnSyncImpl: vi.fn(),
@@ -102,7 +108,7 @@ describe("runUpdateAction", () => {
       {
         currentVersion: () => "0.1.0",
         error,
-        getLatestVersion: () => "0.2.0",
+        getMaintainedTarget: () => maintainedTarget("0.2.0"),
         isSourceCheckout: () => true,
         log: vi.fn(),
         spawnSyncImpl,
@@ -129,7 +135,7 @@ describe("runUpdateAction", () => {
         {
           currentVersion: () => "0.1.0",
           env: { ...process.env, HOME: home },
-          getLatestVersion: () => "0.2.0",
+          getMaintainedTarget: () => maintainedTarget("0.2.0"),
           log: vi.fn(),
           rootDir,
           spawnSyncImpl,
@@ -152,7 +158,7 @@ describe("runUpdateAction", () => {
       { yes: true },
       {
         currentVersion: () => "0.2.0",
-        getLatestVersion: () => "0.2.0",
+        getMaintainedTarget: () => maintainedTarget("0.2.0"),
         isSourceCheckout: () => false,
         log,
         spawnSyncImpl,
@@ -175,7 +181,7 @@ describe("runUpdateAction", () => {
       { fresh: true, yes: true },
       {
         currentVersion: () => "0.2.0",
-        getLatestVersion: () => "0.2.0",
+        getMaintainedTarget: () => maintainedTarget("0.2.0"),
         isSourceCheckout: () => false,
         log,
         spawnSyncImpl,
@@ -205,7 +211,7 @@ describe("runUpdateAction", () => {
       {
         currentVersion: () => "0.0.102",
         error,
-        getLatestVersion: () => "0.0.97",
+        getMaintainedTarget: () => maintainedTarget("0.0.97"),
         isSourceCheckout: () => false,
         log,
         spawnSyncImpl,
@@ -230,7 +236,7 @@ describe("runUpdateAction", () => {
       {
         currentVersion: () => "1.0.0-rc-1",
         error,
-        getLatestVersion: () => "1.0.0-rc.1",
+        getMaintainedTarget: () => maintainedTarget("1.0.0-rc.1"),
         isSourceCheckout: () => false,
         log: vi.fn(),
         spawnSyncImpl,
@@ -254,7 +260,7 @@ describe("runUpdateAction", () => {
       { allowDowngrade: true, fresh: true, yes: true },
       {
         currentVersion: () => "0.0.102",
-        getLatestVersion: () => "0.0.97",
+        getMaintainedTarget: () => maintainedTarget("0.0.97"),
         isSourceCheckout: () => false,
         log,
         spawnSyncImpl,
@@ -282,7 +288,7 @@ describe("runUpdateAction", () => {
       {
         currentVersion: () => currentVersion,
         error,
-        getLatestVersion: () => "0.0.97",
+        getMaintainedTarget: () => maintainedTarget("0.0.97"),
         isSourceCheckout: () => false,
         log: vi.fn(),
         spawnSyncImpl,
@@ -304,7 +310,7 @@ describe("runUpdateAction", () => {
       {
         currentVersion: () => "1.0.0-rc.1-3-gabcdef0",
         error,
-        getLatestVersion: () => "1.0.0",
+        getMaintainedTarget: () => maintainedTarget("1.0.0"),
         isSourceCheckout: () => false,
         log: vi.fn(),
         spawnSyncImpl,
@@ -327,7 +333,7 @@ describe("runUpdateAction", () => {
       {
         currentVersion: () => "dev",
         error,
-        getLatestVersion: () => "0.0.97",
+        getMaintainedTarget: () => maintainedTarget("0.0.97"),
         isSourceCheckout: () => false,
         log: vi.fn(),
         spawnSyncImpl,
@@ -349,7 +355,7 @@ describe("runUpdateAction", () => {
       {
         currentVersion: () => "0.0.102",
         error,
-        getLatestVersion: () => null,
+        getMaintainedTarget: () => maintainedTarget(null),
         isSourceCheckout: () => false,
         log: vi.fn(),
         spawnSyncImpl,
@@ -371,7 +377,7 @@ describe("runUpdateAction", () => {
       { yes: true },
       {
         currentVersion: () => "0.0.102",
-        getLatestVersion: () => null,
+        getMaintainedTarget: () => maintainedTarget(null),
         isSourceCheckout: () => false,
         log: vi.fn(),
         spawnSyncImpl,
@@ -391,7 +397,7 @@ describe("runUpdateAction", () => {
       { fresh: true, yes: true },
       {
         currentVersion: () => "0.0.90-2-gdeadbee",
-        getLatestVersion: () => "0.0.97",
+        getMaintainedTarget: () => maintainedTarget("0.0.97"),
         isSourceCheckout: () => false,
         log: vi.fn(),
         spawnSyncImpl,
@@ -412,7 +418,7 @@ describe("runUpdateAction", () => {
       { yes: true },
       {
         currentVersion: () => "0.0.97-rc.1",
-        getLatestVersion: () => "0.0.97",
+        getMaintainedTarget: () => maintainedTarget("0.0.97"),
         isSourceCheckout: () => false,
         log,
         spawnSyncImpl,
@@ -433,7 +439,7 @@ describe("runUpdateAction", () => {
       {
         currentVersion: () => "0.0.102invalid",
         error,
-        getLatestVersion: () => "0.0.97",
+        getMaintainedTarget: () => maintainedTarget("0.0.97"),
         isSourceCheckout: () => false,
         log: vi.fn(),
         spawnSyncImpl,
@@ -455,7 +461,7 @@ describe("runUpdateAction", () => {
       {
         currentVersion: () => "0.0.102",
         error,
-        getLatestVersion: () => "0.0.97",
+        getMaintainedTarget: () => maintainedTarget("0.0.97"),
         isSourceCheckout: () => false,
         log,
         spawnSyncImpl,
@@ -479,7 +485,7 @@ describe("runUpdateAction", () => {
       { fresh: true },
       {
         currentVersion: () => "0.2.0",
-        getLatestVersion: () => "0.2.0",
+        getMaintainedTarget: () => maintainedTarget("0.2.0"),
         isSourceCheckout: () => false,
         log,
         prompt,
@@ -502,7 +508,7 @@ describe("runUpdateAction", () => {
       {
         currentVersion: () => "0.2.0",
         error: vi.fn(),
-        getLatestVersion: () => "0.2.0",
+        getMaintainedTarget: () => maintainedTarget("0.2.0"),
         isSourceCheckout: () => true,
         log: vi.fn(),
         spawnSyncImpl,
@@ -523,7 +529,7 @@ describe("runUpdateAction", () => {
       {},
       {
         currentVersion: () => "0.1.0",
-        getLatestVersion: () => "0.2.0",
+        getMaintainedTarget: () => maintainedTarget("0.2.0"),
         isSourceCheckout: () => false,
         log: vi.fn(),
         prompt,
@@ -553,7 +559,7 @@ describe("runUpdateAction", () => {
       { yes: true },
       {
         currentVersion: () => "0.1.0",
-        getLatestVersion: () => "0.2.0",
+        getMaintainedTarget: () => maintainedTarget("0.2.0"),
         isSourceCheckout: () => false,
         log: vi.fn(),
         prompt,
@@ -608,7 +614,7 @@ describe("runUpdateAction", () => {
         currentVersion: () => "0.1.0",
         env: { ...process.env, NEMOCLAW_NON_INTERACTIVE: "1" },
         error: vi.fn(),
-        getLatestVersion: () => "0.2.0",
+        getMaintainedTarget: () => maintainedTarget("0.2.0"),
         isSourceCheckout: () => false,
         log: vi.fn(),
         prompt,
@@ -638,7 +644,7 @@ describe("runUpdateAction", () => {
           NEMOCLAW_INSTALL_REF: "refs/heads/not-maintained",
           NEMOCLAW_INSTALL_TAG: "not-maintained",
         },
-        getLatestVersion: () => "0.2.0",
+        getMaintainedTarget: () => maintainedTarget("0.2.0"),
         isSourceCheckout: () => false,
         log: vi.fn(),
         spawnSyncImpl,
@@ -652,7 +658,7 @@ describe("runUpdateAction", () => {
     expect(options?.env?.BASH_ENV).toBeUndefined();
     expect(options?.env?.ENV).toBeUndefined();
     expect(options?.env?.NEMOCLAW_FRESH).toBeUndefined();
-    expect(options?.env?.NEMOCLAW_INSTALL_REF).toBeUndefined();
+    expect(options?.env?.NEMOCLAW_INSTALL_REF).toBe(MAINTAINED_REVISION);
     expect(options?.env?.NEMOCLAW_INSTALL_TAG).toBeUndefined();
   });
 
@@ -672,7 +678,7 @@ describe("runUpdateAction", () => {
           NEMOCLAW_AGENT: "langchain-deepagents-code",
           NEMOCLAW_INSTALL_REF: "refs/heads/not-maintained",
         },
-        getLatestVersion: () => "0.2.0",
+        getMaintainedTarget: () => maintainedTarget("0.2.0"),
         isSourceCheckout: () => false,
         log,
         spawnSyncImpl,
@@ -685,7 +691,7 @@ describe("runUpdateAction", () => {
     const options = calls[0]?.[2];
     expect(options?.env?.NEMOCLAW_AGENT).toBe("langchain-deepagents-code");
     expect(options?.env?.BASH_ENV).toBeUndefined();
-    expect(options?.env?.NEMOCLAW_INSTALL_REF).toBeUndefined();
+    expect(options?.env?.NEMOCLAW_INSTALL_REF).toBe(MAINTAINED_REVISION);
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining("Running maintained NemoDeepAgents installer"),
     );
@@ -712,7 +718,7 @@ describe("runUpdateAction", () => {
           NEMOCLAW_AGENT: "hermes",
           NEMOCLAW_INSTALL_REF: "refs/heads/not-maintained",
         },
-        getLatestVersion: () => "0.2.0",
+        getMaintainedTarget: () => maintainedTarget("0.2.0"),
         isSourceCheckout: () => false,
         log,
         spawnSyncImpl,
@@ -725,7 +731,7 @@ describe("runUpdateAction", () => {
     const options = calls[0]?.[2];
     expect(options?.env?.NEMOCLAW_AGENT).toBe("hermes");
     expect(options?.env?.BASH_ENV).toBeUndefined();
-    expect(options?.env?.NEMOCLAW_INSTALL_REF).toBeUndefined();
+    expect(options?.env?.NEMOCLAW_INSTALL_REF).toBe(MAINTAINED_REVISION);
     expect(log).toHaveBeenCalledWith(
       expect.stringContaining("Running maintained NemoHermes installer"),
     );
@@ -741,7 +747,7 @@ describe("runUpdateAction", () => {
       { yes: true },
       {
         currentVersion: () => "0.2.0",
-        getLatestVersion: () => "0.2.0",
+        getMaintainedTarget: () => maintainedTarget("0.2.0"),
         isSourceCheckout: () => false,
         log: vi.fn(),
         spawnSyncImpl,

@@ -46,7 +46,6 @@ export interface RunUpdateDeps {
   currentVersion: () => string;
   env?: NodeJS.ProcessEnv;
   error?: LogFn;
-  getLatestVersion?: () => string | null;
   getMaintainedTarget?: () => MaintainedNemoClawTarget | null;
   isSourceCheckout?: () => boolean;
   log?: LogFn;
@@ -375,11 +374,9 @@ export async function runUpdateAction(
   const rootDir = deps.rootDir ?? process.cwd();
   const currentVersion = deps.currentVersion();
   const branding = updateBranding(env);
-  const maintainedTarget = deps.getMaintainedTarget
-    ? deps.getMaintainedTarget()
-    : deps.getLatestVersion
-      ? { revision: "", version: deps.getLatestVersion() }
-      : getMaintainedNemoClawTargetFromGitTag({ env });
+  const maintainedTarget = (
+    deps.getMaintainedTarget ?? (() => getMaintainedNemoClawTargetFromGitTag({ env }))
+  )();
   const latestVersion = maintainedTarget?.version ?? null;
   const installType = deps.isSourceCheckout
     ? deps.isSourceCheckout()
