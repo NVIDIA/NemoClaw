@@ -360,7 +360,7 @@ describe("vllm model registry", () => {
     expect(qwen35b!.gated).toBe(false);
   });
 
-  it("builds the NVFP4 serve command from the DGX Spark model-card recipe (#6457)", () => {
+  it("builds the MTP-free NVFP4 serve command for DGX Spark (#7127)", () => {
     const qwen35b = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4");
     const cmd = buildVllmServeCommand(qwen35b!);
     // The current NVIDIA model card no longer needs Spark-specific env exports.
@@ -390,9 +390,14 @@ describe("vllm model registry", () => {
     expect(cmd.match(/--tool-call-parser/g)).toHaveLength(1);
     expect(cmd).toContain("--reasoning-parser qwen3");
     expect(cmd).toContain("--max-model-len 262144");
-    expect(cmd).toContain(
-      `--speculative-config '{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'`,
-    );
+    expect(cmd).toContain("--dtype auto");
+    expect(cmd).toContain("--max-num-seqs 4");
+    expect(cmd).toContain("--max-num-batched-tokens 8192");
+    expect(cmd).toContain("--enable-chunked-prefill");
+    expect(cmd).toContain("--async-scheduling");
+    expect(cmd).toContain("--enable-prefix-caching");
+    expect(cmd).not.toContain("--speculative-config");
+    expect(cmd).not.toContain('"method":"mtp"');
     // Single-node parallel flags stay shared; 0.4 utilization follows the
     // current DGX Spark model-card recipe.
     expect(cmd).toContain("--gpu-memory-utilization 0.4");
