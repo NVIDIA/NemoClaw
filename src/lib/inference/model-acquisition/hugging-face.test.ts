@@ -136,9 +136,14 @@ describe("Hugging Face model acquisition", () => {
     " nvidia/model",
     "nvidia/model ",
     "nvidia/bad model",
-  ])("rejects a repository that is not one positional argument %j (#8279)", (repository) => {
+    "nvidia/model/extra",
+    "nvidia/bad..model",
+    "nvidia/model.git",
+    `nvidia/${"a".repeat(90)}`,
+    "nvidia/\u001b[31mmodel",
+  ])("rejects an invalid Hugging Face repository ID %j (#8279)", (repository) => {
     expect(() => buildHuggingFaceModelDownloadArgv(request({ repository }))).toThrow(
-      "Hugging Face repository must be one non-empty positional argument",
+      "Hugging Face repository must be one valid repository ID",
     );
   });
 
@@ -236,6 +241,50 @@ describe("Hugging Face model acquisition", () => {
     });
     const output = stdoutWrite.mock.calls.map((call: unknown[]) => String(call[0])).join("");
     expect(output).toContain("Authorization: Bearer <REDACTED> request failed");
+    expect(output).not.toContain(secret);
+  });
+
+  it("redacts a contextual bearer credential across interleaved streams (#8279)", async () => {
+    const secret = "opaque-bearer-value";
+    const proc = mockProcess();
+    dockerSpawn.mockReturnValue(proc);
+    const resultPromise = acquireHuggingFaceModel(request({ credentialEnv: {} }), observer());
+    proc.stdout.emit("data", Buffer.from("Authorization: Bearer "));
+    proc.stderr.emit("data", Buffer.from("progress\n"));
+    proc.stdout.emit("data", Buffer.from(`${secret} request failed\n`));
+    proc.emit("exit", 1);
+
+    await expect(resultPromise).resolves.toEqual({
+      ok: false,
+      reason: "hf download failed (exit 1)",
+    });
+    const output = [...stdoutWrite.mock.calls, ...stderrWrite.mock.calls]
+      .map((call: unknown[]) => String(call[0]))
+      .join("");
+    expect(output).toContain("Authorization: Bearer <REDACTED> request failed");
+    expect(output).toContain("progress");
+    expect(output).not.toContain(secret);
+  });
+
+  it("redacts a folded authorization value across a split CRLF boundary (#8279)", async () => {
+    const secret = "opaque-folded-value";
+    const proc = mockProcess();
+    dockerSpawn.mockReturnValue(proc);
+    const resultPromise = acquireHuggingFaceModel(request({ credentialEnv: {} }), observer());
+    proc.stdout.emit("data", Buffer.from("Authorization:\r"));
+    proc.stdout.emit("data", Buffer.from("\n"));
+    proc.stdout.emit("data", Buffer.from(`\t${secret}\r\nnext diagnostic\n`));
+    proc.emit("exit", 1);
+
+    await expect(resultPromise).resolves.toEqual({
+      ok: false,
+      reason: "hf download failed (exit 1)",
+    });
+    const output = [...stdoutWrite.mock.calls, ...stderrWrite.mock.calls]
+      .map((call: unknown[]) => String(call[0]))
+      .join("");
+    expect(output).toContain("Authorization: <REDACTED>");
+    expect(output).toContain("next diagnostic");
     expect(output).not.toContain(secret);
   });
 

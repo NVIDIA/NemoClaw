@@ -11,6 +11,10 @@ const HF_TOKEN_ENV_KEYS = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"] as const;
 const HF_RATE_LIMIT_PATTERN = /\b429\b|too many requests|rate[\s_-]*limit/i;
 const MODEL_DOWNLOAD_HEARTBEAT_MS = 30_000;
 const HF_DOWNLOAD_CACHE_CONTAINER_DIR = "/tmp/nemoclaw-huggingface";
+const HF_REPOSITORY_ID_MAX_LENGTH = 96;
+const HF_REPOSITORY_COMPONENT_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
+const HF_SENSITIVE_HEADER_AT_STREAM_BOUNDARY =
+  /(?:^|[\r\n])(?:authorization|proxy-authorization|cookie|set-cookie)[ \t]*[:=][^\r\n]*\r?\n$/i;
 const TAIL_MAX = 50;
 
 export interface HuggingFaceModelAcquisitionRequest {
@@ -116,13 +120,17 @@ function exactFilenameArgs(filename: string | undefined): string[] {
 }
 
 function repositoryArg(repository: string): string {
+  const components = repository.split("/");
   if (
     repository.length === 0 ||
-    repository.includes("\0") ||
-    repository.startsWith("-") ||
-    /\s/.test(repository)
+    repository.length > HF_REPOSITORY_ID_MAX_LENGTH ||
+    components.length > 2 ||
+    components.some((component) => !HF_REPOSITORY_COMPONENT_PATTERN.test(component)) ||
+    repository.includes("--") ||
+    repository.includes("..") ||
+    repository.endsWith(".git")
   ) {
-    throw new Error("Hugging Face repository must be one non-empty positional argument");
+    throw new Error("Hugging Face repository must be one valid repository ID");
   }
   return repository;
 }
@@ -198,24 +206,16 @@ function redactHfDownloadOutputChunks(
   });
 
   const redactedChunks = tokenRedactedChunks.map(() => "");
-  let groupStart = 0;
-  while (groupStart < tokenRedactedChunks.length) {
-    const stream = tokenRedactedChunks[groupStart].stream;
-    let groupEnd = groupStart + 1;
-    while (
-      groupEnd < tokenRedactedChunks.length &&
-      tokenRedactedChunks[groupEnd].stream === stream
-    ) {
-      groupEnd += 1;
-    }
-    redactedChunks[groupStart] = redactHfDownloadOutput(
-      tokenRedactedChunks
-        .slice(groupStart, groupEnd)
-        .map((chunk) => chunk.text)
-        .join(""),
-      null,
-    );
-    groupStart = groupEnd;
+  const streamGroups = new Map<NodeJS.WriteStream, { text: string; lastIndex: number }>();
+  for (const [index, chunk] of tokenRedactedChunks.entries()) {
+    const group = streamGroups.get(chunk.stream);
+    streamGroups.set(chunk.stream, {
+      text: `${group?.text ?? ""}${chunk.text}`,
+      lastIndex: index,
+    });
+  }
+  for (const group of streamGroups.values()) {
+    redactedChunks[group.lastIndex] = redactHfDownloadOutput(group.text, null);
   }
   return redactedChunks;
 }
@@ -296,31 +296,20 @@ export function acquireHuggingFaceModel(
       }
     }
 
-    function takePendingOutput(end: number): { text: string; stream: NodeJS.WriteStream }[] {
-      const selected: { text: string; stream: NodeJS.WriteStream }[] = [];
-      let remaining = end;
-      while (remaining > 0 && pendingOutput.length > 0) {
-        const chunk = pendingOutput[0];
-        if (chunk.text.length <= remaining) {
-          selected.push(chunk);
-          pendingOutput.shift();
-          remaining -= chunk.text.length;
-          continue;
-        }
-        selected.push({ text: chunk.text.slice(0, remaining), stream: chunk.stream });
-        pendingOutput[0] = { text: chunk.text.slice(remaining), stream: chunk.stream };
-        remaining = 0;
+    function pendingStreamsEndCleanly(): boolean {
+      const streamText = new Map<NodeJS.WriteStream, string>();
+      for (const chunk of pendingOutput) {
+        streamText.set(chunk.stream, `${streamText.get(chunk.stream) ?? ""}${chunk.text}`);
       }
-      return selected;
+      return [...streamText.values()].every(
+        (text) => text.endsWith("\n") && !HF_SENSITIVE_HEADER_AT_STREAM_BOUNDARY.test(text),
+      );
     }
 
     function flushOutput(flushAll = false): void {
-      const pendingText = pendingOutput.map((chunk) => chunk.text).join("");
-      const end = flushAll
-        ? pendingText.length
-        : Math.max(pendingText.lastIndexOf("\n"), pendingText.lastIndexOf("\r")) + 1;
-      if (end <= 0) return;
-      const selected = takePendingOutput(end);
+      if (pendingOutput.length === 0 || (!flushAll && !pendingStreamsEndCleanly())) return;
+      const selected = pendingOutput;
+      pendingOutput = [];
       const safeChunks = redactHfDownloadOutputChunks(selected, tokenValue);
       for (const [index, safeText] of safeChunks.entries()) {
         if (!safeText) continue;
