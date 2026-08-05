@@ -69,6 +69,9 @@ state_dirs:
   - skills
   - plugins
   - cron
+  # User-authored cron scripts are part of the job definition contract. Keep
+  # them in the same rebuild backup so active jobs never outlive their inputs.
+  - scripts
   - logs
   - skins
   - plans

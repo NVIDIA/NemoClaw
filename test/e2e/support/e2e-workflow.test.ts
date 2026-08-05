@@ -765,6 +765,18 @@ describe("e2e workflow boundary", () => {
       },
     ]);
     expect(
+      focusedE2eJobsForChangedFiles(["test/e2e/live/rebuild-hermes-cron-restore.ts"], inventory),
+    ).toEqual([
+      {
+        id: "rebuild-hermes",
+        matchedFiles: ["test/e2e/live/rebuild-hermes-cron-restore.ts"],
+      },
+      {
+        id: "rebuild-hermes-stale-base",
+        matchedFiles: ["test/e2e/live/rebuild-hermes-cron-restore.ts"],
+      },
+    ]);
+    expect(
       focusedE2eJobsForChangedFiles(
         ["test/e2e/live/openshell-gateway-upgrade-helpers.ts"],
         inventory,
