@@ -46,10 +46,18 @@ describe("trusted PR base comparison", () => {
     expect(readApprovedPrBaseSha(eventEnvironment(""))).toBeNull();
   });
 
+  it("does not read the dispatch event when cold measurement is disabled", async () => {
+    const command = vi.fn();
+    await bindApprovedPrBaseForBaseImageComparison({ command }, false, {
+      GITHUB_EVENT_NAME: "workflow_dispatch",
+    });
+    expect(command).not.toHaveBeenCalled();
+  });
+
   it("rejects an invalid dispatch base before running Git", async () => {
     const command = vi.fn();
     await expect(
-      bindApprovedPrBaseForBaseImageComparison({ command }, eventEnvironment("main")),
+      bindApprovedPrBaseForBaseImageComparison({ command }, true, eventEnvironment("main")),
     ).rejects.toThrow("base_sha must be a lowercase 40-character commit SHA");
     expect(command).not.toHaveBeenCalled();
   });
@@ -61,7 +69,7 @@ describe("trusted PR base comparison", () => {
       .mockResolvedValueOnce(result(`${BASE_SHA}\n`))
       .mockResolvedValueOnce(result());
 
-    await bindApprovedPrBaseForBaseImageComparison({ command }, eventEnvironment(BASE_SHA));
+    await bindApprovedPrBaseForBaseImageComparison({ command }, true, eventEnvironment(BASE_SHA));
 
     expect(command.mock.calls.map((call) => call.slice(0, 2))).toEqual([
       [
@@ -80,7 +88,7 @@ describe("trusted PR base comparison", () => {
       .mockResolvedValueOnce(result(`${"f".repeat(40)}\n`));
 
     await expect(
-      bindApprovedPrBaseForBaseImageComparison({ command }, eventEnvironment(BASE_SHA)),
+      bindApprovedPrBaseForBaseImageComparison({ command }, true, eventEnvironment(BASE_SHA)),
     ).rejects.toThrow("did not match");
     expect(command).toHaveBeenCalledTimes(2);
   });

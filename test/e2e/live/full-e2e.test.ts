@@ -423,9 +423,7 @@ test("full e2e: install, onboard, inference, cli operations, and cleanup", {
     timeoutMs: 120_000,
   });
   await cleanup(host, sandbox);
-  if (MEASURE_COLD_ONBOARD) {
-    await bindApprovedPrBaseForBaseImageComparison(host);
-  }
+  await bindApprovedPrBaseForBaseImageComparison(host, MEASURE_COLD_ONBOARD);
 
   const coldOnboard = createColdOnboardCapture();
   coldOnboard &&

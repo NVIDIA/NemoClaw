@@ -63,8 +63,10 @@ async function runGit(
  */
 export async function bindApprovedPrBaseForBaseImageComparison(
   host: HostCommandClient,
+  enabled = true,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
+  if (!enabled) return;
   const baseSha = readApprovedPrBaseSha(env);
   if (!baseSha) return;
 
