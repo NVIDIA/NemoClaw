@@ -245,7 +245,7 @@ test("Hermes inference set updates route/config and preserves live runtime", {
 
   const dashboardConfig = await sandbox.exec(
     SANDBOX_NAME,
-    ["cat", "/sandbox/.hermes/dashboard-home/config.yaml"],
+    ["cat", "/sandbox/.hermes/profiles/dashboard-home/config.yaml"],
     {
       artifactName: "hermes-dashboard-config-yaml-after-switch",
       env: env(),

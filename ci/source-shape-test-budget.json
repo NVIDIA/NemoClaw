@@ -52,6 +52,11 @@
       "category": "security"
     },
     {
+      "file": "test/code-change-considerations.test.ts",
+      "test": "keeps the stage-neutral questions in one concise owner",
+      "category": "compatibility"
+    },
+    {
       "file": "test/code-scanning-workflow.test.ts",
       "test": "groups CodeQL action updates so Dependabot keeps the shared revision synchronized",
       "category": "security"
@@ -89,6 +94,11 @@
     {
       "file": "test/corporate-ca-build-tls-anchor.test.ts",
       "test": "trusts the corporate CA before the DCode discovery runtime npm install",
+      "category": "security"
+    },
+    {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "uses the corporate CA conditionally for all Hermes registry remediations",
       "category": "security"
     },
     {

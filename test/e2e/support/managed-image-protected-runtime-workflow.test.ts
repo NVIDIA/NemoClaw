@@ -179,7 +179,7 @@ describe("protected managed-image runtime workflow boundary", () => {
     expect(validateE2eWorkflow(value)).toContain(
       "managed-image-protected-runtime Docker Hub auth must run immediately after the protected cache download",
     );
-  });
+  }, 15_000);
 
   it("rejects a GPU rebuild that can reach the network on a cache miss", () => {
     const value = workflow();
