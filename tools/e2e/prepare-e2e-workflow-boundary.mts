@@ -27,6 +27,7 @@ const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
 const NO_BUILD_JOBS = new Set([
   "generate-matrix",
   "bootstrap-install-smoke",
+  "llama-cpp-dgx-spark-qualification",
   "managed-image-multiarch-startup",
   "ollama-auth-proxy",
   "security-posture",
