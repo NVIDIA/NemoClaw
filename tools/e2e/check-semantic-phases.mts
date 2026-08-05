@@ -154,8 +154,9 @@ export function validateWindowsMxcControlBoundarySource(source: string): string[
   }
 
   function commandKind(node: ts.CallExpression): "create" | "delete" | null {
-    if (invokedName(node.expression) !== "runCommand") return null;
-    const args = node.arguments[1];
+    const name = invokedName(node.expression);
+    if (name !== "runCommand" && name !== "runOpenShellCommand") return null;
+    const args = name === "runCommand" ? node.arguments[1] : node.arguments[0];
     if (!args || !ts.isArrayLiteralExpression(args) || args.elements.length < 2) return null;
     const [scope, action, target] = args.elements;
     if (!ts.isStringLiteralLike(scope) || scope.text !== "sandbox") return null;
@@ -174,6 +175,9 @@ export function validateWindowsMxcControlBoundarySource(source: string): string[
 
   function inspect(node: ts.Node): void {
     if (ts.isCallExpression(node)) {
+      // This deliberately broad source-level guard uses textual positions. It is
+      // not a runtime control-flow proof, and any wxcExecPath use in a process
+      // invocation subtree is rejected conservatively.
       const name = invokedName(node.expression);
       if (name && controlCalls.has(name) && node.arguments.some(containsWxcExecPath)) {
         failures.push("wxc-exec must not be invoked outside the OpenShell control boundary");
@@ -2579,6 +2583,12 @@ export function scanLiveSourceGraph(entryFile: string): SemanticPhaseSourceGraph
   let importsDirectTest = false;
   let importsSharedTest = false;
   let importsWorkflowTest = false;
+
+  if (!fs.existsSync(path.join(REPO_ROOT, WINDOWS_MXC_OPENCLAW_HELPER))) {
+    childProcessAuditFailures.push(
+      `${WINDOWS_MXC_OPENCLAW_HELPER}: required Windows MXC control-boundary source is missing`,
+    );
+  }
 
   function visit(file: string): void {
     if (visited.has(file)) return;

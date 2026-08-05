@@ -156,7 +156,11 @@ and creation time. For OpenClaw, it also validates the probe-parent ancestry.
 The host rejects a mismatched or reused PID. The fallback uses the
 `taskkill.exe` beneath the validated Windows system root. If either the
 OpenClaw process or OpenShell gateway needs that fallback, the qualification
-fails.
+fails. The delete retry and process-termination paths are failure containment,
+not compatibility workarounds that permit a passing result; their presence does
+not assume a specific upstream defect. Remove them only when failed or partial
+OpenShell lifecycle operations can still guarantee teardown without host-side
+cleanup.
 
 Run only the explicit target:
 

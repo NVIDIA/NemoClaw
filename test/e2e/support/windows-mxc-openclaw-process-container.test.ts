@@ -11,6 +11,7 @@ import { sha256WindowsOpenClawArtifactTree } from "../../../tools/e2e/windows-mx
 import {
   allowlistedWindowsProcessEnvironment,
   assertCleanCheckoutIdentity,
+  assertExactArtifactIdentities,
   assertExpectedOpenClawProcessIdentity,
   assertExpectedOpenShellGatewayProcessIdentity,
   normalizeReportedVersion,
@@ -104,6 +105,18 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
 
     expect(() => parseWindowsMxcOpenClawQualificationEnvironment(environment)).toThrow(
       /unsupported format/u,
+    );
+  });
+
+  it("rejects an artifact replaced after its initial identity check (#8178)", () => {
+    const { environment } = fixture();
+    const parsed = parseWindowsMxcOpenClawQualificationEnvironment(environment);
+    assertExactArtifactIdentities(parsed);
+
+    fs.writeFileSync(parsed.openShell.cliPath, "replacement", "utf8");
+
+    expect(() => assertExactArtifactIdentities(parsed)).toThrow(
+      /openShellCliSha256 does not match the expected exact identity/u,
     );
   });
 

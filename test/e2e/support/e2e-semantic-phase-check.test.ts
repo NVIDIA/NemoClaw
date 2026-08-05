@@ -34,13 +34,10 @@ const FAKE_OPENAI_SOURCE = path.join(REPO_ROOT, "test/e2e/fixtures/fake-openai-c
 describe("semantic E2E phase checker", () => {
   test("accepts formatted OpenShell create-then-delete control flow for Windows MXC", () => {
     const source = `
-      async function qualify(cli, env, progress, sandboxName) {
-        await runCommand(cli, ["sandbox", "create", "--name", sandboxName], env, progress, "create");
-        await runCommand(
-          cli,
+      async function qualify(runOpenShellCommand, sandboxName) {
+        await runOpenShellCommand(["sandbox", "create", "--name", sandboxName], "create");
+        await runOpenShellCommand(
           ["sandbox", "delete", sandboxName],
-          env,
-          progress,
           "delete",
         );
       }
@@ -61,6 +58,19 @@ describe("semantic E2E phase checker", () => {
     expect(validateWindowsMxcControlBoundarySource(source)).toEqual([
       "wxc-exec must not be invoked outside the OpenShell control boundary",
       "OpenShell sandbox delete must not run before sandbox create",
+    ]);
+  });
+
+  test("rejects a Windows MXC control flow without sandbox lifecycle commands", () => {
+    const source = `
+      async function qualify(cli, env, progress) {
+        await runCommand(cli, ["gateway", "select", "name"], env, progress, "select");
+      }
+    `;
+
+    expect(validateWindowsMxcControlBoundarySource(source)).toEqual([
+      "OpenShell sandbox create command is missing",
+      "OpenShell sandbox delete command is missing",
     ]);
   });
 

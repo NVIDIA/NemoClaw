@@ -896,8 +896,13 @@ function trustedWindowsSystemExecutable(
   return realRegularFile(path.join(systemRoot, ...segments), name);
 }
 
-function assertExactIdentities(inputs: WindowsMxcOpenClawQualificationInputs): void {
-  assertCurrentCheckoutIdentity(inputs.expected.nemoClawRevision);
+function assertExactFileIdentity(file: string, expectedSha256: string, name: string): void {
+  if (sha256File(file) !== expectedSha256) {
+    throw new Error(`${name} does not match the expected exact identity`);
+  }
+}
+
+export function assertExactArtifactIdentities(inputs: WindowsMxcOpenClawQualificationInputs): void {
   const observed = {
     nodeSha256: sha256File(inputs.openClaw.nodePath),
     openClawArtifactTreeSha256: sha256WindowsOpenClawArtifactTree(inputs.openClaw.root),
@@ -911,6 +916,11 @@ function assertExactIdentities(inputs: WindowsMxcOpenClawQualificationInputs): v
       throw new Error(`${name} does not match the expected exact identity`);
     }
   }
+}
+
+function assertExactIdentities(inputs: WindowsMxcOpenClawQualificationInputs): void {
+  assertCurrentCheckoutIdentity(inputs.expected.nemoClawRevision);
+  assertExactArtifactIdentities(inputs);
 }
 
 function receiptPasses(checks: QualificationChecks): boolean {
@@ -943,6 +953,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     "Windows taskkill",
   );
 
+  assertExactArtifactIdentities(inputs);
   const version = await runCommand(
     inputs.openClaw.nodePath,
     [inputs.openClaw.entryPath, "--version"],
@@ -1062,8 +1073,32 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     sandboxDeleteAccepted: false,
     workloadTerminatedByDelete: false,
   };
+  const runOpenShellCommand = async (
+    args: readonly string[],
+    activityLabel: string,
+    timeoutMs = COMMAND_TIMEOUT_MS,
+  ): Promise<CommandResult> => {
+    assertExactFileIdentity(
+      inputs.openShell.cliPath,
+      inputs.expected.openShellCliSha256,
+      "openShellCliSha256",
+    );
+    return await runCommand(
+      inputs.openShell.cliPath,
+      args,
+      controlEnvironment,
+      progress,
+      activityLabel,
+      timeoutMs,
+    );
+  };
 
   try {
+    assertExactFileIdentity(
+      inputs.openShell.gatewayPath,
+      inputs.expected.openShellGatewaySha256,
+      "openShellGatewaySha256",
+    );
     gateway = spawnObservedChild(
       inputs.openShell.gatewayPath,
       [
@@ -1103,28 +1138,22 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       port: gatewayPort,
     });
 
-    const add = await runCommand(
-      inputs.openShell.cliPath,
+    const add = await runOpenShellCommand(
       ["gateway", "add", `http://127.0.0.1:${gatewayPort}`, "--local", "--name", gatewayName],
-      controlEnvironment,
-      progress,
       "command: windows-mxc-gateway-add",
     );
     if (add.exitCode !== 0) throw new Error(`OpenShell gateway add failed: ${commandDetail(add)}`);
-    const select = await runCommand(
-      inputs.openShell.cliPath,
+    const select = await runOpenShellCommand(
       ["gateway", "select", gatewayName],
-      controlEnvironment,
-      progress,
       "command: windows-mxc-gateway-select",
     );
     if (select.exitCode !== 0) {
       throw new Error(`OpenShell gateway select failed: ${commandDetail(select)}`);
     }
 
+    assertExactArtifactIdentities(inputs);
     sandboxCreateStarted = true;
-    const create = await runCommand(
-      inputs.openShell.cliPath,
+    const create = await runOpenShellCommand(
       [
         "sandbox",
         "create",
@@ -1136,11 +1165,12 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
         "--",
         "exit",
       ],
-      controlEnvironment,
-      progress,
       "command: windows-mxc-sandbox-create",
       READY_TIMEOUT_MS,
     );
+    if (create.exitCode !== 0) {
+      throw new Error(`OpenShell sandbox create failed: ${commandDetail(create)}`);
+    }
 
     await waitForFile(outcomePath, READY_TIMEOUT_MS);
     const ready = fs.existsSync(readyPath);
@@ -1173,11 +1203,8 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       openClawProcessPresentWhileReady: trustedOpenClawProcess !== null,
     };
 
-    const listWhileReady = await runCommand(
-      inputs.openShell.cliPath,
+    const listWhileReady = await runOpenShellCommand(
       ["sandbox", "list", "-o", "json"],
-      controlEnvironment,
-      progress,
       "command: windows-mxc-sandbox-list-ready",
     );
     checks = {
@@ -1192,11 +1219,8 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     };
 
     progress.phase("delete the sandbox and verify registry plus OpenClaw process cleanup");
-    const remove = await runCommand(
-      inputs.openShell.cliPath,
+    const remove = await runOpenShellCommand(
       ["sandbox", "delete", sandboxName],
-      controlEnvironment,
-      progress,
       "command: windows-mxc-sandbox-delete",
     );
     checks = { ...checks, sandboxDeleteAccepted: remove.exitCode === 0 };
@@ -1218,11 +1242,8 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       await heartbeatStopped(heartbeatPath);
     }
 
-    const listAfterDelete = await runCommand(
-      inputs.openShell.cliPath,
+    const listAfterDelete = await runOpenShellCommand(
       ["sandbox", "list", "-o", "json"],
-      controlEnvironment,
-      progress,
       "command: windows-mxc-sandbox-list-deleted",
     );
     checks = {
@@ -1237,11 +1258,8 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     if (sandboxCreateStarted) {
       let exactRegistryEntryPresent = true;
       try {
-        const cleanupListBeforeRetry = await runCommand(
-          inputs.openShell.cliPath,
+        const cleanupListBeforeRetry = await runOpenShellCommand(
           ["sandbox", "list", "-o", "json"],
-          controlEnvironment,
-          progress,
           "command: windows-mxc-sandbox-list-before-cleanup",
         );
         if (cleanupListBeforeRetry.exitCode === 0) {
@@ -1258,11 +1276,8 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       if (shouldRetrySandboxDelete(checks.sandboxDeleteAccepted, exactRegistryEntryPresent)) {
         sandboxDeleteRetried = true;
         try {
-          const cleanupDelete = await runCommand(
-            inputs.openShell.cliPath,
+          const cleanupDelete = await runOpenShellCommand(
             ["sandbox", "delete", sandboxName],
-            controlEnvironment,
-            progress,
             "command: windows-mxc-sandbox-delete-cleanup",
           );
           checks = { ...checks, sandboxDeleteAccepted: cleanupDelete.exitCode === 0 };
@@ -1277,11 +1292,8 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       }
 
       try {
-        const cleanupList = await runCommand(
-          inputs.openShell.cliPath,
+        const cleanupList = await runOpenShellCommand(
           ["sandbox", "list", "-o", "json"],
-          controlEnvironment,
-          progress,
           "command: windows-mxc-sandbox-list-cleanup",
         );
         const registryRemovedAfterDelete =
