@@ -125,7 +125,9 @@ export function hermesCronJobRuntimeState(job: JsonObject, label: string) {
   const repeat = requireObject(job.repeat, `${label} repeat state`);
   const state = typeof job.state === "string" ? job.state : fail(`${label} state is not a string`);
   const completed =
-    typeof repeat.completed === "number"
+    typeof repeat.completed === "number" &&
+    Number.isSafeInteger(repeat.completed) &&
+    repeat.completed >= 0
       ? repeat.completed
       : fail(`${label} completed run count is unavailable`);
   return {

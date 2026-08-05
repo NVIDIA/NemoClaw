@@ -41,4 +41,17 @@ describe("Hermes rebuild cron restore evidence", () => {
       ),
     ).toThrow("cron job fixture repeat state is not an object");
   });
+
+  it.each([-1, 0.5])("rejects invalid completed run count %s", (completed) => {
+    expect(() =>
+      hermesCronJobRuntimeState(
+        {
+          next_run_at: "2026-08-06T19:41:01.000Z",
+          repeat: { completed, times: null },
+          state: "scheduled",
+        },
+        "cron job fixture",
+      ),
+    ).toThrow("cron job fixture completed run count is unavailable");
+  });
 });
