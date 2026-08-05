@@ -428,8 +428,10 @@ export function allowlistedWindowsProcessEnvironment(
 export function withoutOpenShellGatewaySelection(
   environment: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
-  const isolated = { ...environment };
-  delete isolated.OPENSHELL_GATEWAY;
+  const isolated: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(environment)) {
+    if (name.toLowerCase() !== "openshell_gateway") isolated[name] = value;
+  }
   return isolated;
 }
 

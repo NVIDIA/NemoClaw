@@ -76,9 +76,9 @@ describe("semantic E2E phase checker", () => {
 
   test("rejects in-sandbox exec after Windows MXC process_container creation", () => {
     const source = `
-      async function qualify(cli, env, progress, sandboxName) {
-        await runCommand(cli, ["sandbox", "create", "--", "exit"], env, progress, "create");
-        await runCommand(cli, ["sandbox", "delete", sandboxName], env, progress, "delete");
+      async function qualify(sandboxName) {
+        await runOpenShellCommand(["sandbox", "create", "--", "exit"], "create");
+        await runOpenShellCommand(["sandbox", "delete", sandboxName], "delete");
       }
     `;
 

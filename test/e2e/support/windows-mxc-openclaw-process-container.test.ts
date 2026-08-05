@@ -138,6 +138,14 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     ).toThrow(/does not match/u);
     expect(normalizeReportedVersion("OpenClaw 2026.7.1\n")).toBe("2026.7.1");
     expect(normalizeReportedVersion("OpenClaw 2026.7.1 (2d2ddc4)\n")).toBe("2026.7.1");
+    expect(
+      normalizeReportedVersion("OpenClaw 2026.7.1 (0123456789abcdef0123456789abcdef01234567)\n"),
+    ).toBe("2026.7.1");
+    expect(normalizeReportedVersion("OpenClaw 2026.7.1 (2d2ddc)\n")).toBeNull();
+    expect(
+      normalizeReportedVersion("OpenClaw 2026.7.1 (0123456789abcdef0123456789abcdef012345678)\n"),
+    ).toBeNull();
+    expect(normalizeReportedVersion("OpenClaw 2026.7.1 (2d2ddcZ)\n")).toBeNull();
     expect(normalizeReportedVersion("2026.7.10\n")).toBe("2026.7.10");
     expect(normalizeReportedVersion("OpenClaw 2026.7.1 (local)\n")).toBeNull();
     expect(normalizeReportedVersion("OpenClaw version 2026.7.1 extra\n")).toBeNull();
@@ -299,7 +307,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
   it("does not override the gateway selected in the isolated CLI state (#8178)", () => {
     expect(
       withoutOpenShellGatewaySelection({
-        OPENSHELL_GATEWAY: "",
+        OpenShell_Gateway: "unexpected-gateway",
         OPENSHELL_GATEWAY_CONFIG: "C:\\probe\\gateway.toml",
       }),
     ).toEqual({ OPENSHELL_GATEWAY_CONFIG: "C:\\probe\\gateway.toml" });
