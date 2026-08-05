@@ -286,6 +286,7 @@ describe("restoreSandboxBaseline (#7178)", () => {
     promptMock.mockResolvedValue("n");
     await restoreSandboxBaseline("alpha", { key: "nous_research" });
     expect(console.log).toHaveBeenCalledWith("  Cancelled.");
+    expect(restoreBaselineEntryMock).not.toHaveBeenCalled();
   });
 
   it("does not mutate on --dry-run", async () => {
