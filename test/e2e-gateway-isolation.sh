@@ -49,7 +49,8 @@ fi
 
 # Helper: run a command inside the container as the sandbox user
 run_as_sandbox() {
-  docker run --rm --entrypoint "" "$IMAGE" gosu sandbox bash -c "$1" 2>&1
+  docker run --rm --entrypoint "" "$IMAGE" /usr/bin/setpriv \
+    --reuid=sandbox --regid=sandbox --init-groups -- bash -c "$1" 2>&1
 }
 
 # Helper: run a command inside the container as root
@@ -120,14 +121,14 @@ else
   fail "sandbox cannot write to config hash — should be writable: $OUT"
 fi
 
-# ── Test 7: gosu is installed ────────────────────────────────────
+# ── Test 7: setpriv is installed and gosu is absent ──────────────
 
-info "7. gosu binary is available"
-OUT=$(run_as_root "command -v gosu && gosu --version")
-if echo "$OUT" | grep -q "gosu"; then
-  pass "gosu installed"
+info "7. setpriv is available and gosu is absent"
+OUT=$(run_as_root "test -x /usr/bin/setpriv && /usr/bin/setpriv --version && ! command -v gosu")
+if echo "$OUT" | grep -q "setpriv"; then
+  pass "setpriv installed; gosu absent"
 else
-  fail "gosu not found: $OUT"
+  fail "setpriv/gosu runtime contract failed: $OUT"
 fi
 
 # ── Test 8: Entrypoint PATH is locked to system dirs ─────────────
@@ -144,7 +145,7 @@ fi
 # ── Test 9: openclaw resolves to expected absolute path ──────────
 
 info "9. Gateway runs the expected openclaw binary"
-OUT=$(run_as_root "gosu gateway which openclaw")
+OUT=$(run_as_root "/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- which openclaw")
 if [ "$OUT" = "/usr/local/bin/openclaw" ]; then
   pass "openclaw resolves to /usr/local/bin/openclaw"
 else
@@ -192,10 +193,10 @@ fi
 info "13. Sandbox user cannot kill gateway-user processes"
 # Start a dummy process as gateway, try to kill it as sandbox
 OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
-  gosu gateway sleep 60 &
+  /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sleep 60 &
   GW_PID=$!
   sleep 0.5
-  RESULT=$(gosu sandbox kill $GW_PID 2>&1 || echo "EPERM")
+  RESULT=$(/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- kill $GW_PID 2>&1 || echo "EPERM")
   echo "$RESULT"
   kill $GW_PID 2>/dev/null || true
 ')
@@ -252,8 +253,8 @@ info "14. Entrypoint drops the full issue #3280 dangerous-cap inventory from san
 # step-down: (1) the entrypoint-wide capsh drop in drop_capabilities()
 # and (2) the per-user setpriv drop in STEP_DOWN_PREFIX_SANDBOX. The
 # previous test (#3328) only exercised stage 1 and classified
-# CAP_FOWNER/SETUID/SETGID as load-bearing because gosu needed them;
-# the follow-up replaces gosu with setpriv so those three drop
+# CAP_FOWNER/SETUID/SETGID as load-bearing for the user transition;
+# setpriv removes those capabilities atomically during the transition
 # atomically with reuid, and ALL eight issue-named caps must be absent.
 #
 # IMPORTANT: docker's default bounding set already excludes CAP_SYS_ADMIN
@@ -452,7 +453,7 @@ OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
   echo "# proxy config placeholder" > /tmp/nemoclaw-proxy-env.sh
   chown root:root /tmp/nemoclaw-proxy-env.sh
   chmod 444 /tmp/nemoclaw-proxy-env.sh
-  gosu sandbox bash -c "echo test >> /tmp/nemoclaw-proxy-env.sh 2>&1; echo EXIT=\$?"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- bash -c "echo test >> /tmp/nemoclaw-proxy-env.sh 2>&1; echo EXIT=\$?"
 ' 2>&1)
 if echo "$OUT" | grep -q "EXIT=1\|Permission denied"; then
   pass "sandbox user cannot write to /tmp/nemoclaw-proxy-env.sh"
@@ -517,8 +518,8 @@ OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
   chmod 444 /tmp/nemoclaw-proxy-env.sh
   echo "ROOT_BASH_IC=$(bash -ic "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
   echo "ROOT_BASH_LC=$(bash -lc "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
-  echo "SANDBOX_BASH_IC=$(gosu sandbox bash -ic "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
-  echo "SANDBOX_BASH_LC=$(gosu sandbox bash -lc "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
+  echo "SANDBOX_BASH_IC=$(/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- bash -ic "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
+  echo "SANDBOX_BASH_LC=$(/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- bash -lc "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
 ' 2>&1)
 EXPECTED="https://probe.invalid:9999"
 if echo "$OUT" | grep -qE "ROOT_BASH_IC=$EXPECTED" \
@@ -530,16 +531,16 @@ else
   fail "proxy env not set in all bash modes (#2704): $OUT"
 fi
 
-# ── Test 27: Non-root mode executes without gosu ──────────────────
-# The entrypoint detects uid != 0, skips gosu, and execs the command directly.
+# ── Test 27: Non-root mode executes without privilege step-down ───
+# The entrypoint detects uid != 0, skips setpriv, and executes directly.
 # Use the image's actual sandbox uid/gid here: the system-assigned sandbox uid
 # is not guaranteed to be 1000 on every runner, and the non-root fallback is
 # designed to run as that sandbox user.
 
-info "27. Non-root mode executes command without gosu"
+info "27. Non-root mode executes command without setpriv"
 OUT=$(docker run --rm --user "${SB_UID}:${SB_GID}" "$IMAGE" bash -c 'printf "%s\n" "NON_ROOT_EXEC_OK"; sleep 0.2' 2>&1 || true)
 if echo "$OUT" | grep -q "NON_ROOT_EXEC_OK"; then
-  pass "non-root mode executed command directly (no gosu)"
+  pass "non-root mode executed command directly (no setpriv)"
 else
   fail "non-root command execution failed: $OUT"
 fi
@@ -624,15 +625,15 @@ OUT=$(docker run --rm --cap-drop DAC_OVERRIDE --entrypoint bash "$IMAGE" -lc '
   source /tmp/normalize.sh
   capsh --has-p=cap_setgid
   capsh --has-p=cap_setuid
-  gosu sandbox sh -c "printf baseline > /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; chmod 600 /sandbox/.openclaw/openclaw.json.nemoclaw-baseline"
-  gosu sandbox chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
-  gosu sandbox chmod 700 /sandbox/.openclaw
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "printf baseline > /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; chmod 600 /sandbox/.openclaw/openclaw.json.nemoclaw-baseline"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- chmod 700 /sandbox/.openclaw
   normalize_mutable_config_perms
-  gosu sandbox sh -c "test \"\$(stat -c %a /sandbox/.openclaw)\" = 2770"
-  gosu sandbox sh -c "test \"\$(stat -c %a /sandbox/.openclaw/openclaw.json)\" = 660"
-  gosu sandbox sh -c "test \"\$(stat -c %a /sandbox/.openclaw/.config-hash)\" = 660"
-  gosu sandbox sh -c "test \"\$(stat -c \"%a %U:%G\" /sandbox/.openclaw/openclaw.json.nemoclaw-baseline)\" = \"440 root:sandbox\""
-  gosu gateway sh -c "printf \" \" >>/sandbox/.openclaw/openclaw.json"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "test \"\$(stat -c %a /sandbox/.openclaw)\" = 2770"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "test \"\$(stat -c %a /sandbox/.openclaw/openclaw.json)\" = 660"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "test \"\$(stat -c %a /sandbox/.openclaw/.config-hash)\" = 660"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "test \"\$(stat -c \"%a %U:%G\" /sandbox/.openclaw/openclaw.json.nemoclaw-baseline)\" = \"440 root:sandbox\""
+  /usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -c "printf \" \" >>/sandbox/.openclaw/openclaw.json"
   printf "ONESHOT_DAC_REPAIR_OK\n"
 ' 2>&1 || true)
 if echo "$OUT" | grep -q "ONESHOT_DAC_REPAIR_OK"; then
@@ -718,7 +719,7 @@ OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
   source /tmp/normalize.sh
   rm -f /sandbox/.openclaw/openclaw.json.nemoclaw-baseline
   normalize_mutable_config_perms
-  gosu sandbox sh -c "rm -f /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; printf \"{\\\"safe\\\":true}\\n\" > /sandbox/baseline-hardlink-target; chmod 640 /sandbox/baseline-hardlink-target; ln /sandbox/baseline-hardlink-target /sandbox/.openclaw/openclaw.json.nemoclaw-baseline"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "rm -f /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; printf \"{\\\"safe\\\":true}\\n\" > /sandbox/baseline-hardlink-target; chmod 640 /sandbox/baseline-hardlink-target; ln /sandbox/baseline-hardlink-target /sandbox/.openclaw/openclaw.json.nemoclaw-baseline"
   before=$(stat -c "%u %g %a" /sandbox/baseline-hardlink-target)
   [ "$(stat -c "%h" /sandbox/baseline-hardlink-target)" -eq 2 ]
   write_openclaw_config_baseline
@@ -768,9 +769,9 @@ PY_INJECT_HANDOFF_RACE
   } >/tmp/normalize.sh
   source /tmp/normalize.sh
   find /sandbox/.openclaw -mindepth 1 -delete
-  gosu sandbox sh -c "printf \"{}\\n\" > /sandbox/.openclaw/openclaw.json; printf \"hash\\n\" > /sandbox/.openclaw/.config-hash"
-  gosu sandbox chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
-  gosu sandbox chmod 700 /sandbox/.openclaw
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "printf \"{}\\n\" > /sandbox/.openclaw/openclaw.json; printf \"hash\\n\" > /sandbox/.openclaw/.config-hash"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- chmod 700 /sandbox/.openclaw
   rc=0
   normalize_mutable_config_perms || rc=$?
   [ "$rc" -eq 1 ]
@@ -799,8 +800,8 @@ OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
   printf "protected\n" >/sandbox/recovery-protected
   chmod 600 /sandbox/recovery-protected
   chown root:root /sandbox/recovery-protected
-  gosu sandbox rm -f /sandbox/.openclaw/openclaw.json
-  gosu sandbox ln -s /sandbox/recovery-protected /sandbox/.openclaw/openclaw.json
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- rm -f /sandbox/.openclaw/openclaw.json
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- ln -s /sandbox/recovery-protected /sandbox/.openclaw/openclaw.json
   before=$(stat -c "%U:%G:%a" /sandbox/recovery-protected):$(cat /sandbox/recovery-protected)
   rc=0
   recover_openclaw_config_if_empty || rc=$?
@@ -884,7 +885,7 @@ OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
   [ "$(stat -c "%a %U:%G" /sandbox/.openclaw)" = "2770 sandbox:sandbox" ]
   [ "$(stat -c "%a %U:%G" /sandbox/.openclaw/openclaw.json)" = "660 sandbox:sandbox" ]
   [ "$(stat -c "%a %U:%G" /sandbox/.openclaw/.config-hash)" = "660 sandbox:sandbox" ]
-  gosu sandbox sh -c "printf \" \" >>/sandbox/.openclaw/openclaw.json; touch /sandbox/.openclaw/reclaim-write-check"
+  /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "printf \" \" >>/sandbox/.openclaw/openclaw.json; touch /sandbox/.openclaw/reclaim-write-check"
 
   chown root:root /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
   chmod 755 /sandbox/.openclaw
@@ -893,7 +894,7 @@ OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
   sealed_before=$(stat -c "%u %g %a" /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash)
   normalize_mutable_config_perms
   [ "$sealed_before" = "$(stat -c "%u %g %a" /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash)" ]
-  ! gosu sandbox sh -c "printf x >>/sandbox/.openclaw/openclaw.json"
+  ! /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- sh -c "printf x >>/sandbox/.openclaw/openclaw.json"
 
   chmod 644 /sandbox/.openclaw/openclaw.json
   ambiguous_before=$(stat -c "%u %g %a" /sandbox/.openclaw /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash)
