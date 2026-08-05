@@ -1463,13 +1463,17 @@ export function applyChannelPresetIfAvailable(
 function getSandboxChannelStatePaths(agent: AgentDefinition, channelName: string): string[] {
   const configDir = agent.configPaths.dir;
   const stateDirs = new Set(agent.stateDirs);
+  const paths: string[] = [];
   if (stateDirs.has("platforms")) {
-    return [`${configDir}/platforms/${channelName}`];
+    paths.push(`${configDir}/platforms/${channelName}`);
   }
-  if (stateDirs.has(channelName)) {
-    return [`${configDir}/${channelName}`];
+  if (channelName === "whatsapp" && stateDirs.has("dashboard-home")) {
+    paths.push(`${configDir}/dashboard-home/platforms/whatsapp/session`);
   }
-  return [];
+  if (paths.length === 0 && stateDirs.has(channelName)) {
+    paths.push(`${configDir}/${channelName}`);
+  }
+  return paths;
 }
 
 function isSafeChannelStatePath(p: string): boolean {
