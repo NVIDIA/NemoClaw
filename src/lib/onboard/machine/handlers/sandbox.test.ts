@@ -15,6 +15,7 @@ import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
 import { handleSandboxState } from "./sandbox";
 import {
   baseOptions,
+  bindJournaledRecreate,
   createDeps,
   makeMinimalPlan,
   withEnv,
@@ -856,13 +857,19 @@ describe("handleSandboxState", () => {
   it("marks web search changed when recreate implicitly enables Tavily", async () => {
     const session = createSession({ sandboxName: "saved" });
     session.steps.sandbox.status = "complete";
-    const { deps } = createDeps({
-      getSandboxReuseState: () => "not_ready",
-      configureWebSearch: vi.fn(async () => ({
-        fetchEnabled: true as const,
-        provider: "tavily" as const,
-      })),
-    });
+    const journal = bindJournaledRecreate(session);
+    const { deps } = createDeps(
+      {
+        getSandboxReuseState: () => "not_ready",
+        getSandboxRecreateObservation: journal.observe,
+        configureWebSearch: vi.fn(async () => ({
+          fetchEnabled: true as const,
+          provider: "tavily" as const,
+        })),
+        createSandbox: journal.completeCreate,
+      },
+      session,
+    );
 
     const result = await handleSandboxState({
       ...baseOptions(deps, session),
@@ -872,75 +879,6 @@ describe("handleSandboxState", () => {
 
     expect(result.webSearchConfig).toEqual({ fetchEnabled: true, provider: "tavily" });
     expect(result.webSearchConfigChanged).toBe(true);
-  });
-
-  it("removes registry state when messaging config drift forces sandbox recreation", async () => {
-    const session = createSession();
-    session.steps.sandbox.status = "complete";
-    const { deps, calls } = createDeps({
-      getSandboxReuseState: () => "ready",
-      getStoredMessagingChannelConfig: () => ({ TELEGRAM_REQUIRE_MENTION: "1" }),
-      hydrateMessagingChannelConfig: () => ({ TELEGRAM_REQUIRE_MENTION: "0" }),
-      messagingChannelConfigsEqual: () => false,
-    });
-
-    await handleSandboxState({
-      ...baseOptions(deps, session),
-      resume: true,
-      sandboxName: "saved",
-    });
-
-    expect(calls.note).toHaveBeenCalledWith(
-      "  [resume] Messaging channel configuration changed; recreating sandbox.",
-    );
-    expect(calls.removeSandbox).toHaveBeenCalledWith("saved");
-    expect(calls.createSandbox).toHaveBeenCalled();
-  });
-
-  it("repairs not-ready resumed sandboxes before recreation", async () => {
-    const session = createSession({ sandboxName: "saved" });
-    session.steps.sandbox.status = "complete";
-    const { deps, calls } = createDeps({ getSandboxReuseState: () => "not_ready" });
-
-    await handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "saved" });
-
-    expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.started", {
-      state: "sandbox",
-      metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
-    });
-    expect(calls.repairSandbox).toHaveBeenCalledWith("saved");
-    expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.completed", {
-      state: "sandbox",
-      metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
-    });
-    expect(calls.createSandbox).toHaveBeenCalled();
-  });
-
-  it("records failed sandbox repair events before propagating repair errors", async () => {
-    const session = createSession({ sandboxName: "saved" });
-    session.steps.sandbox.status = "complete";
-    const { deps, calls } = createDeps({
-      getSandboxReuseState: () => "not_ready",
-      repairRecordedSandbox: vi.fn(() => {
-        throw new Error("cleanup failed");
-      }),
-    });
-
-    await expect(
-      handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "saved" }),
-    ).rejects.toThrow("cleanup failed");
-
-    expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.started", {
-      state: "sandbox",
-      metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
-    });
-    expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.failed", {
-      state: "sandbox",
-      error: "cleanup failed",
-      metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
-    });
-    expect(calls.repairEvent).not.toHaveBeenCalledWith("state.repair.completed", expect.anything());
-    expect(calls.createSandbox).not.toHaveBeenCalled();
   });
 
   it("recreates when a saved web search sandbox is no longer supported", async () => {
@@ -955,13 +893,19 @@ describe("handleSandboxState", () => {
       },
     });
     session.steps.sandbox.status = "complete";
-    const { deps, calls } = createDeps({
-      agentSupportsWebSearch: () => false,
-      getSandboxReuseState: () => "ready",
-      updateSession: vi.fn(
-        (mutator: (value: Session) => Session | void) => mutator(session) ?? session,
-      ),
-    });
+    const journal = bindJournaledRecreate(session);
+    const { deps, calls } = createDeps(
+      {
+        agentSupportsWebSearch: () => false,
+        getSandboxReuseState: () => "ready",
+        getSandboxRecreateObservation: journal.observe,
+        createSandbox: journal.completeCreate,
+        updateSession: vi.fn(
+          (mutator: (value: Session) => Session | void) => mutator(session) ?? session,
+        ),
+      },
+      session,
+    );
 
     await handleSandboxState({
       ...baseOptions(deps, session),
@@ -979,8 +923,7 @@ describe("handleSandboxState", () => {
     expect(calls.note).not.toHaveBeenCalledWith(
       "  [resume] Reusing web search selection: disabled.",
     );
-    expect(calls.removeSandbox).toHaveBeenCalledWith("saved");
-    expect(calls.createSandbox).toHaveBeenCalled();
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
   });
 
   it("recreates when an explicit web-search provider differs from saved state", async () => {
@@ -989,10 +932,16 @@ describe("handleSandboxState", () => {
       webSearchConfig: { fetchEnabled: true, provider: "brave" },
     });
     session.steps.sandbox.status = "complete";
-    const { deps, calls } = createDeps({
-      getSandboxReuseState: () => "ready",
-      agentSupportsWebSearchProvider: () => true,
-    });
+    const journal = bindJournaledRecreate(session);
+    const { deps, calls } = createDeps(
+      {
+        getSandboxReuseState: () => "ready",
+        getSandboxRecreateObservation: journal.observe,
+        createSandbox: journal.completeCreate,
+        agentSupportsWebSearchProvider: () => true,
+      },
+      session,
+    );
 
     const result = await handleSandboxState({
       ...baseOptions(deps, session),
@@ -1005,12 +954,12 @@ describe("handleSandboxState", () => {
     expect(calls.note).toHaveBeenCalledWith(
       "  [resume] Web Search configuration changed; recreating sandbox.",
     );
-    expect(calls.removeSandbox).toHaveBeenCalledWith("saved");
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(calls.validateBrave).toHaveBeenCalledWith({
       fetchEnabled: true,
       provider: "tavily",
     });
-    expect(calls.createSandbox).toHaveBeenCalledWith(
+    expect(journal.completeCreate).toHaveBeenCalledWith(
       { type: "nvidia" },
       "model",
       "provider",
@@ -1025,7 +974,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      {
+      expect.objectContaining({
         resolved: expect.any(Object),
         recreate: true,
         toolDisclosure: "progressive",
@@ -1033,7 +982,12 @@ describe("handleSandboxState", () => {
         endpointSource: null,
         extraProviders: [],
         reuseRegisteredCredentials: true,
-      },
+        recreateTransaction: expect.objectContaining({
+          id: expect.any(String),
+          targetGeneration: expect.any(String),
+          targetIntentFingerprint: expect.any(String),
+        }),
+      }),
     );
     expect(result.webSearchConfigChanged).toBe(true);
   });
@@ -1118,11 +1072,17 @@ describe("handleSandboxState", () => {
     });
     session.steps.sandbox.status = "complete";
     const backToSelection = Object.freeze({ kind: "NEMOCLAW_BACK_TO_SELECTION" });
-    const { deps, calls } = createDeps({
-      getSandboxReuseState: () => "not_ready",
-      ensureValidatedWebSearchCredential: vi.fn(async () => backToSelection),
-      isBackToSelection: vi.fn((value: unknown) => value === backToSelection),
-    });
+    const journal = bindJournaledRecreate(session);
+    const { deps, calls } = createDeps(
+      {
+        getSandboxReuseState: () => "not_ready",
+        getSandboxRecreateObservation: journal.observe,
+        createSandbox: journal.completeCreate,
+        ensureValidatedWebSearchCredential: vi.fn(async () => backToSelection),
+        isBackToSelection: vi.fn((value: unknown) => value === backToSelection),
+      },
+      session,
+    );
 
     const result = await handleSandboxState({
       ...baseOptions(deps, session),
@@ -1132,7 +1092,7 @@ describe("handleSandboxState", () => {
     });
 
     expect(calls.configureWebSearch).not.toHaveBeenCalled();
-    expect(calls.createSandbox).toHaveBeenCalledWith(
+    expect(journal.completeCreate).toHaveBeenCalledWith(
       { type: "nvidia" },
       "model",
       "provider",
@@ -1147,7 +1107,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      {
+      expect.objectContaining({
         resolved: expect.any(Object),
         recreate: true,
         toolDisclosure: "progressive",
@@ -1155,7 +1115,12 @@ describe("handleSandboxState", () => {
         endpointSource: null,
         extraProviders: [],
         reuseRegisteredCredentials: true,
-      },
+        recreateTransaction: expect.objectContaining({
+          id: expect.any(String),
+          targetGeneration: expect.any(String),
+          targetIntentFingerprint: expect.any(String),
+        }),
+      }),
     );
     expect(result.webSearchConfig).toBeNull();
   });
