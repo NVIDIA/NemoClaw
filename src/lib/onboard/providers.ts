@@ -339,9 +339,10 @@ const isProviderKeyCredentialCandidate = isHostedInferenceProviderKeyCredentialC
 /**
  * Resolve the requested model from the preferred env var or its compatibility fallback.
  */
-function getRequestedModelEnv(env = process.env) {
+function getRequestedModelEnv(env = process.env, options = {}) {
   const model = (env[MODEL_ENV] || "").trim();
   if (model) return { value: model, source: MODEL_ENV };
+  if (options.allowProviderModelFallback === false) return { value: "", source: null };
   const providerModel = (env[PROVIDER_MODEL_ENV] || "").trim();
   if (providerModel) return { value: providerModel, source: PROVIDER_MODEL_ENV };
   return { value: "", source: null };
@@ -354,8 +355,8 @@ function getRequestedModelFromEnv(env = process.env) {
   return getRequestedModelEnv(env).value || null;
 }
 
-function getNonInteractiveModel(providerKey) {
-  const { value: model, source } = getRequestedModelEnv();
+function getNonInteractiveModel(providerKey, options = {}) {
+  const { value: model, source } = getRequestedModelEnv(process.env, options);
   if (!model) return null;
   if (!isSafeModelId(model)) {
     console.error(`  Invalid ${source || MODEL_ENV} for provider '${providerKey}': ${model}`);
