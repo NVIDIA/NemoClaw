@@ -2,16 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import {
-  copyFileSync,
-  cpSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -21,35 +12,9 @@ import catalogSchema from "../../managed-inference/schemas/catalog.schema.json" 
 };
 import presetSchema from "../../managed-inference/schemas/preset.schema.json" with { type: "json" };
 import recipeSchema from "../../managed-inference/schemas/recipe.schema.json" with { type: "json" };
+import { createPackageFixture } from "./helpers/package-fixture";
 
 const REPOSITORY_ROOT = path.join(import.meta.dirname, "..", "..");
-
-function createPackFixture(): string {
-  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-serving-catalog-pack-"));
-  const packageJson = JSON.parse(
-    readFileSync(path.join(REPOSITORY_ROOT, "package.json"), "utf8"),
-  ) as { scripts?: Record<string, string> };
-  // Local-directory packs always prepare first; keep this fixture scoped to packlist behavior.
-  packageJson.scripts = {};
-
-  writeFileSync(
-    path.join(fixtureRoot, "package.json"),
-    `${JSON.stringify(packageJson, null, 2)}\n`,
-  );
-  copyFileSync(path.join(REPOSITORY_ROOT, ".gitignore"), path.join(fixtureRoot, ".gitignore"));
-  mkdirSync(path.join(fixtureRoot, "dist"), { recursive: true });
-  cpSync(
-    path.join(REPOSITORY_ROOT, "dist", "managed-inference"),
-    path.join(fixtureRoot, "dist", "managed-inference"),
-    { recursive: true },
-  );
-  cpSync(
-    path.join(REPOSITORY_ROOT, "managed-inference"),
-    path.join(fixtureRoot, "managed-inference"),
-    { recursive: true },
-  );
-  return fixtureRoot;
-}
 
 describe("compiled managed inference serving catalog", () => {
   it("build output contains a schema-valid catalog with a source revision and matching digest (#8144)", () => {
@@ -65,7 +30,10 @@ describe("compiled managed inference serving catalog", () => {
   });
 
   it("includes the compiled catalog in the npm package (#8144)", () => {
-    const fixtureRoot = createPackFixture();
+    const fixtureRoot = createPackageFixture({
+      prefix: "nemoclaw-serving-catalog-pack-",
+      entries: ["dist/managed-inference", "managed-inference"],
+    });
     try {
       const result = JSON.parse(
         execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {

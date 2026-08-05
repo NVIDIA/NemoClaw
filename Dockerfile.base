@@ -3,7 +3,7 @@
 #
 # NemoClaw sandbox base image — expensive, rarely-changing layers.
 #
-# Contains: node:22-trixie-slim, apt packages, gosu, user/group setup,
+# Contains: node:22-trixie-slim, apt packages, setpriv, user/group setup,
 # .openclaw directory structure, OpenClaw CLI, and PyYAML.
 #
 # Built on main merges and pushed to GHCR. The production Dockerfile
@@ -18,7 +18,7 @@
 #   node:22-trixie-slim — pinned by sha256 digest, checked weekly by
 #                          docker-pin-check.yaml
 #   apt packages        — pinned to exact Debian trixie versions
-#   gosu 1.19           — pinned release + per-arch sha256 checksum
+#   util-linux          — pinned Debian package providing setpriv
 #   npm 11.18.0         — reviewed archive + sha512 integrity
 #   gateway/sandbox     — OS users and groups; names and UIDs are a
 #     users               stable contract with OpenShell
@@ -39,7 +39,7 @@
 #
 #   1. OpenClaw CLI version bump    — update OPENCLAW_VERSION default below, or override via --build-arg / workflow_dispatch
 #   2. New apt package needed       — add it to the apt-get install list
-#   3. gosu upgrade                 — update URL, checksum, and version
+#   3. util-linux upgrade           — update the pinned apt package version
 #   4. node:22-trixie-slim digest rotated — update-docker-pin.sh updates all
 #                                      Dockerfile and Dockerfile.base
 #   5. npm upgrade                  — update upgrade-bundled-npm.mts
@@ -124,6 +124,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         iptables=1.8.11-2 \
         nftables=1.1.3-1 \
         libcap2-bin=1:2.75-10+deb13u1+b1 \
+        util-linux=2.41-5 \
         procps=2:4.0.4-9 \
         e2fsprogs=1.47.2-3+b11 \
         "dos2unix=7.5.2-1*" \
@@ -259,24 +260,9 @@ RUN apt-get update \
     && git --version \
     && test -z "$(dpkg --audit)"
 
-# gosu for privilege separation (gateway vs sandbox user).
-# Install from GitHub release with checksum verification instead of
-# Debian's packaged gosu can lag upstream. Pinned to 1.19 (2025-09).
-# Binary release asset downloads can be slower than hash fetches; keep
-# longer bounded transfer timeouts while preserving checksum verification.
-# hadolint ignore=DL4006
-RUN arch="$(dpkg --print-architecture)" \
-    && case "$arch" in \
-        amd64) gosu_asset="gosu-amd64"; gosu_sha256="52c8749d0142edd234e9d6bd5237dff2d81e71f43537e2f4f66f75dd4b243dd0" ;; \
-        arm64) gosu_asset="gosu-arm64"; gosu_sha256="3a8ef022d82c0bc4a98bcb144e77da714c25fcfa64dccc57f6aba7ae47ff1a44" ;; \
-        *) echo "Unsupported architecture for gosu: $arch" >&2; exit 1 ;; \
-    esac \
-    && curl --proto '=https' --tlsv1.2 -fsSL \
-        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
-        -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/${gosu_asset}" \
-    && echo "${gosu_sha256}  /usr/local/bin/gosu" | sha256sum -c - \
-    && chmod +x /usr/local/bin/gosu \
-    && gosu --version
+# setpriv runtime contract for gateway and sandbox privilege separation.
+RUN test -x /usr/bin/setpriv \
+    && /usr/bin/setpriv --version
 
 # Create sandbox user (matches OpenShell convention) and gateway user.
 # The gateway runs as 'gateway' so the 'sandbox' user (agent) cannot
@@ -641,7 +627,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
 ARG HOMEBREW_VERSION=5.1.12
 RUN mkdir -p /home/linuxbrew/.linuxbrew/bin \
     && chown -R sandbox:sandbox /home/linuxbrew \
-    && gosu sandbox git clone --depth=1 --branch="${HOMEBREW_VERSION}" \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        env HOME=/sandbox git clone --depth=1 --branch="${HOMEBREW_VERSION}" \
         https://github.com/Homebrew/brew.git \
         /home/linuxbrew/.linuxbrew/Homebrew \
     && ln -s /home/linuxbrew/.linuxbrew/Homebrew/bin/brew \
@@ -655,10 +642,13 @@ RUN mkdir -p /home/linuxbrew/.linuxbrew/bin \
     && chmod 755 /usr/local/bin/brew \
     && grep -qx 'export HOMEBREW_TEMP=/tmp' /usr/local/bin/brew \
     && grep -qx 'export TMPDIR=/tmp' /usr/local/bin/brew \
-    && gosu sandbox env HOMEBREW_TEMP=/var/tmp TMPDIR=/var/tmp /usr/local/bin/brew --prefix \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        env HOME=/sandbox HOMEBREW_TEMP=/var/tmp TMPDIR=/var/tmp /usr/local/bin/brew --prefix \
         | grep -qx /home/linuxbrew/.linuxbrew \
-    && gosu sandbox /usr/local/bin/brew --prefix | grep -qx /home/linuxbrew/.linuxbrew \
-    && gosu sandbox /usr/local/bin/brew --version
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        env HOME=/sandbox /usr/local/bin/brew --prefix | grep -qx /home/linuxbrew/.linuxbrew \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- \
+        env HOME=/sandbox /usr/local/bin/brew --version
 RUN { \
         printf '%s\n' "if [ \"\$(/usr/bin/id -un 2>/dev/null || true)\" = sandbox ]; then"; \
         printf '%s\n' "  export PATH=\"\${PATH}:/home/linuxbrew/.linuxbrew/bin\""; \
@@ -671,10 +661,10 @@ RUN { \
     && chmod 755 /tmp/nemoclaw-hostile-bin/id \
     && PATH="/tmp/nemoclaw-hostile-bin:${PATH}" bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 1 ;; *) exit 0 ;; esac" \
     && rm -rf /tmp/nemoclaw-hostile-bin \
-    && gosu sandbox bash -lc 'command -v brew >/dev/null' \
-    && gosu sandbox bash -lc 'command -v brew' | grep -qx /usr/local/bin/brew \
-    && gosu sandbox bash -lc 'brew --prefix' | grep -qx /home/linuxbrew/.linuxbrew \
-    && gosu sandbox bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 0 ;; *) exit 1 ;; esac"
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- env HOME=/sandbox bash -lc 'command -v brew >/dev/null' \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- env HOME=/sandbox bash -lc 'command -v brew' | grep -qx /usr/local/bin/brew \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- env HOME=/sandbox bash -lc 'brew --prefix' | grep -qx /home/linuxbrew/.linuxbrew \
+    && /usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- env HOME=/sandbox bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 0 ;; *) exit 1 ;; esac"
 
 # Gate the exact completed base filesystem before it can be published.
 COPY scripts/checks/node-tar-image-scan.mts /scripts/checks/node-tar-image-scan.mts
