@@ -134,6 +134,7 @@ function prGateMutationResponse(request: RecordedGitHubRequest, id = 17): Respon
   const body = (request.body ?? {}) as Record<string, unknown>;
   return githubResponse(exactPrGateCheck({ id, ...body }));
 }
+
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }

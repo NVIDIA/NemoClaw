@@ -348,6 +348,7 @@ describe("PR E2E gate workflow", () => {
       checks: "write",
       contents: "read",
       "pull-requests": "read",
+      statuses: "write",
     });
     expect(initialize.concurrency?.group).toBe(
       "pr-e2e-gate-${{ github.repository }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-${{ github.event.pull_request.base.sha }}",
@@ -367,6 +368,7 @@ describe("PR E2E gate workflow", () => {
       checks: "write",
       contents: "read",
       "pull-requests": "read",
+      statuses: "write",
     });
     expect(coordinate.if).toContain("github.event_name == 'workflow_run'");
     expect(coordinate.if).toContain("github.event.workflow_run.event == 'pull_request'");
@@ -385,6 +387,7 @@ describe("PR E2E gate workflow", () => {
       checks: "write",
       contents: "read",
       "pull-requests": "read",
+      statuses: "write",
     });
     expect(coordinate.concurrency?.group).toBe(
       "pr-e2e-gate-${{ github.repository }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0].number || inputs.pr_number }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.expected_head_sha }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0].base.sha || inputs.expected_base_sha }}",
