@@ -54,7 +54,6 @@ describe("managed startup sandbox identity prefix", () => {
   });
 
   it.each([
-    ["is missing", null],
     ["is a symbolic link", setprivStat({ symbolicLink: true })],
     ["is not a regular file", setprivStat({ file: false })],
     ["is writable by its group", setprivStat({ mode: 0o775 })],
@@ -63,8 +62,14 @@ describe("managed startup sandbox identity prefix", () => {
     ["is not owned by root", setprivStat({ uid: 1000 })],
     ["is not in the root group", setprivStat({ gid: 1000 })],
   ] as const)("fails before identity lookup when setpriv %s", (_label, stat) => {
+    vi.spyOn(fs, "lstatSync").mockReturnValue(stat);
+
+    expect(() => managedStartupSandboxPrefix()).toThrow("a trusted setpriv executable is required");
+    expect(childProcessMock.spawnSync).not.toHaveBeenCalled();
+  });
+
+  it("fails before identity lookup when setpriv is missing", () => {
     vi.spyOn(fs, "lstatSync").mockImplementation(() => {
-      if (stat) return stat;
       throw Object.assign(new Error("missing"), { code: "ENOENT" });
     });
 
