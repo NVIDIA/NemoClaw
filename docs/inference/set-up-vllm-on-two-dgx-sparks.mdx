@@ -227,7 +227,8 @@ $$nemoclaw uninstall
 
 Full uninstall revalidates every exact container ID before it removes the containers.
 It then retires the receipt, copied SSH bindings, and exact temporary discovery claims recorded by that receipt.
-If revalidation, removal, or retirement of the exact recorded temporary claims fails, uninstall stops before other cleanup and preserves the receipt for a retry.
+If NemoClaw cannot revalidate or remove a receipt-owned container, uninstall stops before other cleanup and preserves the receipt so you can rerun `$$nemoclaw uninstall`.
+Uninstall also stops and preserves the receipt when NemoClaw cannot retire an exact temporary discovery claim recorded by that receipt.
 A gateway-scoped uninstall preserves the host-global cluster, receipt, SSH bindings, and API key while another gateway remains.
 Cluster cleanup does not delete the Hugging Face model cache.
 
