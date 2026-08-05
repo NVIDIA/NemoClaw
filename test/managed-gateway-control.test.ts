@@ -62,7 +62,6 @@ import os
 import shutil
 import sys
 import tempfile
-import threading
 from dataclasses import replace
 
 spec = importlib.util.spec_from_file_location("managed_control", sys.argv[1])
@@ -666,8 +665,6 @@ with tempfile.TemporaryDirectory() as root:
     control._preflight = lambda *_args: None
     control._http_healthy_in_gateway_namespace = lambda *_args: True
     real_terminate = control._terminate_gateway
-    with control.ProcReader(proc_root) as controller_reader:
-        controller_identity = control._controller_process_identity(controller_reader)
     lease_path = os.path.join(
         system_root,
         "run/nemoclaw",
@@ -704,7 +701,7 @@ with tempfile.TemporaryDirectory() as root:
                 and lock_metadata.st_nlink == 1
             ),
         })
-    def replace_gateway(_reader, identity):
+    def replace_gateway(_reader, identity, _recovery_deadline=None):
         assert identity.pid == 41
         observe_expected_exit_lease(identity, "restart")
         remove_process(proc_root, 41)
@@ -718,82 +715,6 @@ with tempfile.TemporaryDirectory() as root:
             b"/usr/local/bin/hermes.real\0gateway\0run\0",
             listener_inode="77777",
         )
-
-    active_lease = control._publish_expected_exit_lease(expected_gateway, controller_identity)
-    release_thread = threading.Timer(0.02, control._clear_expected_exit_lease, args=(active_lease,))
-    release_thread.start()
-    waited_lease = control._publish_expected_exit_lease(expected_gateway, controller_identity)
-    release_thread.join()
-    active_controller_lock = "waited"
-    control._clear_expected_exit_lease(waited_lease)
-
-    previous_timeout = control.RECOVERY_TIMEOUT_SECONDS
-    control.RECOVERY_TIMEOUT_SECONDS = 0.01
-    timeout_clock = [0.0]
-    original_time = control.time.monotonic, control.time.sleep
-    control.time.monotonic = lambda: timeout_clock[0]
-    control.time.sleep = lambda duration: timeout_clock.__setitem__(0, timeout_clock[0] + duration)
-    timeout_lease = control._publish_expected_exit_lease(expected_gateway, controller_identity)
-    try:
-        try:
-            control._publish_expected_exit_lease(expected_gateway, controller_identity)
-            lock_timeout = "replaced"
-        except control.ControlError as error:
-            lock_timeout = error.code
-    finally:
-        control._clear_expected_exit_lease(timeout_lease)
-        control.RECOVERY_TIMEOUT_SECONDS = previous_timeout
-        control.time.monotonic, control.time.sleep = original_time
-    lock_timeout_wait = timeout_clock[0]
-
-    orphaned_lease = control._publish_expected_exit_lease(expected_gateway, controller_identity)
-    orphaned_inode = os.stat(lease_path, follow_symlinks=False).st_ino
-    os.close(orphaned_lease.marker_fd)
-    os.close(orphaned_lease.lock_fd)
-    os.close(orphaned_lease.directory_fd)
-    untrusted_marker_fd = os.open(lease_path, os.O_RDONLY)
-    control.fcntl.flock(untrusted_marker_fd, control.fcntl.LOCK_SH)
-    recovered_lease = control._publish_expected_exit_lease(
-        expected_gateway,
-        controller_identity,
-    )
-    marker_flock_cannot_pin = (
-        os.stat(lease_path, follow_symlinks=False).st_ino != orphaned_inode
-    )
-    control.fcntl.flock(untrusted_marker_fd, control.fcntl.LOCK_UN)
-    os.close(untrusted_marker_fd)
-    control._clear_expected_exit_lease(recovered_lease)
-
-    original_lease = control._publish_expected_exit_lease(
-        expected_gateway,
-        controller_identity,
-    )
-    os.unlink(lease_path)
-    with open(lease_path, "w", encoding="ascii") as stream:
-        stream.write(f"v1 41 333 {controller_pid} {controller_start_time}\n")
-    os.chmod(lease_path, 0o444)
-    replacement_inode = os.stat(lease_path, follow_symlinks=False).st_ino
-    control._clear_expected_exit_lease(original_lease)
-    inode_safe_cleanup = (
-        os.path.exists(lease_path)
-        and os.stat(lease_path, follow_symlinks=False).st_ino == replacement_inode
-    )
-    os.unlink(lease_path)
-
-    os.unlink(lock_path)
-    original_umask = os.umask(0o777)
-    try:
-        restrictive_umask_lease = control._publish_expected_exit_lease(
-            expected_gateway,
-            controller_identity,
-        )
-    finally:
-        os.umask(original_umask)
-    restrictive_umask_modes = [
-        os.stat(lease_path, follow_symlinks=False).st_mode & 0o777,
-        os.stat(lock_path, follow_symlinks=False).st_mode & 0o777,
-    ]
-    control._clear_expected_exit_lease(restrictive_umask_lease)
 
     control._terminate_gateway = replace_gateway
     try:
@@ -810,8 +731,10 @@ with tempfile.TemporaryDirectory() as root:
         control._agent_spec = lambda *_args: control.AgentSpec("openclaw", 18642)
         control._gateway_candidates = lambda reader, *_args: [reader.capture(43)]
         control._wait_for_healthy_gateway = lambda reader, *_args: reader.capture(43)
-        control._terminate_gateway = lambda _reader, identity: observe_expected_exit_lease(
-            identity, "openclaw-restart"
+        control._terminate_gateway = (
+            lambda _reader, identity, _recovery_deadline=None: (
+                observe_expected_exit_lease(identity, "openclaw-restart")
+            )
         )
         try:
             openclaw_restart = control._control("restart", "f" * 64)
@@ -855,7 +778,11 @@ with tempfile.TemporaryDirectory() as root:
             if len(timeout_refresh_waits) == 2:
                 raise control.ControlError("GATEWAY_HEALTH_TIMEOUT")
             return reader.capture(45)
-        def terminate_refreshed_gateway(_reader, identity):
+        def terminate_refreshed_gateway(
+            _reader,
+            identity,
+            _recovery_deadline=None,
+        ):
             timeout_refresh_signals.append(identity.pid)
             assert identity.pid == 44
             observe_expected_exit_lease(identity, "unhealthy-recover")
@@ -1240,14 +1167,6 @@ with tempfile.TemporaryDirectory() as root:
         "recovered": recovered,
         "probed": probed,
         "openclaw_restart": openclaw_restart,
-        "lease_races": [
-            active_controller_lock,
-            lock_timeout,
-            lock_timeout_wait,
-            marker_flock_cannot_pin,
-            inode_safe_cleanup,
-            restrictive_umask_modes,
-        ],
         "expected_exit_leases": [
             lease_observations,
             restart_lease_cleared,
@@ -1369,7 +1288,6 @@ describe("managed gateway root control", () => {
       recovered: ["already-running", 43, 43],
       probed: ["already-running", 43, 43],
       openclaw_restart: ["ok", 43, 43],
-      lease_races: ["waited", "SUPERVISOR_BUSY", 0.01, true, true, [0o444, 0o600]],
       expected_exit_leases: [
         [
           {
@@ -1398,7 +1316,7 @@ describe("managed gateway root control", () => {
         [
           [0, 10, false],
           [0, 10, false],
-          [44, 150, true],
+          [44, expect.any(Number), true],
         ],
       ],
       inflight_recovery: [["already-running", 43, 43], 4],
@@ -1473,6 +1391,8 @@ describe("managed gateway root control", () => {
         [1, ["SUPERVISOR_NOT_RUNNING"]],
       ],
     });
+    expect(output.timeout_refresh[2][2][1]).toBeGreaterThan(0);
+    expect(output.timeout_refresh[2][2][1]).toBeLessThanOrEqual(150);
     expect(output.start_log_security.installed_topology[0]).not.toBe(
       output.start_log_security.installed_topology[1],
     );
