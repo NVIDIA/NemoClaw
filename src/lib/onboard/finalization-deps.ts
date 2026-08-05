@@ -6,27 +6,34 @@
 // entrypoint stays lean (codebase-growth-guardrails). The lazy `require` calls
 // avoid an import cycle: connect.ts and process-recovery.ts both pull in
 // onboard helpers, so they must not be statically imported here.
+type ProcessRecoveryDeps = Pick<
+  typeof import("../actions/sandbox/process-recovery"),
+  "checkAndRecoverSandboxProcesses" | "waitForRecreatedSandboxOpenShellReady"
+>;
+
+export const finalizationHandlerRuntime = {
+  loadProcessRecovery: () => require("../actions/sandbox/process-recovery") as ProcessRecoveryDeps,
+};
+
 export const finalizationHandlerDeps = {
   waitForSandboxControlPlaneReady(name: string): boolean {
-    const processRecovery: typeof import("../actions/sandbox/process-recovery") =
-      require("../actions/sandbox/process-recovery");
-    const { SANDBOX_READY_TIMEOUT_SECS }: typeof import("./env") = require("./env");
-    return processRecovery.waitForRecreatedSandboxOpenShellReady(name, {
-      timeoutSeconds: SANDBOX_READY_TIMEOUT_SECS,
-    });
+    return finalizationHandlerRuntime
+      .loadProcessRecovery()
+      .waitForRecreatedSandboxOpenShellReady(name);
   },
   checkAndRecoverSandboxProcesses(name: string, options: { quiet: boolean }): void {
-    const processRecovery: typeof import("../actions/sandbox/process-recovery") =
-      require("../actions/sandbox/process-recovery");
+    const processRecovery = finalizationHandlerRuntime.loadProcessRecovery();
     processRecovery.checkAndRecoverSandboxProcesses(name, options);
   },
   // Best-effort device-approval sweep that clears pending allowlisted
   // CLI/webchat scope upgrades so onboard hands off without a stuck pairing
   // request (#4504). Never throws.
   autoPairScopeApproval(name: string): void {
-    const connect: typeof import("../actions/sandbox/connect") =
-      require("../actions/sandbox/connect");
-    connect.runConnectAutoPairApprovalPass(name);
+    const {
+      runConnectAutoPairApprovalPass,
+    }: typeof import("../actions/sandbox/auto-pair-approval") =
+      require("../actions/sandbox/auto-pair-approval");
+    runConnectAutoPairApprovalPass(name);
   },
   // Provoke the operator.write scope upgrade with a throwaway in-sandbox agent
   // run so the request is PENDING when the approval pass above clears it,

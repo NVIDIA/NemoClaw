@@ -12,6 +12,8 @@ vi.mock("../../src/lib/actions/global", () => ({
   forgetExtraProvider: vi.fn(),
   recordExtraProvider: vi.fn(),
   recoverNamedGatewayRuntime: vi.fn().mockResolvedValue({ recovered: true }),
+}));
+vi.mock("../../src/lib/adapters/openshell/provider-command", () => ({
   runOpenshellProviderCommand: vi.fn(),
 }));
 

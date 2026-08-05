@@ -21,15 +21,18 @@ export function getChangedFiles(base: string, head: string): string[] {
     .sort();
 }
 
-export function getDiff(base: string, head: string, maxChars: number): string {
+export function getDiff(base: string, head: string): string {
   const stdout = gitOutput(
     [
       ["diff", "--find-renames", "--find-copies", "--unified=80", `${base}...${head}`],
       ["diff", "--find-renames", "--find-copies", "--unified=80", `${base}..${head}`],
     ],
-    20 * 1024 * 1024,
+    Number.POSITIVE_INFINITY,
   );
-  return stdout === undefined ? "" : truncate(stdout, maxChars);
+  if (stdout === undefined) {
+    throw new Error(`failed to read complete diff ${base}..${head}; ensure both refs are fetched`);
+  }
+  return stdout;
 }
 
 export function getDiffStat(base: string, head: string): string {
@@ -65,9 +68,4 @@ export function gitOutput(commands: string[][], maxBuffer: number): string | und
     }
   }
   return undefined;
-}
-
-export function truncate(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars)}\n\n<diff truncated at ${maxChars} characters>`;
 }

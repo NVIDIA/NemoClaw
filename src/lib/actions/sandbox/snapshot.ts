@@ -672,9 +672,9 @@ function runSnapshotCreate(
     snapshotExit(1);
   }
   return withTimerBoundShieldsMutationLock(sandboxName, "create sandbox snapshot", () => {
-    // Keep the shields check and backup in one timer-bound interval. Normal
-    // auto-restore waits; at the absolute deadline it may preempt this process
-    // and reclaim the token rather than changing policy/config mid-copy.
+    // Keep the shields check and backup in one timer-bound interval. At the
+    // absolute deadline, auto-restore closes the outer lifecycle gate and waits
+    // for this exact owner to finish before changing policy or config.
     if (!isSnapshotCreationAllowedByShields(sandboxName)) {
       console.error("  Cannot create snapshot while shields are up.");
       console.error(`  Run \`${CLI_NAME} ${sandboxName} shields down\` first, then retry.`);
@@ -1282,9 +1282,9 @@ async function runSnapshotRestoreUnlocked(
   }
   withTimerBoundShieldsMutationLock(targetSandbox, "restore sandbox snapshot", () => {
     // Serialize filesystem restore, mutable-permission repair, and policy
-    // reconciliation under the active timer generation. Normal auto-restore
-    // waits; the absolute deadline may preempt this process and reclaim the
-    // token, preventing policy/config mutation after lockdown resumes.
+    // reconciliation under the active timer generation. At the absolute
+    // deadline, auto-restore keeps the outer lifecycle gate closed and waits
+    // for this exact owner to finish before restoring lockdown.
     const validateManagedRestoreBeforeMutation = preparedRuntimeRestore
       ? () => {
           const currentTarget = registry.getSandbox(targetSandbox);

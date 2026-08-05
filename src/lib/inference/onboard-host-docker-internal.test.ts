@@ -1,13 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SpawnSyncReturns } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const { isHijackedDockerInternalUrl } = require("./onboard-host-docker-internal");
-const { isSandboxInternalUrl, probeOpenAiLikeEndpoint } = require("./onboard-probes");
+const {
+  isSandboxInternalUrl,
+  probeOpenAiLikeEndpoint,
+  probeOpenAiLikeEndpointOptimized,
+} = require("./onboard-probes");
 
 describe("host.docker.internal onboarding inference policy", () => {
   it("does not treat host.docker.internal as a usable sandbox URL", () => {
@@ -44,46 +47,53 @@ describe("host.docker.internal onboarding inference policy", () => {
     expect(result.message).toMatch(/host\.openshell\.internal:11435/);
   });
 
-  it("allows explicit Windows-host Ollama validation to probe host.docker.internal", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-docker-probe-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const seenUrl = path.join(tmpDir, "url");
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-outfile=""
-url=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    -w) shift 2 ;;
-    *) url="$1"; shift ;;
-  esac
-done
-printf '%s' "$url" > "${seenUrl}"
-if [ -n "$outfile" ]; then
-  cat <<'JSON' > "$outfile"
-{"choices":[{"message":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"sessions_send","arguments":"{\\"message\\":\\"hello\\"}"}}]}}]}
-JSON
-fi
-printf '200'
-exit 0
-`,
-      { mode: 0o755 },
-    );
+  it("validates Windows-host Ollama from Docker for strict and compatibility paths (#8127)", async () => {
+    const seenCommands: Array<{ command: string; args: readonly string[] }> = [];
+    const containerProbeSpawnSyncImpl = (
+      command: string,
+      args: readonly string[],
+    ): SpawnSyncReturns<string> => {
+      seenCommands.push({ command, args });
+      const outputIndex = args.indexOf("-o");
+      const outputPath = args[outputIndex + 1];
+      fs.writeFileSync(
+        outputPath,
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  {
+                    id: "call_1",
+                    type: "function",
+                    function: { name: "sessions_send", arguments: '{"message":"hello"}' },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      );
+      return {
+        pid: 123,
+        output: ["200", ""],
+        stdout: "200",
+        stderr: "",
+        status: 0,
+        signal: null,
+      };
+    };
 
-    const originalPath = process.env.PATH;
-    process.env.PATH = `${fakeBin}:${originalPath || ""}`;
-    try {
-      const result = probeOpenAiLikeEndpoint(
+    for (const requireChatCompletionsToolCalling of [true, false]) {
+      const result = await probeOpenAiLikeEndpointOptimized(
         "http://host.docker.internal:11434/v1",
         "openai/nemotron-mini",
         "",
         {
           skipResponsesProbe: true,
-          requireChatCompletionsToolCalling: true,
+          requireChatCompletionsToolCalling,
           allowHostDockerInternal: true,
+          probeFromDocker: { expectedPort: 11434, spawnSyncImpl: containerProbeSpawnSyncImpl },
         },
       );
 
@@ -92,12 +102,47 @@ exit 0
         api: "openai-completions",
         label: "Chat Completions API",
       });
-      expect(fs.readFileSync(seenUrl, "utf8")).toBe(
-        "http://host.docker.internal:11434/v1/chat/completions",
-      );
-    } finally {
-      process.env.PATH = originalPath;
-      fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+    expect(seenCommands).toHaveLength(2);
+    for (const { command, args } of seenCommands) {
+      expect(command).toBe("docker");
+      expect(args).toContain("curlimages/curl:8.10.1");
+      expect(args).toContain("http://host.docker.internal:11434/v1/chat/completions");
+    }
+  });
+
+  it.each([
+    {
+      endpointUrl: "http://host.docker.internal:11434/v1",
+      apiKey: "not-a-real-secret",
+      extraHeaders: undefined,
+    },
+    {
+      endpointUrl: "http://host.docker.internal:11434/v1?debug=1",
+      apiKey: "",
+      extraHeaders: undefined,
+    },
+    {
+      endpointUrl: "http://host.docker.internal:11434/v1",
+      apiKey: "",
+      extraHeaders: ["Authorization: Bearer not-a-real-secret"],
+    },
+  ])("refuses credentials and non-canonical Windows-host Ollama routes in Docker-context validation (#8127)", ({
+    endpointUrl,
+    apiKey,
+    extraHeaders,
+  }) => {
+    const result = probeOpenAiLikeEndpoint(endpointUrl, "openai/nemotron-mini", apiKey, {
+      skipResponsesProbe: true,
+      requireChatCompletionsToolCalling: true,
+      allowHostDockerInternal: true,
+      probeFromDocker: { expectedPort: 11434 },
+      extraHeaders,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      failures: [expect.objectContaining({ name: "Docker-context validation boundary" })],
+    });
   });
 });

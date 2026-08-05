@@ -3,7 +3,7 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, R } from "../../cli/terminal-style";
-import type { SandboxMessagingPlan } from "../../messaging";
+import { MessagingSetupApplier, type SandboxMessagingPlan } from "../../messaging";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import { applyReasoningEffortEnv } from "../../onboard/reasoning-mode";
 import * as shields from "../../shields";
@@ -98,7 +98,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     log,
     bail,
   } = input;
-
   console.log("");
   console.log("  Creating new sandbox with current image...");
 
@@ -206,6 +205,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   // where a second backup is impossible after deletion. Keep the bypass scoped to
   // this call; remove it when onboard accepts an explicit outer-backup handoff.
   process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
+  if (rebuildMessagingPlan) MessagingSetupApplier.writePlanToEnv(rebuildMessagingPlan);
   if (recreateOptions.policyTier) {
     process.env.NEMOCLAW_POLICY_TIER = recreateOptions.policyTier;
   }
@@ -225,6 +225,9 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   try {
     await rebuildOnboardDependencies.onboard({
       ...recreateOptions,
+      ...(rebuildsHermesSandbox && backupManifest?.preservedEnv
+        ? { rebuildPreservedEnv: backupManifest.preservedEnv }
+        : {}),
       recreateJournalTargetIntentFingerprint: recreateJournal.targetIntentFingerprint,
     });
     log("onboard() returned successfully");

@@ -334,6 +334,7 @@ function watcherLease() {
   const lease: PodmanGatewayWatcherLease = {
     record: {
       schemaVersion: PODMAN_WATCHER_LEASE_SCHEMA_VERSION,
+      holder: { pid: 9_100, processStartIdentity: "holder-start-100" },
       leaseId: "123e4567-e89b-42d3-a456-426614174000",
       phase: "stopped",
       gatewayName: "default",
@@ -413,7 +414,7 @@ describe("Podman bootstrap stopped replacement", () => {
     expect(harness.capturedEnvironmentMode).toBe(0o600);
     expect(harness.capturedEnvironmentContents).toBe(`${ENVIRONMENT.join("\n")}\n`);
     expect(fs.existsSync(harness.capturedEnvironmentFile as string)).toBe(false);
-    expect(harness.calls[0]).not.toContain(ENVIRONMENT[1]);
+    expect(harness.calls.flat().join("\u0000")).not.toContain(ENVIRONMENT[1]);
     expect(JSON.stringify(prepared.journal)).not.toContain("do-not-put-this-in-process-argv");
     expect(watcher.assertStillStopped.mock.calls.length).toBeGreaterThanOrEqual(6);
     expect(watcher.resumeAndProve).not.toHaveBeenCalled();
@@ -473,6 +474,27 @@ describe("Podman bootstrap stopped replacement", () => {
         plan: { ...plan, runtimeArgs: ["--name=attacker-selected"] },
       }),
     ).toThrow("cannot set '--name'");
+    expect(store.load(BOOTSTRAP_IDENTITY)).toBeNull();
+    expect(harness.calls).toEqual([]);
+  });
+
+  it.each([
+    "-eSECRET=1",
+    "-lcom.nvidia.nemoclaw.override=true",
+    "-d=true",
+  ])("rejects attached protected shorthand %s before invoking Podman", (argument) => {
+    const harness = new PodmanHarness();
+    const store = journalStore();
+    const watcher = watcherLease();
+
+    expect(() =>
+      prepareStoppedPodmanBootstrapReplacement({
+        engine: harness.engine,
+        journalStore: store,
+        watcherLease: watcher.lease,
+        plan: { ...plan, runtimeArgs: [argument] },
+      }),
+    ).toThrow("cannot set");
     expect(store.load(BOOTSTRAP_IDENTITY)).toBeNull();
     expect(harness.calls).toEqual([]);
   });

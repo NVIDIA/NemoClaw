@@ -3,6 +3,7 @@
 
 export {
   activateManagedBootstrapSequence,
+  enforceManagedBootstrapRecoveryForSandbox,
   finalizeManagedBootstrapSequence,
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   type ManagedBootstrapActivatedTransaction,
@@ -10,9 +11,14 @@ export {
   type ManagedBootstrapAuthorityStore,
   type ManagedBootstrapExpectedPlan,
   type ManagedBootstrapPreparedTransaction,
+  ManagedBootstrapRecoveryBlockedError,
+  type ManagedBootstrapRecoveryFailure,
   type ManagedBootstrapRecoveryReceipt,
+  type ManagedBootstrapRecoveryReport,
   prepareManagedBootstrapSequence,
   recoverManagedBootstrapTransactions,
+  sameManagedBootstrapCompletionReceipt,
+  sameManagedBootstrapDurablePreparationReceipt,
 } from "./adapter";
 export {
   MANAGED_BOOTSTRAP_COMPLETION_FILE,
@@ -22,6 +28,16 @@ export {
   serializeManagedBootstrapEnvelope,
   serializeManagedBootstrapImageCompletion,
 } from "./envelope";
+export {
+  applyManagedBootstrapEnvelope,
+  type ManagedBootstrapEnvelopeClaimPaths,
+  type ManagedBootstrapImageRuntimeExpected,
+  main as mainManagedBootstrapImageRuntime,
+  managedBootstrapEnvelopeClaimPaths,
+  readManagedBootstrapEnvelope,
+  recoverManagedBootstrapEnvelopeClaim,
+  verifyManagedBootstrapImageCompletion,
+} from "./image-runtime";
 export type {
   ManagedBootstrapRuntimeCreateLifecycle,
   ManagedBootstrapRuntimePatch,

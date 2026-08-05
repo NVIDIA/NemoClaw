@@ -9,14 +9,22 @@ vi.mock("../gateway-state", () => ({
 
 vi.mock("./gateway-rpc", () => ({
   callOpenclawGateway: vi.fn(),
+  sandboxUsesHermesAgent: vi.fn(() => false),
 }));
 
+vi.mock("../exec", () => ({
+  execSandbox: vi.fn(async () => undefined),
+}));
+
+import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
-import { callOpenclawGateway } from "./gateway-rpc";
 import { deleteSandboxSession } from "./delete";
+import { callOpenclawGateway, sandboxUsesHermesAgent } from "./gateway-rpc";
 
 const ensureMock = ensureLiveSandboxOrExit as unknown as ReturnType<typeof vi.fn>;
 const gatewayMock = callOpenclawGateway as unknown as ReturnType<typeof vi.fn>;
+const hermesAgentMock = sandboxUsesHermesAgent as unknown as ReturnType<typeof vi.fn>;
+const execSandboxMock = execSandbox as unknown as ReturnType<typeof vi.fn>;
 
 function successResult(key: string, extra: { removedTranscript?: boolean; entry?: unknown } = {}) {
   const payload = { ok: true as const, key, ...extra };
@@ -35,6 +43,10 @@ let consoleLogSpy: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   ensureMock.mockClear();
   gatewayMock.mockReset();
+  hermesAgentMock.mockReset();
+  hermesAgentMock.mockReturnValue(false);
+  execSandboxMock.mockReset();
+  execSandboxMock.mockResolvedValue(undefined);
   processExitSpy = vi.spyOn(process, "exit").mockImplementation((code?: number | string | null) => {
     throw new Error(`process.exit:${code ?? 0}`);
   });
@@ -161,5 +173,100 @@ describe("deleteSandboxSession", () => {
     });
 
     expect(result.removedTranscript).toBe(false);
+  });
+});
+
+describe("deleteSandboxSession (hermes sandbox)", () => {
+  beforeEach(() => {
+    hermesAgentMock.mockReturnValue(true);
+    // execSandbox streams the native output and exits the process with its
+    // code; model that terminal behavior so the routing never returns a value.
+    execSandboxMock.mockImplementation(async () => {
+      process.exit(0);
+    });
+  });
+
+  it("routes to the native hermes sessions delete without the OpenClaw gateway (#7642)", async () => {
+    await expect(deleteSandboxSession("sb-h", { key: "20260727_130357_cb2b61" })).rejects.toThrow(
+      /process\.exit:0/,
+    );
+
+    expect(gatewayMock).not.toHaveBeenCalled();
+    expect(ensureMock).toHaveBeenCalledWith("sb-h", { allowNonReadyPhase: true });
+    expect(execSandboxMock).toHaveBeenCalledWith("sb-h", [
+      "hermes",
+      "sessions",
+      "delete",
+      "20260727_130357_cb2b61",
+      "--yes",
+    ]);
+  });
+
+  it("passes the native hermes session id through without OpenClaw canonicalization (#7642)", async () => {
+    await expect(deleteSandboxSession("sb-h", { key: "20260727_121145_238595" })).rejects.toThrow(
+      /process\.exit:0/,
+    );
+
+    expect(execSandboxMock.mock.calls[0]?.[1]).toContain("20260727_121145_238595");
+    expect(execSandboxMock.mock.calls[0]?.[1]?.join(" ")).not.toContain("agent:");
+  });
+
+  it("rejects the OpenClaw-only --agent flag on a hermes sandbox (#7642)", async () => {
+    await expect(
+      deleteSandboxSession("sb-h", { key: "20260727_130357_cb2b61", agent: "research" }),
+    ).rejects.toThrow(/process\.exit:1/);
+
+    expect(execSandboxMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy.mock.calls.flat().join("\n")).toMatch(
+      /--agent.*OpenClaw-only.*not supported on a Hermes sandbox/,
+    );
+  });
+
+  it("rejects the OpenClaw-only --keep-transcript flag on a hermes sandbox (#7642)", async () => {
+    await expect(
+      deleteSandboxSession("sb-h", { key: "20260727_130357_cb2b61", keepTranscript: true }),
+    ).rejects.toThrow(/process\.exit:1/);
+
+    expect(execSandboxMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy.mock.calls.flat().join("\n")).toMatch(
+      /--keep-transcript.*OpenClaw-only.*not supported on a Hermes sandbox/,
+    );
+  });
+
+  it("rejects --agent hermes instead of silently ignoring the OpenClaw-only flag (#7642)", async () => {
+    await expect(
+      deleteSandboxSession("sb-h", { key: "20260727_130357_cb2b61", agent: "hermes" }),
+    ).rejects.toThrow(/process\.exit:1/);
+
+    expect(execSandboxMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy.mock.calls.flat().join("\n")).toMatch(
+      /--agent hermes.*OpenClaw-only.*not supported on a Hermes sandbox/,
+    );
+  });
+
+  it.each([
+    ["json", { json: true }],
+    ["verbose", { verbose: true }],
+  ])("rejects the OpenClaw-only --%s flag on a hermes sandbox (#7642)", async (_flag, extra) => {
+    await expect(
+      deleteSandboxSession("sb-h", { key: "20260727_130357_cb2b61", ...extra }),
+    ).rejects.toThrow(/process\.exit:1/);
+
+    expect(execSandboxMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy.mock.calls.flat().join("\n")).toMatch(
+      /--json and --verbose.*OpenClaw-only/,
+    );
+  });
+
+  it.each([
+    ["a leading dash that could parse as a flag", "--yes"],
+    ["an empty string", ""],
+    ["only whitespace", "   "],
+    ["embedded whitespace", "2026 0727"],
+  ])("rejects an invalid hermes session id (%s) (#7642)", async (_case, key) => {
+    await expect(deleteSandboxSession("sb-h", { key })).rejects.toThrow(/process\.exit:1/);
+
+    expect(execSandboxMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy.mock.calls.flat().join("\n")).toMatch(/session id/i);
   });
 });

@@ -7,8 +7,8 @@
  * this compensation until attachment mutations expose an immutable-ID CAS API.
  */
 
-import { runOpenshellProviderCommand } from "../../actions/global";
 import { stripAnsi } from "../../adapters/openshell/client";
+import { runOpenshellProviderCommand } from "../../adapters/openshell/provider-command";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, type OpenShellCommandResult } from "./mcp-bridge-output";

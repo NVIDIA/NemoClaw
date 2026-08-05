@@ -21,6 +21,7 @@ const OTHER_IMAGE_ID = "3".repeat(64);
 const BOOTSTRAP_IDENTITY = "4".repeat(64);
 const SANDBOX_ID = "sandbox-uuid-1";
 const SANDBOX_NAME = "demo-box";
+const SANDBOX_NAMESPACE = "default";
 const SUPERVISOR_ARGV = ["/opt/openshell/bin/supervisor", "--config", "/etc/openshell.toml"];
 const HELD_WORKLOAD_ARGV = [
   "/usr/local/bin/nemoclaw-managed-hold",
@@ -65,7 +66,7 @@ function inspectOutput(
           [PODMAN_MANAGED_LABEL]: "true",
           [PODMAN_SANDBOX_ID_LABEL]: SANDBOX_ID,
           [PODMAN_SANDBOX_NAME_LABEL]: SANDBOX_NAME,
-          [PODMAN_SANDBOX_NAMESPACE_LABEL]: "",
+          [PODMAN_SANDBOX_NAMESPACE_LABEL]: SANDBOX_NAMESPACE,
         },
         User: overrides.user ?? "root",
       },
@@ -92,7 +93,7 @@ function engineWith(
   return { capture, engine };
 }
 
-function inspect(engine: ContainerEngine) {
+function inspect(engine: ContainerEngine, sandboxNamespace = SANDBOX_NAMESPACE) {
   return inspectExactPodmanHeldWorkload({
     bootstrapIdentity: BOOTSTRAP_IDENTITY,
     engine,
@@ -101,6 +102,7 @@ function inspect(engine: ContainerEngine) {
     expectedSupervisorArgv: SUPERVISOR_ARGV,
     sandboxId: SANDBOX_ID,
     sandboxName: SANDBOX_NAME,
+    sandboxNamespace,
   });
 }
 
@@ -120,7 +122,7 @@ describe("Podman managed bootstrap held-workload inspection", () => {
         [PODMAN_MANAGED_LABEL]: "true",
         [PODMAN_SANDBOX_ID_LABEL]: SANDBOX_ID,
         [PODMAN_SANDBOX_NAME_LABEL]: SANDBOX_NAME,
-        [PODMAN_SANDBOX_NAMESPACE_LABEL]: "",
+        [PODMAN_SANDBOX_NAMESPACE_LABEL]: SANDBOX_NAMESPACE,
       },
       runtimeId: RUNTIME_ID,
       running: true,
@@ -155,6 +157,13 @@ describe("Podman managed bootstrap held-workload inspection", () => {
     expect(fake.capture).not.toHaveBeenCalled();
   });
 
+  it("rejects an empty expected namespace before discovering a workload", () => {
+    const fake = engineWith([]);
+
+    expect(() => inspect(fake.engine, "")).toThrow("sandbox namespace must be a bounded non-empty");
+    expect(fake.capture).not.toHaveBeenCalled();
+  });
+
   it("rejects ambiguous managed containers before inspecting either candidate", () => {
     const fake = engineWith([result(listOutput([RUNTIME_ID, "5".repeat(64)]))]);
 
@@ -171,7 +180,25 @@ describe("Podman managed bootstrap held-workload inspection", () => {
             [PODMAN_MANAGED_LABEL]: "true",
             [PODMAN_SANDBOX_ID_LABEL]: "another-sandbox",
             [PODMAN_SANDBOX_NAME_LABEL]: SANDBOX_NAME,
-            [PODMAN_SANDBOX_NAMESPACE_LABEL]: "",
+            [PODMAN_SANDBOX_NAMESPACE_LABEL]: SANDBOX_NAMESPACE,
+          },
+        }),
+      ),
+    ]);
+
+    expect(() => inspect(fake.engine)).toThrow("exact OpenShell ownership");
+  });
+
+  it("rejects a namespace label from a different OpenShell ownership scope", () => {
+    const fake = engineWith([
+      result(listOutput()),
+      result(
+        inspectOutput({
+          labels: {
+            [PODMAN_MANAGED_LABEL]: "true",
+            [PODMAN_SANDBOX_ID_LABEL]: SANDBOX_ID,
+            [PODMAN_SANDBOX_NAME_LABEL]: SANDBOX_NAME,
+            [PODMAN_SANDBOX_NAMESPACE_LABEL]: "another-namespace",
           },
         }),
       ),

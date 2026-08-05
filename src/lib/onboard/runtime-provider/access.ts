@@ -7,6 +7,10 @@ export type {
   RuntimeProviderChannelStopTransport,
   RuntimeProviderGatewayLauncher,
   RuntimeProviderManagedImageSupport,
+  RuntimeProviderPreparedStateMutationPlan,
+  RuntimeProviderStateMutationPlan,
+  RuntimeProviderStateMutationSelector,
+  RuntimeProviderStateMutationSurface,
   RuntimeProviderWorkloadCleanupPlan,
   RuntimeProviderWorkloadCleanupResult,
   RuntimeProviderWorkloadProfile,
@@ -26,3 +30,4 @@ export {
   resolveRuntimeProviderBundle,
   runtimeProviderContainerEngineIdentity,
 } from "./registry";
+export { prepareRuntimeProviderStateMutationPlan } from "./state-mutation";

@@ -14,6 +14,12 @@ import {
 } from "../../inference/gateway-route-compatibility";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { requireRuntimeProviderBundleForSandbox } from "../../onboard/runtime-provider/access";
+import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "../../onboard/runtime-provider/current";
+import {
+  type ManagedWorkloadRebuildHandoff,
+  managedWorkloadRebuildHandoffMatchesEntry,
+} from "../../onboard/workload/rebuild";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import { withLock } from "../../state/registry/lock";
@@ -228,6 +234,30 @@ export function revalidateRebuildRouteBeforeDelete(
     Object.values(sandboxRegistry.sandboxes),
   );
   return conflict ? { ok: false, message: conflict } : { ok: true, receipt };
+}
+
+/** Re-read the complete provider-bound managed workload authority at a mutation edge. */
+export function revalidateManagedWorkloadRebuildBeforeDelete(
+  sandboxName: string,
+  handoff: ManagedWorkloadRebuildHandoff | undefined,
+): Extract<RebuildRoutePreflightResult, { ok: false }> | null {
+  if (!handoff) return null;
+  const current = registry.getSandbox(sandboxName);
+  try {
+    const provider = current
+      ? requireRuntimeProviderBundleForSandbox(current, CURRENT_RUNTIME_PROVIDER_BUNDLES)
+      : null;
+    if (provider && managedWorkloadRebuildHandoffMatchesEntry(handoff, current, provider)) {
+      return null;
+    }
+  } catch {
+    // Convert every provider or durable-authority parse failure into one
+    // fail-closed mutation-edge result below.
+  }
+  return {
+    ok: false,
+    message: "Managed workload authority changed before sandbox deletion.",
+  };
 }
 
 export function checkRebuildGatewaySchemaPreflight(
