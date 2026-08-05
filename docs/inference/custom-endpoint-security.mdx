@@ -77,10 +77,9 @@ After an adapter restart, routes other than the one that triggered recovery retu
 
 Before revocation, NemoClaw checks whether another sandbox references the route.
 If another sandbox references it, NemoClaw keeps the route.
-If no other sandbox references it, NemoClaw attempts revocation.
-NemoClaw makes this attempt after the new inference route commits or after sandbox deletion succeeds.
-If the reference check or revocation fails, NemoClaw does not roll back the committed inference route or the completed sandbox deletion.
-NemoClaw prints a warning because the upstream credential may remain in adapter memory.
+If no other sandbox references the route, NemoClaw attempts revocation after it applies the new inference route or completes sandbox deletion.
+If the reference check or revocation fails, NemoClaw does not restore the previous inference route or the deleted sandbox.
+NemoClaw prints a warning because the upstream credential can remain in adapter memory.
 
 Revocation must authenticate the running adapter.
 The control-plane proof binds the source-subnet policy that the adapter used at startup.
@@ -99,9 +98,15 @@ The first command records the source-subnet policy for the running adapter.
 NemoClaw retries revocation during the second command.
 When no other sandbox references the route, a completed switch without a revocation warning confirms that the adapter removed it.
 
-If the affected sandbox was destroyed or revocation continues to fail, remove all remaining sandboxes before adapter cleanup.
+<Warning title="Create Snapshots Before Cleanup">
+Destroying a sandbox deletes its persistent state volume.
+Before you destroy a remaining sandbox, create a snapshot of any state that you must keep.
+Refer to [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots) for instructions.
+</Warning>
+
+If the affected sandbox was destroyed or revocation continues to fail, destroy all remaining sandboxes before adapter cleanup.
 A scoped uninstall that leaves sibling gateways in place preserves the shared adapter and its remaining routes.
-After all sandboxes are removed, uninstall NemoClaw to stop the adapter and purge its in-memory credentials.
+After you destroy all sandboxes, uninstall NemoClaw to stop the adapter and purge its in-memory credentials.
 
 This support is specific to `inference set` on an already-onboarded sandbox.
 Hermes Provider setup, host-side `config set`, and a direct blueprint run still reject DNS-backed HTTPS URLs as described above.
