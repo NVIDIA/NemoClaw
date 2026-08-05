@@ -67,11 +67,11 @@ function workflowFixture(): Workflow {
 }
 
 type RestoreFixtureOptions = {
-  archive?: "valid" | "non-dist" | "link" | "traversal";
+  archive?: "valid" | "missing-shared" | "non-dist" | "link" | "traversal";
   buildIdentitySha?: string;
   expectedPayloadSha256?: string;
   manifestCandidateSha?: string;
-  preexistingDist?: "dangling-symlink" | "directory";
+  preexistingDist?: "dangling-symlink" | "directory" | "nested-directory";
 };
 
 type ArchiveFixtureContext = {
@@ -84,7 +84,7 @@ function sha256File(file: string): string {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
-function writeDistArchive(
+function writeDistTree(
   context: ArchiveFixtureContext,
   customizeDist: (dist: string) => void,
 ): void {
@@ -99,17 +99,40 @@ function writeDistArchive(
     })}\n`,
   );
   customizeDist(dist);
-  execFileSync("tar", ["-cf", context.payload, "-C", context.payloadRoot, "dist"]);
+}
+
+function writeSharedTree(context: ArchiveFixtureContext): void {
+  const shared = path.join(context.payloadRoot, "nemoclaw", "dist", "shared");
+  fs.mkdirSync(shared, { recursive: true });
+  fs.writeFileSync(path.join(shared, "sandbox-name.cjs"), "module.exports = {};\n");
+}
+
+function writeArchive(context: ArchiveFixtureContext, members: string[]): void {
+  execFileSync("tar", ["-cf", context.payload, "-C", context.payloadRoot, ...members]);
+}
+
+function writeCompleteArchive(
+  context: ArchiveFixtureContext,
+  customizeDist: (dist: string) => void,
+): void {
+  writeDistTree(context, customizeDist);
+  writeSharedTree(context);
+  writeArchive(context, ["dist", "nemoclaw/dist"]);
 }
 
 function writeValidArchive(context: ArchiveFixtureContext): void {
-  writeDistArchive(context, () => undefined);
+  writeCompleteArchive(context, () => undefined);
 }
 
 function writeLinkArchive(context: ArchiveFixtureContext): void {
-  writeDistArchive(context, (dist) => {
+  writeCompleteArchive(context, (dist) => {
     fs.symlinkSync("nemoclaw.js", path.join(dist, "linked-cli.js"));
   });
+}
+
+function writeMissingSharedArchive(context: ArchiveFixtureContext): void {
+  writeDistTree(context, () => undefined);
+  writeArchive(context, ["dist"]);
 }
 
 function writeNonDistArchive(context: ArchiveFixtureContext): void {
@@ -135,6 +158,7 @@ function writeTraversalArchive(context: ArchiveFixtureContext): void {
 
 const ARCHIVE_FIXTURE_WRITERS = {
   link: writeLinkArchive,
+  "missing-shared": writeMissingSharedArchive,
   "non-dist": writeNonDistArchive,
   traversal: writeTraversalArchive,
   valid: writeValidArchive,
@@ -154,9 +178,16 @@ function writePreexistingDistDirectory(workspace: string): void {
   fs.writeFileSync(path.join(workspace, "dist", "existing.txt"), "preserve\n");
 }
 
+function writePreexistingNestedDistDirectory(workspace: string): void {
+  const dist = path.join(workspace, "nemoclaw", "dist");
+  fs.mkdirSync(dist, { recursive: true });
+  fs.writeFileSync(path.join(dist, "existing.txt"), "preserve\n");
+}
+
 const PREEXISTING_DIST_WRITERS = {
   "dangling-symlink": writeDanglingDistSymlink,
   directory: writePreexistingDistDirectory,
+  "nested-directory": writePreexistingNestedDistDirectory,
   none: () => undefined,
 } satisfies Record<
   NonNullable<RestoreFixtureOptions["preexistingDist"]> | "none",
@@ -171,6 +202,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
   const payloadRoot = path.join(root, "payload-root");
   const toolDirectory = path.join(root, "tools");
   fs.mkdirSync(path.join(workspace, "bin"), { recursive: true });
+  fs.mkdirSync(path.join(workspace, "nemoclaw"), { recursive: true });
   fs.mkdirSync(artifactDirectory, { recursive: true });
   fs.mkdirSync(payloadRoot, { recursive: true });
   fs.mkdirSync(toolDirectory, { recursive: true });
@@ -180,6 +212,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
     '#!/usr/bin/env node\nrequire("../dist/nemoclaw.js");\n',
     { mode: 0o755 },
   );
+  fs.writeFileSync(path.join(workspace, "nemoclaw", ".gitkeep"), "");
   execFileSync("git", ["init", "--quiet"], { cwd: workspace });
   execFileSync("git", ["add", "."], { cwd: workspace });
   execFileSync(
@@ -389,6 +422,11 @@ describe("exact-commit CLI artifact workflow boundary", () => {
         ),
       ).toEqual({ nemoclawVersion: "0.0.0", sourceRevision: fixture.candidateSha });
       expect(
+        fs.existsSync(
+          path.join(fixture.workspace, "nemoclaw", "dist", "shared", "sandbox-name.cjs"),
+        ),
+      ).toBe(true);
+      expect(
         fs
           .readdirSync(fixture.runnerTemp)
           .filter((entry) => entry.startsWith("nemoclaw-cli-restore.")),
@@ -416,6 +454,13 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     expectRestoreFailure(
       { archive: "non-dist" },
       "CLI artifact contains an unsafe member: outside.txt",
+    );
+  });
+
+  it("rejects a payload missing the compiled shared dependency before activation (#7915)", () => {
+    expectRestoreFailure(
+      { archive: "missing-shared" },
+      "restored CLI artifact is missing nemoclaw/dist/shared/sandbox-name.cjs",
     );
   });
 
@@ -447,6 +492,22 @@ describe("exact-commit CLI artifact workflow boundary", () => {
       expect(fixture.output).toContain("consumer unexpectedly built dist before artifact restore");
       expect(fs.lstatSync(path.join(fixture.workspace, "dist")).isSymbolicLink()).toBe(true);
       expect(fs.readlinkSync(path.join(fixture.workspace, "dist"))).toBe("missing-dist");
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("does not overwrite a preexisting nemoclaw/dist directory (#7915)", () => {
+    const fixture = runRestoreValidation({ preexistingDist: "nested-directory" });
+    try {
+      expect(fixture.result.status, fixture.output).not.toBe(0);
+      expect(fixture.output).toContain(
+        "consumer unexpectedly built nemoclaw/dist before artifact restore",
+      );
+      expect(
+        fs.readFileSync(path.join(fixture.workspace, "nemoclaw", "dist", "existing.txt"), "utf8"),
+      ).toBe("preserve\n");
+      expect(fs.existsSync(path.join(fixture.workspace, "dist"))).toBe(false);
     } finally {
       fixture.cleanup();
     }
