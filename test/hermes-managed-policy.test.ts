@@ -117,12 +117,18 @@ describe("Hermes managed policy", () => {
   it("rejects a raw model credential without echoing it (#8008)", () => {
     const rawCredential = "sk-raw-policy-credential";
     const policy = structuredClone(buildHermesManagedPolicy(SETTINGS, {}));
-    policy.config.model.api_key = rawCredential;
+    const malformedPolicy = {
+      ...policy,
+      config: {
+        ...policy.config,
+        model: { ...policy.config.model, api_key: rawCredential },
+      },
+    };
 
-    const result = loadWithPython(policy);
+    const result = loadWithPython(malformedPolicy);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("must use the Hermes proxy rewrite sentinel");
+    expect(result.stderr).toContain("must use the OpenShell proxy rewrite sentinel");
     expect(result.stderr).not.toContain(rawCredential);
   });
 

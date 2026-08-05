@@ -91,7 +91,7 @@ def load_managed_policy(path: Path = MANAGED_POLICY_PATH) -> dict:
     config = document["config"]
     if policy_value(config, "model.api_key") != HERMES_PROXY_REWRITE_SENTINEL:
         raise ManagedPolicyError(
-            "managed policy model.api_key must use the Hermes proxy rewrite sentinel"
+            "managed policy model.api_key must use the OpenShell proxy rewrite sentinel"
         )
     for managed_path in managed_paths:
         policy_value(config, managed_path)
