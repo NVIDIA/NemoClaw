@@ -272,6 +272,35 @@ describe("uninstall OpenShell gateway user service", () => {
     expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
   });
 
+  it("preserves the marked Linux unit when scoped gateway registration removal fails (#8220)", () => {
+    const test = fixture(true);
+    const servicePath = writeManagedService(test);
+    writeSelectedSandboxRegistry(test, "my-assistant");
+    const calls: string[][] = [];
+
+    const result = uninstall(
+      test,
+      false,
+      {
+        commandExists: (command) => command === "systemctl",
+        run: (command, args) => {
+          calls.push([command, ...args]);
+          return command === "openshell" && args[0] === "gateway" && args[1] === "remove"
+            ? { status: 1, stdout: "", stderr: "gateway registration is busy" }
+            : ok();
+        },
+      },
+      [{ name: "nemoclaw" }, { name: "nemoclaw-8081" }],
+    );
+
+    // Sandbox deletion succeeded, so this pins the second cleanup boundary: registration
+    // removal failed, and uninstall still returns before it removes the gateway service.
+    expect(calls).toContainEqual(["openshell", "sandbox", "delete", "my-assistant"]);
+    expect(result.exitCode).toBe(1);
+    expect(fs.existsSync(servicePath)).toBe(true);
+    expect(calls.some((call) => call[0] === "systemctl" && call.includes("disable"))).toBe(false);
+  });
+
   it("removes only the marked Linux unit and managed env on full uninstall (#6903)", () => {
     const test = fixture(true);
     const servicePath = writeManagedService(test);
