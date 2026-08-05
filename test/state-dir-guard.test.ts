@@ -1188,7 +1188,7 @@ describe("state-dir-guard", () => {
     });
   });
 
-  it("applies distinct confidentiality, workspace, mutable, and session-carveout modes", () => {
+  it("applies distinct confidentiality, workspace, and writable runtime modes", () => {
     const { configDir } = fixture();
     const secretDir = path.join(configDir, "credentials");
     const secretPath = path.join(secretDir, "token.json");

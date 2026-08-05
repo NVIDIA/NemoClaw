@@ -58,6 +58,11 @@ state_dirs:
   - path: plugins
     backup: false
     shields: read-only
+  # OpenClaw may create profile-scoped runtime state. Preserve its existing
+  # Shields boundary without newly treating profile data as portable state.
+  - path: profiles
+    backup: false
+    shields: read-only
   - path: workspace
     shields: read-only
   # Multi-agent OpenClaw deployments create workspace-<agent> siblings.

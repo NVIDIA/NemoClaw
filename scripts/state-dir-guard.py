@@ -75,6 +75,7 @@ PLAN_KEYS = frozenset(
 )
 OPTIONAL_PLAN_KEYS = frozenset({"$comment"})
 MAX_PLAN_BYTES = 1024 * 1024
+HERMES_PRIVATE_WRITABLE_SUBPATH = "profiles/dashboard-home"
 FS_IMMUTABLE_FL = 0x00000010
 FS_APPEND_FL = 0x00000020
 FS_IOC_GETFLAGS = 0x80086601
@@ -688,6 +689,12 @@ class TraversalContext:
             self._matches(pattern, components) for pattern in self.writable_subpaths
         )
 
+    def is_private_writable_root(self, relative_path: str) -> bool:
+        return (
+            posixpath.basename(self.config_path) == ".hermes"
+            and relative_path == HERMES_PRIVATE_WRITABLE_SUBPATH
+        )
+
     def is_under_writable_root(self, relative_path: str) -> bool:
         components = tuple(relative_path.split("/"))
         return any(
@@ -1126,6 +1133,20 @@ def _set_dir_metadata(
     os.fchmod(dir_fd, _expected_dir_mode(policy, action, is_confidentiality_root))
 
 
+def _set_writable_subpath_metadata(
+    context: TraversalContext,
+    dir_fd: int,
+    relative_path: str,
+    policy: Policy,
+    identity: Identity,
+) -> None:
+    if context.is_private_writable_root(relative_path):
+        os.fchown(dir_fd, identity.sandbox_uid, identity.sandbox_gid)
+        os.fchmod(dir_fd, 0o700)
+        return
+    _set_dir_metadata(dir_fd, policy, "unlock", identity)
+
+
 def _set_empty_credentials_startup_metadata(
     dir_fd: int,
     identity: Identity,
@@ -1514,7 +1535,9 @@ def _ensure_writable_subpath(
             )
         ) from exc
     try:
-        _set_dir_metadata(child_fd, policy, "unlock", identity)
+        _set_writable_subpath_metadata(
+            context, child_fd, relative_path, policy, identity
+        )
     except OSError as exc:
         raise GuardOperationError(
             _os_issue(
@@ -1615,7 +1638,9 @@ def _mutate_dir(
                     # contents remain runtime-owned and may change while this
                     # helper runs, so never chmod/chown/copy descendants.
                     _clear_mutation_flags(child_fd)
-                    _set_dir_metadata(child_fd, policy, "unlock", identity)
+                    _set_writable_subpath_metadata(
+                        context, child_fd, relative_path, policy, identity
+                    )
                     result.directories += 1
                 else:
                     _mutate_dir(
@@ -1807,6 +1832,33 @@ def _verify_metadata(
     return None
 
 
+def _verify_writable_subpath_metadata(
+    context: TraversalContext,
+    path: str,
+    relative_path: str,
+    st: os.stat_result,
+    policy: Policy,
+    identity: Identity,
+) -> Issue | None:
+    if not context.is_private_writable_root(relative_path):
+        return _verify_metadata(path, st, "directory", policy, "unlock", identity)
+    if st.st_uid != identity.sandbox_uid or st.st_gid != identity.sandbox_gid:
+        return Issue(
+            "verification-owner-mismatch",
+            path,
+            f"owner is {st.st_uid}:{st.st_gid}, "
+            f"expected {identity.sandbox_uid}:{identity.sandbox_gid}",
+        )
+    mode = stat.S_IMODE(st.st_mode)
+    if mode != 0o700:
+        return Issue(
+            "verification-mode-mismatch",
+            path,
+            f"directory mode is {mode:04o}, expected 0700",
+        )
+    return None
+
+
 def _verify_dir(
     context: TraversalContext,
     dir_fd: int,
@@ -1881,12 +1933,12 @@ def _verify_dir(
                 continue
             try:
                 if context.is_writable_root(relative_path):
-                    writable_issue = _verify_metadata(
+                    writable_issue = _verify_writable_subpath_metadata(
+                        context,
                         path,
+                        relative_path,
                         os.fstat(child_fd),
-                        "directory",
                         policy,
-                        "unlock",
                         identity,
                     )
                     if writable_issue is not None:

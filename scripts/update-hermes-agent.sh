@@ -204,7 +204,7 @@ installed_copy_schema_error() {
       "openshell-child-visible-credentials.v0.0.85.json" \
       "HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix" \
       "node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts" \
-      "/sandbox/.hermes/dashboard-home"; do
+      "/sandbox/.hermes/profiles/dashboard-home"; do
       grep -Fq "$item" "$dockerfile" || missing+=("marker ${item}")
     done
     if grep -q '^ARG HERMES_SEMVER=' "$dockerfile"; then

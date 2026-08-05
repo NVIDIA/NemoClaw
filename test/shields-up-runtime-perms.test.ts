@@ -8,6 +8,7 @@ import { loadAgent } from "../src/lib/agent/defs";
 const OPENCLAW_GUARD = "/usr/local/lib/nemoclaw/openclaw-config-guard.py";
 const STATE_DIR_GUARD = "/usr/local/lib/nemoclaw/state-dir-guard.py";
 const OPENCLAW_STATE_LOCK_PLAN = loadAgent("openclaw").stateLockPlan;
+const HERMES_STATE_LOCK_PLAN = loadAgent("hermes").stateLockPlan;
 
 type GuardProbeResult = {
   calls: string[][];
@@ -206,10 +207,15 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
 
   it("uses the OpenClaw manifest plan and writable sessions carve-out", () => {
     expect(OPENCLAW_STATE_LOCK_PLAN.readOnlyRoots).toEqual(
-      expect.arrayContaining(["skills", "hooks", "agents", "extensions", "workspace"]),
+      expect.arrayContaining(["skills", "hooks", "agents", "extensions", "profiles", "workspace"]),
     );
     expect(OPENCLAW_STATE_LOCK_PLAN.confidentialRoots).toEqual(["credentials", "identity"]);
     expect(OPENCLAW_STATE_LOCK_PLAN.writableSubpaths).toEqual(["agents/*/sessions"]);
+  });
+
+  it("uses the Hermes manifest plan for pairing and the private dashboard profile", () => {
+    expect(HERMES_STATE_LOCK_PLAN.confidentialRoots).toEqual(["pairing"]);
+    expect(HERMES_STATE_LOCK_PLAN.writableSubpaths).toEqual(["profiles/dashboard-home"]);
   });
 
   it.each([
