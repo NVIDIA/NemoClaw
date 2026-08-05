@@ -55,7 +55,7 @@ interface GatewayEvidence {
   active_agents: number;
   gateway_state: string;
   pid: number;
-  running_pid: number;
+  running_pid: number | null;
   start_time: number;
 }
 
@@ -186,6 +186,18 @@ function assertFutureCronJob(job: JsonObject, seed: SeededCronJob, minimumFuture
 export function hermesCronJobIsDue(job: JsonObject, label: string, nowMs = Date.now()): boolean {
   const runtime = hermesCronJobRuntimeState(job, label);
   return normalizeTimestampMs(runtime.nextRunAt, `${label} next run`) <= nowMs;
+}
+
+export function parseHermesGatewayEvidence(text: string): GatewayEvidence {
+  const payload = parseJsonObject(text, "Hermes gateway status");
+  for (const field of ["active_agents", "pid", "start_time"] as const) {
+    if (!Number.isSafeInteger(payload[field])) fail(`Hermes gateway ${field} is invalid`);
+  }
+  if (payload.running_pid !== null && !Number.isSafeInteger(payload.running_pid)) {
+    fail("Hermes gateway running_pid is invalid");
+  }
+  if (typeof payload.gateway_state !== "string") fail("Hermes gateway state is invalid");
+  return payload as unknown as GatewayEvidence;
 }
 
 export function hermesRuntimeExecArgs(sandboxName: string, command: string[]): string[] {
@@ -392,15 +404,6 @@ export function createRebuildHermesCronRestoreFixture({
     if (present) expect(result.stdout.trim()).toMatch(/^0:0 400 [1-9]\d*$/u);
   }
 
-  function parseGatewayEvidence(text: string): GatewayEvidence {
-    const payload = parseJsonObject(text, "Hermes gateway status");
-    for (const field of ["active_agents", "pid", "running_pid", "start_time"] as const) {
-      if (!Number.isSafeInteger(payload[field])) fail(`Hermes gateway ${field} is invalid`);
-    }
-    if (typeof payload.gateway_state !== "string") fail("Hermes gateway state is invalid");
-    return payload as unknown as GatewayEvidence;
-  }
-
   async function gatewayEvidence(artifactName: string): Promise<GatewayEvidence | null> {
     const script = [
       "import json",
@@ -420,7 +423,7 @@ export function createRebuildHermesCronRestoreFixture({
     ].join("\n");
     const result = await dockerRoot([HERMES_PYTHON, "-I", "-c", script], artifactName);
     if (result.exitCode !== 0) return null;
-    return parseGatewayEvidence(result.stdout.trim());
+    return parseHermesGatewayEvidence(result.stdout.trim());
   }
 
   async function waitForGatewayState(

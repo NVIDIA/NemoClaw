@@ -6,6 +6,7 @@ import {
   hermesCronJobIsDue,
   hermesCronJobRuntimeState,
   parseHermesCronBeginReceipt,
+  parseHermesGatewayEvidence,
 } from "../live/rebuild-hermes-cron-restore.ts";
 
 describe("Hermes rebuild cron restore evidence", () => {
@@ -86,5 +87,19 @@ describe("Hermes rebuild cron restore evidence", () => {
     expect(hermesCronJobIsDue(job, "cron job fixture", Date.parse("2026-08-06T19:41:01Z"))).toBe(
       true,
     );
+  });
+
+  it("accepts a transient missing gateway process while restart polling continues", () => {
+    expect(
+      parseHermesGatewayEvidence(
+        '{"active_agents":0,"gateway_state":"draining","pid":263,"running_pid":null,"start_time":38291}',
+      ),
+    ).toEqual({
+      active_agents: 0,
+      gateway_state: "draining",
+      pid: 263,
+      running_pid: null,
+      start_time: 38291,
+    });
   });
 });
