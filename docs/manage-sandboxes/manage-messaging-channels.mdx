@@ -20,6 +20,11 @@ Rebuild the sandbox after the update so the image reflects the current channel s
 For WeChat, the cached-token shortcut applies.
 Remove WeChat first when you intend to acquire a fresh account through a new QR scan.
 
+<AgentOnly variant="openclaw">
+For Google Chat, re-add the channel and paste the replacement service-account JSON.
+NemoClaw updates the gateway-side refresh material, and the sandbox continues to receive only gateway-minted access tokens.
+</AgentOnly>
+
 For detailed token rotation procedures, refer to [Credential Rotation](../../security/credential-rotation).
 
 ## Remove a Channel
@@ -34,6 +39,13 @@ $$nemoclaw my-assistant channels remove teams
 
 `channels remove wechat` clears the bot token, deletes the `<sandbox>-wechat-bridge` provider, and removes `wechat` from the enabled-channel set.
 The next rebuild omits WeChat configuration and per-account state files.
+
+<AgentOnly variant="openclaw">
+`channels remove googlechat` detaches and deletes the `<sandbox>-googlechat-bridge` provider before the rebuild removes Google Chat configuration and the matching policy preset.
+It also stops the dedicated cloudflared process and webhook proxy for that sandbox.
+`$$nemoclaw <name> destroy` also stops both host-side processes.
+If endpoint teardown fails, the command exits nonzero without changing the channel credentials, bridge provider, policy preset, or durable messaging plan so you can fix the host service and retry removal.
+</AgentOnly>
 
 For in-sandbox QR-paired channels such as WhatsApp, `channels remove` destructively clears the session directory before rebuild so stale auth files do not reconnect the channel.
 
@@ -75,20 +87,33 @@ For WeChat, `channels stop wechat` followed by rebuild keeps the per-account sta
 A later `channels start wechat` plus rebuild revives the bridge against the same iLink account without a fresh QR scan.
 The bot token remains in the OpenShell provider across the stop and start cycle.
 
+<AgentOnly variant="openclaw">
+Google Chat stop and start cycles also preserve the bridge provider and its gateway-side refresh material.
+They preserve the dedicated public webhook endpoint so the Google Cloud configuration can keep the same URL.
+The next rebuild reuses that provider without requiring the service-account JSON again.
+`$$nemoclaw tunnel stop` does not stop the dedicated Google Chat endpoint.
+It controls the separate full-dashboard tunnel.
+</AgentOnly>
+
 When `channels start` re-enables a channel, NemoClaw reapplies the matching built-in policy preset before rebuild.
 If policy restoration fails, the command keeps the channel disabled and exits without rebuilding into a partially active state.
 
 ## Avoid Cross-Sandbox Conflicts
 
+<Warning title="Conflict Detection Scope">
+NemoClaw checks only the sandboxes recorded in the selected OpenShell gateway's sandbox registry.
+It cannot detect or prevent Slack credential reuse across independent OpenShell gateways.
+</Warning>
+
 Use distinct credentials and resources for each active messaging sandbox.
 Follow these channel-specific rules:
 
 - Use a distinct iLink `accountId` for each WeChat sandbox.
-- Use distinct bot and Socket Mode app tokens for each Slack sandbox.
-- Use a different gateway for each Slack sandbox.
+- Run only one active Slack sandbox on each OpenShell gateway.
+- Use distinct bot and Socket Mode app tokens across OpenShell gateways.
 - Use a different local webhook port for each Microsoft Teams sandbox.
 
-When you onboard, rebuild, or add a channel, the command aborts on a conflict or an incomplete required check.
+When you onboard, rebuild, or add a channel, the command aborts on a conflict or an incomplete required check within the selected OpenShell gateway's sandbox registry.
 Legacy entries without credential hashes count as incomplete.
 An unreadable messaging registry also causes onboarding and rebuild to abort.
 Onboarding and rebuild have no conflict override.
@@ -100,21 +125,21 @@ Rerun `channels add <channel>` with the intended token to refresh stored non-sec
 Before a rebuild, NemoClaw checks the messaging plan before backup or deletion.
 A conflict leaves the original sandbox intact.
 Resolve any conflict, then rerun the operation.
-`$$nemoclaw status` reports cross-sandbox overlaps.
+`$$nemoclaw status` reports cross-sandbox overlaps within the selected OpenShell gateway's sandbox registry.
 
 ## Stop All Delivery
 
 Use `channels stop` for an individual bridge or stop the sandbox when you need to stop the complete supervised runtime.
 
 <AgentOnly variant="openclaw">
-`$$nemoclaw tunnel stop` stops host auxiliary services and asks NemoClaw to stop the OpenClaw gateway inside the selected sandbox.
+`$$nemoclaw tunnel stop` stops the dashboard tunnel services that `$$nemoclaw tunnel start` created and asks NemoClaw to stop the OpenClaw gateway inside the selected sandbox.
 The deprecated full `$$nemoclaw stop` command also attempts to release an unshared OpenShell gateway port whose ownership NemoClaw can verify.
 
 Stopping the in-sandbox gateway stops all channel delivery for that sandbox until you restart the sandbox or gateway.
 </AgentOnly>
 
 <AgentOnly variant="hermes">
-`$$nemoclaw tunnel stop` stops host auxiliary services without stopping the supervisor-owned Hermes gateway, agent-owned host forwards, or managed OpenShell gateway port.
+`$$nemoclaw tunnel stop` stops the dashboard tunnel services that `$$nemoclaw tunnel start` created without stopping the supervisor-owned Hermes gateway, agent-owned host forwards, or managed OpenShell gateway port.
 The deprecated full `$$nemoclaw stop` command attempts to stop host forwards and safely release an unshared OpenShell gateway port while the Hermes gateway remains under sandbox supervision.
 </AgentOnly>
 

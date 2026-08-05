@@ -459,7 +459,7 @@ describe("ManifestCompiler", () => {
         required: true,
         value: {
           manager: "hermes-uv-pip",
-          spec: "aiohttp==3.14.1",
+          spec: "aiohttp==3.14.3",
         },
       },
     ]);

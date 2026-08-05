@@ -151,7 +151,12 @@ expected_boot_image="projects/$(jq -er .project "$manifest")/global/images/$(jq 
 image_repository_sha="$(jq -er .imageRepositorySha "$manifest")"
 rm -rf "$WORK_DIR/handoff"
 
-# The standing Launchable resolves the staging family; the guest must contain the exact clean candidate.
+# The standing Launchable resolves the staging family. Give that reference time to
+# observe the family update before deploying it.
+log "Waiting 300s for the Launchable image family to settle"
+sleep 300
+
+# The guest must boot the exact image and contain the exact clean candidate.
 existing="$(workspace)" || die "Brev workspace inventory failed"
 [ -z "$existing" ] || die "workspace name already exists"
 cleanup_required=1
@@ -172,12 +177,28 @@ jq -e '.status == "RUNNING" and (.shell_status // .shellStatus) == "READY" and
 workspace_id="$(jq -r '.id // ""' <<<"$ready")"
 log "Workspace $INSTANCE_NAME ($workspace_id) is ready"
 
-# Return the booted image and the baked runtime receipt.
+# Record the booted image before reading the baked runtime receipt so a stale
+# Launchable image remains visible when the receipt is absent.
 # The remote shell expands the single-quoted command.
 # shellcheck disable=SC2016
-identity="$(timeout 300s brev exec "$INSTANCE_NAME" 'set -euo pipefail
+boot_image="$(timeout 300s brev exec "$INSTANCE_NAME" 'set -euo pipefail
   boot_image=$(curl -fsS --max-time 10 -H "Metadata-Flavor: Google" \
     http://metadata.google.internal/computeMetadata/v1/instance/image)
+  printf "NEMOCLAW_BOOT_IMAGE=%s\n" "$boot_image"' --host \
+  | sed -n 's/^NEMOCLAW_BOOT_IMAGE=//p' | tail -n 1)"
+[ -n "$boot_image" ] || die "booted image identity is missing"
+
+jq -n --arg candidateSha "$CANDIDATE_SHA" --arg producerRun "$producer_run" \
+  --arg bootImage "$boot_image" --arg workspaceName "$INSTANCE_NAME" --arg workspaceId "$workspace_id" \
+  '{candidateSha:$candidateSha,producer:{runId:$producerRun,status:"success"},boot:{bootImage:$bootImage},workspace:{name:$workspaceName,id:$workspaceId},fullE2e:"pending"}' \
+  >"$WORK_DIR/launchable-e2e.json"
+
+[ "$boot_image" = "$expected_boot_image" ] \
+  || die "booted image does not match the producer handoff"
+
+# Return the baked runtime receipt.
+# shellcheck disable=SC2016
+identity="$(timeout 300s brev exec "$INSTANCE_NAME" 'set -euo pipefail
   schema_version=$(sudo -n jq -er .schemaVersion /etc/nemoclaw/provision.json)
   source_repository=$(sudo -n jq -er .sourceRepository /etc/nemoclaw/provision.json)
   source_path=$(sudo -n jq -er .sourcePath /etc/nemoclaw/provision.json)
@@ -195,17 +216,15 @@ identity="$(timeout 300s brev exec "$INSTANCE_NAME" 'set -euo pipefail
     runtime_overrides=false
   fi
   printf "NEMOCLAW_IDENTITY="
-  jq -cn --arg bootImage "$boot_image" --argjson schemaVersion "$schema_version" \
-    --arg sourceRepository "$source_repository" --arg sourcePath "$source_path" \
+  jq -cn --argjson schemaVersion "$schema_version" --arg sourceRepository "$source_repository" \
+    --arg sourcePath "$source_path" \
     --arg repoSha "$repo_sha" --arg provisionSha "$provision_sha" \
     --arg imageRepositorySha "$image_repository_sha" --argjson repoClean "$repo_clean" \
     --argjson runtimeOverrides "$runtime_overrides" \
-    "{bootImage:\$bootImage,schemaVersion:\$schemaVersion,sourceRepository:\$sourceRepository,sourcePath:\$sourcePath,repoSha:\$repoSha,provisionSha:\$provisionSha,imageRepositorySha:\$imageRepositorySha,repoClean:\$repoClean,runtimeOverrides:\$runtimeOverrides}"' --host \
+    "{schemaVersion:\$schemaVersion,sourceRepository:\$sourceRepository,sourcePath:\$sourcePath,repoSha:\$repoSha,provisionSha:\$provisionSha,imageRepositorySha:\$imageRepositorySha,repoClean:\$repoClean,runtimeOverrides:\$runtimeOverrides}"' --host \
   | sed -n 's/^NEMOCLAW_IDENTITY=//p' | tail -n 1)"
-jq -e --arg sha "$CANDIDATE_SHA" --arg bootImage "$expected_boot_image" \
-  --arg imageRepositorySha "$image_repository_sha" '
-  .bootImage == $bootImage and .schemaVersion == 1 and
-  .sourceRepository == "NVIDIA/NemoClaw" and
+jq -e --arg sha "$CANDIDATE_SHA" --arg imageRepositorySha "$image_repository_sha" '
+  .schemaVersion == 1 and .sourceRepository == "NVIDIA/NemoClaw" and
   .sourcePath == "/opt/nemoclaw-image/NemoClaw" and
   .repoSha == $sha and .provisionSha == $sha and
   .imageRepositorySha == $imageRepositorySha and
@@ -213,10 +232,9 @@ jq -e --arg sha "$CANDIDATE_SHA" --arg bootImage "$expected_boot_image" \
   <<<"$identity" >/dev/null || die "booted image runtime does not match the producer handoff"
 source_path="$(jq -er .sourcePath <<<"$identity")"
 
-jq -n --arg candidateSha "$CANDIDATE_SHA" --arg producerRun "$producer_run" \
-  --argjson boot "$identity" --arg workspaceName "$INSTANCE_NAME" --arg workspaceId "$workspace_id" \
-  '{candidateSha:$candidateSha,producer:{runId:$producerRun,status:"success"},boot:$boot,workspace:{name:$workspaceName,id:$workspaceId},fullE2e:"pending"}' \
-  >"$WORK_DIR/launchable-e2e.json"
+jq --argjson identity "$identity" '.boot += $identity' \
+  "$WORK_DIR/launchable-e2e.json" >"$WORK_DIR/launchable-e2e.tmp"
+mv "$WORK_DIR/launchable-e2e.tmp" "$WORK_DIR/launchable-e2e.json"
 
 # Run the existing suite from the baked checkout; no source copy, install, or rebuild.
 raw_log="${RUNNER_TEMP:-/tmp}/brev-launchable-e2e-${GITHUB_RUN_ID}.raw"

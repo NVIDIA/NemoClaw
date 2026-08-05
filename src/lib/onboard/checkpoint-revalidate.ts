@@ -23,9 +23,27 @@ export function revalidateCheckpointBindings(
   const missingCredentialEnvs = checkpoint.bindings.credentialEnvs.filter(
     (env) => !available.availableCredentialEnvs.has(env),
   );
-  const missingProviders = checkpoint.bindings.registeredProviders
-    .filter((provider) => !available.liveRegisteredProviders.has(provider.name))
-    .map((provider) => provider.name);
+  const providerNameCounts = new Map<string, number>();
+  for (const provider of checkpoint.bindings.registeredProviders) {
+    providerNameCounts.set(provider.name, (providerNameCounts.get(provider.name) ?? 0) + 1);
+  }
+  const missingProviders = [
+    ...new Set(
+      checkpoint.bindings.registeredProviders
+        .filter(
+          (provider) =>
+            !provider.name ||
+            !provider.type ||
+            !provider.credentialEnv ||
+            provider.name.trim() !== provider.name ||
+            provider.type.trim() !== provider.type ||
+            provider.credentialEnv.trim() !== provider.credentialEnv ||
+            providerNameCounts.get(provider.name) !== 1 ||
+            !available.liveRegisteredProviders.has(provider.name),
+        )
+        .map((provider) => provider.name || "<invalid provider binding>"),
+    ),
+  ];
   if (missingCredentialEnvs.length === 0 && missingProviders.length === 0) {
     return { status: "ok" };
   }

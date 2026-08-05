@@ -299,6 +299,14 @@ export function sameContainerId(
   return left.startsWith(right) || right.startsWith(left);
 }
 
+/** Return only a complete Docker container ID that is safe for exact-ID cleanup. */
+export function fullDockerContainerId(value: string | null | undefined): string | null {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return /^[0-9a-f]{64}$/u.test(normalized) ? normalized : null;
+}
+
 function dockerNetworkAliases(
   inspect: DockerContainerInspect,
   networkMode: string | null | undefined,
@@ -329,7 +337,15 @@ export function buildDockerGpuCloneRunArgs(
   const image = String(options.image || config.Image || "").trim();
   if (!image) throw new Error("Docker inspect output did not include Config.Image.");
 
-  const args: string[] = ["--name", dockerContainerName(inspect), ...mode.args];
+  const containerName = String(options.containerName ?? dockerContainerName(inspect)).trim();
+  if (
+    containerName.length === 0 ||
+    containerName.length > 253 ||
+    !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/u.test(containerName)
+  ) {
+    throw new Error("Docker clone container name is invalid.");
+  }
+  const args: string[] = ["--name", containerName, ...mode.args];
   const gpuAugment = mode.kind !== "startup-command";
 
   // Startup-command recreation must retain OpenShell's native CDI attachment.
@@ -435,8 +451,17 @@ export function buildDockerGpuCloneRunArgs(
   if (host.Init) args.push("--init");
 
   const entrypoint = stringArray(config.Entrypoint);
-  if (entrypoint.length > 0) args.push("--entrypoint", entrypoint[0]);
-  const commandArgs = sandboxCommand ? [] : [...entrypoint.slice(1), ...stringArray(config.Cmd)];
+  const replacementEntrypoint = String(options.containerEntrypoint ?? "").trim();
+  if (replacementEntrypoint) {
+    args.push("--entrypoint", replacementEntrypoint);
+  } else if (entrypoint.length > 0) {
+    args.push("--entrypoint", entrypoint[0]);
+  }
+  const commandArgs = options.containerCommand
+    ? [...options.containerCommand]
+    : sandboxCommand
+      ? []
+      : [...entrypoint.slice(1), ...stringArray(config.Cmd)];
   args.push(image, ...commandArgs);
   return args;
 }

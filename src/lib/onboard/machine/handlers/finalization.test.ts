@@ -30,6 +30,7 @@ function createDeps(
   const calls = {
     setDefaultSandbox: vi.fn(),
     ensureAgentDashboard: vi.fn(() => 18789),
+    persistDashboardPort: vi.fn(),
     removeLegacy: vi.fn(),
     cleanupHost: vi.fn(),
     recoverProcesses: vi.fn(),
@@ -50,6 +51,7 @@ function createDeps(
     calls,
     deps: {
       ensureAgentDashboardForward: calls.ensureAgentDashboard,
+      persistDashboardPort: calls.persistDashboardPort,
       setDefaultSandbox: calls.setDefaultSandbox,
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
       removeLegacyCredentialsFile: calls.removeLegacy,
@@ -213,6 +215,36 @@ describe("finalization handlers", () => {
     expect(result.stateResult.type).toBe("complete");
   });
 
+  it("persists the dashboard port selected after final recovery (#8214)", async () => {
+    const persistDashboardPort = vi.fn();
+    const { deps } = createDeps({
+      ensureAgentDashboardForward: vi.fn(() => 18792),
+      persistDashboardPort,
+    });
+
+    await handleFinalizationPhase({
+      ...baseOptions(deps),
+      agent: { name: "hermes" },
+    });
+
+    expect(persistDashboardPort).toHaveBeenCalledWith("my-assistant", 18792);
+  });
+
+  it("does not persist a zero dashboard port after final recovery (#8214)", async () => {
+    const persistDashboardPort = vi.fn();
+    const { deps } = createDeps({
+      ensureAgentDashboardForward: vi.fn(() => 0),
+      persistDashboardPort,
+    });
+
+    await handleFinalizationPhase({
+      ...baseOptions(deps),
+      agent: { name: "hermes" },
+    });
+
+    expect(persistDashboardPort).not.toHaveBeenCalled();
+  });
+
   it("ensures agent dashboard forwarding before completion for non-OpenClaw agents", async () => {
     const { deps, calls } = createDeps();
     const agent = { name: "hermes" };
@@ -285,6 +317,7 @@ describe("finalization handlers", () => {
     expect(calls.log).toHaveBeenCalledWith(
       "  ✓ LangChain Deep Agents Code terminal runtime is ready",
     );
+    expect(calls.log).toHaveBeenCalledWith("  Launch: nemoclaw launch my-assistant");
     expect(calls.log).toHaveBeenCalledWith("  Connect: nemoclaw my-assistant connect");
     expect(calls.log).toHaveBeenCalledWith("  Interactive: dcode");
     expect(calls.log).toHaveBeenCalledWith('  Headless: dcode -n "<task>"');

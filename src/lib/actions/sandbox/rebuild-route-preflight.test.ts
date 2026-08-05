@@ -89,6 +89,15 @@ const remoteProviders = [
   (provider): provider is typeof provider & { credentialEnv: string } =>
     typeof provider.credentialEnv === "string" && provider.credentialEnv.length > 0,
 );
+const remoteProviderRouteOverrides = new Map<string, Partial<SandboxEntry>>([
+  [
+    REMOTE_PROVIDER_CONFIG["llama-cpp"].providerName,
+    {
+      endpointUrl: REMOTE_PROVIDER_CONFIG["llama-cpp"].endpointUrl ?? null,
+      preferredInferenceApi: "openai-completions",
+    },
+  ],
+]);
 
 describe("commitRebuildRoutePreflight", () => {
   it("includes a credential-bearing provider in the migration matrix (#7798)", () => {
@@ -98,10 +107,12 @@ describe("commitRebuildRoutePreflight", () => {
   it.each(
     remoteProviders,
   )("migrates missing shared-gateway credential identity for $providerName (#7798)", (providerConfig) => {
+    const routeOverrides = remoteProviderRouteOverrides.get(providerConfig.providerName) ?? {};
     const target = sandbox("target", providerConfig.providerName, {
+      ...routeOverrides,
       credentialEnv: providerConfig.credentialEnv,
     });
-    const peer = sandbox("peer", providerConfig.providerName);
+    const peer = sandbox("peer", providerConfig.providerName, routeOverrides);
     const state = transactionDependencies(registry(target, peer));
 
     const result = commitRebuildRoutePreflight(
@@ -122,6 +133,35 @@ describe("commitRebuildRoutePreflight", () => {
     expect(state.persisted().sandboxes.target?.credentialEnv).toBe(providerConfig.credentialEnv);
     expect(state.persisted().sandboxes.peer?.credentialEnv).toBe(providerConfig.credentialEnv);
     expect(state.save).toHaveBeenCalledOnce();
+  });
+
+  it("migrates two missing credential identities across sequential shared-route rebuilds (#7615, #7798)", () => {
+    const credentialEnv = "NVIDIA_INFERENCE_API_KEY";
+    const alpha = sandbox("alpha", "nvidia-prod");
+    const beta = sandbox("beta", "nvidia-prod");
+    const state = transactionDependencies(registry(alpha, beta));
+
+    const results = [alpha, beta].map((entry) =>
+      commitRebuildRoutePreflight(
+        {
+          sandboxName: entry.name,
+          gatewayName: "nemoclaw",
+          targetUpdate: targetUpdate({ ...entry, credentialEnv }),
+        },
+        state.dependencies,
+      ),
+    );
+
+    expect(results).toMatchObject([
+      { ok: true, receipt: { sandboxName: "alpha", migratedSandboxNames: ["beta"] } },
+      { ok: true, receipt: { sandboxName: "beta", migratedSandboxNames: [] } },
+    ]);
+    expect(
+      [alpha.name, beta.name].map(
+        (sandboxName) => state.persisted().sandboxes[sandboxName]?.credentialEnv,
+      ),
+    ).toEqual([credentialEnv, credentialEnv]);
+    expect(state.save).toHaveBeenCalledTimes(2);
   });
 
   it.each(

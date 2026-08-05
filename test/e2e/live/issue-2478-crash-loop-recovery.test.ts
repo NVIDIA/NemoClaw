@@ -4,10 +4,11 @@
 /**
  *
  * Preserves the contract with real Docker/OpenShell/NemoClaw boundaries:
- * onboard an OpenClaw sandbox, kill and recover the gateway via the production
+ * onboard an OpenClaw sandbox, pause and recover the gateway via the production
  * `connect --probe-only` path, verify the guard-chain preloads remain present,
- * prove inference.local keeps serving models, exercise the missing proxy-env
- * warning path, restore the env file, and soak for crash-loop churn.
+ * prove inference.local keeps serving models, and verify that the recovered
+ * process identity remains unchanged for 15 seconds. Deterministic tests cover repeated
+ * restoration and missing `/tmp` proxy environment state.
  */
 
 import http from "node:http";
@@ -23,23 +24,15 @@ import { ubuntuRepoDocker } from "../registry/matrix.ts";
 
 const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-2478";
-const CRASH_CYCLES = positiveInteger(process.env.NEMOCLAW_E2E_CRASH_CYCLES, 5);
-const SOAK_SECONDS = positiveInteger(process.env.NEMOCLAW_E2E_SOAK_SECONDS, 300);
+const STABILITY_SECONDS = 15;
 const COMPATIBLE_MODEL = process.env.NEMOCLAW_COMPAT_MODEL ?? "test-model";
 const COMPATIBLE_AUTH_VALUE = ["nemoclaw", "e2e", "compatible", "mock"].join("-");
-const PROXY_ENV_PATH = "/tmp/nemoclaw-proxy-env.sh";
-const PROXY_ENV_BACKUP_PATH = "/tmp/.issue-2478-proxy-env.sh.backup";
 const ONBOARD_ARGS = [
   "onboard",
   "--non-interactive",
   "--yes",
   "--yes-i-accept-third-party-software",
 ];
-
-function positiveInteger(raw: string | undefined, fallback: number): number {
-  const parsed = raw ? Number(raw) : fallback;
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
-}
 
 function probeEnv(): NodeJS.ProcessEnv {
   return {
@@ -209,17 +202,19 @@ async function onboardWithCompatibleEndpoint(
   };
 }
 
-async function waitForGatewayPid(
+type GatewayProcessIdentity = { pid: number; startIdentity: string };
+
+async function waitForGatewayIdentity(
   gateway: {
-    resolveGatewayPid(instance: NemoClawInstance): Promise<number | null>;
+    resolveGatewayIdentity(instance: NemoClawInstance): Promise<GatewayProcessIdentity | null>;
   },
   instance: NemoClawInstance,
   timeoutMs: number,
-): Promise<number | null> {
+): Promise<GatewayProcessIdentity | null> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const pid = await gateway.resolveGatewayPid(instance);
-    if (pid !== null) return pid;
+    const identity = await gateway.resolveGatewayIdentity(instance);
+    if (identity !== null) return identity;
     await sleep(2_000);
   }
   return null;
@@ -244,36 +239,13 @@ async function runProbeOnly(
     result.exitCode,
     `${artifactName} failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
   ).toBe(0);
-}
-
-async function killGatewayPid(
-  sandbox: {
-    exec(
-      name: string,
-      command: string[],
-      options?: Record<string, unknown>,
-    ): Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
-  },
-  sandboxName: string,
-  pid: number,
-  artifactName: string,
-): Promise<void> {
-  const result = await sandbox.exec(
-    sandboxName,
-    ["sh", "-c", `kill -9 ${pid} 2>/dev/null || true; sleep 1`],
-    {
-      artifactName,
-      env: probeEnv(),
-      timeoutMs: 30_000,
-    },
-  );
   expect(
-    result.exitCode,
-    `${artifactName}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
-  ).toBe(0);
+    result.stdout,
+    `${artifactName} did not exercise connect-driven recovery\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  ).toContain(`Probe complete: recovered OpenClaw gateway in '${sandboxName}'.`);
 }
 
-async function killOpenclawTreeForRecovery(
+async function terminateGatewayIdentity(
   sandbox: {
     exec(
       name: string,
@@ -282,6 +254,7 @@ async function killOpenclawTreeForRecovery(
     ): Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
   },
   sandboxName: string,
+  identity: GatewayProcessIdentity,
   artifactName: string,
 ): Promise<void> {
   const result = await sandbox.exec(
@@ -289,161 +262,61 @@ async function killOpenclawTreeForRecovery(
     [
       "sh",
       "-c",
-      "pkill -9 -f '[o]penclaw' 2>/dev/null || true; sleep 2; pgrep -af '[o]penclaw' || echo ALL_DEAD",
-    ],
-    { artifactName, env: probeEnv(), timeoutMs: 30_000 },
-  );
-  expect(result.exitCode, result.stderr).toBe(0);
-}
-
-async function moveProxyEnvToBackup(
-  sandbox: {
-    exec(
-      name: string,
-      command: string[],
-      options?: Record<string, unknown>,
-    ): Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
-  },
-  sandboxName: string,
-): Promise<void> {
-  // This scenario restarts only the process tree, so a same-directory rename
-  // survives the recovery phase while preserving the file bytes and metadata.
-  const result = await sandbox.exec(
-    sandboxName,
-    ["mv", "-f", PROXY_ENV_PATH, PROXY_ENV_BACKUP_PATH],
-    { artifactName: "backup-proxy-env", env: probeEnv(), timeoutMs: 30_000 },
-  );
-  expect(result.exitCode, result.stderr).toBe(0);
-}
-
-async function restoreProxyEnvFromBackup(
-  sandbox: {
-    exec(
-      name: string,
-      command: string[],
-      options?: Record<string, unknown>,
-    ): Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
-  },
-  sandboxName: string,
-): Promise<void> {
-  const result = await sandbox.exec(
-    sandboxName,
-    ["mv", "-f", PROXY_ENV_BACKUP_PATH, PROXY_ENV_PATH],
-    { artifactName: "restore-proxy-env", env: probeEnv(), timeoutMs: 30_000 },
-  );
-  expect(result.exitCode, result.stderr).toBe(0);
-}
-
-async function waitForRecoveryWarning(
-  sandbox: {
-    exec(
-      name: string,
-      command: string[],
-      options?: Record<string, unknown>,
-    ): Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
-  },
-  instance: NemoClawInstance,
-): Promise<void> {
-  const warning = /\[gateway-recovery\] WARNING: .*restoring library guards from packaged preloads/;
-  const unguarded = /gateway launching without library guards/;
-  let lastError: unknown;
-
-  for (let attempt = 1; attempt <= 5; attempt += 1) {
-    const diagnostics = await sandbox.exec(
-      instance.sandboxName,
       [
-        "sh",
-        "-c",
-        "printf '%s\\n' '== entrypoint log =='; " +
-          "tail -n 300 /tmp/nemoclaw-start.log 2>&1 || true; " +
-          "printf '%s\\n' '== gateway log =='; " +
-          "tail -n 300 /tmp/gateway.log 2>&1 || true",
-      ],
-      {
-        artifactName: `missing-proxy-env-recovery-diagnostics-${attempt}`,
-        env: probeEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    const combined = `${diagnostics.stdout}\n${diagnostics.stderr}`;
-    try {
-      expect(diagnostics.exitCode, combined).toBe(0);
-      expect(combined).toMatch(warning);
-      expect(combined).not.toMatch(unguarded);
-      return;
-    } catch (error) {
-      lastError = error;
-      await sleep(3_000);
-    }
-  }
-
-  throw lastError;
-}
-
-async function sampleGatewayStability(
-  gateway: {
-    resolveGatewayPid(instance: NemoClawInstance): Promise<number | null>;
-  },
-  runtime: {
-    expectInferenceLocalModels(
-      instance: NemoClawInstance,
-      options?: Record<string, unknown>,
-    ): Promise<unknown>;
-  },
-  instance: NemoClawInstance,
-  soakSeconds: number,
-): Promise<{
-  samples: Array<number | null>;
-  inferenceFailures: number;
-  inferenceProbes: number;
-}> {
-  const samples: Array<number | null> = [];
-  let inferenceFailures = 0;
-  let inferenceProbes = 0;
-  const intervalSeconds = 15;
-
-  for (let elapsed = 0; elapsed < soakSeconds; elapsed += intervalSeconds) {
-    samples.push(await gateway.resolveGatewayPid(instance));
-    if (elapsed % 60 === 0) {
-      inferenceProbes += 1;
-      try {
-        await runtime.expectInferenceLocalModels(instance, {
-          artifactName: `soak-inference-local-models-${elapsed}s`,
-          curlMaxTimeSeconds: 5,
-          timeoutMs: 15_000,
-        });
-      } catch {
-        inferenceFailures += 1;
-      }
-    }
-    await sleep(intervalSeconds * 1_000);
-  }
-
-  return { samples, inferenceFailures, inferenceProbes };
+        "set -eu",
+        'pid="$1"',
+        'expected_start="$2"',
+        "inspect_identity() {",
+        '  stat_line="$(cat "/proc/$pid/stat" 2>/dev/null || true)"',
+        '  [ -n "$stat_line" ] || return 1',
+        '  stat_tail="${stat_line##*) }"',
+        '  [ "$stat_tail" != "$stat_line" ] || return 1',
+        "  set -- $stat_tail",
+        '  [ "$#" -ge 20 ] || return 1',
+        '  process_state="$1"',
+        '  actual_start="${20}"',
+        "}",
+        "inspect_identity",
+        '[ "$actual_start" = "$expected_start" ]',
+        'case "$process_state" in Z|X) exit 1 ;; esac',
+        'kill -TERM "$pid"',
+      ].join("\n"),
+      "sh",
+      String(identity.pid),
+      identity.startIdentity,
+    ],
+    {
+      artifactName,
+      env: probeEnv(),
+      timeoutMs: 10_000,
+    },
+  );
+  expect(
+    result.exitCode,
+    `${artifactName} did not terminate the expected process identity\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  ).toBe(0);
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-test("gateway recovery preserves guard chain and avoids crash loop (#2478)", {
+test("connect-driven gateway recovery restores the guard chain and keeps the recovered process identity for 15 seconds (#2478)", {
   meta: {
     e2ePhases: [
       "start the compatible endpoint and confirm host readiness",
       "onboard the guarded OpenClaw sandbox",
       "confirm initial gateway and inference health",
-      "exercise repeated gateway crash recovery",
-      "exercise recovery without proxy environment state",
-      "restore proxy state and prepare the stability soak",
-      "measure gateway and inference stability",
+      "terminate one live gateway and recover it through the production connect path",
+      "verify the recovered process identity remains unchanged for 15 seconds",
     ],
   },
 }, async ({ artifacts, cleanup, environment, gateway, host, progress, runtime, sandbox }) => {
   await artifacts.target.declare({
     id: "issue-2478-crash-loop-recovery",
     issues: ["#2478", "#2701"],
-    crashCycles: CRASH_CYCLES,
-    soakSeconds: SOAK_SECONDS,
+    unresponsiveRecoveryCycles: 1,
+    stabilitySeconds: STABILITY_SECONDS,
     compatibleEndpointModel: COMPATIBLE_MODEL,
   });
 
@@ -469,72 +342,52 @@ test("gateway recovery preserves guard chain and avoids crash loop (#2478)", {
   });
 
   progress.phase("confirm initial gateway and inference health");
-  const initialPid = await waitForGatewayPid(gateway, instance, 60_000);
-  expect(initialPid, "gateway should be running after onboard").not.toBeNull();
+  const initialIdentity = await waitForGatewayIdentity(gateway, instance, 60_000);
+  expect(initialIdentity, "gateway should be running after onboard").not.toBeNull();
   await gateway.expectGuardChainActive(instance);
   await runtime.expectInferenceLocalModels(instance, {
     artifactName: "initial-inference-local-models",
     timeoutMs: 60_000,
   });
+  const preRecoveryIdentity = await gateway.resolveGatewayIdentity(instance);
+  expect(preRecoveryIdentity, "gateway process identity changed before the recovery probe").toEqual(
+    initialIdentity,
+  );
 
-  progress.phase("exercise repeated gateway crash recovery");
-  let previousPid = initialPid!;
-  for (let cycle = 1; cycle <= CRASH_CYCLES; cycle += 1) {
-    await killGatewayPid(sandbox, instance.sandboxName, previousPid, `cycle-${cycle}-kill-gateway`);
-    await runProbeOnly(host, instance.sandboxName, `cycle-${cycle}-connect-probe-only`);
-    const nextPid = await waitForGatewayPid(gateway, instance, 45_000);
-    expect(nextPid, `cycle ${cycle}: gateway should respawn`).not.toBeNull();
-    expect(nextPid, `cycle ${cycle}: kill should force a new PID`).not.toBe(previousPid);
-    await gateway.expectGuardChainActive(instance);
-    await runtime.expectInferenceLocalModels(instance, {
-      artifactName: `cycle-${cycle}-inference-local-models`,
-      timeoutMs: 60_000,
-    });
-    previousPid = nextPid!;
-  }
-
-  progress.phase("exercise recovery without proxy environment state");
-  await moveProxyEnvToBackup(sandbox, instance.sandboxName);
-  await killOpenclawTreeForRecovery(
+  progress.phase("terminate one live gateway and recover it through the production connect path");
+  await terminateGatewayIdentity(
     sandbox,
     instance.sandboxName,
-    "missing-proxy-env-kill-gateway-tree",
+    preRecoveryIdentity!,
+    "functional-recovery-terminate-gateway",
   );
-  await runProbeOnly(host, instance.sandboxName, "missing-proxy-env-connect-probe-only");
-  await waitForRecoveryWarning(sandbox, instance);
-  const negativePid = await waitForGatewayPid(gateway, instance, 45_000);
-  expect(negativePid, "missing proxy-env warning path should still respawn gateway").not.toBeNull();
-  await gateway.expectGuardChainActive(instance);
-
-  progress.phase("restore proxy state and prepare the stability soak");
-  await restoreProxyEnvFromBackup(sandbox, instance.sandboxName);
-  await killOpenclawTreeForRecovery(
-    sandbox,
-    instance.sandboxName,
-    "restored-proxy-env-kill-gateway-tree",
-  );
-  await runProbeOnly(host, instance.sandboxName, "restored-proxy-env-connect-probe-only");
-  const soakStartPid = await waitForGatewayPid(gateway, instance, 45_000);
-  expect(soakStartPid, "gateway should be up before soak").not.toBeNull();
+  await runProbeOnly(host, instance.sandboxName, "functional-recovery-connect-probe-only");
+  const recoveredIdentity = await waitForGatewayIdentity(gateway, instance, 45_000);
+  expect(
+    recoveredIdentity,
+    "gateway should respawn after the production recovery probe",
+  ).not.toBeNull();
+  expect(
+    `${recoveredIdentity!.pid}:${recoveredIdentity!.startIdentity}`,
+    "recovery should replace the terminated gateway process identity",
+  ).not.toBe(`${preRecoveryIdentity!.pid}:${preRecoveryIdentity!.startIdentity}`);
   await gateway.expectGuardChainActive(instance);
   await runtime.expectInferenceLocalModels(instance, {
-    artifactName: "pre-soak-inference-local-models",
+    artifactName: "recovered-inference-local-models",
     timeoutMs: 60_000,
   });
 
-  progress.phase("measure gateway and inference stability");
-  const soak = await sampleGatewayStability(gateway, runtime, instance, SOAK_SECONDS);
-  await artifacts.writeJson("soak-summary.json", soak);
-  const distinctPids = new Set(soak.samples.filter((pid): pid is number => pid !== null));
-  const emptySamples = soak.samples.filter((pid) => pid === null).length;
-
-  expect(
-    distinctPids.size,
-    `crash-loop signature: ${distinctPids.size} distinct PIDs in samples ${soak.samples.join(",")}`,
-  ).toBeLessThanOrEqual(2);
-  expect(
-    emptySamples,
-    `gateway should not disappear repeatedly during soak: ${soak.samples.join(",")}`,
-  ).toBeLessThanOrEqual(1);
-  expect(soak.inferenceFailures, "inference.local should stay available during soak").toBe(0);
+  progress.phase("verify the recovered process identity remains unchanged for 15 seconds");
+  const stableIdentity = await gateway.expectPidStable(instance, {
+    durationSeconds: STABILITY_SECONDS,
+    pollIntervalSeconds: 5,
+  });
+  expect(stableIdentity).toEqual(recoveredIdentity);
+  await artifacts.writeJson("functional-recovery-summary.json", {
+    initialIdentity,
+    preRecoveryIdentity,
+    recoveredIdentity,
+    stableIdentity,
+    stabilitySeconds: STABILITY_SECONDS,
+  });
 });

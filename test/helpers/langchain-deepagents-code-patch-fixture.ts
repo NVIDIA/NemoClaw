@@ -23,6 +23,26 @@ export function writeManagedAutoApproval(root: string, content: string, mode = 0
   return capabilityPath;
 }
 
+export function managedReasoningEffortPath(root: string): string {
+  return path.join(root, "managed-reasoning-effort");
+}
+
+export function writeManagedReasoningEffort(root: string, content: string, mode = 0o444): string {
+  const capabilityPath = managedReasoningEffortPath(root);
+  fs.writeFileSync(capabilityPath, content, { mode });
+  fs.chmodSync(capabilityPath, mode);
+  return capabilityPath;
+}
+
+export function linkManagedReasoningEffort(root: string, content: string, mode = 0o444): string {
+  const targetPath = path.join(root, "managed-reasoning-effort-target");
+  fs.writeFileSync(targetPath, content, { mode });
+  fs.chmodSync(targetPath, mode);
+  const capabilityPath = managedReasoningEffortPath(root);
+  fs.symlinkSync(targetPath, capabilityPath);
+  return capabilityPath;
+}
+
 export function writeFixtureFile(root: string, relativePath: string, content: string): void {
   const target = path.join(root, relativePath);
   fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -34,6 +54,111 @@ export function createPackageFixture(version = "0.1.34"): string {
   packageFixtureDirs.add(tempDir);
   const packageDir = path.join(tempDir, "deepagents_code");
   writeFixtureFile(packageDir, "__init__.py", '"""Test package."""');
+  writeFixtureFile(
+    tempDir,
+    "httpx/__init__.py",
+    `
+class HTTPError(Exception):
+    pass
+
+
+class RequestError(HTTPError):
+    pass
+
+
+class TransportError(RequestError):
+    pass
+
+
+class TimeoutException(TransportError):
+    pass
+
+
+class ConnectTimeout(TimeoutException):
+    pass
+
+
+class ReadTimeout(TimeoutException):
+    pass
+
+
+class WriteTimeout(TimeoutException):
+    pass
+
+
+class PoolTimeout(TimeoutException):
+    pass
+
+
+class NetworkError(TransportError):
+    pass
+
+
+class ConnectError(NetworkError):
+    pass
+
+
+class ReadError(NetworkError):
+    pass
+
+
+class WriteError(NetworkError):
+    pass
+
+
+class CloseError(NetworkError):
+    pass
+
+
+class ProxyError(TransportError):
+    pass
+`,
+  );
+  writeFixtureFile(tempDir, "langgraph_sdk/__init__.py", '"""Test package."""');
+  writeFixtureFile(
+    tempDir,
+    "langgraph_sdk/errors.py",
+    `
+class LangGraphError(Exception):
+    pass
+
+
+class APIError(LangGraphError):
+    pass
+
+
+class APIStatusError(APIError):
+    pass
+
+
+class APIConnectionError(APIError):
+    pass
+
+
+class APITimeoutError(APIConnectionError):
+    pass
+
+
+class AuthenticationError(APIStatusError):
+    pass
+
+
+class PermissionDeniedError(APIStatusError):
+    pass
+
+
+class NotFoundError(APIStatusError):
+    pass
+
+
+class RateLimitError(APIStatusError):
+    pass
+
+
+class InternalServerError(APIStatusError):
+    pass
+`,
+  );
   writeFixtureFile(
     packageDir,
     "__main__.py",
@@ -337,6 +462,22 @@ from __future__ import annotations
 
 
 class ModelConfigError(RuntimeError):
+    pass
+
+
+class NoCredentialsConfiguredError(ModelConfigError):
+    pass
+
+
+class UnknownProviderError(ModelConfigError):
+    pass
+
+
+class MissingCredentialsError(ModelConfigError):
+    pass
+
+
+class MissingProviderPackageError(ModelConfigError):
     pass
 
 
@@ -809,6 +950,10 @@ export function patchFixture(tempDir: string): void {
     .replace(
       '"/usr/local/share/nemoclaw/dcode-auto-approval"',
       JSON.stringify(managedAutoApprovalPath(tempDir)),
+    )
+    .replace(
+      '"/usr/local/share/nemoclaw/dcode-reasoning-effort"',
+      JSON.stringify(managedReasoningEffortPath(tempDir)),
     )
     .replace("_MANAGED_FILE_OWNER_UID = 0", `_MANAGED_FILE_OWNER_UID = ${process.getuid?.() ?? 0}`);
   fs.writeFileSync(helperPath, helper, "utf8");

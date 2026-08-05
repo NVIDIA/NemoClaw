@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import type { AgentDefinition } from "../agent/defs";
+import { getInteractiveAgentCommand } from "../agent/gateway-restart-scripts";
 import { DASHBOARD_PORT } from "../core/ports";
 import { buildChain, buildControlUiUrls, buildFallbackControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
@@ -439,6 +440,26 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     }
   }
 
+  /**
+   * Print the terminal handoff for a ready sandbox. `launch` runs the same
+   * preflight as `connect` and then starts the agent (#6006), so it leads. The
+   * `connect` path stays documented for anyone who wants a sandbox shell, and
+   * the command it tells the user to run comes from the agent manifest rather
+   * than a hardcoded `openclaw tui`.
+   */
+  function printTerminalHandoff(
+    indent: string,
+    sandboxName: string,
+    agent: AgentDefinition | null,
+  ): void {
+    console.log(`${indent}Terminal:`);
+    console.log(`${indent}  ${deps.cliName()} launch ${sandboxName}`);
+    console.log("");
+    console.log(`${indent}  Or open a sandbox shell first:`);
+    console.log(`${indent}    ${deps.cliName()} ${sandboxName} connect`);
+    console.log(`${indent}    then run: ${getInteractiveAgentCommand(agent, agent?.name)}`);
+  }
+
   function printDashboard(
     sandboxName: string,
     model: string,
@@ -502,8 +523,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         },
       });
       console.log("");
-      console.log("  Terminal:");
-      console.log(`    ${deps.cliName()} ${sandboxName} connect`);
+      printTerminalHandoff("  ", sandboxName, agent);
     } else if (token) {
       console.log("  Start chatting");
       console.log("");
@@ -511,9 +531,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       console.log(`      ${dashboardUrl}`);
       printWslFallback(fallbackDashboardUrls, "    ");
       console.log("");
-      console.log("    Terminal:");
-      console.log(`      ${deps.cliName()} ${sandboxName} connect`);
-      console.log("      then run: openclaw tui");
+      printTerminalHandoff("    ", sandboxName, agent);
       console.log("");
       console.log("  Authenticated dashboard URL, if needed:");
       console.log(`    ${deps.cliName()} ${sandboxName} dashboard-url --quiet`);
@@ -525,9 +543,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       console.log(`      ${dashboardUrl}`);
       printWslFallback(fallbackDashboardUrls, "    ");
       console.log("");
-      console.log("    Terminal:");
-      console.log(`      ${deps.cliName()} ${sandboxName} connect`);
-      console.log("      then run: openclaw tui");
+      printTerminalHandoff("    ", sandboxName, agent);
     }
     const sshForwardHint = buildSshForwardHintLines({
       port: chain.port,

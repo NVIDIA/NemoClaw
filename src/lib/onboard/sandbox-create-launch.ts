@@ -9,6 +9,12 @@ import { appendExtraPlaceholderKeysEnvArg } from "./extra-placeholder-keys";
 import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import { appendHermesDashboardEnvArgs } from "./hermes-dashboard";
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
+import {
+  createManagedBootstrapIdentity,
+  renderManagedBootstrapHeldCommand,
+} from "./managed-bootstrap/adapter";
+import { MANAGED_STARTUP_EXECUTABLE } from "./managed-startup/hold";
+import type { ManagedStartupRootApplyRequest } from "./managed-startup/root-apply";
 import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
 import {
   prebuildSandboxImageIfEligible,
@@ -25,6 +31,8 @@ type OpenshellArgv = (args: string[]) => string[];
 const OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS = [
   "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS",
   "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS",
+  "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS",
+  "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
   "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS",
   "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS",
 ] as const;
@@ -55,6 +63,14 @@ export interface SandboxCreateLaunchInput {
   openshellShellCommand: OpenshellShellCommand;
   openshellArgv?: OpenshellArgv;
   buildEnv?(): Record<string, string>;
+  /**
+   * Intentional partial migration: remains unset until production selects a
+   * complete runtime bundle with supported bootstrap after epic #7744's durable
+   * lifecycle, recovery, and rollback gates plus exact-head/base protected
+   * all-agent amd64/arm64, GPU/local-inference, and regression matrix pass.
+   * https://github.com/NVIDIA/NemoClaw/issues/7744
+   */
+  managedStartupRootApplyRequest?: ManagedStartupRootApplyRequest | null;
 }
 
 export interface SandboxCreateLaunch {
@@ -64,6 +80,9 @@ export interface SandboxCreateLaunch {
   envArgs: string[];
   sandboxEnv: Record<string, string>;
   sandboxStartupCommand: string[];
+  intendedSandboxStartupCommand: string[];
+  managedBootstrapIdentity: string | null;
+  managedStartupRootApplyRequest: ManagedStartupRootApplyRequest | null;
 }
 
 export interface SandboxCreateLaunchWithPrebuildInput extends SandboxCreateLaunchInput {
@@ -149,11 +168,18 @@ export function buildSandboxRuntimeEnvArgs(input: SandboxRuntimeEnvArgsInput): {
     envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
   }
 
+  // Every sandbox needs to know its own name at runtime, not only the LangChain
+  // Deep Agents Code image. OpenShell exports OPENSHELL_SANDBOX as the boolean
+  // "1" to the processes it spawns inside the sandbox, so this injection is the
+  // only in-container source of the name. nemoclaw-start.sh bakes it into the
+  // connect-shell env so the in-sandbox hints can print a copyable host-side
+  // `nemoclaw <name> …` command instead of a `<name>` placeholder. (#7795)
+  const sandboxName = input.sandboxName;
+  if (sandboxName) {
+    envArgs.push(formatEnvAssignment("NEMOCLAW_SANDBOX_NAME", sandboxName));
+  }
+
   if (agent?.name === "langchain-deepagents-code") {
-    const sandboxName = input.sandboxName;
-    if (sandboxName) {
-      envArgs.push(formatEnvAssignment("NEMOCLAW_SANDBOX_NAME", sandboxName));
-    }
     envArgs.push(
       formatEnvAssignment(
         "NEMOCLAW_OBSERVABILITY",
@@ -194,7 +220,21 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
   // lets the real exit code flow through to run().
-  const sandboxStartupCommand = ["env", ...envArgs, "nemoclaw-start"];
+  const intendedSandboxStartupCommand = ["env", ...envArgs, MANAGED_STARTUP_EXECUTABLE];
+  const managedStartupRootApplyRequest = input.managedStartupRootApplyRequest ?? null;
+  const managedBootstrapIdentity = managedStartupRootApplyRequest
+    ? createManagedBootstrapIdentity()
+    : null;
+  const sandboxStartupCommand =
+    managedStartupRootApplyRequest && managedBootstrapIdentity
+      ? [
+          ...renderManagedBootstrapHeldCommand(
+            managedStartupRootApplyRequest,
+            managedBootstrapIdentity,
+            intendedSandboxStartupCommand,
+          ),
+        ]
+      : intendedSandboxStartupCommand;
   const openshellArgs = ["sandbox", "create", ...input.createArgs, "--", ...sandboxStartupCommand];
   const createCommand = renderSandboxCreateCommand(
     input.createArgs,
@@ -212,6 +252,9 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     envArgs,
     sandboxEnv,
     sandboxStartupCommand,
+    intendedSandboxStartupCommand,
+    managedBootstrapIdentity,
+    managedStartupRootApplyRequest,
   };
 }
 

@@ -43,7 +43,7 @@ function githubResponse(value?: unknown, status = 200): Response {
 function exactPrGateCheck(overrides: Record<string, unknown> = {}) {
   return {
     id: 17,
-    name: "E2E / PR Gate Coordination",
+    name: "E2E / PR Gate",
     head_sha: HEAD_SHA,
     external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
     status: "in_progress",
@@ -155,6 +155,74 @@ describe("PR E2E controller retry history", () => {
     });
   });
 
+  it("preserves a successful gate and skips E2E dispatch when prerequisite CI reruns (#8293)", async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-control-"));
+    const outputPath = path.join(workDir, "github-output");
+    fs.writeFileSync(outputPath, "", { mode: 0o600 });
+    vi.stubEnv("GITHUB_TOKEN", "token");
+    vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
+    vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    const requests: RecordedGitHubRequest[] = [];
+    let completedCheck = exactPrGateCheck({
+      status: "completed",
+      conclusion: "success",
+      details_url: "https://github.com/NVIDIA/NemoClaw/runs/17",
+      output: {
+        title: "No E2E checks selected",
+        summary: "No changed files matched an E2E risk rule.",
+      },
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      createGitHubFetchRouter(
+        [
+          githubFetchRoute(
+            ({ url, method }) =>
+              url.includes(`/commits/${HEAD_SHA}/check-runs?`) && method === "GET",
+            () => githubResponse({ total_count: 1, check_runs: [completedCheck] }),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/pulls/42") && method === "GET",
+            () => githubResponse(pullRequest()),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
+            (request) => {
+              completedCheck = {
+                ...completedCheck,
+                ...(request.body as Record<string, unknown> | undefined),
+              };
+              return githubResponse(completedCheck);
+            },
+          ),
+        ],
+        requests,
+      ),
+    );
+
+    try {
+      await expect(startPrGate(startCommand(workDir))).resolves.toBeUndefined();
+      const updates = requests.filter(
+        (request) => request.url.endsWith("/check-runs/17") && request.method === "PATCH",
+      );
+      expect(updates).toHaveLength(1);
+      expect(updates[0]?.body).toMatchObject({
+        status: "completed",
+        conclusion: "success",
+        details_url: "https://github.com/NVIDIA/NemoClaw/runs/17",
+        output: {
+          title: "No E2E checks selected",
+          summary: "No changed files matched an E2E risk rule.",
+        },
+      });
+      expect(requests.some((request) => request.method === "POST")).toBe(false);
+      expect(fs.readFileSync(outputPath, "utf8")).toContain("check_id=17");
+      expect(fs.readFileSync(outputPath, "utf8")).toContain("dispatched=false");
+      expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("creates a fresh check and dispatches internal E2E after a marker-backed infrastructure failure (#7052)", async () => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-control-"));
     const outputPath = path.join(workDir, "github-output");
@@ -258,7 +326,7 @@ describe("PR E2E controller retry history", () => {
         (request) => request.url.endsWith("/check-runs") && request.method === "POST",
       );
       expect(creation?.body).toMatchObject({
-        name: "E2E / PR Gate Coordination",
+        name: "E2E / PR Gate",
         head_sha: HEAD_SHA,
         external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
         status: "in_progress",

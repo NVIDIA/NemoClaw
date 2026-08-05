@@ -449,7 +449,7 @@ describe("registerCreatedSandbox", () => {
   it("passes the built entry to the supplied registry writer", () => {
     const registerSandbox = vi.fn();
 
-    const entry = registerCreatedSandbox({
+    const input = {
       sandboxName: "demo",
       inferenceSelection: {
         model: "llama",
@@ -465,6 +465,12 @@ describe("registerCreatedSandbox", () => {
       agent: null,
       agentVersionKnown: true,
       imageTag: null,
+      workload: {
+        schemaVersion: 1,
+        kind: "legacy-dockerfile",
+        reference: null,
+        shared: false,
+      },
       openclawImagePluginInstalls: [],
       appliedPolicies: [],
       plannedMessagingState: undefined,
@@ -474,10 +480,52 @@ describe("registerCreatedSandbox", () => {
       gatewayName: "nemoclaw",
       gatewayPort: 8080,
       registerSandbox,
-    });
+    } satisfies Parameters<typeof registerCreatedSandbox>[0];
+    const entry = registerCreatedSandbox(input);
 
     expect(registerSandbox).toHaveBeenCalledWith(entry);
     expect(entry.name).toBe("demo");
     expect(entry.openclawImagePluginInstalls).toEqual([]);
+    expect(entry.workload).toEqual(input.workload);
+    expect(() =>
+      registerCreatedSandbox({
+        ...input,
+        workload: { ...input.workload, reference: "" },
+      }),
+    ).toThrow(/workload ownership receipt failed closed validation/u);
+    expect(registerSandbox).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails before registry mutation for an unknown durable provider identity", () => {
+    const registerSandbox = vi.fn();
+
+    expect(() =>
+      registerCreatedSandbox({
+        sandboxName: "demo",
+        inferenceSelection: {
+          model: "llama",
+          provider: "openai-compatible",
+          endpointUrl: null,
+          credentialEnv: null,
+          preferredInferenceApi: null,
+          compatibleEndpointReasoning: null,
+          compatibleEndpointReasoningEffort: null,
+          nimContainer: null,
+        },
+        runtimeFields: { ...runtimeFields, openshellDriver: "unknown-runtime" },
+        agent: null,
+        agentVersionKnown: true,
+        imageTag: null,
+        appliedPolicies: [],
+        plannedMessagingState: undefined,
+        hermesToolGateways: [],
+        hermesDashboardState: { enabled: false, config: null },
+        dashboardPort: 18789,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        registerSandbox,
+      }),
+    ).toThrow(/not registered/u);
+    expect(registerSandbox).not.toHaveBeenCalled();
   });
 });

@@ -162,8 +162,10 @@ identity:
 ```
 
 Register a separate Entra application for the delegated runtime flow.
-Grant only the Microsoft Graph delegated `User.Read` permission needed by [`GET /me`](https://learn.microsoft.com/en-us/graph/api/user-get?view=graph-rest-1.0), and request [`offline_access`](https://learn.microsoft.com/en-us/entra/identity-platform/scopes-oidc#the-offline_access-scope) during the external authorization-code bootstrap so the v2 endpoint returns a refresh token.
-Microsoft documents `offline_access` as an explicit requirement for v2 refresh-token issuance and [documents replacement of the stored refresh token](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#refresh-the-access-token) when a refresh response carries a new one.
+Grant only the Microsoft Graph delegated `User.Read` permission needed by [`GET /me`](https://learn.microsoft.com/en-us/graph/api/user-get?view=graph-rest-1.0).
+During the external authorization-code bootstrap, request [`offline_access`](https://learn.microsoft.com/en-us/entra/identity-platform/scopes-oidc#the-offline_access-scope) so the v2 endpoint returns a refresh token.
+Microsoft documents `offline_access` as an explicit requirement for v2 refresh-token issuance.
+It also [documents replacement of the stored refresh token](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow#refresh-the-access-token) when a refresh response carries a new refresh token.
 Use a confidential web application and `ENTRA_CLIENT_SECRET` when the bootstrap client can keep a secret.
 Omit `client_secret_env` for a public client rather than placing a public-client secret on the host.
 NemoClaw does not package the authorization redirect, consent UI, PKCE exchange, or MSAL cache.

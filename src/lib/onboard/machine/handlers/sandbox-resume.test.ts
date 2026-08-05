@@ -1,13 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
-  applySandboxResumeDecision,
   decideSandboxResume,
+  hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
-  type SandboxResumeDeps,
   type SandboxResumeSignals,
 } from "./sandbox-resume";
 
@@ -18,6 +17,7 @@ function resumeSignals(overrides: Partial<SandboxResumeSignals> = {}): SandboxRe
     sandboxStepComplete: true,
     sandboxReuseState: "ready",
     inferenceRouteConfigChanged: false,
+    compatibleEndpointReasoningChanged: false,
     webSearchConfigChanged: false,
     sandboxGpuConfigChanged: false,
     recreateSandboxRequested: false,
@@ -37,6 +37,7 @@ describe("decideSandboxResume", () => {
 
   it.each([
     ["agent", { resumeAgentChanged: true }, false],
+    ["compatible endpoint reasoning", { compatibleEndpointReasoningChanged: true }, false],
     ["web search", { webSearchConfigChanged: true }, true],
     ["explicit recreate", { recreateSandboxRequested: true }, false],
     ["sandbox GPU", { sandboxGpuConfigChanged: true }, true],
@@ -143,63 +144,77 @@ describe("decideSandboxResume", () => {
     ).toEqual({ kind: "repair-and-recreate" });
   });
 
+  it("repairs a not-ready sandbox before recreating for reasoning capability drift (#7570)", () => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxReuseState: "not_ready",
+          compatibleEndpointReasoningChanged: true,
+        }),
+      ),
+    ).toEqual({ kind: "repair-and-recreate" });
+  });
+
+  it.each([
+    ["live DCode inference selection", { inferenceSelectionChanged: true }],
+    ["agent selection", { resumeAgentChanged: true }],
+    ["Hermes inference route", { inferenceRouteConfigChanged: true }],
+  ] as const)("repairs a not-ready sandbox before recreating for %s drift", (_label, drift) => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxReuseState: "not_ready",
+          ...drift,
+        }),
+      ),
+    ).toEqual({ kind: "repair-and-recreate" });
+  });
+
   it("creates without resume-specific cleanup when the step is incomplete", () => {
     expect(
       decideSandboxResume(
-        resumeSignals({ sandboxStepComplete: false, webSearchConfigChanged: true }),
+        resumeSignals({
+          sandboxStepComplete: false,
+          compatibleEndpointReasoningChanged: true,
+          webSearchConfigChanged: true,
+        }),
       ),
     ).toEqual({ kind: "create" });
   });
 });
 
-function resumeDeps(overrides: Partial<SandboxResumeDeps> = {}): SandboxResumeDeps {
-  return {
-    note: vi.fn(),
-    removeSandboxFromRegistry: vi.fn(() => null),
-    repairRecordedSandbox: vi.fn(),
-    recordRepairEvent: vi.fn(async () => undefined),
-    ...overrides,
-  };
-}
-
-describe("applySandboxResumeDecision (#7194)", () => {
-  it("returns the removal receipt so a failed replacement create can restore it", async () => {
-    const receipt = {
-      entry: { name: "saved" },
-      wasDefault: false,
-      fallbackDefault: null,
-      postRemovalDefaultSelectionRevision: 1,
-    };
-    const deps = resumeDeps({ removeSandboxFromRegistry: vi.fn(() => receipt) });
-
-    const result = await applySandboxResumeDecision(
-      { kind: "recreate", note: "  recreating", removeRegistryEntry: true },
-      "saved",
-      deps,
-    );
-
-    expect(deps.removeSandboxFromRegistry).toHaveBeenCalledWith("saved");
-    expect(result).toBe(receipt);
+describe("hasCompatibleEndpointReasoningDrift", () => {
+  it("compares the validated capability with the image-baked registry value (#7570)", () => {
+    expect(
+      hasCompatibleEndpointReasoningDrift({
+        provider: "compatible-endpoint",
+        compatibleEndpointReasoning: "true",
+        registryEntry: { name: "saved", compatibleEndpointReasoning: "false" },
+      }),
+    ).toBe(true);
+    expect(
+      hasCompatibleEndpointReasoningDrift({
+        provider: "compatible-endpoint",
+        compatibleEndpointReasoning: "true",
+        registryEntry: { name: "saved", compatibleEndpointReasoning: "true" },
+      }),
+    ).toBe(false);
+    expect(
+      hasCompatibleEndpointReasoningDrift({
+        provider: "compatible-endpoint",
+        compatibleEndpointReasoning: "true",
+        registryEntry: { name: "saved" },
+      }),
+    ).toBe(true);
   });
 
-  it("does not remove the registry row or return a receipt when the decision keeps it", async () => {
-    const deps = resumeDeps();
-
-    const result = await applySandboxResumeDecision(
-      { kind: "recreate", note: "  recreating", removeRegistryEntry: false },
-      "saved",
-      deps,
-    );
-
-    expect(deps.removeSandboxFromRegistry).not.toHaveBeenCalled();
-    expect(result).toBeNull();
-  });
-
-  it("returns null for create and reuse decisions", async () => {
-    const deps = resumeDeps();
-
-    expect(await applySandboxResumeDecision({ kind: "create" }, "saved", deps)).toBeNull();
-    expect(await applySandboxResumeDecision({ kind: "reuse" }, "saved", deps)).toBeNull();
-    expect(deps.removeSandboxFromRegistry).not.toHaveBeenCalled();
+  it("ignores reasoning metadata for providers that do not support the capability", () => {
+    expect(
+      hasCompatibleEndpointReasoningDrift({
+        provider: "provider",
+        compatibleEndpointReasoning: "true",
+        registryEntry: { name: "saved", compatibleEndpointReasoning: "false" },
+      }),
+    ).toBe(false);
   });
 });
