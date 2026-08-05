@@ -71,19 +71,12 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     );
   });
 
-  it("includes the built-in security rubric when the trusted skill is unavailable", () => {
+  it("does not fall back when the trusted security rubric is unavailable", () => {
     vi.spyOn(fs, "readFileSync").mockImplementationOnce(() => {
-      throw new Error("missing skill fixture");
+      throw new Error("missing rubric fixture");
     });
-    vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const prompt = buildSystemPrompt();
-
-    expect(prompt).toContain(
-      "Trusted security review skill was unavailable; use this built-in 9-category security rubric instead",
-    );
-    expect(prompt).toContain("1. Secrets and Credentials");
-    expect(prompt).toContain("9. Holistic Security Posture");
+    expect(() => buildSystemPrompt()).toThrow("Security rubric unavailable");
   });
 
   it("materializes the declarative PR review stage contract (#6446)", () => {
