@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 const INSTALLER_PAYLOAD = path.join(import.meta.dirname, "..", "scripts", "install.sh");
 
-function runPortableOverride(profile = "portable"): ReturnType<typeof spawnSync> {
+function runPortableOverride(profile = "portable", dockerHost = ""): ReturnType<typeof spawnSync> {
   const snippet = `
     set -e
     source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1 || true
@@ -28,7 +28,7 @@ function runPortableOverride(profile = "portable"): ReturnType<typeof spawnSync>
   `;
   return spawnSync("bash", ["-c", snippet], {
     encoding: "utf-8",
-    env: { ...process.env },
+    env: { ...process.env, DOCKER_HOST: dockerHost },
   });
 }
 
@@ -41,9 +41,9 @@ describe("installer portable profile runtime override", () => {
   });
 
   it("does not touch the runtime without the explicit portable profile", () => {
-    const result = runPortableOverride("");
+    const result = runPortableOverride("", "unix:///preexisting.sock");
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe("DOCKER_HOST=\n");
+    expect(result.stdout).toBe("DOCKER_HOST=unix:///preexisting.sock\n");
     expect(result.stderr).toBe("");
   });
 });

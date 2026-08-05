@@ -5009,7 +5009,7 @@ main() {
   [[ -z "$expect_experimental_profile" ]] \
     || error "Missing value for --experimental-profile (expected: portable)."
   case "$EXPERIMENTAL_PROFILE" in
-    "") ;;
+    "") unset NEMOCLAW_EXPERIMENTAL_PROFILE ;;
     portable) export NEMOCLAW_EXPERIMENTAL_PROFILE="$EXPERIMENTAL_PROFILE" ;;
     *) error "Unknown experimental profile: $EXPERIMENTAL_PROFILE (expected: portable)." ;;
   esac
