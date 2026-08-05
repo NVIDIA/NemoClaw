@@ -196,7 +196,7 @@ When you start managed vLLM outside the installer express flow, NemoClaw uses th
 | Linux with an NVIDIA GPU | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` |
 
 For the managed single-node DGX Spark `nvidia/Qwen3.6-35B-A3B-NVFP4` profile, NemoClaw enables async scheduling and does not enable multi-token prediction (MTP) speculative decoding.
-The profile retains `--gpu-memory-utilization 0.4`, a `262144`-token context window, four concurrent sequences, an `8192`-token batch limit, chunked prefill, prefix caching, and its registered parsers and acceleration backends.
+The profile retains `--gpu-memory-utilization 0.4`, a `262144`-token context window, `4` concurrent sequences, an `8192`-token batch limit, chunked prefill, prefix caching, and its registered parsers and acceleration backends.
 
 On DGX Station, accepting the installer express prompt selects `NEMOCLAW_VLLM_MODEL=nemotron-3-ultra-550b-a55b`.
 Express uses the single-Station Ultra recipe unless a trusted reciprocal pair qualifies for distributed serving.
@@ -335,7 +335,8 @@ NEMOCLAW_PROVIDER=install-vllm \
 
 If the selected image does not support an argument, the managed container exits and NemoClaw prints the log tail.
 
-To bound resource use while investigating long-context workflows on a single DGX Spark, select the Qwen profile and apply lower context, concurrency, and batch limits.
+To bound resource use while investigating long-context workflows on a single DGX Spark, select the Qwen profile.
+The following override disables async scheduling and lowers the context window, concurrent-sequence limit, and batch limit.
 
 ```bash
 NEMOCLAW_PROVIDER=install-vllm \
