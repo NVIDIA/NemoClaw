@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { extractShellFunction } from "./support/hermes-shell-harness";
 
@@ -20,17 +21,33 @@ function runtimeShellEnvFunction(source: string): string {
   return source.slice(start, end);
 }
 
-function messagingRuntimeSetupSection(source: string, planPath: string): string {
+function messagingRuntimeSetupSection(
+  source: string,
+  planPath: string,
+  preloadPaths?: { sourcePrefix: string; targetPrefix: string },
+): string {
   const start = source.indexOf("# ── Messaging runtime setup from manifest metadata");
   const end = source.indexOf("# ── End messaging runtime setup", start);
   expect(start).toBeGreaterThanOrEqual(0);
   expect(end).toBeGreaterThan(start);
-  return source
+  let section = source
     .slice(start, end)
     .replace(
       '_MESSAGING_RUNTIME_SETUP_PLAN="/tmp/nemoclaw-messaging-runtime-setup.json"',
       `_MESSAGING_RUNTIME_SETUP_PLAN=${JSON.stringify(planPath)}`,
     );
+  if (preloadPaths) {
+    section = section
+      .replace(
+        'PRELOAD_SOURCE_PREFIX = "/usr/local/lib/nemoclaw/preloads/"',
+        `PRELOAD_SOURCE_PREFIX = ${JSON.stringify(preloadPaths.sourcePrefix)}`,
+      )
+      .replace(
+        'PRELOAD_TARGET_PREFIX = "/tmp/nemoclaw-"',
+        `PRELOAD_TARGET_PREFIX = ${JSON.stringify(preloadPaths.targetPrefix)}`,
+      );
+  }
+  return section;
 }
 
 function encodeRuntimePlan(nodePreloads: Array<Record<string, unknown>>): string {
@@ -54,6 +71,84 @@ function encodeRuntimePlan(nodePreloads: Array<Record<string, unknown>>): string
 }
 
 describe("Hermes messaging runtime setup", () => {
+  it("installs the active WhatsApp preload and rewrites the Hermes bridge session path (#8229)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-whatsapp-plan-"));
+    const sourceDir = path.join(tmpDir, "preloads");
+    const sourcePrefix = `${sourceDir}${path.sep}`;
+    const sourcePath = path.join(sourceDir, "whatsapp-hermes-session.js");
+    const targetPrefix = path.join(tmpDir, "nemoclaw-");
+    const targetPath = `${targetPrefix}whatsapp-hermes-session.js`;
+    const planPath = path.join(tmpDir, "runtime-plan.json");
+    const runtimeSourcePath = path.join(
+      ROOT,
+      "src",
+      "lib",
+      "messaging",
+      "channels",
+      "whatsapp",
+      "runtime",
+      "whatsapp-hermes-session.ts",
+    );
+    fs.mkdirSync(sourceDir, { recursive: true });
+    fs.writeFileSync(
+      sourcePath,
+      ts.transpileModule(fs.readFileSync(runtimeSourcePath, "utf-8"), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+        fileName: runtimeSourcePath,
+      }).outputText,
+    );
+
+    try {
+      const result = spawnSync(
+        "bash",
+        [
+          "--noprofile",
+          "--norc",
+          "-c",
+          [
+            "set -euo pipefail",
+            'emit_sandbox_sourced_file() { local target="$1"; cat >"$target"; chmod 444 "$target"; }',
+            messagingRuntimeSetupSection(SANDBOX_INIT, planPath, {
+              sourcePrefix,
+              targetPrefix,
+            }),
+            "write_messaging_runtime_setup_plan",
+            "install_messaging_runtime_preloads",
+            "node -e 'process.stdout.write(JSON.stringify(process.argv))' /sandbox/.hermes/scripts/whatsapp-bridge/bridge.js --session /tmp/split-session",
+          ].join("\n"),
+        ],
+        {
+          encoding: "utf-8",
+          timeout: 5000,
+          env: {
+            ...process.env,
+            NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH: path.join(tmpDir, "missing.json"),
+            NEMOCLAW_MESSAGING_PLAN_B64: encodeRuntimePlan([
+              {
+                source: sourcePath,
+                target: targetPath,
+                injectInto: ["boot", "connect"],
+                optional: false,
+              },
+            ]),
+            NODE_OPTIONS: "",
+          },
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([
+        process.execPath,
+        "/sandbox/.hermes/scripts/whatsapp-bridge/bridge.js",
+        "--session",
+        "/sandbox/.hermes/platforms/whatsapp/session",
+      ]);
+      expect(fs.readFileSync(targetPath, "utf-8")).toBe(fs.readFileSync(sourcePath, "utf-8"));
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects traversal-shaped preload targets before any destination write (#8229)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preload-traversal-"));
     const victimPath = path.join(tmpDir, "victim.js");

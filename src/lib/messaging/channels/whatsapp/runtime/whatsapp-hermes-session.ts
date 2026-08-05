@@ -27,10 +27,12 @@ export function normalizeHermesWhatsappSessionArgv(argv: string[]): boolean {
   }
 
   // Hermes currently launches its dashboard and gateway bridge from different homes with
-  // independent --session values. The channel runtime preload is the shared boundary where
-  // both launchers can be reconciled; the rendered manifest session_path does not control
-  // those launcher arguments. Keep the two owned paths and this regression together, and
-  // remove the preload once both upstream launchers honor one manifest-owned session path.
+  // independent --session values. Both command-construction sites belong to the upstream
+  // Hermes distribution installed into the image rather than NemoClaw's manifest renderer,
+  // so the rendered manifest session_path cannot change those arguments here. The channel
+  // runtime preload is the shared boundary where both launchers can be reconciled. Keep the
+  // two owned paths and this regression together, and remove the preload once both upstream
+  // launchers honor one manifest-owned session path.
   argv[sessionIndex + 1] = HERMES_WHATSAPP_SESSION_PATH;
   return true;
 }
