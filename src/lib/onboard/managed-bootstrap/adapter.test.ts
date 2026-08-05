@@ -20,6 +20,7 @@ import {
   type ManagedBootstrapAuthorityStore,
   type ManagedBootstrapCompletionReceipt,
   type ManagedBootstrapCreateReceipt,
+  type ManagedBootstrapDurablePreparationReceipt,
   type ManagedBootstrapFinalizationReceipt,
   type ManagedBootstrapHeldWorkloadHandle,
   type ManagedBootstrapObservedSnapshot,
@@ -29,7 +30,10 @@ import {
   prepareManagedBootstrapSequence,
   recoverManagedBootstrapTransactions,
   renderManagedBootstrapHeldCommand,
+  sameManagedBootstrapCompletionReceipt,
+  sameManagedBootstrapDurablePreparationReceipt,
 } from "./adapter";
+import { reverseKeys } from "./managed-bootstrap-test-fixture";
 
 const IDENTITY = "1".repeat(64);
 const CONFIG_ID = `sha256:${"2".repeat(64)}`;
@@ -61,7 +65,7 @@ function planFor(request: ReturnType<typeof requestFor>) {
     },
     profile: { agent: request.agent, fingerprint: request.profileFingerprint },
     agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
-    intendedWorkloadArgv: ["env", "A=1", "nemoclaw-start"],
+    intendedWorkloadArgv: ["env", "A=1", "/usr/local/bin/nemoclaw-start"],
     expectedSupervisorArgv: ["/runtime/sandbox-supervisor", "supervise", "--foreground"],
     metadata: { "nemoclaw.ai/managed-profile": request.profileFingerprint },
   } as const;
@@ -356,6 +360,45 @@ async function captureFailure<T>(promise: Promise<T>) {
 }
 
 describe("managed bootstrap adapter contract", () => {
+  it("compares provider-neutral durable receipts by canonical value", () => {
+    const handle = handleFor(requestFor("hermes"));
+    const preparation: ManagedBootstrapDurablePreparationReceipt = {
+      schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+      sandbox: handle.sandbox,
+      bootstrapIdentity: handle.bootstrapIdentity,
+      authorityFingerprint: "a".repeat(64),
+      recordId: "mxc-durable-authority",
+      recordedAt: "2026-07-29T12:00:30.000Z",
+    };
+    const reorderedPreparation = reverseKeys({
+      ...preparation,
+      sandbox: reverseKeys({ ...preparation.sandbox }),
+    });
+    expect(sameManagedBootstrapDurablePreparationReceipt(preparation, reorderedPreparation)).toBe(
+      true,
+    );
+    expect(
+      sameManagedBootstrapDurablePreparationReceipt(preparation, {
+        ...reorderedPreparation,
+        recordId: "changed-authority",
+      }),
+    ).toBe(false);
+
+    const completion = completionFor(requestFor("hermes"), handle);
+    const reorderedCompletion = reverseKeys({
+      ...completion,
+      image: reverseKeys({ ...completion.image }),
+      sandbox: reverseKeys({ ...completion.sandbox }),
+    });
+    expect(sameManagedBootstrapCompletionReceipt(completion, reorderedCompletion)).toBe(true);
+    expect(
+      sameManagedBootstrapCompletionReceipt(completion, {
+        ...reorderedCompletion,
+        transactionPending: false,
+      }),
+    ).toBe(false);
+  });
+
   it.each(
     MANAGED_STARTUP_AGENTS,
   )("prepares, durably records, and only then activates %s through a provider-neutral adapter", async (agent) => {
@@ -382,6 +425,46 @@ describe("managed bootstrap adapter contract", () => {
     const prepareInput = vi.mocked(result.adapter.prepareBootstrapReplacement).mock.calls[0]?.[0];
     expect(Object.isFrozen(prepareInput?.replacementOptions.values)).toBe(true);
     expect(Object.isFrozen(prepareInput?.replacementOptions.values.groups)).toBe(true);
+  });
+
+  it.each(
+    MANAGED_STARTUP_AGENTS,
+  )("renders one exact identity-bound %s hold and preserves only the intended startup tail", (agent) => {
+    const request = requestFor(agent);
+    expect(
+      renderManagedBootstrapHeldCommand(request, IDENTITY, [
+        "env",
+        "A=1",
+        "/usr/local/bin/nemoclaw-start",
+        "/bin/sh",
+        "-c",
+        "printf tail",
+      ]),
+    ).toEqual([
+      "env",
+      "A=1",
+      "/usr/local/bin/nemoclaw-managed-startup-hold",
+      "--agent",
+      agent,
+      "--profile-fingerprint",
+      request.profileFingerprint,
+      "--bootstrap-identity",
+      IDENTITY,
+      "--",
+      "/bin/sh",
+      "-c",
+      "printf tail",
+    ]);
+  });
+
+  it.each([
+    "nemoclaw-start",
+    "/bin/sh",
+    "/tmp/nemoclaw-start",
+  ])("rejects non-canonical intended startup executable %s", (executable) => {
+    expect(() =>
+      renderManagedBootstrapHeldCommand(requestFor("openclaw"), IDENTITY, ["env", executable]),
+    ).toThrow("intended workload executable must be /usr/local/bin/nemoclaw-start");
   });
 
   it("stops after non-destructive preparation until durable activation is requested", async () => {
@@ -1105,7 +1188,11 @@ describe("managed bootstrap adapter contract", () => {
   ])("rejects a process-control assignment before rendering the held command: %s", (assignment) => {
     const request = requestFor("hermes");
     expect(() =>
-      renderManagedBootstrapHeldCommand(request, IDENTITY, ["env", assignment, "nemoclaw-start"]),
+      renderManagedBootstrapHeldCommand(request, IDENTITY, [
+        "env",
+        assignment,
+        "/usr/local/bin/nemoclaw-start",
+      ]),
     ).toThrow("process-control environment assignment");
   });
 });

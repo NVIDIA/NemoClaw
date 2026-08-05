@@ -1,0 +1,188 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Attest llama.cpp server image
+
+on:
+  workflow_call:
+    inputs:
+      candidate_tag:
+        description: Run-unique candidate tag
+        required: true
+        type: string
+      digest:
+        description: Exact candidate index digest
+        required: true
+        type: string
+      image:
+        description: Owned llama.cpp server image repository
+        required: true
+        type: string
+      retention_days:
+        description: Evidence artifact retention in days
+        required: true
+        type: number
+      sbom_format:
+        description: SBOM document format
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  validate-inputs:
+    name: Validate attestation inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      candidate_tag: ${{ steps.validate.outputs.candidate_tag }}
+      digest: ${{ steps.validate.outputs.digest }}
+      image: ${{ steps.validate.outputs.image }}
+      retention_days: ${{ steps.validate.outputs.retention_days }}
+      sbom_format: ${{ steps.validate.outputs.sbom_format }}
+    steps:
+      - name: Validate exact inputs
+        id: validate
+        shell: bash
+        env:
+          CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
+          INPUT_CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          INPUT_DIGEST: ${{ inputs.digest }}
+          INPUT_IMAGE: ${{ inputs.image }}
+          INPUT_RETENTION_DAYS: ${{ inputs.retention_days }}
+          INPUT_SBOM_FORMAT: ${{ inputs.sbom_format }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REPOSITORY" != "NVIDIA/NemoClaw" ] \
+            || [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] \
+            || [ "$GITHUB_REF" != "refs/heads/main" ] \
+            || [ "$CALLER_WORKFLOW_REF" != "NVIDIA/NemoClaw/.github/workflows/llama-cpp-image.yaml@refs/heads/main" ]; then
+            echo "ERROR: attestation caller does not match the trusted main workflow." >&2
+            exit 1
+          fi
+          expected_candidate_tag="llama-cpp-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if [ "$INPUT_CANDIDATE_TAG" != "$expected_candidate_tag" ]; then
+            echo "ERROR: candidate tag does not match llama-cpp-candidate-RUN_ID-RUN_ATTEMPT." >&2
+            exit 1
+          fi
+          if [[ ! "$INPUT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "ERROR: candidate digest is invalid." >&2
+            exit 1
+          fi
+          if [ "$INPUT_IMAGE" != "ghcr.io/nvidia/nemoclaw/llama-cpp-server" ]; then
+            echo "ERROR: image repository is not the owned llama.cpp server repository." >&2
+            exit 1
+          fi
+          if [ "$INPUT_SBOM_FORMAT" != "spdx-json" ]; then
+            echo "ERROR: SBOM format must be spdx-json." >&2
+            exit 1
+          fi
+          if [[ ! "$INPUT_RETENTION_DAYS" =~ ^[1-9][0-9]*$ ]] \
+            || [ "$INPUT_RETENTION_DAYS" -gt 90 ]; then
+            echo "ERROR: evidence retention must be between 1 and 90 days." >&2
+            exit 1
+          fi
+          {
+            printf 'candidate_tag=%s\n' "$INPUT_CANDIDATE_TAG"
+            printf 'digest=%s\n' "$INPUT_DIGEST"
+            printf 'image=%s\n' "$INPUT_IMAGE"
+            printf 'retention_days=%s\n' "$INPUT_RETENTION_DAYS"
+            printf 'sbom_format=%s\n' "$INPUT_SBOM_FORMAT"
+          } >> "$GITHUB_OUTPUT"
+
+  attest:
+    name: Generate and publish image evidence
+    needs: validate-inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Generate amd64 SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        env:
+          SYFT_PLATFORM: linux/amd64
+        with:
+          image: ${{ needs.validate-inputs.outputs.image }}@${{ needs.validate-inputs.outputs.digest }}
+          format: ${{ needs.validate-inputs.outputs.sbom_format }}
+          artifact-name: llama-cpp-sbom-amd64-${{ needs.validate-inputs.outputs.candidate_tag }}
+          output-file: llama-cpp-sbom-amd64.spdx.json
+          upload-artifact: true
+          upload-artifact-retention: ${{ needs.validate-inputs.outputs.retention_days }}
+          upload-release-assets: false
+
+      - name: Generate arm64 SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        env:
+          SYFT_PLATFORM: linux/arm64
+        with:
+          image: ${{ needs.validate-inputs.outputs.image }}@${{ needs.validate-inputs.outputs.digest }}
+          format: ${{ needs.validate-inputs.outputs.sbom_format }}
+          artifact-name: llama-cpp-sbom-arm64-${{ needs.validate-inputs.outputs.candidate_tag }}
+          output-file: llama-cpp-sbom-arm64.spdx.json
+          upload-artifact: true
+          upload-artifact-retention: ${{ needs.validate-inputs.outputs.retention_days }}
+          upload-release-assets: false
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.2
+
+      - name: Attest amd64 SPDX SBOM
+        shell: bash
+        env:
+          DIGEST: ${{ needs.validate-inputs.outputs.digest }}
+          IMAGE: ${{ needs.validate-inputs.outputs.image }}
+        run: |
+          set -euo pipefail
+          timeout --foreground 120s cosign attest \
+            --yes \
+            --predicate llama-cpp-sbom-amd64.spdx.json \
+            --type spdxjson \
+            "$IMAGE@$DIGEST"
+
+      - name: Attest arm64 SPDX SBOM
+        shell: bash
+        env:
+          DIGEST: ${{ needs.validate-inputs.outputs.digest }}
+          IMAGE: ${{ needs.validate-inputs.outputs.image }}
+        run: |
+          set -euo pipefail
+          timeout --foreground 120s cosign attest \
+            --yes \
+            --predicate llama-cpp-sbom-arm64.spdx.json \
+            --type spdxjson \
+            "$IMAGE@$DIGEST"
+
+      - name: Attest SLSA build provenance
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-name: ${{ needs.validate-inputs.outputs.image }}
+          subject-digest: ${{ needs.validate-inputs.outputs.digest }}
+          push-to-registry: true
+
+      - name: Sign exact candidate index
+        shell: bash
+        env:
+          DIGEST: ${{ needs.validate-inputs.outputs.digest }}
+          IMAGE: ${{ needs.validate-inputs.outputs.image }}
+        run: |
+          set -euo pipefail
+          timeout --foreground 120s cosign sign --yes "$IMAGE@$DIGEST"

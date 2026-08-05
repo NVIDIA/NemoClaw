@@ -142,8 +142,8 @@ Follow [Set Up vLLM](set-up-vllm) for that workflow.
 ## Preserve Cleanup Ownership
 
 After readiness and container validation pass, NemoClaw writes an owner-only cleanup receipt.
-It also copies the SSH binding under the selected gateway state root.
-A later onboarding run that reuses the validated pair recreates this cleanup ownership before it accepts the endpoint.
+It copies the SSH binding beside the receipt under the host-global `~/.nemoclaw/` state root so every gateway port uses the same ownership state.
+A later onboarding run recovers and revalidates this cleanup ownership before it accepts the existing endpoint.
 
 The receipt contains no serving API key.
 It records the peer, cluster, and GPU identities needed to revalidate and remove both managed containers.

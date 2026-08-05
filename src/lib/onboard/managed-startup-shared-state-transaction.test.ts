@@ -78,6 +78,20 @@ describe("managed startup shared-state transaction", () => {
     );
   }
 
+  function rewriteManifest(
+    rewrite: (manifest: Record<string, unknown>) => Record<string, unknown> = (manifest) =>
+      manifest,
+  ): void {
+    const manifestFile = path.join(transactionDirectory, "manifest.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8")) as Record<string, unknown>;
+    expect(manifest.bootstrapIdentity).toBeNull();
+    delete manifest.bootstrapIdentity;
+    const rewritten = rewrite(manifest);
+    fs.chmodSync(manifestFile, 0o600);
+    fs.writeFileSync(manifestFile, `${JSON.stringify(rewritten, null, 2)}\n`);
+    fs.chmodSync(manifestFile, 0o400);
+  }
+
   it.each([
     "openclaw",
     "hermes",
@@ -257,6 +271,70 @@ describe("managed startup shared-state transaction", () => {
     expect(commitManagedStartupSharedStateTransaction("openclaw", options)).toBe(false);
   });
 
+  it.each([
+    ["commits", "commit"],
+    ["rolls back", "rollback"],
+  ] as const)("%s an exact historical schema-v1 manifest without bootstrap identity", (_description, action) => {
+    const root = agentRoot("openclaw");
+    fs.mkdirSync(root);
+    const config = path.join(root, "openclaw.json");
+    fs.writeFileSync(config, "before\n");
+    beginManagedStartupSharedStateTransaction(managedStartupE2eProfile("openclaw"), options);
+    rewriteManifest();
+    fs.writeFileSync(config, "after\n");
+
+    const result =
+      action === "commit"
+        ? commitManagedStartupSharedStateTransaction("openclaw", options)
+        : rollbackManagedStartupSharedStateTransaction("openclaw", options);
+
+    expect(result).toBe(true);
+    expect(fs.readFileSync(config, "utf8")).toBe(action === "commit" ? "after\n" : "before\n");
+    expect(fs.existsSync(transactionDirectory)).toBe(false);
+    expect(fs.existsSync(commitReceiptDirectory())).toBe(false);
+  });
+
+  it.each([
+    ["an extra field", (manifest: Record<string, unknown>) => ({ ...manifest, extra: true })],
+    [
+      "a missing historical field",
+      (manifest: Record<string, unknown>) => {
+        delete manifest.directories;
+        return manifest;
+      },
+    ],
+  ] as const)("rejects a schema-v1 legacy manifest with %s", (_case, rewrite) => {
+    const root = agentRoot("openclaw");
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(root, "openclaw.json"), "before\n");
+    beginManagedStartupSharedStateTransaction(managedStartupE2eProfile("openclaw"), options);
+    rewriteManifest(rewrite);
+
+    expect(() => commitManagedStartupSharedStateTransaction("openclaw", options)).toThrow(
+      /unexpected fields/u,
+    );
+    expect(fs.existsSync(transactionDirectory)).toBe(true);
+  });
+
+  it("does not treat a legacy manifest as authority for an identity-bound bootstrap", () => {
+    const root = agentRoot("openclaw");
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(root, "openclaw.json"), "before\n");
+    const boundOptions = { ...options, bootstrapIdentity: "b".repeat(64) };
+    beginManagedStartupSharedStateTransaction(managedStartupE2eProfile("openclaw"), boundOptions);
+    const manifestFile = path.join(transactionDirectory, "manifest.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8")) as Record<string, unknown>;
+    delete manifest.bootstrapIdentity;
+    fs.chmodSync(manifestFile, 0o600);
+    fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
+    fs.chmodSync(manifestFile, 0o400);
+
+    expect(() => rollbackManagedStartupSharedStateTransaction("openclaw", boundOptions)).toThrow(
+      /different bootstrap attempt/u,
+    );
+    expect(fs.existsSync(transactionDirectory)).toBe(true);
+  });
+
   it("fsyncs every transaction namespace before exposing a pending receipt", () => {
     const root = agentRoot("openclaw");
     fs.mkdirSync(root);
@@ -403,10 +481,13 @@ describe("managed startup shared-state transaction", () => {
             throw new Error("injected post-rename cleanup interruption");
           })()
         : originalRmSync(target, removeOptions)) as typeof fs.rmSync);
-    expect(() => commitManagedStartupSharedStateTransaction("openclaw", boundOptions)).toThrow(
-      /injected post-rename cleanup interruption/u,
-    );
-    rm.mockRestore();
+    try {
+      expect(() => commitManagedStartupSharedStateTransaction("openclaw", boundOptions)).toThrow(
+        /injected post-rename cleanup interruption/u,
+      );
+    } finally {
+      rm.mockRestore();
+    }
 
     expect(fs.existsSync(transactionDirectory)).toBe(false);
     const committedDirectory = commitReceiptDirectory();

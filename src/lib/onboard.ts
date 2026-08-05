@@ -480,7 +480,7 @@ const {
   restoreDefaultAfterRecreate,
 }: typeof import("./onboard/cancel-rollback") = require("./onboard/cancel-rollback");
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-const { createProviderInferenceOnboardFlowPhase, createSandboxOnboardFlowPhase, runCoreOnboardFlowSlice }: typeof import("./onboard/machine/core-flow-phases") = require("./onboard/machine/core-flow-phases");
+const { createProviderInferenceOnboardFlowPhase, createSandboxOnboardFlowPhase, prepareCoreOnboardFlowContext, prepareFinalOnboardFlowContext, runCoreOnboardFlowSlice }: typeof import("./onboard/machine/core-flow-phases") = require("./onboard/machine/core-flow-phases");
 const {
   createFinalOnboardFlowPhases,
   runFinalOnboardFlowSlice,
@@ -1086,16 +1086,16 @@ const {
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const handleVllmSelection = createSetupNimVllmHandler({
   VLLM_PORT, runCapture, getLocalProviderBaseUrl, getLocalProviderValidationBaseUrl,
-  getManagedVllmProviderBinding: localInference.getManagedDualStationVllmProviderBinding, queryVllmModels: (baseUrl, apiKey) => { const result = localInference.probeVllmModels(baseUrl, apiKey); return result.ok ? result.body : ""; }, isSafeModelId, requireValue, validateOpenAiLikeSelection,
-  applyVllmRuntimeContextWindow: localInference.applyVllmRuntimeContextWindow, isDgxSparkHost: () => nim.detectNvidiaPlatform() === "spark", isNemoClawManagedVllmRunning: vllmInference.isNemoClawManagedVllmRunning, persistConfiguredDualStationVllmRuntimeReceipt: vllmInference.persistConfiguredDualStationVllmRuntimeReceipt,
+  getManagedVllmProviderBinding: localInference.getManagedVllmProviderBinding, queryVllmModels: (baseUrl, apiKey) => { const result = localInference.probeVllmModels(baseUrl, apiKey); return result.ok ? result.body : ""; }, isSafeModelId, requireValue, validateOpenAiLikeSelection,
+  applyVllmRuntimeContextWindow: localInference.applyVllmRuntimeContextWindow, isDgxSparkHost: () => nim.detectNvidiaPlatform() === "spark", isNemoClawManagedVllmRunning: vllmInference.isNemoClawManagedVllmRunning, persistConfiguredManagedVllmRuntimeReceipt: vllmInference.persistConfiguredManagedVllmRuntimeReceipt,
   exitProcess: (code) => process.exit(code),
 });
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+const handleLlamaCppSelection = setupNimFlow.createLlamaCppSelectionHandler({ isNonInteractive, resolveCredential: resolveProviderCredential, ensureNamedCredential: (envName, label) => credentialPrompt.ensureNamedCredential(envName, label), returningToProviderSelection: credentialPrompt.returningToProviderSelection, probeLlamaCppAttachment: setupNimFlow.probeLlamaCppAttachment, validateOpenAiLikeSelection, error: (message) => console.error(message), log: (message) => console.log(message), exitProcess: (code): never => process.exit(code) });
 const ollamaModelSize: typeof import("./inference/ollama/model-size") = require("./inference/ollama/model-size");
-
 function isOpenshellInstalled(): boolean {
   return resolveOpenshell() !== null;
 }
-
 function installOpenshell(): OpenShellInstallResult {
   return openshellPinFlow.runOpenshellInstall({
     scriptsDir: SCRIPTS,
@@ -1111,7 +1111,6 @@ function installOpenshell(): OpenShellInstallResult {
     log: console.log,
   });
 }
-
 function areRequiredDockerDriverBinariesPresent(
   platform: NodeJS.Platform = process.platform,
   binaries: DockerDriverBinaryOverrides = {},
@@ -2613,8 +2612,7 @@ async function createSandboxWithBaseImageResolution(
           ),
       },
     );
-  // Returns true if the build context was fully removed, false otherwise.
-  // The caller uses this to decide whether the process 'exit' safety net
+  // The caller uses the cleanup result to decide whether the process 'exit' safety net
   // can be deregistered — if inline cleanup fails, we leave the handler
   // armed so the temp dir is still removed on process exit.
   const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
@@ -2673,6 +2671,7 @@ async function createSandboxWithBaseImageResolution(
       chatUiUrl,
       provider,
       endpointUrl: createIntent?.endpointUrl ?? null,
+      compatibleEndpointReasoning: createIntent?.compatibleEndpointReasoning,
       preferredInferenceApi,
       webSearchConfig,
       toolDisclosure: effectiveToolDisclosure,
@@ -3557,6 +3556,7 @@ function getSetupNimDeps(): SetupNimDeps {
         isNonInteractive,
         abortNonInteractive,
       ),
+    handleLlamaCppSelection,
     handleRemoteProviderSelection,
     handleNimLocalSelection,
     handleRunningOllamaSelection,
@@ -3771,7 +3771,7 @@ const computeSetupPresetSuggestions = (
   options: SetupPresetSuggestionOptions = {},
 ): string[] =>
   computeSetupPresetSuggestionsImpl(
-    { policies, tiers, localInferenceProviders: LOCAL_INFERENCE_PROVIDERS },
+    { policies, tiers, localInferenceProviders: [...LOCAL_INFERENCE_PROVIDERS, "llama-cpp-local"] },
     tierName,
     options,
   );
@@ -3784,7 +3784,7 @@ async function setupPoliciesWithSelection(
       {
         policies,
         tiers,
-        localInferenceProviders: LOCAL_INFERENCE_PROVIDERS,
+        localInferenceProviders: [...LOCAL_INFERENCE_PROVIDERS, "llama-cpp-local"],
         step,
         note,
         isNonInteractive,
@@ -4250,35 +4250,23 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       recordRepairEvent,
     });
 
-    const initialContext = initialFlowResult.context;
-    if (!initialContext.sandboxGpuConfig) {
-      throw new Error("Preflight did not produce a sandbox GPU configuration.");
-    }
-    session = initialFlowResult.session;
-    const sandboxGpuConfig = initialContext.sandboxGpuConfig;
-    const { gpuPassthrough } = initialContext;
-    const gpu = initialContext.gpu ?? null;
-
     // #2753: for an unfinished sandbox, an explicit requested name precedes
     // the checkpointed name from the interrupted session.
-    let sandboxName =
-      recordedSandboxName || requestedSandboxName || checkpointedSandboxName || null;
-    if (sandboxName && RESERVED_SANDBOX_NAMES.has(sandboxName)) {
-      console.error(
-        `  Reserved name in resumed session: '${sandboxName}' is a ${cliDisplayName()} CLI command.`,
-      );
-      console.error("  Start a fresh onboard with --name <sandbox> to choose a different name.");
-      process.exit(1);
-    }
-    const coreFlowContext: InitialOnboardFlowContext = {
-      ...initialContext,
-      session,
-      sandboxName,
+    const coreFlowContext = prepareCoreOnboardFlowContext({
+      initial: initialFlowResult,
+      recordedSandboxName,
+      requestedSandboxName,
+      checkpointedSandboxName,
       selectedMessagingChannels,
-      gpu,
-      sandboxGpuConfig,
-      gpuPassthrough,
-    };
+      assertSandboxNameAllowed: (sandboxName) => {
+        if (!RESERVED_SANDBOX_NAMES.has(sandboxName)) return;
+        console.error(
+          `  Reserved name in resumed session: '${sandboxName}' is a ${cliDisplayName()} CLI command.`,
+        );
+        console.error("  Start a fresh onboard with --name <sandbox> to choose a different name.");
+        process.exit(1);
+      },
+    });
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const runCoreGatewayOpenshell = setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, GATEWAY_NAME);
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -4444,39 +4432,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       recordRepairEvent,
     });
     setupInferenceFactory.selectGatewayForFollowupOrExit(GATEWAY_NAME, runOpenshell);
-    const coreContext = coreFlowResult.context;
-    session = coreContext.session;
-    sandboxName = coreContext.sandboxName;
-    if (!sandboxName || !coreContext.model || !coreContext.provider) {
-      throw new Error("Onboarding state is incomplete after sandbox setup.");
-    }
-    const model = coreContext.model;
-    const provider = coreContext.provider;
-    const endpointUrl = coreContext.endpointUrl;
-    const credentialEnv = coreContext.credentialEnv;
-    const hermesAuthMethod = coreContext.hermesAuthMethod;
-    const hermesToolGateways = coreContext.hermesToolGateways;
-    const nimContainer = coreContext.nimContainer;
-    let webSearchConfig = coreContext.webSearchConfig as WebSearchConfig | null;
-    const webSearchSupported = coreContext.webSearchSupported;
-
-    const finalFlowContext: InitialOnboardFlowContext = {
-      ...coreContext,
-      session,
-      sandboxName,
-      model,
-      provider,
-      endpointUrl,
-      credentialEnv,
-      hermesAuthMethod,
-      hermesToolGateways,
-      nimContainer,
-      webSearchConfig,
-      selectedMessagingChannels: coreContext.selectedMessagingChannels,
-      webSearchSupported,
-    };
-    let liveFinalFlowContext = finalFlowContext;
-
+    const finalFlowContext = prepareFinalOnboardFlowContext(coreFlowResult);
+    let liveFinalFlowContext: InitialOnboardFlowContext = finalFlowContext;
     const finalFlowPhases = createFinalOnboardFlowPhases<
       InitialOnboardFlowContext,
       import("./dashboard/contract").DashboardDeliveryChain,
@@ -4502,6 +4459,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         }),
         ensureAgentDashboardForward: (name, selectedAgent) =>
           selectedAgent ? ensureAgentDashboardForward(name, selectedAgent) : 0,
+        persistDashboardPort: (name, port) => registry.updateSandbox(name, { dashboardPort: port }),
         recordStepSkipped,
         isOpenclawReady,
         skippedStepMessage,

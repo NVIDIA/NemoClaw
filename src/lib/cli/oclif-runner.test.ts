@@ -246,6 +246,97 @@ describe("runOclifCommandById", () => {
     expect(exit).toHaveBeenCalledWith(2);
   });
 
+  it("formats an invalid enum flag value instead of rethrowing it (#8123)", async () => {
+    class FlagInvalidOptionError extends Error {
+      oclif = { exit: 2 };
+      parse = {};
+      showHelp = false;
+    }
+    runCommandMock.mockRejectedValue(
+      new FlagInvalidOptionError(
+        "Expected --reasoning-effort=ultra to be one of: low, medium, high, default\nSee more help with --help",
+      ),
+    );
+    const errorLine = vi.fn();
+    const exit = vi.fn((code: number): never => {
+      throw new Error(`exit:${code}`);
+    });
+
+    await expect(
+      runOclifCommandById("inference:set", ["--reasoning-effort", "ultra"], {
+        rootDir: "/repo",
+        error: errorLine,
+        exit,
+      }),
+    ).rejects.toThrow("exit:2");
+
+    expect(errorLine).toHaveBeenCalledWith(
+      "  Expected --reasoning-effort=ultra to be one of: low, medium, high, default\nSee more help with --help",
+    );
+    expect(exit).toHaveBeenCalledWith(2);
+  });
+
+  it("formats an invalid enum argument value instead of rethrowing it (#8123)", async () => {
+    class ArgInvalidOptionError extends Error {
+      oclif = { exit: 2 };
+      parse = {};
+      showHelp = false;
+    }
+    runCommandMock.mockRejectedValue(
+      new ArgInvalidOptionError("Expected powershell to be one of: bash, zsh, fish"),
+    );
+    const errorLine = vi.fn();
+    const exit = vi.fn((code: number): never => {
+      throw new Error(`exit:${code}`);
+    });
+
+    await expect(
+      runOclifCommandById("completion", ["powershell"], {
+        rootDir: "/repo",
+        error: errorLine,
+        exit,
+      }),
+    ).rejects.toThrow("exit:2");
+
+    expect(errorLine).toHaveBeenCalledWith("  Expected powershell to be one of: bash, zsh, fish");
+    expect(exit).toHaveBeenCalledWith(2);
+  });
+
+  it("recognizes a parse error by shape when its class name is unknown (#8123)", async () => {
+    class SomeLaterParserError extends Error {
+      oclif = { exit: 2 };
+      parse = {};
+      showHelp = true;
+    }
+    runCommandMock.mockRejectedValue(new SomeLaterParserError("A parser rule rejected the input"));
+    const errorLine = vi.fn();
+    const exit = vi.fn((code: number): never => {
+      throw new Error(`exit:${code}`);
+    });
+
+    await expect(
+      runOclifCommandById("list", ["--json"], { rootDir: "/repo", error: errorLine, exit }),
+    ).rejects.toThrow("exit:2");
+
+    expect(errorLine).toHaveBeenCalledWith("  A parser rule rejected the input");
+    expect(exit).toHaveBeenCalledWith(2);
+  });
+
+  it("keeps rethrowing a command failure that carries an unrelated parse property (#8123)", async () => {
+    class CommandFailure extends Error {
+      oclif = { exit: 2 };
+      parse = { source: "sandboxes.json" };
+    }
+    const error = new CommandFailure("Could not read the sandbox registry");
+    runCommandMock.mockRejectedValue(error);
+    const errorLine = vi.fn();
+
+    await expect(
+      runOclifCommandById("list", [], { rootDir: "/repo", error: errorLine }),
+    ).rejects.toBe(error);
+    expect(errorLine).not.toHaveBeenCalled();
+  });
+
   it("treats oclif graceful ExitError(0) as silent success", async () => {
     // Mirrors what `Command.exit(0)` and `--help` actually throw in oclif: an
     // ExitError instance whose synthetic `EEXIT: 0` message must NOT leak to

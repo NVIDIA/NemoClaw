@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/managed-inference/schemas/catalog.schema.json",
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "title": "NemoClaw compiled managed inference serving catalog",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "compilerVersion",
+    "sourceRevision",
+    "readinessSchemaRef",
+    "recipes",
+    "presets",
+    "sources",
+    "catalogDigest"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "compilerVersion": { "const": "1.1.0" },
+    "sourceRevision": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
+    "readinessSchemaRef": {
+      "const": "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json"
+    },
+    "recipes": {
+      "type": "array",
+      "items": { "$ref": "recipe.schema.json" }
+    },
+    "presets": {
+      "type": "array",
+      "items": { "$ref": "preset.schema.json" }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "kind", "id", "digest"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "pattern": "^managed-inference/(?:recipes|presets)/.+\\.ya?ml$",
+            "maxLength": 512
+          },
+          "kind": { "enum": ["ServingRecipe", "ServingPreset"] },
+          "id": { "type": "string", "minLength": 1, "maxLength": 160 },
+          "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "catalogDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+  },
+  "additionalProperties": false
+}
