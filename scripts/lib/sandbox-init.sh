@@ -869,15 +869,53 @@ def clean_message(value, field):
     return value
 
 
+def clean_preload_path(value, field, prefix, description):
+    path = clean_string(value, field)
+    if not path.startswith(prefix) or not path.endswith(".js"):
+        fail(f"{field} must be a {description} under {prefix}*")
+
+    prefix_without_slash = prefix.rstrip("/")
+    if prefix.endswith("/"):
+        allowed_directory = prefix_without_slash
+        basename_prefix = ""
+    else:
+        allowed_directory = os.path.dirname(prefix_without_slash)
+        basename_prefix = os.path.basename(prefix_without_slash)
+
+    normalized = os.path.normpath(path)
+    basename = os.path.basename(normalized)
+    if (
+        normalized != path
+        or os.path.dirname(normalized) != allowed_directory
+        or not basename.startswith(basename_prefix)
+    ):
+        fail(f"{field} must be a direct {description} under {prefix}*")
+
+    # Reject an existing symlink that escapes the approved directory. The
+    # atomic writer replaces an in-directory final symlink instead of following
+    # it, while this check prevents either source or target from resolving into
+    # another filesystem location.
+    resolved_directory = os.path.realpath(allowed_directory)
+    if os.path.dirname(os.path.realpath(path)) != resolved_directory:
+        fail(f"{field} must not resolve outside {prefix}*")
+    return path
+
+
 def clean_node_preload(entry, index):
     if not isinstance(entry, dict):
         fail(f"nodePreloads[{index}] must be an object")
-    source = clean_string(entry.get("source"), f"nodePreloads[{index}].source")
-    target = clean_string(entry.get("target"), f"nodePreloads[{index}].target")
-    if not source.startswith(PRELOAD_SOURCE_PREFIX) or not source.endswith(".js"):
-        fail(f"nodePreloads[{index}].source must be a preload JavaScript file under {PRELOAD_SOURCE_PREFIX}")
-    if not target.startswith(PRELOAD_TARGET_PREFIX) or not target.endswith(".js"):
-        fail(f"nodePreloads[{index}].target must be a JavaScript file under {PRELOAD_TARGET_PREFIX}*")
+    source = clean_preload_path(
+        entry.get("source"),
+        f"nodePreloads[{index}].source",
+        PRELOAD_SOURCE_PREFIX,
+        "preload JavaScript file",
+    )
+    target = clean_preload_path(
+        entry.get("target"),
+        f"nodePreloads[{index}].target",
+        PRELOAD_TARGET_PREFIX,
+        "JavaScript file",
+    )
     inject_into = entry.get("injectInto", [])
     if not isinstance(inject_into, list):
         fail(f"nodePreloads[{index}].injectInto must be a list")

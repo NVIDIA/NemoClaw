@@ -20,7 +20,88 @@ function runtimeShellEnvFunction(source: string): string {
   return source.slice(start, end);
 }
 
+function messagingRuntimeSetupSection(source: string, planPath: string): string {
+  const start = source.indexOf("# ── Messaging runtime setup from manifest metadata");
+  const end = source.indexOf("# ── End messaging runtime setup", start);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  return source
+    .slice(start, end)
+    .replace(
+      '_MESSAGING_RUNTIME_SETUP_PLAN="/tmp/nemoclaw-messaging-runtime-setup.json"',
+      `_MESSAGING_RUNTIME_SETUP_PLAN=${JSON.stringify(planPath)}`,
+    );
+}
+
+function encodeRuntimePlan(nodePreloads: Array<Record<string, unknown>>): string {
+  return Buffer.from(
+    JSON.stringify({
+      channels: [
+        {
+          channelId: "whatsapp",
+          active: true,
+          disabled: false,
+        },
+      ],
+      disabledChannels: [],
+      runtimeSetup: {
+        nodePreloads: nodePreloads.map((entry) => ({ channelId: "whatsapp", ...entry })),
+        envAliases: [],
+        secretScans: [],
+      },
+    }),
+  ).toString("base64");
+}
+
 describe("Hermes messaging runtime setup", () => {
+  it("rejects traversal-shaped preload targets before any destination write (#8229)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preload-traversal-"));
+    const victimPath = path.join(tmpDir, "victim.js");
+    const planPath = path.join(tmpDir, "runtime-plan.json");
+    const traversalTarget = `/tmp/nemoclaw-/../..${victimPath}`;
+    fs.writeFileSync(victimPath, "preserve me\n");
+    expect(path.resolve(traversalTarget)).toBe(path.resolve(victimPath));
+
+    try {
+      const result = spawnSync(
+        "bash",
+        [
+          "--noprofile",
+          "--norc",
+          "-c",
+          [
+            "set -euo pipefail",
+            'emit_sandbox_sourced_file() { local target="$1"; cat >"$target"; }',
+            messagingRuntimeSetupSection(SANDBOX_INIT, planPath),
+            "write_messaging_runtime_setup_plan",
+          ].join("\n"),
+        ],
+        {
+          encoding: "utf-8",
+          timeout: 5000,
+          env: {
+            ...process.env,
+            NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH: path.join(tmpDir, "missing.json"),
+            NEMOCLAW_MESSAGING_PLAN_B64: encodeRuntimePlan([
+              {
+                source: "/usr/local/lib/nemoclaw/preloads/whatsapp-hermes-session.js",
+                target: traversalTarget,
+                injectInto: ["boot", "connect"],
+                optional: false,
+              },
+            ]),
+          },
+        },
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("nodePreloads[0].target must be a direct JavaScript file");
+      expect(fs.readFileSync(victimPath, "utf-8")).toBe("preserve me\n");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("runs the manifest runtime setup in order (#8184)", () => {
     const result = spawnSync(
       "bash",
