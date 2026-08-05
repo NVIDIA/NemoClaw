@@ -870,6 +870,45 @@ $$nemoclaw use <name>
 $$nemoclaw use <name> --json
 ```
 
+### `$$nemoclaw launch <name>`
+
+Connect to a sandbox and start its agent in one host-side command.
+Use it instead of running `$$nemoclaw <name> connect` and then typing the agent command inside the sandbox.
+
+`launch` runs the same preflight as [`$$nemoclaw <name> connect`](#$$nemoclaw-name-connect), including the readiness wait, in-sandbox agent process recovery, and inference-route reconciliation.
+It runs every check in that shared preflight.
+After the preflight, `launch` starts the sandbox's agent in your terminal instead of opening a sandbox shell.
+
+The agent command comes from the sandbox's agent manifest.
+If the sandbox registry names a non-OpenClaw agent without a readable local agent manifest, `launch` exits before starting an in-sandbox command.
+
+| Agent | Command |
+|---|---|
+| OpenClaw | `openclaw tui` |
+| Hermes | `hermes` |
+| LangChain Deep Agents Code | `dcode` |
+
+```bash
+$$nemoclaw launch <name>
+```
+
+The sandbox name is required, and the command takes no flags.
+When the agent exits, you return to the host shell.
+
+<AgentOnly variant="openclaw">
+
+`launch` returns the agent's exit code when the post-command OpenClaw permission cleanup succeeds.
+If that cleanup cannot inspect, restore, or verify the mutable config permission contract, `launch` fails closed with exit `1` and prints `OpenClaw permission cleanup failed (...)` to `stderr`.
+
+</AgentOnly>
+<AgentOnly variant="hermes,deepagents">
+
+`launch` returns the agent's exit code.
+
+</AgentOnly>
+
+When you want a shell inside the sandbox rather than an agent session, use `$$nemoclaw <name> connect`.
+
 ### `$$nemoclaw deploy`
 
 <Warning>
@@ -930,6 +969,8 @@ $$nemoclaw connect
 The `--probe-only` flag waits for the sandbox to become ready, verifies or repairs its in-sandbox agent process and host-side forward, and exits without opening a shell.
 It rechecks the sandbox on its recorded OpenShell gateway after the readiness wait and never restarts the shared host gateway.
 Use it for health checks and scripted readiness probes.
+
+Use [`$$nemoclaw launch <name>`](#$$nemoclaw-launch-name) when you want the same preflight followed by the agent instead of a sandbox shell.
 
 ### `$$nemoclaw <name> exec`
 
@@ -1705,7 +1746,8 @@ Use `nemohermes my-assistant status` to see both the dashboard and API endpoints
 <AgentOnly variant="deepagents">
 
 `dashboard-url` is not applicable to Deep Agents sandboxes because the managed harness is a terminal runtime without a dashboard port.
-Use `$$nemoclaw <name> connect` and run `dcode` inside the sandbox.
+Use `$$nemoclaw launch <name>` to start `dcode`.
+Use `$$nemoclaw <name> connect` instead when you want a sandbox shell.
 
 </AgentOnly>
 
