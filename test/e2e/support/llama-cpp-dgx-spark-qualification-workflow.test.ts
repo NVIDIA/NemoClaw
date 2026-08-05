@@ -33,7 +33,7 @@ function namedStep(value: WorkflowRecord, jobId: string, name: string): Record<s
 }
 
 describe("llama.cpp DGX Spark qualification workflow boundary (#8260)", () => {
-  it("accepts the exact dormant trusted qualification lane", () => {
+  it("accepts the exact trusted qualification lane", () => {
     expect(validateLlamaCppDgxSparkQualificationWorkflow(workflow())).toEqual([]);
   });
 
