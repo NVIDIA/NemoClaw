@@ -33,6 +33,7 @@ function namedStep(name: string): WorkflowStep {
 }
 
 describe("native Podman CPU proof workflow", () => {
+  // source-shape-contract: security -- Exact checkout and package pins bind the credential-free Podman proof to the reported PR head and reviewed runtime bytes
   it("runs as a credential-free exact-head PR workflow", () => {
     const parsed = workflow();
     const job = proofJob();
@@ -44,6 +45,14 @@ describe("native Podman CPU proof workflow", () => {
     expect(job["runs-on"]).toBe("ubuntu-26.04");
     expect(job["timeout-minutes"]).toBe(30);
     expect(job.env?.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
+    expect(job.env?.PODMAN_APT_VERSION).toBe("5.7.0+ds2-3build1");
+    expect(namedStep("Checkout").with).toMatchObject({
+      ref: "${{ github.event.pull_request.head.sha }}",
+    });
+    const installPodman = namedStep("Install Podman 5 runtime").run ?? "";
+    expect(installPodman).toContain('apt-get install --yes "podman=$PODMAN_APT_VERSION"');
+    expect(installPodman).toContain('test "$package_version" = "$PODMAN_APT_VERSION"');
+    expect(installPodman).toContain('test "$version" = "podman version 5.7.0"');
     expect(readRepoText(".github/workflows/podman-cpu-proof.yaml")).not.toContain("secrets.");
   });
 

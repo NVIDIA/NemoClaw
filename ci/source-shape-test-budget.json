@@ -267,6 +267,11 @@
       "category": "security"
     },
     {
+      "file": "test/e2e/support/podman-cpu-proof-workflow.test.ts",
+      "test": "runs as a credential-free exact-head PR workflow",
+      "category": "security"
+    },
+    {
       "file": "test/e2e/support/trusted-hermes-swap-workflow-boundary.test.ts",
       "test": "keeps the fixed privileged program before candidate checkout in every protected job (#7145)",
       "category": "security"
