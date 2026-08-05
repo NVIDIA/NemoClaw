@@ -11,6 +11,8 @@ on:
     types: [opened, synchronize, reopened]
     paths:
       - ".github/workflows/portable-profile-e2e.yaml"
+      - "install.sh"
+      - "scripts/install.sh"
       - "src/lib/onboard/**"
       - "src/lib/domain/sandbox/image-tag.ts"
       - "src/lib/sandbox/build-context.ts"
@@ -20,6 +22,8 @@ on:
       - main
     paths:
       - ".github/workflows/portable-profile-e2e.yaml"
+      - "install.sh"
+      - "scripts/install.sh"
       - "src/lib/onboard/**"
       - "src/lib/domain/sandbox/image-tag.ts"
       - "src/lib/sandbox/build-context.ts"
