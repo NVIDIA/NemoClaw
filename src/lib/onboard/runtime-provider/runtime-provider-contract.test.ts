@@ -220,9 +220,8 @@ describe("RuntimeProviderBundle registry contract", () => {
     ).toBe(true);
     const dockerHostMounts =
       CURRENT_RUNTIME_PROVIDER_BUNDLES.docker!.capabilities.readOnlyHostMounts;
-    if (dockerHostMounts.supported) {
-      expect(Object.isFrozen(dockerHostMounts.hostPlatforms)).toBe(true);
-    }
+    expectSupportedSurface(dockerHostMounts);
+    expect(Object.isFrozen(dockerHostMounts.hostPlatforms)).toBe(true);
   });
 
   it("registers an MXC-style managed-bootstrap provider through the bundle surface", () => {
