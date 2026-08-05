@@ -9,6 +9,7 @@ import { resolveDirectSandboxContainer } from "../../../src/lib/sandbox/privileg
 import { assertExitZero as expectExitZero } from "../fixtures/clients/command.ts";
 import { type HostCliClient, resultText } from "../fixtures/clients/index.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { hermesCronRuntimeFields } from "./rebuild-hermes-cron-state.ts";
 import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
 
 const HERMES_HOME = "/sandbox/.hermes";
@@ -121,12 +122,8 @@ function parseCronJob(text: string, jobId: string, label: string): JsonObject {
   );
 }
 
-function cronJobState(job: JsonObject, label: string): JsonObject {
-  return requireObject(job.state, `${label} state`);
-}
-
 function completedRuns(job: JsonObject, label: string): number {
-  const repeat = requireObject(cronJobState(job, label).repeat, `${label} repeat state`);
+  const repeat = requireObject(hermesCronRuntimeFields(job, label).repeat, `${label} repeat state`);
   return typeof repeat.completed === "number"
     ? repeat.completed
     : fail(`${label} completed run count is unavailable`);
@@ -140,13 +137,14 @@ function assertFutureCronJob(job: JsonObject, seed: SeededCronJob): void {
     no_agent: true,
     schedule: { kind: "interval" },
     script: seed.scriptName,
+    state: "scheduled",
   });
-  const state = cronJobState(job, `cron job ${seed.id}`);
-  expect(state.last_run_at ?? null).toBeNull();
-  expect(state.last_status ?? null).toBeNull();
+  const runtime = hermesCronRuntimeFields(job, `cron job ${seed.id}`);
+  expect(runtime.last_run_at ?? null).toBeNull();
+  expect(runtime.last_status ?? null).toBeNull();
   expect(completedRuns(job, `cron job ${seed.id}`)).toBe(0);
   expect(
-    normalizeTimestampMs(state.next_run_at, `cron job ${seed.id} next run`),
+    normalizeTimestampMs(runtime.next_run_at, `cron job ${seed.id} next run`),
     "seeded recurring cron job must remain well in the future during rebuild",
   ).toBeGreaterThan(Date.now() + 60 * 60_000);
 }
@@ -305,13 +303,13 @@ export function createRebuildHermesCronRestoreFixture({
     for (let attempt = 1; attempt <= EXECUTION_POLL_ATTEMPTS; attempt += 1) {
       const job = await readCronJob(seed.id, `${artifactPrefix}-job-attempt-${attempt}`);
       const count = await executionCount(seed, `${artifactPrefix}-marker-attempt-${attempt}`);
-      const state = cronJobState(job, `cron job ${seed.id}`);
+      const runtime = hermesCronRuntimeFields(job, `cron job ${seed.id}`);
       const completed = completedRuns(job, `cron job ${seed.id}`);
-      lastEvidence = JSON.stringify({ completed, count, last_status: state.last_status });
+      lastEvidence = JSON.stringify({ completed, count, last_status: runtime.last_status });
       if (completed > 1 || count > 1) {
         fail(`Hermes cron job ${seed.id} executed more than once: ${lastEvidence}`);
       }
-      if (completed === 1 && count === 1 && state.last_status === "ok") return;
+      if (completed === 1 && count === 1 && runtime.last_status === "ok") return;
       await sleep(POLL_INTERVAL_MS);
     }
     fail(`Hermes cron job ${seed.id} did not complete exactly once: ${lastEvidence}`);
