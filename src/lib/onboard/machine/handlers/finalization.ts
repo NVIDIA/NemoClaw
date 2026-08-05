@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { CLI_NAME } from "../../../cli/branding";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
 import {
   advanceTo,
@@ -116,7 +117,11 @@ function logTerminalReadyBlock(
         ? terminalAgent.name
         : "Terminal agent";
   log(`  ✓ ${displayName} terminal runtime is ready`);
-  log(`  Connect: nemoclaw ${sandboxName} connect`);
+  // Lead with the one-step path (#6006); `connect` still opens a sandbox shell.
+  // Only terminal agents reach this block, so the variant binary (for example
+  // `nemo-deepagents`) is the common case — use the resolved name, not a literal.
+  log(`  Launch: ${CLI_NAME} launch ${sandboxName}`);
+  log(`  Connect: ${CLI_NAME} ${sandboxName} connect`);
   if (typeof terminalAgent.runtime?.interactive_command === "string") {
     log(`  Interactive: ${terminalAgent.runtime.interactive_command}`);
   }

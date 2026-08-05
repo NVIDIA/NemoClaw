@@ -879,19 +879,33 @@ def _preflight(
 
 
 def _expected_ids(
-    policy: Policy, action: Action, identity: Identity
+    policy: Policy,
+    action: Action,
+    identity: Identity,
+    is_confidentiality_root: bool = False,
 ) -> tuple[int, int]:
     if action == "unlock":
         return identity.sandbox_uid, identity.sandbox_gid
     if policy == "confidentiality":
+        if is_confidentiality_root:
+            return identity.root_uid, identity.sandbox_gid
         return identity.root_uid, identity.root_gid
     return identity.root_uid, identity.sandbox_gid
 
 
-def _expected_dir_mode(policy: Policy, action: Action) -> int:
+def _expected_dir_mode(
+    policy: Policy, action: Action, is_confidentiality_root: bool = False
+) -> int:
     if action == "unlock":
         return 0o2770
-    return 0o700 if policy == "confidentiality" else 0o755
+    if policy == "confidentiality":
+        # The confidentiality root stays traversable (group execute, no read)
+        # so a sandbox probe for a missing name directly under the root, such
+        # as the legacy credentials/oauth.json, resolves as ENOENT instead of
+        # EACCES.  Nested directories and every file keep the sealed posture,
+        # so contents and the subtree shape stay unreadable.
+        return 0o710 if is_confidentiality_root else 0o700
+    return 0o755
 
 
 def _expected_file_mode(policy: Policy, action: Action, old_mode: int) -> int:
@@ -915,10 +929,11 @@ def _set_dir_metadata(
     policy: Policy,
     action: Action,
     identity: Identity,
+    is_confidentiality_root: bool = False,
 ) -> None:
-    uid, gid = _expected_ids(policy, action, identity)
+    uid, gid = _expected_ids(policy, action, identity, is_confidentiality_root)
     os.fchown(dir_fd, uid, gid)
-    os.fchmod(dir_fd, _expected_dir_mode(policy, action))
+    os.fchmod(dir_fd, _expected_dir_mode(policy, action, is_confidentiality_root))
 
 
 def _set_empty_credentials_startup_metadata(
@@ -1354,7 +1369,9 @@ def _mutate_dir(
             # mutation through directory descriptors opened by the sandbox
             # before shields-up, and it happens before visiting descendants.
             _freeze_dir_for_lock(dir_fd)
-            _set_dir_metadata(dir_fd, policy, action, identity)
+            _set_dir_metadata(
+                dir_fd, policy, action, identity, is_root and policy == "confidentiality"
+            )
         elif is_root:
             # Keep the subtree inaccessible while descendants are restored.
             os.fchmod(dir_fd, 0o700)
@@ -1366,10 +1383,10 @@ def _mutate_dir(
         if _is_empty_credentials_root(
             relative_dir, policy, action, is_root, names
         ):
-            # OpenClaw probes optional credential paths while starting.  An
-            # empty directory contains no secret metadata to expose, so allow
-            # the sandbox group to traverse it without granting list, read, or
-            # write access.  Non-empty confidentiality roots remain root-only.
+            # The confidentiality-root contract already grants the sandbox
+            # group execute-only access (root:sandbox 0710).  Keep this
+            # explicit empty-root case for compatibility with the startup
+            # recovery path; nested entries remain root-only.
             _set_empty_credentials_startup_metadata(dir_fd, identity)
     except OSError as exc:
         raise GuardOperationError(
@@ -1544,12 +1561,11 @@ def _verify_metadata(
     policy: Policy,
     action: Action,
     identity: Identity,
-    empty_credentials_root: bool = False,
+    is_confidentiality_root: bool = False,
 ) -> Issue | None:
-    if empty_credentials_root:
-        expected_uid, expected_gid = identity.root_uid, identity.sandbox_gid
-    else:
-        expected_uid, expected_gid = _expected_ids(policy, action, identity)
+    expected_uid, expected_gid = _expected_ids(
+        policy, action, identity, is_confidentiality_root
+    )
     if st.st_uid != expected_uid or st.st_gid != expected_gid:
         return Issue(
             "verification-owner-mismatch",
@@ -1560,7 +1576,7 @@ def _verify_metadata(
         return None
     mode = stat.S_IMODE(st.st_mode)
     if entry_type == "directory":
-        expected_mode = 0o710 if empty_credentials_root else _expected_dir_mode(policy, action)
+        expected_mode = _expected_dir_mode(policy, action, is_confidentiality_root)
         if mode != expected_mode:
             return Issue(
                 "verification-mode-mismatch",
@@ -1607,6 +1623,7 @@ def _verify_dir(
     replaced_inodes: dict[str, int],
     issues: list[Issue],
     depth: int,
+    is_root: bool = False,
 ) -> None:
     if depth > MAX_TRAVERSAL_DEPTH:
         issues.append(
@@ -1635,9 +1652,7 @@ def _verify_dir(
         policy,
         action,
         identity,
-        _is_empty_credentials_root(
-            relative_dir, policy, action, relative_dir == "credentials", names
-        ),
+        is_root and policy == "confidentiality",
     )
     if dir_issue is not None:
         issues.append(dir_issue)
@@ -1805,14 +1820,16 @@ def _restore_empty_credentials_startup_access(
                 )
             )
             return result
-        if names:
-            if startup_traversable:
-                _set_dir_metadata(
-                    credentials_fd, "confidentiality", "lock", identity
-                )
-                os.fsync(credentials_fd)
-            return result
-        _set_empty_credentials_startup_metadata(credentials_fd, identity)
+        # All confidentiality roots are execute-only for the sandbox group,
+        # whether or not they currently contain credentials.  This preserves
+        # known-name ENOENT probes without exposing names or descendants.
+        _set_dir_metadata(
+            credentials_fd,
+            "confidentiality",
+            "lock",
+            identity,
+            is_confidentiality_root=True,
+        )
         after = os.fstat(credentials_fd)
         if (
             after.st_uid != identity.root_uid
@@ -2019,6 +2036,7 @@ def _run_guard_unserialized(
                     replaced_inodes,
                     result.issues,
                     1,
+                    is_root=True,
                 )
             finally:
                 os.close(root_fd)
