@@ -26,7 +26,7 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 `;
 
-describe("Hermes restore cron guard", () => {
+describe("Hermes restore cron guard (#7806)", () => {
   it("waits for the gateway drain acknowledgement that includes all active work", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cron-guard-"));
     try {
@@ -208,7 +208,10 @@ print(drain.marker, drain.cleared)
       );
 
       const result = runGuardModule(
-        `${LOAD_GUARD}\nmodule.validate_enabled_scripts(pathlib.Path(sys.argv[2]))`,
+        `${LOAD_GUARD}
+module._gateway_identity = lambda: None
+module.validate_enabled_scripts(pathlib.Path(sys.argv[2]))
+`,
         [fixture],
       );
       expect(result.status).toBe(0);
@@ -263,6 +266,61 @@ module.validate_enabled_scripts(pathlib.Path(sys.argv[2]))
       );
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("missing or unreadable");
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an enabled job whose script sits behind a directory the gateway cannot search", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cron-guard-"));
+    const nested = path.join(fixture, "scripts", "private");
+    try {
+      fs.mkdirSync(path.join(fixture, "scripts"));
+      fs.mkdirSync(path.join(fixture, "cron"));
+      fs.mkdirSync(nested, { mode: 0o700 });
+      fs.writeFileSync(path.join(nested, "digest.sh"), "echo ok\n", { mode: 0o644 });
+      fs.writeFileSync(
+        path.join(fixture, "cron", "jobs.json"),
+        JSON.stringify({ jobs: [{ enabled: true, script: "private/digest.sh" }] }),
+      );
+
+      const result = runGuardModule(
+        `${LOAD_GUARD}
+import os
+module._gateway_identity = lambda: (os.geteuid() + 1, set())
+module.validate_enabled_scripts(pathlib.Path(sys.argv[2]))
+`,
+        [fixture],
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("cannot reach through its directories");
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts an enabled job whose script directories the gateway can search", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cron-guard-"));
+    const nested = path.join(fixture, "scripts", "shared");
+    try {
+      fs.mkdirSync(path.join(fixture, "scripts"), { mode: 0o755 });
+      fs.mkdirSync(path.join(fixture, "cron"));
+      fs.mkdirSync(nested, { mode: 0o755 });
+      fs.writeFileSync(path.join(nested, "digest.sh"), "echo ok\n", { mode: 0o644 });
+      fs.writeFileSync(
+        path.join(fixture, "cron", "jobs.json"),
+        JSON.stringify({ jobs: [{ enabled: true, script: "shared/digest.sh" }] }),
+      );
+
+      const result = runGuardModule(
+        `${LOAD_GUARD}
+import os
+module._gateway_identity = lambda: (os.geteuid() + 1, set())
+module.validate_enabled_scripts(pathlib.Path(sys.argv[2]))
+`,
+        [fixture],
+      );
+      expect(result.status).toBe(0);
     } finally {
       fs.rmSync(fixture, { recursive: true, force: true });
     }

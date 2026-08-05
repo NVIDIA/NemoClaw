@@ -145,19 +145,40 @@ def _gateway_identity() -> tuple[int, set[int]] | None:
     return entry.pw_uid, memberships
 
 
-def _readable_by_gateway(script_path: Path) -> bool:
+def _accessible_by_gateway(path: Path, access_mode: int, bits: tuple[int, int, int]) -> bool:
     identity = _gateway_identity()
     if identity is None:
-        return os.access(script_path, os.R_OK)
+        return os.access(path, access_mode)
     uid, gids = identity
     if uid == os.geteuid():
-        return os.access(script_path, os.R_OK)
-    info = script_path.stat()
+        return os.access(path, access_mode)
+    owner_bit, group_bit, other_bit = bits
+    info = path.stat()
     if info.st_uid == uid:
-        return bool(info.st_mode & stat.S_IRUSR)
+        return bool(info.st_mode & owner_bit)
     if info.st_gid in gids:
-        return bool(info.st_mode & stat.S_IRGRP)
-    return bool(info.st_mode & stat.S_IROTH)
+        return bool(info.st_mode & group_bit)
+    return bool(info.st_mode & other_bit)
+
+
+def _readable_by_gateway(script_path: Path) -> bool:
+    return _accessible_by_gateway(
+        script_path, os.R_OK, (stat.S_IRUSR, stat.S_IRGRP, stat.S_IROTH)
+    )
+
+
+def _searchable_by_gateway(directory: Path) -> bool:
+    return _accessible_by_gateway(
+        directory, os.X_OK, (stat.S_IXUSR, stat.S_IXGRP, stat.S_IXOTH)
+    )
+
+
+def _enclosing_directories(scripts_dir: Path, script_parent: Path) -> list[Path]:
+    directories = [script_parent]
+    while directories[-1] != scripts_dir:
+        directories.append(directories[-1].parent)
+    directories.reverse()
+    return directories
 
 
 def _load_jobs(jobs_file: Path) -> list[Any]:
@@ -202,6 +223,12 @@ def validate_enabled_scripts(home: Path) -> None:
             raise ValueError(
                 f"Enabled Hermes cron job at index {index} references a missing or unreadable script"
             )
+        for directory in _enclosing_directories(scripts_dir, script_path.parent):
+            if not _searchable_by_gateway(directory):
+                raise ValueError(
+                    f"Enabled Hermes cron job at index {index} references a script the Hermes "
+                    "gateway cannot reach through its directories"
+                )
 
 
 def validate_restore(home: Path) -> None:

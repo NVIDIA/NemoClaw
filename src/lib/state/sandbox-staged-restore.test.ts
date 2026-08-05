@@ -453,6 +453,7 @@ describe("Hermes cron state restore", () => {
     });
 
     expect(result.restore.success).toBe(false);
+    expect(result.guardEvents).toEqual(["begin", "assert-safe", "validate", "release"]);
     expect(result.restoredScript).toBe("old script\n");
     expect(result.restoredCronJob).toBe("old cron\n");
     expect(result.drainLeftBehind).toBe(false);
