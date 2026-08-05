@@ -124,6 +124,47 @@ def verify_gateway_process_identity() -> None:
     )
 
 
+def verify_neutral_platform_inertness() -> None:
+    import socket
+
+    from gateway.config import Platform, load_gateway_config
+
+    original_connect = socket.socket.connect
+    original_create_connection = socket.create_connection
+
+    def reject_network(*_args, **_kwargs):
+        raise AssertionError("neutral Hermes configuration attempted a network connection")
+
+    socket.socket.connect = reject_network
+    socket.create_connection = reject_network
+    try:
+        config = load_gateway_config()
+    finally:
+        socket.socket.connect = original_connect
+        socket.create_connection = original_create_connection
+    bundled_plugins = {
+        manifest.parent.name
+        for manifest in Path("/opt/hermes/plugins/platforms").glob("*/plugin.yaml")
+    }
+    built_in_optional = {
+        platform.value
+        for platform in Platform
+        if platform.value not in {"api_server", "local"}
+    }
+    expected = bundled_plugins | built_in_optional
+    assert "google_chat" in expected, expected
+    assert "whatsapp_cloud" in expected, expected
+
+    for name in expected:
+        platform = Platform(name)
+        platform_config = config.platforms.get(platform)
+        assert platform_config is not None, name
+        assert platform_config.enabled is False, (name, platform_config)
+        assert platform_config.token is None, (name, platform_config.token)
+        assert platform_config.api_key is None, (name, platform_config.api_key)
+        assert platform_config.extra == {}, (name, platform_config.extra)
+
+
 def verify_cron_runtime_source() -> None:
     from cron.executions import EXECUTIONS_FILE
     from hermes_cli.backup import _QUICK_STATE_FILES
@@ -358,6 +399,7 @@ COMMANDS: dict[str, Callable[[], None]] = {
     "gateway-process-identity": verify_gateway_process_identity,
     "gateway-runtime-metadata": verify_gateway_runtime_metadata,
     "langfuse-credentials": verify_langfuse_credentials,
+    "neutral-platform-inertness": verify_neutral_platform_inertness,
     "profile-policy": verify_profile_policy,
     "session-preview": verify_session_preview,
 }

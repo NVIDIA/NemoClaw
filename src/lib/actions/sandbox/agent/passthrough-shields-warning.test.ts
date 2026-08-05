@@ -27,7 +27,15 @@ const isTerminalAgentMock = vi.hoisted(() =>
   vi.fn((agent: { runtime?: { kind?: string } }) => agent.runtime?.kind === "terminal"),
 );
 
-vi.mock("../exec", () => ({ execSandbox: execMock }));
+vi.mock("../exec", () => ({
+  execSandbox: execMock,
+  buildOpenshellExecArgs: vi.fn((_sb: string, cmd: readonly string[]) => cmd),
+  wrapExecCommandWithRuntimeEnv: vi.fn((cmd: readonly string[]) => cmd),
+  computeExitCode: vi.fn((result: { status: number | null }) => ({
+    code: result.status ?? 1,
+    errorMessage: null,
+  })),
+}));
 vi.mock("../gateway-state", () => ({ ensureLiveSandboxOrExit: ensureLiveMock }));
 vi.mock("../../../state/registry", () => ({ getSandbox: getSandboxMock }));
 vi.mock("../../../agent/defs", () => ({
@@ -63,13 +71,22 @@ describe("runAgentPassthrough shields-relock warning", () => {
     result: ShieldsAutoRestoreReadResult,
     sandboxName = "alpha",
   ): Promise<string> {
+    const execNonJson = vi.fn(((): never => {
+      throw new Error("__exit:0");
+    }) as NonNullable<AgentPassthroughDeps["execNonJson"]>);
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
     const { writes, proc } = makeProcMock();
-    await runAgentPassthrough(
-      sandboxName,
-      { extraArgs: ["--agent", "main", "-m", "hi"] },
-      { process: proc, getRecentShieldsAutoRestore: () => result },
-    );
+    await expect(
+      runAgentPassthrough(
+        sandboxName,
+        { extraArgs: ["--agent", "main", "-m", "hi"] },
+        {
+          process: proc,
+          execNonJson,
+          getRecentShieldsAutoRestore: () => result,
+        },
+      ),
+    ).rejects.toThrow("__exit:0");
     return writes.join("");
   }
 
@@ -78,7 +95,6 @@ describe("runAgentPassthrough shields-relock warning", () => {
       kind: "event",
       event: { timestamp: new Date().toISOString(), timeoutSeconds: 20 },
     });
-    expect(execMock).toHaveBeenCalled();
     expect(output).toMatch(/[Ss]hields auto-relocked after 20s/);
     expect(output).toMatch(/shields down --timeout 20s/);
   });
@@ -88,7 +104,6 @@ describe("runAgentPassthrough shields-relock warning", () => {
       kind: "event",
       event: { timestamp: new Date().toISOString(), timeoutSeconds: null },
     });
-    expect(execMock).toHaveBeenCalled();
     expect(output).toMatch(/[Ss]hields auto-relocked/);
     expect(output).toMatch(/shields down --timeout 60s/);
   });
@@ -183,13 +198,11 @@ describe("runAgentPassthrough shields-relock warning", () => {
 
   it("emits no relock warning when the audit has no recent event (#5922)", async () => {
     const output = await runWarning({ kind: "none" });
-    expect(execMock).toHaveBeenCalled();
     expect(output).not.toMatch(/[Ss]hields auto-relocked/);
   });
 
   it("reports unreadable audit history without blocking agent dispatch (#5922)", async () => {
     const output = await runWarning({ kind: "unreadable" });
-    expect(execMock).toHaveBeenCalled();
     expect(output).toMatch(/Could not read shields audit history/);
     expect(output).toMatch(/shields status/);
   });

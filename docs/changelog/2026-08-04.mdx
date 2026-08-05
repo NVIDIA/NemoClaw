@@ -1,0 +1,50 @@
+{/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */}
+
+## v0.0.102
+
+NemoClaw v0.0.102 adds authenticated attachment of operator-managed llama.cpp servers and an Experimental managed vLLM profile for two DGX Spark systems.
+It also improves DGX Station and Windows installation, gateway and sandbox recovery, Shields transactions, inference reliability, multi-port uninstall, and Hermes and LangChain Deep Agents Code workflows.
+
+- Onboarding can now attach an authenticated, operator-managed llama.cpp server on loopback port `8081` as the `llama-cpp-local` provider.
+  NemoClaw requires consistent native fingerprint evidence, bounds probe responses, and retains the generic compatible-endpoint path when the server cannot be identified as llama.cpp.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Experimental Express installation can now discover two qualified DGX Spark systems and select their managed vLLM profile from the declarative serving catalog.
+  DGX Station paths also qualify the May 2026 GB300WS factory image, retain the qualified driver transaction, accept mode-bound Express resume state, and recover host-global dual-Station runtime ownership during later onboarding.
+  For more information, refer to [Set Up vLLM on Two DGX Sparks](/user-guide/openclaw/inference/local-inference/set-up-vllm-on-two-dgx-sparks), [Set Up vLLM on Two DGX Stations](/user-guide/openclaw/inference/local-inference/set-up-vllm-on-two-dgx-stations), and [Additional Setup for DGX Station](/user-guide/openclaw/get-started/additional-setup/dgx-station-preparation).
+- Windows Subsystem for Linux (WSL) onboarding now validates Windows-host Ollama from Docker Desktop's network context and reuses a running daemon on mirrored networking.
+  When WSL has no local `ollama` executable, model pulls use the daemon's HTTP API instead.
+  For more information, refer to [Additional Setup for Windows Machines](/user-guide/openclaw/get-started/additional-setup/windows-preparation) and [Use Ollama](/user-guide/openclaw/inference/local-inference/set-up-ollama).
+- Reinstallation now reuses a healthy installer-managed CLI when its selected source and build identity still match.
+  Linux installation rejects incompatible OpenShell gateway versions before onboarding, adopts only a compatible package-managed gateway, and permits the bounded package-service-to-standalone recovery transition.
+  Multi-sandbox onboarding also records the dashboard port selected after a collision or final recovery.
+  For more information, refer to [Gateway Lifecycle Authority](/user-guide/openclaw/deployment/gateway-lifecycle-authority) and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- Starting a stopped sandbox now restores managed startup state before final gateway and host-forward readiness checks.
+  The gateway watchdog recovers every classified not-serving state after the gateway has served, and managed recovery applies `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` consistently.
+  Docker sandbox creation also retains rollback authority through late readiness, GPU, and local-inference checks.
+  For more information, refer to [Run Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/run-sandboxes) and [Recover and Rebuild Sandboxes](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/recover-and-rebuild-sandboxes).
+- Shields deadline recovery now blocks new mutations, waits for the verified owner to release its lock, and enters durable containment when bounded recovery cannot establish authority.
+  Relock can repair a narrowly validated permission-only configuration-hash drift, while corrupt transition locks fail promptly with recovery guidance.
+  For more information, refer to [Understand Runtime Changes](/user-guide/openclaw/manage-sandboxes/configure-sandboxes/understand-runtime-changes) and [Create and Restore Snapshots](/user-guide/openclaw/manage-sandboxes/state-and-backups/create-and-restore-snapshots).
+- `policy restore` now accepts `--yes`, `-y`, and `--force`, previews restored egress or stale-record cleanup, and revalidates the target before mutation.
+  Explicit sandbox destruction can continue after pre-delete Shields hardening fails while preserving the auto-restore authority if deletion is not confirmed.
+  The new `nemoclaw uninstall --all-gateway-ports` mode processes every discovered gateway-port environment independently and preserves shared resources when cleanup remains incomplete.
+  For more information, refer to [Network Policies](/user-guide/openclaw/reference/network-policies), [Uninstall NemoClaw](/user-guide/openclaw/manage-sandboxes/operate-sandboxes/uninstall-nemoclaw), and the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands).
+- OpenClaw now retries one classified transient remote Model Context Protocol (MCP) startup with a fresh transport and does not retain a degraded tool catalog as the stable session catalog.
+  Hosted inference probes use a bounded reply budget accepted by endpoints with a higher minimum, and onboarding preserves the validated reasoning-capability value through resume and sandbox creation.
+  For more information, refer to [Troubleshoot MCP Servers](/user-guide/openclaw/reference/troubleshoot-mcp-servers) and [Configure Model Capabilities](/user-guide/openclaw/inference/manage-inference/configure-model-capabilities).
+- Hermes WhatsApp pairing and media traffic now use the injected OpenShell proxy.
+  Hermes `sessions delete` invokes the native Hermes command with native identifier validation.
+  Deep Agents Code applies configured corporate certificate authority (CA) trust during local base-image dependency fetches and in the final sandbox image.
+  For more information, refer to [Set Up WhatsApp](/user-guide/hermes/manage-sandboxes/messaging-channels/set-up-whatsapp), the Hermes [NemoClaw CLI Commands Reference](/user-guide/hermes/reference/commands), and [Configure Corporate CA Trust](/user-guide/deepagents/security/configure-corporate-ca-trust).
+- Managed OpenClaw, Hermes, Deep Agents Code, and MCP discovery images now carry reviewed dependency updates for the release advisory set.
+  The changes update locked runtime graphs, remediate private npm dependencies during image assembly, and preserve fail-closed identity and integrity checks.
+  For more information, refer to the [OpenClaw 2026.7.1 Dependency Review](https://github.com/NVIDIA/NemoClaw/blob/main/docs/security/openclaw-2026.7.1-dependency-review.md) and [Hermes 0.19.0 Dependency Review](https://github.com/NVIDIA/NemoClaw/blob/main/docs/security/hermes-0.19.0-dependency-review.md).
+- Affected CLI paths now report invalid enumerated values, unresolved sandbox base images, and changed gateway authority without raw Node.js stack traces.
+  Captured output from non-JSON OpenClaw agent commands is inspected for recognized embedded-fallback markers.
+  When a marker is present, NemoClaw suppresses the captured transport output, exits with status `1`, and prints the documented recovery commands.
+  For more information, refer to the [NemoClaw CLI Commands Reference](/user-guide/openclaw/reference/commands) and [Troubleshooting](/user-guide/openclaw/reference/troubleshooting).
+- Documentation now gives OpenClaw, Hermes, and Deep Agents Code the same one-command interactive installation start and describes the current product capabilities and boundaries.
+  For more information, refer to the OpenClaw [Quickstart](/user-guide/openclaw/get-started/quickstart), Hermes [Quickstart](/user-guide/hermes/get-started/quickstart), [Quickstart with LangChain Deep Agents Code](/user-guide/deepagents/get-started/quickstart), and [Platform Support](/user-guide/openclaw/reference/platform-support).

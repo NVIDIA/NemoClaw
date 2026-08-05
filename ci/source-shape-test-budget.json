@@ -568,7 +568,7 @@
     },
     {
       "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps managed-bootstrap assets out of image packaging",
+      "test": "packages the dormant managed-bootstrap native boundary for every agent image",
       "category": "security"
     },
     {
@@ -745,6 +745,11 @@
       "file": "test/vitest-temp-root.test.ts",
       "test": "wires cleanup into root and standalone plugin test runs",
       "category": "compatibility"
+    },
+    {
+      "file": "test/vitest-temp-root.test.ts",
+      "test": "isolates stateful non-live projects without redirecting live E2E state",
+      "category": "security"
     },
     {
       "file": "test/vitest-watch-triggers.test.ts",

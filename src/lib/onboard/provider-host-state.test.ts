@@ -36,6 +36,7 @@ function buildDeps(
     })),
     getWindowsHostOllamaDockerRequirement: vi.fn(() => SUPPORTED_WINDOWS_OLLAMA),
     detectVllmProfile: vi.fn(() => null),
+    getLocalProviderAvailabilityEndpoint: vi.fn(() => "http://127.0.0.1:8000/v1/models"),
     ...overrides,
   };
 }
@@ -160,6 +161,24 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.vllmRunning).toBe(false);
   });
 
+  it("fails the vLLM running probe closed when managed endpoint resolution fails", () => {
+    const runCapture = vi.fn(() => "200");
+    const state = detectWithDeps(
+      buildDeps({
+        runCapture,
+        getLocalProviderAvailabilityEndpoint: () => {
+          throw new Error("managed state unavailable");
+        },
+      }),
+    );
+
+    expect(state.vllmRunning).toBe(false);
+    expect(runCapture).not.toHaveBeenCalledWith(
+      expect.arrayContaining([expect.stringContaining("8000")]),
+      expect.anything(),
+    );
+  });
+
   it("detects a reachable Windows-host Ollama beside WSL-local Ollama and warns outside mirrored networking", () => {
     const logs: string[] = [];
     const deps = buildDeps({
@@ -195,6 +214,28 @@ describe("detectInferenceProviderHostState", () => {
     expect(state.winOllamaInstalledPath).toMatch(/ollama\.exe$/);
     expect(logs.join("\n")).toContain("Ollama is running on both WSL and the Windows host");
     expect(deps.getWindowsHostOllamaDockerRequirement).toHaveBeenCalledWith("docker-desktop");
+  });
+
+  it("keeps WSL-local install available when Docker Desktop cannot reach Windows-host Ollama (#8199)", () => {
+    const deps = buildDeps({
+      isWsl: vi.fn(() => true),
+      getContainerRuntime: vi.fn<DetectInferenceProviderHostStateDeps["getContainerRuntime"]>(
+        () => "docker-desktop",
+      ),
+      detectWindowsHostOllama: vi.fn(() => ({
+        installed: true,
+        installedPath: "C:\\Users\\me\\AppData\\Local\\Programs\\Ollama\\ollama.exe",
+        loopbackOnly: false,
+      })),
+    });
+
+    const state = detectWithDeps(deps);
+
+    expect(state.hasWindowsOllama).toBe(true);
+    expect(state.windowsHostOllamaDockerRequirement.supported).toBe(true);
+    expect(state.windowsOllamaReachable).toBe(false);
+    expect(state.ollamaInstallMenu.entry?.key).toBe("install-ollama");
+    expect(state.ollamaInstallMenu.entry?.label).toBe("Install Ollama (WSL Linux)");
   });
 
   it("passes injected platform and env through WSL detection", () => {
