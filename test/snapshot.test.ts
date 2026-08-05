@@ -212,6 +212,39 @@ describe("listBackups computes virtual versions", () => {
     expect(entry.name).toBe("before-upgrade");
     expect(entry.snapshotVersion).toBe(1);
   });
+  it("stops listing a snapshot that was removed as incomplete (#8201)", () => {
+    const incomplete = writeBackup("test-sandbox", "2026-04-21T14-00-00-000Z", {
+      name: "failtest",
+    });
+    expect(sandboxState.listBackups("test-sandbox")).toHaveLength(1);
+
+    expect(sandboxState.removeIncompleteSnapshot(String(incomplete.backupPath))).toEqual({
+      removed: true,
+    });
+
+    expect(sandboxState.listBackups("test-sandbox")).toEqual([]);
+    expect(sandboxState.findBackup("test-sandbox", "failtest").match).toBeNull();
+    expect(fs.existsSync(String(incomplete.backupPath))).toBe(false);
+  });
+  it("restores the versions of surviving snapshots once an incomplete one is removed (#8201)", () => {
+    writeBackup("test-sandbox", "2026-04-21T14-01-00-000Z");
+    const incomplete = writeBackup("test-sandbox", "2026-04-21T14-05-00-000Z");
+    writeBackup("test-sandbox", "2026-04-21T14-10-00-000Z");
+    expect(sandboxState.listBackups("test-sandbox").map((b) => b.timestamp)).toEqual([
+      "2026-04-21T14-10-00-000Z",
+      "2026-04-21T14-05-00-000Z",
+      "2026-04-21T14-01-00-000Z",
+    ]);
+
+    sandboxState.removeIncompleteSnapshot(String(incomplete.backupPath));
+
+    expect(
+      sandboxState.listBackups("test-sandbox").map((b) => [b.snapshotVersion, b.timestamp]),
+    ).toEqual([
+      [2, "2026-04-21T14-10-00-000Z"],
+      [1, "2026-04-21T14-01-00-000Z"],
+    ]);
+  });
 
   it("surfaces customPolicies (name + content + sourcePath) through the manifest round-trip", () => {
     const custom = [
