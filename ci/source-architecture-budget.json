@@ -11,8 +11,8 @@
       "src/lib/adapters/openshell/runtime.ts": 52,
       "src/lib/adapters/openshell/timeouts.ts": 37,
       "src/lib/agent/defs.ts": 32,
-      "src/lib/cli/branding.ts": 86,
-      "src/lib/cli/nemoclaw-oclif-command.ts": 103,
+      "src/lib/cli/branding.ts": 87,
+      "src/lib/cli/nemoclaw-oclif-command.ts": 104,
       "src/lib/cli/terminal-style.ts": 45,
       "src/lib/core/json-types.ts": 37,
       "src/lib/core/ports.ts": 89,
@@ -24,7 +24,7 @@
       "src/lib/inference/web-search.ts": 21,
       "src/lib/messaging/channels/index.ts": 25,
       "src/lib/onboard/gateway-binding.ts": 49,
-      "src/lib/runner.ts": 89,
+      "src/lib/runner.ts": 88,
       "src/lib/security/redact.ts": 51,
       "src/lib/state/onboard-session.ts": 36,
       "src/lib/state/registry.ts": 101,
@@ -57,7 +57,7 @@
   "maxRootFiles": {
     "src/lib/onboard": 310,
     "src/lib/actions": 19,
-    "src/lib/actions/sandbox": 183,
+    "src/lib/actions/sandbox": 184,
     "src/lib/state": 37,
     "src/lib/inference": 62,
     "scripts": 46
