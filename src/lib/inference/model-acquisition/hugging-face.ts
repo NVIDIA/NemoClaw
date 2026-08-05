@@ -120,9 +120,9 @@ function exactFilenameArgs(filename: string | undefined): string[] {
   return [filename];
 }
 
-function repositoryArg(repository: string): string {
+export function isValidHuggingFaceRepositoryId(repository: string): boolean {
   const components = repository.split("/");
-  if (
+  return !(
     repository.length === 0 ||
     repository.length > HF_REPOSITORY_ID_MAX_LENGTH ||
     components.length > 2 ||
@@ -130,7 +130,11 @@ function repositoryArg(repository: string): string {
     repository.includes("--") ||
     repository.includes("..") ||
     repository.endsWith(".git")
-  ) {
+  );
+}
+
+function repositoryArg(repository: string): string {
+  if (!isValidHuggingFaceRepositoryId(repository)) {
     throw new Error("Hugging Face repository must be one valid repository ID");
   }
   return repository;
