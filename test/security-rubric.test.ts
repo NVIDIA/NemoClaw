@@ -29,6 +29,17 @@ describe("canonical security rubric", () => {
     expect(rubric.match(/^### Expected evidence$/gmu)).toHaveLength(9);
   });
 
+  it("rejects duplicate category names in an otherwise complete rubric", () => {
+    const duplicateCategoryRubric = readTrustedSecurityRubric().replace(
+      "## Category 2: Input Validation and Data Sanitization",
+      "## Category 2: Secrets and Credentials",
+    );
+
+    expect(() => parseSecurityRubric(duplicateCategoryRubric)).toThrow(
+      "Security rubric category names must be unique",
+    );
+  });
+
   it("keeps review procedure in the skill and category definitions only in the rubric", () => {
     const skill = fs.readFileSync(
       path.join(ROOT, ".agents", "skills", "nemoclaw-maintainer-security-code-review", "SKILL.md"),
