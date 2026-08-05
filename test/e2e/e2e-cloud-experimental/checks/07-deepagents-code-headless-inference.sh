@@ -22,6 +22,9 @@
 # sends untrusted evidence through the image-installed route-probe helper and
 # must stop before session attach. Per-phase diagnostics retain failure
 # attribution without splitting that shared evidence boundary.
+# This check is the typed target's risk-plan activation marker. The same target's
+# ordered thread-auto-approval check proves two named rebuilds converge and keep
+# `nemoclaw status` healthy when the capability returns to its disabled default.
 
 set -euo pipefail
 
