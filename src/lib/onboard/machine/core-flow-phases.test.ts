@@ -227,7 +227,6 @@ function createPhases(
         left.length === right.length && left.every((item) => right.includes(item)),
       removeSandboxFromRegistry: vi.fn(() => null),
       restoreSandboxRegistryEntryIfMissing: vi.fn(() => false),
-      repairRecordedSandbox: vi.fn(),
       ensureValidatedWebSearchCredential: vi.fn(async () => null),
       isBackToSelection: () => false,
       configureWebSearch: vi.fn(async () => null),

@@ -89,6 +89,7 @@ export interface VllmModelDef {
    * override outside this list before the image pull and model download.
    */
   platforms: readonly VllmPlatform[];
+  minComputeCapability?: number;
   /**
    * Environment variables exported immediately before `vllm serve` (e.g.
    * FlashInfer / MoE-backend selection, target SM arch). Joined as
@@ -125,6 +126,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     ],
     gated: false,
     platforms: ["spark", "station", "linux"],
+    minComputeCapability: 89,
   },
   {
     id: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
@@ -188,6 +190,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     ],
     gated: false,
     platforms: ["spark", "station", "linux"],
+    minComputeCapability: 89,
   },
   {
     id: "deepseek-ai/DeepSeek-V4-Flash",
@@ -204,7 +207,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--gpu-memory-utilization",
       "0.92",
       "--compilation-config",
-      `'{"cudagraph_mode":"FULL_AND_PIECEWISE","custom_ops":["all"]}'`,
+      `{"cudagraph_mode":"FULL_AND_PIECEWISE","custom_ops":["all"]}`,
       "--attention_config.use_fp4_indexer_cache",
       "True",
       "--tokenizer-mode",
@@ -219,7 +222,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--max-cudagraph-capture-size",
       "128",
       "--speculative-config",
-      `'{"method":"mtp","num_speculative_tokens":3}'`,
+      `{"method":"mtp","num_speculative_tokens":3}`,
       "--max-num-batched-tokens",
       "8192",
       "--max-num-seqs",
@@ -229,6 +232,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     ],
     gated: false,
     platforms: ["station"],
+    minComputeCapability: 100,
   },
   {
     id: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
@@ -248,9 +252,9 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--cpu-offload-params",
       "experts",
       "--kernel_config",
-      `'{"enable_flashinfer_autotune": false}'`,
+      `{"enable_flashinfer_autotune": false}`,
       "--speculative-config",
-      `'{"method":"nemotron_h_mtp","num_speculative_tokens":3}'`,
+      `{"method":"nemotron_h_mtp","num_speculative_tokens":3}`,
       "--max-num-seqs",
       "256",
       "--gpu-memory-utilization",
@@ -261,10 +265,11 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--tool-call-parser",
       "qwen3_coder",
       "--default-chat-template-kwargs",
-      `'{"enable_thinking":true,"force_nonempty_content":true}'`,
+      `{"enable_thinking":true,"force_nonempty_content":true}`,
     ],
     gated: false,
     platforms: ["station"],
+    minComputeCapability: 100,
     serveEnv: {
       VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY: "1",
       VLLM_NVFP4_GEMM_BACKEND: "flashinfer-trtllm",
@@ -331,13 +336,15 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "qwen3_coder",
       "--reasoning-parser",
       "qwen3",
-      "--speculative-config",
-      `'{"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}'`,
+      // Keep MTP speculative decoding opt-in on DGX Spark. It increases the
+      // managed profile's cold-start memory pressure and long-context risk
+      // without being required for correct model or tool-call behavior (#7127).
       "--load-format",
       "fastsafetensors",
     ],
     gated: false,
     platforms: ["spark"],
+    minComputeCapability: 121,
   },
 ] as const;
 
@@ -670,7 +677,12 @@ export function buildVllmServeCommand(
 ): string {
   const envPrefix = model.serveEnv
     ? `${Object.entries(model.serveEnv)
-        .map(([key, value]) => `export ${key}=${value}`)
+        .map(([key, value]) => {
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key)) {
+            throw new Error(`Invalid vLLM serving environment variable name: ${key}`);
+          }
+          return `export ${key}=${shellQuote(value)}`;
+        })
         .join(" && ")} && `
     : "";
   const args = [
@@ -681,8 +693,10 @@ export function buildVllmServeCommand(
     ...(model.servedModelId ? ["--served-model-name", model.servedModelId] : []),
     ...model.modelArgs,
   ];
-  const extraArgs = parseVllmExtraServeArgs(env).map(shellQuote);
+  const extraArgs = parseVllmExtraServeArgs(env);
   const setup =
     model.installFastSafetensors === false ? "" : "pip install vllm[fastsafetensors] && ";
-  return `${envPrefix}${setup}vllm serve ${model.id} ${[...args, ...extraArgs].join(" ")}`;
+  return `${envPrefix}${setup}vllm serve ${[model.id, ...args, ...extraArgs]
+    .map(shellQuote)
+    .join(" ")}`;
 }

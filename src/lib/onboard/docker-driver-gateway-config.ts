@@ -8,6 +8,7 @@ import {
   type DockerDriverGatewayJwtBundle,
   ensureDockerDriverGatewayJwtBundle,
 } from "./docker-driver-gateway-jwt-bundle";
+import { PORTABLE_HOST_GATEWAY_IP } from "./docker-driver-platform";
 
 export type { DockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
 export { ensureDockerDriverGatewayJwtBundle } from "./docker-driver-gateway-jwt-bundle";
@@ -73,10 +74,12 @@ export function buildDockerDriverGatewayConfigToml(
   jwtBundle?: DockerDriverGatewayJwtBundle | null,
   gatewayId = "nemoclaw",
 ): string {
+  const driver = gatewayEnv.OPENSHELL_DRIVERS === "podman" ? "podman" : "docker";
   const localTlsDir = jwtBundle ? gatewayLocalTlsDir(gatewayEnv) : undefined;
   const dockerEntries: [string, string | boolean | undefined][] = [
     ["enable_bind_mounts", gatewayEnv.NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS === "1" || undefined],
     ["grpc_endpoint", gatewayEnv.OPENSHELL_GRPC_ENDPOINT],
+    ["host_gateway_ip", driver === "podman" ? PORTABLE_HOST_GATEWAY_IP : undefined],
     ["network_name", gatewayEnv.OPENSHELL_DOCKER_NETWORK_NAME],
     ["supervisor_image", gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE],
     ["supervisor_bin", sandboxBin ?? undefined],
@@ -100,7 +103,7 @@ export function buildDockerDriverGatewayConfigToml(
     "version = 1",
     "",
     "[openshell.gateway]",
-    'compute_drivers = ["docker"]',
+    `compute_drivers = [${tomlString(driver)}]`,
     "disable_tls = false",
     "",
   ];
@@ -130,7 +133,7 @@ export function buildDockerDriverGatewayConfigToml(
     );
   }
 
-  sections.push("[openshell.drivers.docker]");
+  sections.push(`[openshell.drivers.${driver}]`);
   if (dockerConfig) sections.push(dockerConfig);
   sections.push("");
 

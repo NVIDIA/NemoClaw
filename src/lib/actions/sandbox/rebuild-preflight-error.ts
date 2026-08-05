@@ -9,10 +9,15 @@ export function printRebuildPreflightFailure(
   detail: string,
   bailMessage: string,
   bail: RebuildBail,
+  bailCode?: number,
 ): void {
   console.error("");
   console.error(`  ${_RD}Rebuild preflight failed:${R} ${summary}`);
   console.error(`  ${detail}`);
-  console.error("  Sandbox is untouched — no data was lost.");
-  bail(bailMessage);
+  console.error("  Aborting rebuild — sandbox is untouched, no data was lost.");
+  if (bailCode === undefined) {
+    bail(bailMessage);
+  } else {
+    bail(bailMessage, bailCode);
+  }
 }

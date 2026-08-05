@@ -141,6 +141,22 @@ spec:
         format: gguf
         quantization: Q4_K_M
         license: Apache-2.0
+    acquisition:
+      ref: hugging-face-exact-file/v1
+      authentication:
+        mode: optional
+        environment: HF_TOKEN
+    cache:
+      ref: llama-cpp.gguf-content-addressed/v1
+      receiptRef: llama-cpp.gguf-cache-entry.receipt/v1
+      root: user-cache
+      quotaBytes: 6442450944
+      stagingHeadroomBytes: 1073741824
+      staging: same-filesystem
+      publication: atomic-no-clobber
+      reuse: verified-only-offline
+      sharing: owner-only
+      cleanup: receipt-owner-only
   runtime:
     image: registry.example/test/llama-server@sha256:${"2".repeat(64)}
     imageDownloadSizeBytes: 1073741824
@@ -315,7 +331,7 @@ describe("managed inference serving catalog compiler", () => {
     expect(first.readinessSchemaRef).toBe(
       "https://github.com/NVIDIA/NemoClaw/schemas/system-readiness.schema.json",
     );
-    expect(first.compilerVersion).toBe("1.1.0");
+    expect(first.compilerVersion).toBe("1.2.0");
     expect(first.recipes.map((definition) => definition.metadata.id)).toEqual(["test.recipe.v1"]);
     expect(first.presets.map((definition) => definition.metadata.id)).toEqual(["test.preset.auto"]);
     expect(first.sources.map((source) => source.path)).toEqual([
@@ -367,7 +383,37 @@ describe("managed inference serving catalog compiler", () => {
       "      revision: main",
     ],
     ["a mutable model revision", `    revision: ${"f".repeat(40)}`, "    revision: latest"],
+    ["a missing GGUF digest", `        digest: sha256:${"1".repeat(64)}\n`, ""],
     ["a missing GGUF byte size", "        sizeBytes: 4294967296\n", ""],
+    ["a non-GGUF file", "      - path: test-model.Q4_K_M.gguf", "      - path: model.bin"],
+    [
+      "an unsupported acquisition transport",
+      "      ref: hugging-face-exact-file/v1",
+      "      ref: arbitrary-url/v1",
+    ],
+    ["a required acquisition credential", "        mode: optional", "        mode: required"],
+    [
+      "an arbitrary acquisition endpoint",
+      "      ref: hugging-face-exact-file/v1",
+      "      ref: hugging-face-exact-file/v1\n      endpoint: https://example.test/model.gguf",
+    ],
+    [
+      "an embedded acquisition credential",
+      "        environment: HF_TOKEN",
+      "        environment: HF_TOKEN\n        token: test-secret",
+    ],
+    ["a shared cache owner", "      sharing: owner-only", "      sharing: host-user"],
+    [
+      "cross-filesystem staging",
+      "      staging: same-filesystem",
+      "      staging: system-temporary",
+    ],
+    [
+      "clobbering cache publication",
+      "      publication: atomic-no-clobber",
+      "      publication: replace-existing",
+    ],
+    ["unverified cache reuse", "      reuse: verified-only-offline", "      reuse: trust-existing"],
     [
       "a mutable server image",
       `    image: registry.example/test/llama-server@sha256:${"2".repeat(64)}`,
@@ -463,6 +509,39 @@ describe("managed inference serving catalog compiler", () => {
     expect(() => compile([recipe])).toThrow("does not satisfy the ServingRecipe schema");
   });
 
+  it.each([
+    [
+      "acquisition",
+      `    revision: ${MODEL_REVISION}`,
+      `    revision: ${MODEL_REVISION}
+    acquisition:
+      ref: hugging-face-exact-file/v1
+      authentication:
+        mode: optional
+        environment: HF_TOKEN`,
+    ],
+    [
+      "cache",
+      `    revision: ${MODEL_REVISION}`,
+      `    revision: ${MODEL_REVISION}
+    cache:
+      ref: llama-cpp.gguf-content-addressed/v1
+      receiptRef: llama-cpp.gguf-cache-entry.receipt/v1
+      root: user-cache
+      quotaBytes: 2048
+      stagingHeadroomBytes: 1024
+      staging: same-filesystem
+      publication: atomic-no-clobber
+      reuse: verified-only-offline
+      sharing: owner-only
+      cleanup: receipt-owner-only`,
+    ],
+  ])("rejects llama.cpp model %s on a generic recipe (#8279)", (_field, expected, replacement) => {
+    const recipe = replaceSource(recipeSource(), expected, replacement);
+
+    expect(() => compile([recipe])).toThrow("does not satisfy the ServingRecipe schema");
+  });
+
   it("rejects a llama.cpp readiness model that differs from the served name (#8181)", () => {
     const wrongExpectedModel = replaceSource(
       llamaCppRecipeSource(),
@@ -496,6 +575,18 @@ describe("managed inference serving catalog compiler", () => {
 
     expect(() => compile([invalidBatching])).toThrow(
       "serve.microBatchSize cannot exceed serve.batchSize",
+    );
+  });
+
+  it("rejects a llama.cpp cache quota below the file size and staging headroom (#8279)", () => {
+    const insufficientQuota = replaceSource(
+      llamaCppRecipeSource(),
+      "      quotaBytes: 6442450944",
+      "      quotaBytes: 5368709119",
+    );
+
+    expect(() => compile([insufficientQuota])).toThrow(
+      "cache quota must be at least 5368709120 bytes",
     );
   });
 

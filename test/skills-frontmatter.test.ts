@@ -109,7 +109,10 @@ describe("repo skill markdown files", () => {
     );
     expect(discovery.split("\n").length).toBeLessThan(35);
     expect(discovery).toContain("Before implementation");
-    expect(discovery).toContain("nemoclaw-maintainer-security-code-review");
+    expect(discovery).toContain("security-rubric.md");
+    expect(discovery).toContain("applicable risks, intended controls");
+    expect(discovery).toContain("negative evidence for each");
+    expect(discovery).not.toContain("nemoclaw-maintainer-security-code-review");
     expect(discovery).not.toContain("rg --files");
     expect(discovery).not.toContain("Follow imports and call sites");
   });

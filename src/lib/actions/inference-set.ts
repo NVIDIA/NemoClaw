@@ -1245,7 +1245,7 @@ async function runInferenceSetWithoutHostLock(
         `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
       );
     }
-    // Hermes keeps an isolated dashboard-home config that only mirrors the gateway
+    // Hermes keeps an isolated dashboard profile config that only mirrors the gateway
     // config's model routing at sandbox startup. Re-seed it after an in-place
     // switch so Dashboard Chat (and /api/model/info) converge on the new model
     // instead of silently staying on the previous one (#6893).

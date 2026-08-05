@@ -191,7 +191,7 @@ if [ "$DASHBOARD_PUBLIC_PORT" -eq "$DASHBOARD_INTERNAL_PORT" ]; then
   DASHBOARD_INTERNAL_PORT=19120
 fi
 HERMES_DASHBOARD_TUI="${NEMOCLAW_HERMES_DASHBOARD_TUI:-${HERMES_DASHBOARD_TUI:-0}}"
-HERMES_DASHBOARD_HOME="${HERMES_DASHBOARD_HOME:-/sandbox/.hermes/dashboard-home}"
+HERMES_DASHBOARD_HOME="${HERMES_DASHBOARD_HOME:-/sandbox/.hermes/profiles/dashboard-home}"
 HERMES="$(command -v hermes)" # Resolve once, use absolute path everywhere
 
 # Hermes resolves config and runtime state relative to HERMES_HOME. The config
@@ -3151,6 +3151,7 @@ supervise_hermes_gateway_current_user() {
     sleep 2 || true
 
     recover_hermes_gateway_current_user || return 1
+    unhealthy_streak=0
     echo "[gateway] Hermes gateway respawned (pid $GATEWAY_PID)" >&2
   done
 }
