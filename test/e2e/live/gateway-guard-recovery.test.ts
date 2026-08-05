@@ -50,6 +50,8 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { pollUntil } from "../fixtures/polling.ts";
+import type { TestProgress } from "../fixtures/progress.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
 
 // Reuses the standard ubuntu-repo-docker environment with the
@@ -143,6 +145,35 @@ async function inspectStartupCommand(
   });
   expect(result.exitCode, resultText(result)).toBe(0);
   return result.stdout.trim();
+}
+
+async function waitForSandboxExecAfterContainerRestart(
+  host: HostCliClient,
+  sandboxName: string,
+  progress: TestProgress,
+): Promise<void> {
+  await pollUntil({
+    artifactPrefix: "legacy-restart-openshell-ready",
+    attempts: 12,
+    delayMs: 3_000,
+    probe: async (_attempt, artifactName) =>
+      await host.command(
+        host.openshellCommandPath,
+        ["sandbox", "exec", "-n", sandboxName, "--", "true"],
+        {
+          artifactName,
+          env: buildAvailabilityProbeEnv(),
+          timeoutMs: 30_000,
+        },
+      ),
+    accept: (result, attempt) =>
+      result.exitCode === 0 ? true : reportReadinessRetry(progress, attempt),
+  });
+}
+
+function reportReadinessRetry(progress: TestProgress, attempt: number): false {
+  progress.event(`OpenShell sandbox readiness retry ${attempt}`);
+  return false;
 }
 
 test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)", {
@@ -418,6 +449,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     timeoutMs: 120_000,
   });
   expect(legacyRestart.exitCode, resultText(legacyRestart)).toBe(0);
+  await waitForSandboxExecAfterContainerRestart(host, instance.sandboxName, progress);
 
   progress.phase("recover legacy managed supervisor and inference");
   const legacyCredentialCanary = "nemoclaw-e2e-recovery-secret-6635";
