@@ -611,6 +611,27 @@ describe("shields — unit logic", () => {
       expect(writeTempPolicy).not.toHaveBeenCalled();
     });
 
+    it("deadline restore reuses an unchanged snapshot without temporary storage when no managed MCP entries exist (#7952)", async () => {
+      const snapshotPath = path.join(stateDir(), "policy-snapshot-no-managed-mcp.yaml");
+      fs.mkdirSync(stateDir(), { recursive: true });
+      fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  restrictive_baseline: {}\n");
+      const createTempDirectory = vi.spyOn(fs, "mkdtempSync").mockImplementation(() => {
+        throw Object.assign(new Error("ENOSPC: simulated temporary storage full"), {
+          code: "ENOSPC",
+        });
+      });
+      const { buildDeadlineRuntimeManagedMcpPolicy } = await import("./permissive-runtime");
+
+      const result = buildDeadlineRuntimeManagedMcpPolicy(snapshotPath, {
+        managedMcpPolicies: [],
+        snapshotManagedPolicyKeys: [],
+        readBasePolicy: () => fs.readFileSync(snapshotPath, "utf-8"),
+      });
+
+      expect(result).toEqual({ path: snapshotPath, omissions: [] });
+      expect(createTempDirectory).not.toHaveBeenCalled();
+    });
+
     it("shieldsStatus warns and stays DOWN when inline recovery fails", async () => {
       const sandboxName = "openclaw";
       const missingSnapshotPath = path.join(stateDir(), "missing-snapshot.yaml");

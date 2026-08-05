@@ -15,6 +15,11 @@ export interface OllamaInstallMenuInput {
   hasOllama: boolean;
   ollamaRunning: boolean;
   hasWindowsOllama: boolean;
+  /** Whether the sandbox can reach a Windows-host Ollama daemon at all. A
+   *  Windows install behind a container runtime without `host.docker.internal`
+   *  routing covers nothing, so the WSL-local install entry stays on offer.
+   *  Only read when `hasWindowsOllama` is set; defaults to reachable. */
+  windowsHostOllamaSupported?: boolean;
   platform: NodeJS.Platform;
   isWsl: boolean;
   /** Resolved host for the running Ollama daemon. `host.docker.internal`
@@ -110,9 +115,9 @@ function osTagFor(platform: NodeJS.Platform, isWsl: boolean): string | null {
  * Decide whether the onboard provider menu should expose an `install-ollama`
  * entry, and which label to render. Two cases:
  *
- *   1. No Ollama anywhere (host, running, or Windows) — offer a fresh install
- *      as a fallback (e.g. when the NVIDIA API server is down and cloud keys
- *      are unavailable).
+ *   1. No usable Ollama anywhere (host, running, or a Windows install the
+ *      sandbox can reach) — offer a fresh install as a fallback (e.g. when the
+ *      NVIDIA API server is down and cloud keys are unavailable).
  *   2. Host Ollama exists but its version is below `MIN_OLLAMA_VERSION` —
  *      offer an explicit upgrade so the express setup path doesn't reuse a
  *      daemon that crashes loading newer starter models.
@@ -147,8 +152,13 @@ export function resolveOllamaInstallMenuEntry(
   const daemonNeedsUpgrade =
     daemonProbeApplies && !isOllamaVersionAtLeast(runningOllamaVersion, MIN_OLLAMA_VERSION);
   const hasUpgradableOllama = binaryNeedsUpgrade || daemonNeedsUpgrade;
+  // A Windows-host install only covers the local-inference need when the
+  // sandbox can route to it. Under a container runtime without that routing,
+  // WSL-local Ollama is the only workable local provider, and suppressing its
+  // entry left a requested `install-ollama` with nothing to select (#8199).
+  const usableWindowsOllama = input.hasWindowsOllama && (input.windowsHostOllamaSupported ?? true);
   const showEntry =
-    (!input.hasOllama && !input.ollamaRunning && !input.hasWindowsOllama) || hasUpgradableOllama;
+    (!input.hasOllama && !input.ollamaRunning && !usableWindowsOllama) || hasUpgradableOllama;
   if (!showEntry) {
     return { entry: null, hasUpgradableOllama };
   }
