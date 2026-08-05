@@ -145,13 +145,15 @@ The redacted `error_body` value contains at most 2,048 UTF-8 bytes before JSON e
 It redacts session identifiers, bearer tokens, structured credentials such as `access_token`, `refresh_token`, and `client_secret`, and known token prefixes.
 The diagnostic does not include a JSON-RPC operation because this boundary sees only the endpoint.
 
-To find the matching sandbox audit record, read the audit log for the same endpoint around the failure time:
+To find the matching sandbox audit record, read the sandbox log for the same endpoint around the failure time.
+The `logs` command reads both OpenClaw gateway output and OpenShell audit events, so it needs no separate audit flag.
 
 ```bash
-$$nemoclaw <sandbox> logs --audit --tail 200
+$$nemoclaw <sandbox> logs --tail 200
 ```
 
 Match on `target` and the timestamp.
+If NemoClaw cannot enable OpenShell audit logs, it prints a warning and the policy denial events can be missing from the output.
 `diagnostic_id` is a local identifier created for one line group.
 It is not a distributed trace identifier and does not appear in OpenShell audit events.
 Correlate with OpenShell by endpoint and time until OpenShell records a shared identifier.

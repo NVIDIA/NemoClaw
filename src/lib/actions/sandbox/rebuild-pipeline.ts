@@ -18,7 +18,13 @@ import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
 import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import { disposeRebuildAgentBaseImagePreflight } from "./rebuild-flow-helpers";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
-import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
+import {
+  HermesCronRestoreIncompleteError,
+  printHermesCronRestoreRecoveryCommand,
+  recoverHermesCronRestore,
+  runHermesCronRestoreTransaction,
+  runRebuildPostRestorePhase,
+} from "./rebuild-post-restore-phase";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import {
   blockRebuildOnPendingBaselineTransition,
@@ -26,6 +32,7 @@ import {
 } from "./rebuild-preflight-guards";
 import {
   finalizePreparedRebuildImageMessagingPlan,
+  runHermesCronRestoreBackupPreflight,
   runRebuildPreflightPhase,
 } from "./rebuild-preflight-phase";
 import {
@@ -54,6 +61,10 @@ function runBestEffortRebuildCleanup(cleanup: () => boolean | void, warning: str
   } catch {
     console.warn(warning);
   }
+}
+
+function rebuildFailureDetail(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**
@@ -194,6 +205,19 @@ async function rebuildSandboxUnlocked(
       });
       if (!backup) return;
 
+      // Validate the completed backup artifact produced above, not the mutable live
+      // tree. This gate therefore follows backup creation and precedes every
+      // destructive rebuild phase.
+      const hermesCronRestorePreflight = runHermesCronRestoreBackupPreflight({
+        rebuildAgent,
+        backupPath: backup.backupManifest?.backupPath ?? null,
+        backedUpDirs: backup.backupManifest?.backedUpDirs ?? [],
+        log,
+        bail,
+      });
+      if (!hermesCronRestorePreflight) return;
+      const hermesCronRestorePlan = hermesCronRestorePreflight.plan;
+
       const preservedEnv = backup.backupManifest?.preservedEnv ?? [];
       if (preparedImage && messagingPlan?.agent === "hermes" && preservedEnv.length > 0) {
         const finalizedImage = finalizePreparedRebuildImageMessagingPlan(
@@ -261,6 +285,40 @@ async function rebuildSandboxUnlocked(
       // replacement. Retire its journal and stop before the destroy phase so a
       // restart converges to that sandbox instead of deleting it.
       if (recreateJournal.acceptedTarget) {
+        // The accepted replacement belongs to an earlier run. Its persisted
+        // gate is independent of the current backup's cron plan, so probe every
+        // Hermes target before retiring the replacement journal.
+        if (rebuildAgent === "hermes") {
+          try {
+            const outcome = recoverHermesCronRestore(sandboxName);
+            if (outcome === "unsupported") {
+              console.error("");
+              console.error(
+                "  The accepted Hermes replacement does not provide cron restore recovery.",
+              );
+              console.error(`  Backup is preserved at: ${backup.backupManifest?.backupPath}`);
+              return bail(
+                "Hermes cron restore recovery is unavailable; the replacement journal was retained.",
+              );
+            }
+            if (outcome === "operator-drain-preserved") {
+              console.log(
+                "  Hermes cron restore gate cleared; the independent operator drain remains active.",
+              );
+            }
+            log(`Hermes cron restore recovery for accepted replacement: ${outcome}`);
+          } catch (error) {
+            console.error("");
+            console.error(
+              `  Hermes cron restore could not validate and release the accepted replacement: ${rebuildFailureDetail(error)}`,
+            );
+            console.error(`  Backup is preserved at: ${backup.backupManifest?.backupPath}`);
+            printHermesCronRestoreRecoveryCommand(sandboxName);
+            return bail(
+              "Hermes cron restore recovery failed; the replacement journal was retained.",
+            );
+          }
+        }
         recreateJournal.completeAcceptedTarget();
         log(`Recovered journaled replacement ${recreateJournal.id} for '${sandboxName}'`);
         console.log(
@@ -378,18 +436,40 @@ async function rebuildSandboxUnlocked(
         durableConfig.webSearchConfig,
       );
 
-      const restored = runRebuildRestorePhase({
-        sandboxName,
-        targetAgentType: rebuildAgent || "openclaw",
-        targetImageIsCustom: Boolean(fromDockerfile),
-        backupManifest: backup.backupManifest,
-        policyPresets: targetPolicyPresets,
-        customPolicies:
-          backup.backupManifest?.customPolicies?.map((entry) => ({ ...entry })) ??
-          preservedCustomPolicies,
-        reconcileManagedDcodeObservability: rebuildAgent === DCODE_AGENT_NAME,
-        log,
-      });
+      const restore = () =>
+        runRebuildRestorePhase({
+          sandboxName,
+          targetAgentType: rebuildAgent || "openclaw",
+          targetImageIsCustom: Boolean(fromDockerfile),
+          backupManifest: backup.backupManifest,
+          policyPresets: targetPolicyPresets,
+          customPolicies:
+            backup.backupManifest?.customPolicies?.map((entry) => ({ ...entry })) ??
+            preservedCustomPolicies,
+          reconcileManagedDcodeObservability: rebuildAgent === DCODE_AGENT_NAME,
+          log,
+        });
+      const restored = hermesCronRestorePlan?.requiresDispatchGate
+        ? (() => {
+            try {
+              return runHermesCronRestoreTransaction(sandboxName, restore, (state, identity) => {
+                log(
+                  `Hermes cron restore gate ${state}: pid=${String(identity.pid)}, startTime=${String(identity.start_time)}`,
+                );
+              });
+            } catch (error) {
+              console.error("");
+              console.error(
+                error instanceof HermesCronRestoreIncompleteError
+                  ? "  Hermes cron dispatch remains drained because state restore was incomplete."
+                  : `  Hermes cron restore could not validate and reactivate dispatch: ${rebuildFailureDetail(error)}`,
+              );
+              console.error(`  Backup is preserved at: ${backup.backupManifest?.backupPath}`);
+              printHermesCronRestoreRecoveryCommand(sandboxName);
+              return bail("Hermes cron restore validation failed; dispatch was not re-enabled.");
+            }
+          })()
+        : restore();
       await runRebuildPostRestorePhase({
         sandboxName,
         sandboxEntry,
