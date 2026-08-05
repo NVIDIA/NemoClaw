@@ -4,6 +4,7 @@
 import { Flags } from "@oclif/core";
 import { TOOL_DISCLOSURE_VALUES, type ToolDisclosure } from "../tool-disclosure";
 import { describeAgentFlag } from "./agent-flag-help";
+import { PORTABLE_EXPERIMENTAL_PROFILE } from "./docker-driver-platform";
 import { NOTICE_ACCEPT_FLAG, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 
 type AgentRegistryReader = () => readonly string[];
@@ -80,6 +81,7 @@ export type OnboardFlags = {
   events?: "jsonl";
   yes?: boolean;
   "no-ollama-autostart"?: boolean;
+  "experimental-profile"?: string;
   [NOTICE_ACCEPT_FLAG_NAME]?: boolean;
 };
 
@@ -146,6 +148,10 @@ export function buildOnboardFlags(options: { includeEvents?: boolean } = {}): Re
     "no-ollama-autostart": Flags.boolean({
       description:
         "Skip the wizard's eager Ollama auto-start during inference-provider selection so onboard surfaces the unreachable-Ollama warning and the default fallback model; later setup steps still expect a reachable Ollama, and on Linux/systemd hosts the loopback-override path may still restart the daemon",
+    }),
+    "experimental-profile": Flags.string({
+      hidden: true,
+      options: [PORTABLE_EXPERIMENTAL_PROFILE],
     }),
     [NOTICE_ACCEPT_FLAG_NAME]: Flags.boolean({
       description: "Accept the third-party software notice",

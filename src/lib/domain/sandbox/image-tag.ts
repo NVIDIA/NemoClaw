@@ -8,6 +8,7 @@ export const SANDBOX_FROM_IMAGE_REPO = "openshell/sandbox-from";
  * (Linux, or macOS on Apple Silicon — see isLinuxDockerDriverGatewayEnabled).
  */
 export const LOCAL_SANDBOX_IMAGE_REPO = "nemoclaw-sandbox-local";
+export const PORTABLE_LOCAL_SANDBOX_IMAGE_REPO = "localhost:5000/nemoclaw-sandbox-local";
 
 /**
  * Every Docker repository that can hold a sandbox image. Any orphan sweep
@@ -16,7 +17,11 @@ export const LOCAL_SANDBOX_IMAGE_REPO = "nemoclaw-sandbox-local";
  * SANDBOX_FROM_IMAGE_REPO, so scanning only the latter left local orphans
  * invisible to gc (#6301).
  */
-export const SANDBOX_IMAGE_REPOS = [SANDBOX_FROM_IMAGE_REPO, LOCAL_SANDBOX_IMAGE_REPO] as const;
+export const SANDBOX_IMAGE_REPOS = [
+  SANDBOX_FROM_IMAGE_REPO,
+  LOCAL_SANDBOX_IMAGE_REPO,
+  PORTABLE_LOCAL_SANDBOX_IMAGE_REPO,
+] as const;
 
 const BUILT_SANDBOX_IMAGE_RE = /Built image (openshell\/sandbox-from:\d+)/;
 
