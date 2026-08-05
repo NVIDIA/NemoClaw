@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Shared setup mechanics for the two source suites that drive installVllm:
-// vllm.test.ts and vllm-install-storage.test.ts (#8351). vi.hoisted and
+// Shared setup mechanics for the source suites that drive installVllm:
+// vllm.test.ts, vllm-install-storage.test.ts, and
+// vllm-compute-capability.test.ts (#8351). vi.hoisted and
 // vi.mock are hoisted per file, so each suite still declares and owns its own
 // mocks; every export here takes that object as a parameter. Nothing in this
 // module holds mutable state, so each call returns fresh state. Not a
@@ -198,7 +199,7 @@ export function createVllmInstallSpies(): VllmInstallSpies {
   };
 }
 
-/** Clear the env vars both install suites read, without setting one for either. */
+/** Clear the env vars the install suites read, without setting one for any of them. */
 export function resetVllmInstallEnv(): void {
   delete process.env.NEMOCLAW_VLLM_MODEL;
   delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;
