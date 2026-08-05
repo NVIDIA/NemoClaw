@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   probeDockerStorage: vi.fn(),
   probeHostStorage: vi.fn(),
   runCapture: vi.fn(),
+  tryInstallManagedClusterManagedVllm: vi.fn(async () => ({ kind: "not-selected" as const })),
 }));
 
 vi.mock("../runner", async (importOriginal) => ({
@@ -51,6 +52,14 @@ vi.mock("./vllm-storage", async (importOriginal) => {
   };
 });
 
+vi.mock("./serving/vllm-managed-support", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./serving/vllm-managed-support")>();
+  return {
+    ...actual,
+    tryInstallManagedClusterManagedVllm: mocks.tryInstallManagedClusterManagedVllm,
+  };
+});
+
 import { detectVllmProfile, installVllm } from "./vllm";
 import {
   applyVllmInstallProbeDefaults,
@@ -75,6 +84,7 @@ describe("managed vLLM install storage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getGpuIndicesByName.mockReturnValue([0]);
+    mocks.tryInstallManagedClusterManagedVllm.mockResolvedValue({ kind: "not-selected" });
     ({ errSpy, mkdirSpy, restore: restoreSpies } = createVllmInstallSpies());
     resetVllmInstallEnv();
     process.env.HF_TOKEN = "hf_test";

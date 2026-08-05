@@ -153,7 +153,7 @@ export function mockSuccessfulVllmInstall(
     timedOut: false,
     timeoutKind: null,
   });
-  mocks.dockerSpawn.mockReturnValue(mockDockerSpawnSuccess());
+  mocks.dockerSpawn.mockImplementation(() => mockDockerSpawnSuccess());
   mocks.dockerRunDetached.mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
   const ownershipQueue = [...ownershipResponses];
   let ownershipCallIndex = 0;

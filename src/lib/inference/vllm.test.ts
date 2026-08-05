@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
     kind: "not-selected",
   })),
   runCapture: vi.fn(),
+  tryInstallManagedClusterManagedVllm: vi.fn(async () => ({ kind: "not-selected" as const })),
 }));
 
 vi.mock("../runner", async (importOriginal) => ({
@@ -61,6 +62,7 @@ vi.mock("./serving/vllm-managed-support", async (importOriginal) => {
   return {
     ...actual,
     resolveHostLocalVllmSelection: mocks.resolveHostLocalVllmSelection,
+    tryInstallManagedClusterManagedVllm: mocks.tryInstallManagedClusterManagedVllm,
   };
 });
 
@@ -95,6 +97,7 @@ beforeEach(() => {
   applyVllmInstallProbeDefaults(mocks);
   mocks.getGpuIndicesByName.mockReturnValue([]);
   mocks.resolveHostLocalVllmSelection.mockReturnValue({ kind: "not-selected" });
+  mocks.tryInstallManagedClusterManagedVllm.mockResolvedValue({ kind: "not-selected" });
 });
 
 function currentHostIdentity(): string | null {
