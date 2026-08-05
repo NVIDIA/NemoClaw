@@ -291,7 +291,7 @@ with tempfile.TemporaryDirectory() as root:
 `;
 
 describe("managed gateway lifecycle locking", () => {
-  it("serializes controller proofs and shares one recovery deadline (#8262)", () => {
+  it("acquires the expected-exit lock before gateway inspection and enforces one recovery deadline (#8262)", () => {
     const result = spawnSync("python3", ["-c", LOCKING_HARNESS, HELPER], {
       encoding: "utf8",
     });
