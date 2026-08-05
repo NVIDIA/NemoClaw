@@ -19,12 +19,13 @@ import { ManagedWorkloadAuthorityError, readManagedWorkloadAuthority } from "./w
 
 const AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
 const PLATFORMS = ["linux/amd64", "linux/arm64"] as const;
+type ManagedWorkloadReceipt = Extract<SandboxWorkloadReceipt, { readonly kind: "managed-image" }>;
 
 function managedReceipt(
   agent: ShippedManagedImageAgent,
   platform: ManagedImagePlatform,
   profileAgent: ShippedManagedImageAgent = agent,
-): Extract<SandboxWorkloadReceipt, { kind: "managed-image" }> {
+): ManagedWorkloadReceipt {
   const encodedProfile = encodeManagedStartupProfile(managedStartupE2eProfile(profileAgent));
   const digest = agent === "openclaw" ? "a" : agent === "hermes" ? "b" : "c";
   return {
@@ -47,7 +48,7 @@ function managedReceipt(
 function managedEntry(
   agent: ShippedManagedImageAgent,
   platform: ManagedImagePlatform = "linux/amd64",
-  receipt: SandboxWorkloadReceipt = managedReceipt(agent, platform),
+  receipt: ManagedWorkloadReceipt = managedReceipt(agent, platform),
 ): SandboxEntry {
   return {
     name: `authority-${agent}`,
@@ -107,7 +108,7 @@ describe("managed workload authority", () => {
     const { platform: _platform, ...withoutPlatform } = managedReceipt("openclaw", "linux/amd64");
     expect(() =>
       readManagedWorkloadAuthority(
-        managedEntry("openclaw", "linux/amd64", withoutPlatform as SandboxWorkloadReceipt),
+        managedEntry("openclaw", "linux/amd64", withoutPlatform as ManagedWorkloadReceipt),
       ),
     ).toThrow(/does not record an explicit OCI platform/u);
   });
@@ -134,7 +135,7 @@ describe("managed workload authority", () => {
         managedEntry("openclaw", "linux/amd64", {
           ...managedReceipt("openclaw", "linux/amd64"),
           platform: "linux/s390x",
-        } as unknown as SandboxWorkloadReceipt),
+        } as unknown as ManagedWorkloadReceipt),
       ),
     ).toThrow(ManagedWorkloadAuthorityError);
   });
