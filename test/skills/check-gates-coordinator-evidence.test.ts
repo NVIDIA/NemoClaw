@@ -1146,14 +1146,14 @@ describe("maintainer merge-gate E2E coordinator evidence", () => {
     expect(output.gates.ci.pendingChecks).toContain("checks");
   });
 
-  it("rejects a partition capped before its complete workflow-run inventory", () => {
+  it("rejects a workflow-run inventory at the 1,000-result cap", () => {
     const cappedIds = Array.from({ length: 1_000 }, (_value, index) => 30_000 + index);
     const result = runGateWithCoordinator({
       coordinatorRunPartitions: [
         {
           createdRange: DEFAULT_COORDINATOR_RANGES[0],
           runPages: paginatedRunIds(cappedIds),
-          totalCount: 1_001,
+          totalCount: 1_000,
           fallbackCreatedAt: "2025-12-31T06:00:00Z",
         },
         {

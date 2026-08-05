@@ -28,6 +28,10 @@ describe("maintainer merge-gate final PR snapshot", () => {
   it.each([
     ["the status rollup is incomplete", { finalStatusCheckHasNextPage: true }],
     ["the status rollup belongs to another commit", { finalStatusCheckCommitOid: "c".repeat(40) }],
+    [
+      "the status rollup count does not match its returned contexts",
+      { finalStatusContextTotalCount: successfulRequiredChecks().length + 1 },
+    ],
   ])("fails closed when %s in the final PR observation", (_condition, finalStatusFixture) => {
     const output = JSON.parse(
       runGate({
@@ -42,5 +46,20 @@ describe("maintainer merge-gate final PR snapshot", () => {
       details: "Unable to verify the final PR checks",
     });
     expect(output.allPass).toBe(false);
+  });
+
+  it("accepts a multi-commit PR when the final snapshot returns its last commit", () => {
+    const output = JSON.parse(
+      runGate({
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+        finalCommitTotalCount: 2,
+      }).stdout,
+    );
+
+    expect(output).toMatchObject({
+      allPass: true,
+      gates: { ci: { pass: true } },
+    });
   });
 });

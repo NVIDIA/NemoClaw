@@ -159,6 +159,8 @@ interface ComplianceFixture {
   finalPrAfterCurrentBase?: Record<string, unknown>;
   finalPrAfterCiEvidence?: Record<string, unknown>;
   finalPrAfterFinalCi?: Record<string, unknown>;
+  finalCommitTotalCount?: number;
+  finalStatusContextTotalCount?: number;
   finalStatusCheckCommitOid?: string;
   finalStatusCheckHasNextPage?: boolean;
 }
@@ -520,14 +522,15 @@ function runGate(fixture: ComplianceFixture) {
               ? null
               : { target: { oid: finalCurrentBaseSha ?? BASE_SHA } },
           commits: {
-            totalCount: 1,
+            totalCount: fixture.finalCommitTotalCount ?? 1,
             nodes: [
               {
                 commit: {
                   oid: fixture.finalStatusCheckCommitOid ?? finalPrAfterFinalCi.headRefOid,
                   statusCheckRollup: {
                     contexts: {
-                      totalCount: finalStatusCheckNodes.length,
+                      totalCount:
+                        fixture.finalStatusContextTotalCount ?? finalStatusCheckNodes.length,
                       pageInfo: { hasNextPage: fixture.finalStatusCheckHasNextPage ?? false },
                       nodes: finalStatusCheckNodes,
                     },
