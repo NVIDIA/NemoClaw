@@ -2576,8 +2576,10 @@ jobs:
   # sourceBoundary: The hosted amd64 lane builds the same exact candidate and
   # exports only BuildKit cache records; the GPU lane verifies that complete
   # all-agent cache and rebuilds with network access disabled.
-  # whyNotSourceFix: The failure is in the protected runner's external npm
-  # network path, outside candidate source and runner configuration owned here.
+  # whyNotSourceFix: The root cause is unverified. Protected run 31012875592
+  # failed twice during npm install before qualification while hosted builds of
+  # the same candidate passed; the protected runner infrastructure is not owned
+  # by this change. Evidence: https://github.com/NVIDIA/NemoClaw/actions/runs/31012875592
   # regressionTest: The build-script behavior test proves complete-cache-only,
   # symlink-free offline imports and exact --cache-from/--network none Docker
   # arguments; workflow boundary tests pin the producer/consumer handoff.
