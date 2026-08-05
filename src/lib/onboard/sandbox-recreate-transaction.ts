@@ -37,7 +37,7 @@ export type ReplacedSandboxWorkloadCleanupResult =
 
 export type ReplacedSandboxSourceEntry = Omit<SandboxEntry, "workload"> & {
   readonly workload?:
-    | Extract<NonNullable<SandboxEntry["workload"]>, { readonly kind: "managed-image" }>
+    | Exclude<NonNullable<SandboxEntry["workload"]>, { readonly kind: "legacy-dockerfile" }>
     | {
         readonly schemaVersion: 1;
         readonly kind: "legacy-dockerfile";
@@ -53,8 +53,12 @@ interface ReplacedSandboxWorkloadCleanupDeps {
 function providerCleanupSource(source: ReplacedSandboxSourceEntry): SandboxEntry {
   const { workload, ...entry } = source;
   if (!workload) return entry;
-  if (workload.kind === "managed-image") return { ...entry, workload };
+  if (workload.kind !== "legacy-dockerfile") return { ...entry, workload };
   return { ...entry, workload: { ...workload, shared: false } };
+}
+
+function workloadReference(workload: SandboxEntry["workload"]): string | null {
+  return !workload || workload.kind === "native-artifact" ? null : workload.reference;
 }
 
 /** Remove an owned source image only after the journaled replacement is registered. */
@@ -103,8 +107,8 @@ export function retireReplacedSandboxWorkload(
     return { status: "skipped", reason: "authority-unproven" };
   }
   if (
-    replacement.imageTag === plan.reference ||
-    replacement.workload?.reference === plan.reference
+    (replacement.workload?.kind !== "native-artifact" && replacement.imageTag === plan.reference) ||
+    workloadReference(replacement.workload) === plan.reference
   ) {
     return { status: "skipped", reason: "image-reused" };
   }

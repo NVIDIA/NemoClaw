@@ -904,7 +904,8 @@ function loadShieldsState(sandboxName: string): LoadedShieldsState {
   const filePath = stateFilePath(sandboxName);
   if (!fs.existsSync(filePath)) return { _hasStateFile: false };
   try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    const contents = fs.readFileSync(filePath, "utf-8");
+    const parsed = JSON.parse(contents);
     if (!isShieldsState(parsed)) {
       return {
         _hasStateFile: true,
@@ -1218,6 +1219,25 @@ function saveShieldsState(sandboxName: string, patch: ShieldsState): ShieldsStat
   fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
   fs.writeFileSync(stateFilePath(sandboxName), JSON.stringify(updated, null, 2), { mode: 0o600 });
   return updated;
+}
+
+function restoreShieldsStateSnapshot(sandboxName: string, state: LoadedShieldsState): void {
+  const {
+    _hasStateFile: hasStateFile,
+    _isCorrupt: isCorrupt,
+    _corruptError: _corruptError,
+    ...persisted
+  } = state;
+  const filePath = stateFilePath(sandboxName);
+  if (!hasStateFile) {
+    fs.rmSync(filePath, { force: true });
+    return;
+  }
+  fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+  if (isCorrupt) {
+    throw new Error("Cannot restore a corrupt shields state snapshot");
+  }
+  fs.writeFileSync(filePath, JSON.stringify(persisted, null, 2), { mode: 0o600 });
 }
 
 function isOptionalBoolean(value: unknown): value is boolean | undefined {
@@ -2866,6 +2886,25 @@ function lockAgentConfig(
   });
 }
 
+type ShieldsDownRollbackOutcome =
+  | "mutable_default_restored"
+  | "lockdown_restored"
+  | "manual_intervention_required";
+
+type ShieldsDownRollbackResult = {
+  outcome: ShieldsDownRollbackOutcome;
+  timerAuthorityRevoked: boolean;
+};
+
+function describeRollbackTimerAuthority(
+  hadScheduledTimer: boolean,
+  timerAuthorityRevoked: boolean,
+): string {
+  if (!hadScheduledTimer) return "";
+  return timerAuthorityRevoked
+    ? " Auto-restore timer authority was revoked."
+    : " The scheduled auto-restore remains authoritative.";
+}
 function resolveExactManagedMcpPolicies(
   sandboxName: string,
   livePolicyYaml?: string,
@@ -3063,9 +3102,11 @@ function rollbackShieldsDown(
   sandboxName: string,
   target: AgentConfigTarget,
   snapshotPath: string,
+  initialMode: ShieldsMode,
+  initialState: LoadedShieldsState,
   allowLegacyHermesProtocol = false,
   cachedProtocol?: HermesShieldsProtocol,
-): void {
+): ShieldsDownRollbackResult {
   console.error("  Rolling back — restoring policy from snapshot...");
   let rollbackResult: ReturnType<typeof run> | null = null;
   try {
@@ -3074,9 +3115,30 @@ function rollbackShieldsDown(
     const message = error instanceof Error ? error.message : String(error);
     console.error(`  Warning: Policy restore preparation failed during rollback: ${message}`);
   }
+  let timerAuthorityRevoked = false;
   let rollbackChattrApplied: boolean | null = null;
   let rollbackFileHashes: { [path: string]: string } | null = null;
   if (rollbackResult?.status === 0) {
+    if (initialMode === "mutable_default" && target.agentName === "openclaw") {
+      try {
+        unlockAgentConfig(sandboxName, target, false, allowLegacyHermesProtocol, cachedProtocol);
+        const timerCancellation = killTimer(sandboxName);
+        timerAuthorityRevoked = timerCancellation.authorityRevoked;
+        if (!timerCancellation.authorityRevoked) {
+          throw new Error(
+            `Cannot revoke auto-restore timer authority: ${timerCancellation.warnings.join("; ")}`,
+          );
+        }
+        restoreShieldsStateSnapshot(sandboxName, initialState);
+        console.error("  Original mutable-default posture restored.");
+        return { outcome: "mutable_default_restored", timerAuthorityRevoked };
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(
+          `  Warning: Could not verify the original mutable-default posture; applying fail-closed lockdown. ${detail}`,
+        );
+      }
+    }
     // Re-confirm after the settle window so a reconciler revert cannot leave
     // the rolled-back config DRIFTED — same fail-closed treatment as the
     // auto-restore path. Leaves the hashes null (→ "manual intervention"
@@ -3089,7 +3151,7 @@ function rollbackShieldsDown(
       rollbackFileHashes = relock.lastResult.fileHashes;
     } else {
       console.error(
-        "  Warning: Rollback re-lock could not be re-confirmed. Check config manually.",
+        `  Warning: Rollback re-lock could not be re-confirmed. Check config manually. ${relock.error ?? ""}`.trimEnd(),
       );
     }
   } else {
@@ -3105,11 +3167,16 @@ function rollbackShieldsDown(
       chattrApplied: rollbackChattrApplied,
       fileHashes: rollbackFileHashes,
     });
-    console.error("  Lockdown restored. Config was never left unguarded.");
-  } else {
-    console.error("  Config remains unlocked — manual intervention required.");
-    printManualRelockRecoveryHint(sandboxName);
+    console.error(
+      initialMode === "mutable_default"
+        ? "  Fail-closed lockdown applied; the original mutable-default posture was not restored."
+        : "  Lockdown restored. Config was never left unguarded.",
+    );
+    return { outcome: "lockdown_restored", timerAuthorityRevoked };
   }
+  console.error("  Config remains unlocked — manual intervention required.");
+  printManualRelockRecoveryHint(sandboxName);
+  return { outcome: "manual_intervention_required", timerAuthorityRevoked };
 }
 
 interface LockdownActivationResult {
@@ -3358,6 +3425,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     );
     return failShieldsCommand(`Shields state is corrupt for ${sandboxName}`, opts.throwOnError);
   }
+  const initialMode = deriveShieldsMode(state, state._hasStateFile);
   if (state.shieldsDown) {
     console.error(
       `  Config is already unlocked for ${sandboxName} (since ${state.shieldsDownAt}).`,
@@ -3381,7 +3449,15 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   // Kill stale auto-restore markers only when this command will actually
   // transition into shields-down. A repeated shields-down must not cancel the
   // active timer and leave the sandbox unlocked indefinitely.
-  killTimer(sandboxName);
+  const timerCancellation = killTimer(sandboxName);
+  if (!timerCancellation.authorityRevoked) {
+    const detail = timerCancellation.warnings.join("; ");
+    console.error(`  Cannot revoke stale auto-restore timer authority: ${detail}`);
+    return failShieldsCommand(
+      `Cannot revoke stale auto-restore timer authority for ${sandboxName}`,
+      opts.throwOnError,
+    );
+  }
 
   const timeoutSeconds = parseDuration(opts.timeout || `${DEFAULT_TIMEOUT_SECONDS}`);
   const reason = opts.reason || null;
@@ -3596,24 +3672,40 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     unlockAgentConfig(
       sandboxName,
       target,
-      deriveShieldsMode(state, state._hasStateFile) === "locked",
+      initialMode === "locked",
       opts.allowLegacyHermesProtocol === true,
       protocol,
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    rollbackShieldsDown(
+    const rollback = rollbackShieldsDown(
       sandboxName,
       target,
       snapshotPath,
+      initialMode,
+      state,
       opts.allowLegacyHermesProtocol === true,
       protocol,
     );
     if (transition) clearShieldsDownTransition(sandboxName, transition.processToken);
     console.error(`  ERROR: ${message}`);
-    console.error(
-      "  Config did not reach the mutable-default state; the scheduled auto-restore remains authoritative.",
+    const timerAuthority = describeRollbackTimerAuthority(
+      transition !== null,
+      rollback.timerAuthorityRevoked,
     );
+    if (rollback.outcome === "mutable_default_restored") {
+      console.error(
+        `  Config mutation failed; the original mutable-default posture was restored.${timerAuthority}`,
+      );
+    } else if (rollback.outcome === "lockdown_restored") {
+      console.error(
+        `  Config did not reach the mutable-default state; fail-closed lockdown was restored.${timerAuthority}`,
+      );
+    } else {
+      console.error(
+        `  Config rollback is incomplete.${timerAuthority} Manual intervention is required.`,
+      );
+    }
     console.error(
       `  Re-run \`nemoclaw ${sandboxName} shields down\` after correcting file ownership.`,
     );
@@ -3626,16 +3718,29 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
       writeShieldsDownTransition(transition, "preparing");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      rollbackShieldsDown(
+      const rollback = rollbackShieldsDown(
         sandboxName,
         target,
         snapshotPath,
+        initialMode,
+        state,
         opts.allowLegacyHermesProtocol === true,
         protocol,
       );
       clearShieldsDownTransition(sandboxName, transition.processToken);
       console.error(`  ERROR: ${message}`);
-      console.error("  Auto-restore handoff failed; lockdown was restored.");
+      const timerAuthority = describeRollbackTimerAuthority(true, rollback.timerAuthorityRevoked);
+      if (rollback.outcome === "mutable_default_restored") {
+        console.error(
+          `  Auto-restore handoff failed; the original mutable-default posture was restored.${timerAuthority}`,
+        );
+      } else if (rollback.outcome === "lockdown_restored") {
+        console.error(`  Auto-restore handoff failed; lockdown was restored.${timerAuthority}`);
+      } else {
+        console.error(
+          `  Auto-restore handoff failed; rollback is incomplete.${timerAuthority} Manual intervention is required.`,
+        );
+      }
       return failShieldsCommand(message, opts.throwOnError);
     }
   }
