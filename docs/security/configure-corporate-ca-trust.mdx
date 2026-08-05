@@ -39,7 +39,12 @@ It sets `NODE_EXTRA_CA_CERTS` before build-time Node.js dependency verification,
 
 <AgentOnly variant="hermes">
 
-The Hermes Dockerfile decodes the bundle after its managed build-time dependency steps, so the corporate CA does not apply to those earlier operations.
+The Hermes discovery-runtime installer applies the corporate CA before its npm operations.
+The final Hermes image stage decodes the CA immediately after `FROM ${BASE_IMAGE}` and sets `NODE_EXTRA_CA_CERTS` before later npm operations.
+The registry-backed npm remediations set `CURL_CA_BUNDLE` before each download only when the decoded certificate file exists.
+The Hermes package installer clears inherited `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` values before its build-time `uv pip install` commands.
+When the decoded CA exists, it sets both variables to that file for those commands.
+If the file does not exist, uv and Python use their default trust configuration.
 
 </AgentOnly>
 

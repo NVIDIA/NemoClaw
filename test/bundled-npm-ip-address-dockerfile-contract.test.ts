@@ -12,6 +12,7 @@ import {
   REVIEWED_NPM_VERSION,
 } from "../scripts/lib/patch-bundled-npm-ip-address.mts";
 import { REVIEWED_NPM_VERSION as UPGRADED_NPM_VERSION } from "../scripts/upgrade-bundled-npm.mts";
+import { requireSingleReviewedDockerfileRunCommand } from "./helpers/dockerfile-run-commands";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const baseDockerfiles = [
@@ -28,10 +29,7 @@ const copyInstruction =
   "COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts";
 const patchCommand =
   "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts";
-
-function instructionBody(source: string, start: number): string {
-  return source.slice(start).split(/\n(?=\S)/u, 1)[0] ?? "";
-}
+const npmRootArguments = ["--npm-root", "/usr/local/lib/node_modules/npm"] as const;
 
 describe("bundled npm ip-address image remediation contract", () => {
   it("binds the replacement to the reviewed npm and registry artifact", () => {
@@ -49,36 +47,40 @@ describe("bundled npm ip-address image remediation contract", () => {
   it.each(baseDockerfiles)("patches the reviewed npm tree after upgrading it in %s", (file) => {
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const copy = source.indexOf(copyInstruction);
-    const upgrade = source.indexOf(
-      "RUN node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
-    );
-    const patch = source.indexOf(patchCommand);
+    const upgrade = requireSingleReviewedDockerfileRunCommand(
+      source,
+      "node --experimental-strip-types /scripts/upgrade-bundled-npm.mts",
+      npmRootArguments,
+    ).commandStart;
+    const patch = requireSingleReviewedDockerfileRunCommand(source, patchCommand, npmRootArguments);
 
     expect(copy, file).toBeGreaterThanOrEqual(0);
     expect(upgrade, file).toBeGreaterThan(copy);
-    expect(patch, file).toBeGreaterThan(upgrade);
-    expect(instructionBody(source, patch), file).toContain(
-      "--npm-root /usr/local/lib/node_modules/npm",
-    );
+    expect(patch.commandStart, file).toBeGreaterThan(upgrade);
   });
 
   it.each(finalDockerfiles)("reasserts the private package fix in the completed %s", (file) => {
     const source = fs.readFileSync(path.join(repoRoot, file), "utf8");
     const copy = source.indexOf(copyInstruction);
-    const tarPatch = source.indexOf(
-      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+    const tarPatch = requireSingleReviewedDockerfileRunCommand(
+      source,
+      "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+      npmRootArguments,
+    ).commandStart;
+    const bracePatch = requireSingleReviewedDockerfileRunCommand(
+      source,
+      "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
+      npmRootArguments,
+    ).commandStart;
+    const ipAddressPatch = requireSingleReviewedDockerfileRunCommand(
+      source,
+      patchCommand,
+      npmRootArguments,
     );
-    const bracePatch = source.indexOf(
-      "RUN node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
-    );
-    const ipAddressPatch = source.indexOf(patchCommand);
 
     expect(copy, file).toBeGreaterThanOrEqual(0);
     expect(tarPatch, file).toBeGreaterThan(copy);
     expect(bracePatch, file).toBeGreaterThan(tarPatch);
-    expect(ipAddressPatch, file).toBeGreaterThan(bracePatch);
-    expect(instructionBody(source, ipAddressPatch), file).toContain(
-      "--npm-root /usr/local/lib/node_modules/npm",
-    );
+    expect(ipAddressPatch.commandStart, file).toBeGreaterThan(bracePatch);
   });
 });
