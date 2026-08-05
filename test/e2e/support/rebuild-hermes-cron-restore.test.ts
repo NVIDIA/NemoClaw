@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { cronJobState, parseHermesCronBeginReceipt } from "../live/rebuild-hermes-cron-restore.ts";
+import {
+  cronJobState,
+  parseCronTickerTimestamp,
+  parseHermesCronBeginReceipt,
+} from "../live/rebuild-hermes-cron-restore.ts";
 
 describe("Hermes rebuild cron state compatibility", () => {
   it("reads the historical nested cron state (#7806)", () => {
@@ -62,5 +66,24 @@ describe("Hermes rebuild cron begin receipt", () => {
         })}\n`,
       ),
     ).toThrow("Hermes cron begin receipt identity is invalid");
+  });
+});
+
+describe("Hermes rebuild cron ticker timestamp", () => {
+  it("parses the ticker epoch", () => {
+    expect(parseCronTickerTimestamp("1785951799.098\n", "ticker timestamp")).toBe(
+      1_785_951_799.098,
+    );
+  });
+
+  it.each([
+    "",
+    "not-an-epoch\n",
+    "Infinity\n",
+    "-1\n",
+  ])("rejects malformed ticker evidence %j", (evidence) => {
+    expect(() => parseCronTickerTimestamp(evidence, "ticker timestamp")).toThrow(
+      "ticker timestamp is invalid",
+    );
   });
 });
