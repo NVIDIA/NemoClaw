@@ -205,7 +205,7 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
   if (!packageStep || !uploadStep || !provenanceStep) return;
 
   if (packageStep.id !== "package_cli_artifact" || packageStep.shell !== "bash") {
-    errors.push("CLI artifact package step must use the canonical id and bash shell");
+    errors.push("CLI artifact package step must use id package_cli_artifact and the Bash shell");
   }
   if (
     !isDeepStrictEqual(record(packageStep.env), {
@@ -225,7 +225,7 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
     "test -s dist/nemoclaw.js",
     "test -s dist/build-identity.json",
     ".sourceRevision == $candidateSha",
-    "authoritative CLI build identity does not match the candidate SHA",
+    "candidate CLI build identity does not match the candidate commit SHA",
     "--sort=name",
     "--mtime=@0",
     "source_tree=\"$(git rev-parse 'HEAD^{tree}')\"",

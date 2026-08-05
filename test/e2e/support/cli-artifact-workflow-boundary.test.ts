@@ -295,7 +295,7 @@ function requireStep(workflow: Workflow, jobName: string, stepName: string) {
 }
 
 describe("exact-commit CLI artifact workflow boundary", () => {
-  it("builds once and gives every build-backed E2E job the verified artifact", () => {
+  it("builds the candidate CLI once and requires every artifact-using job to restore it", () => {
     expect(validateCliArtifactWorkflowBoundary(readWorkflow())).toEqual([]);
   });
 
@@ -316,7 +316,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     }
   });
 
-  it("accepts an exact producer and consumer identity", () => {
+  it("accepts matching artifact, candidate source, and workflow identities", () => {
     const result = runIdentityValidation();
     expect(result.status, result.stderr).toBe(0);
   });
@@ -526,7 +526,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     );
   });
 
-  it("keeps installer-backed no-build jobs outside the artifact handoff", () => {
+  it("excludes installer-backed jobs from the shared CLI artifact", () => {
     const workflow = workflowFixture();
     const inheritedRestore = requireStep(workflow, "sandbox-operations", CLI_ARTIFACT_RESTORE_STEP);
     workflow.jobs["security-posture"].steps!.push(inheritedRestore);

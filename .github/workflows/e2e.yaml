@@ -393,16 +393,16 @@ jobs:
           [[ "$RUN_ATTEMPT" =~ ^[1-9][0-9]*$ && "$RUN_ID" =~ ^[1-9][0-9]*$ ]] ||
             { echo "::error::workflow run identity is invalid"; exit 1; }
           test -s dist/nemoclaw.js ||
-            { echo "::error::authoritative CLI build did not produce dist/nemoclaw.js"; exit 1; }
+            { echo "::error::candidate CLI build did not produce dist/nemoclaw.js"; exit 1; }
           test -s dist/build-identity.json ||
-            { echo "::error::authoritative CLI build did not produce dist/build-identity.json"; exit 1; }
+            { echo "::error::candidate CLI build did not produce dist/build-identity.json"; exit 1; }
           jq -e --arg candidateSha "$CANDIDATE_SHA" '
             type == "object" and
             (keys | sort) == ["nemoclawVersion", "sourceRevision"] and
             (.nemoclawVersion | strings | length > 0) and
             .sourceRevision == $candidateSha
           ' dist/build-identity.json >/dev/null ||
-            { echo "::error::authoritative CLI build identity does not match the candidate SHA"; exit 1; }
+            { echo "::error::candidate CLI build identity does not match the candidate commit SHA"; exit 1; }
 
           artifact_dir="${RUNNER_TEMP}/nemoclaw-cli-artifact"
           install -d -m 0700 "$artifact_dir"

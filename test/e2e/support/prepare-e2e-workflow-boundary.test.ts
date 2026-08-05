@@ -27,7 +27,7 @@ type Workflow = {
 };
 
 describe("prepare-e2e workflow boundary", () => {
-  it("keeps one canonical bootstrap invocation and one authoritative CLI build", () => {
+  it("requires one workspace preparation step per E2E job and one candidate CLI build in generate-matrix", () => {
     expect(validatePrepareE2eAction()).toEqual([]);
     expect(validatePrepareE2eInvocations(readWorkflow())).toEqual([]);
   });

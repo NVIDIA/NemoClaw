@@ -195,9 +195,9 @@ export function validateRunnerComparisonWorkflow(workflowValue: unknown): string
 
     const prepare = jobSteps.findIndex((step) => step.name === PREPARE_E2E_STEP);
     const restore = jobSteps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
-    // Comparison jobs in PREPARE_E2E_NO_BUILD_JOBS, including security-posture,
-    // end CLI bootstrap at workspace preparation because they do not restore the artifact.
+    // security-posture installs the CLI after workspace preparation and does not restore the artifact.
     const bootstrapEnd = restore >= 0 ? restore : prepare;
+    const initializationBoundary = restore >= 0 ? "CLI artifact restore" : "workspace preparation";
     const initializeIndex = jobSteps.indexOf(initialize);
     const finalizeIndex = jobSteps.indexOf(finalize);
     const publish = publicationIndex(jobSteps);
@@ -215,7 +215,7 @@ export function validateRunnerComparisonWorkflow(workflowValue: unknown): string
       }
     } else if (prepare < 0 || bootstrapEnd < prepare || initializeIndex !== bootstrapEnd + 1) {
       errors.push(
-        `${jobId} must initialize runner comparison telemetry immediately after CLI bootstrap`,
+        `${jobId} must initialize runner comparison telemetry immediately after ${initializationBoundary}`,
       );
     }
     if (publish < 0 || finalizeIndex !== publish - 1) {

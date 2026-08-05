@@ -23,36 +23,58 @@ before those targets run; local runners must provide it themselves.
 
 ## CI execution shape
 
-### Exact-Commit CLI Artifact
+### Candidate CLI Artifact
 
-The `generate-matrix` job owns the workflow's authoritative candidate CLI build.
-It packages `dist/` once and publishes a content-addressed artifact for 62 consumer jobs.
-Before artifact reuse, those 62 jobs each built the candidate CLI.
-The shared producer retains one candidate build and eliminates 61 duplicate build invocations.
-Each consumer still runs the pinned preparation action for Node.js and dependency installation.
-Each consumer sets `build-cli: "false"` on that action.
-The `managed-image-protected-runtime` qualification is separate.
-It builds the trusted workflow checkout and never executes or restores candidate CLI code.
+The candidate CLI comes from the source commit that an E2E run tests.
+The `generate-matrix` job builds it once and publishes `dist/` as a content-addressed artifact.
+The workflow has 62 artifact-using job definitions.
+Each selected job execution restores the artifact instead of running `npm run build:cli`.
+Each selected job still runs the pinned preparation action to install Node.js and project dependencies.
+It sets `build-cli: "false"` so the preparation action does not rebuild the CLI.
+The `managed-image-protected-runtime` qualification does not use this artifact.
+It builds the CLI from the trusted workflow checkout and never executes or restores the candidate CLI.
 
-For a pull request (PR) dispatch, `checkout_sha` identifies the candidate source that the live jobs test.
-The trusted workflow still runs from `github.workflow_sha`.
-Direct scheduled and manual runs use `github.sha` as the candidate when `checkout_sha` is empty.
-The artifact manifest records both identities, the source tree, lockfile digest, workflow run and attempt, Node.js and npm versions, runner platform, build command, and payload digest.
+#### Artifact Identity
+
+For a pull request (PR) run, `checkout_sha` identifies the candidate source commit.
+The trusted workflow runs from `github.workflow_sha`.
+A scheduled or manual run uses `github.sha` when `checkout_sha` is empty.
+
+The artifact manifest records these values:
+
+- The candidate repository and commit SHA.
+- The trusted workflow SHA, run ID, and attempt.
+- The source tree and lockfile digests.
+- The Node.js and npm versions, runner platform, and build command.
+- The payload digest.
+
 The artifact name contains the candidate commit SHA and payload SHA-256 digest.
-The producer emits one `nemoclaw-e2e-cli-provenance-v1` JSON object through the `cli_artifact_provenance` job output.
-Each consumer passes that object as the restore action's only `provenance-json` input.
+The `generate-matrix` job emits one `nemoclaw-e2e-cli-provenance-v1` JSON object through its `cli_artifact_provenance` output.
+Each artifact-using job passes that object as the restore action's only `provenance-json` input.
 
-Each consumer invokes the repository-owned `restore-e2e-cli-artifact` composite action at a full commit SHA.
+Each artifact-using job invokes the repository-owned `restore-e2e-cli-artifact` composite action at a full commit SHA.
 The workflow does not load the action implementation from the candidate checkout.
-The pinned action rejects extra or missing provenance fields and compares the candidate checkout, repository, workflow SHA, run ID, and attempt before download.
-It then downloads by immutable artifact ID with digest mismatch handling set to `error`.
-It rejects a missing or malformed upload digest, a different candidate SHA, or a manifest that does not match the current source, workflow, run, toolchain contract, and payload.
-It also rejects an unsafe archive member, link, special file, or preexisting `dist/` directory before extraction.
-Before activation, the action requires staged `dist/build-identity.json` to name the candidate commit SHA.
-The restored CLI must report its version through `bin/nemoclaw.js`.
-These checks keep the candidate source identity separate from the trusted workflow identity and fail closed before a live test runs.
+Before download, the action rejects extra or missing provenance fields.
+It also compares the candidate checkout, repository, workflow SHA, run ID, and attempt with the provenance object.
+The action downloads the artifact by immutable ID and sets digest mismatch handling to `error`.
 
-The pre-change baseline uses GitHub Actions composite-step timings from these workflow runs:
+Before the action restores `dist/` into the workspace, it verifies these conditions:
+
+- The upload digest is present and well formed.
+- The candidate SHA matches the expected commit.
+- The manifest matches the source, workflow run, toolchain contract, and payload.
+- The archive contains no path traversal, links, special files, or files outside `dist/`.
+- The candidate checkout has no preexisting `dist/` path.
+- The staged `dist/build-identity.json` names the candidate commit SHA.
+
+If a pre-restore check fails, the action stops before it moves `dist/` into the workspace.
+After the checks pass, the action moves `dist/` and runs `bin/nemoclaw.js --version`.
+If the version command fails, the action stops before the live test runs.
+This boundary keeps candidate source separate from the trusted workflow implementation.
+
+#### Timing Baseline
+
+The pre-change baseline uses GitHub Actions `Build CLI` step timings from these workflow runs:
 
 | Workflow run | Job | Tested candidate | `Build CLI` duration |
 | --- | --- | --- | --- |
@@ -61,30 +83,37 @@ The pre-change baseline uses GitHub Actions composite-step timings from these wo
 | [30503498077](https://github.com/NVIDIA/NemoClaw/actions/runs/30503498077) | `Shared E2E (vllm-docker-storage)` | `d52d459` | 18.756 seconds |
 
 The three observed build steps have a median duration of 18.756 seconds.
-These observations are inputs to theoretical analysis only.
-The implementation replaces 62 independent candidate-workspace builds with one producer build and eliminates 61 duplicate invocations.
-Artifact upload, download, validation, and the producer dependency add runtime and can affect the workflow critical path.
+This baseline measures only the replaced build step.
+Artifact upload, download, validation, and the dependency on `generate-matrix` add runtime and can affect the workflow critical path.
 Do not use the build-step median to claim savings in runner time or workflow elapsed time.
 
-A trusted PR E2E dispatch tests candidate code but executes `.github/workflows/e2e.yaml` from `main`.
-It therefore cannot measure this workflow change before merge.
-Post-change measurements require a passing post-merge `main` run.
-Use matching job selections, runner labels, and first attempts.
-Record the producer build, upload, consumer download, validation, activation, job, and workflow durations.
-Sum the affected step durations for runner-time comparison, and compare matched job and workflow elapsed times.
-Identify each result by workflow run, tested commit SHA, trusted workflow SHA, and attempt.
+A trusted PR E2E run tests candidate code but executes `.github/workflows/e2e.yaml` from `main`.
+The PR run cannot measure this workflow change before merge.
+After merge, use a passing `main` run and complete these steps:
+
+1. Match the job selection, runner labels, and first attempt to the baseline.
+2. Record durations for the candidate build, artifact upload, artifact download, combined verification and restore step, job, and workflow.
+3. Sum affected step durations for runner-time comparison.
+4. Compare matched job and workflow elapsed times.
+5. Identify each result by workflow run, tested commit SHA, trusted workflow SHA, and attempt.
+
 Do not substitute a theoretical value for post-change CI evidence.
 
-The retained historical fixtures have this artifact disposition:
+#### Historical Fixtures
 
-| Fixture | Disposition |
+The historical fixtures retain these version boundaries:
+
+| Fixture | Required boundary |
 | --- | --- |
-| `openshell-gateway-upgrade` | Keep the historical installer commit and SHA-256 digest, sandbox image digest, and reviewed OpenClaw npm URL and SHA-512 integrity in the target. The target must install the historical package before it exercises the current upgrade path. |
-| `rebuild-openclaw` | Keep the reviewed old-base build inside the target. The target must build and create the old sandbox before it exercises the current rebuild path. |
+| `openshell-gateway-upgrade` | Retain the historical installer commit and SHA-256 digest, sandbox image digest, and reviewed OpenClaw npm URL and SHA-512 integrity. Install the historical package before testing the candidate upgrade path. |
+| `rebuild-openclaw` | Retain the reviewed old-base build in the target. Build and create the old sandbox before testing the candidate rebuild path. |
 
-These targets can consume the shared artifact for the current candidate CLI.
-They must not use it to replace a historical installer, package, image, or version boundary that the target tests.
-The gateway fixture's remote historical inputs are already bound to immutable commits and cryptographic digests, so this change does not republish them as workflow artifacts.
+These targets may restore the shared artifact for the candidate CLI.
+They must not replace a historical installer, package, image, or version boundary with that artifact.
+The gateway fixture already binds its remote historical inputs to immutable commits and cryptographic digests.
+The workflow does not republish those inputs as artifacts.
+
+### Hermes Sandbox Image Artifact
 
 The sandbox image workflow builds the Hermes production image in the dedicated
 30-minute `build-hermes-sandbox-image` job. It uses full-SHA-pinned Buildx
@@ -414,8 +443,7 @@ larger runner.
 Each execution writes one bounded, ordered v2 time series to the canonical
 `runner-comparison.jsonl` ledger. It contains:
 
-- an `initialize` endpoint after workspace preparation and any fixed-capacity
-  rebuild swap;
+- an `initialize` endpoint after exact-commit artifact restoration, or after workspace preparation for `security-posture`; the rebuild jobs initialize after their fixed-capacity swap;
 - a distinct `scenario-start` for every test handled by the execution;
 - a `periodic` sample on an approximately 15-second fixed cadence for
   `rebuild-hermes` and `rebuild-hermes-stale-base`, and an approximately
@@ -469,8 +497,12 @@ selection and ranking observation; `breakdown.vmRssKb` is the immediately
 following procfs observation and may differ when a live process changes memory.
 
 The finalizer validates the complete ledger before writing
-`runner-comparison-summary.json`. The v2 summary reports the sampled
-post-prepare window; CPU average and busiest interval; one-minute load;
+`runner-comparison-summary.json`. The v2 summary reports the sampled window from
+`initialize` until immediately before artifact scanning or upload. For artifact-using
+jobs, initialization follows artifact restoration and any required rebuild swap. For
+the Hermes `security-posture` shard, initialization follows workspace preparation,
+so the window includes OpenShell installation and installer-backed NemoClaw setup.
+The summary reports CPU average and busiest interval; one-minute load;
 available, cached, reclaimable, swap, root-cgroup current/peak/limit, and
 endpoint OOM-counter evidence; memory and I/O pressure; workspace bytes and
 inodes; Docker image, container, and build-cache usage; largest container
