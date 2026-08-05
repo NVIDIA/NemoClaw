@@ -50,6 +50,11 @@ import type {
 import * as inferenceProviders from "./inference-providers";
 import { createLocalInferenceRouteApplier } from "./local-inference-route";
 import type { ProviderInferenceSetupOptions } from "./machine/handlers/provider-inference";
+import type { HostLocalInferenceRuntime } from "./runtime-provider/host-local-inference";
+import {
+  type HostLocalInferenceStartupRoute,
+  prepareHostLocalInferenceStartup,
+} from "./runtime-provider/host-local-inference-routing";
 
 type ProviderBranchDeps = Pick<
   CommonDeps,
@@ -120,6 +125,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   localInferenceTimeoutSecs: number;
   vllmLocalCredentialEnv: string;
   getManagedVllmProviderBinding?: () => { baseUrl: string; apiKey: string } | null;
+  resolveHostLocalInferenceRuntime?: (sandboxName: string) => HostLocalInferenceRuntime | null;
   ollamaProxyCredentialEnv: string;
   isRoutedInferenceProvider: (provider: string) => boolean;
   applyLocalInferenceRoute?: VllmDeps["applyLocalInferenceRoute"];
@@ -216,6 +222,35 @@ function resolveLocalInferenceRouteApplier(
       exitProcess: deps.exitProcess,
     })
   );
+}
+
+function resolveHostLocalInferenceRoute(
+  deps: SetupInferenceDeps,
+  sandboxName: string | null,
+  provider: string,
+  request: NonNullable<ProviderInferenceSetupOptions["hostLocalInference"]>,
+): HostLocalInferenceStartupRoute {
+  const expectedProvider = request.service === "ollama" ? "ollama-local" : "vllm-local";
+  if (expectedProvider !== provider) {
+    throw new Error(`Host-local ${request.service} cannot configure provider '${provider}'.`);
+  }
+  if (!sandboxName || !deps.resolveHostLocalInferenceRuntime) {
+    throw new Error("Host-local inference requires a sandbox-bound runtime provider.");
+  }
+  const runtime = deps.resolveHostLocalInferenceRuntime(sandboxName);
+  if (!runtime) throw new Error(`Sandbox '${sandboxName}' has no host-local inference runtime.`);
+  let route: HostLocalInferenceStartupRoute;
+  try {
+    route = prepareHostLocalInferenceStartup(runtime, request);
+  } catch (error) {
+    throw new Error(
+      `Host-local inference startup failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (route.gatewayProvider !== provider) {
+    throw new Error("Host-local inference route provider normalization failed.");
+  }
+  return route;
 }
 
 export type SetupInference = (
@@ -365,6 +400,21 @@ export function createSetupInference(
           log: deps.log,
         } satisfies CommonDeps;
 
+        let hostLocalRoute: HostLocalInferenceStartupRoute | null = null;
+        if (options.hostLocalInference) {
+          try {
+            hostLocalRoute = resolveHostLocalInferenceRoute(
+              deps,
+              sandboxName,
+              provider,
+              options.hostLocalInference,
+            );
+          } catch (error) {
+            deps.error(`  ${error instanceof Error ? error.message : String(error)}`);
+            return deps.exitProcess(1);
+          }
+        }
+
         if (provider === deps.hermesProviderAuth.HERMES_PROVIDER_NAME) {
           return inferenceProviders.setupHermesProviderInference(
             {
@@ -433,17 +483,22 @@ export function createSetupInference(
             { model, provider },
             {
               ...commonDeps,
-              validateLocalProvider: deps.validateLocalProvider,
+              validateLocalProvider: hostLocalRoute
+                ? () => ({ ok: true as const })
+                : deps.validateLocalProvider,
               getLocalProviderHealthCheck: deps.getLocalProviderHealthCheck,
-              getLocalProviderBaseUrl: deps.getLocalProviderBaseUrl,
+              getLocalProviderBaseUrl: hostLocalRoute
+                ? () => hostLocalRoute.gatewayProviderBaseUrl
+                : deps.getLocalProviderBaseUrl,
               applyLocalInferenceRoute: resolveLocalInferenceRouteApplier(
                 deps,
                 runGatewayOpenshell,
               ),
               run: deps.run,
               VLLM_LOCAL_CREDENTIAL_ENV: deps.vllmLocalCredentialEnv,
-              getManagedVllmProviderBinding:
-                deps.getManagedVllmProviderBinding ?? getManagedVllmProviderBinding,
+              getManagedVllmProviderBinding: hostLocalRoute
+                ? () => null
+                : (deps.getManagedVllmProviderBinding ?? getManagedVllmProviderBinding),
             },
           );
           if (outcome.done) return outcome.result;
@@ -452,15 +507,21 @@ export function createSetupInference(
             { model, provider, allowToolsIncompatible: options.allowToolsIncompatible === true },
             {
               ...commonDeps,
-              validateLocalProvider: deps.validateLocalProvider,
-              getLocalProviderBaseUrl: deps.getLocalProviderBaseUrl,
+              validateLocalProvider: hostLocalRoute
+                ? () => ({ ok: true as const })
+                : deps.validateLocalProvider,
+              getLocalProviderBaseUrl: hostLocalRoute
+                ? () => hostLocalRoute.gatewayProviderBaseUrl
+                : deps.getLocalProviderBaseUrl,
               applyLocalInferenceRoute: resolveLocalInferenceRouteApplier(
                 deps,
                 runGatewayOpenshell,
               ),
               getOllamaWarmupCommand: deps.getOllamaWarmupCommand,
               run: deps.run,
-              shouldFrontOllamaWithProxy: deps.shouldFrontOllamaWithProxy,
+              shouldFrontOllamaWithProxy: hostLocalRoute
+                ? () => false
+                : deps.shouldFrontOllamaWithProxy,
               ensureOllamaAuthProxy: deps.ensureOllamaAuthProxy,
               isProxyHealthy: deps.isProxyHealthy,
               getOllamaProxyToken: deps.getOllamaProxyToken,

@@ -29,6 +29,7 @@ import type {
   createProviderRecoveryReceiptLedger,
   ProviderRecoveryReceipt,
 } from "../../rebuild-route-handoff";
+import type { HostLocalInferenceStartupRequest } from "../../runtime-provider/host-local-inference-routing";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult, retryTo } from "../result";
 import { createRecovery, type RecoveryAuthority } from "./provider-inference-recovery";
@@ -66,6 +67,8 @@ export interface ProviderInferenceSetupOptions {
   reservationSessionId?: string;
   /** Recheck recorded-route ownership after acquiring route mutation locks. */
   isRecordedProviderRecoveryAuthorized?: () => boolean;
+  /** Dormant provider-owned startup request used by pluggable local runtimes. */
+  hostLocalInference?: HostLocalInferenceStartupRequest;
 }
 
 export interface ProviderSelectionResult {
