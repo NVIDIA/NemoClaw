@@ -8,7 +8,6 @@ import type {
   ContainerEngine,
   ContainerEngineCommandResult,
 } from "../../adapters/container-engine";
-import { MANAGED_STARTUP_AGENTS, type ManagedStartupAgent } from "../managed-startup/profile";
 import type { ManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import { cleanupTempDir, secureTempFile } from "../temp-files";
 import {
@@ -45,6 +44,13 @@ const DEFAULT_POLL_INTERVAL_MS = 250;
 const MAX_TIMEOUT_SECONDS = 3_600;
 
 type BootstrapEngine = ContainerEngine & { readonly authorityId: string };
+type ManagedStartupAgent = ManagedStartupRootApplyRequest["agent"];
+
+const PODMAN_BOOTSTRAP_AGENTS = Object.freeze({
+  openclaw: true,
+  hermes: true,
+  "langchain-deepagents-code": true,
+} satisfies Record<ManagedStartupAgent, true>);
 
 export interface PodmanBootstrapImageTransactionInput {
   readonly engine: BootstrapEngine;
@@ -121,7 +127,7 @@ function exactEngine(engine: BootstrapEngine, expectedAuthorityId?: string): Boo
 }
 
 function exactAgent(value: string): ManagedStartupAgent {
-  if ((MANAGED_STARTUP_AGENTS as readonly string[]).includes(value)) {
+  if (Object.prototype.hasOwnProperty.call(PODMAN_BOOTSTRAP_AGENTS, value)) {
     return value as ManagedStartupAgent;
   }
   return fail("the managed agent is unsupported");

@@ -93,25 +93,6 @@ describe("persisted engine authority", () => {
     }
   });
 
-  it("persists a host-local inference engine independently of lifecycle authority", () => {
-    const store = createFilePersistedEngineAuthorityStore(temporaryRoot());
-    const inference = createPersistedEngineAuthority(
-      "mxc",
-      engine("host-local-inference"),
-      BINDING_SHA256,
-    );
-    const lifecycle = createPersistedEngineAuthority(
-      "mxc",
-      engine("sandbox-lifecycle"),
-      BINDING_SHA256,
-    );
-
-    expect(store.record(inference)).toEqual(inference);
-    expect(store.record(lifecycle)).toEqual(lifecycle);
-    expect(store.load("host-local-inference")).toEqual(inference);
-    expect(store.load("sandbox-lifecycle")).toEqual(lifecycle);
-  });
-
   it.each([
     {
       label: "provider",

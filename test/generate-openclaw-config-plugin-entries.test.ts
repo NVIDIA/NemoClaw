@@ -11,7 +11,12 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { buildConfig, main } from "../scripts/generate-openclaw-config.mts";
+import {
+  buildConfig,
+  MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
+  MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
+  main,
+} from "../scripts/generate-openclaw-config.mts";
 
 const BASE_ENV: Record<string, string> = {
   NEMOCLAW_MODEL: "test-model",
@@ -28,6 +33,22 @@ const BASE_ENV: Record<string, string> = {
   NEMOCLAW_REASONING: "false",
   NEMOCLAW_AGENT_TIMEOUT: "600",
 };
+const EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES = [
+  { channelId: "telegram", pluginId: "telegram" },
+  { channelId: "discord", pluginId: "discord" },
+  { channelId: "openclaw-weixin", pluginId: "openclaw-weixin" },
+  { channelId: "slack", pluginId: "slack" },
+  { channelId: "whatsapp", pluginId: "whatsapp" },
+  { channelId: "msteams", pluginId: "msteams" },
+  { channelId: "googlechat", pluginId: "googlechat" },
+] as const;
+const EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES = [
+  { channelId: "imessage", pluginId: "imessage" },
+] as const;
+const EXPECTED_MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES = [
+  ...EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
+  ...EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
+] as const;
 
 describe("generate-openclaw-config.mts: default plugin entries", () => {
   it("omits the stale acpx entry and disables bundled bonjour by default", () => {
@@ -49,28 +70,18 @@ describe("generate-openclaw-config.mts: default plugin entries", () => {
       NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION: "1",
     });
 
-    for (const pluginId of [
-      "telegram",
-      "discord",
-      "openclaw-weixin",
-      "slack",
-      "whatsapp",
-      "msteams",
-      "diagnostics-otel",
-      "brave",
-      "tavily",
-    ]) {
+    expect(MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES).toEqual(
+      EXPECTED_MANAGED_IMAGE_OPENCLAW_MESSAGING_CAPABILITIES,
+    );
+    expect(MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES).toEqual(
+      EXPECTED_MANAGED_IMAGE_OPENCLAW_BUNDLED_INERT_CAPABILITIES,
+    );
+    for (const { channelId, pluginId } of EXPECTED_MANAGED_IMAGE_OPENCLAW_NEUTRAL_CAPABILITIES) {
       expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
-    }
-    for (const channelId of [
-      "telegram",
-      "discord",
-      "openclaw-weixin",
-      "slack",
-      "whatsapp",
-      "msteams",
-    ]) {
       expect(config.channels[channelId], channelId).toEqual({ enabled: false });
+    }
+    for (const pluginId of ["diagnostics-otel", "brave", "tavily"]) {
+      expect(config.plugins.entries[pluginId], pluginId).toEqual({ enabled: false });
     }
     expect(config.tools.web.search).toEqual({ enabled: false });
   });

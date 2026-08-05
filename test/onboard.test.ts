@@ -642,7 +642,7 @@ startGateway(null).catch(() => {});
     expect(cleared.messagingPlan).toBeNull();
     expect(cleared.resourceProfile).toEqual({ cpu: "75%", memory: "75%" });
     expect(cleared.sandboxPromptProgress).toEqual({
-      sandboxName: true,
+      sandboxName: false,
       webSearch: false,
       messaging: false,
       resourceProfile: true,

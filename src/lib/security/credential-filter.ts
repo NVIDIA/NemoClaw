@@ -15,13 +15,13 @@ import {
   closeSync,
   constants,
   fstatSync,
-  lstatSync,
   openSync,
   readFileSync,
   renameSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 import { isObjectRecord } from "../core/json-types";
 import { hasPassCredentialSegment, SECRET_PATTERNS } from "./secret-patterns";
@@ -31,13 +31,11 @@ function parseJson<T>(text: string): T {
 }
 
 function readRegularFileNoFollow(filePath: string): string | null {
+  const noFollowFlag = constants.O_NOFOLLOW;
+  if (typeof noFollowFlag !== "number") return null;
+
   let fd: number;
   try {
-    if (typeof constants.O_NOFOLLOW !== "number") {
-      const stat = lstatSync(filePath);
-      if (!stat.isFile() || stat.isSymbolicLink()) return null;
-    }
-    const noFollowFlag = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
     fd = openSync(filePath, constants.O_RDONLY | noFollowFlag);
   } catch {
     return null;
@@ -106,14 +104,14 @@ const SNAPSHOT_CREDENTIAL_SCAN_EXCLUDED_BASENAMES = new Set([
  * Credential field names that MUST be stripped from config files.
  */
 const CREDENTIAL_FIELDS = new Set([
-  "apiKey",
+  "apikey",
   "api_key",
   "token",
   "secret",
   "password",
   "pass",
   "passwd",
-  "resolvedKey",
+  "resolvedkey",
 ]);
 
 /**
@@ -123,7 +121,7 @@ const CREDENTIAL_FIELDS = new Set([
  * (`botToken`, `appToken`) used by Slack/Telegram accounts.
  */
 const CREDENTIAL_FIELD_PATTERN =
-  /(?:access|refresh|client|bearer|auth|api|private|public|signing|session|bot|app)(?:Token|Key|Secret|Password)$/;
+  /^(?:(?:personal[._-]?)?access|refresh|client|bearer|oauth|auth|api|private|public|signing|session|bot|app|resolved)[._-]?(?:tokens?|keys?|secrets?|passwords?|passphrases?|credentials?)$/i;
 
 /**
  * Environment-variable-style secret names (SCREAMING_SNAKE_CASE) such as an MCP
@@ -163,7 +161,7 @@ const HEADER_CREDENTIAL_PATTERN = /-(?:key|token|secret|password|passphrase|cred
  * `PUBLIC_KEY`, `public-key`, and prefixed forms like `X-Public-Key` /
  * `GITHUB_PUBLIC_KEY`. Checked before the secret patterns below.
  */
-const PUBLIC_KEY_FIELD_PATTERN = /(?:^|[-_])public[-_]?keys?$/i;
+const PUBLIC_KEY_FIELD_PATTERN = /(?:^|[._-])public[._-]?keys?$/i;
 
 /**
  * Check whether a field name should be treated as credential-bearing.
@@ -171,7 +169,7 @@ const PUBLIC_KEY_FIELD_PATTERN = /(?:^|[-_])public[-_]?keys?$/i;
 export function isCredentialField(key: string): boolean {
   if (PUBLIC_KEY_FIELD_PATTERN.test(key)) return false;
   return (
-    CREDENTIAL_FIELDS.has(key) ||
+    CREDENTIAL_FIELDS.has(key.toLowerCase()) ||
     CREDENTIAL_FIELD_PATTERN.test(key) ||
     hasPassCredentialSegment(key) ||
     ENV_SECRET_FIELD_PATTERN.test(key) ||
@@ -294,9 +292,12 @@ export function stripCredentials(obj: ConfigValue): ConfigValue {
   const result: ConfigObject = {};
   for (const [key, value] of Object.entries(obj)) {
     if (isCredentialField(key)) {
-      // Preserve non-secret references (OpenShell resolve placeholders, the
-      // `unused` sentinel); scrub anything else that looks like a raw secret.
-      result[key] = isSafeCredentialPlaceholder(value) ? value : CREDENTIAL_PLACEHOLDER;
+      // Preserve unset credential fields and non-secret references (OpenShell
+      // resolve placeholders, the `unused` sentinel); scrub raw secrets.
+      result[key] =
+        value === null || value === undefined || isSafeCredentialPlaceholder(value)
+          ? value
+          : CREDENTIAL_PLACEHOLDER;
     } else {
       result[key] = scrubConfigValue(value);
     }
@@ -358,23 +359,166 @@ function scrubArrayElement(value: ConfigValue, previous: ConfigValue): ConfigVal
 }
 
 /**
- * Strip credential fields from a JSON config file in-place.
- * Removes the "gateway" section (contains auth tokens — regenerated at startup).
+ * Strip credential fields from a KEY=value env file body.
+ * Uses the same field-name rules as JSON scrubbing so `DB_PASS` and
+ * `PASSPHRASE` are stripped while benign names like `KEYBOARD_LAYOUT`
+ * and `NODE_ENV` are preserved.
  */
-export function sanitizeConfigFile(configPath: string): void {
-  const rawConfig = readRegularFileNoFollow(configPath);
-  if (rawConfig === null) return;
-  let parsed: ConfigValue;
-  try {
-    parsed = parseJson<ConfigValue>(rawConfig);
-  } catch {
-    return; // Not valid JSON — skip (may be YAML for Hermes)
-  }
-  if (!isConfigObject(parsed)) return;
+export function sanitizeEnvFileContent(content: string): string {
+  return content
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+      if (trimmed === "" || trimmed.startsWith("#")) return line;
+      const eq = line.indexOf("=");
+      if (eq <= 0) return line;
+      const rawKey = line.slice(0, eq).trim();
+      // Shell-sourced .env files often use `export KEY=value`.
+      const key = rawKey.replace(/^export\s+/i, "").trim();
+      const value = line.slice(eq + 1);
+      if (isSafeCredentialPlaceholder(value)) return line;
+      if (!key) return line;
+      if (!isCredentialField(key) && !valueLooksLikeSecret(value)) return line;
+      return `${line.slice(0, eq)}=${CREDENTIAL_PLACEHOLDER}`;
+    })
+    .join("\n");
+}
 
-  const { gateway: _gateway, ...config } = parsed;
-  const sanitized = stripCredentials(config);
-  writeFileAtomically(configPath, JSON.stringify(sanitized, null, 2));
+/**
+ * Strip credential lines from a `.env` file in-place.
+ */
+export function sanitizeEnvFile(
+  filePath: string,
+  writeSanitized: (targetPath: string, contents: string) => void = writeFileAtomically,
+): boolean {
+  const raw = readRegularFileNoFollow(filePath);
+  if (raw === null) return false;
+  try {
+    writeSanitized(filePath, sanitizeEnvFileContent(raw));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const UNREPRESENTABLE_CONFIG_VALUE = Symbol("unrepresentable-config-value");
+
+function toConfigValue(value: unknown): ConfigValue | typeof UNREPRESENTABLE_CONFIG_VALUE {
+  if (value === null || value === undefined) return value;
+  if (typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const items: ConfigValue[] = [];
+    for (const entry of value) {
+      const converted = toConfigValue(entry);
+      if (converted === UNREPRESENTABLE_CONFIG_VALUE) return UNREPRESENTABLE_CONFIG_VALUE;
+      items.push(converted);
+    }
+    return items;
+  }
+  if (!isObjectRecord(value)) return UNREPRESENTABLE_CONFIG_VALUE;
+  const result: ConfigObject = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const converted = toConfigValue(entry);
+    if (converted === UNREPRESENTABLE_CONFIG_VALUE) return UNREPRESENTABLE_CONFIG_VALUE;
+    result[key] = converted;
+  }
+  return result;
+}
+
+/**
+ * Strip credential fields from a Hermes YAML config body.
+ *
+ * Returns null when the document cannot be represented safely. Empty and
+ * comment-only documents are returned unchanged because they contain no
+ * credential material.
+ */
+export function sanitizeYamlConfigContent(rawConfig: string): string | null {
+  try {
+    const parsed = parseYaml(rawConfig);
+    if (parsed === null || parsed === undefined) return rawConfig;
+    const configValue = toConfigValue(parsed);
+    if (configValue === UNREPRESENTABLE_CONFIG_VALUE || !isConfigObject(configValue)) {
+      return null;
+    }
+
+    const { gateway: _gateway, ...config } = configValue;
+    return stringifyYaml(stripCredentials(config));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Strip credential fields from a JSON or YAML config body.
+ *
+ * The filename is used only to decide whether a non-JSON document is an
+ * allowed YAML target. Returns null when the input cannot be sanitized.
+ */
+export function sanitizeConfigFileContent(configName: string, rawConfig: string): string | null {
+  try {
+    const parsed = parseJson<ConfigValue | object>(rawConfig);
+    if (!isConfigValue(parsed)) return null;
+    let config = parsed;
+    if (isConfigObject(parsed)) {
+      const { gateway: _gateway, ...withoutGateway } = parsed;
+      config = withoutGateway;
+    }
+    return JSON.stringify(stripCredentials(config), null, 2);
+  } catch {
+    // Fall through to YAML for Hermes and other non-JSON configs.
+  }
+
+  const normalized = basename(configName).toLowerCase();
+  if (normalized.endsWith(".yaml") || normalized.endsWith(".yml")) {
+    return sanitizeYamlConfigContent(rawConfig);
+  }
+  return null;
+}
+
+/**
+ * Strip credential fields from a Hermes YAML config file in-place.
+ * Removes the "gateway" section when present (auth tokens — regenerated
+ * at startup), matching JSON sanitization.
+ */
+export function sanitizeYamlConfigFile(
+  configPath: string,
+  writeSanitized: (targetPath: string, contents: string) => void = writeFileAtomically,
+): boolean {
+  const rawConfig = readRegularFileNoFollow(configPath);
+  if (rawConfig === null) return false;
+  const sanitized = sanitizeYamlConfigContent(rawConfig);
+  if (sanitized === null) return false;
+  if (sanitized === rawConfig) return true;
+  try {
+    writeSanitized(configPath, sanitized);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Strip credential fields from a JSON or YAML config file in-place.
+ * Removes the "gateway" section (contains auth tokens — regenerated at startup).
+ * JSON is preferred when the file parses as JSON; otherwise YAML is tried
+ * so Hermes `config.yaml` secrets are scrubbed from rebuild backups.
+ * Returns false when a YAML/YML target cannot be sanitized so callers can
+ * fail closed instead of retaining the raw file.
+ */
+export function sanitizeConfigFile(configPath: string): boolean {
+  const rawConfig = readRegularFileNoFollow(configPath);
+  if (rawConfig === null) return false;
+  const sanitized = sanitizeConfigFileContent(configPath, rawConfig);
+  if (sanitized === null) return false;
+  if (sanitized === rawConfig) return true;
+  try {
+    writeFileAtomically(configPath, sanitized);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -394,6 +538,8 @@ export function shouldScanSnapshotFileForCredentials(filename: string): boolean 
   return (
     normalizedBasename === ".env" ||
     normalizedBasename.endsWith(".env") ||
-    normalizedBasename.endsWith(".json")
+    normalizedBasename.endsWith(".json") ||
+    normalizedBasename.endsWith(".yaml") ||
+    normalizedBasename.endsWith(".yml")
   );
 }

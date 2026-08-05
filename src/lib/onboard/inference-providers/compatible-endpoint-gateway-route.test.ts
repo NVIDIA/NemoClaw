@@ -8,6 +8,7 @@ import YAML from "yaml";
 
 import {
   BUNDLED_LOCAL_INFERENCE_GATEWAY_PORTS,
+  COMPATIBLE_ENDPOINT_GATEWAY_PORTS,
   gatewayReachableCompatibleEndpointUrl,
 } from "./compatible-endpoint-gateway-route";
 
@@ -33,7 +34,7 @@ describe("compatible endpoint gateway routing", () => {
 
   it("rewrites exact HTTP loopback hosts on bundled local-inference ports (#5744)", () => {
     for (const host of ["localhost", "127.0.0.1", "[::1]"]) {
-      for (const port of BUNDLED_LOCAL_INFERENCE_GATEWAY_PORTS) {
+      for (const port of COMPATIBLE_ENDPOINT_GATEWAY_PORTS) {
         expect(
           gatewayReachableCompatibleEndpointUrl(
             "compatible-endpoint",
@@ -42,6 +43,21 @@ describe("compatible endpoint gateway routing", () => {
         ).toBe(`http://host.openshell.internal:${port}/v1`);
       }
     }
+  });
+
+  it("leaves a generic compatible-endpoint loopback URL unchanged on port 8081 (#8161)", () => {
+    expect(
+      gatewayReachableCompatibleEndpointUrl("compatible-endpoint", "http://127.0.0.1:8081/v1"),
+    ).toBe("http://127.0.0.1:8081/v1");
+  });
+
+  it("rewrites only fixed loopback port 8081 for llama.cpp attachment (#8161)", () => {
+    expect(
+      gatewayReachableCompatibleEndpointUrl("llama-cpp-local", "http://127.0.0.1:8081/v1"),
+    ).toBe("http://host.openshell.internal:8081/v1");
+    expect(
+      gatewayReachableCompatibleEndpointUrl("llama-cpp-local", "http://127.0.0.1:8000/v1"),
+    ).toBe("http://127.0.0.1:8000/v1");
   });
 
   it("preserves query strings and fragments for root and non-root routes (#5744)", () => {

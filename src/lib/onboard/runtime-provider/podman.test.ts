@@ -137,12 +137,14 @@ describe("dormant Podman runtime provider", () => {
   )("runs basic CPU start and stop for %s through an injected bundle", async (agent) => {
     const runtime = providerHarness(agent);
     const verifyGateway = vi.fn(async () => undefined);
+    const restoreStartupState = vi.fn();
     const stopSandboxChannels = vi.fn();
 
     await expect(
       startSandbox(runtime.sandboxName, {
         getSandbox: () => runtime.entry,
         runtimeProviders: runtime.providers,
+        restoreStartupState,
         verifyGateway,
         log: vi.fn(),
       }),
@@ -157,6 +159,7 @@ describe("dormant Podman runtime provider", () => {
       }),
     ).toEqual({ exitCode: 0 });
 
+    expect(restoreStartupState).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
     expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
     expect(stopSandboxChannels).toHaveBeenCalledWith(
       runtime.sandboxName,
@@ -165,6 +168,28 @@ describe("dormant Podman runtime provider", () => {
     expect(
       JSON.stringify((runtime.lifecycle.capture as ReturnType<typeof vi.fn>).mock.calls),
     ).not.toContain("docker");
+  });
+
+  it("reports a failed gateway probe after the exact Podman container starts", async () => {
+    const runtime = providerHarness("openclaw");
+    const gatewayFailure = new Error("independent gateway probe failed");
+    const verifyGateway = vi.fn(async () => Promise.reject(gatewayFailure));
+
+    await expect(
+      startSandbox(runtime.sandboxName, {
+        getSandbox: () => runtime.entry,
+        runtimeProviders: runtime.providers,
+        restoreStartupState: vi.fn(),
+        verifyGateway,
+        log: vi.fn(),
+      }),
+    ).rejects.toBe(gatewayFailure);
+    expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
+    expect(
+      (runtime.lifecycle.capture as ReturnType<typeof vi.fn>).mock.calls.some(
+        ([args]) => (args as readonly string[])[0] === "start",
+      ),
+    ).toBe(true);
   });
 
   it("stays outside the production-selectable registry", () => {

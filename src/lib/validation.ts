@@ -321,7 +321,8 @@ export function shouldSkipResponsesProbe(provider: string): boolean {
     provider === "nvidia-prod" ||
     provider === "nvidia-nim" ||
     provider === "gemini-api" ||
-    provider === "openrouter-api"
+    provider === "openrouter-api" ||
+    provider === "llama-cpp-local"
   );
 }
 

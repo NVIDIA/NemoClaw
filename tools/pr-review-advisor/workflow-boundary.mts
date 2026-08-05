@@ -53,7 +53,7 @@ const FORBIDDEN_ARTIFACT_DOWNLOAD_WITH_KEYS = [
 const ADVISOR_RUNTIME_PACKAGE_PINS = [
   { packageName: "@earendil-works/pi-coding-agent", envName: "PI_SDK_VERSION", version: "0.80.6" },
   { packageName: "typebox", envName: "TYPEBOX_VERSION", version: "1.1.38" },
-  { packageName: "undici", envName: "UNDICI_VERSION", version: "8.5.0" },
+  { packageName: "undici", envName: "UNDICI_VERSION", version: "8.10.0" },
   { packageName: "yaml", envName: "YAML_VERSION", version: "2.8.3" },
   { packageName: "vitest", envName: "VITEST_VERSION", version: "4.1.9" },
 ] as const;

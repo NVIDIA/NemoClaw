@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { checkpointGatewayAuthority } from "../../onboard/gateway-authority-checkpoint";
-import { resolveGatewayTeardownAuthority } from "../../onboard/gateway-teardown-authority";
+import {
+  GatewayAuthorityError,
+  gatewayAuthorityFailureLines,
+  resolveGatewayRebuildAuthority,
+} from "../../onboard/gateway-teardown-authority";
 import {
   observeSandboxOnGateway,
   type SandboxRecreateObserver,
@@ -90,6 +94,11 @@ export interface OpenRebuildRecreateJournalInput {
   readonly targetIntentFingerprint: string;
   readonly log: (message: string) => void;
   readonly observe?: RebuildSandboxObserver;
+  /**
+   * Invoked with ready-to-print lines when gateway authority cannot be
+   * revalidated, so the command layer can fail cleanly (#8103).
+   */
+  readonly onAuthorityRefusal?: (lines: readonly string[]) => void;
 }
 
 export function openRebuildRecreateJournal(
@@ -97,10 +106,21 @@ export function openRebuildRecreateJournal(
 ): RebuildRecreateJournal {
   const { target, agentName, targetIntentFingerprint, log } = input;
   const observe = input.observe ?? observeRebuildSandbox;
-  const authority = resolveGatewayTeardownAuthority({
-    gatewayName: target.gatewayName,
-    gatewayPort: target.gatewayPort,
-  });
+  // Authority revalidation runs before the destroy phase. Handing the refusal
+  // to the caller lets rebuild report the migration and its remedy instead of
+  // crashing with a Node stack trace (#8103). The dedicated rebuild resolver
+  // permits its narrowly defined managed-service migration.
+  let authority: ReturnType<typeof resolveGatewayRebuildAuthority>;
+  try {
+    authority = resolveGatewayRebuildAuthority({
+      gatewayName: target.gatewayName,
+      gatewayPort: target.gatewayPort,
+    });
+  } catch (error) {
+    if (!(error instanceof GatewayAuthorityError)) throw error;
+    input.onAuthorityRefusal?.(gatewayAuthorityFailureLines(error, "sandbox rebuild"));
+    throw error;
+  }
   const sourceEntry = registry.getSandbox(target.sandboxName);
   const observation = observe(target);
   const active = onboardSession.loadSession()?.checkpoint?.sandboxRecreate ?? null;

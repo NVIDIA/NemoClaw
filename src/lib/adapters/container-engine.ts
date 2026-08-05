@@ -3,12 +3,9 @@
 
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { ROOT } from "../state/paths";
-import { buildSubprocessEnv } from "../subprocess-env";
 
 export type ContainerEngineOperationScope =
   | "host-doctor"
-  | "host-local-inference"
   | "gateway-inspection"
   | "managed-bootstrap"
   | "sandbox-lifecycle"
@@ -64,6 +61,42 @@ const ENGINE_ID_PATTERN = /^[a-z][a-z0-9-]{0,62}$/u;
 const AUTHORITY_ID_PATTERN = /^[a-z][a-z0-9-]{0,62}:[A-Za-z0-9._:-]{1,255}$/u;
 const EXECUTABLE_NAME_PATTERN = /^[A-Za-z0-9._-]+$/u;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
+const COMMAND_ENV_NAMES = new Set([
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "PATH",
+  "TERM",
+  "HOSTNAME",
+  "LANG",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "GIT_SSL_CAINFO",
+  "GIT_SSL_CAPATH",
+  "CURL_CA_BUNDLE",
+]);
+const COMMAND_ENV_PREFIXES = ["LC_", "XDG_"] as const;
+
+function containerEngineCommandEnvironment(): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([name, value]) =>
+        value !== undefined &&
+        (COMMAND_ENV_NAMES.has(name) ||
+          COMMAND_ENV_PREFIXES.some((prefix) => name.startsWith(prefix))),
+    ),
+  );
+}
 
 function boundedText(value: string, label: string, allowPath = false): string {
   const normalized = value.trim();
@@ -137,8 +170,8 @@ function defaultCapture(
   timeoutMs: number,
 ): ContainerEngineCommandResult {
   const result = spawnSync(executable, [...args], {
-    cwd: ROOT,
-    env: buildSubprocessEnv(),
+    cwd: process.cwd(),
+    env: containerEngineCommandEnvironment(),
     encoding: "utf8",
     maxBuffer: MAX_OUTPUT_BYTES,
     shell: false,

@@ -66,7 +66,6 @@ const MUTATION_OPERATIONS = new Set<RuntimeProviderMutationOperation>([
 ]);
 const CONTAINER_ENGINE_OPERATIONS = new Set<RuntimeProviderContainerEngineOperation>([
   "host-doctor",
-  "host-local-inference",
   "gateway-inspection",
   "sandbox-lifecycle",
   "workload-cleanup",
@@ -338,6 +337,7 @@ function validateMutationAuthoritySurface(
 
 function validateBootstrapSurface(surface: Record<string, unknown>): void {
   if (surface.supported === true) {
+    requireFunction(surface, "createAuthorityStore", "bootstrap");
     requireFunction(surface, "createLifecycle", "bootstrap");
     requireFunction(surface, "createOnboardRouting", "bootstrap");
   }

@@ -33,6 +33,7 @@ type SwapWorkflow = {
 
 const PROTECTED_JOBS = [
   "agent-turn-latency",
+  "bedrock-runtime-compatible-anthropic",
   "channels-stop-start",
   "common-egress-agent",
   "hermes-discord",

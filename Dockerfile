@@ -59,15 +59,66 @@ FROM mcp-tool-discovery-runtime AS managed-startup-runtime-builder
 WORKDIR /opt/nemoclaw-managed-startup-build
 COPY src/lib/core/json-types.ts src/lib/core/ports.ts ./src/lib/core/
 COPY src/lib/messaging/ ./src/lib/messaging/
-COPY src/lib/onboard/managed-bootstrap/envelope.ts ./src/lib/onboard/managed-bootstrap/
+COPY src/lib/onboard/managed-bootstrap/ ./src/lib/onboard/managed-bootstrap/
 COPY src/lib/onboard/managed-startup/ ./src/lib/onboard/managed-startup/
 COPY src/lib/security/credential-hash.ts ./src/lib/security/
 COPY src/lib/state/paths.ts src/lib/state/state-root.ts ./src/lib/state/
 RUN /opt/mcp-tool-discovery-runtime/node_modules/.bin/esbuild \
-        src/lib/onboard/managed-startup/image-runtime.ts \
+        src/lib/onboard/managed-bootstrap/image-runtime.ts \
         --bundle --platform=node --format=cjs --target=node22 \
         --outfile=/out/managed-startup-image-runtime.cjs \
     && chmod 0444 /out/managed-startup-image-runtime.cjs
+
+# Compile the bootstrap boundary on the target platform. The output is a
+# freestanding static ELF; only its reviewed, non-executable Bash body remains
+# interpreted at runtime after the native boundary has scrubbed process control.
+FROM node:22-trixie-slim@sha256:e6d9a389d34ff9678438af985c9913fbd1eb6ed36e80fea56644f4b4f6dd70ba AS managed-bootstrap-entrypoint-builder
+ARG TARGETARCH
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends binutils gcc \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /opt/nemoclaw-managed-bootstrap-build
+COPY scripts/managed-bootstrap-entrypoint.c ./
+COPY scripts/managed-bootstrap-trampoline.sh ./
+# hadolint ignore=DL4006
+RUN set -eu; \
+    target_arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
+    case "$target_arch" in \
+        amd64) expected_machine='Advanced Micro Devices X86-64' ;; \
+        arm64) expected_machine='AArch64' ;; \
+        *) echo "ERROR: unsupported managed bootstrap target architecture: $target_arch" >&2; exit 1 ;; \
+    esac; \
+    install -d -o root -g root -m 0755 /out/usr/local/bin /out/usr/local/lib/nemoclaw; \
+    gcc \
+        -std=c11 -O2 -Wall -Wextra -Werror \
+        -DNEMOCLAW_MANAGED_BOOTSTRAP_FREESTANDING=1 \
+        -ffreestanding -fno-asynchronous-unwind-tables -fno-builtin -fno-ident \
+        -fno-pie -fno-stack-protector -fno-unwind-tables \
+        -no-pie -nostdlib -static \
+        -Wl,--build-id=none -Wl,-z,noexecstack \
+        managed-bootstrap-entrypoint.c -o /tmp/nemoclaw-managed-bootstrap; \
+    install -o root -g root -m 0755 \
+        /tmp/nemoclaw-managed-bootstrap /out/usr/local/bin/nemoclaw-managed-bootstrap; \
+    install -o root -g root -m 0444 \
+        managed-bootstrap-trampoline.sh \
+        /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh; \
+    binary=/out/usr/local/bin/nemoclaw-managed-bootstrap; \
+    body=/out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh; \
+    test -f "$binary" && test ! -L "$binary"; \
+    test -f "$body" && test ! -L "$body"; \
+    test "$(stat -c '%u:%g:%a' "$binary")" = '0:0:755'; \
+    test "$(stat -c '%u:%g:%a' "$body")" = '0:0:444'; \
+    /bin/bash -n "$body"; \
+    test "$(readelf -hW "$binary" | sed -n 's/^[[:space:]]*Class:[[:space:]]*//p')" = 'ELF64'; \
+    test "$(readelf -hW "$binary" | sed -n 's/^[[:space:]]*Type:[[:space:]]*//p')" = 'EXEC (Executable file)'; \
+    test "$(readelf -hW "$binary" | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')" = "$expected_machine"; \
+    program_headers="$(readelf -lW "$binary")"; \
+    case "$program_headers" in *INTERP*) echo 'ERROR: managed bootstrap ELF has an interpreter' >&2; exit 1 ;; esac; \
+    readelf -dW "$binary" | grep -Fq 'There is no dynamic section'; \
+    test -z "$(nm --undefined-only "$binary")"; \
+    strings "$binary" | grep -Fq '/usr/local/bin/nemoclaw-managed-bootstrap'; \
+    strings "$binary" | grep -Fq '/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh'
 
 # Group repository-owned files outside the final image so both Docker builders
 # can collapse related payloads without invalidating earlier final-image work.
@@ -84,6 +135,7 @@ COPY scripts/lib/reviewed-npm-archive.mts /scripts/lib/reviewed-npm-archive.mts
 COPY scripts/lib/reviewed-npm-audit.mts /scripts/lib/reviewed-npm-audit.mts
 COPY scripts/lib/openclaw-npm-remediation.mts /scripts/lib/openclaw-npm-remediation.mts
 COPY scripts/patch-bundled-npm-brace-expansion.mts /scripts/patch-bundled-npm-brace-expansion.mts
+COPY scripts/lib/patch-bundled-npm-ip-address.mts /scripts/lib/patch-bundled-npm-ip-address.mts
 COPY scripts/patch-bundled-npm-tar.mts /scripts/patch-bundled-npm-tar.mts
 
 FROM scratch AS openclaw-plugin-payload
@@ -97,7 +149,9 @@ FROM scratch AS openclaw-patch-payload
 COPY scripts/patch-openclaw-tool-catalog.mts /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts
 COPY scripts/patch-openclaw-chat-send.mts /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts
 COPY scripts/patch-openclaw-mcp-npx.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts
+COPY scripts/patch-openclaw-mcp-reliability.mts /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts
 COPY scripts/patch-openclaw-issue-4434-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts
+COPY scripts/patch-openclaw-managed-transport-diagnostics.mts /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts
 COPY scripts/patch-openclaw-device-self-approval.mts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts
 COPY scripts/extract-semver.sh /usr/local/lib/nemoclaw/extract-semver
 COPY scripts/patch-openclaw-shared-state-permissions.mts /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts
@@ -117,7 +171,8 @@ COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-gu
 COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/managed-startup-hold.sh /usr/local/bin/nemoclaw-managed-startup-hold
-COPY scripts/managed-bootstrap-trampoline.sh /usr/local/bin/nemoclaw-managed-bootstrap
+COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/bin/nemoclaw-managed-bootstrap /usr/local/bin/nemoclaw-managed-bootstrap
+COPY --from=managed-bootstrap-entrypoint-builder /out/usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh
 COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/
@@ -224,6 +279,15 @@ RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
 # nemoclaw-start overrides it with the merged OpenShell + corporate bundle.
 ENV NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem
 
+# Reassert the npm-private ip-address fix for the exact final filesystem. When
+# onboarding supplied a corporate CA, use it for the registry-backed download.
+# hadolint ignore=DL3059
+RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \
+      export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \
+    fi; \
+    node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts \
+      --npm-root /usr/local/lib/node_modules/npm
+
 # Harden: remove unnecessary build tools and network probes from base image (#830)
 # Protect runtime tools before autoremove — the GHCR base may predate the
 # procps/e2fsprogs/tmux additions, leaving ps/chattr/tmux absent or auto-marked.
@@ -325,7 +389,9 @@ COPY --from=openclaw-patch-payload / /
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-chat-send.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
+        /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.mts \
+        /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts \
         /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.mts \
         /usr/local/lib/nemoclaw/extract-semver \
         /usr/local/lib/nemoclaw/patch-openclaw-shared-state-permissions.mts \
@@ -398,7 +464,7 @@ RUN set -eu; \
     OPENCLAW_LOCK_SHA256=none-legacy-fixture; \
     OPENCLAW_RECIPE='ignore-scripts+reviewed-lifecycle-v1'; \
     if [ "$OPENCLAW_VERSION" = "2026.7.1" ]; then \
-        OPENCLAW_LOCK_SHA256=82489f62febb12da52833c0b1f7f6969f7e21a098c565ef1f91342b1e5e32d88; \
+        OPENCLAW_LOCK_SHA256=759b31779f40867f35f15065b582eb1d3efb8fddb1fe43c207507c905fa2a421; \
         ACTUAL_OPENCLAW_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/openclaw-runtime/package-lock.json | awk '{print $1}')"; \
         [ "$ACTUAL_OPENCLAW_LOCK_SHA256" = "$OPENCLAW_LOCK_SHA256" ] \
             || { echo "ERROR: OpenClaw lock SHA-256 mismatch (expected $OPENCLAW_LOCK_SHA256, found $ACTUAL_OPENCLAW_LOCK_SHA256)" >&2; exit 1; }; \
@@ -941,6 +1007,34 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-issue
 RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-npx.mts \
     /usr/local/lib/node_modules/openclaw/dist
 
+# Recover from a transient remote Streamable HTTP MCP startup failure. OpenClaw
+# 2026.7.1 turns one reset or request timeout into an empty tool set plus
+# catalog diagnostics, and keeps that degraded catalog for the whole session, so
+# the agent reports the integration as unavailable until a new session starts.
+# The patch retries a classified transient startup once with a fresh transport
+# and drops a diagnostics-carrying catalog at the next agent run. Authentication,
+# authorization, TLS, policy, and configuration failures are never retried.
+#
+# Removal criterion: drop when upstream OpenClaw provides bounded startup retry,
+# negative-catalog invalidation, and temporary-transport failure attribution.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-mcp-reliability.mts \
+    /usr/local/lib/node_modules/openclaw/dist
+
+# Emit a redacted managed-transport diagnostic when a remote Streamable HTTP MCP
+# request fails. OpenClaw 2026.7.1 surfaces only the transport error text, which
+# does not say whether policy, CONNECT, TLS, the upstream connection, the
+# request, or response headers failed. The fetch-boundary wrapper is
+# failure-only, never retries, never alters the request, and never reads a 2xx
+# body, so streaming responses stay behaviorally unchanged. It is inert unless
+# OPENSHELL_SANDBOX=1.
+#
+# Removal criterion: drop when upstream OpenClaw emits phase-classified,
+# redacted transport diagnostics for remote MCP fetch failures.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-managed-transport-diagnostics.mts \
+    /usr/local/lib/node_modules/openclaw/dist
+
 # Run the compact tool catalog shim for OpenClaw selection runtimes that still
 # need it. OpenClaw 2026.7.1 ships a built-in catalog surface, so the script
 # skips cleanly after classifying the compiled selection-*.js shape.
@@ -987,6 +1081,12 @@ RUN discovery_contract="$(node /usr/local/lib/nemoclaw/mcp-tool-discovery-runtim
     && node -e "const result = JSON.parse(process.argv[1]); if (result.protocol !== 1 || result.ok !== false || result.detail !== \"tool discovery received invalid runtime arguments\") process.exit(1);" "$discovery_contract" \
     && discovery_unsafe="$(find -L /usr/local/lib/nemoclaw/mcp-tool-discovery-runtime \( ! -user root -o -perm /022 \) -print -quit)" \
     && test -z "$discovery_unsafe" \
+    && test -f /usr/local/bin/nemoclaw-managed-bootstrap \
+    && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \
+    && test "$(stat -c '%u:%g:%a' /usr/local/bin/nemoclaw-managed-bootstrap)" = '0:0:755' \
+    && test -f /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
+    && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
+    && test "$(stat -c '%u:%g:%a' /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh)" = '0:0:444' \
     && install -d -o root -g root -m 0755 /run/nemoclaw
 
 # Copy startup script and shared sandbox initialisation library.
@@ -1371,11 +1471,12 @@ RUN OPENCLAW_VERSION="${OPENCLAW_VERSION}" node --experimental-strip-types /src/
 # deployment. Regenerate after every optional plugin is installed so OpenClaw's
 # install registry survives while every optional plugin/channel remains inert.
 # Validate the exact generated file through the pinned OpenClaw CLI.
-# hadolint ignore=DL3059,DL4006
+# hadolint ignore=DL3059,DL4006,SC2016
 RUN if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \
         node --experimental-strip-types /scripts/generate-openclaw-config.mts; \
         validation="$(openclaw config validate --json)"; \
         node -e 'const result=JSON.parse(process.argv[1]); if (result.valid !== true) process.exit(1)' "$validation"; \
+        node -e 'const fs=require("node:fs"), path=require("node:path"); const config=JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8")); const root="/usr/local/lib/node_modules/openclaw/dist/extensions"; const bundled=fs.readdirSync(root, {withFileTypes:true}).filter((entry)=>entry.isDirectory()).map((entry)=>entry.name).flatMap((id)=>{ const packagePath=path.join(root, id, "package.json"); if (!fs.existsSync(packagePath)) return []; const packageManifest=JSON.parse(fs.readFileSync(packagePath, "utf8")); if (!packageManifest.openclaw?.channel?.id) return []; const pluginManifest=JSON.parse(fs.readFileSync(path.join(root, id, "openclaw.plugin.json"), "utf8")); return [{channelId:packageManifest.openclaw.channel.id, pluginId:pluginManifest.id}]; }); if (!bundled.some(({channelId})=>channelId === "imessage") || !bundled.some(({channelId})=>channelId === "telegram")) throw new Error(`unexpected bundled OpenClaw channel inventory: ${bundled.map(({channelId})=>channelId).join(",")}`); for (const {channelId, pluginId} of bundled) { if (config.plugins?.entries?.[pluginId]?.enabled !== false || config.channels?.[channelId]?.enabled !== false) throw new Error(`bundled OpenClaw channel is not neutral: ${channelId}`); }'; \
     fi
 
 # Release the offline lock so the runtime sandbox can install MCP servers,
@@ -1719,9 +1820,14 @@ RUN check_metadata() { \
       fi; \
     } \
     && check_metadata /scripts/patch-bundled-npm-brace-expansion.mts 'root:root:755' \
+    && check_metadata /scripts/lib/patch-bundled-npm-ip-address.mts 'root:root:755' \
     && check_metadata /scripts/patch-bundled-npm-tar.mts 'root:root:755' \
     && check_metadata /opt/nemoclaw/openclaw.plugin.json 'root:root:644' \
     && check_metadata /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.mts 'root:root:755' \
+    && test ! -L /usr/local/bin/nemoclaw-managed-bootstrap \
+    && check_metadata /usr/local/bin/nemoclaw-managed-bootstrap 'root:root:755' \
+    && test ! -L /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh \
+    && check_metadata /usr/local/lib/nemoclaw/managed-bootstrap-trampoline.sh 'root:root:444' \
     && check_metadata /usr/local/bin/nemoclaw-gateway-control 'root:root:700' \
     && check_metadata /usr/local/lib/nemoclaw/state-dir-guard.py 'root:root:500' \
     && check_metadata /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js 'root:root:644' \
