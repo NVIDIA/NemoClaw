@@ -43,6 +43,7 @@
  * #2701 guard-chain assertion.
  */
 
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
@@ -143,6 +144,28 @@ async function inspectStartupCommand(
   });
   expect(result.exitCode, resultText(result)).toBe(0);
   return result.stdout.trim();
+}
+
+async function waitForSandboxExecAfterContainerRestart(
+  host: HostCliClient,
+  sandboxName: string,
+): Promise<void> {
+  let lastResult = "no OpenShell exec attempt completed";
+  for (let attempt = 1; attempt <= 12; attempt += 1) {
+    const result = await host.command(
+      "openshell",
+      ["sandbox", "exec", "-n", sandboxName, "--", "true"],
+      {
+        artifactName: `legacy-restart-openshell-ready-${attempt}`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    if (result.exitCode === 0) return;
+    lastResult = resultText(result);
+    await sleep(3_000);
+  }
+  throw new Error(`OpenShell did not accept the restarted legacy sandbox:\n${lastResult}`);
 }
 
 test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)", {
@@ -418,6 +441,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     timeoutMs: 120_000,
   });
   expect(legacyRestart.exitCode, resultText(legacyRestart)).toBe(0);
+  await waitForSandboxExecAfterContainerRestart(host, instance.sandboxName);
 
   progress.phase("recover legacy managed supervisor and inference");
   const legacyCredentialCanary = "nemoclaw-e2e-recovery-secret-6635";
