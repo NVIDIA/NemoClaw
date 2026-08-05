@@ -21,6 +21,7 @@ type ProbeMode =
   | "resume-core-gateway-provenance-resolver"
   | "authoritative-core-gateway"
   | "authoritative-core-gateway-policy-tier"
+  | "dashboard-port-composition"
   | "ordinary-policy-tier"
   | "ahead-core";
 
@@ -191,6 +192,19 @@ function runSliceProbe(options: ProbeOptions) {
     path.join(repoRoot, "src", "lib", "onboard", "machine", "core-flow-phases.ts"),
   );
   const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+  const onboardDashboardPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "dashboard.ts"),
+  );
+  const agentOnboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "agent", "onboard.ts"));
+  const agentSelectionPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "agent-selection.ts"),
+  );
+  const dashboardUrlCommandPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "dashboard-url-command.ts"),
+  );
+  const finalizationDepsPath = JSON.stringify(
+    path.join(repoRoot, "src", "lib", "onboard", "finalization-deps.ts"),
+  );
 
   fs.writeFileSync(
     scriptPath,
@@ -206,6 +220,30 @@ const coreFlowPhases = require(${coreFlowPhasesPath});
 const registry = require(${registryPath});
 const called = [];
 const sentinel = new Error("slice-called");
+
+if (scenario.mode === "dashboard-port-composition") {
+  const finalizationHandlerDeps = require(${finalizationDepsPath}).finalizationHandlerDeps;
+  finalizationHandlerDeps.checkAndRecoverSandboxProcesses = () => undefined;
+  finalizationHandlerDeps.warmupScopeUpgrade = () => undefined;
+  finalizationHandlerDeps.autoPairScopeApproval = () => undefined;
+  const onboardDashboard = require(${onboardDashboardPath});
+  const createOnboardDashboardHelpers = onboardDashboard.createOnboardDashboardHelpers;
+  let dashboardForwardCalls = 0;
+  onboardDashboard.createOnboardDashboardHelpers = (deps) => ({
+    ...createOnboardDashboardHelpers(deps),
+    ensureAgentDashboardForward: () => {
+      const port = dashboardForwardCalls === 0 ? 18791 : 18792;
+      dashboardForwardCalls += 1;
+      called.push("forward-port:" + String(port));
+      return port;
+    },
+  });
+  require(${agentOnboardPath}).handleAgentSetup = async () => undefined;
+  require(${agentSelectionPath}).createOnboardAgentSelector = () => async () => ({
+    name: "hermes",
+    displayName: "Hermes Agent",
+  });
+}
 
 if (scenario.mode.endsWith("policy-tier") || scenario.mode.endsWith("provenance-resolver")) {
   const readsProvenance = scenario.mode.endsWith("provenance-resolver");
@@ -335,12 +373,47 @@ flowSlices.runCoreOnboardFlowSequence = async ({ context, runtime }) => {
   if (scenario.slice === "core") throw sentinel;
   await runtime.applyResult(advanceTo("inference", { metadata: { state: "provider_selection" } }));
   await runtime.applyResult(advanceTo("sandbox", { metadata: { state: "inference" } }));
-  await runtime.applyResult(branchTo("openclaw", { metadata: { state: "sandbox" } }));
+  await runtime.applyResult(
+    branchTo(scenario.mode === "dashboard-port-composition" ? "agent_setup" : "openclaw", {
+      metadata: { state: "sandbox" },
+    }),
+  );
   const session = await runtime.session();
   return { context: baseContext(context, { session }), session };
 };
 
-flowSlices.runFinalOnboardFlowSequence = async ({ context }) => {
+flowSlices.runFinalOnboardFlowSequence = async ({ context, phases }) => {
+  if (scenario.mode === "dashboard-port-composition") {
+    registry.registerSandbox({
+      name: "fsm-sandbox",
+      agent: "hermes",
+      provider: "openai-api",
+      model: "gpt-test",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
+    const agentSetupPhase = phases.find((phase) => phase.state === "agent_setup");
+    if (!agentSetupPhase) throw new Error("agent setup phase was not composed");
+    await agentSetupPhase.run(context);
+    const finalizationPhase = phases.find((phase) => phase.state === "finalizing");
+    if (!finalizationPhase) throw new Error("finalization phase was not composed");
+    await finalizationPhase.run(context);
+
+    const dashboardOutput = [];
+    require(${dashboardUrlCommandPath}).runDashboardUrlCommand(
+      "fsm-sandbox",
+      { quiet: true },
+      {
+        fetchToken: () => null,
+        getSandbox: (name) => registry.getSandbox(name),
+        getAgentDashboardAuth: () => "session",
+        log: (message) => dashboardOutput.push(String(message)),
+      },
+    );
+    called.push("registry-port:" + String(registry.getSandbox("fsm-sandbox")?.dashboardPort));
+    called.push("dashboard-url:" + String(dashboardOutput.at(-1)));
+    throw sentinel;
+  }
   called.push("final");
   if (scenario.slice === "final") throw sentinel;
   throw new Error("unexpected final slice fallthrough");
@@ -397,7 +470,12 @@ const { onboard } = require(${onboardPath});
       (scenario.mode === "endpoint-override" &&
         error?.name === "OpenShellGatewayEndpointOverrideError")
     ) {
-      console.log(JSON.stringify({ called }));
+      const payload = JSON.stringify({ called });
+      if (scenario.mode === "dashboard-port-composition") {
+        process.stdout.write(payload + "\\n", () => process.exit(0));
+        return;
+      }
+      console.log(payload);
       return;
     }
     console.error(error);
@@ -420,7 +498,7 @@ const { onboard } = require(${onboardPath});
           : {}),
         ...(options.policyTier ? { NEMOCLAW_POLICY_TIER: options.policyTier } : {}),
       },
-      timeout: probeTimeoutMs,
+      timeout: scenario.mode === "dashboard-port-composition" ? 60_000 : probeTimeoutMs,
     },
   );
   try {
@@ -465,6 +543,17 @@ describe("live onboard FSM slice boundaries", () => {
   it("enters the final slice after the core slice reaches the branch state", () => {
     assert.deepEqual(runSliceProbe({ slice: "final" }), ["initial:init", "core", "final"]);
   });
+
+  it("returns the post-recovery dashboard port after agent onboarding (#8214)", () => {
+    assert.deepEqual(runSliceProbe({ slice: "final", mode: "dashboard-port-composition" }), [
+      "initial:init",
+      "core",
+      "forward-port:18791",
+      "forward-port:18792",
+      "registry-port:18792",
+      "dashboard-url:http://127.0.0.1:18792/",
+    ]);
+  }, 60_000);
 
   it("enters the strict initial runner at preflight on an exact-state resume", () => {
     assert.deepEqual(runSliceProbe({ slice: "initial", mode: "resume-initial" }), [

@@ -44,7 +44,7 @@ const INVALID_NAME_PREVIEW_MAX_LENGTH = 80;
  * terminal or CI log. Escaping every non-ASCII UTF-16 code unit also covers
  * C1 controls, line separators, bidi formatting, and unpaired surrogates.
  */
-function diagnosticPreview(value: unknown): string {
+export function diagnosticPreview(value: unknown): string {
   const raw = String(value);
   const prefix = raw.slice(0, INVALID_NAME_PREVIEW_MAX_LENGTH);
   let escaped = '"';

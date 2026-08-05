@@ -124,6 +124,7 @@ Do not add a platform label only because the environment template names Docker, 
 Use a platform label when the platform appears in the error, title, or affected install path.
 `Windows ARM`, `Windows ARM64`, and `aarch64` support `platform: arm64`.
 `WSL`, `WSL2`, and `Windows Subsystem for Linux` support `platform: wsl`.
+`N1X`, `N1x Linux Laptop`, and `NVIDIA RTX Spark N1X` support `platform: n1x` when N1X is the affected platform.
 
 | Label | Description |
 |---|---|
@@ -138,6 +139,7 @@ Use a platform label when the platform appears in the error, title, or affected 
 | `platform: k8s` | Kubernetes-specific behavior. |
 | `platform: linux` | Linux behavior without Ubuntu specificity. |
 | `platform: macos` | macOS, Darwin, Homebrew, or Apple Silicon behavior. |
+| `platform: n1x` | Affects N1X hardware or workflows. |
 | `platform: ubuntu` | Ubuntu-specific behavior. |
 | `platform: windows` | Native Windows or PowerShell behavior. |
 | `platform: wsl` | Windows Subsystem for Linux behavior. |

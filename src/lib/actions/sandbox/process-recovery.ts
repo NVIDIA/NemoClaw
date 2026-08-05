@@ -16,7 +16,6 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { sleepSeconds, waitUntil } from "../../core/wait";
-import { SANDBOX_READY_TIMEOUT_SECS } from "../../onboard/env";
 import { ROOT, shellQuote } from "../../runner";
 import {
   isDirectSandboxFallbackUnavailableError,
@@ -819,15 +818,16 @@ function waitForRecreatedSandboxOpenShellReadyResult(
   const capture = options.captureOpenshellImpl ?? captureOpenshell;
   const now = options.nowImpl ?? Date.now;
   const sleep = options.sleepImpl ?? sleepSeconds;
-  const timeoutSeconds =
+  const requestedTimeoutSeconds =
     typeof options.timeoutSeconds === "number" &&
     Number.isFinite(options.timeoutSeconds) &&
     options.timeoutSeconds >= 0
       ? options.timeoutSeconds
-      : readNonNegativeNumberEnv(
-          "NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS",
-          GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS,
-        );
+      : GATEWAY_RECOVERY_WAIT_DEFAULT_SECONDS;
+  const timeoutSeconds = readNonNegativeNumberEnv(
+    "NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS",
+    requestedTimeoutSeconds,
+  );
   const intervalSeconds = readNonNegativeNumberEnv(
     "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
     options.intervalSeconds ?? 3,
@@ -1449,7 +1449,6 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       ? (() => {
           const readinessOptions: RecreatedSandboxOpenShellReadyOptions = {
             beforeProbe: (timeoutMs) => confirmRelaunchedManagedHealth?.(timeoutMs) ?? null,
-            timeoutSeconds: SANDBOX_READY_TIMEOUT_SECS,
           };
           const readiness =
             waitForRecreatedSandboxOpenShellReadyImpl === waitForRecreatedSandboxOpenShellReady

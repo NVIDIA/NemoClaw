@@ -30,7 +30,7 @@ describe("Hermes doctor and config hash boundary", () => {
     const command = dockerRunCommandBetween(
       dockerfile,
       'RUN hermes_version_output="$(/usr/local/bin/hermes --version)"',
-      "# This runs before `/usr/local/bin/hermes`",
+      "# Validate the versioned adapter",
     )
       .replaceAll("/usr/local/bin/hermes", hermesBin)
       .replaceAll("/usr/local/lib/nemoclaw/hermes-wrapper.py", wrapper)
@@ -92,7 +92,10 @@ describe("Hermes doctor and config hash boundary", () => {
       fs.mkdirSync(profileDir, { recursive: true });
       for (const relativePath of [
         path.join(binDir, "nemoclaw-start"),
+        path.join(binDir, "nemoclaw-managed-startup-hold"),
+        path.join(binDir, "nemoclaw-managed-bootstrap"),
         path.join(binDir, "nemoclaw-gateway-control"),
+        path.join(libDir, "entrypoint-env-wrapper.sh"),
         path.join(libDir, "sandbox-init.sh"),
         path.join(libDir, "gateway-supervisor.sh"),
         path.join(libDir, "validate-hermes-env-secret-boundary.py"),

@@ -280,6 +280,7 @@ export const REMOTE_PROVIDER_NAMES = [
   "compatible-anthropic-endpoint",
   "gemini-api",
   "compatible-endpoint",
+  "llama-cpp-local",
 ] as const;
 
 export type RemoteProviderName = (typeof REMOTE_PROVIDER_NAMES)[number];

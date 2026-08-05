@@ -39,19 +39,29 @@ Review the [Prerequisites](prerequisites) before you begin.
 
 <Steps>
   <Step title="Install NemoClaw for Deep Agents">
-    Select Deep Agents, then run the hosted installer.
+    Run the hosted installer.
 
     ```bash
-    export NEMOCLAW_AGENT=langchain-deepagents-code
-    export NEMOCLAW_SANDBOX_NAME=my-deepagents
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
     ```
   </Step>
 
   <Step title="Complete Onboarding">
-    If the installer offers Express, you can accept it to use managed local inference for that platform.
-    Otherwise, choose an inference provider and model, then provide its credential when prompted.
-    The install command uses `my-deepagents` as the sandbox name.
+    Select **LangChain Deep Agents Code** when the installer prompts you to choose an agent.
+
+    <Note>
+      On supported platforms, the installer can display `Run express install with these settings? [Y/n]:` before the agent-selection prompt.
+      Press Enter to use the recommended express install mode for that platform.
+      This mode applies preset settings and runs the remaining onboarding non-interactively.
+      Express install mode installs OpenClaw by default.
+      If you accept, refer to [NemoClaw Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart).
+      Enter `n` if you want to select LangChain Deep Agents Code, a sandbox name, an inference provider, and a model interactively.
+      Refer to [Use Docker and supported platforms](#use-docker-and-supported-platforms) for more information.
+    </Note>
+
+    When prompted for the sandbox name, enter `my-deepagents` or press Enter to accept the suggested `deepagents-code` name.
+    If you accept the suggested name, use `deepagents-code` instead of `my-deepagents` in the commands that follow.
+    Choose an inference provider and model, then provide its credential when prompted.
     Accept the suggested network policy tier for a first run.
   </Step>
 
@@ -86,8 +96,9 @@ Use these details when you need more control during setup or after the first san
     Before you install from Windows, follow [Prepare a Windows Machine to Install NemoClaw](additional-setup/windows-preparation).
     Before you install on DGX Station, follow [Prepare DGX Station to Install NemoClaw](additional-setup/dgx-station-preparation).
 
-    DGX Spark, qualifying DGX Station hosts, and Windows WSL can offer an interactive express path after the third-party software notice.
-    After you confirm the Express prompt, the installer switches the remaining onboarding to non-interactive mode and selects the managed local inference path for that platform.
+    DGX Spark, qualifying DGX Station hosts, and Windows Subsystem for Linux (WSL) can offer the recommended express install mode after the third-party software notice.
+    Press Enter at the express install prompt to apply preset settings, switch the remaining onboarding to non-interactive mode, and select the managed local inference path for that platform.
+    Enter `n` to continue with interactive onboarding when you want to select the agent or other settings yourself.
 
     Refer to [Set Up vLLM](../inference/local-inference/set-up-vllm) for managed model profiles and headless setup.
     Refer to [Set Up vLLM on Two DGX Stations](../inference/local-inference/set-up-vllm-on-two-dgx-stations) for the Deferred paired workflow.
