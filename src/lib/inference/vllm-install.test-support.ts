@@ -124,10 +124,14 @@ export function mockDockerSpawnFailure(
 }
 
 /**
- * Drive a managed vLLM install down its successful path. `ownershipResponses`
- * supplies the ambient ownership inspections in order; exhausting the queue
- * throws so an install that inspects more often than the test intends fails
- * loudly instead of reading an empty row.
+ * Drive a managed vLLM install down its successful path. Each
+ * `dockerCapture(["container", ...])` call alternates between two outcomes:
+ * the first call and every other call after it (0, 2, 4, ...) unconditionally
+ * return an empty row; the second call and every other call after that
+ * (1, 3, 5, ...) consume the next entry from `ownershipResponses`. Only every
+ * other container inspection reads the queue. Exhausting the queue throws so
+ * an install that inspects ambient ownership more often than the test
+ * intends fails loudly instead of reading an empty row.
  */
 export function mockSuccessfulVllmInstall(
   mocks: VllmInstallMocks,
