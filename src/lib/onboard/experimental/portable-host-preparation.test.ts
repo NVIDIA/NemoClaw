@@ -92,7 +92,6 @@ describe("preparePortableExperimentalHost", () => {
     expect(fs.readFileSync(containersConf, "utf-8")).toContain(
       'default_rootless_network_cmd = "pasta"',
     );
-    expect(fs.readFileSync(containersConf, "utf-8")).toContain('pasta_options = ["--map-gw"]');
     expect(fs.readFileSync(containersConf, "utf-8")).toContain('env = ["NETAVARK_FW=iptables"]');
     expect(fs.statSync(containersConf).mode & 0o777).toBe(0o600);
   });

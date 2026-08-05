@@ -22,7 +22,6 @@ insecure = true
 const PORTABLE_CONTAINERS_CONF = `[network]
 default_rootless_network_cmd = "pasta"
 firewall_driver = "iptables"
-pasta_options = ["--map-gw"]
 
 [engine]
 env = ["NETAVARK_FW=iptables"]

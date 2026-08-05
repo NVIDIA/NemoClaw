@@ -149,7 +149,7 @@ async function main(): Promise<void> {
     assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`);
     assert.match(
       fs.readFileSync(String(process.env.CONTAINERS_CONF), "utf-8"),
-      /pasta_options = \["--map-gw"\]/,
+      /default_rootless_network_cmd = "pasta"/,
     );
 
     const podmanInfo = JSON.parse(run("podman", ["info", "--format", "json"]));
@@ -229,6 +229,8 @@ async function main(): Promise<void> {
           "--network",
           "openshell-docker",
           prebuild.imageRef,
+          "timeout",
+          "15",
           "bash",
           "-lc",
           routeProof,
