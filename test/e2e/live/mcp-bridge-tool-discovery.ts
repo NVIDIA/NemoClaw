@@ -138,6 +138,14 @@ export async function assertAuthenticatedMcpDiscovery(
     .toMatchObject({ discovered: true });
 }
 
+type AuthenticatedMcpDiscoveryRestartDeps = {
+  assertDiscovery: typeof assertAuthenticatedMcpDiscovery;
+};
+
+const AUTHENTICATED_MCP_DISCOVERY_RESTART_DEPS: AuthenticatedMcpDiscoveryRestartDeps = {
+  assertDiscovery: assertAuthenticatedMcpDiscovery,
+};
+
 export async function assertAuthenticatedMcpDiscoveryWithOneRestart(
   fakeMcp: FakeMcpHttpsServer,
   options: {
@@ -146,15 +154,16 @@ export async function assertAuthenticatedMcpDiscoveryWithOneRestart(
     label: string;
     restart: () => Promise<void>;
   },
+  deps: AuthenticatedMcpDiscoveryRestartDeps = AUTHENTICATED_MCP_DISCOVERY_RESTART_DEPS,
 ): Promise<void> {
   try {
-    await assertAuthenticatedMcpDiscovery(fakeMcp, options);
+    await deps.assertDiscovery(fakeMcp, options);
   } catch (error) {
     if (!shouldRetryMcpDiscoveryAfterRestart(fakeMcp.requests.slice(options.requestOffset))) {
       throw error;
     }
     await options.restart();
-    await assertAuthenticatedMcpDiscovery(fakeMcp, {
+    await deps.assertDiscovery(fakeMcp, {
       ...options,
       label: `${options.label} after one bridge restart`,
     });
