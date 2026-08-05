@@ -68,8 +68,6 @@ jobs:
           if ! grep -q "^${USER}:" /etc/subgid; then
             sudo usermod --add-subgids 100000-165535 "$USER"
           fi
-          # Model the fixed host endpoint exposed by the constrained runtime.
-          sudo ip address add 169.254.1.2/32 dev lo
           podman --version
           pasta --version
           docker --version

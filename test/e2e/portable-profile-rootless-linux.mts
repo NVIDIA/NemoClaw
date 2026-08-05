@@ -143,7 +143,6 @@ async function main(): Promise<void> {
     NEMOCLAW_SANDBOX_PREBUILD: "1",
   });
 
-  let server: http.Server | undefined;
   try {
     preparePortableExperimentalHost(process.env);
     assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`);
@@ -186,39 +185,36 @@ async function main(): Promise<void> {
       run("podman", ["image", "inspect", "--format", "{{.Id}}", prebuild.imageRef]),
       /^(?:sha256:)?[a-f0-9]{64}$/,
     );
-    run("podman", ["network", "create", "openshell-docker"]);
-
-    server = http.createServer((_request, response) => {
-      response.writeHead(200, { "content-type": "text/plain" });
-      response.end("portable-profile-ok\n");
-    });
-    await new Promise<void>((resolve, reject) => {
-      server?.once("error", reject);
-      server?.listen(0, "0.0.0.0", resolve);
-    });
-    const address = server.address();
-    assert(address && typeof address === "object");
+    run("podman", ["network", "create", "--subnet", "169.254.1.0/24", "openshell-docker"]);
+    run("podman", [
+      "network",
+      "connect",
+      "--ip",
+      "169.254.1.2",
+      "openshell-docker",
+      "nemoclaw-portable-registry",
+    ]);
 
     const gatewayEnv = buildDockerDriverGatewayEnv({
       platform: "linux",
-      gatewayPort: address.port,
+      gatewayPort: 5000,
       stateDir,
       getDockerSupervisorImage: () => "supervisor:e2e-not-launched",
       resolveSandboxBin: () => null,
     });
     assert.equal(gatewayEnv.OPENSHELL_DRIVERS, "podman");
     assert.equal(gatewayEnv.OPENSHELL_BIND_ADDRESS, "0.0.0.0");
-    assert.equal(gatewayEnv.OPENSHELL_GRPC_ENDPOINT, `https://169.254.1.2:${address.port}`);
+    assert.equal(gatewayEnv.OPENSHELL_GRPC_ENDPOINT, "https://169.254.1.2:5000");
     assert.match(
       fs.readFileSync(gatewayEnv.OPENSHELL_GATEWAY_CONFIG, "utf-8"),
       /host_gateway_ip = "169\.254\.1\.2"/,
     );
 
     const routeProof = [
-      `exec 3<>/dev/tcp/169.254.1.2/${address.port}`,
-      "printf 'GET / HTTP/1.1\\r\\nHost: portable-profile\\r\\nConnection: close\\r\\n\\r\\n' >&3",
+      "exec 3<>/dev/tcp/169.254.1.2/5000",
+      "printf 'GET /v2/ HTTP/1.1\\r\\nHost: portable-profile\\r\\nConnection: close\\r\\n\\r\\n' >&3",
       "response=$(cat <&3)",
-      'grep -F portable-profile-ok <<<"$response"',
+      'grep -F "200 OK" <<<"$response"',
     ].join("; ");
     assert.equal(
       run(
@@ -237,12 +233,11 @@ async function main(): Promise<void> {
         ],
         20_000,
       ),
-      "portable-profile-ok",
+      "HTTP/1.1 200 OK",
     );
 
     console.log("Portable profile rootless environment E2E passed.");
   } finally {
-    server?.close();
     spawnSync("podman", ["rm", "--force", "nemoclaw-portable-registry"], {
       env: process.env,
       stdio: "ignore",
