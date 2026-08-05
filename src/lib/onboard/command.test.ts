@@ -440,6 +440,45 @@ describe("onboard command options", () => {
     }
   });
 
+  it.each([
+    {
+      name: "portable profile",
+      flags: { "experimental-profile": "portable" } as OnboardFlags,
+      listServingProfiles: undefined,
+      keys: [
+        "NEMOCLAW_EXPERIMENTAL_PROFILE",
+        "NEMOCLAW_PROVIDER",
+        "NEMOCLAW_MODEL",
+        "NEMOCLAW_OLLAMA_NO_AUTOSTART",
+      ],
+    },
+    {
+      name: "serving profile",
+      flags: { profile: COMPATIBLE_NANO_PROFILE.id } as OnboardFlags,
+      listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
+      keys: ["NEMOCLAW_SERVING_PRESET"],
+    },
+  ])("restores the $name environment when an agents manifest is invalid", async (testCase) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-invalid-agents-manifest-"));
+    const manifestPath = path.join(tmpDir, "agents.yaml");
+    fs.writeFileSync(manifestPath, "agents: [\n");
+    const env: NodeJS.ProcessEnv = {};
+
+    try {
+      await expect(
+        runOnboardCommand({
+          flags: { ...testCase.flags, agents: manifestPath },
+          env,
+          listServingProfiles: testCase.listServingProfiles,
+          runOnboard: vi.fn(),
+        }),
+      ).rejects.toThrow("--agents YAML parse error");
+      for (const key of testCase.keys) expect(env[key]).toBeUndefined();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("treats a prompt EOF during onboarding as cancellation and exits non-zero (#5976)", async () => {
     const errors: string[] = [];
     await expect(

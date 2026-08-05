@@ -355,16 +355,18 @@ function applyServingProfileEnvironment(
 export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<void> {
   const options = resolveOnboardOptions(deps.flags, deps);
   const env = deps.env ?? process.env;
-  const restorePortableEnvironment = applyPortableEnvironment(options, env);
-  const restoreServingProfileEnvironment = applyServingProfileEnvironment(options, env);
-  if (options.noOllamaAutostart) env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
-  // Keep direct callers and the legacy monolithic onboard path on the same
-  // canonical source. No value is written for the default so resume/rebuild
-  // can distinguish an explicit request from an unset environment.
-  if (options.toolDisclosure) env[TOOL_DISCLOSURE_ENV] = options.toolDisclosure;
+  let restorePortableEnvironment = () => {};
+  let restoreServingProfileEnvironment = () => {};
   const previousAgentsManifest = env.NEMOCLAW_EXTRA_AGENTS_JSON;
-  if (options.agentsManifest) applyAgentsManifestEnv(options.agentsManifest, env);
   try {
+    restorePortableEnvironment = applyPortableEnvironment(options, env);
+    restoreServingProfileEnvironment = applyServingProfileEnvironment(options, env);
+    if (options.noOllamaAutostart) env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
+    // Keep direct callers and the legacy monolithic onboard path on the same
+    // canonical source. No value is written for the default so resume/rebuild
+    // can distinguish an explicit request from an unset environment.
+    if (options.toolDisclosure) env[TOOL_DISCLOSURE_ENV] = options.toolDisclosure;
+    if (options.agentsManifest) applyAgentsManifestEnv(options.agentsManifest, env);
     await deps.runOnboard(options);
   } catch (error) {
     handleOnboardCommandError(error, deps);
