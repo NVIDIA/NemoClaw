@@ -223,8 +223,11 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     ).not.toThrow();
     expect(() =>
       assertExpectedOpenShellGatewayProcessIdentity(
-        { ...identity, commandLine: `${identity.commandLine} --other 9999` },
-        { gatewayPath: "C:\\package\\openshell-gateway.exe", port: 9999 },
+        {
+          ...identity,
+          commandLine: '"C:\\package\\openshell-gateway.exe" --disable-tls 17670 --port',
+        },
+        { gatewayPath: "C:\\package\\openshell-gateway.exe", port: 17670 },
       ),
     ).toThrow(/does not match/u);
   });
