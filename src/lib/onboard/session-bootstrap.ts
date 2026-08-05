@@ -11,6 +11,12 @@ import { checkpointProvesSandboxStepComplete } from "./checkpoint-replay";
 import type { ResumeConfigConflict } from "./resume-config";
 import type { StationExpressResumeIntent } from "./station-express-resume";
 
+export {
+  beginHostMountScope,
+  isDockerBindMountsEnabled,
+  reportReadOnlyHostMounts,
+} from "./host-mount";
+
 export interface OnboardSessionBootstrapInput {
   resume: boolean;
   fresh: boolean;

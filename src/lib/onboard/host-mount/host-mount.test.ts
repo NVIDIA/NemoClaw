@@ -7,9 +7,12 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  beginHostMountScope,
+  isDockerBindMountsEnabled,
   normalizePersistedSandboxHostMounts,
   parseReadOnlyHostMount,
   parseReadOnlyHostMounts,
+  reportReadOnlyHostMounts,
 } from ".";
 
 const created: string[] = [];
@@ -83,5 +86,24 @@ describe("read-only host mount validation", () => {
     expect(() =>
       normalizePersistedSandboxHostMounts([{ source, target: "/sandbox/project", readOnly: true }]),
     ).toThrow("host directory does not exist");
+  });
+
+  it("scopes the managed gateway capability and reports requested access", () => {
+    const mount = {
+      source: workspaceTempDir(),
+      target: "/sandbox/project",
+      readOnly: true as const,
+    };
+    const messages: string[] = [];
+    const scope = beginHostMountScope([mount]);
+
+    expect(isDockerBindMountsEnabled()).toBe(false);
+    const mounts = scope.activate(undefined);
+    expect(isDockerBindMountsEnabled()).toBe(true);
+    reportReadOnlyHostMounts(mounts, (message) => messages.push(message));
+    expect(messages).toContain(`    ${mount.source} -> /sandbox/project`);
+
+    scope.restore();
+    expect(isDockerBindMountsEnabled()).toBe(false);
   });
 });
