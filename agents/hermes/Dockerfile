@@ -891,7 +891,7 @@ RUN set -eu; \
         "$config_dir/weixin" \
         "$config_dir/weixin/accounts" \
         "$config_dir/runtime" \
-        "$config_dir/dashboard-home"; \
+        "$config_dir/profiles/dashboard-home"; \
     if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then \
         echo "ERROR: legacy data dir still exists after cleanup: $data_dir" >&2; \
         exit 1; \
@@ -944,7 +944,7 @@ RUN set -eu; \
         /sandbox/.hermes/weixin \
         /sandbox/.hermes/weixin/accounts \
         /sandbox/.hermes/runtime \
-        /sandbox/.hermes/dashboard-home \
+        /sandbox/.hermes/profiles/dashboard-home \
     && chmod 2770 \
         /sandbox/.hermes/logs \
         /sandbox/.hermes/logs/curator \

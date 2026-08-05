@@ -46,14 +46,25 @@ mkdir -p "$BACKUP_DIR/dashboard-home"
 
 openshell sandbox download "$SANDBOX" /sandbox/SOUL.md "$BACKUP_DIR/"
 openshell sandbox download "$SANDBOX" /sandbox/.hermes/state.db "$BACKUP_DIR/"
-openshell sandbox download "$SANDBOX" /sandbox/.hermes/dashboard-home/MEMORY.md "$BACKUP_DIR/dashboard-home/MEMORY.md"
-openshell sandbox download "$SANDBOX" /sandbox/.hermes/dashboard-home/USER.md "$BACKUP_DIR/dashboard-home/USER.md"
+openshell sandbox download "$SANDBOX" /sandbox/.hermes/profiles/dashboard-home/MEMORY.md "$BACKUP_DIR/dashboard-home/MEMORY.md"
+openshell sandbox download "$SANDBOX" /sandbox/.hermes/profiles/dashboard-home/USER.md "$BACKUP_DIR/dashboard-home/USER.md"
 openshell sandbox download "$SANDBOX" /sandbox/.hermes/platforms/ "$BACKUP_DIR/platforms/"
 ```
 
 Copy only the dashboard profile's `MEMORY.md` and `USER.md` files.
-Do not copy `.hermes/dashboard-home/.env` or `.hermes/dashboard-home/config.yaml`.
+Do not copy `.hermes/profiles/dashboard-home/.env` or `.hermes/profiles/dashboard-home/config.yaml`.
 NemoClaw regenerates both files, and `.env` contains dashboard authentication material.
+
+If startup refuses a legacy profile migration, download the preserved user files for inspection:
+
+```bash
+mkdir -p "$BACKUP_DIR/dashboard-home-legacy"
+openshell sandbox download "$SANDBOX" /sandbox/.hermes/dashboard-home/MEMORY.md "$BACKUP_DIR/dashboard-home-legacy/MEMORY.md"
+openshell sandbox download "$SANDBOX" /sandbox/.hermes/dashboard-home/USER.md "$BACKUP_DIR/dashboard-home-legacy/USER.md"
+```
+
+Do not download the legacy `.env` or `config.yaml`.
+Compare the preserved user files with the canonical profile before you upload either version.
 
 </AgentOnly>
 <AgentOnly variant="deepagents">
@@ -106,8 +117,8 @@ BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
 
 openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/SOUL.md" /sandbox/
 openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/state.db" /sandbox/.hermes/
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/dashboard-home/MEMORY.md" /sandbox/.hermes/dashboard-home/MEMORY.md
-openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/dashboard-home/USER.md" /sandbox/.hermes/dashboard-home/USER.md
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/dashboard-home/MEMORY.md" /sandbox/.hermes/profiles/dashboard-home/MEMORY.md
+openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/dashboard-home/USER.md" /sandbox/.hermes/profiles/dashboard-home/USER.md
 openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/platforms/" /sandbox/.hermes/platforms/
 ```
 
