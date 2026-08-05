@@ -510,9 +510,9 @@ It generates platform support tables from `ci/platform-matrix.json` and tests gu
 Targeted documentation regression tests preserve credential-rotation commands, authenticated endpoint verification, and variant-specific procedures.
 Pair these assertions with product behavior tests because the presence of a command in a page does not establish that the command succeeds.
 
-NemoClaw also performs the judgment-based layer during development, not as a separate post-publication audit.
-On hosts that support subagents, the repository-wide `AGENTS.md` tells the implementation agent to start a documentation authoring subagent alongside user-visible code work.
-Before final handoff, an independent documentation writer subagent reviews the completed change for documentation impact and checks changed explanatory text for accuracy, grounding, completeness, usability, and style.
+NemoClaw also performs the judgment-based layer before final handoff, not as a separate post-publication audit.
+On hosts that support subagents, the repository-wide `AGENTS.md` tells the implementation agent to run an independent documentation writer subagent after completing development changes.
+The subagent reviews the completed change for documentation impact and checks changed explanatory text for accuracy, grounding, completeness, usability, and style.
 The pull request then records the review against the current commit and instruction version.
 
 <Note>
@@ -630,7 +630,7 @@ Before calling a documentation system agent-ready, confirm the following conditi
 - Routing prompts and skills point to the source instead of copying it.
 - Guide variant generation is deterministic, partial scope declarations match published routes, and guide variant behavior is tested.
 - Agent workflows define scope, approvals, stop conditions, and completion evidence.
-- User-visible code changes start documentation authoring during implementation, and every completed change receives an independent documentation writer review before handoff.
+- Every completed development change receives an independent documentation writer review before handoff.
 - Code-changing and documentation-only pull requests record a documentation-review result tied to the current head and instruction version.
 - New commits invalidate the recorded review until the documentation writer subagent runs again.
 - Pull requests validate generated output, routes, links, product parity, and rendered previews.
