@@ -8,31 +8,32 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
-import * as importedGatewayEnv from "../../src/lib/onboard/docker-driver-gateway-env.ts";
-import * as importedPortableHostPreparation from "../../src/lib/onboard/experimental/portable-host-preparation.ts";
-import * as importedSandboxPrebuild from "../../src/lib/onboard/sandbox-prebuild.ts";
-import * as importedBuildContext from "../../src/lib/sandbox/build-context.ts";
+import * as importedGatewayEnv from "../../../src/lib/onboard/docker-driver-gateway-env.ts";
+import * as importedPortableHostPreparation from "../../../src/lib/onboard/experimental/portable-host-preparation.ts";
+import * as importedSandboxPrebuild from "../../../src/lib/onboard/sandbox-prebuild.ts";
+import * as importedBuildContext from "../../../src/lib/sandbox/build-context.ts";
+import { test } from "../fixtures/e2e-test.ts";
 
 const gatewayEnvModule = (
   "default" in importedGatewayEnv && importedGatewayEnv.default
     ? importedGatewayEnv.default
     : importedGatewayEnv
-) as typeof import("../../src/lib/onboard/docker-driver-gateway-env.ts");
+) as typeof import("../../../src/lib/onboard/docker-driver-gateway-env.ts");
 const portableHostPreparationModule = (
   "default" in importedPortableHostPreparation && importedPortableHostPreparation.default
     ? importedPortableHostPreparation.default
     : importedPortableHostPreparation
-) as typeof import("../../src/lib/onboard/experimental/portable-host-preparation.ts");
+) as typeof import("../../../src/lib/onboard/experimental/portable-host-preparation.ts");
 const sandboxPrebuildModule = (
   "default" in importedSandboxPrebuild && importedSandboxPrebuild.default
     ? importedSandboxPrebuild.default
     : importedSandboxPrebuild
-) as typeof import("../../src/lib/onboard/sandbox-prebuild.ts");
+) as typeof import("../../../src/lib/onboard/sandbox-prebuild.ts");
 const buildContextModule = (
   "default" in importedBuildContext && importedBuildContext.default
     ? importedBuildContext.default
     : importedBuildContext
-) as typeof import("../../src/lib/sandbox/build-context.ts");
+) as typeof import("../../../src/lib/sandbox/build-context.ts");
 
 const { buildDockerDriverGatewayEnv } = gatewayEnvModule;
 const { preparePortableExperimentalHost } = portableHostPreparationModule;
@@ -41,13 +42,20 @@ const { SANDBOX_BUILD_CONTEXT_PREFIX } = buildContextModule;
 
 const BASE_IMAGE =
   "docker.io/library/ubuntu@sha256:019e8eb29a85e74d64925745884f2ec79aa27e3feab36353d24656f4d6b89467";
+const PORTABLE_PROFILE_E2E_PHASES = [
+  "prepare the rootless container runtime",
+  "build and publish the sandbox image",
+  "verify the fixed host route",
+  "record portable environment completion",
+] as const;
 
-function run(command: string, args: readonly string[], timeout = 60_000): string {
+function run(command: string, args: readonly string[]): string {
   const result = spawnSync(command, [...args], {
     encoding: "utf-8",
     env: process.env,
+    killSignal: "SIGKILL",
     stdio: ["ignore", "pipe", "pipe"],
-    timeout,
+    timeout: 55_000,
   });
   assert.equal(
     result.status,
@@ -120,7 +128,7 @@ esac
   );
 }
 
-async function main(): Promise<void> {
+async function main(progress: { phase: (phase: string) => void }): Promise<void> {
   assert.equal(process.platform, "linux", "portable profile E2E requires Linux");
   assert.notEqual(process.getuid?.(), 0, "portable profile E2E must run without root privileges");
 
@@ -144,6 +152,7 @@ async function main(): Promise<void> {
   });
 
   try {
+    progress.phase("prepare the rootless container runtime");
     preparePortableExperimentalHost(process.env);
     assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`);
     assert.match(
@@ -156,6 +165,7 @@ async function main(): Promise<void> {
     run("docker", ["version"]);
     await waitForRegistry();
 
+    progress.phase("build and publish the sandbox image");
     const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
     fs.chmodSync(buildCtx, 0o700);
     const dockerfile = path.join(buildCtx, "Dockerfile");
@@ -195,6 +205,7 @@ async function main(): Promise<void> {
       "nemoclaw-portable-registry",
     ]);
 
+    progress.phase("verify the fixed host route");
     const gatewayEnv = buildDockerDriverGatewayEnv({
       platform: "linux",
       gatewayPort: 5000,
@@ -217,34 +228,35 @@ async function main(): Promise<void> {
       'grep -F "200 OK" <<<"$response"',
     ].join("; ");
     assert.equal(
-      run(
-        "podman",
-        [
-          "run",
-          "--rm",
-          "--network",
-          "openshell-docker",
-          prebuild.imageRef,
-          "timeout",
-          "15",
-          "bash",
-          "-lc",
-          routeProof,
-        ],
-        20_000,
-      ),
+      run("podman", [
+        "run",
+        "--rm",
+        "--network",
+        "openshell-docker",
+        prebuild.imageRef,
+        "timeout",
+        "15",
+        "bash",
+        "-lc",
+        routeProof,
+      ]),
       "HTTP/1.1 200 OK",
     );
 
+    progress.phase("record portable environment completion");
     console.log("Portable profile rootless environment E2E passed.");
   } finally {
     spawnSync("podman", ["rm", "--force", "nemoclaw-portable-registry"], {
       env: process.env,
+      killSignal: "SIGKILL",
       stdio: "ignore",
+      timeout: 15_000,
     });
     spawnSync("podman", ["system", "reset", "--force"], {
       env: process.env,
+      killSignal: "SIGKILL",
       stdio: "ignore",
+      timeout: 15_000,
     });
     const pidFile = path.join(runtimeDir, "nemoclaw-podman-service.pid");
     if (fs.existsSync(pidFile)) {
@@ -259,4 +271,9 @@ async function main(): Promise<void> {
   }
 }
 
-await main();
+test("portable profile rootless environment completes the local image and fixed-host route contracts", {
+  meta: { e2ePhases: PORTABLE_PROFILE_E2E_PHASES },
+  timeout: 120_000,
+}, async ({ progress }) => {
+  await main(progress);
+});

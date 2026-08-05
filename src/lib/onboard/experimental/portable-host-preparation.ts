@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -15,6 +14,8 @@ const REGISTRY_CONTAINER = "nemoclaw-portable-registry";
 const REGISTRY_LABEL = "com.nvidia.nemoclaw.portable=1";
 const REGISTRY_IMAGE =
   "docker.io/library/registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373";
+const HOST_COMMAND_TIMEOUT_MS = 30_000;
+const REGISTRY_COMMAND_TIMEOUT_MS = 300_000;
 const REGISTRY_FRAGMENT = `[[registry]]
 location = "${PORTABLE_LOCAL_REGISTRY}"
 insecure = true
@@ -93,6 +94,9 @@ function ensureRegistryContainer(
     ],
     env,
   );
+  if (inspection.error) {
+    requireCommand(inspection, "Inspecting the managed portable registry");
+  }
   const exists = inspection.status === 0;
   if (exists && String(inspection.stdout ?? "").trim() !== "1") {
     throw new Error(
@@ -145,7 +149,12 @@ export function preparePortableExperimentalHost(
 
   const systemctl =
     deps.systemctl ??
-    ((args, childEnv) => spawnSync("systemctl", [...args], { encoding: "utf-8", env: childEnv }));
+    ((args, childEnv) =>
+      spawnSync("systemctl", [...args], {
+        encoding: "utf-8",
+        env: childEnv,
+        timeout: HOST_COMMAND_TIMEOUT_MS,
+      }));
   requireCommand(
     systemctl(
       [
@@ -169,7 +178,12 @@ export function preparePortableExperimentalHost(
 
   const docker =
     deps.docker ??
-    ((args, childEnv) => dockerSpawnSync(args, { encoding: "utf-8", env: childEnv }));
+    ((args, childEnv) =>
+      dockerSpawnSync(args, {
+        encoding: "utf-8",
+        env: childEnv,
+        timeout: REGISTRY_COMMAND_TIMEOUT_MS,
+      }));
   ensureRegistryContainer(env, docker);
 }
 

@@ -14,7 +14,7 @@ on:
       - "src/lib/onboard/**"
       - "src/lib/domain/sandbox/image-tag.ts"
       - "src/lib/sandbox/build-context.ts"
-      - "test/e2e/portable-profile-rootless-linux.mts"
+      - "test/e2e/live/portable-profile-rootless-linux.test.ts"
   push:
     branches:
       - main
@@ -23,7 +23,7 @@ on:
       - "src/lib/onboard/**"
       - "src/lib/domain/sandbox/image-tag.ts"
       - "src/lib/sandbox/build-context.ts"
-      - "test/e2e/portable-profile-rootless-linux.mts"
+      - "test/e2e/live/portable-profile-rootless-linux.test.ts"
 
 permissions:
   contents: read
@@ -73,4 +73,21 @@ jobs:
           docker --version
 
       - name: Exercise portable profile in the rootless environment
-        run: npx tsx test/e2e/portable-profile-rootless-linux.mts
+        env:
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/portable-profile
+          E2E_TARGET_ID: portable-profile
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+        run: >-
+          npx vitest run --project e2e-live
+          test/e2e/live/portable-profile-rootless-linux.test.ts
+          --silent=false --reporter=default
+
+      - name: Upload portable profile E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: portable-profile-e2e-artifacts
+          path: e2e-artifacts/portable-profile/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14

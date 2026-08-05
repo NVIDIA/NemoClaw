@@ -111,4 +111,38 @@ describe("preparePortableExperimentalHost", () => {
       }),
     ).toThrow(/unmanaged container/);
   });
+
+  it("reports a bounded registry inspection failure before attempting startup", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-"));
+    tempDirs.push(home);
+    const timeout = Object.assign(new Error("registry inspection timed out"), {
+      code: "ETIMEDOUT",
+    });
+    const docker = vi.fn(
+      () =>
+        ({
+          error: timeout,
+          output: [null, "", ""],
+          pid: 1234,
+          signal: "SIGKILL",
+          status: null,
+          stderr: "",
+          stdout: "",
+        }) as SpawnResult,
+    );
+
+    expect(() =>
+      preparePortableExperimentalHost(
+        { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+        {
+          platform: "linux",
+          home,
+          uid: 1001,
+          systemctl: () => result(),
+          docker,
+        },
+      ),
+    ).toThrow(/Inspecting the managed portable registry failed: registry inspection timed out/);
+    expect(docker).toHaveBeenCalledTimes(1);
+  });
 });
