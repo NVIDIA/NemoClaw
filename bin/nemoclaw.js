@@ -12,7 +12,12 @@ if (invokedAs === "nemo-deepagents") {
 const { log } = require("../dist/lib/cli/logger");
 const { mainPromise } = require("../dist/nemoclaw");
 mainPromise.catch((error) => {
-  const message = (error instanceof Error ? error.message : String(error)).replace(/[\r\n]+/g, " ");
+  let message = "Command failed.";
+  try {
+    message = String(error instanceof Error ? error.message : error).replace(/[\r\n]+/g, " ");
+  } catch {
+    // Keep the top-level rejection handler reliable even for values with throwing coercion hooks.
+  }
   log.error(`Error: ${message}`);
   process.exitCode = 1;
 });

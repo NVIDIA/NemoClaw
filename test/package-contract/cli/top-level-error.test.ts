@@ -50,6 +50,13 @@ describe("compiled CLI top-level errors", () => {
     expectTopLevelError('"String failure."', "Error: String failure.\n");
   });
 
+  it("prints a safe fallback when a rejected value cannot be converted to text (#8202)", () => {
+    expectTopLevelError(
+      '{ [Symbol.toPrimitive]() { throw new Error("coercion failed"); } }',
+      "Error: Command failed.\n",
+    );
+  });
+
   it("replaces rejected error line breaks and redacts credentials (#8202)", () => {
     const secret = `nvapi-${"a".repeat(20)}`;
     const rejection = `new Error(${JSON.stringify(`First line\n${secret}\r\nLast line`)})`;
