@@ -337,7 +337,7 @@ export function acquireHuggingFaceModel(
       if (!reportedOutputSuppression) {
         reportedOutputSuppression = true;
         observer.logLine(
-          "Hugging Face output suppressed after exceeding the safe redaction buffer",
+          "Hugging Face output suppressed after exceeding the redaction buffer limit",
         );
       }
     }

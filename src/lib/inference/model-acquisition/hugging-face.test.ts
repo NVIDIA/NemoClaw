@@ -321,7 +321,7 @@ describe("Hugging Face model acquisition", () => {
     expect(output).not.toContain("must-not-be-emitted");
     expect(output).not.toContain("x".repeat(100));
     expect(events.logLine).toHaveBeenCalledWith(
-      "Hugging Face output suppressed after exceeding the safe redaction buffer",
+      "Hugging Face output suppressed after exceeding the redaction buffer limit",
     );
   });
 
