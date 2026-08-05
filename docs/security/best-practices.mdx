@@ -297,10 +297,12 @@ After the top-level config binding is frozen, lockdown makes containment monoton
 It removes unsafe symlinks, special entries, and protected-root names that are not directories through descriptor-relative operations without following their targets.
 For protected regular files, lockdown publishes a fresh inode, severing hardlinks while preserving file content, read/execute mode, timestamps, and supported extended attributes; this also revokes write authority held through a descriptor opened before `shields up`.
 The OpenClaw gateway (a member of the `sandbox` group) keeps read access to plugin and agent code; the sandbox user can no longer write them.
-The same workflow locks `identity`, `pairing`, and a non-empty `credentials` directory to `root:root 0700`.
-An empty `credentials` directory uses `root:sandbox 0710` so OpenClaw can confirm that optional credential files are absent during startup.
-The sandbox group cannot list, create, or remove entries, and it cannot read credential files.
-Neither the sandbox user nor the gateway can read stored secrets while the lock is active.
+The same workflow also locks the secret-bearing `credentials`, `identity`, and `pairing` directories.
+The guard sets each confidentiality root to `root:sandbox 0710`, including a non-empty `credentials` directory.
+It sets every nested directory and file to `root:root` and removes all group and world permission bits.
+The sandbox group cannot list, create, or remove entries in a confidentiality root, and neither the sandbox user nor gateway can read stored secrets.
+They can inspect metadata for a direct child only when they already know its name.
+Probing a missing direct child, such as the legacy `credentials/oauth.json`, returns `ENOENT` instead of `EACCES`.
 Restoring the mutable-default posture returns those directories to `sandbox:sandbox 2770`.
 The list is the union of state directories declared by every shipped agent manifest.
 The lock helper silently skips dirs that are not present in a given agent's config tree.
@@ -346,6 +348,11 @@ Direct edits to these files can be overwritten when NemoClaw regenerates the ima
 
 Hermes also stores runtime state such as `state.db`, logs, and platform sessions under the `.hermes` tree.
 Messaging sessions such as WhatsApp pairing can remain mutable by design so they survive rebuilds.
+
+When Shields locks the tree, the shared state-directory guard treats any present `credentials`, `identity`, or `pairing` directory as a confidentiality root.
+For Hermes, this normally applies to `pairing`.
+The guard sets the root to `root:sandbox 710`, keeps it traversable but unlistable to the sandbox group, and sets every descendant to `root:root` with no group or world permission bits.
+As a result, a known-name probe for a missing direct child returns `ENOENT`, while directory listing, nested traversal, and protected-file reads return `EACCES`.
 
 | Aspect | Detail |
 |---|---|
