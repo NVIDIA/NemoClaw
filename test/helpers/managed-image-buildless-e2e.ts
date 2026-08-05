@@ -71,7 +71,7 @@ interface ChildPayload {
     sandboxName?: string;
   }>;
   registerCalls: Array<{
-    agent?: string;
+    agent?: string | null;
     dashboardPort?: number | null;
     imageTag?: string | null;
     name?: string;
@@ -653,9 +653,11 @@ function assertManagedLaunch(
   expect(createArgs.join(" ")).not.toContain("Dockerfile");
 
   expect(createArgs.filter((arg) => arg.startsWith("NEMOCLAW_STARTUP_PROFILE_B64="))).toEqual([]);
-  const encodedProfile = bootstrapRequest?.encodedProfile ?? "";
-  const profile = decodeManagedStartupProfile(encodedProfile);
-  expect(encodeManagedStartupProfile(profile)).toBe(encodedProfile);
+  const encodedProfile = bootstrapRequest?.encodedProfile;
+  expect(encodedProfile).toEqual(expect.any(String));
+  const requiredEncodedProfile = encodedProfile as string;
+  const profile = decodeManagedStartupProfile(requiredEncodedProfile);
+  expect(encodeManagedStartupProfile(profile)).toBe(requiredEncodedProfile);
   expect(profile).toMatchObject({
     schemaVersion: MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
     agent,
@@ -708,7 +710,7 @@ function assertManagedLaunch(
       result.payload.registerCalls,
     )}`,
   ).toBeDefined();
-  expect(registration?.agent ?? "openclaw").toBe(agent);
+  expect(registration?.agent).toBe(agent === "openclaw" ? null : agent);
   if (agent === "langchain-deepagents-code") {
     expect(registration?.dashboardPort).toBe(0);
   }
@@ -722,8 +724,8 @@ function assertManagedLaunch(
     sourceCohort: expectedContract.source.cohort,
     capabilityContractVersion: MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
     startupProfileContractVersion: MANAGED_IMAGE_STARTUP_PROFILE_CONTRACT_VERSION,
-    encodedProfile,
-    startupProfileSha256: createHash("sha256").update(encodedProfile, "utf8").digest("hex"),
+    encodedProfile: requiredEncodedProfile,
+    startupProfileSha256: createHash("sha256").update(requiredEncodedProfile, "utf8").digest("hex"),
     credentialProxyReplayRequired: agent !== "langchain-deepagents-code",
     shared: true,
   });
