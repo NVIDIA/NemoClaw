@@ -117,6 +117,24 @@ describe("evaluateWhatsappDiagnostics", () => {
     expect(session?.detail).toMatch(/gateway session path contains WhatsApp credentials/);
   });
 
+  it("reports duplicate Hermes session paths without claiming live health (#8184)", () => {
+    const report = evaluateWhatsappDiagnostics(
+      baseInput({
+        agent: "hermes",
+        paired: null,
+        sessionLocations: {
+          gatewaySessionCreds: true,
+          dashboardSessionCreds: true,
+        },
+      }),
+    );
+    const session = report.signals.find((s) => s.label === "Session location");
+    expect(report.verdict).toBe("unknown");
+    expect(session?.severity).toBe("info");
+    expect(session?.detail).toBe("both Hermes session paths contain WhatsApp credentials");
+    expect(session?.hint).toBe("use one active WhatsApp bridge for the paired account");
+  });
+
   it("returns idle when paired with a live WebSocket but no inbound event observed", () => {
     // This is the exact #4386 shape: pairing is fine, WebSocket is up, but
     // lastInboundAt is still null. We MUST NOT report this as healthy.
