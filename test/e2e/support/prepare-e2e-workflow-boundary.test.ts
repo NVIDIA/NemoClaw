@@ -27,7 +27,7 @@ type Workflow = {
 };
 
 describe("prepare-e2e workflow boundary", () => {
-  it("keeps one canonical bootstrap invocation on every E2E execution job", () => {
+  it("requires one workspace preparation step per E2E job and one candidate CLI build in generate-matrix", () => {
     expect(validatePrepareE2eAction()).toEqual([]);
     expect(validatePrepareE2eInvocations(readWorkflow())).toEqual([]);
   });
@@ -89,10 +89,16 @@ describe("prepare-e2e workflow boundary", () => {
 
   it("rejects build-mode, duplicate-step, and ordering drift", () => {
     const workflow = readWorkflow() as Workflow;
-    const buildJob = workflow.jobs["sandbox-operations"];
-    const buildPrepare = buildJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
-    buildPrepare.with = { "build-cli": "false" };
-    buildJob.steps!.splice(buildJob.steps!.indexOf(buildPrepare), 0, {
+    const artifactProducer = workflow.jobs["generate-matrix"];
+    const producerPrepare = artifactProducer.steps!.find(
+      (step) => step.uses === PREPARE_E2E_ACTION,
+    )!;
+    producerPrepare.with = { "build-cli": "false" };
+
+    const consumerJob = workflow.jobs["sandbox-operations"];
+    const consumerPrepare = consumerJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
+    delete consumerPrepare.with;
+    consumerJob.steps!.splice(consumerJob.steps!.indexOf(consumerPrepare), 0, {
       name: "Build CLI",
       run: "npm run build:cli",
     });
@@ -103,7 +109,7 @@ describe("prepare-e2e workflow boundary", () => {
 
     const sharedJob = workflow.jobs["shared-e2e"];
     const sharedPrepare = sharedJob.steps!.find((step) => step.uses === PREPARE_E2E_ACTION)!;
-    sharedPrepare.with = { "build-cli": "false" };
+    delete sharedPrepare.with;
     sharedJob.env!.E2E_EXECUTION_PROFILE = "credential-free";
     sharedJob.env!.E2E_JOB = "1";
 
@@ -120,14 +126,16 @@ describe("prepare-e2e workflow boundary", () => {
 
     expect(validatePrepareE2eInvocations(workflow)).toEqual(
       expect.arrayContaining([
-        "sandbox-operations prepare-e2e must use the default CLI build",
+        "generate-matrix prepare-e2e must own the only default CLI build",
+        "generate-matrix prepare-e2e invocation must not override its canonical contract",
+        "sandbox-operations prepare-e2e must set build-cli to false",
         "sandbox-operations prepare-e2e invocation must not override its canonical contract",
         "sandbox-operations must not duplicate prepare-e2e step 'Build CLI'",
         "bootstrap-install-smoke prepare-e2e must set build-cli to false",
         "bootstrap-install-smoke prepare-e2e invocation must not override its canonical contract",
         "shared-e2e must not declare E2E_EXECUTION_PROFILE",
         "shared-e2e must not declare E2E_JOB",
-        "shared-e2e prepare-e2e must use the default CLI build",
+        "shared-e2e prepare-e2e must set build-cli to false",
         "shared-e2e prepare-e2e invocation must not override its canonical contract",
         "inference-routing must not load prepare-e2e from the target checkout",
         "inference-routing must use prepare-e2e exactly once",

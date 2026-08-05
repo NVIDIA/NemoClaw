@@ -42,7 +42,6 @@ import {
   type OperationsWorkflow,
   validateE2eOperationsWorkflow,
 } from "./operations-workflow-boundary.mts";
-import { validatePrepareE2eWorkflowBoundary } from "./prepare-e2e-workflow-boundary.mts";
 import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-workflow-boundary.mts";
 import { validateRunnerPressureWorkflow } from "./runner-pressure-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
@@ -56,6 +55,10 @@ import {
   UPLOAD_E2E_ARTIFACTS_ACTION,
   validateUploadE2eArtifactsWorkflowBoundary,
 } from "./upload-e2e-artifacts-workflow-boundary.mts";
+import {
+  CLI_ARTIFACT_RESTORE_STEP,
+  validateE2eWorkspaceBootstrapBoundary,
+} from "./workspace-bootstrap-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_E2E_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -1840,9 +1843,10 @@ export function validateRebuildHermesBootstrapBoundary(
 
   const steps = asSteps(job.steps);
   const prepareWorkspace = requireJobStep(errors, jobName, steps, "Prepare E2E workspace");
-  if (Object.keys(asRecord(prepareWorkspace?.with)).length !== 0) {
-    errors.push(`${jobName} workspace preparation must use the default checked-out CLI build`);
+  if (!isDeepStrictEqual(asRecord(prepareWorkspace?.with), { "build-cli": "false" })) {
+    errors.push(`${jobName} workspace preparation must defer to the exact-commit CLI artifact`);
   }
+  const restoreCli = requireJobStep(errors, jobName, steps, CLI_ARTIFACT_RESTORE_STEP);
 
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
@@ -1894,14 +1898,18 @@ export function validateRebuildHermesBootstrapBoundary(
 
   if (
     prepareWorkspace &&
+    restoreCli &&
     installOpenShell &&
     runVitest &&
     !(
-      steps.indexOf(prepareWorkspace) < steps.indexOf(installOpenShell) &&
+      steps.indexOf(prepareWorkspace) < steps.indexOf(restoreCli) &&
+      steps.indexOf(restoreCli) < steps.indexOf(installOpenShell) &&
       steps.indexOf(installOpenShell) < steps.indexOf(runVitest)
     )
   ) {
-    errors.push(`${jobName} must build the CLI before installing OpenShell and running Vitest`);
+    errors.push(
+      `${jobName} must restore the exact-commit CLI before installing OpenShell and running Vitest`,
+    );
   }
   return errors;
 }
@@ -4242,7 +4250,7 @@ function validateTrustedE2eDispatchReceipt(
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const workflow = asRecord(workflowValue);
   const errors: string[] = [];
-  errors.push(...validatePrepareE2eWorkflowBoundary(workflow));
+  errors.push(...validateE2eWorkspaceBootstrapBoundary(workflow));
   errors.push(...validateUploadE2eArtifactsWorkflowBoundary(workflow));
   errors.push(...validateHermesDashboardWorkflow(workflow as unknown as HermesDashboardWorkflow));
   errors.push(...validateHermesGpuStartupWorkflow(workflow));
