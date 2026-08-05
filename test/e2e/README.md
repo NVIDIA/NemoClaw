@@ -154,8 +154,9 @@ than the complete caller environment. Before using a termination fallback,
 the host binds the process ID to the expected executable, command arguments,
 and creation time. For OpenClaw, it also validates the probe-parent ancestry.
 The host rejects a mismatched or reused PID. The fallback uses the
-`taskkill.exe` beneath the validated Windows system root. If sandbox deletion
-needs that fallback, the qualification fails.
+`taskkill.exe` beneath the validated Windows system root. If either the
+OpenClaw process or OpenShell gateway needs that fallback, the qualification
+fails.
 
 Run only the explicit target:
 
