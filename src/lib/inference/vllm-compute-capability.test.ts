@@ -300,10 +300,10 @@ describe("managed vLLM crash-loop watchdog", () => {
     process.env = { ...originalEnv };
   });
 
-  it("stops a restarting container instead of waiting out the load timeout (#8307)", async () => {
+  it("stops a container at the startup restart limit (#8307)", async () => {
     const profile = detectVllmProfile({ type: "nvidia" });
     mockHostCommands({ computeCap: "8.9\n", curl: "" });
-    mockDockerDaemon(profile!.containerName, "4");
+    mockDockerDaemon(profile!.containerName, "3");
 
     const result = await installVllm(profile!, {
       hasImage: true,
@@ -314,10 +314,10 @@ describe("managed vLLM crash-loop watchdog", () => {
     expect(result).toEqual({ ok: false });
     expect(mocks.dockerStop).toHaveBeenCalledTimes(1);
     const errors = errSpy.mock.calls.map((call: unknown[]) => String(call[0])).join("\n");
-    expect(errors).toContain("vLLM container restarted 4 times before readiness");
+    expect(errors).toContain("vLLM container restarted 3 times before readiness");
   });
 
-  it("keeps waiting while the container has not restarted (#8307)", async () => {
+  it("keeps waiting below the startup restart limit (#8307)", async () => {
     const profile = detectVllmProfile({ type: "nvidia" });
     mockHostCommands({ computeCap: "8.9\n" });
     mockDockerDaemon(profile!.containerName, "2");
