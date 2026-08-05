@@ -77,7 +77,7 @@ describe("uninstall sandbox delete outcomes (#7906)", () => {
       expectedWarning: "OpenShell sandbox 'selected-box' could not be removed or was unreachable",
       expectsPreservedState: true,
     },
-  ])("completes selected-gateway cleanup when the recorded sandbox is $case", async ({
+  ])("classifies selected-gateway cleanup when the recorded sandbox is $case", async ({
     deleteResponse,
     expectedExitCode,
     expectedWarning,
