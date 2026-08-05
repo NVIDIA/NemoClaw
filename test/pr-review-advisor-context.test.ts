@@ -147,7 +147,7 @@ diff --git a/test/plain-logic.test.ts b/test/plain-logic.test.ts
     expect(analysisTurns[1]?.prompt).toContain("Do not use a token scan");
     expect(analysisTurns[1]?.prompt).toContain("what concrete contrasting case");
     expect(analysisTurns[1]?.prompt).toContain("pr_review_trace_term");
-    expect(analysisTurns[2]?.prompt).toContain("source-of-truth questions");
+    expect(analysisTurns[2]?.prompt).toContain("trusted code change considerations");
     expect(analysisTurns[3]?.prompt).toContain("sandbox escape");
     expect(analysisTurns[4]?.prompt).toContain("every riskPlan invariant");
     expect(analysisTurns[4]?.prompt).toContain("inputs for e2e.coverage");
