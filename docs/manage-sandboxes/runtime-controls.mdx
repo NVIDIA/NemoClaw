@@ -129,6 +129,14 @@ Durable containment, retained exact gates, or the fail-closed state-directory er
 Stop all NemoClaw processes for the sandbox, then follow the paths, identities, tokens, and removal order in the reported error.
 Verify each recorded generation is unchanged, remove only the exact stale generations first, and remove the exact containment generation last.
 
+Before a manual Shields transition replaces a policy, NemoClaw requires exact Model Context Protocol (MCP) agreement among the sandbox registry, generated-policy record, and live gateway policy.
+`shields down` carries the proven managed MCP policy entries into the relaxed policy.
+Restoration removes snapshot-time managed MCP entries before it overlays current exact entries.
+If exact agreement is absent, a manual Shields transition refuses the replacement policy.
+At an expired deadline, auto-restore omits unproven managed MCP policy entries, restores lockdown, and records the omission count in its audit entry.
+An MCP server removed during the shields-down window stays removed.
+A surviving server keeps its recorded endpoint and address pins while its policy ownership remains exact.
+
 ## Related Topics
 
 - [Understand Gateway Lifecycle Control](understand-gateway-lifecycle-control) for `recover` and `gateway restart` trust boundaries.
