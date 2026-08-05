@@ -185,7 +185,7 @@ async function main(): Promise<void> {
     run("podman", ["pull", prebuild.imageRef]);
     assert.match(
       run("podman", ["image", "inspect", "--format", "{{.Id}}", prebuild.imageRef]),
-      /^sha256:/,
+      /^(?:sha256:)?[a-f0-9]{64}$/,
     );
 
     server = http.createServer((_request, response) => {
