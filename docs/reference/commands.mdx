@@ -870,6 +870,45 @@ $$nemoclaw use <name>
 $$nemoclaw use <name> --json
 ```
 
+### `$$nemoclaw launch <name>`
+
+Connect to a sandbox and start its agent in one host-side command.
+Use it instead of running `$$nemoclaw <name> connect` and then typing the agent command inside the sandbox.
+
+`launch` runs the same preflight as [`$$nemoclaw <name> connect`](#$$nemoclaw-name-connect), including the readiness wait, in-sandbox agent process recovery, and inference-route reconciliation.
+It runs every check in that shared preflight.
+After the preflight, `launch` starts the sandbox's agent in your terminal instead of opening a sandbox shell.
+
+The agent command comes from the sandbox's agent manifest.
+If the sandbox registry names a non-OpenClaw agent without a readable local agent manifest, `launch` exits before starting an in-sandbox command.
+
+| Agent | Command |
+|---|---|
+| OpenClaw | `openclaw tui` |
+| Hermes | `hermes` |
+| LangChain Deep Agents Code | `dcode` |
+
+```bash
+$$nemoclaw launch <name>
+```
+
+The sandbox name is required, and the command takes no flags.
+When the agent exits, you return to the host shell.
+
+<AgentOnly variant="openclaw">
+
+`launch` returns the agent's exit code when the post-command OpenClaw permission cleanup succeeds.
+If that cleanup cannot inspect, restore, or verify the mutable config permission contract, `launch` fails closed with exit `1` and prints `OpenClaw permission cleanup failed (...)` to `stderr`.
+
+</AgentOnly>
+<AgentOnly variant="hermes,deepagents">
+
+`launch` returns the agent's exit code.
+
+</AgentOnly>
+
+When you want a shell inside the sandbox rather than an agent session, use `$$nemoclaw <name> connect`.
+
 ### `$$nemoclaw deploy`
 
 <Warning>
@@ -930,6 +969,8 @@ $$nemoclaw connect
 The `--probe-only` flag waits for the sandbox to become ready, verifies or repairs its in-sandbox agent process and host-side forward, and exits without opening a shell.
 It rechecks the sandbox on its recorded OpenShell gateway after the readiness wait and never restarts the shared host gateway.
 Use it for health checks and scripted readiness probes.
+
+Use [`$$nemoclaw launch <name>`](#$$nemoclaw-launch-name) when you want the same preflight followed by the agent instead of a sandbox shell.
 
 ### `$$nemoclaw <name> exec`
 
@@ -1191,6 +1232,14 @@ NemoClaw also records durable containment when an owner exits before it can prov
 Durable containment, retained exact gates, or the fail-closed state-directory error blocks new mutations until you complete exact-generation operator recovery.
 Stop all NemoClaw processes for the sandbox, then follow the paths, identities, tokens, and removal order in the reported error.
 Verify each recorded generation is unchanged, remove only the exact stale generations first, and remove the exact containment generation last.
+
+Before a manual Shields transition replaces a policy, NemoClaw requires exact agreement among the sandbox registry, generated-policy record, and live gateway policy.
+`shields down` carries the proven managed MCP policy entries into the relaxed policy.
+Restoration removes snapshot-time managed MCP entries before it overlays current exact entries.
+If exact agreement is absent, a manual Shields transition refuses the replacement policy.
+At an expired deadline, auto-restore omits unproven managed MCP policy entries, restores lockdown, and records the omission count in its audit entry.
+An MCP server removed during the shields-down window stays removed.
+A surviving server keeps its recorded endpoint and address pins while its policy ownership remains exact.
 
 <AgentOnly variant="openclaw,hermes">
 
@@ -1697,7 +1746,8 @@ Use `nemohermes my-assistant status` to see both the dashboard and API endpoints
 <AgentOnly variant="deepagents">
 
 `dashboard-url` is not applicable to Deep Agents sandboxes because the managed harness is a terminal runtime without a dashboard port.
-Use `$$nemoclaw <name> connect` and run `dcode` inside the sandbox.
+Use `$$nemoclaw launch <name>` to start `dcode`.
+Use `$$nemoclaw <name> connect` instead when you want a sandbox shell.
 
 </AgentOnly>
 
@@ -3774,6 +3824,7 @@ Set them before running `$$nemoclaw onboard`.
 | Variable | Format | Effect |
 |----------|--------|--------|
 | `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openrouter`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `routed`, `hermes-provider`, `llama-cpp`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. `llama-cpp` selects attachment of an authenticated, operator-managed llama.cpp server on loopback port `8081`. Set `NEMOCLAW_LLAMACPP_LOCAL_TOKEN`; set `NEMOCLAW_MODEL` to the served alias when the server exposes multiple models. If the server does not provide consistent native llama.cpp evidence, select `custom`. Aliases: `cloud` → `build`, `open-router` / `openrouterai` → `openrouter`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
+| `NEMOCLAW_MODEL` | model ID | Selects an explicit model for a non-interactive onboarding run. NemoClaw preserves it across a detected provider switch, even when it matches the recorded provider's default. When this variable is unset during such a switch, NemoClaw ignores the `NEMOCLAW_PROVIDER_MODEL` compatibility fallback and uses normal provider model selection. |
 | `NEMOCLAW_TOOL_DISCLOSURE` | `progressive` or `direct` | Selects progressive tool discovery or the prior direct-exposure behavior. Defaults to `progressive`; `--tool-disclosure` takes precedence when both are set. |
 | `NEMOCLAW_ENDPOINT_URL` | URL | Custom endpoint URL. Used together with `NEMOCLAW_PROVIDER=custom` for OpenAI-compatible endpoints or `NEMOCLAW_PROVIDER=anthropicCompatible` for Anthropic-compatible endpoints. |
 | `NEMOCLAW_COMPATIBLE_AUTH_MODE` | `none` or unset | Explicitly selects no authentication for an HTTP OpenAI-compatible endpoint using `localhost`, `127.0.0.1`, or `[::1]` and port `8000`, `11434`, or `11435` during non-interactive onboarding. |
