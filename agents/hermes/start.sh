@@ -361,6 +361,7 @@ verify_hermes_config_integrity() {
 
 prepare_hermes_messaging_runtime() {
   write_messaging_runtime_setup_plan || return 1
+  apply_messaging_runtime_env_aliases || return 1
   install_messaging_runtime_preloads || return 1
   verify_messaging_runtime_secret_scans || return 1
   write_runtime_shell_env
