@@ -11,8 +11,9 @@
  * stdin-EOF guard prints, so the two refusals disagreed on what to do next.
  *
  * These tests drive the compiled CLI (`dist/nemoclaw.js`) over a real stdin
- * pipe. Only the registry and baseline lookups are stubbed, which replaces
- * on-disk sandbox state.
+ * pipe. The helper stubs registry and baseline lookups. It replaces
+ * `restoreBaselineEntry` with a marker so the test does not change sandbox
+ * state.
  */
 
 import { spawnSync } from "node:child_process";
