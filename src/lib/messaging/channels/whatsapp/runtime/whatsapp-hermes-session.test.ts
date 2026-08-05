@@ -28,6 +28,20 @@ describe("Hermes WhatsApp session runtime preload", () => {
     expect(argv[3]).toBe("/keep");
   });
 
+  it("leaves a path-shaped unrelated bridge and its umask unchanged (#8184)", () => {
+    const modes: number[] = [];
+    const argv = [
+      "/usr/local/bin/node",
+      "/sandbox/unrelated/whatsapp-bridge/bridge.js",
+      "--session",
+      "/keep",
+    ];
+
+    expect(applyHermesWhatsappSessionPatch(argv, (mode) => modes.push(mode))).toBe(false);
+    expect(argv[3]).toBe("/keep");
+    expect(modes).toEqual([]);
+  });
+
   it("keeps paired credentials shared with the Hermes gateway group (#8184)", () => {
     const modes: number[] = [];
     const argv = [
@@ -42,12 +56,12 @@ describe("Hermes WhatsApp session runtime preload", () => {
   });
 
   it.each([
-    ["missing", ["/usr/local/bin/node", "/sandbox/whatsapp-bridge/bridge.js"]],
+    ["missing", ["/usr/local/bin/node", "/sandbox/.hermes/scripts/whatsapp-bridge/bridge.js"]],
     [
       "duplicate",
       [
         "/usr/local/bin/node",
-        "/sandbox/whatsapp-bridge/bridge.js",
+        "/sandbox/.hermes/scripts/whatsapp-bridge/bridge.js",
         "--session",
         "/one",
         "--session",
