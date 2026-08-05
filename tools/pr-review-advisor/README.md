@@ -112,7 +112,7 @@ Authors and coding agents should follow the shared [PR CI and Review Follow-Up](
   job that the model omits or downgrades. The PR E2E controller separately dispatches every listed
   job without consuming the advisor's normalized result.
 
-Risk plan version 12 maps runtime changes from these paths to the `focused-e2e` family:
+Risk plan version 13 maps runtime changes from these paths to the `focused-e2e` family:
 
 - `src/lib/onboard/managed-startup/**`.
 - `src/lib/onboard/sandbox-create-launch.ts`.
@@ -134,6 +134,16 @@ Each Hermes CLI adapter match selects these focused E2E jobs:
 
 - `channels-stop-start`.
 - `mcp-bridge`.
+
+The same risk plan maps these Hermes cron restore paths to `focused-e2e`:
+
+- `agents/hermes/cron-restore-control.py`.
+- `agents/hermes/patch-cron-restore-drain.py`.
+- `src/lib/actions/sandbox/rebuild-hermes-post-restore.ts`.
+- `src/lib/actions/sandbox/runtime/hermes-cron-restore-recovery.ts`.
+
+Each Hermes cron restore match selects `rebuild-hermes`.
+The generic `src/commands/sandbox/recover.ts` adapter remains agent-neutral and does not select that job.
 
 ## Required secret
 
