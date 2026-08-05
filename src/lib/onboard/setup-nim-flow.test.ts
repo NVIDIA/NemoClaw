@@ -122,6 +122,8 @@ function makeDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupNimFlowDeps {
     error: vi.fn(),
     exitProcess: (code) => unexpected(`exitProcess(${code})`),
     abortNonInteractive: (message) => unexpected(`abortNonInteractive(${message})`),
+    resolveLocalModelProfilePlan: () => null,
+    handleLocalModelProfile: async () => unexpected("local model profile"),
     handleLlamaCppSelection: async () => unexpected("llama.cpp selection"),
     handleRemoteProviderSelection: async () => unexpected("remote provider selection"),
     handleNimLocalSelection: async () => unexpected("local NIM selection"),
@@ -1291,6 +1293,44 @@ describe("createSetupNim", () => {
       preferredInferenceApi: "openai-completions",
     });
     expect(handleLlamaCppSelection).toHaveBeenCalledOnce();
+  });
+
+  it("routes a gated local model profile through its dedicated onboarder", async () => {
+    const profile = { name: "DGX Spark", platform: "spark" } as VllmProfile;
+    const plan = { runtime: "vllm" } as ReturnType<
+      SetupNimFlowDeps["resolveLocalModelProfilePlan"]
+    >;
+    const handleLocalModelProfile = vi.fn<SetupNimFlowDeps["handleLocalModelProfile"]>(
+      async (_plan, host, state) => {
+        expect(host).toMatchObject({
+          hasVllmImage: true,
+          sparkHost: true,
+          vllmProfile: profile,
+          vllmRunning: false,
+        });
+        state.provider = "vllm-local";
+        state.model = "catalog/model";
+        state.endpointUrl = "http://127.0.0.1:8000/v1";
+        state.credentialEnv = null;
+        state.preferredInferenceApi = "openai-completions";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        resolveLocalModelProfilePlan: () => plan,
+        handleLocalModelProfile,
+        detectInferenceProviderHostState: () =>
+          makeHostState({ vllmProfile: profile, hasVllmImage: true }),
+        selectFromNumberedMenu: () => unexpected("provider menu"),
+      }),
+    );
+
+    await expect(
+      setupNim({ type: "nvidia", spark: true, platform: "spark" } as never),
+    ).resolves.toMatchObject({ provider: "vllm-local", model: "catalog/model" });
+    expect(handleLocalModelProfile).toHaveBeenCalledOnce();
   });
 
   it("returns interactive occupied-port selection to the provider menu", async () => {

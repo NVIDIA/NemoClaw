@@ -13,6 +13,10 @@ import type { VllmProfile } from "../inference/vllm";
 import { isBackToSelection } from "../navigation";
 import type { HermesAuthMethod } from "./hermes-auth";
 import { OnboardInferenceCapabilityCache } from "./inference-capability-cache";
+import type {
+  LocalModelProfileHostState,
+  LocalModelProfilePlan,
+} from "./local-model-profile/integration";
 import type { ProviderSelectionResult } from "./machine/handlers/provider-inference";
 import type { ProviderInferenceProbeRoute } from "./machine/handlers/provider-inference-route-containment";
 import type {
@@ -30,6 +34,7 @@ import type { SetupNimSelectionState as BaseSetupNimSelectionState } from "./set
 
 export { probeLlamaCppAttachment } from "../inference/llama-cpp";
 export { createLlamaCppSelectionHandler } from "./llama-cpp-selection";
+export { createLocalModelProfileIntegration } from "./local-model-profile/integration";
 
 export type SetupNimGpu = ReturnType<typeof import("../inference/nim").detectGpu>;
 export type SetupNimSelectionState = BaseSetupNimSelectionState<HermesAuthMethod>;
@@ -116,6 +121,12 @@ export interface SetupNimFlowDeps {
   error(message: string): void;
   exitProcess(code: number): never;
   abortNonInteractive(message: string): never;
+  resolveLocalModelProfilePlan(): LocalModelProfilePlan | null;
+  handleLocalModelProfile(
+    plan: LocalModelProfilePlan,
+    host: LocalModelProfileHostState,
+    state: SetupNimSelectionState,
+  ): Promise<SetupNimSelectionResult>;
   handleRemoteProviderSelection(
     args: SetupNimRemoteSelectionArgs,
     state: SetupNimSelectionState,
@@ -255,6 +266,42 @@ function applyGatewayRouteDiscoveryConstraints(
 
 function isEndpointProviderSelection(deps: SetupNimFlowDeps, providerKey: string): boolean {
   return providerKey === "llama-cpp" || Boolean(deps.remoteProviderConfig[providerKey]);
+}
+
+async function runDedicatedLocalModelProfile(input: {
+  deps: SetupNimFlowDeps;
+  gpu: SetupNimGpu;
+  hasVllmImage: boolean;
+  vllmProfile: VllmProfile | null;
+  vllmRunning: boolean;
+  providerMenuOptionCount: number;
+  createSelectionState: () => SetupNimSelectionState;
+}): Promise<{ state: SetupNimSelectionState | null; providerMenuOptionCount: number }> {
+  let plan: LocalModelProfilePlan | null;
+  try {
+    plan = input.deps.resolveLocalModelProfilePlan();
+  } catch (error) {
+    input.deps.abortNonInteractive((error as Error).message);
+  }
+  if (!plan) return { state: null, providerMenuOptionCount: input.providerMenuOptionCount };
+  if (!input.deps.isNonInteractive()) {
+    input.deps.abortNonInteractive("The local model profile requires non-interactive onboarding.");
+  }
+  const state = input.createSelectionState();
+  const result = await input.deps.handleLocalModelProfile(
+    plan,
+    {
+      hasVllmImage: input.hasVllmImage,
+      sparkHost: input.gpu?.platform === "spark" || input.gpu?.spark === true,
+      vllmProfile: input.vllmProfile,
+      vllmRunning: input.vllmRunning,
+    },
+    state,
+  );
+  if (result === "retry-selection") {
+    input.deps.abortNonInteractive("The local model profile could not be configured.");
+  }
+  return { state, providerMenuOptionCount: 0 };
 }
 
 async function handleEndpointProviderSelection(input: {
@@ -477,7 +524,35 @@ export function createSetupNim(
     }
 
     let recoveredFromSandbox = false;
-    if (options.length > 1) {
+    const localModelProfile = await runDedicatedLocalModelProfile({
+      deps,
+      gpu,
+      hasVllmImage,
+      vllmProfile,
+      vllmRunning,
+      providerMenuOptionCount: options.length,
+      createSelectionState,
+    });
+    const localModelState = localModelProfile.state;
+    ({
+      model,
+      provider,
+      endpointUrl,
+      credentialEnv,
+      preferredInferenceApi,
+      nimContainer,
+      allowToolsIncompatible,
+    } = localModelState ?? {
+      model,
+      provider,
+      endpointUrl,
+      credentialEnv,
+      preferredInferenceApi,
+      nimContainer,
+      allowToolsIncompatible,
+    });
+    vllmModelIdentity = localModelState?.vllmModelIdentity;
+    if (localModelProfile.providerMenuOptionCount > 1) {
       selectionLoop: while (true) {
         let selected: ProviderMenuChoice | undefined;
         recoveredFromSandbox = false;

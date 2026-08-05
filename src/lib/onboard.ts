@@ -1082,6 +1082,13 @@ const handleVllmSelection = createSetupNimVllmHandler({
 });
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const handleLlamaCppSelection = setupNimFlow.createLlamaCppSelectionHandler({ isNonInteractive, resolveCredential: resolveProviderCredential, ensureNamedCredential: (envName, label) => credentialPrompt.ensureNamedCredential(envName, label), returningToProviderSelection: credentialPrompt.returningToProviderSelection, probeLlamaCppAttachment: setupNimFlow.probeLlamaCppAttachment, validateOpenAiLikeSelection, error: (message) => console.error(message), log: (message) => console.log(message), exitProcess: (code): never => process.exit(code) });
+const localModelProfileIntegration = setupNimFlow.createLocalModelProfileIntegration({
+  installVllm: vllmInference.installVllm,
+  handleVllmSelection,
+  handleLlamaCppSelection,
+  prompt,
+  error: (message) => console.error(message),
+});
 const ollamaModelSize: typeof import("./inference/ollama/model-size") = require("./inference/ollama/model-size");
 function isOpenshellInstalled(): boolean {
   return resolveOpenshell() !== null;
@@ -3539,6 +3546,8 @@ function getSetupNimDeps(): SetupNimDeps {
     error: (message) => console.error(message),
     exitProcess: (code): never => process.exit(code),
     abortNonInteractive,
+    resolveLocalModelProfilePlan: localModelProfileIntegration.resolvePlan,
+    handleLocalModelProfile: localModelProfileIntegration.onboard,
     rejectWindowsHostOllama: (requirement, providerKey, windowsHostSelected) =>
       rejectUnsupportedWindowsHostOllama(
         requirement,

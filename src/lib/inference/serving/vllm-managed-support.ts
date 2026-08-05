@@ -14,3 +14,4 @@ export {
 } from "./host-local-vllm-selection.js";
 export { tryInstallManagedClusterManagedVllm } from "./managed-cluster-installer.js";
 export { recoverInstalledManagedClusterVllmEndpoint } from "./managed-cluster-runtime-receipt.js";
+export { recoverHostLocalManagedVllmEndpoint } from "./vllm-host-local-lifecycle.js";
