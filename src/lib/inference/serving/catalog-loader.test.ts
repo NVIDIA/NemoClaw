@@ -3,6 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  HOST_LOCAL_VLLM_LIFECYCLE_REF,
+  HOST_LOCAL_VLLM_MATERIALIZER_REF,
   MANAGED_CLUSTER_VLLM_LIFECYCLE_REF,
   MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
 } from "./adapter-registry";
@@ -128,6 +130,56 @@ describe("managed inference catalog loader", () => {
     expect(managedCatalog.catalogDigest).not.toBe(EMPTY_CATALOG.catalogDigest);
     const { catalogDigest, ...catalogContents } = managedCatalog;
     expect(catalogDigest).toBe(servingCatalogDigest(catalogContents));
+  });
+
+  it("retains registered host-local vLLM definitions (#8246)", () => {
+    const servingCatalog = loadServingCatalog();
+    const sourceRecipe = servingCatalog.recipes.find(({ spec }) => spec.backend === "vllm")!;
+    expect(sourceRecipe).toBeDefined();
+    const sourceSpec = sourceRecipe.spec as Exclude<
+      ServingRecipe["spec"],
+      { backend: "install-llama-cpp" }
+    >;
+    const sourcePreset = servingCatalog.presets.find(
+      ({ spec }) => spec.plan.recipeRef === sourceRecipe.metadata.id,
+    )!;
+    const { bindings: _bindings, ...hostLocalSpec } = sourceSpec;
+    const execution = {
+      materializerRef: HOST_LOCAL_VLLM_MATERIALIZER_REF,
+      lifecycleRef: HOST_LOCAL_VLLM_LIFECYCLE_REF,
+    };
+    const recipe = {
+      ...sourceRecipe,
+      metadata: { id: "test.vllm-host-local-recipe" },
+      spec: {
+        ...hostLocalSpec,
+        backend: "vllm",
+        model: { ...sourceSpec.model, preparation: { ref: "none/v1" } },
+        execution,
+      },
+    } satisfies ServingRecipe;
+    const preset = {
+      ...sourcePreset,
+      metadata: { id: "test.vllm-host-local-preset" },
+      spec: {
+        ...sourcePreset.spec,
+        selection: "explicit-only",
+        requirements: {
+          all: sourcePreset.spec.requirements!.all.filter(
+            (requirement) => "readiness" in requirement,
+          ),
+        },
+        plan: { backend: "vllm", recipeRef: recipe.metadata.id },
+      },
+    } as ServingPreset;
+    const projected = managedInferenceCatalogFromServingCatalog({
+      ...EMPTY_CATALOG,
+      recipes: [recipe],
+      presets: [preset],
+    });
+
+    expect(projected.recipes.map(({ metadata }) => metadata.id)).toEqual([recipe.metadata.id]);
+    expect(projected.presets.map(({ metadata }) => metadata.id)).toEqual([preset.metadata.id]);
   });
 
   it("retains managed vLLM definitions while projecting the mixed serving catalog (#8173)", () => {
