@@ -133,9 +133,10 @@ describe("decideSandboxResume", () => {
     });
   });
 
-  it("uses compatibility recreate over repair when not-ready with DCode auto-approval drift", () => {
-    // DCode auto-approval already guards against not_ready internally;
-    // the sandbox falls through to repair-and-recreate at the bottom.
+  it("repairs a not-ready sandbox with DCode auto-approval drift", () => {
+    // DCode auto-approval guards against not_ready internally (see
+    // runtimeConfigurationResumeDecision); the sandbox falls through to
+    // repair-and-recreate at the bottom.
     expect(
       decideSandboxResume(
         resumeSignals({
@@ -160,10 +161,10 @@ describe("decideSandboxResume", () => {
   });
 
   it.each([
-    ["live DCode inference selection", { inferenceSelectionChanged: true }, "DCode model/provider"],
-    ["agent selection", { resumeAgentChanged: true }, "Agent selection changed"],
-    ["Hermes inference route", { inferenceRouteConfigChanged: true }, "inference route"],
-  ] as const)("uses compatibility recreate for %s drift even when not-ready", (_label, drift, _noteFragment) => {
+    ["live DCode inference selection", { inferenceSelectionChanged: true }],
+    ["agent selection", { resumeAgentChanged: true }],
+    ["Hermes inference route", { inferenceRouteConfigChanged: true }],
+  ] as const)("uses compatibility recreate for %s drift even when not-ready", (_label, drift) => {
     expect(
       decideSandboxResume(
         resumeSignals({
@@ -175,6 +176,46 @@ describe("decideSandboxResume", () => {
       kind: "recreate",
       note: expect.any(String),
       removeRegistryEntry: expect.any(Boolean),
+    });
+  });
+
+  it.each([
+    ["explicit recreate request", { recreateSandboxRequested: true }, false],
+    ["web search config change", { webSearchConfigChanged: true }, true],
+    ["sandbox GPU config change", { sandboxGpuConfigChanged: true }, true],
+    ["messaging channel config change", { messagingChannelConfigChanged: true }, true],
+    ["Hermes tool gateway config change", { hermesToolGatewayConfigChanged: true }, true],
+    ["observability change", { observabilityChanged: true }, false],
+  ] as const)("uses runtime-configuration recreate for %s even when not-ready", (_label, drift, expectedRemoveRegistry) => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxReuseState: "not_ready",
+          ...drift,
+        }),
+      ),
+    ).toEqual({
+      kind: "recreate",
+      note: expect.any(String),
+      removeRegistryEntry: expectedRemoveRegistry,
+    });
+  });
+
+  it.each([
+    ["tool disclosure migration", { toolDisclosureMigrationNeeded: true }, false],
+    ["tool disclosure change", { toolDisclosureChanged: true }, false],
+  ] as const)("uses tool-disclosure recreate for %s even when not-ready", (_label, drift, expectedRemoveRegistry) => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxReuseState: "not_ready",
+          ...drift,
+        }),
+      ),
+    ).toEqual({
+      kind: "recreate",
+      note: expect.any(String),
+      removeRegistryEntry: expectedRemoveRegistry,
     });
   });
 
