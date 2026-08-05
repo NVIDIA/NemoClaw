@@ -12,6 +12,7 @@ import YAML from "yaml";
 
 import {
   validateDockerHubAuthAction,
+  validateDockerHubCleanupAction,
   validateE2eWorkflowBoundary,
 } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow } from "../../helpers/e2e-workflow-contract";
@@ -30,6 +31,13 @@ const AUTH_ACTION_PATH = path.join(
   ".github",
   "actions",
   "docker-auth-setup",
+  "action.yaml",
+);
+const CLEANUP_ACTION_PATH = path.join(
+  REPO_ROOT,
+  ".github",
+  "actions",
+  "docker-auth-cleanup",
   "action.yaml",
 );
 
@@ -89,7 +97,7 @@ function writeExecutable(filePath: string, source: string): void {
   fs.chmodSync(filePath, 0o755);
 }
 
-function mutateAuthActionSource(
+function mutateActionSource(
   source: string,
   mutateAction: (action: Record<string, unknown>) => void,
 ): string {
@@ -108,12 +116,33 @@ function validateAuthArtifactMutation(options: {
   try {
     const actionSource = fs.readFileSync(AUTH_ACTION_PATH, "utf8");
     const mutatedActionSource = options.mutateAction
-      ? mutateAuthActionSource(actionSource, options.mutateAction)
+      ? mutateActionSource(actionSource, options.mutateAction)
       : actionSource;
     fs.writeFileSync(actionPath, mutatedActionSource);
     const scriptSource = fs.readFileSync(AUTH_HELPER_PATH, "utf8");
     fs.writeFileSync(scriptPath, options.mutateScript?.(scriptSource) ?? scriptSource);
     return validateDockerHubAuthAction(actionPath, scriptPath);
+  } finally {
+    fs.rmSync(directory, { force: true, recursive: true });
+  }
+}
+
+function validateCleanupArtifactMutation(options: {
+  mutateAction?: (action: Record<string, unknown>) => void;
+  mutateScript?: (source: string) => string;
+}): string[] {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-cleanup-action-"));
+  const actionPath = path.join(directory, "action.yaml");
+  const scriptPath = path.join(directory, "docker-auth-cleanup.sh");
+  try {
+    const actionSource = fs.readFileSync(CLEANUP_ACTION_PATH, "utf8");
+    const mutatedActionSource = options.mutateAction
+      ? mutateActionSource(actionSource, options.mutateAction)
+      : actionSource;
+    fs.writeFileSync(actionPath, mutatedActionSource);
+    const scriptSource = fs.readFileSync(CLEANUP_HELPER_PATH, "utf8");
+    fs.writeFileSync(scriptPath, options.mutateScript?.(scriptSource) ?? scriptSource);
+    return validateDockerHubCleanupAction(actionPath, scriptPath);
   } finally {
     fs.rmSync(directory, { force: true, recursive: true });
   }
@@ -148,6 +177,32 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
       }),
     ).toContain(
       "docker-auth-setup script content must match the helper reviewed at its immutable commit pin",
+    );
+  });
+
+  // source-shape-contract: security -- Immutable cleanup action bytes must stay bound to the reviewed helper and commit provenance.
+  it("binds the cleanup action and helper to their immutable reviewed revision", () => {
+    expect(validateDockerHubCleanupAction()).toEqual([]);
+
+    const actionErrors = validateCleanupArtifactMutation({
+      mutateAction: (action) => {
+        const runs = action.runs as { steps: WorkflowStep[] };
+        runs.steps[0].run = "bash .github/scripts/docker-auth-cleanup.sh";
+      },
+    });
+    expect(actionErrors).toContain(
+      "docker-auth-cleanup action content must match the action reviewed at its immutable commit pin",
+    );
+    expect(actionErrors).toContain(
+      "docker-auth-cleanup action must preserve its pinned helper invocation",
+    );
+
+    expect(
+      validateCleanupArtifactMutation({
+        mutateScript: (source) => `${source}# unreviewed drift\n`,
+      }),
+    ).toContain(
+      "docker-auth-cleanup script content must match the helper reviewed at its immutable commit pin",
     );
   });
 

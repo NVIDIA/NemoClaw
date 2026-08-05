@@ -6078,10 +6078,7 @@ jobs:
 
       - name: Remove Docker auth before release-pinned fixture
         if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash .github/scripts/docker-auth-cleanup.sh
+        uses: NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75
@@ -6153,10 +6150,7 @@ jobs:
 
       - name: Remove Docker auth before release-pinned fixture
         if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash .github/scripts/docker-auth-cleanup.sh
+        uses: NVIDIA/NemoClaw/.github/actions/docker-auth-cleanup@d5f37099766ca82a4516e7d8f0de117cda197fe3
 
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@f6304bc25fc35bfaa441c8c2fbfee38f72805a75

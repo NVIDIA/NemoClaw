@@ -37,6 +37,7 @@ const RESTORE_ACTION_CONTENT_SHA256 =
 const CLI_ARTIFACT_DOWNLOAD_STEP = "Download exact-commit CLI artifact";
 const CLI_ARTIFACT_VERIFY_STEP = "Verify and restore exact-commit CLI artifact";
 const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
+const PR_CHECKOUT_PATH = /(?:^|[\s"'`])(?:\.\/)?(?:\.github|bin|nemoclaw|scripts|src|test|tools)\//mu;
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -317,6 +318,12 @@ function validateConsumer(
   if (job.needs !== CLI_ARTIFACT_PRODUCER_JOB) {
     errors.push(`${jobName} must depend directly on the CLI artifact producer`);
   }
+  const checkoutIndex = jobSteps.findIndex(
+    (step) =>
+      typeof step.uses === "string" &&
+      step.uses.startsWith("actions/checkout@") &&
+      record(step.with).repository === "${{ inputs.checkout_repository || github.repository }}",
+  );
   const prepareIndex = jobSteps.findIndex((step) => step.uses === PREPARE_E2E_ACTION);
   const restoreSteps = jobSteps.filter(
     (step) => step.name === CLI_ARTIFACT_RESTORE_STEP || step.uses === CLI_ARTIFACT_RESTORE_ACTION,
@@ -338,6 +345,18 @@ function validateConsumer(
   const restoreIndex = jobSteps.indexOf(restore);
   if (!(prepareIndex >= 0 && prepareIndex < restoreIndex)) {
     errors.push(`${jobName} must prepare before restoring the CLI artifact`);
+  }
+  if (prepareIndex >= 0 && restoreIndex !== prepareIndex + 1) {
+    errors.push(`${jobName} must restore the CLI artifact immediately after workspace preparation`);
+  }
+  if (
+    checkoutIndex >= 0 &&
+    checkoutIndex < restoreIndex &&
+    jobSteps
+      .slice(checkoutIndex + 1, restoreIndex)
+      .some((step) => typeof step.run === "string" && PR_CHECKOUT_PATH.test(step.run))
+  ) {
+    errors.push(`${jobName} must not execute PR checkout files before restoring the CLI artifact`);
   }
 }
 

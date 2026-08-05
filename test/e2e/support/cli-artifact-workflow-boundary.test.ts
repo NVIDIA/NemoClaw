@@ -632,6 +632,28 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     );
   });
 
+  it("rejects PR checkout execution and delays before artifact restore", () => {
+    const workflow = workflowFixture();
+    const steps = workflow.jobs["sandbox-operations"].steps!;
+    const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+    steps.splice(prepareIndex, 0, {
+      name: "Run PR checkout helper",
+      run: "bash scripts/pr-helper.sh",
+    });
+    const restoreIndex = steps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
+    steps.splice(restoreIndex, 0, {
+      name: "Delay CLI artifact restore",
+      run: "true",
+    });
+
+    expect(validateCliArtifactWorkflowBoundary(workflow)).toEqual(
+      expect.arrayContaining([
+        "sandbox-operations must not execute PR checkout files before restoring the CLI artifact",
+        "sandbox-operations must restore the CLI artifact immediately after workspace preparation",
+      ]),
+    );
+  });
+
   it("rejects incomplete consumer provenance and a mutable action reference", () => {
     const workflow = workflowFixture();
     const restore = requireStep(workflow, "sandbox-operations", CLI_ARTIFACT_RESTORE_STEP);
