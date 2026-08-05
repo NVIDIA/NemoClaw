@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { decisionSelected } from "../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../state/onboard-checkpoint-migrate";
 import type {
@@ -14,6 +15,7 @@ import type {
 } from "../state/onboard-checkpoint-types";
 import { createSession } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
+import { encodeManagedStartupProfile } from "./managed-startup/profile";
 import { createDockerRuntimeProviderBundle } from "./runtime-provider/docker";
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import {
@@ -31,6 +33,7 @@ import {
   sandboxRecreateSourceWorkloadEntry,
   selectedGatewayForSandboxRecreate,
 } from "./sandbox-recreate-transaction";
+import { nativeArtifactWorkloadReceiptFixture } from "./workload/native-artifact-test-fixture";
 
 const ISO = "2026-07-27T20:00:00.000Z";
 const TX_ID = "11111111-1111-4111-8111-111111111111";
@@ -181,7 +184,9 @@ describe("sandbox recreate journal", () => {
     ]);
     const replacement: SandboxEntry = {
       ...SOURCE_ENTRY,
-      workload: { kind: "native-artifact", shared: true } as SandboxEntry["workload"],
+      workload: nativeArtifactWorkloadReceiptFixture(
+        encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
+      ),
       lifecycleGeneration: TARGET_GENERATION,
       lifecycleLiveIdentityFingerprint: TARGET_ID,
     };

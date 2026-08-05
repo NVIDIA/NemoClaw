@@ -1,15 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
-
 import { describe, expect, it } from "vitest";
 
 import { managedStartupE2eProfile } from "../../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import type { SandboxWorkloadReceipt } from "../../state/registry/types";
 import { cloneSandboxWorkloadReceipt } from "../../state/registry/workload";
 import { encodeManagedStartupProfile } from "../managed-startup/profile";
-import type { NativeArtifactWorkloadReceiptV1 } from "../workload/native-artifact";
+import { nativeArtifactWorkloadReceiptFixture } from "../workload/native-artifact-test-fixture";
 import { CURRENT_RUNTIME_PROVIDER_BUNDLES } from "./current";
 import { createDockerRuntimeProviderBundle } from "./docker";
 import { createMxcRuntimeProviderBundle } from "./mxc";
@@ -19,37 +17,9 @@ import {
   requireRuntimeProviderMutationAuthority,
 } from "./registry";
 
-const ENCODED_PROFILE = encodeManagedStartupProfile(managedStartupE2eProfile("openclaw"));
-const PROFILE_SHA256 = createHash("sha256").update(ENCODED_PROFILE, "utf8").digest("hex");
-const NATIVE_RECEIPT = {
-  schemaVersion: 1,
-  kind: "native-artifact",
-  contractVersion: 1,
-  agent: "openclaw",
-  platform: "windows/x64",
-  artifact: {
-    digest: `sha256:${"a".repeat(64)}`,
-    version: "2026.7.1",
-    source: {
-      repository: "NVIDIA/NemoClaw",
-      revision: "b".repeat(40),
-    },
-  },
-  launch: {
-    executable: {
-      relativePath: "node/node.exe",
-      digest: `sha256:${"c".repeat(64)}`,
-    },
-    arguments: ["openclaw.mjs", "gateway"],
-    workingDirectory: ".",
-    environmentNames: ["PATH"],
-  },
-  startupProfileContractVersion: 1,
-  encodedProfile: ENCODED_PROFILE,
-  startupProfileSha256: PROFILE_SHA256,
-  credentialProxyReplayRequired: true,
-  shared: true,
-} as const satisfies NativeArtifactWorkloadReceiptV1;
+const NATIVE_RECEIPT = nativeArtifactWorkloadReceiptFixture(
+  encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
+);
 
 function candidateBundle() {
   return createMxcRuntimeProviderBundle({
