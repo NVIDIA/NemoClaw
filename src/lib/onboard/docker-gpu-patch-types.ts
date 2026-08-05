@@ -82,6 +82,9 @@ export type DockerGpuPatchFailureContext = {
   selectedMode?: DockerGpuPatchMode | null;
   modeAttempts?: DockerGpuPatchModeAttempt[];
   rolledBack?: boolean;
+  replacementStopConfirmed?: boolean;
+  replacementRemovalConfirmed?: boolean;
+  replacementPresence?: "absent" | "present" | "unknown";
 };
 
 export type DockerGpuPatchResult = {
@@ -133,6 +136,7 @@ export type DockerGpuCloneRunOptions = {
 export type DockerGpuPatchDiagnostics = {
   dir: string;
   cleanupCommands: string[];
+  cleanupDisposition: "manual" | "not_required" | "pending_rollback" | "unknown";
   summaryLines: string[];
 };
 
@@ -180,7 +184,15 @@ export type DockerGpuPatchFailureKind =
 export type DockerGpuPatchFailureClassification = {
   kind: DockerGpuPatchFailureKind;
   headline: string;
+  /** Stable create-mode identity used when a saved verdict crosses rollback. */
+  selectedModeKind?: DockerGpuPatchModeKind | null;
   summaryLines: string[];
+  /**
+   * Prose guidance for failure signatures whose cause is supported by an
+   * exact runtime signal. Kept separate from `summaryLines` so the on-disk
+   * summary stays machine-readable `key=value` (#7996).
+   */
+  hints?: string[];
 };
 
 export type DockerContainerInspect = {

@@ -53,6 +53,8 @@ const CHANNEL_STOP_TRANSPORTS: ReadonlySet<unknown> = new Set<RuntimeProviderCha
 ]);
 const MANAGED_IMAGE_SELECTION_POLICIES = new Set(["prefer-managed", "require-managed"]);
 const MANAGED_IMAGE_PLATFORMS = new Set(["linux/amd64", "linux/arm64"]);
+const NATIVE_ARTIFACT_PLATFORMS = new Set(["windows/x64"]);
+const NATIVE_ARTIFACT_AGENTS = new Set(["openclaw"]);
 const MUTATION_OPERATIONS = new Set<RuntimeProviderMutationOperation>([
   "registration",
   "start",
@@ -224,6 +226,44 @@ function validateWorkloadProfile(providerId: string, surface: Record<string, unk
     throw new RuntimeProviderRegistrationError(
       `workload profile for '${providerId}' has invalid host architectures`,
     );
+  }
+  if (profile.nativeArtifactSupport !== undefined && profile.nativeArtifactSupport !== null) {
+    if (!isPlainRecord(profile.nativeArtifactSupport)) {
+      throw new RuntimeProviderRegistrationError(
+        `workload profile for '${providerId}' has invalid native-artifact support`,
+      );
+    }
+    const nativeSupport = profile.nativeArtifactSupport;
+    if (
+      typeof nativeSupport.exactDigestReferences !== "boolean" ||
+      !Array.isArray(nativeSupport.platforms) ||
+      nativeSupport.platforms.length === 0 ||
+      nativeSupport.platforms.some(
+        (platform) => !NATIVE_ARTIFACT_PLATFORMS.has(String(platform)),
+      ) ||
+      new Set(nativeSupport.platforms).size !== nativeSupport.platforms.length ||
+      !Array.isArray(nativeSupport.agents) ||
+      nativeSupport.agents.length === 0 ||
+      nativeSupport.agents.some((agent) => !NATIVE_ARTIFACT_AGENTS.has(String(agent))) ||
+      new Set(nativeSupport.agents).size !== nativeSupport.agents.length
+    ) {
+      throw new RuntimeProviderRegistrationError(
+        `workload profile for '${providerId}' has invalid native-artifact identity`,
+      );
+    }
+    for (const field of ["contractVersions", "startupProfileContractVersions"] as const) {
+      const versions = nativeSupport[field];
+      if (
+        !Array.isArray(versions) ||
+        versions.length === 0 ||
+        versions.some((version) => !Number.isSafeInteger(version) || Number(version) <= 0) ||
+        new Set(versions).size !== versions.length
+      ) {
+        throw new RuntimeProviderRegistrationError(
+          `workload profile for '${providerId}' has invalid native-artifact ${field}`,
+        );
+      }
+    }
   }
   if (profile.support === null) return;
   if (!isPlainRecord(profile.support)) {
