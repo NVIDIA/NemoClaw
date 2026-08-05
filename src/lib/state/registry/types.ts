@@ -68,6 +68,13 @@ export interface SandboxGpuProofResult {
   at: string;
 }
 
+/** Explicit host directories exposed read-only to this sandbox. */
+export interface SandboxHostMount {
+  source: string;
+  target: string;
+  readonly readOnly: true;
+}
+
 export interface SandboxEntry extends Partial<InferenceSelection> {
   name: string;
   /** Route-only placeholder created before sandbox creation; never eligible as the default. */
@@ -81,6 +88,7 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   sandboxGpuMode?: "auto" | "1" | "0" | string | null;
   sandboxGpuDevice?: string | null;
   sandboxGpuProof?: SandboxGpuProofResult | null;
+  hostMounts?: SandboxHostMount[];
   openshellDriver?: string | null;
   openshellVersion?: string | null;
   policies?: string[];

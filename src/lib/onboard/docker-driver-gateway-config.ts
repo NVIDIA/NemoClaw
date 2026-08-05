@@ -74,7 +74,8 @@ export function buildDockerDriverGatewayConfigToml(
   gatewayId = "nemoclaw",
 ): string {
   const localTlsDir = jwtBundle ? gatewayLocalTlsDir(gatewayEnv) : undefined;
-  const dockerEntries: [string, string | undefined][] = [
+  const dockerEntries: [string, string | boolean | undefined][] = [
+    ["enable_bind_mounts", gatewayEnv.NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS === "1" || undefined],
     ["grpc_endpoint", gatewayEnv.OPENSHELL_GRPC_ENDPOINT],
     ["network_name", gatewayEnv.OPENSHELL_DOCKER_NETWORK_NAME],
     ["supervisor_image", gatewayEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE],
@@ -85,9 +86,13 @@ export function buildDockerDriverGatewayConfigToml(
   ];
   const dockerConfig = dockerEntries
     .filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim() !== "",
+      (entry): entry is [string, string | boolean] =>
+        typeof entry[1] === "boolean" || (typeof entry[1] === "string" && entry[1].trim() !== ""),
     )
-    .map(([key, value]) => `${key} = ${tomlString(value)}`)
+    .map(
+      ([key, value]) =>
+        `${key} = ${typeof value === "boolean" ? String(value) : tomlString(value)}`,
+    )
     .join("\n");
 
   const sections = [

@@ -58,6 +58,21 @@ describe("sandbox status DCode auto-approval (#6478)", () => {
   });
 });
 
+describe("sandbox status host mounts", () => {
+  it("projects durable read-only host mounts into JSON status", async () => {
+    const hostMounts = [
+      { source: "/srv/project", target: "/sandbox/project", readOnly: true as const },
+    ];
+    const report = await getSandboxStatusReport("alpha", {
+      getSandbox: () => ({ name: "alpha", hostMounts }) as never,
+      reconcile: async () => ({ state: "missing" as const, output: "not found" }),
+    });
+
+    expect(report.hostMounts).toEqual(hostMounts);
+    expect(report.hostMounts).not.toBe(hostMounts);
+  });
+});
+
 describe("sandbox status inference health", () => {
   it("passes the current model with the current provider", () => {
     let observed: { provider: string; options?: ProviderHealthProbeOptions } | null = null;

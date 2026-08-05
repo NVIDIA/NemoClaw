@@ -162,6 +162,7 @@ describe("resolveSandboxCreateIntent", () => {
       extraProviders: ["custom-provider", "custom-provider", ""],
       staleExtraProviders: ["stale-provider", "stale-provider", ""],
       hermesToolGateways: ["github"],
+      hostMounts: [{ source: "/srv/project", target: "/sandbox/project", readOnly: true }],
       sandboxGpuConfig,
       gpuCreateArgs: ["--gpu", "--gpu-device", "nvidia.com/gpu=0"],
       resourceCreateArgs: ["--cpu", "4", "--memory", "16Gi"],
@@ -195,6 +196,9 @@ describe("resolveSandboxCreateIntent", () => {
     expect(first.extraProviders).toEqual(["custom-provider"]);
     expect(first.staleExtraProviders).toEqual(["stale-provider"]);
     expect(first.resourceCreateArgs).toEqual(["--cpu", "4", "--memory", "16Gi"]);
+    expect(first.hostMounts).toEqual([
+      { source: "/srv/project", target: "/sandbox/project", readOnly: true },
+    ]);
     expect(first.extraPlaceholderKeys).toEqual(["TELEGRAM_BOT_TOKEN_AGENT_A"]);
     expect(first.policy).toEqual({
       basePolicyPath: "/repo/policy.yaml",
@@ -449,6 +453,7 @@ describe("prepareSandboxCreatePlan", () => {
       reusableMessagingChannels: ["discord"],
       reusableMessagingProviders: ["sandbox-existing-discord"],
       hermesToolGateways: ["github"],
+      hostMounts: [{ source: "/srv/project", target: "/sandbox/project", readOnly: true }],
       sandboxGpuConfig,
       gpuRoutePlan: "native-only",
       sandboxGpuLogMessage: "gpu note",
@@ -501,6 +506,12 @@ describe("prepareSandboxCreatePlan", () => {
               options: ["noexec"],
               size_bytes: 1_048_576,
               mode: 0o1777,
+            },
+            {
+              type: "bind",
+              source: "/srv/project",
+              target: "/sandbox/project",
+              read_only: true,
             },
           ],
         },

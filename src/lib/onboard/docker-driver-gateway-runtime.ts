@@ -67,6 +67,7 @@ export interface DockerDriverGatewayRuntimeDeps {
   runCaptureEx?: RunCaptureEx;
   shouldUseOpenshellDevChannel(): boolean;
   supportedOpenshellFallbackVersion: string;
+  enableBindMounts?: () => boolean;
 }
 
 export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewayRuntimeDeps): {
@@ -229,6 +230,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       dockerNetworkName: process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
       getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
       resolveSandboxBin: resolveOpenShellSandboxBinary,
+      enableBindMounts: deps.enableBindMounts?.() === true,
     });
     if (gatewayEnv.OPENSHELL_LOCAL_TLS_DIR) {
       process.env.OPENSHELL_LOCAL_TLS_DIR = gatewayEnv.OPENSHELL_LOCAL_TLS_DIR;

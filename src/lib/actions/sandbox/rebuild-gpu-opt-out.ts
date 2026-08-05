@@ -16,6 +16,7 @@ import {
   resolveSandboxGatewayName,
 } from "../../onboard/gateway-binding";
 import { isDcodeAgent } from "../../onboard/observability-policy-presets";
+import { normalizePersistedSandboxHostMounts } from "../../state/registry/host-mount";
 import type {
   PreparedDcodeRebuildHandoff,
   PreparedImageRebuildHandoff,
@@ -47,6 +48,7 @@ export type RebuildGpuOptOutEntry = {
   provider?: string | null;
   model?: string | null;
   preferredInferenceApi?: string | null;
+  hostMounts?: import("../../state/registry/types").SandboxHostMount[];
 };
 
 // Modern source of truth is the persisted `sandboxGpuMode` string ("0" / "1" /
@@ -125,6 +127,7 @@ export type RebuildRecreateOnboardOpts = {
   providerRecoveryReceipt?: ProviderRecoveryReceipt;
   preparedImageRebuild?: PreparedImageRebuildHandoff;
   rebuildPreservedEnv?: readonly PreservedEnvFile[];
+  hostMounts?: readonly import("../../state/registry/types").SandboxHostMount[];
   autoYes: boolean;
   toolDisclosure: ToolDisclosure;
   dcodeAutoApprovalMode: DcodeAutoApprovalMode;
@@ -154,6 +157,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
     );
   }
   const gpuOverrides = getRebuildSandboxGpuOverrides(args.sb);
+  const hostMounts = normalizePersistedSandboxHostMounts(args.sb?.hostMounts);
   const rawPolicyTier = args.sb?.policyTier?.trim().toLowerCase() || null;
   if (rawPolicyTier && !getTier(rawPolicyTier)) {
     throw new Error(`Invalid recorded policy tier '${String(args.sb?.policyTier)}'.`);
@@ -207,5 +211,6 @@ export function buildRebuildRecreateOnboardOpts(args: {
     policyTier: rawPolicyTier,
     baseImageResolutionHint: args.baseImageResolutionHint ?? null,
     ...(rebuildShouldOptOutGpu(args.sb) ? { noGpu: true as const } : {}),
+    ...(hostMounts.length > 0 ? { hostMounts } : {}),
   };
 }

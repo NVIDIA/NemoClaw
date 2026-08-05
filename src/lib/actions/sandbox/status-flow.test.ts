@@ -159,6 +159,20 @@ describe("showSandboxStatus flow", () => {
     expect(output).not.toMatch(/^\s*Connected:/m);
   });
 
+  it("reports durable read-only host directory exposure", async () => {
+    const harness = createStatusFlowHarness({
+      sandboxEntry: {
+        hostMounts: [{ source: "/srv/project", target: "/sandbox/project", readOnly: true }],
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Host mounts:");
+    expect(output).toContain("/srv/project -> /sandbox/project (read-only)");
+  });
+
   it("omits SSH sessions when the active-session probe is unavailable (#7805)", async () => {
     const harness = createStatusFlowHarness();
     harness.getActiveSandboxSessionsSpy.mockReturnValue({ detected: false, sessions: [] });

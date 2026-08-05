@@ -165,6 +165,7 @@ export interface SandboxStatusReport {
   // Last recorded CUDA-usability proof so `status` can distinguish a configured
   // GPU from a proven-usable one instead of reporting any GPU as healthy (#4231).
   sandboxGpuProof: registry.SandboxGpuProofResult | null;
+  hostMounts: registry.SandboxHostMount[];
   openshellDriver: string;
   openshellVersion: string;
   policies: string[];
@@ -639,6 +640,7 @@ async function buildSandboxStatusReport(
     phase,
   );
   const sandboxGpuEnabled = sb ? (sb.sandboxGpuEnabled ?? sb.gpuEnabled === true) : false;
+  const hostMounts = sb?.hostMounts?.map((mount) => ({ ...mount })) ?? [];
   const policies =
     sb && Array.isArray(sb.policies)
       ? sb.policies.filter((policy): policy is string => typeof policy === "string")
@@ -686,6 +688,7 @@ async function buildSandboxStatusReport(
     sandboxGpuMode: (sb && sb.sandboxGpuMode) || null,
     sandboxGpuDevice: (sb && sb.sandboxGpuDevice) || null,
     sandboxGpuProof: (sb && sb.sandboxGpuProof) || null,
+    hostMounts,
     openshellDriver: (sb && sb.openshellDriver) || "unknown",
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies,

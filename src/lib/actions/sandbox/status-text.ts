@@ -203,6 +203,14 @@ function printSandboxGpuStatus(sandbox: SandboxEntry): void {
   }
 }
 
+function printSandboxHostMounts(sandbox: SandboxEntry): void {
+  if (!sandbox.hostMounts?.length) return;
+  console.log("    Host mounts:");
+  for (const mount of sandbox.hostMounts) {
+    console.log(`      ${mount.source} -> ${mount.target} (read-only)`);
+  }
+}
+
 function printTerminalHarness(context: SandboxStatusTextContext): number | null {
   const { lookup, sandboxName, statusAgent, terminalRuntimeHealth } = context;
   if (!statusAgent.agentDefinition || statusAgent.agentRuntime !== "terminal") return null;
@@ -351,6 +359,7 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
   printInferenceStatus(context);
   const inferenceExitCode = inferenceHealthExitCode(context.inferenceHealth);
   printSandboxGpuStatus(sb);
+  printSandboxHostMounts(sb);
   console.log(
     `    OpenShell: ${sb.openshellVersion || "unknown"} (${sb.openshellDriver || "unknown"})`,
   );

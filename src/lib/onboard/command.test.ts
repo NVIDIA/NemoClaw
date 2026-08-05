@@ -110,6 +110,20 @@ describe("onboard command options", () => {
     });
   });
 
+  it("maps repeated Linux host mounts and rejects unsupported host platforms", () => {
+    const source = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
+    try {
+      expect(
+        resolve({ "host-mount": [`${source}:/sandbox/project`] }, { platform: "linux" }).hostMounts,
+      ).toEqual([{ source, target: "/sandbox/project", readOnly: true }]);
+      expect(() =>
+        resolve({ "host-mount": [`${source}:/sandbox/project`] }, { platform: "darwin" }),
+      ).toThrow("exit:1");
+    } finally {
+      fs.rmSync(source, { recursive: true, force: true });
+    }
+  });
+
   it("maps --no-observability to an explicit disabled request", () => {
     expect(
       resolve(

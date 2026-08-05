@@ -644,6 +644,7 @@ const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN: string | null = null;
 let GATEWAY_PORT = DEFAULT_GATEWAY_PORT;
 let GATEWAY_NAME = gatewayBinding.resolveGatewayName(GATEWAY_PORT);
+let ENABLE_DOCKER_BIND_MOUNTS = false;
 const {
   clearDockerDriverGatewayRuntimeFiles,
   createGatewayServicePortOwnership,
@@ -674,6 +675,7 @@ const {
   runCaptureEx,
   shouldUseOpenshellDevChannel,
   supportedOpenshellFallbackVersion: SUPPORTED_OPENSHELL_FALLBACK_VERSION,
+  enableBindMounts: () => ENABLE_DOCKER_BIND_MOUNTS,
 });
 
 import type { JsonObject as LooseObject } from "./core/json-types";
@@ -2849,6 +2851,7 @@ async function createSandboxWithBaseImageResolution(
           ...recreateRuntime.registrationFields,
           gatewayName: GATEWAY_NAME,
           gatewayPort: GATEWAY_PORT,
+          hostMounts: resolvedCreateIntent.hostMounts,
         }),
     },
   );
@@ -3907,6 +3910,8 @@ async function preflightAuthoritativeRebuildTarget(
 // ── Main ─────────────────────────────────────────────────────────
 const onboard = onboardEntryOptions.wrapOnboard(runOnboard, onboardSession);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
+  const previousEnableDockerBindMounts = ENABLE_DOCKER_BIND_MOUNTS;
+  let effectiveHostMounts = opts.hostMounts ?? [];
   resetGatewayOwnerBinding();
   setupInferenceFactory.assertNoOpenShellGatewayEndpointOverride();
   const runtimeControlRequests = runtimeControlFlow.applyOnboardRuntimeControlRequests(opts);
@@ -4057,6 +4062,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         agentFlag: opts.agent || null,
         envAgent: process.env.NEMOCLAW_AGENT || null,
         ...stationSessionInput,
+        requestedHostMounts: opts.hostMounts,
       },
       {
         loadSession: onboardSession.loadSession,
@@ -4074,6 +4080,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         exitProcess: (code) => process.exit(code),
       },
     );
+    effectiveHostMounts =
+      opts.hostMounts && opts.hostMounts.length > 0
+        ? opts.hostMounts
+        : onboardSession.normalizePersistedSandboxHostMounts(session?.metadata.hostMounts);
+    ENABLE_DOCKER_BIND_MOUNTS = effectiveHostMounts.length > 0;
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
     // Resume backstop: a session may exist without a sandboxName if sandbox
     // creation failed before that step. Non-interactive --from cannot infer a
@@ -4140,6 +4151,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     if (isNonInteractive()) note("  (non-interactive mode)");
     if (resume) note("  (resume mode)");
     console.log("  ===================");
+    if (effectiveHostMounts.length > 0) {
+      note("  Host directory access requested (read-only):");
+      for (const mount of effectiveHostMounts) {
+        note(`    ${mount.source} -> ${mount.target}`);
+      }
+      note("  Files remain on the host, and host-side changes are visible inside the sandbox.");
+    }
     const explicitSandboxGpuFlag = resolveSandboxGpuFlagFromOptions(opts);
     const recordedGpuPassthroughBeforePreflight = session?.gpuPassthrough === true;
     type InitialOnboardFlowContext =
@@ -4210,6 +4228,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot()).gatewayReuseState,
       gatewayName: GATEWAY_NAME,
       recreateSandbox: isRecreateSandbox,
+      requiresBindMounts: effectiveHostMounts.length > 0,
       gatewayDeps: {
         ...machineGatewayOwnerDeps,
         refreshDockerDriverGatewayReuseState,
@@ -4351,6 +4370,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       requestedObservabilityEnabled: runtimeControlRequests.requestedObservabilityEnabled,
       requestedDcodeAutoApprovalMode: runtimeControlRequests.requestedDcodeAutoApprovalMode,
       rebuildPreservedEnv: opts.rebuildPreservedEnv,
+      hostMounts: effectiveHostMounts,
       endpointProvenance,
       recreateSandbox: isRecreateSandbox,
       controlUiPort: _preflightDashboardPort,
@@ -4573,6 +4593,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     if (previousOpenshellLocalTlsDir === undefined) delete process.env.OPENSHELL_LOCAL_TLS_DIR;
     else process.env.OPENSHELL_LOCAL_TLS_DIR = previousOpenshellLocalTlsDir;
     resetGatewayOwnerBinding();
+    ENABLE_DOCKER_BIND_MOUNTS = previousEnableDockerBindMounts;
   }
 }
 

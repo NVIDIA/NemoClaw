@@ -79,6 +79,7 @@ export type PrepareSandboxCreatePlanInput = {
   reusableMessagingChannels: string[];
   reusableMessagingProviders: string[];
   extraProviders?: readonly string[];
+  hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
   hermesToolGateways: string[];
   sandboxGpuConfig: SandboxGpuCreateConfig;
   gpuRoutePlan: DockerGpuRoutePlan;
@@ -108,6 +109,7 @@ export function prepareSandboxCreatePlan({
   reusableMessagingChannels,
   reusableMessagingProviders,
   extraProviders,
+  hostMounts,
   hermesToolGateways,
   sandboxGpuConfig,
   gpuRoutePlan,
@@ -142,6 +144,7 @@ export function prepareSandboxCreatePlan({
     reusableMessagingChannels,
     reusableMessagingProviders,
     extraProviders,
+    hostMounts,
     hermesToolGateways,
     sandboxGpuConfig,
     gpuCreateArgs,

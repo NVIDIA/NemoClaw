@@ -24,6 +24,7 @@ export interface OnboardSessionBootstrapInput {
   requestedToolDisclosure?: ToolDisclosure | null;
   requestedObservabilityEnabled?: boolean | null;
   stationExpressIntent?: StationExpressResumeIntent | null;
+  requestedHostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
 }
 
 export interface OnboardSessionBootstrapDeps {
@@ -269,6 +270,9 @@ async function prepareResumeSession(
     current.mode = mode(input.nonInteractive);
     current.failure = null;
     current.status = "in_progress";
+    if (input.requestedHostMounts && input.requestedHostMounts.length > 0) {
+      current.metadata.hostMounts = input.requestedHostMounts.map((mount) => ({ ...mount }));
+    }
     return current;
   });
   session = deps.loadSession();
@@ -293,7 +297,13 @@ function prepareFreshSession(
       observabilityEnabled: input.requestedObservabilityEnabled === true,
       observabilityRequestedExplicitly: typeof input.requestedObservabilityEnabled === "boolean",
       stationExpressIntent: input.stationExpressIntent ?? null,
-      metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
+      metadata: {
+        gatewayName: "nemoclaw",
+        fromDockerfile: fromDockerfile || null,
+        ...(input.requestedHostMounts && input.requestedHostMounts.length > 0
+          ? { hostMounts: input.requestedHostMounts.map((mount) => ({ ...mount })) }
+          : {}),
+      },
     }),
   );
   return { session, fromDockerfile };

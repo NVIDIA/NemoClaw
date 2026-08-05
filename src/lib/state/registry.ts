@@ -33,6 +33,7 @@ export {
 } from "./registry-entry-view";
 
 import { isDcodeAutoApprovalMode } from "../onboard/dcode-auto-approval";
+import { cloneSandboxHostMounts } from "./registry/host-mount";
 import type {
   BaselineExclusionEntry,
   BaselineExclusionTransition,
@@ -70,6 +71,7 @@ export type {
   SandboxEntry,
   SandboxGpuProofResult,
   SandboxGpuProofStatus,
+  SandboxHostMount,
   SandboxRegistry,
   SandboxWorkloadReceipt,
 } from "./registry/types";
@@ -121,6 +123,10 @@ export function registerSandbox(entry: SandboxEntry): void {
       sandboxGpuMode: entry.sandboxGpuMode || null,
       sandboxGpuDevice: entry.sandboxGpuDevice || null,
       sandboxGpuProof: entry.sandboxGpuProof ?? null,
+      hostMounts:
+        Array.isArray(entry.hostMounts) && entry.hostMounts.length > 0
+          ? cloneSandboxHostMounts(entry.hostMounts)
+          : undefined,
       openshellDriver: entry.openshellDriver || null,
       openshellVersion: entry.openshellVersion || null,
       policies: entry.policies || [],

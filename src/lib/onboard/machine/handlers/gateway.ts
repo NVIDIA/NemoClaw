@@ -26,6 +26,7 @@ export interface GatewayStateOptions<Gpu> {
   recordedSandboxName: string | null;
   requestedSandboxName: string | null;
   recreateSandbox: boolean;
+  requiresBindMounts?: boolean;
   deps: {
     /**
      * The single declared lifecycle authority for this run (#6576). Resolved
@@ -105,6 +106,7 @@ async function handleGatewayStatePhase<Gpu>({
   recordedSandboxName,
   requestedSandboxName,
   recreateSandbox,
+  requiresBindMounts = false,
   deps,
 }: GatewayStateOptions<Gpu>): Promise<GatewayStateResult> {
   // Establish the lifecycle authority before anything in this phase can touch
@@ -113,6 +115,13 @@ async function handleGatewayStatePhase<Gpu>({
   // the port.
   const owner = deps.resolveGatewayOwner();
   if (isExternallySupervised(owner)) {
+    if (requiresBindMounts) {
+      throw new GatewayOwnershipError(
+        "capability_unsupported",
+        "Read-only host mounts require a NemoClaw-managed Docker-driver gateway; the declared external gateway lifecycle cannot be reconfigured safely.",
+        owner,
+      );
+    }
     return attachToExternallySupervisedGateway(owner, deps);
   }
 

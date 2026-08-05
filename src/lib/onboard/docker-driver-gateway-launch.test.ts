@@ -106,6 +106,21 @@ describe("docker-driver-gateway-launch", () => {
     expect(toml).toContain('supervisor_bin = "/home/shadeform/.local/bin/openshell-sandbox"');
   });
 
+  it("gates Docker bind mounts behind the explicit managed runtime setting", () => {
+    const baseEnv = {
+      OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
+      OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "supervisor:test",
+    };
+    expect(buildDockerDriverGatewayConfigToml(baseEnv)).not.toContain("enable_bind_mounts");
+    expect(
+      buildDockerDriverGatewayConfigToml({
+        ...baseEnv,
+        NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS: "1",
+      }),
+    ).toContain("enable_bind_mounts = true");
+  });
+
   it("rejects wildcard binds for direct host gateway launches", () => {
     expect(() => {
       withTempBinaries(({ dir, gatewayBin }) => {

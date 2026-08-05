@@ -1,0 +1,87 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import path from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import {
+  normalizePersistedSandboxHostMounts,
+  parseReadOnlyHostMount,
+  parseReadOnlyHostMounts,
+} from ".";
+
+const created: string[] = [];
+
+function workspaceTempDir(): string {
+  const dir = fs.mkdtempSync(path.join(process.cwd(), ".host-mount-test-"));
+  created.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const target of created.splice(0)) fs.rmSync(target, { recursive: true, force: true });
+});
+
+describe("read-only host mount validation", () => {
+  it("accepts an existing absolute directory below /sandbox", () => {
+    const source = workspaceTempDir();
+    expect(parseReadOnlyHostMount(`${source}:/sandbox/project`)).toEqual({
+      source,
+      target: "/sandbox/project",
+      readOnly: true,
+    });
+  });
+
+  it("rejects missing, relative, symlinked, and non-normalized paths", () => {
+    const source = workspaceTempDir();
+    const symlink = `${source}-link`;
+    fs.symlinkSync(source, symlink);
+    created.push(symlink);
+
+    expect(() => parseReadOnlyHostMount("relative:/sandbox/project")).toThrow(
+      "host directory must be an absolute path",
+    );
+    expect(() => parseReadOnlyHostMount(`${source}-missing:/sandbox/project`)).toThrow(
+      "does not exist",
+    );
+    expect(() => parseReadOnlyHostMount(`${symlink}:/sandbox/project`)).toThrow(
+      "must not contain symlinks",
+    );
+    expect(() => parseReadOnlyHostMount(`${source}:/sandbox/../project`)).toThrow(
+      "normalized absolute path below /sandbox",
+    );
+    expect(() => parseReadOnlyHostMount(`${source}:/sandbox/project\nforged`)).toThrow(
+      "must not contain control characters",
+    );
+  });
+
+  it("rejects duplicate host and sandbox directories", () => {
+    const first = workspaceTempDir();
+    const second = workspaceTempDir();
+    expect(() =>
+      parseReadOnlyHostMounts([`${first}:/sandbox/first`, `${first}:/sandbox/second`]),
+    ).toThrow("Duplicate --host-mount host directory");
+    expect(() =>
+      parseReadOnlyHostMounts([`${first}:/sandbox/project`, `${second}:/sandbox/project`]),
+    ).toThrow("Duplicate --host-mount sandbox directory");
+  });
+
+  it("fails closed when durable registry state is malformed or no longer usable", () => {
+    const source = workspaceTempDir();
+    expect(
+      normalizePersistedSandboxHostMounts([{ source, target: "/sandbox/project", readOnly: true }]),
+    ).toEqual([{ source, target: "/sandbox/project", readOnly: true }]);
+    expect(() =>
+      normalizePersistedSandboxHostMounts([
+        { source, target: "/sandbox/project", readOnly: false },
+      ]),
+    ).toThrow("invalid read-only host mount");
+    fs.rmSync(source, { recursive: true, force: true });
+    created.splice(created.indexOf(source), 1);
+    expect(() =>
+      normalizePersistedSandboxHostMounts([{ source, target: "/sandbox/project", readOnly: true }]),
+    ).toThrow("host directory does not exist");
+  });
+});

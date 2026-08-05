@@ -976,6 +976,21 @@ describe("onboard session", () => {
     expect("token" in loaded.metadata).toBe(false);
   });
 
+  it("round-trips secret-free read-only host mount metadata", () => {
+    const hostMounts = [
+      { source: "/srv/project", target: "/sandbox/project", readOnly: true as const },
+    ];
+    session.saveSession(
+      session.createSession({
+        metadata: { gatewayName: "nemoclaw", fromDockerfile: null, hostMounts },
+      }),
+    );
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.metadata.hostMounts).toEqual(hostMounts);
+    expect(loaded.metadata.hostMounts).not.toBe(hostMounts);
+  });
+
   it("drops non-string gatewayName during normalization", () => {
     fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
     fs.writeFileSync(

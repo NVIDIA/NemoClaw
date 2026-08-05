@@ -51,6 +51,9 @@ import {
 } from "./onboard-session-tool-disclosure";
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 import { nemoclawStateRoot } from "./state-root";
+import type { SandboxHostMount } from "./registry/types";
+
+export { normalizePersistedSandboxHostMounts } from "./registry/host-mount";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;
@@ -94,6 +97,7 @@ export interface SessionFailure {
 export interface SessionMetadata {
   gatewayName: string;
   fromDockerfile: string | null;
+  hostMounts?: SandboxHostMount[];
 }
 
 export type SessionRecoveryReceiptReason =
@@ -463,9 +467,23 @@ function parseWechatConfig(value: unknown): WechatConfig | null {
 
 function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetadata | undefined {
   if (!isObject(value)) return undefined;
+  const hostMounts = Array.isArray(value.hostMounts)
+    ? value.hostMounts.flatMap((candidate): SandboxHostMount[] => {
+        if (
+          !isObject(candidate) ||
+          typeof candidate.source !== "string" ||
+          typeof candidate.target !== "string" ||
+          candidate.readOnly !== true
+        ) {
+          return [];
+        }
+        return [{ source: candidate.source, target: candidate.target, readOnly: true }];
+      })
+    : [];
   return {
     gatewayName: readString(value.gatewayName) ?? "nemoclaw",
     fromDockerfile: readString(value.fromDockerfile),
+    ...(hostMounts.length > 0 ? { hostMounts } : {}),
   };
 }
 
@@ -700,6 +718,9 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     metadata: {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
+      ...(overrides.metadata?.hostMounts?.length
+        ? { hostMounts: overrides.metadata.hostMounts.map((mount) => ({ ...mount })) }
+        : {}),
     },
     machine:
       parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined, sessionId) ??

@@ -49,6 +49,7 @@ export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "OPENSHELL_GATEWAY_CONFIG",
   "OPENSHELL_VM_DRIVER_STATE_DIR",
   "OPENSHELL_DRIVER_DIR",
+  "NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS",
 ] as const;
 
 export interface BuildDockerDriverGatewayEnvOptions {
@@ -58,6 +59,7 @@ export interface BuildDockerDriverGatewayEnvOptions {
   dockerNetworkName?: string;
   getDockerSupervisorImage: () => string;
   resolveSandboxBin: () => string | null;
+  enableBindMounts?: boolean;
 }
 
 export type PackageManagedDockerDriverGatewayWithEnvOverrideOptions = Omit<
@@ -211,6 +213,7 @@ export function buildDockerDriverGatewayEnv({
   dockerNetworkName = "openshell-docker",
   getDockerSupervisorImage,
   resolveSandboxBin,
+  enableBindMounts = false,
 }: BuildDockerDriverGatewayEnvOptions): Record<string, string> {
   const env: Record<string, string> = {
     OPENSHELL_DRIVERS: "docker",
@@ -221,6 +224,7 @@ export function buildDockerDriverGatewayEnv({
     OPENSHELL_DOCKER_NETWORK_NAME: dockerNetworkName,
     OPENSHELL_DOCKER_SUPERVISOR_IMAGE: getDockerSupervisorImage(),
   };
+  if (enableBindMounts) env.NEMOCLAW_DOCKER_ENABLE_BIND_MOUNTS = "1";
   if (platform === "linux") {
     const sandboxBin = resolveSandboxBin();
     if (sandboxBin) {
