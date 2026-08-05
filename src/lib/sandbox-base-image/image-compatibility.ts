@@ -4,6 +4,9 @@
 import { dockerCapture } from "../adapters/docker";
 import { OPENSHELL_SANDBOX_MIN_GLIBC } from "./types";
 
+const GLIBC_PROBE_TIMEOUTS_MS = [20_000, 120_000] as const;
+let glibcProbeSequence = 0;
+
 export function parseGlibcVersion(output: string | null | undefined): string | null {
   const text = String(output || "");
   const firstLine = text.split(/\r?\n/).find((line) => line.trim());
@@ -30,11 +33,34 @@ export function versionGte(left = "0.0.0", right = "0.0.0"): boolean {
 }
 
 export function getImageGlibcVersion(imageRef: string): string | null {
-  const output = dockerCapture(
-    ["run", "--rm", "--entrypoint", "/usr/bin/ldd", imageRef, "--version"],
-    { ignoreError: true, timeout: 20_000 },
-  );
-  return parseGlibcVersion(output);
+  for (const timeout of GLIBC_PROBE_TIMEOUTS_MS) {
+    const containerName = `nemoclaw-glibc-probe-${process.pid}-${(glibcProbeSequence += 1)}`;
+    let output = "";
+    try {
+      output = dockerCapture(
+        [
+          "run",
+          "--rm",
+          "--name",
+          containerName,
+          "--entrypoint",
+          "/usr/bin/ldd",
+          imageRef,
+          "--version",
+        ],
+        { ignoreError: true, timeout },
+      );
+    } finally {
+      if (!output) {
+        dockerCapture(["rm", "-f", containerName], {
+          ignoreError: true,
+          timeout: 20_000,
+        });
+      }
+    }
+    if (output) return parseGlibcVersion(output);
+  }
+  return null;
 }
 
 export function imageMeetsMinimumGlibc(
