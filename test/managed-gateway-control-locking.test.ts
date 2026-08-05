@@ -186,6 +186,32 @@ with tempfile.TemporaryDirectory() as root:
     ]
     control._clear_expected_exit_lease(restrictive_umask_lease)
 
+    original_open_runtime_directory = control._open_managed_runtime_directory
+    original_open_expected_exit_lock = control._open_expected_exit_lock
+    original_expected_exit_lock = control.ExpectedExitLock
+    original_close = control.os.close
+    constructor_cleanup = []
+    control._open_managed_runtime_directory = lambda: 101
+    control._open_expected_exit_lock = lambda *_args: 202
+    control.ExpectedExitLock = lambda **_kwargs: (_ for _ in ()).throw(
+        RuntimeError("lock record construction failed")
+    )
+    control.os.close = lambda fd: constructor_cleanup.append(fd)
+    try:
+        try:
+            control._acquire_expected_exit_lock(
+                control.time.monotonic() + control.RECOVERY_TIMEOUT_SECONDS
+            )
+            raise AssertionError("lock record construction unexpectedly succeeded")
+        except RuntimeError as error:
+            if str(error) != "lock record construction failed":
+                raise
+    finally:
+        control._open_managed_runtime_directory = original_open_runtime_directory
+        control._open_expected_exit_lock = original_open_expected_exit_lock
+        control.ExpectedExitLock = original_expected_exit_lock
+        control.os.close = original_close
+
     current_gateway = [gateway_41]
     control._proc_root = lambda: proc_root
     control._detect_agent = lambda: "hermes"
@@ -287,6 +313,7 @@ with tempfile.TemporaryDirectory() as root:
         "marker_flock_cannot_pin": marker_flock_cannot_pin,
         "inode_safe_cleanup": inode_safe_cleanup,
         "restrictive_umask_modes": restrictive_umask_modes,
+        "constructor_cleanup": constructor_cleanup,
         "contended_restart": contended_restart,
         "termination_deadline": termination_deadline,
     }))
@@ -309,6 +336,7 @@ describe("managed gateway lifecycle locking", () => {
       marker_flock_cannot_pin: true,
       inode_safe_cleanup: true,
       restrictive_umask_modes: [0o444, 0o600],
+      constructor_cleanup: [202, 101],
       contended_restart: [["ok", 43, 44], ["v1", "43", "555", "999", "777"], true],
       termination_deadline: ["GATEWAY_FAILED", [3, 0], [15, 9]],
     });

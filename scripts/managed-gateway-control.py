@@ -521,12 +521,15 @@ def _acquire_expected_exit_lock(
     recovery_deadline: float,
 ) -> ExpectedExitLock:
     directory_fd = _open_managed_runtime_directory()
+    lock_fd = None
     try:
         lock_fd = _open_expected_exit_lock(directory_fd, recovery_deadline)
+        return ExpectedExitLock(directory_fd=directory_fd, lock_fd=lock_fd)
     except Exception:
+        if lock_fd is not None:
+            os.close(lock_fd)
         os.close(directory_fd)
         raise
-    return ExpectedExitLock(directory_fd=directory_fd, lock_fd=lock_fd)
 
 
 def _close_expected_exit_lock(lock: ExpectedExitLock) -> None:
