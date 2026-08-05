@@ -16,8 +16,10 @@ export type ShieldsFlowHarness = {
   auditSpy: MockInstance;
   cleanupTempDirSpy: MockInstance;
   errorSpy: MockInstance;
+  getOpenClawPosture: () => "locked" | "mutable";
   logSpy: MockInstance;
   policySetBodies: string[];
+  runCaptureSpy: MockInstance;
   runSpy: MockInstance;
   shieldsDown: typeof import("../../src/lib/shields/index.js").shieldsDown;
   shieldsStatus: typeof import("../../src/lib/shields/index.js").shieldsStatus;
@@ -28,10 +30,12 @@ export type ShieldsFlowHarness = {
 
 export type ShieldsFlowHarnessOptions = {
   beginContainment?: typeof import("../../src/lib/state/mcp-lifecycle-lock.js").beginCommittedMcpLifecycleContainmentSync;
+  confirmOpenClawInodeFlags?: boolean;
   directSandboxUnavailable?: boolean;
   dockerExecFileSync?: (argv: unknown) => string;
   failOpenClawGuardActions?: Array<"lock" | "unlock">;
   failStateSave?: boolean;
+  initialOpenClawPosture?: "locked" | "mutable";
   invokedAs?: "nemoclaw" | "nemohermes";
   openClawGuardFailure?: {
     code: string;
@@ -53,6 +57,7 @@ export type ShieldsFlowHarnessOptions = {
   livePolicyYaml?: string;
   run?: (cmd: unknown) => { status: number };
   sandboxEntry?: SandboxEntry;
+  timerAuthorityRevokedSequence?: readonly boolean[];
 };
 
 export function managedMcpPolicy(server: string, address = "8.8.8.8") {
@@ -138,15 +143,16 @@ export function createShieldsFlowHarness(
   const privilegedExec = requireDist("../sandbox/privileged-exec.js");
   const dockerExec = requireDist("../adapters/docker/exec.js");
   const audit = requireDist("./audit.js");
+  const timerControl = requireDist("./timer-control.js");
   const tempFiles = requireDist("../onboard/temp-files.js");
   const childProcess = requireDist("node:child_process");
   const policySetBodies: string[] = [];
-  let openClawPosture: "locked" | "mutable" = "mutable";
+  let openClawPosture: "locked" | "mutable" = options.initialOpenClawPosture ?? "mutable";
 
   vi.spyOn(runner, "validateName").mockImplementation((name: unknown) => String(name));
-  vi.spyOn(runner, "runCapture").mockReturnValue(
-    options.livePolicyYaml ?? "version: 1\nnetwork_policies:\n  test: {}\n",
-  );
+  const runCaptureSpy = vi
+    .spyOn(runner, "runCapture")
+    .mockReturnValue(options.livePolicyYaml ?? "version: 1\nnetwork_policies:\n  test: {}\n");
   const runSpy = vi.spyOn(runner, "run").mockImplementation((cmd: unknown) => {
     return options.run ? options.run(cmd) : { status: 0 };
   });
@@ -255,21 +261,40 @@ export function createShieldsFlowHarness(
       ? options.dockerExecFileSync(argv)
       : args.includes("sha256sum")
         ? "a".repeat(64) + "  /sandbox/.openclaw/openclaw.json\n"
-        : args.includes("stat")
-          ? args.at(-1) === "/sandbox"
-            ? openClawPosture === "locked"
-              ? "1775 root:sandbox\n"
-              : "755 sandbox:sandbox\n"
-            : args.at(-1) === "/sandbox/.openclaw"
+        : args.includes("lsattr") && options.confirmOpenClawInodeFlags
+          ? `${openClawPosture === "locked" ? "----i---------e-----" : "----------------------"} ${String(args.at(-1))}\n`
+          : args.includes("stat")
+            ? args.at(-1) === "/sandbox"
               ? openClawPosture === "locked"
-                ? "755 root:root\n"
-                : "2770 sandbox:sandbox\n"
-              : openClawPosture === "locked"
-                ? "444 root:root\n"
-                : "660 sandbox:sandbox\n"
-          : "";
+                ? "1775 root:sandbox\n"
+                : "755 sandbox:sandbox\n"
+              : args.at(-1) === "/sandbox/.openclaw"
+                ? openClawPosture === "locked"
+                  ? "755 root:root\n"
+                  : "2770 sandbox:sandbox\n"
+                : openClawPosture === "locked"
+                  ? "444 root:root\n"
+                  : "660 sandbox:sandbox\n"
+            : "";
   });
   const auditSpy = vi.spyOn(audit, "appendAuditEntry").mockImplementation(() => undefined);
+  if (options.timerAuthorityRevokedSequence) {
+    const timerAuthorityRevocations = [...options.timerAuthorityRevokedSequence];
+    const finalTimerAuthorityRevocation = timerAuthorityRevocations.at(-1) ?? true;
+    vi.spyOn(timerControl, "killTimer").mockImplementation(() => {
+      const authorityRevoked = timerAuthorityRevocations.shift() ?? finalTimerAuthorityRevocation;
+      return {
+        authorityRevoked,
+        markerFound: true,
+        markerPid: 4242,
+        wasAlive: false,
+        terminated: false,
+        warnings: authorityRevoked
+          ? []
+          : ["Failed to remove shields timer marker: permission denied"],
+      };
+    });
+  }
   const cleanupTempDirSpy = vi.spyOn(tempFiles, "cleanupTempDir");
   const prepareStateSaveFailure = options.failStateSave
     ? () =>
@@ -290,13 +315,16 @@ export function createShieldsFlowHarness(
   logSpy.mockClear();
   errorSpy.mockClear();
   auditSpy.mockClear();
+  runCaptureSpy.mockClear();
   return {
     applyShieldsPolicySnapshot: shields.applyShieldsPolicySnapshot,
     auditSpy,
     cleanupTempDirSpy,
     errorSpy,
+    getOpenClawPosture: () => openClawPosture,
     logSpy,
     policySetBodies,
+    runCaptureSpy,
     runSpy,
     shieldsDown: shields.shieldsDown,
     shieldsStatus: shields.shieldsStatus,

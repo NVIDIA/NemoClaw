@@ -50,6 +50,10 @@ interface ActionJobFixture {
   name: string;
   status?: string;
   conclusion?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  omitStartedAt?: boolean;
+  omitCompletedAt?: boolean;
 }
 
 interface ActionRunFixture {
@@ -62,11 +66,14 @@ interface ActionRunFixture {
   nextConclusion?: string | null;
   jobs?: ActionJobFixture[];
   jobPages?: ActionJobFixture[][];
-  createdAt?: string;
-  updatedAt?: string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  omitCreatedAt?: boolean;
+  omitUpdatedAt?: boolean;
   headSha?: string;
   headBranch?: string;
   headRepository?: string;
+  repository?: string;
   pullRequestHeadSha?: string;
   pullRequests?: unknown[];
   baseSha?: string;
@@ -75,6 +82,20 @@ interface ActionRunFixture {
   path?: string;
   status?: string;
   conclusion?: string | null;
+}
+
+interface CoordinatorRunPartitionFixture {
+  createdRange: string;
+  runPages: number[][];
+  event?: "workflow_run" | "workflow_dispatch";
+  totalCount?: number;
+  pageTotalCounts?: number[];
+  fallbackCreatedAt?: string;
+  runOverrides?: Record<string, Partial<ActionRunFixture>>;
+  finalRunPages?: number[][];
+  finalTotalCount?: number;
+  finalPageTotalCounts?: number[];
+  finalRunOverrides?: Record<string, Partial<ActionRunFixture>>;
 }
 
 interface ComplianceFixture {
@@ -120,14 +141,28 @@ interface ComplianceFixture {
   mergeable?: string;
   mergeStateStatus?: string;
   currentBaseSha?: string | null;
+  finalCurrentBaseSha?: string | null;
+  files?: Array<{ path: string; status: string }>;
   verified: boolean;
   reason?: string;
   actionRunAttempts?: Record<string, ActionRunFixture>;
+  coordinatorListAttempts?: Record<string, ActionRunFixture>;
+  coordinatorRunPages?: number[][];
+  coordinatorRunPartitions?: CoordinatorRunPartitionFixture[];
   issueEventPages?: unknown[];
   coordinationCheckPages?: unknown[];
   formerCoordinationCheckPages?: unknown[];
+  finalCoordinationCheckPages?: unknown[];
+  finalFormerCoordinationCheckPages?: unknown[];
+  observationTime?: string;
   finalPr?: Record<string, unknown>;
   finalPrAfterCurrentBase?: Record<string, unknown>;
+  finalPrAfterCiEvidence?: Record<string, unknown>;
+  finalPrAfterFinalCi?: Record<string, unknown>;
+  finalCommitTotalCount?: number;
+  finalStatusContextTotalCount?: number;
+  finalStatusCheckCommitOid?: string;
+  finalStatusCheckHasNextPage?: boolean;
 }
 
 interface ComparatorFixture extends ComplianceFixture {
@@ -147,7 +182,7 @@ function successfulRequiredChecksWithoutE2e() {
 }
 
 function successfulRequiredChecks() {
-  return REQUIRED_CHECK_NAMES.map((name) => requiredCheck(name));
+  return [...REQUIRED_CHECK_NAMES.map((name) => requiredCheck(name)), initialE2eSeedCheck()];
 }
 
 function requiredCheck(name: string, conclusion = "SUCCESS") {
@@ -163,6 +198,30 @@ function requiredCheck(name: string, conclusion = "SUCCESS") {
   }
   const { runId, jobId, workflowName } = REQUIRED_CHECK_RUNS[name];
   return e2eGateCheck([runId, jobId, conclusion, undefined, undefined, workflowName, name]);
+}
+
+function initialE2eSeedJobs(): ActionJobFixture[] {
+  return [
+    { id: 471, name: "cancel-superseded" },
+    { id: 472, name: "initialize" },
+    { id: 473, name: "coordinate", conclusion: "skipped" },
+  ].map((job) => ({
+    ...job,
+    startedAt: "2026-01-01T00:01:00Z",
+    completedAt: "2026-01-01T00:01:31Z",
+  }));
+}
+
+function initialE2eSeedCheck() {
+  return {
+    __typename: "CheckRun",
+    name: "initialize",
+    workflowName: "E2E / PR Gate Controller",
+    detailsUrl: "https://github.com/NVIDIA/NemoClaw/actions/runs/407/job/472",
+    startedAt: "2026-01-01T00:01:00Z",
+    status: "COMPLETED",
+    conclusion: "SUCCESS",
+  };
 }
 
 function e2eGateCheck(check: E2eCheckFixture, index = 0) {
@@ -198,6 +257,60 @@ function exactDiffGateRun(result: string, jobs: ActionJobFixture[], attempt = 1)
     status: "completed",
     conclusion: result,
     jobs,
+  };
+}
+
+function e2eCoordinatorRun(
+  result = "success",
+  jobs: ActionJobFixture[] = [
+    {
+      id: 951,
+      name: "coordinate",
+      startedAt: "2026-01-01T00:02:00Z",
+      completedAt: "2026-01-01T00:02:31Z",
+    },
+    {
+      id: 952,
+      name: "initialize",
+      conclusion: "skipped",
+      startedAt: "2026-01-01T00:02:00Z",
+      completedAt: "2026-01-01T00:02:00Z",
+    },
+    {
+      id: 953,
+      name: "cancel-superseded",
+      conclusion: "skipped",
+      startedAt: "2026-01-01T00:02:00Z",
+      completedAt: "2026-01-01T00:02:00Z",
+    },
+  ],
+): ActionRunFixture {
+  return {
+    attempt: 1,
+    createdAt: "2026-01-01T00:02:00Z",
+    updatedAt: "2026-01-01T00:02:32Z",
+    headSha: BASE_SHA,
+    headBranch: "main",
+    headRepository: "NVIDIA/NemoClaw",
+    repository: "NVIDIA/NemoClaw",
+    pullRequests: [],
+    displayTitle: `E2E Gate coordinate from CI PR #42 head ${HEAD_SHA} base ${BASE_SHA} gate true`,
+    event: "workflow_run",
+    path: ".github/workflows/pr-e2e-gate.yaml",
+    status: "completed",
+    conclusion: result,
+    jobs,
+  };
+}
+
+function e2eManualCoordinatorRun(
+  result = "success",
+  jobs: ActionJobFixture[] = e2eCoordinatorRun().jobs ?? [],
+): ActionRunFixture {
+  return {
+    ...e2eCoordinatorRun(result, jobs),
+    displayTitle: `E2E Gate approve PR #42 head ${HEAD_SHA} base ${BASE_SHA}`,
+    event: "workflow_dispatch",
   };
 }
 
@@ -267,20 +380,29 @@ function runGate(fixture: ComplianceFixture) {
   const bin = path.join(tmp, "bin");
   fs.mkdirSync(bin);
   const ghPath = path.join(bin, "gh");
+  const clockPath = path.join(tmp, "clock.mjs");
+  const observationTime =
+    fixture.observationTime ??
+    fixture.coordinatorRunPartitions?.at(-1)?.createdRange.split("..")[1] ??
+    "2026-01-01T00:03:00Z";
+  fs.writeFileSync(clockPath, `Date.now = () => ${Date.parse(observationTime)};\n`);
 
   const headRepository = fixture.headRepository ?? "NVIDIA/NemoClaw";
   const [headRepositoryOwner, headRepositoryName] = headRepository.split("/");
+  const defaultStatusChecks: NonNullable<ComplianceFixture["statusChecks"]> =
+    fixture.checkNames === undefined
+      ? successfulRequiredChecks().map((check) => {
+          const conclusion = fixture.checkConclusions?.[check.name];
+          return conclusion === undefined ? check : { ...check, conclusion };
+        })
+      : fixture.checkNames.map((name) => requiredCheck(name, fixture.checkConclusions?.[name]));
   const pr = {
     number: 42,
     title: "fix(policy): align maintainer workflow",
     url: "https://github.com/NVIDIA/NemoClaw/pull/42",
     body: fixture.body,
-    files: [],
-    statusCheckRollup:
-      fixture.statusChecks ??
-      (fixture.checkNames ?? REQUIRED_CHECK_NAMES).map((name) =>
-        requiredCheck(name, fixture.checkConclusions?.[name]),
-      ),
+    files: fixture.files ?? [],
+    statusCheckRollup: fixture.statusChecks ?? defaultStatusChecks,
     mergeable: fixture.mergeable ?? "MERGEABLE",
     mergeStateStatus: fixture.mergeStateStatus ?? "CLEAN",
     state: "OPEN",
@@ -300,6 +422,14 @@ function runGate(fixture: ComplianceFixture) {
   };
   const finalPr = { ...pr, ...fixture.finalPr };
   const finalPrAfterCurrentBase = { ...finalPr, ...fixture.finalPrAfterCurrentBase };
+  const finalPrAfterCiEvidence = {
+    ...finalPrAfterCurrentBase,
+    ...fixture.finalPrAfterCiEvidence,
+  };
+  const finalPrAfterFinalCi = {
+    ...finalPrAfterCiEvidence,
+    ...fixture.finalPrAfterFinalCi,
+  };
   const contributorCommitPages = (
     fixture.contributorCommitPages ?? [
       [
@@ -359,6 +489,60 @@ function runGate(fixture: ComplianceFixture) {
       },
     },
   });
+  const finalCurrentBaseSha =
+    fixture.finalCurrentBaseSha === undefined
+      ? fixture.currentBaseSha
+      : fixture.finalCurrentBaseSha;
+  const finalStatusCheckNodes = finalPrAfterFinalCi.statusCheckRollup.map(
+    ({ workflowName, ...check }) => ({
+      ...check,
+      ...(workflowName
+        ? { checkSuite: { workflowRun: { workflow: { name: workflowName } } } }
+        : {}),
+    }),
+  );
+  const finalPrSnapshotOutput = JSON.stringify({
+    data: {
+      repository: {
+        pullRequest: {
+          title: finalPrAfterFinalCi.title,
+          body: finalPrAfterFinalCi.body,
+          state: finalPrAfterFinalCi.state,
+          isDraft: finalPrAfterFinalCi.isDraft,
+          mergeable: finalPrAfterFinalCi.mergeable,
+          mergeStateStatus: finalPrAfterFinalCi.mergeStateStatus,
+          headRefOid: finalPrAfterFinalCi.headRefOid,
+          baseRefOid: finalPrAfterFinalCi.baseRefOid,
+          headRefName: finalPrAfterFinalCi.headRefName,
+          baseRefName: finalPrAfterFinalCi.baseRefName,
+          headRepository: finalPrAfterFinalCi.headRepository,
+          headRepositoryOwner: finalPrAfterFinalCi.headRepositoryOwner,
+          baseRef:
+            finalCurrentBaseSha === null
+              ? null
+              : { target: { oid: finalCurrentBaseSha ?? BASE_SHA } },
+          commits: {
+            totalCount: fixture.finalCommitTotalCount ?? 1,
+            nodes: [
+              {
+                commit: {
+                  oid: fixture.finalStatusCheckCommitOid ?? finalPrAfterFinalCi.headRefOid,
+                  statusCheckRollup: {
+                    contexts: {
+                      totalCount:
+                        fixture.finalStatusContextTotalCount ?? finalStatusCheckNodes.length,
+                      pageInfo: { hasNextPage: fixture.finalStatusCheckHasNextPage ?? false },
+                      nodes: finalStatusCheckNodes,
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
   const issueEventPages = fixture.issueEventPages ?? [[]];
   const coordinationCheckPages = fixture.coordinationCheckPages ?? [
     {
@@ -369,7 +553,10 @@ function runGate(fixture: ComplianceFixture) {
   const formerCoordinationCheckPages = fixture.formerCoordinationCheckPages ?? [
     { total_count: 0, check_runs: [] },
   ];
-  const actionRunCases = Object.entries({
+  const finalCoordinationCheckPages = fixture.finalCoordinationCheckPages ?? coordinationCheckPages;
+  const finalFormerCoordinationCheckPages =
+    fixture.finalFormerCoordinationCheckPages ?? formerCoordinationCheckPages;
+  const actionRunFixtures: Record<string, ActionRunFixture> = {
     "90": prWorkflowRun(
       "success",
       [
@@ -392,50 +579,78 @@ function runGate(fixture: ComplianceFixture) {
       path: ".github/workflows/dco-check.yaml",
     },
     "94": exactDiffGateRun("success", [{ id: 1, name: "E2E / PR Gate" }]),
+    "407": {
+      ...exactDiffGateRun("success", initialE2eSeedJobs()),
+      createdAt: "2026-01-01T00:01:00Z",
+      updatedAt: "2026-01-01T00:01:31Z",
+      headRepository,
+      pullRequests: [],
+    },
+    "9500": e2eCoordinatorRun(),
     ...fixture.actionRunAttempts,
-  })
+  };
+  const actionRunData = (runId: string, value: ActionRunFixture): Record<string, unknown> => ({
+    id: Number(runId),
+    run_attempt: value.attempt,
+    ...(value.omitCreatedAt
+      ? {}
+      : {
+          created_at: value.createdAt === undefined ? "2026-01-01T00:01:00Z" : value.createdAt,
+        }),
+    ...(value.omitUpdatedAt
+      ? {}
+      : {
+          updated_at: value.updatedAt === undefined ? "2026-01-01T00:03:00Z" : value.updatedAt,
+        }),
+    event: value.event,
+    path: value.path,
+    status: value.status,
+    conclusion: value.conclusion,
+    display_title: value.displayTitle,
+    repository: { full_name: value.repository ?? "NVIDIA/NemoClaw" },
+    ...(value.headSha ? { head_sha: value.headSha } : {}),
+    ...(value.headBranch ? { head_branch: value.headBranch } : {}),
+    ...(value.headRepository ? { head_repository: { full_name: value.headRepository } } : {}),
+    ...(value.pullRequests !== undefined
+      ? { pull_requests: value.pullRequests }
+      : value.headSha
+        ? {
+            pull_requests: value.baseSha
+              ? [
+                  {
+                    number: 42,
+                    head: { sha: value.pullRequestHeadSha ?? value.headSha },
+                    base: { sha: value.baseSha },
+                  },
+                ]
+              : [],
+          }
+        : {}),
+  });
+  const actionRunCases = Object.entries(actionRunFixtures)
     .flatMap(([runId, value]) => {
       const jobPages = (value.jobPages ?? [value.jobs ?? []]).map((page) =>
-        page.map((job) => ({
+        page.map(({ startedAt, completedAt, omitStartedAt, omitCompletedAt, ...job }) => ({
           ...job,
           status: job.status ?? "completed",
           conclusion: job.conclusion === undefined ? "success" : job.conclusion,
+          ...(omitStartedAt
+            ? {}
+            : { started_at: startedAt === undefined ? "2026-01-01T00:01:00Z" : startedAt }),
+          ...(omitCompletedAt
+            ? {}
+            : {
+                completed_at: completedAt === undefined ? "2026-01-01T00:03:00Z" : completedAt,
+              }),
         })),
       );
       const jobs = jobPages.flat();
-      const runData = {
-        run_attempt: value.attempt,
-        created_at: value.createdAt ?? "2026-01-01T00:01:00Z",
-        updated_at: value.updatedAt ?? "2026-01-01T00:03:00Z",
-        event: value.event,
-        path: value.path,
-        status: value.status,
-        conclusion: value.conclusion,
-        display_title: value.displayTitle,
-        ...(value.headSha ? { head_sha: value.headSha } : {}),
-        ...(value.headBranch ? { head_branch: value.headBranch } : {}),
-        ...(value.headRepository ? { head_repository: { full_name: value.headRepository } } : {}),
-        ...(value.pullRequests !== undefined
-          ? { pull_requests: value.pullRequests }
-          : value.headSha
-            ? {
-                pull_requests: value.baseSha
-                  ? [
-                      {
-                        number: 42,
-                        head: { sha: value.pullRequestHeadSha ?? value.headSha },
-                        base: { sha: value.baseSha },
-                      },
-                    ]
-                  : [],
-              }
-            : {}),
-      };
+      const runData = actionRunData(runId, value);
       const refreshedRunData = {
         ...runData,
         run_attempt: value.nextAttempt ?? value.attempt,
-        created_at: value.nextCreatedAt ?? runData.created_at,
-        updated_at: value.nextUpdatedAt ?? runData.updated_at,
+        ...(value.nextCreatedAt === undefined ? {} : { created_at: value.nextCreatedAt }),
+        ...(value.nextUpdatedAt === undefined ? {} : { updated_at: value.nextUpdatedAt }),
         display_title: value.nextDisplayTitle ?? runData.display_title,
         status: value.nextStatus ?? runData.status,
         conclusion: value.nextConclusion === undefined ? runData.conclusion : value.nextConclusion,
@@ -454,22 +669,125 @@ function runGate(fixture: ComplianceFixture) {
       ];
     })
     .join("\n");
+  const coordinatorRunPages = fixture.coordinatorRunPages ?? [[9500]];
+  const configuredCoordinatorRunPartitions = fixture.coordinatorRunPartitions ?? [
+    {
+      createdRange: "2025-12-31T00:00:00Z..2025-12-31T12:00:00Z",
+      runPages: [[]],
+    },
+    {
+      createdRange: "2025-12-31T12:00:00Z..2026-01-01T00:00:00Z",
+      runPages: [[]],
+    },
+    {
+      createdRange: "2026-01-01T00:00:00Z..2026-01-01T00:03:00Z",
+      runPages: coordinatorRunPages,
+    },
+  ];
+  const coordinatorRunPartitions = [...configuredCoordinatorRunPartitions];
+  const coordinatorCreatedRanges = [
+    ...new Set(configuredCoordinatorRunPartitions.map((partition) => partition.createdRange)),
+  ];
+  for (const event of ["workflow_run", "workflow_dispatch"] as const) {
+    for (const createdRange of coordinatorCreatedRanges) {
+      if (
+        !coordinatorRunPartitions.some(
+          (partition) =>
+            (partition.event ?? "workflow_run") === event &&
+            partition.createdRange === createdRange,
+        )
+      ) {
+        coordinatorRunPartitions.push({ createdRange, event, runPages: [[]] });
+      }
+    }
+  }
+  const coordinatorWorkflowRunCases = coordinatorRunPartitions
+    .map((partition, partitionIndex) => {
+      const fallbackCreatedAt =
+        partition.fallbackCreatedAt ?? partition.createdRange.split("..")[0];
+      const event = partition.event ?? "workflow_run";
+      const responsePages = (
+        runPages: number[][],
+        totalCount: number | undefined,
+        pageTotalCounts: number[] | undefined,
+        runOverrides: Record<string, Partial<ActionRunFixture>> | undefined,
+      ) => {
+        const partitionTotal = totalCount ?? runPages.flat().length;
+        return runPages.map((page, pageIndex) => ({
+          total_count: pageTotalCounts?.[pageIndex] ?? partitionTotal,
+          workflow_runs: page.map((runId) => {
+            const listedValue =
+              fixture.coordinatorListAttempts?.[String(runId)] ?? actionRunFixtures[String(runId)];
+            const value =
+              listedValue && runOverrides?.[String(runId)]
+                ? { ...listedValue, ...runOverrides[String(runId)] }
+                : listedValue;
+            return value
+              ? actionRunData(String(runId), value)
+              : {
+                  id: runId,
+                  created_at: fallbackCreatedAt,
+                  display_title: `unrelated workflow run ${runId}`,
+                  event,
+                };
+          }),
+        }));
+      };
+      const pages = responsePages(
+        partition.runPages,
+        partition.totalCount,
+        partition.pageTotalCounts,
+        partition.runOverrides,
+      );
+      const finalPages = responsePages(
+        partition.finalRunPages ?? partition.runPages,
+        partition.finalTotalCount ?? partition.totalCount,
+        partition.finalPageTotalCounts ?? partition.pageTotalCounts,
+        partition.finalRunOverrides ?? partition.runOverrides,
+      );
+      const projection =
+        "{total_count,workflow_runs:[.workflow_runs[]|{id,run_attempt,event,display_title,path," +
+        "head_branch,head_sha,status,conclusion,repository:{full_name:.repository.full_name}," +
+        "head_repository:{full_name:.head_repository.full_name},created_at,updated_at}]}";
+      const query =
+        "api --paginate --jq " +
+        projection +
+        " repos/NVIDIA/NemoClaw/actions/workflows/pr-e2e-gate.yaml/runs?event=" +
+        event +
+        "&created=" +
+        encodeURIComponent(partition.createdRange) +
+        "&per_page=100";
+      const marker = path.join(tmp, `coordinator-partition-${partitionIndex}-seen`);
+      const output = pages.map((page) => JSON.stringify(page)).join("\n");
+      const finalOutput = finalPages.map((page) => JSON.stringify(page)).join("\n");
+      return `  ${shellSingleQuote(query)}) if mkdir ${shellSingleQuote(marker)} 2>/dev/null; then printf '%s' ${shellSingleQuote(output)}; else printf '%s' ${shellSingleQuote(finalOutput)}; fi ;;`;
+    })
+    .join("\n");
+  const coordinationCheckMarker = path.join(tmp, "coordination-checks-seen");
+  const formerCoordinationCheckMarker = path.join(tmp, "former-coordination-checks-seen");
+  const finalPrReadMarker = path.join(tmp, "final-pr-read");
 
   fs.writeFileSync(
     ghPath,
     `#!/usr/bin/env bash
 set -euo pipefail
+if [ -d ${shellSingleQuote(finalPrReadMarker)} ]; then
+  echo "unexpected gh args after final PR read: $*" >&2
+  exit 9
+fi
 case "$*" in
-  "pr view"*) if mkdir ${shellSingleQuote(path.join(tmp, "pr-view-seen"))} 2>/dev/null; then printf '%s' ${shellSingleQuote(JSON.stringify(pr))}; elif [ -d ${shellSingleQuote(path.join(tmp, "current-base-seen"))} ]; then printf '%s' ${shellSingleQuote(JSON.stringify(finalPrAfterCurrentBase))}; else printf '%s' ${shellSingleQuote(JSON.stringify(finalPr))}; fi ;;
+  "pr view"*) if mkdir ${shellSingleQuote(path.join(tmp, "pr-view-seen"))} 2>/dev/null; then printf '%s' ${shellSingleQuote(JSON.stringify(pr))}; elif mkdir ${shellSingleQuote(path.join(tmp, "pr-before-final-ci-seen"))} 2>/dev/null; then printf '%s' ${shellSingleQuote(JSON.stringify(finalPrAfterCurrentBase))}; else printf '%s' ${shellSingleQuote(JSON.stringify(finalPrAfterCiEvidence))}; fi ;;
   *"ContributorCommits"*) printf '%s' ${shellSingleQuote(contributorCommitOutput)} ;;
   *"ContributorReviews"*) printf '%s' ${shellSingleQuote(contributorReviewOutput)} ;;
   *"CurrentBaseRef"*) mkdir -p ${shellSingleQuote(path.join(tmp, "current-base-seen"))}; printf '%s' ${shellSingleQuote(currentBaseOutput)} ;;
+  *"FinalPrSnapshot"*) mkdir -p ${shellSingleQuote(finalPrReadMarker)}; printf '%s' ${shellSingleQuote(finalPrSnapshotOutput)} ;;
   "api graphql"*) printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}' ;;
   "api repos/NVIDIA/NemoClaw/issues/42/comments"*) printf '%s' '{"id":1,"body":"ordinary comment","user":{"login":"reviewer"},"updated_at":"2026-01-01T00:00:00Z"}' ;;
   "api repos/NVIDIA/NemoClaw/pulls/42/commits"*) printf '%s' ${shellSingleQuote(commitOutput)} ;;
   "api --paginate --slurp repos/NVIDIA/NemoClaw/issues/42/events?per_page=100") printf '%s' ${shellSingleQuote(JSON.stringify(issueEventPages))} ;;
-  "api --paginate --slurp repos/NVIDIA/NemoClaw/commits/${HEAD_SHA}/check-runs?check_name=E2E%20%2F%20PR%20Gate&filter=all&per_page=100") printf '%s' ${shellSingleQuote(JSON.stringify(coordinationCheckPages))} ;;
-  "api --paginate --slurp repos/NVIDIA/NemoClaw/commits/${HEAD_SHA}/check-runs?check_name=E2E%20%2F%20PR%20Gate%20Coordination&filter=all&per_page=100") printf '%s' ${shellSingleQuote(JSON.stringify(formerCoordinationCheckPages))} ;;
+  "api --paginate --slurp repos/NVIDIA/NemoClaw/commits/${HEAD_SHA}/check-runs?check_name=E2E%20%2F%20PR%20Gate&filter=all&per_page=100") if mkdir ${shellSingleQuote(coordinationCheckMarker)} 2>/dev/null; then printf '%s' ${shellSingleQuote(JSON.stringify(coordinationCheckPages))}; else printf '%s' ${shellSingleQuote(JSON.stringify(finalCoordinationCheckPages))}; fi ;;
+  "api --paginate --slurp repos/NVIDIA/NemoClaw/commits/${HEAD_SHA}/check-runs?check_name=E2E%20%2F%20PR%20Gate%20Coordination&filter=all&per_page=100") if mkdir ${shellSingleQuote(formerCoordinationCheckMarker)} 2>/dev/null; then printf '%s' ${shellSingleQuote(JSON.stringify(formerCoordinationCheckPages))}; else printf '%s' ${shellSingleQuote(JSON.stringify(finalFormerCoordinationCheckPages))}; fi ;;
+${coordinatorWorkflowRunCases}
 ${actionRunCases}
   *) echo "unexpected gh args: $*" >&2; exit 9 ;;
 esac
@@ -481,6 +799,8 @@ esac
     return spawnSync(
       process.execPath,
       [
+        "--import",
+        clockPath,
         "--experimental-strip-types",
         "--no-warnings",
         ".agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts",
@@ -563,6 +883,7 @@ export type {
   ActionRunFixture,
   ComparatorFixture,
   ComplianceFixture,
+  CoordinatorRunPartitionFixture,
   E2eCheckFixture,
 };
 export {
@@ -572,6 +893,8 @@ export {
   E2E_COORDINATION_EXTERNAL_ID,
   E2E_COORDINATION_NAME,
   e2eChecks,
+  e2eCoordinatorRun,
+  e2eManualCoordinatorRun,
   e2eGateCheck,
   e2eJobs,
   e2eRunFixture,
