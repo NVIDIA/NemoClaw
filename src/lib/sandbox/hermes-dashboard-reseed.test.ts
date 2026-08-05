@@ -3,7 +3,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentConfigTarget } from "./config";
-import { seedHermesDashboardConfig } from "./config";
+import { restoreHermesDashboardConfig, seedHermesDashboardConfig } from "./config";
 
 interface CaptureResult {
   status: number | null;
@@ -23,7 +23,7 @@ const TARGET: AgentConfigTarget = {
 };
 const PYTHON = "/opt/hermes/.venv/bin/python3";
 const SEEDER = "/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py";
-const DASHBOARD_CONFIG = "/sandbox/.hermes/dashboard-home/config.yaml";
+const DASHBOARD_CONFIG = "/sandbox/.hermes/profiles/dashboard-home/config.yaml";
 const capture = vi.fn<(binary: string, args: string[], options: unknown) => CaptureResult>();
 const reportFailure = vi.fn<(stage: "python" | "inspection" | "seed", detail: string) => void>();
 
@@ -64,7 +64,9 @@ describe("seedHermesDashboardConfig", () => {
 
   it("passes adversarial paths as discrete argv without invoking a shell (#6893)", () => {
     mockReseedFlow({
-      seed: successfulSeed("/sandbox/Hermes home;$(touch dir-pwned)/dashboard-home/config.yaml"),
+      seed: successfulSeed(
+        "/sandbox/Hermes home;$(touch dir-pwned)/profiles/dashboard-home/config.yaml",
+      ),
     });
     const target: AgentConfigTarget = {
       ...TARGET,
@@ -102,22 +104,73 @@ describe("seedHermesDashboardConfig", () => {
     expect(inspectionCommand[2]).toContain("os.lstat(sys.argv[1])");
     expect(inspectionCommand[2]).toContain("except FileNotFoundError:");
     expect(inspectionCommand[2]).toContain("stat.S_ISDIR(mode)");
-    expect(inspectionCommand.at(-1)).toBe("/sandbox/Hermes home;$(touch dir-pwned)/dashboard-home");
+    expect(inspectionCommand.at(-1)).toBe(
+      "/sandbox/Hermes home;$(touch dir-pwned)/profiles/dashboard-home",
+    );
     expect(sandboxCommand(capture.mock.calls[2][1])).toEqual([
       PYTHON,
       SEEDER,
       "/sandbox/Hermes config;$(touch source-pwned)/config'quote.yaml",
-      "/sandbox/Hermes home;$(touch dir-pwned)/dashboard-home/config.yaml",
+      "/sandbox/Hermes home;$(touch dir-pwned)/profiles/dashboard-home/config.yaml",
       "/sandbox/Hermes home;$(touch dir-pwned)/.env",
-      "/sandbox/Hermes home;$(touch dir-pwned)/dashboard-home/.env",
+      "/sandbox/Hermes home;$(touch dir-pwned)/profiles/dashboard-home/.env",
     ]);
   });
 
   it("returns absent only when the path inspection reports it missing (#6893)", () => {
-    mockReseedFlow({ inspection: result({ status: 3, stderr: "missing" }) });
+    capture
+      .mockReturnValueOnce(result())
+      .mockReturnValueOnce(result({ status: 3, stderr: "canonical missing" }))
+      .mockReturnValueOnce(result({ status: 3, stderr: "legacy missing" }));
 
     expect(seedHermesDashboardConfig("hermes", TARGET, deps)).toBe("absent");
-    expect(capture).toHaveBeenCalledTimes(2);
+    expect(capture).toHaveBeenCalledTimes(3);
+    expect(sandboxCommand(capture.mock.calls[1][1]).at(-1)).toBe(
+      "/sandbox/.hermes/profiles/dashboard-home",
+    );
+    expect(sandboxCommand(capture.mock.calls[2][1]).at(-1)).toBe("/sandbox/.hermes/dashboard-home");
+  });
+
+  it("migrates a legacy-only profile during an in-place reseed (#7200)", () => {
+    capture
+      .mockReturnValueOnce(result())
+      .mockReturnValueOnce(result({ status: 3, stderr: "canonical missing" }))
+      .mockReturnValueOnce(result())
+      .mockReturnValueOnce(successfulSeed());
+
+    expect(seedHermesDashboardConfig("hermes", TARGET, deps)).toBe("converged");
+    expect(capture).toHaveBeenCalledTimes(4);
+    expect(sandboxCommand(capture.mock.calls[2][1]).at(-1)).toBe("/sandbox/.hermes/dashboard-home");
+    expect(sandboxCommand(capture.mock.calls[3][1])).toContain(DASHBOARD_CONFIG);
+  });
+
+  it("requests a no-clobber legacy merge after rebuild restore (#7200)", () => {
+    mockReseedFlow();
+
+    expect(restoreHermesDashboardConfig("hermes", TARGET, deps)).toBe("converged");
+    expect(sandboxCommand(capture.mock.calls[2][1])).toEqual([
+      PYTHON,
+      SEEDER,
+      "--merge-legacy",
+      TARGET.configPath,
+      DASHBOARD_CONFIG,
+      "/sandbox/.hermes/.env",
+      "/sandbox/.hermes/profiles/dashboard-home/.env",
+    ]);
+  });
+
+  it("fails closed when the legacy profile cannot be inspected (#7200)", () => {
+    capture
+      .mockReturnValueOnce(result())
+      .mockReturnValueOnce(result({ status: 3, stderr: "canonical missing" }))
+      .mockReturnValueOnce(result({ status: 2, stderr: "legacy symlink" }));
+
+    expect(seedHermesDashboardConfig("hermes", TARGET, deps)).toBe("failed");
+    expect(capture).toHaveBeenCalledTimes(3);
+    expect(reportFailure).toHaveBeenCalledWith(
+      "inspection",
+      expect.stringContaining("legacy symlink"),
+    );
   });
 
   it.each([
