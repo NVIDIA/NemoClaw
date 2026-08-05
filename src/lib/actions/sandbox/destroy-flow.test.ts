@@ -408,7 +408,9 @@ describe("destroySandbox flow", () => {
     harness.setSandboxPresent(false);
     harness.finalizeMcpBridgesAfterSandboxDeleteSpy.mockResolvedValue(undefined);
 
-    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+    await expect(
+      harness.destroySandbox("alpha", { yes: true, cleanupGateway: true }),
+    ).resolves.toBeUndefined();
 
     expect(harness.prepareMcpBridgesForAbsentSandboxDestroySpy).toHaveBeenCalledWith("alpha", {
       force: false,
