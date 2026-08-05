@@ -3151,6 +3151,7 @@ supervise_hermes_gateway_current_user() {
     sleep 2 || true
 
     recover_hermes_gateway_current_user || return 1
+    unhealthy_streak=0
     echo "[gateway] Hermes gateway respawned (pid $GATEWAY_PID)" >&2
   done
 }

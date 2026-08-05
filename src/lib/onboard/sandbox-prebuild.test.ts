@@ -56,6 +56,7 @@ describe("sandbox BuildKit prebuild", () => {
   it("keeps Docker runtime settings while dropping secrets and control-plane state", () => {
     vi.stubEnv("PATH", "/usr/bin");
     vi.stubEnv("HOME", "/home/user");
+    vi.stubEnv("CONTAINERS_CONF", "/home/user/.config/nemoclaw/portable/containers.conf");
     vi.stubEnv("DOCKER_HOST", "unix:///var/run/docker.sock");
     vi.stubEnv("DOCKER_CONFIG", "/home/user/.docker-ci");
     vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
@@ -76,6 +77,7 @@ describe("sandbox BuildKit prebuild", () => {
     expect(env).toMatchObject({
       PATH: "/usr/bin",
       HOME: "/home/user",
+      CONTAINERS_CONF: "/home/user/.config/nemoclaw/portable/containers.conf",
       DOCKER_HOST: "unix:///var/run/docker.sock",
       DOCKER_CONFIG: "/home/user/.docker-ci",
       DOCKER_CONTEXT: "remote-builder",
@@ -364,6 +366,47 @@ describe("sandbox BuildKit prebuild", () => {
       imageRef: "nemoclaw-sandbox-local:alpha-1234567890",
       imageId: IMAGE_ID,
     });
+  });
+
+  it("publishes portable-profile builds to the managed loopback registry", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const buildImage = vi.fn(async () => 0);
+    let credentialConfig = "";
+    const publishImage = vi.fn(async (_args, options) => {
+      credentialConfig = String(options.env.DOCKER_CONFIG);
+      expect(credentialConfig).toContain("nemoclaw-portable-docker-config-");
+      expect(options.env.REGISTRY_AUTH_FILE).toBe(path.join(credentialConfig, "config.json"));
+      expect(fs.statSync(credentialConfig).mode & 0o777).toBe(0o700);
+      expect(
+        JSON.parse(fs.readFileSync(path.join(credentialConfig, "config.json"), "utf-8")),
+      ).toEqual({ auths: {} });
+      expect(fs.statSync(path.join(credentialConfig, "config.json")).mode & 0o777).toBe(0o600);
+      return 0;
+    });
+    const result = await prebuildSandboxImageIfEligible({
+      buildCtx,
+      buildId: BUILD_ID,
+      origin: "generated",
+      createArgs,
+      sandboxName: "alpha",
+      dockerDriverGateway: true,
+      env: { NEMOCLAW_EXPERIMENTAL_PROFILE: "portable" },
+      buildImage,
+      publishImage,
+      inspectImageId: () => IMAGE_ID,
+      log: () => {},
+    });
+
+    expect(publishImage).toHaveBeenCalledWith(
+      ["push", "localhost:5000/nemoclaw-sandbox-local:alpha-1234567890"],
+      expect.objectContaining({ stdio: "inherit" }),
+    );
+    expect(buildImage).toHaveBeenCalledWith(
+      expect.arrayContaining(["build", "localhost:5000/nemoclaw-sandbox-local:alpha-1234567890"]),
+      expect.objectContaining({ env: expect.not.objectContaining({ DOCKER_BUILDKIT: "1" }) }),
+    );
+    expect(result.imageRef).toBe("localhost:5000/nemoclaw-sandbox-local:alpha-1234567890");
+    expect(fs.existsSync(credentialConfig)).toBe(false);
   });
 
   it("routes default Docker build stdout only while JSONL owns stdout (#6403)", async () => {

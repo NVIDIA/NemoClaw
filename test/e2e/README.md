@@ -26,7 +26,8 @@ before those targets run; local runners must provide it themselves.
 ### Candidate CLI Artifact
 
 The candidate CLI comes from the source commit that an E2E run tests.
-The `generate-matrix` job builds it once and publishes `dist/` as a content-addressed artifact.
+The `generate-matrix` job builds it once.
+The job publishes root `dist/` and `nemoclaw/dist/shared/` in one content-addressed artifact.
 The workflow has 62 artifact-using job definitions.
 Each selected job execution restores the artifact instead of running `npm run build:cli`.
 Each selected job still runs the pinned preparation action to install Node.js and project dependencies.
@@ -58,17 +59,19 @@ Before download, the action rejects extra or missing provenance fields.
 It also compares the candidate checkout, repository, workflow SHA, run ID, and attempt with the provenance object.
 The action downloads the artifact by immutable ID and sets digest mismatch handling to `error`.
 
-Before the action restores `dist/` into the workspace, it verifies these conditions:
+Before the action restores root `dist/` and `nemoclaw/dist/shared/` into the workspace, it verifies these conditions:
 
 - The upload digest is present and well formed.
 - The candidate SHA matches the expected commit.
 - The manifest matches the source, workflow run, toolchain contract, and payload.
-- The archive contains no path traversal, links, special files, or files outside `dist/`.
-- The candidate checkout has no preexisting `dist/` path.
+- The archive contains no path traversal, links, special files, or files outside root `dist/` and `nemoclaw/dist/shared/`.
+- Neither root `dist/` nor `nemoclaw/dist/` already exists, including as a dangling symbolic link.
+- The candidate checkout's `nemoclaw/` path is a directory and is not a symbolic link.
+- The CLI entry point and required shared modules are nonempty regular files.
 - The staged `dist/build-identity.json` names the candidate commit SHA.
 
-If a pre-restore check fails, the action stops before it moves `dist/` into the workspace.
-After the checks pass, the action moves `dist/` and runs `bin/nemoclaw.js --version`.
+If a pre-restore check fails, the action stops before it adds either directory to the workspace.
+After the checks pass, the action restores root `dist/` and `nemoclaw/dist/shared/`, then runs `bin/nemoclaw.js --version`.
 If the version command fails, the action stops before the live test runs.
 This boundary keeps candidate source separate from the trusted workflow implementation.
 
@@ -186,6 +189,90 @@ discovery command locally to inspect the generated test matrix:
 ```bash
 npx tsx tools/e2e/credential-free-tests.mts
 ```
+
+## Inactive Windows MXC OpenClaw qualification
+
+`windows-mxc-openclaw-process-container.test.ts` is an explicit local
+qualification target for epic #8178. It exercises an operator-supplied native
+Windows OpenShell package and a staged OpenClaw artifact through the OpenShell
+`process_container` driver. It does not register MXC, call `wxc-exec.exe`
+directly, or establish Windows support.
+The generated driver configuration requests the stricter less-privileged
+AppContainer mode and records that choice in the receipt.
+
+The target requires a Windows x64 host that passes the minimum MXC candidate
+check. It rejects a dirty NemoClaw checkout and requires exact expected
+identities for that checkout, the OpenShell CLI and gateway, the
+OpenShell-supplied `wxc-exec.exe`, the complete OpenClaw artifact tree, Node.js,
+and the OpenClaw entrypoint. Compute the canonical artifact-tree digest after
+staging:
+
+```powershell
+npx tsx tools/e2e/windows-mxc-openclaw-artifact-tree.mts $env:NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT
+```
+
+Set the following environment variables to paths or exact lowercase identity
+values. Do not put credentials in them.
+
+| Variable | Meaning |
+| --- | --- |
+| `E2E_ARTIFACT_DIR` | Existing directory for the secret-free qualification receipt |
+| `NEMOCLAW_E2E_EXPECTED_SHA` | Exact 40-character NemoClaw checkout revision |
+| `NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI` | Extracted `openshell.exe` path |
+| `NEMOCLAW_WINDOWS_MXC_OPENSHELL_GATEWAY` | Extracted `openshell-gateway.exe` path |
+| `NEMOCLAW_WINDOWS_MXC_WXC_EXEC` | `wxc-exec.exe` supplied for that OpenShell package |
+| `NEMOCLAW_WINDOWS_MXC_OPENSHELL_VERSION` | Exact OpenShell package version |
+| `NEMOCLAW_WINDOWS_MXC_OPENSHELL_REVISION` | Exact 40-character OpenShell source revision |
+| `NEMOCLAW_WINDOWS_MXC_OPENSHELL_CLI_SHA256` | Expected OpenShell CLI SHA-256 |
+| `NEMOCLAW_WINDOWS_MXC_OPENSHELL_GATEWAY_SHA256` | Expected OpenShell gateway SHA-256 |
+| `NEMOCLAW_WINDOWS_MXC_WXC_EXEC_SHA256` | Expected `wxc-exec.exe` SHA-256 |
+| `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ROOT` | Staged native OpenClaw artifact root |
+| `NEMOCLAW_WINDOWS_MXC_NODE` | Node.js executable beneath the artifact root |
+| `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY` | OpenClaw entrypoint beneath the artifact root |
+| `NEMOCLAW_WINDOWS_MXC_OPENCLAW_VERSION` | Expected OpenClaw version |
+| `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ARTIFACT_TREE_SHA256` | Expected canonical artifact-tree SHA-256 |
+| `NEMOCLAW_WINDOWS_MXC_NODE_SHA256` | Expected Node.js SHA-256 |
+| `NEMOCLAW_WINDOWS_MXC_OPENCLAW_ENTRY_SHA256` | Expected OpenClaw entrypoint SHA-256 |
+
+The target creates a random OpenClaw gateway token for readiness checks. It
+passes that token through the MXC agent environment; current OpenShell
+`process_container` packaging can therefore expose its encoded configuration,
+including the token, to privileged host process inspection while `wxc-exec.exe`
+starts the sandbox. The token is never written to the receipt or supplied in
+the OpenClaw command arguments, is not reused, and is useful only for the
+temporary loopback OpenClaw gateway. Cleanup attempts sandbox deletion, stops
+the recorded OpenClaw process, clears the in-memory environment value, and
+removes the runtime home, state, configuration, and gateway logs. A direct
+process-tree termination is an emergency cleanup fallback only. The host-side
+OpenShell processes receive an allowlist of Windows runtime variables rather
+than the complete caller environment. Before using a termination fallback,
+the host binds the process ID to the expected executable, command arguments,
+and creation time. For OpenClaw, it also validates the probe-parent ancestry.
+The host rejects a mismatched or reused PID. The fallback uses the
+`taskkill.exe` beneath the validated Windows system root. If either the
+OpenClaw process or OpenShell gateway needs that fallback, the qualification
+fails. The delete retry and process-termination paths are failure containment,
+not compatibility workarounds that permit a passing result; their presence does
+not assume a specific upstream defect. Remove them only when failed or partial
+OpenShell lifecycle operations can still guarantee teardown without host-side
+cleanup.
+
+Run only the explicit target:
+
+```powershell
+$env:NEMOCLAW_RUN_LIVE_E2E = "1"
+$env:NEMOCLAW_RUN_WINDOWS_MXC_OPENCLAW_E2E = "1"
+npx vitest run --project e2e-live test/e2e/live/windows-mxc-openclaw-process-container.test.ts
+```
+
+The target verifies OpenClaw startup and in-sandbox health, read-write and denied
+filesystem behavior, registry cleanup, and termination of the recorded
+OpenClaw process on sandbox delete. After preflight and local setup succeed, it
+writes a secret-free receipt for either verdict and records whether sensitive
+runtime artifacts were removed. When that cleanup succeeds, a failed run retains
+only non-sensitive probe files for diagnosis.
+Gateway mTLS, governed egress, managed inference, gateway-restart recovery, and
+production activation remain outside this target.
 
 The retired `hermes-dashboard` selector remains a compatibility alias for
 `hermes-e2e` in both selector inputs. Reports use the canonical
