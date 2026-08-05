@@ -396,6 +396,13 @@ jobs:
             { echo "::error::candidate CLI build did not produce dist/nemoclaw.js"; exit 1; }
           test -s dist/build-identity.json ||
             { echo "::error::candidate CLI build did not produce dist/build-identity.json"; exit 1; }
+          for shared_module in \
+            openshell-policy-boundary.cjs \
+            sandbox-name.cjs \
+            snapshot-sanitizer-boundary.cjs; do
+            test -s "nemoclaw/dist/shared/${shared_module}" ||
+              { echo "::error::candidate CLI build did not produce nemoclaw/dist/shared/${shared_module}"; exit 1; }
+          done
           jq -e --arg candidateSha "$CANDIDATE_SHA" '
             type == "object" and
             (keys | sort) == ["nemoclawVersion", "sourceRevision"] and
@@ -415,7 +422,8 @@ jobs:
             --group=0 \
             --numeric-owner \
             -cf "$payload" \
-            dist
+            dist \
+            nemoclaw/dist/shared
           payload_sha256="$(sha256sum "$payload" | awk '{print $1}')"
           source_tree="$(git rev-parse 'HEAD^{tree}')"
           lockfile_sha256="$(sha256sum package-lock.json | awk '{print $1}')"

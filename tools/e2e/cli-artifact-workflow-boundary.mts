@@ -33,7 +33,7 @@ const DEFAULT_RESTORE_ACTION_PATH = join(
   "action.yaml",
 );
 const RESTORE_ACTION_CONTENT_SHA256 =
-  "bae2b6b99b46f7d007be9b792d7179fbef30c38d31623849e025d7341f179d0d";
+  "25845253d5fdc625cda34c796c54182178476c9f0ff967cdc48ed3d908b6d22b";
 const CLI_ARTIFACT_DOWNLOAD_STEP = "Download exact-commit CLI artifact";
 const CLI_ARTIFACT_VERIFY_STEP = "Verify and restore exact-commit CLI artifact";
 const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
@@ -164,9 +164,13 @@ export function validateCliArtifactRestoreAction(
     '*) echo "::error::CLI artifact contains an unsafe member',
     "CLI artifact contains a link or special file",
     '[[ ! -e "$GITHUB_WORKSPACE/dist" && ! -L "$GITHUB_WORKSPACE/dist" ]]',
+    '[[ -d "$GITHUB_WORKSPACE/nemoclaw" && ! -L "$GITHUB_WORKSPACE/nemoclaw" ]]',
+    '[[ ! -e "$GITHUB_WORKSPACE/nemoclaw/dist" && ! -L "$GITHUB_WORKSPACE/nemoclaw/dist" ]]',
     'restore_dir="$(mktemp -d',
     'tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"',
+    'test -s "$restore_dir/nemoclaw/dist/shared/${shared_module}"',
     ".sourceRevision == $candidateSha",
+    'mv "$restore_dir/nemoclaw/dist" "$GITHUB_WORKSPACE/nemoclaw/dist"',
     'mv "$restore_dir/dist" "$GITHUB_WORKSPACE/dist"',
     'node "$GITHUB_WORKSPACE/bin/nemoclaw.js" --version',
   ]);
@@ -224,10 +228,12 @@ function validateProducer(errors: string[], producer: WorkflowRecord): void {
     'git rev-parse --verify HEAD)" == "$CANDIDATE_SHA"',
     "test -s dist/nemoclaw.js",
     "test -s dist/build-identity.json",
+    'test -s "nemoclaw/dist/shared/${shared_module}"',
     ".sourceRevision == $candidateSha",
     "candidate CLI build identity does not match the candidate commit SHA",
     "--sort=name",
     "--mtime=@0",
+    "nemoclaw/dist/shared",
     "source_tree=\"$(git rev-parse 'HEAD^{tree}')\"",
     'lockfile_sha256="$(sha256sum package-lock.json',
     'artifact_name="nemoclaw-cli-${CANDIDATE_SHA}-${payload_sha256}"',

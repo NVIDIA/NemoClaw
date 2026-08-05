@@ -67,11 +67,12 @@ function workflowFixture(): Workflow {
 }
 
 type RestoreFixtureOptions = {
-  archive?: "valid" | "non-dist" | "link" | "traversal";
+  archive?: "valid" | "missing-shared-runtime" | "non-dist" | "link" | "traversal";
   buildIdentitySha?: string;
   expectedPayloadSha256?: string;
   manifestCandidateSha?: string;
   preexistingDist?: "dangling-symlink" | "directory";
+  preexistingSharedRuntime?: "dangling-symlink" | "directory";
 };
 
 type ArchiveFixtureContext = {
@@ -84,13 +85,17 @@ function sha256File(file: string): string {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
-function writeDistArchive(
+function writeCliArchive(
   context: ArchiveFixtureContext,
   customizeDist: (dist: string) => void,
+  includeSharedRuntime = true,
 ): void {
   const dist = path.join(context.payloadRoot, "dist");
   fs.mkdirSync(dist);
-  fs.writeFileSync(path.join(dist, "nemoclaw.js"), 'console.log("nemoclaw v0.0.0");\n');
+  fs.writeFileSync(
+    path.join(dist, "nemoclaw.js"),
+    'require("../nemoclaw/dist/shared/sandbox-name.cjs");\nconsole.log("nemoclaw v0.0.0");\n',
+  );
   fs.writeFileSync(
     path.join(dist, "build-identity.json"),
     `${JSON.stringify({
@@ -99,15 +104,32 @@ function writeDistArchive(
     })}\n`,
   );
   customizeDist(dist);
-  execFileSync("tar", ["-cf", context.payload, "-C", context.payloadRoot, "dist"]);
+  const archiveMembers = ["dist"];
+  if (includeSharedRuntime) {
+    const sharedRuntime = path.join(context.payloadRoot, "nemoclaw", "dist", "shared");
+    fs.mkdirSync(sharedRuntime, { recursive: true });
+    for (const moduleName of [
+      "openshell-policy-boundary.cjs",
+      "sandbox-name.cjs",
+      "snapshot-sanitizer-boundary.cjs",
+    ]) {
+      fs.writeFileSync(path.join(sharedRuntime, moduleName), "module.exports = {};\n");
+    }
+    archiveMembers.push("nemoclaw/dist/shared");
+  }
+  execFileSync("tar", ["-cf", context.payload, "-C", context.payloadRoot, ...archiveMembers]);
 }
 
 function writeValidArchive(context: ArchiveFixtureContext): void {
-  writeDistArchive(context, () => undefined);
+  writeCliArchive(context, () => undefined);
+}
+
+function writeArchiveWithoutSharedRuntime(context: ArchiveFixtureContext): void {
+  writeCliArchive(context, () => undefined, false);
 }
 
 function writeLinkArchive(context: ArchiveFixtureContext): void {
-  writeDistArchive(context, (dist) => {
+  writeCliArchive(context, (dist) => {
     fs.symlinkSync("nemoclaw.js", path.join(dist, "linked-cli.js"));
   });
 }
@@ -135,6 +157,7 @@ function writeTraversalArchive(context: ArchiveFixtureContext): void {
 
 const ARCHIVE_FIXTURE_WRITERS = {
   link: writeLinkArchive,
+  "missing-shared-runtime": writeArchiveWithoutSharedRuntime,
   "non-dist": writeNonDistArchive,
   traversal: writeTraversalArchive,
   valid: writeValidArchive,
@@ -154,12 +177,33 @@ function writePreexistingDistDirectory(workspace: string): void {
   fs.writeFileSync(path.join(workspace, "dist", "existing.txt"), "preserve\n");
 }
 
+function writeDanglingSharedRuntimeSymlink(workspace: string): void {
+  const nemoclaw = path.join(workspace, "nemoclaw");
+  fs.mkdirSync(nemoclaw, { recursive: true });
+  fs.symlinkSync("missing-dist", path.join(nemoclaw, "dist"));
+}
+
+function writePreexistingSharedRuntimeDirectory(workspace: string): void {
+  const sharedRuntime = path.join(workspace, "nemoclaw", "dist");
+  fs.mkdirSync(sharedRuntime, { recursive: true });
+  fs.writeFileSync(path.join(sharedRuntime, "existing.txt"), "preserve\n");
+}
+
 const PREEXISTING_DIST_WRITERS = {
   "dangling-symlink": writeDanglingDistSymlink,
   directory: writePreexistingDistDirectory,
   none: () => undefined,
 } satisfies Record<
   NonNullable<RestoreFixtureOptions["preexistingDist"]> | "none",
+  (workspace: string) => void
+>;
+
+const PREEXISTING_SHARED_RUNTIME_WRITERS = {
+  "dangling-symlink": writeDanglingSharedRuntimeSymlink,
+  directory: writePreexistingSharedRuntimeDirectory,
+  none: () => undefined,
+} satisfies Record<
+  NonNullable<RestoreFixtureOptions["preexistingSharedRuntime"]> | "none",
   (workspace: string) => void
 >;
 
@@ -171,6 +215,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
   const payloadRoot = path.join(root, "payload-root");
   const toolDirectory = path.join(root, "tools");
   fs.mkdirSync(path.join(workspace, "bin"), { recursive: true });
+  fs.mkdirSync(path.join(workspace, "nemoclaw"), { recursive: true });
   fs.mkdirSync(artifactDirectory, { recursive: true });
   fs.mkdirSync(payloadRoot, { recursive: true });
   fs.mkdirSync(toolDirectory, { recursive: true });
@@ -248,6 +293,7 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
     { mode: 0o755 },
   );
   PREEXISTING_DIST_WRITERS[options.preexistingDist ?? "none"](workspace);
+  PREEXISTING_SHARED_RUNTIME_WRITERS[options.preexistingSharedRuntime ?? "none"](workspace);
 
   const action = readYaml<CompositeAction>(".github/actions/restore-e2e-cli-artifact/action.yaml");
   const result = spawnSync("bash", ["-c", action.runs.steps[2]!.run!], {
@@ -389,6 +435,11 @@ describe("exact-commit CLI artifact workflow boundary", () => {
         ),
       ).toEqual({ nemoclawVersion: "0.0.0", sourceRevision: fixture.candidateSha });
       expect(
+        fs.existsSync(
+          path.join(fixture.workspace, "nemoclaw", "dist", "shared", "sandbox-name.cjs"),
+        ),
+      ).toBe(true);
+      expect(
         fs
           .readdirSync(fixture.runnerTemp)
           .filter((entry) => entry.startsWith("nemoclaw-cli-restore.")),
@@ -416,6 +467,13 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     expectRestoreFailure(
       { archive: "non-dist" },
       "CLI artifact contains an unsafe member: outside.txt",
+    );
+  });
+
+  it("rejects a payload that omits the generated shared CLI runtime", () => {
+    expectRestoreFailure(
+      { archive: "missing-shared-runtime" },
+      "restored CLI artifact is missing the generated shared runtime",
     );
   });
 
@@ -447,6 +505,30 @@ describe("exact-commit CLI artifact workflow boundary", () => {
       expect(fixture.output).toContain("consumer unexpectedly built dist before artifact restore");
       expect(fs.lstatSync(path.join(fixture.workspace, "dist")).isSymbolicLink()).toBe(true);
       expect(fs.readlinkSync(path.join(fixture.workspace, "dist"))).toBe("missing-dist");
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it.each([
+    "directory",
+    "dangling-symlink",
+  ] as const)("does not overwrite a preexisting generated shared runtime %s", (preexistingSharedRuntime) => {
+    const fixture = runRestoreValidation({ preexistingSharedRuntime });
+    try {
+      expect(fixture.result.status, fixture.output).not.toBe(0);
+      expect(fixture.output).toContain(
+        "consumer unexpectedly built nemoclaw/dist before artifact restore",
+      );
+      const sharedRuntime = path.join(fixture.workspace, "nemoclaw", "dist");
+      if (preexistingSharedRuntime === "directory") {
+        expect(fs.readFileSync(path.join(sharedRuntime, "existing.txt"), "utf8")).toBe(
+          "preserve\n",
+        );
+      } else {
+        expect(fs.lstatSync(sharedRuntime).isSymbolicLink()).toBe(true);
+        expect(fs.readlinkSync(sharedRuntime)).toBe("missing-dist");
+      }
     } finally {
       fixture.cleanup();
     }

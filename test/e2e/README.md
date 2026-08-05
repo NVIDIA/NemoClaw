@@ -26,7 +26,8 @@ before those targets run; local runners must provide it themselves.
 ### Candidate CLI Artifact
 
 The candidate CLI comes from the source commit that an E2E run tests.
-The `generate-matrix` job builds it once and publishes `dist/` as a content-addressed artifact.
+The `generate-matrix` job builds it once and publishes `dist/` and
+`nemoclaw/dist/shared/` as one content-addressed artifact.
 The workflow has 62 artifact-using job definitions.
 Each selected job execution restores the artifact instead of running `npm run build:cli`.
 Each selected job still runs the pinned preparation action to install Node.js and project dependencies.
@@ -58,17 +59,18 @@ Before download, the action rejects extra or missing provenance fields.
 It also compares the candidate checkout, repository, workflow SHA, run ID, and attempt with the provenance object.
 The action downloads the artifact by immutable ID and sets digest mismatch handling to `error`.
 
-Before the action restores `dist/` into the workspace, it verifies these conditions:
+Before the action restores either compiled directory into the workspace, it verifies these conditions:
 
 - The upload digest is present and well formed.
 - The candidate SHA matches the expected commit.
 - The manifest matches the source, workflow run, toolchain contract, and payload.
-- The archive contains no path traversal, links, special files, or files outside `dist/`.
-- The candidate checkout has no preexisting `dist/` path.
+- The archive contains no path traversal, links, special files, or files outside `dist/` and `nemoclaw/dist/shared/`.
+- The candidate checkout has no preexisting `dist/` or `nemoclaw/dist/` path.
 - The staged `dist/build-identity.json` names the candidate commit SHA.
+- The staged shared runtime contains each generated module that the CLI imports.
 
-If a pre-restore check fails, the action stops before it moves `dist/` into the workspace.
-After the checks pass, the action moves `dist/` and runs `bin/nemoclaw.js --version`.
+If a pre-restore check fails, the action stops before it moves either directory into the workspace.
+After the checks pass, the action moves both directories and runs `bin/nemoclaw.js --version`.
 If the version command fails, the action stops before the live test runs.
 This boundary keeps candidate source separate from the trusted workflow implementation.
 
