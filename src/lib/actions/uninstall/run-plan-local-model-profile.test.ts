@@ -48,9 +48,9 @@ describe("uninstall local model profile cleanup", () => {
   it("fails before generic Docker cleanup when a reserved inference name remains", () => {
     const errors: string[] = [];
     const psResults = new Map([
-      ["{{.Names}}", ok("nemoclaw-llama-cpp\n")],
+      [JSON.stringify(["ps", "-a", "--format", "{{.Names}}"]), ok("nemoclaw-llama-cpp\n")],
       [
-        "{{.ID}} {{.Image}} {{.Names}}",
+        JSON.stringify(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"]),
         ok(
           [
             "id-head image nemoclaw-vllm",
@@ -63,7 +63,9 @@ describe("uninstall local model profile cleanup", () => {
       ],
     ]);
     const runDocker = vi.fn((args: string[]) => {
-      return psResults.get(args[0] === "ps" ? (args.at(-1) ?? "") : "") ?? ok();
+      const result = psResults.get(JSON.stringify(args));
+      expect(result, `Unexpected Docker arguments: ${args.join(" ")}`).toBeDefined();
+      return result!;
     });
 
     const result = runUninstallPlan(
