@@ -29,6 +29,18 @@ function read(relativePath: string): string {
   return fs.readFileSync(path.join(ROOT, relativePath), "utf8");
 }
 
+const trustedReadFileSync = fs.readFileSync.bind(fs);
+
+function mockTrustedConsiderationsRead(
+  loadConsiderations: () => ReturnType<typeof fs.readFileSync>,
+): void {
+  vi.spyOn(fs, "readFileSync").mockImplementation((file, options) =>
+    String(file).endsWith(`${path.sep}code-change-considerations.md`)
+      ? loadConsiderations()
+      : trustedReadFileSync(file, options as never),
+  );
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -98,39 +110,39 @@ describe("shared code change considerations", () => {
   });
 
   it("rejects a missing or malformed trusted resource", () => {
-    const readFileSync = fs.readFileSync.bind(fs);
-    vi.spyOn(fs, "readFileSync").mockImplementation((file, options) => {
-      if (String(file).endsWith(`${path.sep}code-change-considerations.md`)) {
-        throw new Error("missing considerations fixture");
-      }
-      return readFileSync(file, options as never);
+    mockTrustedConsiderationsRead(() => {
+      throw new Error("missing considerations fixture");
     });
     expect(() => readTrustedCodeChangeConsiderations()).toThrow(
       "Code change considerations unavailable",
     );
     vi.restoreAllMocks();
 
-    vi.spyOn(fs, "readFileSync").mockImplementation((file, options) => {
-      if (String(file).endsWith(`${path.sep}code-change-considerations.md`)) {
-        return "# Code Change Considerations\n\nThis lost its contract structure.";
-      }
-      return readFileSync(file, options as never);
-    });
+    mockTrustedConsiderationsRead(
+      () => "# Code Change Considerations\n\nThis lost its contract structure.",
+    );
+    expect(() => readTrustedCodeChangeConsiderations()).toThrow(
+      "Code change considerations malformed",
+    );
+  });
+
+  it("rejects questions placed outside the Questions section", () => {
+    mockTrustedConsiderationsRead(
+      () =>
+        "# Code Change Considerations\n\n## Authority\n\n- Misplaced question.\n\n## Questions\n",
+    );
+
     expect(() => readTrustedCodeChangeConsiderations()).toThrow(
       "Code change considerations malformed",
     );
   });
 
   it("writes visible failure artifacts for malformed Advisor input", () => {
-    const readFileSync = fs.readFileSync.bind(fs);
     const outDir = fs.mkdtempSync(path.join(tmpdir(), "advisor-considerations-failure-"));
     const reviewMetadata = metadata();
-    vi.spyOn(fs, "readFileSync").mockImplementation((file, options) => {
-      if (String(file).endsWith(`${path.sep}code-change-considerations.md`)) {
-        return "# Code Change Considerations\n\nThis lost its contract structure.";
-      }
-      return readFileSync(file, options as never);
-    });
+    mockTrustedConsiderationsRead(
+      () => "# Code Change Considerations\n\nThis lost its contract structure.",
+    );
 
     try {
       expect(() =>

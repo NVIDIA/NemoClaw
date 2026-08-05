@@ -1823,13 +1823,16 @@ export function readTrustedCodeChangeConsiderations(): string {
     "## Authority",
     "## Questions",
   ];
-  const headings = considerations
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("#"));
+  const lines = considerations.split("\n");
+  const headings = lines.map((line) => line.trim()).filter((line) => line.startsWith("#"));
+  const questionsStart = lines.findIndex((line) => line.trim() === "## Questions");
+  const questionsEnd = lines.findIndex(
+    (line, index) => index > questionsStart && line.trim().startsWith("## "),
+  );
+  const questions = lines.slice(questionsStart + 1, questionsEnd < 0 ? undefined : questionsEnd);
   if (
     !requiredHeadings.every((heading) => headings.includes(heading)) ||
-    !considerations.split("\n").some((line) => line.trimStart().startsWith("- "))
+    !questions.some((line) => line.trimStart().startsWith("- "))
   ) {
     throw new Error(
       `Code change considerations malformed at ${TRUSTED_CODE_CHANGE_CONSIDERATIONS_PATH}: required headings or questions are missing`,
