@@ -29,10 +29,11 @@ qualificationTest(
     progress.phase("start OpenClaw and verify in-sandbox readiness plus filesystem enforcement");
     const receipt = await runWindowsMxcOpenClawProcessContainerQualification(inputs, progress);
 
-    progress.phase("delete the sandbox and verify registry plus OpenClaw process cleanup");
     expect(receipt.verdict).toBe("pass");
+    expect(receipt.configuration).toEqual({ pcLeastPrivilege: true });
     expect(receipt.cleanup).toEqual({
       boundedStopMarkerNeeded: false,
+      emergencyGatewayTerminationNeeded: false,
       emergencyProcessTerminationNeeded: false,
       gatewayProcessStopped: true,
       openClawProcessStopped: true,

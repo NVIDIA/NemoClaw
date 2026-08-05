@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const MAX_ARTIFACT_FILES = 100_000;
 
-function sha256File(file: string): string {
+export function sha256File(file: string): string {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 

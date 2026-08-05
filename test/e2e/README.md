@@ -102,6 +102,8 @@ qualification target for epic #8178. It exercises an operator-supplied native
 Windows OpenShell package and a staged OpenClaw artifact through the OpenShell
 `process_container` driver. It does not register MXC, call `wxc-exec.exe`
 directly, or establish Windows support.
+The generated driver configuration requests the stricter less-privileged
+AppContainer mode and records that choice in the receipt.
 
 The target requires a Windows x64 host that passes the minimum MXC candidate
 check. It rejects a dirty NemoClaw checkout and requires exact expected
@@ -146,12 +148,14 @@ the OpenClaw command arguments, is not reused, and is useful only for the
 temporary loopback OpenClaw gateway. Cleanup attempts sandbox deletion, stops
 the recorded OpenClaw process, clears the in-memory environment value, and
 removes the runtime home, state, configuration, and gateway logs. A direct
-process-tree termination is an emergency cleanup fallback only. Before using
-it, the host binds the sandbox-reported PID to the expected Node.js path,
-OpenClaw command line, creation time, and probe-parent ancestry, and rejects a
-mismatched or reused PID. The fallback uses the `taskkill.exe` beneath the
-validated Windows system root. If sandbox deletion needs that fallback, the
-qualification fails.
+process-tree termination is an emergency cleanup fallback only. The host-side
+OpenShell processes receive an allowlist of Windows runtime variables rather
+than the complete caller environment. Before using a termination fallback,
+the host binds the process ID to the expected executable, command arguments,
+and creation time. For OpenClaw, it also validates the probe-parent ancestry.
+The host rejects a mismatched or reused PID. The fallback uses the
+`taskkill.exe` beneath the validated Windows system root. If sandbox deletion
+needs that fallback, the qualification fails.
 
 Run only the explicit target:
 

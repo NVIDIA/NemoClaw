@@ -2,18 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type ChildProcess, spawnSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
 import { assessWindowsMxcProcessContainerCandidate } from "../../../src/lib/onboard/windows-mxc/host-qualification.ts";
-import { sha256WindowsOpenClawArtifactTree } from "../../../tools/e2e/windows-mxc-openclaw-artifact-tree.mts";
+import {
+  sha256File,
+  sha256WindowsOpenClawArtifactTree,
+} from "../../../tools/e2e/windows-mxc-openclaw-artifact-tree.mts";
 import {
   type ChildProcessProgress,
   spawnObservedChild,
 } from "../fixtures/observed-child-process.ts";
+
+type QualificationProgress = ChildProcessProgress & {
+  phase(label: string): void;
+};
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const REVISION_PATTERN = /^[0-9a-f]{40}$/u;
@@ -22,6 +29,20 @@ const MAX_COMMAND_OUTPUT_BYTES = 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
 const READY_TIMEOUT_MS = 180_000;
 const TERMINATION_TIMEOUT_MS = 15_000;
+const WINDOWS_PROCESS_ENVIRONMENT_NAMES = [
+  "ComSpec",
+  "NUMBER_OF_PROCESSORS",
+  "OS",
+  "Path",
+  "PATHEXT",
+  "PROCESSOR_ARCHITECTURE",
+  "PROCESSOR_ARCHITEW6432",
+  "SystemDrive",
+  "SystemRoot",
+  "TEMP",
+  "TMP",
+  "windir",
+] as const;
 
 const AGENT_ENVIRONMENT_NAMES = [
   "NEMOCLAW_MXC_E2E_DENY_PATH",
@@ -31,6 +52,7 @@ const AGENT_ENVIRONMENT_NAMES = [
   "NEMOCLAW_MXC_E2E_NODE",
   "NEMOCLAW_MXC_E2E_OPENCLAW_PORT",
   "NEMOCLAW_MXC_E2E_OPENCLAW_PID_PATH",
+  "NEMOCLAW_MXC_E2E_OUTCOME_PATH",
   "NEMOCLAW_MXC_E2E_READY_PATH",
   "NEMOCLAW_MXC_E2E_RESULT_PATH",
   "NEMOCLAW_MXC_E2E_STOP_PATH",
@@ -63,7 +85,7 @@ export interface WindowsMxcOpenClawQualificationInputs {
   };
 }
 
-type CommandResult = {
+export type CommandResult = {
   readonly exitCode: number;
   readonly stderr: string;
   readonly stdout: string;
@@ -99,6 +121,9 @@ export interface WindowsMxcOpenClawQualificationReceipt {
   readonly schemaVersion: 1;
   readonly classification: "inactive-candidate";
   readonly backend: "process_container";
+  readonly configuration: {
+    readonly pcLeastPrivilege: true;
+  };
   readonly identities: {
     readonly host: {
       readonly architecture: "x64";
@@ -124,6 +149,7 @@ export interface WindowsMxcOpenClawQualificationReceipt {
   readonly cleanup: {
     readonly boundedStopMarkerNeeded: boolean;
     readonly emergencyProcessTerminationNeeded: boolean;
+    readonly emergencyGatewayTerminationNeeded: boolean;
     readonly gatewayProcessStopped: boolean;
     readonly openClawProcessStopped: boolean;
     readonly runDirectoryRemoved: boolean;
@@ -266,9 +292,7 @@ export function parseWindowsMxcOpenClawQualificationEnvironment(
   };
 }
 
-export function sha256File(file: string): string {
-  return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-}
+export { sha256File };
 
 export function sandboxListContainsExactName(output: string, sandboxName: string): boolean {
   const parsed: unknown = JSON.parse(output);
@@ -325,6 +349,18 @@ function commandLineHasExactArgument(commandLine: string, expected: string): boo
   );
 }
 
+function commandLineHasExactArgumentPair(
+  commandLine: string,
+  first: string,
+  second: string,
+): boolean {
+  const normalized = normalizeWindowsIdentityValue(commandLine);
+  const pair = [first, second]
+    .map((value) => normalizeWindowsIdentityValue(value).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
+    .join('[\\s"]+');
+  return new RegExp(`(?:^|[\\s\"])${pair}(?=$|[\\s\"])`, "u").test(normalized);
+}
+
 export function sameWindowsProcessIdentity(
   expected: WindowsProcessIdentity,
   observed: WindowsProcessIdentity,
@@ -355,13 +391,38 @@ export function assertExpectedOpenClawProcessIdentity(
     identity.child.parentProcessId !== identity.parent.processId ||
     !commandLineHasExactArgument(identity.child.commandLine, expected.entryPath) ||
     !commandLineHasExactArgument(identity.child.commandLine, "gateway") ||
-    !commandLineHasExactArgument(identity.child.commandLine, String(expected.port)) ||
+    !commandLineHasExactArgumentPair(identity.child.commandLine, "--port", String(expected.port)) ||
     !commandLineHasExactArgument(identity.parent.commandLine, expected.probeAgentPath)
   ) {
     throw new Error(
       "sandbox-reported PID does not match the host-observed OpenClaw process identity",
     );
   }
+}
+
+export function assertExpectedOpenShellGatewayProcessIdentity(
+  identity: WindowsProcessIdentity,
+  expected: { readonly gatewayPath: string; readonly port: number },
+): void {
+  if (
+    normalizeWindowsIdentityValue(identity.executablePath) !==
+      normalizeWindowsIdentityValue(expected.gatewayPath) ||
+    !commandLineHasExactArgumentPair(identity.commandLine, "--port", String(expected.port)) ||
+    !commandLineHasExactArgument(identity.commandLine, "--disable-tls")
+  ) {
+    throw new Error("spawned PID does not match the expected OpenShell gateway process identity");
+  }
+}
+
+export function allowlistedWindowsProcessEnvironment(
+  environment: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  const allowed: NodeJS.ProcessEnv = {};
+  const allowedNames = new Set(WINDOWS_PROCESS_ENVIRONMENT_NAMES.map((name) => name.toLowerCase()));
+  for (const [name, value] of Object.entries(environment)) {
+    if (value !== undefined && allowedNames.has(name.toLowerCase())) allowed[name] = value;
+  }
+  return allowed;
 }
 
 function tomlString(value: string): string {
@@ -387,7 +448,7 @@ export function renderWindowsMxcGatewayConfig(input: {
     "agent_env = [",
     ...AGENT_ENVIRONMENT_NAMES.map((name) => `  ${JSON.stringify(name)},`),
     "]",
-    "pc_least_privilege = false",
+    "pc_least_privilege = true",
     "pc_capabilities = []",
     "egress_proxy = false",
     'egress_proxy_addr = ""',
@@ -430,6 +491,7 @@ const home = required("NEMOCLAW_MXC_E2E_HOME");
 const token = required("NEMOCLAW_MXC_E2E_TOKEN");
 const readyPath = required("NEMOCLAW_MXC_E2E_READY_PATH");
 const resultPath = required("NEMOCLAW_MXC_E2E_RESULT_PATH");
+const outcomePath = required("NEMOCLAW_MXC_E2E_OUTCOME_PATH");
 const heartbeatPath = required("NEMOCLAW_MXC_E2E_HEARTBEAT_PATH");
 const stopPath = required("NEMOCLAW_MXC_E2E_STOP_PATH");
 const denyPath = required("NEMOCLAW_MXC_E2E_DENY_PATH");
@@ -486,12 +548,16 @@ const gateway = spawn(
   ],
   { env, stdio: "ignore", windowsHide: true },
 );
-writeFileSync(openClawPidPath, String(gateway.pid), "utf8");
+let gatewaySpawnError = null;
+gateway.once("error", (error) => {
+  gatewaySpawnError = error instanceof Error ? error.message : String(error);
+});
+if (gateway.pid !== undefined) writeFileSync(openClawPidPath, String(gateway.pid), "utf8");
 
 let healthObserved = false;
 let lastHealth = { exitCode: null, stdout: "", stderr: "" };
 const deadline = Date.now() + 120000;
-while (Date.now() < deadline && gateway.exitCode === null) {
+while (Date.now() < deadline && gateway.exitCode === null && gatewaySpawnError === null) {
   lastHealth = await run([
     entry,
     "gateway",
@@ -513,11 +579,13 @@ const result = {
   controlWrite: true,
   deniedWrite,
   gatewayExitedBeforeReadiness: gateway.exitCode !== null,
+  gatewaySpawnError,
   healthObserved,
   openClawVersion: version.stdout.trim(),
   versionExitCode: version.exitCode,
 };
 writeFileSync(resultPath, JSON.stringify(result), "utf8");
+writeFileSync(outcomePath, JSON.stringify(result), "utf8");
 if (healthObserved) writeFileSync(readyPath, JSON.stringify(result), "utf8");
 
 while (healthObserved && gateway.exitCode === null && !existsSync(stopPath)) {
@@ -563,11 +631,12 @@ async function runCommand(
     let outputBytes = 0;
     const timer = setTimeout(() => {
       child.kill();
-      reject(new Error(`${path.basename(file)} timed out`));
+      reject(new Error(`${path.basename(file)} timed out after ${timeoutMs}ms`));
     }, timeoutMs);
     const append = (target: "stdout" | "stderr", chunk: Buffer) => {
       outputBytes += chunk.byteLength;
       if (outputBytes > MAX_COMMAND_OUTPUT_BYTES) {
+        clearTimeout(timer);
         child.kill();
         reject(new Error(`${path.basename(file)} output exceeded its bound`));
         return;
@@ -586,6 +655,16 @@ async function runCommand(
       resolve({ exitCode: code ?? 1, stdout, stderr });
     });
   });
+}
+
+export function parseWindowsProcessQueryResult(
+  result: CommandResult,
+): WindowsProcessIdentity | null {
+  if (result.exitCode === 3) return null;
+  if (result.exitCode !== 0) {
+    throw new Error(`host process identity query failed: ${commandDetail(result)}`);
+  }
+  return parseWindowsProcessIdentity(result.stdout);
 }
 
 async function observeWindowsProcessIdentity(
@@ -608,11 +687,15 @@ async function observeWindowsProcessIdentity(
     progress,
     activityLabel,
   );
-  if (result.exitCode === 3 || !result.stdout.trim()) return null;
-  if (result.exitCode !== 0) {
-    throw new Error(`host process identity query failed: ${commandDetail(result)}`);
+  return parseWindowsProcessQueryResult(result);
+}
+
+function writeStopMarkerOnce(file: string): void {
+  try {
+    fs.writeFileSync(file, "stop\n", { encoding: "utf8", flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
-  return parseWindowsProcessIdentity(result.stdout);
 }
 
 async function observeTrustedOpenClawProcessIdentity(input: {
@@ -698,7 +781,7 @@ async function waitForPort(port: number, child: ChildProcess): Promise<void> {
     if (connected) return;
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  throw new Error("OpenShell gateway did not listen within 30 seconds");
+  throw new Error(`OpenShell gateway did not listen within ${COMMAND_TIMEOUT_MS}ms`);
 }
 
 async function freeLoopbackPort(): Promise<number> {
@@ -836,7 +919,7 @@ function receiptPasses(checks: QualificationChecks): boolean {
 
 export async function runWindowsMxcOpenClawProcessContainerQualification(
   inputs: WindowsMxcOpenClawQualificationInputs,
-  progress: ChildProcessProgress,
+  progress: QualificationProgress,
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<WindowsMxcOpenClawQualificationReceipt> {
   if (process.platform !== "win32" || nativeArchitecture(environment) !== "x64") {
@@ -890,6 +973,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
   const probeAgentPath = path.join(shareDirectory, "probe-agent.mjs");
   const readyPath = path.join(shareDirectory, "ready.json");
   const resultPath = path.join(shareDirectory, "result.json");
+  const outcomePath = path.join(shareDirectory, "outcome.json");
   const heartbeatPath = path.join(shareDirectory, "heartbeat.txt");
   const openClawPidPath = path.join(shareDirectory, "openclaw.pid");
   const stopPath = path.join(shareDirectory, "stop.txt");
@@ -897,9 +981,9 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
   const gatewayLogPath = path.join(runRoot, "openshell-gateway.log");
   const gatewayErrorPath = path.join(runRoot, "openshell-gateway.err.log");
   const gatewayPort = await freeLoopbackPort();
-  const openClawPort = 20_000 + (Number.parseInt(runId.slice(0, 4), 16) % 20_000);
+  const openClawPort = await freeLoopbackPort();
   const sandboxName = `mxc-oc-${runId}`;
-  const gatewayName = `mxc-oc-${runId}`;
+  const gatewayName = `mxc-gw-${runId}`;
   const token = randomBytes(32).toString("base64url");
 
   fs.writeFileSync(
@@ -925,7 +1009,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
   });
 
   const gatewayEnvironment: NodeJS.ProcessEnv = {
-    ...environment,
+    ...allowlistedWindowsProcessEnvironment(environment),
     NEMOCLAW_MXC_E2E_DENY_PATH: denyPath,
     NEMOCLAW_MXC_E2E_ENTRY: inputs.openClaw.entryPath,
     NEMOCLAW_MXC_E2E_HEARTBEAT_PATH: heartbeatPath,
@@ -933,6 +1017,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     NEMOCLAW_MXC_E2E_NODE: inputs.openClaw.nodePath,
     NEMOCLAW_MXC_E2E_OPENCLAW_PORT: String(openClawPort),
     NEMOCLAW_MXC_E2E_OPENCLAW_PID_PATH: openClawPidPath,
+    NEMOCLAW_MXC_E2E_OUTCOME_PATH: outcomePath,
     NEMOCLAW_MXC_E2E_READY_PATH: readyPath,
     NEMOCLAW_MXC_E2E_RESULT_PATH: resultPath,
     NEMOCLAW_MXC_E2E_STOP_PATH: stopPath,
@@ -954,6 +1039,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
   let gatewayStopped = false;
   let boundedStopMarkerNeeded = false;
   let emergencyProcessTerminationNeeded = false;
+  let emergencyGatewayTerminationNeeded = false;
   let openClawProcessStopped = false;
   let runDirectoryRemoved = false;
   let sandboxCreateStarted = false;
@@ -961,6 +1047,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
   let sensitiveRuntimeArtifactsRemoved = false;
   let openClawProcessId: number | null = null;
   let trustedOpenClawProcess: TrustedOpenClawProcessIdentity | null = null;
+  let trustedGatewayProcess: WindowsProcessIdentity | null = null;
   let primaryFailure: unknown = null;
   const cleanupFailures: unknown[] = [];
   let checks: QualificationChecks = {
@@ -1000,6 +1087,21 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       },
     );
     await waitForPort(gatewayPort, gateway);
+    if (gateway.pid === undefined) throw new Error("OpenShell gateway did not report a process ID");
+    trustedGatewayProcess = await observeWindowsProcessIdentity(
+      gateway.pid,
+      powershellPath,
+      controlEnvironment,
+      progress,
+      "command: windows-mxc-openshell-gateway-process-identity",
+    );
+    if (trustedGatewayProcess === null) {
+      throw new Error("OpenShell gateway process identity is unavailable after readiness");
+    }
+    assertExpectedOpenShellGatewayProcessIdentity(trustedGatewayProcess, {
+      gatewayPath: inputs.openShell.gatewayPath,
+      port: gatewayPort,
+    });
 
     const add = await runCommand(
       inputs.openShell.cliPath,
@@ -1040,7 +1142,8 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       READY_TIMEOUT_MS,
     );
 
-    const ready = await waitForFile(readyPath, READY_TIMEOUT_MS);
+    await waitForFile(outcomePath, READY_TIMEOUT_MS);
+    const ready = fs.existsSync(readyPath);
     const probeResult = fs.existsSync(resultPath)
       ? (JSON.parse(fs.readFileSync(resultPath, "utf8")) as Record<string, unknown>)
       : {};
@@ -1085,15 +1188,10 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     };
     checks = {
       ...checks,
-      sandboxCreateAccepted:
-        create.exitCode === 0 ||
-        (checks.openClawHealth &&
-          checks.registryPresentWhileReady &&
-          !/connection refused|failed to connect|not registered|transport error/iu.test(
-            commandDetail(create),
-          )),
+      sandboxCreateAccepted: create.exitCode === 0,
     };
 
+    progress.phase("delete the sandbox and verify registry plus OpenClaw process cleanup");
     const remove = await runCommand(
       inputs.openShell.cliPath,
       ["sandbox", "delete", sandboxName],
@@ -1116,7 +1214,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
 
     if (!checks.workloadTerminatedByDelete) {
       boundedStopMarkerNeeded = true;
-      fs.writeFileSync(stopPath, "stop\n", "utf8");
+      writeStopMarkerOnce(stopPath);
       await heartbeatStopped(heartbeatPath);
     }
 
@@ -1201,7 +1299,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
       }
     }
     try {
-      if (!fs.existsSync(stopPath)) fs.writeFileSync(stopPath, "stop\n", "utf8");
+      writeStopMarkerOnce(stopPath);
       await heartbeatStopped(heartbeatPath);
       if (
         trustedOpenClawProcess !== null &&
@@ -1254,39 +1352,83 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
           new Promise((resolve) => setTimeout(resolve, 5000)),
         ]);
       }
-      gatewayStopped = gateway === null || gateway.exitCode !== null;
+      if (
+        trustedGatewayProcess !== null &&
+        (await trustedProcessIsAlive(
+          trustedGatewayProcess,
+          powershellPath,
+          controlEnvironment,
+          progress,
+        ))
+      ) {
+        emergencyGatewayTerminationNeeded = true;
+        const terminateGateway = await runCommand(
+          taskkillPath,
+          ["/PID", String(trustedGatewayProcess.processId), "/T", "/F"],
+          controlEnvironment,
+          progress,
+          "command: windows-mxc-openshell-gateway-emergency-termination",
+        );
+        if (
+          terminateGateway.exitCode !== 0 &&
+          (await trustedProcessIsAlive(
+            trustedGatewayProcess,
+            powershellPath,
+            controlEnvironment,
+            progress,
+          ))
+        ) {
+          cleanupFailures.push(
+            new Error(
+              `OpenShell gateway emergency termination failed: ${commandDetail(terminateGateway)}`,
+            ),
+          );
+        }
+      }
+      gatewayStopped =
+        trustedGatewayProcess === null
+          ? gateway === null || gateway.exitCode !== null
+          : await waitForTrustedProcessExit(
+              trustedGatewayProcess,
+              powershellPath,
+              controlEnvironment,
+              progress,
+            );
     } catch (error) {
       cleanupFailures.push(error);
     }
     gatewayEnvironment.NEMOCLAW_MXC_E2E_TOKEN = undefined;
-    try {
-      fs.closeSync(gatewayStdout);
-      fs.closeSync(gatewayStderr);
-      for (const sensitivePath of [
-        homeDirectory,
-        configDirectory,
-        stateDirectory,
-        gatewayLogPath,
-        gatewayErrorPath,
-      ]) {
-        fs.rmSync(sensitivePath, { force: true, recursive: true });
+    for (const descriptor of [gatewayStdout, gatewayStderr]) {
+      try {
+        fs.closeSync(descriptor);
+      } catch (error) {
+        cleanupFailures.push(error);
       }
-      sensitiveRuntimeArtifactsRemoved = [
-        homeDirectory,
-        configDirectory,
-        stateDirectory,
-        gatewayLogPath,
-        gatewayErrorPath,
-      ].every((sensitivePath) => !fs.existsSync(sensitivePath));
-    } catch (error) {
-      cleanupFailures.push(error);
     }
+    const sensitivePaths = [
+      homeDirectory,
+      configDirectory,
+      stateDirectory,
+      gatewayLogPath,
+      gatewayErrorPath,
+    ];
+    for (const sensitivePath of sensitivePaths) {
+      try {
+        fs.rmSync(sensitivePath, { force: true, recursive: true });
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+    }
+    sensitiveRuntimeArtifactsRemoved = sensitivePaths.every(
+      (sensitivePath) => !fs.existsSync(sensitivePath),
+    );
   }
 
   const lifecyclePassedBeforeDirectoryRemoval =
     receiptPasses(checks) &&
     !boundedStopMarkerNeeded &&
     !emergencyProcessTerminationNeeded &&
+    !emergencyGatewayTerminationNeeded &&
     !sandboxDeleteRetried &&
     gatewayStopped &&
     openClawProcessStopped &&
@@ -1309,6 +1451,9 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     schemaVersion: 1,
     classification: "inactive-candidate",
     backend: "process_container",
+    configuration: {
+      pcLeastPrivilege: true,
+    },
     identities: {
       host: {
         architecture: "x64",
@@ -1334,6 +1479,7 @@ export async function runWindowsMxcOpenClawProcessContainerQualification(
     cleanup: {
       boundedStopMarkerNeeded,
       emergencyProcessTerminationNeeded,
+      emergencyGatewayTerminationNeeded,
       gatewayProcessStopped: gatewayStopped,
       openClawProcessStopped,
       runDirectoryRemoved,

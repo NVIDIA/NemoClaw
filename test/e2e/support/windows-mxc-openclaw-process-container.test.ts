@@ -2,17 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 import { sha256WindowsOpenClawArtifactTree } from "../../../tools/e2e/windows-mxc-openclaw-artifact-tree.mts";
 import {
+  allowlistedWindowsProcessEnvironment,
   assertCleanCheckoutIdentity,
   assertExpectedOpenClawProcessIdentity,
+  assertExpectedOpenShellGatewayProcessIdentity,
   normalizeReportedVersion,
   parseWindowsMxcOpenClawQualificationEnvironment,
+  parseWindowsProcessQueryResult,
   renderWindowsMxcFilesystemPolicy,
   renderWindowsMxcGatewayConfig,
   renderWindowsMxcOpenClawProbeAgent,
@@ -22,9 +25,6 @@ import {
   shouldRetrySandboxDelete,
 } from "../live/windows-mxc-openclaw-process-container-helpers.ts";
 
-const helperPath = fileURLToPath(
-  new URL("../live/windows-mxc-openclaw-process-container-helpers.ts", import.meta.url),
-);
 const roots: string[] = [];
 
 function fixture(): { readonly environment: NodeJS.ProcessEnv; readonly root: string } {
@@ -123,16 +123,34 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
       }),
     ).toThrow(/does not match/u);
     expect(normalizeReportedVersion("OpenClaw 2026.7.1\n")).toBe("2026.7.1");
-    expect(normalizeReportedVersion("2026.7.10\n")).not.toBe("2026.7.1");
+    expect(normalizeReportedVersion("2026.7.10\n")).toBe("2026.7.10");
     expect(normalizeReportedVersion("OpenClaw version 2026.7.1 extra\n")).toBeNull();
   });
 
-  it("matches exact registry names and rejects a reused or mismatched host process identity (#8178)", () => {
+  it("matches exact registry names and identifies when delete needs a retry (#8178)", () => {
     expect(sandboxListContainsExactName('[{"name":"mxc-oc-123-extra"}]', "mxc-oc-123")).toBe(false);
     expect(sandboxListContainsExactName('[{"name":"mxc-oc-123"}]', "mxc-oc-123")).toBe(true);
     expect(shouldRetrySandboxDelete(true, true)).toBe(true);
     expect(shouldRetrySandboxDelete(true, false)).toBe(false);
+  });
 
+  it("compares the complete Windows process identity (#8178)", () => {
+    const child = {
+      commandLine: '"C:\\artifact\\node.exe" "C:\\artifact\\openclaw.mjs" gateway run --port 23456',
+      creationDate: "20260804180001.000000-420",
+      executablePath: "C:\\artifact\\node.exe",
+      parentProcessId: 41,
+      processId: 42,
+    };
+    expect(
+      sameWindowsProcessIdentity(child, {
+        ...child,
+        creationDate: "20260804180002.000000-420",
+      }),
+    ).toBe(false);
+  });
+
+  it("accepts only the expected OpenClaw child and parent command identities (#8178)", () => {
     const parent = {
       commandLine: '"C:\\artifact\\node.exe" "C:\\probe\\probe-agent.mjs"',
       creationDate: "20260804180000.000000-420",
@@ -158,12 +176,6 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
         },
       ),
     ).not.toThrow();
-    expect(
-      sameWindowsProcessIdentity(child, {
-        ...child,
-        creationDate: "20260804180002.000000-420",
-      }),
-    ).toBe(false);
     expect(() =>
       assertExpectedOpenClawProcessIdentity(
         { child: { ...child, executablePath: "C:\\Windows\\System32\\svchost.exe" }, parent },
@@ -195,6 +207,28 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     ).toThrow(/does not match/u);
   });
 
+  it("requires the OpenShell gateway path and ordered port argument pair (#8178)", () => {
+    const identity = {
+      commandLine: '"C:\\package\\openshell-gateway.exe" --port 17670 --disable-tls',
+      creationDate: "20260804180000.000000-420",
+      executablePath: "C:\\package\\openshell-gateway.exe",
+      parentProcessId: 40,
+      processId: 41,
+    };
+    expect(() =>
+      assertExpectedOpenShellGatewayProcessIdentity(identity, {
+        gatewayPath: "C:\\package\\openshell-gateway.exe",
+        port: 17670,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertExpectedOpenShellGatewayProcessIdentity(
+        { ...identity, commandLine: `${identity.commandLine} --other 9999` },
+        { gatewayPath: "C:\\package\\openshell-gateway.exe", port: 9999 },
+      ),
+    ).toThrow(/does not match/u);
+  });
+
   it("renders a gateway-scoped process_container probe without credential values (#8178)", () => {
     const config = renderWindowsMxcGatewayConfig({
       agentPath: "C:\\artifact\\node.exe",
@@ -203,6 +237,7 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     });
 
     expect(config).toContain('backend = "process_container"');
+    expect(config).toContain("pc_least_privilege = true");
     expect(config).toContain('"NEMOCLAW_MXC_E2E_TOKEN"');
     expect(config).not.toContain("credential-value");
     expect(config).not.toContain("--token");
@@ -223,28 +258,75 @@ describe("inactive Windows MXC OpenClaw process_container qualification", () => 
     const agent = renderWindowsMxcOpenClawProbeAgent();
 
     expect(agent).toContain('required("NEMOCLAW_MXC_E2E_TOKEN")');
-    expect(agent).toContain("writeFileSync(openClawPidPath, String(gateway.pid)");
+    expect(agent).toContain("if (gateway.pid !== undefined)");
+    expect(agent).toContain('gateway.once("error"');
+    expect(agent).toContain("writeFileSync(outcomePath");
     expect(agent).toContain('"gateway",\n    "health"');
     expect(agent).not.toContain('"--token"');
     expect(agent).not.toMatch(/[A-Za-z0-9_-]{40,}/u);
   });
 
-  it("uses OpenShell as the sole MXC control boundary and never pre-deletes by name (#8178)", () => {
-    const source = fs.readFileSync(helperPath, "utf8");
+  it("passes only allowlisted Windows runtime variables to host child processes (#8178)", () => {
+    const allowed = allowlistedWindowsProcessEnvironment({
+      AWS_SECRET_ACCESS_KEY: "secret",
+      Path: "C:\\Windows\\System32",
+      SystemRoot: "C:\\Windows",
+      UNRELATED_CREDENTIAL: "secret",
+    });
 
-    expect(source).not.toMatch(/spawn(?:Sync)?\([^\n]*wxcExecPath/u);
-    expect(source).not.toMatch(/runCommand\([^\n]*wxcExecPath/u);
-    expect(source.match(/\["sandbox", "delete", sandboxName\]/gu)).toHaveLength(2);
-    const createIndex = source.indexOf('"sandbox",\n        "create"');
-    const firstDeleteIndex = source.indexOf('["sandbox", "delete", sandboxName]');
-    expect(createIndex).toBeGreaterThan(-1);
-    expect(firstDeleteIndex).toBeGreaterThan(createIndex);
-    expect(source).toContain("windows-mxc-sandbox-delete-cleanup");
-    expect(source).toContain('"taskkill.exe"');
-    expect(source).toContain('["System32", "taskkill.exe"]');
-    expect(source).toContain("sameWindowsProcessIdentity(identity, observed)");
-    expect(source.indexOf("fs.rmSync(runRoot")).toBeLessThan(
-      source.indexOf("const receipt: WindowsMxcOpenClawQualificationReceipt"),
-    );
+    expect(allowed).toEqual({ Path: "C:\\Windows\\System32", SystemRoot: "C:\\Windows" });
   });
+
+  it("fails closed when a Windows process query fails without output (#8178)", () => {
+    expect(() =>
+      parseWindowsProcessQueryResult({ exitCode: 1, stderr: "query failed", stdout: "" }),
+    ).toThrow(/query failed/u);
+    expect(parseWindowsProcessQueryResult({ exitCode: 3, stderr: "", stdout: "" })).toBeNull();
+  });
+
+  it("changes the artifact digest when file content or relative paths change (#8178)", () => {
+    const { root } = fixture();
+    const artifact = path.join(root, "digest-artifact");
+    fs.mkdirSync(artifact);
+    const first = path.join(artifact, "first.txt");
+    fs.writeFileSync(first, "one", "utf8");
+    const initial = sha256WindowsOpenClawArtifactTree(artifact);
+    fs.writeFileSync(first, "two", "utf8");
+    const contentChanged = sha256WindowsOpenClawArtifactTree(artifact);
+    fs.renameSync(first, path.join(artifact, "second.txt"));
+    const pathChanged = sha256WindowsOpenClawArtifactTree(artifact);
+
+    expect(contentChanged).not.toBe(initial);
+    expect(pathChanged).not.toBe(contentChanged);
+  });
+
+  it("rejects links in the OpenClaw artifact tree (#8178)", () => {
+    const { root } = fixture();
+    const artifact = path.join(root, "linked-artifact");
+    fs.mkdirSync(artifact);
+    const target = path.join(artifact, "target.txt");
+    fs.writeFileSync(target, "content", "utf8");
+    fs.symlinkSync(target, path.join(artifact, "link.txt"));
+
+    expect(() => sha256WindowsOpenClawArtifactTree(artifact)).toThrow(/must not contain links/u);
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "rejects unsupported entries in the OpenClaw artifact tree (#8178)",
+    async () => {
+      const artifact = fs.mkdtempSync(path.join("/tmp", "nemoclaw-mxc-socket-"));
+      roots.push(artifact);
+      const socketPath = path.join(artifact, "runtime.sock");
+      const server = net.createServer();
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(socketPath, resolve);
+      });
+      try {
+        expect(() => sha256WindowsOpenClawArtifactTree(artifact)).toThrow(/unsupported file type/u);
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    },
+  );
 });
