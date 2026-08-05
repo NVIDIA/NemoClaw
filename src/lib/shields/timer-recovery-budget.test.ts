@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ManagedMcpPolicyOmission } from "../actions/sandbox/mcp-bridge-policy";
 import {
   beginCommittedMcpLifecycleContainmentSync,
   getMcpLifecycleLockPath,
@@ -13,29 +14,13 @@ import {
 } from "../state/mcp-lifecycle-lock";
 
 const shieldsIndexMock = vi.hoisted(() => ({
+  applyShieldsPolicySnapshot: vi.fn(
+    (): { status: number; managedMcpOmissions?: ManagedMcpPolicyOmission[] } => ({ status: 0 }),
+  ),
   completeAutoRestoreTransition: vi.fn(() => true),
   lockAgentConfig: vi.fn(),
   prepareAutoRestoreTransitionTakeover: vi.fn(),
   resolvePersistedAutoRestoreTarget: vi.fn(),
-}));
-
-const runMock = vi.fn(() => ({ status: 0 }));
-
-vi.mock("../runner", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../runner")>()),
-  run: runMock,
-}));
-
-vi.mock("../policy", () => ({
-  buildPolicySetCommand: vi.fn((file: string, name: string) => [
-    "openshell",
-    "policy",
-    "set",
-    "--policy",
-    file,
-    "--wait",
-    name,
-  ]),
 }));
 
 vi.mock("./index", () => shieldsIndexMock);
@@ -50,7 +35,7 @@ describe("detached Shields recovery budget", { timeout: 15_000 }, () => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "shields-recovery-budget-"));
     stateDir = path.join(tmpHome, ".nemoclaw", "state");
     vi.stubEnv("HOME", tmpHome);
-    runMock.mockImplementation(() => ({ status: 0 }));
+    shieldsIndexMock.applyShieldsPolicySnapshot.mockImplementation(() => ({ status: 0 }));
     vi.resetModules();
     vi.clearAllMocks();
   });
@@ -119,7 +104,7 @@ describe("detached Shields recovery budget", { timeout: 15_000 }, () => {
     ).toHaveLength(1);
     expect(auditsAtExit.at(-1)?.error).toContain("recovery failed after 7 attempts");
     expect(auditsAtExit.at(-1)?.error).toContain("Correct the state-directory write failure");
-    expect(runMock).not.toHaveBeenCalled();
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).not.toHaveBeenCalled();
     await expect(
       withMcpLifecycleLock(sandboxName, () => undefined, { stateDir }),
     ).rejects.toThrow();
@@ -142,7 +127,7 @@ describe("detached Shields recovery budget", { timeout: 15_000 }, () => {
       .mockImplementationOnce(rejectSetup)
       .mockImplementationOnce(rejectSetup)
       .mockImplementation(originalMkdir);
-    runMock.mockReturnValue({ status: 1 });
+    shieldsIndexMock.applyShieldsPolicySnapshot.mockReturnValue({ status: 1 });
     const exitSpy = vi
       .spyOn(process, "exit")
       .mockImplementation((() => undefined) as typeof process.exit);
@@ -153,7 +138,7 @@ describe("detached Shields recovery budget", { timeout: 15_000 }, () => {
       timeout: 10_000,
     });
 
-    expect(runMock).toHaveBeenCalledTimes(5);
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledTimes(5);
     expect(fs.existsSync(containmentPath)).toBe(true);
     expect(
       readAuditEntries().filter((entry) =>
@@ -185,7 +170,7 @@ describe("detached Shields recovery budget", { timeout: 15_000 }, () => {
     const { args, lockPath, timer } = await createFixture(sandboxName);
     const containmentPath = `${lockPath}.containment`;
     const deadlinePath = `${lockPath}.deadline`;
-    runMock.mockReturnValue({ status: 0 });
+    shieldsIndexMock.applyShieldsPolicySnapshot.mockReturnValue({ status: 0 });
     const exitSpy = vi
       .spyOn(process, "exit")
       .mockImplementation((() => undefined) as typeof process.exit);
@@ -204,7 +189,7 @@ describe("detached Shields recovery budget", { timeout: 15_000 }, () => {
 
       expect(exitSpy).not.toHaveBeenCalled();
       expect(fs.existsSync(containmentPath)).toBe(false);
-      expect(runMock).not.toHaveBeenCalled();
+      expect(shieldsIndexMock.applyShieldsPolicySnapshot).not.toHaveBeenCalled();
       const waitingAudits = readAuditEntries();
       expect(waitingAudits).toEqual([
         expect.objectContaining({
@@ -222,7 +207,7 @@ describe("detached Shields recovery budget", { timeout: 15_000 }, () => {
 
       expect(exitSpy).toHaveBeenCalledOnce();
       expect(exitSpy).toHaveBeenCalledWith(0);
-      expect(runMock).toHaveBeenCalledOnce();
+      expect(shieldsIndexMock.applyShieldsPolicySnapshot).toHaveBeenCalledOnce();
       expect(fs.existsSync(lockPath)).toBe(false);
       expect(fs.existsSync(deadlinePath)).toBe(false);
       expect(fs.existsSync(containmentPath)).toBe(false);
@@ -257,7 +242,7 @@ describe("detached Shields recovery budget", { timeout: 15_000 }, () => {
     expect(exitSpy).toHaveBeenCalledTimes(1);
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(linkSpy).toHaveBeenCalledTimes(4);
-    expect(runMock).not.toHaveBeenCalled();
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).not.toHaveBeenCalled();
     expect(fs.existsSync(deadlinePath)).toBe(false);
     expect(fs.existsSync(containmentPath)).toBe(true);
     expect(readAuditEntries()).toHaveLength(2);
@@ -338,7 +323,7 @@ describe("detached Shields recovery budget", { timeout: 15_000 }, () => {
     expect(exitSpy).toHaveBeenCalledTimes(1);
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(fs.existsSync(`${lockPath}.containment`)).toBe(true);
-    expect(runMock).not.toHaveBeenCalled();
+    expect(shieldsIndexMock.applyShieldsPolicySnapshot).not.toHaveBeenCalled();
     const audits = readAuditEntries();
     expect(audits).toHaveLength(1);
     expect(audits[0]?.error).toContain("committed process-tree containment");
