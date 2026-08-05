@@ -437,7 +437,7 @@ function readSandboxIdentity(): { readonly uid: string; readonly gid: string } {
   return { uid: readId("-u"), gid: readId("-g") };
 }
 
-function sandboxPrefix(): readonly string[] {
+export function managedStartupSandboxPrefix(): readonly string[] {
   if (trustedExecutable("/usr/bin/setpriv")) {
     const identity = readSandboxIdentity();
     return [
@@ -482,7 +482,7 @@ function execute(
   capture = false,
 ): CommandResult {
   if (argv.length === 0) fail("refusing an empty managed startup command");
-  const command = runAs === "sandbox" ? [...sandboxPrefix(), ...argv] : [...argv];
+  const command = runAs === "sandbox" ? [...managedStartupSandboxPrefix(), ...argv] : [...argv];
   const result = spawnSync(command[0] as string, command.slice(1), {
     encoding: "utf8",
     env: commandEnvironment(configurationEnvironment, applicationRuntime),
