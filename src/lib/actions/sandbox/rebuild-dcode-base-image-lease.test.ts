@@ -107,6 +107,56 @@ describe("rebuildSandbox DCode flow: base-image trust lease", () => {
     expect(leaseActive).toBe(false);
   });
 
+  it("restores the published base-image trust lease when replacement preparation throws (#8120)", async () => {
+    const restoreEnv = snapshotEnv([overrideEnvName]);
+    process.env[overrideEnvName] = "caller-selected-base:current";
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+    });
+    configureDcodeSession(harness);
+    const resolutionMetadata = {
+      ref: trustedRemoteRef,
+      source: "source-sha",
+    };
+    harness.ensureAgentBaseImageSpy.mockReturnValue({
+      imageTag: trustedRemoteRef,
+      built: false,
+      resolutionMetadata,
+    });
+    let leaseActive = false;
+    harness.restoreTrustedAgentRemoteBaseImageOverrideSpy.mockImplementation(() => {
+      leaseActive = false;
+    });
+    harness.pinTrustedAgentRemoteBaseImageOverrideForOperationSpy.mockImplementation(() => {
+      leaseActive = true;
+      return harness.restoreTrustedAgentRemoteBaseImageOverrideSpy;
+    });
+    harness.prepareManagedDcodeRebuildImageSpy.mockImplementation(async () => {
+      expect(leaseActive).toBe(true);
+      expect(process.env[overrideEnvName]).toBe(trustedRemoteRef);
+      throw new Error("fixture preparation failed");
+    });
+
+    try {
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("fixture preparation failed");
+
+      expect(harness.pinTrustedAgentRemoteBaseImageOverrideForOperationSpy).toHaveBeenCalledWith(
+        overrideEnvName,
+        { ref: trustedRemoteRef, resolutionMetadata },
+      );
+      expect(harness.pinTrustedAgentBaseImageOverrideForOperationSpy).not.toHaveBeenCalled();
+      expect(harness.restoreTrustedAgentRemoteBaseImageOverrideSpy).toHaveBeenCalledOnce();
+      expect(harness.dockerRmiSpy).not.toHaveBeenCalledWith(trustedRemoteRef, expect.anything());
+      expect(leaseActive).toBe(false);
+      expect(process.env[overrideEnvName]).toBe("caller-selected-base:current");
+    } finally {
+      restoreEnv();
+    }
+  });
+
   it("restores the base-image trust lease when replacement preparation throws (#6195)", async () => {
     const restoreEnv = snapshotEnv([overrideEnvName]);
     process.env[overrideEnvName] = "caller-selected-base:current";
