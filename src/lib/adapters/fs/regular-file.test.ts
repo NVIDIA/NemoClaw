@@ -49,6 +49,28 @@ describe("regular file adapter", () => {
     }
   });
 
+  it("bounds reads through the pinned descriptor", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-regular-file-"));
+    const filePath = path.join(tmp, "jobs.json");
+    fs.writeFileSync(filePath, "trusted\n");
+
+    try {
+      const file = openRegularFileNoFollow(filePath);
+      try {
+        expect(() => file.readUtf8(7)).toThrow(RangeError);
+
+        fs.renameSync(filePath, path.join(tmp, "opened-jobs.json"));
+        fs.writeFileSync(filePath, "replacement\n");
+
+        expect(file.readUtf8(8)).toBe("trusted\n");
+      } finally {
+        file.close();
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("refuses to follow a symbolic link", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-regular-file-"));
     const targetPath = path.join(tmp, "target");

@@ -72,6 +72,8 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
 
 ## Verify the Installed Route
 
+The distributed install runs the same managed vLLM entry point as the single-Station path, so it applies the GPU compute-capability check described in [Check GPU Compute Capability](set-up-vllm#check-gpu-compute-capability).
+
 After the installer completes, inspect the live route and the sandbox inference path.
 
 ```bash

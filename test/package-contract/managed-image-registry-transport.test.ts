@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { createPackageFixture } from "./helpers/package-fixture";
+
 const repoRoot = path.join(import.meta.dirname, "..", "..");
 
 describe("managed image registry transport package contract", () => {
@@ -35,12 +37,16 @@ describe("managed image registry transport package contract", () => {
     };
     expect(productionDependencies.dependencies?.undici?.version).toBe("8.10.0");
 
+    const fixtureRoot = createPackageFixture({
+      prefix: "nemoclaw-managed-registry-pack-",
+      entries: ["dist"],
+    });
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-registry-package-"));
     try {
       const packed = spawnSync(
         "npm",
         ["pack", "--ignore-scripts", "--silent", "--pack-destination", tempDir],
-        { cwd: repoRoot, encoding: "utf8", timeout: 120_000 },
+        { cwd: fixtureRoot, encoding: "utf8", timeout: 120_000 },
       );
       expect(packed.status, `${packed.stdout}${packed.stderr}`).toBe(0);
       const archives = fs.readdirSync(tempDir).filter((entry) => entry.endsWith(".tgz"));
@@ -105,6 +111,7 @@ session.close().then(
       expect(probe.status, `${probe.stdout}${probe.stderr}`).toBe(0);
       expect(probe.stdout).toBe("constructed");
     } finally {
+      fs.rmSync(fixtureRoot, { recursive: true, force: true });
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
