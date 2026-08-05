@@ -35,6 +35,7 @@ export type DestroyHarness = {
   restoreMcpBridgesAfterDestroyAbortSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   selectGatewaySpy: MockInstance;
+  setSandboxPresent: (present: boolean) => void;
   shieldsDownSpy: MockInstance;
   stopAllSpy: MockInstance;
   stopNimByNameSpy: MockInstance;
@@ -112,6 +113,7 @@ export function loadDestroySandboxPresenceClassifier(): DestroySandboxPresenceCl
 export function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarness {
   resetDestroyModuleCache();
   const events: string[] = [];
+  let sandboxPresent = options.sandboxPresent !== false;
 
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -201,7 +203,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
         gatewayPinsAtSandboxList.push(process.env.OPENSHELL_GATEWAY);
         return {
           status: 0,
-          stdout: sandboxListJson(options.sandboxPresent === false ? [] : ["alpha"]),
+          stdout: sandboxListJson(sandboxPresent ? ["alpha"] : []),
           stderr: "",
         };
       case "sandbox:delete":
@@ -356,6 +358,9 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     restoreMcpBridgesAfterDestroyAbortSpy,
     runOpenshellSpy,
     selectGatewaySpy,
+    setSandboxPresent: (present: boolean) => {
+      sandboxPresent = present;
+    },
     shieldsDownSpy,
     stopAllSpy,
     stopNimByNameSpy,
