@@ -104,7 +104,9 @@ describe("live E2E runtime policy (#7922)", () => {
 
   it("requires rationale and a live expiry or review condition for exceptions", () => {
     const policy = policyFixture();
-    const entry = policy.coverage.find((candidate) => candidate.id === "sandbox-rebuild")!;
+    const entry = policy.coverage.find(
+      (candidate) => candidate.id === "llama-cpp-dgx-spark-qualification",
+    )!;
     entry.exception = {
       rationale: "short",
       expiresOn: "2026-07-01",
@@ -113,9 +115,9 @@ describe("live E2E runtime policy (#7922)", () => {
 
     expect(validate(policy)).toEqual(
       expect.arrayContaining([
-        "sandbox-rebuild exception rationale must explain the deviation",
-        "sandbox-rebuild exception expired on 2026-07-01",
-        "sandbox-rebuild exception must declare a concrete review condition",
+        "llama-cpp-dgx-spark-qualification exception rationale must explain the deviation",
+        "llama-cpp-dgx-spark-qualification exception expired on 2026-07-01",
+        "llama-cpp-dgx-spark-qualification exception must declare a concrete review condition",
       ]),
     );
   });

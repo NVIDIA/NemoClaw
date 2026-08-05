@@ -53,16 +53,16 @@ E2E, 20 minutes and fewer than 300 runner-minutes for nightly coverage, and 45
 minutes for weekly compatibility coverage.
 
 Exceptions require a rationale, an expiry date, and a concrete review
-condition. Three explicit exceptions expire on 2026-08-31:
+condition. Four explicit exceptions expire on 2026-08-31: the baseline and the
+three protected release lanes that do not yet have five comparable passing
+runtime samples. PR #7665 retired `sandbox-rebuild` and
+`upgrade-stale-sandbox`, and `sandbox-rlimits-connect` now resolves to the
+retained `sandbox-operations` selector. PR #7943 delivered the exact-commit CLI
+artifact optimization tracked by #7915.
 
-- the provisional baseline remains pending both the #7665 retirements and the
-  exact-commit artifact optimization in #7915; and
-- `sandbox-rebuild` and `upgrade-stale-sandbox` remain only until #7665 retires
-  those duplicate selectors.
-
-After #7665 and #7915 land, replace the provisional source run with five
-comparable passing runs and remove the two retired selector entries instead of
-renewing their exceptions.
+Replace the provisional source run and protected-lane runtime values after five
+comparable passing runs on the current retained inventory. Do not renew an
+exception without fresh rationale and a new review condition.
 
 ## Sources Of Truth
 

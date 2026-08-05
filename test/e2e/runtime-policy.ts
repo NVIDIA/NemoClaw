@@ -191,8 +191,11 @@ const WORKFLOW_RUNTIME = {
   "issue-4462-scope-upgrade-approval": ["weekly", 7, 15, 7, "standard-linux"],
   "jetson-nvmap-gpu": ["release", 20, 45, 20, "jetson-linux"],
   "kimi-inference-compat": ["weekly", 4, 15, 4, "standard-linux"],
+  "llama-cpp-dgx-spark-qualification": ["release", 120, 180, 120, "gpu-linux"],
   "mcp-bridge": ["weekly", 24, 30, 41, "mixed-linux"],
   "mcp-bridge-dev": ["weekly", 15, 30, 30, "standard-linux"],
+  "managed-image-multiarch-startup": ["release", 15, 30, 30, "mixed-linux"],
+  "managed-image-protected-runtime": ["release", 120, 180, 120, "gpu-linux"],
   "messaging-compatible-endpoint": ["nightly", 6, 15, 6, "standard-linux"],
   "messaging-providers": ["weekly", 13, 25, 13, "standard-linux"],
   "model-router-provider-routed-inference": ["weekly", 7, 15, 7, "standard-linux"],
@@ -215,8 +218,6 @@ const WORKFLOW_RUNTIME = {
   "rebuild-hermes-stale-base": ["weekly", 6, 15, 6, "larger-linux"],
   "rebuild-openclaw": ["weekly", 20, 30, 20, "standard-linux"],
   "sandbox-operations": ["weekly", 8, 15, 8, "standard-linux"],
-  "sandbox-rebuild": ["weekly", 6, 15, 6, "standard-linux"],
-  "sandbox-rlimits-connect": ["weekly", 10, 20, 10, "standard-linux"],
   "sandbox-survival": ["weekly", 6, 15, 6, "standard-linux"],
   "security-posture": ["nightly", 6, 15, 12, "mixed-linux"],
   "sessions-agents-cli": ["weekly", 6, 15, 6, "standard-linux"],
@@ -229,7 +230,6 @@ const WORKFLOW_RUNTIME = {
   "telegram-injection": ["weekly", 9, 15, 9, "standard-linux"],
   "token-rotation": ["nightly", 19, 20, 19, "standard-linux"],
   "tunnel-lifecycle": ["weekly", 6, 15, 6, "standard-linux"],
-  "upgrade-stale-sandbox": ["weekly", 18, 25, 18, "standard-linux"],
   "vllm-docker-storage": ["weekly", 1, 10, 1, "standard-linux"],
 } as const satisfies Record<string, RuntimeSeed>;
 
@@ -281,8 +281,14 @@ const WORKFLOW_BOUNDARIES: Record<keyof typeof WORKFLOW_RUNTIME, string> = {
   "jetson-nvmap-gpu":
     "A Jetson runner exposes the required nvmap GPU device boundary to the sandbox.",
   "kimi-inference-compat": "The Kimi-compatible provider completes a real inference turn.",
+  "llama-cpp-dgx-spark-qualification":
+    "The exact managed llama.cpp image proves authenticated GPU-offloaded inference and cleanup on NVIDIA DGX Spark.",
   "mcp-bridge": "DeepAgents, OpenClaw, and Hermes cross the retained MCP bridge process boundary.",
   "mcp-bridge-dev": "The development MCP bridge path connects all supported agents from source.",
+  "managed-image-multiarch-startup":
+    "Exact managed images for every supported agent start directly on native AMD64 and ARM64 runners.",
+  "managed-image-protected-runtime":
+    "Exact managed images retain GPU, Ollama, NIM, vLLM, rollback, and cleanup behavior on a protected runner.",
   "messaging-compatible-endpoint":
     "A live channel reaches a compatible external messaging endpoint through policy.",
   "messaging-providers":
@@ -319,10 +325,6 @@ const WORKFLOW_BOUNDARIES: Record<keyof typeof WORKFLOW_RUNTIME, string> = {
     "A Hermes sandbox rebuild replaces a retained stale base without losing live state.",
   "rebuild-openclaw": "A historical OpenClaw base rebuilds into the current healthy sandbox state.",
   "sandbox-operations": "Start, stop, status, and remove commands act on a real sandbox lifecycle.",
-  "sandbox-rebuild":
-    "A live sandbox rebuild recreates the current sandbox without losing registered state.",
-  "sandbox-rlimits-connect":
-    "A sandbox with constrained process limits still accepts a live connection.",
   "sandbox-survival": "A sandbox remains recoverable after the live gateway process is replaced.",
   "security-posture":
     "OpenClaw and Hermes retain the required container and process security posture.",
@@ -338,24 +340,31 @@ const WORKFLOW_BOUNDARIES: Record<keyof typeof WORKFLOW_RUNTIME, string> = {
   "token-rotation": "A live sandbox adopts a rotated credential and rejects the stale token.",
   "tunnel-lifecycle":
     "The external tunnel starts, serves, and shuts down with the sandbox lifecycle.",
-  "upgrade-stale-sandbox":
-    "A stale live sandbox upgrades through the current migration path without losing workspace state.",
   "vllm-docker-storage":
     "A vLLM container preserves model storage across the Docker runtime boundary.",
 };
 
 const POLICY_EXCEPTIONS: Partial<Record<keyof typeof WORKFLOW_RUNTIME, LiveE2EPolicyException>> = {
-  "sandbox-rebuild": {
-    rationale: "PR #7665 retires this duplicate live selector after focused replacement coverage.",
+  "llama-cpp-dgx-spark-qualification": {
+    rationale:
+      "This protected release lane does not yet have five comparable passing runtime samples.",
     expiresOn: "2026-08-31",
     reviewCondition:
-      "Remove this policy entry when #7665 lands; do not renew it as retained coverage.",
+      "Replace the provisional runtime values after five comparable passing protected qualification runs.",
   },
-  "upgrade-stale-sandbox": {
-    rationale: "PR #7665 retires this duplicate live selector after focused replacement coverage.",
+  "managed-image-multiarch-startup": {
+    rationale:
+      "This protected release lane does not yet have five comparable passing runtime samples.",
     expiresOn: "2026-08-31",
     reviewCondition:
-      "Remove this policy entry when #7665 lands; do not renew it as retained coverage.",
+      "Replace the provisional runtime values after five comparable passing multiarch startup runs.",
+  },
+  "managed-image-protected-runtime": {
+    rationale:
+      "This protected release lane does not yet have five comparable passing runtime samples.",
+    expiresOn: "2026-08-31",
+    reviewCondition:
+      "Replace the provisional runtime values after five comparable passing protected runtime runs.",
   },
 };
 
@@ -431,10 +440,10 @@ export const LIVE_E2E_RUNTIME_POLICY: LiveE2ERuntimePolicy = {
     },
     exception: {
       rationale:
-        "The initial inventory predates pending #7665 retirements and the exact-commit artifact optimization in #7915.",
+        "The source run predates the merged #7665 retirements and #7943 exact-commit artifact optimization.",
       expiresOn: "2026-08-31",
       reviewCondition:
-        "Replace the source run and remove retired entries after #7665 and #7915 land, using five comparable passing runs.",
+        "Replace the source run with five comparable passing runs from the current retained inventory.",
     },
   },
   coverage: [
