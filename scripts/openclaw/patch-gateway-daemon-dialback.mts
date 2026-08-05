@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /*
- * Temporary compatibility patch for OpenClaw 2026.7.1 gateway self-dialback.
+ * Temporary compatibility patch for OpenClaw 2026.7.1 gateway daemon
+ * self-dialback.
  *
  * NemoClaw exports OPENCLAW_GATEWAY_URL so agent processes can reach the
  * gateway through its OpenShell-allowed private interface. The gateway daemon
@@ -12,10 +13,10 @@
  * requires pairing. OpenClaw marks only the daemon process with the
  * "openclaw-gateway" title, so ignore the inherited URL only in that process
  * and only when OPENSHELL_SANDBOX is exactly "1". Explicit URL overrides and
- * configured remote mode remain unchanged.
+ * configured remote URLs remain unchanged.
  *
- * Remove this patch when upstream distinguishes gateway self-dialback from
- * descendant agent routing without changing the daemon environment.
+ * Remove this patch when upstream distinguishes gateway daemon self-dialback
+ * from descendant agent routing without changing the daemon environment.
  */
 
 import fs from "node:fs";
@@ -208,7 +209,7 @@ function main(): void {
       audit,
     });
     console.log(
-      `${audit ? "audited" : result.status === "patched" ? "patched" : "already patched"} OpenClaw gateway daemon dial-back (${result.files.length} files)`,
+      `${audit ? "audited" : result.status === "patched" ? "patched" : "already patched"} OpenClaw gateway daemon self-dialback (${result.files.length} files)`,
     );
   } catch (error) {
     console.error(`ERROR: ${error instanceof Error ? error.message : String(error)}`);

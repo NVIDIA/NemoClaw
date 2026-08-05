@@ -103,7 +103,7 @@ function readGatewayDaemonDialbackBuildCommand(): string {
     .join(" ");
 }
 
-describe("OpenClaw gateway daemon dial-back patch", () => {
+describe("OpenClaw gateway daemon self-dialback patch", () => {
   it.each([
     { expectedCalls: "", version: "2026.3.11" },
     { expectedCalls: "", version: "2026.4.24" },
@@ -199,7 +199,7 @@ describe("OpenClaw gateway daemon dial-back patch", () => {
     }
   });
 
-  it("preserves explicit URL and non-OpenShell behavior", async () => {
+  it("preserves OPENCLAW_GATEWAY_URL outside OpenShell and explicit URL precedence", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-dialback-explicit-"));
     try {
       const runtime = await importFixture<{
@@ -220,7 +220,7 @@ describe("OpenClaw gateway daemon dial-back patch", () => {
     }
   });
 
-  it("preserves explicit URL, local port, and configured remote precedence for the OpenShell gateway daemon (#7230)", async () => {
+  it("preserves explicit URL, local port, and configured remote URL precedence for the OpenShell gateway daemon (#7230)", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-dialback-precedence-"));
     try {
       const callRuntime = await importFixture<{
@@ -305,17 +305,19 @@ describe("OpenClaw gateway daemon dial-back patch", () => {
     ).toThrow(/found 2 upstream/);
   });
 
-  it("does not write any target when a later patch shape is missing", () => {
+  it("leaves earlier targets unchanged when the agent-tool gateway shape is missing", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-dialback-atomic-"));
     const callPath = path.join(tmp, "call.js");
+    const connectionPath = path.join(tmp, "connection-details.js");
     try {
       fs.writeFileSync(callPath, CALL_CONTEXT_SOURCE);
-      fs.writeFileSync(path.join(tmp, "connection-details.js"), CONNECTION_DETAILS_SOURCE);
+      fs.writeFileSync(connectionPath, CONNECTION_DETAILS_SOURCE);
 
       expect(() => patchOpenClawGatewayDaemonDialback(tmp)).toThrow(
         /expected exactly one agent-tool gateway target, found 0/,
       );
       expect(fs.readFileSync(callPath, "utf8")).toBe(CALL_CONTEXT_SOURCE);
+      expect(fs.readFileSync(connectionPath, "utf8")).toBe(CONNECTION_DETAILS_SOURCE);
     } finally {
       fs.rmSync(tmp, { force: true, recursive: true });
     }
@@ -345,7 +347,7 @@ describe("OpenClaw gateway daemon dial-back patch", () => {
         encoding: "utf8",
       });
       expect(apply.status, apply.stderr).toBe(0);
-      expect(apply.stdout).toContain("patched OpenClaw gateway daemon dial-back (3 files)");
+      expect(apply.stdout).toContain("patched OpenClaw gateway daemon self-dialback (3 files)");
 
       const audit = spawnSync(
         process.execPath,
@@ -353,7 +355,7 @@ describe("OpenClaw gateway daemon dial-back patch", () => {
         { encoding: "utf8" },
       );
       expect(audit.status, audit.stderr).toBe(0);
-      expect(audit.stdout).toContain("audited OpenClaw gateway daemon dial-back (3 files)");
+      expect(audit.stdout).toContain("audited OpenClaw gateway daemon self-dialback (3 files)");
     } finally {
       fs.rmSync(tmp, { force: true, recursive: true });
     }

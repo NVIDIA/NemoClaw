@@ -563,11 +563,11 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           ["--experimental-strip-types", PATCH_OPENCLAW_GATEWAY_DAEMON_DIALBACK, dist],
           { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
         );
-        requireSpawnSuccess(gatewayDialbackPatch, "apply gateway daemon dial-back patch");
+        requireSpawnSuccess(gatewayDialbackPatch, "apply gateway daemon self-dialback patch");
         requireRuntimeIncludes(
           gatewayDialbackPatch.stdout,
-          "patched OpenClaw gateway daemon dial-back (3 files)",
-          "gateway daemon dial-back patch output",
+          "patched OpenClaw gateway daemon self-dialback (3 files)",
+          "gateway daemon self-dialback patch output",
         );
 
         const gatewayDialbackAudit = spawnSync(
@@ -575,11 +575,11 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           ["--experimental-strip-types", PATCH_OPENCLAW_GATEWAY_DAEMON_DIALBACK, "--audit", dist],
           { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
         );
-        requireSpawnSuccess(gatewayDialbackAudit, "audit gateway daemon dial-back patch");
+        requireSpawnSuccess(gatewayDialbackAudit, "audit gateway daemon self-dialback patch");
         requireRuntimeIncludes(
           gatewayDialbackAudit.stdout,
-          "audited OpenClaw gateway daemon dial-back (3 files)",
-          "gateway daemon dial-back audit output",
+          "audited OpenClaw gateway daemon self-dialback (3 files)",
+          "gateway daemon self-dialback audit output",
         );
         const gatewayDialbackTargets = fs
           .readdirSync(dist)
@@ -591,7 +591,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
         requireRuntimeEqual(
           String(gatewayDialbackTargets.length),
           "2",
-          "gateway daemon dial-back transport target count",
+          "gateway daemon self-dialback transport target count",
         );
         const gatewayToolTarget = fs
           .readdirSync(dist)
@@ -605,7 +605,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
         requireRuntimeEqual(
           String(gatewayToolTarget.length),
           "1",
-          "gateway daemon dial-back tool target count",
+          "gateway daemon self-dialback tool target count",
         );
 
         const sharedStatePatch = spawnSync(
