@@ -2059,6 +2059,12 @@ is_reusable_managed_nemoclaw_install() {
   [[ "$version_output" == "${_CLI_BIN} v${identity_version}" ]]
 }
 
+restore_managed_source_lockfile() {
+  local source_root="$1"
+  [[ -d "${source_root}/.git" && ! -L "${source_root}/.git" ]] || return 0
+  git -C "$source_root" checkout -- package-lock.json 2>/dev/null
+}
+
 finish_nemoclaw_install() {
   # A backup-preparation pass defers OpenShell but still prepares the CLI. The
   # later install pass completes only the OpenShell policy for that source mode.
@@ -2141,6 +2147,8 @@ install_nemoclaw() {
       spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
       spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm ci --ignore-scripts && npm run build"
       spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$nemoclaw_src\" && npm link"
+      restore_managed_source_lockfile "$nemoclaw_src" \
+        || warn "Could not restore package-lock.json in ${nemoclaw_src} — the next install re-clones that checkout instead of reusing it."
     fi
     _NEMOCLAW_CLI_INSTALL_MODE=managed
   fi
@@ -3512,6 +3520,7 @@ STATION_ULTRA_LEGACY_VLLM_IMAGE="vllm/vllm-openai@sha256:0fec7ec5f3e6bc168e54899
 STATION_DEEPSEEK_VLLM_MODEL="deepseek-v4-flash"
 STATION_DEEPSEEK_SERVED_MODEL="deepseek-ai/DeepSeek-V4-Flash"
 _SELECTED_EXPRESS_PLATFORM=""
+_EXPRESS_WSL_PROVIDER_PENDING=""
 _STATION_EXPRESS_RESUME_REVISION=""
 _STATION_EXPRESS_MODEL_WAS_EXPLICIT=0
 _STATION_EXPRESS_DEFERRED_MANAGED_PAIR=0
@@ -4190,6 +4199,48 @@ express_wsl_can_use_windows_host_ollama() {
   express_wsl_docker_operating_system | grep -qi 'docker desktop'
 }
 
+# True when a readable Docker configuration decides the context but no Node.js can
+# parse it yet. The express prompt runs before install_nodejs, so treating that
+# window as non-local pinned WSL-local Ollama on hosts whose Docker Desktop
+# topology supports Windows-host Ollama, and onboarding then rejected the
+# preselected provider (#8199). Selection waits for the runtime instead.
+express_wsl_docker_context_needs_node() {
+  [ -z "${DOCKER_HOST:-}" ] || return 1
+  [ -z "${DOCKER_CONTEXT:-}" ] || return 1
+  local cfg="${DOCKER_CONFIG:-${HOME:-}/.docker}/config.json"
+  [ -e "$cfg" ] && [ -r "$cfg" ] || return 1
+  ! command_exists node
+}
+
+# Choose between Windows-host and WSL-local Ollama, or defer when only the
+# missing Node.js runtime blocks the decision.
+select_express_wsl_ollama_provider() {
+  _EXPRESS_WSL_PROVIDER_PENDING=""
+  if express_wsl_can_use_windows_host_ollama; then
+    export NEMOCLAW_PROVIDER=install-windows-ollama
+    return 0
+  fi
+  if express_wsl_docker_context_needs_node; then
+    _EXPRESS_WSL_PROVIDER_PENDING=1
+    return 0
+  fi
+  export NEMOCLAW_PROVIDER=install-ollama
+}
+
+# Finish a deferred Windows WSL selection once install_nodejs has provided the
+# runtime that reads the Docker configuration.
+resolve_pending_express_wsl_provider() {
+  [ "${_EXPRESS_WSL_PROVIDER_PENDING:-}" = "1" ] || return 0
+  _EXPRESS_WSL_PROVIDER_PENDING=""
+  if express_wsl_can_use_windows_host_ollama; then
+    export NEMOCLAW_PROVIDER=install-windows-ollama
+    info "Express install will configure Windows-host Ollama through host.docker.internal."
+  else
+    export NEMOCLAW_PROVIDER=install-ollama
+    info "Express install will configure WSL-local Ollama."
+  fi
+}
+
 activate_express_install() {
   local platform="$1"
   _SELECTED_EXPRESS_PLATFORM="$platform"
@@ -4222,11 +4273,7 @@ activate_express_install() {
       configure_station_express_model
       ;;
     "Windows WSL")
-      if express_wsl_can_use_windows_host_ollama; then
-        export NEMOCLAW_PROVIDER=install-windows-ollama
-      else
-        export NEMOCLAW_PROVIDER=install-ollama
-      fi
+      select_express_wsl_ollama_provider
       ;;
   esac
 }
@@ -4698,6 +4745,8 @@ describe_express_install() {
     "Windows WSL")
       if express_wsl_can_use_windows_host_ollama; then
         inference_summary="Windows-host Ollama through host.docker.internal"
+      elif express_wsl_docker_context_needs_node; then
+        inference_summary="local Ollama, selected once the installed Node.js runtime reads the Docker configuration"
       else
         inference_summary="WSL-local Ollama, with a sandbox auth proxy when containers cannot reach host loopback"
       fi
@@ -4979,6 +5028,7 @@ main() {
   step 1 "Node.js"
   install_nodejs
   ensure_supported_runtime
+  resolve_pending_express_wsl_provider
   ensure_station_express_pair
 
   step 2 "${_CLI_DISPLAY} CLI"

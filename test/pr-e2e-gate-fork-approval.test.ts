@@ -73,6 +73,10 @@ function prGateMutationResponse(request: RecordedGitHubRequest, id = 17): Respon
   return githubResponse(exactPrGateCheck({ id, ...body }));
 }
 
+function commitStatusMutationResponse(request: RecordedGitHubRequest): Response {
+  return githubResponse(request.body);
+}
+
 function mainWorkflowRefRoute(sha = WORKFLOW_SHA) {
   return githubFetchRoute(
     ({ url }) => url.endsWith("/git/ref/heads/main"),
@@ -273,6 +277,8 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("GITHUB_WORKFLOW", "E2E / PR Gate Controller");
     const requests: RecordedGitHubRequest[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
@@ -297,6 +303,10 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
             (request) => prGateMutationResponse(request),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith(`/statuses/${HEAD_SHA}`) && method === "POST",
+            commitStatusMutationResponse,
           ),
         ],
         requests,
@@ -338,6 +348,14 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
       expect(JSON.stringify(pending?.body)).toContain(
         "This gate passes only if the dispatched evidence references both SHAs and verifies successfully.",
       );
+      const visibleStatus = requests
+        .filter((request) => request.url.endsWith(`/statuses/${HEAD_SHA}`))
+        .at(-1);
+      expect(visibleStatus?.body).toMatchObject({
+        state: "pending",
+        context: "E2E / PR Gate / Rollup",
+        description: "Maintainer approval required to run fork E2E",
+      });
       const outputs = fs.readFileSync(outputPath, "utf8");
       expect(outputs).not.toContain("approval_");
       expect(outputs).toContain("finalized=true");

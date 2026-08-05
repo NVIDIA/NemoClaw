@@ -10,6 +10,7 @@ import { GATEWAY_PORT } from "../core/ports";
 import { rejectSymlinksOnPath } from "../state/config-io";
 import { nemoclawStateRoot } from "../state/state-root";
 import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
+import { fullDockerContainerId } from "./docker-gpu-patch-clone";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import { getDockerGpuPatchFailureContext } from "./docker-gpu-patch-recreate";
 import type {
@@ -129,6 +130,14 @@ export function dockerGpuPatchCleanupCommands(sandboxName: string): string[] {
   return [`openshell sandbox delete ${JSON.stringify(sandboxName)}`];
 }
 
+function dockerGpuReplacementCleanupCommands(containerId: string): string[] {
+  return [`docker rm -f ${JSON.stringify(containerId)}`];
+}
+
+function confirmationValue(value: boolean | undefined): string {
+  return value === true ? "yes" : value === false ? "no" : "unknown";
+}
+
 export function collectDockerGpuPatchDiagnostics(
   sandboxName: string,
   options: {
@@ -140,6 +149,11 @@ export function collectDockerGpuPatchDiagnostics(
     additionalSummaryLines?: readonly string[];
     additionalSensitiveValues?: readonly string[];
     dockerTopOutput?: string | null;
+    /**
+     * The caller captured evidence before rollback and cannot yet determine
+     * whether manual cleanup will be required.
+     */
+    cleanupDisposition?: "pending-rollback";
   } = {},
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchDiagnostics | null {
@@ -162,6 +176,9 @@ export function collectDockerGpuPatchDiagnostics(
   }
 
   const context = options.context || getDockerGpuPatchFailureContext(options.error) || null;
+  const selectedMode = options.selectedMode || context?.selectedMode || null;
+  const snapshot = options.snapshot ?? null;
+  const classification = options.classification ?? null;
   const redactor = createDockerGpuDiagnosticRedactor(options.additionalSensitiveValues);
   let discoveredContainerIds: string[] = [];
   try {
@@ -198,7 +215,34 @@ export function collectDockerGpuPatchDiagnostics(
     writeTextFile(dir, name, JSON.stringify(redactor.redactValue(value), null, 2));
   };
 
-  const cleanupCommands = dockerGpuPatchCleanupCommands(sandboxName).map(redactor.redactText);
+  const cleanupPendingRollback = options.cleanupDisposition === "pending-rollback";
+  const prePatchRestored = context?.rolledBack === true;
+  const replacementId = fullDockerContainerId(context?.newContainerId);
+  const inspectConfirmsReplacementPresent =
+    replacementId !== null &&
+    inspectedTargets.some(({ entries }) =>
+      entries.some((entry) => fullDockerContainerId(entry.Id) === replacementId),
+    );
+  const snapshotConfirmsReplacementPresent =
+    replacementId !== null && snapshot?.patchedContainerState != null;
+  const replacementPresence =
+    snapshotConfirmsReplacementPresent || inspectConfirmsReplacementPresent
+      ? "present"
+      : (context?.replacementPresence ?? "unknown");
+  let cleanupDisposition: DockerGpuPatchDiagnostics["cleanupDisposition"];
+  let cleanupCommands: string[] = [];
+  if (cleanupPendingRollback) {
+    cleanupDisposition = "pending_rollback";
+  } else if (!prePatchRestored) {
+    cleanupDisposition = "unknown";
+  } else if (replacementPresence === "absent") {
+    cleanupDisposition = "not_required";
+  } else if (replacementId) {
+    cleanupDisposition = "manual";
+    cleanupCommands = dockerGpuReplacementCleanupCommands(replacementId).map(redactor.redactText);
+  } else {
+    cleanupDisposition = "unknown";
+  }
   const errorText = redactor.redactText(
     options.error instanceof Error
       ? options.error.message
@@ -206,9 +250,6 @@ export function collectDockerGpuPatchDiagnostics(
         ? String(options.error)
         : "none",
   );
-  const selectedMode = options.selectedMode || context?.selectedMode || null;
-  const snapshot = options.snapshot ?? null;
-  const classification = options.classification ?? null;
   const summaryLines = [
     `created_at=${now.toISOString()}`,
     `sandbox_name=${redactor.redactText(sandboxName)}`,
@@ -218,9 +259,19 @@ export function collectDockerGpuPatchDiagnostics(
     `old_container_id=${redactor.redactText(context?.oldContainerId ?? "unknown")}`,
     `new_container_id=${redactor.redactText(context?.newContainerId ?? "unknown")}`,
     `backup_container_name=${redactor.redactText(context?.backupContainerName ?? "none")}`,
-    `rolled_back=${context?.rolledBack === true ? "yes" : context?.rolledBack === false ? "failed" : "no"}`,
-    "cleanup_commands:",
-    ...cleanupCommands.map((command) => `  ${command}`),
+    `rolled_back=${cleanupPendingRollback ? "pending" : context?.rolledBack === true ? "yes" : context?.rolledBack === false ? "failed" : "no"}`,
+    ...(context?.replacementStopConfirmed !== undefined
+      ? [`replacement_stop_confirmed=${confirmationValue(context.replacementStopConfirmed)}`]
+      : []),
+    ...(context?.replacementRemovalConfirmed !== undefined
+      ? [`replacement_removal_confirmed=${confirmationValue(context.replacementRemovalConfirmed)}`]
+      : []),
+    ...(prePatchRestored ? [`replacement_presence=${replacementPresence}`] : []),
+    `cleanup_disposition=${cleanupDisposition}`,
+    `cleanup_required=${cleanupDisposition === "manual" ? "yes" : cleanupDisposition === "not_required" ? "no" : "unknown"}`,
+    ...(cleanupCommands.length > 0
+      ? ["cleanup_commands:", ...cleanupCommands.map((command) => `  ${command}`)]
+      : []),
   ];
   if (context?.modeAttempts?.length) {
     summaryLines.push("gpu_mode_attempts:");
@@ -327,5 +378,5 @@ export function collectDockerGpuPatchDiagnostics(
     }
   }
 
-  return { dir, cleanupCommands, summaryLines };
+  return { dir, cleanupCommands, cleanupDisposition, summaryLines };
 }

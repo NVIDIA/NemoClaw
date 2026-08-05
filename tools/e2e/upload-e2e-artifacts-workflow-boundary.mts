@@ -7,6 +7,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
+import {
+  CLI_ARTIFACT_PUBLISH_STEP,
+  CLI_ARTIFACT_UPLOAD_ACTION,
+} from "./cli-artifact-workflow-boundary.mts";
 import { SHARED_E2E_JOB_ID } from "./credential-free-tests.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -439,7 +443,11 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
       if (uses.startsWith(CHECKOUT_LOCAL_UPLOAD_E2E_ARTIFACTS_ACTION)) {
         errors.push(`${jobName} must not load upload-e2e-artifacts from the target checkout`);
       }
-      if (uses.startsWith(UPLOAD_ARTIFACT_ACTION_PREFIX)) {
+      const isExactCommitCliArtifactUpload =
+        jobName === "generate-matrix" &&
+        step.name === CLI_ARTIFACT_PUBLISH_STEP &&
+        uses === CLI_ARTIFACT_UPLOAD_ACTION;
+      if (uses.startsWith(UPLOAD_ARTIFACT_ACTION_PREFIX) && !isExactCommitCliArtifactUpload) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);
       }
       if (

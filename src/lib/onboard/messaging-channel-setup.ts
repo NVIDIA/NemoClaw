@@ -20,6 +20,7 @@ import {
 } from "../messaging";
 import type { GooglechatTunnelRuntimeDeps } from "../messaging/channels/googlechat/hooks/tunnel-runtime";
 import * as registry from "../state/registry";
+import type { RegistryMessagingAuthority } from "../messaging/plan-authority";
 
 export { MessagingHostStateApplier };
 
@@ -417,8 +418,17 @@ export function clearPlanEnv(): void {
   MessagingSetupApplier.clearPlanEnv();
 }
 
-export function getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null {
-  return registry.getHydratedMessagingPlanFromEntry(registry.getSandbox(sandboxName));
+export function getRegistrySandboxMessagingAuthority(
+  sandboxName: string,
+): RegistryMessagingAuthority {
+  const entry = registry.getSandbox(sandboxName);
+  if (!entry || entry.pendingRouteReservation === true) {
+    return { authoritative: false, plan: null };
+  }
+  return {
+    authoritative: true,
+    plan: registry.getHydratedMessagingPlanFromEntry(entry),
+  };
 }
 
 function resolveMessagingSetupSandboxName(options: SetupSelectedMessagingChannelsOptions): string {

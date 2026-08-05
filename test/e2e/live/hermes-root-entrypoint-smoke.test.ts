@@ -216,7 +216,7 @@ async function assertRuntimeLayout(probe: DockerProbe, container: string): Promi
     probe,
     container,
     "gateway user cannot write required Hermes v0.14 directories",
-    'gosu gateway sh -lc \'for dir in hooks image_cache audio_cache logs/curator; do p="/sandbox/.hermes/$dir/.nemoclaw-write-test"; : >"$p" && rm -f "$p"; done\'',
+    '/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- sh -lc \'for dir in hooks image_cache audio_cache logs/curator; do p="/sandbox/.hermes/$dir/.nemoclaw-write-test"; : >"$p" && rm -f "$p"; done\'',
   );
   await expectContainerSh(
     probe,
@@ -228,7 +228,7 @@ async function assertRuntimeLayout(probe: DockerProbe, container: string): Promi
     probe,
     container,
     "gateway user was able to remove config.yaml",
-    "gosu gateway rm /sandbox/.hermes/config.yaml",
+    "/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- rm /sandbox/.hermes/config.yaml",
   );
   await expectContainerSh(
     probe,

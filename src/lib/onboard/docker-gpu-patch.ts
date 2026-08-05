@@ -28,10 +28,7 @@ export {
   parseDockerInspectJson,
 } from "./docker-gpu-patch-clone";
 
-import {
-  collectDockerGpuPatchDiagnostics,
-  dockerGpuPatchCleanupCommands,
-} from "./docker-gpu-patch-diagnostics";
+import { collectDockerGpuPatchDiagnostics } from "./docker-gpu-patch-diagnostics";
 import {
   getDockerGpuPatchFailureContext,
   recreateOpenShellDockerSandboxContainer,
@@ -101,12 +98,30 @@ export {
   waitForOpenShellSupervisorReconnect,
 };
 
-function printDockerGpuPatchCleanup(sandboxName: string): void {
-  console.error("  The failed sandbox/container has been left in place for inspection.");
-  console.error("  Manual cleanup:");
-  for (const command of dockerGpuPatchCleanupCommands(sandboxName)) {
-    console.error(`    ${command}`);
+function printDockerGpuPatchCleanup(
+  context: DockerGpuPatchFailureContext | null,
+  diagnostics: ReturnType<typeof collectDockerGpuPatchDiagnostics>,
+): void {
+  if (context?.rolledBack === true) {
+    console.error("  The pre-patch sandbox container was restored and started.");
+    if (diagnostics?.cleanupDisposition === "manual") {
+      console.error("  The failed replacement container may still be present.");
+      console.error("  Manual cleanup:");
+      for (const command of diagnostics.cleanupCommands) console.error(`    ${command}`);
+    } else if (
+      !diagnostics ||
+      diagnostics.cleanupDisposition === "unknown" ||
+      diagnostics.cleanupDisposition === "pending_rollback"
+    ) {
+      console.error(
+        "  Replacement container cleanup could not be confirmed. Inspect the diagnostics before removing any container.",
+      );
+    }
+    return;
   }
+  console.error(
+    "  The failed sandbox and container state is uncertain. Inspect the diagnostics before removing any container.",
+  );
 }
 
 export function applyDockerGpuPatchOrExit(
@@ -143,6 +158,7 @@ function printDockerGpuPatchClassificationLines(
   if (!classification) return;
   if (classification.headline) console.error(`  ${classification.headline}`);
   for (const line of classification.summaryLines) console.error(`    ${line}`);
+  for (const hint of classification.hints ?? []) console.error(`  ${hint}`);
 }
 
 function patchedContainerIdFromContext(
@@ -170,6 +186,14 @@ function snapshotInspectDeps(
   return inner;
 }
 
+function classificationMatchesSelectedMode(
+  classification: DockerGpuPatchFailureClassification,
+  selectedMode: DockerGpuPatchMode | null,
+): boolean {
+  if (!selectedMode) return false;
+  return classification.selectedModeKind === selectedMode.kind;
+}
+
 export function printDockerGpuPatchFailureAndExit(
   sandboxName: string,
   error: unknown,
@@ -177,7 +201,13 @@ export function printDockerGpuPatchFailureAndExit(
     context?: DockerGpuPatchFailureContext | null;
     selectedMode?: DockerGpuPatchMode | null;
     additionalSummaryLines?: readonly string[];
-  },
+    /**
+     * Classification captured while the replacement container still existed.
+     * The failure path cannot rely on that replacement remaining inspectable
+     * after rollback, so a fresh snapshot can lose its exit state (#7996).
+     */
+    preRollbackClassification?: DockerGpuPatchFailureClassification | null;
+  } & Pick<DockerGpuPatchDeps, "dockerLogs" | "homedir" | "now">,
 ): never {
   const context = deps.context || getDockerGpuPatchFailureContext(error) || null;
   const selectedMode = deps.selectedMode || context?.selectedMode || null;
@@ -187,7 +217,16 @@ export function printDockerGpuPatchFailureAndExit(
     { patchedContainerId: patchedContainerIdFromContext(context) },
     inspectDeps,
   );
-  const classification = classifyDockerGpuPatchFailure(snapshot, selectedMode);
+  // Prefer the earlier verdict only when the fresh snapshot cannot inspect the
+  // replacement container after rollback and the verdict describes this
+  // failure's exact create option (#7996).
+  const observedClassification = classifyDockerGpuPatchFailure(snapshot, selectedMode);
+  const classification =
+    deps.preRollbackClassification?.kind === "patched_container_failed" &&
+    snapshot.patchedContainerState === null &&
+    classificationMatchesSelectedMode(deps.preRollbackClassification, selectedMode)
+      ? deps.preRollbackClassification
+      : observedClassification;
   const diagnostics = collectDockerGpuPatchDiagnostics(
     sandboxName,
     {
@@ -198,7 +237,7 @@ export function printDockerGpuPatchFailureAndExit(
       classification,
       additionalSummaryLines: deps.additionalSummaryLines,
     },
-    inspectDeps,
+    deps,
   );
   const errorMessage =
     error instanceof Error && error.message
@@ -221,7 +260,7 @@ export function printDockerGpuPatchFailureAndExit(
   console.error(
     "    NEMOCLAW_SANDBOX_GPU=0      skip GPU passthrough entirely (or rerun with --no-gpu).",
   );
-  printDockerGpuPatchCleanup(sandboxName);
+  printDockerGpuPatchCleanup(context, diagnostics);
   process.exit(1);
 }
 
@@ -256,7 +295,7 @@ export function printDockerGpuReadinessFailure(
   if (diagnostics) {
     console.error(`  Docker GPU diagnostics saved: ${diagnostics.dir}`);
   }
-  printDockerGpuPatchCleanup(sandboxName);
+  printDockerGpuPatchCleanup(context, diagnostics);
 }
 
 export function printDockerGpuProofFailure(
@@ -294,7 +333,7 @@ export function printDockerGpuProofFailure(
   if (diagnostics) {
     console.error(`  Diagnostics saved: ${diagnostics.dir}`);
   }
-  printDockerGpuPatchCleanup(sandboxName);
+  printDockerGpuPatchCleanup(context, diagnostics);
 }
 
 const SANDBOX_FAILURE_PHASE_TOKENS = new Set(["Error", "Failed", "CrashLoopBackOff"]);
@@ -419,6 +458,15 @@ export function captureDockerGpuPatchSandboxSnapshot(
   return { sandboxPhase, sandboxListLine, patchedContainerState };
 }
 
+// Exit code 127 alone is ambiguous because `env` propagates a child process's
+// status. Missing-startup guidance therefore requires a separate exact signal
+// from the replacement container's captured logs (#7996).
+const SANDBOX_STARTUP_COMMAND_NOT_FOUND_EXIT_CODE = 127;
+const SANDBOX_STARTUP_COMMAND_NOT_FOUND_HINTS: readonly string[] = [
+  "Container logs show that the sandbox image does not provide the NemoClaw-managed `nemoclaw-start` command.",
+  "Rebuild the sandbox image from the complete Dockerfile and source context for the selected agent and NemoClaw release.",
+];
+
 function describePatchedContainerState(state: DockerContainerState | null): string[] {
   if (!state) return [];
   const lines: string[] = [];
@@ -461,7 +509,7 @@ function patchedContainerLooksFailed(state: DockerContainerState | null): boolea
 export function classifyDockerGpuPatchFailure(
   snapshot: DockerGpuPatchSandboxSnapshot,
   selectedMode: DockerGpuPatchMode | null,
-  options: { proofError?: unknown } = {},
+  options: { proofError?: unknown; managedStartupCommandMissing?: boolean } = {},
 ): DockerGpuPatchFailureClassification {
   const lines: string[] = [];
   if (snapshot.sandboxPhase) lines.push(`sandbox_phase=${snapshot.sandboxPhase}`);
@@ -474,6 +522,7 @@ export function classifyDockerGpuPatchFailure(
   const sandboxNotLive =
     !!snapshot.sandboxPhase && !SANDBOX_LIVE_PHASE_TOKENS.has(snapshot.sandboxPhase);
 
+  const hints: string[] = [];
   let kind: DockerGpuPatchFailureKind = "unknown";
   let headline: string;
   if (containerFailed) {
@@ -484,6 +533,12 @@ export function classifyDockerGpuPatchFailure(
       typeof exit === "number" && exit !== 0
         ? `Patched GPU container exited with code ${exit}${opt}.`
         : `Patched GPU container is not running${opt}.`;
+    if (
+      exit === SANDBOX_STARTUP_COMMAND_NOT_FOUND_EXIT_CODE &&
+      options.managedStartupCommandMissing === true
+    ) {
+      hints.push(...SANDBOX_STARTUP_COMMAND_NOT_FOUND_HINTS);
+    }
   } else if (sandboxInErrorPhase) {
     kind = "sandbox_error_phase";
     headline = `OpenShell sandbox entered ${snapshot.sandboxPhase} phase before the GPU proof could run.`;
@@ -514,5 +569,11 @@ export function classifyDockerGpuPatchFailure(
       options.proofError instanceof Error ? options.proofError.message : String(options.proofError);
     if (proofText) lines.push(`proof_error=${proofText}`);
   }
-  return { kind, headline, summaryLines: lines };
+  const classification = {
+    kind,
+    headline,
+    selectedModeKind: selectedMode?.kind ?? null,
+    summaryLines: lines,
+  };
+  return hints.length > 0 ? { ...classification, hints } : classification;
 }
