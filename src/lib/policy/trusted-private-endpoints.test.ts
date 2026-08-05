@@ -40,14 +40,14 @@ network_policies:
 `);
 
     const [prepared] = await prepareTrustedPrivatePolicyPresets([input], ["API.CORP.EXAMPLE."], {
-      lookup: lookup({ "api.corp.example": ["10.20.30.40", "2001:4860:4860::8888"] }),
+      lookup: lookup({ "api.corp.example": ["fd00::40", "10.20.30.40"] }),
     });
     const document = YAML.parse(prepared.content) as {
       network_policies: { services: { endpoints: Array<{ allowed_ips?: string[] }> } };
     };
     expect(document.network_policies.services.endpoints).toHaveLength(4);
     for (const endpoint of document.network_policies.services.endpoints) {
-      expect(endpoint.allowed_ips).toEqual(["10.20.30.40", "2001:4860:4860::8888"]);
+      expect(endpoint.allowed_ips).toEqual(["10.20.30.40", "fd00::40"]);
     }
     expect(prepared.trustedPrivatePins).toMatchObject({
       version: 1,
@@ -76,6 +76,28 @@ network_policies:
         prepared.trustedPrivatePins,
       ),
     ).toBe(false);
+    expect(input.content).not.toContain("allowed_ips");
+  });
+
+  it.each([
+    "rest",
+    "websocket",
+    "jsonrpc",
+    "mcp",
+  ])("rejects mixed public and private DNS answers for %s endpoints (#8176)", async (protocol) => {
+    const input = preset(`preset:
+  name: private
+network_policies:
+  services:
+    endpoints:
+      - { host: api.corp.example, port: 443, protocol: ${protocol} }
+`);
+
+    await expect(
+      prepareTrustedPrivatePolicyPresets([input], ["api.corp.example"], {
+        lookup: lookup({ "api.corp.example": ["10.20.30.40", "8.8.8.8"] }),
+      }),
+    ).rejects.toThrow(/mixed public and private addresses/);
     expect(input.content).not.toContain("allowed_ips");
   });
 

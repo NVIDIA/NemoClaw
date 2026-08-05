@@ -314,7 +314,7 @@ export async function prepareTrustedPrivatePolicyPresets(
       }
       continue;
     }
-    const pins = [
+    const resolvedPins = [
       ...new Set(
         (result.addresses?.length
           ? result.addresses
@@ -322,6 +322,18 @@ export async function prepareTrustedPrivatePolicyPresets(
         ).map((address) => address.toLowerCase()),
       ),
     ].sort();
+    const capabilityPins = [...result.trustedPrivateCapability.addresses]
+      .map((address) => address.toLowerCase())
+      .sort();
+    if (
+      resolvedPins.length !== capabilityPins.length ||
+      resolvedPins.some((address, index) => address !== capabilityPins[index])
+    ) {
+      throw new Error(
+        `Trusted private host '${host}' returned mixed public and private addresses. Trusted-private policy endpoints must resolve only to supported routed private addresses.`,
+      );
+    }
+    const pins = capabilityPins;
     if (pins.length === 0) {
       throw new Error(`Trusted private host '${host}' produced no validated address pins.`);
     }
