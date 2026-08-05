@@ -79,7 +79,11 @@ export const MUTATION_READS: readonly AuditedPolicyReadFile[] = [
   },
   {
     relativePath: "src/lib/shields/index.ts",
-    expectedReads: [ignoredBase("shieldsDownWithoutHostLock")],
+    expectedReads: [
+      preservingBase("resolveExactManagedMcpPolicies"),
+      ignoredBase("resolveProvableManagedMcpPoliciesForDeadline"),
+      ignoredBase("shieldsDownWithoutHostLock"),
+    ],
   },
 ];
 
