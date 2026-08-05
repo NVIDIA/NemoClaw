@@ -586,6 +586,7 @@ const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
 ]);
 const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
   ["test/e2e/live/openclaw-plugin-runtime-exdev-lifecycle.ts", ["openclaw-plugin-runtime-exdev"]],
+  ["test/e2e/live/rebuild-hermes-cron-restore.ts", ["rebuild-hermes", "rebuild-hermes-stale-base"]],
   ["test/e2e/live/openshell-gateway-upgrade-helpers.ts", ["openshell-gateway-upgrade"]],
   ["test/e2e/live/openshell-gateway-upgrade-old-installer.ts", ["openshell-gateway-upgrade"]],
 ]);

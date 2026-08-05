@@ -21,6 +21,7 @@ vi.mock("./rebuild-backup-phase", () => ({
 }));
 
 vi.mock("./rebuild-preflight-phase", () => ({
+  runHermesCronRestoreBackupPreflight: () => ({ plan: null }),
   runRebuildPreflightPhase: phaseMocks.runPreflight,
 }));
 
