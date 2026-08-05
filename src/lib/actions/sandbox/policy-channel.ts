@@ -232,22 +232,39 @@ async function addSandboxPolicyUnlocked(
       console.error(`  No .yaml/.yml preset files in ${dirPath}`);
       process.exit(1);
     }
-    const prepared = await prepareExternalPolicyPresets(
-      files,
-      trustedPrivateHosts,
-      commandTrustedPrivateHosts,
-    );
+    if (commandTrustedPrivateHosts.length === 0) {
+      for (const file of files) {
+        const prepared = await prepareExternalPolicyPresets([file], trustedPrivateHosts, []);
+        const preset = prepared?.[0];
+        if (
+          !preset ||
+          !(await applyExternalPreset(sandboxName, preset, { dryRun, yes: skipConfirm }))
+        ) {
+          console.error(`  Aborting --from-dir: ${file} failed. Remaining presets not applied.`);
+          process.exit(1);
+          return;
+        }
+      }
+      return;
+    }
+
+    // Command-line declarations are strict and must be consumed exactly once
+    // across the whole directory. Prepare that batch before mutating policy so
+    // an unused or duplicate declaration cannot partially apply the directory.
+    const prepared = await prepareExternalPolicyPresets(files, trustedPrivateHosts, [
+      ...commandTrustedPrivateHosts,
+    ]);
     if (!prepared) {
       process.exit(1);
       return;
     }
     for (const preset of prepared) {
-      const ok = await applyExternalPreset(sandboxName, preset, { dryRun, yes: skipConfirm });
-      if (!ok) {
+      if (!(await applyExternalPreset(sandboxName, preset, { dryRun, yes: skipConfirm }))) {
         console.error(
           `  Aborting --from-dir: ${preset.filePath} failed. Remaining presets not applied.`,
         );
         process.exit(1);
+        return;
       }
     }
     return;
