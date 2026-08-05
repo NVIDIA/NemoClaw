@@ -119,10 +119,14 @@ function writeNonDistArchive(context: ArchiveFixtureContext): void {
 
 function writeTraversalArchive(context: ArchiveFixtureContext): void {
   fs.writeFileSync(path.join(context.payloadRoot, "outside.txt"), "outside dist\n");
+  const transform =
+    process.platform === "darwin"
+      ? ["-s", "|^outside.txt$|dist/../outside.txt|"]
+      : ["--transform=s|^outside.txt$|dist/../outside.txt|"];
   execFileSync("tar", [
     "-cf",
     context.payload,
-    "--transform=s|^outside.txt$|dist/../outside.txt|",
+    ...transform,
     "-C",
     context.payloadRoot,
     "outside.txt",
@@ -325,7 +329,7 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     [
       "different candidate SHA",
       { candidateSha: "e".repeat(40) },
-      "consumer checkout does not match the producer candidate SHA",
+      "producer CLI artifact provenance is invalid",
     ],
     [
       "unbound artifact name",

@@ -11,6 +11,7 @@ import {
   CLI_ARTIFACT_PRODUCER_JOB,
   PREPARE_E2E_ACTION,
   PREPARE_E2E_NO_BUILD_JOBS,
+  PREPARE_E2E_TRUSTED_BUILD_JOBS,
 } from "./prepare-e2e-workflow-boundary.mts";
 
 export const CLI_ARTIFACT_DOWNLOAD_ACTION =
@@ -18,7 +19,7 @@ export const CLI_ARTIFACT_DOWNLOAD_ACTION =
 export const CLI_ARTIFACT_UPLOAD_ACTION =
   "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
 export const CLI_ARTIFACT_RESTORE_ACTION =
-  "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@e5a55a8be89d4a3dfd44b743c7190544ef2f5246";
+  "NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@4b911e40f3f41ce500d69330ca9280b79ceede0f";
 export const CLI_ARTIFACT_PACKAGE_STEP = "Package exact-commit CLI";
 export const CLI_ARTIFACT_PUBLISH_STEP = "Publish content-addressed CLI artifact";
 export const CLI_ARTIFACT_RESTORE_STEP = "Restore exact-commit CLI artifact";
@@ -32,7 +33,7 @@ const DEFAULT_RESTORE_ACTION_PATH = join(
   "action.yaml",
 );
 const RESTORE_ACTION_CONTENT_SHA256 =
-  "9b289c07e932bd882d9e3db80a052fc3adf40102f0239da50410b171feda1765";
+  "bae2b6b99b46f7d007be9b792d7179fbef30c38d31623849e025d7341f179d0d";
 const CLI_ARTIFACT_DOWNLOAD_STEP = "Download exact-commit CLI artifact";
 const CLI_ARTIFACT_VERIFY_STEP = "Verify and restore exact-commit CLI artifact";
 const CLI_ARTIFACT_PROVENANCE_STEP = "Record CLI artifact provenance";
@@ -353,7 +354,8 @@ export function validateCliArtifactWorkflowBoundary(
     const shouldConsume =
       usesPrepare &&
       jobName !== CLI_ARTIFACT_PRODUCER_JOB &&
-      !PREPARE_E2E_NO_BUILD_JOBS.has(jobName);
+      !PREPARE_E2E_NO_BUILD_JOBS.has(jobName) &&
+      !PREPARE_E2E_TRUSTED_BUILD_JOBS.has(jobName);
     if (shouldConsume) {
       validateConsumer(errors, jobName, job, jobSteps);
     } else if (artifactSteps.length > 0) {

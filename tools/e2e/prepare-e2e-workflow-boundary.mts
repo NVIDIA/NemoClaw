@@ -36,6 +36,8 @@ export const PREPARE_E2E_NO_BUILD_JOBS = new Set([
   "spark-install",
 ]);
 
+export const PREPARE_E2E_TRUSTED_BUILD_JOBS = new Set(["managed-image-protected-runtime"]);
+
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
   name?: string;
@@ -152,9 +154,14 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
       errors.push(`${jobName} prepare-e2e step must be named '${PREPARE_E2E_STEP}'`);
     }
     const withInputs = record(prepare.with);
-    const shouldBuild = jobName === CLI_ARTIFACT_PRODUCER_JOB;
+    const shouldBuild =
+      jobName === CLI_ARTIFACT_PRODUCER_JOB || PREPARE_E2E_TRUSTED_BUILD_JOBS.has(jobName);
     if (shouldBuild && Object.keys(withInputs).length !== 0) {
-      errors.push(`${jobName} prepare-e2e must own the only default CLI build`);
+      errors.push(
+        jobName === CLI_ARTIFACT_PRODUCER_JOB
+          ? `${jobName} prepare-e2e must own the only default CLI build`
+          : `${jobName} prepare-e2e must use its default trusted CLI build`,
+      );
     }
     if (!shouldBuild && !isDeepStrictEqual(withInputs, { "build-cli": "false" })) {
       errors.push(`${jobName} prepare-e2e must set build-cli to false`);
@@ -182,6 +189,11 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
 
   for (const jobName of PREPARE_E2E_NO_BUILD_JOBS) {
     if (!expectedJobs.has(jobName)) errors.push(`prepare-e2e no-build job is missing: ${jobName}`);
+  }
+  for (const jobName of PREPARE_E2E_TRUSTED_BUILD_JOBS) {
+    if (!expectedJobs.has(jobName)) {
+      errors.push(`prepare-e2e trusted-build job is missing: ${jobName}`);
+    }
   }
   return errors;
 }

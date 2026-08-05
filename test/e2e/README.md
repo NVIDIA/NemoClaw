@@ -25,12 +25,14 @@ before those targets run; local runners must provide it themselves.
 
 ### Exact-Commit CLI Artifact
 
-The `generate-matrix` job owns the workflow's authoritative `npm run build:cli` invocation.
-It packages `dist/` once and publishes a content-addressed artifact for 63 restore consumers.
-Before artifact reuse, the workflow ran 63 independent CLI builds.
-The shared producer reduces this total to one and eliminates 62 duplicate build invocations.
+The `generate-matrix` job owns the workflow's authoritative candidate CLI build.
+It packages `dist/` once and publishes a content-addressed artifact for 62 consumer jobs.
+Before artifact reuse, those 62 jobs each built the candidate CLI.
+The shared producer retains one candidate build and eliminates 61 duplicate build invocations.
 Each consumer still runs the pinned preparation action for Node.js and dependency installation.
 Each consumer sets `build-cli: "false"` on that action.
+The `managed-image-protected-runtime` qualification is separate.
+It builds the trusted workflow checkout and never executes or restores candidate CLI code.
 
 For a pull request (PR) dispatch, `checkout_sha` identifies the candidate source that the live jobs test.
 The trusted workflow still runs from `github.workflow_sha`.
@@ -60,7 +62,7 @@ The pre-change baseline uses GitHub Actions composite-step timings from these wo
 
 The three observed build steps have a median duration of 18.756 seconds.
 These observations are inputs to theoretical analysis only.
-The implementation replaces 63 independent builds with one producer build and eliminates 62 duplicate invocations.
+The implementation replaces 62 independent candidate-workspace builds with one producer build and eliminates 61 duplicate invocations.
 Artifact upload, download, validation, and the producer dependency add runtime and can affect the workflow critical path.
 Do not use the build-step median to claim savings in runner time or workflow elapsed time.
 
