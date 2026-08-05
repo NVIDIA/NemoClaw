@@ -84,6 +84,9 @@ state_dirs:
   - path: hooks
     backup: false
     shields: read-only
+  # User-authored cron scripts are part of the job definition contract. Keep
+  # them in the same rebuild backup so active jobs never outlive their inputs.
+  - scripts
   - logs
   - path: skins
     shields: read-only
