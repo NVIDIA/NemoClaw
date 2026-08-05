@@ -5,7 +5,7 @@ title: "Engineer Documentation for AI Agents"
 sidebar-title: "Engineer Agentic Docs"
 description: "A practical architecture and operating model for making technical documentation reliable for both people and AI agents."
 description-agent: "Explains how to engineer agent-ready documentation with one canonical source, Markdown and MCP delivery, thin routing skills, workflow automation, review receipts, accuracy assurance, adoption metrics, variants, governance, and deterministic quality gates. Use when designing agentic documentation, docs engineering systems, AI documentation workflows, documentation accuracy tests, or docs-as-code automation."
-keywords: ["agentic documentation", "agent-ready docs", "documentation engineering", "AI documentation workflow", "documentation accuracy tests", "documentation review receipt", "docs as code", "llms.txt", "docs MCP server"]
+keywords: ["agentic documentation", "agent-ready docs", "documentation engineering", "AI documentation workflow", "documentation accuracy tests", "documentation source of truth", "documentation review receipt", "docs as code", "llms.txt", "docs MCP server"]
 content:
   type: "how_to"
 ---
@@ -184,6 +184,10 @@ Product behavior may be authoritative in code, schemas, command metadata, or sup
 Generate structured reference content from product sources when practical and use parity tests when prose must remain hand-written.
 
 NemoClaw uses MDX under `docs/` as its user-facing source of truth and generates agent-specific pages during the docs build.
+Inside that corpus, use parity-checked reference pages as the canonical documentation owners for facts that many task pages reuse.
+Code and product metadata remain the behavior authority.
+After generation or parity tests align a reference page with those inputs, treat that page as the documentation source of truth for downstream pages and agent-authored guidance.
+Authoring agents and task pages should consult and link to that reference instead of copying inventories of commands, flags, configuration keys, or support data.
 
 Apply these source rules:
 
@@ -506,6 +510,10 @@ The first layer proves fidelity to the selected inputs, not the accuracy of thos
 Prefer product-owned source models so the product and its documentation do not maintain separate hard-coded facts.
 
 NemoClaw compares documented CLI commands and flags with compiled help, checks installer provider choices, and audits `NEMOCLAW_*` reads in CLI source against the command reference.
+The [NemoClaw CLI Commands Reference](../reference/commands) is the canonical documentation owner for public CLI commands, flags, arguments, and exit codes.
+The compiled CLI contract checks public command headings and long-form flags in both directions against the shipped CLI.
+Its routing metadata directs agents there for subcommand, flag, argument, and exit-code lookups.
+Task pages can rely on and link to that reference for syntax while keeping procedure-specific context and verification in the owning task page.
 It generates platform support tables from `ci/platform-matrix.json` and tests guide variant selection against shared source pages.
 Targeted documentation regression tests preserve credential-rotation commands, authenticated endpoint verification, and variant-specific procedures.
 Pair these assertions with product behavior tests because the presence of a command in a page does not establish that the command succeeds.
@@ -607,6 +615,7 @@ The current NemoClaw repository provides concrete examples for each layer.
 | Routing skill | `.agents/skills/nemoclaw-user-guide/SKILL.md`. |
 | Starter prompt | `docs/resources/starter-prompt.md` and `scripts/generate-starter-prompt.mts`. |
 | Product-owned generated facts | `ci/platform-matrix.json` and `scripts/generate-platform-docs.py`. |
+| Canonical CLI documentation | `docs/reference/commands.mdx`, checked against compiled public command and flag help and linked from task pages. |
 | Guide variant generation | `scripts/sync-agent-variant-docs.mts`. |
 | Route validation | `scripts/check-docs-published-routes.mts`. |
 | Documentation accuracy tests | Compiled CLI and installer parity, environment-variable coverage, generated platform documentation, and targeted procedure and guide variant regression tests under `test/`. |
@@ -628,6 +637,7 @@ Before calling a documentation system agent-ready, confirm the following conditi
 - Every priority task has routing metadata, a stable machine-readable route, and a verification step.
 - Search, the docs index, and rendered navigation resolve to the same release and canonical owner.
 - Routing prompts and skills point to the source instead of copying it.
+- Reusable structured facts have a parity-checked reference owner that task pages and agent workflows consult instead of copying.
 - Guide variant generation is deterministic, partial scope declarations match published routes, and guide variant behavior is tested.
 - Agent workflows define scope, approvals, stop conditions, and completion evidence.
 - Every completed development change receives an independent documentation writer review before handoff.
