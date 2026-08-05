@@ -786,21 +786,118 @@ import io as _nemoclaw_io
 import json as _nemoclaw_json
 import logging as _nemoclaw_logging
 import os as _nemoclaw_os
-import re as _nemoclaw_re
-import sqlite3 as _nemoclaw_sqlite3
+import ssl as _nemoclaw_ssl
 import sys as _nemoclaw_sys
 import threading as _nemoclaw_threading
 import time as _nemoclaw_time
 
-# NemoClaw-managed Deep Agents Code hardening v2.
-_NEMOCLAW_PROVIDER_CAPACITY_ERROR = _nemoclaw_re.compile(
-    r"""\bAPIError\(["']ResourceExhausted:\s*
-        Worker\s+local\s+total\s+request\s+limit\s+reached\s*
-        \(\d+/\d+\)""",
-    _nemoclaw_re.IGNORECASE | _nemoclaw_re.VERBOSE,
-)
+import httpx as _nemoclaw_httpx
+from deepagents_code import model_config as _nemoclaw_model_config
+from langgraph_sdk import errors as _nemoclaw_langgraph_errors
 
-_NEMOCLAW_MANAGED_STATE_DB = "/sandbox/.deepagents/.state/sessions.db"
+# NemoClaw-managed Deep Agents Code hardening v2.
+# Classify only imported exception class objects from the active client error
+# chain. Pinned LangGraph stores `BaseException` checkpoints as
+# `repr(exception)`, which application code can replace through `__repr__`.
+# Checkpoint text is therefore not a trustworthy error-type source.
+_NEMOCLAW_EXCEPTION_CLASSIFIERS = {
+    _nemoclaw_langgraph_errors.RateLimitError: (
+        "RateLimited",
+        "rate_limited",
+        "true",
+    ),
+    _nemoclaw_langgraph_errors.AuthenticationError: (
+        "Unauthorized",
+        "authorization_rejected",
+        "false",
+    ),
+    _nemoclaw_langgraph_errors.PermissionDeniedError: (
+        "Unauthorized",
+        "authorization_rejected",
+        "false",
+    ),
+    _nemoclaw_langgraph_errors.NotFoundError: (
+        "NotFound",
+        "model_or_route_not_found",
+        "false",
+    ),
+    _nemoclaw_langgraph_errors.APITimeoutError: (
+        "Timeout",
+        "request_timeout",
+        "true",
+    ),
+    _nemoclaw_langgraph_errors.APIConnectionError: (
+        "Unavailable",
+        "route_unreachable",
+        "true",
+    ),
+    _nemoclaw_langgraph_errors.InternalServerError: (
+        "InternalServerError",
+        "remote_server_error",
+        "true",
+    ),
+    _nemoclaw_langgraph_errors.APIStatusError: (
+        "APIError",
+        "agent_remote_failure",
+        "false",
+    ),
+    _nemoclaw_langgraph_errors.APIError: (
+        "APIError",
+        "agent_remote_failure",
+        "false",
+    ),
+    _nemoclaw_httpx.ConnectTimeout: ("Timeout", "request_timeout", "true"),
+    _nemoclaw_httpx.ReadTimeout: ("Timeout", "request_timeout", "true"),
+    _nemoclaw_httpx.WriteTimeout: ("Timeout", "request_timeout", "true"),
+    _nemoclaw_httpx.PoolTimeout: ("Timeout", "request_timeout", "true"),
+    _nemoclaw_httpx.ConnectError: ("Unavailable", "route_unreachable", "true"),
+    _nemoclaw_httpx.ReadError: ("Unavailable", "route_unreachable", "true"),
+    _nemoclaw_httpx.WriteError: ("Unavailable", "route_unreachable", "true"),
+    _nemoclaw_httpx.CloseError: ("Unavailable", "route_unreachable", "true"),
+    _nemoclaw_httpx.ProxyError: ("Unavailable", "route_unreachable", "true"),
+    _nemoclaw_ssl.SSLCertVerificationError: (
+        "Unavailable",
+        "route_unreachable",
+        "true",
+    ),
+    _nemoclaw_ssl.SSLError: ("Unavailable", "route_unreachable", "true"),
+    TimeoutError: ("Timeout", "request_timeout", "true"),
+    ConnectionError: ("Unavailable", "route_unreachable", "true"),
+    ConnectionAbortedError: ("Unavailable", "route_unreachable", "true"),
+    ConnectionRefusedError: ("Unavailable", "route_unreachable", "true"),
+    ConnectionResetError: ("Unavailable", "route_unreachable", "true"),
+    BrokenPipeError: ("Unavailable", "route_unreachable", "true"),
+    _nemoclaw_model_config.ModelConfigError: (
+        "ModelConfigError",
+        "model_configuration",
+        "false",
+    ),
+    _nemoclaw_model_config.NoCredentialsConfiguredError: (
+        "ModelConfigError",
+        "model_configuration",
+        "false",
+    ),
+    _nemoclaw_model_config.UnknownProviderError: (
+        "ModelConfigError",
+        "model_configuration",
+        "false",
+    ),
+    _nemoclaw_model_config.MissingCredentialsError: (
+        "ModelConfigError",
+        "model_configuration",
+        "false",
+    ),
+    _nemoclaw_model_config.MissingProviderPackageError: (
+        "ModelConfigError",
+        "model_configuration",
+        "false",
+    ),
+}
+
+# Bound the __cause__/__context__ walk so a self-referential or deeply chained
+# exception cannot turn diagnostics into an unbounded loop.
+_NEMOCLAW_EXCEPTION_CHAIN_LIMIT = 8
+
 _NEMOCLAW_JSON_SCHEMA_VERSION = 1
 _NEMOCLAW_JSON_MAX_BYTES = 1_048_576
 _NEMOCLAW_JSON_ENVELOPE_RESERVE_BYTES = 4_096
@@ -1089,45 +1186,26 @@ async def _nemoclaw_run_json_non_interactive(timeout_seconds, *args, **kwargs):
     return _nemoclaw_write_json_envelope(run, status, exit_code)
 
 
-def _nemoclaw_classify_persisted_error(thread_id):
-    """Classify the observed provider-capacity error for one managed thread."""
-    if (
-        not isinstance(thread_id, str)
-        or not thread_id
-        or not _nemoclaw_os.path.isfile(_NEMOCLAW_MANAGED_STATE_DB)
-    ):
-        return None
-    try:
-        conn = _nemoclaw_sqlite3.connect(_NEMOCLAW_MANAGED_STATE_DB, timeout=2)
-        conn.execute("PRAGMA query_only = ON")
-        try:
-            cursor = conn.execute(
-                "SELECT substr(value, 1, 4096) FROM writes "
-                "WHERE thread_id = ? AND channel = '__error__' "
-                "ORDER BY rowid DESC LIMIT 5",
-                (thread_id,),
-            )
-            for (value,) in cursor:
-                if not isinstance(value, (str, bytes)):
-                    continue
-                text = (
-                    value
-                    if isinstance(value, str)
-                    else value.decode("utf-8", errors="replace")
-                )
-                if _NEMOCLAW_PROVIDER_CAPACITY_ERROR.search(text):
-                    return ("ResourceExhausted", "upstream_provider_capacity", "true")
-        finally:
-            conn.close()
-    except Exception:
-        # Diagnostics must not replace the original non-interactive exit result.
-        pass
+def _nemoclaw_classify_active_exception():
+    """Classify the in-flight exception by imported class identity (#8121)."""
+    error = _nemoclaw_sys.exc_info()[1]
+    seen = set()
+    depth = 0
+    while error is not None and depth < _NEMOCLAW_EXCEPTION_CHAIN_LIMIT:
+        if id(error) in seen:
+            return None
+        seen.add(id(error))
+        classification = _NEMOCLAW_EXCEPTION_CLASSIFIERS.get(type(error))
+        if classification:
+            return classification
+        error = error.__cause__ or error.__context__
+        depth += 1
     return None
 
 
 def _nemoclaw_report_non_interactive_error(thread_id, console):
-    """Emit bounded diagnostics without logging the exception or checkpoint row."""
-    classified = _nemoclaw_classify_persisted_error(thread_id)
+    """Emit bounded diagnostics without logging exception content."""
+    classified = _nemoclaw_classify_active_exception()
     logger = _nemoclaw_logging.getLogger("nemoclaw.managed.non_interactive")
     if classified:
         error_class, category, retryable = classified
@@ -1139,9 +1217,12 @@ def _nemoclaw_report_non_interactive_error(thread_id, console):
             retryable,
             thread_id,
         )
+        # The values come from a fixed table keyed by imported exception class
+        # objects, so the console line stays a closed vocabulary.
         console.print(
             f"\n[red]Model request failed: {error_class} "
-            f"(correlation_id={thread_id})[/red]"
+            f"(category={category} retryable={retryable} "
+            f"correlation_id={thread_id})[/red]"
         )
         return
     logger.warning(
