@@ -31,7 +31,9 @@ function bootstrapJob(jobName: JobName): {
       {
         name: "Prepare E2E workspace",
         uses: "NVIDIA/NemoClaw/.github/actions/prepare-e2e@immutable",
+        with: { "build-cli": "false" },
       },
+      { name: "Restore exact-commit CLI artifact" },
       { name: "Install OpenShell", run: INSTALL_OPENSHELL },
       {
         name: runStepName,
@@ -53,11 +55,23 @@ describe("Hermes rebuild bootstrap workflow boundary", () => {
   it.each([
     "rebuild-hermes",
     "rebuild-hermes-stale-base",
+  ] as const)("%s requires the exact-commit CLI restore step (#7144)", (jobName) => {
+    const job = bootstrapJob(jobName);
+    job.steps = job.steps.filter((step) => step.name !== "Restore exact-commit CLI artifact");
+
+    expect(validateRebuildHermesBootstrapBoundary(jobName, job)).toContain(
+      `${jobName} job missing step: Restore exact-commit CLI artifact`,
+    );
+  });
+
+  it.each([
+    "rebuild-hermes",
+    "rebuild-hermes-stale-base",
   ] as const)("%s rejects bootstrap trust-boundary drift (#7144)", (jobName) => {
     const job = bootstrapJob(jobName);
-    const [prepare, install, run] = job.steps;
+    const [prepare, restore, install, run] = job.steps;
     job.env.NEMOCLAW_CLI_BIN = "${{ github.workspace }}/evil/bin/nemoclaw.js";
-    prepare.with = { "build-cli": "false" };
+    delete prepare.with;
     install.env = {
       NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
     };
@@ -68,12 +82,12 @@ describe("Hermes rebuild bootstrap workflow boundary", () => {
     };
     run.run =
       "tools/e2e/live-vitest-invocation.mts run --test-path test/e2e/live/rebuild-hermes.test.ts";
-    job.steps = [run, install, prepare];
+    job.steps = [run, install, restore, prepare];
 
     const errors = validateRebuildHermesBootstrapBoundary(jobName, job);
     expect(errors).toContain(`${jobName} job must point NEMOCLAW_CLI_BIN at the repo CLI`);
     expect(errors).toContain(
-      `${jobName} workspace preparation must use the default checked-out CLI build`,
+      `${jobName} workspace preparation must defer to the exact-commit CLI artifact`,
     );
     expect(errors).toContain(
       "step 'Install OpenShell' run script must include env -u DOCKER_CONFIG",
@@ -88,7 +102,7 @@ describe("Hermes rebuild bootstrap workflow boundary", () => {
     expect(errors).toContain(`${jobName} step '${run.name}' env must not include NVIDIA_API_KEY`);
     expect(errors).toContain(`step '${run.name}' run script must include OPENSHELL_BIN`);
     expect(errors).toContain(
-      `${jobName} must build the CLI before installing OpenShell and running Vitest`,
+      `${jobName} must restore the exact-commit CLI before installing OpenShell and running Vitest`,
     );
   });
 });
