@@ -3382,7 +3382,7 @@ Switch the active inference provider or model for a NemoClaw-managed Hermes sand
 The command updates the OpenShell gateway route, patches the selected running agent config so it matches the route, recomputes the config hash, and updates the NemoClaw registry.
 It is also available in sandbox-first form as `$$nemoclaw <name> inference set --provider <provider> --model <model>`.
 For Hermes, the patch updates `/sandbox/.hermes/config.yaml` (`model.default`, `model.base_url`, `model.provider: custom`, API-family mode when needed, and the OpenShell proxy API-key placeholder) and does not rebuild or restart the gateway.
-When the Hermes dashboard profile exists, the command also mirrors the model route into `/sandbox/.hermes/dashboard-home/config.yaml` for Dashboard Chat.
+When the Hermes dashboard profile exists, the command also mirrors the model route into `/sandbox/.hermes/profiles/dashboard-home/config.yaml` for Dashboard Chat.
 Keeping the placeholder preserves dashboard and API authentication after provider switches.
 If NemoClaw cannot confirm that the dashboard config was updated, the route, registry, and main Hermes config remain committed, but the command exits nonzero without printing `Inference route synced`.
 Restart the sandbox with `nemohermes <name> stop` followed by `nemohermes <name> start`, then verify Dashboard Chat before relying on it.

@@ -76,9 +76,8 @@ state_dirs:
   - profiles
   - cache
   - pairing
-  # Hermes' Web dashboard uses a separate profile home for its config,
-  # memories, and user identity. Preserve it so rebuilds do not reset the
-  # dashboard profile independently of the main Hermes runtime.
+  # Legacy pre-#7200 dashboard profile location. Keep it in snapshots while
+  # startup migrates existing state into profiles/dashboard-home.
   - dashboard-home
   # Hermes' WhatsApp bridge stores QR-paired session credentials under
   # ~/.hermes/platforms/whatsapp/session. Preserve the parent so rebuilds

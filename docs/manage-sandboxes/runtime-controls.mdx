@@ -91,6 +91,8 @@ Hermes host-side config writes run as a sealed transaction.
 NemoClaw binds the write to the SHA-256 digest of the matching read, temporarily seals the mutable config paths, atomically installs fresh config inodes, refreshes the strict and compatibility hashes, and then restores the prior shields posture.
 
 `shields up` also publishes fresh config, environment, and compatibility-hash inodes so a descriptor opened before lockdown cannot retain write authority.
+Shields up keeps `/sandbox/.hermes/profiles/dashboard-home/` sandbox-owned at mode `0700` so the dashboard can update its isolated profile.
+Other Hermes profiles remain read-only during lockdown.
 The same root-only mutation lock stays held through Hermes config writes, the full `shields up` or `shields down` filesystem transition and verification, and lifecycle recovery that needs to seal those paths.
 
 If another host mutation is active, the command reports `Hermes config mutation is already in progress`.
