@@ -2,7 +2,7 @@
 #
 # Layers PR-specific code (plugin, blueprint, config, startup script) on top
 # of the pre-built base image from GHCR. The base image contains all the
-# expensive, rarely-changing layers (apt, gosu, users, openclaw CLI).
+# expensive, rarely-changing layers (apt, setpriv, users, openclaw CLI).
 #
 # For local builds without GHCR access, build the base first:
 #   docker build -f Dockerfile.base -t ghcr.io/nvidia/nemoclaw/sandbox-base:latest .

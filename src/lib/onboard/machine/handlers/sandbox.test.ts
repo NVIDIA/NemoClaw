@@ -1426,6 +1426,7 @@ describe("handleSandboxState", () => {
     });
 
     expect(calls.setupMessaging).toHaveBeenCalledWith(null, ["whatsapp"], "my-assistant");
+    expect(readMessagingPlanFromEnv).toHaveBeenCalledOnce();
     expect(writePlanToEnv).not.toHaveBeenCalled();
     expect(calls.note).toHaveBeenCalledWith(
       "  [non-interactive] Detected messaging channel inputs for telegram; refreshing reused sandbox messaging plan.",
