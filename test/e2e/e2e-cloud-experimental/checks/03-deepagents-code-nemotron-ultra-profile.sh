@@ -146,7 +146,10 @@ from deepagents_code.config import (
     _NEMOCLAW_NEMOTRON_ULTRA_MODEL_IDS,
     _get_provider_kwargs,
 )
-from deepagents_code._nemoclaw_managed import managed_inference_base_url
+from deepagents_code._nemoclaw_managed import (
+    managed_inference_base_url,
+    managed_reasoning_effort,
+)
 from deepagents_code.model_config import ModelConfigError
 
 # A mutable allowlist would let a caller widen the shaped set at runtime.
@@ -161,6 +164,15 @@ OPENAI_CONTRACT = {
     "api_key": "nemoclaw-managed-inference",
     "base_url": MANAGED_BASE_URL,
     "use_responses_api": False,
+}
+MANAGED_REASONING_EFFORT = managed_reasoning_effort()
+if MANAGED_REASONING_EFFORT is not None:
+    OPENAI_CONTRACT["extra_body"] = {
+        "reasoning_effort": MANAGED_REASONING_EFFORT,
+    }
+MANAGED_ULTRA_EXTRA_BODY = {
+    **OPENAI_CONTRACT.get("extra_body", {}),
+    **EXPECTED_EXTRA_BODY,
 }
 OPENROUTER_CONTRACT = {
     "api_key": "nemoclaw-managed-inference",
@@ -181,7 +193,7 @@ try:
     for model_id in MANAGED_MODEL_IDS:
         assert _get_provider_kwargs("openai", model_name=model_id) == {
             **OPENAI_CONTRACT,
-            "extra_body": EXPECTED_EXTRA_BODY,
+            "extra_body": MANAGED_ULTRA_EXTRA_BODY,
         }, model_id
         # The reviewed argument belongs to the OpenAI adapter alone; the managed
         # OpenRouter adapter keeps the unshaped contract for the same model.
@@ -213,7 +225,7 @@ try:
     tampered["extra_body"]["chat_template_kwargs"]["force_nonempty_content"] = False
     assert _get_provider_kwargs("openai", model_name=MANAGED_MODEL_IDS[0]) == {
         **OPENAI_CONTRACT,
-        "extra_body": EXPECTED_EXTRA_BODY,
+        "extra_body": MANAGED_ULTRA_EXTRA_BODY,
     }
 finally:
     socket.socket = real_socket

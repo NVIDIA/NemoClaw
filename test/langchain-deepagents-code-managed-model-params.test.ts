@@ -101,6 +101,8 @@ print("managed-ultra-template-argument-ok")
     expect(e2eCheck).toContain("_NEMOCLAW_NEMOTRON_ULTRA_MODEL_IDS,");
     expect(e2eCheck).toContain('_get_provider_kwargs("openai", model_name=model_id)');
     expect(e2eCheck).toContain('_get_provider_kwargs("openrouter", model_name=model_id)');
+    expect(e2eCheck).toContain("managed_reasoning_effort,");
+    expect(e2eCheck).toContain("MANAGED_REASONING_EFFORT = managed_reasoning_effort()");
     expect(e2eCheck).toContain("except ModelConfigError:");
     expect(e2eCheck).toContain("NEMOCLAW_MANAGED_RESOLVER_CONTRACT_OK:");
     // The resolver contract stays inference-free, like the profile contract.
