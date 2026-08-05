@@ -33,6 +33,7 @@ import { isPortableExperimentalProfile, PORTABLE_HOST_GATEWAY_IP } from "./docke
 export { getGatewayHttpsEndpoint, startPackageManagedDockerDriverGateway };
 
 export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
+  "CONTAINERS_CONF",
   "DOCKER_HOST",
   "OPENSHELL_DRIVERS",
   "OPENSHELL_BIND_ADDRESS",
@@ -236,7 +237,11 @@ export function buildDockerDriverGatewayEnv({
     OPENSHELL_DOCKER_NETWORK_NAME: dockerNetworkName,
     OPENSHELL_DOCKER_SUPERVISOR_IMAGE: getDockerSupervisorImage(),
   };
-  if (portable) env.NETAVARK_FW = "iptables";
+  if (portable) {
+    env.NETAVARK_FW = "iptables";
+    const containersConf = process.env.CONTAINERS_CONF?.trim();
+    if (containersConf) env.CONTAINERS_CONF = containersConf;
+  }
   if (platform === "linux") {
     const sandboxBin = resolveSandboxBin();
     if (sandboxBin) {

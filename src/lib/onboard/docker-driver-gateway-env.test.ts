@@ -68,6 +68,7 @@ describe("buildDockerDriverGatewayEnv", () => {
 
   it("builds the exact rootless gateway network contract for the portable profile", () => {
     vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "portable");
+    vi.stubEnv("CONTAINERS_CONF", "/tmp/nemoclaw-portable/containers.conf");
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-portable-gateway-"));
     try {
       const env = buildDockerDriverGatewayEnv({
@@ -78,6 +79,7 @@ describe("buildDockerDriverGatewayEnv", () => {
       });
       expect(env).toMatchObject({
         OPENSHELL_DRIVERS: "podman",
+        CONTAINERS_CONF: "/tmp/nemoclaw-portable/containers.conf",
         OPENSHELL_BIND_ADDRESS: "0.0.0.0",
         OPENSHELL_GRPC_ENDPOINT: "https://169.254.1.2:8080",
         NETAVARK_FW: "iptables",

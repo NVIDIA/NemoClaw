@@ -24,6 +24,7 @@ import { isImmutableDockerImageId } from "./openshell-docker-sandbox-containers"
 const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
 const FALSY_FLAG_VALUES = new Set(["0", "false", "no", "off"]);
 const DOCKER_ENV_NAMES = [
+  "CONTAINERS_CONF",
   "DOCKER_API_VERSION",
   "DOCKER_CERT_PATH",
   "DOCKER_CONFIG",

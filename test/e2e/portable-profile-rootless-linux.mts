@@ -42,16 +42,17 @@ const { SANDBOX_BUILD_CONTEXT_PREFIX } = buildContextModule;
 const BASE_IMAGE =
   "docker.io/library/ubuntu@sha256:019e8eb29a85e74d64925745884f2ec79aa27e3feab36353d24656f4d6b89467";
 
-function run(command: string, args: readonly string[]): string {
+function run(command: string, args: readonly string[], timeout = 60_000): string {
   const result = spawnSync(command, [...args], {
     encoding: "utf-8",
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
+    timeout,
   });
   assert.equal(
     result.status,
     0,
-    `${command} ${args.join(" ")} failed:\n${String(result.stderr || result.stdout)}`,
+    `${command} ${args.join(" ")} failed:\n${String(result.error?.message || result.stderr || result.stdout)}`,
   );
   return String(result.stdout).trim();
 }
@@ -88,7 +89,7 @@ pid_file="\${runtime_dir}/nemoclaw-podman-service.pid"
 log_file="\${runtime_dir}/nemoclaw-podman-service.log"
 
 case "$*" in
-  "--user set-environment NETAVARK_FW=iptables")
+  "--user set-environment NETAVARK_FW=iptables CONTAINERS_CONF="*)
     exit 0
     ;;
   "--user try-restart podman.service")
@@ -129,13 +130,7 @@ async function main(): Promise<void> {
   const stateDir = path.join(root, "gateway-state");
   const configHome = path.join(home, ".config");
   const runtimeDir = `/run/user/${String(process.getuid?.())}`;
-  fs.mkdirSync(path.join(configHome, "containers"), { recursive: true, mode: 0o700 });
   fs.mkdirSync(binDir, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(
-    path.join(configHome, "containers", "containers.conf"),
-    '[network]\ndefault_rootless_network_cmd = "pasta"\n',
-    { encoding: "utf-8", mode: 0o600 },
-  );
   writeSystemctlShim(binDir);
 
   Object.assign(process.env, {
@@ -152,6 +147,10 @@ async function main(): Promise<void> {
   try {
     preparePortableExperimentalHost(process.env);
     assert.equal(process.env.DOCKER_HOST, `unix://${runtimeDir}/podman/podman.sock`);
+    assert.match(
+      fs.readFileSync(String(process.env.CONTAINERS_CONF), "utf-8"),
+      /pasta_options = \["--map-gw"\]/,
+    );
 
     const podmanInfo = JSON.parse(run("podman", ["info", "--format", "json"]));
     assert.equal(podmanInfo.host?.security?.rootless, true, "Podman must be rootless");
@@ -187,6 +186,7 @@ async function main(): Promise<void> {
       run("podman", ["image", "inspect", "--format", "{{.Id}}", prebuild.imageRef]),
       /^(?:sha256:)?[a-f0-9]{64}$/,
     );
+    run("podman", ["network", "create", "openshell-docker"]);
 
     server = http.createServer((_request, response) => {
       response.writeHead(200, { "content-type": "text/plain" });
@@ -221,7 +221,20 @@ async function main(): Promise<void> {
       'grep -F portable-profile-ok <<<"$response"',
     ].join("; ");
     assert.equal(
-      run("podman", ["run", "--rm", prebuild.imageRef, "bash", "-lc", routeProof]),
+      run(
+        "podman",
+        [
+          "run",
+          "--rm",
+          "--network",
+          "openshell-docker",
+          prebuild.imageRef,
+          "bash",
+          "-lc",
+          routeProof,
+        ],
+        20_000,
+      ),
       "portable-profile-ok",
     );
 

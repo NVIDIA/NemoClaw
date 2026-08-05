@@ -19,6 +19,14 @@ const REGISTRY_FRAGMENT = `[[registry]]
 location = "${PORTABLE_LOCAL_REGISTRY}"
 insecure = true
 `;
+const PORTABLE_CONTAINERS_CONF = `[network]
+default_rootless_network_cmd = "pasta"
+firewall_driver = "iptables"
+pasta_options = ["--map-gw"]
+
+[engine]
+env = ["NETAVARK_FW=iptables"]
+`;
 
 type SpawnResult = ReturnType<typeof spawnSync>;
 
@@ -42,27 +50,35 @@ function requireCommand(result: SpawnResult, description: string): void {
   throw new Error(`${description} failed: ${commandDetail(result)}`);
 }
 
-function writeRegistryFragment(home: string, env: NodeJS.ProcessEnv): void {
-  const configHome = env.XDG_CONFIG_HOME?.trim() || path.join(home, ".config");
-  const fragmentDir = path.join(configHome, "containers", "registries.conf.d");
-  const fragmentPath = path.join(fragmentDir, "99-nemoclaw-portable.conf");
-  ensureConfigDir(fragmentDir);
+function writePrivateConfig(filePath: string, value: string): void {
+  ensureConfigDir(path.dirname(filePath));
   let file;
   try {
-    file = openRegularFileNoFollow(fragmentPath, { writable: true });
+    file = openRegularFileNoFollow(filePath, { writable: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    file = openRegularFileNoFollow(fragmentPath, {
+    file = openRegularFileNoFollow(filePath, {
       create: true,
       mode: 0o600,
       writable: true,
     });
   }
   try {
-    file.replaceUtf8(REGISTRY_FRAGMENT, 0o600);
+    file.replaceUtf8(value, 0o600);
   } finally {
     file.close();
   }
+}
+
+function writePortableRuntimeConfig(home: string, env: NodeJS.ProcessEnv): string {
+  const configHome = env.XDG_CONFIG_HOME?.trim() || path.join(home, ".config");
+  writePrivateConfig(
+    path.join(configHome, "containers", "registries.conf.d", "99-nemoclaw-portable.conf"),
+    REGISTRY_FRAGMENT,
+  );
+  const containersConf = path.join(configHome, "nemoclaw", "portable", "containers.conf");
+  writePrivateConfig(containersConf, PORTABLE_CONTAINERS_CONF);
+  return containersConf;
 }
 
 function ensureRegistryContainer(
@@ -126,13 +142,21 @@ export function preparePortableExperimentalHost(
   const home = deps.home ?? env.HOME ?? os.homedir();
   env.NETAVARK_FW = "iptables";
   env.DOCKER_HOST = `unix:///run/user/${String(uid)}/podman/podman.sock`;
-  writeRegistryFragment(home, env);
+  env.CONTAINERS_CONF = writePortableRuntimeConfig(home, env);
 
   const systemctl =
     deps.systemctl ??
     ((args, childEnv) => spawnSync("systemctl", [...args], { encoding: "utf-8", env: childEnv }));
   requireCommand(
-    systemctl(["--user", "set-environment", "NETAVARK_FW=iptables"], env),
+    systemctl(
+      [
+        "--user",
+        "set-environment",
+        "NETAVARK_FW=iptables",
+        `CONTAINERS_CONF=${env.CONTAINERS_CONF}`,
+      ],
+      env,
+    ),
     "Configuring the rootless container service environment",
   );
   requireCommand(
@@ -154,4 +178,5 @@ export const portableHostPreparationInternals = {
   REGISTRY_CONTAINER,
   REGISTRY_IMAGE,
   REGISTRY_FRAGMENT,
+  PORTABLE_CONTAINERS_CONF,
 };

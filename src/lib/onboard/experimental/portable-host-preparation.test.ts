@@ -56,11 +56,17 @@ describe("preparePortableExperimentalHost", () => {
     });
 
     expect(env).toMatchObject({
+      CONTAINERS_CONF: path.join(home, ".config/nemoclaw/portable/containers.conf"),
       DOCKER_HOST: "unix:///run/user/1001/podman/podman.sock",
       NETAVARK_FW: "iptables",
     });
     expect(systemctl.mock.calls.map(([args]) => args)).toEqual([
-      ["--user", "set-environment", "NETAVARK_FW=iptables"],
+      [
+        "--user",
+        "set-environment",
+        "NETAVARK_FW=iptables",
+        `CONTAINERS_CONF=${path.join(home, ".config/nemoclaw/portable/containers.conf")}`,
+      ],
       ["--user", "try-restart", "podman.service"],
       ["--user", "enable", "--now", "podman.socket"],
     ]);
@@ -82,6 +88,13 @@ describe("preparePortableExperimentalHost", () => {
     );
     expect(fs.readFileSync(registryConfig, "utf-8")).toContain('location = "localhost:5000"');
     expect(fs.statSync(registryConfig).mode & 0o777).toBe(0o600);
+    const containersConf = path.join(home, ".config/nemoclaw/portable/containers.conf");
+    expect(fs.readFileSync(containersConf, "utf-8")).toContain(
+      'default_rootless_network_cmd = "pasta"',
+    );
+    expect(fs.readFileSync(containersConf, "utf-8")).toContain('pasta_options = ["--map-gw"]');
+    expect(fs.readFileSync(containersConf, "utf-8")).toContain('env = ["NETAVARK_FW=iptables"]');
+    expect(fs.statSync(containersConf).mode & 0o777).toBe(0o600);
   });
 
   it("refuses to replace an unmanaged registry container", () => {

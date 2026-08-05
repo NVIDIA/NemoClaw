@@ -56,6 +56,7 @@ describe("sandbox BuildKit prebuild", () => {
   it("keeps Docker runtime settings while dropping secrets and control-plane state", () => {
     vi.stubEnv("PATH", "/usr/bin");
     vi.stubEnv("HOME", "/home/user");
+    vi.stubEnv("CONTAINERS_CONF", "/home/user/.config/nemoclaw/portable/containers.conf");
     vi.stubEnv("DOCKER_HOST", "unix:///var/run/docker.sock");
     vi.stubEnv("DOCKER_CONFIG", "/home/user/.docker-ci");
     vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
@@ -76,6 +77,7 @@ describe("sandbox BuildKit prebuild", () => {
     expect(env).toMatchObject({
       PATH: "/usr/bin",
       HOME: "/home/user",
+      CONTAINERS_CONF: "/home/user/.config/nemoclaw/portable/containers.conf",
       DOCKER_HOST: "unix:///var/run/docker.sock",
       DOCKER_CONFIG: "/home/user/.docker-ci",
       DOCKER_CONTEXT: "remote-builder",
