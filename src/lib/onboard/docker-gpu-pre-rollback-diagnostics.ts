@@ -5,7 +5,10 @@ import {
   dockerCapture as defaultDockerCapture,
   dockerLogs as defaultDockerLogs,
 } from "../adapters/docker";
-import { discoverDockerGpuDiagnosticSensitiveValues } from "./docker-gpu-diagnostic-redaction";
+import {
+  createDockerGpuDiagnosticRedactor,
+  discoverDockerGpuDiagnosticSensitiveValues,
+} from "./docker-gpu-diagnostic-redaction";
 import {
   captureDockerGpuPatchSandboxSnapshot,
   classifyDockerGpuPatchFailure,
@@ -17,12 +20,15 @@ import type {
   DockerContainerInspect,
   DockerGpuPatchDeps,
   DockerGpuPatchDiagnostics,
+  DockerGpuPatchFailureClassification,
   DockerGpuPatchFailureContext,
   DockerGpuPatchResult,
 } from "./docker-gpu-patch-types";
 
 const PRE_ROLLBACK_DIAGNOSTICS_TOTAL_BUDGET_MS = 10_000;
 const PRE_ROLLBACK_DIAGNOSTICS_CALL_TIMEOUT_MS = 2_000;
+const MISSING_MANAGED_STARTUP_COMMAND_LOG =
+  /(?:^|\n)(?:\/usr\/bin\/)?env: (?:[\u0027\u2018]?nemoclaw-start[\u0027\u2019]?|can't execute 'nemoclaw-start'): No such file or directory(?:\r?\n|$)/u;
 
 type PreRollbackDiagnosticsDeps = Pick<
   DockerGpuPatchDeps,
@@ -118,11 +124,26 @@ function primeSensitiveDiagnosticValues(
   return [...sensitiveValues];
 }
 
+/**
+ * Diagnostics bundle plus the verdict computed while the replacement container
+ * was still inspectable. The failure path cannot rely on that replacement
+ * remaining inspectable after rollback, so `classification` preserves the
+ * exit-state evidence for the caller's user-facing failure message (#7996).
+ */
+export type DockerGpuPreRollbackDiagnostics = {
+  classification: DockerGpuPatchFailureClassification;
+  diagnostics: DockerGpuPatchDiagnostics | null;
+};
+
+function logsShowMissingManagedStartupCommand(logs: string): boolean {
+  return MISSING_MANAGED_STARTUP_COMMAND_LOG.test(logs);
+}
+
 export function captureDockerGpuPreRollbackDiagnostics(
   sandboxName: string,
   result: DockerGpuPatchResult,
   deps: PreRollbackDiagnosticsDeps = {},
-): DockerGpuPatchDiagnostics | null {
+): DockerGpuPreRollbackDiagnostics | null {
   const context: DockerGpuPatchFailureContext = {
     sandboxName,
     oldContainerId: result.oldContainerId,
@@ -131,17 +152,35 @@ export function captureDockerGpuPreRollbackDiagnostics(
     selectedMode: result.mode,
   };
   const diagnosticDeps = boundedDiagnosticsDeps(deps);
-  const additionalSensitiveValues = primeSensitiveDiagnosticValues(
-    sandboxName,
-    result,
-    diagnosticDeps,
-  );
+  // Preserve the short-lived failure verdict before optional inspect
+  // enrichment can consume the shared capture budget. The replacement State
+  // is the only source of its exit code once rollback removes the container.
   const snapshot = captureDockerGpuPatchSandboxSnapshot(
     sandboxName,
     { patchedContainerId: result.newContainerId },
     diagnosticDeps,
   );
-  const classification = classifyDockerGpuPatchFailure(snapshot, result.mode);
+  const additionalSensitiveValues = primeSensitiveDiagnosticValues(
+    sandboxName,
+    result,
+    diagnosticDeps,
+  );
+  let patchedContainerLogs = "";
+  try {
+    const logs = diagnosticDeps.dockerLogs ?? defaultDockerLogs;
+    patchedContainerLogs = logs(result.newContainerId, {
+      tail: 120,
+      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+    });
+  } catch {
+    // An unavailable log does not establish a missing startup command.
+  }
+  const classification = classifyDockerGpuPatchFailure(snapshot, result.mode, {
+    managedStartupCommandMissing: logsShowMissingManagedStartupCommand(patchedContainerLogs),
+  });
+  const redactedClassification = createDockerGpuDiagnosticRedactor(
+    additionalSensitiveValues,
+  ).redactValue(classification) as DockerGpuPatchFailureClassification;
   let dockerTopOutput: string | null = null;
   try {
     const dockerCapture = diagnosticDeps.dockerCapture ?? defaultDockerCapture;
@@ -161,11 +200,10 @@ export function captureDockerGpuPreRollbackDiagnostics(
       classification,
       additionalSensitiveValues,
       dockerTopOutput,
+      cleanupDisposition: "pending-rollback",
     },
     diagnosticDeps,
   );
-  if (!diagnostics) return null;
-
-  console.error(`  Pre-rollback diagnostics saved: ${diagnostics.dir}`);
-  return diagnostics;
+  if (diagnostics) console.error(`  Pre-rollback diagnostics saved: ${diagnostics.dir}`);
+  return { classification: redactedClassification, diagnostics };
 }
