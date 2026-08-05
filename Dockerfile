@@ -1175,9 +1175,9 @@ ARG NEMOCLAW_MESSAGING_PLAN_B64=
 # union. It is inert by default and must never be enabled for a deployment-
 # specific Dockerfile build carrying an active messaging plan.
 ARG NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION=0
-# OpenClaw already uses a root supervisor; the explicit value keeps the managed
-# image entry-user contract uniform with Hermes and DCode publication.
-ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=root
+# OpenShell requires a nonroot image default. Managed publication explicitly
+# selects root so the entrypoint can preserve gateway and agent UID isolation.
+ARG NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER=sandbox
 # Base64-encoded JSON array of secondary OpenClaw agent config entries
 # (e.g. [{"id":"research","workspace":"/sandbox/.openclaw/workspace-research",
 # "agentDir":"/sandbox/.openclaw/agents/research", ...}]).
@@ -1270,7 +1270,11 @@ RUN case "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" in \
             ;; \
         *) echo "ERROR: NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION must be 0 or 1" >&2; exit 1 ;; \
     esac \
-    && test "$NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER" = "root"
+    && case "$NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER" in \
+        root|sandbox) ;; \
+        *) echo "ERROR: NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER must be root or sandbox" >&2; exit 1 ;; \
+    esac \
+    && command -v setpriv >/dev/null 2>&1
 
 # Bake reduced messaging runtime metadata for the entrypoint. The full
 # NEMOCLAW_MESSAGING_PLAN_B64 is a build input; OpenShell sandbox create only
@@ -1950,6 +1954,6 @@ RUN set -eu; \
 # OpenShell rejects OCI images whose default user is root. The entrypoint
 # supports this non-root mode; deployments that require gateway/agent
 # privilege separation can still override the runtime user to root.
-USER sandbox
+USER ${NEMOCLAW_MANAGED_IMAGE_RUNTIME_USER}
 ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]
 CMD ["/bin/bash"]

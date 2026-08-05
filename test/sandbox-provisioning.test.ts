@@ -385,7 +385,7 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
     const command = dockerHealthCommandBetween(
       dockerfile,
       "# Health check: poll the gateway's /health endpoint",
-      "# Entrypoint runs as root",
+      "ENTRYPOINT",
     );
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-health-probe-"));
 
@@ -455,7 +455,7 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
       const rawCommand = dockerHealthCommandBetween(
         dockerfile,
         "# Health check: poll the gateway's /health endpoint",
-        "# Entrypoint runs as root",
+        "ENTRYPOINT",
       );
       const command = rawCommand
         .replaceAll("/tmp/gateway.log", logPath)
@@ -617,7 +617,7 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
         const command = dockerHealthCommandBetween(
           dockerfile,
           "# Health check: poll the gateway's /health endpoint",
-          "# Entrypoint runs as root",
+          "ENTRYPOINT",
         )
           .replaceAll("/tmp/gateway.log", logPath)
           .replaceAll("/tmp/nemoclaw-gateway-local", markerPath)
