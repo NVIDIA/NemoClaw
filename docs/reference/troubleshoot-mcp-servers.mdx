@@ -146,7 +146,7 @@ It redacts session identifiers, bearer tokens, structured credentials such as `a
 The diagnostic does not include a JSON-RPC operation because this boundary sees only the endpoint.
 
 To find the matching sandbox audit record, read the sandbox log for the same endpoint around the failure time.
-The `logs` command reads both OpenClaw gateway output and OpenShell audit events, so it needs no separate audit flag:
+The `logs` command reads both OpenClaw gateway output and OpenShell audit events, so it needs no separate audit flag.
 
 ```bash
 $$nemoclaw <sandbox> logs --tail 200

@@ -19,36 +19,46 @@ type DocumentedInvocation = {
   reference: string;
 };
 
-function* walkMdxFiles(dir: string): Generator<string> {
-  const entries = fs
+function walkMdxFiles(dir: string): string[] {
+  return fs
     .readdirSync(dir, { withFileTypes: true })
-    .sort((left, right) => left.name.localeCompare(right.name));
-  for (const entry of entries) {
-    const absolute = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name === "_build") continue;
-      yield* walkMdxFiles(absolute);
-    } else if (entry.isFile() && entry.name.endsWith(".mdx")) {
-      yield absolute;
-    }
-  }
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .flatMap((entry) => {
+      const absolute = path.join(dir, entry.name);
+      return entry.name === "_build"
+        ? []
+        : entry.isDirectory()
+          ? walkMdxFiles(absolute)
+          : entry.isFile() && entry.name.endsWith(".mdx")
+            ? [absolute]
+            : [];
+    });
+}
+
+function extractInvocation(line: string, index: number, file: string): DocumentedInvocation | null {
+  const rest = LOGS_INVOCATION.exec(line.trim())?.groups?.rest.trim();
+  return rest !== undefined && !PLACEHOLDER_OR_SHELL_SYNTAX.test(rest)
+    ? {
+        args: [SANDBOX_NAME, "logs", rest].filter(Boolean).join(" "),
+        reference: `${path.relative(REPO_ROOT, file)}:${index + 1}`,
+      }
+    : null;
+}
+
+function isDocumentedInvocation(
+  invocation: DocumentedInvocation | null,
+): invocation is DocumentedInvocation {
+  return invocation !== null;
 }
 
 function documentedLogsInvocations(): DocumentedInvocation[] {
-  const invocations: DocumentedInvocation[] = [];
-  for (const file of walkMdxFiles(DOCS_ROOT)) {
-    const lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
-    lines.forEach((line, index) => {
-      const rest = LOGS_INVOCATION.exec(line.trim())?.groups?.rest.trim();
-      if (rest === undefined) return;
-      if (PLACEHOLDER_OR_SHELL_SYNTAX.test(rest)) return;
-      invocations.push({
-        args: [SANDBOX_NAME, "logs", rest].filter(Boolean).join(" "),
-        reference: `${path.relative(REPO_ROOT, file)}:${index + 1}`,
-      });
-    });
-  }
-  return invocations;
+  return walkMdxFiles(DOCS_ROOT).flatMap((file) =>
+    fs
+      .readFileSync(file, "utf8")
+      .split(/\r?\n/)
+      .map((line, index) => extractInvocation(line, index, file))
+      .filter(isDocumentedInvocation),
+  );
 }
 
 describe("documented sandbox logs invocations", () => {
