@@ -162,6 +162,8 @@ const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e",
   "hermes-gpu-startup",
   "llama-cpp-dgx-spark-qualification",
+  "managed-image-multiarch-startup",
+  "managed-image-protected-runtime",
   "openshell-credential-generation-window",
   "staging-brev-launchable",
 ]);
@@ -2519,12 +2521,16 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
         ? checkoutIndex + 2
         : jobName === "hermes-gpu-startup"
           ? checkoutIndex + 3
-          : checkoutIndex + 1;
+          : jobName === "managed-image-protected-runtime"
+            ? checkoutIndex + 2
+            : checkoutIndex + 1;
     if (checkoutIndex < 0 || authIndex !== expectedAuthIndex) {
       errors.push(
         jobName === "jetson-nvmap-gpu"
           ? `${jobName} Docker Hub auth must run immediately after the Jetson dispatch guard`
-          : `${jobName} Docker Hub auth must run immediately after checkout`,
+          : jobName === "managed-image-protected-runtime"
+            ? `${jobName} Docker Hub auth must run immediately after the protected cache download`
+            : `${jobName} Docker Hub auth must run immediately after checkout`,
       );
     }
     if (authIndex < 0 || cleanupIndex <= authIndex) {

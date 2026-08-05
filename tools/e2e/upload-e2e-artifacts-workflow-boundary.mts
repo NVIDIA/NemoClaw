@@ -34,6 +34,7 @@ const CHECKOUT_LOCAL_UPLOAD_E2E_ARTIFACTS_ACTION = "./.github/actions/upload-e2e
 const UPLOAD_E2E_ARTIFACTS_ACTION_PREFIX = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@";
 const UPLOAD_ARTIFACT_ACTION = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
 const UPLOAD_ARTIFACT_ACTION_PREFIX = "actions/upload-artifact@";
+const MANAGED_IMAGE_BUILD_CACHE_PUBLISH_STEP = "Publish exact amd64 protected runtime build cache";
 const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
 const RETIRED_SELECTOR_COMPATIBILITY_JOB = "retired-selector-compatibility";
@@ -447,7 +448,15 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
         jobName === "generate-matrix" &&
         step.name === CLI_ARTIFACT_PUBLISH_STEP &&
         uses === CLI_ARTIFACT_UPLOAD_ACTION;
-      if (uses.startsWith(UPLOAD_ARTIFACT_ACTION_PREFIX) && !isExactCommitCliArtifactUpload) {
+      const isExactManagedImageBuildCacheUpload =
+        jobName === "managed-image-multiarch-startup" &&
+        step.name === MANAGED_IMAGE_BUILD_CACHE_PUBLISH_STEP &&
+        uses === UPLOAD_ARTIFACT_ACTION;
+      if (
+        uses.startsWith(UPLOAD_ARTIFACT_ACTION_PREFIX) &&
+        !isExactCommitCliArtifactUpload &&
+        !isExactManagedImageBuildCacheUpload
+      ) {
         errors.push(`${jobName} must not invoke actions/upload-artifact directly`);
       }
       if (
