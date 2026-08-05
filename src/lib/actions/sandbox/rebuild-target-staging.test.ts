@@ -1,16 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import {
   createRebuildProviderReconfigureHandoff,
   type RegistryInferenceRoute,
   validateRebuildProviderReconfigureHandoff,
 } from "../../onboard/rebuild-route-handoff";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
+import * as onboardSession from "../../state/onboard-session";
+import type { Session } from "../../state/onboard-session";
+import * as registry from "../../state/registry";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
-import { prepareRebuildRecreateOptions } from "./rebuild-target-staging";
+import {
+  hydrateMessagingConfigForRebuild,
+  prepareRebuildRecreateOptions,
+} from "./rebuild-target-staging";
 
 const SANDBOX_ENTRY = {
   name: "alpha",
@@ -46,6 +53,51 @@ const BASE_IMAGE_RESOLUTION_HINT: SandboxBaseImageResolutionMetadata = {
 const bail = (message: string): never => {
   throw new Error(message);
 };
+
+function messagingConfigPlan(requireMention: "0" | "1"): SandboxMessagingPlan {
+  return {
+    schemaVersion: 1,
+    sandboxName: "alpha",
+    agent: "openclaw",
+    workflow: "rebuild",
+    channels: [
+      {
+        channelId: "telegram",
+        displayName: "Telegram",
+        authMode: "token-paste",
+        active: true,
+        selected: true,
+        configured: true,
+        disabled: false,
+        inputs: [
+          {
+            channelId: "telegram",
+            inputId: "requireMention",
+            kind: "config",
+            required: false,
+            sourceEnv: "TELEGRAM_REQUIRE_MENTION",
+            statePath: "telegramConfig.requireMention",
+            value: requireMention,
+          },
+        ],
+        hooks: [],
+      },
+    ],
+    disabledChannels: [],
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+  };
+}
+
+afterEach(() => {
+  delete process.env.TELEGRAM_REQUIRE_MENTION;
+  delete process.env.NEMOCLAW_MESSAGING_PLAN_B64;
+  vi.restoreAllMocks();
+});
 
 describe("prepareRebuildRecreateOptions", () => {
   it("binds provider reconfiguration authority to the exact rebuild target (#6114)", () => {
@@ -103,5 +155,22 @@ describe("prepareRebuildRecreateOptions", () => {
 
     expect(options?.baseImageResolutionHint).toBeNull();
     expect(options).not.toHaveProperty("rebuildRegistryInferenceRoute");
+  });
+});
+
+describe("hydrateMessagingConfigForRebuild", () => {
+  it("hydrates registry config instead of conflicting session config", () => {
+    const registryPlan = messagingConfigPlan("0");
+    const sessionPlan = messagingConfigPlan("1");
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "alpha",
+      messagingPlan: sessionPlan,
+    } as Session);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha" });
+    vi.spyOn(registry, "getHydratedMessagingPlanFromEntry").mockReturnValue(registryPlan);
+
+    hydrateMessagingConfigForRebuild("alpha", vi.fn());
+
+    expect(process.env.TELEGRAM_REQUIRE_MENTION).toBe("0");
   });
 });

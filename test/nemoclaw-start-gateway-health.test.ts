@@ -611,9 +611,13 @@ describe("gateway launch wiring (#4710)", () => {
       `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nexec sleep 30\n`,
       { mode: 0o755 },
     );
-    fs.writeFileSync(path.join(fakeBin, "gosu"), `#!/usr/bin/env bash\nshift\nexec "$@"\n`, {
-      mode: 0o755,
-    });
+    fs.writeFileSync(
+      path.join(fakeBin, "setpriv"),
+      `#!/usr/bin/env bash\nwhile [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n`,
+      {
+        mode: 0o755,
+      },
+    );
     fs.writeFileSync(gatewayLog, "gateway booting\n");
 
     const realFunctions = [
@@ -625,6 +629,7 @@ describe("gateway launch wiring (#4710)", () => {
         gatewayLog,
       ),
       extractShellFunction(src, "record_gateway_pid"),
+      extractShellFunction(src, "clear_gateway_pid_record"),
       extractShellFunction(src, "gateway_pid_is_openclaw_gateway"),
       extractShellFunction(src, "gateway_watchdog_positive_int_ok"),
       extractShellFunction(src, "start_gateway_serving_watchdog"),
@@ -649,8 +654,8 @@ describe("gateway launch wiring (#4710)", () => {
         'start_auto_pair() { command sleep 30 & AUTO_PAIR_PID=$!; capture_openclaw_pid_start_identity "$AUTO_PAIR_PID" AUTO_PAIR_PID_START_IDENTITY; }',
         "start_plugin_registry_refresh() { :; }",
         "cleanup_on_signal() { :; }",
-        "STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)",
-        "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
+        "STEP_DOWN_PREFIX_SANDBOX=(setpriv --reuid=sandbox --regid=sandbox --init-groups --)",
+        "STEP_DOWN_PREFIX_GATEWAY=(setpriv --reuid=gateway --regid=gateway --init-groups --)",
         realFunctions,
         gatewayLaunchBlock(src, kind, gatewayLog),
         `if [ -f ${JSON.stringify(markerPath)} ]; then printf "MARKER_PRESENT=1\\n"; fi`,
@@ -742,9 +747,13 @@ describe("respawn loop pidfile refresh (#4710)", () => {
       `#!/usr/bin/env bash\n[ -f ${JSON.stringify(restoreSentinel)} ] || exit 97\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nexec sleep 30\n`,
       { mode: 0o755 },
     );
-    fs.writeFileSync(path.join(fakeBin, "gosu"), `#!/usr/bin/env bash\nshift\nexec "$@"\n`, {
-      mode: 0o755,
-    });
+    fs.writeFileSync(
+      path.join(fakeBin, "setpriv"),
+      `#!/usr/bin/env bash\nwhile [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n`,
+      {
+        mode: 0o755,
+      },
+    );
 
     fs.writeFileSync(
       scriptPath,
@@ -755,7 +764,7 @@ describe("respawn loop pidfile refresh (#4710)", () => {
         `OPENCLAW=${JSON.stringify(path.join(fakeBin, "openclaw"))}`,
         '_DASHBOARD_PORT="19000"',
         `GATEWAY_PID_FILE=${JSON.stringify(pidFile)}`,
-        "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
+        "STEP_DOWN_PREFIX_GATEWAY=(setpriv --reuid=gateway --regid=gateway --init-groups --)",
         `prepare_openclaw_automatic_respawn() { printf restored >${JSON.stringify(restoreSentinel)}; }`,
         // The loop sleeps 2s between respawns; keep the test fast.
         "sleep() { command sleep 0.05; }",
@@ -923,7 +932,7 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-launch-${kind}-`));
     const fakeBin = path.join(tmpDir, "bin");
     const openclawLog = path.join(tmpDir, "openclaw.log");
-    const gosuLog = path.join(tmpDir, "gosu.log");
+    const setprivLog = path.join(tmpDir, "setpriv.log");
     const gatewayLog = path.join(tmpDir, "gateway.log");
     const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
     const scriptPath = path.join(tmpDir, "run.sh");
@@ -937,8 +946,8 @@ describe("nemoclaw-start gateway launch signal handling", () => {
       { mode: 0o755 },
     );
     fs.writeFileSync(
-      path.join(fakeBin, "gosu"),
-      `#!/usr/bin/env bash\nprintf 'user=%s args=%s\\n' "$1" "${"$*"}" >> ${JSON.stringify(gosuLog)}\nshift\nexec "$@"\n`,
+      path.join(fakeBin, "setpriv"),
+      `#!/usr/bin/env bash\nprintf 'args=%s\\n' "${"$*"}" >> ${JSON.stringify(setprivLog)}\nwhile [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n`,
       { mode: 0o755 },
     );
     fs.writeFileSync(gatewayLog, "gateway booting\n");
@@ -964,17 +973,18 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         // Stub PID recording and the serving watchdog; each has focused tests
         // elsewhere in this suite (#4710).
         "record_gateway_pid() { :; }",
+        "clear_gateway_pid_record() { :; }",
         'start_gateway_serving_watchdog() { sleep 30 & GATEWAY_WATCHDOG_PID=$!; capture_openclaw_pid_start_identity "$GATEWAY_WATCHDOG_PID" GATEWAY_WATCHDOG_PID_START_IDENTITY; }',
         extractShellFunction(src, "launch_openclaw_gateway_non_root").replaceAll(
           "/tmp/gateway.log",
           gatewayLog,
         ),
         rootGatewayLifecycleFunctions(src, gatewayLog),
-        "STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)",
-        "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
+        "STEP_DOWN_PREFIX_SANDBOX=(setpriv --reuid=sandbox --regid=sandbox --init-groups --)",
+        "STEP_DOWN_PREFIX_GATEWAY=(setpriv --reuid=gateway --regid=gateway --init-groups --)",
         gatewayLaunchBlock(src, kind, gatewayLog),
         kind === "root"
-          ? `for _ in ${waitForLaunchLogIterations}; do [ -s ${JSON.stringify(gosuLog)} ] && [ -s ${JSON.stringify(openclawLog)} ] && break; sleep 0.1; done`
+          ? `for _ in ${waitForLaunchLogIterations}; do [ -s ${JSON.stringify(setprivLog)} ] && [ -s ${JSON.stringify(openclawLog)} ] && break; sleep 0.1; done`
           : `for _ in ${waitForLaunchLogIterations}; do [ -s ${JSON.stringify(openclawLog)} ] && break; sleep 0.1; done`,
         'printf "GATEWAY_PID=%s\\n" "$GATEWAY_PID"',
         'printf "AUTO_PAIR_PID=%s\\n" "${AUTO_PAIR_PID:-}"',
@@ -991,10 +1001,10 @@ describe("nemoclaw-start gateway launch signal handling", () => {
 
     const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 15_000 });
     const openclaw = readFileIfPresent(openclawLog) ?? "";
-    const gosu = readFileIfPresent(gosuLog) ?? "";
+    const setpriv = readFileIfPresent(setprivLog) ?? "";
     const gateway = readFileIfPresent(gatewayLog) ?? "";
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    return { result, openclaw, gosu, gateway };
+    return { result, openclaw, setpriv, gateway };
   }
 
   it("registers child PIDs, redirects gateway output, and traps signals in non-root mode", () => {
@@ -1020,11 +1030,11 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     expect(stdout).toContain("cleanup_openclaw_on_signal");
   });
 
-  it("launches the root gateway through gosu with the configured port and tracks child PIDs", () => {
-    const { result, openclaw, gosu } = runLaunchBlock("root");
-    expect(result.status).toBe(0);
-    expect(gosu).toContain("user=gateway");
-    expect(gosu).toContain("gateway run --port 19000");
+  it("launches the root gateway through setpriv with the configured port and tracks child PIDs", () => {
+    const { result, openclaw, setpriv } = runLaunchBlock("root");
+    expect(result.status, result.stderr).toBe(0);
+    expect(setpriv).toContain("--reuid=gateway --regid=gateway --init-groups --");
+    expect(setpriv).toContain("gateway run --port 19000");
     expect(openclaw).toContain("marker=present");
     expect(openclaw).not.toContain("marker=absent");
     expect(openclaw).toContain(

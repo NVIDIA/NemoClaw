@@ -22,7 +22,21 @@ function retryableFailure(id: number, reason: string, title = "Retryable E2E fai
 }
 
 function gateOutput(checkRuns: unknown[]) {
-  const currentCheckId = Math.max(...checkRuns.map((check) => (check as { id: number }).id));
+  const orderedCheckIds = checkRuns
+    .map((check) => (check as { id: number }).id)
+    .sort((left, right) => left - right);
+  const timingWindowStart = Date.parse("2026-01-01T00:01:31Z");
+  const slotDuration = 60_000 / orderedCheckIds.length;
+  const checkRunsWithTiming = checkRuns.map((check) => {
+    const record = check as Record<string, unknown> & { id: number };
+    const position = orderedCheckIds.indexOf(record.id);
+    return {
+      ...record,
+      started_at: new Date(timingWindowStart + position * slotDuration).toISOString(),
+      completed_at: new Date(timingWindowStart + (position + 1) * slotDuration).toISOString(),
+    };
+  });
+  const currentCheckId = orderedCheckIds.at(-1)!;
   return JSON.parse(
     runGate({
       body: SIGNED_BODY,
@@ -35,7 +49,9 @@ function gateOutput(checkRuns: unknown[]) {
             }
           : check,
       ),
-      coordinationCheckPages: [{ total_count: checkRuns.length, check_runs: checkRuns }],
+      coordinationCheckPages: [
+        { total_count: checkRunsWithTiming.length, check_runs: checkRunsWithTiming },
+      ],
     }).stdout,
   );
 }
@@ -43,7 +59,10 @@ function gateOutput(checkRuns: unknown[]) {
 function expectIncompleteEvidence(checkRuns: unknown[]) {
   expect(gateOutput(checkRuns).gates.ci).toMatchObject({
     pass: false,
-    failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
+    failingChecks: [
+      "E2E / PR Gate: latest attempt evidence incomplete",
+      "initialize: latest attempt evidence incomplete",
+    ],
   });
 }
 
@@ -54,6 +73,15 @@ describe("maintainer merge-gate E2E retry history", () => {
     "evidence-download",
   ])("accepts a later successful coordination check after a %s retry failure", (reason) => {
     const output = gateOutput([coordinationCheck({ id: 8002 }), retryableFailure(8001, reason)]);
+
+    expect(output).toMatchObject({ allPass: true, gates: { ci: { pass: true } } });
+  });
+
+  it("accepts retry history with more than 60 completed checks", () => {
+    const retryHistory = Array.from({ length: 61 }, (_value, index) =>
+      retryableFailure(8001 + index, "prerequisite-ci"),
+    );
+    const output = gateOutput([coordinationCheck({ id: 8062 }), ...retryHistory]);
 
     expect(output).toMatchObject({ allPass: true, gates: { ci: { pass: true } } });
   });
