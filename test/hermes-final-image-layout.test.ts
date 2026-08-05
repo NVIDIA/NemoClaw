@@ -394,6 +394,7 @@ describe("Hermes final image layout", () => {
     expect(agent).toBeLessThan(agentChmod);
     expect(cronRestoreDrainPatch).toBeLessThan(profilePolicyPatch);
     expect(profilePolicyPatch).toBeLessThan(neutralPlatformPatch);
+    expect(neutralPlatformPatch).toBeLessThan(neutralMessagingConfig);
     expect(managedMessagingUnionInstall).toBeLessThan(neutralMessagingConfig);
     expect(runtime).toBeGreaterThan(configFind);
     expect(runtime).toBeLessThan(managedRuntimeDirectory);
@@ -443,9 +444,9 @@ describe("Hermes final image layout", () => {
     expect(doctorLayer).toContain('assert m.version("microsoft-teams-apps") == "2.0.13.4"');
     expect(doctorLayer).toContain('assert m.version("aiohttp") == "3.14.3"');
     expect(doctorLayer).toContain("assert len(neutral) == 30");
-    expect(doctorLayer).toContain("neutral-platform-inertness");
-    expect(doctorLayer).toContain("GOOGLE_CHAT_SERVICE_ACCOUNT_JSON");
-    expect(doctorLayer).toContain("WHATSAPP_CLOUD_ACCESS_TOKEN");
+    expect(finalStage).toContain("neutral-platform-inertness");
+    expect(finalStage).toContain("GOOGLE_CHAT_SERVICE_ACCOUNT_JSON");
+    expect(finalStage).toContain("WHATSAPP_CLOUD_ACCESS_TOKEN");
     expect(finalStage).toContain(
       "ARG NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256=" +
         "2084c652a07614761d85703787f8697fc29560fe447f23362aa0bda5179dffa7",
