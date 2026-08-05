@@ -6,6 +6,8 @@ import { join } from "node:path";
 
 import {
   getManagedInferenceRecipeRegistrationError,
+  HOST_LOCAL_VLLM_LIFECYCLE_REF,
+  HOST_LOCAL_VLLM_MATERIALIZER_REF,
   MANAGED_CLUSTER_VLLM_LIFECYCLE_REF,
   MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
 } from "./adapter-registry.js";
@@ -14,8 +16,8 @@ import { immutableManagedInferenceCopy } from "./catalog-integrity.js";
 import type {
   CompiledManagedInferenceCatalog,
   CompiledServingCatalog,
+  ManagedInferenceRuntimeServingRecipe,
   ManagedInferenceServingPreset,
-  ManagedInferenceServingRecipe,
   ServingCatalogSchemas,
   ServingPreset,
   ServingRecipe,
@@ -43,11 +45,11 @@ let loadedManagedCatalog: CompiledManagedInferenceCatalog | undefined;
 
 function assertManagedRecipe(
   recipe: ServingRecipe,
-): asserts recipe is ManagedInferenceServingRecipe {
+): asserts recipe is ManagedInferenceRuntimeServingRecipe {
   let registrationError: string | undefined;
   try {
     registrationError = getManagedInferenceRecipeRegistrationError(
-      recipe as ManagedInferenceServingRecipe,
+      recipe as ManagedInferenceRuntimeServingRecipe,
     );
   } catch {
     registrationError = "does not satisfy its registered adapter contract";
@@ -60,10 +62,8 @@ function assertManagedRecipe(
 function assertManagedPreset(
   preset: ServingPreset,
 ): asserts preset is ManagedInferenceServingPreset {
-  if (!preset.spec.requirements || !preset.spec.plan.bindings) {
-    throw new Error(
-      `Managed inference preset ${preset.metadata.id} must declare requirements and topology bindings`,
-    );
+  if (!preset.spec.requirements) {
+    throw new Error(`Managed inference preset ${preset.metadata.id} must declare requirements`);
   }
 }
 
@@ -94,18 +94,22 @@ export function parseCompiledManagedInferenceCatalogJson(
   return catalog;
 }
 
-function isManagedClusterRecipeCandidate(recipe: ServingRecipe): boolean {
+function isManagedInferenceRecipeCandidate(
+  recipe: ServingRecipe,
+): recipe is ManagedInferenceRuntimeServingRecipe {
   return (
     recipe.spec.execution.materializerRef === MANAGED_CLUSTER_VLLM_MATERIALIZER_REF ||
-    recipe.spec.execution.lifecycleRef === MANAGED_CLUSTER_VLLM_LIFECYCLE_REF
+    recipe.spec.execution.lifecycleRef === MANAGED_CLUSTER_VLLM_LIFECYCLE_REF ||
+    recipe.spec.execution.materializerRef === HOST_LOCAL_VLLM_MATERIALIZER_REF ||
+    recipe.spec.execution.lifecycleRef === HOST_LOCAL_VLLM_LIFECYCLE_REF
   );
 }
 
-/** The managed-cluster runtime accepts only recipes backed by its vLLM materializer and lifecycle. */
+/** Project recipes backed by a registered NemoClaw-managed vLLM runtime. */
 export function managedInferenceCatalogFromServingCatalog(
   catalog: CompiledServingCatalog,
 ): CompiledManagedInferenceCatalog {
-  const recipes = catalog.recipes.filter(isManagedClusterRecipeCandidate);
+  const recipes = catalog.recipes.filter(isManagedInferenceRecipeCandidate);
   const recipeIds = new Set(recipes.map(({ metadata }) => metadata.id));
   const presets = catalog.presets.filter((preset) => recipeIds.has(preset.spec.plan.recipeRef));
   const definitionIds = new Set([...recipeIds, ...presets.map(({ metadata }) => metadata.id)]);
@@ -151,6 +155,6 @@ export function getManagedInferenceCompiledPreset(
 
 export function getManagedInferenceCompiledRecipe(
   id: string,
-): ManagedInferenceServingRecipe | undefined {
+): ManagedInferenceRuntimeServingRecipe | undefined {
   return loadManagedInferenceCatalog().recipes.find(({ metadata }) => metadata.id === id);
 }
