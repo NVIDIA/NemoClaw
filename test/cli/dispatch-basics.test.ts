@@ -142,7 +142,7 @@ describe("CLI dispatch", () => {
     expect(output).toContain("nemoclaw upgrade-sandboxes");
     expect(output).toContain("(--check, --auto, --yes|-y)");
     expect(output).toContain("nemoclaw update");
-    expect(output).toContain("(--check, --fresh, --yes|-y)");
+    expect(output).toContain("(--check, --fresh, --allow-downgrade, --yes|-y)");
     expect(output).toContain("nemoclaw gc");
     expect(output).toContain("(--yes|-y|--force, --dry-run)");
     expect(output).toContain("nemoclaw onboard");
