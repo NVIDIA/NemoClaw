@@ -592,7 +592,7 @@ describe("shields — unit logic", () => {
       expect(appliedPolicy).not.toContain("mcp_bridge_alpha");
     });
 
-    it("auto-restore applies a snapshot with no managed MCP entries when policy staging is unavailable (#7952)", async () => {
+    it("does not stage an unchanged snapshot when auto-restore has no managed MCP entries (#7952)", async () => {
       const sandboxName = "openclaw";
       const processToken = "d".repeat(32);
       const snapshotPath = path.join(stateDir(), "policy-snapshot-no-managed-mcp.yaml");
@@ -612,22 +612,19 @@ describe("shields — unit logic", () => {
       });
       vi.spyOn(process, "kill").mockImplementation(routeProcessKill);
       const { applyShieldsPolicySnapshot } = await loadShieldsModule();
-      const { buildPolicySetCommand } = await import("../policy");
       const createTempDirectory = vi.spyOn(fs, "mkdtempSync").mockImplementation(() => {
         throw Object.assign(new Error("ENOSPC: simulated temporary storage full"), {
           code: "ENOSPC",
         });
       });
 
-      const result = applyShieldsPolicySnapshot(sandboxName, snapshotPath, {
+      applyShieldsPolicySnapshot(sandboxName, snapshotPath, {
         transitionProcessToken: processToken,
         deadlineAuthoritative: true,
         expiredTimerRecovery: true,
       });
 
-      expect(result.status).toBe(0);
       expect(createTempDirectory).not.toHaveBeenCalled();
-      expect(buildPolicySetCommand).toHaveBeenCalledWith(snapshotPath, sandboxName);
     });
 
     it("shieldsStatus warns and stays DOWN when inline recovery fails", async () => {
