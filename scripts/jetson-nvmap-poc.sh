@@ -186,16 +186,22 @@ fi
 printf 'stage_status=%s\n' "$isolated_status"
 
 printf '\n=== verdict ===\n'
+verdict_status=0
 if [[ "$host_status" != "0" ]]; then
   echo 'FAIL boundary=host-nvmap-mode'
+  verdict_status=1
 elif [[ "$isolated_status" != "0" ]]; then
   echo 'FAIL boundary=docker-runtime-or-bootstrap'
+  verdict_status=1
 elif [[ "$outer_sandbox_status" != "0" ]]; then
   echo 'FAIL boundary=recreated-container-bootstrap'
+  verdict_status=1
 elif [[ "$openshell_status" != "0" ]]; then
   echo 'FAIL boundary=openshell-sandbox-execution'
+  verdict_status=1
 else
   echo 'PASS boundary=end-to-end'
 fi
 
 echo "evidence host=$host_status isolated=$isolated_status outer_root=$outer_root_status outer_sandbox=$outer_sandbox_status openshell=$openshell_status"
+exit "$verdict_status"
