@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createSession } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
 import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
+import { fingerprintSandboxRegistryEntry } from "../../sandbox-recreate-transaction";
 import { handleSandboxState } from "./sandbox";
 import { baseOptions, bindJournaledRecreate, createDeps } from "./sandbox-test-fixtures";
 
@@ -72,7 +73,7 @@ describe("handleSandboxState journaled replacement failure", () => {
     expect(session.checkpoint?.sandboxRecreate).toMatchObject({
       sandboxName: "saved",
       phase: "planned",
-      sourceRegistryFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+      sourceRegistryFingerprint: fingerprintSandboxRegistryEntry(sourceEntry),
     });
   });
 });

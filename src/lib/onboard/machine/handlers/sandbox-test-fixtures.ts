@@ -116,10 +116,15 @@ export function bindJournaledRecreate(
   };
   return {
     observe: () => observation,
-    completeCreate: vi.fn(async () => {
+    completeCreate: vi.fn(async (...args: unknown[]) => {
       const transaction = updateSession((current) => current).checkpoint?.sandboxRecreate;
       expect(transaction).toBeDefined();
       const ownedTransaction = transaction as CheckpointSandboxRecreateTransaction;
+      const createIntent = args.at(-1) as
+        | { recreate?: boolean; recreateTransaction?: { id?: string } }
+        | undefined;
+      expect(createIntent?.recreate).toBe(true);
+      expect(createIntent?.recreateTransaction?.id).toBe(ownedTransaction.id);
       for (const phase of ["deleting", "deleted", "creating"] as const) {
         updateSession((current) => {
           advanceSandboxRecreateTransaction(current, ownedTransaction.id, phase);

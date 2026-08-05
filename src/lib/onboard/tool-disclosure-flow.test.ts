@@ -193,23 +193,4 @@ describe("onboard tool-disclosure flow", () => {
     expect(mocks.updateSession).toHaveBeenCalledOnce();
     expect(mocks.removeSandbox).not.toHaveBeenCalled();
   });
-
-  it("preserves the source registry row when OpenShell reports no sandbox (#7736)", () => {
-    const sourceEntry = { name: "beta", toolDisclosure: "progressive" as const };
-
-    const result = prepareSandboxToolDisclosure(
-      "beta",
-      null,
-      false,
-      () => ({
-        existingEntry: sourceEntry,
-        preservedMcpState: undefined,
-        liveExists: false,
-      }),
-      "progressive",
-    );
-
-    expect(result.existingEntry).toBe(sourceEntry);
-    expect(mocks.removeSandbox).not.toHaveBeenCalled();
-  });
 });

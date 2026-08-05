@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it } from "vitest";
+import { afterEach, describe, it } from "vitest";
 
 import { writeOkOpenshell } from "./helpers/onboard-openshell-fixture";
 
@@ -14,12 +14,25 @@ const repoRoot = path.join(import.meta.dirname, "..");
 const onboardScriptMocksPath = JSON.stringify(
   path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
 );
+const createdTmpDirs: string[] = [];
+
+function makeTmpDir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  createdTmpDirs.push(dir);
+  return dir;
+}
 
 describe("createSandbox installer restore intent", () => {
+  afterEach(() => {
+    for (const dir of createdTmpDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("non-interactive not-ready sandbox with installer restore intent skips the fresh backup, restores the pre-upgrade backup, and stays exec-usable for a workspace marker (#6114)", {
     timeout: 60_000,
   }, async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-installer-restore-"));
+    const tmpDir = makeTmpDir("nemoclaw-onboard-installer-restore-");
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "installer-restore.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
@@ -237,7 +250,7 @@ const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852
     race,
     error,
   }) => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-registry-race-"));
+    const tmpDir = makeTmpDir("nemoclaw-onboard-registry-race-");
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "registry-race.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
@@ -359,7 +372,7 @@ const { createSandbox } = require(${onboardPath});
   it("non-interactive not-ready sandbox without installer restore intent exits before any sandbox delete (#6114)", {
     timeout: 60_000,
   }, async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-no-restore-intent-"));
+    const tmpDir = makeTmpDir("nemoclaw-onboard-no-restore-intent-");
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "no-restore-intent.js");
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
