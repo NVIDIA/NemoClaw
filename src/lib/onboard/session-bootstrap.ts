@@ -50,6 +50,7 @@ export interface OnboardSessionBootstrapDeps {
       agent?: string | null;
       toolDisclosure?: ToolDisclosure | null;
       observabilityEnabled?: boolean | null;
+      hostMounts?: readonly import("../state/registry/types").SandboxHostMount[];
       authoritativeResumeConfig?: boolean;
     },
   ): ResumeConfigConflict[];
@@ -261,6 +262,7 @@ async function prepareResumeSession(
     agent: input.agentFlag || null,
     toolDisclosure: input.requestedToolDisclosure ?? null,
     observabilityEnabled: input.requestedObservabilityEnabled ?? null,
+    hostMounts: input.requestedHostMounts,
     authoritativeResumeConfig: input.authoritativeResumeConfig,
   });
   if (resumeConflicts.length > 0) {
@@ -276,9 +278,6 @@ async function prepareResumeSession(
     current.mode = mode(input.nonInteractive);
     current.failure = null;
     current.status = "in_progress";
-    if (input.requestedHostMounts && input.requestedHostMounts.length > 0) {
-      current.metadata.hostMounts = input.requestedHostMounts.map((mount) => ({ ...mount }));
-    }
     return current;
   });
   session = deps.loadSession();

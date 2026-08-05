@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
-
+import { persistedSandboxHostMountsEqual } from "../../state/registry/host-mount";
 import {
   beginHostMountScope,
   isDockerBindMountsEnabled,
@@ -86,6 +86,24 @@ describe("read-only host mount validation", () => {
     expect(() =>
       normalizePersistedSandboxHostMounts([{ source, target: "/sandbox/project", readOnly: true }]),
     ).toThrow("host directory does not exist");
+  });
+
+  it("revalidates and compares unordered declarations before sandbox reuse", () => {
+    const first = {
+      source: workspaceTempDir(),
+      target: "/sandbox/first",
+      readOnly: true as const,
+    };
+    const second = {
+      source: workspaceTempDir(),
+      target: "/sandbox/second",
+      readOnly: true as const,
+    };
+    expect(persistedSandboxHostMountsEqual([first, second], [second, first])).toBe(true);
+    expect(persistedSandboxHostMountsEqual([first], [first, second])).toBe(false);
+    expect(persistedSandboxHostMountsEqual([first, second], [first])).toBe(false);
+    expect(persistedSandboxHostMountsEqual([first], [second])).toBe(false);
+    expect(persistedSandboxHostMountsEqual(undefined, [first])).toBe(false);
   });
 
   it("scopes the managed gateway capability and reports requested access", () => {

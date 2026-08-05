@@ -199,6 +199,9 @@ describe("resolveSandboxCreateIntent", () => {
     expect(first.hostMounts).toEqual([
       { source: "/srv/project", target: "/sandbox/project", readOnly: true },
     ]);
+    expect(resolveSandboxCreateIntent({ ...input, hostMounts: undefined })).not.toHaveProperty(
+      "hostMounts",
+    );
     expect(first.extraPlaceholderKeys).toEqual(["TELEGRAM_BOT_TOKEN_AGENT_A"]);
     expect(first.policy).toEqual({
       basePolicyPath: "/repo/policy.yaml",

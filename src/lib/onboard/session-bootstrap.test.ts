@@ -295,6 +295,51 @@ describe("prepareOnboardSession", () => {
     expect(deps.exitProcess).toHaveBeenCalledWith(1);
   });
 
+  it("checks requested host mounts for resume conflict without overwriting recorded state", async () => {
+    const recordedMount = {
+      source: "/srv/project",
+      target: "/sandbox/project",
+      readOnly: true as const,
+    };
+    const requestedMount = {
+      source: "/srv/reference",
+      target: "/sandbox/reference",
+      readOnly: true as const,
+    };
+    const initial = createSession({
+      metadata: { gatewayName: "nemoclaw", fromDockerfile: null, hostMounts: [recordedMount] },
+    });
+    const conflict: ResumeConfigConflict = {
+      field: "host mounts",
+      requested: JSON.stringify([requestedMount]),
+      recorded: JSON.stringify([recordedMount]),
+    };
+    const getResumeConfigConflicts = vi.fn(() => [conflict]);
+    const { deps } = createDeps(initial, { getResumeConfigConflicts });
+
+    await expect(
+      prepareOnboardSession(
+        {
+          resume: true,
+          fresh: false,
+          requestedFromDockerfile: null,
+          requestedSandboxName: null,
+          requestedHostMounts: [requestedMount],
+          cannotPrompt: false,
+          nonInteractive: false,
+        },
+        deps,
+      ),
+    ).rejects.toThrow(ExitError);
+
+    expect(getResumeConfigConflicts).toHaveBeenCalledWith(
+      initial,
+      expect.objectContaining({ hostMounts: [requestedMount] }),
+    );
+    expect(deps.updateSession).not.toHaveBeenCalled();
+    expect(initial.metadata.hostMounts).toEqual([recordedMount]);
+  });
+
   it("still exits on resume conflicts when diagnostic recording fails", async () => {
     const conflict: ResumeConfigConflict = {
       field: "sandbox",

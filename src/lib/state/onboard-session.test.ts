@@ -991,6 +991,28 @@ describe("onboard session", () => {
     expect(loaded.metadata.hostMounts).not.toBe(hostMounts);
   });
 
+  it("preserves a fail-closed marker for malformed host mount metadata", () => {
+    const malformed = session.createSession();
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.SESSION_FILE,
+      JSON.stringify({
+        ...malformed,
+        metadata: {
+          ...malformed.metadata,
+          hostMounts: [
+            { source: "/srv/project", target: "/sandbox/project", readOnly: true },
+            { source: "/srv/private", target: "/sandbox/private", readOnly: false },
+          ],
+        },
+      }),
+    );
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(session.hasInvalidSessionHostMounts(loaded)).toBe(true);
+    expect(loaded.metadata.hostMounts).toBeUndefined();
+  });
+
   it("drops non-string gatewayName during normalization", () => {
     fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
     fs.writeFileSync(

@@ -109,6 +109,24 @@ export function normalizePersistedSandboxHostMounts(value: unknown): SandboxHost
   }
 }
 
+function canonicalHostMounts(mounts: readonly SandboxHostMount[]): string {
+  return JSON.stringify(
+    mounts
+      .map(({ source, target }) => ({ source, target, readOnly: true as const }))
+      .sort((left, right) =>
+        `${left.source}\0${left.target}`.localeCompare(`${right.source}\0${right.target}`),
+      ),
+  );
+}
+
+/** Revalidate both declarations before deciding whether a live sandbox can be reused. */
+export function persistedSandboxHostMountsEqual(left: unknown, right: unknown): boolean {
+  return (
+    canonicalHostMounts(normalizePersistedSandboxHostMounts(left)) ===
+    canonicalHostMounts(normalizePersistedSandboxHostMounts(right))
+  );
+}
+
 export function cloneSandboxHostMounts(
   mounts: readonly SandboxHostMount[] | undefined,
 ): SandboxHostMount[] {

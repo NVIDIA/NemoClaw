@@ -111,16 +111,18 @@ describe("onboard command options", () => {
   });
 
   it("maps repeated Linux host mounts and rejects unsupported host platforms", () => {
-    const source = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
+    const first = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
+    const second = fs.mkdtempSync(path.join(process.cwd(), ".onboard-host-mount-test-"));
+    const values = [`${first}:/sandbox/project`, `${second}:/sandbox/reference`];
     try {
-      expect(
-        resolve({ "host-mount": [`${source}:/sandbox/project`] }, { platform: "linux" }).hostMounts,
-      ).toEqual([{ source, target: "/sandbox/project", readOnly: true }]);
-      expect(() =>
-        resolve({ "host-mount": [`${source}:/sandbox/project`] }, { platform: "darwin" }),
-      ).toThrow("exit:1");
+      expect(resolve({ "host-mount": values }, { platform: "linux" }).hostMounts).toEqual([
+        { source: first, target: "/sandbox/project", readOnly: true },
+        { source: second, target: "/sandbox/reference", readOnly: true },
+      ]);
+      expect(() => resolve({ "host-mount": values }, { platform: "darwin" })).toThrow("exit:1");
     } finally {
-      fs.rmSync(source, { recursive: true, force: true });
+      fs.rmSync(first, { recursive: true, force: true });
+      fs.rmSync(second, { recursive: true, force: true });
     }
   });
 

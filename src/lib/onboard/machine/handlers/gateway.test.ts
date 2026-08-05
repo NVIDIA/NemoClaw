@@ -9,13 +9,13 @@ import type { GatewayReuseState } from "../../../state/gateway";
 import { createSession, type Session } from "../../../state/onboard-session";
 import { flushTrace, resetTraceForTests, TRACE_FILE_ENV, type TraceArtifact } from "../../../trace";
 import type { GatewayContainerState } from "../../gateway-container-running";
-import { createGatewayReuseHelpers } from "../../gateway-reuse";
 import {
   type GatewayAttachmentProbe,
   type GatewayOwner,
   GatewayOwnershipError,
   resolveGatewayOwner,
 } from "../../gateway-ownership";
+import { createGatewayReuseHelpers } from "../../gateway-reuse";
 import { ONBOARD_TRACE_PHASE_NAMES } from "../../tracing";
 import { type GatewayStateOptions, handleGatewayState } from "./gateway";
 
@@ -577,6 +577,19 @@ describe("externally supervised gateway lifecycle authority", () => {
     expect(result.stateResult).toMatchObject({
       metadata: { gatewayOwner: { mode: "externally-supervised", source: "declared" } },
     });
+  });
+
+  it("rejects host mounts before any externally supervised gateway effect", async () => {
+    const { calls, deps } = externalDeps();
+
+    await expect(
+      handleGatewayState({ ...baseOptions(deps, "missing"), requiresBindMounts: true }),
+    ).rejects.toMatchObject({ code: "capability_unsupported" });
+
+    expect(calls.attachGateway).not.toHaveBeenCalled();
+    expect(calls.startGateway).not.toHaveBeenCalled();
+    expect(calls.destroy).not.toHaveBeenCalled();
+    expect(calls.complete).not.toHaveBeenCalled();
   });
 
   it("does not cross the provider-mutation boundary when exact registration fails (#6576)", async () => {

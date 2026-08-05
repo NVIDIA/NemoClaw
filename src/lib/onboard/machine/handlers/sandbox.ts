@@ -106,6 +106,7 @@ import {
   decideSandboxResume,
   hasCompatibleEndpointReasoningDrift,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
+  hasHostMountConfigDrift,
   mcpRegistryRemovalBlockReason,
   resolveToolDisclosureResumeSignals,
   type SandboxResumeDecision,
@@ -596,6 +597,10 @@ class SandboxStateFlow<
       sandboxGpuConfigChanged: state.sandboxName
         ? this.deps.hasSandboxGpuDrift(state.sandboxName, this.options.sandboxGpuConfig)
         : false,
+      hostMountConfigChanged: hasHostMountConfigDrift(
+        registryEntry?.hostMounts,
+        this.options.hostMounts,
+      ),
       recreateSandboxRequested: this.options.recreateSandbox(false),
       messagingChannelConfigChanged: !this.deps.messagingChannelConfigsEqual(
         effectiveMessagingConfig,

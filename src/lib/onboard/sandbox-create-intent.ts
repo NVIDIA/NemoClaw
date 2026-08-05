@@ -198,7 +198,15 @@ export function resolveSandboxCreateIntent({
     },
     gpuCreateArgs: [...gpuCreateArgs],
     resourceCreateArgs: [...resourceCreateArgs],
-    hostMounts: hostMounts.map(({ source, target }) => ({ source, target, readOnly: true })),
+    ...(hostMounts.length > 0
+      ? {
+          hostMounts: hostMounts.map(({ source, target }) => ({
+            source,
+            target,
+            readOnly: true,
+          })),
+        }
+      : {}),
     gpuRoutePlan,
     sandboxGpuLogMessage,
     disabledChannelNames: [...disabledChannelNames],
