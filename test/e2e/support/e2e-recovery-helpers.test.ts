@@ -404,6 +404,7 @@ describe("SandboxClient disruption helpers (#2701)", () => {
 
     await sandbox.killGatewayTree("e2e-2701");
 
+    expect(runner.calls).toHaveLength(1);
     const args = runner.calls[0]?.args ?? [];
     const script = args[args.length - 1];
     expect(script).toBe("pkill -9 -f '[o]penclaw'");
