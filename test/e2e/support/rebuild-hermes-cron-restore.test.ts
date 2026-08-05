@@ -70,6 +70,10 @@ describe("Hermes rebuild cron begin receipt", () => {
 });
 
 describe("Hermes rebuild cron ticker timestamp", () => {
+  it("accepts the initial missing-file sentinel", () => {
+    expect(parseCronTickerTimestamp("0\n", "ticker timestamp")).toBe(0);
+  });
+
   it("parses the ticker epoch", () => {
     expect(parseCronTickerTimestamp("1785951799.098\n", "ticker timestamp")).toBe(
       1_785_951_799.098,

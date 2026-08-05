@@ -14,7 +14,6 @@ import { buildHermesRuntimeExecArgs } from "./rebuild-hermes-runtime-exec.ts";
 const HERMES_HOME = "/sandbox/.hermes";
 const CRON_JOBS_FILE = `${HERMES_HOME}/cron/jobs.json`;
 const CRON_SCRIPTS_ROOT = `${HERMES_HOME}/scripts`;
-const CRON_TICKER_LAST_SUCCESS = `${HERMES_HOME}/cron/ticker_last_success`;
 const CRON_CONTROL = "/usr/local/lib/nemoclaw/hermes-cron-restore-control.py";
 const NEMOCLAW_STATE_ROOT = "/sandbox/.nemoclaw";
 const CRON_CONTROL_MARKER_NAME = "hermes-cron-restore-drain.json";
@@ -26,6 +25,12 @@ const EXECUTION_POLL_ATTEMPTS = 30;
 const POLL_INTERVAL_MS = 5_000;
 const SUBSTITUTION_PROBE_ATTEMPTS = 13;
 const RECEIPT_PREFIX = "NEMOCLAW_HERMES_CRON_RESTORE_V1:";
+const READ_CRON_TICKER_LAST_SUCCESS_PYTHON = [
+  "from pathlib import Path",
+  "from cron.jobs import TICKER_SUCCESS_FILE",
+  "path = Path(TICKER_SUCCESS_FILE)",
+  'print(path.read_text(encoding="utf-8").strip() if path.is_file() else "0")',
+].join("\n");
 const TRIGGER_CRON_JOB_PYTHON = [
   "import json",
   "import sys",
@@ -358,7 +363,10 @@ export function createRebuildHermesCronRestoreFixture({
   }
 
   async function tickerLastSuccess(artifactName: string): Promise<number> {
-    const read = await dockerSandbox(["cat", CRON_TICKER_LAST_SUCCESS], artifactName);
+    const read = await dockerSandbox(
+      [HERMES_PYTHON, "-I", "-c", READ_CRON_TICKER_LAST_SUCCESS_PYTHON],
+      artifactName,
+    );
     expectExitZero(read, "read Hermes cron ticker last-success timestamp");
     return parseCronTickerTimestamp(read.stdout, "Hermes cron ticker last-success timestamp");
   }
