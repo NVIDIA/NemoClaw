@@ -722,6 +722,23 @@ describe("managed inference resolver", () => {
     ).toMatchObject({ outcome: "rejected", code: "invalid-readiness" });
   });
 
+  it("rejects remediation when another fatal finding remains (#8246)", () => {
+    const report = storageRemediableReadinessReport([
+      {
+        id: "host.gpu.unavailable",
+        severity: "fatal",
+        summary: "No supported GPU is available.",
+        capabilityIds: ["host.gpu.available"],
+      },
+    ]);
+
+    expect(
+      resolveManagedInferenceServing(
+        resolverInput({ readinessReports: [{ nodeId: "spark-head", report }] }),
+      ),
+    ).toMatchObject({ outcome: "rejected", code: "invalid-readiness" });
+  });
+
   it("rejects a storage conflict without the remediation capability (#8246)", () => {
     const remediable = storageRemediableReadinessReport();
     const report = {
