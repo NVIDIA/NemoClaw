@@ -7,5 +7,5 @@ const RUNTIME_AUTH_FINGERPRINT_DOMAIN = "nemoclaw.host-local-runtime-auth/v1";
 
 /** Derive a domain-separated runtime identity label from a high-entropy API key. */
 export function runtimeAuthFingerprint(apiKey: string): string {
-  return createHmac("sha256", RUNTIME_AUTH_FINGERPRINT_DOMAIN).update(apiKey).digest("hex");
+  return createHmac("sha256", apiKey).update(RUNTIME_AUTH_FINGERPRINT_DOMAIN).digest("hex");
 }
