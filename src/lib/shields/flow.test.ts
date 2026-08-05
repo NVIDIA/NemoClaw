@@ -979,22 +979,21 @@ describe("shields command flow", () => {
   });
 
   it("keeps the timer and transition authoritative when the rollback state write fails (#8198)", () => {
-    // The permissive policy set is rejected, and clearing the persisted
-    // shields-down state then fails too. On disk the sandbox still reads DOWN,
-    // so the auto-restore timer and transition marker must remain as the only
-    // recovery authority rather than be cleared.
+    // The permissive policy set is rejected and clearing the persisted DOWN state fails too,
+    // so the auto-restore timer and transition must remain the recovery authority.
+    const timerChild = {
+      pid: 4242,
+      disconnect: vi.fn(),
+      unref: vi.fn(),
+      send: vi.fn(() => true),
+      kill: vi.fn(() => true),
+    };
     const harness = createHarness({
       run: (cmd) => {
         const argv = Array.isArray(cmd) ? cmd.map(String) : [];
         return argv.includes("policy") && argv.includes("set") ? { status: 1 } : { status: 0 };
       },
-      fork: () => ({
-        pid: 4242,
-        disconnect: vi.fn(),
-        unref: vi.fn(),
-        send: vi.fn(() => true),
-        kill: vi.fn(() => true),
-      }),
+      fork: () => timerChild,
     });
     // Fail only the rollback clear (shieldsDown:false); the initial shields-down
     // write and the timer/transition writes must succeed first.
@@ -1021,7 +1020,9 @@ describe("shields command flow", () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     // The initial shields-down write succeeded and the rollback clear failed,
     // so the DOWN record must remain for the timer to reclaim.
-    const state = JSON.parse(fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf-8"));
+    const state = JSON.parse(
+      fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf-8"),
+    );
     expect(state.shieldsDown).toBe(true);
     // The timer marker and transition must NOT be killed/cleared.
     expect(fs.existsSync(path.join(stateDir, "shields-timer-openclaw.json"))).toBe(true);
@@ -1029,6 +1030,7 @@ describe("shields command flow", () => {
       .readdirSync(stateDir)
       .some((name) => name.startsWith("shields-transition-openclaw-"));
     expect(transitionRemains).toBe(true);
+    expect(timerChild.kill).not.toHaveBeenCalled();
     expect(harness.errorSpy.mock.calls.flat().map(String).join("\n")).toContain(
       "auto-restore remains authoritative",
     );
