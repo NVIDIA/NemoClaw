@@ -120,7 +120,7 @@ describe("shields down policy rejection", () => {
     });
   }
 
-  it("keeps status up when OpenShell rejects the permissive policy (#8198)", () => {
+  it("keeps `shields status` at `UP` when OpenShell rejects the permissive policy (#8198)", () => {
     const harness = createRejectedPolicyHarness();
 
     expect(() =>

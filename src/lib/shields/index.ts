@@ -3595,13 +3595,14 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     cleanupRuntimePolicyFile();
   }
   if (policySetResult.status !== 0) {
-    // The permissive policy was rejected before it applied — e.g. OpenShell
-    // refuses a live landlock change on a sandbox whose policy is sealed at
-    // startup (Deep Agents). Nothing was weakened: config is still locked and
-    // the restrictive policy is unchanged. The shields-down state persisted
-    // above is therefore false, so clear it (and cancel the now-pointless
-    // auto-restore timer/transition) and fail closed. Otherwise `shields
-    // status` would report DOWN/permissive for an unlock that never happened.
+    // The permissive policy was rejected before it applied — for example,
+    // OpenShell refuses a live Landlock change on a sandbox whose policy is
+    // sealed at startup (Deep Agents). Nothing was weakened: configuration is
+    // still locked and the restrictive policy is unchanged. The provisional
+    // Shields down record written above therefore conflicts with the actual
+    // posture. Clear it, cancel the now-pointless timer and transition, and
+    // fail closed. Otherwise `shields status` would report `DOWN`/permissive
+    // for an unlock that never happened.
     // See #8198.
     try {
       saveShieldsState(sandboxName, {
@@ -3613,15 +3614,15 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
         shieldsPolicySnapshotPath: null,
       });
     } catch (stateErr) {
-      // Clearing the persisted down-state failed, so on disk the sandbox still
-      // reads shields-down. Keep the auto-restore timer and its transition
+      // Clearing the provisional Shields down record failed, so on disk the
+      // sandbox still reads `DOWN`. Keep the auto-restore timer and transition
       // marker: they are the only remaining recovery authority and will
       // reclaim the (already-restrictive) policy on owner death. Clearing them
-      // here would strand the sandbox reporting down with no recovery. Report
+      // here would strand the sandbox reporting `DOWN` with no recovery. Report
       // and fail closed.
       const stateMessage = stateErr instanceof Error ? stateErr.message : String(stateErr);
       console.error(
-        `  ERROR: Could not apply the ${policyName} policy, and clearing shields-down state failed: ${stateMessage}`,
+        `  ERROR: Could not apply the ${policyName} policy, and clearing the provisional Shields down record failed: ${stateMessage}`,
       );
       console.error("  The scheduled auto-restore remains authoritative.");
       return failShieldsCommand(`Could not apply ${policyName} policy`, opts.throwOnError);
@@ -3629,11 +3630,9 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
     if (transition) clearShieldsDownTransition(sandboxName, transition.processToken);
     killTimer(sandboxName);
     console.error(
-      `  ERROR: Could not apply the ${policyName} policy; the sandbox remains shielded.`,
+      `  ERROR: Could not apply the ${policyName} policy; the sandbox remains in the Shields up state.`,
     );
-    console.error(
-      "  Shields down did not take effect. `shields status` continues to report the sandbox as up.",
-    );
+    console.error("  Shields down did not take effect. `shields status` continues to report `UP`.");
     return failShieldsCommand(`Could not apply ${policyName} policy`, opts.throwOnError);
   }
 
