@@ -54,7 +54,7 @@ interface GatewayEvidence {
   start_time: number;
 }
 
-interface CronControlReceipt {
+export interface CronControlReceipt {
   action: "begin";
   active_agents: number;
   disposition: string;
@@ -121,15 +121,41 @@ function parseCronJob(text: string, jobId: string, label: string): JsonObject {
   );
 }
 
-function cronJobState(job: JsonObject, label: string): JsonObject {
-  return requireObject(job.state, `${label} state`);
+export function hermesCronJobRuntimeState(job: JsonObject, label: string) {
+  const repeat = requireObject(job.repeat, `${label} repeat state`);
+  const state = typeof job.state === "string" ? job.state : fail(`${label} state is not a string`);
+  const completed =
+    typeof repeat.completed === "number" &&
+    Number.isSafeInteger(repeat.completed) &&
+    repeat.completed >= 0
+      ? repeat.completed
+      : fail(`${label} completed run count is unavailable`);
+  return {
+    completed,
+    lastRunAt: job.last_run_at ?? null,
+    lastStatus: job.last_status ?? null,
+    nextRunAt: job.next_run_at,
+    state,
+  };
 }
 
-function completedRuns(job: JsonObject, label: string): number {
-  const repeat = requireObject(cronJobState(job, label).repeat, `${label} repeat state`);
-  return typeof repeat.completed === "number"
-    ? repeat.completed
-    : fail(`${label} completed run count is unavailable`);
+export function parseHermesCronBeginReceipt(text: string): CronControlReceipt {
+  const lines = text.split(/\r?\n/u).filter((line) => line.startsWith(RECEIPT_PREFIX));
+  if (lines.length !== 1) fail(`Hermes cron begin returned ${lines.length} receipts`);
+  const payload = parseJsonObject(lines[0].slice(RECEIPT_PREFIX.length), "cron begin receipt");
+  expect(payload).toMatchObject({
+    action: "begin",
+    active_agents: 0,
+    disposition: "drain-acquired",
+    drain_acquired: true,
+    drain_token: "<REDACTED>",
+    operator_drain_active: false,
+    version: 1,
+  });
+  if (!Number.isSafeInteger(payload.pid) || !Number.isSafeInteger(payload.start_time)) {
+    fail("Hermes cron begin receipt identity is invalid");
+  }
+  return payload as unknown as CronControlReceipt;
 }
 
 function assertFutureCronJob(job: JsonObject, seed: SeededCronJob): void {
@@ -141,12 +167,13 @@ function assertFutureCronJob(job: JsonObject, seed: SeededCronJob): void {
     schedule: { kind: "interval" },
     script: seed.scriptName,
   });
-  const state = cronJobState(job, `cron job ${seed.id}`);
-  expect(state.last_run_at ?? null).toBeNull();
-  expect(state.last_status ?? null).toBeNull();
-  expect(completedRuns(job, `cron job ${seed.id}`)).toBe(0);
+  const runtime = hermesCronJobRuntimeState(job, `cron job ${seed.id}`);
+  expect(runtime.state).toBe("scheduled");
+  expect(runtime.lastRunAt).toBeNull();
+  expect(runtime.lastStatus).toBeNull();
+  expect(runtime.completed).toBe(0);
   expect(
-    normalizeTimestampMs(state.next_run_at, `cron job ${seed.id} next run`),
+    normalizeTimestampMs(runtime.nextRunAt, `cron job ${seed.id} next run`),
     "seeded recurring cron job must remain well in the future during rebuild",
   ).toBeGreaterThan(Date.now() + 60 * 60_000);
 }
@@ -305,13 +332,13 @@ export function createRebuildHermesCronRestoreFixture({
     for (let attempt = 1; attempt <= EXECUTION_POLL_ATTEMPTS; attempt += 1) {
       const job = await readCronJob(seed.id, `${artifactPrefix}-job-attempt-${attempt}`);
       const count = await executionCount(seed, `${artifactPrefix}-marker-attempt-${attempt}`);
-      const state = cronJobState(job, `cron job ${seed.id}`);
-      const completed = completedRuns(job, `cron job ${seed.id}`);
-      lastEvidence = JSON.stringify({ completed, count, last_status: state.last_status });
+      const runtime = hermesCronJobRuntimeState(job, `cron job ${seed.id}`);
+      const completed = runtime.completed;
+      lastEvidence = JSON.stringify({ completed, count, last_status: runtime.lastStatus });
       if (completed > 1 || count > 1) {
         fail(`Hermes cron job ${seed.id} executed more than once: ${lastEvidence}`);
       }
-      if (completed === 1 && count === 1 && state.last_status === "ok") return;
+      if (completed === 1 && count === 1 && runtime.lastStatus === "ok") return;
       await sleep(POLL_INTERVAL_MS);
     }
     fail(`Hermes cron job ${seed.id} did not complete exactly once: ${lastEvidence}`);
@@ -387,29 +414,6 @@ export function createRebuildHermesCronRestoreFixture({
       await sleep(POLL_INTERVAL_MS);
     }
     fail(`Hermes gateway did not reach ${state}: ${lastEvidence}`);
-  }
-
-  function parseBeginReceipt(text: string): CronControlReceipt {
-    const lines = text.split(/\r?\n/u).filter((line) => line.startsWith(RECEIPT_PREFIX));
-    if (lines.length !== 1) fail(`Hermes cron begin returned ${lines.length} receipts`);
-    const payload = parseJsonObject(lines[0].slice(RECEIPT_PREFIX.length), "cron begin receipt");
-    expect(payload).toMatchObject({
-      action: "begin",
-      active_agents: 0,
-      disposition: "drain-acquired",
-      drain_acquired: true,
-      operator_drain_active: false,
-      version: 1,
-    });
-    if (
-      !Number.isSafeInteger(payload.pid) ||
-      !Number.isSafeInteger(payload.start_time) ||
-      typeof payload.drain_token !== "string" ||
-      payload.drain_token.length !== 32
-    ) {
-      fail("Hermes cron begin receipt identity is invalid");
-    }
-    return payload as unknown as CronControlReceipt;
   }
 
   async function exerciseStateRootSubstitutionAttack(
@@ -537,7 +541,7 @@ export function createRebuildHermesCronRestoreFixture({
         "phase-8-acquire-stranded-hermes-cron-restore-gate",
       );
       expectExitZero(begin, "acquire stranded Hermes cron restore gate");
-      const receipt = parseBeginReceipt(begin.stdout);
+      const receipt = parseHermesCronBeginReceipt(begin.stdout);
       await assertControlMarker(true, "phase-8-verify-cron-restore-marker-before-restart");
 
       const recoverySeed = await seedCronJob("recovery");

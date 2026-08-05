@@ -96,13 +96,12 @@ const RISK_CONTEXT_PATH_SAMPLE_LIMIT = 20;
 const RISK_CONTEXT_PATH_CHARACTER_LIMIT = 240;
 const METADATA_CHANGED_FILE_LIMIT = 20;
 const METADATA_CHANGED_FILE_BYTE_LIMIT = 8192;
-const SECURITY_REVIEW_SKILL_PATH =
-  ".agents/skills/nemoclaw-maintainer-security-code-review/SKILL.md";
-const TRUSTED_SECURITY_REVIEW_SKILL_PATH = path.resolve(
+const SECURITY_RUBRIC_PATH = ".agents/skills/_shared/security-rubric.md";
+const TRUSTED_SECURITY_RUBRIC_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
   "..",
-  SECURITY_REVIEW_SKILL_PATH,
+  SECURITY_RUBRIC_PATH,
 );
 const TRUSTED_WRITING_GUIDE_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -122,17 +121,8 @@ const TRUSTED_CODE_CHANGE_CONSIDERATIONS_PATH = path.resolve(
   "..",
   ".agents/skills/_shared/code-change-considerations.md",
 );
-const SECURITY_CATEGORIES = [
-  "Secrets and Credentials",
-  "Input Validation and Data Sanitization",
-  "Authentication and Authorization",
-  "Dependencies and Third-Party Libraries",
-  "Error Handling and Logging",
-  "Cryptography and Data Protection",
-  "Configuration and Security Headers",
-  "Security Testing",
-  "Holistic Security Posture",
-];
+const SECURITY_CATEGORY_COUNT = 9;
+const SECURITY_CATEGORY_SECTION_NAMES = ["Meaning", "Questions", "Expected evidence"] as const;
 const FINDING_CATEGORIES = [
   "security",
   "correctness",
@@ -1775,16 +1765,71 @@ function isTimestampWithin(value: string, start: string, end: string): boolean {
   return valueTime >= startTime && valueTime <= endTime;
 }
 
-export function readTrustedSecurityReviewSkill(): string {
+export function parseSecurityRubric(rubric: string): {
+  content: string;
+  categories: string[];
+} {
+  const headings = [...rubric.matchAll(/^## Category (\d+): (.+)$/gmu)];
+  if (headings.length !== SECURITY_CATEGORY_COUNT) {
+    throw new Error(
+      `Security rubric must define exactly ${SECURITY_CATEGORY_COUNT} categories; found ${headings.length}`,
+    );
+  }
+
+  const categories = headings.map((heading, index) => {
+    const number = Number(heading[1]);
+    const name = heading[2]?.trim() ?? "";
+    if (number !== index + 1 || !name) {
+      throw new Error(`Security rubric category ${index + 1} has a malformed heading`);
+    }
+    const sectionStart = heading.index ?? 0;
+    const sectionEnd = headings[index + 1]?.index ?? rubric.length;
+    const section = rubric.slice(sectionStart, sectionEnd);
+    const subsectionMatches = [...section.matchAll(/^### (.+)$/gmu)];
+    const subsectionNames = subsectionMatches.map((match) => match[1]?.trim() ?? "");
+    if (
+      subsectionNames.length !== SECURITY_CATEGORY_SECTION_NAMES.length ||
+      !SECURITY_CATEGORY_SECTION_NAMES.every(
+        (sectionName, index) => sectionName === subsectionNames[index],
+      )
+    ) {
+      throw new Error(
+        `Security rubric category ${number} must define Meaning, Questions, and Expected evidence in order`,
+      );
+    }
+    for (const [sectionIndex, sectionName] of SECURITY_CATEGORY_SECTION_NAMES.entries()) {
+      const contentStart =
+        (subsectionMatches[sectionIndex]?.index ?? section.length) + `### ${sectionName}`.length;
+      const contentEnd = subsectionMatches[sectionIndex + 1]?.index ?? section.length;
+      if (!section.slice(contentStart, contentEnd).trim()) {
+        throw new Error(`Security rubric category ${number} has empty ${sectionName}`);
+      }
+    }
+    return name;
+  });
+
+  if (new Set(categories).size !== categories.length) {
+    throw new Error("Security rubric category names must be unique");
+  }
+  if (categories.at(-1) !== "System Security") {
+    throw new Error("Security rubric category 9 must be System Security");
+  }
+  return { content: rubric, categories };
+}
+
+export function readTrustedSecurityRubric(): string {
+  let rubric: string;
   try {
-    return fs.readFileSync(TRUSTED_SECURITY_REVIEW_SKILL_PATH, "utf8");
+    rubric = fs.readFileSync(TRUSTED_SECURITY_RUBRIC_PATH, "utf8");
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
-    console.error(
-      `Security review skill unavailable at ${TRUSTED_SECURITY_REVIEW_SKILL_PATH}: ${reason}`,
-    );
-    return "";
+    throw new Error(`Security rubric unavailable at ${TRUSTED_SECURITY_RUBRIC_PATH}: ${reason}`);
   }
+  return parseSecurityRubric(rubric).content;
+}
+
+function readSecurityCategoryNames(): string[] {
+  return parseSecurityRubric(readTrustedSecurityRubric()).categories;
 }
 
 export function readTrustedWritingGuide(): string {
@@ -1842,15 +1887,9 @@ export function readTrustedCodeChangeConsiderations(): string {
 }
 
 export function buildSystemPrompt(): string {
-  const securityReviewSkill = readTrustedSecurityReviewSkill();
+  const securityRubric = readTrustedSecurityRubric();
   const writingGuide = readTrustedWritingGuide();
   const codeChangeConsiderations = readTrustedCodeChangeConsiderations();
-  const securityRubric =
-    securityReviewSkill ||
-    [
-      "Trusted security review skill was unavailable; use this built-in 9-category security rubric instead:",
-      ...SECURITY_CATEGORIES.map((category, index) => `${index + 1}. ${category}`),
-    ].join("\n");
   return [
     "You are the NemoClaw PR Review Advisor for GitHub Actions.",
     "NemoClaw runs OpenClaw assistants inside OpenShell sandboxes. Security boundaries, workflows, credentials, network policy, SSRF validation, Dockerfiles, installers, and sandbox lifecycle code are high risk.",
@@ -1867,8 +1906,8 @@ export function buildSystemPrompt(): string {
     "Review rubric:",
     "1. Start by mapping the actual changed surfaces and codebase drift. Apply the trusted code change considerations to the current diff and repository evidence.",
     "2. Keep the review focused on the code changes in this PR. Do not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or external E2E job status; those are handled by other PR surfaces.",
-    "3. Security: use the trusted security code review skill embedded below as the authoritative security rubric. Apply every category with PASS/WARNING/FAIL evidence. NemoClaw-specific focus: sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, and workflow trusted-code boundary.",
-    "Trusted security review skill from main checkout:",
+    "3. Security: use the trusted security rubric embedded below. Apply every category with PASS/WARNING/FAIL evidence. NemoClaw-specific focus: sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, and workflow trusted-code boundary.",
+    "Trusted security rubric from workflow checkout:",
     fencedBlock(securityRubric, "markdown"),
     "4. Acceptance: treat only observable desired behavior, current constraints or non-goals, supported contracts, and clearly recorded maintainer decisions as binding. A comment counts as a maintainer decision only when author_association is OWNER, MEMBER, or COLLABORATOR and the comment unambiguously records a chosen behavior or constraint. Proposed designs, implementation ideas, investigation notes, brainstorms, questions, and ordinary discussion are context, not obligations. Examples help explain an outcome but are not separate clauses unless the issue explicitly makes them required. A Refs, Related, or Follow-up link does not commit the PR to the whole issue. If a statement's authority or required outcome is unclear, mark it unknown and do not create a finding.",
     "5. Correctness: apply the trusted code change considerations to the completed diff. testDepth.suggestedTests are internal review notes, not author tasks. A concrete missing regression test for changed behavior must be represented in a finding; use category=tests only when the gap is not already part of another defect. Otherwise do not request more tests.",
@@ -2706,10 +2745,11 @@ function sanitizeAcceptanceCoverage(value: unknown): AcceptanceCoverage[] {
 }
 
 function sanitizeSecurityCategories(value: unknown): SecurityCategory[] {
+  const securityCategories = readSecurityCategoryNames();
   const provided = new Map(
     recordItems(value).flatMap((item) => {
       const category = stringOrDefault(item.category, "");
-      if (!SECURITY_CATEGORIES.includes(category)) return [];
+      if (!securityCategories.includes(category)) return [];
       return [
         [
           category,
@@ -2722,7 +2762,7 @@ function sanitizeSecurityCategories(value: unknown): SecurityCategory[] {
       ];
     }),
   );
-  return SECURITY_CATEGORIES.map((category) => ({
+  return securityCategories.map((category) => ({
     ...(provided.get(category) ?? {
       category,
       verdict: "warning" as const,
@@ -2972,11 +3012,7 @@ function unavailableResult(
         : `Advisor execution skipped: ${reason}`,
     },
     acceptanceCoverage: [],
-    securityCategories: SECURITY_CATEGORIES.map((category) => ({
-      category,
-      verdict: "warning",
-      justification: "Advisor unavailable; maintainer review required.",
-    })),
+    securityCategories: [],
     sourceOfTruthReview: [],
     e2e: normalizeCombinedE2eResult({}, metadata),
     testDepth: metadata.deterministic.testDepth,

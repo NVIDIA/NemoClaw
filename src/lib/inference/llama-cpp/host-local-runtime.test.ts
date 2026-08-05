@@ -1,7 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import {
+  lstatSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   buildLlamaCppHostLocalDockerArgv,
@@ -11,6 +23,31 @@ import {
 
 const MODEL_DIGEST = `sha256:${"a".repeat(64)}`;
 const IMAGE = `ghcr.io/nvidia/nemoclaw/llama-cpp-server@sha256:${"b".repeat(64)}`;
+const MODEL_CONTENT = Buffer.alloc(64, 0x61);
+const MODEL_FILENAME = "Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf";
+let modelRoot = "";
+let modelPath = "";
+
+function filesystemIdentity() {
+  const status = lstatSync(modelPath, { bigint: true });
+  return {
+    ctimeNs: status.ctimeNs,
+    dev: status.dev,
+    ino: status.ino,
+    mtimeNs: status.mtimeNs,
+    size: status.size,
+  };
+}
+
+beforeEach(() => {
+  modelRoot = realpathSync(mkdtempSync(path.join(os.tmpdir(), "nemoclaw-llama-runtime-")));
+  modelPath = path.join(modelRoot, MODEL_FILENAME);
+  writeFileSync(modelPath, MODEL_CONTENT);
+});
+
+afterEach(() => {
+  rmSync(modelRoot, { force: true, recursive: true });
+});
 
 function contract(): LlamaCppHostLocalLaunchContract {
   return {
@@ -18,8 +55,8 @@ function contract(): LlamaCppHostLocalLaunchContract {
       servedName: "nvidia-nemotron-3-nano-30b-a3b",
       file: {
         digest: MODEL_DIGEST,
-        path: "Nemotron-3-Nano-30B-A3B-UD-Q4_K_XL.gguf",
-        sizeBytes: 22_833_947_424,
+        path: MODEL_FILENAME,
+        sizeBytes: MODEL_CONTENT.length,
       },
     },
     policy: {
@@ -70,8 +107,9 @@ function bindings(): LlamaCppHostLocalRuntimeBindings {
     imageReference: IMAGE,
     model: {
       digest: MODEL_DIGEST,
-      hostPath: `/home/nvidia/.cache/huggingface/hub/blobs/${"c".repeat(64)}`,
-      sizeBytes: 22_833_947_424,
+      filesystemIdentity: filesystemIdentity(),
+      hostPath: modelPath,
+      sizeBytes: MODEL_CONTENT.length,
     },
     network: { isolation: "docker-internal", name: "nemoclaw-llama-cpp-internal" },
     ownerLabel: { name: "io.nvidia.nemoclaw.llama-cpp-owner", value: "gateway.primary" },
@@ -227,6 +265,62 @@ describe("llama.cpp host-local runtime materializer", () => {
         model: { ...bindings().model, sizeBytes: 1 },
       }),
     ).toThrow("verified model artifact does not match");
+  });
+
+  it("rejects a replacement at a previously verified model path (#8279)", () => {
+    const runtime = bindings();
+    renameSync(modelPath, `${modelPath}.verified`);
+    writeFileSync(modelPath, MODEL_CONTENT);
+
+    expect(() => buildLlamaCppHostLocalDockerArgv(contract(), runtime)).toThrow(
+      "does not match its verified filesystem identity",
+    );
+  });
+
+  it("rejects changed state on the previously verified inode (#8279)", () => {
+    const runtime = bindings();
+    writeFileSync(modelPath, Buffer.alloc(MODEL_CONTENT.length, 0x62));
+    const future = new Date(Date.now() + 10_000);
+    utimesSync(modelPath, future, future);
+
+    expect(() => buildLlamaCppHostLocalDockerArgv(contract(), runtime)).toThrow(
+      "does not match its verified filesystem identity",
+    );
+  });
+
+  it.each([
+    "dev",
+    "ino",
+    "size",
+    "mtimeNs",
+    "ctimeNs",
+  ] as const)("rejects a forged %s field in the verified filesystem identity (#8279)", (field) => {
+    const runtime = bindings();
+    expect(() =>
+      buildLlamaCppHostLocalDockerArgv(contract(), {
+        ...runtime,
+        model: {
+          ...runtime.model,
+          filesystemIdentity: {
+            ...runtime.model.filesystemIdentity,
+            [field]: runtime.model.filesystemIdentity[field] + 1n,
+          },
+        },
+      }),
+    ).toThrow("does not match its verified filesystem identity");
+  });
+
+  it("rejects a forged artifact that omits filesystem identity (#8279)", () => {
+    const runtime = bindings();
+    expect(() =>
+      buildLlamaCppHostLocalDockerArgv(contract(), {
+        ...runtime,
+        model: {
+          ...runtime.model,
+          filesystemIdentity: undefined,
+        } as unknown as typeof runtime.model,
+      }),
+    ).toThrow("does not match its verified filesystem identity");
   });
 
   it("rejects inputs that violate host-local isolation (#8144)", () => {
