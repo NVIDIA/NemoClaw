@@ -11,22 +11,22 @@ Use after the baseline/latest installs are ready. Covers baseline matching, synt
 - [Step 8c: Synth-repro and retry on baseline](#step-8c-synth-repro-and-retry-on-baseline)
 - [Step 8d: Install latest, run validated reproducer](#step-8d-install-latest-run-validated-reproducer)
 - [Step 8d.5: Architectural-Drift Check](#step-8d5-architectural-drift-check)
-- [Step 8e: Performance-Bug Verification](#step-8e-performance-bug-verification-when-bug_classperformance)
+- [Step 8e: Performance and Resource-Growth Verification](#step-8e-performance-and-resource-growth-verification)
 - [Step 8f: Rebuild-Cycle Verification](#step-8f-rebuild-cycle-verification-when-bug_classrebuild-cycle)
 
 ---
 
 ### Step 8b: Run reproducer on baseline, compare to issue symptom
 
-If `./reproducer.sh` exists (verbatim from Step 6), run it. Otherwise synth on demand from the issue body (apply −30 penalty now, locked in for the rest of the run).
+Run only the bounded `$EVIDENCE_DIR/reproducer.sh` reconstructed and approved in Step 6. Never run `reported-reproducer.txt` or issue text directly. If no safe script exists, select `verify-inconclusive`.
 
-**Interactive subcommand handling.** Many `nemoclaw onboard` / `nemoclaw configure` invocations prompt for input and will hang in a non-interactive shell. Auto-detect such subcommands in the script and apply, in order:
+**Interactive subcommand handling.** Many `nemoclaw onboard` / `nemoclaw configure` invocations prompt for input and will hang in a non-interactive shell. Do not mutate an approved reproducer in place or feed blanket `yes` responses. Inspect the exact tag's command help and apply, in order:
 
-1. Add `--non-interactive` if the version supports it.
-2. Add `--dangerously-skip-prompts` (issue #2168 confirmed this exists for at least some Jetson paths).
-3. Pre-feed answers via stdin: `printf 'yes\n\n\n' | nemoclaw onboard ...`
+1. Add `--non-interactive` only if the exact version documents it and the resulting effects are understood.
+2. Preserve `--dangerously-skip-prompts` only when it was part of the reviewed report and the exact version documents its meaning. Never add it automatically or use it to imply third-party-software consent.
+3. Pre-feed only exact, version-specific responses after reviewing every prompt and the state change or consent it represents.
 
-If none work, route the script to Step 8c (synth-repro) so the LLM can rewrite it using non-interactive equivalents.
+Every adaptation creates a revised script. Show the complete revision, exact stdin responses, and effects, then obtain explicit approval before execution. If no reviewed non-interactive path exists, route the script to Step 8c or select `verify-inconclusive`.
 
 ```bash
 # `brev exec` spawns a non-login shell, so ~/.local/bin (where the nemoclaw binary lives
@@ -34,19 +34,36 @@ If none work, route the script to Step 8c (synth-repro) so the LLM can rewrite i
 # use `sg docker -c '...'` blocks for any Docker-touching command — Step 8a.5b covers
 # that requirement; double-wrapping with sg docker on the outer call breaks nested-quote
 # escaping in some bash versions.
-brev copy ./reproducer.sh "$INSTANCE_NAME":~/reproducer.sh
-brev exec "$INSTANCE_NAME" 'export PATH="$HOME/.local/bin:$PATH" && bash ~/reproducer.sh' 2>&1 | tee ./baseline-transcript.log
+run_bounded brev copy "$EVIDENCE_DIR/reproducer.sh" "$INSTANCE_NAME":~/.verify-stale-evidence/reproducer.sh || exit 1
+REPRO_TIMEOUT=$(remaining_seconds) || exit 1
+[ "$REPRO_TIMEOUT" -le 1200 ] || REPRO_TIMEOUT=1200
+if run_bounded brev exec "$INSTANCE_NAME" "export PATH=\"\$HOME/.local/bin:\$PATH\" && timeout ${REPRO_TIMEOUT}s bash ~/.verify-stale-evidence/reproducer.sh" >"$EVIDENCE_DIR/baseline-transcript.log" 2>&1; then
+  BASELINE_EXIT=0
+else
+  BASELINE_EXIT=$?
+fi
+python3 .agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.py \
+  "$EVIDENCE_DIR/baseline-transcript.log" >"$EVIDENCE_DIR/baseline-transcript.redacted.log"
+sed -n '1,200p' "$EVIDENCE_DIR/baseline-transcript.redacted.log"
+echo "[verify-stale] baseline reproducer exit: $BASELINE_EXIT"
 ```
+
+Do not pipe `brev exec` through `tee` when the exit code is evidence. Without `pipefail`, the pipeline reports `tee`'s status and can turn a failed reproducer into exit 0.
 
 **Log-scraping (when `BUG_CLASS=log-only`).** Some bugs describe symptoms that show up in internal log files, not the reproducer's stdout/stderr — e.g., #1642 "see lots of error in openclaw log," #2611 "os.networkInterfaces guard errors." After running the reproducer, also pull the relevant logs from inside the sandbox and search them for the issue's symptom phrase:
 
 ```bash
 # Common NemoClaw / OpenClaw / OpenShell log paths inside the sandbox.
-brev exec "$INSTANCE_NAME" "sg docker -c 'cat ~/.openclaw/logs/*.log /var/log/nemoclaw/*.log 2>/dev/null'" \
-  | tee ./baseline-logs.log
+if ! run_bounded brev exec "$INSTANCE_NAME" "sg docker -c 'cat ~/.openclaw/logs/*.log /var/log/nemoclaw/*.log 2>/dev/null'" \
+  >"$EVIDENCE_DIR/baseline-logs.log" 2>&1; then
+  echo "ERROR: log capture failed; the log-only result is inconclusive"
+  exit 1
+fi
+python3 .agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.py \
+  "$EVIDENCE_DIR/baseline-logs.log" >"$EVIDENCE_DIR/baseline-logs.redacted.log"
 
 # Search the log capture for the issue's symptom phrase too, not just the transcript.
-grep -F "<symptom phrase from issue body>" ./baseline-logs.log
+grep -F "<redacted symptom phrase from issue body>" "$EVIDENCE_DIR/baseline-logs.redacted.log"
 ```
 
 For functional bugs the reproducer's stdout is sufficient; for log-only bugs the transcript may be clean but the log capture has the symptom. Both halves feed into the match rubric below.
@@ -57,11 +74,11 @@ For functional bugs the reproducer's stdout is sufficient; for log-only bugs the
 |---|---|
 | All three reproduce the symptom | Strong baseline match → continue to 8d |
 | All three are clean (no symptom) | Reproducer doesn't expose the bug on baseline → Step 8c synth-repro |
-| Mixed (1 or 2 of 3 show the symptom) | Flake-prone reproducer. Note "flake suspected" in the comment; apply −25 to Step 9 score; downgrade `+50 latest clean` to `+25` because a clean latest run could just be the lucky path of an intermittent bug |
+| Mixed (1 or 2 of 3 show the symptom) | Flake-prone reproducer. Note "flake suspected" in the comment; use `+25` instead of the normal `+50` latest-clean signal because a clean latest run could be the lucky path of an intermittent bug |
 
 Skip flake retry for `performance` and `rebuild-cycle` classes — those have their own multi-run rubrics in Steps 8e and 8f.
 
-**Match rubric.** LLM compares `baseline-transcript.log` to the issue's "Actual result" / error description. Match criteria, in order:
+**Match rubric.** Compare `baseline-transcript.redacted.log` to the redacted issue's "Actual result" or error description. Keep the raw file local and never print it. Match criteria, in order:
 
 1. **Exit code agrees** with what the issue describes (non-zero if issue describes a failure, zero if issue describes a wrong-output bug). Necessary but not sufficient.
 2. **Symptom phrase match:** transcript contains a key error phrase from the issue (e.g., issue says `Permission denied on generate-openclaw-config.py`, transcript says `EACCES: permission denied, open '...generate-openclaw-config.py'` — semantic equivalence counts).
@@ -78,79 +95,101 @@ Skip flake retry for `performance` and `rebuild-cycle` classes — those have th
 
 ### Step 8c: Synth-repro and retry on baseline
 
-LLM rewrites `./reproducer.sh` using the full issue context (description, environment, symptoms) **plus the baseline transcript** so it can react to what actually happened. Apply **−30 confidence penalty** (or keep it if 8b already applied it for the missing-verbatim case).
+LLM rewrites `$EVIDENCE_DIR/reproducer.sh` using the issue context plus the redacted baseline transcript. Apply the **−30 confidence penalty**. Repeat Step 6's untrusted-input review, show the complete revision and effects, and obtain approval before copying or executing it.
 
 ```bash
-brev copy ./reproducer.sh "$INSTANCE_NAME":~/reproducer.sh
-# Same PATH safeguard as Step 8b — non-login shells don't pick up ~/.local/bin
-# automatically, and an empty PATH here misreads as `nemoclaw: command not found`
-# which would route to `verify-inconclusive` for the wrong reason.
-brev exec "$INSTANCE_NAME" 'export PATH="$HOME/.local/bin:$PATH" && bash ~/reproducer.sh' 2>&1 | tee ./baseline-transcript-2.log
+run_bounded brev copy "$EVIDENCE_DIR/reproducer.sh" "$INSTANCE_NAME":~/.verify-stale-evidence/reproducer.sh || exit 1
+REPRO_TIMEOUT=$(remaining_seconds) || exit 1
+[ "$REPRO_TIMEOUT" -le 1200 ] || REPRO_TIMEOUT=1200
+if run_bounded brev exec "$INSTANCE_NAME" "export PATH=\"\$HOME/.local/bin:\$PATH\" && timeout ${REPRO_TIMEOUT}s bash ~/.verify-stale-evidence/reproducer.sh" >"$EVIDENCE_DIR/baseline-transcript-2.log" 2>&1; then
+  BASELINE_EXIT_2=0
+else
+  BASELINE_EXIT_2=$?
+fi
+python3 .agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.py \
+  "$EVIDENCE_DIR/baseline-transcript-2.log" >"$EVIDENCE_DIR/baseline-transcript-2.redacted.log"
+sed -n '1,200p' "$EVIDENCE_DIR/baseline-transcript-2.redacted.log"
+echo "[verify-stale] revised baseline reproducer exit: $BASELINE_EXIT_2"
 ```
 
 - **Match:** validated (with −30 baked in). Proceed to 8d.
-- **Still no match:** select the `verify-inconclusive` verdict. Prepare a comment that includes both reproducer attempts and both baseline transcripts with the message "couldn't establish a working reproducer for this bug on `$REPORTED_VERSION`." **Skip 8d** — there's nothing to verify on latest.
+- **Still no match:** select the `verify-inconclusive` verdict. Prepare a comment with one redacted diagnostic line from each attempt and the message "couldn't establish a working reproducer for this bug on `$REPORTED_VERSION`." Keep the complete transcripts in local evidence only. **Skip 8d** because there is no validated reproducer.
 
 ### Step 8d: Install latest, run validated reproducer
 
 ```bash
-brev exec "$INSTANCE_NAME" "$RESET"
-brev exec "$INSTANCE_NAME" "
-  if [ -f ~/.nvidia-api-key ]; then export NVIDIA_API_KEY=\$(cat ~/.nvidia-api-key); fi
-  curl -fsSL $INSTALL_URL | bash
-"
+if ! run_bounded brev exec "$INSTANCE_NAME" "$RESET"; then
+  echo "ERROR: latest reset failed or exceeded the execution budget"
+  exit 1
+fi
+LATEST_INSTALL_FAILED=0
+INSTALL_TIMEOUT=$(remaining_seconds) || exit 1
+if run_bounded brev exec "$INSTANCE_NAME" "
+  $CREDENTIAL_EXPORT
+  timeout ${INSTALL_TIMEOUT}s env \
+    NEMOCLAW_INSTALL_REF= \
+    NEMOCLAW_INSTALL_TAG=$LATEST \
+    NEMOCLAW_NON_INTERACTIVE=1 \
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+    NEMOCLAW_AGENT=${NEMOCLAW_AGENT:-openclaw} \
+    NEMOCLAW_PROVIDER=${BUG_PROVIDER:-ollama} \
+    NEMOCLAW_MODEL=$VERIFY_MODEL \
+    NEMOCLAW_SANDBOX_NAME=verify-stale-install \
+    bash -o pipefail -c 'curl -fsSL $INSTALL_URL | bash'
+" >"$EVIDENCE_DIR/latest-install.log" 2>&1; then
+  LATEST_INSTALL_FAILED=0
+else
+  LATEST_INSTALL_FAILED=1
+fi
+python3 .agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.py \
+  "$EVIDENCE_DIR/latest-install.log" >"$EVIDENCE_DIR/latest-install.redacted.log"
+tail -40 "$EVIDENCE_DIR/latest-install.redacted.log"
 
 # Same resolved-version check as Step 8a — guard against env-var scoping or default fallthrough
 # silently installing the wrong version. The latest install should resolve to $LATEST.
-RESOLVED=$(brev exec "$INSTANCE_NAME" "bash -lc 'nemoclaw --version'" 2>&1 | tail -1)
+RESOLVED=$(run_bounded brev exec "$INSTANCE_NAME" "bash -lc 'nemoclaw --version'" 2>&1 | tail -1)
+RESOLVED_SEMVER=$(printf '%s\n' "$RESOLVED" | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
+RESOLVED_TAG="v${RESOLVED_SEMVER#v}"
 echo "[verify-stale] latest requested: $LATEST; resolved: $RESOLVED"
-case "$RESOLVED" in
-  *"$LATEST"*) ;;  # match — proceed
-  *) echo "WARN: latest install resolved to '$RESOLVED' (expected match for $LATEST). Proceeding but flag in comment." ;;
-esac
+if [ -z "$RESOLVED_SEMVER" ] || [ "$RESOLVED_TAG" != "$LATEST" ]; then
+    echo "ERROR: latest install resolved to '$RESOLVED' instead of $LATEST."
+    echo "Treating this as an infra failure; no verdict or GitHub write is allowed."
+    LATEST_INSTALL_FAILED=1
+fi
 
-# OpenShell version pin — surfaced from #1642's e2e run. Latest's blueprint.yaml may set
-# `max_openshell_version` below what the OpenShell installer would otherwise grab. The
-# baseline phase (Step 8a) installed whichever OpenShell was current at reported-version,
-# which can be newer than latest's cap (e.g., reported v0.0.6 → installed openshell 0.0.37,
-# latest v0.0.38 caps at 0.0.36, onboard preflight refuses to run). Re-pin from latest's
-# repo so onboard preflight passes; if the new pin is OLDER than the installed binary,
-# install-openshell.sh refuses the downgrade — fall back to direct GitHub download.
-brev exec "$INSTANCE_NAME" '
-  set -e
-  cd ~/NemoClaw
-  git fetch --depth 1 origin tag "'"$LATEST"'" 2>&1 | tail -2
-  git checkout -- . 2>/dev/null || true
-  git checkout "'"$LATEST"'" 2>&1 | tail -2
+# Do not replace OpenShell manually. The exact-tag installer enforces the
+# blueprint's min/max OpenShell range and verifies the pinned release assets.
+# An OpenShell range failure is an infra failure, not permission to download an
+# unverified replacement binary.
 
-  MAX_OS=$(grep -E "^max_openshell_version:" nemoclaw-blueprint/blueprint.yaml 2>/dev/null | awk "{print \$2}" | tr -d "\"" | tr -d "v")
-  CUR_OS=$(openshell --version 2>&1 | grep -oE "[0-9]+\.[0-9]+\.[0-9]+" | head -1 || echo 0.0.0)
-  echo "[verify-stale] openshell pin: blueprint max=$MAX_OS, currently installed=$CUR_OS"
+[ "${LATEST_INSTALL_FAILED:-0}" = "0" ] || exit 1
 
-  if [ -n "$MAX_OS" ] && [ "$(printf "%s\n%s\n" "$CUR_OS" "$MAX_OS" | sort -V | tail -1)" != "$MAX_OS" ]; then
-    echo "[verify-stale] currently installed openshell ($CUR_OS) is newer than blueprint cap ($MAX_OS) — force-downgrading"
-    sudo rm -f /usr/local/bin/openshell
-    cd /tmp
-    curl -fsSL "https://github.com/NVIDIA/OpenShell/releases/download/v$MAX_OS/openshell-x86_64-unknown-linux-musl.tar.gz" -o openshell-pin.tar.gz
-    tar -xzf openshell-pin.tar.gz
-    sudo install -m 755 ./openshell /usr/local/bin/openshell
-    openshell --version
-  else
-    sudo bash scripts/install-openshell.sh 2>&1 | tail -3
-  fi
-'
+# Remove the installer's verification sandbox so the approved reproducer sees
+# the same clean starting state it saw after the baseline installer.
+if ! run_bounded brev exec "$INSTANCE_NAME" "export PATH=\"\$HOME/.local/bin:\$PATH\"; nemoclaw verify-stale-install destroy --force --cleanup-gateway 2>/dev/null || true"; then
+  echo "ERROR: could not remove the latest installer's verification sandbox"
+  exit 1
+fi
 
-brev copy ./reproducer.sh "$INSTANCE_NAME":~/reproducer.sh
-# Same PATH safeguard as the baseline call — non-login shells don't pick up ~/.local/bin
-# automatically. The reproducer's internal `sg docker -c '...'` blocks cover Docker access.
-brev exec "$INSTANCE_NAME" 'export PATH="$HOME/.local/bin:$PATH" && bash ~/reproducer.sh' 2>&1 | tee ./latest-transcript.log
+run_bounded brev copy "$EVIDENCE_DIR/reproducer.sh" "$INSTANCE_NAME":~/.verify-stale-evidence/reproducer.sh || exit 1
+REPRO_TIMEOUT=$(remaining_seconds) || exit 1
+[ "$REPRO_TIMEOUT" -le 1200 ] || REPRO_TIMEOUT=1200
+if run_bounded brev exec "$INSTANCE_NAME" "export PATH=\"\$HOME/.local/bin:\$PATH\" && timeout ${REPRO_TIMEOUT}s bash ~/.verify-stale-evidence/reproducer.sh" >"$EVIDENCE_DIR/latest-transcript.log" 2>&1; then
+  LATEST_EXIT=0
+else
+  LATEST_EXIT=$?
+fi
+python3 .agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.py \
+  "$EVIDENCE_DIR/latest-transcript.log" >"$EVIDENCE_DIR/latest-transcript.redacted.log"
+sed -n '1,200p' "$EVIDENCE_DIR/latest-transcript.redacted.log"
+echo "[verify-stale] latest reproducer exit: $LATEST_EXIT"
 ```
 
 If the install of **latest** fails (e.g. installer regression — see #3058 for a current example), this is an infra failure — see Step 11. Do not score the issue or mutate its labels or Project fields.
 
-If install succeeds, `latest-transcript.log` is the input to Step 9 scoring.
+If install succeeds, `latest-transcript.redacted.log` is the input to Step 9 scoring. Retain the raw file only until the temporary evidence directory is removed at the end of the run.
 
-For interactive debugging when something looks off:
+The automated verification must not open an unbounded interactive shell. After the run has cleaned up—or after separately approved retention—a maintainer can debug manually outside this skill's execution budget:
 
 ```bash
 brev shell "$INSTANCE_NAME"
@@ -166,13 +205,11 @@ Cross-version verification compares two moving targets: the reproducer assumes `
 
 ```bash
 # Extract the primary verification command from the reproducer (e.g. "openshell forward list").
-# Use mapfile + a quoted-array iteration so multi-word tool strings ("openshell forward")
-# stay intact — bare `for t in $TOOL` word-splits them on whitespace and would pickaxe
-# `openshell` and `forward` separately, weakening the drift signal.
-mapfile -t TOOLS < <(grep -oE '\b(openshell|nemoclaw)[[:space:]]+[a-z-]+' reproducer.sh | sort -u)
-
-# Pickaxe each tool name across the version range.
-for t in "${TOOLS[@]}"; do
+# Preserve multi-word tool strings without Bash 4-only `mapfile`; maintainers
+# can run this check from macOS's system Bash.
+grep -oE '\b(openshell|nemoclaw)[[:space:]]+[a-z-]+' "$EVIDENCE_DIR/reproducer.sh" \
+  | sort -u \
+  | while IFS= read -r t; do
   echo "=== drift check: $t ==="
   git log "$REPORTED_VERSION".."$LATEST" -S"$t" --oneline -- src/ bin/ nemoclaw/src/ 2>&1 | head -5
 done
@@ -203,18 +240,48 @@ Adapt the axes to the bug class. For filesystem bugs: `find`, `lsattr`, `stat`. 
 
 ---
 
-## Step 8e: Performance-Bug Verification (when `BUG_CLASS=performance`)
+## Step 8e: Performance and Resource-Growth Verification
 
-Performance bugs (#2598 "10s P50", #2600 "hangs ~2 min", #2733 Ollama tool-call leak over time) can't be answered by the standard exit-code + symptom-phrase rubric — one clean reproducer run doesn't tell you the p50 budget is met; one slow run doesn't tell you the bug still reproduces. Replace Step 8b's match with a measurement-and-distribution rubric:
+Latency and resource-growth reports (#2598 "10s P50", #2600 "hangs ~2 min", #2733 Ollama tool-call leak over time) cannot be answered by the standard exit-code and symptom-phrase rubric. A single clean run does not establish a percentile or growth budget. Use the matching branch below.
 
-1. **Parse the SLA from the issue body.** Extract numeric latency thresholds: `10s P50`, `200ms`, `under 5 seconds`, `~2 min`. Save as `SLA_P50_MS`, `SLA_P90_MS`, etc. If no numeric SLA is in the body, route to Step 8c synth-repro to ask the reporter (via comment) for one — without a target, the verdict is undefined.
-2. **Run the reproducer N=10 times** on each side (baseline + latest), capturing per-run latency:
+**Latency branch (when `BUG_CLASS=performance`):**
+
+1. **Parse the acceptance threshold from the issue body.** Extract numeric latency thresholds such as `10s P50`, `200ms`, `under 5 seconds`, or `~2 min`. Save them as `SLA_P50_MS`, `SLA_P90_MS`, or the matching metric. Do not silently interpret an unqualified latency threshold as p50; use the statistic named by the issue or obtain maintainer approval for the interpretation. If the issue gives no numeric threshold, select `verify-inconclusive` and propose a concise comment that asks for the metric, workload, warm-up, sample count, and threshold. Step 8c cannot invent an acceptance criterion.
+2. **Run the reproducer N=10 times on the Brev instance** after each exact-tag install, capturing per-run latency. Follow the issue's warm-up instructions; if it gives none, run one unmeasured warm-up on each release and disclose that choice. Set `PERF_SIDE=baseline` after Step 8a and `PERF_SIDE=latest` after Step 8d:
 
    ```bash
-   for i in $(seq 1 10); do
-     /usr/bin/time -f '%e' bash ~/reproducer.sh >/dev/null 2>>./latest-perf.log
-   done
+   case "$PERF_SIDE" in baseline|latest) ;; *) echo "invalid PERF_SIDE"; exit 1 ;; esac
+   PERF_TIMEOUT=$(remaining_seconds) || exit 1
+   if ! run_bounded brev exec "$INSTANCE_NAME" "
+     export PATH=\"\$HOME/.local/bin:\$PATH\"
+     PERF_DEADLINE=\$((\$(date +%s) + ${PERF_TIMEOUT}))
+     sample_timeout() {
+       sample_remaining=\$((PERF_DEADLINE - \$(date +%s)))
+       [ \"\$sample_remaining\" -gt 0 ] || return 1
+       [ \"\$sample_remaining\" -le 1200 ] || sample_remaining=1200
+       printf '%s\\n' \"\$sample_remaining\"
+     }
+     : > ~/.verify-stale-evidence/${PERF_SIDE}-perf.log
+     : > ~/.verify-stale-evidence/${PERF_SIDE}-perf-stderr.log
+     : > ~/.verify-stale-evidence/${PERF_SIDE}-perf-exits.log
+     WARMUP_TIMEOUT=\$(sample_timeout) || exit 124
+     timeout \"\${WARMUP_TIMEOUT}s\" bash ~/.verify-stale-evidence/reproducer.sh >/dev/null 2>>~/.verify-stale-evidence/${PERF_SIDE}-perf-stderr.log || {
+       WARMUP_EXIT=\$?
+       [ \"\$WARMUP_EXIT\" -ne 124 ] || exit 124
+     }
+     for i in \$(seq 1 10); do
+       SAMPLE_TIMEOUT=\$(sample_timeout) || exit 124
+       /usr/bin/time -f '%e' -o ~/.verify-stale-evidence/${PERF_SIDE}-perf.log -a \
+         timeout \"\${SAMPLE_TIMEOUT}s\" bash ~/.verify-stale-evidence/reproducer.sh >/dev/null 2>>~/.verify-stale-evidence/${PERF_SIDE}-perf-stderr.log
+       printf '%s\n' \$? >> ~/.verify-stale-evidence/${PERF_SIDE}-perf-exits.log
+     done
+   "; then
+     echo "ERROR: performance harness failed or exceeded the execution budget"
+     exit 1
+   fi
    ```
+
+   Keep the reproducer's stderr separate from `/usr/bin/time` output. Mixing diagnostics with numeric samples corrupts `sort` and percentile calculations. Confirm that the exit log contains ten expected exit codes. An unexpected failure makes the performance result inconclusive; do not treat a fast failure as an improvement.
 
 3. **Compute p50 and p90** for both sides, in milliseconds (to match the `_MS`
    units of `SLA_P50_MS` / `SLA_P90_MS`). `/usr/bin/time -f '%e'` emits
@@ -222,48 +289,76 @@ Performance bugs (#2598 "10s P50", #2600 "hangs ~2 min", #2733 Ollama tool-call 
 
    ```bash
    # p50 = mean of the 5th and 6th values (standard median for even N), in ms.
-   P50_MS=$(sort -n ./latest-perf.log \
+   PERF_SAMPLES=$(run_bounded brev exec "$INSTANCE_NAME" "cat ~/.verify-stale-evidence/${PERF_SIDE}-perf.log" \
+     | grep -E '^[0-9]+([.][0-9]+)?$' || true)
+   [ "$(printf '%s\n' "$PERF_SAMPLES" | sed '/^$/d' | wc -l | tr -d ' ')" = "10" ] || {
+     echo "ERROR: expected exactly ten numeric timing samples"
+     exit 1
+   }
+   P50_MS=$(printf '%s\n' "$PERF_SAMPLES" | sort -n \
      | awk 'NR==5||NR==6 {sum+=$1; n++} END {printf "%d", (sum/n)*1000}')
    # p90 = 9th value (nearest-rank / NIST method for N=10), in ms.
-   P90_MS=$(sort -n ./latest-perf.log | awk 'NR==9 {printf "%d", $1*1000}')
-   echo "[perf] latest p50=${P50_MS}ms p90=${P90_MS}ms"
+   P90_MS=$(printf '%s\n' "$PERF_SAMPLES" | sort -n | awk 'NR==9 {printf "%d", $1*1000}')
+   echo "[perf] ${PERF_SIDE} p50=${P50_MS}ms p90=${P90_MS}ms"
    ```
 
-   Apply the same two lines to `./baseline-perf.log` for the baseline side
-   (export as `BASELINE_P50_MS` / `BASELINE_P90_MS`).
+   Save the values as `BASELINE_P50_MS` / `BASELINE_P90_MS` or `LATEST_P50_MS` / `LATEST_P90_MS` according to `PERF_SIDE`.
 4. **Match rubric (p50 fires first; p90 is the regression backstop):**
    - Latest's p50 within `$SLA_P50_MS` AND baseline's p50 outside → bug fixed; same Step 9 scoring (subject to baseline-validation gate).
    - Latest's p50 outside `$SLA_P50_MS` → bug still reproduces (Step 9 special case).
    - Latest's p50 within `$SLA_P50_MS` AND baseline's p50 also within → reproducer doesn't actually exercise the bug; route to Step 8c synth-repro.
    - **p90 backstop**: if `$SLA_P90_MS` was parsed from the issue, latest's p90 outside `$SLA_P90_MS` flips a within-SLA-p50 verdict to `still-reproduces` — tail-latency regressions matter for the issues that name them.
 
-**Hardware-substitution caveat.** Performance numbers are silicon-dependent. When the issue is `platform: dgx-spark` or `platform: gb10` and we're measuring on a Brev x86 GPU SKU, the comment must say so explicitly: a Brev p50 of 1.5s on an `H100` does not prove the DGX Spark p50 is fixed. Cap the score at 60 unless the bug is clearly silicon-independent (e.g. an algorithmic regression in user-space JS that would manifest the same on any silicon).
+**Resource-growth branch (when `BUG_CLASS=resource-growth`).** Do not use elapsed time as a proxy for a memory, VRAM, file-descriptor, or disk-growth report. Require the issue to identify the resource, workload, observation duration or iteration count, sampling interval, and acceptance threshold. Instrument the exact named process, container, or filesystem with a reviewed command and run the same sampling harness on baseline and latest. Before each side, obtain `GROWTH_TIMEOUT=$(remaining_seconds) || exit 1` and wrap the complete remote sampling harness in `timeout "${GROWTH_TIMEOUT}s"`; do not start when the requested observation window cannot fit. The baseline must cross the reported growth threshold before a clean latest result can support `fixed-on-latest`; both crossing it means `still-reproduces`. Missing thresholds, process ambiguity, early process exit, or a third outcome means `verify-inconclusive`. Preserve the numeric sample series as local evidence and publish only the baseline/latest summary statistics after redaction.
+
+**Hardware-substitution caveat.** Performance and resource-growth results are often silicon-dependent. When the issue is `platform: dgx-spark` or `platform: gb10` and the Brev SKU uses different silicon, select `verify-inconclusive` unless the issue's acceptance criterion explicitly applies across the two environments and the maintainer approved that substitution. Even when cross-hardware comparison is valid, the comment must name both environments and the remaining limitation.
 
 ---
 
 ## Step 8f: Rebuild-Cycle Verification (when `BUG_CLASS=rebuild-cycle`)
 
-Rebuild-cycle bugs (#2701 "Pod recreate wipes `/tmp/nemoclaw-proxy-env.sh`," issues describing "configuration is not persisted across rebuilds") only manifest when sandbox state crosses a destroy/recreate boundary. A single onboard run can't trigger the symptom. Replace Step 8b's match with a run-rebuild-rerun harness:
+Lifecycle bugs only manifest across the operation named by the issue. `restart`, `rebuild`, `recreate`, and `destroy` are different contracts. Do not normalize them all to destroy plus onboard. Run the same approved lifecycle harness on the reported release and the newest exact release tag.
+
+Before each onboard, lifecycle operation, and capture, call `remaining_seconds` and use its result as that remote command's `timeout`. Do not begin a boundary sequence unless all required pre/post observations can fit within the remaining verification budget.
 
 1. **First onboard.** Run the reproducer once to establish initial state. Capture relevant artifacts (config files, env vars, sandbox metadata) — the issue body usually names what should persist:
 
    ```bash
-   brev exec "$INSTANCE_NAME" "sg docker -c 'cat <files-mentioned-in-issue> 2>&1'" | tee ./pre-rebuild.log
+   if ! run_bounded brev exec "$INSTANCE_NAME" "sg docker -c 'cat <non-credential-bearing-files-mentioned-in-issue> 2>&1'" \
+     >"$EVIDENCE_DIR/pre-rebuild.log" 2>&1; then
+     echo "ERROR: pre-boundary capture failed"
+     exit 1
+   fi
+   python3 .agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.py \
+     "$EVIDENCE_DIR/pre-rebuild.log" >"$EVIDENCE_DIR/pre-rebuild.redacted.log"
    ```
 
-2. **Trigger the rebuild.** Use `nemoclaw destroy --all --force` followed by `nemoclaw onboard` with the same env vars. Do not run the reset between them; the point is to test destroy/recreate, not start from scratch.
+2. **Trigger the reported boundary.** Use the exact supported command that the issue names:
+   - Restart: `nemoclaw <name> stop`, then `nemoclaw <name> start`, unless the issue names a service-level restart.
+   - Rebuild: `nemoclaw <name> rebuild --yes`.
+   - Recreate through onboarding: use the issue's reviewed `nemoclaw onboard --fresh --name <name> --recreate-sandbox` flow.
+   - Destroy and onboard: use `nemoclaw <name> destroy --force`, then the reviewed onboarding command, only when the issue explicitly names that deletion boundary.
+
+   Do not run the reset between the pre- and post-captures. The reset belongs between release installs, not inside the lifecycle observation.
 
 3. **Re-capture the same artifacts** post-rebuild:
 
    ```bash
-   brev exec "$INSTANCE_NAME" "sg docker -c 'cat <same-files> 2>&1'" | tee ./post-rebuild.log
+   if ! run_bounded brev exec "$INSTANCE_NAME" "sg docker -c 'cat <same-non-credential-bearing-files> 2>&1'" \
+     >"$EVIDENCE_DIR/post-rebuild.log" 2>&1; then
+     echo "ERROR: post-boundary capture failed"
+     exit 1
+   fi
+   python3 .agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.py \
+     "$EVIDENCE_DIR/post-rebuild.log" >"$EVIDENCE_DIR/post-rebuild.redacted.log"
    ```
 
-4. **Diff and match.** The bug is "X gets wiped / changes / regresses across rebuild." Compare pre-rebuild vs post-rebuild captures to the issue's expected behavior:
-   - Pre and post agree (artifact preserved) AND issue says it should be preserved → bug fixed
-   - Pre and post differ (artifact wiped) AND issue says it gets wiped → bug still reproduces
-   - Pre and post agree AND issue says it gets wiped → reproducer doesn't exercise the bug; Step 8c synth-repro
+4. **Validate the baseline.** On `$REPORTED_VERSION`, the pre/post result must expose the reported symptom. If it does not, revise the bounded reproducer once through Step 8c. If the revised baseline still does not match, select `verify-inconclusive`.
+5. **Verify latest.** After the reset and exact `$LATEST` install, repeat the same setup, lifecycle operation, and captures:
+   - Baseline loses or changes the artifact, while latest preserves the expected state → candidate for `fixed-on-latest` scoring.
+   - Baseline and latest both lose or change the artifact in the reported way → `still-reproduces`.
+   - Latest produces a third outcome or the lifecycle command differs → `verify-inconclusive`.
 
-The harness still uses Step 9's scoring framework — `+50 latest clean (artifact preserved)`, etc. — but the "what gets compared" axis is the diff, not the symptom phrase.
+The harness still uses Step 9's scoring framework, but the evidence is the pre/post state comparison for the exact lifecycle boundary.
 
 ---

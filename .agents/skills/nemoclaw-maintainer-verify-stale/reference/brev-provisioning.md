@@ -18,10 +18,10 @@ Use when the local-first path does not settle the issue and a Brev run is approv
 
 ## Step 7: Reuse or Provision a Brev Box
 
-The skill prefers reuse over provisioning. A pool of `verify-stale-*` boxes (CPU and GPU) can be kept warm; reuse the matching one if available, otherwise provision.
+Prefer reuse over provisioning only when the matching `verify-stale-*` instance has no active verification sentinel or registered NemoClaw sandbox. Before remote execution or a cost-bearing action, present the exact instance, type, hourly price, 60-minute execution budget, 120-second cleanup grace, third-party-software acceptance, credential plan, and cleanup action. Wait for explicit maintainer approval.
 
 ```bash
-# Auth + install URL already verified by Step 6.5 — no need to re-check or auto-login here.
+# Auth + install URL already verified by Step 6.8 — no need to re-check or auto-login here.
 
 # Determine class from Step 5: "cpu" or "gpu"
 INSTANCE_CLASS="cpu"   # or "gpu"
@@ -42,23 +42,27 @@ PROVISIONED_NEW=0
 
 if [ -n "$EXISTING" ]; then
   INSTANCE_NAME="$EXISTING"
-  echo "Reusing existing verification box: $INSTANCE_NAME"
+  echo "Candidate for reuse: $INSTANCE_NAME"
+  echo "The approved plan will atomically acquire the instance, then verify that ~/.verify-stale-running is absent and 'nemoclaw list --json' has no sandboxes before reuse."
 else
-  # Concurrency cap: refuse if 4+ verify-stale-* boxes are already running.
-  # Filter on .status to match the reuse query above — counting non-running boxes
-  # would falsely block provisioning when prior boxes are stopped but not deleted.
-  RUNNING=$(echo "$INSTANCES" | jq '[.[]? | select(.name | startswith("verify-stale-")) | select(.status == "RUNNING")] | length')
-  if [ "$RUNNING" -ge 4 ]; then
-    echo "ERROR: 4 verify-stale boxes already running. Wait for one to finish or reuse."
+  # Concurrency cap: count running, starting, provisioning, and failed-but-still-
+  # allocated verification boxes. Only explicitly stopped boxes are excluded.
+  ACTIVE=$(echo "$INSTANCES" | jq '[.[]? | select(.name | startswith("verify-stale-")) | select(.status != "STOPPED")] | length')
+  if [ "$ACTIVE" -ge 2 ]; then
+    echo "ERROR: 2 verify-stale boxes are already active. Wait, reuse, or clean up a stale allocation."
     exit 1
   fi
 
-  INSTANCE_NAME="verify-stale-${ISSUE_NUMBER}-$(date +%s)"
+  INSTANCE_NAME="verify-stale-${ISSUE_NUMBER}-$(date +%s)-$$"
+  if echo "$INSTANCES" | jq -e --arg name "$INSTANCE_NAME" 'any(.[]?; .name == $name)' >/dev/null; then
+    echo "ERROR: refusing to create or clean up a pre-existing instance named $INSTANCE_NAME"
+    exit 1
+  fi
 
   if [ "$INSTANCE_CLASS" = "gpu" ]; then
     # brev create auto-selects the cheapest GPU meeting the defaults
     # (>=20GB VRAM, >=500GB disk, compute >=8.0). Override with --type if needed.
-    brev create "$INSTANCE_NAME"
+    CREATE_ARGS=("$INSTANCE_NAME")
   else
     # CPU case: pick the cheapest stoppable Linux SKU at runtime so the skill doesn't rot when
     # SKUs change. Bias the floor by reproducer-implied memory needs — the cheapest 2 GB SKU
@@ -73,26 +77,166 @@ else
     #   - Pure CLI-surface bug (no sandbox, no model)                          -> floor 4 GB.
     # Override the auto-pick by exporting VERIFY_STALE_CPU_TYPE if the team has hard preferences.
     CPU_RAM_FLOOR=${CPU_RAM_FLOOR:-8}
-    CPU_TYPE=${VERIFY_STALE_CPU_TYPE:-$(brev search cpu --sort price --json \
+    CPU_ARCH=${INSTANCE_ARCH:-x86_64}
+    case "$CPU_ARCH" in x86_64|arm64) ;; *) echo "ERROR: unsupported CPU architecture: $CPU_ARCH"; exit 1 ;; esac
+    CPU_TYPE=${VERIFY_STALE_CPU_TYPE:-$(brev search cpu --arch "$CPU_ARCH" --sort price --json \
       | jq -r --argjson floor "$CPU_RAM_FLOOR" \
           '[.[] | select(.stoppable == true and .ram_gb >= $floor)] | .[0].type // empty')}
-    [ -n "$CPU_TYPE" ] || { echo "ERROR: no stoppable CPU SKU with >= ${CPU_RAM_FLOOR} GB RAM"; exit 1; }
-    brev create "$INSTANCE_NAME" --type "$CPU_TYPE"
+    [ -n "$CPU_TYPE" ] || { echo "ERROR: no stoppable $CPU_ARCH CPU SKU with >= ${CPU_RAM_FLOOR} GB RAM"; exit 1; }
+    CREATE_ARGS=("$INSTANCE_NAME" --type "$CPU_TYPE")
   fi
-
-  PROVISIONED_NEW=1
 fi
 
-# Cleanup runs on success, error, and SIGINT.
-# Delete only what we provisioned. Reused boxes stay warm for next time.
+# STOP. Present the plan and wait for explicit approval here. For a new instance,
+# preview the selected type and price with the matching `brev search` result or
+# `brev create "${CREATE_ARGS[@]}" --dry-run`. Approval includes creation and
+# deletion of this exact instance name. For reused and retained instances, the
+# cleanup plan resets NemoClaw state and removes copied credentials, reproducer
+# scripts, and verification logs. Approval does not permit retaining a new box.
+
+# Install cleanup before creation so a partially successful `brev create` cannot
+# leave an approved cost running when a later local step fails.
+KEEP_INSTANCE=0
+VERIFY_STALE_DEADLINE_EPOCH=$(($(date +%s) + 3600))
+VERIFY_STALE_RUN_ID="${ISSUE_NUMBER}-$(date +%s)-$$"
+REMOTE_STATE_CREATED=0
+remaining_seconds() {
+  local remaining
+  remaining=$((VERIFY_STALE_DEADLINE_EPOCH - $(date +%s)))
+  [ "$remaining" -gt 0 ] || { echo "ERROR: 60-minute verification budget expired" >&2; return 1; }
+  printf '%s\n' "$remaining"
+}
+run_with_timeout() {
+  local timeout_seconds=$1
+  shift
+  python3 - "$timeout_seconds" "$@" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+timeout_seconds = max(1, int(sys.argv[1]))
+process = subprocess.Popen(sys.argv[2:], start_new_session=True)
+
+def terminate() -> None:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=5)
+    except (ProcessLookupError, subprocess.TimeoutExpired):
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+try:
+    raise SystemExit(process.wait(timeout=timeout_seconds))
+except subprocess.TimeoutExpired:
+    terminate()
+    print(f"ERROR: command exceeded {timeout_seconds}s wall-clock budget", file=sys.stderr)
+    raise SystemExit(124)
+except KeyboardInterrupt:
+    terminate()
+    raise SystemExit(130)
+PY
+}
+run_bounded() {
+  local command_budget
+  command_budget=$(remaining_seconds) || return 124
+  run_with_timeout "$command_budget" "$@"
+}
+cleanup_verification() {
+  # The execution budget can be exhausted when cleanup starts. Give control-
+  # plane cleanup a separate bounded grace period and report failures.
+  if [ "$PROVISIONED_NEW" = "1" ] && [ "$KEEP_INSTANCE" != "1" ]; then
+    # Deleting a newly provisioned box removes its remote evidence and lock too;
+    # prioritize deletion so the total cleanup grace remains 120 seconds.
+    run_with_timeout 120 brev delete "$INSTANCE_NAME" >/dev/null 2>&1 || \
+      echo "WARNING: bounded delete did not complete for $INSTANCE_NAME; check Brev billing state now" >&2
+  elif [ "$REMOTE_STATE_CREATED" = "1" ]; then
+    CLEANUP_COMMAND="
+      test \"\$(cat ~/.verify-stale-owner/token 2>/dev/null)\" = \"$VERIFY_STALE_RUN_ID\" || exit 0
+      ${RESET:-:}
+      rm -rf ~/.verify-stale-evidence
+      rm -rf ~/.verify-stale-running
+      rm -rf ~/.verify-stale-owner
+    "
+    run_with_timeout 120 brev exec "$INSTANCE_NAME" "$CLEANUP_COMMAND" >/dev/null 2>&1 || \
+      echo "WARNING: bounded remote cleanup did not complete for $INSTANCE_NAME" >&2
+  else
+    # Acquisition can succeed remotely even if SSH drops before acknowledgement.
+    # Remove only a lock carrying this run's unique local identifier.
+    RELEASE_COMMAND="
+      test \"\$(cat ~/.verify-stale-owner/token 2>/dev/null)\" = \"$VERIFY_STALE_RUN_ID\" || exit 0
+      rm -rf ~/.verify-stale-owner
+    "
+    run_with_timeout 120 brev exec "$INSTANCE_NAME" "$RELEASE_COMMAND" >/dev/null 2>&1 || true
+  fi
+  cleanup_local_evidence
+}
+trap cleanup_verification EXIT
+
+if [ -z "$EXISTING" ]; then
+  PROVISIONED_NEW=1
+  if ! run_bounded brev create "${CREATE_ARGS[@]}"; then
+    echo "ERROR: provisioning failed or exceeded the approved execution budget"
+    exit 1
+  fi
+fi
+
+# Atomically acquire the instance before inspecting or modifying reusable state.
+# Set the token inside the new directory; cleanup removes only a matching token.
+ACQUIRE_COMMAND="
+  set -eu
+  if ! mkdir ~/.verify-stale-owner 2>/dev/null; then
+    echo 'ERROR: another verification owns this instance' >&2
+    exit 73
+  fi
+  trap 'rm -rf ~/.verify-stale-owner' EXIT
+  umask 077
+  printf '%s' '$VERIFY_STALE_RUN_ID' > ~/.verify-stale-owner/token
+  trap - EXIT
+"
+if ! run_bounded brev exec "$INSTANCE_NAME" "$ACQUIRE_COMMAND"; then
+  echo "ERROR: could not acquire exclusive ownership of $INSTANCE_NAME"
+  exit 1
+fi
+
+if [ -n "$EXISTING" ]; then
+  # Fail closed when the reusable box contains state that this run does not own.
+  REUSE_CHECK='set -eu
+    test ! -e ~/.verify-stale-running
+    export PATH="$HOME/.local/bin:$PATH"
+    if command -v nemoclaw >/dev/null 2>&1; then
+      test "$(nemoclaw list --json | python3 -c '\''import json,sys; print(len(json.load(sys.stdin).get("sandboxes", [])))'\'')" = "0"
+    fi'
+  if ! run_bounded brev exec "$INSTANCE_NAME" "$REUSE_CHECK"; then
+    echo "ERROR: reuse checks failed; no remote verification state will be reset"
+    exit 1
+  fi
+fi
+
+# Keep every remote script and raw log in one owner-only directory so cleanup is
+# complete even when a later rubric adds another evidence file.
+if ! run_bounded brev exec "$INSTANCE_NAME" 'rm -rf ~/.verify-stale-evidence && mkdir -m 700 ~/.verify-stale-evidence'; then
+  echo "ERROR: could not initialize the remote evidence directory"
+  exit 1
+fi
+REMOTE_STATE_CREATED=1
+
+# Cleanup runs on success, error, and SIGINT. Reset verification state and remove
+# copied credentials, scripts, logs, and the sentinel from every instance. Delete
+# only what we provisioned; reused boxes stay available without run artifacts.
 # `brev delete` is non-interactive by default — there is no --yes flag, and passing one errors.
-echo ">>> Brev instance: $INSTANCE_NAME (provisioned_new=$PROVISIONED_NEW; manual cleanup: brev delete $INSTANCE_NAME)"
-trap '[ "$PROVISIONED_NEW" = "1" ] && brev delete "$INSTANCE_NAME" >/dev/null 2>&1 || true' EXIT
+echo ">>> Brev instance: $INSTANCE_NAME (provisioned_new=$PROVISIONED_NEW; approved cleanup: reset verification state, remove credentials/scripts/logs, and brev delete $INSTANCE_NAME when newly provisioned)"
 ```
 
-Wallclock cap per verification: **60 minutes** default. The cap accommodates two install passes (baseline + latest), resets between them, and any reproducer dependency bootstrapping (Step 8a.5) — most of which run sequentially against a single Brev box. Bugs that require more than an hour to manifest fall out of v1 scope; if a provisioned box isn't ready in time, abort and treat as an infra failure (Step 11).
+Do not set `KEEP_INSTANCE=1` unless the maintainer separately approves the retention cost, names the cleanup owner, and accepts an exact deletion deadline. Before reuse or retention, remove `~/.verify-stale-evidence` and confirm the verification sentinel is absent.
 
-The previous design had a 25-min default with a 60-min extension for time-sensitive bugs (`memory leak`, `over time`, etc.). That split optimised for the wrong constraint — most issues fit comfortably under 60 min, and the keyword-based extension forced re-runs whenever a real install or bootstrap took longer than the optimistic 25-min budget. Single 60-min cap removes that paper cut.
+Wallclock execution budget per verification: **60 minutes** default, measured from the approved create/reuse action. `run_bounded` caps every post-approval local Brev CLI process; phase-specific remote `timeout` calls use the smaller remaining budget. Cleanup gets a separate bounded grace period of up to 120 seconds because deletion still depends on the Brev control plane. The approval plan must disclose that grace and that billing can continue until deletion is acknowledged. Do not start a phase whose required sample plan cannot fit. Bugs that need more than an hour fall out of v1 scope; an expired budget is an infra failure (Step 11), and the cleanup trap still runs.
+
+Check every `run_bounded` result. Status `124` means the local wall-clock wrapper or remote phase timed out; treat it as an infra failure and let the cleanup trap run. Never continue from a failed copy, reset, bootstrap, or transport call using partial state.
+
+The previous design had a 25-min default with a 60-min extension for time-sensitive bugs (`memory leak`, `over time`, etc.). That split optimised for the wrong constraint — most issues fit comfortably under 60 min, and the keyword-based extension forced re-runs whenever a real install or bootstrap took longer than the optimistic 25-min budget. One 60-minute execution budget removes that paper cut.
 
 ---
 
@@ -111,7 +255,14 @@ NemoClaw spawns OpenShell sandboxes (containers), runtime services, and listenin
 
 ```bash
 RESET=$(cat <<'SCRIPT'
-nemoclaw destroy --all --force 2>/dev/null || true
+export PATH="$HOME/.local/bin:$PATH"
+if command -v nemoclaw >/dev/null 2>&1; then
+  nemoclaw list --json 2>/dev/null \
+    | python3 -c 'import json,sys; [print(item["name"]) for item in json.load(sys.stdin).get("sandboxes", [])]' \
+    | while IFS= read -r sandbox; do
+        nemoclaw "$sandbox" destroy --force --cleanup-gateway 2>/dev/null || true
+      done
+fi
 # Anchor pkill patterns to "/nemoclaw" / "/openshell" path components so the kill doesn't
 # match unrelated processes that happen to mention these strings (including the agent
 # harness running this skill if its working dir contains the word).
@@ -119,9 +270,10 @@ pkill -9 -f '/nemoclaw([[:space:]]|$)' 2>/dev/null || true
 pkill -9 -f '/openshell([[:space:]]|$)' 2>/dev/null || true
 docker ps -a --filter "name=openshell-" -q 2>/dev/null | xargs -r docker rm -f 2>/dev/null || true
 docker ps -a --filter "name=nemoclaw-" -q 2>/dev/null | xargs -r docker rm -f 2>/dev/null || true
-# Sandbox state lives in ~/.openclaw (default-writable since #2227); ~/.nemoclaw holds CLI state.
-# Wipe both so the latest install starts clean.
-rm -rf ~/.nemoclaw ~/.openclaw 2>/dev/null
+# Remove CLI, runtime, and OpenShell configuration only after the registered
+# sandboxes, gateway processes, and containers above have been retired.
+rm -rf ~/.nemoclaw ~/.openclaw ~/.hermes ~/.config/nemoclaw ~/.config/openshell 2>/dev/null
+rm -rf ~/.verify-stale-running 2>/dev/null
 sudo -n rm -f /usr/local/bin/nemoclaw 2>/dev/null || true
 sudo -n rm -rf /usr/local/lib/nemoclaw 2>/dev/null || true
 for port in 8080 18789 9119; do fuser -k -n tcp $port 2>/dev/null || true; done
@@ -130,7 +282,7 @@ SCRIPT
 )
 ```
 
-Idempotent — fails silently when there's nothing to clean. Run via `brev exec "$INSTANCE_NAME" "$RESET"` before 8a's install and again before 8d's install.
+Idempotent — fails silently when there's nothing to clean. Run via `run_bounded brev exec "$INSTANCE_NAME" "$RESET"` before 8a's install and again before 8d's install.
 
 **Sudo precondition.** All `sudo` invocations use `sudo -n` (non-interactive) so they fail fast instead of hanging on a password prompt. The skill assumes the Brev image's default user has passwordless sudo configured — Brev's stock images do; custom images may not. If `sudo -n` fails, the binary cleanup is best-effort and a stale `/usr/local/bin/nemoclaw` may persist. The user-local install path (`~/.nemoclaw`) is fully reset regardless.
 
@@ -139,26 +291,66 @@ Idempotent — fails silently when there's nothing to clean. Run via `brev exec 
 The installer accepts the target ref via the `NEMOCLAW_INSTALL_TAG` env var (verified against `install.sh` source — defaults to `latest` if unset). It is **not** a `--version` flag.
 
 ```bash
-brev exec "$INSTANCE_NAME" "$RESET"
+if ! run_bounded brev exec "$INSTANCE_NAME" "$RESET"; then
+  echo "ERROR: baseline reset failed or exceeded the execution budget"
+  exit 1
+fi
+BASELINE_INSTALL_FAILED=0
 
-# Pass the provider env vars through so install.sh's bundled `[3/3] Onboarding` step
-# doesn't fall back to the default `build` (NIM) provider — which requires NVIDIA_API_KEY
-# and otherwise fails the install with a misleading error. When NEMOCLAW_PROVIDER=ollama
-# (the common case), the bundled onboard uses the local Ollama we set up in Step 8a.5
-# and either succeeds (ideal) or fails on a real Dockerfile/sandbox-build issue (which
-# is what we want to detect). Pass NVIDIA_API_KEY only if the maintainer provided one
-# at Step 5's prompt.
-# Read NVIDIA_API_KEY from ~/.nvidia-api-key on the BOX (not from this shell's argv).
-# The Step 5 propagation block already brev-copy'd the key file with 600 perms.
-brev exec "$INSTANCE_NAME" "
-  if [ -f ~/.nvidia-api-key ]; then export NVIDIA_API_KEY=\$(cat ~/.nvidia-api-key); fi
-  NEMOCLAW_INSTALL_TAG=$REPORTED_VERSION \
+# Pass the provider env vars through so install.sh's bundled onboarding step
+# does not fall back to the default `build` provider. The installer owns any
+# provider setup performed during its onboarding step; Step 8a.5 adds only
+# dependencies the reviewed reproducer still needs. PROVIDER_CREDENTIAL_ENV is
+# allowlisted in Step 5.
+CREDENTIAL_EXPORT=""
+if [ -n "${PROVIDER_CREDENTIAL_ENV:-}" ]; then
+  CREDENTIAL_EXPORT="export $PROVIDER_CREDENTIAL_ENV=\$(cat ~/.verify-stale-evidence/provider-key);"
+fi
+
+# Hosted providers require the exact model from the issue or approved plan.
+# The default below is valid only for the local Ollama path.
+VERIFY_MODEL=${NEMOCLAW_MODEL:-}
+if [ "${BUG_PROVIDER:-ollama}" = "ollama" ]; then
+  VERIFY_MODEL=${VERIFY_MODEL:-nemotron-3-nano:4b}
+fi
+[ -n "$VERIFY_MODEL" ] || {
+  echo "ERROR: no exact model was supplied for provider ${BUG_PROVIDER:-ollama}; select verify-inconclusive"
+  exit 1
+}
+printf '%s' "$VERIFY_MODEL" | grep -Eq '^[A-Za-z0-9._:/-]+$' || {
+  echo "ERROR: model contains characters outside the reviewed allowlist"
+  exit 1
+}
+case "${BUG_PROVIDER:-ollama}" in
+  build|gemini|openrouter|openai|anthropic|ollama) ;;
+  *) echo "ERROR: provider is not in the reviewed verification allowlist"; exit 1 ;;
+esac
+case "${NEMOCLAW_AGENT:-openclaw}" in
+  openclaw|hermes) ;;
+  *) echo "ERROR: agent runtime is not in the reviewed verification allowlist"; exit 1 ;;
+esac
+
+INSTALL_TIMEOUT=$(remaining_seconds) || exit 1
+if run_bounded brev exec "$INSTANCE_NAME" "
+  $CREDENTIAL_EXPORT
+  timeout ${INSTALL_TIMEOUT}s env \
+    NEMOCLAW_INSTALL_REF= \
+    NEMOCLAW_INSTALL_TAG=$REPORTED_VERSION \
     NEMOCLAW_NON_INTERACTIVE=1 \
-    NEMOCLAW_PROVIDER=${NEMOCLAW_PROVIDER:-ollama} \
-    NEMOCLAW_MODEL=${NEMOCLAW_MODEL:-nemotron-3-nano:4b} \
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+    NEMOCLAW_AGENT=${NEMOCLAW_AGENT:-openclaw} \
+    NEMOCLAW_PROVIDER=${BUG_PROVIDER:-ollama} \
+    NEMOCLAW_MODEL=$VERIFY_MODEL \
     NEMOCLAW_SANDBOX_NAME=verify-stale-install \
-    bash -c 'curl -fsSL $INSTALL_URL | bash'
-" || BASELINE_INSTALL_FAILED=1
+    bash -o pipefail -c 'curl -fsSL $INSTALL_URL | bash'
+" >"$EVIDENCE_DIR/baseline-install.log" 2>&1; then
+  BASELINE_INSTALL_FAILED=0
+else
+  BASELINE_INSTALL_FAILED=1
+fi
+python3 .agents/skills/nemoclaw-maintainer-verify-stale/scripts/redact-evidence.py \
+  "$EVIDENCE_DIR/baseline-install.log" >"$EVIDENCE_DIR/baseline-install.redacted.log"
+tail -40 "$EVIDENCE_DIR/baseline-install.redacted.log"
 
 # Verify the resolved install version matches the requested version. This guards against the
 # `VAR=val curl ... | bash` shell-scoping footgun where the env var binds to curl, not the
@@ -166,26 +358,26 @@ brev exec "$INSTANCE_NAME" "
 # rot-debugging investigation where v0.0.36 was silently installed when v0.0.26 was requested
 # and several minutes of "convincing" output ran before anyone noticed. Always print the
 # resolved state, never trust the requested state.
-RESOLVED=$(brev exec "$INSTANCE_NAME" "bash -lc 'nemoclaw --version'" 2>&1 | tail -1)
+RESOLVED=$(run_bounded brev exec "$INSTANCE_NAME" "bash -lc 'nemoclaw --version'" 2>&1 | tail -1)
+RESOLVED_SEMVER=$(printf '%s\n' "$RESOLVED" | grep -oE 'v?[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
+RESOLVED_TAG="v${RESOLVED_SEMVER#v}"
 echo "[verify-stale] baseline requested: $REPORTED_VERSION; resolved: $RESOLVED"
-case "$RESOLVED" in
-  *"$REPORTED_VERSION"*) ;;  # match — proceed
-  *)
+if [ -z "$RESOLVED_SEMVER" ] || [ "$RESOLVED_TAG" != "$REPORTED_VERSION" ]; then
     echo "ERROR: baseline install resolved to '$RESOLVED' but $REPORTED_VERSION was requested."
     echo "  Common cause: env-var scoping in the install command. Verify the env vars are on"
     echo "  the BASH side of the curl|bash pipe, not the curl side. Setting"
     echo "  BASELINE_INSTALL_FAILED=1 to prevent verifying against the wrong version."
     BASELINE_INSTALL_FAILED=1
-    ;;
-esac
+fi
 
-# The bundled onboard creates a sandbox name we don't want carrying through to the reproducer.
-# Use a hyphen-only name (NemoClaw's name validator rejects underscores). Destroy it so the
-# reproducer starts from a clean state.
-brev exec "$INSTANCE_NAME" "sg docker -c 'nemoclaw destroy --all --force 2>/dev/null || true'"
+# The bundled onboard creates a sandbox name we do not want carrying through to the reproducer.
+if ! run_bounded brev exec "$INSTANCE_NAME" "export PATH=\"\$HOME/.local/bin:\$PATH\"; nemoclaw verify-stale-install destroy --force --cleanup-gateway 2>/dev/null || true"; then
+  echo "ERROR: could not remove the baseline installer's verification sandbox"
+  exit 1
+fi
 ```
 
-If install fails (old releases rot — installer URLs, deps, OS images all drift over time, or the in-image Dockerfile patch step asserts against a code shape that's since changed), set `BASELINE_INSTALL_FAILED=1` and **skip 8b/8c**, going straight to 8d. Note "baseline-install-skipped" or "baseline-build-skipped" in the final comment depending on which phase rotted. Step 9's scoring rule handles the degraded mode (cap at 84).
+If the baseline install or build fails, set `BASELINE_INSTALL_FAILED=1` and select `verify-inconclusive`. Do not run latest to infer a fixed verdict. The baseline gate cannot establish that the reviewed reproducer exposed the reported bug. Check this flag before dependency bootstrap or reproducer execution.
 
 **The reproducer's own `nemoclaw onboard` (Step 8b) must pass `--fresh`.** If install.sh's bundled onboard was in an in-progress or failed state when we destroyed the install sandbox, the reproducer's onboard would error with `Previous onboarding session failed. Re-run with --fresh to discard it`. `--fresh` ensures a clean start.
 
@@ -199,31 +391,38 @@ Brev's stock CPU images ship with NemoClaw installable but not the broader ecosy
 - The reproducer references a specific model name with a tag (`nemotron-3-nano:4b`, `llama3:8b`, etc.).
 - The reporter's environment in the issue body shows a configured provider (e.g., `OpenShell CLI: 0.0.26` plus an Ollama running on host).
 
-**When to substitute (with -30 penalty):**
+**When substitution cannot establish `fixed-on-latest`:**
 
-- Provider requires an API key the skill cannot safely supply (NIM, OpenAI, Anthropic, etc.). Stubbing a key won't pass validation faithfully and a real key shouldn't sit in a verify-stale run. Apply the -30 penalty (treat as synth-repro per Step 8b) and document the substitution in the comment.
+- Provider requires a credential the approved run does not supply. Substitution cannot establish a fixed provider-specific bug. Select `verify-inconclusive` and document the mismatch.
 - The bug is *provably* independent of the dependency (e.g., a CLI argument-parsing bug that errors before any provider runs). Note this explicitly in the comment.
 
 **Canonical bootstraps:**
 
 ```bash
-# Ollama + a specific model.
-# The Ollama installer registers a systemd service (`ollama.service`) so the
-# daemon survives between brev exec calls.
-brev exec "$INSTANCE_NAME" "curl -fsSL https://ollama.com/install.sh | sh"
-brev exec "$INSTANCE_NAME" "sudo systemctl start ollama && sleep 3"
-brev exec "$INSTANCE_NAME" "ollama pull <model>"
-brev exec "$INSTANCE_NAME" "ollama list"   # confirm before continuing
+# Ollama + a specific model, only when installer onboarding did not already
+# provide it. If the issue is Ollama-version-specific, install that exact
+# reviewed version rather than using the moving installer URL below.
+BOOTSTRAP_TIMEOUT=$(remaining_seconds) || exit 1
+run_bounded brev exec "$INSTANCE_NAME" "timeout ${BOOTSTRAP_TIMEOUT}s bash -o pipefail -c 'curl -fsSL https://ollama.com/install.sh | sh'" || exit 1
+BOOTSTRAP_TIMEOUT=$(remaining_seconds) || exit 1
+run_bounded brev exec "$INSTANCE_NAME" "timeout ${BOOTSTRAP_TIMEOUT}s bash -c 'sudo systemctl start ollama && sleep 3'" || exit 1
+BOOTSTRAP_TIMEOUT=$(remaining_seconds) || exit 1
+run_bounded brev exec "$INSTANCE_NAME" "timeout ${BOOTSTRAP_TIMEOUT}s ollama pull <model>" || exit 1
+BOOTSTRAP_TIMEOUT=$(remaining_seconds) || exit 1
+run_bounded brev exec "$INSTANCE_NAME" "timeout ${BOOTSTRAP_TIMEOUT}s ollama list" || exit 1   # confirm before continuing
 ```
 
 ```bash
 # vLLM + a model (HuggingFace-hosted).
-brev exec "$INSTANCE_NAME" "pip install --quiet vllm"
-brev exec "$INSTANCE_NAME" "nohup python -m vllm.entrypoints.openai.api_server --model <model> --host 127.0.0.1 --port 8000 >/var/log/vllm.log 2>&1 &"
-brev exec "$INSTANCE_NAME" "sleep 30 && curl -fsS http://127.0.0.1:8000/v1/models"
+BOOTSTRAP_TIMEOUT=$(remaining_seconds) || exit 1
+run_bounded brev exec "$INSTANCE_NAME" "timeout ${BOOTSTRAP_TIMEOUT}s python3 -m pip install --quiet 'vllm==<version reported by the issue>'" || exit 1
+BOOTSTRAP_TIMEOUT=$(remaining_seconds) || exit 1
+run_bounded brev exec "$INSTANCE_NAME" "timeout ${BOOTSTRAP_TIMEOUT}s bash -c 'nohup python -m vllm.entrypoints.openai.api_server --model <model> --host 127.0.0.1 --port 8000 >~/.verify-stale-evidence/vllm.log 2>&1 &'" || exit 1
+BOOTSTRAP_TIMEOUT=$(remaining_seconds) || exit 1
+run_bounded brev exec "$INSTANCE_NAME" "timeout ${BOOTSTRAP_TIMEOUT}s bash -c 'sleep 30 && curl -fsS http://127.0.0.1:8000/v1/models'" || exit 1
 ```
 
-Bootstrap **once before Step 8b's baseline run** and reuse for Step 8d's latest run. Don't reset Ollama/vLLM state between baseline and latest — model downloads are expensive and unrelated to the NemoClaw install. Adjust the reset script to skip these external services if needed.
+Bootstrap **once before Step 8b's baseline run** and reuse for Step 8d's latest run. Record the exact dependency and model versions. If the dependency itself is implicated, reproduce the reported version; when no version is reported, select `verify-inconclusive` or obtain maintainer direction. A current dependency is acceptable only when the reviewed bug path is independent of its version, and the plan must say so. Do not reset Ollama/vLLM state between baseline and latest because model downloads are expensive and unrelated to the NemoClaw install.
 
 **If bootstrap fails** (network issue pulling the model, service won't start, etc.), this is an infra failure — abort to Step 11. Do not silently substitute; the user opted into faithfulness for a reason.
 
@@ -254,17 +453,17 @@ Two non-obvious gotchas surfaced during the #2007 e2e run that every subsequent 
 export PATH="$HOME/.local/bin:$PATH"
 
 # Or equivalently when calling brev exec ad-hoc:
-brev exec "$INSTANCE" "bash -lc 'nemoclaw --version'"
+run_bounded brev exec "$INSTANCE" "bash -lc 'nemoclaw --version'" || exit 1
 ```
 
 **Docker group requires `sg docker -c '...'` after `usermod -aG`.** Adding the user to the `docker` group (`sudo usermod -aG docker ubuntu`) takes effect for new login sessions, but `brev exec` calls in the same Brev session keep the old gid. The reproducer's `nemoclaw onboard` will fail with `permission denied while connecting to /var/run/docker.sock` unless the call runs in a subshell with the docker group active.
 
 ```bash
 # Reproducer execution: wrap with sg docker.
-brev exec "$INSTANCE" "sg docker -c 'bash ~/reproducer.sh'"
+run_bounded brev exec "$INSTANCE" "sg docker -c 'bash ~/.verify-stale-evidence/reproducer.sh'" || exit 1
 ```
 
-Both patterns appear in the canonical setup script committed alongside the skill (or are encoded in your reproducer wrapper). Don't rely on the user discovering them mid-run.
+Encode both patterns in the reviewed reproducer wrapper. No setup script is bundled with this skill.
 
 **`openshell sandbox exec` argument-order footgun.** When the reproducer needs to run a command *inside* the sandbox (channels-guard checks, in-sandbox file inspection, etc.), the correct non-interactive form uses `-n <name>` and a `--` separator:
 
@@ -283,15 +482,14 @@ Issue #2592's first run hit this — wasted ~15 min before the maintainer notice
 **`brev exec` SSH-drop re-execution guard.** Brev's CLI silently retries from the top when the SSH connection drops mid-run, producing two parallel reproducer executions (we hit this on #2592 — one onboard process clobbered another's state, and both got billed). Use a sentinel file in the reproducer wrapper to make the script idempotent:
 
 ```bash
-# At the top of the reproducer wrapper script:
+# At the top of the reproducer wrapper script, use an atomic directory lock:
 SENTINEL=~/.verify-stale-running
-if [ -f "$SENTINEL" ]; then
+if ! mkdir "$SENTINEL" 2>/dev/null; then
   echo "ERROR: another verify-stale run is in progress (sentinel: $SENTINEL)."
-  echo "       If you're sure no other run is active, rm $SENTINEL and re-invoke."
+  echo "       If you're sure no other run is active, rmdir $SENTINEL and re-invoke."
   exit 1
 fi
-trap 'rm -f "$SENTINEL"' EXIT
-touch "$SENTINEL"
+trap 'rmdir "$SENTINEL" 2>/dev/null || true' EXIT
 ```
 
-The sentinel survives an SSH drop because it lives on the Brev box's filesystem; the trap removes it on script exit. A second `brev exec` invocation that tries to retry from the top will hit the sentinel and bail instead of double-running.
+The sentinel survives an SSH drop because it lives on the Brev box's filesystem; the trap removes it on script exit. Atomic `mkdir` prevents two simultaneous starts from both passing the check. A second `brev exec` invocation that tries to retry from the top will hit the sentinel and bail instead of double-running.
