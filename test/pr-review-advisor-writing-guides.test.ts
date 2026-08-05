@@ -6,30 +6,32 @@ import {
   buildSystemPrompt,
   readTrustedCodeChangeConsiderations,
   readTrustedControlledWords,
-  readTrustedSecurityReviewSkill,
+  readTrustedSecurityRubric,
   readTrustedWritingGuide,
 } from "../tools/pr-review-advisor/analyze.mts";
 
 describe("PR review advisor writing guides", () => {
   it("loads and embeds the checked-in review guides", () => {
-    const skill = readTrustedSecurityReviewSkill();
+    const rubric = readTrustedSecurityRubric();
     const writingGuide = readTrustedWritingGuide();
     const controlledWords = readTrustedControlledWords();
     const considerations = readTrustedCodeChangeConsiderations();
     const prompt = buildSystemPrompt();
 
-    expect(skill).toContain("# Security Code Review");
-    expect(skill).toContain("Category 1: Secrets and Credentials");
+    expect(rubric).toContain("# Security Rubric");
+    expect(rubric).toContain("Category 1: Secrets and Credentials");
+    expect(rubric).toContain("Category 9: System Security");
     expect(writingGuide).toContain("# NemoClaw Writing Guide");
     expect(writingGuide).toContain("Use one term for one concept");
     expect(writingGuide).toContain("## Scope and Review Policy");
     expect(controlledWords).toContain("| `commit SHA` | Technical noun |");
     expect(considerations).toContain("# Code Change Considerations");
-    expect(prompt).toContain("Trusted security review skill from main checkout");
+    expect(prompt).toContain("Trusted security rubric from workflow checkout");
     expect(prompt).toContain("Trusted code change considerations from workflow checkout");
     expect(prompt).toContain("Trusted NemoClaw writing guide from workflow checkout");
-    expect(prompt).toContain("# Security Code Review");
+    expect(prompt).toContain("# Security Rubric");
     expect(prompt).toContain("Category 1: Secrets and Credentials");
+    expect(prompt).not.toContain("## Step 1: Parse the GitHub URL");
     expect(prompt).toContain("# NemoClaw Writing Guide");
     expect(prompt).toContain("Use one term for one concept");
   });
@@ -39,7 +41,8 @@ describe("PR review advisor writing guides", () => {
 
     expect(prompt).toContain("Apply its review policy when you evaluate changed explanatory text");
     expect(prompt).toContain("Do not request unrelated language cleanup");
-    expect(prompt).toContain("For NemoClaw PRs, check SSRF bypasses");
+    expect(prompt).toContain("SSRF-shaped input");
+    expect(prompt).toContain("sandbox escape, SSRF bypass, policy bypass");
     expect(prompt).not.toContain("For NemoClaw PRs, check sandbox escape vectors");
     expect(prompt).toContain(
       "Do not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or external E2E job status",
