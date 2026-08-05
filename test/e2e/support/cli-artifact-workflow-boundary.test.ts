@@ -71,7 +71,7 @@ type RestoreFixtureOptions = {
   buildIdentitySha?: string;
   expectedPayloadSha256?: string;
   manifestCandidateSha?: string;
-  preexistingDist?: "dangling-symlink" | "directory";
+  preexistingDist?: "dangling-symlink" | "directory" | "plugin-directory";
 };
 
 type ArchiveFixtureContext = {
@@ -84,13 +84,18 @@ function sha256File(file: string): string {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
-function writeDistArchive(
+function writeCliArchive(
   context: ArchiveFixtureContext,
   customizeDist: (dist: string) => void,
 ): void {
   const dist = path.join(context.payloadRoot, "dist");
+  const shared = path.join(context.payloadRoot, "nemoclaw", "dist", "shared");
   fs.mkdirSync(dist);
-  fs.writeFileSync(path.join(dist, "nemoclaw.js"), 'console.log("nemoclaw v0.0.0");\n');
+  fs.mkdirSync(shared, { recursive: true });
+  fs.writeFileSync(
+    path.join(dist, "nemoclaw.js"),
+    'require("../nemoclaw/dist/shared/sandbox-name.cjs");\nconsole.log("nemoclaw v0.0.0");\n',
+  );
   fs.writeFileSync(
     path.join(dist, "build-identity.json"),
     `${JSON.stringify({
@@ -98,16 +103,30 @@ function writeDistArchive(
       sourceRevision: context.buildIdentitySha,
     })}\n`,
   );
+  for (const boundary of [
+    "openshell-policy-boundary.cjs",
+    "sandbox-name.cjs",
+    "snapshot-sanitizer-boundary.cjs",
+  ]) {
+    fs.writeFileSync(path.join(shared, boundary), "module.exports = {};\n");
+  }
   customizeDist(dist);
-  execFileSync("tar", ["-cf", context.payload, "-C", context.payloadRoot, "dist"]);
+  execFileSync("tar", [
+    "-cf",
+    context.payload,
+    "-C",
+    context.payloadRoot,
+    "dist",
+    "nemoclaw/dist/shared",
+  ]);
 }
 
 function writeValidArchive(context: ArchiveFixtureContext): void {
-  writeDistArchive(context, () => undefined);
+  writeCliArchive(context, () => undefined);
 }
 
 function writeLinkArchive(context: ArchiveFixtureContext): void {
-  writeDistArchive(context, (dist) => {
+  writeCliArchive(context, (dist) => {
     fs.symlinkSync("nemoclaw.js", path.join(dist, "linked-cli.js"));
   });
 }
@@ -154,9 +173,17 @@ function writePreexistingDistDirectory(workspace: string): void {
   fs.writeFileSync(path.join(workspace, "dist", "existing.txt"), "preserve\n");
 }
 
+function writePreexistingPluginDistDirectory(workspace: string): void {
+  const shared = path.join(workspace, "nemoclaw", "dist", "shared");
+  fs.mkdirSync(shared, { recursive: true });
+  fs.writeFileSync(path.join(shared, "existing.cjs"), "module.exports = {};\n");
+}
+
 const PREEXISTING_DIST_WRITERS = {
   "dangling-symlink": writeDanglingDistSymlink,
   directory: writePreexistingDistDirectory,
+  "plugin-directory": writePreexistingPluginDistDirectory,
+
   none: () => undefined,
 } satisfies Record<
   NonNullable<RestoreFixtureOptions["preexistingDist"]> | "none",
@@ -171,6 +198,8 @@ function runRestoreValidation(options: RestoreFixtureOptions = {}) {
   const payloadRoot = path.join(root, "payload-root");
   const toolDirectory = path.join(root, "tools");
   fs.mkdirSync(path.join(workspace, "bin"), { recursive: true });
+  fs.mkdirSync(path.join(workspace, "nemoclaw"), { recursive: true });
+
   fs.mkdirSync(artifactDirectory, { recursive: true });
   fs.mkdirSync(payloadRoot, { recursive: true });
   fs.mkdirSync(toolDirectory, { recursive: true });
@@ -389,6 +418,12 @@ describe("exact-commit CLI artifact workflow boundary", () => {
         ),
       ).toEqual({ nemoclawVersion: "0.0.0", sourceRevision: fixture.candidateSha });
       expect(
+        fs.existsSync(
+          path.join(fixture.workspace, "nemoclaw", "dist", "shared", "sandbox-name.cjs"),
+        ),
+      ).toBe(true);
+
+      expect(
         fs
           .readdirSync(fixture.runnerTemp)
           .filter((entry) => entry.startsWith("nemoclaw-cli-restore.")),
@@ -435,6 +470,25 @@ describe("exact-commit CLI artifact workflow boundary", () => {
       expect(fs.readFileSync(path.join(fixture.workspace, "dist", "existing.txt"), "utf8")).toBe(
         "preserve\n",
       );
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("does not overwrite preexisting shared boundaries (#7915)", () => {
+    const fixture = runRestoreValidation({ preexistingDist: "plugin-directory" });
+    try {
+      expect(fixture.result.status, fixture.output).not.toBe(0);
+      expect(fixture.output).toContain(
+        "consumer unexpectedly built shared boundaries before artifact restore",
+      );
+      expect(
+        fs.readFileSync(
+          path.join(fixture.workspace, "nemoclaw", "dist", "shared", "existing.cjs"),
+          "utf8",
+        ),
+      ).toBe("module.exports = {};\n");
+      expect(fs.existsSync(path.join(fixture.workspace, "dist"))).toBe(false);
     } finally {
       fixture.cleanup();
     }
