@@ -2062,7 +2062,7 @@ is_reusable_managed_nemoclaw_install() {
 restore_managed_source_lockfile() {
   local source_root="$1"
   [[ -d "${source_root}/.git" && ! -L "${source_root}/.git" ]] || return 0
-  git -C "$source_root" checkout -- package-lock.json 2>/dev/null || true
+  git -C "$source_root" checkout -- package-lock.json 2>/dev/null
 }
 
 finish_nemoclaw_install() {
@@ -2147,7 +2147,8 @@ install_nemoclaw() {
       spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$nemoclaw_src\" && npm run --if-present build:cli"
       spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$nemoclaw_src\"/nemoclaw && npm ci --ignore-scripts && npm run build"
       spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$nemoclaw_src\" && npm link"
-      restore_managed_source_lockfile "$nemoclaw_src"
+      restore_managed_source_lockfile "$nemoclaw_src" \
+        || warn "Could not restore package-lock.json in ${nemoclaw_src} — the next install re-clones that checkout instead of reusing it."
     fi
     _NEMOCLAW_CLI_INSTALL_MODE=managed
   fi

@@ -57,11 +57,17 @@ function writeManagedSource(root: string, revision: string) {
   );
 }
 
-function runManagedCliInstallTwice(
+function runManagedCliInstallTwice({
   initialRevision = INSTALL_REUSE_REVISION,
   forceCliReinstall = false,
   separateInstallerRuns = false,
-) {
+  failLockfileRestore = false,
+}: {
+  initialRevision?: string;
+  forceCliReinstall?: boolean;
+  separateInstallerRuns?: boolean;
+  failLockfileRestore?: boolean;
+} = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-reuse-"));
   const home = path.join(tmp, "home");
   const fakeBin = path.join(tmp, "bin");
@@ -98,6 +104,7 @@ case "\${1:-}" in
     exit 0
     ;;
   checkout)
+    if [ "\${FAIL_LOCKFILE_RESTORE:-}" = "1" ]; then exit 1; fi
     if [ -n "$repo" ]; then rm -f "$repo/.fixture-lockfile-dirty"; fi
     ;;
   init)
@@ -173,6 +180,7 @@ printf 'PREPARED=%s MODE=%s SOURCE=%s\n' \
       env: {
         ...process.env,
         EXPECTED_REVISION: INSTALL_REUSE_REVISION,
+        FAIL_LOCKFILE_RESTORE: failLockfileRestore ? "1" : "",
         GIT_LOG_PATH: gitLogPath,
         HOME: home,
         INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
@@ -205,7 +213,9 @@ describe("installer-managed CLI reuse", () => {
   });
 
   it("builds a changed managed revision once across backup preparation and install (#7898)", () => {
-    const { result, gitLog, npmLog } = runManagedCliInstallTwice("b".repeat(40));
+    const { result, gitLog, npmLog } = runManagedCliInstallTwice({
+      initialRevision: "b".repeat(40),
+    });
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).not.toContain(
@@ -221,7 +231,10 @@ describe("installer-managed CLI reuse", () => {
   });
 
   it("reuses the managed checkout on a later installer run after its own dependency install (#8305)", () => {
-    const { result, gitLog, npmLog } = runManagedCliInstallTwice("b".repeat(40), false, true);
+    const { result, gitLog, npmLog } = runManagedCliInstallTwice({
+      initialRevision: "b".repeat(40),
+      separateInstallerRuns: true,
+    });
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain("Reusing the installed NemoClaw CLI at the selected revision");
@@ -230,8 +243,23 @@ describe("installer-managed CLI reuse", () => {
     expect(npmLog.match(/\|link$/gm)).toHaveLength(1);
   });
 
+  it("warns and completes when the managed lockfile cannot be restored (#8305)", () => {
+    const { result, gitLog } = runManagedCliInstallTwice({
+      initialRevision: "b".repeat(40),
+      separateInstallerRuns: true,
+      failLockfileRestore: true,
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain("Could not restore package-lock.json");
+    expect(result.stdout).not.toContain(
+      "Reusing the installed NemoClaw CLI at the selected revision",
+    );
+    expect(gitLog.match(/^init\b/gm)).toHaveLength(2);
+  });
+
   it("reinstalls the exact managed CLI once when update --fresh requests repair (#7898)", () => {
-    const { result, gitLog, npmLog } = runManagedCliInstallTwice(INSTALL_REUSE_REVISION, true);
+    const { result, gitLog, npmLog } = runManagedCliInstallTwice({ forceCliReinstall: true });
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).not.toContain(
