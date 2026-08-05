@@ -271,9 +271,14 @@ describe("Hugging Face model acquisition", () => {
     const proc = mockProcess();
     dockerSpawn.mockReturnValue(proc);
     const resultPromise = acquireHuggingFaceModel(request({ credentialEnv: {} }), observer());
-    proc.stdout.emit("data", Buffer.from("Authorization:\r"));
+    proc.stdout.emit("data", Buffer.from("error: Authorization:\r"));
     proc.stdout.emit("data", Buffer.from("\n"));
-    proc.stdout.emit("data", Buffer.from(`\t${secret}\r\nnext diagnostic\n`));
+    proc.stdout.emit("data", Buffer.from(`\t${secret}\r`));
+    const progressFrameOutput = stdoutWrite.mock.calls
+      .map((call: unknown[]) => String(call[0]))
+      .join("");
+    expect(progressFrameOutput).not.toContain(secret);
+    proc.stdout.emit("data", Buffer.from("\nnext diagnostic\n"));
     proc.emit("exit", 1);
 
     await expect(resultPromise).resolves.toEqual({
@@ -286,6 +291,38 @@ describe("Hugging Face model acquisition", () => {
     expect(output).toContain("Authorization: <REDACTED>");
     expect(output).toContain("next diagnostic");
     expect(output).not.toContain(secret);
+  });
+
+  it("flushes carriage-return progress frames promptly (#8279)", async () => {
+    const proc = mockProcess();
+    dockerSpawn.mockReturnValue(proc);
+    const resultPromise = acquireHuggingFaceModel(request({ credentialEnv: {} }), observer());
+    proc.stdout.emit("data", Buffer.from("Downloading 1%\r"));
+    const progressOutput = stdoutWrite.mock.calls
+      .map((call: unknown[]) => String(call[0]))
+      .join("");
+    expect(progressOutput).toContain("Downloading 1%\r");
+    proc.emit("exit", 0);
+
+    await expect(resultPromise).resolves.toEqual({ ok: true });
+  });
+
+  it("bounds unterminated output by suppressing the affected stream (#8279)", async () => {
+    const proc = mockProcess();
+    dockerSpawn.mockReturnValue(proc);
+    const events = observer();
+    const resultPromise = acquireHuggingFaceModel(request({ credentialEnv: {} }), events);
+    proc.stdout.emit("data", Buffer.from("x".repeat(70_000)));
+    proc.stdout.emit("data", Buffer.from("must-not-be-emitted\n"));
+    proc.emit("exit", 0);
+
+    await expect(resultPromise).resolves.toEqual({ ok: true });
+    const output = stdoutWrite.mock.calls.map((call: unknown[]) => String(call[0])).join("");
+    expect(output).not.toContain("must-not-be-emitted");
+    expect(output).not.toContain("x".repeat(100));
+    expect(events.logLine).toHaveBeenCalledWith(
+      "Hugging Face output suppressed after exceeding the safe redaction buffer",
+    );
   });
 
   it("returns validation failures without spawning Docker (#8279)", async () => {

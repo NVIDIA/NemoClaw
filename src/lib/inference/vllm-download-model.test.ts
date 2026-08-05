@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   acquireHuggingFaceModel: vi.fn(),
@@ -21,10 +21,6 @@ vi.mock("./model-acquisition/hugging-face", async (importOriginal) => ({
 import { detectVllmProfile, downloadModel } from "./vllm";
 
 describe("vLLM model acquisition adapter", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
   it("maps the existing vLLM contract to shared acquisition and preserves failures (#8279)", async () => {
     const failure = {
       ok: false as const,
@@ -58,5 +54,6 @@ describe("vLLM model acquisition adapter", () => {
         onRateLimit: expect.any(Function),
       },
     );
+    expect(mocks.dockerSpawn).not.toHaveBeenCalled();
   });
 });

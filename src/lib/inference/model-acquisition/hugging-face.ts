@@ -12,9 +12,10 @@ const HF_RATE_LIMIT_PATTERN = /\b429\b|too many requests|rate[\s_-]*limit/i;
 const MODEL_DOWNLOAD_HEARTBEAT_MS = 30_000;
 const HF_DOWNLOAD_CACHE_CONTAINER_DIR = "/tmp/nemoclaw-huggingface";
 const HF_REPOSITORY_ID_MAX_LENGTH = 96;
+const HF_PENDING_OUTPUT_MAX_CHARS = 64 * 1024;
 const HF_REPOSITORY_COMPONENT_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 const HF_SENSITIVE_HEADER_AT_STREAM_BOUNDARY =
-  /(?:^|[\r\n])(?:authorization|proxy-authorization|cookie|set-cookie)[ \t]*[:=][^\r\n]*\r?\n$/i;
+  /\b(?:authorization|proxy-authorization|cookie|set-cookie)[ \t]*[:=][^\r\n]*(?:\r\n|[\r\n])$/i;
 const TAIL_MAX = 50;
 
 export interface HuggingFaceModelAcquisitionRequest {
@@ -263,6 +264,9 @@ export function acquireHuggingFaceModel(
       { decoder: new StringDecoder("utf8"), stream: process.stderr },
     ];
     let pendingOutput: { text: string; stream: NodeJS.WriteStream }[] = [];
+    let pendingOutputChars = 0;
+    const suppressedOutputStreams = new Set<NodeJS.WriteStream>();
+    let reportedOutputSuppression = false;
     let resolved = false;
     let decodersFinalized = false;
     const start = Date.now();
@@ -302,7 +306,7 @@ export function acquireHuggingFaceModel(
         streamText.set(chunk.stream, `${streamText.get(chunk.stream) ?? ""}${chunk.text}`);
       }
       return [...streamText.values()].every(
-        (text) => text.endsWith("\n") && !HF_SENSITIVE_HEADER_AT_STREAM_BOUNDARY.test(text),
+        (text) => /[\r\n]$/.test(text) && !HF_SENSITIVE_HEADER_AT_STREAM_BOUNDARY.test(text),
       );
     }
 
@@ -310,6 +314,7 @@ export function acquireHuggingFaceModel(
       if (pendingOutput.length === 0 || (!flushAll && !pendingStreamsEndCleanly())) return;
       const selected = pendingOutput;
       pendingOutput = [];
+      pendingOutputChars = 0;
       const safeChunks = redactHfDownloadOutputChunks(selected, tokenValue);
       for (const [index, safeText] of safeChunks.entries()) {
         if (!safeText) continue;
@@ -319,12 +324,30 @@ export function acquireHuggingFaceModel(
       }
     }
 
+    function queueOutput(text: string, stream: NodeJS.WriteStream): void {
+      if (!text || suppressedOutputStreams.has(stream)) return;
+      pendingOutput.push({ text, stream });
+      pendingOutputChars += text.length;
+      flushOutput();
+      if (pendingOutputChars <= HF_PENDING_OUTPUT_MAX_CHARS) return;
+
+      for (const chunk of pendingOutput) suppressedOutputStreams.add(chunk.stream);
+      pendingOutput = [];
+      pendingOutputChars = 0;
+      if (!reportedOutputSuppression) {
+        reportedOutputSuppression = true;
+        observer.logLine(
+          "Hugging Face output suppressed after exceeding the safe redaction buffer",
+        );
+      }
+    }
+
     function finalizeOutputDecoders(): void {
       if (decodersFinalized) return;
       decodersFinalized = true;
       for (const state of outputDecoders) {
         const text = state.decoder.end();
-        if (text) pendingOutput.push({ text, stream: state.stream });
+        queueOutput(text, state.stream);
       }
       flushOutput(true);
     }
@@ -332,8 +355,7 @@ export function acquireHuggingFaceModel(
     function onChunk(buf: Buffer, state: (typeof outputDecoders)[number]): void {
       lastOutputAt = Date.now();
       const text = state.decoder.write(buf);
-      if (text) pendingOutput.push({ text, stream: state.stream });
-      flushOutput();
+      queueOutput(text, state.stream);
     }
 
     proc.stdout?.on("data", (buf: Buffer) => onChunk(buf, outputDecoders[0]));
