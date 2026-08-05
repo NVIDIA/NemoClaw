@@ -122,7 +122,15 @@ describe("agent state directory contract", () => {
         confidentialPrefixes: [],
         writableSubpaths: ["profiles/dashboard-home"],
       },
-      expectedMutablePaths: ["memories", "sessions", "logs", "plans", "cache", "dashboard-home"],
+      expectedMutablePaths: [
+        "memories",
+        "sessions",
+        "scripts",
+        "logs",
+        "plans",
+        "cache",
+        "dashboard-home",
+      ],
     },
   ])("pins the complete shipped $agentName Shields boundary (#8006)", (testCase) => {
     const agent = loadAgent(testCase.agentName);

@@ -78,6 +78,9 @@ state_dirs:
     shields: read-only
   - path: cron
     shields: read-only
+  # User-authored cron scripts are part of the job definition contract. Keep
+  # them in the same rebuild backup so active jobs never outlive their inputs.
+  - scripts
   # Hermes creates this mutable integration directory today, and the existing
   # Shields helper protects it. Keep that lock behavior without newly treating
   # its contents as portable snapshot state.

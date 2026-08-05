@@ -40,6 +40,14 @@ function owner(currentDeclaration: GatewayManagementDeclaration | null): Gateway
   });
 }
 
+function managedOwner(hasPackagedService: boolean): GatewayOwner {
+  return resolveGatewayOwner({
+    ...target,
+    declaration: null,
+    hasPackagedService,
+  });
+}
+
 function checkpointSession(recordedOwner: GatewayOwner) {
   const session = createSession();
   bindGatewayAuthorityToCheckpoint(session, recordedOwner);
@@ -114,6 +122,38 @@ describe("resolveGatewayTeardownAuthority", () => {
         loadSession: () => checkpointSession(recordedOwner),
       }),
     ).toThrow(/authority changed since onboarding.*teardown will not perform gateway effects/);
+  });
+
+  it("allows opted-in uninstall teardown after the packaged service was already removed (#8215)", () => {
+    const recordedOwner = managedOwner(true);
+
+    expect(
+      resolveGatewayTeardownAuthority(target, {
+        allowMissingPackagedServiceTeardown: true,
+        hasPackagedService: () => false,
+        loadDeclaration: () => ({ ok: true, declaration: null, source: null }),
+        loadSession: () => checkpointSession(recordedOwner),
+      }),
+    ).toMatchObject({
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      mode: "nemoclaw-managed",
+      source: "standalone",
+    });
+  });
+
+  it("still rejects credential mutation after the recorded packaged service is removed (#8215)", () => {
+    const recordedOwner = managedOwner(true);
+
+    expect(() =>
+      resolveGatewayCredentialMutationAuthority(target, {
+        hasPackagedService: () => false,
+        loadDeclaration: () => ({ ok: true, declaration: null, source: null }),
+        loadSession: () => checkpointSession(recordedOwner),
+      }),
+    ).toThrow(
+      /packaged-service -> nemoclaw@8080:nemoclaw-managed:standalone.*provider credential mutation will not perform gateway effects/,
+    );
   });
 
   it("fails closed before credential mutation when authority changed since onboarding (#6576)", () => {
