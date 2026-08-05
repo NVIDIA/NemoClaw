@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   detectInstallType,
+  getMaintainedNemoClawTargetFromGitTag,
   getMaintainedNemoClawVersionFromGitTag,
   NEMOCLAW_UPDATE_COMMAND,
   runUpdateAction,
@@ -542,6 +543,38 @@ describe("runUpdateAction", () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
+  it("keeps the maintained revision that passed the fresh downgrade guard (#8306)", async () => {
+    const reviewedRevision = "a".repeat(40);
+    let maintainedTagRevision = reviewedRevision;
+    const spawnSyncImpl = vi.fn((_command, _args, options) => {
+      maintainedTagRevision = "b".repeat(40);
+      expect(options.env?.NEMOCLAW_INSTALL_REF).toBe(reviewedRevision);
+      expect(options.env?.NEMOCLAW_INSTALL_REF).not.toBe(maintainedTagRevision);
+      expect(options.env?.NEMOCLAW_INSTALL_TAG).toBeUndefined();
+      return { status: 0, stdout: "", stderr: "", signal: null } as never;
+    });
+
+    const result = await runUpdateAction(
+      { fresh: true, yes: true },
+      {
+        currentVersion: () => "0.2.0",
+        env: {
+          ...process.env,
+          NEMOCLAW_INSTALL_REF: "refs/heads/not-maintained",
+          NEMOCLAW_INSTALL_TAG: "not-maintained",
+        },
+        getMaintainedTarget: () => ({ revision: maintainedTagRevision, version: "0.2.0" }),
+        isSourceCheckout: () => false,
+        log: vi.fn(),
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.ranInstaller).toBe(true);
+    expect(spawnSyncImpl).toHaveBeenCalledTimes(1);
+  });
+
   it("refuses to prompt in non-interactive mode without --yes", async () => {
     const prompt = vi.fn(async () => "yes");
     const spawnSyncImpl = vi.fn();
@@ -720,15 +753,16 @@ describe("detectInstallType", () => {
 
 describe("getMaintainedNemoClawVersionFromGitTag", () => {
   it("resolves the version tag that points at the maintained lkg tag", () => {
+    const maintainedRevision = "a".repeat(40);
     const spawnSyncImpl = vi.fn(
       () =>
         ({
           status: 0,
           stdout: [
-            "abc123\trefs/tags/lkg",
-            "older\trefs/tags/v0.0.36",
-            "abc123\trefs/tags/v0.0.37",
-            "future\trefs/tags/v0.1.0",
+            `${maintainedRevision}\trefs/tags/lkg`,
+            `${"b".repeat(40)}\trefs/tags/v0.0.36`,
+            `${maintainedRevision}\trefs/tags/v0.0.37`,
+            `${"c".repeat(40)}\trefs/tags/v0.1.0`,
           ].join("\n"),
           stderr: "",
           signal: null,
@@ -741,5 +775,39 @@ describe("getMaintainedNemoClawVersionFromGitTag", () => {
       expect.arrayContaining(["refs/tags/lkg", "refs/tags/lkg^{}"]),
       expect.any(Object),
     );
+  });
+
+  it("returns the maintained revision with its version", () => {
+    const revision = "a".repeat(40);
+    const spawnSyncImpl = vi.fn(
+      () =>
+        ({
+          status: 0,
+          stdout: [`${revision}\trefs/tags/lkg`, `${revision}\trefs/tags/v0.0.37`].join("\n"),
+          stderr: "",
+          signal: null,
+        }) as never,
+    );
+
+    expect(getMaintainedNemoClawTargetFromGitTag({ spawnSyncImpl })).toEqual({
+      revision,
+      version: "0.0.37",
+    });
+  });
+
+  it("rejects a maintained tag result that is not a Git object ID", () => {
+    const spawnSyncImpl = vi.fn(
+      () =>
+        ({
+          status: 0,
+          stdout: ["refs/heads/main\trefs/tags/lkg", "refs/heads/main\trefs/tags/v0.0.37"].join(
+            "\n",
+          ),
+          stderr: "",
+          signal: null,
+        }) as never,
+    );
+
+    expect(getMaintainedNemoClawTargetFromGitTag({ spawnSyncImpl })).toBeNull();
   });
 });

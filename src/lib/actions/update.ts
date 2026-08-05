@@ -47,6 +47,7 @@ export interface RunUpdateDeps {
   env?: NodeJS.ProcessEnv;
   error?: LogFn;
   getLatestVersion?: () => string | null;
+  getMaintainedTarget?: () => MaintainedNemoClawTarget | null;
   isSourceCheckout?: () => boolean;
   log?: LogFn;
   prompt?: PromptFn;
@@ -67,6 +68,11 @@ interface UpdateBranding {
   cliName: string;
   displayName: string;
   maintainedUpdateCommand: string;
+}
+
+export interface MaintainedNemoClawTarget {
+  revision: string;
+  version: string | null;
 }
 
 function trimOutput(value: string | Buffer | null | undefined): string {
@@ -133,14 +139,14 @@ export function isSourceCheckout(rootDir: string, env: NodeJS.ProcessEnv = proce
   return detectInstallType(rootDir, env) === "source";
 }
 
-export function getMaintainedNemoClawVersionFromGitTag(
+export function getMaintainedNemoClawTargetFromGitTag(
   deps: {
     env?: NodeJS.ProcessEnv;
     gitCommand?: string;
     repoUrl?: string;
     spawnSyncImpl?: SpawnSyncFn;
   } = {},
-): string | null {
+): MaintainedNemoClawTarget | null {
   const result = (deps.spawnSyncImpl ?? spawnSync)(
     deps.gitCommand ?? "git",
     [
@@ -174,7 +180,22 @@ export function getMaintainedNemoClawVersionFromGitTag(
     const match = /^refs\/tags\/v(.+?)(\^\{\})?$/.exec(ref);
     if (match?.[1]) versionsBySha.set(sha, match[1]);
   }
-  return maintainedSha ? (versionsBySha.get(maintainedSha) ?? null) : null;
+  if (!maintainedSha || !/^[0-9a-f]{40,64}$/i.test(maintainedSha)) return null;
+  return {
+    revision: maintainedSha,
+    version: versionsBySha.get(maintainedSha) ?? null,
+  };
+}
+
+export function getMaintainedNemoClawVersionFromGitTag(
+  deps: {
+    env?: NodeJS.ProcessEnv;
+    gitCommand?: string;
+    repoUrl?: string;
+    spawnSyncImpl?: SpawnSyncFn;
+  } = {},
+): string | null {
+  return getMaintainedNemoClawTargetFromGitTag(deps)?.version ?? null;
 }
 
 /**
@@ -323,7 +344,11 @@ function printStatus(input: {
   input.log(`  Maintained update path:   ${input.branding.maintainedUpdateCommand}`);
 }
 
-function updateInstallerEnv(env: NodeJS.ProcessEnv, forceCliReinstall: boolean): NodeJS.ProcessEnv {
+function updateInstallerEnv(
+  env: NodeJS.ProcessEnv,
+  forceCliReinstall: boolean,
+  maintainedRevision: string | null,
+): NodeJS.ProcessEnv {
   const next = { ...env };
   delete next.BASH_ENV;
   delete next.ENV;
@@ -331,6 +356,7 @@ function updateInstallerEnv(env: NodeJS.ProcessEnv, forceCliReinstall: boolean):
   delete next.NEMOCLAW_INSTALL_REF;
   delete next.NEMOCLAW_INSTALL_TAG;
   delete next.NEMOCLAW_REINSTALL_CLI;
+  if (maintainedRevision) next.NEMOCLAW_INSTALL_REF = maintainedRevision;
   if (forceCliReinstall) next.NEMOCLAW_REINSTALL_CLI = "1";
   return next;
 }
@@ -345,9 +371,12 @@ export async function runUpdateAction(
   const rootDir = deps.rootDir ?? process.cwd();
   const currentVersion = deps.currentVersion();
   const branding = updateBranding(env);
-  const latestVersion = (
-    deps.getLatestVersion ?? (() => getMaintainedNemoClawVersionFromGitTag({ env }))
-  )();
+  const maintainedTarget = deps.getMaintainedTarget
+    ? deps.getMaintainedTarget()
+    : deps.getLatestVersion
+      ? { revision: "", version: deps.getLatestVersion() }
+      : getMaintainedNemoClawTargetFromGitTag({ env });
+  const latestVersion = maintainedTarget?.version ?? null;
   const installType = deps.isSourceCheckout
     ? deps.isSourceCheckout()
       ? "source"
@@ -488,7 +517,7 @@ export async function runUpdateAction(
     "bash",
     ["-o", "pipefail", "-lc", NEMOCLAW_UPDATE_COMMAND],
     {
-      env: updateInstallerEnv(env, options.fresh === true),
+      env: updateInstallerEnv(env, options.fresh === true, maintainedTarget?.revision || null),
       stdio: "inherit",
     },
   );
