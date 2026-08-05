@@ -89,6 +89,7 @@ export interface VllmModelDef {
    * override outside this list before the image pull and model download.
    */
   platforms: readonly VllmPlatform[];
+  minComputeCapability?: number;
   /**
    * Environment variables exported immediately before `vllm serve` (e.g.
    * FlashInfer / MoE-backend selection, target SM arch). Joined as
@@ -125,6 +126,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     ],
     gated: false,
     platforms: ["spark", "station", "linux"],
+    minComputeCapability: 89,
   },
   {
     id: "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
@@ -188,6 +190,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     ],
     gated: false,
     platforms: ["spark", "station", "linux"],
+    minComputeCapability: 89,
   },
   {
     id: "deepseek-ai/DeepSeek-V4-Flash",
@@ -229,6 +232,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     ],
     gated: false,
     platforms: ["station"],
+    minComputeCapability: 100,
   },
   {
     id: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-NVFP4",
@@ -265,6 +269,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     ],
     gated: false,
     platforms: ["station"],
+    minComputeCapability: 100,
     serveEnv: {
       VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY: "1",
       VLLM_NVFP4_GEMM_BACKEND: "flashinfer-trtllm",
@@ -338,6 +343,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     ],
     gated: false,
     platforms: ["spark"],
+    minComputeCapability: 121,
   },
 ] as const;
 
