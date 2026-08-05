@@ -18,6 +18,7 @@ const trustedLocalOverride = {
   ref: `nemoclaw-langchain-deepagents-code-sandbox-base-local:image-${"a".repeat(64)}`,
   provenance: `${"b".repeat(64)}.${"c".repeat(64)}`,
 };
+const trustedRemoteRef = `ghcr.io/nvidia/nemoclaw/langchain-deepagents-code-sandbox-base@sha256:${"d".repeat(64)}`;
 
 describe("rebuildSandbox DCode flow: base-image trust lease", () => {
   beforeEach(resetRebuildFlowTestEnvironment);
@@ -52,6 +53,57 @@ describe("rebuildSandbox DCode flow: base-image trust lease", () => {
       trustedLocalOverride,
     );
     expect(harness.restoreTrustedAgentBaseImageOverrideSpy).toHaveBeenCalledOnce();
+    expect(leaseActive).toBe(false);
+  });
+
+  it("uses the refreshed published base without recompiling native libraries (#8120)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+    });
+    configureDcodeSession(harness);
+    const resolutionMetadata = {
+      ref: trustedRemoteRef,
+      source: "source-sha",
+    };
+    harness.ensureAgentBaseImageSpy.mockReturnValue({
+      imageTag: trustedRemoteRef,
+      built: false,
+      resolutionMetadata,
+    });
+    let leaseActive = false;
+    harness.restoreTrustedAgentRemoteBaseImageOverrideSpy.mockImplementation(() => {
+      leaseActive = false;
+    });
+    harness.pinTrustedAgentRemoteBaseImageOverrideForOperationSpy.mockImplementation(() => {
+      leaseActive = true;
+      return harness.restoreTrustedAgentRemoteBaseImageOverrideSpy;
+    });
+    harness.prepareManagedDcodeRebuildImageSpy.mockImplementation(async () => {
+      expect(leaseActive).toBe(true);
+      expect(process.env[overrideEnvName]).toBe(trustedRemoteRef);
+      return { ok: true, prepared: harness.preparedDcodeBuildContext };
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.ensureAgentBaseImageSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "langchain-deepagents-code" }),
+      { forceBaseImageRefresh: true },
+    );
+    expect(harness.ensureAgentBaseImageSpy).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ forceBaseImageRebuild: true }),
+    );
+    expect(harness.pinTrustedAgentRemoteBaseImageOverrideForOperationSpy).toHaveBeenCalledWith(
+      overrideEnvName,
+      { ref: trustedRemoteRef, resolutionMetadata },
+    );
+    expect(harness.pinTrustedAgentBaseImageOverrideForOperationSpy).not.toHaveBeenCalled();
+    expect(harness.restoreTrustedAgentRemoteBaseImageOverrideSpy).toHaveBeenCalledOnce();
+    expect(harness.dockerRmiSpy).not.toHaveBeenCalledWith(trustedRemoteRef, expect.anything());
     expect(leaseActive).toBe(false);
   });
 
