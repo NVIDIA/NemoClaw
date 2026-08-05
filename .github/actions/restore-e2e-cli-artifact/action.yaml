@@ -146,7 +146,7 @@ runs:
           { echo "::error::exact-commit CLI artifact payload digest mismatch"; exit 1; }
         while IFS= read -r member; do
           case "$member" in
-            dist | dist/* | nemoclaw | nemoclaw/dist | nemoclaw/dist/*) ;;
+            dist | dist/* | nemoclaw/dist/shared | nemoclaw/dist/shared/*) ;;
             *) echo "::error::CLI artifact contains an unsafe member: $member"; exit 1 ;;
           esac
           case "/$member/" in
@@ -158,15 +158,25 @@ runs:
           { echo "::error::CLI artifact contains a link or special file"; exit 1; }
         [[ ! -e "$GITHUB_WORKSPACE/dist" && ! -L "$GITHUB_WORKSPACE/dist" ]] ||
           { echo "::error::consumer unexpectedly built dist before artifact restore"; exit 1; }
+        [[ -d "$GITHUB_WORKSPACE/nemoclaw" && ! -L "$GITHUB_WORKSPACE/nemoclaw" ]] ||
+          { echo "::error::consumer nemoclaw directory must be a non-symlink directory"; exit 1; }
+
         [[ ! -e "$GITHUB_WORKSPACE/nemoclaw/dist" && ! -L "$GITHUB_WORKSPACE/nemoclaw/dist" ]] ||
           { echo "::error::consumer unexpectedly built nemoclaw/dist before artifact restore"; exit 1; }
         restore_dir="$(mktemp -d "${RUNNER_TEMP}/nemoclaw-cli-restore.XXXXXX")"
         trap 'rm -rf -- "$restore_dir"' EXIT
         tar --no-same-owner --no-same-permissions -xf "$payload" -C "$restore_dir"
-        test -s "$restore_dir/dist/nemoclaw.js" ||
-          { echo "::error::restored CLI artifact is missing dist/nemoclaw.js"; exit 1; }
-        test -s "$restore_dir/nemoclaw/dist/shared/sandbox-name.cjs" ||
-          { echo "::error::restored CLI artifact is missing nemoclaw/dist/shared/sandbox-name.cjs"; exit 1; }
+        cli_entrypoint="$restore_dir/dist/nemoclaw.js"
+        [[ -f "$cli_entrypoint" && ! -L "$cli_entrypoint" && -s "$cli_entrypoint" ]] ||
+          { echo "::error::restored CLI artifact entry point is missing or is not a nonempty regular file"; exit 1; }
+        for boundary in \
+          openshell-policy-boundary.cjs \
+          sandbox-name.cjs \
+          snapshot-sanitizer-boundary.cjs; do
+          boundary_path="$restore_dir/nemoclaw/dist/shared/$boundary"
+          [[ -f "$boundary_path" && ! -L "$boundary_path" && -s "$boundary_path" ]] ||
+            { echo "::error::restored CLI artifact shared module is missing or is not a nonempty regular file: $boundary"; exit 1; }
+        done
         jq -e --arg candidateSha "$CANDIDATE_SHA" '
           type == "object" and
           (keys | sort) == ["nemoclawVersion", "sourceRevision"] and
