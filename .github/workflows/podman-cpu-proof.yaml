@@ -96,10 +96,9 @@ jobs:
           sudo systemctl mask --runtime docker.service docker.socket || true
           sudo pkill -TERM -x dockerd 2>/dev/null || true
           for attempt in $(seq 1 20); do
-            if ! pgrep -x dockerd >/dev/null && [ ! -S /var/run/docker.sock ]; then
+            if ! pgrep -x dockerd >/dev/null; then
               break
             fi
-            test "$attempt" -lt 20
             sleep 1
           done
           if pgrep -x dockerd >/dev/null; then
