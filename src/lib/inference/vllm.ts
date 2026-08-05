@@ -38,11 +38,14 @@ import {
   buildVllmDockerEnv,
   ensureDualStationVllmApiKey,
   loadDualStationVllmApiKey,
+  type MaterializedHostLocalVllmSelection,
   recoverInstalledManagedClusterVllmEndpoint,
+  resolveHostLocalVllmSelection,
   resolveVllmInstallModel,
   tryInstallManagedClusterManagedVllm,
 } from "./serving/vllm-managed-support";
 import {
+  assertGatedModelAccess,
   buildVllmServeCommand,
   NEMOTRON_ULTRA_DUAL_STATION_IMAGE,
   NEMOTRON_ULTRA_STATION_IMAGE,
@@ -126,6 +129,12 @@ export interface VllmProfile {
   // Optional pinned model snapshot size. Model-specific runtime overrides use
   // this to guard the host Hugging Face cache before a cold download.
   modelDownloadSizeBytes?: number;
+  servingCatalog?: {
+    presetId: string;
+    presetDigest: string;
+    recipeId: string;
+    recipeDigest: string;
+  };
 }
 
 interface VllmImageCatalogEntry {
@@ -756,6 +765,18 @@ export function buildVllmRunArgs(
     ...safeRunFlags,
     "--label",
     `${NEMOCLAW_VLLM_MANAGED_LABEL}=true`,
+    ...(profile.servingCatalog
+      ? [
+          "--label",
+          `com.nvidia.nemoclaw.serving-preset=${profile.servingCatalog.presetId}`,
+          "--label",
+          `com.nvidia.nemoclaw.serving-preset-digest=${profile.servingCatalog.presetDigest}`,
+          "--label",
+          `com.nvidia.nemoclaw.serving-recipe=${profile.servingCatalog.recipeId}`,
+          "--label",
+          `com.nvidia.nemoclaw.serving-recipe-digest=${profile.servingCatalog.recipeDigest}`,
+        ]
+      : []),
     "-p",
     `${String(VLLM_PORT)}:8000`,
     "--name",
@@ -1658,22 +1679,36 @@ export async function installVllm(
 async function runVllmInstall(
   profile: VllmProfile,
   opts: InstallVllmOptions,
+  hostLocalSelection?: MaterializedHostLocalVllmSelection,
 ): Promise<{ ok: boolean }> {
-  const managedCluster = await tryInstallManagedClusterManagedVllm(
-    {
-      platform: profile.platform,
-      nonInteractive: opts.nonInteractive,
-      promptFn: opts.promptFn,
-      beforeInstall: opts.beforeInstall,
-    },
-    {
-      prerequisites: dockerPrereqsOk,
-      pullImage,
-      downloadModel,
-      printDownloadAuthentication: printHfDownloadAuthentication,
-    },
-  );
+  const managedCluster = hostLocalSelection
+    ? { kind: "not-selected" as const }
+    : await tryInstallManagedClusterManagedVllm(
+        {
+          platform: profile.platform,
+          nonInteractive: opts.nonInteractive,
+          promptFn: opts.promptFn,
+          beforeInstall: opts.beforeInstall,
+        },
+        {
+          prerequisites: dockerPrereqsOk,
+          pullImage,
+          downloadModel,
+          printDownloadAuthentication: printHfDownloadAuthentication,
+        },
+      );
   if (managedCluster.kind === "handled") return managedCluster.result;
+
+  if (!hostLocalSelection) {
+    const selected = resolveHostLocalVllmSelection(profile);
+    if (selected.kind === "rejected") {
+      console.error(`  vLLM install failed: ${selected.reason}`);
+      return { ok: false };
+    }
+    if (selected.kind === "selected") {
+      return await runVllmInstall(selected.profile, opts, selected);
+    }
+  }
 
   let dualStationPlan: DualStationVllmPlan | null = null;
   let peerModelSnapshot: "ready" | "staging-required" | null = null;
@@ -1729,6 +1764,14 @@ async function runVllmInstall(
     if (!resolved) return { ok: false };
     dualStationPlan = capability.plan;
     peerModelSnapshot = capability.peerModelSnapshot;
+  } else if (hostLocalSelection) {
+    try {
+      assertGatedModelAccess(hostLocalSelection.model);
+    } catch (error) {
+      console.error(`  vLLM install failed: ${(error as Error).message}`);
+      return { ok: false };
+    }
+    resolved = { model: hostLocalSelection.model, source: "default" };
   } else {
     resolved = await resolveVllmInstallModel(profile, {
       nonInteractive: opts.nonInteractive,

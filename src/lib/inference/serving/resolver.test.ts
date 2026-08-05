@@ -3,8 +3,15 @@
 
 import { describe, expect, it } from "vitest";
 import type { SystemReadinessReport } from "../../readiness/types.js";
+import type { VllmProfile } from "../vllm.js";
+import {
+  HOST_LOCAL_VLLM_LIFECYCLE_REF,
+  HOST_LOCAL_VLLM_MATERIALIZER_REF,
+  isManagedClusterInferenceServingRecipe,
+} from "./adapter-registry.js";
 import { managedInferenceDigest } from "./catalog-integrity.js";
 import { loadManagedInferenceCatalog } from "./catalog-loader.js";
+import { materializeHostLocalVllmSelection } from "./host-local-vllm-selection.js";
 import {
   FIXTURE_MANAGED_CLUSTER_PRESET_ID,
   fixtureManagedClusterSelection,
@@ -16,6 +23,7 @@ import {
 import { resolveManagedInferenceServing } from "./resolver.js";
 import type {
   CompiledManagedInferenceCatalog,
+  HostLocalInferenceServingRecipe,
   ManagedInferencePresetRequirement,
   ManagedInferenceReadinessSource,
   ManagedInferenceResolverInput,
@@ -55,7 +63,9 @@ function shippedCompiledRecipe(
 }
 
 function shippedRecipe(catalog = shippedCatalog()): ManagedInferenceServingRecipe {
-  return shippedCompiledRecipe(catalog);
+  const recipe = shippedCompiledRecipe(catalog);
+  expect(isManagedClusterInferenceServingRecipe(recipe)).toBe(true);
+  return recipe as ManagedInferenceServingRecipe;
 }
 
 function shippedFixtureCatalog(): CompiledManagedInferenceCatalog {
@@ -65,6 +75,39 @@ function shippedFixtureCatalog(): CompiledManagedInferenceCatalog {
     presets: [shippedCompiledPreset(catalog)],
     recipes: [shippedCompiledRecipe(catalog)],
   };
+}
+
+function hostLocalFixtureCatalog(): CompiledManagedInferenceCatalog {
+  const catalog = shippedFixtureCatalog();
+  const sourceRecipe = shippedRecipe(catalog);
+  const sourcePreset = shippedPreset(catalog);
+  const { bindings: _bindings, ...hostLocalSpec } = sourceRecipe.spec;
+  const recipe = {
+    ...sourceRecipe,
+    metadata: { id: "test.vllm-host-local-recipe" },
+    spec: {
+      ...hostLocalSpec,
+      backend: "vllm",
+      model: { ...sourceRecipe.spec.model, preparation: { ref: "none/v1" } },
+      execution: {
+        materializerRef: HOST_LOCAL_VLLM_MATERIALIZER_REF,
+        lifecycleRef: HOST_LOCAL_VLLM_LIFECYCLE_REF,
+      },
+    },
+  } satisfies HostLocalInferenceServingRecipe;
+  const preset = {
+    ...sourcePreset,
+    metadata: { id: "test.vllm-host-local-preset" },
+    spec: {
+      ...sourcePreset.spec,
+      selection: "explicit-only",
+      requirements: {
+        all: sourcePreset.spec.requirements.all.filter((requirement) => "readiness" in requirement),
+      },
+      plan: { backend: "vllm", recipeRef: recipe.metadata.id },
+    },
+  } as ManagedInferenceServingPreset;
+  return { ...catalog, recipes: [recipe], presets: [preset] };
 }
 
 function catalogReadinessEntities(): Pick<
@@ -218,6 +261,69 @@ function catalogWithSecondProfile(options: {
 }
 
 describe("managed inference resolver", () => {
+  it("resolves an explicit host-local vLLM preset without topology data (#8246)", () => {
+    const catalog = hostLocalFixtureCatalog();
+    const presetId = catalog.presets[0]!.metadata.id;
+    const input = resolverInput({ intent: { preset: presetId } });
+    const result = resolveManagedInferenceServing(
+      { ...input, topologyQualifications: [] },
+      catalog,
+    );
+
+    expect(result).toMatchObject({
+      outcome: "selected",
+      selection: "explicit",
+      preset: { metadata: { id: presetId } },
+      recipe: { metadata: { id: catalog.recipes[0]!.metadata.id } },
+    });
+    expect(result).not.toHaveProperty("topologyQualification");
+  });
+
+  it("materializes a host-local selection into the existing single-Spark runtime (#8246)", () => {
+    const catalog = hostLocalFixtureCatalog();
+    const presetId = catalog.presets[0]!.metadata.id;
+    const input = resolverInput({ intent: { preset: presetId } });
+    const result = resolveManagedInferenceServing(
+      { ...input, topologyQualifications: [] },
+      catalog,
+    );
+    expect(result.outcome).toBe("selected");
+    expect(result).not.toHaveProperty("topologyQualification");
+    const baseProfile = {
+      name: "DGX Spark",
+      platform: "spark",
+      image: "example.invalid/vllm@sha256:" + "a".repeat(64),
+      imageDownloadSizeBytes: 1,
+      defaultModel: {} as never,
+      containerName: "nemoclaw-vllm",
+      dockerRunFlags: ["--gpus", "all"],
+      pullTimeoutSec: 1,
+      loadTimeoutSec: 1,
+    } satisfies VllmProfile;
+    const selected = materializeHostLocalVllmSelection(
+      result as Extract<typeof result, { outcome: "selected" }> & {
+        topologyQualification?: never;
+      },
+      baseProfile,
+    );
+
+    expect(selected).toMatchObject({
+      presetId,
+      recipeId: catalog.recipes[0]!.metadata.id,
+      profile: {
+        platform: "spark",
+        servingCatalog: {
+          presetId,
+          recipeId: catalog.recipes[0]!.metadata.id,
+        },
+      },
+      model: {
+        id: catalog.recipes[0]!.spec.model.id,
+        platforms: ["spark"],
+      },
+    });
+  });
+
   it("selects the shipped automatic preset from catalog data", () => {
     const catalog = shippedFixtureCatalog();
     const compiledPreset = shippedCompiledPreset(catalog);
@@ -467,7 +573,10 @@ describe("managed inference resolver", () => {
     );
 
     expect(result.outcome).toBe("selected");
-    const selected = result as Extract<typeof result, { outcome: "selected" }>;
+    const selected = result as Extract<typeof result, { outcome: "selected" }> & {
+      readonly topologyQualification: ManagedInferenceTopologyQualification<ManagedClusterTopologyOutput>;
+    };
+    expect("topologyQualification" in selected).toBe(true);
     (artifact.output as { masterAddress: string }).masterAddress = "192.168.100.99";
     expect(selected.topologyQualification.output.masterAddress).toBe("192.168.100.10");
     expect(Object.isFrozen(selected.topologyQualification.output)).toBe(true);
