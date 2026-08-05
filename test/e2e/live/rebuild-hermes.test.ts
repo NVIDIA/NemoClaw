@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
-import { resolveDirectSandboxContainer } from "../../../src/lib/sandbox/privileged-exec";
 import { readSandboxBaseImageResolutionMetadata } from "../../../src/lib/sandbox-base-image";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertCleanupSucceededOrAbsent } from "../fixtures/cleanup-resources.ts";
@@ -45,6 +44,10 @@ import {
   requireRebuildHermesOpenshellBin,
   resolveRebuildHermesCurrentBase,
 } from "./rebuild-hermes-bootstrap.ts";
+import {
+  createRebuildHermesCronRestoreFixture,
+  hermesRuntimeExecArgs,
+} from "./rebuild-hermes-cron-restore.ts";
 import { buildRebuildHermesChildEnv, planRebuildHermesBaseReuse } from "./rebuild-hermes-env.ts";
 import { ensureRebuildHermesHostTools, hermesApiTokenDigest } from "./rebuild-hermes-host-tools.ts";
 import {
@@ -204,14 +207,6 @@ swapon "$swap_file"`,
   );
   expectExitZero(verified, "inspect active swap after Hermes rebuild provisioning");
   expect(parseActiveSwapBytes(verified.stdout)).toBeGreaterThanOrEqual(HERMES_REBUILD_SWAP_BYTES);
-}
-
-function hermesRuntimeExecArgs(sandboxName: string, command: string[]): string[] {
-  // `openshell sandbox exec` intentionally runs inside Landlock, which cannot
-  // read the immutable `/opt/hermes` runtime. The rebuild contract needs to
-  // seed and inspect that runtime in the managed Docker container itself.
-  const containerId = resolveDirectSandboxContainer(sandboxName, "docker");
-  return buildHermesRuntimeExecArgs(containerId, command);
 }
 
 function inspectKanbanTaskArgs(sandboxName: string): string[] {
@@ -638,15 +633,20 @@ function verifySeededOldBaseResolution(
 }
 
 test(STALE_BASE_REBUILD
-  ? "rebuild-hermes: stale base cache is refreshed while Hermes state survives rebuild"
-  : "rebuild-hermes: historical base rebuild preserves messaging state and selects current base", {
+  ? "rebuild-hermes: stale base refresh restores Hermes state and resumes cron dispatch (#7806)"
+  : "rebuild-hermes: rebuild restores Hermes state and recovers a stranded cron drain (#7806)", {
   timeout: LIVE_TIMEOUT_MS,
   meta: { e2ePhases: REBUILD_HERMES_PHASES },
 }, async ({ artifacts, cleanup, host, progress, sandbox, secrets, skip }) => {
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const redactionValues = [apiKey, DISCORD_FAKE_TOKEN, PRE_REBUILD_API_SERVER_KEY];
   const expectedVersion = expectedHermesVersion();
-
+  const cronRestore = createRebuildHermesCronRestoreFixture({
+    host,
+    sandboxName: SANDBOX_NAME,
+    env: testEnv(apiKey),
+    redactionValues,
+  });
   const registrySnapshot = snapshotFile(REGISTRY_FILE);
   const sessionSnapshot = snapshotFile(SESSION_FILE);
   const sandboxBackupRoot = path.join(BACKUP_ROOT, SANDBOX_NAME);
@@ -669,7 +669,7 @@ test(STALE_BASE_REBUILD
       "OpenShell provider create/update and sandbox create/exec/list",
       "curated local ~/.nemoclaw registry and onboard-session rebuild metadata",
       "real nemoclaw <sandbox> rebuild --yes --verbose without host inference credentials",
-      "Hermes .env/config.yaml messaging placeholder preservation",
+      "Hermes messaging placeholders plus script-backed cron restore and dispatch gating",
       "backup credential leak scan under ~/.nemoclaw/rebuild-backups",
     ],
     outOfScope: [
@@ -1095,7 +1095,7 @@ test(STALE_BASE_REBUILD
     },
   );
   expectExitZero(writeExcludedKanbanMarker, "write excluded Hermes kanban marker");
-
+  await cronRestore.seed();
   const seededKanbanDb = await host.command("docker", inspectKanbanTaskArgs(SANDBOX_NAME), {
     artifactName: "phase-4-inspect-seeded-kanban-db",
     env: testEnv(apiKey),
@@ -1298,7 +1298,8 @@ test(STALE_BASE_REBUILD
     expectedVersion,
     `Hermes version output did not include expected release ${expectedVersion}: ${hermesVersionText}`,
   );
-
+  await cronRestore.verify(rebuildOutput, rebuildBackupPath);
+  await cronRestore.verifyStrandedGateRecovery();
   const restoredKanbanDatabase = await host.command(
     activeOpenshellBin,
     [

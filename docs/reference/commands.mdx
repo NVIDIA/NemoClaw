@@ -657,7 +657,7 @@ For OpenClaw, the backed-up paths include agents, extensions, workspace, skills,
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-For Hermes, the backed-up paths come from `agents/hermes/manifest.yaml`, including `/sandbox/.hermes` state such as memories, sessions, skills, plugins, cron, logs, plans, workspace, messaging platform state, `runtime/state.db`, and the default kanban board in `kanban.db`.
+For Hermes, the backed-up paths come from `agents/hermes/manifest.yaml`, including `/sandbox/.hermes` state such as memories, sessions, skills, plugins, cron, scripts, logs, plans, workspace, messaging platform state, `runtime/state.db`, and the default kanban board in `kanban.db`.
 Kanban backup does not include named boards, attachments, worker logs, scratch workspaces under `kanban/`, or external directory or worktree targets.
 
 </AgentOnly>
@@ -1221,6 +1221,13 @@ Follow [Deep Agents Config Lock Failure Recovery](troubleshooting#deep-agents-co
 </AgentOnly>
 
 Host-side config and inference writes, snapshot mutation, sandbox destruction, and shields transitions serialize per sandbox.
+
+<AgentOnly variant="openclaw,hermes">
+
+Host-side gateway recovery uses the same per-sandbox serialization.
+
+</AgentOnly>
+
 Before `shields down` opens a new window, NemoClaw must revoke any stale auto-restore timer authority.
 If marker cleanup fails, the command reports `Cannot revoke stale auto-restore timer authority` and stops before policy capture, state writes, config unlock, replacement-timer startup, or audit writes.
 The sandbox retains its existing configuration and policy posture, and the stale timer authority remains.
@@ -1257,6 +1264,9 @@ A surviving server keeps its recorded endpoint and address pins while its policy
 
 Repair a stopped in-sandbox gateway and re-establish host-side forwards without opening an SSH session.
 Use this after a direct sandbox container restart, a sandbox crash, or whenever `$$nemoclaw <name> status` reports the gateway is not running but the sandbox is alive.
+
+`recover` waits up to 30 seconds to acquire the per-sandbox lifecycle lock.
+After acquisition, it holds the lock until gateway recovery and forward repair finish.
 
 For built-in OpenClaw and Hermes sandboxes, `recover` sends an authenticated lifecycle request through registry-scoped privileged direct-container control.
 The host selects the controller from the live container topology.
@@ -1301,6 +1311,13 @@ The managed controller verifies that strict hash when both Hermes config inputs 
 Mutable config under the managed topology has no durable root-owned hash anchor and retains the same trust and time-of-check/time-of-use limits as managed cold start.
 If the boundary validator or supervisor helper is missing, recovery fails closed, names the sandbox, explains that `/sandbox/.hermes/.env` could not be re-evaluated, and leaves an otherwise healthy gateway untouched.
 Rebuild an older sandbox image with `$$nemoclaw <name> rebuild --yes` before retrying.
+
+While a NemoClaw cron restore gate exists, Hermes `recover` keeps the same lifecycle lock through restore validation and gate release.
+That controller call has a 130-second host timeout; the earlier 30-second limit applies only to lifecycle-lock acquisition.
+
+After gateway and forward recovery, Hermes `recover` also checks for a NemoClaw cron restore gate retained by an interrupted rebuild.
+It validates the restored cron jobs and scripts before it clears that gate, and it leaves an independent Hermes operator drain active.
+A validation failure leaves the NemoClaw gate in place so new Hermes turns and cron dispatch remain blocked.
 
 </AgentOnly>
 
