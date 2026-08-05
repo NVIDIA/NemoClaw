@@ -109,7 +109,7 @@ Refer to [Create and Restore Snapshots](../../manage-sandboxes/state-and-backups
 
 If the affected sandbox was destroyed or revocation continues to fail, destroy all remaining sandboxes before adapter cleanup.
 A scoped uninstall that leaves sibling gateways in place preserves the shared adapter and its remaining routes.
-After you destroy all sandboxes, run `nemoclaw uninstall --all-gateway-ports` to remove every gateway-port environment and stop the shared adapter.
+After you destroy all sandboxes, run `$$nemoclaw uninstall --all-gateway-ports` to remove every gateway-port environment and stop the shared adapter.
 Do not treat its in-memory credentials as purged until the command succeeds, the adapter PID has exited, and no listener remains on `NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT` (default `11438`).
 
 This support is specific to `inference set` on an already-onboarded sandbox.
