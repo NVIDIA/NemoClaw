@@ -1574,6 +1574,11 @@ def _terminate_gateway(
             ),
         ):
             return
+        if (
+            recovery_deadline is not None
+            and time.monotonic() >= recovery_deadline
+        ):
+            raise ControlError("GATEWAY_FAILED")
         # The pidfd already pins the proven gateway across exit and PID reuse.
         # Re-reading /proc here races with the normal live-to-zombie transition
         # and adds no signal-target safety.

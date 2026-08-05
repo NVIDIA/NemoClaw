@@ -338,7 +338,7 @@ describe("managed gateway lifecycle locking", () => {
       restrictive_umask_modes: [0o444, 0o600],
       constructor_cleanup: [202, 101],
       contended_restart: [["ok", 43, 44], ["v1", "43", "555", "999", "777"], true],
-      termination_deadline: ["GATEWAY_FAILED", [3, 0], [15, 9]],
+      termination_deadline: ["GATEWAY_FAILED", [3], [15]],
     });
   });
 });
