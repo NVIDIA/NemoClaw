@@ -50,12 +50,15 @@ describe("PR Review Advisor writing guide", () => {
     const outDir = fs.mkdtempSync(path.join(tmpdir(), "advisor-rubric-failure-"));
     const headSha = "b".repeat(40);
     const realReadFileSync = fs.readFileSync.bind(fs);
-    const readSpy = vi.spyOn(fs, "readFileSync").mockImplementation(((file, ...args) => {
-      if (String(file).endsWith(`${path.sep}security-rubric.md`)) {
-        throw new Error("missing rubric fixture");
-      }
-      return realReadFileSync(file, ...args);
-    }) as typeof fs.readFileSync);
+    const rejectRubricRead = () => {
+      throw new Error("missing rubric fixture");
+    };
+    const readSpy = vi
+      .spyOn(fs, "readFileSync")
+      .mockImplementation(((file, ...args) =>
+        String(file).endsWith(`${path.sep}security-rubric.md`)
+          ? rejectRubricRead()
+          : realReadFileSync(file, ...args)) as typeof fs.readFileSync);
     const metadata = {
       baseRef: "origin/main",
       headRef: "HEAD",
