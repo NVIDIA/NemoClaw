@@ -203,6 +203,7 @@ with tempfile.TemporaryDirectory() as root:
         with open(marker_path, "r", encoding="ascii") as stream:
             observed_marker.extend(stream.read().split())
         current_gateway[0] = gateway_44
+    original_terminate_gateway = control._terminate_gateway
     control._terminate_gateway = replace_after_wait
 
     first_controller_lock = control._acquire_expected_exit_lock(
@@ -239,6 +240,7 @@ with tempfile.TemporaryDirectory() as root:
             control._close_expected_exit_lock(first_controller_lock)
         contended_thread.join(5.0)
         control.fcntl.flock = real_flock
+        control._terminate_gateway = original_terminate_gateway
     if contended_thread.is_alive():
         raise AssertionError("second controller did not finish")
     if contended_errors:
@@ -294,8 +296,11 @@ describe("managed gateway lifecycle locking", () => {
   it("acquires the expected-exit lock before gateway inspection and enforces one recovery deadline (#8262)", () => {
     const result = spawnSync("python3", ["-c", LOCKING_HARNESS, HELPER], {
       encoding: "utf8",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
     });
 
+    expect(result.error, result.error?.stack ?? result.stderr).toBeUndefined();
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       serialized_lease: ["waited", true],
