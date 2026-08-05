@@ -54,3 +54,13 @@ describe("buildOnboardFlags --events help", () => {
     expect(aliasFlags.events).toBeUndefined();
   });
 });
+
+describe("buildOnboardFlags temporary managed runtime gate", () => {
+  it("accepts the activation flag without advertising it in CLI help", () => {
+    const flags = buildOnboardFlags({ includeEvents: true });
+
+    expect(flags["temp-managed-runtime"].hidden).toBe(true);
+    expect(flags["temp-managed-runtime"].description).toBeUndefined();
+    expect(flags.events.hidden).not.toBe(true);
+  });
+});

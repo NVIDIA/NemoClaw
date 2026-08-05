@@ -19,8 +19,8 @@ import {
   getResumeSandboxGpuOverrides,
   resolveSandboxGpuConfig,
 } from "../../onboard/sandbox-gpu-mode";
-import { redact } from "../../security/redact";
 import type { TrustedLocalBaseImageOverride } from "../../sandbox-base-image";
+import { redact } from "../../security/redact";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
@@ -462,5 +462,24 @@ export async function revalidateDcodeReplacementAtMutationEdge(
   if (!replacement.verify()) {
     fail("the prepared DCode replacement inputs changed before deletion", bail);
   }
+  return true;
+}
+
+/**
+ * Revalidate DCode's live route and registry target when the replacement is an
+ * immutable managed image. The generic managed-workload handoff owns the exact
+ * image and profile authority, so no Dockerfile artifact exists to retain.
+ */
+export async function revalidateManagedDcodeWorkloadAtMutationEdge(
+  input: DcodeReplacementPreflightInput,
+): Promise<boolean> {
+  const { sandboxName, entry, resumeConfig, skipLiveRoute, gatewayPort, log, bail } = input;
+  const target = resolveTarget(entry, resumeConfig, bail, gatewayPort);
+  if (!(await ensureDcodeRebuildTargetGatewaySelected(sandboxName, entry, log, bail))) {
+    return false;
+  }
+  if (!input.checkGatewaySchema()) return false;
+  if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail);
+  requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
   return true;
 }

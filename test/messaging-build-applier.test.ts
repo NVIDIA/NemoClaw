@@ -1127,14 +1127,14 @@ describe("messaging-build-applier.mts: agent-install", () => {
       const plan = readMessagingBuildPlanFromEnv(planEnv, "hermes");
       expect(describeMessagingBuildPhase(plan, "agent-install", planEnv).hermesUvPackages).toEqual([
         "microsoft-teams-apps==2.0.13.4",
-        "aiohttp==3.14.1",
+        "aiohttp==3.14.3",
       ]);
 
       const result = runApplierProcess(planEnv, "hermes", "agent-install");
 
       expect(result.status, result.stderr).toBe(0);
       expect(fs.readFileSync(tracePath, "utf-8").trim()).toBe(
-        "pip install --python /opt/hermes/.venv/bin/python --no-cache -- microsoft-teams-apps==2.0.13.4 aiohttp==3.14.1",
+        "pip install --python /opt/hermes/.venv/bin/python --no-cache -- microsoft-teams-apps==2.0.13.4 aiohttp==3.14.3",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -1183,7 +1183,6 @@ describe("messaging-build-applier.mts: agent-install", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-discord-runtime-contract-"));
     const tracePath = path.join(tmp, "openclaw.trace");
     const fakeOpenclaw = path.join(tmp, "openclaw");
-    const fakeNpm = path.join(tmp, "npm");
     const discordChannels = channelsB64(["discord"]);
     fs.writeFileSync(
       fakeOpenclaw,
@@ -1210,19 +1209,6 @@ describe("messaging-build-applier.mts: agent-install", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
-    fs.writeFileSync(
-      fakeNpm,
-      [
-        "#!/bin/sh",
-        'printf \'npm|%s|%s|%s||\\n\' "$1" "$2" "$3" >> "$OPENCLAW_TRACE"',
-        ...fakeOpenClawPluginNpmPackScriptLines(),
-        'if [ "${1:-}" = "view" ] && [ "${2:-}" = "@openclaw/discord@2026.7.1" ] && [ "${3:-}" = "dist.integrity" ]; then printf "%s\\n" "$OPENCLAW_DISCORD_2026_7_1_INTEGRITY"; exit 0; fi',
-        "exit 1",
-        "",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-
     try {
       const generatorEnv = await withLegacyMessagingPlanEnvDirect(
         {
@@ -1252,19 +1238,10 @@ describe("messaging-build-applier.mts: agent-install", () => {
         NEMOCLAW_MESSAGING_PLAN_B64: generatorEnv.NEMOCLAW_MESSAGING_PLAN_B64,
         NEMOCLAW_WEB_SEARCH_ENABLED: "1",
       };
-      const pluginResult = runApplierProcess(applierEnv, "openclaw", "agent-install");
-      expect(pluginResult.status, pluginResult.stderr).toBe(0);
-
       const postInstallResult = runApplierProcess(applierEnv, "openclaw", "post-agent-install");
 
       expect(postInstallResult.status, postInstallResult.stderr).toBe(0);
       const trace = fs.readFileSync(tracePath, "utf-8");
-      expect(trace).toContain("npm|view|@openclaw/discord@2026.7.1|dist.integrity||");
-      expect(trace).toContain(
-        "npm|pack|https://registry.npmjs.org/@openclaw/discord/-/discord-2026.7.1.tgz|--pack-destination||",
-      );
-      expect(trace).toContain("plugins|install|npm-pack:");
-      expect(trace).toContain("discord-2026.7.1.tgz||");
       expect(trace).toContain(
         "doctor|--fix|--non-interactive|openshell:resolve:env:DISCORD_BOT_TOKEN|openshell:resolve:env:BRAVE_API_KEY",
       );

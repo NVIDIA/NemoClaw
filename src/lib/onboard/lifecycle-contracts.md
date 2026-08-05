@@ -53,7 +53,7 @@ Every nonterminal state has one production owner or an explicit internal designa
 | `post_verify` | `handlePostVerifyState` in `machine/handlers/finalization.ts` |
 | `complete`, `failed` | Terminal; no handler |
 
-The final flow gives the strict runner ownership from the durable entry state. If a saved session is at `policies`, `finalizing`, or `post_verify`, the flow runs earlier handlers as prerequisite repairs. Each repair emits a `state.repair.started` event and then a `state.repair.completed` or `state.repair.failed` event. A repair must return one update-free canonical advance and leave the durable state unchanged. The flow validates but does not apply the returned transition. The repaired context then feeds the strict runner at the saved entry state.
+The initial, core, and final flows give the strict runner ownership from the durable entry state. If a saved session is later than a slice entry, the flow runs earlier handlers as prerequisite repairs. Each repair emits a `state.repair.started` event and then a `state.repair.completed` or `state.repair.failed` event. A repair must return a legal, update-free transition chain and leave the durable state unchanged. The flow validates but does not apply the repair transitions. The repaired context then feeds the strict runner at an exact state or the next flow slice.
 
 FSM transitions remain step-granular.
 For OpenClaw onboarding, the sandbox handler additionally checkpoints each completed secret-free prompt group: sandbox name, web search selection, messaging selection and non-secret configuration, and resource profile.
@@ -123,30 +123,6 @@ runtime mutation
 | **Credential rotation** — `configRotateToken` in `src/lib/sandbox/config.ts` | A session with `credentialEnv` selects the provider and binding. A non-null different `sandboxName` is rejected, but a legacy/null session name is accepted for the requested sandbox. The new value comes from a named environment variable, stdin, or a secret prompt; it is trimmed, then rejected when empty or still containing internal whitespace. | `saveCredential` first stages the value in the current process. OpenShell provider update is the first external mutation, with provider create as a fallback; audit follows. No sandbox deletion. | The logical binding is unchanged, so session and registry are not rewritten. The raw value exists only in process memory/environment and the gateway provider; audit records action/sandbox/reason without the value. | No rollback after a successful provider update; an audit failure can report failure after the credential is already active. Covered by the rotate-token cases in `test/config-set-nested-ssrf.test.ts`. Gap: a null-name legacy session is not strongly bound to the requested sandbox. |
 | **Config, policy, resource, port-forward, and runtime setup contributions** — `configSet`; `prepareInitialSandboxCreatePolicy`; `selectResourceProfileForSandbox`; manifest compiler/runtime appliers; dashboard and channel forward helpers | Config uses validated dotpaths and SSRF-safe URL rewriting. Create/rebuild contributions are assembled by `sandbox-create-plan.ts` and `MessagingWorkflowPlanner`: policy presets/keys, resource flags, package/build steps, `hostForward`, runtime node preloads, env aliases, and secret scans. | Config’s first effect is a compare-and-swap sandbox write. Build-time contributions inherit the enclosing create/recreate boundary. Forward helpers can stop an existing forward and start its replacement in place after readiness, without recreating the sandbox. | Durable owners are compact registry messaging/policy/inference metadata, current manifests used for plan rehydration, onboard session, sandbox config/hash, gateway provider state, and shields audit. An interrupted onboarding session records the selected resource values or an explicit OpenShell-default choice; the resolved create intent remains process-local. Logical bindings are serializable; raw provider values are not. | CAS rejects stale config writes; OpenClaw/Hermes commit config and integrity hashes together, while other agents may refresh a path hash afterward. Audit and optional restart are post-commit and forward-only. Forward recovery can re-establish declared forwards. Gaps: no cross-contribution effect transaction/checkpoint. |
 
-## Dormant Podman bootstrap watcher authority
-
-`createPodmanManagedGatewayWatcherController` is an internal, unregistered
-authority for a later native Podman bootstrap provider. It does not activate or
-advertise Podman support. The caller must resolve exactly one healthy watcher,
-a process identity that distinguishes PID reuse, and the managed lifecycle
-owner that can stop and resume the same launch identity. Ambiguous or
-externally supervised owners fail closed.
-
-The controller durably records an `acquiring` lease before the first stop
-request, proves the owner, process, and target listener absent, and then records
-the `stopped` phase. Release clears the lease only after the same owner and
-launch identity serve one independently healthy target watcher. Recovery treats
-both phases as unfinished: a healthy exact owner is accepted without spawning a
-duplicate, while a proven stopped owner is resumed and requalified.
-
-This authority is the prerequisite for preparing two immutable, final-labelled
-Podman container identities without exposing duplicate OpenShell watcher state.
-The later provider transaction must keep the watcher durably stopped until one
-authoritative managed container remains; this slice does not yet create,
-replace, or expose a workload. Crash-window, ambiguous-owner, durable-write,
-and compare-and-clear behavior is covered by
-`podman-watcher-lease.test.ts`.
-
 ## Durable resumed recreate journal
 
 A resumed same-name replacement writes a secret-free journal before the lower create path can delete the source sandbox.
@@ -200,6 +176,32 @@ rebind, durable interrupted-restore recovery, ordinary recreate integration, and
 runtime activation are separately reviewable units tracked by that epic.
 If provider proof fails after filesystem restoration, NemoClaw reports that state changed and requires the operator to retry the exact snapshot after the runtime stabilizes.
 
+## Dormant Podman managed bootstrap authority
+
+The Podman candidate owns a separate `managed-bootstrap` command scope bound
+to one exact rootless engine authority. Before a bootstrap mutation, it
+discovers and stably inspects exactly one held OpenShell workload and acquires a
+durable lease over the exact watcher process and lifecycle owner. Ambiguous
+workloads, watcher ownership, PID reuse, endpoint drift, or a competing lease
+fail closed.
+
+Preparation creates a private managed state volume and a stopped,
+final-labelled replacement while retaining the exact original. Its monotonic
+journal records the engine authority, watcher lease, immutable original and
+replacement identities, image and specification fingerprints, state volume,
+and rollback decision before each external effect. Pre-commit rollback removes
+only the proven stopped replacement and owned volume, restores the exact
+original, and leaves the watcher lease with the caller until a healthy exact
+owner is independently requalified.
+
+The image transaction accepts only that prepared authority. It stages one
+protected root-apply request, starts the exact replacement, and authenticates
+the image-owned completion for OpenClaw, Hermes, or LangChain Deep Agents Code.
+The watcher stays stopped and the journal remains authoritative throughout.
+These provider-owned modules remain disconnected from production runtime
+selection; persisted post-commit recovery, GPU and local inference, installer
+qualification, and supported activation remain later gates in #7744.
+
 ## Agent-specific differences
 
 | Agent | Lifecycle difference |
@@ -210,12 +212,12 @@ If provider proof fails after filesystem restoration, NemoClaw reports that stat
 
 ## Persisted field ownership
 
-The schema and sanitation authority is `Session` plus `normalizeSession`/`filterSafeUpdates` in `src/lib/state/onboard-session.ts`. `undefined` in an update means “leave unchanged”; accepted `null` means “clear.” On disk, many nullable fields still collapse never selected, explicitly declined, and explicitly cleared into the same `null` representation. `sandboxPromptProgress` records which of the checkpointed sandbox name, web search, messaging, and resource choices completed. The dedicated versioned `checkpoint` field (`src/lib/state/onboard-checkpoint.ts`) resolves the remaining ambiguity for those choices by modelling each as an explicit `unset`/`declined`/`selected` decision (#6228, #6227/#5783); `deriveCheckpointFromSession` reconstructs the same tri-state from legacy sessions using the completion markers. Live decision reads still consult the legacy fields; migrating every consumer onto the checkpoint decisions is a follow-up.
+The schema and sanitation authority is `Session` plus `normalizeSession`/`filterSafeUpdates` in `src/lib/state/onboard-session.ts`. `undefined` in an update means “leave unchanged”; accepted `null` means “clear.” On disk, many nullable fields still collapse never selected, explicitly declined, and explicitly cleared into the same `null` representation. `sandboxPromptProgress` records which of the checkpointed sandbox name, web search, messaging, and resource choices completed. The dedicated versioned `checkpoint` field (`src/lib/state/onboard-checkpoint.ts`) resolves the remaining ambiguity for those choices by modelling each as an explicit `unset`/`declined`/`selected` decision (#6228, #6227/#5783). Live decision reads use the checkpoint when it exists. When a session has no checkpoint, sandbox identity matching accepts the legacy name only if `sandboxPromptProgress.sandboxName` records completion. `deriveCheckpointFromSession` uses legacy fields only to migrate a session that has no checkpoint.
 
 | Field group | Fields | Writer/owner and state meaning |
 |---|---|---|
 | Session envelope | `version`, `sessionId`, `mode`, `startedAt`, `updatedAt`, `status`, `resumable` | `createSession`, save/update helpers, and completion/failure paths. Values are always known after creation. |
-| Progress and recovery | `lastStepStarted`, `lastCompletedStep`, `failure`, `steps`, `machine`, `sandboxPromptProgress`, `stagedCredentialProviders`, `checkpoint` | Step-mutation helpers and `OnboardRuntime` own whole-step progress; the OpenClaw sandbox handler owns prompt-group completion markers. `stagedCredentialProviders` contains only names registered before sandbox setup so OpenClaw resume can require both durable ownership and an exact live binding. A marker is trusted only when its matching persisted value is present and valid, including an explicit `null` where supported. `checkpoint` is the dedicated versioned resume contract: a secret-free tri-state decision record plus durable sandbox identity, effect-group receipts, and logical web-search and messaging provider bindings, serialized alongside the session under its own `schemaVersion` with fail-closed handling of an unknown future version. The primary inference provider binding remains owned and revalidated by the provider and inference phases instead of entering this checkpoint ledger. |
+| Progress and recovery | `lastStepStarted`, `lastCompletedStep`, `failure`, `steps`, `machine`, `sandboxPromptProgress`, `stagedCredentialProviders`, `checkpoint` | Step helpers record step-progress bookkeeping and context updates accepted by `filterSafeUpdates`. `OnboardRuntime` owns machine transitions, terminal state, and machine events. Explicit session recovery and the process-exit failure backstop are separate recovery boundaries. The OpenClaw sandbox handler owns prompt-group completion markers. `stagedCredentialProviders` contains only names registered before sandbox setup so OpenClaw resume can require both durable ownership and an exact live binding. A marker is trusted only when its matching persisted value is present and valid, including an explicit `null` where supported. `checkpoint` is the dedicated versioned resume contract: a secret-free tri-state decision record plus durable sandbox identity, effect-group receipts, and logical web-search and messaging provider bindings, serialized alongside the session under its own `schemaVersion` with fail-closed handling of an unknown future version. The primary inference provider binding remains owned and revalidated by the provider and inference phases instead of entering this checkpoint ledger. |
 | Target identity | `agent`, `sandboxName`, `metadata.gatewayName`, `metadata.fromDockerfile` | Onboard selection, sandbox handler/registration, and rebuild session preparation. A completed sandbox step or valid `sandboxPromptProgress.sandboxName` marker is the trust gate for a recorded name. |
 | Inference intent | `provider`, `model`, `endpointUrl`, `credentialEnv`, `preferredInferenceApi`, `compatibleEndpointReasoning`, `nimContainer`, `webSearchConfig` | Provider/inference handlers and `runInferenceSet`. Known credential state is an environment-variable name or presence metadata, never the value. `redactUrl` masks userinfo and fragments, redacts values under sensitive parameter names, and redacts canonical token-shaped values even under benign parameter names. |
 | Agent and policy intent | `hermesAuthMethod`, `toolDisclosure`, `hermesToolGateways`, `policyPresets` | Agent setup and policy handling. Channel commands update matching-session `policyPresets` only best-effort. Nullable fields conflate unset, declined, and cleared where the CLI makes those distinctions. |
@@ -224,7 +226,7 @@ The schema and sanitation authority is `Session` plus `normalizeSession`/`filter
 | Runtime metadata | `routerPid`, `routerCredentialHash`, `gpuPassthrough` | Router and sandbox setup/recovery. PID is a live-process hint; credential hash is a digest; GPU is a concrete boolean. |
 | Legacy migration proof | `migratedLegacyValueHashes` | Onboard legacy migration writes SHA-256 digests keyed by environment name; session filtering guarantees string records but does not independently validate digest shape. |
 
-The registry is separately owned by `src/lib/state/registry.ts`; backup/recovery manifests are owned by their rebuild and recreate modules. Step helpers normally use `RECORD_ONLY_STEP_MUTATION_OPTIONS`; `LEGACY_MACHINE_STEP_MUTATION_OPTIONS` is the compatibility path that also moves the machine snapshot.
+The registry is separately owned by `src/lib/state/registry.ts`; backup and recovery manifests are owned by their rebuild and recreate modules. Step helpers do not change the machine snapshot or emit machine events.
 
 ## Duplicated decision points
 
@@ -259,14 +261,14 @@ PR #5955 moved the rebuild messaging conflict check before destruction.
 
 | Contract | Executable evidence | Uncovered boundary |
 |---|---|---|
-| Fresh, resumed, recreate, successful, and failed machine event order | `machine/transition-traces.test.ts` | None at this boundary. Sandbox-handler replay tests cover effect-group crash recovery. |
+| Fresh, resumed, recreate, successful, and failed machine event order | `machine/transition-traces.test.ts`, `machine/prerequisite-repair.test.ts` | None at this boundary. Sandbox-handler replay tests cover effect-group crash recovery. |
 | Detailed recreate decisions and repair branches | `machine/handlers/sandbox-resume.test.ts`, `machine/handlers/sandbox.test.ts` | Cross-handler effect transaction |
 | Legal edges, result kinds, runtime event shapes, runner sequencing | `machine/transitions.test.ts`, `machine/runtime.test.ts`, `machine/runner*.test.ts` | None at the unit boundary |
 | Create intent/provider ordering and fail-closed credential drift | `sandbox-create-plan.test.ts` | Cross-module pre-delete ordering has no behavioral seam |
 | Messaging conflict validation before recreate | `sandbox-messaging-preflight.test.ts`, rebuild preflight tests | One shared declarative policy across all callers |
 | Resume identity | `checkpoint-replay.test.ts`, `checkpoint-resume-guard.test.ts`, `machine/handlers/sandbox-checkpoint-crash-recovery.test.ts` | Live process-termination E2E with a real OpenShell sandbox |
 | Session sanitation, sandbox prompt checkpoints, and no-secret persistence | `src/lib/state/onboard-session-sandbox-prompts.test.ts`, `src/lib/state/onboard-checkpoint.test.ts`, `machine/handlers/sandbox-create-intent-boundary.test.ts` | Tri-state decisions remain scoped to checkpointed sandbox choices. |
-| Versioned checkpoint schema, tri-state decisions, migration, and unknown-future fail-safe | `src/lib/state/onboard-checkpoint.test.ts`, `src/lib/state/onboard-checkpoint-migrate.test.ts` | Live decision reads still use legacy fields |
+| Versioned checkpoint schema, tri-state decisions, migration, and unknown-future fail-safe | `src/lib/state/onboard-checkpoint.test.ts`, `src/lib/state/onboard-checkpoint-migrate.test.ts`, `checkpoint-replay.test.ts` | Legacy sandbox identity remains a bounded runtime fallback and migration input only when no checkpoint exists. |
 | Resumable create replay, durable identity, and stale-binding fail-closed | `src/lib/onboard/checkpoint-replay.test.ts`, `src/lib/onboard/checkpoint-resume-guard.test.ts`, `machine/handlers/sandbox-checkpoint-crash-recovery.test.ts` | None at the sandbox-handler boundary. |
 | Managed snapshot workload, content, and provider authority across explicit and rebuild flows | `src/lib/actions/sandbox/snapshot/backup-authority.test.ts`, `restore-authority.test.ts`, `managed-profile.test.ts`, `provider-lifecycle.test.ts`, and `snapshot-managed-provider-restore-order.test.ts` | Durable interrupted-restore recovery and user-visible runtime activation remain separate review units. |
 | Dormant managed clone handoff and fail-closed production boundary | `src/lib/onboard/managed-workload-clone-handoff.test.ts`, `src/lib/onboard/managed-startup-clone-rebinder.test.ts`, and `src/lib/actions/sandbox/snapshot-managed-clone-handoff-dormancy.test.ts` | Provider materialization, destination bootstrap, rollback, recovery, protected E2E, and activation remain tracked by [#7744](https://github.com/NVIDIA/NemoClaw/issues/7744). |

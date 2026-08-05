@@ -8,10 +8,6 @@
     "reason": "Internal launcher marker set by bin/nemohermes.js so the runtime knows which binary the user invoked. Never user-set; the value is constrained to a known-name allowlist in src/lib/cli/branding.ts."
   },
   {
-    "name": "NEMOCLAW_MANAGED_HERMES_HASH_B64",
-    "reason": "Internal one-shot base64 transport from the privileged managed-startup runtime to the sandbox-user Hermes compatibility-hash writer. NemoClaw synthesizes it for that constrained child action; users never set it."
-  },
-  {
     "name": "NEMOCLAW_MODEL_ROUTER_VENV",
     "reason": "Internal developer/test override for the managed Model Router virtualenv path. Production users should use the default ~/.nemoclaw/model-router-venv."
   },
@@ -64,6 +60,14 @@
     "reason": "Test sentinel that bypasses real-time sleep() calls in onboard inference probes. Set to '1' only by Vitest tests; never user-set."
   },
   {
+    "name": "NEMOCLAW_TEST_BASE_HOME",
+    "reason": "Internal Vitest-only baseline used with NEMOCLAW_TEST_STATE_DIR so tests that explicitly replace HOME retain their fixture paths. Never user-set in production."
+  },
+  {
+    "name": "NEMOCLAW_TEST_STATE_DIR",
+    "reason": "Internal Vitest-only state root that keeps lifecycle locks and Shields artifacts out of the caller's real NemoClaw state. The production resolver honors it only while Vitest is active."
+  },
+  {
     "name": "NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS",
     "reason": "Internal Vitest-only override that shortens the Telegram diagnostics startup-grace timer. Production uses the built-in default."
   },
@@ -97,6 +101,6 @@
   },
   {
     "name": "NEMOCLAW_MANAGED_HERMES_HASH_B64",
-    "reason": "Internal one-process transport from the root image applicator to its sandbox-owned Hermes compatibility-hash writer. The value is a bounded base64-encoded hash receipt that only the private internal writer consumes; users must not set it."
+    "reason": "Internal one-shot transport from the privileged managed-startup runtime or root image applicator to the sandbox-owned Hermes compatibility-hash writer. The value is a bounded base64-encoded hash receipt that only the private internal writer consumes; NemoClaw synthesizes it and users must not set it."
   }
 ]

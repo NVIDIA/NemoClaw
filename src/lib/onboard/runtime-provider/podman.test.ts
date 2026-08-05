@@ -137,12 +137,14 @@ describe("dormant Podman runtime provider", () => {
   )("runs basic CPU start and stop for %s through an injected bundle", async (agent) => {
     const runtime = providerHarness(agent);
     const verifyGateway = vi.fn(async () => undefined);
+    const restoreStartupState = vi.fn();
     const stopSandboxChannels = vi.fn();
 
     await expect(
       startSandbox(runtime.sandboxName, {
         getSandbox: () => runtime.entry,
         runtimeProviders: runtime.providers,
+        restoreStartupState,
         verifyGateway,
         log: vi.fn(),
       }),
@@ -157,6 +159,7 @@ describe("dormant Podman runtime provider", () => {
       }),
     ).toEqual({ exitCode: 0 });
 
+    expect(restoreStartupState).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
     expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
     expect(stopSandboxChannels).toHaveBeenCalledWith(
       runtime.sandboxName,

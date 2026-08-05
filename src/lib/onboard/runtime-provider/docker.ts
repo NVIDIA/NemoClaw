@@ -11,6 +11,7 @@ import {
   findLabeledSandboxContainers,
   recoverDockerDriverSandbox,
 } from "../docker-driver-sandbox-recovery";
+import { createDockerManagedBootstrapSurface } from "../managed-bootstrap/docker-runtime";
 import {
   MANAGED_IMAGE_CAPABILITY_CONTRACT_VERSION,
   MANAGED_IMAGE_PLATFORMS,
@@ -158,7 +159,13 @@ function startDockerSandbox(
     return { exitCode: 0 };
   }
 
-  const recovery = deps.recoverSandbox(input.sandboxName);
+  // Docker health is an image-level signal, not the lifecycle authority for
+  // `start`. Once the container is running, verifyStarted performs the
+  // provider-owned OpenShell, managed gateway, and host-forward recovery.
+  // Waiting for Docker health here can prevent that repair from running.
+  const recovery = deps.recoverSandbox(input.sandboxName, {
+    readiness: "runtime-running",
+  });
   if (!recovery.recovered) {
     return {
       exitCode: 1,
@@ -353,7 +360,7 @@ export function createDockerRuntimeProviderBundle(
         "workload-cleanup",
       ],
     },
-    bootstrap: unsupported(providerId, futureReason),
+    bootstrap: createDockerManagedBootstrapSurface(providerId),
     snapshot: createDockerRuntimeProviderSnapshotSurface(providerId, {
       captureHostCommand: deps.captureHostCommand,
       queryRuntimeSnapshot: deps.queryRuntimeSnapshot,

@@ -143,6 +143,8 @@ The preflight derives every required execution and these dispatch groups from th
 - `parallelExplicit`: explicit-only selectors that require neither the Launchable E2E job nor runner confirmation; and
 - `conditional`: Jetson or another lane that must not queue until its authoritative runner inventory is confirmed online.
 
+An explicit-only job may declare `RELEASE_E2E_ACTIVATION_PATH` in its workflow environment. The preflight includes that job and all of its expanded executions only when the exact relative path exists at the candidate SHA. When the path is absent, the job is a dormant lane: do not dispatch it and do not treat it as missing release evidence.
+
 First feed applicable existing runs for the candidate SHA into the ledger.
 Dispatch only groups that still lack green evidence.
 When no applicable exact Brev evidence exists, load `nemoclaw-maintainer-e2e` and dispatch full mode for that SHA.
@@ -235,6 +237,14 @@ Before showing the confirmation prompt, present:
 
 Do not ask for the phrase until each test and the exact Brev Launchable E2E job has successful evidence or its own itemized maintainer exception.
 Immediately before asking, refresh `origin/main` once and compare its full SHA with the plan. If it moved, discard all prior candidate-bound evidence, regenerate the plan, rerun preflight and every required default, explicit, conditional, and exact Brev Launchable E2E group for the new SHA, capture a new manifest, and rebuild the ledger before requesting confirmation; merges did not need to stop while the earlier evidence ran.
+
+Exercise the configured Git signing backend before asking for confirmation:
+
+```bash
+npm run release:cut -- --plan <plan.json> --preflight-only
+```
+
+Require status 0. This preflight creates and deletes one local temporary tag. It does not push a ref. Git selects the maintainer's configured OpenPGP, SSH, or X.509 signer.
 
 Ask the maintainer to paste this phrase:
 
@@ -373,6 +383,7 @@ If the Announcement is valid, return its URL with the release artifacts and mark
 - Launchable E2E or cleanup evidence is missing or invalid: reject the run. Do not infer Launchable E2E success from the workflow conclusion.
 - `origin/main` moved after plan generation: regenerate the plan and ask for the new confirmation phrase.
 - Remote semver tag already exists: stop; do not retag unless the maintainer explicitly starts protected-tag remediation.
+- Signing preflight fails: fix the reported Git signer or signing-key failure. Run the preflight again before requesting confirmation.
 - `latest` workflow fails or times out: report the workflow/status; do not move `latest` manually.
 - `latest` workflow rejects a rollback: keep `latest` unchanged, inspect the plan target commit, and regenerate the plan for the current `origin/main` tip if appropriate.
 - `lkg` changed: stop and escalate to a release admin.

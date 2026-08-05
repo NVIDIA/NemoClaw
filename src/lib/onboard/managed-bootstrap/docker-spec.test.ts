@@ -14,7 +14,7 @@ describe("managed bootstrap Docker launch spec", () => {
     const first = createDockerGpuInspectFixture();
     const second = structuredClone(first);
     second.Id = "another-runtime-id";
-    second.State = { Running: false, Dead: true };
+    Object.assign(second, { State: { Running: false, Dead: true } });
     second.NetworkSettings!.Networks!["openshell-docker"]!.IPAddress = "172.18.0.99";
     second.NetworkSettings!.Networks!["openshell-docker"]!.Gateway = "172.18.0.254";
 
@@ -29,7 +29,7 @@ describe("managed bootstrap Docker launch spec", () => {
   it("changes the hash when a reproducible launch field changes", () => {
     const first = createDockerGpuInspectFixture();
     const second = structuredClone(first);
-    second.Config!.StopTimeout = 45;
+    Object.assign(second.Config!, { StopTimeout: 45 });
 
     expect(normalizeDockerManagedBootstrapLaunchSpec(second).hash).not.toBe(
       normalizeDockerManagedBootstrapLaunchSpec(first).hash,
@@ -54,11 +54,36 @@ describe("managed bootstrap Docker launch spec", () => {
     );
   });
 
+  it("detaches and deeply freezes canonical launch state at the hashed boundary", () => {
+    const inspect = createDockerGpuInspectFixture();
+    const normalized = normalizeDockerManagedBootstrapLaunchSpec(inspect);
+    const { canonicalJson, hash } = normalized;
+    const config = normalized.spec.inspect.Config as Record<string, unknown>;
+    const hostConfig = normalized.spec.inspect.HostConfig as Record<string, unknown>;
+    const network = normalized.spec.inspect.NetworkSettings!.Networks!["openshell-docker"]!;
+
+    expect(() => Object.assign(config, { StopTimeout: 999 })).toThrow(TypeError);
+    expect(() => Object.assign(hostConfig, { Runtime: "mutated" })).toThrow(TypeError);
+    expect(() => network.Aliases!.push("mutated")).toThrow(TypeError);
+
+    Object.assign(inspect.Config!, { StopTimeout: 45 });
+    Object.assign(inspect.HostConfig!, { Runtime: "mutated" });
+    inspect.NetworkSettings!.Networks!["openshell-docker"]!.Aliases!.push("mutated");
+
+    expect(normalized.spec.inspect.Config).not.toHaveProperty("StopTimeout");
+    expect(normalized.spec.inspect.HostConfig).not.toHaveProperty("Runtime");
+    expect(network.Aliases).toEqual(["openshell-alpha"]);
+    expect(normalized.canonicalJson).toBe(`${JSON.stringify(normalized.spec)}\n`);
+    expect(normalized.canonicalJson).toBe(canonicalJson);
+    expect(normalized.hash).toBe(hash);
+    expect(normalizeDockerManagedBootstrapLaunchSpec(inspect).hash).not.toBe(hash);
+  });
+
   it.each([
     {
       name: "anonymous Config.Volumes whose data source cannot be proven",
       mutate: (inspect: ReturnType<typeof createDockerGpuInspectFixture>) => {
-        inspect.Config!.Volumes = { "/var/lib/state": {} };
+        Object.assign(inspect.Config!, { Volumes: { "/var/lib/state": {} } });
       },
       error: /config fields it cannot reproduce exactly: Volumes\./u,
     },
