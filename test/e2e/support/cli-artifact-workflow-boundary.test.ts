@@ -67,7 +67,7 @@ function workflowFixture(): Workflow {
 }
 
 type RestoreFixtureOptions = {
-  archive?: "valid" | "non-dist" | "link" | "traversal";
+  archive?: "valid" | "missing-shared" | "non-dist" | "link" | "traversal";
   buildIdentitySha?: string;
   expectedPayloadSha256?: string;
   manifestCandidateSha?: string;
@@ -87,6 +87,7 @@ function sha256File(file: string): string {
 function writeCliArchive(
   context: ArchiveFixtureContext,
   customizeDist: (dist: string) => void,
+  customizeShared: (shared: string) => void = () => undefined,
 ): void {
   const dist = path.join(context.payloadRoot, "dist");
   const shared = path.join(context.payloadRoot, "nemoclaw", "dist", "shared");
@@ -110,6 +111,8 @@ function writeCliArchive(
   ]) {
     fs.writeFileSync(path.join(shared, boundary), "module.exports = {};\n");
   }
+  customizeShared(shared);
+
   customizeDist(dist);
   execFileSync("tar", [
     "-cf",
@@ -129,6 +132,14 @@ function writeLinkArchive(context: ArchiveFixtureContext): void {
   writeCliArchive(context, (dist) => {
     fs.symlinkSync("nemoclaw.js", path.join(dist, "linked-cli.js"));
   });
+}
+
+function writeMissingSharedArchive(context: ArchiveFixtureContext): void {
+  writeCliArchive(
+    context,
+    () => undefined,
+    (shared) => fs.rmSync(path.join(shared, "sandbox-name.cjs")),
+  );
 }
 
 function writeNonDistArchive(context: ArchiveFixtureContext): void {
@@ -154,6 +165,8 @@ function writeTraversalArchive(context: ArchiveFixtureContext): void {
 
 const ARCHIVE_FIXTURE_WRITERS = {
   link: writeLinkArchive,
+  "missing-shared": writeMissingSharedArchive,
+
   "non-dist": writeNonDistArchive,
   traversal: writeTraversalArchive,
   valid: writeValidArchive,
@@ -444,6 +457,13 @@ describe("exact-commit CLI artifact workflow boundary", () => {
     expectRestoreFailure(
       { expectedPayloadSha256: "f".repeat(64) },
       "exact-commit CLI artifact payload digest mismatch",
+    );
+  });
+
+  it("rejects a payload missing a compiled shared boundary before activation (#7915)", () => {
+    expectRestoreFailure(
+      { archive: "missing-shared" },
+      "restored CLI artifact is missing shared boundary sandbox-name.cjs",
     );
   });
 
