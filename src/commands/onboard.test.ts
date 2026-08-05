@@ -85,6 +85,15 @@ describe("onboard oclif command", () => {
     );
   });
 
+  it("accepts the hidden portable experimental profile", async () => {
+    await OnboardCliCommand.run(["--experimental-profile", "portable"], rootDir);
+
+    expect(runOnboardAction).toHaveBeenCalledWith(
+      expect.objectContaining({ "experimental-profile": "portable" }),
+      mocks.onboardRuntimeDeps,
+    );
+  });
+
   it.each([
     ["--gpu", "--no-gpu"],
     ["--sandbox-gpu", "--no-sandbox-gpu"],

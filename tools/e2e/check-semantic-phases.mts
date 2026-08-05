@@ -95,6 +95,8 @@ const E2E_ROOT = path.join(REPO_ROOT, "test", "e2e");
 const E2E_PROCESS_ROOTS = [E2E_ROOT, path.join(REPO_ROOT, "tools", "e2e")];
 const E2E_RUNTIME_OBSERVABILITY_FILES = [path.join(E2E_ROOT, "risk-signal-reporter.ts")];
 const REGISTRY_TARGET_TEST = "test/e2e/live/registry-targets.test.ts";
+const WINDOWS_MXC_OPENCLAW_HELPER =
+  "test/e2e/live/windows-mxc-openclaw-process-container-helpers.ts";
 const LIVE_TEST_FORWARDERS = new Map([
   ["test/e2e/live/bootstrap-install-smoke.test.ts", "test/e2e/live/launchable-smoke.test.ts"],
 ]);
@@ -106,6 +108,99 @@ type SemanticPhaseWorkflowPlan = {
   testMatrix: readonly CredentialFreeTestMatrixRow[];
 };
 type SemanticPhaseWorkflowInventory = Pick<FreeStandingJobsInventory, "liveTestToJobs">;
+
+export function validateWindowsMxcControlBoundarySource(source: string): string[] {
+  const sourceFile = ts.createSourceFile(
+    WINDOWS_MXC_OPENCLAW_HELPER,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const failures: string[] = [];
+  const controlCalls = new Set([
+    "exec",
+    "execFile",
+    "execFileSync",
+    "execSync",
+    "runCommand",
+    "spawn",
+    "spawnObservedChild",
+    "spawnSync",
+  ]);
+  let createPosition: number | null = null;
+  const deletePositions: number[] = [];
+
+  function containsWxcExecPath(node: ts.Node): boolean {
+    let found = false;
+    function inspect(candidate: ts.Node): void {
+      if (
+        (ts.isIdentifier(candidate) && candidate.text === "wxcExecPath") ||
+        (ts.isPropertyAccessExpression(candidate) && candidate.name.text === "wxcExecPath")
+      ) {
+        found = true;
+        return;
+      }
+      ts.forEachChild(candidate, inspect);
+    }
+    inspect(node);
+    return found;
+  }
+
+  function invokedName(expression: ts.Expression): string | null {
+    if (ts.isIdentifier(expression)) return expression.text;
+    if (ts.isPropertyAccessExpression(expression)) return expression.name.text;
+    return null;
+  }
+
+  function commandKind(node: ts.CallExpression): "create" | "delete" | null {
+    const name = invokedName(node.expression);
+    if (name !== "runCommand" && name !== "runOpenShellCommand") return null;
+    const args = name === "runCommand" ? node.arguments[1] : node.arguments[0];
+    if (!args || !ts.isArrayLiteralExpression(args) || args.elements.length < 2) return null;
+    const [scope, action, target] = args.elements;
+    if (!ts.isStringLiteralLike(scope) || scope.text !== "sandbox") return null;
+    if (!ts.isStringLiteralLike(action)) return null;
+    if (action.text === "create") return "create";
+    if (
+      action.text === "delete" &&
+      target !== undefined &&
+      ts.isIdentifier(target) &&
+      target.text === "sandboxName"
+    ) {
+      return "delete";
+    }
+    return null;
+  }
+
+  function inspect(node: ts.Node): void {
+    if (ts.isCallExpression(node)) {
+      // This deliberately broad source-level guard uses textual positions. It is
+      // not a runtime control-flow proof, and any wxcExecPath use in a process
+      // invocation subtree is rejected conservatively.
+      const name = invokedName(node.expression);
+      if (name && controlCalls.has(name) && node.arguments.some(containsWxcExecPath)) {
+        failures.push("wxc-exec must not be invoked outside the OpenShell control boundary");
+      }
+      const kind = commandKind(node);
+      if (kind === "create" && createPosition === null) createPosition = node.getStart(sourceFile);
+      if (kind === "delete") deletePositions.push(node.getStart(sourceFile));
+    }
+    ts.forEachChild(node, inspect);
+  }
+  inspect(sourceFile);
+
+  if (createPosition === null) failures.push("OpenShell sandbox create command is missing");
+  if (deletePositions.length === 0) failures.push("OpenShell sandbox delete command is missing");
+  const observedCreatePosition = createPosition;
+  if (
+    observedCreatePosition !== null &&
+    deletePositions.some((position) => position < observedCreatePosition)
+  ) {
+    failures.push("OpenShell sandbox delete must not run before sandbox create");
+  }
+  return [...new Set(failures)];
+}
 
 function credentialFreeProjectForWorkflowFile(
   file: string,
@@ -282,6 +377,14 @@ const OBSERVED_CHILD_PROGRESS_POLICIES = new Map<string, ObservedChildProgressPo
     { kind: "path", path: "options.progress" },
   ],
   ["test/e2e/live/ollama-auth-proxy.test.ts#spawnLogged", { kind: "path", path: "progress" }],
+  [
+    "test/e2e/live/windows-mxc-openclaw-process-container-helpers.ts#runCommand",
+    { kind: "path", path: "progress" },
+  ],
+  [
+    "test/e2e/live/windows-mxc-openclaw-process-container-helpers.ts#runWindowsMxcOpenClawProcessContainerQualification",
+    { kind: "path", path: "progress" },
+  ],
 ]);
 
 interface DirectChildProcessBindings {
@@ -2481,6 +2584,12 @@ export function scanLiveSourceGraph(entryFile: string): SemanticPhaseSourceGraph
   let importsSharedTest = false;
   let importsWorkflowTest = false;
 
+  if (!fs.existsSync(path.join(REPO_ROOT, WINDOWS_MXC_OPENCLAW_HELPER))) {
+    childProcessAuditFailures.push(
+      `${WINDOWS_MXC_OPENCLAW_HELPER}: required Windows MXC control-boundary source is missing`,
+    );
+  }
+
   function visit(file: string): void {
     if (visited.has(file)) return;
     visited.add(file);
@@ -2528,6 +2637,14 @@ export function scanLiveSourceGraph(entryFile: string): SemanticPhaseSourceGraph
       true,
       ts.ScriptKind.TS,
     );
+    const relativeFile = path.relative(REPO_ROOT, file).split(path.sep).join("/");
+    if (relativeFile === WINDOWS_MXC_OPENCLAW_HELPER) {
+      childProcessAuditFailures.push(
+        ...validateWindowsMxcControlBoundarySource(sourceFile.text).map(
+          (failure) => `${relativeFile}: ${failure}`,
+        ),
+      );
+    }
     directChildProcessCalls.push(
       ...collectDirectChildProcessCalls(file, sourceFile, childProcessAuditFailures),
     );

@@ -6,8 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildHfTokenDockerArgs,
   buildHfTokenForwardEnv,
-  detectVllmProfile,
-} from "../src/lib/inference/vllm.js";
+} from "../src/lib/inference/model-acquisition/hugging-face.js";
+import { detectVllmProfile } from "../src/lib/inference/vllm.js";
 
 describe("detectVllmProfile", () => {
   it("returns the Spark profile when gpu.platform === 'spark'", () => {

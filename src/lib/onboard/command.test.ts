@@ -5,12 +5,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { resolveOnboardOptions, runOnboardCommand } from "./command";
 import type { OnboardFlags } from "./command-support";
 import { invalidGatewayManagementDeclarationError } from "./gateway-management";
 import { GatewayAuthorityError } from "./gateway-teardown-authority";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 function exitWithCode(code: number): never {
   throw new Error(`exit:${code}`);
@@ -84,6 +88,7 @@ describe("onboard command options", () => {
       noGpu: false,
       autoYes: true,
       noOllamaAutostart: true,
+      experimentalProfile: null,
     });
   });
 
@@ -107,7 +112,29 @@ describe("onboard command options", () => {
       noGpu: false,
       autoYes: false,
       noOllamaAutostart: false,
+      experimentalProfile: null,
     });
+  });
+
+  it("resolves the portable profile to deterministic unattended defaults", () => {
+    expect(resolve({ "experimental-profile": "portable" })).toMatchObject({
+      experimentalProfile: "portable",
+      nonInteractive: true,
+      fresh: true,
+      autoYes: true,
+      noOllamaAutostart: true,
+    });
+  });
+
+  it("rejects resume when the portable profile requires a deterministic fresh install", () => {
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        { "experimental-profile": "portable", resume: true },
+        { error: (message = "") => errors.push(message) },
+      ),
+    ).toThrow("exit:1");
+    expect(errors).toContain("  --resume cannot be combined with --experimental-profile portable.");
   });
 
   it("maps --no-observability to an explicit disabled request", () => {
@@ -255,6 +282,41 @@ describe("onboard command options", () => {
     });
 
     expect(runOnboard).toHaveBeenCalledWith(expect.objectContaining({ resume: true }));
+  });
+
+  it("prepares and scopes portable profile defaults around onboarding", async () => {
+    vi.stubEnv("NEMOCLAW_EXPERIMENTAL_PROFILE", "previous-profile");
+    vi.stubEnv("NEMOCLAW_PROVIDER", "previous-provider");
+    vi.stubEnv("NEMOCLAW_MODEL", "previous-model");
+    vi.stubEnv("NEMOCLAW_OLLAMA_NO_AUTOSTART", "0");
+    const observed: Record<string, string | undefined> = {};
+    await runOnboardCommand({
+      flags: { "experimental-profile": "portable" },
+      env: {},
+      runOnboard: async () => {
+        for (const key of [
+          "NEMOCLAW_EXPERIMENTAL_PROFILE",
+          "NEMOCLAW_PROVIDER",
+          "NEMOCLAW_MODEL",
+          "NEMOCLAW_OLLAMA_NO_AUTOSTART",
+        ]) {
+          observed[key] = process.env[key];
+        }
+      },
+    });
+
+    expect(observed).toEqual({
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "portable",
+      NEMOCLAW_PROVIDER: "ollama",
+      NEMOCLAW_MODEL: "qwen3-vl:4b",
+      NEMOCLAW_OLLAMA_NO_AUTOSTART: "1",
+    });
+    expect(process.env).toMatchObject({
+      NEMOCLAW_EXPERIMENTAL_PROFILE: "previous-profile",
+      NEMOCLAW_PROVIDER: "previous-provider",
+      NEMOCLAW_MODEL: "previous-model",
+      NEMOCLAW_OLLAMA_NO_AUTOSTART: "0",
+    });
   });
 
   it("treats a prompt EOF during onboarding as cancellation and exits non-zero (#5976)", async () => {
