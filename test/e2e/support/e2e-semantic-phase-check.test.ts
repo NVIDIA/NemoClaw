@@ -74,6 +74,33 @@ describe("semantic E2E phase checker", () => {
     ]);
   });
 
+  test("rejects in-sandbox exec after Windows MXC process_container creation", () => {
+    const source = `
+      async function qualify(sandboxName) {
+        await runOpenShellCommand(["sandbox", "create", "--", "exit"], "create");
+        await runOpenShellCommand(["sandbox", "delete", sandboxName], "delete");
+      }
+    `;
+
+    expect(validateWindowsMxcControlBoundarySource(source)).toEqual([
+      "OpenShell process_container create must not request in-sandbox exec",
+    ]);
+  });
+
+  test("rejects in-sandbox exec when a later Windows MXC create omits it", () => {
+    const source = `
+      async function qualify(cli, env, progress, sandboxName) {
+        await runCommand(cli, ["sandbox", "create", "--", "exit"], env, progress, "create");
+        await runCommand(cli, ["sandbox", "create", "--name", sandboxName], env, progress, "retry");
+        await runCommand(cli, ["sandbox", "delete", sandboxName], env, progress, "delete");
+      }
+    `;
+
+    expect(validateWindowsMxcControlBoundarySource(source)).toEqual([
+      "OpenShell process_container create must not request in-sandbox exec",
+    ]);
+  });
+
   // source-shape-contract: compatibility -- Generated policy output must precede semantic collection and remain shared with the canonical CLI build
   test("builds the policy boundary before semantic collection and CLI compilation", () => {
     const scripts = (
