@@ -220,7 +220,7 @@ with tempfile.TemporaryDirectory() as root:
     control._gateway_candidates = lambda *_args: [current_gateway[0]]
     control._preflight = lambda *_args: None
     control._controller_process_identity = lambda _reader: controller
-    control._wait_for_healthy_gateway = lambda *_args: current_gateway[0]
+    control._wait_for_healthy_gateway = lambda *_args, **_kwargs: current_gateway[0]
 
     observed_marker = []
     def replace_after_wait(_reader, gateway, _recovery_deadline=None):

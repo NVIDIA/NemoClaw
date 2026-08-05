@@ -730,7 +730,9 @@ with tempfile.TemporaryDirectory() as root:
         control._detect_agent = lambda: "openclaw"
         control._agent_spec = lambda *_args: control.AgentSpec("openclaw", 18642)
         control._gateway_candidates = lambda reader, *_args: [reader.capture(43)]
-        control._wait_for_healthy_gateway = lambda reader, *_args: reader.capture(43)
+        control._wait_for_healthy_gateway = (
+            lambda reader, *_args, **_kwargs: reader.capture(43)
+        )
         control._terminate_gateway = (
             lambda _reader, identity, _recovery_deadline=None: (
                 observe_expected_exit_lease(identity, "openclaw-restart")

@@ -116,6 +116,7 @@ real_acquire_lock = control._acquire_expected_exit_lock
 real_publish_lease = control._publish_expected_exit_lease
 real_close_lock = control._close_expected_exit_lock
 real_clear_lease = control._clear_expected_exit_lease
+real_terminate_gateway = control._terminate_gateway
 control.ProcReader = FakeProcReader
 control._acquire_expected_exit_lock = lambda recovery_deadline: (
     observed["lock"].append(recovery_deadline) or lock
@@ -201,6 +202,7 @@ control._acquire_expected_exit_lock = real_acquire_lock
 control._publish_expected_exit_lease = real_publish_lease
 control._close_expected_exit_lock = real_close_lock
 control._clear_expected_exit_lease = real_clear_lease
+control._terminate_gateway = real_terminate_gateway
 with tempfile.TemporaryDirectory() as root:
     proc_root = os.path.join(root, "proc")
     system_root = os.path.join(root, "system")
@@ -271,8 +273,8 @@ before_recapture_status = error_code(
 )
 before_recapture_result = [
     before_recapture_status,
-    recapture_calls,
-    termination_signals,
+    list(recapture_calls),
+    list(termination_signals),
 ]
 
 termination_clock[0] = 0.0
@@ -292,8 +294,8 @@ during_recapture_status = error_code(
 )
 during_recapture_result = [
     during_recapture_status,
-    recapture_calls,
-    termination_signals,
+    list(recapture_calls),
+    list(termination_signals),
 ]
 
 print(json.dumps({
@@ -318,6 +320,7 @@ spec.loader.exec_module(control)
 
 real_connection = control.http.client.HTTPConnection
 clock = [0.0]
+control.time.monotonic = lambda: clock[0]
 active = {}
 
 
