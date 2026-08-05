@@ -205,6 +205,25 @@ hermes                     Self-improving AI agent with learning loop (Nous Rese
 langchain-deepagents-code  Terminal coding agent built on the Deep Agents SDK
 ```
 
+### `$$nemoclaw profiles list`
+
+List the serving profiles installed with NemoClaw and evaluate them against the current host.
+The command reports each profile's stable ID, display name, inference backend, model, topology, selection mode, support state, estimated downloads, and incompatibility reason.
+It reads the serving catalog and host readiness state without downloading a model or changing host, gateway, inference, or sandbox resources.
+
+```bash
+$$nemoclaw profiles list
+```
+
+Use `--json` for machine-readable output with the same profile fields.
+
+```bash
+$$nemoclaw profiles list --json
+```
+
+Use the stable `id` value with `$$nemoclaw onboard --profile <name>`.
+Display names are accepted when they identify exactly one profile, but stable IDs are suitable for scripts and automation.
+
 ### `$$nemoclaw onboard`
 
 Run the interactive setup wizard (recommended for new installs).
@@ -212,7 +231,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```bash
-$$nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
+$$nemoclaw onboard [--profile <name>] [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--observability | --no-observability] [--control-ui-port <N>] [--events=jsonl] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
 <AgentOnly variant="hermes">
@@ -238,6 +257,22 @@ nemoclaw onboard --agent langchain-deepagents-code [options]
 
 `--agent` accepts the canonical manifest names from `$$nemoclaw agents list` plus common aliases.
 For example, `nemohermes` resolves to `hermes`, while `dcode`, `deepagents`, `deepagents-code`, and `langchain` resolve to `langchain-deepagents-code`.
+
+#### `--profile <name>`
+
+Select one serving profile from `$$nemoclaw profiles list` for interactive or non-interactive onboarding.
+The flag is generic and does not add a model-specific command or flag.
+NemoClaw maps a unique display name to its stable catalog ID and passes that ID to the managed inference path.
+
+```bash
+$$nemoclaw onboard --profile <profile-id>
+```
+
+NemoClaw rejects an unknown, ambiguous, disabled, or incompatible profile before image or model downloads begin.
+It also rejects `--profile` when you combine it with `NEMOCLAW_PROVIDER`, `NEMOCLAW_MODEL`, `NEMOCLAW_VLLM_MODEL`, `NEMOCLAW_SERVING_PRESET`, `NEMOCLAW_MANAGED_CLUSTER_PEERS`, or `NEMOCLAW_VLLM_EXTRA_ARGS` overrides.
+Run `$$nemoclaw profiles list` to inspect an incompatibility reason before onboarding.
+
+If you omit `--profile`, onboarding uses the same provider and model defaults as an installation without this feature.
 
 #### `--events=jsonl`
 

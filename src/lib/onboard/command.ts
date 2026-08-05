@@ -5,6 +5,14 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { formatAgentAliasSuffix, resolveAgentNameAlias } from "../agent/aliases";
+import { loadServingCatalog } from "../inference/serving/catalog-loader";
+import { NEMOCLAW_SERVING_PRESET_ENV } from "../inference/serving/managed-cluster-discovery";
+import {
+  listServingProfiles,
+  type ServingProfileListEntry,
+} from "../inference/serving/profile-list";
+import type { ServingPreset } from "../inference/serving/types";
+import { VLLM_EXTRA_ARGS_ENV } from "../inference/vllm-models";
 import {
   resolveToolDisclosureRequest,
   TOOL_DISCLOSURE_ENV,
@@ -44,11 +52,13 @@ export interface OnboardCommandOptions {
   autoYes: boolean;
   noOllamaAutostart: boolean;
   experimentalProfile: ExperimentalOnboardProfile | null;
+  servingProfile: string | null;
 }
 
 export interface ResolveOnboardOptionsDeps {
   env: NodeJS.ProcessEnv;
   listAgents?: () => string[];
+  listServingProfiles?: () => ServingProfileListEntry[];
   error?: (message?: string) => void;
   exit?: (code: number) => never;
 }
@@ -159,6 +169,74 @@ function resolveExperimentalProfile(flags: OnboardFlags): ExperimentalOnboardPro
     : null;
 }
 
+const PROFILE_CONFLICT_ENV = [
+  "NEMOCLAW_PROVIDER",
+  "NEMOCLAW_MODEL",
+  "NEMOCLAW_VLLM_MODEL",
+  VLLM_EXTRA_ARGS_ENV,
+  "NEMOCLAW_MANAGED_CLUSTER_PEERS",
+] as const;
+
+function selectedServingPreset(candidate: string, deps: ResolveOnboardOptionsDeps): ServingPreset {
+  const matches = loadServingCatalog().presets.filter(
+    ({ metadata }) => metadata.id === candidate || metadata.displayName === candidate,
+  );
+  if (matches.length === 0) {
+    fail(deps, `  Unknown serving profile '${candidate}'. Run 'nemoclaw profiles list'.`);
+  }
+  if (matches.length > 1) {
+    fail(deps, `  Serving profile name '${candidate}' is ambiguous; select a stable profile ID.`);
+  }
+  const selected = matches[0]!;
+  if (selected.spec.selection === "disabled" || selected.metadata.supportState === "disabled") {
+    fail(deps, `  Serving profile '${selected.metadata.id}' is disabled.`);
+  }
+  return selected;
+}
+
+function validateServingProfileConflicts(
+  selected: ServingPreset,
+  deps: ResolveOnboardOptionsDeps,
+): void {
+  const existingPreset = String(deps.env[NEMOCLAW_SERVING_PRESET_ENV] ?? "").trim();
+  if (existingPreset && existingPreset !== selected.metadata.id) {
+    fail(
+      deps,
+      `  --profile ${selected.metadata.id} conflicts with ${NEMOCLAW_SERVING_PRESET_ENV}=${existingPreset}.`,
+    );
+  }
+  const conflicts = PROFILE_CONFLICT_ENV.filter((name) => String(deps.env[name] ?? "").trim());
+  if (conflicts.length > 0) {
+    fail(deps, `  --profile cannot be combined with inference overrides: ${conflicts.join(", ")}.`);
+  }
+}
+
+function validateServingProfileCompatibility(
+  selected: ServingPreset,
+  deps: ResolveOnboardOptionsDeps,
+): void {
+  const profile = (deps.listServingProfiles ?? listServingProfiles)().find(
+    ({ id }) => id === selected.metadata.id,
+  );
+  if (!profile?.compatible) {
+    fail(
+      deps,
+      `  Serving profile '${selected.metadata.id}' is incompatible: ${profile?.incompatibilityReason ?? "compatibility could not be evaluated"}.`,
+    );
+  }
+}
+
+function resolveServingProfile(
+  requested: string | undefined,
+  deps: ResolveOnboardOptionsDeps,
+): string | null {
+  if (requested === undefined) return null;
+  const selected = selectedServingPreset(requested.trim(), deps);
+  validateServingProfileConflicts(selected, deps);
+  validateServingProfileCompatibility(selected, deps);
+  return selected.metadata.id;
+}
+
 function validateExperimentalProfileLifecycle(
   flags: OnboardFlags,
   profile: ExperimentalOnboardProfile | null,
@@ -211,6 +289,7 @@ export function resolveOnboardOptions(
     autoYes: withPortableDefault(flags.yes, experimentalProfile),
     noOllamaAutostart: withPortableDefault(flags["no-ollama-autostart"], experimentalProfile),
     experimentalProfile,
+    servingProfile: resolveServingProfile(flags.profile, deps),
   };
 }
 
@@ -283,9 +362,20 @@ function applyPortableEnvironment(options: OnboardCommandOptions): () => void {
   return restore;
 }
 
+function applyServingProfileEnvironment(options: OnboardCommandOptions): () => void {
+  if (!options.servingProfile) return () => {};
+  const previous = process.env[NEMOCLAW_SERVING_PRESET_ENV];
+  process.env[NEMOCLAW_SERVING_PRESET_ENV] = options.servingProfile;
+  return () => {
+    if (previous === undefined) delete process.env[NEMOCLAW_SERVING_PRESET_ENV];
+    else process.env[NEMOCLAW_SERVING_PRESET_ENV] = previous;
+  };
+}
+
 export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<void> {
   const options = resolveOnboardOptions(deps.flags, deps);
   const restorePortableEnvironment = applyPortableEnvironment(options);
+  const restoreServingProfileEnvironment = applyServingProfileEnvironment(options);
   if (options.noOllamaAutostart) process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
   // Keep direct callers and the legacy monolithic onboard path on the same
   // canonical source. No value is written for the default so resume/rebuild
@@ -297,6 +387,7 @@ export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<vo
   } catch (error) {
     handleOnboardCommandError(error, deps);
   } finally {
+    restoreServingProfileEnvironment();
     restorePortableEnvironment();
   }
 }

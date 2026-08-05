@@ -5,6 +5,7 @@ import type { SystemReadinessReport } from "../../readiness/types.js";
 
 export type ServingDefinitionKind = "ServingRecipe" | "ServingPreset";
 export type ServingSelectionPolicy = "automatic" | "explicit-only" | "disabled";
+export type ServingSupportState = "supported" | "experimental" | "disabled";
 export type ReadinessEntityKind = "observation" | "capability" | "qualification";
 export type ReadinessValueType = "boolean" | "number" | "string" | "version";
 export type ServingReadinessObservationRole =
@@ -17,6 +18,7 @@ export type ServingReadinessObservationRole =
 export interface ServingMetadata {
   readonly id: string;
   readonly displayName?: string;
+  readonly supportState?: ServingSupportState;
 }
 
 export interface ServingArgument {

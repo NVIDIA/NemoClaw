@@ -32,6 +32,20 @@ function resolve(
   });
 }
 
+const COMPATIBLE_NANO_PROFILE = {
+  id: "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b",
+  displayName: "NVIDIA Nemotron 3 Nano 30B-A3B on one DGX Spark",
+  backend: "install-llama-cpp",
+  model: "unsloth/Nemotron-3-Nano-30B-A3B-GGUF",
+  topology: "single-host",
+  selectionMode: "explicit-only" as const,
+  supportState: "experimental" as const,
+  estimatedImageDownloadBytes: 1,
+  estimatedModelDownloadBytes: 1,
+  compatible: true,
+  incompatibilityReason: null,
+};
+
 // Recreation is selected three ways and only the first sets the flag that
 // `resolveOnboardOptions` records: the explicit flag, NEMOCLAW_RECREATE_SANDBOX
 // read inside `runOnboard`, and drift detected mid-run. All three reach the same
@@ -43,6 +57,62 @@ const RECREATE_SELECTIONS: [string, OnboardFlags, Record<string, string>][] = [
 ];
 
 describe("onboard command options", () => {
+  it("resolves a generic serving profile ID without changing defaults (#8384)", () => {
+    expect(
+      resolve(
+        { profile: "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b" },
+        { listServingProfiles: () => [COMPATIBLE_NANO_PROFILE] },
+      ).servingProfile,
+    ).toBe("llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b");
+    expect(
+      resolve(
+        { profile: COMPATIBLE_NANO_PROFILE.displayName },
+        { listServingProfiles: () => [COMPATIBLE_NANO_PROFILE] },
+      ).servingProfile,
+    ).toBe(COMPATIBLE_NANO_PROFILE.id);
+    expect(resolve({}).servingProfile).toBeNull();
+  });
+
+  it("rejects unknown or conflicting serving profile intent before onboarding (#8384)", () => {
+    const errors: string[] = [];
+    expect(() =>
+      resolve({ profile: "missing-profile" }, { error: (message = "") => errors.push(message) }),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("Run 'nemoclaw profiles list'");
+
+    errors.length = 0;
+    expect(() =>
+      resolve(
+        { profile: "llama-cpp.dgx-spark-gb10.single.nemotron-3-nano-30b-a3b" },
+        {
+          env: { NEMOCLAW_PROVIDER: "ollama" },
+          listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
+          error: (message = "") => errors.push(message),
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("cannot be combined with inference overrides");
+    expect(errors.join("\n")).toContain("NEMOCLAW_PROVIDER");
+
+    errors.length = 0;
+    expect(() =>
+      resolve(
+        { profile: COMPATIBLE_NANO_PROFILE.id },
+        {
+          listServingProfiles: () => [
+            {
+              ...COMPATIBLE_NANO_PROFILE,
+              compatible: false,
+              incompatibilityReason: "A host requirement is not met.",
+            },
+          ],
+          error: (message = "") => errors.push(message),
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("incompatible: A host requirement is not met");
+  });
+
   it("maps typed oclif flags to onboarding options", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-options-"));
     const dockerfilePath = path.join(tmpDir, "Custom.Dockerfile");
@@ -89,6 +159,7 @@ describe("onboard command options", () => {
       autoYes: true,
       noOllamaAutostart: true,
       experimentalProfile: null,
+      servingProfile: null,
     });
   });
 
@@ -113,6 +184,7 @@ describe("onboard command options", () => {
       autoYes: false,
       noOllamaAutostart: false,
       experimentalProfile: null,
+      servingProfile: null,
     });
   });
 
@@ -282,6 +354,23 @@ describe("onboard command options", () => {
     });
 
     expect(runOnboard).toHaveBeenCalledWith(expect.objectContaining({ resume: true }));
+  });
+
+  it("scopes the selected catalog preset to one onboarding run (#8384)", async () => {
+    vi.stubEnv("NEMOCLAW_SERVING_PRESET", "previous-profile");
+    let observed: string | undefined;
+    await runOnboardCommand({
+      flags: { profile: COMPATIBLE_NANO_PROFILE.id },
+      env: {},
+      listServingProfiles: () => [COMPATIBLE_NANO_PROFILE],
+      runOnboard: async (options) => {
+        observed = process.env.NEMOCLAW_SERVING_PRESET;
+        expect(options.servingProfile).toBe(COMPATIBLE_NANO_PROFILE.id);
+      },
+    });
+
+    expect(observed).toBe(COMPATIBLE_NANO_PROFILE.id);
+    expect(process.env.NEMOCLAW_SERVING_PRESET).toBe("previous-profile");
   });
 
   it("prepares and scopes portable profile defaults around onboarding", async () => {
