@@ -242,6 +242,25 @@ describe("shared Docker Hub authentication workflow boundary (#6961)", () => {
         );
       }
     }
+
+    const orderingErrors = validateMutation((workflow) => {
+      for (const jobName of jobNames) {
+        const job = workflow.jobs[jobName];
+        const steps = job.steps!;
+        const cleanup = namedStep(job, "Remove Docker auth before release-pinned fixture");
+        const restore = namedStep(job, "Restore exact-commit CLI artifact");
+        expect(cleanup).toBeDefined();
+        expect(restore).toBeDefined();
+        steps.splice(steps.indexOf(cleanup!), 1);
+        steps.splice(steps.indexOf(restore!) + 1, 0, cleanup!);
+      }
+    });
+
+    for (const jobName of jobNames) {
+      expect(orderingErrors).toContain(
+        `${jobName} step 'Remove Docker auth before release-pinned fixture' must precede 'Prepare E2E workspace'`,
+      );
+    }
   });
 
   it("rejects missing auth and cleanup coverage for every classified image job", () => {
