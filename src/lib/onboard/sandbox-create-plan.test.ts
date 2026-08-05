@@ -162,7 +162,7 @@ describe("resolveSandboxCreateIntent", () => {
       extraProviders: ["custom-provider", "custom-provider", ""],
       staleExtraProviders: ["stale-provider", "stale-provider", ""],
       hermesToolGateways: ["github"],
-      hostMounts: [{ source: "/srv/project", target: "/sandbox/project", readOnly: true }],
+      hostMounts: [{ source: "/srv/project", target: "/sandbox/project", readOnly: true as const }],
       sandboxGpuConfig,
       gpuCreateArgs: ["--gpu", "--gpu-device", "nvidia.com/gpu=0"],
       resourceCreateArgs: ["--cpu", "4", "--memory", "16Gi"],

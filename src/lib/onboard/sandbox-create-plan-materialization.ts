@@ -23,7 +23,7 @@ const DCODE_MCP_SNAPSHOT_TMPFS_MOUNT = {
   mode: 0o1777,
 } as const;
 function buildSandboxDriverConfig(intent: SandboxCreateIntent): string | null {
-  const dockerMounts: Array<Record<string, unknown>> = intent.hostMounts.map(
+  const dockerMounts: Array<Record<string, unknown>> = (intent.hostMounts ?? []).map(
     ({ source, target }) => ({ type: "bind", source, target, read_only: true }),
   );
   const podmanMounts: Array<Record<string, unknown>> = [];

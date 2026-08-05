@@ -55,7 +55,7 @@ export type SandboxCreateIntent = {
   readonly policy: SandboxCreatePolicyRequest;
   readonly gpuCreateArgs: readonly string[];
   readonly resourceCreateArgs: readonly string[];
-  readonly hostMounts: readonly SandboxHostMount[];
+  readonly hostMounts?: readonly SandboxHostMount[];
   readonly gpuRoutePlan: DockerGpuRoutePlan;
   readonly sandboxGpuLogMessage: string | null;
   readonly disabledChannelNames: readonly string[];
