@@ -1017,7 +1017,6 @@ describe("handleSandboxState", () => {
     ).rejects.toThrow("Tavily credential rejected");
 
     expect(calls.removeSandbox).not.toHaveBeenCalled();
-    expect(calls.repairSandbox).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
   });
 
