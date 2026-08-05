@@ -592,42 +592,44 @@ describe("shields — unit logic", () => {
       expect(appliedPolicy).not.toContain("mcp_bridge_alpha");
     });
 
-    it("auto-restore applies a snapshot with no managed MCP entries when policy staging is unavailable (#7952)", async () => {
-      const sandboxName = "openclaw";
-      const processToken = "d".repeat(32);
+    it("reuses the snapshot without staging when the snapshot and current policy have no managed MCP entries (#7952)", async () => {
+      const snapshotPath = "/state/policy-snapshot-no-managed-mcp.yaml";
+      const snapshotYaml = "version: 1\nnetwork_policies:\n  restrictive_baseline: {}\n";
+      const writeTempPolicy = vi.fn(() => {
+        throw new Error("policy staging is unavailable");
+      });
+      const { buildDeadlineRuntimeManagedMcpPolicy } = await import("./permissive-runtime");
+
+      const result = buildDeadlineRuntimeManagedMcpPolicy(snapshotPath, {
+        managedMcpPolicies: [],
+        snapshotManagedPolicyKeys: [],
+        readBasePolicy: () => snapshotYaml,
+        writeTempPolicy,
+      });
+
+      expect(result).toEqual({ path: snapshotPath, omissions: [] });
+      expect(writeTempPolicy).not.toHaveBeenCalled();
+    });
+
+    it("deadline restore reuses an unchanged snapshot without temporary storage when no managed MCP entries exist (#7952)", async () => {
       const snapshotPath = path.join(stateDir(), "policy-snapshot-no-managed-mcp.yaml");
       fs.mkdirSync(stateDir(), { recursive: true });
       fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies:\n  restrictive_baseline: {}\n");
-      writeState(sandboxName, {
-        shieldsDown: true,
-        shieldsPolicySnapshotPath: snapshotPath,
-        shieldsManagedMcpPolicyKeys: [],
-      });
-      writeMarker(sandboxName, {
-        pid: 2_147_483_647,
-        sandboxName,
-        snapshotPath,
-        restoreAt: new Date(Date.now() - 1_000).toISOString(),
-        processToken,
-      });
-      vi.spyOn(process, "kill").mockImplementation(routeProcessKill);
-      const { applyShieldsPolicySnapshot } = await loadShieldsModule();
-      const { buildPolicySetCommand } = await import("../policy");
       const createTempDirectory = vi.spyOn(fs, "mkdtempSync").mockImplementation(() => {
         throw Object.assign(new Error("ENOSPC: simulated temporary storage full"), {
           code: "ENOSPC",
         });
       });
+      const { buildDeadlineRuntimeManagedMcpPolicy } = await import("./permissive-runtime");
 
-      const result = applyShieldsPolicySnapshot(sandboxName, snapshotPath, {
-        transitionProcessToken: processToken,
-        deadlineAuthoritative: true,
-        expiredTimerRecovery: true,
+      const result = buildDeadlineRuntimeManagedMcpPolicy(snapshotPath, {
+        managedMcpPolicies: [],
+        snapshotManagedPolicyKeys: [],
+        readBasePolicy: () => fs.readFileSync(snapshotPath, "utf-8"),
       });
 
-      expect(result.status).toBe(0);
+      expect(result).toEqual({ path: snapshotPath, omissions: [] });
       expect(createTempDirectory).not.toHaveBeenCalled();
-      expect(buildPolicySetCommand).toHaveBeenCalledWith(snapshotPath, sandboxName);
     });
 
     it("shieldsStatus warns and stays DOWN when inline recovery fails", async () => {
