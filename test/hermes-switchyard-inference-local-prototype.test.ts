@@ -71,7 +71,9 @@ describe("Hermes Relay Switchyard inference.local prototype", () => {
       expect(SANDBOX_RUNNER).toContain(credential);
     }
     expect(SANDBOX_RUNNER).toContain("https://inference.local/v1/chat/completions");
-    expect(SANDBOX_RUNNER).toContain("nemoclaw-v3-untrusted-caller-value");
+    expect(SANDBOX_RUNNER).toContain("auth_probe_value_prefix='nemoclaw-v3-untrusted-'");
+    expect(SANDBOX_RUNNER).toContain('auth_probe_value="${auth_probe_value_prefix}caller-value"');
+    expect(RUNNER).toContain("nemoclaw-v3-untrusted-caller-value");
     expect(SANDBOX_RUNNER).toContain("^openshell:resolve:env:(v[0-9]{1,20}_)?COMPATIBLE_API_KEY$");
     expect(SANDBOX_RUNNER).toContain('"raw_provider_credentials_absent": True');
     expect(SANDBOX_RUNNER).toContain('"provider_placeholder_present": True');

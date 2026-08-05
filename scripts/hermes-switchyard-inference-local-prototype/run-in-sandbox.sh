@@ -98,7 +98,9 @@ test -n "${API_SERVER_KEY:-}"
 # OpenShell must strip it and inject the gateway-owned provider credential.
 auth_probe_payload='{"model":"caller-supplied-model","messages":[{"role":"user","content":"credential boundary probe"}],"max_tokens":8}'
 auth_probe_header_name='Authorization'
-auth_probe_header_value='Bearer caller-controlled-placeholder'
+auth_probe_value_prefix='nemoclaw-v3-untrusted-'
+auth_probe_value="${auth_probe_value_prefix}caller-value"
+auth_probe_header_value="Bearer ${auth_probe_value}"
 auth_probe_status="$(curl --silent --show-error --max-time 120 \
   --output "${AUTH_PROBE_RESPONSE}" --write-out '%{http_code}' \
   -H 'Content-Type: application/json' \
