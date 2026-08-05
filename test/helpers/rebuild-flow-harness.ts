@@ -157,10 +157,13 @@ export type RebuildFlowHarness = {
   applyPresetContentSpy: MockInstance;
   backupSandboxStateSpy: MockInstance;
   disposePreparedDcodeRebuildImageSpy: MockInstance;
+  dockerRmiSpy: MockInstance;
   errorSpy: MockInstance;
   ensureAgentBaseImageSpy: MockInstance;
   pinTrustedAgentBaseImageOverrideForOperationSpy: MockInstance;
+  pinTrustedAgentRemoteBaseImageOverrideForOperationSpy: MockInstance;
   restoreTrustedAgentBaseImageOverrideSpy: MockInstance;
+  restoreTrustedAgentRemoteBaseImageOverrideSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
   checkAndRecoverSandboxProcessesSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
@@ -378,7 +381,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     }
     return dcodeBaseImageIds.shift() ?? "sha256:dcode-base";
   });
-  vi.spyOn(dockerImage, "dockerRmi").mockReturnValue({ status: 0 });
+  const dockerRmiSpy = vi.spyOn(dockerImage, "dockerRmi").mockReturnValue({ status: 0 });
   vi.spyOn(dockerImage, "dockerTag").mockImplementation((source: unknown, target: unknown) => {
     const sourceRef = String(source);
     const sourceId =
@@ -400,6 +403,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const pinTrustedAgentBaseImageOverrideForOperationSpy = vi
     .spyOn(agentOnboard, "pinTrustedAgentBaseImageOverrideForOperation")
     .mockReturnValue(restoreTrustedAgentBaseImageOverrideSpy);
+  const restoreTrustedAgentRemoteBaseImageOverrideSpy = vi.fn();
+  const pinTrustedAgentRemoteBaseImageOverrideForOperationSpy = vi
+    .spyOn(agentOnboard, "pinTrustedAgentRemoteBaseImageOverrideForOperation")
+    .mockReturnValue(restoreTrustedAgentRemoteBaseImageOverrideSpy);
   const sessionAgentName =
     overrides.sessionAgentName === undefined ? agentName : overrides.sessionAgentName;
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(
@@ -817,10 +824,13 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     applyPresetContentSpy,
     backupSandboxStateSpy,
     disposePreparedDcodeRebuildImageSpy,
+    dockerRmiSpy,
     errorSpy,
     ensureAgentBaseImageSpy,
     pinTrustedAgentBaseImageOverrideForOperationSpy,
+    pinTrustedAgentRemoteBaseImageOverrideForOperationSpy,
     restoreTrustedAgentBaseImageOverrideSpy,
+    restoreTrustedAgentRemoteBaseImageOverrideSpy,
     executeSandboxCommandSpy,
     checkAndRecoverSandboxProcessesSpy,
     ensureMessagingHostForwardAfterRebuildSpy,

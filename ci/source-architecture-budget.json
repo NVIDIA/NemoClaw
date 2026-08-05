@@ -27,7 +27,7 @@
       "src/lib/runner.ts": 88,
       "src/lib/security/redact.ts": 51,
       "src/lib/state/onboard-session.ts": 36,
-      "src/lib/state/registry.ts": 101,
+      "src/lib/state/registry.ts": 98,
       "src/lib/state/state-root.ts": 22,
       "src/lib/subprocess-env.ts": 24,
       "src/lib/validation.ts": 25
@@ -44,10 +44,10 @@
       "src/lib/actions/sandbox/process-recovery.ts": 21,
       "src/lib/actions/sandbox/rebuild-pipeline.ts": 28,
       "src/lib/actions/sandbox/snapshot.ts": 39,
-      "src/lib/actions/uninstall/run-plan.ts": 25,
+      "src/lib/actions/uninstall/run-plan.ts": 26,
       "src/lib/inference/onboard-probes.ts": 21,
       "src/lib/inference/vllm.ts": 21,
-      "src/lib/onboard.ts": 225,
+      "src/lib/onboard.ts": 223,
       "src/lib/onboard/machine/handlers/sandbox.ts": 21,
       "src/lib/sandbox/config.ts": 22,
       "src/lib/shields/index.ts": 23
@@ -55,7 +55,7 @@
   },
   "allowedCycles": [],
   "maxRootFiles": {
-    "src/lib/onboard": 310,
+    "src/lib/onboard": 309,
     "src/lib/actions": 19,
     "src/lib/actions/sandbox": 184,
     "src/lib/state": 37,

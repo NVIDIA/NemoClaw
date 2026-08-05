@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
@@ -31,6 +31,7 @@ const HERMES_DOWNLOAD_ARTIFACT_ACTION =
   "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c";
 const HERMES_UPLOAD_ARTIFACT_ACTION =
   "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a";
+const HERMES_BASE_IMAGE_RESOLVER_ACTION = "./.github/actions/resolve-hermes-base-image";
 const HERMES_CACHE_FROM = "type=gha,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}";
 const HERMES_CACHE_TO =
   "type=gha,mode=max,scope=hermes-production-${{ runner.os }}-${{ runner.arch }}";
@@ -69,6 +70,13 @@ const REGISTRY_WRITE =
 
 function normalizeShellContinuations(run: string): string {
   return run.replace(/\\\r?\n[ \t]*/gu, " ");
+}
+
+function normalizeLocalActionPath(uses: string | undefined): string | undefined {
+  if (!uses?.startsWith("./")) {
+    return uses;
+  }
+  return posix.normalize(uses).replace(/\/+$/u, "");
 }
 
 type GuardedProductionBuildContract = {
@@ -903,6 +911,31 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
     testJob,
     "Run Hermes sandbox secret boundary test",
   );
+  const resolverActionPath = normalizeLocalActionPath(HERMES_BASE_IMAGE_RESOLVER_ACTION);
+  const resolverSteps = steps(testJob).filter(
+    (step) =>
+      step.name === "Resolve Hermes base image" ||
+      normalizeLocalActionPath(step.uses) === resolverActionPath,
+  );
+  const baseImageResolver = resolverSteps.find(
+    (step) => normalizeLocalActionPath(step.uses) === resolverActionPath,
+  );
+  if (
+    resolverSteps.length !== 1 ||
+    baseImageResolver?.name !== "Resolve Hermes base image" ||
+    stepIndex(testJob, baseImageResolver?.name ?? "") >=
+      stepIndex(testJob, secretBoundary.name ?? "")
+  ) {
+    errors.push(
+      "Hermes image tests must resolve the Hermes base image exactly once with the canonical action before the secret-boundary probe",
+    );
+  }
+  if (resolverSteps.some((step) => step.if !== undefined)) {
+    errors.push("Hermes base-image resolver must run unconditionally");
+  }
+  if (resolverSteps.some((step) => step["continue-on-error"] !== undefined)) {
+    errors.push("Hermes base-image resolver must fail closed");
+  }
   const rootEntrypoint = requireStep(
     errors,
     testJobName,

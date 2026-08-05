@@ -174,8 +174,5 @@ The re-add flow prompts for the service-account JSON again when it is not alread
 After the rebuild, send a direct message from an allowed or paired account and confirm that OpenClaw replies.
 If the webhook returns an error, verify that the public endpoint still ends in `/googlechat`, the dedicated tunnel and webhook proxy are running, and the Google Chat API configuration contains the exact same URL.
 
-Use the host-side `channels stop`, `channels start`, and `channels remove` commands to manage the integration.
-`channels stop googlechat` leaves the dedicated endpoint running so `channels start googlechat` can keep the same Google Cloud endpoint URL.
-`channels remove googlechat` and `nemoclaw <name> destroy` stop the dedicated cloudflared process and webhook proxy.
-`nemoclaw tunnel stop` does not stop the dedicated Google Chat endpoint; it controls the separate full-dashboard tunnel.
-Refer to [Manage Messaging Channels](manage-messaging-channels) for lifecycle behavior.
+Refer to [Manage Messaging Channels](manage-messaging-channels) to stop, start, or remove Google Chat after setup.
+That page explains how each command affects the bridge provider, service-account refresh material, and dedicated public endpoint.
