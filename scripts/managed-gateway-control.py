@@ -47,12 +47,14 @@ import errno
 import fcntl
 import hashlib
 import http.client
+import io
 import importlib.util
 import os
 import pwd
 import re
 import select
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -568,9 +570,11 @@ def _publish_expected_exit_lease(
     lock: ExpectedExitLock,
     identity: ProcessIdentity,
     controller: ProcessIdentity,
+    recovery_deadline: float | None = None,
 ) -> ExpectedExitLease:
     """Authorize one exact gateway exit while this root controller is live."""
 
+    _require_recovery_time(recovery_deadline)
     directory_fd = lock.directory_fd
     lock_fd = lock.lock_fd
     marker_fd = -1
@@ -587,6 +591,7 @@ def _publish_expected_exit_lease(
                 )
             finally:
                 os.close(existing_fd)
+        _require_recovery_time(recovery_deadline)
 
         payload = (
             f"v1 {identity.pid} {identity.start_time} "
@@ -627,6 +632,7 @@ def _publish_expected_exit_lease(
             marker_inode,
         ):
             raise ControlError("SUPERVISOR_UNAVAILABLE")
+        _require_recovery_time(recovery_deadline)
     except Exception:
         try:
             if marker_fd >= 0:
@@ -905,13 +911,17 @@ def _read_stable_file_with_proof_grace(
     identity: ProcessIdentity,
     name: str,
     limit: int,
+    recovery_deadline: float | None = None,
 ) -> bytes:
     """Retry an inconsistent proc read only while the pinned process is exact."""
 
     deadline = time.monotonic() + PROCESS_PROOF_GRACE_SECONDS
+    if recovery_deadline is not None:
+        deadline = min(deadline, recovery_deadline)
+    _require_recovery_time(recovery_deadline)
     while True:
         try:
-            return reader.read_stable_file(identity, name, limit)
+            value = reader.read_stable_file(identity, name, limit)
         except ControlError as error:
             if error.code != "SUPERVISOR_UNAVAILABLE":
                 raise
@@ -920,6 +930,9 @@ def _read_stable_file_with_proof_grace(
             if remaining <= 0:
                 raise
             time.sleep(min(PROCESS_PROOF_RETRY_SECONDS, remaining))
+            continue
+        _require_recovery_time(recovery_deadline)
+        return value
 
 
 def _basename(value: bytes) -> bytes:
@@ -1146,6 +1159,11 @@ def _recovery_deadline_reached(recovery_deadline: float | None) -> bool:
     )
 
 
+def _require_recovery_time(recovery_deadline: float | None) -> None:
+    if _recovery_deadline_reached(recovery_deadline):
+        raise ControlError("GATEWAY_FAILED")
+
+
 def _gateway_candidates(
     reader: ProcReader,
     supervisor: ProcessIdentity,
@@ -1260,30 +1278,112 @@ def _owns_listener(
     return False
 
 
+def _http_remaining_time(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError
+    return remaining
+
+
+class _DeadlineSocket:
+    """Apply one deadline to each socket operation used by HTTPResponse."""
+
+    def __init__(self, transport: socket.socket, deadline: float) -> None:
+        self._transport = transport
+        self._deadline = deadline
+        self._readers = 0
+        self._close_requested = False
+
+    def _set_timeout(self) -> None:
+        self._transport.settimeout(_http_remaining_time(self._deadline))
+
+    def sendall(self, data: bytes) -> None:
+        self._set_timeout()
+        self._transport.sendall(data)
+        _http_remaining_time(self._deadline)
+
+    def recv_into(self, buffer: bytearray | memoryview) -> int:
+        self._set_timeout()
+        received = self._transport.recv_into(buffer)
+        _http_remaining_time(self._deadline)
+        return received
+
+    def makefile(self, mode: str) -> io.BufferedReader:
+        if mode != "rb":
+            raise ValueError("HTTP response reader requires binary mode")
+        self._readers += 1
+        return io.BufferedReader(_DeadlineSocketReader(self))
+
+    def _release_reader(self) -> None:
+        self._readers -= 1
+        if self._close_requested and self._readers == 0:
+            self._transport.close()
+
+    def close(self) -> None:
+        self._close_requested = True
+        if self._readers == 0:
+            self._transport.close()
+
+
+class _DeadlineSocketReader(io.RawIOBase):
+    def __init__(self, owner: _DeadlineSocket) -> None:
+        super().__init__()
+        self._owner = owner
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: bytearray | memoryview) -> int:
+        return self._owner.recv_into(buffer)
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        try:
+            super().close()
+        finally:
+            self._owner._release_reader()
+
+
 def _http_healthy(
     port: int,
     path: str,
     recovery_deadline: float | None = None,
 ) -> bool:
-    timeout_seconds = _remaining_recovery_time(recovery_deadline, 2.0)
-    if timeout_seconds <= 0:
+    request_deadline = time.monotonic() + 2.0
+    if recovery_deadline is not None:
+        request_deadline = min(request_deadline, recovery_deadline)
+    try:
+        timeout_seconds = _http_remaining_time(request_deadline)
+    except OSError:
         return False
     connection = http.client.HTTPConnection(
         "127.0.0.1",
         port,
         timeout=timeout_seconds,
     )
+    response: http.client.HTTPResponse | None = None
     try:
-        connection.request("GET", path)
-        response = connection.getresponse()
-        response.read(4096)
-        return bool(
-            response.status in (200, 401)
-            and not _recovery_deadline_reached(recovery_deadline)
+        connection.connect()
+        _http_remaining_time(request_deadline)
+        if connection.sock is None:
+            return False
+        connection.sock = _DeadlineSocket(  # type: ignore[assignment]
+            connection.sock,
+            request_deadline,
         )
-    except OSError:
+        connection.request("GET", path)
+        _http_remaining_time(request_deadline)
+        response = connection.getresponse()
+        _http_remaining_time(request_deadline)
+        response.read(4096)
+        _http_remaining_time(request_deadline)
+        return response.status in (200, 401)
+    except (OSError, http.client.HTTPException):
         return False
     finally:
+        if response is not None:
+            response.close()
         connection.close()
 
 
@@ -1400,16 +1500,35 @@ def _gateway_auxiliaries_healthy(
     )
 
 
-def _run_fixed_validator(script: str, arguments: list[str]) -> None:
+def _preflight_timeout(recovery_deadline: float | None) -> float:
+    timeout_seconds = _remaining_recovery_time(recovery_deadline, 15.0)
+    if timeout_seconds <= 0:
+        raise ControlError("GATEWAY_FAILED")
+    return timeout_seconds
+
+
+def _run_fixed_validator(
+    script: str,
+    arguments: list[str],
+    recovery_deadline: float | None = None,
+) -> None:
+    _require_recovery_time(recovery_deadline)
     _validate_trusted_regular(script)
-    result = subprocess.run(
-        [sys.executable, "-I", script, *arguments],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=15,
-        check=False,
-    )
+    _require_recovery_time(recovery_deadline)
+    try:
+        result = subprocess.run(
+            [sys.executable, "-I", script, *arguments],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=_preflight_timeout(recovery_deadline),
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        if recovery_deadline is not None:
+            raise ControlError("GATEWAY_FAILED") from exc
+        raise ControlError("SECRET_BOUNDARY_REFUSED") from exc
+    _require_recovery_time(recovery_deadline)
     if result.returncode != 0:
         raise ControlError("SECRET_BOUNDARY_REFUSED")
 
@@ -1526,53 +1645,74 @@ def _verify_locked_hermes_hash() -> None:
         raise ControlError("GATEWAY_CONFIG_HASH_MISMATCH")
 
 
-def _hermes_preflight(reader: ProcReader, supervisor: ProcessIdentity) -> None:
+def _hermes_preflight(
+    reader: ProcReader,
+    supervisor: ProcessIdentity,
+    recovery_deadline: float | None = None,
+) -> None:
+    _require_recovery_time(recovery_deadline)
     validator = _system_path(HERMES_BOUNDARY_PATH)
     if not os.path.exists(validator):
         raise ControlError("SECRET_BOUNDARY_VALIDATOR_MISSING")
     _run_fixed_validator(
         validator,
         ["env-file", _system_path("/sandbox/.hermes/.env")],
+        recovery_deadline,
     )
     raw_environment = _read_stable_file_with_proof_grace(
         reader,
         supervisor,
         "environ",
         MAX_ENV_BYTES,
+        recovery_deadline,
     )
     _validate_runtime_environment(validator, _parse_environment(raw_environment))
+    _require_recovery_time(recovery_deadline)
     _verify_locked_hermes_hash()
+    _require_recovery_time(recovery_deadline)
 
 
-def _openclaw_preflight() -> None:
+def _openclaw_preflight(recovery_deadline: float | None = None) -> None:
+    _require_recovery_time(recovery_deadline)
     guard = _system_path(OPENCLAW_GUARD_PATH)
     _validate_trusted_regular(guard)
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-I",
-            guard,
-            "preflight-restart",
-            "--config-dir",
-            _system_path("/sandbox/.openclaw"),
-        ],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=15,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                guard,
+                "preflight-restart",
+                "--config-dir",
+                _system_path("/sandbox/.openclaw"),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=_preflight_timeout(recovery_deadline),
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        if recovery_deadline is not None:
+            raise ControlError("GATEWAY_FAILED") from exc
+        raise ControlError("GATEWAY_UNSAFE_CONFIG_PATH") from exc
+    _require_recovery_time(recovery_deadline)
     if result.returncode != 0:
         raise ControlError("GATEWAY_UNSAFE_CONFIG_PATH")
 
 
 def _preflight(
-    spec: AgentSpec, reader: ProcReader, supervisor: ProcessIdentity
+    spec: AgentSpec,
+    reader: ProcReader,
+    supervisor: ProcessIdentity,
+    recovery_deadline: float | None = None,
 ) -> None:
+    _require_recovery_time(recovery_deadline)
     if spec.name == "hermes":
-        _hermes_preflight(reader, supervisor)
+        _hermes_preflight(reader, supervisor, recovery_deadline)
     else:
-        _openclaw_preflight()
+        _openclaw_preflight(recovery_deadline)
+    _require_recovery_time(recovery_deadline)
 
 
 def _pidfd_open(pid: int) -> int | None:
@@ -1628,16 +1768,21 @@ def _terminate_gateway(
     if pidfd is None:
         return
     try:
+        _require_recovery_time(recovery_deadline)
         try:
-            _recapture_exact_identity(reader, identity)
+            _recapture_exact_identity(
+                reader,
+                identity,
+                deadline=recovery_deadline,
+            )
         except ControlError:
             # The pidfd is readable only when the exact process opened above has
             # exited. Accept that race without ever falling back to a PID signal.
             if _pidfd_exited(pidfd, 0):
                 return
+            _require_recovery_time(recovery_deadline)
             raise
-        if _recovery_deadline_reached(recovery_deadline):
-            raise ControlError("GATEWAY_FAILED")
+        _require_recovery_time(recovery_deadline)
         if not _send_pidfd(pidfd, signal.SIGTERM):
             return
         if _pidfd_exited(
@@ -1801,7 +1946,12 @@ def _control(action: str, nonce: str) -> tuple[str, int, int]:
                 old_identity = candidates[0] if candidates else None
 
             with _control_stage("preflight"):
-                _preflight(spec, reader, supervisor)
+                _preflight(
+                    spec,
+                    reader,
+                    supervisor,
+                    recovery_deadline,
+                )
 
             if action == "probe":
                 if old_identity is None:
@@ -1875,6 +2025,7 @@ def _control(action: str, nonce: str) -> tuple[str, int, int]:
                         expected_exit_lock,
                         old_identity,
                         controller_identity,
+                        recovery_deadline,
                     )
                     expected_exit_lock = None
             if old_identity is not None:

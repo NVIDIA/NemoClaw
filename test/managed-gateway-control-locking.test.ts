@@ -282,7 +282,7 @@ with tempfile.TemporaryDirectory() as root:
     deadline_waits = []
     deadline_signals = []
     control._pidfd_open = lambda _pid: os.dup(read_fd)
-    control._recapture_exact_identity = lambda *_args: gateway_41
+    control._recapture_exact_identity = lambda *_args, **_kwargs: gateway_41
     control.time.monotonic = lambda: deadline_clock[0]
     control._send_pidfd = lambda _pidfd, signum: (
         deadline_signals.append(int(signum)) or True

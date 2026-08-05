@@ -128,7 +128,7 @@ with tempfile.TemporaryDirectory() as root:
 
     # openclaw is the detected agent, and its preflight must not gate the lease.
     control._detect_agent = lambda: "openclaw"
-    control._openclaw_preflight = lambda: None
+    control._openclaw_preflight = lambda _recovery_deadline=None: None
     control._sandbox_uid = lambda: 1000
     control._http_healthy_in_gateway_namespace = (
         lambda _reader, _identity, port, path, _recovery_deadline=None: True

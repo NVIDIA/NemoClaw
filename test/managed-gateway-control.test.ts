@@ -416,7 +416,7 @@ with tempfile.TemporaryDirectory() as root:
         real_validator = control._run_fixed_validator
         real_runtime_validator = control._validate_runtime_environment
         real_hash_check = control._verify_locked_hermes_hash
-        control._run_fixed_validator = lambda script, arguments: preflight_steps.append({
+        control._run_fixed_validator = lambda script, arguments, _recovery_deadline=None: preflight_steps.append({
             "script": script,
             "arguments": arguments,
         })
