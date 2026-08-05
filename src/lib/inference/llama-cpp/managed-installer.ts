@@ -13,7 +13,11 @@ import {
   dockerPullWithProgressWatchdog,
   dockerRun,
 } from "../../adapters/docker/local-model-runtime";
-import { ensureLocalAdapterStateDir, writeLocalAdapterJsonFile } from "../local-adapter-lifecycle";
+import {
+  ensureLocalAdapterStateDir,
+  removeLocalAdapterFile,
+  writeLocalAdapterJsonFile,
+} from "../local-adapter-lifecycle";
 import { runtimeAuthFingerprint } from "../serving/runtime-auth-fingerprint";
 import type { LlamaCppServingRecipe } from "../serving/types";
 import { compileLlamaCppGgufCachePlan, type LlamaCppGgufCachePlan } from "./gguf-cache-plan";
@@ -153,7 +157,10 @@ function ownerForCache(
     ) {
       throw new Error("Managed llama.cpp owner state is malformed.");
     }
-    return { id: MANAGED_LLAMA_CPP_CACHE_OWNER_ID, generation: existing.generation };
+    return {
+      id: MANAGED_LLAMA_CPP_CACHE_OWNER_ID,
+      generation: existing.generation,
+    };
   }
   const owner = {
     id: MANAGED_LLAMA_CPP_CACHE_OWNER_ID,
@@ -206,7 +213,10 @@ function persistRuntimeReceipt(
     receiptRef: "llama-cpp.host-local.receipt/v1",
     owner: input.owner,
     authentication: { fingerprint: input.apiKeyFingerprint },
-    container: { name: MANAGED_LLAMA_CPP_CONTAINER_NAME, id: input.containerId },
+    container: {
+      name: MANAGED_LLAMA_CPP_CONTAINER_NAME,
+      id: input.containerId,
+    },
     network: { name: MANAGED_LLAMA_CPP_NETWORK_NAME, id: input.networkId },
     runtime: { image: input.recipe.spec.runtime.image },
     model: {
@@ -431,7 +441,10 @@ async function acquireArtifact(
 
 function launchContract(recipe: LlamaCppServingRecipe): LlamaCppHostLocalLaunchContract {
   return {
-    model: { servedName: recipe.spec.model.servedName, file: recipe.spec.model.files[0]! },
+    model: {
+      servedName: recipe.spec.model.servedName,
+      file: recipe.spec.model.files[0]!,
+    },
     policy: recipe.spec.policy,
     runtime: {
       gpu: recipe.spec.runtime.gpu,
@@ -444,7 +457,9 @@ function launchContract(recipe: LlamaCppServingRecipe): LlamaCppHostLocalLaunchC
       flashAttention: recipe.spec.serve.flashAttention,
       idleSleepSeconds: recipe.spec.serve.idleSleepSeconds,
       kvCache: recipe.spec.serve.kvCache,
-      limits: { requestTimeoutSeconds: recipe.spec.serve.limits.requestTimeoutSeconds },
+      limits: {
+        requestTimeoutSeconds: recipe.spec.serve.limits.requestTimeoutSeconds,
+      },
       microBatchSize: recipe.spec.serve.microBatchSize,
       port: recipe.spec.serve.port,
       protocol: recipe.spec.serve.protocol,
@@ -515,7 +530,11 @@ function ownedContainerId(
   if (!Array.isArray(parsed) || parsed.length !== 1) {
     throw new Error("Managed llama.cpp container inspection was ambiguous.");
   }
-  const row = parsed[0] as { Id?: unknown; Name?: unknown; Config?: { Labels?: unknown } };
+  const row = parsed[0] as {
+    Id?: unknown;
+    Name?: unknown;
+    Config?: { Labels?: unknown };
+  };
   const labels = row.Config?.Labels;
   if (
     row.Name !== `/${name}` ||
@@ -569,11 +588,17 @@ export async function installManagedLlamaCpp(
       capture,
     );
     if (containerState.kind === "foreign") {
-      return { ok: false, reason: "the llama.cpp container name is owned by another runtime" };
+      return {
+        ok: false,
+        reason: "the llama.cpp container name is owned by another runtime",
+      };
     }
     const networkState = ownedNetwork(MANAGED_LLAMA_CPP_NETWORK_NAME, owner.generation, capture);
     if (networkState.kind === "foreign") {
-      return { ok: false, reason: "the llama.cpp network name is owned by another runtime" };
+      return {
+        ok: false,
+        reason: "the llama.cpp network name is owned by another runtime",
+      };
     }
     log("  Staging the exact llama.cpp model artifact");
     const artifact = await acquireArtifact(plan, owner, homeDir, fetchImpl, randomBytes);
@@ -583,13 +608,19 @@ export async function installManagedLlamaCpp(
       logLine: (line) => log(`  ${line}`),
     });
     if (pullResult.status !== 0) {
-      return { ok: false, reason: "the pinned llama.cpp image could not be pulled" };
+      return {
+        ok: false,
+        reason: "the pinned llama.cpp image could not be pulled",
+      };
     }
 
     if (containerState.kind === "owned") {
       const removal = forceRm(containerState.id, { suppressOutput: true });
       if (removal.status !== 0) {
-        return { ok: false, reason: "the prior managed llama.cpp container could not be removed" };
+        return {
+          ok: false,
+          reason: "the prior managed llama.cpp container could not be removed",
+        };
       }
     }
     const createdNetwork = networkState.kind === "absent";
@@ -610,7 +641,10 @@ export async function installManagedLlamaCpp(
     const runtimeUid = typeof process.getuid === "function" ? process.getuid() : 1000;
     const runtimeGid = typeof process.getgid === "function" ? process.getgid() : 1000;
     if (runtimeUid < 1 || runtimeGid < 1) {
-      return { ok: false, reason: "managed llama.cpp must run as a non-root host identity" };
+      return {
+        ok: false,
+        reason: "managed llama.cpp must run as a non-root host identity",
+      };
     }
     const argv = buildLlamaCppHostLocalDockerArgv(launchContract(recipe), {
       apiKeyHostPath: path.join(privateStateDir, "api-key"),
@@ -618,8 +652,14 @@ export async function installManagedLlamaCpp(
       hostPort: LLAMA_CPP_PORT,
       imageReference: recipe.spec.runtime.image,
       model: artifact,
-      network: { isolation: "docker-internal", name: MANAGED_LLAMA_CPP_NETWORK_NAME },
-      ownerLabel: { name: MANAGED_LLAMA_CPP_OWNER_LABEL, value: MANAGED_LLAMA_CPP_OWNER_VALUE },
+      network: {
+        isolation: "docker-internal",
+        name: MANAGED_LLAMA_CPP_NETWORK_NAME,
+      },
+      ownerLabel: {
+        name: MANAGED_LLAMA_CPP_OWNER_LABEL,
+        value: MANAGED_LLAMA_CPP_OWNER_VALUE,
+      },
       identityLabels: [
         { name: MANAGED_LLAMA_CPP_GENERATION_LABEL, value: owner.generation },
         { name: MANAGED_LLAMA_CPP_AUTH_LABEL, value: authFingerprint },
@@ -638,7 +678,10 @@ export async function installManagedLlamaCpp(
     );
     const launchedNetwork = ownedNetwork(MANAGED_LLAMA_CPP_NETWORK_NAME, owner.generation, capture);
     if (launchedContainer.kind !== "owned" || launchedNetwork.kind !== "owned") {
-      return { ok: false, reason: "the llama.cpp runtime identity could not be verified" };
+      return {
+        ok: false,
+        reason: "the llama.cpp runtime identity could not be verified",
+      };
     }
     try {
       persistRuntimeReceipt(privateStateDir, {
@@ -650,9 +693,15 @@ export async function installManagedLlamaCpp(
         artifact,
       });
     } catch (error) {
-      forceRm(launchedContainer.id, { ignoreError: true, suppressOutput: true });
+      forceRm(launchedContainer.id, {
+        ignoreError: true,
+        suppressOutput: true,
+      });
       if (createdNetwork) {
-        run(["network", "rm", launchedNetwork.id], { ignoreError: true, suppressOutput: true });
+        run(["network", "rm", launchedNetwork.id], {
+          ignoreError: true,
+          suppressOutput: true,
+        });
       }
       return {
         ok: false,
@@ -662,15 +711,26 @@ export async function installManagedLlamaCpp(
 
     const deadline = now() + recipe.spec.readiness.timeoutSeconds * 1000;
     while (now() <= deadline) {
-      const attachment = probe(apiKey, { requestedModel: recipe.spec.readiness.expectedModel });
+      const attachment = probe(apiKey, {
+        requestedModel: recipe.spec.readiness.expectedModel,
+      });
       if (attachment.ok) {
         process.env[LLAMA_CPP_CREDENTIAL_ENV] = apiKey;
         return { ok: true, apiKey, model: attachment.model };
       }
       await sleep(2_000);
     }
-    forceRm(launchedContainer.id, { ignoreError: true, suppressOutput: true });
-    return { ok: false, reason: "llama.cpp did not satisfy readiness before the timeout" };
+    const removal = forceRm(launchedContainer.id, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    if (removal.status === 0) {
+      removeLocalAdapterFile(path.join(privateStateDir, MANAGED_LLAMA_CPP_RUNTIME_RECEIPT_FILE));
+    }
+    return {
+      ok: false,
+      reason: "llama.cpp did not satisfy readiness before the timeout",
+    };
   } catch (error) {
     return { ok: false, reason: (error as Error).message };
   }

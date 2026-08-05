@@ -63,6 +63,10 @@ function dockerHarness() {
     runActions[key]?.(argv);
     return { status: 0 } as never;
   });
+  const forceRm = vi.fn(() => {
+    containerPresent = false;
+    return { status: 0 } as never;
+  });
   const capture = vi.fn((argv: readonly string[]) => {
     const containerResult =
       argv[0] === "container" && containerPresent
@@ -100,6 +104,7 @@ function dockerHarness() {
   });
   return {
     capture,
+    forceRm,
     run,
     resetRuntime: () => {
       containerPresent = false;
@@ -130,13 +135,19 @@ describe("managed llama.cpp installer", () => {
       dockerForceRmImpl: vi.fn() as never,
       dockerRunImpl: docker.run,
       dockerPullImpl: vi.fn(async () => ({ status: 0 })) as never,
-      probeImpl: vi.fn(() => ({ ok: true as const, model: "nvidia-nemotron-3-nano-30b-a3b" })),
+      probeImpl: vi.fn(() => ({
+        ok: true as const,
+        model: "nvidia-nemotron-3-nano-30b-a3b",
+      })),
       randomBytes: ((size: number) => Buffer.alloc(size, 7)) as typeof crypto.randomBytes,
       sleepImpl: vi.fn(async () => {}),
       log: vi.fn(),
     });
 
-    expect(result).toMatchObject({ ok: true, model: "nvidia-nemotron-3-nano-30b-a3b" });
+    expect(result).toMatchObject({
+      ok: true,
+      model: "nvidia-nemotron-3-nano-30b-a3b",
+    });
     const launch = docker.run.mock.calls
       .map(([argv]) => argv as string[])
       .find((argv) => argv.includes("nemoclaw-llama-cpp"));
@@ -147,7 +158,9 @@ describe("managed llama.cpp installer", () => {
       expect.arrayContaining([expect.stringContaining(`${MANAGED_LLAMA_CPP_AUTH_LABEL}=`)]),
     );
     const receipts = fs
-      .readdirSync(path.join(homeDir, ".cache", "nemoclaw", "llama-cpp"), { recursive: true })
+      .readdirSync(path.join(homeDir, ".cache", "nemoclaw", "llama-cpp"), {
+        recursive: true,
+      })
       .filter((entry) => String(entry).endsWith("receipt.json"));
     expect(receipts).toHaveLength(1);
   });
@@ -182,7 +195,10 @@ describe("managed llama.cpp installer", () => {
       dockerForceRmImpl: vi.fn() as never,
       dockerRunImpl: docker.run,
       dockerPullImpl: vi.fn(async () => ({ status: 0 })) as never,
-      probeImpl: vi.fn(() => ({ ok: true as const, model: "nvidia-nemotron-3-nano-30b-a3b" })),
+      probeImpl: vi.fn(() => ({
+        ok: true as const,
+        model: "nvidia-nemotron-3-nano-30b-a3b",
+      })),
       sleepImpl: vi.fn(async () => {}),
       log: vi.fn(),
     };
@@ -191,7 +207,10 @@ describe("managed llama.cpp installer", () => {
       fetchImpl: vi.fn(async () => new Response(body, { status: 200 })),
       randomBytes: ((size: number) => Buffer.alloc(size, 3)) as typeof crypto.randomBytes,
     });
-    fs.rmSync(path.join(homeDir, ".nemoclaw"), { force: true, recursive: true });
+    fs.rmSync(path.join(homeDir, ".nemoclaw"), {
+      force: true,
+      recursive: true,
+    });
     docker.resetRuntime();
     const fetchImpl = vi.fn(async () => {
       throw new Error("verified cache should be reused");
@@ -233,7 +252,10 @@ describe("managed llama.cpp installer", () => {
       dockerForceRmImpl: vi.fn() as never,
       dockerRunImpl: docker.run,
       dockerPullImpl: vi.fn(async () => ({ status: 0 })) as never,
-      probeImpl: vi.fn(() => ({ ok: true as const, model: "nvidia-nemotron-3-nano-30b-a3b" })),
+      probeImpl: vi.fn(() => ({
+        ok: true as const,
+        model: "nvidia-nemotron-3-nano-30b-a3b",
+      })),
       randomBytes: ((size: number) => Buffer.alloc(size, 5)) as typeof crypto.randomBytes,
       sleepImpl: vi.fn(async () => {}),
       log: vi.fn(),
@@ -245,5 +267,57 @@ describe("managed llama.cpp installer", () => {
     const secondHeaders = fetchImpl.mock.calls[1]?.[1]?.headers as Record<string, string>;
     expect(firstHeaders.Authorization).toBe("Bearer hf_private_test_token");
     expect(secondHeaders.Authorization).toBeUndefined();
+  });
+
+  it("cleans up a readiness timeout and retries on the owned network", async () => {
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-llama-installer-"));
+    temporaryDirectories.push(homeDir);
+    const body = Buffer.from("retryable-catalog-gguf");
+    const docker = dockerHarness();
+    let clock = 0;
+    const ready = vi.fn(() => ({
+      ok: true as const,
+      model: "nvidia-nemotron-3-nano-30b-a3b",
+    }));
+    const common = {
+      homeDir,
+      fetchImpl: vi.fn(async () => new Response(body, { status: 200 })),
+      dockerCaptureImpl: docker.capture,
+      dockerForceRmImpl: docker.forceRm,
+      dockerRunImpl: docker.run,
+      dockerPullImpl: vi.fn(async () => ({ status: 0 })) as never,
+      randomBytes: ((size: number) => Buffer.alloc(size, 6)) as typeof crypto.randomBytes,
+      now: () => clock,
+      sleepImpl: vi.fn(async () => {
+        clock += 2_000;
+      }),
+      log: vi.fn(),
+    };
+
+    const first = await installManagedLlamaCpp(testRecipe(body), {
+      ...common,
+      probeImpl: vi.fn(() => ({ ok: false as const, reason: "not ready" })),
+    });
+    clock = 0;
+    const second = await installManagedLlamaCpp(testRecipe(body), {
+      ...common,
+      probeImpl: ready,
+    });
+
+    expect(first).toEqual({
+      ok: false,
+      reason: "llama.cpp did not satisfy readiness before the timeout",
+    });
+    expect(second).toMatchObject({ ok: true });
+    expect(docker.forceRm).toHaveBeenCalledTimes(1);
+    expect(
+      docker.run.mock.calls.filter(
+        ([argv]) => (argv as string[]).slice(0, 2).join(" ") === "network create",
+      ),
+    ).toHaveLength(1);
+    expect(docker.run.mock.calls.filter(([argv]) => (argv as string[])[0] === "run")).toHaveLength(
+      2,
+    );
+    expect(ready).toHaveBeenCalledTimes(1);
   });
 });
