@@ -142,9 +142,21 @@ describe("shields down policy rejection", () => {
   });
 
   it("retains auto-restore authority when rejected policy state cleanup fails (#8198)", () => {
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const statePath = path.join(stateDir, "shields-openclaw.json");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        shieldsDown: false,
+        fileHashes: { "/sandbox/.openclaw/openclaw.json": "a".repeat(64) },
+        updatedAt: "2026-08-05T00:00:00.000Z",
+      }),
+    );
     const timerKill = vi.fn(() => true);
     const harness = createShieldsFlowHarness(requireSource, tmpDir, {
       failPolicyRejectionStateClear: true,
+      initialOpenClawPosture: "locked",
       processStartIdentity: "test-process-start-identity",
       fork: () => ({
         pid: 4242,
@@ -157,9 +169,6 @@ describe("shields down policy rejection", () => {
         status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
       }),
     });
-    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
-    const statePath = path.join(stateDir, "shields-openclaw.json");
-
     expect(() =>
       harness.shieldsDown("openclaw", {
         reason: "verify recovery authority",
@@ -175,10 +184,31 @@ describe("shields down policy rejection", () => {
     expect(
       fs.readdirSync(stateDir).some((name) => name.startsWith("shields-transition-openclaw-")),
     ).toBe(true);
+    const transitionName = fs
+      .readdirSync(stateDir)
+      .find((name) => name.startsWith("shields-transition-openclaw-"));
+    expect(
+      JSON.parse(fs.readFileSync(path.join(stateDir, transitionName!), "utf-8")),
+    ).toMatchObject({ phase: "policy_rejected" });
     expect(timerKill).not.toHaveBeenCalled();
     expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
       "The scheduled auto-restore remains authoritative.",
     );
+
+    harness.logSpy.mockClear();
+    harness.errorSpy.mockClear();
+    harness.shieldsStatus("openclaw", true, {
+      verifyLockState: () => ({ ok: true, issues: [] }),
+      resolveConfig: () => ({
+        agentName: "openclaw",
+        configPath: "/sandbox/.openclaw/openclaw.json",
+        configDir: "/sandbox/.openclaw",
+      }),
+    });
+
+    expect(harness.isShieldsDown("openclaw")).toBe(false);
+    expect(harness.logSpy).toHaveBeenCalledWith("  Shields: UP (lockdown active)");
+    expect(harness.logSpy.mock.calls.flat().join("\n")).not.toMatch(/DOWN|permissive|unlocked/);
   });
 });
 
