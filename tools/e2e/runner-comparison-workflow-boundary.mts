@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isDeepStrictEqual } from "node:util";
+import { CLI_ARTIFACT_RESTORE_STEP } from "./cli-artifact-workflow-boundary.mts";
 import { PREPARE_E2E_STEP } from "./prepare-e2e-workflow-boundary.mts";
 import { UPLOAD_E2E_ARTIFACTS_ACTION } from "./upload-e2e-artifacts-workflow-boundary.mts";
 
@@ -193,19 +194,28 @@ export function validateRunnerComparisonWorkflow(workflowValue: unknown): string
     if (!initialize || !finalize) continue;
 
     const prepare = jobSteps.findIndex((step) => step.name === PREPARE_E2E_STEP);
+    const restore = jobSteps.findIndex((step) => step.name === CLI_ARTIFACT_RESTORE_STEP);
+    // security-posture installs the CLI after workspace preparation and does not restore the artifact.
+    const bootstrapEnd = restore >= 0 ? restore : prepare;
+    const initializationBoundary = restore >= 0 ? "CLI artifact restore" : "workspace preparation";
     const initializeIndex = jobSteps.indexOf(initialize);
     const finalizeIndex = jobSteps.indexOf(finalize);
     const publish = publicationIndex(jobSteps);
     if (HERMES_REBUILD_SWAP_JOBS.has(jobId)) {
       const swapIndex = jobSteps.findIndex((step) => step.name === HERMES_REBUILD_SWAP_STEP);
-      if (prepare < 0 || swapIndex !== prepare + 1 || initializeIndex !== swapIndex + 1) {
+      if (
+        prepare < 0 ||
+        bootstrapEnd < prepare ||
+        swapIndex !== bootstrapEnd + 1 ||
+        initializeIndex !== swapIndex + 1
+      ) {
         errors.push(
           `${jobId} must establish rebuild swap before initializing runner comparison telemetry`,
         );
       }
-    } else if (prepare < 0 || initializeIndex !== prepare + 1) {
+    } else if (prepare < 0 || bootstrapEnd < prepare || initializeIndex !== bootstrapEnd + 1) {
       errors.push(
-        `${jobId} must initialize runner comparison telemetry immediately after prepare-e2e`,
+        `${jobId} must initialize runner comparison telemetry immediately after ${initializationBoundary}`,
       );
     }
     if (publish < 0 || finalizeIndex !== publish - 1) {
