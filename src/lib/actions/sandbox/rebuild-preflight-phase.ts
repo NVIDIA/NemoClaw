@@ -6,6 +6,10 @@ import type { SandboxMessagingPlan } from "../../messaging";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { DCODE_AUTO_APPROVAL_FEATURE } from "../../onboard/dcode-auto-approval";
 import { managedSandboxFeatureIssue } from "../../onboard/managed-sandbox-feature";
+import {
+  type HermesCronRestorePlan,
+  validateHermesCronRestoreBackup,
+} from "../../state/rebuild/hermes-cron-restore-backup";
 import type { RebuildManifest } from "../../state/sandbox";
 import { assertMcpDestroyNotPending } from "./mcp-bridge-state";
 import {
@@ -73,6 +77,42 @@ export interface RebuildPreflightPhaseResult {
   releaseOnboardLock: () => void;
   log: RebuildLog;
   bail: RebuildBail;
+}
+
+interface HermesCronRestoreBackupPreflightInput {
+  rebuildAgent: string | null;
+  backupPath: string | null;
+  backedUpDirs: readonly string[];
+  log: RebuildLog;
+  bail: RebuildBail;
+}
+
+export function runHermesCronRestoreBackupPreflight({
+  rebuildAgent,
+  backupPath,
+  backedUpDirs,
+  log,
+  bail,
+}: HermesCronRestoreBackupPreflightInput): { plan: HermesCronRestorePlan | null } | null {
+  if (rebuildAgent !== "hermes" || backupPath === null || !backedUpDirs.includes("cron")) {
+    return { plan: null };
+  }
+  try {
+    const plan = validateHermesCronRestoreBackup(backupPath);
+    log(
+      `Hermes cron restore preflight: activeJobs=${String(plan.activeJobs)}, scriptJobs=${String(plan.scriptJobs)}, gate=${String(plan.requiresDispatchGate)}`,
+    );
+    return { plan };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    printRebuildPreflightFailure(
+      `the Hermes cron backup failed script-reference validation: ${detail}`,
+      `Repair or disable the affected job before rebuilding. Backup: ${backupPath}`,
+      "Hermes cron restore preflight failed.",
+      bail,
+    );
+    return null;
+  }
 }
 
 /**

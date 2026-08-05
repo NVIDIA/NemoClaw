@@ -13,20 +13,27 @@ import {
 import { createManagedStartupRootApplyRequest } from "../managed-startup/root-apply";
 import {
   activateManagedBootstrapSequence,
+  enforceManagedBootstrapRecoveryForSandbox,
   finalizeManagedBootstrapSequence,
   MANAGED_BOOTSTRAP_SCHEMA_VERSION,
   type ManagedBootstrapAdapter,
   type ManagedBootstrapAuthorityStore,
   type ManagedBootstrapCompletionReceipt,
   type ManagedBootstrapCreateReceipt,
+  type ManagedBootstrapDurablePreparationReceipt,
   type ManagedBootstrapFinalizationReceipt,
   type ManagedBootstrapHeldWorkloadHandle,
   type ManagedBootstrapObservedSnapshot,
   type ManagedBootstrapPreparedReplacementHandle,
+  ManagedBootstrapRecoveryBlockedError,
   type ManagedBootstrapReplacementHandle,
   prepareManagedBootstrapSequence,
+  recoverManagedBootstrapTransactions,
   renderManagedBootstrapHeldCommand,
+  sameManagedBootstrapCompletionReceipt,
+  sameManagedBootstrapDurablePreparationReceipt,
 } from "./adapter";
+import { reverseKeys } from "./managed-bootstrap-test-fixture";
 
 const IDENTITY = "1".repeat(64);
 const CONFIG_ID = `sha256:${"2".repeat(64)}`;
@@ -58,7 +65,7 @@ function planFor(request: ReturnType<typeof requestFor>) {
     },
     profile: { agent: request.agent, fingerprint: request.profileFingerprint },
     agentIdentity: { uid: 1000, gid: 1000, workdir: "/sandbox" },
-    intendedWorkloadArgv: ["env", "A=1", "nemoclaw-start"],
+    intendedWorkloadArgv: ["env", "A=1", "/usr/local/bin/nemoclaw-start"],
     expectedSupervisorArgv: ["/runtime/sandbox-supervisor", "supervise", "--foreground"],
     metadata: { "nemoclaw.ai/managed-profile": request.profileFingerprint },
   } as const;
@@ -227,6 +234,7 @@ function adapterFor(agent: ManagedStartupAgent): Fixture {
   const order: string[] = [];
   const raw: Fixture["raw"] = { handle: null, snapshot: null, prepared: null };
   const adapter: ManagedBootstrapAdapter = {
+    recoverUnfinishedTransactions: vi.fn(async () => ({ receipts: [], failures: [] })),
     createHeldWorkload: vi.fn(async (input) => {
       order.push("create");
       const receipt = await input.launch({
@@ -352,6 +360,45 @@ async function captureFailure<T>(promise: Promise<T>) {
 }
 
 describe("managed bootstrap adapter contract", () => {
+  it("compares provider-neutral durable receipts by canonical value", () => {
+    const handle = handleFor(requestFor("hermes"));
+    const preparation: ManagedBootstrapDurablePreparationReceipt = {
+      schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+      sandbox: handle.sandbox,
+      bootstrapIdentity: handle.bootstrapIdentity,
+      authorityFingerprint: "a".repeat(64),
+      recordId: "mxc-durable-authority",
+      recordedAt: "2026-07-29T12:00:30.000Z",
+    };
+    const reorderedPreparation = reverseKeys({
+      ...preparation,
+      sandbox: reverseKeys({ ...preparation.sandbox }),
+    });
+    expect(sameManagedBootstrapDurablePreparationReceipt(preparation, reorderedPreparation)).toBe(
+      true,
+    );
+    expect(
+      sameManagedBootstrapDurablePreparationReceipt(preparation, {
+        ...reorderedPreparation,
+        recordId: "changed-authority",
+      }),
+    ).toBe(false);
+
+    const completion = completionFor(requestFor("hermes"), handle);
+    const reorderedCompletion = reverseKeys({
+      ...completion,
+      image: reverseKeys({ ...completion.image }),
+      sandbox: reverseKeys({ ...completion.sandbox }),
+    });
+    expect(sameManagedBootstrapCompletionReceipt(completion, reorderedCompletion)).toBe(true);
+    expect(
+      sameManagedBootstrapCompletionReceipt(completion, {
+        ...reorderedCompletion,
+        transactionPending: false,
+      }),
+    ).toBe(false);
+  });
+
   it.each(
     MANAGED_STARTUP_AGENTS,
   )("prepares, durably records, and only then activates %s through a provider-neutral adapter", async (agent) => {
@@ -378,6 +425,46 @@ describe("managed bootstrap adapter contract", () => {
     const prepareInput = vi.mocked(result.adapter.prepareBootstrapReplacement).mock.calls[0]?.[0];
     expect(Object.isFrozen(prepareInput?.replacementOptions.values)).toBe(true);
     expect(Object.isFrozen(prepareInput?.replacementOptions.values.groups)).toBe(true);
+  });
+
+  it.each(
+    MANAGED_STARTUP_AGENTS,
+  )("renders one exact identity-bound %s hold and preserves only the intended startup tail", (agent) => {
+    const request = requestFor(agent);
+    expect(
+      renderManagedBootstrapHeldCommand(request, IDENTITY, [
+        "env",
+        "A=1",
+        "/usr/local/bin/nemoclaw-start",
+        "/bin/sh",
+        "-c",
+        "printf tail",
+      ]),
+    ).toEqual([
+      "env",
+      "A=1",
+      "/usr/local/bin/nemoclaw-managed-startup-hold",
+      "--agent",
+      agent,
+      "--profile-fingerprint",
+      request.profileFingerprint,
+      "--bootstrap-identity",
+      IDENTITY,
+      "--",
+      "/bin/sh",
+      "-c",
+      "printf tail",
+    ]);
+  });
+
+  it.each([
+    "nemoclaw-start",
+    "/bin/sh",
+    "/tmp/nemoclaw-start",
+  ])("rejects non-canonical intended startup executable %s", (executable) => {
+    expect(() =>
+      renderManagedBootstrapHeldCommand(requestFor("openclaw"), IDENTITY, ["env", executable]),
+    ).toThrow("intended workload executable must be /usr/local/bin/nemoclaw-start");
   });
 
   it("stops after non-destructive preparation until durable activation is requested", async () => {
@@ -908,19 +995,204 @@ describe("managed bootstrap adapter contract", () => {
     expect(fixture.adapter.finalizeBootstrap).not.toHaveBeenCalled();
   });
 
+  it("normalizes, freezes, and orders provider-owned restart recovery receipts", async () => {
+    const fixture = adapterFor("openclaw");
+    const receipt = cleanupReceipt();
+    const candidate = (bootstrapIdentity: string) => ({
+      schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+      providerId: receipt.sandbox.driverId,
+      sourcePhase: "cutover",
+      sandbox: receipt.sandbox,
+      bootstrapIdentity,
+      outcome: "rolled-back" as const,
+      finalization: { ...receipt, bootstrapIdentity },
+    });
+    vi.mocked(fixture.adapter.recoverUnfinishedTransactions).mockResolvedValueOnce({
+      receipts: [candidate("b".repeat(64)), candidate("a".repeat(64))],
+      failures: [],
+    });
+
+    const recovered = await recoverManagedBootstrapTransactions(fixture.adapter);
+
+    expect(recovered.receipts.map(({ bootstrapIdentity }) => bootstrapIdentity)).toEqual([
+      "a".repeat(64),
+      "b".repeat(64),
+    ]);
+    expect(Object.isFrozen(recovered)).toBe(true);
+    expect(Object.isFrozen(recovered.receipts)).toBe(true);
+    expect(recovered.receipts.every((entry) => Object.isFrozen(entry.finalization))).toBe(true);
+  });
+
+  it("rejects recovery evidence whose provider does not own the durable sandbox", async () => {
+    const fixture = adapterFor("openclaw");
+    const receipt = cleanupReceipt();
+    vi.mocked(fixture.adapter.recoverUnfinishedTransactions).mockResolvedValueOnce({
+      receipts: [
+        {
+          schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+          providerId: "mxc",
+          sourcePhase: "cutover",
+          sandbox: receipt.sandbox,
+          bootstrapIdentity: IDENTITY,
+          outcome: "rolled-back",
+          finalization: receipt,
+        },
+      ],
+      failures: [],
+    });
+
+    await expect(recoverManagedBootstrapTransactions(fixture.adapter)).rejects.toThrow(
+      "recovery provider does not own",
+    );
+  });
+
+  it("normalizes provider-neutral failures and preserves bounded MXC-style diagnostics", async () => {
+    const fixture = adapterFor("hermes");
+    const failure = (bootstrapIdentity: string, sandboxName: string | null) => ({
+      schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+      providerId: "mxc",
+      sourcePhase: "provider-owned-cleanup",
+      sandbox:
+        sandboxName === null
+          ? null
+          : { sandboxName, sandboxId: `mxc-${sandboxName}`, driverId: "mxc" },
+      bootstrapIdentity,
+      code: "provider-owned-retry",
+      retryable: true,
+      detail: "opaque MXC recovery evidence",
+    });
+    vi.mocked(fixture.adapter.recoverUnfinishedTransactions).mockResolvedValueOnce({
+      receipts: [],
+      failures: [failure("b".repeat(64), "bravo"), failure("a".repeat(64), null)],
+    });
+
+    const recovered = await recoverManagedBootstrapTransactions(fixture.adapter);
+
+    expect(recovered.failures.map(({ bootstrapIdentity }) => bootstrapIdentity)).toEqual([
+      "a".repeat(64),
+      "b".repeat(64),
+    ]);
+    expect(recovered.failures[0]).toMatchObject({ sandbox: null, providerId: "mxc" });
+    expect(Object.isFrozen(recovered.failures)).toBe(true);
+    expect(recovered.failures.every(Object.isFrozen)).toBe(true);
+  });
+
+  it("rejects duplicate identities across recovered receipts and failures", async () => {
+    const fixture = adapterFor("openclaw");
+    const receipt = cleanupReceipt();
+    vi.mocked(fixture.adapter.recoverUnfinishedTransactions).mockResolvedValueOnce({
+      receipts: [
+        {
+          schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+          providerId: receipt.sandbox.driverId,
+          sourcePhase: "cutover",
+          sandbox: receipt.sandbox,
+          bootstrapIdentity: IDENTITY,
+          outcome: "rolled-back",
+          finalization: receipt,
+        },
+      ],
+      failures: [
+        {
+          schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+          providerId: receipt.sandbox.driverId,
+          sourcePhase: "cleanup",
+          sandbox: receipt.sandbox,
+          bootstrapIdentity: IDENTITY,
+          code: "retry",
+          retryable: true,
+          detail: "retained",
+        },
+      ],
+    });
+
+    await expect(recoverManagedBootstrapTransactions(fixture.adapter)).rejects.toThrow(
+      "duplicate bootstrap identities",
+    );
+  });
+
+  it("rejects an unbounded provider recovery result before normalizing records", async () => {
+    const fixture = adapterFor("hermes");
+    const candidate = {
+      schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+      providerId: "mxc",
+      sourcePhase: "provider-owned-cleanup",
+      sandbox: null,
+      bootstrapIdentity: IDENTITY,
+      code: "provider-owned-retry",
+      retryable: true,
+      detail: "opaque MXC recovery evidence",
+    } as const;
+    vi.mocked(fixture.adapter.recoverUnfinishedTransactions).mockResolvedValueOnce({
+      receipts: [],
+      failures: Array.from({ length: 4097 }, () => candidate),
+    });
+
+    await expect(recoverManagedBootstrapTransactions(fixture.adapter)).rejects.toThrow(
+      "provider recovery returned too many records",
+    );
+  });
+
+  it("blocks same-name and identity-unknown failures while warning for unrelated sandboxes", () => {
+    const failure = (bootstrapIdentity: string, sandboxName: string | null) =>
+      Object.freeze({
+        schemaVersion: MANAGED_BOOTSTRAP_SCHEMA_VERSION,
+        providerId: "mxc",
+        sourcePhase: "cleanup",
+        sandbox:
+          sandboxName === null
+            ? null
+            : Object.freeze({ sandboxName, sandboxId: `mxc-${sandboxName}`, driverId: "mxc" }),
+        bootstrapIdentity,
+        code: "provider-owned-retry",
+        retryable: true,
+        detail: "opaque provider detail",
+      });
+    const warn = vi.fn();
+    const unrelated = failure("a".repeat(64), "bravo");
+    const sameName = failure("b".repeat(64), "alpha");
+    const identityUnknown = failure("c".repeat(64), null);
+
+    expect(
+      enforceManagedBootstrapRecoveryForSandbox(
+        Object.freeze({ receipts: Object.freeze([]), failures: Object.freeze([unrelated]) }),
+        "alpha",
+        warn,
+      ),
+    ).toMatchObject({ failures: [unrelated] });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("unrelated sandbox 'bravo'"));
+
+    for (const blocking of [sameName, identityUnknown]) {
+      expect(() =>
+        enforceManagedBootstrapRecoveryForSandbox(
+          Object.freeze({ receipts: Object.freeze([]), failures: Object.freeze([blocking]) }),
+          "alpha",
+          warn,
+        ),
+      ).toThrow(ManagedBootstrapRecoveryBlockedError);
+    }
+  });
+
   it.each([
+    "BASHOPTS=extdebug",
     "BASH_ENV=/sandbox/attacker",
     "ENV=/sandbox/attacker",
-    "LD_PRELOAD=/sandbox/attacker.so",
     "LD_AUDIT=/sandbox/attacker.so",
     "LD_LIBRARY_PATH=/sandbox/lib",
-    "SHELLOPTS=xtrace",
+    "LD_PRELOAD=/sandbox/attacker.so",
+    "NODE_OPTIONS=--require=/sandbox/attacker.cjs",
+    "NODE_PATH=/sandbox/attacker-modules",
     "PS4=$(touch /sandbox/bypass)",
+    "SHELLOPTS=xtrace",
     "BASH_FUNC_attacker%%=() { touch /sandbox/bypass; }",
   ])("rejects a process-control assignment before rendering the held command: %s", (assignment) => {
     const request = requestFor("hermes");
     expect(() =>
-      renderManagedBootstrapHeldCommand(request, IDENTITY, ["env", assignment, "nemoclaw-start"]),
+      renderManagedBootstrapHeldCommand(request, IDENTITY, [
+        "env",
+        assignment,
+        "/usr/local/bin/nemoclaw-start",
+      ]),
     ).toThrow("process-control environment assignment");
   });
 });

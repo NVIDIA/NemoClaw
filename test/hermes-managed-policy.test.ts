@@ -43,6 +43,7 @@ const SETTINGS: HermesBuildSettings = {
     },
   ],
   managedToolGateways: { brokerEnabled: false, presets: [] },
+  managedImageCapabilityUnion: false,
 };
 
 const PYTHON_LOAD = `

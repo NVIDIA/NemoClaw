@@ -8,6 +8,13 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const WRAPPER = path.join(import.meta.dirname, "..", "agents", "hermes", "hermes-wrapper.py");
+const ADAPTER = path.join(
+  import.meta.dirname,
+  "..",
+  "agents",
+  "hermes",
+  "hermes-cli-adapter-v1.json",
+);
 const PYTHON_AVAILABLE = spawnSync("python3", ["--version"], { timeout: 5_000 }).status === 0;
 const GENERATED_KEY = "a".repeat(64);
 
@@ -19,6 +26,7 @@ function runDashboard(sourcePath: string) {
   const argvPath = path.join(tmpDir, "captured-argv");
   const markerPath = path.join(tmpDir, "real-invoked");
   fs.copyFileSync(WRAPPER, wrapperPath);
+  fs.copyFileSync(ADAPTER, path.join(tmpDir, "hermes-cli-adapter-v1.json"));
   fs.writeFileSync(
     path.join(tmpDir, "hermes.real"),
     [

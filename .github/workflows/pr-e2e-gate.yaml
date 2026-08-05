@@ -9,7 +9,11 @@ run-name: >-
   github.event.pull_request.number, github.event.pull_request.head.sha,
   github.event.pull_request.base.sha,
   github.event.action != 'closed') ||
-  format('E2E Gate {0} {1}', github.event_name, github.run_id) }}
+  github.event_name == 'workflow_run' &&
+  format('E2E Gate coordinate from {0}',
+  github.event.workflow_run.display_title) ||
+  format('E2E Gate approve PR #{0} head {1} base {2}',
+  inputs.pr_number, inputs.expected_head_sha, inputs.expected_base_sha) }}
 
 on:
   workflow_run:
@@ -54,6 +58,7 @@ jobs:
       checks: write
       contents: read
       pull-requests: read
+      statuses: write
     concurrency:
       group: pr-e2e-gate-${{ github.repository }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-${{ github.event.pull_request.base.sha }}
       queue: max
@@ -86,48 +91,6 @@ jobs:
           --head "$HEAD_SHA"
           --base "$BASE_SHA"
 
-  required:
-    # GitHub treats a skipped required job as passing, so only the running observer can use the required check name.
-    name: >-
-      ${{ github.event_name == 'pull_request_target' &&
-      github.repository == 'NVIDIA/NemoClaw' &&
-      github.event.action != 'closed' &&
-      'E2E / PR Gate' || 'E2E / PR Gate (not applicable)' }}
-    if: ${{ github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && github.event.action != 'closed' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    permissions:
-      checks: read
-      contents: read
-      pull-requests: read
-    concurrency:
-      group: pr-e2e-required-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
-    steps:
-      - name: Checkout observer
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.workflow_sha }}
-          persist-credentials: false
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "22"
-
-      - name: Wait for trusted PR/base SHA verdict
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          GITHUB_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: >-
-          node --experimental-strip-types tools/e2e/pr-e2e-required.mts
-          --pr "$PR_NUMBER"
-          --head "$HEAD_SHA"
-          --base "$BASE_SHA"
-          --timeout-seconds 21480
-
   cancel-superseded:
     if: ${{ github.run_attempt == 1 && github.event_name == 'pull_request_target' && github.repository == 'NVIDIA/NemoClaw' && (github.event.action != 'edited' || github.event.changes.base != null) }}
     runs-on: ubuntu-latest
@@ -137,6 +100,7 @@ jobs:
       checks: write
       contents: read
       pull-requests: read
+      statuses: write
     steps:
       - name: Checkout controller
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -174,6 +138,7 @@ jobs:
       checks: write
       contents: read
       pull-requests: read
+      statuses: write
     concurrency:
       group: pr-e2e-gate-${{ github.repository }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0].number || inputs.pr_number }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.expected_head_sha }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0].base.sha || inputs.expected_base_sha }}
       queue: max

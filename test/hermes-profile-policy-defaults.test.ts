@@ -26,6 +26,7 @@ const POLICY_SETTINGS: HermesBuildSettings = {
   webSearchProvider: null,
   messagingCredentialPlaceholders: [],
   managedToolGateways: { brokerEnabled: false, presets: [] },
+  managedImageCapabilityUnion: false,
 };
 const MANAGED_POLICY = buildHermesManagedPolicy(POLICY_SETTINGS, {});
 

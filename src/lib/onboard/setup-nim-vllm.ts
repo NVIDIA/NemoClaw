@@ -50,7 +50,7 @@ export interface SetupNimVllmDeps {
   applyVllmRuntimeContextWindow(models: VllmModels, model: string): void;
   isDgxSparkHost?: () => boolean;
   isNemoClawManagedVllmRunning?: () => boolean;
-  persistConfiguredDualStationVllmRuntimeReceipt(): Promise<
+  persistConfiguredManagedVllmRuntimeReceipt(): Promise<
     | {
         ok: true;
         persisted: boolean;
@@ -78,7 +78,7 @@ async function managedVllmValidationOptions(baseUrl: string, apiKey: string) {
     trustedPrivateHosts: [hostname],
   });
   if (!preflight.ok || !preflight.trustedPrivateCapability) {
-    throw new Error("Managed dual-Station vLLM endpoint authorization failed.");
+    throw new Error("Managed vLLM endpoint authorization failed.");
   }
   return {
     apiKey,
@@ -257,10 +257,10 @@ export function createSetupNimVllmHandler(
     }
 
     const apiKey = managedBinding?.apiKey ?? null;
-    const managedDualEndpoint = managedBinding != null;
+    const managedEndpoint = managedBinding != null;
     console.log(
-      managedDualEndpoint
-        ? "  ✓ Using managed dual-Station vLLM endpoint"
+      managedEndpoint
+        ? "  ✓ Using managed vLLM endpoint"
         : `  ✓ Using existing vLLM on localhost:${deps.VLLM_PORT}`,
     );
     const raw = apiKey
@@ -273,8 +273,8 @@ export function createSetupNimVllmHandler(
       models = JSON.parse(raw);
     } catch {
       console.error(
-        managedDualEndpoint
-          ? "  Could not query the managed dual-Station vLLM models endpoint. Is the deployment running and reachable?"
+        managedEndpoint
+          ? "  Could not query the managed vLLM models endpoint. Is the deployment running and reachable?"
           : `  Could not query vLLM models endpoint. Is vLLM running on localhost:${deps.VLLM_PORT}?`,
       );
       deps.exitProcess(1);
@@ -295,15 +295,15 @@ export function createSetupNimVllmHandler(
       requiredModel &&
       detectedModel !== requiredModel &&
       (options.managedInstall === true ||
-        managedDualEndpoint ||
+        managedEndpoint ||
         !reportedModelMatchesRequest(models, detectedModel, requiredModel))
     ) {
       console.error(
         `  Detected vLLM model '${detectedModel}' does not match the shared gateway route '${requiredModel}'.`,
       );
       console.error(
-        managedDualEndpoint
-          ? `  To install '${requiredModel}', stop the managed dual-Station vLLM deployment, then rerun the original install/onboard command.`
+        managedEndpoint
+          ? `  To install '${requiredModel}', stop the managed vLLM deployment, then rerun the original install/onboard command.`
           : `  To install '${requiredModel}', stop the existing vLLM server on localhost:${deps.VLLM_PORT}, then rerun the original install/onboard command.`,
       );
       console.error(`  To keep '${detectedModel}' instead, start detailed setup:`);
@@ -363,13 +363,11 @@ export function createSetupNimVllmHandler(
       return "retry-selection";
     }
 
-    if (managedDualEndpoint) {
-      const receipt = await deps.persistConfiguredDualStationVllmRuntimeReceipt();
+    if (managedEndpoint) {
+      const receipt = await deps.persistConfiguredManagedVllmRuntimeReceipt();
       if (!receipt.ok || !receipt.persisted) {
-        const reason = receipt.ok
-          ? "the managed dual-Station cleanup receipt was not written"
-          : receipt.reason;
-        console.error(`  Managed dual-Station cleanup ownership could not be persisted: ${reason}`);
+        const reason = receipt.ok ? "the managed cleanup receipt was not written" : receipt.reason;
+        console.error(`  Managed vLLM cleanup ownership could not be persisted: ${reason}`);
         deps.exitProcess(1);
       }
     }

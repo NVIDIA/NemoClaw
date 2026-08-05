@@ -1367,7 +1367,7 @@ describe("uninstall run plan", () => {
       }
     });
 
-    it("removes ~/.nemoclaw wholesale when it is a symlink rather than a real directory", () => {
+    it("refuses to follow or remove ~/.nemoclaw when it is a symlink", () => {
       const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-"));
       const realTarget = fs.mkdtempSync(
         path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-target-"),
@@ -1379,12 +1379,14 @@ describe("uninstall run plan", () => {
       fs.writeFileSync(path.join(realTarget, "rebuild-backups"), "should not be followed");
       try {
         const logs: string[] = [];
+        const errors: string[] = [];
         const result = runUninstallPlan(
           { assumeYes: true, deleteModels: false, keepOpenShell: true },
           {
             commandExists: (command) => command === "openshell",
             env: { HOME: tmpHome } as NodeJS.ProcessEnv,
             existsSync: (target: string) => target.startsWith(tmpHome) && fs.existsSync(target),
+            error: (line) => errors.push(line),
             isTty: false,
             log: (line) => logs.push(line),
             run: vi.fn(okWithKnownGatewayList),
@@ -1392,10 +1394,13 @@ describe("uninstall run plan", () => {
           },
         );
 
-        expect(result.exitCode).toBe(0);
-        expect(fs.existsSync(stateDir)).toBe(false);
+        expect(result.exitCode).toBe(1);
+        expect(fs.lstatSync(stateDir).isSymbolicLink()).toBe(true);
         expect(fs.existsSync(realTarget)).toBe(true);
-        expect(logs).toContain(`Removed ${stateDir}`);
+        expect(errors.join("\n")).toContain(
+          "Managed distributed vLLM state root is not a real directory",
+        );
+        expect(logs).not.toContain(`Removed ${stateDir}`);
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });
         fs.rmSync(realTarget, { recursive: true, force: true });

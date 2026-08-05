@@ -65,7 +65,10 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Build CLI
-        run: npm run build:cli
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          test "$(git rev-parse --verify HEAD)" = "$GITHUB_SHA"
+          npm run build:cli
 
       - name: Run Ubuntu 26.04 compatibility contracts
         run: |

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { CLI_NAME } from "../../../cli/branding";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
 import {
   advanceTo,
@@ -24,6 +25,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   webSearchEnabled: boolean;
   deps: {
     ensureAgentDashboardForward(sandboxName: string, agent: Agent): number;
+    persistDashboardPort(sandboxName: string, dashboardPort: number): void;
     /**
      * Mark this sandbox as the default. Called here (not at sandbox creation) so
      * a cancel at the policy-preset step never leaves an unconfigured sandbox
@@ -115,7 +117,11 @@ function logTerminalReadyBlock(
         ? terminalAgent.name
         : "Terminal agent";
   log(`  ✓ ${displayName} terminal runtime is ready`);
-  log(`  Connect: nemoclaw ${sandboxName} connect`);
+  // Lead with the one-step path (#6006); `connect` still opens a sandbox shell.
+  // Only terminal agents reach this block, so the variant binary (for example
+  // `nemo-deepagents`) is the common case — use the resolved name, not a literal.
+  log(`  Launch: ${CLI_NAME} launch ${sandboxName}`);
+  log(`  Connect: ${CLI_NAME} ${sandboxName} connect`);
   if (typeof terminalAgent.runtime?.interactive_command === "string") {
     log(`  Interactive: ${terminalAgent.runtime.interactive_command}`);
   }
@@ -185,7 +191,10 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
     // Reconcile after the final recovery because any restart above can
     // invalidate the forward created earlier in onboarding.
-    deps.ensureAgentDashboardForward(sandboxName, agent);
+    const dashboardPort = deps.ensureAgentDashboardForward(sandboxName, agent);
+    if (dashboardPort > 0) {
+      deps.persistDashboardPort(sandboxName, dashboardPort);
+    }
   }
 
   return {

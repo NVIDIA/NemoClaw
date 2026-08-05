@@ -39,6 +39,52 @@ const REMOTE_PLATFORM_TOOLSETS = [
   "audio",
 ];
 
+export const MANAGED_IMAGE_HERMES_SUPPORTED_PLATFORMS = [
+  "telegram",
+  "discord",
+  "weixin",
+  "slack",
+  "whatsapp",
+  "teams",
+] as const;
+
+// Hermes v0.19.0 also packages platform plugins and built-in adapters that are
+// not yet supported by NemoClaw's messaging manifests. A neutral managed image
+// must explicitly disable the complete installed surface, while keeping this
+// list separate from the supported/activatable contract above.
+export const MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS = [
+  "bluebubbles",
+  "dingtalk",
+  "discord",
+  "email",
+  "feishu",
+  "google_chat",
+  "homeassistant",
+  "irc",
+  "line",
+  "matrix",
+  "mattermost",
+  "msgraph_webhook",
+  "ntfy",
+  "photon",
+  "qqbot",
+  "raft",
+  "relay",
+  "signal",
+  "simplex",
+  "slack",
+  "sms",
+  "teams",
+  "telegram",
+  "wecom",
+  "wecom_callback",
+  "weixin",
+  "whatsapp",
+  "whatsapp_cloud",
+  "webhook",
+  "yuanbao",
+] as const;
+
 const DASHBOARD_ROUTING_KEYS = [
   "model",
   "providers",
@@ -120,6 +166,21 @@ export function buildHermesManagedPolicy(
   settings: HermesBuildSettings,
   env: NodeJS.ProcessEnv = process.env,
 ): HermesManagedPolicyV1 {
+  const platforms: Record<string, unknown> = {
+    api_server: {
+      enabled: true,
+      extra: {
+        port: 18642,
+        host: "127.0.0.1",
+      },
+    },
+  };
+  if (settings.managedImageCapabilityUnion) {
+    for (const platform of MANAGED_IMAGE_HERMES_NEUTRAL_PLATFORMS) {
+      platforms[platform] = { enabled: false };
+    }
+  }
+
   const config: HermesManagedConfigBase = {
     _config_version: 33,
     approvals: {
@@ -208,15 +269,7 @@ export function buildHermesManagedPolicy(
     platform_toolsets: {
       api_server: buildHermesRemotePlatformToolsets(settings),
     },
-    platforms: {
-      api_server: {
-        enabled: true,
-        extra: {
-          port: 18642,
-          host: "127.0.0.1",
-        },
-      },
-    },
+    platforms,
   };
 
   applyHermesManagedRoute(config, {

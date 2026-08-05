@@ -26,6 +26,9 @@ import {
   type InferenceSwitchWorkflow,
   validateInferenceSwitchWorkflow,
 } from "./inference-switch-workflow-boundary.mts";
+import { validateLlamaCppDgxSparkQualificationWorkflow } from "./llama-cpp-dgx-spark-qualification-workflow-boundary.mts";
+import { validateManagedImageMultiarchWorkflow } from "./managed-image-multiarch-workflow-boundary.mts";
+import { validateManagedImageProtectedRuntimeWorkflow } from "./managed-image-protected-runtime-workflow-boundary.mts";
 import {
   type OpenClawPluginRuntimeExdevWorkflow,
   validateOpenClawPluginRuntimeExdevWorkflow,
@@ -39,7 +42,6 @@ import {
   type OperationsWorkflow,
   validateE2eOperationsWorkflow,
 } from "./operations-workflow-boundary.mts";
-import { validatePrepareE2eWorkflowBoundary } from "./prepare-e2e-workflow-boundary.mts";
 import { validateRunnerComparisonWorkflowBoundary } from "./runner-comparison-workflow-boundary.mts";
 import { validateRunnerPressureWorkflow } from "./runner-pressure-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
@@ -53,6 +55,10 @@ import {
   UPLOAD_E2E_ARTIFACTS_ACTION,
   validateUploadE2eArtifactsWorkflowBoundary,
 } from "./upload-e2e-artifacts-workflow-boundary.mts";
+import {
+  CLI_ARTIFACT_RESTORE_STEP,
+  validateE2eWorkspaceBootstrapBoundary,
+} from "./workspace-bootstrap-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_E2E_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -155,6 +161,7 @@ const COMMON_SECRET_ENV_NAMES = [
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e",
   "hermes-gpu-startup",
+  "llama-cpp-dgx-spark-qualification",
   "openshell-credential-generation-window",
   "staging-brev-launchable",
 ]);
@@ -579,6 +586,7 @@ const RESTORED_GATEWAY_PAIRING_RUNTIME_FILES = new Set([
 ]);
 const LIVE_E2E_OWNING_FILE_JOBS = new Map<string, readonly string[]>([
   ["test/e2e/live/openclaw-plugin-runtime-exdev-lifecycle.ts", ["openclaw-plugin-runtime-exdev"]],
+  ["test/e2e/live/rebuild-hermes-cron-restore.ts", ["rebuild-hermes", "rebuild-hermes-stale-base"]],
   ["test/e2e/live/openshell-gateway-upgrade-helpers.ts", ["openshell-gateway-upgrade"]],
   ["test/e2e/live/openshell-gateway-upgrade-old-installer.ts", ["openshell-gateway-upgrade"]],
 ]);
@@ -1836,9 +1844,10 @@ export function validateRebuildHermesBootstrapBoundary(
 
   const steps = asSteps(job.steps);
   const prepareWorkspace = requireJobStep(errors, jobName, steps, "Prepare E2E workspace");
-  if (Object.keys(asRecord(prepareWorkspace?.with)).length !== 0) {
-    errors.push(`${jobName} workspace preparation must use the default checked-out CLI build`);
+  if (!isDeepStrictEqual(asRecord(prepareWorkspace?.with), { "build-cli": "false" })) {
+    errors.push(`${jobName} workspace preparation must defer to the exact-commit CLI artifact`);
   }
+  const restoreCli = requireJobStep(errors, jobName, steps, CLI_ARTIFACT_RESTORE_STEP);
 
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
@@ -1890,14 +1899,18 @@ export function validateRebuildHermesBootstrapBoundary(
 
   if (
     prepareWorkspace &&
+    restoreCli &&
     installOpenShell &&
     runVitest &&
     !(
-      steps.indexOf(prepareWorkspace) < steps.indexOf(installOpenShell) &&
+      steps.indexOf(prepareWorkspace) < steps.indexOf(restoreCli) &&
+      steps.indexOf(restoreCli) < steps.indexOf(installOpenShell) &&
       steps.indexOf(installOpenShell) < steps.indexOf(runVitest)
     )
   ) {
-    errors.push(`${jobName} must build the CLI before installing OpenShell and running Vitest`);
+    errors.push(
+      `${jobName} must restore the exact-commit CLI before installing OpenShell and running Vitest`,
+    );
   }
   return errors;
 }
@@ -2491,9 +2504,15 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
     }
     requireCanonicalDockerHubCleanupRun(errors, jobName, cleanup);
 
-    const checkoutIndex = steps.findIndex((step) =>
-      stringValue(step.uses).startsWith("actions/checkout@"),
-    );
+    const checkoutIndex = steps.findIndex((step) => {
+      if (jobName === "managed-image-protected-runtime") {
+        return step.name === "Checkout exact protected runtime candidate source";
+      }
+      if (jobName === "llama-cpp-dgx-spark-qualification") {
+        return step.name === "Checkout exact llama.cpp qualification candidate";
+      }
+      return stringValue(step.uses).startsWith("actions/checkout@");
+    });
     const authIndex = steps.indexOf(auth);
     const cleanupIndex = steps.indexOf(cleanup);
     const expectedAuthIndex =
@@ -4232,11 +4251,14 @@ function validateTrustedE2eDispatchReceipt(
 export function validateE2eWorkflow(workflowValue: unknown): string[] {
   const workflow = asRecord(workflowValue);
   const errors: string[] = [];
-  errors.push(...validatePrepareE2eWorkflowBoundary(workflow));
+  errors.push(...validateE2eWorkspaceBootstrapBoundary(workflow));
   errors.push(...validateUploadE2eArtifactsWorkflowBoundary(workflow));
   errors.push(...validateHermesDashboardWorkflow(workflow as unknown as HermesDashboardWorkflow));
   errors.push(...validateHermesGpuStartupWorkflow(workflow));
   errors.push(...validateInferenceSwitchWorkflow(workflow as unknown as InferenceSwitchWorkflow));
+  errors.push(...validateLlamaCppDgxSparkQualificationWorkflow(workflow));
+  errors.push(...validateManagedImageMultiarchWorkflow(workflow));
+  errors.push(...validateManagedImageProtectedRuntimeWorkflow(workflow));
   errors.push(
     ...validateOpenClawPluginRuntimeExdevWorkflow(
       workflow as unknown as OpenClawPluginRuntimeExdevWorkflow,

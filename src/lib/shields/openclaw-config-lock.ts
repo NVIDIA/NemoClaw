@@ -65,6 +65,7 @@ type GuardSummary = {
   chattrApplied?: boolean;
   configSha256?: string;
   hashSynthesized?: boolean;
+  resealedDrift?: boolean;
   recovery?: string;
   originalLocked?: boolean;
 };
@@ -74,6 +75,7 @@ export type OpenClawConfigGuardResult = {
   chattrApplied: boolean;
   configSha256?: string;
   hashSynthesized?: boolean;
+  resealedDrift?: boolean;
   recovery?: string;
   originalLocked?: boolean;
 };
@@ -144,7 +146,17 @@ export function validateOpenClawConfigCandidate(
     ];
   }
   const result = privileged.run(
-    [...SCHEMA_VALIDATION_TIMEOUT, "gosu", "gateway", "sh", "-c", SCHEMA_VALIDATION_SCRIPT],
+    [
+      ...SCHEMA_VALIDATION_TIMEOUT,
+      "/usr/bin/setpriv",
+      "--reuid=gateway",
+      "--regid=gateway",
+      "--init-groups",
+      "--",
+      "sh",
+      "-c",
+      SCHEMA_VALIDATION_SCRIPT,
+    ],
     input,
   );
   let payload: unknown;
@@ -230,6 +242,7 @@ export function parseOpenClawConfigGuardOutput(
       (record.chattrApplied === undefined || typeof record.chattrApplied === "boolean") &&
       (record.configSha256 === undefined || typeof record.configSha256 === "string") &&
       (record.hashSynthesized === undefined || typeof record.hashSynthesized === "boolean") &&
+      (record.resealedDrift === undefined || typeof record.resealedDrift === "boolean") &&
       (record.recovery === undefined || typeof record.recovery === "string") &&
       (record.originalLocked === undefined || typeof record.originalLocked === "boolean")
     ) {
@@ -302,6 +315,7 @@ export function parseOpenClawConfigGuardOutput(
     ...(summary?.status === "ok" && summary.hashSynthesized === true
       ? { hashSynthesized: true }
       : {}),
+    ...(summary?.status === "ok" && summary.resealedDrift === true ? { resealedDrift: true } : {}),
     ...(summary?.status === "ok" && summary.recovery ? { recovery: summary.recovery } : {}),
     ...(summary?.status === "ok" && typeof summary.originalLocked === "boolean"
       ? { originalLocked: summary.originalLocked }

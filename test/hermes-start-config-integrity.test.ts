@@ -66,7 +66,7 @@ function runHermesDashboardHomePrepAsRoot() {
   const fakePython = path.join(tmpDir, "fake-python.sh");
   const logPath = path.join(tmpDir, "seed.log");
   const hermesHome = path.join(tmpDir, ".hermes");
-  const dashboardHome = path.join(hermesHome, "dashboard-home");
+  const dashboardHome = path.join(hermesHome, "profiles", "dashboard-home");
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   fs.mkdirSync(dashboardHome, { recursive: true });
   fs.mkdirSync(binDir, { recursive: true });

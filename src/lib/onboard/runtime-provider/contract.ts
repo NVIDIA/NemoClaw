@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxEntry, SandboxWorkloadReceipt } from "../../state/registry/types";
+import type {
+  ManagedBootstrapRuntimeCreateLifecycle,
+  ManagedBootstrapRuntimeCreateLifecycleInput,
+  ManagedBootstrapRuntimeOnboardRouting,
+  ManagedBootstrapRuntimeOnboardRoutingInput,
+} from "../managed-bootstrap/runtime-create";
 import type { ManagedImageSelectionPolicy } from "../workload/source";
 
 export const RUNTIME_PROVIDER_BUNDLE_CONTRACT_VERSION = 1 as const;
@@ -67,8 +73,17 @@ export type RuntimeProviderManagedImageSupport = {
   readonly capabilityContractVersions: readonly number[];
 };
 
+export type RuntimeProviderNativeArtifactSupport = {
+  readonly exactDigestReferences: boolean;
+  readonly platforms: readonly "windows/x64"[];
+  readonly agents: readonly "openclaw"[];
+  readonly contractVersions: readonly number[];
+  readonly startupProfileContractVersions: readonly number[];
+};
+
 export interface RuntimeProviderWorkloadProfile {
   readonly support: RuntimeProviderManagedImageSupport | null;
+  readonly nativeArtifactSupport?: RuntimeProviderNativeArtifactSupport | null;
   readonly hostArchitectures: readonly string[];
   readonly managedImageSelectionPolicy: ManagedImageSelectionPolicy;
   readonly legacyDockerfileBuilds: boolean;
@@ -261,7 +276,12 @@ export type RuntimeProviderMutationAuthoritySurface =
 
 export type RuntimeProviderBootstrapSurface =
   | RuntimeProviderSupportedSurface<{
-      prepare(sandbox: SandboxEntry): unknown;
+      createLifecycle(
+        input: ManagedBootstrapRuntimeCreateLifecycleInput,
+      ): ManagedBootstrapRuntimeCreateLifecycle;
+      createOnboardRouting(
+        input: ManagedBootstrapRuntimeOnboardRoutingInput,
+      ): ManagedBootstrapRuntimeOnboardRouting;
     }>
   | RuntimeProviderUnsupportedSurface;
 

@@ -17,7 +17,9 @@ const config = fs.readFileSync(
   "utf8",
 );
 const manifest = fs.readFileSync(path.join(root, "agents", "hermes", "manifest.yaml"), "utf8");
-const wrapper = fs.readFileSync(path.join(root, "agents", "hermes", "hermes-wrapper.py"), "utf8");
+const cliAdapter = JSON.parse(
+  fs.readFileSync(path.join(root, "agents", "hermes", "hermes-cli-adapter-v1.json"), "utf8"),
+);
 const review = fs.readFileSync(
   path.join(root, "docs", "security", "hermes-0.19.0-dependency-review.md"),
   "utf8",
@@ -96,10 +98,30 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(review).toContain("Unresolved upgrade-created high-impact concerns: `0`");
   });
 
-  it("keeps wrapper parsing aligned with the target CLI", () => {
-    for (const expected of ['"--usage-file"', '"--no-restore-cwd"', '"--safe-mode"', '"console"']) {
-      expect(wrapper).toContain(expected);
-    }
+  it("binds the CLI adapter version and source-fix constraints to target Hermes", () => {
+    expect(cliAdapter.adapter_version).toBe(1);
+    expect(cliAdapter.upstream_cli_version).toBe("0.19.0");
+    expect(cliAdapter.managed_commands).toEqual(["chat"]);
+    expect(cliAdapter.session_name_coalescer).toEqual({
+      module: "hermes_cli.main",
+      function: "_coalesce_session_name_args",
+      boundary_set: "_SUBCOMMANDS",
+    });
+    expect(Object.keys(cliAdapter.translations).sort()).toEqual([
+      "provider_model_composition",
+      "resumed_oneshot",
+    ]);
+    expect(
+      (
+        Object.values(cliAdapter.translations) as Array<{
+          source_fix_constraint?: unknown;
+        }>
+      ).every(
+        (translation) =>
+          typeof translation.source_fix_constraint === "string" &&
+          translation.source_fix_constraint.length > 0,
+      ),
+    ).toBe(true);
   });
 
   it("accepts uv build metadata and rejects a different semantic version", () => {
@@ -129,7 +151,9 @@ describe("Hermes 0.19.0 dependency review", () => {
     expect(arg("NODE_VERSION")).toBe("24.18.1");
     expect(arg("UV_VERSION")).toBe("0.11.33");
     for (const selection of [
-      '"cryptography==48.0.1"',
+      '"aiohttp==3.14.3"',
+      '"cryptography==50.0.0"',
+      '"alibabacloud-dingtalk==2.2.54"',
       '"mcp==1.28.1"',
       '"Pillow==12.3.0"',
       '"starlette==1.3.1"',
@@ -137,8 +161,20 @@ describe("Hermes 0.19.0 dependency review", () => {
     ]) {
       expect(securityDependenciesPatch).toContain(selection);
     }
+    const addedPatchLines = securityDependenciesPatch
+      .split("\n")
+      .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+      .join("\n");
+    for (const supersededSelection of [
+      '"aiohttp==3.14.1"',
+      '"cryptography==48.0.1"',
+      '"alibabacloud-dingtalk==2.2.42"',
+    ]) {
+      expect(addedPatchLines).not.toContain(supersededSelection);
+    }
     for (const installedVersion of [
-      "'cryptography': '48.0.1'",
+      "'aiohttp': '3.14.3'",
+      "'cryptography': '50.0.0'",
       "'mcp': '1.28.1'",
       "'pillow': '12.3.0'",
       "'starlette': '1.3.1'",
@@ -146,6 +182,8 @@ describe("Hermes 0.19.0 dependency review", () => {
     ]) {
       expect(dockerfileBase).toContain(installedVersion);
     }
+    expect(dockerfileBase).not.toContain("'aiohttp': '3.14.1'");
+    expect(dockerfileBase).not.toContain("'cryptography': '48.0.1'");
     expect(dockerfileBase).toContain("python-multipart==0.0.32");
     expect(dockerfileBase).toContain(
       "sha256:be54b7f3fa167bb83e4fcd936b887b708f4e57fe75911c02aebf53efaf8d938e",
@@ -156,7 +194,15 @@ describe("Hermes 0.19.0 dependency review", () => {
     for (const advisory of ["GHSA-5rvq-cxj2-64vf", "GHSA-6jv3-5f52-599m", "GHSA-v9pg-7xvm-68hf"]) {
       expect(review).toContain(advisory);
     }
-    expect(review).toContain("`cryptography==48.0.1`");
+    for (const advisory of ["GHSA-cq5v-8q36-5273", "GHSA-g6cj-pr64-35w5"]) {
+      expect(review).toContain(advisory);
+    }
+    expect(review).toContain("`aiohttp==3.14.3`");
+    expect(review).toContain("`cryptography==50.0.0`");
+    expect(review).toContain("`alibabacloud-dingtalk==2.2.54`");
+    expect(review).toContain("confirms 94 unique third-party package names");
+    expect(review).toContain("Tornado `6.5.7` is the lowest version");
+    expect(review).toContain("source-distribution-only");
     expect(review).toContain("`mcp==1.28.1`");
     expect(review).toContain("`Pillow==12.3.0`");
     expect(review).toContain("`starlette==1.3.1`");
