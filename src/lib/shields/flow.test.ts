@@ -1012,28 +1012,6 @@ describe("shields command flow", () => {
     expect(permissiveRuntimeDirs()).toEqual(before);
   });
 
-  it("keeps status up when OpenShell rejects the permissive policy (#8198)", () => {
-    const harness = createHarness({
-      run: (cmd) => ({
-        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
-      }),
-    });
-
-    expect(() =>
-      harness.shieldsDown("openclaw", {
-        reason: "verify",
-        skipTimer: true,
-        throwOnError: true,
-      }),
-    ).toThrow(/Could not apply/);
-    expect(harness.isShieldsDown("openclaw")).toBe(false);
-
-    const state = JSON.parse(
-      fs.readFileSync(path.join(tmpDir, ".nemoclaw/state/shields-openclaw.json"), "utf-8"),
-    );
-    expect(state).toMatchObject({ shieldsDown: false, shieldsDownAt: null });
-  });
-
   it.skipIf(process.platform === "win32")(
     "atomically replaces a timer marker symlink without modifying its target",
     () => {

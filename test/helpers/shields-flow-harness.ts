@@ -43,6 +43,7 @@ export type ShieldsFlowHarnessOptions = {
     path: string;
     detail: string;
   }>;
+  processStartIdentity?: string;
   fork?: (...args: unknown[]) => {
     pid: number;
     disconnect: () => void;
@@ -119,6 +120,14 @@ export function createShieldsFlowHarness(
   delete require.cache[requireDist.resolve("../actions/sandbox/mcp-bridge-policy.js")];
   delete require.cache[requireDist.resolve("../sandbox/privileged-exec.js")];
   delete require.cache[requireDist.resolve("../cli/branding.js")];
+  const timerControl = requireDist(
+    "./timer-control.js",
+  ) as typeof import("../../src/lib/shields/timer-control.js");
+  if (options.processStartIdentity !== undefined) {
+    vi.spyOn(timerControl, "readProcessStartIdentity").mockReturnValue(
+      options.processStartIdentity,
+    );
+  }
   const lifecycleLock = requireDist(
     "../state/mcp-lifecycle-lock.js",
   ) as typeof import("../../src/lib/state/mcp-lifecycle-lock.js");

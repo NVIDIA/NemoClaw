@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import YAML from "yaml";
+import { createShieldsFlowHarness } from "../../../test/helpers/shields-flow-harness";
 
 const requireSource = createRequire(import.meta.url);
 const SHIELDS_MODULE = "./index.js";
@@ -93,6 +94,94 @@ describe("shields policy transition", () => {
     const stateFiles = fs.readdirSync(path.join(homeDir, ".nemoclaw", "state"));
     expect(stateFiles.filter((name) => /^(policy-snapshot-|shields-openclaw)/.test(name))).toEqual(
       [],
+    );
+  });
+});
+
+describe("shields down policy rejection", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "shields-policy-rejection-"));
+    vi.stubEnv("HOME", tmpDir);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function createRejectedPolicyHarness() {
+    return createShieldsFlowHarness(requireSource, tmpDir, {
+      run: (cmd) => ({
+        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
+      }),
+    });
+  }
+
+  it("keeps status up when OpenShell rejects the permissive policy (#8198)", () => {
+    const harness = createRejectedPolicyHarness();
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        reason: "verify",
+        skipTimer: true,
+        throwOnError: true,
+      }),
+    ).toThrow(/Could not apply/);
+    expect(harness.isShieldsDown("openclaw")).toBe(false);
+
+    const state = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, ".nemoclaw/state/shields-openclaw.json"), "utf-8"),
+    );
+    expect(state).toMatchObject({ shieldsDown: false, shieldsDownAt: null });
+  });
+
+  it("retains auto-restore authority when rejected policy state cleanup fails (#8198)", () => {
+    const timerKill = vi.fn(() => true);
+    const harness = createShieldsFlowHarness(requireSource, tmpDir, {
+      processStartIdentity: "test-process-start-identity",
+      fork: () => ({
+        pid: 4242,
+        disconnect: vi.fn(),
+        unref: vi.fn(),
+        send: vi.fn(() => true),
+        kill: timerKill,
+      }),
+      run: (cmd) => ({
+        status: Array.isArray(cmd) && cmd.includes("policy") && cmd.includes("set") ? 1 : 0,
+      }),
+    });
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const statePath = path.join(stateDir, "shields-openclaw.json");
+    const originalWriteFileSync = fs.writeFileSync.bind(fs);
+    let stateWrites = 0;
+    vi.spyOn(fs, "writeFileSync").mockImplementation(((file, data, options) => {
+      if (String(file) === statePath && ++stateWrites === 2) {
+        throw new Error("state cleanup denied");
+      }
+      return originalWriteFileSync(file, data, options);
+    }) as typeof fs.writeFileSync);
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        reason: "verify recovery authority",
+        throwOnError: true,
+      }),
+    ).toThrow(/Could not apply/);
+
+    expect(JSON.parse(fs.readFileSync(statePath, "utf-8"))).toMatchObject({
+      shieldsDown: true,
+      shieldsDownReason: "verify recovery authority",
+    });
+    expect(fs.existsSync(path.join(stateDir, "shields-timer-openclaw.json"))).toBe(true);
+    expect(
+      fs.readdirSync(stateDir).some((name) => name.startsWith("shields-transition-openclaw-")),
+    ).toBe(true);
+    expect(timerKill).not.toHaveBeenCalled();
+    expect(harness.errorSpy.mock.calls.flat().join("\n")).toContain(
+      "The scheduled auto-restore remains authoritative.",
     );
   });
 });
