@@ -58,7 +58,9 @@ describe("native Podman CPU proof workflow", () => {
     expect(installGuard).toContain("exit 97");
     expect(installGuard).toContain("DOCKER_HOST=");
     expect(disableDocker).toContain("systemctl stop docker.service docker.socket");
-    expect(disableDocker).toContain("test ! -S /var/run/docker.sock");
+    expect(disableDocker).toContain("pkill -TERM -x dockerd");
+    expect(disableDocker).toContain("docker-absence-boundary.json");
+    expect(disableDocker).toContain("Docker socket remained available after Docker shutdown");
     expect(startPodman).toContain("umask 077");
     expect(startPodman).toContain('socket_path="$runtime_dir/podman/podman.sock"');
     expect(startPodman).toContain('podman system service --time=0 "unix://$socket_path"');

@@ -91,12 +91,49 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          install -d -m 0700 "$E2E_ARTIFACT_DIR"
           sudo systemctl stop docker.service docker.socket || true
           sudo systemctl mask --runtime docker.service docker.socket || true
-          ! systemctl is-active --quiet docker.service
-          ! systemctl is-active --quiet docker.socket
-          test ! -S /var/run/docker.sock
-          test "$(command -v docker)" = "$E2E_DOCKER_GUARD_BIN"
+          sudo pkill -TERM -x dockerd 2>/dev/null || true
+          for attempt in $(seq 1 20); do
+            if ! pgrep -x dockerd >/dev/null && [ ! -S /var/run/docker.sock ]; then
+              break
+            fi
+            test "$attempt" -lt 20
+            sleep 1
+          done
+          if pgrep -x dockerd >/dev/null; then
+            echo "::error::dockerd remained active after Docker shutdown" >&2
+            exit 1
+          fi
+          sudo rm -f /var/run/docker.sock
+          if systemctl is-active --quiet docker.service; then
+            echo "::error::docker.service remained active after Docker shutdown" >&2
+            exit 1
+          fi
+          if systemctl is-active --quiet docker.socket; then
+            echo "::error::docker.socket remained active after Docker shutdown" >&2
+            exit 1
+          fi
+          if [ -S /var/run/docker.sock ]; then
+            echo "::error::Docker socket remained available after Docker shutdown" >&2
+            exit 1
+          fi
+          docker_candidate="$(command -v docker || true)"
+          if [ "$docker_candidate" != "$E2E_DOCKER_GUARD_BIN" ]; then
+            echo "::error::Docker command resolution escaped the invocation guard" >&2
+            exit 1
+          fi
+          jq -n \
+            --arg dockerCandidate "$docker_candidate" \
+            '{
+              schemaVersion: 1,
+              dockerServiceActive: false,
+              dockerSocketActive: false,
+              dockerDaemonActive: false,
+              dockerSocketPresent: false,
+              dockerCandidate: $dockerCandidate
+            }' >"$E2E_ARTIFACT_DIR/docker-absence-boundary.json"
 
       - name: Start exact rootless Podman API socket
         shell: bash
