@@ -15,6 +15,19 @@ const PYTHON_HAS_DESCRIPTOR_XATTR =
     "-c",
     "import os; assert all(hasattr(os, name) for name in ('listxattr', 'getxattr', 'setxattr'))",
   ]).status === 0;
+// An unprivileged process can chgrp only to a group it belongs to, so a
+// supplementary gid distinct from the primary gid stands in for the sandbox
+// group; the ownership test skips on runners that have none.
+const SUPPLEMENTARY_GID = Number(
+  spawnSync(
+    "python3",
+    [
+      "-c",
+      "import os; groups = [g for g in os.getgroups() if g != os.getgid()]; print(groups[0] if groups else -1)",
+    ],
+    { encoding: "utf-8" },
+  ).stdout.trim(),
+);
 
 const RUN_GUARD_AS_CURRENT_USER = String.raw`
 import importlib.util
@@ -134,6 +147,37 @@ finally:
     if plugins_fd >= 0:
         os.close(plugins_fd)
     os.close(config_fd)
+`;
+
+const RUN_GUARD_WITH_DISTINCT_SANDBOX_GID = String.raw`
+import importlib.util
+import json
+import os
+import sys
+
+guard_path, config_dir, sandbox_gid = sys.argv[1:4]
+spec = importlib.util.spec_from_file_location("nemoclaw_state_dir_guard_gid", guard_path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+identity = module.Identity(
+    root_uid=os.getuid(), root_gid=os.getgid(),
+    sandbox_uid=os.getuid(), sandbox_gid=int(sandbox_gid),
+)
+result = module.run_guard("lock", config_dir, identity)
+
+
+def group_of(path):
+    return os.lstat(os.path.join(config_dir, path)).st_gid
+
+
+print(json.dumps({
+    "ok": result.ok,
+    "rootGid": os.getgid(),
+    "credentialsGid": group_of("credentials"),
+    "nestedGid": group_of("credentials/providers"),
+    "secretGid": group_of("credentials/providers/provider.json"),
+}))
 `;
 
 const RUN_CARVEOUT_MKDIR_RACE = String.raw`
@@ -889,6 +933,8 @@ describe("state-dir-guard", () => {
     const { configDir } = fixture();
     const secretDir = path.join(configDir, "credentials");
     const secretPath = path.join(secretDir, "token.json");
+    const nestedSecretDir = path.join(secretDir, "providers");
+    const nestedSecretPath = path.join(nestedSecretDir, "provider.json");
     const workspaceDir = path.join(configDir, "workspace-research");
     const executablePath = path.join(workspaceDir, "run.sh");
     const agentDir = path.join(configDir, "agents", "main");
@@ -897,10 +943,11 @@ describe("state-dir-guard", () => {
     const sessionBacklink = path.join(sessionsDir, "runtime-link");
     const sessionFifo = path.join(sessionsDir, "runtime-events.fifo");
     const agentCodePath = path.join(agentDir, "agent.js");
-    fs.mkdirSync(secretDir, { recursive: true });
+    fs.mkdirSync(nestedSecretDir, { recursive: true });
     fs.mkdirSync(workspaceDir);
     fs.mkdirSync(sessionsDir, { recursive: true });
     fs.writeFileSync(secretPath, "secret\n", { mode: 0o640 });
+    fs.writeFileSync(nestedSecretPath, "secret\n", { mode: 0o640 });
     fs.writeFileSync(executablePath, "#!/bin/sh\n", { mode: 0o775 });
     fs.writeFileSync(sessionPath, "runtime\n", { mode: 0o660 });
     fs.writeFileSync(agentCodePath, "export {};\n", { mode: 0o664 });
@@ -913,8 +960,10 @@ describe("state-dir-guard", () => {
     const locked = runGuard("lock", configDir);
 
     expect(locked.status).toBe(0);
-    expect(mode(secretDir)).toBe(0o700);
+    expect(mode(secretDir)).toBe(0o710);
+    expect(mode(nestedSecretDir)).toBe(0o700);
     expect(mode(secretPath)).toBe(0o600);
+    expect(mode(nestedSecretPath)).toBe(0o600);
     expect(mode(workspaceDir)).toBe(0o755);
     expect(mode(executablePath)).toBe(0o755);
     expect(mode(path.join(configDir, "agents"))).toBe(0o755);
@@ -937,7 +986,37 @@ describe("state-dir-guard", () => {
     expect(mode(agentDir)).toBe(0o2770);
   });
 
-  it("restores startup traversal only for an empty sealed credentials root (#8112)", () => {
+  it.skipIf(SUPPLEMENTARY_GID < 0)(
+    "assigns the sandbox group to the confidentiality root only, while nested entries keep the root group (#7545)",
+    () => {
+      const { configDir } = fixture(".openclaw");
+      const nested = path.join(configDir, "credentials", "providers");
+      fs.mkdirSync(nested, { recursive: true });
+      fs.writeFileSync(path.join(nested, "provider.json"), "secret\n", { mode: 0o640 });
+
+      const result = spawnSync(
+        "python3",
+        [
+          "-c",
+          RUN_GUARD_WITH_DISTINCT_SANDBOX_GID,
+          GUARD_PATH,
+          configDir,
+          String(SUPPLEMENTARY_GID),
+        ],
+        { encoding: "utf-8", timeout: 15_000 },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim());
+      expect(parsed.ok).toBe(true);
+      expect(parsed.rootGid).not.toBe(SUPPLEMENTARY_GID);
+      expect(parsed.credentialsGid).toBe(SUPPLEMENTARY_GID);
+      expect(parsed.nestedGid).toBe(parsed.rootGid);
+      expect(parsed.secretGid).toBe(parsed.rootGid);
+    },
+  );
+
+  it("restores startup traversal for sealed credentials roots without exposing contents (#8112)", () => {
     const { configDir } = fixture();
     const credentialsDir = path.join(configDir, "credentials");
     fs.mkdirSync(credentialsDir);
@@ -953,7 +1032,7 @@ describe("state-dir-guard", () => {
     const nonemptyStartup = runGuard("startup", configDir);
 
     expect(nonemptyStartup.status, nonemptyStartup.stderr).toBe(0);
-    expect(mode(credentialsDir)).toBe(0o700);
+    expect(mode(credentialsDir)).toBe(0o710);
     expect(mode(path.join(credentialsDir, "token.json"))).toBe(0o600);
   });
 

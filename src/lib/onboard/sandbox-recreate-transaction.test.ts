@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { managedStartupE2eProfile } from "../../../scripts/checks/generate-managed-startup-profile-fixture.mts";
 import { decisionSelected } from "../state/onboard-checkpoint-decision";
 import { deriveCheckpointFromSession } from "../state/onboard-checkpoint-migrate";
 import type {
@@ -14,6 +15,7 @@ import type {
 } from "../state/onboard-checkpoint-types";
 import { createSession } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
+import { encodeManagedStartupProfile } from "./managed-startup/profile";
 import { createDockerRuntimeProviderBundle } from "./runtime-provider/docker";
 import { createRuntimeProviderBundleRegistry } from "./runtime-provider/registry";
 import {
@@ -31,6 +33,7 @@ import {
   sandboxRecreateSourceWorkloadEntry,
   selectedGatewayForSandboxRecreate,
 } from "./sandbox-recreate-transaction";
+import { nativeArtifactWorkloadReceiptFixture } from "./workload/native-artifact-test-fixture";
 
 const ISO = "2026-07-27T20:00:00.000Z";
 const TX_ID = "11111111-1111-4111-8111-111111111111";
@@ -172,6 +175,40 @@ describe("sandbox recreate journal", () => {
       ),
     ).toEqual({ status: "skipped", reason: "shared-image" });
     expect(removeImage).not.toHaveBeenCalled();
+  });
+
+  it("removes the owned source image when a native-artifact replacement retains a stale imageTag (#8178)", () => {
+    const removeImage = vi.fn(() => ({ status: 0 }));
+    const runtimeProviders = createRuntimeProviderBundleRegistry([
+      ["docker", createDockerRuntimeProviderBundle({ removeImage })],
+    ]);
+    const replacement: SandboxEntry = {
+      ...SOURCE_ENTRY,
+      workload: nativeArtifactWorkloadReceiptFixture(
+        encodeManagedStartupProfile(managedStartupE2eProfile("openclaw")),
+      ),
+      lifecycleGeneration: TARGET_GENERATION,
+      lifecycleLiveIdentityFingerprint: TARGET_ID,
+    };
+
+    expect(
+      retireReplacedSandboxWorkload(
+        "alpha",
+        TARGET_GENERATION,
+        TARGET_ID,
+        SOURCE_ENTRY,
+        replacement,
+        { runtimeProviders },
+      ),
+    ).toEqual({
+      status: "removed",
+      engineDisplayName: "Docker",
+      reference: SOURCE_ENTRY.imageTag,
+    });
+    expect(removeImage).toHaveBeenCalledExactlyOnceWith(SOURCE_ENTRY.imageTag, {
+      ignoreError: true,
+      timeout: 30_000,
+    });
   });
 
   it("starts at deleted when the source is already absent", () => {
