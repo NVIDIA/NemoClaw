@@ -89,13 +89,20 @@ describe("detached Shields timer process", () => {
         child.disconnect();
 
         const exit = once(child, "exit", { signal: AbortSignal.timeout(10_000) });
-        expect(killTimer(sandboxName)).toEqual({
+        const cancellation = killTimer(sandboxName);
+        expect(cancellation).toMatchObject({
           markerFound: true,
           markerPid: childPid,
           wasAlive: true,
           terminated: false,
-          warnings: [],
+          authorityRevoked: true,
         });
+        expect([
+          [],
+          [
+            `Unable to verify shields timer PID ${String(childPid)} for sandbox '${sandboxName}'; clearing marker without signaling.`,
+          ],
+        ]).toContainEqual(cancellation.warnings);
         expect(fs.existsSync(markerPath)).toBe(false);
         const [code, signal] = await exit;
         expect({ code, signal }).toEqual({ code: 0, signal: null });

@@ -13,11 +13,14 @@ import { isErrnoException } from "../../core/errno";
 import { DEFAULT_GATEWAY_PORT, GATEWAY_PORT } from "../../core/ports";
 import { isStdinTty, readLineFromStdin } from "../../core/stdin";
 import { sleepMs } from "../../core/wait";
+import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import {
   gatewayDestroySkipMessage,
   OPENSHELL_SANDBOXES_DELETE_SKIP_MESSAGE,
   preservedRegistryUnrecoverableWarnings,
   providerDeleteSkipMessage,
+  sandboxDeleteAbsentMessage,
+  sandboxDeleteFailureMessage,
 } from "../../domain/uninstall/messaging";
 import {
   defaultUninstallPaths,
@@ -571,6 +574,22 @@ function runOptional(
   // destroyed AND skipped. Callers that care can pass a `onSkip` message
   // describing the actual state (target absent or unreachable).
   runtime.warn(opts.onSkip ?? `${description} skipped`);
+  return false;
+}
+
+function deleteSelectedGatewaySandbox(runtime: UninstallRuntime, sandboxName: string): boolean {
+  const result = runtime.run("openshell", ["sandbox", "delete", sandboxName], {
+    env: runtime.env,
+  });
+  if (result.status === 0) {
+    runtime.log(`Deleted OpenShell sandbox '${sandboxName}'`);
+    return true;
+  }
+  if (getSandboxDeleteOutcome(result).alreadyGone) {
+    runtime.warn(sandboxDeleteAbsentMessage(sandboxName));
+    return true;
+  }
+  runtime.warn(sandboxDeleteFailureMessage(sandboxName));
   return false;
 }
 
@@ -1144,13 +1163,11 @@ function removeOpenShellResources(
     let removedSelectedResources = true;
     for (const sandboxName of sandboxNames) {
       removedSelectedResources =
-        runOptional(
-          runtime,
-          `Deleted OpenShell sandbox '${sandboxName}'`,
-          "openshell",
-          ["sandbox", "delete", sandboxName],
-          { onSkip: `OpenShell sandbox '${sandboxName}' was already absent or unreachable` },
-        ) && removedSelectedResources;
+        deleteSelectedGatewaySandbox(runtime, sandboxName) && removedSelectedResources;
+    }
+    if (!removedSelectedResources) {
+      runtime.warn("Selected gateway cleanup was incomplete; preserving its state for retry.");
+      return false;
     }
     removedSelectedResources =
       removeGatewayRegistration(runtime, gatewayLabel, !externallySupervised) &&
