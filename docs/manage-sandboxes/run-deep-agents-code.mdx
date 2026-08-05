@@ -83,6 +83,17 @@ The process exit code matches `data.exit_code`.
 The terminal statuses are `success`, `agent_failure`, `process_failure`, `timeout`, `turn_limit`, `cancelled`, and `output_limit`.
 A timeout exits `124`, cancellation exits `130`, and other failures exit nonzero.
 
+When a headless run fails, the managed runtime classifies the active client exception chain when it contains a pinned exception class.
+Known classifications cover LangGraph SDK request failures, transport and TLS failures, and managed model-configuration failures.
+The stderr diagnostic includes `error_class`, `category`, `retryable`, and `correlation_id`.
+Use `correlation_id` to match the failure to logs.
+The `retryable` field is diagnostic information and does not cause an automatic retry.
+
+The runtime does not classify persisted checkpoint exception text.
+If no pinned exception class matches, stderr reports `error_class=unknown category=unknown retryable=false`.
+Text mode also prints `Unexpected error` with only the correlation ID.
+The runtime emits only fixed classification labels and does not copy the exception class name, message, or checkpoint content.
+
 The complete serialized envelope is limited to 1 MiB.
 If the response cannot fit, the runtime discards it and emits a bounded `output_limit` failure envelope.
 If it cannot write the envelope, the command exits nonzero and reports the write failure on stderr.
