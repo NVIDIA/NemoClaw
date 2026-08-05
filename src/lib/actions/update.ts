@@ -212,7 +212,7 @@ type MaintainedVersionRelation = "ahead" | "behind" | "incomparable" | "same" | 
 const PUBLIC_VERSION =
   /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*))?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
 /** A git-describe suffix identifies commits after its base tag. */
-const DESCRIBED_AFTER_TAG = /-\d+-g[0-9a-f]{7,64}$/;
+const DESCRIBED_VERSION = /^(.*)-\d+-g[0-9a-f]{7,64}$/;
 
 interface ParsedPublicVersion {
   describedAfterTag: boolean;
@@ -223,12 +223,13 @@ interface ParsedPublicVersion {
 
 function parsePublicVersion(version: string): ParsedPublicVersion | null {
   const normalized = normalizeVersion(version);
-  const match = PUBLIC_VERSION.exec(normalized);
+  const described = DESCRIBED_VERSION.exec(normalized);
+  const match = PUBLIC_VERSION.exec(described?.[1] ?? normalized);
   if (!match) return null;
   const release = [Number(match[1]), Number(match[2]), Number(match[3])] as const;
   if (release.some((part) => !Number.isSafeInteger(part))) return null;
   return {
-    describedAfterTag: DESCRIBED_AFTER_TAG.test(normalized),
+    describedAfterTag: described !== null,
     normalized,
     prerelease: match[4] ? match[4].split(".") : [],
     release,
@@ -283,9 +284,12 @@ function maintainedVersionRelation(
   if (releaseDifference > 0) return "ahead";
   if (releaseDifference < 0) return "behind";
 
-  // A git-describe version is after its base tag, not a SemVer prerelease.
+  // A git-described commit is ordered against the same base tag. Another tag
+  // on the same release line does not establish which commit is later.
   if (current.describedAfterTag || maintained.describedAfterTag) {
     if (current.normalized === maintained.normalized) return "same";
+    const baseDifference = compareSemver(current, maintained);
+    if (baseDifference !== 0) return "incomparable";
     if (current.describedAfterTag && !maintained.describedAfterTag) return "ahead";
     if (!current.describedAfterTag && maintained.describedAfterTag) return "behind";
     return "incomparable";
@@ -441,7 +445,7 @@ export async function runUpdateAction(
         : "  Refusing --fresh: reinstalling could replace it with an older build.",
     );
     error(
-      `  Drop --fresh to keep ${currentVersion}, or re-run with --allow-downgrade to reinstall anyway.`,
+      `  Drop --fresh to keep ${currentVersion}, or rerun with --allow-downgrade to reinstall anyway.`,
     );
     return {
       currentVersion,

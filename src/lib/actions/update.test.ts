@@ -295,6 +295,29 @@ describe("runUpdateAction", () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining("--allow-downgrade"));
   });
 
+  it("does not order a git-described prerelease against the stable release (#8306)", async () => {
+    const spawnSyncImpl = vi.fn();
+    const error = vi.fn();
+
+    const result = await runUpdateAction(
+      { fresh: true, yes: true },
+      {
+        currentVersion: () => "1.0.0-rc.1-3-gabcdef0",
+        error,
+        getLatestVersion: () => "1.0.0",
+        isSourceCheckout: () => false,
+        log: vi.fn(),
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.ranInstaller).toBe(false);
+    expect(result.status).toBe(1);
+    expect(result.updateAvailable).toBeNull();
+    expect(spawnSyncImpl).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Cannot order"));
+  });
+
   it("fails closed on --fresh when the versions cannot be ordered (#8306)", async () => {
     const spawnSyncImpl = vi.fn();
     const error = vi.fn();
