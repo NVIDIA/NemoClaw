@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { decisionSelected, decisionUnset } from "../../../state/onboard-checkpoint-decision";
 import {
   CHECKPOINT_SCHEMA_VERSION,
+  type CheckpointProviderBinding,
   type OnboardCheckpoint,
 } from "../../../state/onboard-checkpoint-types";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
@@ -129,6 +130,7 @@ function realStageSandboxCredentialProviders(
       enabledChannels: readonly string[];
       webSearchConfig: unknown;
       agent: unknown;
+      requiredBindings: readonly CheckpointProviderBinding[];
     }) => {
       const staged = await registration.stageSandboxCredentialProviders(
         input as never,
@@ -164,6 +166,23 @@ function sessionWithCheckpoint(checkpoint: OnboardCheckpoint): Session {
   return session;
 }
 
+function discordMessagingPlan(): ReturnType<typeof makeMinimalPlan> {
+  return {
+    ...makeMinimalPlan("my-assistant", "openclaw", ["discord"]),
+    credentialBindings: [
+      {
+        channelId: "discord",
+        credentialId: "discordBotToken",
+        sourceInput: "botToken",
+        providerName: "my-assistant-discord-bridge",
+        providerEnvKey: "DISCORD_BOT_TOKEN",
+        placeholder: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+        credentialAvailable: true,
+      },
+    ],
+  };
+}
+
 describe("sandbox crash-recovery replay (#5961, #6228)", () => {
   it("reuses a surviving sandbox with a legacy pre-reasoning fingerprint", async () => {
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
@@ -193,7 +212,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect((calls.createSandbox.mock.calls[0] as unknown[] | undefined)?.[4]).toBe("my-assistant");
   });
 
-  it("rejects stale bindings before any mutation instead of guessing", async () => {
+  it("rejects a stale credential binding before creating the missing sandbox", async () => {
     const { deps, calls } = createDeps({ getSandboxReuseState: () => "missing" });
     const session = sessionWithCheckpoint(
       crashedCheckpoint({
@@ -255,7 +274,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(calls.recordSkip).not.toHaveBeenCalled();
   });
 
-  it("rejects reuse when a checkpointed provider is no longer live-registered with the gateway", async () => {
+  it("rejects a stale provider binding without an effect receipt before creating the missing sandbox", async () => {
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "missing",
       providerMatchesGatewayCredential: () => false,
@@ -281,6 +300,344 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
 
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(calls.error.mock.calls.flat().join("\n")).toContain("my-assistant-brave-search");
+  });
+
+  it.each([
+    ["a malformed effect receipt", [",my-assistant-brave-search"], ["my-assistant-brave-search"]],
+    [
+      "whitespace around a provider name",
+      [" my-assistant-brave-search"],
+      [" my-assistant-brave-search"],
+    ],
+    [
+      "duplicate names in one effect receipt",
+      ["my-assistant-brave-search,my-assistant-brave-search"],
+      ["my-assistant-brave-search"],
+    ],
+    [
+      "a provider named by two effect receipts",
+      ["my-assistant-brave-search", "my-assistant-brave-search"],
+      ["my-assistant-brave-search"],
+    ],
+    [
+      "an effect receipt without a matching binding",
+      ["missing-provider"],
+      ["my-assistant-brave-search"],
+    ],
+    [
+      "duplicate registered provider bindings",
+      ["my-assistant-brave-search"],
+      ["my-assistant-brave-search", "my-assistant-brave-search"],
+    ],
+  ] as const)("does not grant provider replay authority to %s", async (_case, fingerprints, registeredProviderNames) => {
+    const [webFingerprint, messagingFingerprint] = fingerprints;
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "missing",
+      providerMatchesGatewayCredential: () => false,
+    });
+    const session = sessionWithCheckpoint(
+      crashedCheckpoint({
+        effectGroups: {
+          sandbox_create: {
+            completedAt: "2026-01-01T00:00:00.000Z",
+            fingerprint: defaultCreateFingerprint(),
+          },
+          web_search_provider: {
+            completedAt: "2026-01-01T00:00:00.000Z",
+            fingerprint: webFingerprint,
+          },
+          ...(messagingFingerprint
+            ? {
+                messaging_providers: {
+                  completedAt: "2026-01-01T00:00:00.000Z",
+                  fingerprint: messagingFingerprint,
+                },
+              }
+            : {}),
+        },
+        bindings: {
+          credentialEnvs: ["BRAVE_API_KEY"],
+          registeredProviders: registeredProviderNames.map((name) => ({
+            name,
+            type: "brave",
+            credentialEnv: "BRAVE_API_KEY",
+          })),
+        },
+      }),
+    );
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+        env: {},
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed provider receipt before registering a changed selection (#7702)", async () => {
+    const oldBinding = {
+      name: "my-assistant-brave-search",
+      type: "brave",
+      credentialEnv: "BRAVE_API_KEY",
+    };
+    const currentBinding = {
+      name: "my-assistant-tavily-search",
+      type: "tavily",
+      credentialEnv: "TAVILY_API_KEY",
+    };
+    const stageSandboxCredentialProviders = vi.fn(async () => [currentBinding]);
+    const session = sessionWithCheckpoint(
+      crashedCheckpoint({
+        webSearch: decisionSelected({ fetchEnabled: true, provider: "brave" }),
+        effectGroups: {
+          sandbox_create: {
+            completedAt: "2026-01-01T00:00:00.000Z",
+            fingerprint: defaultCreateFingerprint(),
+          },
+          web_search_provider: {
+            completedAt: "2026-01-01T00:00:00.000Z",
+            fingerprint: `,${oldBinding.name}`,
+          },
+        },
+        bindings: {
+          credentialEnvs: [oldBinding.credentialEnv],
+          registeredProviders: [oldBinding],
+        },
+      }),
+    );
+    session.webSearchConfig = { fetchEnabled: true, provider: "brave" };
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "missing",
+      stageSandboxCredentialProviders,
+      providerMatchesGatewayCredential: (name, type, credentialEnv) =>
+        name === oldBinding.name &&
+        type === oldBinding.type &&
+        credentialEnv === oldBinding.credentialEnv,
+    });
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+        webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(stageSandboxCredentialProviders).not.toHaveBeenCalled();
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      invalidState: "a malformed provider receipt",
+      fingerprint: ",my-assistant-brave-search",
+      binding: {
+        name: "my-assistant-brave-search",
+        type: "brave",
+        credentialEnv: "BRAVE_API_KEY",
+      },
+    },
+    {
+      invalidState: "an unowned provider binding with whitespace",
+      fingerprint: null,
+      binding: {
+        name: " unowned-provider",
+        type: "generic",
+        credentialEnv: "UNOWNED_TOKEN",
+      },
+    },
+  ])("rejects $invalidState before forced recreation (#7701)", async ({ fingerprint, binding }) => {
+    const session = sessionWithCheckpoint(
+      crashedCheckpoint({
+        effectGroups: {
+          sandbox_create: {
+            completedAt: "2026-01-01T00:00:00.000Z",
+            fingerprint: defaultCreateFingerprint(),
+          },
+          ...(fingerprint
+            ? {
+                web_search_provider: {
+                  completedAt: "2026-01-01T00:00:00.000Z",
+                  fingerprint,
+                },
+              }
+            : {}),
+        },
+        bindings: {
+          credentialEnvs: [binding.credentialEnv],
+          registeredProviders: [binding],
+        },
+      }),
+    );
+    const stageSandboxCredentialProviders = vi.fn(async () => []);
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      stageSandboxCredentialProviders,
+    });
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        recreateSandbox: () => true,
+        sandboxName: "my-assistant",
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(stageSandboxCredentialProviders).not.toHaveBeenCalled();
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
+    expect(calls.retireReplacedSandboxWorkload).not.toHaveBeenCalled();
+    expect(calls.repairSandbox).not.toHaveBeenCalled();
+    expect(calls.error.mock.calls.flat().join("\n")).toContain("nemoclaw onboard --fresh");
+  });
+
+  it("rejects duplicate provider names when only one binding matches the gateway (#7022)", async () => {
+    const providerName = "my-assistant-brave-search";
+    const session = sessionWithCheckpoint(
+      crashedCheckpoint({
+        effectGroups: {
+          sandbox_create: {
+            completedAt: "2026-01-01T00:00:00.000Z",
+            fingerprint: defaultCreateFingerprint(),
+          },
+          web_search_provider: {
+            completedAt: "2026-01-01T00:00:00.000Z",
+            fingerprint: providerName,
+          },
+        },
+        bindings: {
+          credentialEnvs: ["BRAVE_API_KEY"],
+          registeredProviders: [
+            { name: providerName, type: "brave", credentialEnv: "BRAVE_API_KEY" },
+            { name: providerName, type: "tavily", credentialEnv: "BRAVE_API_KEY" },
+          ],
+        },
+      }),
+    );
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      providerMatchesGatewayCredential: (_name, type) => type === "brave",
+    });
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+        env: {},
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stale provider binding with an effect receipt during locked live-sandbox reuse (#7022)", async () => {
+    let gatewayLockEntered = false;
+    const withGatewayRouteMutationLock = async <T>(
+      _gatewayName: string,
+      operation: () => Promise<T> | T,
+    ): Promise<T> => {
+      gatewayLockEntered = true;
+      return await operation();
+    };
+    const session = sessionWithCheckpoint(
+      crashedCheckpoint({
+        effectGroups: {
+          sandbox_create: {
+            completedAt: "2026-01-01T00:00:00.000Z",
+            fingerprint: defaultCreateFingerprint(),
+          },
+          web_search_provider: {
+            completedAt: "2026-01-01T00:00:00.000Z",
+            fingerprint: "my-assistant-brave-search",
+          },
+        },
+        bindings: {
+          credentialEnvs: ["BRAVE_API_KEY"],
+          registeredProviders: [
+            { name: "my-assistant-brave-search", type: "brave", credentialEnv: "BRAVE_API_KEY" },
+          ],
+        },
+      }),
+    );
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      providerMatchesGatewayCredential: () => false,
+      withGatewayRouteMutationLock,
+    });
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(gatewayLockEntered).toBe(true);
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.recordSkip).not.toHaveBeenCalled();
+  });
+
+  it("replays a stale web-search provider receipt before creating the missing sandbox (#7022)", async () => {
+    const binding = {
+      name: "my-assistant-brave-search",
+      type: "brave",
+      credentialEnv: "BRAVE_API_KEY",
+    };
+    let bindingLive = false;
+    const stageSandboxCredentialProviders = vi.fn(async () => {
+      bindingLive = true;
+      return [binding];
+    });
+    const providerMatchesGatewayCredential = vi.fn(
+      (name, type, credentialEnv) =>
+        bindingLive &&
+        name === binding.name &&
+        type === binding.type &&
+        credentialEnv === binding.credentialEnv,
+    );
+    const session = sessionWithCheckpoint(
+      crashedCheckpoint({
+        webSearch: decisionSelected({ fetchEnabled: true, provider: "brave" }),
+        effectGroups: {
+          sandbox_create: {
+            completedAt: "2026-01-01T00:00:00.000Z",
+            fingerprint: defaultCreateFingerprint(),
+          },
+          web_search_provider: {
+            completedAt: "2026-01-01T00:00:00.000Z",
+            fingerprint: binding.name,
+          },
+        },
+        bindings: {
+          credentialEnvs: [binding.credentialEnv],
+          registeredProviders: [binding],
+        },
+      }),
+    );
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "missing",
+      stageSandboxCredentialProviders,
+      providerMatchesGatewayCredential,
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      webSearchConfig: { fetchEnabled: true, provider: "brave" },
+    });
+
+    expect(stageSandboxCredentialProviders).toHaveBeenCalledTimes(1);
+    expect(calls.createSandbox).toHaveBeenCalledTimes(1);
   });
 
   it("accepts a checkpointed provider that is still live-registered with the gateway", async () => {
@@ -314,7 +671,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
 
   it("rejects reuse when a checkpointed provider name exists live under a different type or credential environment (#7022)", async () => {
     const { deps, calls } = createDeps({
-      getSandboxReuseState: () => "missing",
+      getSandboxReuseState: () => "ready",
       providerMatchesGatewayCredential: (name, type, credentialEnv) =>
         name === "my-assistant-brave-search" &&
         type === "generic" &&
@@ -415,7 +772,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
   it.each([
     "interactive",
     "non-interactive",
-  ] as const)("replays %s messaging provider registration without duplicating the external effect after receipt loss (#7022)", async (mode) => {
+  ] as const)("recovers the %s messaging provider receipt without duplicating the external effect after receipt loss (#7022)", async (mode) => {
     const { stageSandboxCredentialProviders, providerMatchesGatewayCredential, runOpenshell } =
       realStageSandboxCredentialProviders(
         [
@@ -428,7 +785,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
         true,
       );
     const session = createSession({ sessionId: "sess-1", agent: "openclaw", mode });
-    const messagingPlan = makeMinimalPlan("my-assistant", "openclaw", ["discord"]);
+    const messagingPlan = discordMessagingPlan();
     const { deps, getSession } = createDeps(
       {
         getSandboxReuseState: () => "missing",
@@ -462,6 +819,47 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(resumedSession.checkpoint?.bindings.registeredProviders).toEqual([
       { name: "my-assistant-discord-bridge", type: "generic", credentialEnv: "DISCORD_BOT_TOKEN" },
     ]);
+  });
+
+  it("rejects receipt recovery when a required messaging provider did not survive", async () => {
+    const messagingPlan = discordMessagingPlan();
+    const stageSandboxCredentialProviders = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("gateway connection dropped mid-registration"))
+      .mockResolvedValueOnce([]);
+    const providerMatchesGatewayCredential = vi.fn(() => false);
+    const session = createSession({ sessionId: "sess-1", agent: "openclaw" });
+    const { deps, calls, getSession } = createDeps(
+      {
+        getSandboxReuseState: () => "missing",
+        readMessagingPlanFromEnv: () => messagingPlan,
+        stageSandboxCredentialProviders,
+        providerMatchesGatewayCredential,
+      },
+      session,
+    );
+
+    await expect(
+      handleSandboxState({ ...baseOptions(deps, session), resume: false }),
+    ).rejects.toThrow("gateway connection dropped mid-registration");
+
+    const crashedSession = getSession();
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, crashedSession),
+        resume: true,
+        sandboxName: "my-assistant",
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(stageSandboxCredentialProviders).toHaveBeenCalledTimes(2);
+    expect(providerMatchesGatewayCredential).toHaveBeenCalledWith(
+      "my-assistant-discord-bridge",
+      "generic",
+      "DISCORD_BOT_TOKEN",
+    );
+    expect(getSession().checkpoint?.effectGroups.messaging_providers).toBeUndefined();
+    expect(calls.createSandbox).not.toHaveBeenCalled();
   });
 
   it("rejects reuse when the recorded build/policy fingerprint drifted from the current request (#7022)", async () => {
@@ -611,7 +1009,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(resumedRun.calls.error.mock.calls.flat().join("\n")).toContain("--recreate-sandbox");
   });
 
-  it("re-revalidates checkpoint bindings immediately before the locked destructive create, catching a race after the initial check (#7022)", async () => {
+  it("rejects provider removal after replay validation and before sandbox creation (#7022)", async () => {
     let liveCheckCount = 0;
     const providerMatchesGatewayCredential = vi.fn(() => {
       liveCheckCount += 1;
@@ -619,7 +1017,13 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     });
     const session = sessionWithCheckpoint(
       crashedCheckpoint({
-        effectGroups: {},
+        webSearch: decisionSelected({ fetchEnabled: true, provider: "brave" }),
+        effectGroups: {
+          web_search_provider: {
+            completedAt: "2026-01-01T00:00:00.000Z",
+            fingerprint: "my-assistant-brave-search",
+          },
+        },
         bindings: {
           credentialEnvs: [],
           registeredProviders: [
@@ -651,7 +1055,7 @@ describe("sandbox crash-recovery replay (#5961, #6228)", () => {
     expect(calls.error.mock.calls.flat().join("\n")).toContain("my-assistant-brave-search");
   });
 
-  it("accepts a scrubbed host credential when its exact registered provider binding remains live (#7022)", async () => {
+  it("creates the missing sandbox when its exact registered provider binding remains live (#7022)", async () => {
     const providerMatchesGatewayCredential = vi.fn(() => true);
     const session = sessionWithCheckpoint(
       crashedCheckpoint({
