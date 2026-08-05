@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { EventEmitter } from "node:events";
-import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -81,31 +79,21 @@ import {
   resolveVllmServedModelId,
   VLLM_IMAGES,
 } from "./vllm";
+import {
+  applyVllmInstallProbeDefaults,
+  createVllmInstallSpies,
+  MANAGED_CONTAINER_ID,
+  mockDockerSpawnFailure,
+  mockSuccessfulVllmInstall,
+  resetVllmInstallEnv,
+  vllmContainerRow,
+  type VllmInstallSpies,
+} from "./vllm-install.test-support";
 import { buildVllmServeCommand, VLLM_MODELS } from "./vllm-models";
 
 beforeEach(() => {
-  mocks.dockerImageInspectFormat.mockReturnValue("");
-  mocks.findUnwritableModelCachePath.mockReturnValue(null);
+  applyVllmInstallProbeDefaults(mocks);
   mocks.getGpuIndicesByName.mockReturnValue([]);
-  mocks.measureDirectorySizeBytes.mockReturnValue(0n);
-  mocks.probeDockerStorage.mockReturnValue({
-    ok: true,
-    capacity: {
-      availableBytes: 1_000_000_000_000n,
-      filesystemId: "docker-fs",
-      path: "/docker",
-      source: "Docker",
-    },
-  });
-  mocks.probeHostStorage.mockReturnValue({
-    ok: true,
-    capacity: {
-      availableBytes: 1_000_000_000_000n,
-      filesystemId: "model-fs",
-      path: path.join(os.homedir(), ".cache", "huggingface"),
-      source: "Hugging Face cache",
-    },
-  });
   mocks.resolveHostLocalVllmSelection.mockReturnValue({ kind: "not-selected" });
 });
 
@@ -113,106 +101,6 @@ function currentHostIdentity(): string | null {
   const uid = process.getuid?.();
   const gid = process.getgid?.();
   return uid === undefined || gid === undefined ? null : `${String(uid)}:${String(gid)}`;
-}
-
-function inconclusiveModelStorage(reason = "statfs unavailable") {
-  return {
-    ok: false as const,
-    reason,
-    path: path.join(os.homedir(), ".cache", "huggingface"),
-    source: "Hugging Face cache",
-  };
-}
-
-function mockDockerSpawnSuccess(): EventEmitter & {
-  stdout: EventEmitter;
-  stderr: EventEmitter;
-} {
-  const proc = new EventEmitter() as EventEmitter & {
-    stdout: EventEmitter;
-    stderr: EventEmitter;
-  };
-  proc.stdout = new EventEmitter();
-  proc.stderr = new EventEmitter();
-  process.nextTick(() => proc.emit("exit", 0));
-  return proc;
-}
-
-function mockDockerSpawnFailure(
-  chunks: readonly { stream: "stdout" | "stderr"; data: string | Buffer }[],
-  exitCode = 1,
-): EventEmitter & { stdout: EventEmitter; stderr: EventEmitter } {
-  const proc = new EventEmitter() as EventEmitter & {
-    stdout: EventEmitter;
-    stderr: EventEmitter;
-  };
-  proc.stdout = new EventEmitter();
-  proc.stderr = new EventEmitter();
-  process.nextTick(() => {
-    for (const chunk of chunks) {
-      const data = Buffer.isBuffer(chunk.data) ? chunk.data : Buffer.from(chunk.data);
-      proc[chunk.stream].emit("data", data);
-    }
-    proc.emit("exit", exitCode);
-  });
-  return proc;
-}
-
-const MANAGED_CONTAINER_ID = "a".repeat(64);
-
-function vllmContainerRow(
-  containerName: string,
-  { id = MANAGED_CONTAINER_ID, label = "true", state = "exited" } = {},
-): string {
-  return `${id}|${containerName}|${state}|${label}|||`;
-}
-
-function mockSuccessfulVllmInstall(
-  containerName: string,
-  ownershipResponses: readonly (() => string)[] = [() => "", () => ""],
-): void {
-  const runCaptureByCommand: Record<string, string> = {
-    curl: '{"data":[]}',
-    sh: "/usr/bin/tool\n",
-  };
-  mocks.runCapture.mockImplementation(
-    (cmd: readonly string[]) => runCaptureByCommand[cmd[0] ?? ""] ?? "",
-  );
-  mocks.dockerPullWithProgressWatchdog.mockResolvedValue({
-    status: 0,
-    signal: null,
-    output: "",
-    timedOut: false,
-    timeoutKind: null,
-  });
-  mocks.dockerSpawn.mockReturnValue(mockDockerSpawnSuccess());
-  mocks.dockerRunDetached.mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
-  const ownershipQueue = [...ownershipResponses];
-  let ownershipCallIndex = 0;
-  const ownershipHandlers = [
-    (): string => "",
-    (): string =>
-      (
-        ownershipQueue.shift() ??
-        (() => {
-          throw new Error("Unexpected extra ambient vLLM ownership inspection");
-        })
-      )(),
-  ];
-  const dockerCaptureByCommand = new Map<string, () => string>([
-    ["container", () => ownershipHandlers[ownershipCallIndex++ % ownershipHandlers.length]()],
-    ["ps", () => `${containerName}\n`],
-  ]);
-  mocks.dockerCapture.mockImplementation((args: readonly string[]) =>
-    (dockerCaptureByCommand.get(args[0] ?? "") ?? (() => ""))(),
-  );
-}
-
-function mockInconclusiveDockerStorage(): void {
-  mocks.probeDockerStorage.mockReturnValue({
-    ok: false,
-    reason: "Docker uses a remote endpoint (ssh://builder.example.test)",
-  });
 }
 
 describe("vLLM served route identity", () => {
@@ -671,24 +559,25 @@ describe("managed vLLM ownership", () => {
 });
 
 describe("installVllm model resolution", () => {
-  let logSpy: ReturnType<typeof vi.spyOn>;
-  let errSpy: ReturnType<typeof vi.spyOn>;
-  let mkdirSpy: ReturnType<typeof vi.spyOn>;
-  let stdoutWrite: ReturnType<typeof vi.spyOn>;
-  let stderrWrite: ReturnType<typeof vi.spyOn>;
+  let logSpy: VllmInstallSpies["logSpy"];
+  let errSpy: VllmInstallSpies["errSpy"];
+  let mkdirSpy: VllmInstallSpies["mkdirSpy"];
+  let stdoutWrite: VllmInstallSpies["stdoutWrite"];
+  let stderrWrite: VllmInstallSpies["stderrWrite"];
+  let restoreSpies: VllmInstallSpies["restore"];
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
     vi.clearAllMocks();
-    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    mkdirSpy = vi.spyOn(fs, "mkdirSync").mockImplementation(() => undefined);
-    stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-    stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    delete process.env.NEMOCLAW_VLLM_MODEL;
-    delete process.env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON;
-    delete process.env.HF_TOKEN;
-    delete process.env.HUGGING_FACE_HUB_TOKEN;
+    ({
+      logSpy,
+      errSpy,
+      mkdirSpy,
+      stdoutWrite,
+      stderrWrite,
+      restore: restoreSpies,
+    } = createVllmInstallSpies());
+    resetVllmInstallEnv();
     // Fail dockerPrereqsOk so the function returns before any docker work,
     // letting tests assert on the resolved model + summary line without
     // mocking the full install chain.
@@ -696,11 +585,7 @@ describe("installVllm model resolution", () => {
   });
 
   afterEach(() => {
-    logSpy.mockRestore();
-    errSpy.mockRestore();
-    mkdirSpy.mockRestore();
-    stdoutWrite.mockRestore();
-    stderrWrite.mockRestore();
+    restoreSpies();
     process.env = { ...originalEnv };
   });
 
@@ -893,7 +778,7 @@ describe("installVllm model resolution", () => {
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" })!;
     const beforeInstall = vi.fn();
     const promptFn = vi.fn<(q: string) => Promise<string>>();
-    mockSuccessfulVllmInstall(profile.containerName);
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
 
     const result = await installVllm(profile, {
       hasImage: true,
@@ -1083,7 +968,7 @@ describe("installVllm model resolution", () => {
     process.env.DOCKER_CONTEXT = "local-test-context";
     delete process.env.DOCKER_HOST;
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    mockSuccessfulVllmInstall(profile.containerName);
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
 
     const result = await installVllm(profile, {
       hasImage: false,
@@ -1122,7 +1007,7 @@ describe("installVllm model resolution", () => {
 
   it("fails before image pull when the host Hugging Face cache cannot be created", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    mockSuccessfulVllmInstall(profile.containerName);
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
     mkdirSpy.mockImplementation(() => {
       throw new Error("permission denied");
     });
@@ -1144,7 +1029,7 @@ describe("installVllm model resolution", () => {
 
   it("fails before image pull with a safe repair command for a root-owned cache", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    mockSuccessfulVllmInstall(profile.containerName);
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
     mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
     const cacheDir = path.join(os.homedir(), ".cache", "huggingface");
     const rootOwnedPath = path.join(
@@ -1184,7 +1069,7 @@ describe("installVllm model resolution", () => {
     const token = `hf_${"s".repeat(32)}`;
     process.env.HF_TOKEN = token;
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    mockSuccessfulVllmInstall(profile.containerName);
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
     mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
 
     const result = await installVllm(profile, {
@@ -1232,7 +1117,7 @@ describe("installVllm model resolution", () => {
     const token = `hf_${"r".repeat(32)}`;
     process.env.HF_TOKEN = token;
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    mockSuccessfulVllmInstall(profile.containerName);
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
     mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
     const splitAt = 17;
     const unicodeOutput = Buffer.from("Downloading café\n");
@@ -1298,7 +1183,7 @@ describe("installVllm model resolution", () => {
   it("replaces only an existing managed container by its inspected ID", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
     const managed = vllmContainerRow(profile.containerName);
-    mockSuccessfulVllmInstall(profile.containerName, [() => managed, () => managed]);
+    mockSuccessfulVllmInstall(mocks, profile.containerName, [() => managed, () => managed]);
     mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
 
     const result = await installVllm(profile, {
@@ -1321,7 +1206,7 @@ describe("installVllm model resolution", () => {
     "false",
   ])("preserves a same-name container with managed label %j before downloads", async (label) => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    mockSuccessfulVllmInstall(profile.containerName, [
+    mockSuccessfulVllmInstall(mocks, profile.containerName, [
       () => vllmContainerRow(profile.containerName, { label }),
     ]);
 
@@ -1349,7 +1234,7 @@ describe("installVllm model resolution", () => {
     ["malformed ownership output", (): string => "malformed"],
   ] as const)("fails closed on %s", async (_name, ownershipResponse) => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    mockSuccessfulVllmInstall(profile.containerName, [ownershipResponse]);
+    mockSuccessfulVllmInstall(mocks, profile.containerName, [ownershipResponse]);
 
     const result = await installVllm(profile, {
       hasImage: true,
@@ -1368,7 +1253,7 @@ describe("installVllm model resolution", () => {
 
   it("rechecks ownership after downloads and preserves a replacement container", async () => {
     const profile = detectVllmProfile({ platform: "spark", type: "nvidia" })!;
-    mockSuccessfulVllmInstall(profile.containerName, [
+    mockSuccessfulVllmInstall(mocks, profile.containerName, [
       () => vllmContainerRow(profile.containerName),
       () => vllmContainerRow(profile.containerName, { label: "" }),
     ]);
@@ -1394,7 +1279,7 @@ describe("installVllm model resolution", () => {
       ...baseProfile,
       buildDockerRunFlags: () => ["--label", ""],
     };
-    mockSuccessfulVllmInstall(profile.containerName);
+    mockSuccessfulVllmInstall(mocks, profile.containerName);
     mocks.dockerImageInspectFormat.mockReturnValue("sha256:cached-image");
 
     const result = await installVllm(profile, {
