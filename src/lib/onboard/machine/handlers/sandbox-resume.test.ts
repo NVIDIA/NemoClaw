@@ -133,7 +133,9 @@ describe("decideSandboxResume", () => {
     });
   });
 
-  it("repairs a not-ready sandbox before recreating for DCode auto-approval drift", () => {
+  it("uses compatibility recreate over repair when not-ready with DCode auto-approval drift", () => {
+    // DCode auto-approval already guards against not_ready internally;
+    // the sandbox falls through to repair-and-recreate at the bottom.
     expect(
       decideSandboxResume(
         resumeSignals({
@@ -144,7 +146,9 @@ describe("decideSandboxResume", () => {
     ).toEqual({ kind: "repair-and-recreate" });
   });
 
-  it("repairs a not-ready sandbox before recreating for reasoning capability drift (#7570)", () => {
+  it("repairs a not-ready sandbox even with reasoning capability drift (#7570)", () => {
+    // compatibleEndpointReasoningChanged only triggers recreate when the
+    // sandbox is ready; when not_ready, the sandbox falls through to repair.
     expect(
       decideSandboxResume(
         resumeSignals({
@@ -156,10 +160,10 @@ describe("decideSandboxResume", () => {
   });
 
   it.each([
-    ["live DCode inference selection", { inferenceSelectionChanged: true }],
-    ["agent selection", { resumeAgentChanged: true }],
-    ["Hermes inference route", { inferenceRouteConfigChanged: true }],
-  ] as const)("repairs a not-ready sandbox before recreating for %s drift", (_label, drift) => {
+    ["live DCode inference selection", { inferenceSelectionChanged: true }, "DCode model/provider"],
+    ["agent selection", { resumeAgentChanged: true }, "Agent selection changed"],
+    ["Hermes inference route", { inferenceRouteConfigChanged: true }, "inference route"],
+  ] as const)("uses compatibility recreate for %s drift even when not-ready", (_label, drift, _noteFragment) => {
     expect(
       decideSandboxResume(
         resumeSignals({
@@ -167,7 +171,11 @@ describe("decideSandboxResume", () => {
           ...drift,
         }),
       ),
-    ).toEqual({ kind: "repair-and-recreate" });
+    ).toEqual({
+      kind: "recreate",
+      note: expect.any(String),
+      removeRegistryEntry: expect.any(Boolean),
+    });
   });
 
   it("creates without resume-specific cleanup when the step is incomplete", () => {
