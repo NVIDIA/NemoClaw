@@ -159,6 +159,8 @@ interface ComplianceFixture {
   finalPrAfterCurrentBase?: Record<string, unknown>;
   finalPrAfterCiEvidence?: Record<string, unknown>;
   finalPrAfterFinalCi?: Record<string, unknown>;
+  finalStatusCheckCommitOid?: string;
+  finalStatusCheckHasNextPage?: boolean;
 }
 
 interface ComparatorFixture extends ComplianceFixture {
@@ -489,7 +491,15 @@ function runGate(fixture: ComplianceFixture) {
     fixture.finalCurrentBaseSha === undefined
       ? fixture.currentBaseSha
       : fixture.finalCurrentBaseSha;
-  const finalPrIdentityOutput = JSON.stringify({
+  const finalStatusCheckNodes = finalPrAfterFinalCi.statusCheckRollup.map(
+    ({ workflowName, ...check }) => ({
+      ...check,
+      ...(workflowName
+        ? { checkSuite: { workflowRun: { workflow: { name: workflowName } } } }
+        : {}),
+    }),
+  );
+  const finalPrSnapshotOutput = JSON.stringify({
     data: {
       repository: {
         pullRequest: {
@@ -509,6 +519,23 @@ function runGate(fixture: ComplianceFixture) {
             finalCurrentBaseSha === null
               ? null
               : { target: { oid: finalCurrentBaseSha ?? BASE_SHA } },
+          commits: {
+            totalCount: 1,
+            nodes: [
+              {
+                commit: {
+                  oid: fixture.finalStatusCheckCommitOid ?? finalPrAfterFinalCi.headRefOid,
+                  statusCheckRollup: {
+                    contexts: {
+                      totalCount: finalStatusCheckNodes.length,
+                      pageInfo: { hasNextPage: fixture.finalStatusCheckHasNextPage ?? false },
+                      nodes: finalStatusCheckNodes,
+                    },
+                  },
+                },
+              },
+            ],
+          },
         },
       },
     },
@@ -750,7 +777,7 @@ case "$*" in
   *"ContributorCommits"*) printf '%s' ${shellSingleQuote(contributorCommitOutput)} ;;
   *"ContributorReviews"*) printf '%s' ${shellSingleQuote(contributorReviewOutput)} ;;
   *"CurrentBaseRef"*) mkdir -p ${shellSingleQuote(path.join(tmp, "current-base-seen"))}; printf '%s' ${shellSingleQuote(currentBaseOutput)} ;;
-  *"FinalPrIdentity"*) mkdir -p ${shellSingleQuote(finalPrReadMarker)}; printf '%s' ${shellSingleQuote(finalPrIdentityOutput)} ;;
+  *"FinalPrSnapshot"*) mkdir -p ${shellSingleQuote(finalPrReadMarker)}; printf '%s' ${shellSingleQuote(finalPrSnapshotOutput)} ;;
   "api graphql"*) printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}' ;;
   "api repos/NVIDIA/NemoClaw/issues/42/comments"*) printf '%s' '{"id":1,"body":"ordinary comment","user":{"login":"reviewer"},"updated_at":"2026-01-01T00:00:00Z"}' ;;
   "api repos/NVIDIA/NemoClaw/pulls/42/commits"*) printf '%s' ${shellSingleQuote(commitOutput)} ;;

@@ -1353,6 +1353,14 @@ describe("maintainer merge-gate E2E coordinator evidence", () => {
       coordinator: { path: ".github/workflows/pr.yaml" },
     },
     {
+      condition: "the coordinator runs on another branch",
+      coordinator: { headBranch: "release" },
+    },
+    {
+      condition: "the coordinator head commit SHA is malformed",
+      coordinator: { headSha: "not-a-sha" },
+    },
+    {
       condition: "the coordinator uses another trusted workflow revision",
       coordinator: { headSha: "d".repeat(40) },
     },

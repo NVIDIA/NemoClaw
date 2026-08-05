@@ -77,11 +77,11 @@ describe("maintainer merge-gate E2E retry history", () => {
     expect(output).toMatchObject({ allPass: true, gates: { ci: { pass: true } } });
   });
 
-  it("accepts retry history with more than 31 completed checks", () => {
-    const retryHistory = Array.from({ length: 39 }, (_value, index) =>
+  it("accepts retry history with more than 60 completed checks", () => {
+    const retryHistory = Array.from({ length: 61 }, (_value, index) =>
       retryableFailure(8001 + index, "prerequisite-ci"),
     );
-    const output = gateOutput([coordinationCheck({ id: 8040 }), ...retryHistory]);
+    const output = gateOutput([coordinationCheck({ id: 8062 }), ...retryHistory]);
 
     expect(output).toMatchObject({ allPass: true, gates: { ci: { pass: true } } });
   });

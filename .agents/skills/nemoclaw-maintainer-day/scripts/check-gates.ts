@@ -2845,10 +2845,10 @@ function fetchPrRevisionSnapshot(repo: string, number: number): PrRevisionSnapsh
   };
 }
 
-function fetchFinalPrIdentitySnapshot(
+function fetchFinalPrSnapshot(
   repo: string,
   number: number,
-): { revision: PrRevisionIdentity; currentBaseSha: string } | null {
+): { revision: PrRevisionSnapshot; currentBaseSha: string } | null {
   const [owner, name, extra] = repo.split("/");
   if (!owner || !name || extra) return null;
 
@@ -2862,7 +2862,7 @@ function fetchFinalPrIdentitySnapshot(
     "-F",
     `number=${number}`,
     "-f",
-    `query=query FinalPrIdentity($owner: String!, $name: String!, $number: Int!) {
+    `query=query FinalPrSnapshot($owner: String!, $name: String!, $number: Int!) {
       repository(owner: $owner, name: $name) {
         pullRequest(number: $number) {
           title
@@ -2878,6 +2878,37 @@ function fetchFinalPrIdentitySnapshot(
           headRepository { name nameWithOwner }
           headRepositoryOwner { login }
           baseRef { target { oid } }
+          commits(last: 1) {
+            totalCount
+            nodes {
+              commit {
+                oid
+                statusCheckRollup {
+                  contexts(first: 100) {
+                    totalCount
+                    pageInfo { hasNextPage }
+                    nodes {
+                      __typename
+                      ... on CheckRun {
+                        name
+                        status
+                        conclusion
+                        startedAt
+                        completedAt
+                        detailsUrl
+                        checkSuite { workflowRun { workflow { name } } }
+                      }
+                      ... on StatusContext {
+                        context
+                        state
+                        startedAt: createdAt
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }`,
@@ -2916,6 +2947,8 @@ function fetchFinalPrIdentitySnapshot(
   ) {
     return null;
   }
+  const statusCheckRollup = parseFinalStatusCheckRollup(record.commits, record.headRefOid);
+  if (!statusCheckRollup) return null;
   return {
     revision: {
       title: record.title,
@@ -2929,9 +2962,135 @@ function fetchFinalPrIdentitySnapshot(
       headRefName: record.headRefName,
       baseRefName: record.baseRefName,
       headRepository,
+      statusCheckRollup,
     },
     currentBaseSha,
   };
+}
+
+function parseFinalStatusCheckRollup(
+  commitsValue: unknown,
+  expectedHeadSha: string,
+): StatusCheck[] | null {
+  if (typeof commitsValue !== "object" || commitsValue === null || Array.isArray(commitsValue)) {
+    return null;
+  }
+  const commits = commitsValue as Record<string, unknown>;
+  if (
+    typeof commits.totalCount !== "number" ||
+    !Number.isInteger(commits.totalCount) ||
+    commits.totalCount < 1 ||
+    !Array.isArray(commits.nodes) ||
+    commits.nodes.length !== 1
+  ) {
+    return null;
+  }
+  const commitNode = commits.nodes[0];
+  if (typeof commitNode !== "object" || commitNode === null || Array.isArray(commitNode)) {
+    return null;
+  }
+  const commitValue = (commitNode as Record<string, unknown>).commit;
+  if (typeof commitValue !== "object" || commitValue === null || Array.isArray(commitValue)) {
+    return null;
+  }
+  const commit = commitValue as Record<string, unknown>;
+  if (commit.oid !== expectedHeadSha) return null;
+  const rollupValue = commit.statusCheckRollup;
+  if (typeof rollupValue !== "object" || rollupValue === null || Array.isArray(rollupValue)) {
+    return null;
+  }
+  const contextsValue = (rollupValue as Record<string, unknown>).contexts;
+  if (typeof contextsValue !== "object" || contextsValue === null || Array.isArray(contextsValue)) {
+    return null;
+  }
+  const contexts = contextsValue as Record<string, unknown>;
+  const pageInfo = contexts.pageInfo;
+  if (
+    typeof contexts.totalCount !== "number" ||
+    !Number.isInteger(contexts.totalCount) ||
+    contexts.totalCount < 0 ||
+    !Array.isArray(contexts.nodes) ||
+    contexts.nodes.length !== contexts.totalCount ||
+    typeof pageInfo !== "object" ||
+    pageInfo === null ||
+    Array.isArray(pageInfo) ||
+    (pageInfo as Record<string, unknown>).hasNextPage !== false
+  ) {
+    return null;
+  }
+
+  const statusCheckRollup: StatusCheck[] = [];
+  for (const nodeValue of contexts.nodes) {
+    if (typeof nodeValue !== "object" || nodeValue === null || Array.isArray(nodeValue)) {
+      return null;
+    }
+    const node = nodeValue as Record<string, unknown>;
+    if (node.__typename === "CheckRun") {
+      const checkSuite =
+        typeof node.checkSuite === "object" &&
+        node.checkSuite !== null &&
+        !Array.isArray(node.checkSuite)
+          ? (node.checkSuite as Record<string, unknown>)
+          : null;
+      const workflowRun =
+        typeof checkSuite?.workflowRun === "object" &&
+        checkSuite.workflowRun !== null &&
+        !Array.isArray(checkSuite.workflowRun)
+          ? (checkSuite.workflowRun as Record<string, unknown>)
+          : null;
+      const workflow =
+        typeof workflowRun?.workflow === "object" &&
+        workflowRun.workflow !== null &&
+        !Array.isArray(workflowRun.workflow)
+          ? (workflowRun.workflow as Record<string, unknown>)
+          : null;
+      const workflowName = workflow?.name;
+      const scalarFields = [
+        node.name,
+        node.status,
+        node.conclusion,
+        node.startedAt,
+        node.completedAt,
+        node.detailsUrl,
+        workflowName,
+      ];
+      if (
+        typeof node.name !== "string" ||
+        typeof node.status !== "string" ||
+        scalarFields.some(
+          (value) => value !== undefined && value !== null && typeof value !== "string",
+        )
+      ) {
+        return null;
+      }
+      statusCheckRollup.push({
+        __typename: "CheckRun",
+        name: node.name,
+        status: node.status,
+        ...(typeof node.conclusion === "string" ? { conclusion: node.conclusion } : {}),
+        ...(typeof node.startedAt === "string" ? { startedAt: node.startedAt } : {}),
+        ...(typeof node.completedAt === "string" ? { completedAt: node.completedAt } : {}),
+        ...(typeof node.detailsUrl === "string" ? { detailsUrl: node.detailsUrl } : {}),
+        ...(typeof workflowName === "string" ? { workflowName } : {}),
+      });
+      continue;
+    }
+    if (
+      node.__typename !== "StatusContext" ||
+      typeof node.context !== "string" ||
+      typeof node.state !== "string" ||
+      typeof node.startedAt !== "string"
+    ) {
+      return null;
+    }
+    statusCheckRollup.push({
+      __typename: "StatusContext",
+      context: node.context,
+      state: node.state,
+      startedAt: node.startedAt,
+    });
+  }
+  return statusCheckRollup;
 }
 
 function checkFinalRevision(
@@ -3093,7 +3252,7 @@ function main(): void {
     exactDiff,
   );
   const currentRevision = fetchPrRevisionSnapshot(repo, prNumber);
-  const ci = checkLastCi(
+  const ciBeforeFinalSnapshot = checkLastCi(
     evaluatedCi,
     initialCi,
     currentRevision?.statusCheckRollup ?? null,
@@ -3102,13 +3261,26 @@ function main(): void {
     finalE2eEvidence,
     finalCiActionEvidence,
   );
-  const finalIdentity = fetchFinalPrIdentitySnapshot(repo, prNumber);
-  const finalRevision = finalIdentity?.revision ?? null;
-  const finalCurrentBaseSha = finalIdentity?.currentBaseSha ?? null;
+  const finalSnapshot = fetchFinalPrSnapshot(repo, prNumber);
+  const finalRevision = finalSnapshot?.revision ?? null;
+  const finalCurrentBaseSha = finalSnapshot?.currentBaseSha ?? null;
   const stableCurrentBaseSha =
     currentBaseSha && finalCurrentBaseSha && currentBaseSha === finalCurrentBaseSha
       ? finalCurrentBaseSha
       : null;
+  const ci = !ciBeforeFinalSnapshot.pass
+    ? ciBeforeFinalSnapshot
+    : !finalRevision
+      ? { pass: false, details: "Unable to verify the final PR checks" }
+      : checkLastCi(
+          ciBeforeFinalSnapshot,
+          initialCi,
+          finalRevision.statusCheckRollup,
+          repo,
+          exactDiff,
+          finalE2eEvidence,
+          finalCiActionEvidence,
+        );
   const baseRevisionGate: ReturnType<typeof checkConflicts> =
     stableCurrentBaseSha !== null
       ? {
