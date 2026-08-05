@@ -72,11 +72,45 @@ Authenticated control health and route-registration requests remain loopback-onl
 NemoClaw refuses to expose the adapter when it cannot discover a valid bridge subnet.
 Adapter reuse also requires an authenticated health proof for the same source-subnet policy, so a running process with a stale or different policy is replaced.
 After an adapter restart, routes other than the one that triggered recovery return a recovery-needed response until their original `inference set --endpoint-url` command is rerun.
-Switching away from a route or destroying its last sandbox reference revokes it; a scoped uninstall that leaves sibling gateways in place preserves the shared adapter and its remaining routes.
-Revocation has to authenticate the running adapter first, and the control-plane proof binds the source-subnet policy that adapter was started with, so NemoClaw records that policy in host recovery state when it starts or reuses the adapter and reads it back at revocation time.
-It never re-derives the policy from the current host: a bridge that has since been recreated or renumbered would produce a value the running adapter never used.
-An adapter started before NemoClaw recorded that policy cannot be authenticated for revocation, so the superseded route stays registered and `inference set` reports that its upstream credentials are still resident.
-Rerun the `inference set --endpoint-url` command that registered the route: that records the policy for the running adapter, and the next switch revokes cleanly.
+
+### Handle a Route Revocation Warning
+
+Before revocation, NemoClaw checks whether another sandbox references the route.
+If another sandbox references it, NemoClaw keeps the route.
+If no other sandbox references the route, NemoClaw attempts revocation after it applies the new inference route or completes sandbox deletion.
+If the reference check or revocation fails, NemoClaw does not restore the previous inference route or the deleted sandbox.
+NemoClaw prints a warning because the upstream credential can remain in adapter memory.
+
+Revocation must authenticate the running adapter.
+The control-plane proof binds the source-subnet policy that the adapter used at startup.
+NemoClaw records that policy in host recovery state when it starts or reuses the adapter, then reads it during revocation.
+It does not derive the policy again from the current host because a recreated or renumbered bridge would produce a different value.
+
+If an adapter started before NemoClaw recorded the policy, NemoClaw cannot authenticate the adapter for revocation.
+NemoClaw preserves the route recovery state and reports the failed revocation.
+
+If the sandbox still exists, recover the route as follows:
+
+1. Rerun the `inference set --endpoint-url` command that registered the affected route.
+2. Switch away from that route again.
+
+The first command records the source-subnet policy for the running adapter.
+NemoClaw retries revocation during the second command.
+When no other sandbox references the route, a completed switch without a revocation warning confirms that the adapter removed it.
+
+<Warning title="Create Snapshots Before Cleanup">
+NemoClaw attempts to wipe manifest-defined agent state before it deletes a sandbox.
+OpenShell can retain the per-name persistent volume after sandbox deletion.
+If the wipe cannot complete, onboarding with the same name can make old files available again.
+Do not rely on a retained volume as a backup.
+Before you destroy a remaining sandbox, create a snapshot of any state that you must keep.
+Refer to [Create and Restore Snapshots](../../manage-sandboxes/state-and-backups/create-and-restore-snapshots) for instructions.
+</Warning>
+
+If the affected sandbox was destroyed or revocation continues to fail, destroy all remaining sandboxes before adapter cleanup.
+A scoped uninstall that leaves sibling gateways in place preserves the shared adapter and its remaining routes.
+After you destroy all sandboxes, run `$$nemoclaw uninstall --all-gateway-ports` to remove every gateway-port environment and stop the shared adapter.
+Do not treat its in-memory credentials as purged until the command succeeds, the adapter PID has exited, and no listener remains on `NEMOCLAW_HTTPS_PIN_RUNTIME_ADAPTER_PORT` (default `11438`).
 
 This support is specific to `inference set` on an already-onboarded sandbox.
 Hermes Provider setup, host-side `config set`, and a direct blueprint run still reject DNS-backed HTTPS URLs as described above.

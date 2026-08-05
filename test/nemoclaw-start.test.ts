@@ -3536,13 +3536,13 @@ describe("Telegram diagnostics (#2766)", () => {
         "chown() { :; }",
         "chown_tree_no_symlink_follow() { :; }",
         "start_persistent_gateway_log_mirror() { :; }",
-        'gosu() { shift; "$@"; }',
+        'setpriv() { while [ "$1" != "--" ]; do shift; done; shift; "$@"; }',
         // STEP_DOWN_PREFIX_* are normally populated by init_step_down_prefixes
         // in sandbox-init.sh; the test scaffolding doesn't source that, so
-        // initialize them here in their fallback form so the gosu() stub still
-        // gets invoked (issue #3280 follow-up).
-        "STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)",
-        "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
+        // initialize them here because this scaffolding does not source the
+        // shared privilege-transition helper.
+        "STEP_DOWN_PREFIX_SANDBOX=(setpriv --reuid=sandbox --regid=sandbox --init-groups --)",
+        "STEP_DOWN_PREFIX_GATEWAY=(setpriv --reuid=gateway --regid=gateway --init-groups --)",
         'validate_tmp_permissions() { printf "VALIDATE:%s\\n" "$*"; }',
         "_SANDBOX_HOME=/sandbox",
         `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tmpDir, "safety.js"))}`,

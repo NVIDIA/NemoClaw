@@ -181,11 +181,11 @@ describe("Hermes cross-UID ledger permissions", () => {
       `stat -c '%U:%G %a' /sandbox/.hermes/gateway)" = "gateway:sandbox 2770"`,
     );
     expect(dockerfile).toContain(
-      "gosu gateway /opt/hermes/.venv/bin/python -I \\\n" +
+      "/usr/bin/setpriv --reuid=gateway --regid=gateway --init-groups -- /opt/hermes/.venv/bin/python -I \\\n" +
         "        /opt/nemoclaw-hermes-config/image-build-probes.py discord-create",
     );
     expect(dockerfile).toContain(
-      "gosu sandbox /opt/hermes/.venv/bin/python -I \\\n" +
+      "/usr/bin/setpriv --reuid=sandbox --regid=sandbox --init-groups -- /opt/hermes/.venv/bin/python -I \\\n" +
         "        /opt/nemoclaw-hermes-config/image-build-probes.py discord-backup",
     );
     const discordBackup = imageBuildProbes.slice(
