@@ -40,8 +40,8 @@ describe("agent base image provisioning", () => {
     });
   });
 
-  // source-shape-contract: security -- The tracked patched Hermes base and final-image dependency assertions must feed ordinary onboarding
-  it("accepts only the tracked published Hermes base digest", () => {
+  // source-shape-contract: security -- Ordinary onboarding must use the pinned Hermes base image and unconditional dependency guard.
+  it("requires the pinned Hermes base image and unconditional dependency guard during ordinary onboarding (#8328)", () => {
     const dockerfilePath = path.resolve(import.meta.dirname, "../../../agents/hermes/Dockerfile");
     const dockerfile = fs.readFileSync(dockerfilePath, "utf8");
     const trackedRef = dockerfile.match(

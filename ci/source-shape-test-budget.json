@@ -13,7 +13,7 @@
     },
     {
       "file": "src/lib/agent/base-image-hermes.test.ts",
-      "test": "accepts only the tracked published Hermes base digest",
+      "test": "requires the pinned Hermes base image and unconditional dependency guard during ordinary onboarding (#8328)",
       "category": "security"
     },
     {
