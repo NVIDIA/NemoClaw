@@ -62,6 +62,15 @@ describe("MCP bridge onboarding environment", () => {
     });
   });
 
+  it("passes the routed-private MCP test CA through the normal corporate CA input", () => {
+    const env = buildMcpBridgeOnboardEnv({
+      ...ONBOARD_OPTIONS,
+      corporateCaBundle: "/tmp/nemoclaw-mcp-tls/ca.crt",
+    });
+
+    expect(env.NEMOCLAW_CORPORATE_CA_BUNDLE).toBe("/tmp/nemoclaw-mcp-tls/ca.crt");
+  });
+
   it("rejects protected onboarding key collisions", () => {
     expect(() =>
       buildMcpBridgeOnboardEnv({
