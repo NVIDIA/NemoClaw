@@ -2031,11 +2031,10 @@ async function restoreSandboxBaselineUnlocked(
   const dryRun = Boolean(options.dryRun);
   const explicitAck = Boolean(options.yes || options.force);
   const key = options.key?.trim();
+  const usage = `  Usage: ${CLI_NAME} <sandbox> policy restore <key> [--yes|-y] [--force] [--dry-run]`;
   if (!key) {
     console.error("  A baseline key is required.");
-    console.error(
-      `  Usage: ${CLI_NAME} <sandbox> policy restore <key> [--yes|-y] [--force] [--dry-run]`,
-    );
+    console.error(usage);
     process.exit(1);
   }
 
@@ -2076,6 +2075,7 @@ async function restoreSandboxBaselineUnlocked(
     console.error(
       "  Non-interactive restore requires explicit acknowledgement: pass --force (or --yes).",
     );
+    console.error(usage);
     process.exit(1);
   }
   if (!explicitAck) {
@@ -2086,12 +2086,13 @@ async function restoreSandboxBaselineUnlocked(
       const code = (error as NodeJS.ErrnoException | null)?.code;
       if (code !== "EOF") throw error;
       console.error("  No input available on stdin, so policy restore cannot prompt.");
-      console.error(
-        `  Usage: ${CLI_NAME} <sandbox> policy restore <key> [--yes|-y] [--force] [--dry-run]`,
-      );
+      console.error(usage);
       process.exit(1);
     }
-    if (!confirm.trim().toLowerCase().startsWith("y")) return;
+    if (!confirm.trim().toLowerCase().startsWith("y")) {
+      console.log("  Cancelled.");
+      return;
+    }
   }
 
   if (!policies.restoreBaselineEntry(sandboxName, key, { expectedTargetDigest })) {
