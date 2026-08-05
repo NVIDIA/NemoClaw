@@ -586,6 +586,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--json]",
     },
   ],
+  launch: [
+    {
+      group: "Sandbox Management",
+      order: 2.6,
+      usage: "nemoclaw launch <name>",
+    },
+  ],
   update: [
     {
       group: "Upgrade",
