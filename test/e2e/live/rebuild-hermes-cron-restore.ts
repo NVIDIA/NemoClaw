@@ -121,7 +121,8 @@ function parseCronJob(text: string, jobId: string, label: string): JsonObject {
   );
 }
 
-function cronJobState(job: JsonObject, label: string): JsonObject {
+export function cronJobState(job: JsonObject, label: string): JsonObject {
+  if (typeof job.state === "string") return job;
   return requireObject(job.state, `${label} state`);
 }
 
