@@ -4,13 +4,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as openshellResolve from "../../adapters/openshell/resolve";
 import { redact } from "../../security/redact";
+import * as onboardSession from "../../state/onboard-session";
 import * as sandboxSession from "../../state/sandbox-session";
 import {
   confirmSandboxRebuildIfNeeded,
   countActiveSandboxSessionsForRebuild,
   createRebuildCommandContext,
 } from "./rebuild-preflight-confirmation";
-import { isSingleAgentRebuildSupported } from "./rebuild-preflight-guards";
+import {
+  acquireRebuildOnboardLock,
+  isSingleAgentRebuildSupported,
+} from "./rebuild-preflight-guards";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -167,6 +171,58 @@ describe("createRebuildCommandContext bail behaviour (#6376)", () => {
 });
 
 describe("rebuild preflight guards", () => {
+  it("stops after a failed onboard-lock acquisition without releasing another run's lock (#7794)", () => {
+    vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({
+      acquired: false,
+      lockFile: "/tmp/nemoclaw-onboard.lock",
+      stale: false,
+      holderPid: 4242,
+      holderCommand: "nemoclaw onboard",
+    });
+    const release = vi
+      .spyOn(onboardSession, "releaseOnboardLock")
+      .mockImplementation(() => undefined);
+    const registerExitHandler = vi.spyOn(process, "once");
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const bail = vi.fn() as unknown as (message: string, code?: number) => never;
+
+    expect(acquireRebuildOnboardLock("alpha", bail)).toBeNull();
+
+    expect(bail).toHaveBeenCalledWith("Could not acquire onboard lock before rebuild");
+    expect(release).not.toHaveBeenCalled();
+    expect(registerExitHandler).not.toHaveBeenCalled();
+    const output = error.mock.calls.flat().join("\n");
+    expect(output).toContain("another nemoclaw onboarding run is already in progress.");
+    expect(output).toContain("Wait for the other run to finish, then rerun rebuild.");
+    expect(output).toContain("Lock holder PID: 4242.");
+    expect(output).not.toContain("remove the stale lock");
+  });
+
+  it("waits for verified cleanup when stale-lock contention exhausts retries (#7794)", () => {
+    vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({
+      acquired: false,
+      lockFile: "/tmp/nemoclaw-onboard.lock",
+      stale: true,
+    });
+    const release = vi
+      .spyOn(onboardSession, "releaseOnboardLock")
+      .mockImplementation(() => undefined);
+    const registerExitHandler = vi.spyOn(process, "once");
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const bail = vi.fn() as unknown as (message: string, code?: number) => never;
+
+    expect(acquireRebuildOnboardLock("alpha", bail)).toBeNull();
+
+    expect(bail).toHaveBeenCalledWith("Could not acquire onboard lock before rebuild");
+    expect(release).not.toHaveBeenCalled();
+    expect(registerExitHandler).not.toHaveBeenCalled();
+    const output = error.mock.calls.flat().join("\n");
+    expect(output).toContain(
+      "Wait briefly, then rerun rebuild so verified stale-lock cleanup can finish.",
+    );
+    expect(output).not.toContain("remove the stale lock");
+  });
+
   it("rejects a multi-agent sandbox before later rebuild work", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const bail = (message: string): never => {
@@ -181,7 +237,7 @@ describe("rebuild preflight guards", () => {
     ).toThrow("Multi-agent sandbox rebuild is not yet supported");
 
     const output = error.mock.calls.flat().join("\n");
-    expect(output).toContain("Multi-agent sandbox rebuild is not yet supported");
+    expect(output).toContain("multi-agent sandbox rebuild is not yet supported.");
     expect(output).toContain("Back up state manually");
   });
 
