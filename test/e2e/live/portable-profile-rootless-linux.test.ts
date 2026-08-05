@@ -65,23 +65,24 @@ function run(command: string, args: readonly string[]): string {
   return String(result.stdout).trim();
 }
 
-async function waitForRegistry(): Promise<void> {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    const ready = await new Promise<boolean>((resolve) => {
-      const request = http.get("http://127.0.0.1:5000/v2/", (response) => {
-        response.resume();
-        response.once("end", () => resolve(response.statusCode === 200));
-      });
-      request.once("error", () => resolve(false));
-      request.setTimeout(500, () => {
-        request.destroy();
-        resolve(false);
-      });
+async function waitForRegistry(attempt = 0): Promise<void> {
+  assert.ok(attempt < 60, "The managed local registry did not become ready.");
+  const ready = await new Promise<boolean>((resolve) => {
+    const request = http.get("http://127.0.0.1:5000/v2/", (response) => {
+      response.resume();
+      response.once("end", () => resolve(response.statusCode === 200));
     });
-    if (ready) return;
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error("The managed local registry did not become ready.");
+    request.once("error", () => resolve(false));
+    request.setTimeout(500, () => {
+      request.destroy();
+      resolve(false);
+    });
+  });
+  return ready
+    ? undefined
+    : new Promise<void>((resolve) => setTimeout(resolve, 250)).then(() =>
+        waitForRegistry(attempt + 1),
+      );
 }
 
 function writeSystemctlShim(binDir: string): void {
@@ -259,10 +260,13 @@ async function main(progress: { phase: (phase: string) => void }): Promise<void>
       timeout: 15_000,
     });
     const pidFile = path.join(runtimeDir, "nemoclaw-podman-service.pid");
-    if (fs.existsSync(pidFile)) {
-      const pid = Number(fs.readFileSync(pidFile, "utf-8").trim());
-      if (Number.isInteger(pid)) process.kill(pid, "SIGTERM");
-    }
+    const pid = fs.existsSync(pidFile)
+      ? Number(fs.readFileSync(pidFile, "utf-8").trim())
+      : Number.NaN;
+    const terminateService = Number.isInteger(pid)
+      ? () => process.kill(pid, "SIGTERM")
+      : () => undefined;
+    terminateService();
     try {
       fs.rmSync(root, { recursive: true, force: true });
     } catch (error) {
