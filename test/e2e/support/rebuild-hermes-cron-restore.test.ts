@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { cronJobState } from "../live/rebuild-hermes-cron-restore.ts";
+import { cronJobState, parseHermesCronBeginReceipt } from "../live/rebuild-hermes-cron-restore.ts";
 
 describe("Hermes rebuild cron state compatibility", () => {
   it("reads the historical nested cron state (#7806)", () => {
@@ -31,5 +31,36 @@ describe("Hermes rebuild cron state compatibility", () => {
     expect(() => cronJobState({ id: "job-1", state: null }, "cron job job-1")).toThrow(
       "cron job job-1 state is not an object",
     );
+  });
+});
+
+describe("Hermes rebuild cron begin receipt", () => {
+  const receipt = {
+    action: "begin",
+    active_agents: 0,
+    disposition: "drain-acquired",
+    drain_acquired: true,
+    drain_token: "<REDACTED>",
+    operator_drain_active: false,
+    pid: 263,
+    start_time: 29_607,
+    version: 1,
+  };
+
+  it("accepts the canonically redacted ShellProbe receipt", () => {
+    expect(
+      parseHermesCronBeginReceipt(`NEMOCLAW_HERMES_CRON_RESTORE_V1:${JSON.stringify(receipt)}\n`),
+    ).toMatchObject({ pid: 263, start_time: 29_607 });
+  });
+
+  it("rejects an unredacted drain token crossing the ShellProbe boundary", () => {
+    expect(() =>
+      parseHermesCronBeginReceipt(
+        `NEMOCLAW_HERMES_CRON_RESTORE_V1:${JSON.stringify({
+          ...receipt,
+          drain_token: "a".repeat(32),
+        })}\n`,
+      ),
+    ).toThrow("Hermes cron begin receipt identity is invalid");
   });
 });
