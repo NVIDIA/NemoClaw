@@ -52,6 +52,11 @@
       "category": "security"
     },
     {
+      "file": "test/code-change-considerations.test.ts",
+      "test": "keeps the stage-neutral questions in one concise owner",
+      "category": "compatibility"
+    },
+    {
       "file": "test/code-scanning-workflow.test.ts",
       "test": "groups CodeQL action updates so Dependabot keeps the shared revision synchronized",
       "category": "security"
