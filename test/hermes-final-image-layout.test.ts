@@ -449,11 +449,11 @@ describe("Hermes final image layout", () => {
     expect(finalStage).toContain("WHATSAPP_CLOUD_ACCESS_TOKEN");
     expect(finalStage).toContain(
       "ARG NEMOCLAW_HERMES_POST_PROFILE_GATEWAY_CONFIG_SHA256=" +
-        "2084c652a07614761d85703787f8697fc29560fe447f23362aa0bda5179dffa7",
+        "b50a8390311c828fa9e13084e9af0caadafe2380ae161ef36dd4bdf792b22ee6",
     );
     expect(finalStage).toContain(
       "ARG NEMOCLAW_HERMES_NEUTRAL_PLATFORM_OUTPUT_SHA256=" +
-        "5a1375664d1451b2fe9c3f2325f673149a90b9035588dfd4eb6618f785ecd6a2",
+        "77ad342af30d59a5b863d9f5f817247d816fd582fb12d38e074243f88d85b9f4",
     );
     expect(doctorLayer).toMatch(/generate-config[.]ts\s+&& if /u);
     expect(doctorLayer).toMatch(/fi\s+&& rm -rf \/sandbox\/[.]cache$/u);
