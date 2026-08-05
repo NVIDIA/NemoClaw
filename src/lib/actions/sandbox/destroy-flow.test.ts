@@ -374,7 +374,7 @@ describe("destroySandbox flow", () => {
     expectAbsentSandboxMcpFinalize(harness);
   });
 
-  it("exits with code 1 when MCP bridge prepare throws McpBridgeError, gateway down (#8103)", async () => {
+  it("does not delete the sandbox when MCP preparation cannot reach the OpenShell gateway (#8103)", async () => {
     const harness = createDestroyHarness({
       mcpServers: ["github"],
       prepareMcpBridgeError: "Could not inspect OpenShell provider: gateway unreachable",
@@ -397,7 +397,7 @@ describe("destroySandbox flow", () => {
     expectMcpFinalizeBridgeErrorReturnsFailure(harness, secretMarker);
   });
 
-  it("retires retained MCP state when a destroy retry completes finalization (#8103)", async () => {
+  it("completes registry and gateway cleanup after a destroy rerun finalizes MCP providers (#8103)", async () => {
     const harness = createDestroyHarness({
       mcpServers: ["github"],
       finalizeMcpBridgeError: "Could not inspect OpenShell provider: gateway unreachable",

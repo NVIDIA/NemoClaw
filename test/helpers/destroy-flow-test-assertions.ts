@@ -221,7 +221,7 @@ export function expectFailedMcpFinalizePreservesRegistry(harness: DestroyHarness
 
 export function expectMcpPrepareBridgeErrorAborts(harness: DestroyHarness): void {
   expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalled();
-  // MCP preparation must succeed before sandbox deletion begins.
+  // MCP preparation must succeed before NemoClaw asks OpenShell to delete the sandbox.
   expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
     expect.arrayContaining(["sandbox", "delete"]),
     expect.anything(),
