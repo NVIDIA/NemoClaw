@@ -200,6 +200,23 @@ describe("shell runtime helpers", () => {
     expect(result.stderr).toContain(`Invalid ${name}=${value} (expected 1024-65535)`);
   });
 
+  it.each([
+    { name: "NEMOCLAW_VLLM_PORT", value: "8081", provider: "vllm-local" },
+    { name: "NEMOCLAW_VLLM_PORT", value: "08081", provider: "vllm-local" },
+    { name: "NEMOCLAW_OLLAMA_PORT", value: "8081", provider: "ollama-local" },
+    { name: "NEMOCLAW_OLLAMA_PORT", value: "08081", provider: "ollama-local" },
+  ])("rejects reserved llama.cpp port $value for $name", ({ name, value, provider }) => {
+    const result = runShell(`source "${RUNTIME_SH}"; get_local_provider_base_url ${provider}`, {
+      [name]: value,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout.trim()).toBe("");
+    expect(result.stderr).toContain(
+      `Invalid ${name}=${value} (conflicts with fixed llama.cpp inference port 8081)`,
+    );
+  });
+
   it("returns the first non-loopback nameserver", () => {
     const result = runShell(
       `source "${RUNTIME_SH}"; first_non_loopback_nameserver $'nameserver 127.0.0.11\\nnameserver 10.0.0.2'`,

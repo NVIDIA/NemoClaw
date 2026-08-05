@@ -60,6 +60,12 @@ export interface ResolveRequestedProviderSelectionInput<T extends ProviderOption
   windowsHostOllamaSupported: boolean;
   hermesProviderAvailable: boolean;
   /**
+   * True when the onboard probe already reached a live Ollama daemon, on
+   * whichever candidate host answered first. Absent means the caller has no
+   * probe result, which leaves an install request untouched.
+   */
+  ollamaRunning?: boolean;
+  /**
    * On a platform where managed vLLM is the approved non-interactive default,
    * an onboard with no requested/recorded provider should auto-select local
    * vLLM instead of falling back to cloud `build` (#7293).
@@ -97,6 +103,35 @@ function findWindowsHostKey(options: ProviderOption[]): string | null {
 
 function isWindowsHostOllamaRequest(providerKey: string): boolean {
   return providerKey === "start-windows-ollama" || providerKey === "install-windows-ollama";
+}
+
+/**
+ * A daemon that already answers on the Ollama port makes a Windows-host install
+ * request unnecessary. Express emits `install-windows-ollama` from a Docker-only
+ * check that never probes Ollama (`scripts/install.sh`), so the key arrives even
+ * while the daemon is running. Under WSL mirrored networking the Windows daemon
+ * answers on loopback, `isWindowsHostOllama` reads false, the menu keeps the
+ * install entry, and onboarding reinstalls through PowerShell interop — the same
+ * interop whose failure produced the false "no Windows Ollama" reading (#7472).
+ *
+ * Keyed on the observed daemon rather than on the networking mode, so a future
+ * WSL networking mode needs no new condition here.
+ *
+ * Scoped to the Windows-host key on purpose. This helper does not touch
+ * `install-ollama`: `resolveOllamaInstallMenuEntry` keeps that entry for a
+ * running-but-stale daemon, and collapsing it would skip the Ollama upgrade
+ * path.
+ */
+function collapseWindowsInstallToRunningDaemon<T extends ProviderOption>(
+  input: ResolveRequestedProviderSelectionInput<T>,
+  providerKey: string,
+): T | undefined {
+  if (providerKey !== "install-windows-ollama" || !input.ollamaRunning) return undefined;
+  // A daemon reached on the Windows host still needs Docker Desktop WSL
+  // integration for the sandbox to reach it. Leave that request to the
+  // unsupported-runtime rejection below instead of silently reusing it.
+  if (input.isWindowsHostOllama && !input.windowsHostOllamaSupported) return undefined;
+  return findOption(input.options, "ollama");
 }
 
 export function resolveRequestedProviderSelection<T extends ProviderOption>(
@@ -144,6 +179,11 @@ export function resolveRequestedProviderSelection<T extends ProviderOption>(
       // default; otherwise fall back to cloud NVIDIA Endpoints (#7293).
       providerKey = resolveManagedVllmDefaultKey(input) ?? "build";
     }
+  }
+
+  const runningDaemon = collapseWindowsInstallToRunningDaemon(input, providerKey);
+  if (runningDaemon) {
+    return { kind: "selected", selected: runningDaemon, recoveredFromSandbox, recoveredModel };
   }
 
   const selected = findOption(input.options, providerKey);

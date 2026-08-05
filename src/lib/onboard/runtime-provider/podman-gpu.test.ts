@@ -43,7 +43,7 @@ describe("Podman GPU attachment authority", () => {
     expect(() =>
       qualifyPodmanGpuAttachments(["nvidia.com/gpu=0"], ["0", "nvidia.com/gpu=0"]),
     ).toThrow("duplicate NVIDIA CDI device");
-    expect(() => normalizeNvidiaCdiDevice("/dev/nvidia0")).toThrow("safe NVIDIA CDI name");
+    expect(() => normalizeNvidiaCdiDevice("/dev/nvidia0")).toThrow("use an NVIDIA CDI name");
     expect(() => normalizePodmanCdiInventory(["all", "nvidia.com/gpu=all"])).toThrow(
       "duplicate NVIDIA device",
     );

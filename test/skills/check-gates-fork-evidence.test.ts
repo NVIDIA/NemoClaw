@@ -53,7 +53,7 @@ describe("maintainer merge-gate fork evidence", () => {
   it.each([
     "pull_request",
     "pull_request_target",
-  ])("accepts an association-less %s check tied to the exact head metadata", (event) => {
+  ])("accepts an association-less %s check with matching commit metadata", (event) => {
     const output = JSON.parse(
       runGate({
         body: "Signed-off-by: Example User <user@example.com>",
@@ -196,7 +196,10 @@ describe("maintainer merge-gate fork evidence", () => {
 
     expect(output.gates.ci).toMatchObject({
       pass: false,
-      failingChecks: ["E2E / PR Gate: latest attempt evidence incomplete"],
+      failingChecks: [
+        "E2E / PR Gate: latest attempt evidence incomplete",
+        "initialize: latest attempt evidence incomplete",
+      ],
     });
   });
 });

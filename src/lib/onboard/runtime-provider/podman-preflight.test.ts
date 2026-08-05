@@ -134,7 +134,7 @@ describe("Podman host preflight", () => {
         architecture: "x64",
         additionalCdiDevices: ["/dev/nvidia0"],
       }),
-    ).toThrow("safe NVIDIA CDI name");
+    ).toThrow("use an NVIDIA CDI name");
     expect(() =>
       qualifyPodmanHost(engine(), {
         platform: "linux",

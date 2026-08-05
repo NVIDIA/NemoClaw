@@ -1,14 +1,89 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+import YAML from "yaml";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { parseOpenShellPolicy } from "../../../src/lib/policy/merge";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { assertExitZero, resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const MCP_CURL_HTTP_CODE_MARKER = "NEMOCLAW_MCP_CURL_HTTP_CODE=";
 
 export type McpDnsRebindingAdapter = "mcporter" | "hermes-config" | "deepagents-config";
+
+export type CapturedManagedMcpPolicy = {
+  networkPolicies: Record<string, McpNetworkPolicy>;
+  policy: McpNetworkPolicy;
+};
+
+type McpNetworkPolicy = {
+  endpoints?: Array<{
+    host?: string;
+    allowed_ips?: string[];
+    [key: string]: unknown;
+  }>;
+  [key: string]: unknown;
+};
+
+export async function captureManagedMcpPolicy(
+  sandbox: SandboxClient,
+  options: {
+    artifactName: string;
+    label: string;
+    policyKey: string;
+    sandboxName: string;
+    url: string;
+  },
+): Promise<CapturedManagedMcpPolicy> {
+  const result = await sandbox.openshell(["policy", "get", "--full", options.sandboxName], {
+    artifactName: options.artifactName,
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 60_000,
+  });
+  assertExitZero(result, options.label);
+  const document = YAML.parse(parseOpenShellPolicy(resultText(result)).yamlBody) as {
+    network_policies?: Record<string, McpNetworkPolicy>;
+  };
+  const networkPolicies = document.network_policies ?? {};
+  const policy = networkPolicies[options.policyKey];
+  if (!policy) {
+    throw new Error(`${options.label}: managed MCP policy '${options.policyKey}' is absent`);
+  }
+  const endpoint = policy.endpoints?.[0];
+  const expectedHost = new URL(options.url).hostname;
+  if (endpoint?.host !== expectedHost) {
+    throw new Error(`${options.label}: expected managed MCP host '${expectedHost}'`);
+  }
+  if (
+    !Array.isArray(endpoint.allowed_ips) ||
+    endpoint.allowed_ips.length === 0 ||
+    endpoint.allowed_ips.some((address) => typeof address !== "string")
+  ) {
+    throw new Error(`${options.label}: expected at least one managed MCP address pin`);
+  }
+  return { networkPolicies, policy };
+}
+
+export function assertManagedMcpPolicySurvivedRemoval(
+  before: McpNetworkPolicy,
+  after: CapturedManagedMcpPolicy,
+  removedPolicyKey: string,
+): void {
+  assert.deepStrictEqual(after.policy, before);
+  assert.equal(after.networkPolicies[removedPolicyKey], undefined);
+}
+
+export function expectExitNonZero(result: ShellProbeResult, label: string, pattern: RegExp): void {
+  assert.ok(
+    !result.timedOut && result.exitCode !== null && result.exitCode !== 0,
+    `${label}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  );
+  assert.match(resultText(result), pattern);
+}
 
 export async function hostAddressForSandbox(_host: HostCliClient): Promise<string> {
   return "host.openshell.internal";

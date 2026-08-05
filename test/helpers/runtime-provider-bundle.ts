@@ -115,8 +115,18 @@ export function createInMemoryRuntimeProviderBundle({
           ? true
           : receipt.kind === "legacy-dockerfile"
             ? workloadProfile.legacyDockerfileBuilds
-            : receipt.platform !== undefined &&
-              workloadProfile.support?.platforms.includes(receipt.platform) === true;
+            : receipt.kind === "native-artifact"
+              ? workloadProfile.nativeArtifactSupport?.platforms.includes(receipt.platform) ===
+                  true &&
+                workloadProfile.nativeArtifactSupport.agents.includes(receipt.agent) &&
+                workloadProfile.nativeArtifactSupport.contractVersions.includes(
+                  receipt.contractVersion,
+                ) &&
+                workloadProfile.nativeArtifactSupport.startupProfileContractVersions.includes(
+                  receipt.startupProfileContractVersion,
+                )
+              : receipt.platform !== undefined &&
+                workloadProfile.support?.platforms.includes(receipt.platform) === true;
       },
     },
     hostLocalInference: hostLocalInferenceRuntime
@@ -162,6 +172,7 @@ export function createInMemoryRuntimeProviderBundle({
         "workload-cleanup",
       ],
     },
+    stateMutation: unsupported(providerId, futureReason),
     bootstrap: unsupported(providerId, futureReason),
     snapshot: unsupported(providerId, futureReason),
     recovery: unsupported(providerId, futureReason),

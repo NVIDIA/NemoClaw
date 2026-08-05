@@ -59,6 +59,7 @@ const FORBIDDEN_RUNTIME_FLAGS = new Set([
   "-e",
   "-l",
 ]);
+const FORBIDDEN_ATTACHED_SHORT_FLAGS = ["-d", "-e", "-l"] as const;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -349,6 +350,15 @@ function runtimeArguments(value: unknown): readonly string[] {
   const args = exactArgv(value, "Podman replacement runtime arguments");
   for (const [index, argument] of args.entries()) {
     const flag = argument.includes("=") ? argument.slice(0, argument.indexOf("=")) : argument;
+    const attachedShortFlag = FORBIDDEN_ATTACHED_SHORT_FLAGS.find(
+      (candidate) => argument.length > candidate.length && argument.startsWith(candidate),
+    );
+    if (attachedShortFlag) {
+      return failure(
+        `Podman replacement runtime arguments cannot set '${attachedShortFlag}'.`,
+        false,
+      );
+    }
     if (FORBIDDEN_RUNTIME_FLAGS.has(flag)) {
       return failure(`Podman replacement runtime arguments cannot set '${flag}'.`, false);
     }

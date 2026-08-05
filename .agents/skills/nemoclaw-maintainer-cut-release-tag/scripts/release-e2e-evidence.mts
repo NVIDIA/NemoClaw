@@ -101,6 +101,7 @@ const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", 
 const DEFAULT_WORKFLOW_PATH = path.join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const SHA_PATTERN = /^[a-f0-9]{40}$/u;
 const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+$/u;
+const SAFE_REPO_PATH_PATTERN = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[^\\]+$/u;
 const MATRIX_EXPRESSION_PATTERN = /\$\{\{\s*matrix\.([A-Za-z0-9_-]+)\s*\}\}/gu;
 
 function record(value: unknown, label: string): JsonRecord {
@@ -271,8 +272,43 @@ function requiresConfirmedJetsonRunner(job: JsonRecord): boolean {
   return typeof runsOn === "string" && runsOn.includes("inputs.allow_jetson_runner_queue");
 }
 
+function releaseActivationPath(job: JsonRecord, jobId: string): string | undefined {
+  const rawEnvironment = job.env;
+  if (rawEnvironment === undefined) return undefined;
+  const environment = record(rawEnvironment, `workflow.jobs.${jobId}.env`);
+  const activationPath = environment.RELEASE_E2E_ACTIVATION_PATH;
+  if (activationPath === undefined) return undefined;
+  if (
+    typeof activationPath !== "string" ||
+    activationPath.length === 0 ||
+    !SAFE_REPO_PATH_PATTERN.test(activationPath)
+  ) {
+    throw new Error(
+      `${jobId}.env.RELEASE_E2E_ACTIVATION_PATH must be a nonempty relative repository path without backslashes or parent-directory segments`,
+    );
+  }
+  return activationPath;
+}
+
+function candidatePathExists(candidateSha: string, candidatePath: string): boolean {
+  try {
+    const output = execFileSync("git", ["ls-tree", "--name-only", candidateSha, "--", candidatePath], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return output.trim() === candidatePath;
+  } catch (error) {
+    throw new Error(
+      `could not inspect release E2E activation path ${candidatePath} at candidate ${candidateSha}`,
+      { cause: error },
+    );
+  }
+}
+
 export function buildReleaseE2ePreflight(input: {
   candidateSha: string;
+  candidatePathExists?: (candidateSha: string, candidatePath: string) => boolean;
   jetsonRunnerOnline?: RunnerStatus;
   plan?: E2eWorkflowPlan;
   workflowPath?: string;
@@ -285,7 +321,15 @@ export function buildReleaseE2ePreflight(input: {
   const inventory = readFreeStandingJobsInventory(workflowPath);
   const plan = input.plan ?? buildE2eWorkflowPlan();
   const explicitJobs = new Set(inventory.explicitOnlyJobs);
-  const launchableE2eJobs = inventory.explicitOnlyJobs.filter((jobId) =>
+  const pathExists = input.candidatePathExists ?? candidatePathExists;
+  const releaseExplicitJobs = inventory.explicitOnlyJobs.filter((jobId) => {
+    const activationPath = releaseActivationPath(
+      record(jobs[jobId], `workflow.jobs.${jobId}`),
+      jobId,
+    );
+    return activationPath === undefined || pathExists(input.candidateSha, activationPath);
+  });
+  const launchableE2eJobs = releaseExplicitJobs.filter((jobId) =>
     isLaunchableE2eJob(record(jobs[jobId], `workflow.jobs.${jobId}`)),
   );
   if (launchableE2eJobs.length !== 1) {
@@ -294,12 +338,12 @@ export function buildReleaseE2ePreflight(input: {
     );
   }
   const launchableE2eJobId = launchableE2eJobs[0]!;
-  const conditionalJobs = inventory.explicitOnlyJobs.filter(
+  const conditionalJobs = releaseExplicitJobs.filter(
     (jobId) =>
       jobId !== launchableE2eJobId &&
       requiresConfirmedJetsonRunner(record(jobs[jobId], `workflow.jobs.${jobId}`)),
   );
-  const parallelExplicitJobs = inventory.explicitOnlyJobs.filter(
+  const parallelExplicitJobs = releaseExplicitJobs.filter(
     (jobId) => jobId !== launchableE2eJobId && !conditionalJobs.includes(jobId),
   );
 

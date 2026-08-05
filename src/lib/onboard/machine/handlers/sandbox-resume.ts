@@ -8,7 +8,7 @@ import {
   webSearchProviderForConfig,
 } from "../../../inference/web-search";
 import type { Session } from "../../../state/onboard-session";
-import type { SandboxEntry, SandboxRemovalReceipt } from "../../../state/registry";
+import type { SandboxEntry } from "../../../state/registry";
 import { normalizeToolDisclosure, toolDisclosureOrDefault } from "../../../tool-disclosure";
 
 export interface SandboxResumeSignals {
@@ -17,6 +17,7 @@ export interface SandboxResumeSignals {
   readonly sandboxStepComplete: boolean;
   readonly sandboxReuseState: string;
   readonly inferenceRouteConfigChanged: boolean;
+  readonly compatibleEndpointReasoningChanged: boolean;
   readonly webSearchConfigChanged: boolean;
   readonly sandboxGpuConfigChanged: boolean;
   readonly recreateSandboxRequested: boolean;
@@ -65,6 +66,23 @@ export function hasHermesCompatibleAnthropicInferenceRouteDrift({
   );
 }
 
+export function hasCompatibleEndpointReasoningDrift({
+  provider,
+  compatibleEndpointReasoning,
+  registryEntry,
+}: {
+  readonly provider: string | null | undefined;
+  readonly compatibleEndpointReasoning: string | null | undefined;
+  readonly registryEntry: SandboxEntry | null;
+}): boolean {
+  if (provider !== "compatible-endpoint") return false;
+  const desired =
+    compatibleEndpointReasoning === "true" || compatibleEndpointReasoning === "false"
+      ? compatibleEndpointReasoning
+      : null;
+  return (registryEntry?.compatibleEndpointReasoning ?? null) !== desired;
+}
+
 export function resolveToolDisclosureResumeSignals(
   registryEntry: SandboxEntry | null,
   session: Session | null,
@@ -91,6 +109,11 @@ export type SandboxResumeDecision =
     }
   | { readonly kind: "repair-and-recreate" };
 
+export function replacesSameNameSandbox(decision: SandboxResumeDecision): boolean {
+  if (decision.kind === "repair-and-recreate") return true;
+  return decision.kind === "recreate" && decision.removeRegistryEntry;
+}
+
 export function mcpRegistryRemovalBlockReason(
   decision: SandboxResumeDecision,
   sandboxName: string | null,
@@ -115,24 +138,11 @@ export function mcpRegistryRemovalBlockReason(
   return `  Sandbox '${sandboxName}' has managed MCP state. Use the transactional rebuild command before changing settings that recreate the sandbox.`;
 }
 
-export interface SandboxResumeDeps {
-  note(message: string): void;
-  removeSandboxFromRegistry(sandboxName: string): SandboxRemovalReceipt | null;
-  repairRecordedSandbox(sandboxName: string | null): void;
-  recordRepairEvent(
-    type: "state.repair.started" | "state.repair.completed" | "state.repair.failed",
-    options?: {
-      state?: "sandbox";
-      error?: string | null;
-      metadata?: Record<string, unknown> | null;
-    },
-  ): Promise<unknown>;
-}
-
 function canReuseSandbox(signals: SandboxResumeSignals): boolean {
   return (
     !signals.resumeAgentChanged &&
     !signals.inferenceRouteConfigChanged &&
+    !signals.compatibleEndpointReasoningChanged &&
     !signals.inferenceSelectionChanged &&
     !signals.webSearchConfigChanged &&
     !signals.sandboxGpuConfigChanged &&
@@ -169,6 +179,13 @@ function toolDisclosureResumeDecision(signals: SandboxResumeSignals): SandboxRes
 }
 
 function compatibilityResumeDecision(signals: SandboxResumeSignals): SandboxResumeDecision | null {
+  if (signals.compatibleEndpointReasoningChanged && signals.sandboxReuseState === "ready") {
+    return {
+      kind: "recreate",
+      note: "  [resume] Compatible endpoint reasoning capability changed; recreating sandbox.",
+      removeRegistryEntry: false,
+    };
+  }
   if (signals.inferenceSelectionChanged) {
     return {
       kind: "recreate",
@@ -267,45 +284,4 @@ export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResum
     note: "  [resume] Recorded sandbox state is unavailable; recreating it.",
     removeRegistryEntry: true,
   };
-}
-
-async function repairRecordedSandbox(
-  sandboxName: string | null,
-  deps: SandboxResumeDeps,
-): Promise<void> {
-  deps.note(`  [resume] Recorded sandbox '${sandboxName}' exists but is not ready; recreating it.`);
-  const metadata = { repair: "recorded-sandbox-cleanup", sandboxName };
-  await deps.recordRepairEvent("state.repair.started", { state: "sandbox", metadata });
-  try {
-    deps.repairRecordedSandbox(sandboxName);
-  } catch (error) {
-    await deps.recordRepairEvent("state.repair.failed", {
-      state: "sandbox",
-      error: error instanceof Error ? error.message : String(error),
-      metadata,
-    });
-    throw error;
-  }
-  await deps.recordRepairEvent("state.repair.completed", { state: "sandbox", metadata });
-}
-
-/**
- * Apply a resume decision and return the removal receipt (if any) so the
- * caller can restore the durable registry row, including its baseline
- * exclusion records, when replacement creation then fails.
- */
-export async function applySandboxResumeDecision(
-  decision: SandboxResumeDecision,
-  sandboxName: string | null,
-  deps: SandboxResumeDeps,
-): Promise<SandboxRemovalReceipt | null> {
-  if (decision.kind === "repair-and-recreate") {
-    await repairRecordedSandbox(sandboxName, deps);
-    return null;
-  }
-  if (decision.kind !== "recreate") return null;
-  deps.note(decision.note);
-  if (decision.removeRegistryEntry && sandboxName)
-    return deps.removeSandboxFromRegistry(sandboxName);
-  return null;
 }

@@ -44,6 +44,7 @@ export interface InspectPodmanHeldWorkloadInput {
   readonly expectedSupervisorArgv: readonly string[];
   readonly sandboxId: string;
   readonly sandboxName: string;
+  readonly sandboxNamespace: string;
 }
 
 function record(value: unknown, label: string): JsonRecord {
@@ -210,7 +211,7 @@ function parseObservation(
     labels[PODMAN_MANAGED_LABEL] !== "true" ||
     labels[PODMAN_SANDBOX_NAME_LABEL] !== input.sandboxName ||
     labels[PODMAN_SANDBOX_ID_LABEL] !== input.sandboxId ||
-    !Object.hasOwn(labels, PODMAN_SANDBOX_NAMESPACE_LABEL)
+    labels[PODMAN_SANDBOX_NAMESPACE_LABEL] !== input.sandboxNamespace
   ) {
     throw new Error("Podman held workload labels do not match its exact OpenShell ownership.");
   }
@@ -283,9 +284,13 @@ export function inspectExactPodmanHeldWorkload(
     throw new Error("Managed bootstrap Podman held command has an invalid bootstrap identity.");
   }
   const sandboxName = safeSandboxName(input.sandboxName);
+  const sandboxNamespace = safeString(
+    input.sandboxNamespace,
+    "Managed bootstrap Podman sandbox namespace",
+  );
   const runtimeId = discoverRuntimeId(input.engine, sandboxName);
   const inspectArgs = ["container", "inspect", runtimeId] as const;
-  const values = { ...input, sandboxName };
+  const values = { ...input, sandboxName, sandboxNamespace };
   const first = parseObservation(
     capture(input.engine, inspectArgs, "Managed bootstrap Podman inspect").stdout,
     values,

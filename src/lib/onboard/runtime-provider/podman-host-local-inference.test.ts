@@ -131,7 +131,7 @@ describe("Podman host-local inference runtime", () => {
   it.each([
     ["nim", "/v1/health/ready"],
     ["vllm", "/health"],
-  ] as const)("rejects unready managed %s and removes only its new container", (service, path) => {
+  ] as const)("removes only the new managed %s container after its readiness probe fails", (service, path) => {
     const host = runtimeHarness();
     host.setProbeFailure("service is not ready");
 
@@ -152,7 +152,7 @@ describe("Podman host-local inference runtime", () => {
     expect(calls.filter(([operation]) => operation === "rm")).toHaveLength(1);
   });
 
-  it("does not remove an exact existing container when its route becomes unready", () => {
+  it("does not remove an exact existing container when its readiness probe fails", () => {
     const host = runtimeHarness();
     const input = managedInput("vllm");
     const receipt = host.runtime.startManaged(input);
@@ -170,7 +170,7 @@ describe("Podman host-local inference runtime", () => {
   it.each([
     ["nim", "/v1/health/ready"],
     ["vllm", "/health"],
-  ] as const)("rejects unready managed %s preservation without mutation", (service, path) => {
+  ] as const)("rejects managed %s preservation when its readiness probe fails", (service, path) => {
     const host = runtimeHarness();
     const receipt = host.runtime.startManaged(managedInput(service));
     const runtimeId =

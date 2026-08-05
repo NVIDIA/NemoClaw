@@ -22,9 +22,13 @@ import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import {
   blockRebuildOnPendingBaselineTransition,
+  revalidateManagedWorkloadRebuildBeforeDelete,
   revalidateRebuildRouteBeforeDelete,
 } from "./rebuild-preflight-guards";
-import { runRebuildPreflightPhase } from "./rebuild-preflight-phase";
+import {
+  finalizePreparedRebuildImageMessagingPlan,
+  runRebuildPreflightPhase,
+} from "./rebuild-preflight-phase";
 import {
   disposePreparedBuildContext,
   verifyPreparedBuildContext,
@@ -108,7 +112,7 @@ async function rebuildSandboxUnlocked(
     liveState,
     recoveryManifest: validatedRecoveryManifest,
     dcodePreflight,
-    preparedImage,
+    preparedImage: initiallyPreparedImage,
     routePreflightReceipt,
     releaseOnboardLock,
     log,
@@ -125,6 +129,7 @@ async function rebuildSandboxUnlocked(
     fromDockerfile,
   } = targetConfig;
   const { staleRecovery } = liveState;
+  let preparedImage = initiallyPreparedImage;
   const preservedCustomPolicies = (sandboxEntry.customPolicies ?? []).map((entry) => ({
     ...entry,
   }));
@@ -190,6 +195,29 @@ async function rebuildSandboxUnlocked(
       });
       if (!backup) return;
 
+      const preservedEnv = backup.backupManifest?.preservedEnv ?? [];
+      if (preparedImage && messagingPlan?.agent === "hermes" && preservedEnv.length > 0) {
+        const finalizedImage = finalizePreparedRebuildImageMessagingPlan(
+          preparedImage,
+          messagingPlan,
+          preservedEnv,
+        );
+        if (!finalizedImage.ok) {
+          printRebuildPreflightFailure(
+            `the retained replacement image could not include preserved Hermes messaging state: ${finalizedImage.detail}`,
+            "The existing sandbox is untouched. Retry the rebuild after checking the replacement image inputs.",
+            "Replacement sandbox image finalization failed",
+            bail,
+          );
+          return;
+        }
+        preparedImage = finalizedImage.prepared;
+        recreateOptions.preparedImageRebuild = {
+          buildContext: preparedImage,
+          gatewayName: recreateOptions.targetGatewayName,
+        };
+      }
+
       // The post-delete create must consume the exact context that passed the
       // image preflight. Revalidate at the last safe point so mutation of the
       // retained copy cannot cross the destructive boundary.
@@ -218,6 +246,15 @@ async function rebuildSandboxUnlocked(
         return;
       }
 
+      const managedWorkloadMutationGuard = revalidateManagedWorkloadRebuildBeforeDelete(
+        sandboxName,
+        recreateOptions.managedWorkloadRebuild,
+      );
+      if (managedWorkloadMutationGuard) {
+        bail(managedWorkloadMutationGuard.message);
+        return;
+      }
+
       const recreateJournal = openRebuildRecreateJournal({
         target: {
           sandboxName,
@@ -227,6 +264,7 @@ async function rebuildSandboxUnlocked(
         agentName: rebuildAgent || "openclaw",
         targetIntentFingerprint: fingerprintRebuildRecreateTargetIntent(recreateOptions),
         log,
+        onAuthorityRefusal: (lines) => bail(lines.join("\n")),
       });
 
       // An earlier run of this rebuild already registered and proved the
@@ -286,7 +324,11 @@ async function rebuildSandboxUnlocked(
             recreateOptions.targetGatewayPort,
           );
         },
-        validateAtDeleteEdge: () => revalidateRebuildRouteBeforeDelete(routePreflightReceipt),
+        validateAtDeleteEdge: () =>
+          revalidateManagedWorkloadRebuildBeforeDelete(
+            sandboxName,
+            recreateOptions.managedWorkloadRebuild,
+          ) ?? revalidateRebuildRouteBeforeDelete(routePreflightReceipt),
         onDeleted: () => {
           sandboxStillExists = false;
         },
@@ -399,8 +441,9 @@ async function rebuildSandboxUnlocked(
       "  Warning: temporary rebuild base-image handoff could not be removed.",
     );
     if (preparedImage) {
+      const retainedPreparedImage = preparedImage;
       runBestEffortRebuildCleanup(
-        () => disposePreparedBuildContext(preparedImage),
+        () => disposePreparedBuildContext(retainedPreparedImage),
         "  Warning: temporary rebuild image inputs could not be fully removed.",
       );
     }

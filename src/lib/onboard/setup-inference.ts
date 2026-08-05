@@ -15,7 +15,7 @@ import {
   isAdvisoryGatewayRouteConflict,
 } from "../inference/gateway-route-compatibility";
 import { withGatewayRouteMutationLock } from "../inference/gateway-route-mutation-lock";
-import { getManagedDualStationVllmProviderBinding } from "../inference/local";
+import { getManagedVllmProviderBinding } from "../inference/local";
 import {
   assertNoExplicitOpenShellGatewayEndpoint,
   assertNoOpenShellGatewayEndpointOverride,
@@ -504,7 +504,7 @@ export function createSetupInference(
               VLLM_LOCAL_CREDENTIAL_ENV: deps.vllmLocalCredentialEnv,
               getManagedVllmProviderBinding: hostLocalRoute
                 ? () => null
-                : (deps.getManagedVllmProviderBinding ?? getManagedDualStationVllmProviderBinding),
+                : (deps.getManagedVllmProviderBinding ?? getManagedVllmProviderBinding),
             },
           );
           if (outcome.done) return outcome.result;

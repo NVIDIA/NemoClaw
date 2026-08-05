@@ -23,7 +23,7 @@ export function normalizeNvidiaCdiDevice(requestedDevice: string): string {
   const name = device.slice(NVIDIA_CDI_PREFIX.length);
   if (!CDI_DEVICE_NAME.test(name) && !LEGACY_MIG_DEVICE_NAME.test(name)) {
     throw new Error(
-      "Podman GPU device must be a safe NVIDIA CDI name such as 'all', '0', '1:0', 'GPU-...', or 'MIG-...'.",
+      "Podman GPU device must use an NVIDIA CDI name such as 'all', '0', '1:0', 'GPU-...', or 'MIG-...'.",
     );
   }
   return device;

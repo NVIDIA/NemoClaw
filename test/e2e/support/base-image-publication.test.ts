@@ -233,68 +233,13 @@ describe("base-image publication evidence", () => {
     expect(() => parseBaseImagePushPaths(source)).toThrow(expected);
   });
 
-  it("expands only reviewed glob families against first-parent Git history (#7744)", () => {
-    const calls: string[][] = [];
-    const expanded = expandBaseImagePushPaths(
-      EXPECTED_SHA,
-      ["Dockerfile", "agents/**", "src/lib/messaging/**"],
-      (args) => {
-        calls.push(args);
-        const pathspec = required(args.at(-1), "glob expansion call is missing a pathspec");
-        return required(
-          new Map([
-            [
-              ":(glob)agents/**",
-              "agents/hermes/Dockerfile\nagents/openclaw/manifest.yaml\nagents/hermes/Dockerfile",
-            ],
-            [
-              ":(glob)src/lib/messaging/**",
-              "src/lib/messaging/channels/slack.ts\nsrc/lib/messaging/types.ts",
-            ],
-          ]).get(pathspec),
-          `unexpected glob expansion: ${args.join(" ")}`,
-        );
-      },
-    );
-
-    expect(expanded).toEqual([
+  it("passes only reviewed glob families as bounded Git pathspecs (#7744)", () => {
+    const expanded = expandBaseImagePushPaths(EXPECTED_SHA, [
       "Dockerfile",
-      "agents/hermes/Dockerfile",
-      "agents/openclaw/manifest.yaml",
-      "src/lib/messaging/channels/slack.ts",
-      "src/lib/messaging/types.ts",
+      "agents/**",
+      "src/lib/messaging/**",
     ]);
-    expect(calls).toEqual([
-      [
-        "log",
-        "--first-parent",
-        "--diff-merges=first-parent",
-        "--format=",
-        "--name-only",
-        EXPECTED_SHA,
-        "--",
-        ":(glob)agents/**",
-      ],
-      [
-        "log",
-        "--first-parent",
-        "--diff-merges=first-parent",
-        "--format=",
-        "--name-only",
-        EXPECTED_SHA,
-        "--",
-        ":(glob)src/lib/messaging/**",
-      ],
-    ]);
-  });
-
-  it("fails closed when a reviewed glob is empty or Git returns an out-of-family path (#7744)", () => {
-    expect(() => expandBaseImagePushPaths(EXPECTED_SHA, ["agents/**"], () => "")).toThrow(
-      /did not match Git history/u,
-    );
-    expect(() =>
-      expandBaseImagePushPaths(EXPECTED_SHA, ["agents/**"], () => "scripts/escaped.sh"),
-    ).toThrow(/outside reviewed/u);
+    expect(expanded).toEqual([":(glob)agents/**", ":(glob)src/lib/messaging/**", "Dockerfile"]);
   });
 
   it("binds the applicable commit to the checked-out first-parent chain (#7372)", () => {

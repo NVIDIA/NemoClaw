@@ -96,4 +96,4 @@ These examples use recurring NemoClaw concepts. They show the required level of 
 | Announcement | `Added more robust E2E handling.` | `The PR gate now retries evidence download after a child run is cancelled.` |
 | Release entry | `Fixed various issues.` | `The CLI now rejects a provider configuration that has no endpoint.` |
 | Release entry | `Better error handling.` | `The CLI now reports the provider authentication error without a stack trace.` |
-| Procedure | `Refresh and rerun as needed.` | `Fetch origin/main. Rerun the gate after the PR SHA changes.` |
+| Procedure | `Refresh and rerun as needed.` | `Push the next commit. Rerun the gate.` |
