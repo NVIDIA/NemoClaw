@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import {
+  PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH,
   PROTECTED_MANAGED_IMAGE_AGENTS,
   PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID,
   PROTECTED_MANAGED_IMAGE_PLATFORMS,
@@ -73,7 +76,7 @@ function evidenceIdentity(platform: ProtectedManagedImagePlatform) {
 }
 
 describe("protected managed-image build contract", () => {
-  it("accepts only the dormant all-agent multiarch activation contract (#7744)", () => {
+  it("accepts only the all-agent multiarch activation contract (#7744)", () => {
     const activation = {
       agents: PROTECTED_MANAGED_IMAGE_AGENTS,
       contractVersion: 1,
@@ -85,6 +88,19 @@ describe("protected managed-image build contract", () => {
     expect(() =>
       parseProtectedManagedImageActivation({ ...activation, jobId: "untrusted-job" }),
     ).toThrow("activation contract is invalid");
+  });
+
+  it("ships the exact activation contract consumed by the trusted lane (#7744)", () => {
+    const activation = JSON.parse(
+      readFileSync(PROTECTED_MANAGED_IMAGE_ACTIVATION_PATH, "utf8"),
+    ) as unknown;
+
+    expect(parseProtectedManagedImageActivation(activation)).toEqual({
+      agents: PROTECTED_MANAGED_IMAGE_AGENTS,
+      contractVersion: 1,
+      jobId: PROTECTED_MANAGED_IMAGE_MULTIARCH_JOB_ID,
+      platforms: PROTECTED_MANAGED_IMAGE_PLATFORMS,
+    });
   });
 
   it.each(

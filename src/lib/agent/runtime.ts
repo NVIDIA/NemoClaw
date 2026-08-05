@@ -11,7 +11,10 @@ import { DASHBOARD_PORT } from "../core/ports";
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "./defs";
-import { getTerminalCommand } from "./gateway-restart-scripts";
+import {
+  getInteractiveAgentCommand as getManifestInteractiveAgentCommand,
+  getTerminalCommand,
+} from "./gateway-restart-scripts";
 
 type RegisteredAgentSource = { agent?: string | null } | null | undefined;
 
@@ -58,6 +61,29 @@ export function getRegisteredAgent(source: RegisteredAgentSource): AgentDefiniti
   } catch {
     return null;
   }
+}
+
+/**
+ * Resolve the trusted manifest command used for an interactive agent handoff.
+ * OpenClaw remains `null` in getSessionAgent because its recovery behavior uses
+ * legacy defaults, but launch and connect hints still load its repository-owned
+ * manifest here. The historical OpenClaw fallback is used only when that
+ * manifest is genuinely unavailable.
+ */
+export function getInteractiveAgentCommand(
+  agent: AgentDefinition | null,
+  agentName: string | null | undefined,
+): string {
+  const name = agentName || agent?.name || "openclaw";
+  let trustedAgent = agent;
+  if (!trustedAgent) {
+    try {
+      if (listAgents().includes(name)) trustedAgent = loadAgent(name);
+    } catch {
+      trustedAgent = null;
+    }
+  }
+  return getManifestInteractiveAgentCommand(trustedAgent, name);
 }
 
 /**
