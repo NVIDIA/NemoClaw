@@ -3,8 +3,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { GatewayReuseState } from "../state/gateway";
-import type { GatewayContainerState } from "./gateway-container-running";
+import type { GatewayReuseState } from "../../state/gateway";
+import type { GatewayContainerState } from "../gateway-container-running";
 import { applyHealthyPortReuse, classifyGatewayPortReuse } from "./gateway-stale-port-reuse";
 
 const NON_HEALTHY_STATES: GatewayReuseState[] = [
