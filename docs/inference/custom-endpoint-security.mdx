@@ -99,7 +99,10 @@ NemoClaw retries revocation during the second command.
 When no other sandbox references the route, a completed switch without a revocation warning confirms that the adapter removed it.
 
 <Warning title="Create Snapshots Before Cleanup">
-Destroying a sandbox deletes its persistent state volume.
+NemoClaw attempts to wipe manifest-defined agent state before it deletes a sandbox.
+OpenShell can retain the per-name persistent volume after sandbox deletion.
+If the wipe cannot complete, onboarding with the same name can make old files available again.
+Do not rely on a retained volume as a backup.
 Before you destroy a remaining sandbox, create a snapshot of any state that you must keep.
 Refer to [Create and Restore Snapshots](../manage-sandboxes/state-and-backups/create-and-restore-snapshots) for instructions.
 </Warning>
