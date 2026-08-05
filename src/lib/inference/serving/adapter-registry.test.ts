@@ -9,6 +9,8 @@ import {
   getManagedInferencePreparationDescriptor,
   getManagedInferenceRecipeRegistrationError,
   getManagedInferenceTopologyQualificationDescriptor,
+  HOST_LOCAL_VLLM_LIFECYCLE_REF,
+  HOST_LOCAL_VLLM_MATERIALIZER_REF,
   listManagedInferenceLifecycleDescriptors,
   listManagedInferenceMaterializerDescriptors,
   listManagedInferencePreparationDescriptors,
@@ -19,12 +21,12 @@ import {
   SNAPSHOT_COPY_AND_EXACT_TEXT_REPLACEMENT_PREPARATION_REF,
 } from "./adapter-registry.js";
 import { loadManagedInferenceCatalog } from "./catalog-loader.js";
-import type { ManagedInferenceServingRecipe } from "./types.js";
 import { fixtureManagedClusterSelection } from "./managed-cluster-fixture.test-support.js";
 import {
   MANAGED_CLUSTER_TOPOLOGY_ID,
   MANAGED_CLUSTER_TOPOLOGY_SCHEMA_VERSION,
 } from "./managed-cluster-topology.js";
+import type { ManagedInferenceServingRecipe } from "./types.js";
 
 function shippedRecipe(): ManagedInferenceServingRecipe {
   const recipe = loadManagedInferenceCatalog().recipes.find(
@@ -45,9 +47,11 @@ describe("managed inference adapter registries", () => {
     ]);
     expect(listManagedInferenceMaterializerDescriptors()).toMatchObject([
       { ref: MANAGED_CLUSTER_VLLM_MATERIALIZER_REF, backend: "vllm" },
+      { ref: HOST_LOCAL_VLLM_MATERIALIZER_REF, backend: "vllm" },
     ]);
     expect(listManagedInferenceLifecycleDescriptors()).toMatchObject([
       { ref: MANAGED_CLUSTER_VLLM_LIFECYCLE_REF, backend: "vllm" },
+      { ref: HOST_LOCAL_VLLM_LIFECYCLE_REF, backend: "vllm" },
     ]);
     expect(listManagedInferencePreparationDescriptors()).toEqual(
       expect.arrayContaining([
@@ -73,10 +77,14 @@ describe("managed inference adapter registries", () => {
     expect(
       getManagedInferenceMaterializerDescriptor(MANAGED_CLUSTER_VLLM_MATERIALIZER_REF),
     ).toBeDefined();
+    expect(
+      getManagedInferenceMaterializerDescriptor(HOST_LOCAL_VLLM_MATERIALIZER_REF),
+    ).toBeDefined();
     expect(getManagedInferenceMaterializerDescriptor("unknown.materializer/v1")).toBeUndefined();
     expect(
       getManagedInferenceLifecycleDescriptor(MANAGED_CLUSTER_VLLM_LIFECYCLE_REF),
     ).toBeDefined();
+    expect(getManagedInferenceLifecycleDescriptor(HOST_LOCAL_VLLM_LIFECYCLE_REF)).toBeDefined();
     expect(getManagedInferenceLifecycleDescriptor("unknown.lifecycle/v1")).toBeUndefined();
     expect(
       getManagedInferencePreparationDescriptor(

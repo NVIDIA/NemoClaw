@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { type BigIntStats, lstatSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import { isSafeLlamaCppServedModelAlias } from "./contract";
@@ -92,6 +93,14 @@ export interface LlamaCppHostLocalRuntimeBindings {
 
 export interface VerifiedLocalModelArtifact {
   readonly digest: string;
+  /** Executor-only identity captured from the descriptor that verified this file. */
+  readonly filesystemIdentity: {
+    readonly ctimeNs: bigint;
+    readonly dev: bigint;
+    readonly ino: bigint;
+    readonly mtimeNs: bigint;
+    readonly size: bigint;
+  };
   readonly hostPath: string;
   readonly sizeBytes: number;
 }
@@ -174,6 +183,35 @@ function validateBindings(
   ) {
     throw new Error(
       "llama.cpp verified model artifact does not match the declarative GGUF identity",
+    );
+  }
+  let canonicalModelPath: string;
+  let modelStatus: BigIntStats;
+  try {
+    canonicalModelPath = realpathSync(bindings.model.hostPath);
+    modelStatus = lstatSync(bindings.model.hostPath, { bigint: true });
+  } catch {
+    throw new Error("llama.cpp verified model artifact is unavailable");
+  }
+  const identity = bindings.model.filesystemIdentity;
+  if (
+    !identity ||
+    typeof identity.dev !== "bigint" ||
+    typeof identity.ino !== "bigint" ||
+    typeof identity.size !== "bigint" ||
+    typeof identity.mtimeNs !== "bigint" ||
+    typeof identity.ctimeNs !== "bigint" ||
+    canonicalModelPath !== bindings.model.hostPath ||
+    !modelStatus.isFile() ||
+    modelStatus.dev !== identity.dev ||
+    modelStatus.ino !== identity.ino ||
+    modelStatus.size !== identity.size ||
+    modelStatus.mtimeNs !== identity.mtimeNs ||
+    modelStatus.ctimeNs !== identity.ctimeNs ||
+    modelStatus.size !== BigInt(bindings.model.sizeBytes)
+  ) {
+    throw new Error(
+      "llama.cpp verified model artifact does not match its verified filesystem identity",
     );
   }
   if (
