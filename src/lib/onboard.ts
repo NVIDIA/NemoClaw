@@ -983,7 +983,6 @@ const { upsertMessagingProviders, providerMatchesGatewayCredential } =
   registeredCredentialProviders;
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAME) => onboardProviders.providerExistsInGateway(name, setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, gatewayName));
-// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const { verifyInferenceRoute, isInferenceRouteReady, checkGatewayRouteCompatibility, preflightGatewayRouteDiscovery } = inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
