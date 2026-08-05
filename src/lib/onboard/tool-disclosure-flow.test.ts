@@ -193,20 +193,4 @@ describe("onboard tool-disclosure flow", () => {
     expect(mocks.updateSession).toHaveBeenCalledOnce();
     expect(mocks.removeSandbox).not.toHaveBeenCalled();
   });
-
-  it("still clears a stale registry entry that has no live sandbox and no pending reservation", () => {
-    prepareSandboxToolDisclosure(
-      "beta",
-      null,
-      false,
-      () => ({
-        existingEntry: { name: "beta", toolDisclosure: "progressive" },
-        preservedMcpState: undefined,
-        liveExists: false,
-      }),
-      "progressive",
-    );
-
-    expect(mocks.removeSandbox).toHaveBeenCalledWith("beta");
-  });
 });

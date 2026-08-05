@@ -239,22 +239,9 @@ function unsafeLockPathError(lockPath: string, reason: string): Error {
 }
 
 function readExistingLock(lockPath: string, sandboxName: string): ExistingLockSnapshot | null {
-  let pathStat: fs.BigIntStats;
-  try {
-    pathStat = fs.lstatSync(lockPath, { bigint: true });
-  } catch (error) {
-    if (isErrnoException(error) && error.code === "ENOENT") return null;
-    throw error;
-  }
-  if (pathStat.isSymbolicLink()) {
-    throw unsafeLockPathError(lockPath, "symbolic links are not allowed");
-  }
-  if (!pathStat.isFile()) {
-    throw unsafeLockPathError(lockPath, "path is not a regular file");
-  }
-
   let fd: number;
   try {
+    // Open first so every subsequent decision is anchored to one no-follow descriptor.
     fd = fs.openSync(
       lockPath,
       fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
@@ -270,6 +257,23 @@ function readExistingLock(lockPath: string, sandboxName: string): ExistingLockSn
   try {
     const fdStat = fs.fstatSync(fd, { bigint: true });
     if (!fdStat.isFile()) {
+      throw unsafeLockPathError(lockPath, "path is not a regular file");
+    }
+
+    let pathStat: fs.BigIntStats;
+    try {
+      pathStat = fs.lstatSync(lockPath, { bigint: true });
+    } catch (error) {
+      if (isErrnoException(error) && error.code === "ENOENT") {
+        fs.closeSync(fd);
+        return null;
+      }
+      throw error;
+    }
+    if (pathStat.isSymbolicLink()) {
+      throw unsafeLockPathError(lockPath, "symbolic links are not allowed");
+    }
+    if (!pathStat.isFile()) {
       throw unsafeLockPathError(lockPath, "path is not a regular file");
     }
     if (!sameInode(inodeIdentity(pathStat), inodeIdentity(fdStat))) {

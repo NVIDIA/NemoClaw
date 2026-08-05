@@ -299,6 +299,14 @@ export function sameContainerId(
   return left.startsWith(right) || right.startsWith(left);
 }
 
+/** Return only a complete Docker container ID that is safe for exact-ID cleanup. */
+export function fullDockerContainerId(value: string | null | undefined): string | null {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return /^[0-9a-f]{64}$/u.test(normalized) ? normalized : null;
+}
+
 function dockerNetworkAliases(
   inspect: DockerContainerInspect,
   networkMode: string | null | undefined,

@@ -23,7 +23,7 @@ const SECURITY_IMAGES = [
     startMarker: "# Trixie has not published fixes",
     additionalStartMarker:
       "RUN apt-get update \\\n    && apt-get install -y --no-install-recommends \\\n        /tmp/nemoclaw-native-security/perl-base.deb",
-    endMarker: "# gosu for privilege separation",
+    endMarker: "# setpriv runtime contract",
   },
   {
     name: "Hermes",
