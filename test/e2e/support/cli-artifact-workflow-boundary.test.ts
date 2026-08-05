@@ -368,6 +368,7 @@ function expectRestoreFailure(options: RestoreFixtureOptions, message: string): 
     expect(fixture.result.status, fixture.output).not.toBe(0);
     expect(fixture.output).toContain(message);
     expect(fs.existsSync(path.join(fixture.workspace, "dist"))).toBe(false);
+    expect(fs.existsSync(path.join(fixture.workspace, "nemoclaw", "dist"))).toBe(false);
   } finally {
     fixture.cleanup();
   }
