@@ -37,9 +37,35 @@ function writeExecutable(name: string, source: string): void {
 function stubBuildInvocation(): void {
   writeExecutable(
     "docker",
-    '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$NEMOCLAW_TEST_DOCKER_LOG"\ncase "$*" in\n  "buildx imagetools inspect "*) printf "{}\\n"; exit 0 ;;\n  "buildx build "*) exit 88 ;;\nesac\nexit 91\n',
+    '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$NEMOCLAW_TEST_DOCKER_LOG"\ncase "$*" in\n  "buildx imagetools inspect "*) printf "{}\\n" ;;\n  "buildx build "*) ;;\n  "pull "*) ;;\n  "image inspect "*) printf "[]\\n" ;;\n  *) exit 91 ;;\nesac\n',
+  );
+  writeExecutable(
+    "jq",
+    `#!/usr/bin/env bash
+case "$*" in
+  *containerimage.digest*) printf 'sha256:${DIGEST}\\n' ;;
+  *"if length == 1 then .[0].Id"*) printf 'sha256:${DIGEST}\\n' ;;
+  *"--arg agent "*) printf '{}\\n' ;;
+  *"-se "*) printf '[]\\n' ;;
+  *) ;;
+esac
+`,
   );
   writeExecutable("sha256sum", `#!/usr/bin/env bash\nprintf '%s  %s\\n' '${DIGEST}' "$1"\n`);
+}
+
+function recordedBuildInvocations(): string[] {
+  return readFileSync(dockerLog, "utf8")
+    .split("\n")
+    .filter((line) => line.startsWith("buildx build "));
+}
+
+function recordedBuildInvocation(agent: string): string {
+  const invocation = recordedBuildInvocations().find((line) =>
+    line.includes(`io.nvidia.nemoclaw.agent=${agent}`),
+  );
+  expect(invocation, `missing ${agent} build invocation`).toBeDefined();
+  return invocation!;
 }
 
 function runBuild(sourceRoot: string, extraArgs: readonly string[] = []) {
@@ -130,17 +156,20 @@ describe("protected managed-image source-root boundary", () => {
 });
 
 describe("protected managed-image build-cache boundary", () => {
-  it("accepts one empty absolute cache export root before invoking Docker", () => {
+  it("passes each agent one empty absolute cache export root", () => {
     const cacheRoot = path.join(testRoot, "export-cache");
     stubBuildInvocation();
 
     const result = runBuild(REPO_ROOT, ["--cache-to", cacheRoot]);
 
-    expect(result.status, result.stderr).toBe(88);
+    expect(result.status, result.stderr).toBe(0);
     expect(existsSync(cacheRoot)).toBe(true);
-    expect(readFileSync(dockerLog, "utf8")).toContain(
-      `--cache-to type=local,dest=${realpathSync(cacheRoot)}/openclaw,mode=max`,
-    );
+    expect(recordedBuildInvocations()).toHaveLength(3);
+    for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
+      expect(recordedBuildInvocation(agent)).toContain(
+        `--cache-to type=local,dest=${realpathSync(cacheRoot)}/${agent},mode=max`,
+      );
+    }
   });
 
   it.each([
@@ -173,7 +202,7 @@ describe("protected managed-image build-cache boundary", () => {
     expect(existsSync(dockerLog)).toBe(false);
   });
 
-  it("accepts complete all-agent offline cache metadata before invoking Docker", () => {
+  it("passes each agent complete offline cache metadata with network disabled", () => {
     const cacheRoot = path.join(testRoot, "offline-cache");
     for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
       mkdirSync(path.join(cacheRoot, agent, "blobs", "sha256"), {
@@ -185,10 +214,13 @@ describe("protected managed-image build-cache boundary", () => {
 
     const result = runBuild(REPO_ROOT, ["--offline-cache", cacheRoot]);
 
-    expect(result.status, result.stderr).toBe(88);
-    expect(readFileSync(dockerLog, "utf8")).toContain(
-      `--cache-from type=local,src=${realpathSync(cacheRoot)}/openclaw --network none`,
-    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(recordedBuildInvocations()).toHaveLength(3);
+    for (const agent of ["openclaw", "hermes", "langchain-deepagents-code"]) {
+      expect(recordedBuildInvocation(agent)).toContain(
+        `--cache-from type=local,src=${realpathSync(cacheRoot)}/${agent} --network none`,
+      );
+    }
   });
 
   it("rejects a nested symlink in a complete offline cache before invoking Docker", () => {
