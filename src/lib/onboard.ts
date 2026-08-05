@@ -2216,6 +2216,7 @@ async function createSandboxWithBaseImageResolution(
   baseImageResolutionContext: import("./onboard/base-image-resolution-flow").BaseImageResolutionContext,
   computePlan: import("./onboard/compute/plan").OpenShellComputePlan,
   managedWorkloadRebuild: import("./onboard/workload/rebuild").ManagedWorkloadRebuildHandoff | null,
+  tempManagedRuntime: boolean,
   gpu: ReturnType<typeof nim.detectGpu>,
   model: string,
   provider: string,
@@ -2324,7 +2325,7 @@ async function createSandboxWithBaseImageResolution(
   const plannedMessagingState =
     envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const managedWorkloadRuntime = managedWorkloadOnboard.createManagedWorkloadOnboardRuntime({ computePlan, managedWorkloadRebuild, agentName: requestedAgentName, legacyDockerfilePath, customDockerfilePath: fromDockerfile ?? (preparedBuildContext ? preparedBuildContext.stagedDockerfile : null), rootDir: ROOT, model, provider, preferredInferenceApi, endpointUrl: createIntent?.endpointUrl ?? null, startupProfile: { chatUiUrl, effectiveDashboardPort: effectivePort, manageDashboard, dashboardBindAddress: process.env.NEMOCLAW_DASHBOARD_BIND, wslExposure: requestedAgentName === "openclaw" && isWsl(), hermesDashboardState, webSearch: webSearchConfig, toolDisclosure: effectiveToolDisclosure, hermesToolGateways, messagingPlan: plannedMessagingState?.plan ?? null, dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode, observabilityEnabled: createIntent?.observabilityEnabled === true, environment: process.env }, note, fallbackBuildEstimate: () => process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1" ? null : formatSandboxBuildEstimateNote(assessHost()) }, { resolveAgentInferenceApi: inferenceConfig.resolveAgentInferenceApi, getSandboxInferenceConfig });
+  const managedWorkloadRuntime = managedWorkloadOnboard.createManagedWorkloadOnboardRuntime({ computePlan, managedWorkloadRebuild, tempManagedRuntime, agentName: requestedAgentName, legacyDockerfilePath, customDockerfilePath: fromDockerfile ?? (preparedBuildContext ? preparedBuildContext.stagedDockerfile : null), rootDir: ROOT, model, provider, preferredInferenceApi, endpointUrl: createIntent?.endpointUrl ?? null, startupProfile: { chatUiUrl, effectiveDashboardPort: effectivePort, manageDashboard, dashboardBindAddress: process.env.NEMOCLAW_DASHBOARD_BIND, wslExposure: requestedAgentName === "openclaw" && isWsl(), hermesDashboardState, webSearch: webSearchConfig, toolDisclosure: effectiveToolDisclosure, hermesToolGateways, messagingPlan: plannedMessagingState?.plan ?? null, dcodeAutoApprovalMode: dcodeAutoApprovalPlan.mode, observabilityEnabled: createIntent?.observabilityEnabled === true, environment: process.env }, note, fallbackBuildEstimate: () => process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1" ? null : formatSandboxBuildEstimateNote(assessHost()) }, { resolveAgentInferenceApi: inferenceConfig.resolveAgentInferenceApi, getSandboxInferenceConfig });
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
@@ -2833,6 +2834,7 @@ type CreateSandboxArgs =
     unknown,
     unknown,
     unknown,
+    unknown,
     ...infer Args,
   ]
     ? Args
@@ -2844,6 +2846,20 @@ async function createSandbox(...args: CreateSandboxArgs): Promise<string> {
     baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
     computePlan,
     null,
+    false,
+    ...args,
+  );
+}
+
+async function createSandboxWithTemporaryManagedRuntime(
+  ...args: CreateSandboxArgs
+): Promise<string> {
+  const computePlan = dockerDriverPlatform.resolveCurrentOpenShellComputePlan();
+  return createSandboxWithBaseImageResolution(
+    baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
+    computePlan,
+    null,
+    true,
     ...args,
   );
 }
@@ -4363,6 +4379,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             baseImageResolutionContext,
             onboardingComputePlan,
             opts.managedWorkloadRebuild ?? null,
+            opts.tempManagedRuntime === true,
           ),
         ),
         updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
@@ -4545,6 +4562,7 @@ module.exports = {
   classifySandboxCreateFailure,
   configureWebSearch,
   createSandbox,
+  createSandboxWithTemporaryManagedRuntime,
   ensureValidatedWebSearchCredential,
   ensureValidatedBraveSearchCredential,
   formatEnvAssignment,

@@ -208,10 +208,7 @@ langchain-deepagents-code  Terminal coding agent built on the Deep Agents SDK
 ### `$$nemoclaw onboard`
 
 Run the interactive setup wizard (recommended for new installs).
-The wizard creates an OpenShell gateway, registers inference providers, and creates the sandbox.
-For stock OpenClaw, Hermes, and LangChain Deep Agents Code onboarding on Docker, NemoClaw resolves the installed CLI release through one complete all-agent managed-image catalog.
-It selects the chosen agent's exact platform digest, creates the sandbox without staging or building a Dockerfile, and applies the generated startup profile through the transactional managed bootstrap.
-If the catalog is unavailable or does not match the release, platform, all-agent publication cohort, or managed-image contract, onboarding stops before sandbox creation instead of falling back to a Dockerfile build.
+The wizard creates an OpenShell gateway, registers inference providers, builds the sandbox image, and creates the sandbox.
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```bash
@@ -295,7 +292,7 @@ It also bypasses locally recorded sandbox base-image resolution metadata and rer
 `--fresh` takes precedence over a base-image hint carried from a rebuild, so NemoClaw does not use that recorded hint.
 The installer also accepts `--fresh` and forwards it to `$$nemoclaw onboard`, which skips automatic resume detection.
 `--resume` and `--fresh` are mutually exclusive.
-For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you intentionally want onboarding to replace that sandbox with a new provider, model, agent, or startup setting.
+For an existing completed sandbox, use `--fresh --name <sandbox-name> --recreate-sandbox` when you intentionally want onboarding to replace that sandbox with a new provider, model, agent, or build-time setting.
 Use `$$nemoclaw <sandbox-name> rebuild` when you want NemoClaw to recreate the sandbox from its recorded registry metadata without changing those selections.
 
 #### `--tool-disclosure <progressive|direct>`
@@ -360,10 +357,7 @@ Review [Understand Deep Agents Trace Export](/user-guide/deepagents/monitoring/u
 
 </AgentOnly>
 
-The following base-image resolution controls apply only to the legacy Dockerfile workload path.
-Stock managed-image onboarding and rebuild select exact release-catalog digests and do not run local base-image discovery or builds.
-
-When Docker exposes the required identity metadata, NemoClaw records the base-image resolution on images produced through the legacy managed Dockerfile path.
+When Docker exposes the required identity metadata, NemoClaw records the base-image resolution on managed sandbox images.
 During a warm recreate or rebuild, it validates the local image identity and platform, plus the exact repository digest for a published image and any active OpenShell ABI requirement, before reusing it.
 A valid match avoids candidate discovery and a network pull.
 Set `NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH=1` to bypass the recorded hint without changing onboarding session handling:
@@ -453,10 +447,10 @@ The legacy `$$nemoclaw setup` command is deprecated; use `$$nemoclaw onboard` in
 
 After provider selection, the wizard reviews the provider, model, credential state, and sandbox name before registering inference.
 <AgentOnly variant="openclaw,hermes">
-It then prompts for optional web search and messaging channels, creates and starts the sandbox, and asks for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
+It then prompts for optional web search and messaging channels, builds and starts the sandbox, and asks for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
 </AgentOnly>
 <AgentOnly variant="deepagents">
-It then prompts for optional web search, creates and starts the sandbox, and asks for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
+It then prompts for optional web search, builds and starts the sandbox, and asks for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
 </AgentOnly>
 Three tiers are available:
 
@@ -567,7 +561,7 @@ Brave Search wins when both keys are available to preserve the historical non-in
 An explicit provider with no matching key exits before sandbox creation.
 A provider key that fails validation prints a warning, disables web search for that run, and lets the rest of onboarding continue.
 After fixing the key, rerun onboarding so NemoClaw can validate it, register the selected provider, and apply the matching policy preset.
-Changing or disabling the selected provider recreates the sandbox because the plugin configuration and credential attachment are part of the managed startup profile.
+Changing or disabling the selected provider recreates the sandbox because the plugin configuration and credential attachment are part of the image.
 Accept the recreate prompt or pass `--recreate-sandbox`.
 
 </AgentOnly>
@@ -586,7 +580,7 @@ Set `NEMOCLAW_WEB_SEARCH_PROVIDER=none` to disable web search explicitly.
 When the selector is unset, NemoClaw enables Tavily when `TAVILY_API_KEY` is available and ignores `BRAVE_API_KEY` for Hermes.
 An explicit Tavily selection with no key exits before sandbox creation.
 A Tavily key that fails validation prints a warning, disables web search for that run, and lets the rest of onboarding continue.
-Changing or disabling Tavily recreates the sandbox because the Hermes backend, environment placeholder, and credential attachment are part of the managed startup profile.
+Changing or disabling Tavily recreates the sandbox because the Hermes backend, environment placeholder, and credential attachment are part of the image.
 If you also select the Nous-managed web gateway through Nous Portal OAuth, Tavily replaces `nous-web` while other selected Nous tools remain enabled.
 API-key mode is inference-only and does not enable managed Nous tool gateways.
 
@@ -602,7 +596,7 @@ The `$$nemoclaw onboard --help` output lists installed runtime names inline, and
 
 <AgentOnly variant="openclaw">
 
-Use `--agents <agents.yaml>` to declare secondary OpenClaw agents, `agents.defaults`, and main-agent overrides in a checked-in manifest that NemoClaw applies through the managed startup profile.
+Use `--agents <agents.yaml>` to declare secondary OpenClaw agents, `agents.defaults`, and main-agent overrides in a checked-in manifest that NemoClaw bakes into the sandbox image at build time.
 Refer to [Declarative Multi-Agent Manifest](../configure-agents/declarative-agents-manifest) for the schema and OpenClaw-native sub-agent field semantics.
 
 </AgentOnly>
@@ -618,10 +612,10 @@ For Hermes sandboxes, do not use port `8642`; NemoClaw reserves it for the Herme
 If you enable Slack during onboarding, the wizard collects both the Bot Token (`SLACK_BOT_TOKEN`) and the App-Level Token (`SLACK_APP_TOKEN`).
 Socket Mode requires both tokens.
 The app-level token is stored in a dedicated `slack-app` OpenShell provider and forwarded to the sandbox alongside the bot token.
-The wizard also accepts optional `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` values so you can restrict Slack DMs, channel `@mention` users, and channel IDs before NemoClaw creates the sandbox.
+The wizard also accepts optional `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` values so you can restrict Slack DMs, channel `@mention` users, and channel IDs before the sandbox image is built.
 
 If you enable Discord during onboarding, the wizard can also prompt for a Discord Server ID, whether the bot should reply only to `@mentions` or to all messages in that server, and an optional Discord User ID.
-NemoClaw applies those values through the managed startup profile as Discord guild workspace config so the bot can respond in the selected server, not just in DMs.
+NemoClaw bakes those values into the sandbox image as Discord guild workspace config so the bot can respond in the selected server, not just in DMs.
 If you leave the Discord User ID blank, the guild config omits the user allowlist and any member of the configured server can message the bot.
 Guild responses remain mention-gated by default unless you opt into all-message replies.
 If `DISCORD_SERVER_ID` is set and `DISCORD_REQUIRE_MENTION` is unset, NemoClaw records the existing mention-only default (`DISCORD_REQUIRE_MENTION=1`).
@@ -689,8 +683,7 @@ The poll count is clamped to a minimum of `1` so the probe always runs at least 
 
 #### `--from <Dockerfile>`
 
-Build the sandbox image from a custom Dockerfile through the legacy Dockerfile workload path instead of selecting the release managed image.
-This flag bypasses the stock managed-image catalog and startup-profile path for that sandbox workload.
+Build the sandbox image from a custom Dockerfile instead of the stock NemoClaw image.
 The supplied Dockerfile defines the complete sandbox image, and NemoClaw does not layer it on top of the stock managed runtime.
 The entire parent directory of the specified file is used as the Docker build context, so any files your Dockerfile references (scripts, config, etc.) must live alongside it.
 When the supplied path is the selected agent's own managed Dockerfile (for example, `agents/hermes/Dockerfile` in the NemoClaw checkout the CLI runs from), NemoClaw applies one exception and stages the repository root as the build context, exactly as the managed build does, because that Dockerfile copies repository-root paths.
@@ -1198,6 +1191,14 @@ NemoClaw also records durable containment when an owner exits before it can prov
 Durable containment, retained exact gates, or the fail-closed state-directory error blocks new mutations until you complete exact-generation operator recovery.
 Stop all NemoClaw processes for the sandbox, then follow the paths, identities, tokens, and removal order in the reported error.
 Verify each recorded generation is unchanged, remove only the exact stale generations first, and remove the exact containment generation last.
+
+Before a manual Shields transition replaces a policy, NemoClaw requires exact agreement among the sandbox registry, generated-policy record, and live gateway policy.
+`shields down` carries the proven managed MCP policy entries into the relaxed policy.
+Restoration removes snapshot-time managed MCP entries before it overlays current exact entries.
+If exact agreement is absent, a manual Shields transition refuses the replacement policy.
+At an expired deadline, auto-restore omits unproven managed MCP policy entries, restores lockdown, and records the omission count in its audit entry.
+An MCP server removed during the shields-down window stays removed.
+A surviving server keeps its recorded endpoint and address pins while its policy ownership remains exact.
 
 <AgentOnly variant="openclaw,hermes">
 

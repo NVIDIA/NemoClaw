@@ -47,6 +47,7 @@ describe("onboard command options", () => {
     expect(
       resolve(
         {
+          "temp-managed-runtime": true,
           "non-interactive": true,
           resume: true,
           "recreate-sandbox": true,
@@ -66,6 +67,7 @@ describe("onboard command options", () => {
         { listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"] },
       ),
     ).toEqual({
+      tempManagedRuntime: true,
       nonInteractive: true,
       resume: true,
       fresh: false,
@@ -89,6 +91,7 @@ describe("onboard command options", () => {
 
   it("uses explicit false/null defaults when flags are absent", () => {
     expect(resolve({})).toEqual({
+      tempManagedRuntime: false,
       nonInteractive: false,
       resume: false,
       fresh: false,

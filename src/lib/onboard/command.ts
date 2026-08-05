@@ -20,6 +20,7 @@ import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
 import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 
 export interface OnboardCommandOptions {
+  tempManagedRuntime: boolean;
   nonInteractive: boolean;
   resume: boolean;
   fresh: boolean;
@@ -160,6 +161,7 @@ export function resolveOnboardOptions(
     fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
   }
   return {
+    tempManagedRuntime: flags["temp-managed-runtime"] === true,
     nonInteractive: flags["non-interactive"] === true,
     resume: flags.resume === true,
     fresh: flags.fresh === true,

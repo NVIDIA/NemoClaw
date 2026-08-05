@@ -73,6 +73,7 @@ export interface ManagedWorkloadOnboardDependencies {
 export interface CreateManagedWorkloadOnboardRuntimeInput {
   readonly computePlan: OpenShellComputePlan;
   readonly managedWorkloadRebuild: ManagedWorkloadRebuildHandoff | null;
+  readonly tempManagedRuntime: boolean;
   readonly agentName: string;
   readonly legacyDockerfilePath: string;
   readonly customDockerfilePath: string | null;
@@ -106,7 +107,17 @@ export function createManagedWorkloadOnboardRuntime(
   input: CreateManagedWorkloadOnboardRuntimeInput,
   dependencies: ManagedWorkloadOnboardDependencies,
 ): ManagedWorkloadOnboardRuntime {
-  const runtimeCapabilities = resolveSandboxWorkloadRuntimeCapabilities(input.computePlan);
+  const discoveredRuntimeCapabilities = resolveSandboxWorkloadRuntimeCapabilities(
+    input.computePlan,
+  );
+  const runtimeCapabilities =
+    input.tempManagedRuntime || input.managedWorkloadRebuild !== null
+      ? discoveredRuntimeCapabilities
+      : {
+          ...discoveredRuntimeCapabilities,
+          managedImageSelectionPolicy: "prefer-managed" as const,
+          managedImages: null,
+        };
   const runtimeProvider = resolveRuntimeProviderBundle(
     input.computePlan.driverName,
     CURRENT_RUNTIME_PROVIDER_BUNDLES,
