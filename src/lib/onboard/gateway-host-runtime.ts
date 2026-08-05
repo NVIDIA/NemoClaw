@@ -45,6 +45,13 @@ import type { PortProbeResult } from "./preflight";
 /** `systemctl is-active` is a local query; anything slower than this is wedged. */
 const SUPERVISOR_PROBE_TIMEOUT_MS = 5_000;
 
+export function isPackagedGatewayServiceAuthority(
+  gatewayName: string,
+  hasPackagedService: () => boolean,
+): boolean {
+  return gatewayName === "nemoclaw" && hasPackagedService();
+}
+
 export interface GatewayHostRuntimeDeps {
   applyOverlayfsAutoFix(clusterImage: string): string | null;
   checkGatewayPortAvailable(): Promise<PortProbeResult>;
@@ -122,7 +129,10 @@ export function createGatewayHostRuntime(deps: GatewayHostRuntimeDeps): GatewayH
       gatewayName,
       gatewayPort,
       declaration: loaded.declaration,
-      hasPackagedService: hasOpenShellGatewayUserService(),
+      hasPackagedService: isPackagedGatewayServiceAuthority(
+        gatewayName,
+        hasOpenShellGatewayUserService,
+      ),
     });
   }
 

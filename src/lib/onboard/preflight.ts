@@ -1791,7 +1791,7 @@ export function probeContainerDns(opts: ProbeContainerDnsOpts = {}): DnsProbeRes
     };
   }
 
-  // Success: the resolver answered the probe. Two shapes count as success:
+  // Success: the resolver answered the probe. Three shapes count as success:
   //   1. busybox nslookup prints "Name:" + "Address:" lines for a normal
   //      resolution (kept for back-compat with custom probe names that do
   //      resolve to a real A record).
@@ -1799,6 +1799,11 @@ export function probeContainerDns(opts: ProbeContainerDnsOpts = {}): DnsProbeRes
   //      ...: NXDOMAIN" for the .invalid probe we send by default. NXDOMAIN
   //      proves the resolver was reached even though the name does not
   //      resolve, which is the only invariant we need to prove DNS works.
+  //   3. Some enterprise resolvers synthesize a successful NOERROR/NODATA
+  //      response for reserved .invalid names. BusyBox renders that as an
+  //      exit-zero "Non-authoritative answer:" block with no Name/Address
+  //      pair. That also proves a completed resolver round trip and must not
+  //      be mistaken for NXDOMAIN/REFUSED (#7937).
   //      Before #3630 we only accepted the Address shape and used
   //      `registry.npmjs.org`, so a Docker-embedded-DNS cache hit could
   //      mask a host-side egress block. The .invalid probe is never cached
@@ -1806,10 +1811,12 @@ export function probeContainerDns(opts: ProbeContainerDnsOpts = {}): DnsProbeRes
   // The resolver identification block — every busybox nslookup response
   // begins with `Server: ... / Address: <ip>:53` — proves only that we
   // reached *something* claiming to be a resolver, not that we got an
-  // answer. Real success requires either an actual `Name:`+`Address:`
-  // resolution pair OR an NXDOMAIN response body. Keep this line-based so
-  // CodeQL does not treat partial host regexes as URL validation.
+  // answer. Real success requires an actual `Name:`+`Address:` resolution
+  // pair, an NXDOMAIN response body, or the exact exit-zero NOERROR/NODATA
+  // shape above. Keep this line-based so CodeQL does not treat partial host
+  // regexes as URL validation.
   const outputLines = output.split(/\r?\n/).map((line) => line.trim());
+  const nonEmptyOutputLines = outputLines.filter(Boolean);
   const hasResolverHeader = outputLines.some((line) => {
     const fields = line.split(/\s+/);
     return fields[0] === "Server:" && Boolean(fields[1]);
@@ -1826,7 +1833,21 @@ export function probeContainerDns(opts: ProbeContainerDnsOpts = {}): DnsProbeRes
     const lower = line.toLowerCase();
     return lower.includes("server can't find") && lower.includes("nxdomain");
   });
-  if (hasResolverHeader && ((hasResolvedName && hasAddress) || hasNxdomainAnswer)) {
+  const noDataServerFields = nonEmptyOutputLines[0]?.split(/\s+/) ?? [];
+  const noDataAddressFields = nonEmptyOutputLines[1]?.split(/\s+/) ?? [];
+  const hasNoDataAnswer =
+    execution.exitCode === 0 &&
+    nonEmptyOutputLines.length === 4 &&
+    noDataServerFields[0] === "Server:" &&
+    Boolean(noDataServerFields[1]) &&
+    noDataAddressFields[0] === "Address:" &&
+    Boolean(noDataAddressFields[1]) &&
+    nonEmptyOutputLines[2]?.toLowerCase() === "non-authoritative answer:" &&
+    nonEmptyOutputLines[3]?.toLowerCase() === "non-authoritative answer:";
+  if (
+    hasResolverHeader &&
+    ((hasResolvedName && hasAddress) || hasNxdomainAnswer || hasNoDataAnswer)
+  ) {
     return { ok: true };
   }
 

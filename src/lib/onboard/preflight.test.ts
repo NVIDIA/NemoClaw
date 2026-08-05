@@ -962,7 +962,6 @@ describe("probeContainerDns", () => {
     "Address: 104.16.27.35\n";
 
   const BUSYBOX_FAILURE = ";; connection timed out; no servers could be reached\n";
-
   it("returns ok when busybox nslookup succeeds", () => {
     const result = probeContainerDns({ outputOverride: BUSYBOX_SUCCESS });
     expect(result.ok).toBe(true);

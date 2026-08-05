@@ -1,0 +1,68 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+version = 1
+
+[[components]]
+kind = "switchyard"
+enabled = true
+
+[components.config]
+version = 2
+priority = 0
+max_retries = 2
+enabled_inbound_profiles = ["openai_chat"]
+
+[components.config.algorithm]
+kind = "llm_classifier"
+classifier_target = "classifier"
+weak_target = "fast"
+strong_target = "quality"
+base_threshold = 0.5
+min_confidence = 0.5
+
+[components.config.default_targets]
+openai_chat = "quality"
+
+[components.config.targets.classifier]
+model = "provider/classifier"
+protocol = "openai_chat"
+endpoint = "/v1/chat/completions"
+base_url = "http://127.0.0.1:4101"
+
+[components.config.targets.classifier.header_env]
+authorization = "PROTOTYPE_PROVIDER_AUTHORIZATION"
+
+[components.config.targets.fast]
+model = "provider/fast"
+protocol = "openai_chat"
+endpoint = "/v1/chat/completions"
+base_url = "http://127.0.0.1:4101"
+
+[components.config.targets.fast.header_env]
+authorization = "PROTOTYPE_PROVIDER_AUTHORIZATION"
+
+[components.config.targets.quality]
+model = "provider/quality"
+protocol = "openai_chat"
+endpoint = "/v1/chat/completions"
+base_url = "http://127.0.0.1:4101"
+
+[components.config.targets.quality.header_env]
+authorization = "PROTOTYPE_PROVIDER_AUTHORIZATION"
+
+[[components]]
+kind = "observability"
+enabled = true
+
+[components.config]
+version = 2
+
+[components.config.atof]
+enabled = true
+
+[[components.config.atof.sinks]]
+type = "file"
+output_directory = "/tmp/nemoclaw-hermes-switchyard"
+filename = "trajectory.atof.jsonl"
+mode = "overwrite"

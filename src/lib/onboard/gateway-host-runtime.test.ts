@@ -3,7 +3,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createGatewayHostRuntime, type GatewayHostRuntimeDeps } from "./gateway-host-runtime";
+import {
+  createGatewayHostRuntime,
+  type GatewayHostRuntimeDeps,
+  isPackagedGatewayServiceAuthority,
+} from "./gateway-host-runtime";
 import {
   GATEWAY_MANAGEMENT_ENV_VAR,
   GatewayManagementDeclarationError,
@@ -80,6 +84,15 @@ function declareExternalSupervision(declaration: unknown = DECLARATION) {
 }
 
 describe("gateway host runtime ownership", () => {
+  it("never assigns the default packaged service to a custom gateway port (#7937)", () => {
+    const packagedServiceProbe = vi.fn(() => true);
+
+    expect(isPackagedGatewayServiceAuthority("nemoclaw-53950", packagedServiceProbe)).toBe(false);
+    expect(packagedServiceProbe).not.toHaveBeenCalled();
+    expect(isPackagedGatewayServiceAuthority("nemoclaw", packagedServiceProbe)).toBe(true);
+    expect(packagedServiceProbe).toHaveBeenCalledOnce();
+  });
+
   it("resolves the declared external supervisor as the lifecycle owner (#6576)", () => {
     declareExternalSupervision();
 
