@@ -2514,6 +2514,10 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
       }
       return stringValue(step.uses).startsWith("actions/checkout@");
     });
+    const protectedCacheDownloadIndex =
+      jobName === "managed-image-protected-runtime"
+        ? steps.findIndex((step) => step.name === "Download exact protected runtime build cache")
+        : -1;
     const authIndex = steps.indexOf(auth);
     const cleanupIndex = steps.indexOf(cleanup);
     const expectedAuthIndex =
@@ -2522,9 +2526,13 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
         : jobName === "hermes-gpu-startup"
           ? checkoutIndex + 3
           : jobName === "managed-image-protected-runtime"
-            ? checkoutIndex + 2
+            ? protectedCacheDownloadIndex + 1
             : checkoutIndex + 1;
-    if (checkoutIndex < 0 || authIndex !== expectedAuthIndex) {
+    if (
+      checkoutIndex < 0 ||
+      (jobName === "managed-image-protected-runtime" && protectedCacheDownloadIndex < 0) ||
+      authIndex !== expectedAuthIndex
+    ) {
       errors.push(
         jobName === "jetson-nvmap-gpu"
           ? `${jobName} Docker Hub auth must run immediately after the Jetson dispatch guard`

@@ -2581,9 +2581,6 @@ jobs:
   # regressionTest: The build-script behavior test proves complete-cache-only,
   # symlink-free offline imports and exact --cache-from/--network none Docker
   # arguments; workflow boundary tests pin the producer/consumer handoff.
-  # removalCondition: Remove the handoff after protected GPU cold builds of all
-  # three managed images complete reliably and the direct local-inference lane
-  # reaches its assertions without the hosted cache.
   managed-image-protected-runtime:
     name: Protected managed-image GPU and local inference
     needs: [generate-matrix, managed-image-multiarch-startup]

@@ -9,6 +9,7 @@ import YAML from "yaml";
 
 import { validateManagedImageMultiarchWorkflow } from "../../../tools/e2e/managed-image-multiarch-workflow-boundary.mts";
 import { validateManagedImageProtectedRuntimeWorkflow } from "../../../tools/e2e/managed-image-protected-runtime-workflow-boundary.mts";
+import { validateE2eWorkflow } from "../../../tools/e2e/workflow-boundary.mts";
 
 type WorkflowRecord = Record<string, unknown>;
 
@@ -161,6 +162,22 @@ describe("protected managed-image runtime workflow boundary", () => {
 
     expect(validateManagedImageProtectedRuntimeWorkflow(value)).toContain(
       "managed-image-protected-runtime must define exactly one 'Download exact protected runtime build cache' step",
+    );
+  });
+
+  it("rejects Docker authentication before the protected cache download", () => {
+    const value = workflow();
+    const job = runtimeJob(value);
+    const workflowSteps = job.steps as Array<Record<string, unknown>>;
+    const auth = namedStep(value, "Authenticate to Docker Hub");
+    job.steps = [
+      ...workflowSteps.slice(0, 3),
+      auth,
+      ...workflowSteps.slice(3).filter((step) => step !== auth),
+    ];
+
+    expect(validateE2eWorkflow(value)).toContain(
+      "managed-image-protected-runtime Docker Hub auth must run immediately after the protected cache download",
     );
   });
 
