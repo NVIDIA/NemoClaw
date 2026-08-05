@@ -496,7 +496,7 @@ It establishes that the source parses, generated pages match their inputs, publi
 
 Treat generated-output fidelity and factual accuracy as separate problems.
 A generated page must match its authoritative inputs and transformation rules.
-Agent-authored prose must match current product behavior and accepted product scope.
+Agent-authored prose must match current product behavior and product scope established by an accepted issue or accepted design decision.
 
 Use the following assurance layers:
 
@@ -504,7 +504,7 @@ Use the following assurance layers:
 |---|---|---|
 | Source-derived parity tests | Structured facts such as commands, flags, configuration keys, provider choices, support tables, and guide variant membership. | Generate the facts from product-owned data, or compare the documentation with the compiled help, schema, manifest, or other product source. |
 | Executable journey tests | Priority and high-risk procedures, including their prerequisites, state changes, safety boundaries, and acceptance criteria. | Run the documented flow or exercise the same behavior through an integration or end-to-end test. Add a documentation regression test that keeps the validated command sequence and expected observation in the owning page. |
-| Evidence-based review and sampling | Explanations, tradeoffs, support claims, and other prose that does not have a stable machine-readable contract. | Compare each changed claim with checked-in source and tests, verify support against an accepted product decision, run an independent documentation writer review, and sample published outcomes. |
+| Evidence-based review and sampling | Explanations, tradeoffs, support claims, and other prose that does not have a stable machine-readable contract. | Compare each changed claim with checked-in source and tests, verify support against an accepted issue or accepted design decision, run an independent documentation writer review, and sample published outcomes. |
 
 The first layer proves fidelity to the selected inputs, not the accuracy of those inputs.
 Prefer product-owned source models so the product and its documentation do not maintain separate hard-coded facts.
@@ -514,7 +514,7 @@ The [NemoClaw CLI Commands Reference](../reference/commands) is the canonical do
 The compiled CLI contract checks public command headings and long-form flags in both directions against the shipped CLI.
 Its routing metadata directs agents there for subcommand, flag, argument, and exit-code lookups.
 Task pages can rely on and link to that reference for syntax while keeping procedure-specific context and verification in the owning task page.
-It generates platform support tables from `ci/platform-matrix.json` and tests guide variant selection against shared source pages.
+NemoClaw generates platform support tables from `ci/platform-matrix.json` and tests guide variant selection against shared source pages.
 Targeted documentation regression tests preserve credential-rotation commands, authenticated endpoint verification, and variant-specific procedures.
 Pair these assertions with product behavior tests because the presence of a command in a page does not establish that the command succeeds.
 
