@@ -170,6 +170,28 @@ describe("dormant Podman runtime provider", () => {
     ).not.toContain("docker");
   });
 
+  it("reports a failed gateway probe after the exact Podman container starts", async () => {
+    const runtime = providerHarness("openclaw");
+    const gatewayFailure = new Error("independent gateway probe failed");
+    const verifyGateway = vi.fn(async () => Promise.reject(gatewayFailure));
+
+    await expect(
+      startSandbox(runtime.sandboxName, {
+        getSandbox: () => runtime.entry,
+        runtimeProviders: runtime.providers,
+        restoreStartupState: vi.fn(),
+        verifyGateway,
+        log: vi.fn(),
+      }),
+    ).rejects.toBe(gatewayFailure);
+    expect(verifyGateway).toHaveBeenCalledExactlyOnceWith(runtime.sandboxName);
+    expect(
+      (runtime.lifecycle.capture as ReturnType<typeof vi.fn>).mock.calls.some(
+        ([args]) => (args as readonly string[])[0] === "start",
+      ),
+    ).toBe(true);
+  });
+
   it("stays outside the production-selectable registry", () => {
     expect(Object.keys(CURRENT_RUNTIME_PROVIDER_BUNDLES)).toEqual(["docker", "kubernetes"]);
     expect(CURRENT_RUNTIME_PROVIDER_BUNDLES).not.toHaveProperty("podman");
