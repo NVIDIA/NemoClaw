@@ -296,7 +296,11 @@ describe("managed llama.cpp installer", () => {
 
     const first = await installManagedLlamaCpp(testRecipe(body), {
       ...common,
-      probeImpl: vi.fn(() => ({ ok: false as const, reason: "not ready" })),
+      probeImpl: vi.fn(() => ({
+        ok: false as const,
+        reason: "unreachable" as const,
+        message: "not ready",
+      })),
     });
     clock = 0;
     const second = await installManagedLlamaCpp(testRecipe(body), {

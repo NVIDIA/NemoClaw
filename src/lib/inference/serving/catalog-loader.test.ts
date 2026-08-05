@@ -7,7 +7,6 @@ import {
   HOST_LOCAL_VLLM_MATERIALIZER_REF,
   MANAGED_CLUSTER_VLLM_LIFECYCLE_REF,
   MANAGED_CLUSTER_VLLM_MATERIALIZER_REF,
-  isHostLocalInferenceServingRecipe,
 } from "./adapter-registry";
 import { servingCatalogDigest } from "./catalog";
 import {
@@ -146,7 +145,11 @@ describe("managed inference catalog loader", () => {
 
   it("retains registered host-local vLLM definitions (#8246)", () => {
     const servingCatalog = loadServingCatalog();
-    const sourceRecipe = servingCatalog.recipes.find(isHostLocalInferenceServingRecipe)!;
+    const sourceRecipe = servingCatalog.recipes.find(
+      ({ spec }) =>
+        spec.execution.materializerRef === HOST_LOCAL_VLLM_MATERIALIZER_REF &&
+        spec.execution.lifecycleRef === HOST_LOCAL_VLLM_LIFECYCLE_REF,
+    )!;
     expect(sourceRecipe).toBeDefined();
     const sourceSpec = sourceRecipe.spec as Exclude<
       ServingRecipe["spec"],
