@@ -32,7 +32,13 @@ It does not modify the sandbox or the `dcode` configuration.
 
 ## Run Interactive or Headless Tasks
 
-Connect to the sandbox, then launch the terminal UI:
+Start the terminal UI from the host:
+
+```bash
+nemo-deepagents launch <sandbox-name>
+```
+
+To open a sandbox shell first, connect and then start the terminal UI yourself:
 
 ```bash
 nemo-deepagents <sandbox-name> connect
@@ -43,6 +49,9 @@ dcode
 Headless `dcode -n` has no approval UI and automatically approves non-shell tool requests, including file writes and edits.
 Use the interactive TUI when you need to inspect each destructive tool request before it runs.
 </Warning>
+
+Run the headless commands from a sandbox shell that you open with `nemo-deepagents <sandbox-name> connect`.
+`dcode` is an in-sandbox binary and is not on the host PATH.
 
 For a single headless task, run:
 
