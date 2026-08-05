@@ -182,6 +182,7 @@ describe("rebuild preflight guards", () => {
     const release = vi
       .spyOn(onboardSession, "releaseOnboardLock")
       .mockImplementation(() => undefined);
+    const registerExitHandler = vi.spyOn(process, "once");
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const bail = vi.fn() as unknown as (message: string, code?: number) => never;
 
@@ -189,9 +190,37 @@ describe("rebuild preflight guards", () => {
 
     expect(bail).toHaveBeenCalledWith("Could not acquire onboard lock before rebuild");
     expect(release).not.toHaveBeenCalled();
+    expect(registerExitHandler).not.toHaveBeenCalled();
     const output = error.mock.calls.flat().join("\n");
     expect(output).toContain("another nemoclaw onboarding run is already in progress.");
+    expect(output).toContain("Wait for the other run to finish, then rerun rebuild.");
     expect(output).toContain("Lock holder PID: 4242.");
+    expect(output).not.toContain("remove the stale lock");
+  });
+
+  it("waits for verified cleanup when stale-lock contention exhausts retries (#7794)", () => {
+    vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({
+      acquired: false,
+      lockFile: "/tmp/nemoclaw-onboard.lock",
+      stale: true,
+    });
+    const release = vi
+      .spyOn(onboardSession, "releaseOnboardLock")
+      .mockImplementation(() => undefined);
+    const registerExitHandler = vi.spyOn(process, "once");
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const bail = vi.fn() as unknown as (message: string, code?: number) => never;
+
+    expect(acquireRebuildOnboardLock("alpha", bail)).toBeNull();
+
+    expect(bail).toHaveBeenCalledWith("Could not acquire onboard lock before rebuild");
+    expect(release).not.toHaveBeenCalled();
+    expect(registerExitHandler).not.toHaveBeenCalled();
+    const output = error.mock.calls.flat().join("\n");
+    expect(output).toContain(
+      "Wait briefly, then rerun rebuild so verified stale-lock cleanup can finish.",
+    );
+    expect(output).not.toContain("remove the stale lock");
   });
 
   it("rejects a multi-agent sandbox before later rebuild work", () => {

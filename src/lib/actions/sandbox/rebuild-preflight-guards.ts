@@ -324,9 +324,12 @@ export function acquireRebuildOnboardLock(
   );
   if (!lock.acquired) {
     const pidDetail = lock.holderPid ? ` Lock holder PID: ${lock.holderPid}.` : "";
+    const remediation = lock.stale
+      ? "Wait briefly, then rerun rebuild so verified stale-lock cleanup can finish."
+      : `Wait for the other run to finish, then rerun rebuild.${pidDetail}`;
     printRebuildPreflightFailure(
       `another ${CLI_NAME} onboarding run is already in progress.`,
-      `Wait for the other run to finish or remove the stale lock.${pidDetail}`,
+      remediation,
       "Could not acquire onboard lock before rebuild",
       bail,
     );
