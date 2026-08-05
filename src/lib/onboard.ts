@@ -2686,6 +2686,7 @@ async function createSandboxWithBaseImageResolution(
     });
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
+  onboardSessionBootstrap.verifyReadOnlyHostMountSources(resolvedCreateIntent.hostMounts);
   recreateRuntime.advance("creating");
   const {
     createResult,

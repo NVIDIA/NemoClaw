@@ -15,6 +15,7 @@ export {
   beginHostMountScope,
   isDockerBindMountsEnabled,
   reportReadOnlyHostMounts,
+  verifyReadOnlyHostMountSources,
 } from "./host-mount";
 
 export interface OnboardSessionBootstrapInput {

@@ -116,8 +116,18 @@ describe("onboard command options", () => {
     const values = [`${first}:/sandbox/project`, `${second}:/sandbox/reference`];
     try {
       expect(resolve({ "host-mount": values }, { platform: "linux" }).hostMounts).toEqual([
-        { source: first, target: "/sandbox/project", readOnly: true },
-        { source: second, target: "/sandbox/reference", readOnly: true },
+        {
+          source: first,
+          target: "/sandbox/project",
+          readOnly: true,
+          sourceIdentity: { device: expect.any(String), inode: expect.any(String) },
+        },
+        {
+          source: second,
+          target: "/sandbox/reference",
+          readOnly: true,
+          sourceIdentity: { device: expect.any(String), inode: expect.any(String) },
+        },
       ]);
       expect(() => resolve({ "host-mount": values }, { platform: "darwin" })).toThrow("exit:1");
     } finally {

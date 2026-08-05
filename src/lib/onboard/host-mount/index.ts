@@ -5,10 +5,16 @@ import {
   normalizePersistedSandboxHostMounts,
   parseReadOnlyHostMount,
   parseReadOnlyHostMounts,
+  verifyReadOnlyHostMountSources,
 } from "../../state/registry/host-mount";
 import type { SandboxHostMount } from "../../state/registry/types";
 
-export { normalizePersistedSandboxHostMounts, parseReadOnlyHostMount, parseReadOnlyHostMounts };
+export {
+  normalizePersistedSandboxHostMounts,
+  parseReadOnlyHostMount,
+  parseReadOnlyHostMounts,
+  verifyReadOnlyHostMountSources,
+};
 
 let dockerBindMountsEnabled = false;
 
@@ -24,7 +30,7 @@ export function beginHostMountScope(requested: readonly SandboxHostMount[] | und
   return {
     activate(persisted) {
       const mounts = requested?.length
-        ? requested.map((mount) => ({ ...mount }))
+        ? normalizePersistedSandboxHostMounts(requested)
         : normalizePersistedSandboxHostMounts(persisted);
       dockerBindMountsEnabled = mounts.length > 0;
       return mounts;

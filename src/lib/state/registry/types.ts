@@ -73,6 +73,11 @@ export interface SandboxHostMount {
   source: string;
   target: string;
   readonly readOnly: true;
+  /** Host filesystem identity captured when the source path was validated. */
+  readonly sourceIdentity?: {
+    readonly device: string;
+    readonly inode: string;
+  };
 }
 
 export interface SandboxEntry extends Partial<InferenceSelection> {

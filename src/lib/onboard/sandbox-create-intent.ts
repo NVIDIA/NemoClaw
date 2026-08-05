@@ -200,10 +200,11 @@ export function resolveSandboxCreateIntent({
     resourceCreateArgs: [...resourceCreateArgs],
     ...(hostMounts.length > 0
       ? {
-          hostMounts: hostMounts.map(({ source, target }) => ({
+          hostMounts: hostMounts.map(({ source, target, sourceIdentity }) => ({
             source,
             target,
             readOnly: true,
+            ...(sourceIdentity ? { sourceIdentity: { ...sourceIdentity } } : {}),
           })),
         }
       : {}),

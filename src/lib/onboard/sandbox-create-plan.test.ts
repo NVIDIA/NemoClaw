@@ -514,6 +514,9 @@ describe("prepareSandboxCreatePlan", () => {
               type: "bind",
               source: "/srv/project",
               target: "/sandbox/project",
+              // Paired with the v0.0.85 gate-contract test in
+              // docker-driver-gateway-launch.test.ts. Upstream OpenShell's
+              // Docker-driver contract converts this field to Docker `:ro`.
               read_only: true,
             },
           ],

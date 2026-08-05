@@ -106,7 +106,12 @@ describe("docker-driver-gateway-launch", () => {
     expect(toml).toContain('supervisor_bin = "/home/shadeform/.local/bin/openshell-sandbox"');
   });
 
-  it("gates Docker bind mounts behind the explicit managed runtime setting", () => {
+  it("matches the pinned OpenShell v0.0.85 bind-mount gate contract", () => {
+    // OpenShell v0.0.85 contains NVIDIA/OpenShell#2092 (merge 43bb030), whose
+    // Docker-driver contract tests prove disabled bind mounts are rejected and
+    // enabled read-only mounts render with Docker's `:ro` option. Keep this
+    // gateway half paired with the `read_only: true` create-plan assertion in
+    // sandbox-create-plan.test.ts.
     const baseEnv = {
       OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
       OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",

@@ -13,6 +13,7 @@ import {
   parseReadOnlyHostMount,
   parseReadOnlyHostMounts,
   reportReadOnlyHostMounts,
+  verifyReadOnlyHostMountSources,
 } from ".";
 
 const created: string[] = [];
@@ -30,11 +31,17 @@ afterEach(() => {
 describe("read-only host mount validation", () => {
   it("accepts an existing absolute directory below /sandbox", () => {
     const source = workspaceTempDir();
-    expect(parseReadOnlyHostMount(`${source}:/sandbox/project`)).toEqual({
-      source,
-      target: "/sandbox/project",
-      readOnly: true,
-    });
+    expect(parseReadOnlyHostMount(`${source}:/sandbox/project`)).toEqual(
+      expect.objectContaining({
+        source,
+        target: "/sandbox/project",
+        readOnly: true,
+        sourceIdentity: {
+          device: expect.any(String),
+          inode: expect.any(String),
+        },
+      }),
+    );
   });
 
   it("rejects missing, relative, symlinked, and non-normalized paths", () => {
@@ -75,7 +82,14 @@ describe("read-only host mount validation", () => {
     const source = workspaceTempDir();
     expect(
       normalizePersistedSandboxHostMounts([{ source, target: "/sandbox/project", readOnly: true }]),
-    ).toEqual([{ source, target: "/sandbox/project", readOnly: true }]);
+    ).toEqual([
+      {
+        source,
+        target: "/sandbox/project",
+        readOnly: true,
+        sourceIdentity: { device: expect.any(String), inode: expect.any(String) },
+      },
+    ]);
     expect(() =>
       normalizePersistedSandboxHostMounts([
         { source, target: "/sandbox/project", readOnly: false },
@@ -104,6 +118,18 @@ describe("read-only host mount validation", () => {
     expect(persistedSandboxHostMountsEqual([first, second], [first])).toBe(false);
     expect(persistedSandboxHostMountsEqual([first], [second])).toBe(false);
     expect(persistedSandboxHostMountsEqual(undefined, [first])).toBe(false);
+  });
+
+  it("rejects a validated source replaced before the sandbox create boundary", () => {
+    const source = workspaceTempDir();
+    const replacement = workspaceTempDir();
+    const mount = parseReadOnlyHostMount(`${source}:/sandbox/project`);
+    fs.rmSync(source, { recursive: true, force: true });
+    fs.symlinkSync(replacement, source);
+
+    expect(() => verifyReadOnlyHostMountSources([mount])).toThrow(
+      `Read-only host mount source changed after validation: ${source}`,
+    );
   });
 
   it("scopes the managed gateway capability and reports requested access", () => {

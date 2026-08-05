@@ -44,9 +44,9 @@ export function parseReadOnlyHostMount(value: string): SandboxHostMount {
   }
   const source = path.resolve(requestedSource);
   assertNoSymlinkComponents(source, value);
-  let sourceStat: fs.Stats;
+  let sourceStat: fs.BigIntStats;
   try {
-    sourceStat = fs.statSync(source);
+    sourceStat = fs.statSync(source, { bigint: true });
   } catch {
     failHostMount(value, `host directory does not exist: ${source}`);
   }
@@ -58,7 +58,12 @@ export function parseReadOnlyHostMount(value: string): SandboxHostMount {
   if (target !== requestedTarget || !target.startsWith(SANDBOX_MOUNT_PREFIX)) {
     failHostMount(value, "sandbox directory must be a normalized absolute path below /sandbox");
   }
-  return { source, target, readOnly: true };
+  return {
+    source,
+    target,
+    readOnly: true,
+    sourceIdentity: { device: sourceStat.dev.toString(), inode: sourceStat.ino.toString() },
+  };
 }
 
 export function parseReadOnlyHostMounts(values: readonly string[]): SandboxHostMount[] {
@@ -129,8 +134,41 @@ export function persistedSandboxHostMountsEqual(left: unknown, right: unknown): 
   );
 }
 
+/** Revalidate path safety and the captured inode immediately before sandbox creation. */
+export function verifyReadOnlyHostMountSources(
+  mounts: readonly SandboxHostMount[] | undefined,
+): void {
+  for (const mount of mounts ?? []) {
+    const expected = mount.sourceIdentity;
+    if (!expected) {
+      throw new Error(
+        `Read-only host mount source identity is missing for ${mount.source}; validate the mount again.`,
+      );
+    }
+    let current: SandboxHostMount;
+    try {
+      [current] = normalizePersistedSandboxHostMounts([mount]);
+    } catch (error) {
+      throw new Error(`Read-only host mount source changed after validation: ${mount.source}`, {
+        cause: error,
+      });
+    }
+    if (
+      current.sourceIdentity?.device !== expected.device ||
+      current.sourceIdentity.inode !== expected.inode
+    ) {
+      throw new Error(`Read-only host mount source changed after validation: ${mount.source}`);
+    }
+  }
+}
+
 export function cloneSandboxHostMounts(
   mounts: readonly SandboxHostMount[] | undefined,
 ): SandboxHostMount[] {
-  return (mounts ?? []).map(({ source, target }) => ({ source, target, readOnly: true }));
+  return (mounts ?? []).map(({ source, target, sourceIdentity }) => ({
+    source,
+    target,
+    readOnly: true,
+    ...(sourceIdentity ? { sourceIdentity: { ...sourceIdentity } } : {}),
+  }));
 }
