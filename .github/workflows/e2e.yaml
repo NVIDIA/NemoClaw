@@ -630,7 +630,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -808,7 +808,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -971,7 +971,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -1022,7 +1022,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -1296,7 +1296,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -1428,7 +1428,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -1550,7 +1550,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -1662,7 +1662,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -1745,7 +1745,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -1790,7 +1790,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -1869,7 +1869,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -1927,7 +1927,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       - name: Install OpenShell CLI
@@ -2886,7 +2886,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       - name: Initialize runner comparison telemetry
@@ -2960,7 +2960,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       - name: Install OpenShell CLI
@@ -3047,7 +3047,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
       - name: Initialize runner comparison telemetry
@@ -3111,7 +3111,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3218,7 +3218,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3295,7 +3295,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3361,7 +3361,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3410,7 +3410,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3475,7 +3475,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3557,7 +3557,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3702,7 +3702,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -3910,7 +3910,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -4000,7 +4000,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -4099,7 +4099,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -4263,7 +4263,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -4322,7 +4322,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -4400,7 +4400,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -4522,7 +4522,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -4638,7 +4638,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -4689,7 +4689,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -4756,7 +4756,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -4841,7 +4841,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -4903,7 +4903,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -4966,7 +4966,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5028,7 +5028,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5222,7 +5222,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5320,7 +5320,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5381,7 +5381,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5443,7 +5443,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5503,7 +5503,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5562,7 +5562,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5678,7 +5678,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5736,7 +5736,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5848,7 +5848,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -5951,7 +5951,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -6017,7 +6017,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -6089,7 +6089,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -6164,7 +6164,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -6243,7 +6243,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -6312,7 +6312,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -6408,7 +6408,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -6490,7 +6490,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -6545,7 +6545,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -6608,7 +6608,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -6685,7 +6685,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -6785,7 +6785,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -6878,7 +6878,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -6950,7 +6950,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -7015,7 +7015,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
@@ -7087,7 +7087,7 @@ jobs:
           build-cli: "false"
 
       - name: Restore exact-commit CLI artifact
-        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@186323bdb45e2266777b13eb6c48dac4600d8449
+        uses: NVIDIA/NemoClaw/.github/actions/restore-e2e-cli-artifact@d2c2b6511e947346289f3d5b1a7a03f3af650339
         with:
           provenance-json: ${{ needs.generate-matrix.outputs.cli_artifact_provenance }}
 
