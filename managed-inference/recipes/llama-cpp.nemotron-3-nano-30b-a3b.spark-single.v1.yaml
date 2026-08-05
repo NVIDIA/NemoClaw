@@ -29,6 +29,22 @@ spec:
         format: gguf
         quantization: UD-Q4_K_XL
         license: NVIDIA-Open-Model-License
+    acquisition:
+      ref: hugging-face-exact-file/v1
+      authentication:
+        mode: optional
+        environment: HF_TOKEN
+    cache:
+      ref: llama-cpp.gguf-content-addressed/v1
+      receiptRef: llama-cpp.gguf-cache-entry.receipt/v1
+      root: user-cache
+      quotaBytes: 34359738368
+      stagingHeadroomBytes: 5368709120
+      staging: same-filesystem
+      publication: atomic-no-clobber
+      reuse: verified-only-offline
+      sharing: owner-only
+      cleanup: receipt-owner-only
 
   runtime:
     image: ghcr.io/ggml-org/llama.cpp@sha256:866ad568474de9e835e487ae841ad6ace1a494b5eab4f292cbd45adb6180f711

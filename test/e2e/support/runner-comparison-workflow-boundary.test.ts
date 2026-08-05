@@ -148,7 +148,9 @@ describe("runner comparison E2E workflow boundary (#7140)", () => {
     );
   });
 
-  it.each(JOBS)("keeps %s telemetry around the entire post-prepare job", (jobId) => {
+  it.each(
+    JOBS,
+  )("places %s telemetry after workspace preparation, artifact restore when used, and required rebuild swap, and before artifact scanning or upload", (jobId) => {
     const lateInitialize = loadWorkflow();
     const lateSteps = lateInitialize.jobs[jobId]!.steps;
     const initializeIndex = lateSteps.indexOf(
@@ -160,7 +162,9 @@ describe("runner comparison E2E workflow boundary (#7140)", () => {
     ];
     const expectedInitializeError = REBUILD_JOBS.includes(jobId as (typeof REBUILD_JOBS)[number])
       ? `${jobId} must establish rebuild swap before initializing runner comparison telemetry`
-      : `${jobId} must initialize runner comparison telemetry immediately after prepare-e2e`;
+      : jobId === "security-posture"
+        ? `${jobId} must initialize runner comparison telemetry immediately after workspace preparation`
+        : `${jobId} must initialize runner comparison telemetry immediately after CLI artifact restore`;
     expect(validateRunnerComparisonWorkflow(lateInitialize)).toContain(expectedInitializeError);
 
     const afterPublication = loadWorkflow();

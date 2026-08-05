@@ -41,6 +41,13 @@ All workspace files reside inside the sandbox filesystem:
     └── 2026-03-19.md
 ```
 
+<Warning>
+Inside an OpenClaw sandbox, `~` expands to `/sandbox`, not to the OpenClaw workspace.
+Do not create workspace files as `~/USER.md` or `~/SOUL.md`.
+Those paths resolve to `/sandbox/USER.md` and `/sandbox/SOUL.md`, which are outside OpenClaw's managed state and are not included in snapshots.
+Use `$OPENCLAW_WORKSPACE_DIR/USER.md` and `$OPENCLAW_WORKSPACE_DIR/SOUL.md` instead.
+</Warning>
+
 ## Multi-Agent Deployments
 
 A single NemoClaw sandbox can host more than one OpenClaw agent.
