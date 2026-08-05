@@ -221,7 +221,7 @@ export function expectFailedMcpFinalizePreservesRegistry(harness: DestroyHarness
 
 export function expectMcpPrepareBridgeErrorAborts(harness: DestroyHarness): void {
   expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalled();
-  // No delete should happen when MCP prepare itself throws McpBridgeError.
+  // MCP preparation must succeed before sandbox deletion begins.
   expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
     expect.arrayContaining(["sandbox", "delete"]),
     expect.anything(),
