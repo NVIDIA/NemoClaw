@@ -1,14 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../adapters/docker", () => ({
   dockerInspect: vi.fn(),
 }));
 
+vi.mock("../state/registry", () => ({
+  listSandboxes: vi.fn(),
+}));
+
 import * as docker from "../adapters/docker";
 import type { GatewayReuseState } from "../state/gateway";
+import * as registry from "../state/registry";
 import {
   canRestartCpuOnlyGatewayForGpuIntent,
   decideGatewayGpuReuseForGpuIntent,
@@ -20,6 +25,13 @@ import {
 describe("gateway GPU passthrough inspection", () => {
   const healthy: GatewayReuseState = "healthy";
   const missing: GatewayReuseState = "missing";
+
+  // `restoreMocks` restores vi.spyOn descriptors but leaves implementations set
+  // on module mocks, so drop them here to keep this file order-independent.
+  afterEach(() => {
+    vi.mocked(docker.dockerInspect).mockReset();
+    vi.mocked(registry.listSandboxes).mockReset();
+  });
 
   it("only inspects reusable legacy gateway containers", () => {
     expect(shouldInspectLegacyGatewayGpuPassthrough(healthy, true, false)).toBe(true);
@@ -161,5 +173,58 @@ describe("gateway GPU passthrough inspection", () => {
     expect(stopDashboardForwards).not.toHaveBeenCalled();
     expect(retireLegacyGatewayForDockerDriverUpgrade).not.toHaveBeenCalled();
     expect(destroyGatewayRuntimeForGpuReuse).not.toHaveBeenCalled();
+  });
+
+  // This hint had no coverage, so it kept printing the `gateway destroy` verb
+  // that OpenShell removed before 0.0.44 (#8139).
+  it("prints openshell gateway remove without gateway destroy when the sandbox registry is unreadable (#8139)", () => {
+    // A "null" DeviceRequests value marks the gateway CPU-only. Onboard then
+    // reads the sandbox registry, and this test makes that read throw.
+    vi.mocked(docker.dockerInspect).mockReturnValue({
+      pid: 1,
+      output: [],
+      stdout: "null\n",
+      stderr: "",
+      status: 0,
+      signal: null,
+    });
+    vi.mocked(registry.listSandboxes).mockImplementation(() => {
+      throw new Error("registry read failed");
+    });
+    const errors: string[] = [];
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation((line?: unknown) => {
+      errors.push(String(line));
+    });
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation((code?: string | number | null) => {
+        throw new Error(`exit ${code}`);
+      });
+
+    try {
+      expect(() =>
+        reconcileGatewayGpuReuseForGpuIntent({
+          gatewayReuseState: healthy,
+          gpuPassthrough: true,
+          gatewayName: "nemoclaw",
+          currentSandboxName: null,
+          recreateSandbox: false,
+          confirmedDockerDriverGateway: false,
+          stopDashboardForwards: vi.fn(),
+          retireLegacyGatewayForDockerDriverUpgrade: vi.fn(),
+          destroyGatewayRuntimeForGpuReuse: vi.fn(),
+        }),
+      ).toThrow("exit 1");
+
+      expect(errors).toContain("    openshell gateway remove nemoclaw");
+      expect(errors).toContain(
+        "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
+      );
+      expect(errors).toContain("    nemoclaw onboard --gpu");
+      expect(errors.join("\n")).not.toContain("gateway destroy");
+    } finally {
+      exitSpy.mockRestore();
+      consoleErrorSpy.mockRestore();
+    }
   });
 });

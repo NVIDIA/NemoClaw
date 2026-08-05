@@ -156,6 +156,49 @@ exit 0
     }
   }, 60_000);
 
+  it("completes selected-gateway cleanup and exits 0 when the recorded sandbox is already absent (#7906)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-absent-sandbox-"));
+    const fakeBin = path.join(tmp, "bin");
+    writeFakeTools(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+case "$*" in
+  "gateway list -o json") printf '[{"name":"nemoclaw"},{"name":"nemoclaw-9124"}]\\n' ;;
+  "sandbox delete my-assistant")
+    printf "Error: status: NotFound, sandbox 'my-assistant' not found\\n" >&2
+    exit 1
+    ;;
+esac
+exit 0
+`,
+      { mode: 0o755 },
+    );
+    const stateDir = path.join(tmp, ".nemoclaw");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, "sandboxes.json"),
+      JSON.stringify({
+        defaultSandbox: "my-assistant",
+        sandboxes: {
+          "my-assistant": { name: "my-assistant", gatewayName: "nemoclaw", gatewayPort: 8080 },
+          sibling: { name: "sibling", gatewayName: "nemoclaw-9124", gatewayPort: 9124 },
+        },
+      }),
+    );
+    try {
+      const result = runUninstall(tmp, ["--yes", "--destroy-user-data"]);
+      const output = `${result.stdout}${result.stderr}`;
+
+      expect(result.status, output).toBe(0);
+      expect(output).toMatch(/OpenShell sandbox 'my-assistant' already removed/);
+      expect(output).not.toMatch(/Selected gateway cleanup was incomplete/);
+      expect(output).not.toMatch(/Uninstall completed with errors/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it("uses NemoHermes branding for --yes when Hermes is active", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-uninstall-yes-"));
     writeFakeTools(path.join(tmp, "bin"));

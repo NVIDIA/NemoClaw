@@ -111,6 +111,22 @@ describe("managed inference YAML profile contract", () => {
       model: {
         servedName: "nvidia-nemotron-3-nano-30b-a3b",
         files: [{ digest: LLAMA_CPP_MODEL_DIGEST, sizeBytes: 22833947424 }],
+        acquisition: {
+          ref: "hugging-face-exact-file/v1",
+          authentication: { mode: "optional", environment: "HF_TOKEN" },
+        },
+        cache: {
+          ref: "llama-cpp.gguf-content-addressed/v1",
+          receiptRef: "llama-cpp.gguf-cache-entry.receipt/v1",
+          root: "user-cache",
+          quotaBytes: 34359738368,
+          stagingHeadroomBytes: 5368709120,
+          staging: "same-filesystem",
+          publication: "atomic-no-clobber",
+          reuse: "verified-only-offline",
+          sharing: "owner-only",
+          cleanup: "receipt-owner-only",
+        },
       },
       runtime: {
         image: LLAMA_CPP_IMAGE,
