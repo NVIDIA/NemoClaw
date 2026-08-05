@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 
 // Import source directly so tests cannot pass against a stale build.
+import { unloadOllamaModels as defaultUnloadOllamaModels } from "../inference/ollama/proxy";
 import { registerTunnelOrigin } from "./allowed-origins";
 import { resolveDefaultSandboxName } from "./service-command";
 import {
@@ -33,6 +34,7 @@ import {
 // writes; stub it so these tests exercise only the wiring (tunnel-URL and
 // sandbox-name discovery plus the skip/guard branches), never openshell/docker.
 vi.mock("./allowed-origins", () => ({ registerTunnelOrigin: vi.fn() }));
+vi.mock("../inference/ollama/proxy", () => ({ unloadOllamaModels: vi.fn() }));
 
 const INTEGRATION_ENV_SANDBOX = "nc1077-env-sandbox";
 const INTEGRATION_REGISTRY_SANDBOX = "nc1077-registry-sandbox";
@@ -445,6 +447,7 @@ describe("stopAll", () => {
   beforeEach(() => {
     pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-svc-test-"));
     unloadOllamaModels = vi.fn();
+    vi.mocked(defaultUnloadOllamaModels).mockClear();
   });
 
   afterEach(() => {
@@ -574,6 +577,17 @@ describe("stopAll", () => {
 
     expect(unloadOllamaModels).toHaveBeenCalledOnce();
     expect(unloadOllamaModels.mock.invocationCallOrder[0]).toBeLessThan(stoppedCallOrder ?? 0);
+  });
+
+  it("uses the default Ollama cleanup through the public stop path (#8199)", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      stopAll({ pidDir });
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(defaultUnloadOllamaModels).toHaveBeenCalledOnce();
   });
 });
 

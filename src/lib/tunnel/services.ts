@@ -19,6 +19,7 @@ import { renderBox } from "../cli/banner";
 import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
 import { isObjectRecord } from "../core/json-types";
 import { DASHBOARD_PORT } from "../core/ports";
+import { unloadOllamaModels as unloadDefaultOllamaModels } from "../inference/ollama/proxy";
 import { buildSubprocessEnv } from "../subprocess-env";
 import * as agentForwardStop from "./agent-forward-stop";
 import { registerTunnelOrigin } from "./allowed-origins";
@@ -522,8 +523,7 @@ export function stopAll(opts: ServiceOptions = {}): void {
   }
 
   try {
-    const unloadOllamaModels =
-      opts.unloadOllamaModels ?? require("../inference/ollama/proxy").unloadOllamaModels;
+    const unloadOllamaModels = opts.unloadOllamaModels ?? unloadDefaultOllamaModels;
     unloadOllamaModels();
   } catch {
     /* best-effort */
