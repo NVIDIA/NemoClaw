@@ -731,6 +731,27 @@ export function sanitizeBackupDirectory(
   }
 }
 
+export interface IncompleteSnapshotRemoval {
+  readonly removed: boolean;
+  readonly error?: string;
+}
+
+export function removeIncompleteSnapshot(
+  backupPath: string,
+  overrides: Partial<Pick<BackupSanitizationOperations, "removeBackup" | "backupExists">> = {},
+): IncompleteSnapshotRemoval {
+  const operations = { ...DEFAULT_BACKUP_SANITIZATION_OPERATIONS, ...overrides };
+  try {
+    operations.removeBackup(backupPath);
+  } catch (error) {
+    return { removed: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  if (operations.backupExists(backupPath)) {
+    return { removed: false, error: "the snapshot directory still exists after removal" };
+  }
+  return { removed: true };
+}
+
 // ── Logging ────────────────────────────────────────────────────────
 
 const _verbose = () => process.env.NEMOCLAW_REBUILD_VERBOSE === "1";

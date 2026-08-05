@@ -80,6 +80,7 @@ describe("Hermes doctor and config hash boundary", () => {
       libDir,
       "openshell-child-visible-credentials.v0.0.85.json",
     );
+    const hermesCronRestoreControlPath = path.join(libDir, "hermes-cron-restore-control.py");
     const nestedDir = path.join(preloadsDir, "nested");
     const profileDir = path.join(tmp, "etc-profile.d");
     const bashrcPath = path.join(tmp, "bash.bashrc");
@@ -92,7 +93,10 @@ describe("Hermes doctor and config hash boundary", () => {
       fs.mkdirSync(profileDir, { recursive: true });
       for (const relativePath of [
         path.join(binDir, "nemoclaw-start"),
+        path.join(binDir, "nemoclaw-managed-startup-hold"),
+        path.join(binDir, "nemoclaw-managed-bootstrap"),
         path.join(binDir, "nemoclaw-gateway-control"),
+        path.join(libDir, "entrypoint-env-wrapper.sh"),
         path.join(libDir, "sandbox-init.sh"),
         path.join(libDir, "gateway-supervisor.sh"),
         path.join(libDir, "validate-hermes-env-secret-boundary.py"),
@@ -108,6 +112,7 @@ describe("Hermes doctor and config hash boundary", () => {
         mcpCredentialBoundaryPath,
         path.join(libDir, "state-dir-guard.py"),
         path.join(libDir, "managed-gateway-control.py"),
+        hermesCronRestoreControlPath,
         path.join(libDir, "sandbox-rlimits.sh"),
         path.join(preloadsDir, "gateway-safety-net.js"),
         path.join(nestedDir, "ciao-preload.js"),
@@ -142,12 +147,13 @@ describe("Hermes doctor and config hash boundary", () => {
       expect(result.stderr).toBe("");
       expect(fs.readFileSync(chownLogPath, "utf-8")).toBe(
         [
-          `root:root ${path.join(binDir, "nemoclaw-gateway-control")} ${path.join(libDir, "gateway-supervisor.sh")} ${path.join(libDir, "state-dir-guard.py")} ${path.join(libDir, "managed-gateway-control.py")} ${buildMcpDigestPath} ${mcpCredentialBoundaryPath}`,
+          `root:root ${path.join(binDir, "nemoclaw-gateway-control")} ${path.join(libDir, "gateway-supervisor.sh")} ${path.join(libDir, "state-dir-guard.py")} ${path.join(libDir, "managed-gateway-control.py")} ${buildMcpDigestPath} ${hermesCronRestoreControlPath} ${mcpCredentialBoundaryPath}`,
           `-R 0:0 ${preloadsDir}`,
           "",
         ].join("\n"),
       );
       expect(mode(path.join(binDir, "nemoclaw-gateway-control"))).toBe("700");
+      expect(mode(hermesCronRestoreControlPath)).toBe("700");
       expect(mode(path.join(libDir, "finalize-tirith-marker.py"))).toBe("755");
       expect(mode(mcpConfigTransactionPath)).toBe("755");
       expect(mode(discordRecoveryPatcherPath)).toBe("755");

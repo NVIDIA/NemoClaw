@@ -40,7 +40,7 @@ function deps(overrides: Partial<SetupNimVllmDeps> = {}): SetupNimVllmDeps {
     applyVllmRuntimeContextWindow: vi.fn(),
     isDgxSparkHost: () => false,
     isNemoClawManagedVllmRunning: () => false,
-    persistConfiguredDualStationVllmRuntimeReceipt: async () => ({
+    persistConfiguredManagedVllmRuntimeReceipt: async () => ({
       ok: true,
       persisted: true,
     }),
@@ -130,7 +130,7 @@ describe("setupNim vLLM route containment", () => {
       .flat()
       .join("\n");
     expect(renderedOutput).not.toContain(apiKey);
-    expect(renderedOutput).toContain("Using managed dual-Station vLLM endpoint");
+    expect(renderedOutput).toContain("Using managed vLLM endpoint");
     expect(renderedOutput).not.toContain("localhost:8000");
   });
 
@@ -154,7 +154,7 @@ describe("setupNim vLLM route containment", () => {
     await expect(handler(selection)).rejects.toThrow("exit 1");
     expect(validateOpenAiLikeSelection).not.toHaveBeenCalled();
     expect(console.error).toHaveBeenCalledWith(
-      "  To install 'required/model', stop the managed dual-Station vLLM deployment, then rerun the original install/onboard command.",
+      "  To install 'required/model', stop the managed vLLM deployment, then rerun the original install/onboard command.",
     );
     expect(vi.mocked(console.error).mock.calls.flat().join("\n")).not.toContain("localhost");
   });
@@ -166,7 +166,7 @@ describe("setupNim vLLM route containment", () => {
       deps({
         runCapture,
         getManagedVllmProviderBinding: () => {
-          throw new Error("Managed dual-Station vLLM authentication is missing.");
+          throw new Error("Managed vLLM authentication is missing.");
         },
         queryVllmModels,
       }),
@@ -181,7 +181,7 @@ describe("setupNim vLLM route containment", () => {
   });
 
   it("persists cleanup ownership after validating a managed dual endpoint", async () => {
-    const persistConfiguredDualStationVllmRuntimeReceipt = vi.fn(async () => ({
+    const persistConfiguredManagedVllmRuntimeReceipt = vi.fn(async () => ({
       ok: true as const,
       persisted: true,
     }));
@@ -192,12 +192,12 @@ describe("setupNim vLLM route containment", () => {
           apiKey: "a".repeat(64),
         }),
         queryVllmModels: () => JSON.stringify({ data: [{ id: "served/model" }] }),
-        persistConfiguredDualStationVllmRuntimeReceipt,
+        persistConfiguredManagedVllmRuntimeReceipt,
       }),
     );
 
     await expect(handler(state(null))).resolves.toBe("selected");
-    expect(persistConfiguredDualStationVllmRuntimeReceipt).toHaveBeenCalledOnce();
+    expect(persistConfiguredManagedVllmRuntimeReceipt).toHaveBeenCalledOnce();
   });
 
   it("fails closed when managed dual cleanup ownership cannot be persisted", async () => {
@@ -208,7 +208,7 @@ describe("setupNim vLLM route containment", () => {
           apiKey: "a".repeat(64),
         }),
         queryVllmModels: () => JSON.stringify({ data: [{ id: "served/model" }] }),
-        persistConfiguredDualStationVllmRuntimeReceipt: async () => ({
+        persistConfiguredManagedVllmRuntimeReceipt: async () => ({
           ok: false,
           reason: "pair identity changed",
         }),
@@ -217,7 +217,7 @@ describe("setupNim vLLM route containment", () => {
 
     await expect(handler(state(null))).rejects.toThrow("exit 1");
     expect(console.error).toHaveBeenCalledWith(
-      "  Managed dual-Station cleanup ownership could not be persisted: pair identity changed",
+      "  Managed vLLM cleanup ownership could not be persisted: pair identity changed",
     );
   });
 
@@ -229,7 +229,7 @@ describe("setupNim vLLM route containment", () => {
           apiKey: "a".repeat(64),
         }),
         queryVllmModels: () => JSON.stringify({ data: [{ id: "served/model" }] }),
-        persistConfiguredDualStationVllmRuntimeReceipt: async () => ({
+        persistConfiguredManagedVllmRuntimeReceipt: async () => ({
           ok: true,
           persisted: false,
         }),
@@ -238,7 +238,7 @@ describe("setupNim vLLM route containment", () => {
 
     await expect(handler(state(null))).rejects.toThrow("exit 1");
     expect(console.error).toHaveBeenCalledWith(
-      "  Managed dual-Station cleanup ownership could not be persisted: the managed dual-Station cleanup receipt was not written",
+      "  Managed vLLM cleanup ownership could not be persisted: the managed cleanup receipt was not written",
     );
   });
 

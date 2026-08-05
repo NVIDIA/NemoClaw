@@ -73,8 +73,17 @@ export type RuntimeProviderManagedImageSupport = {
   readonly capabilityContractVersions: readonly number[];
 };
 
+export type RuntimeProviderNativeArtifactSupport = {
+  readonly exactDigestReferences: boolean;
+  readonly platforms: readonly "windows/x64"[];
+  readonly agents: readonly "openclaw"[];
+  readonly contractVersions: readonly number[];
+  readonly startupProfileContractVersions: readonly number[];
+};
+
 export interface RuntimeProviderWorkloadProfile {
   readonly support: RuntimeProviderManagedImageSupport | null;
+  readonly nativeArtifactSupport?: RuntimeProviderNativeArtifactSupport | null;
   readonly hostArchitectures: readonly string[];
   readonly managedImageSelectionPolicy: ManagedImageSelectionPolicy;
   readonly legacyDockerfileBuilds: boolean;

@@ -4,6 +4,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { dockerfileInstructions } from "./helpers/dockerfile-run-commands";
 
 const DOCKERFILE = join(import.meta.dirname, "../Dockerfile");
 
@@ -16,12 +17,20 @@ describe("corporate proxy CA build-time TLS anchor (#6839)", () => {
     expect(matches).toHaveLength(1);
   });
 
-  // source-shape-contract: security -- The build-time TLS trust anchor must precede the signature-verifying sigstore fetch
+  // source-shape-contract: security -- The build-time TLS trust anchor must precede registry and signature-verifying fetches
   it("decodes the CA and exports NODE_EXTRA_CA_CERTS before the reinstall audit-signatures step", () => {
     const argIndex = dockerfile.indexOf("ARG NEMOCLAW_CORPORATE_CA_B64=");
     const decodeIndex = dockerfile.indexOf('RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then');
     const anchorIndex = dockerfile.indexOf(
       "ENV NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem",
+    );
+    const curlAnchorIndex = dockerfile.indexOf(
+      "export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem",
+      anchorIndex,
+    );
+    const ipAddressPatchIndex = dockerfile.indexOf(
+      "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
+      curlAnchorIndex,
     );
     const auditSignaturesIndex = dockerfile.indexOf("mcporter-runtime audit signatures");
 
@@ -29,12 +38,16 @@ describe("corporate proxy CA build-time TLS anchor (#6839)", () => {
       argIndex,
       decodeIndex,
       anchorIndex,
+      curlAnchorIndex,
+      ipAddressPatchIndex,
       auditSignaturesIndex,
     })) {
       expect(index, name).toBeGreaterThan(-1);
     }
     expect(argIndex).toBeLessThan(decodeIndex);
     expect(decodeIndex).toBeLessThan(anchorIndex);
+    expect(anchorIndex).toBeLessThan(curlAnchorIndex);
+    expect(curlAnchorIndex).toBeLessThan(ipAddressPatchIndex);
     expect(anchorIndex).toBeLessThan(auditSignaturesIndex);
   });
 });
@@ -133,6 +146,14 @@ describe("DCode corporate proxy CA cold-build trust (#8119)", () => {
       "mcp-tool-discovery-runtime",
       finalDecodeIndex,
     );
+    const curlAnchorIndex = finalDockerfile.indexOf(
+      "export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem",
+      finalDecodeIndex,
+    );
+    const ipAddressPatchIndex = finalDockerfile.indexOf(
+      "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
+      curlAnchorIndex,
+    );
 
     for (const [name, index] of Object.entries({
       finalFromIndex,
@@ -140,6 +161,8 @@ describe("DCode corporate proxy CA cold-build trust (#8119)", () => {
       finalDecodeIndex,
       trustDirectoryIndex,
       runtimeProbeIndex,
+      curlAnchorIndex,
+      ipAddressPatchIndex,
     })) {
       expect(index, name).toBeGreaterThan(-1);
     }
@@ -147,5 +170,92 @@ describe("DCode corporate proxy CA cold-build trust (#8119)", () => {
     expect(finalArgIndex).toBeLessThan(finalDecodeIndex);
     expect(finalDecodeIndex).toBeLessThan(trustDirectoryIndex);
     expect(trustDirectoryIndex).toBeLessThan(runtimeProbeIndex);
+    expect(trustDirectoryIndex).toBeLessThan(curlAnchorIndex);
+    expect(curlAnchorIndex).toBeLessThan(ipAddressPatchIndex);
+  });
+});
+
+describe("Hermes corporate proxy CA final-stage trust", () => {
+  const dockerfile = readFileSync(
+    join(import.meta.dirname, "../agents/hermes/Dockerfile"),
+    "utf-8",
+  );
+
+  // source-shape-contract: security -- Hermes final-stage registry clients must trust the decoded corporate CA before making HTTPS requests
+  it("uses the corporate CA conditionally for all Hermes registry remediations", () => {
+    const finalFromIndex = dockerfile.indexOf("FROM ${BASE_IMAGE}");
+    const finalStage = dockerfile.slice(finalFromIndex);
+    const argIndex = finalStage.indexOf("ARG NEMOCLAW_CORPORATE_CA_B64");
+    const decodeIndex = finalStage.indexOf(
+      'RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then',
+      argIndex,
+    );
+    const nodeAnchorIndex = finalStage.indexOf(
+      "ENV NODE_EXTRA_CA_CERTS=/usr/local/share/nemoclaw/corporate-ca.pem",
+      decodeIndex,
+    );
+    const payloadCopyIndex = finalStage.indexOf(
+      "COPY --from=hermes-npm-patch-payload / /",
+      nodeAnchorIndex,
+    );
+    const conditionalCurlTrust = `RUN if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \\
+      export CURL_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \\
+    fi; \\`;
+    const remediationCommands = [
+      "node --experimental-strip-types /scripts/patch-bundled-npm-tar.mts",
+      "node --experimental-strip-types /scripts/patch-bundled-npm-brace-expansion.mts",
+      "node --experimental-strip-types /scripts/lib/patch-bundled-npm-ip-address.mts",
+    ];
+    const agentInstallCommand =
+      "node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install";
+    const packageInstallRun = dockerfileInstructions(finalStage).find(
+      (instruction) =>
+        instruction.keyword === "RUN" && instruction.body.includes(agentInstallCommand),
+    );
+    const expectedPackageInstallRun = [
+      "RUN unset SSL_CERT_FILE REQUESTS_CA_BUNDLE; \\",
+      "    if [ -f /usr/local/share/nemoclaw/corporate-ca.pem ]; then \\",
+      "      export SSL_CERT_FILE=/usr/local/share/nemoclaw/corporate-ca.pem; \\",
+      "      export REQUESTS_CA_BUNDLE=/usr/local/share/nemoclaw/corporate-ca.pem; \\",
+      "    fi; \\",
+      `    ${agentInstallCommand} \\`,
+      '    && if [ "$NEMOCLAW_MANAGED_IMAGE_CAPABILITY_UNION" = "1" ]; then \\',
+      "        node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts \\",
+      "            --agent hermes --phase managed-image-capability-union; \\",
+      "    fi",
+      "",
+    ].join("\n");
+    const npmCommandIndexes = [...finalStage.matchAll(/^\s*npm\s+(?:ci|run)\b/gmu)].map(
+      (match) => match.index,
+    );
+
+    for (const [name, index] of Object.entries({
+      finalFromIndex,
+      argIndex,
+      decodeIndex,
+      nodeAnchorIndex,
+      payloadCopyIndex,
+    })) {
+      expect(index, name).toBeGreaterThan(-1);
+    }
+    expect(argIndex).toBeLessThan(decodeIndex);
+    expect(decodeIndex).toBeLessThan(nodeAnchorIndex);
+    expect(nodeAnchorIndex).toBeLessThan(payloadCopyIndex);
+    for (const remediationCommand of remediationCommands) {
+      const remediationIndex = finalStage.indexOf(remediationCommand, payloadCopyIndex);
+      expect(remediationIndex, remediationCommand).toBeGreaterThan(payloadCopyIndex);
+      const runIndex = finalStage.lastIndexOf("\nRUN ", remediationIndex) + 1;
+      expect(runIndex, remediationCommand).toBeGreaterThan(payloadCopyIndex);
+      expect(finalStage.slice(runIndex, remediationIndex).trim(), remediationCommand).toBe(
+        conditionalCurlTrust,
+      );
+    }
+    expect(npmCommandIndexes.length).toBeGreaterThan(0);
+    for (const npmCommandIndex of npmCommandIndexes) {
+      expect(nodeAnchorIndex).toBeLessThan(npmCommandIndex);
+    }
+    expect(packageInstallRun?.text).toBe(expectedPackageInstallRun);
+    expect(packageInstallRun?.text).not.toContain("else");
+    expect(finalStage.match(/^ENV (?:SSL_CERT_FILE|REQUESTS_CA_BUNDLE)=/gmu) ?? []).toEqual([]);
   });
 });

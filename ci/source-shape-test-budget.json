@@ -52,6 +52,11 @@
       "category": "security"
     },
     {
+      "file": "test/code-change-considerations.test.ts",
+      "test": "keeps the stage-neutral questions in one concise owner",
+      "category": "compatibility"
+    },
+    {
       "file": "test/code-scanning-workflow.test.ts",
       "test": "groups CodeQL action updates so Dependabot keeps the shared revision synchronized",
       "category": "security"
@@ -89,6 +94,11 @@
     {
       "file": "test/corporate-ca-build-tls-anchor.test.ts",
       "test": "trusts the corporate CA before the DCode discovery runtime npm install",
+      "category": "security"
+    },
+    {
+      "file": "test/corporate-ca-build-tls-anchor.test.ts",
+      "test": "uses the corporate CA conditionally for all Hermes registry remediations",
       "category": "security"
     },
     {
@@ -568,7 +578,7 @@
     },
     {
       "file": "test/runtime-provider-source-shape.test.ts",
-      "test": "keeps managed-bootstrap assets out of image packaging",
+      "test": "packages the dormant managed-bootstrap native boundary for every agent image",
       "category": "security"
     },
     {
@@ -745,6 +755,11 @@
       "file": "test/vitest-temp-root.test.ts",
       "test": "wires cleanup into root and standalone plugin test runs",
       "category": "compatibility"
+    },
+    {
+      "file": "test/vitest-temp-root.test.ts",
+      "test": "isolates stateful non-live projects without redirecting live E2E state",
+      "category": "security"
     },
     {
       "file": "test/vitest-watch-triggers.test.ts",

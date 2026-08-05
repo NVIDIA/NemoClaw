@@ -95,15 +95,7 @@ function writeBootstrapResult(
       noChangesReason: reason,
     },
     acceptanceCoverage: [],
-    securityCategories: [
-      {
-        category: "Holistic Security Posture",
-        verdict: "warning",
-        justification: failed
-          ? "Advisor bootstrap failed; human review required."
-          : "Advisor bootstrap skipped; human review required.",
-      },
-    ],
+    securityCategories: [],
     sourceOfTruthReview: [],
     testDepth: { verdict: "unknown", rationale: reason, suggestedTests: [] },
     e2e: {

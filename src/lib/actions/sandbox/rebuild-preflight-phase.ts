@@ -6,6 +6,10 @@ import type { SandboxMessagingPlan } from "../../messaging";
 import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import { DCODE_AUTO_APPROVAL_FEATURE } from "../../onboard/dcode-auto-approval";
 import { managedSandboxFeatureIssue } from "../../onboard/managed-sandbox-feature";
+import {
+  type HermesCronRestorePlan,
+  validateHermesCronRestoreBackup,
+} from "../../state/rebuild/hermes-cron-restore-backup";
 import type { RebuildManifest } from "../../state/sandbox";
 import { assertMcpDestroyNotPending } from "./mcp-bridge-state";
 import {
@@ -75,6 +79,42 @@ export interface RebuildPreflightPhaseResult {
   bail: RebuildBail;
 }
 
+interface HermesCronRestoreBackupPreflightInput {
+  rebuildAgent: string | null;
+  backupPath: string | null;
+  backedUpDirs: readonly string[];
+  log: RebuildLog;
+  bail: RebuildBail;
+}
+
+export function runHermesCronRestoreBackupPreflight({
+  rebuildAgent,
+  backupPath,
+  backedUpDirs,
+  log,
+  bail,
+}: HermesCronRestoreBackupPreflightInput): { plan: HermesCronRestorePlan | null } | null {
+  if (rebuildAgent !== "hermes" || backupPath === null || !backedUpDirs.includes("cron")) {
+    return { plan: null };
+  }
+  try {
+    const plan = validateHermesCronRestoreBackup(backupPath);
+    log(
+      `Hermes cron restore preflight: activeJobs=${String(plan.activeJobs)}, scriptJobs=${String(plan.scriptJobs)}, gate=${String(plan.requiresDispatchGate)}`,
+    );
+    return { plan };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    printRebuildPreflightFailure(
+      `the Hermes cron backup failed script-reference validation: ${detail}`,
+      `Repair or disable the affected job before rebuilding. Backup: ${backupPath}`,
+      "Hermes cron restore preflight failed.",
+      bail,
+    );
+    return null;
+  }
+}
+
 /**
  * Validate and pin the complete recreate contract while the old sandbox remains
  * intact. The returned onboard lock stays held across every destructive phase.
@@ -109,7 +149,12 @@ export async function runRebuildPreflightPhase(
   try {
     assertMcpDestroyNotPending(sandboxEntry);
   } catch (error) {
-    bail(error instanceof Error ? error.message : String(error));
+    printRebuildPreflightFailure(
+      "a pending MCP destroy transaction blocks rebuild.",
+      "Resolve the pending MCP state before retrying rebuild.",
+      error instanceof Error ? error.message : String(error),
+      bail,
+    );
     return null;
   }
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
@@ -201,6 +246,7 @@ export async function runRebuildPreflightPhase(
   let retainBaseImagePreflight = false;
   try {
     const releaseOnboardLock = acquireRebuildOnboardLock(sandboxName, bail);
+    if (!releaseOnboardLock) return null;
     let retainOnboardLock = false;
     try {
       assertRebuildEntryUnchanged(sandboxName, JSON.stringify(expectedSandboxEntry), bail);

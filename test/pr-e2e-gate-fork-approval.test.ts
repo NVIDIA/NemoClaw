@@ -48,7 +48,7 @@ function emptyPrGateCheckRunsRoute() {
 function exactPrGateCheck(overrides: Record<string, unknown> = {}) {
   return {
     id: 17,
-    name: "E2E / PR Gate Coordination",
+    name: "E2E / PR Gate",
     head_sha: HEAD_SHA,
     external_id: prGateExternalId(42, HEAD_SHA, BASE_SHA),
     status: "in_progress",
@@ -71,6 +71,10 @@ function existingPrGateCheckRunsRoute(overrides: Record<string, unknown> = {}) {
 function prGateMutationResponse(request: RecordedGitHubRequest, id = 17): Response {
   const body = (request.body ?? {}) as Record<string, unknown>;
   return githubResponse(exactPrGateCheck({ id, ...body }));
+}
+
+function commitStatusMutationResponse(request: RecordedGitHubRequest): Response {
+  return githubResponse(request.body);
 }
 
 function mainWorkflowRefRoute(sha = WORKFLOW_SHA) {
@@ -273,6 +277,8 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
     vi.stubEnv("GITHUB_TOKEN", "token");
     vi.stubEnv("GITHUB_REPOSITORY", "NVIDIA/NemoClaw");
     vi.stubEnv("GITHUB_OUTPUT", outputPath);
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    vi.stubEnv("GITHUB_WORKFLOW", "E2E / PR Gate Controller");
     const requests: RecordedGitHubRequest[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(
       createGitHubFetchRouter(
@@ -297,6 +303,10 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
           githubFetchRoute(
             ({ url, method }) => url.endsWith("/check-runs/17") && method === "PATCH",
             (request) => prGateMutationResponse(request),
+          ),
+          githubFetchRoute(
+            ({ url, method }) => url.endsWith(`/statuses/${HEAD_SHA}`) && method === "POST",
+            commitStatusMutationResponse,
           ),
         ],
         requests,
@@ -338,6 +348,14 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
       expect(JSON.stringify(pending?.body)).toContain(
         "This gate passes only if the dispatched evidence references both SHAs and verifies successfully.",
       );
+      const visibleStatus = requests
+        .filter((request) => request.url.endsWith(`/statuses/${HEAD_SHA}`))
+        .at(-1);
+      expect(visibleStatus?.body).toMatchObject({
+        state: "pending",
+        context: "E2E / PR Gate / Rollup",
+        description: "Maintainer approval required to run fork E2E",
+      });
       const outputs = fs.readFileSync(outputPath, "utf8");
       expect(outputs).not.toContain("approval_");
       expect(outputs).toContain("finalized=true");
@@ -793,7 +811,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
         },
       });
       await expect(approvePrE2E(approvalCommand(workDirs[1]!))).rejects.toThrow(
-        /coordination is terminal/u,
+        /required check is terminal/u,
       );
       expect(requests.filter((request) => request.url.endsWith("/dispatches"))).toHaveLength(1);
       expect(fs.readFileSync(outputPath, "utf8")).toContain("finalized=true");
@@ -810,16 +828,16 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
         conclusion: null,
         output: { title: "Waiting for PR CI" },
       },
-      expected: /coordination is still preparing.*Wait for the coordination title/u,
+      expected: /required check is still preparing.*Wait for the required-check title/u,
     },
     {
-      name: "coordination is queued",
+      name: "the required check is queued",
       check: {
         status: "queued",
         conclusion: null,
         output: { title: "Maintainer approval required to run fork E2E" },
       },
-      expected: /coordination is still preparing.*Wait for the coordination title/u,
+      expected: /required check is still preparing.*Wait for the required-check title/u,
     },
     {
       name: "runner-loss retry is preparing",
@@ -828,7 +846,7 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
         conclusion: null,
         output: { title: "Preparing one-time hosted-runner-loss retry" },
       },
-      expected: /coordination is still preparing.*Wait for the coordination title/u,
+      expected: /required check is still preparing.*Wait for the required-check title/u,
     },
     {
       name: "E2E authorization is already published",
@@ -855,43 +873,43 @@ describe("PR E2E controller fork credentialed E2E approval safety", () => {
         conclusion: "failure",
         output: { title: "Maintainer approval required to run fork E2E" },
       },
-      expected: /coordination is terminal.*do not reuse this approval/u,
+      expected: /required check is terminal.*do not reuse this approval/u,
     },
     {
-      name: "the coordination title is malformed",
+      name: "the required-check title is malformed",
       check: {
         status: "in_progress",
         conclusion: null,
         output: { title: "unexpected remote title" },
       },
-      expected: /coordination is malformed or unknown.*do not retry/u,
+      expected: /required check is malformed or unknown.*do not retry/u,
     },
     {
-      name: "the coordination title is missing",
+      name: "the required-check title is missing",
       check: {
         status: "in_progress",
         conclusion: null,
         output: {},
       },
-      expected: /coordination is malformed or unknown.*do not retry/u,
+      expected: /required check is malformed or unknown.*do not retry/u,
     },
     {
-      name: "the coordination title is null",
+      name: "the required-check title is null",
       check: {
         status: "in_progress",
         conclusion: null,
         output: { title: null },
       },
-      expected: /coordination is malformed or unknown.*do not retry/u,
+      expected: /required check is malformed or unknown.*do not retry/u,
     },
     {
-      name: "the coordination title is not a string",
+      name: "the required-check title is not a string",
       check: {
         status: "in_progress",
         conclusion: null,
         output: { title: 7319 },
       },
-      expected: /coordination is malformed or unknown.*do not retry/u,
+      expected: /required check is malformed or unknown.*do not retry/u,
     },
   ])("rejects fork authorization when $name", async ({ check, expected }) => {
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-pr-e2e-gate-title-"));

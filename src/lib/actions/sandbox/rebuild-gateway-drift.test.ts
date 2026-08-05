@@ -120,6 +120,22 @@ describe("rebuild gateway drift preflight", () => {
     expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
   });
 
+  it("prints the safe-abort diagnostic before bailing on gateway schema drift (#7794)", () => {
+    vi.mocked(gatewayDrift.detectOpenShellStateRpcPreflightIssue).mockReturnValue(driftIssue);
+    const nonThrowingBail = vi.fn();
+
+    expect(
+      checkRebuildGatewaySchemaPreflight("alpha", makeSandboxEntry(), nonThrowingBail as never),
+    ).toBe(false);
+
+    const diagnostics = errorSpy.mock.calls.flat().join("\n");
+    expect(diagnostics).toContain("Rebuild preflight failed:");
+    expect(diagnostics).toContain("OpenShell gateway schema is incompatible with this rebuild.");
+    expect(diagnostics).toContain("Follow the gateway recovery guidance above");
+    expect(diagnostics).toContain("Aborting rebuild — sandbox is untouched, no data was lost.");
+    expect(nonThrowingBail).toHaveBeenCalledWith("OpenShell gateway schema mismatch.");
+  });
+
   it.each([
     {
       recordedGateway: "nemoclaw",
