@@ -21,6 +21,7 @@ export interface SandboxResumeSignals {
   readonly webSearchConfigChanged: boolean;
   readonly sandboxGpuConfigChanged: boolean;
   readonly recreateSandboxRequested: boolean;
+  readonly recreateJournalHandoff?: boolean;
   readonly messagingChannelConfigChanged: boolean;
   readonly hermesToolGatewayConfigChanged: boolean;
   readonly observabilityChanged?: boolean;
@@ -271,6 +272,17 @@ function runtimeConfigurationResumeDecision(
 
 export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResumeDecision {
   if (!signals.resume || !signals.sandboxStepComplete) return { kind: "create" };
+  if (
+    signals.sandboxReuseState === "not_ready" &&
+    signals.recreateSandboxRequested &&
+    signals.recreateJournalHandoff
+  ) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Continuing journaled sandbox recreation.",
+      removeRegistryEntry: false,
+    };
+  }
   if (signals.sandboxReuseState === "not_ready") return { kind: "repair-and-recreate" };
   const compatibilityDecision = compatibilityResumeDecision(signals);
   if (compatibilityDecision) return compatibilityDecision;

@@ -133,6 +133,22 @@ describe("decideSandboxResume", () => {
     });
   });
 
+  it("continues an owned recreate when the outer transaction already deleted the sandbox", () => {
+    expect(
+      decideSandboxResume(
+        resumeSignals({
+          sandboxReuseState: "not_ready",
+          recreateSandboxRequested: true,
+          recreateJournalHandoff: true,
+        }),
+      ),
+    ).toEqual({
+      kind: "recreate",
+      note: "  [resume] Continuing journaled sandbox recreation.",
+      removeRegistryEntry: false,
+    });
+  });
+
   it("repairs a not-ready sandbox before recreating for DCode auto-approval drift", () => {
     expect(
       decideSandboxResume(
